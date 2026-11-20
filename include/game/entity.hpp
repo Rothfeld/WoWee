@@ -166,16 +166,31 @@ public:
         remotePredictedMotion_ = false;
         isMoving_ = false; // Instant position set cancels interpolation
         usePathMode_ = false;
+        serverSpline_ = false;
+        hasServerSplinePosition_ = false;
+        serverSplineFlags_ = 0;
+        splineFacingTargetGuid_ = 0;
         activeSpline_.reset();
     }
 
-    // Multi-segment path movement (Catmull-Rom spline interpolation)
+    void markServerSplinePosition(uint32_t splineFlags = 0, uint64_t facingTargetGuid = 0) {
+        hasServerSplinePosition_ = true;
+        serverSplineFlags_ = splineFlags;
+        splineFacingTargetGuid_ = facingTargetGuid;
+    }
+
+    // Multi-segment path movement (Catmull-Rom or piecewise-linear spline interpolation)
     void startMoveAlongPath(const std::vector<std::array<float, 3>>& path, float destO, float totalDuration,
                             bool smooth = true, bool followPathFacing = false, bool cyclic = false) {
         remotePredictedMotion_ = false;
+        remoteAirborne_ = false;
+        serverSpline_ = false;
+        hasServerSplinePosition_ = false;
+        serverSplineFlags_ = 0;
+        splineFacingTargetGuid_ = 0;
         if (path.empty()) return;
         if (path.size() == 1 || totalDuration <= 0.0f) {
-            startMoveTo(path.back()[0], path.back()[1], path.back()[2], destO, totalDuration);
+            setPosition(path.back()[0], path.back()[1], path.back()[2], destO);
             return;
         }
         // Build cumulative distances for proportional time assignment.
@@ -191,17 +206,18 @@ public:
             cumDist[i] = totalDist;
         }
         if (totalDist < 0.001f) {
-            startMoveTo(path.back()[0], path.back()[1], path.back()[2], destO, totalDuration);
+            setPosition(path.back()[0], path.back()[1], path.back()[2], destO);
             return;
         }
         // Build SplineKeys with distance-proportional time
-        uint32_t durationMs = static_cast<uint32_t>(totalDuration * 1000.0f);
+        uint32_t durationMs = std::max<uint32_t>(1u, static_cast<uint32_t>(std::lround(totalDuration * 1000.0f)));
         const float invTotalDist = static_cast<float>(durationMs) / totalDist;
         std::vector<math::SplineKey> keys(path.size());
         for (size_t i = 0; i < path.size(); i++) {
             keys[i].timeMs = static_cast<uint32_t>(cumDist[i] * invTotalDist);
             keys[i].position = {path[i][0], path[i][1], path[i][2]};
         }
+        keys.back().timeMs = durationMs;
         activeSpline_.emplace(std::move(keys), /*timeClosed=*/false);
         splineDurationMs_ = durationMs;
         cyclicPath_ = cyclic;
@@ -209,10 +225,9 @@ public:
         followPathFacing_ = followPathFacing;
         locomotionSpeed_ = totalDist / totalDuration;
 
-        // Snap position if in overrun phase
-        if (isMoving_ && moveElapsed_ >= moveDuration_) {
-            x = moveEndX_; y = moveEndY_; z = moveEndZ_;
-        }
+        x = path.front()[0];
+        y = path.front()[1];
+        z = path.front()[2];
         moveEndX_ = path.back()[0]; moveEndY_ = path.back()[1]; moveEndZ_ = path.back()[2];
         moveDuration_ = totalDuration;
         moveElapsed_ = 0.0f;
@@ -220,22 +235,33 @@ public:
         remoteFacing_ = {};
         isMoving_ = true;
         usePathMode_ = true;
-        // Velocity for dead-reckoning after path completes
-        float fromX = isMoving_ ? moveEndX_ : x;
-        float fromY = isMoving_ ? moveEndY_ : y;
-        float impliedVX = (path.back()[0] - fromX) / totalDuration;
-        float impliedVY = (path.back()[1] - fromY) / totalDuration;
-        float impliedVZ = (path.back()[2] - path[0][2]) / totalDuration;
-        const float alpha = 0.65f;
-        velX_ = alpha * impliedVX + (1.0f - alpha) * velX_;
-        velY_ = alpha * impliedVY + (1.0f - alpha) * velY_;
-        velZ_ = alpha * impliedVZ + (1.0f - alpha) * velZ_;
+        velX_ = 0.0f;
+        velY_ = 0.0f;
+        velZ_ = 0.0f;
+    }
+
+    // Server-authored SMSG_MONSTER_MOVE spline (0 or more intermediate waypoints).
+    // Stops exactly at path.back() with zero dead-reckoning overrun and retains
+    // hasServerSplinePosition_ so stationary ground floor projection persists
+    // (e.g. CMaNGOS MoveCharge adds +1.0 yd to spline Z).
+    void startServerSpline(const std::vector<std::array<float, 3>>& path, float destO,
+                           float totalDuration, bool smooth, bool followPathFacing,
+                           uint32_t splineFlags, uint64_t facingTargetGuid = 0) {
+        startMoveAlongPath(path, destO, totalDuration, smooth, followPathFacing, /*cyclic=*/false);
+        serverSpline_ = isMoving_;
+        hasServerSplinePosition_ = true;
+        serverSplineFlags_ = splineFlags;
+        splineFacingTargetGuid_ = facingTargetGuid;
     }
 
     // Movement interpolation (syncs entity position with renderer during movement)
     void startMoveTo(float destX, float destY, float destZ, float destO, float durationSec) {
         remotePredictedMotion_ = false;
         usePathMode_ = false;
+        serverSpline_ = false;
+        hasServerSplinePosition_ = false;
+        serverSplineFlags_ = 0;
+        splineFacingTargetGuid_ = 0;
         activeSpline_.reset();
         if (durationSec <= 0.0f) {
             setPosition(destX, destY, destZ, destO);
@@ -300,6 +326,10 @@ public:
         remotePredictedMotion_ = true;
         remoteAirborne_ = false;
         usePathMode_ = false;
+        serverSpline_ = false;
+        hasServerSplinePosition_ = false;
+        serverSplineFlags_ = 0;
+        splineFacingTargetGuid_ = 0;
         activeSpline_.reset();
         remoteVelocity_ = velocity;
         remoteCorrection_ = position - glm::vec3(x, y, z);
@@ -411,10 +441,12 @@ public:
                     const auto& keys = activeSpline_->keys();
                     auto end = std::upper_bound(keys.begin(), keys.end(), pathTimeMs,
                         [](uint32_t time, const math::SplineKey& key) { return time < key.timeMs; });
+                    if (end == keys.begin()) end = keys.begin() + 1;
                     if (end == keys.end()) end = keys.end() - 1;
                     const auto& begin = *(end - 1);
+                    const uint32_t segDur = end->timeMs > begin.timeMs ? (end->timeMs - begin.timeMs) : 1u;
                     const float fraction = static_cast<float>(pathTimeMs - begin.timeMs) /
-                        static_cast<float>(end->timeMs - begin.timeMs);
+                        static_cast<float>(segDur);
                     tangent = end->position - begin.position;
                     pos = begin.position + tangent * fraction;
                 }
@@ -430,6 +462,17 @@ public:
                 y = moveStartY_ + (moveEndY_ - moveStartY_) * t;
                 z = moveStartZ_ + (moveEndZ_ - moveStartZ_) * t;
             }
+        } else if (usePathMode_ || serverSpline_) {
+            // Authoritative spline path has reached its explicit endpoint: clamp
+            // directly to destination with zero dead-reckoning overrun.
+            x = moveEndX_;
+            y = moveEndY_;
+            z = moveEndZ_;
+            velX_ = 0.0f;
+            velY_ = 0.0f;
+            velZ_ = 0.0f;
+            isMoving_ = false;
+            serverSpline_ = false;
         } else {
             // Past the interpolation window: dead-reckon at the smoothed velocity
             // rather than freezing in place. Cap to one extra interval so we don't
@@ -447,6 +490,13 @@ public:
             }
         }
     }
+
+    [[nodiscard]] bool isServerSplineActive() const {
+        return serverSpline_ && isActivelyMoving();
+    }
+    [[nodiscard]] bool hasServerSplinePosition() const { return hasServerSplinePosition_; }
+    [[nodiscard]] uint32_t serverSplineFlags() const { return serverSplineFlags_; }
+    [[nodiscard]] uint64_t splineFacingTargetGuid() const { return splineFacingTargetGuid_; }
 
     [[nodiscard]] float getLocomotionSpeed() const {
         return isActivelyMoving() ? locomotionSpeed_ : 0.0f;
@@ -570,6 +620,10 @@ protected:
     bool cyclicPath_ = false;
     bool smoothPath_ = true;
     bool followPathFacing_ = false;
+    bool serverSpline_ = false;
+    bool hasServerSplinePosition_ = false;
+    uint32_t serverSplineFlags_ = 0;
+    uint64_t splineFacingTargetGuid_ = 0;
 };
 
 /**

@@ -245,57 +245,6 @@ void ChargeEffect::recreatePipelines() {
     }
 }
 
-void ChargeEffect::tryLoadM2Models(M2Renderer* m2Renderer, pipeline::AssetManager* assets) {
-    if (!m2Renderer || !assets) return;
-    m2Renderer_ = m2Renderer;
-
-    const char* casterPaths[] = {
-        "Spells\\Charge_Caster.m2",
-        "Spells\\WarriorCharge.m2",
-        "Spells\\Charge\\Charge_Caster.m2",
-        "Spells\\Dust_Medium.m2",
-    };
-    for (const char* path : casterPaths) {
-        auto m2Data = assets->readFile(path);
-        if (m2Data.empty()) continue;
-        pipeline::M2Model model = pipeline::M2Loader::load(m2Data);
-        if (model.name.empty()) model.name = path;
-        if (model.vertices.empty() && model.particleEmitters.empty()) continue;
-        {
-            auto skinData = assets->readFile(pipeline::skinPathForM2(path));
-            if (!skinData.empty() && model.version >= 264)
-                pipeline::M2Loader::loadSkin(skinData, model);
-        }
-        if (m2Renderer_->loadModel(model, CASTER_MODEL_ID)) {
-            casterModelLoaded_ = true;
-            LOG_INFO("ChargeEffect: loaded caster model from ", path);
-            break;
-        }
-    }
-
-    const char* impactPaths[] = {
-        "Spells\\Charge_Impact.m2",
-        "Spells\\Charge\\Charge_Impact.m2",
-        "Spells\\ImpactDust.m2",
-    };
-    for (const char* path : impactPaths) {
-        auto m2Data = assets->readFile(path);
-        if (m2Data.empty()) continue;
-        pipeline::M2Model model = pipeline::M2Loader::load(m2Data);
-        if (model.name.empty()) model.name = path;
-        if (model.vertices.empty() && model.particleEmitters.empty()) continue;
-        {
-            auto skinData = assets->readFile(pipeline::skinPathForM2(path));
-            if (!skinData.empty() && model.version >= 264)
-                pipeline::M2Loader::loadSkin(skinData, model);
-        }
-        if (m2Renderer_->loadModel(model, IMPACT_MODEL_ID)) {
-            LOG_INFO("ChargeEffect: loaded impact model from ", path);
-            break;
-        }
-    }
-}
-
 void ChargeEffect::start(const glm::vec3& position, const glm::vec3& direction) {
     emitting_ = true;
     dustAccum_ = 0.0f;
@@ -303,23 +252,12 @@ void ChargeEffect::start(const glm::vec3& position, const glm::vec3& direction) 
     dustPuffs_.clear();
     lastEmitPos_ = position;
 
-    // Spawn M2 caster effect
-    if (casterModelLoaded_ && m2Renderer_) {
-        activeCasterInstanceId_ = m2Renderer_->createInstance(
-            CASTER_MODEL_ID, position, glm::vec3(0.0f), 1.0f);
-    }
-
     // Seed the first trail point
     emit(position, direction);
 }
 
 void ChargeEffect::emit(const glm::vec3& position, const glm::vec3& direction) {
     if (!emitting_) return;
-
-    // Move M2 caster with player
-    if (activeCasterInstanceId_ != 0 && m2Renderer_) {
-        m2Renderer_->setInstancePosition(activeCasterInstanceId_, position);
-    }
 
     // Only add a new trail point if we've moved enough
     glm::vec3 emitDelta = position - lastEmitPos_;
@@ -368,11 +306,6 @@ void ChargeEffect::emit(const glm::vec3& position, const glm::vec3& direction) {
 
 void ChargeEffect::stop() {
     emitting_ = false;
-
-    if (activeCasterInstanceId_ != 0 && m2Renderer_) {
-        m2Renderer_->removeInstance(activeCasterInstanceId_);
-        activeCasterInstanceId_ = 0;
-    }
 }
 void ChargeEffect::update(float deltaTime) {
     // Age trail points and remove expired ones
@@ -396,17 +329,6 @@ void ChargeEffect::update(float deltaTime) {
         it->alpha = 1.0f - t * t;
         it->size += deltaTime * 8.0f;
         ++it;
-    }
-
-    // Clean up expired M2 impacts
-    for (auto it = activeImpacts_.begin(); it != activeImpacts_.end(); ) {
-        it->elapsed += deltaTime;
-        if (it->elapsed >= M2_EFFECT_DURATION) {
-            if (m2Renderer_) m2Renderer_->removeInstance(it->instanceId);
-            it = activeImpacts_.erase(it);
-        } else {
-            ++it;
-        }
     }
 }
 

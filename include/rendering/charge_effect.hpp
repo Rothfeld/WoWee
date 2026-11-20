@@ -33,9 +33,6 @@ public:
                            const VkPipelineShaderStageCreateInfo& vertStage,
                            const VkPipelineShaderStageCreateInfo& fragStage);
 
-    /// Try to load M2 spell models (Charge_Caster.m2, etc.)
-    void tryLoadM2Models(M2Renderer* m2Renderer, pipeline::AssetManager* assets);
-
     /// Start the trail (call once when charge begins)
     void start(const glm::vec3& position, const glm::vec3& direction);
 
@@ -102,21 +99,6 @@ private:
     bool emitting_ = false;
     glm::vec3 lastEmitPos_{0.0f};
     float dustAccum_ = 0.0f;
-
-    // --- M2 spell effect models (optional) ---
-    static constexpr uint32_t CASTER_MODEL_ID = 999800;
-    static constexpr uint32_t IMPACT_MODEL_ID = 999801;
-    static constexpr float M2_EFFECT_DURATION = 2.0f;
-
-    M2Renderer* m2Renderer_ = nullptr;
-    bool casterModelLoaded_ = false;
-
-    uint32_t activeCasterInstanceId_ = 0;
-    struct ActiveM2 {
-        uint32_t instanceId;
-        float elapsed;
-    };
-    std::vector<ActiveM2> activeImpacts_;
 };
 
 } // namespace rendering

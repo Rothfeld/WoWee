@@ -2161,9 +2161,26 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid, std::optiona
         }
     }
 
-    // Warrior Charge (ranks 1-3): target checks + charge callback
+    owner_.loadSpellNameCache();
+    const auto cachedSpell = owner_.spellNameCacheRef().find(spellId);
+    constexpr uint32_t kSpellEffectCharge = 96u;
+    constexpr uint32_t kSpellEffectChargeDest = 149u;
+    bool isChargeSpell = (spellId == 100 || spellId == 6178 || spellId == 11578 ||
+                          spellId == 20252 || spellId == 20616 || spellId == 20617 ||
+                          spellId == 3411 || spellId == 16979);
+    if (cachedSpell != owner_.spellNameCacheRef().end()) {
+        for (uint32_t eff : cachedSpell->second.effectIds) {
+            if (eff == kSpellEffectCharge || eff == kSpellEffectChargeDest) {
+                isChargeSpell = true;
+                break;
+            }
+        }
+    }
+
+    // Warrior Charge (ranks 1-3): opener combat + attackable unit validation.
+    // Movement itself comes from the authoritative server SMSG_MONSTER_MOVE spline
+    // once the cast succeeds, never a speculative pre-cast client dash.
     if (spellId == 100 || spellId == 6178 || spellId == 11578) {
-        // Charge is an opener: it cannot be used once the fight has started.
         if (owner_.isInCombat()) {
             raiseGlobalStringError(owner_, "SPELL_FAILED_AFFECTING_COMBAT");
             return;
@@ -2177,27 +2194,17 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid, std::optiona
             raiseGlobalStringError(owner_, "ERR_GENERIC_NO_TARGET");
             return;
         }
-        // Charge needs an attackable unit. Game objects (mining nodes, herb nodes,
-        // chests, doors) and corpse objects can all be the current target in this
-        // client, and none of them derive from Unit - so they used to slip past the
-        // hostility checks below untouched and let the player charge at scenery.
         auto unit = std::dynamic_pointer_cast<Unit>(entity);
         const ObjectType targetType = entity->getType();
         if (!unit || (targetType != ObjectType::UNIT && targetType != ObjectType::PLAYER)) {
             raiseGlobalStringError(owner_, "ERR_INVALID_ATTACK_TARGET");
             return;
         }
-        // Corpses cannot be charged.
         if (unit->getHealth() == 0) {
             raiseGlobalStringError(owner_, "ERR_INVALID_ATTACK_TARGET");
             return;
         }
         if (targetType == ObjectType::UNIT) {
-            // Neutral combat creatures (yellow-name mobs such as Goretusks)
-            // are valid Charge targets even though they are not inherently
-            // hostile. Match normal right-click combat by rejecting only
-            // service NPCs and targets the server explicitly marks as
-            // non-attackable/immune, rather than requiring hostile faction.
             constexpr uint32_t kBlockedChargeFlags =
                 UNIT_FLAG_NON_ATTACKABLE |
                 UNIT_FLAG_IMMUNE_TO_PC |
@@ -2210,17 +2217,6 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid, std::optiona
                 return;
             }
         }
-        // Its range, 8 to 25 yards plus both combat reaches, was checked above.
-        float tx = entity->getX(), ty = entity->getY(), tz = entity->getZ();
-        float dx = tx - owner_.movementInfoRef().x;
-        float dy = ty - owner_.movementInfoRef().y;
-        float yaw = std::atan2(-dy, dx);
-        owner_.movementInfoRef().orientation = yaw;
-        owner_.sendMovement(Opcode::MSG_MOVE_SET_FACING);
-        if (owner_.chargeCallbackRef()) {
-            owner_.chargeCallbackRef()(target, tx, ty, tz);
-        }
-        facingHandled = true;
     }
 
     // Instant melee abilities: facing. Melee is decided by the spell's own range,
@@ -2245,8 +2241,7 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid, std::optiona
     //
     // Only with the Combat page's debug setting on, here and for melee above:
     // the original client never turns the player to cast, and a target behind
-    // them is refused as not in front. Charge still turns - its dash runs
-    // along that line.
+    // them is refused as not in front.
     if (!facingHandled && target != 0 && owner_.isAutoFaceTarget()) {
         auto entity = owner_.getEntityManager().getEntity(target);
         if (entity) {
@@ -2259,7 +2254,10 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid, std::optiona
         }
     }
     // Heartbeat ensures the server has the updated orientation before the cast packet.
-    if (target != 0 || fishingCast) {
+    // Native 2.4.3 sends no extra movement packet before Charge/Intercept casts;
+    // emitting one while running stamps a conflicting FORWARD sample right as the
+    // server starts its Charge spline.
+    if ((target != 0 || fishingCast) && (!isChargeSpell || owner_.isAutoFaceTarget())) {
         owner_.sendMovement(Opcode::MSG_MOVE_HEARTBEAT);
     }
 

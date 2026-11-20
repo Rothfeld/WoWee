@@ -534,7 +534,10 @@ void MovementHandler::applyPendingStops() {
 }
 
 void MovementHandler::sendDueHeartbeats() {
-    if (!samplesHeartbeats() || !serverMovementAllowed_ || lastPacketTimeMs_ == 0) return;
+    if (!samplesHeartbeats() || !serverMovementAllowed_ || isPlayerServerSplineActive() ||
+        lastPacketTimeMs_ == 0) {
+        return;
+    }
     // Auto-attack keeps its own cadence in GameHandler::update.
     if (owner_.hasAutoAttackIntent() && isPreWotlk()) return;
     constexpr uint32_t kMoving =
@@ -647,6 +650,14 @@ void MovementHandler::setFlightAirborne(bool airborne) {
 void MovementHandler::sendMovement(Opcode opcode) {
     if (owner_.getState() != WorldState::IN_WORLD) {
         LOG_WARNING("Cannot send movement in state: ", (int)owner_.getState());
+        return;
+    }
+
+    // While an authoritative server spline (such as Warrior Charge / Intercept)
+    // is driving the local player, CMaNGOS drops client MSG_MOVE_* packets until
+    // movespline->Finalized(), and Native 2.4.3 remains silent on the wire.
+    if (isPlayerServerSplineActive()) {
+        timeSinceLastMoveHeartbeat_ = 0.0f;
         return;
     }
 
@@ -1159,6 +1170,10 @@ void MovementHandler::forceClearTaxiAndMovementState() {
     taxiRecoverPending_ = false;
     taxiStartGrace_ = 0.0f;
     onTaxiFlight_ = false;
+    playerServerSplinePendingSettle_ = false;
+    playerServerSplineJustLanded_ = false;
+    playerServerSplineFlags_ = 0;
+    playerServerSplineFacingTarget_ = 0;
 
     const bool clearingTaxiMount = taxiMountActive_;
     if (clearingTaxiMount && owner_.mountCallbackRef()) {
@@ -1212,12 +1227,99 @@ void MovementHandler::setPosition(float x, float y, float z) {
     // Not during a client taxi flight, where the flight simulation moves the
     // entity and the character is placed from it.
     if (taxiClientActive_ || onTaxiFlight_) return;
-    // Nor while the server holds the character: its splines move the entity
-    // and the character is placed from it.
-    if (!serverMovementAllowed_) return;
+    // Nor while the server holds the character or an authoritative server
+    // spline (such as Charge / Intercept) is actively interpolating the entity.
+    if (!serverMovementAllowed_ || isPlayerServerSplineActive()) return;
     if (auto player = owner_.getEntityManager().getEntity(owner_.getPlayerGuid())) {
+        const bool hadSplinePos = player->hasServerSplinePosition();
+        const uint32_t splineFlags = player->serverSplineFlags();
         player->setPosition(x, y, z, movementInfo.orientation);
+        if (hadSplinePos) {
+            player->markServerSplinePosition(splineFlags);
+        }
     }
+}
+
+bool MovementHandler::isPlayerServerSplineActive() const {
+    if (!playerServerSplinePendingSettle_) return false;
+    auto self = owner_.getEntityManager().getEntity(owner_.getPlayerGuid());
+    return self && self->isServerSplineActive();
+}
+
+void MovementHandler::commitServerSplineArrival(const glm::vec3& canonicalPos, float canonicalYaw) {
+    movementInfo.x = canonicalPos.x;
+    movementInfo.y = canonicalPos.y;
+    movementInfo.z = canonicalPos.z;
+    movementInfo.orientation = canonicalYaw;
+    lastSentPos_ = canonicalPos;
+    lastSentOrientation_ = canonicalYaw;
+    lastFacingSentOrientation_ = canonicalYaw;
+    hasSentMovement_ = true;
+    lastHeartbeatX_ = canonicalPos.x;
+    lastHeartbeatY_ = canonicalPos.y;
+    lastHeartbeatZ_ = canonicalPos.z;
+    lastHeartbeatFlags_ = movementInfo.flags;
+    lastHeartbeatTransportGuid_ = movementInfo.transportGuid;
+    lastHeartbeatSendTimeMs_ = movementClockNowMs();
+    timeSinceLastMoveHeartbeat_ = 0.0f;
+    sample_.reset();
+    previousSample_.reset();
+}
+
+bool MovementHandler::consumePlayerServerSplineLanding(uint32_t& outSplineFlags) {
+    if (!playerServerSplineJustLanded_) return false;
+    playerServerSplineJustLanded_ = false;
+    outSplineFlags = playerServerSplineFlags_;
+    return true;
+}
+
+void MovementHandler::syncPlayerServerSpline() {
+    auto& mgr = owner_.getEntityManager();
+    for (const auto& [guid, entity] : mgr.getEntities()) {
+        (void)guid;
+        if (!entity || !entity->isServerSplineActive()) continue;
+        const uint64_t faceGuid = entity->splineFacingTargetGuid();
+        if (faceGuid == 0) continue;
+        if (auto target = mgr.getEntity(faceGuid)) {
+            const float dx = target->getX() - entity->getX();
+            const float dy = target->getY() - entity->getY();
+            if (std::abs(dx) > 0.01f || std::abs(dy) > 0.01f) {
+                entity->setOrientation(std::atan2(-dy, dx));
+            }
+        }
+    }
+
+    if (!playerServerSplinePendingSettle_) return;
+    auto self = mgr.getEntity(owner_.getPlayerGuid());
+    if (!self) {
+        playerServerSplinePendingSettle_ = false;
+        playerServerSplineJustLanded_ = false;
+        return;
+    }
+
+    if (self->isServerSplineActive()) {
+        movementInfo.x = self->getX();
+        movementInfo.y = self->getY();
+        movementInfo.z = self->getZ();
+        movementInfo.orientation = self->getOrientation();
+        timeSinceLastMoveHeartbeat_ = 0.0f;
+        return;
+    }
+
+    if (playerServerSplineFacingTarget_ != 0) {
+        if (auto target = mgr.getEntity(playerServerSplineFacingTarget_)) {
+            const float dx = target->getX() - self->getX();
+            const float dy = target->getY() - self->getY();
+            if (std::abs(dx) > 0.01f || std::abs(dy) > 0.01f) {
+                self->setOrientation(std::atan2(-dy, dx));
+            }
+        }
+    }
+
+    playerServerSplinePendingSettle_ = false;
+    playerServerSplineJustLanded_ = true;
+    commitServerSplineArrival(glm::vec3(self->getX(), self->getY(), self->getZ()),
+                              self->getOrientation());
 }
 
 void MovementHandler::setOrientation(float orientation) {
@@ -2056,33 +2158,56 @@ void MovementHandler::handleMonsterMove(network::Packet& packet) {
     // Runmode on walking splines too. The renderer takes Walk or Run from the
     // spline speed (rendering::splineGroundGaitWalks), as build 8606 does.
 
+    const bool isLocalPlayer = (data.guid == owner_.getPlayerGuid());
+    constexpr uint32_t kClearPlayerSplineWireFlags =
+        static_cast<uint32_t>(MovementFlags::FORWARD) |
+        static_cast<uint32_t>(MovementFlags::BACKWARD) |
+        static_cast<uint32_t>(MovementFlags::STRAFE_LEFT) |
+        static_cast<uint32_t>(MovementFlags::STRAFE_RIGHT) |
+        static_cast<uint32_t>(MovementFlags::TURN_LEFT) |
+        static_cast<uint32_t>(MovementFlags::TURN_RIGHT) |
+        static_cast<uint32_t>(MovementFlags::PITCH_UP) |
+        static_cast<uint32_t>(MovementFlags::PITCH_DOWN) |
+        static_cast<uint32_t>(MovementFlags::FALLING) |
+        static_cast<uint32_t>(MovementFlags::FALLINGFAR) |
+        static_cast<uint32_t>(MovementFlags::PENDING_STOP) |
+        static_cast<uint32_t>(MovementFlags::PENDING_STRAFE_STOP);
+
     if (data.hasDest) {
-        glm::vec3 destCanonical = core::coords::serverToCanonical(
+        const glm::vec3 startCanonical = core::coords::serverToCanonical(
+            glm::vec3(data.x, data.y, data.z));
+        const glm::vec3 destCanonical = core::coords::serverToCanonical(
             glm::vec3(data.destX, data.destY, data.destZ));
 
         float orientation = entity->getOrientation();
         if (data.moveType == 4) {
             orientation = core::coords::serverToCanonicalYaw(data.facingAngle);
         } else if (data.moveType == 3) {
-            auto target = owner_.getEntityManager().getEntity(data.facingTarget);
-            if (target) {
-                float dx = target->getX() - entity->getX();
-                float dy = target->getY() - entity->getY();
+            bool resolvedTarget = false;
+            if (auto target = owner_.getEntityManager().getEntity(data.facingTarget)) {
+                const float dx = target->getX() - startCanonical.x;
+                const float dy = target->getY() - startCanonical.y;
+                if (std::abs(dx) > 0.01f || std::abs(dy) > 0.01f) {
+                    orientation = std::atan2(-dy, dx);
+                    resolvedTarget = true;
+                }
+            }
+            if (!resolvedTarget) {
+                const float dx = destCanonical.x - startCanonical.x;
+                const float dy = destCanonical.y - startCanonical.y;
                 if (std::abs(dx) > 0.01f || std::abs(dy) > 0.01f) {
                     orientation = std::atan2(-dy, dx);
                 }
             }
         } else {
-            float dx = destCanonical.x - entity->getX();
-            float dy = destCanonical.y - entity->getY();
+            const float dx = destCanonical.x - startCanonical.x;
+            const float dy = destCanonical.y - startCanonical.y;
             if (std::abs(dx) > 0.01f || std::abs(dy) > 0.01f) {
                 orientation = std::atan2(-dy, dx);
             }
         }
 
         if (data.moveType != 3) {
-            glm::vec3 startCanonical = core::coords::serverToCanonical(
-                glm::vec3(data.x, data.y, data.z));
             float travelDx = destCanonical.x - startCanonical.x;
             float travelDy = destCanonical.y - startCanonical.y;
             float travelLen = std::sqrt(travelDx * travelDx + travelDy * travelDy);
@@ -2097,31 +2222,55 @@ void MovementHandler::handleMonsterMove(network::Packet& packet) {
             }
         }
 
-        // Build full path: start → waypoints → destination (all in canonical coords)
-        if (!data.waypoints.empty()) {
-            glm::vec3 startCanonical = core::coords::serverToCanonical(
-                glm::vec3(data.x, data.y, data.z));
-            std::vector<std::array<float, 3>> path;
-            // Path = start + waypoints + dest. Reserve once to avoid the
-            // 2–3 reallocations push_back would trigger as it doubles.
-            path.reserve(data.waypoints.size() + 2);
-            path.push_back({startCanonical.x, startCanonical.y, startCanonical.z});
-            for (const auto& wp : data.waypoints) {
-                glm::vec3 wpCanonical = core::coords::serverToCanonical(
-                    glm::vec3(wp.x, wp.y, wp.z));
-                path.push_back({wpCanonical.x, wpCanonical.y, wpCanonical.z});
+        if (!isLocalPlayer && entity->getType() == ObjectType::PLAYER) {
+            otherPlayerGroundSamples_.erase(data.guid);
+        }
+
+        // Build full path: start -> waypoints -> destination (all in canonical coords).
+        // Routing 0-intermediate-waypoint splines through startServerSpline as well
+        // eliminates post-spline dead-reckoning overrun and preserves server-spline
+        // ground-projection metadata uniformly across 1-segment and N-segment paths.
+        std::vector<std::array<float, 3>> path;
+        path.reserve(data.waypoints.size() + 2);
+        path.push_back({startCanonical.x, startCanonical.y, startCanonical.z});
+        for (const auto& wp : data.waypoints) {
+            glm::vec3 wpCanonical = core::coords::serverToCanonical(
+                glm::vec3(wp.x, wp.y, wp.z));
+            path.push_back({wpCanonical.x, wpCanonical.y, wpCanonical.z});
+        }
+        path.push_back({destCanonical.x, destCanonical.y, destCanonical.z});
+        // TBC ground splines are piecewise linear; only Flying (0x200)
+        // selects Catmull-Rom in CMaNGOS MoveSplineFlag.
+        const bool smooth = !isActiveExpansion("tbc") || (data.splineFlags & 0x200u) != 0;
+        const uint64_t facingTargetGuid = (data.moveType == 3) ? data.facingTarget : 0;
+        entity->startServerSpline(path, orientation, data.duration / 1000.0f,
+                                  smooth, data.moveType == 0,
+                                  data.splineFlags, facingTargetGuid);
+
+        if (isLocalPlayer) {
+            movementInfo.flags &= ~kClearPlayerSplineWireFlags;
+            fallStartMs_ = 0;
+            movementInfo.fallTime = 0;
+            movementInfo.jumpVelocity = 0.0f;
+            movementInfo.jumpSinAngle = 0.0f;
+            movementInfo.jumpCosAngle = 0.0f;
+            movementInfo.jumpXYSpeed = 0.0f;
+            playerServerSplineFlags_ = data.splineFlags;
+            playerServerSplineFacingTarget_ = facingTargetGuid;
+            if (entity->isServerSplineActive()) {
+                movementInfo.x = startCanonical.x;
+                movementInfo.y = startCanonical.y;
+                movementInfo.z = startCanonical.z;
+                movementInfo.orientation = orientation;
+                playerServerSplinePendingSettle_ = true;
+                playerServerSplineJustLanded_ = false;
+                timeSinceLastMoveHeartbeat_ = 0.0f;
+            } else {
+                playerServerSplinePendingSettle_ = false;
+                playerServerSplineJustLanded_ = true;
+                commitServerSplineArrival(glm::vec3(entity->getX(), entity->getY(), entity->getZ()),
+                                          entity->getOrientation());
             }
-            path.push_back({destCanonical.x, destCanonical.y, destCanonical.z});
-            // TBC ground splines are piecewise linear; only Flying (0x200)
-            // selects Catmull-Rom in CMaNGOS MoveSplineFlag.
-            const bool smooth = !isActiveExpansion("tbc") || (data.splineFlags & 0x200u) != 0;
-            entity->startMoveAlongPath(path, orientation, data.duration / 1000.0f,
-                                      smooth, data.moveType == 0);
-        } else {
-            const auto start = core::coords::serverToCanonical({data.x, data.y, data.z});
-            entity->setPosition(start.x, start.y, start.z, orientation);
-            entity->startMoveTo(destCanonical.x, destCanonical.y, destCanonical.z,
-                                orientation, data.duration / 1000.0f);
         }
 
         if (owner_.creatureMoveCallbackRef()) {
@@ -2136,18 +2285,42 @@ void MovementHandler::handleMonsterMove(network::Packet& packet) {
         // the only word of Felmyst's air phase that reaches the client. Native
         // flies such a unit (Fly 135, at the spline's height) even with only
         // levitation set: _experiments/20261118T085229Z.sapphiron_liftoff f_run6.
-        if (isActiveExpansion("tbc") && data.guid != owner_.getPlayerGuid() &&
+        if (isActiveExpansion("tbc") && !isLocalPlayer &&
             owner_.unitMoveFlagsCallbackRef()) {
-            constexpr uint32_t kSplineFlying = 0x200u;
+            constexpr uint32_t kSplineFalling = 0x002u;
+            constexpr uint32_t kSplineRunmode = 0x100u;
+            constexpr uint32_t kSplineFlying  = 0x200u;
             const uint32_t flying = static_cast<uint32_t>(MovementFlags::FLYING);
-            owner_.unitMoveFlagsCallbackRef()(data.guid,
-                (data.splineFlags & kSplineFlying) ? flying : 0u, flying);
+            uint32_t flagsValue = (data.splineFlags & kSplineFlying) ? flying : 0u;
+            uint32_t flagsMask = flying;
+            if (entity->getType() == ObjectType::PLAYER) {
+                flagsMask |= static_cast<uint32_t>(MovementFlags::BACKWARD) |
+                             static_cast<uint32_t>(MovementFlags::STRAFE_LEFT) |
+                             static_cast<uint32_t>(MovementFlags::STRAFE_RIGHT) |
+                             static_cast<uint32_t>(MovementFlags::TURN_LEFT) |
+                             static_cast<uint32_t>(MovementFlags::TURN_RIGHT);
+                if ((data.splineFlags & kSplineFalling) == 0) {
+                    flagsMask |= static_cast<uint32_t>(MovementFlags::FALLING) |
+                                 static_cast<uint32_t>(MovementFlags::FALLINGFAR);
+                }
+                if ((data.splineFlags & kSplineRunmode) != 0) {
+                    flagsMask |= static_cast<uint32_t>(MovementFlags::WALKING);
+                }
+            }
+            owner_.unitMoveFlagsCallbackRef()(data.guid, flagsValue, flagsMask);
         }
     } else if (data.moveType == 1) {
         glm::vec3 posCanonical = core::coords::serverToCanonical(
             glm::vec3(data.x, data.y, data.z));
         entity->setPosition(posCanonical.x, posCanonical.y, posCanonical.z,
                             entity->getOrientation());
+        entity->markServerSplinePosition(data.splineFlags);
+        if (isLocalPlayer && playerServerSplinePendingSettle_) {
+            movementInfo.flags &= ~kClearPlayerSplineWireFlags;
+            playerServerSplinePendingSettle_ = false;
+            playerServerSplineJustLanded_ = true;
+            commitServerSplineArrival(posCanonical, entity->getOrientation());
+        }
 
         if (owner_.creatureMoveCallbackRef()) {
             owner_.creatureMoveCallbackRef()(data.guid,
@@ -2158,6 +2331,13 @@ void MovementHandler::handleMonsterMove(network::Packet& packet) {
         glm::vec3 posCanonical = core::coords::serverToCanonical(
             glm::vec3(data.x, data.y, data.z));
         entity->setPosition(posCanonical.x, posCanonical.y, posCanonical.z, orientation);
+        entity->markServerSplinePosition(data.splineFlags);
+        if (isLocalPlayer && playerServerSplinePendingSettle_) {
+            movementInfo.flags &= ~kClearPlayerSplineWireFlags;
+            playerServerSplinePendingSettle_ = false;
+            playerServerSplineJustLanded_ = true;
+            commitServerSplineArrival(posCanonical, orientation);
+        }
         if (owner_.creatureMoveCallbackRef()) {
             owner_.creatureMoveCallbackRef()(data.guid,
                 posCanonical.x, posCanonical.y, posCanonical.z, 0);
@@ -2406,6 +2586,10 @@ void MovementHandler::handleTeleportAck(network::Packet& packet) {
                     ") - acknowledging so the server stops discarding our "
                     "movement, then telling it where we really are");
     } else {
+        playerServerSplinePendingSettle_ = false;
+        playerServerSplineJustLanded_ = false;
+        playerServerSplineFlags_ = 0;
+        playerServerSplineFacingTarget_ = 0;
         movementInfo.x = canonical.x;
         movementInfo.y = canonical.y;
         movementInfo.z = canonical.z;
@@ -2534,6 +2718,10 @@ void MovementHandler::handleNewWorld(network::Packet& packet) {
     }
     pendingTransferTransportEntry_ = 0;
     pendingTransportDestinationMap_ = pendingTransportOriginMap_ = 0xffffffffu;
+    playerServerSplinePendingSettle_ = false;
+    playerServerSplineJustLanded_ = false;
+    playerServerSplineFlags_ = 0;
+    playerServerSplineFacingTarget_ = 0;
     const uint32_t transferAreaTriggerId = lastAreaTriggerId_;
     lastAreaTriggerId_ = 0;
     postTransferReturnAreaTriggerId_ = findKnownReturnAreaTrigger(transferAreaTriggerId);

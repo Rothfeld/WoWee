@@ -143,11 +143,13 @@ std::optional<float> movingEntityFloor(rendering::Renderer* renderer,
     constexpr float kMaxStepUp = 1.5f;
     constexpr float kMaxGroundDrop = 3.0f;
     const float probeZ = renderPos.z + kMaxStepUp;
+    std::optional<float> terrainFloor;
     std::optional<float> best;
     bool bestIsTerrain = false;
 
     auto consider = [&](const std::optional<float>& floor, bool isTerrain = false) {
         if (!floor || *floor > probeZ || *floor < renderPos.z - kMaxGroundDrop) return;
+        if (isTerrain) terrainFloor = floor;
         if (!best || std::abs(*floor - renderPos.z) < std::abs(*best - renderPos.z)) {
             best = floor;
             bestIsTerrain = isTerrain;
@@ -164,15 +166,18 @@ std::optional<float> movingEntityFloor(rendering::Renderer* renderer,
     if (best && std::abs(*best - renderPos.z) <= 0.35f) {
         return best;
     }
+    std::optional<float> wmoFloor;
+    std::optional<float> m2Floor;
     if (auto* wmo = renderer->getWMORenderer()) {
         // Closest to the mover's own feet, so a creature or another player
         // under an overhang is not snapped up to the floor of the level above
         // them - the same flip that pulled the local player between levels.
-        consider(wmo->getFloorHeight(renderPos.x, renderPos.y, probeZ, nullptr,
-                                     renderPos.z));
+        wmoFloor = wmo->getFloorHeight(renderPos.x, renderPos.y, probeZ, nullptr, renderPos.z);
+        consider(wmoFloor);
     }
     if (auto* m2 = renderer->getM2Renderer()) {
-        consider(m2->getFloorHeight(renderPos.x, renderPos.y, probeZ));
+        m2Floor = m2->getFloorHeight(renderPos.x, renderPos.y, probeZ);
+        consider(m2Floor);
     }
 
     // A jump between floors, named once a second while it is happening.
@@ -210,17 +215,29 @@ std::optional<float> movingEntityFloor(rendering::Renderer* renderer,
     // Terrain is a continuous support surface: server spawn heights can differ
     // from its triangles even for stationary creatures. Requiring continuity
     // with an uncorrected spawn height would reject that correction forever.
-    // Structure candidates still need continuity near overlapping floors.
-    // A broader floor candidate is useful on stairs and uneven terrain, but it is
-    // ambiguous near overlapping shells or non-collidable authored props. Require
-    // continuity with the last rendered ground position before accepting it. This
-    // preserves server-authored waypoint height without creature-entry exceptions.
-    if (best && !bestIsTerrain && std::abs(*best - renderPos.z) > 0.35f) {
-        if (!previousRenderPos) return std::nullopt;
-        const glm::vec2 planarDelta = glm::vec2(renderPos) - glm::vec2(*previousRenderPos);
-        const float maxContinuousStep = 0.35f + glm::length(planarDelta) * 1.5f;
-        if (std::abs(*best - previousRenderPos->z) > maxContinuousStep) {
-            return std::nullopt;
+    // Structure/prop candidates still need continuity against previousRenderPos:
+    // server splines such as CMaNGOS MoveCharge add +1.0 yd to renderPos.z,
+    // which can put renderPos.z right next to the top of a nearby ~1 yd M2
+    // fence, crate or signpost base even though the mover was running on grass.
+    if (best && !bestIsTerrain) {
+        if (!previousRenderPos) {
+            if (std::abs(*best - renderPos.z) > 0.35f) {
+                return terrainFloor;
+            }
+        } else {
+            const glm::vec2 planarDelta = glm::vec2(renderPos) - glm::vec2(*previousRenderPos);
+            const float planarLen = glm::length(planarDelta);
+            const float maxContinuousStep = 0.45f + planarLen * 1.5f;
+            const auto isContinuous = [&](const std::optional<float>& cand) {
+                return cand && *cand <= probeZ && *cand >= renderPos.z - kMaxGroundDrop &&
+                       std::abs(*cand - previousRenderPos->z) <= maxContinuousStep;
+            };
+            if ((planarLen < 4.0f || std::abs(*best - renderPos.z) > 0.35f) &&
+                !isContinuous(best)) {
+                if (isContinuous(wmoFloor)) return wmoFloor;
+                if (isContinuous(terrainFloor)) return terrainFloor;
+                return terrainFloor;
+            }
         }
     }
     return best;
@@ -3001,9 +3018,9 @@ void Application::performLeaveWorld(LeaveWorldTo destination) {
     if (worldEntryCallbacks_) worldEntryCallbacks_->resetState();
     facingSendCooldown_ = 0.0f;
     idleYawned_ = false;
-
-    // --- Charge state ---
-    if (animationCallbacks_) animationCallbacks_->resetChargeState();
+    if (renderer && renderer->getAnimationController()) {
+        renderer->getAnimationController()->setCharging(false);
+    }
 
     // --- Player identity ---
     spawnedPlayerGuid_ = 0;
@@ -3110,13 +3127,22 @@ void syncServerSpeedsToCamera(rendering::Renderer* renderer,
     cam->setMovementRooted(gameHandler->isPlayerRooted());
     {
         const bool held = !gameHandler->isServerMovementAllowed();
+        const bool splineActive = gameHandler->isPlayerServerSplineActive();
+        const bool serverControlled = held || splineActive;
         auto self = gameHandler->getEntityManager().getEntity(gameHandler->getPlayerGuid());
-        const bool splineMoving = held && self && self->isActivelyMoving();
+        const bool splineMoving = serverControlled && self && self->isActivelyMoving();
         const float splineSpeed = splineMoving ? self->getLocomotionSpeed() : 0.0f;
         const float walkSpeed = gameHandler->getServerWalkSpeed();
         const float runSpeed = gameHandler->getServerRunSpeed();
         const bool running = std::abs(splineSpeed - runSpeed) < std::abs(splineSpeed - walkSpeed);
-        cam->setServerControlled(held, splineMoving, running);
+        cam->setServerControlled(serverControlled, splineMoving, running, splineSpeed);
+        if (auto* ac = renderer->getAnimationController()) {
+            const bool fastChargeSpline = splineActive && splineMoving &&
+                                          splineSpeed > std::max(runSpeed, 7.0f) * 1.5f;
+            if (ac->isCharging() != fastChargeSpline) {
+                ac->setCharging(fastChargeSpline);
+            }
+        }
     }
     cam->setGravityDisabled(gameHandler->isGravityDisabled());
     cam->setFeatherFallActive(gameHandler->isFeatherFalling());
@@ -3202,8 +3228,7 @@ void Application::applyServerMovementState(float deltaTime) {
     // A ship carries the player's reference frame, but it must not
     // freeze local controls like a taxi flight. On-deck walking is
     // folded into the transport-local offset in the sync block below.
-    const bool externallyDrivenMotion = onTaxi ||
-        (animationCallbacks_ && animationCallbacks_->isCharging());
+    const bool externallyDrivenMotion = onTaxi;
     // Keep physics frozen (externalFollow) during landing clamp when terrain
     // hasn't loaded yet - prevents gravity from pulling player through void.
     bool hearthFreeze = worldEntryCallbacks_ && worldEntryCallbacks_->isHearthTeleportPending();
@@ -3526,9 +3551,6 @@ void Application::applyServerMovementState(float deltaTime) {
             }
         }
         gameHandler->updateM2TransportBoarding(canonical);
-    } else if (animationCallbacks_ && animationCallbacks_->isCharging()) {
-        // Warrior Charge: interpolation delegated to AnimationCallbackHandler
-        animationCallbacks_->updateCharge(deltaTime);
     } else {
         hasWMORideLock_ = false;
         lastWMORideTransportGuid_ = 0;
@@ -3536,24 +3558,59 @@ void Application::applyServerMovementState(float deltaTime) {
         deckFloorPending_ = false;
         glm::vec3 renderPos = renderer->getCharacterPosition();
 
-        // Held by the server: the spline places the character across the
-        // ground; height stays with the camera controller's floor physics,
-        // which settles it on the surface under the new spot.
-        if (renderer->getCameraController() &&
-            renderer->getCameraController()->isServerControlled()) {
+        // Held or propelled by the server (fear/confuse/charm or Charge/Intercept
+        // SMSG_MONSTER_MOVE spline, plus the completion frame where the final
+        // waypoint lands). Ground splines project onto the local floor surface
+        // and suppress vertical fall integration so 27 yd/s slopes never clip
+        // into hills or launch airborne into a fake MSG_MOVE_FALL_LAND.
+        uint32_t landedSplineFlags = 0;
+        auto* movement = gameHandler->getMovementHandler();
+        const bool splineJustLanded =
+            movement && movement->consumePlayerServerSplineLanding(landedSplineFlags);
+        const bool serverDrivenNow =
+            (renderer->getCameraController() &&
+             renderer->getCameraController()->isServerControlled()) ||
+            splineJustLanded;
+        if (serverDrivenNow) {
             if (auto self = gameHandler->getEntityManager().getEntity(gameHandler->getPlayerGuid())) {
-                // Past the spline's end the entity dead-reckons on; the
-                // server's character stops at the end point.
+                const glm::vec3 prevRender = renderPos;
                 const glm::vec3 canonicalNow = self->isActivelyMoving()
                     ? glm::vec3(self->getX(), self->getY(), self->getZ())
                     : glm::vec3(self->getLatestX(), self->getLatestY(), self->getLatestZ());
                 const glm::vec3 splineRender = core::coords::canonicalToRender(canonicalNow);
                 renderPos.x = splineRender.x;
                 renderPos.y = splineRender.y;
+                const uint32_t splineFlags = splineJustLanded
+                    ? landedSplineFlags
+                    : self->serverSplineFlags();
+                constexpr uint32_t kSplineFallingOrFlying = 0x002u | 0x200u;
+                if ((splineFlags & kSplineFallingOrFlying) == 0 &&
+                    !gameHandler->isPlayerFlying() && !gameHandler->isSwimming()) {
+                    if (auto floorZ = movingEntityFloor(renderer.get(), splineRender, prevRender)) {
+                        renderPos.z = *floorZ;
+                        if (renderer->getCameraController()) {
+                            renderer->getCameraController()->suppressVerticalPhysics();
+                        }
+                    }
+                }
                 renderer->getCharacterPosition() = renderPos;
+                if (renderer->getCameraController()) {
+                    if (glm::vec3* followTarget = renderer->getCameraController()->getFollowTargetMutable()) {
+                        *followTarget = renderPos;
+                    }
+                }
                 const float facingDeg = core::coords::canonicalToCharacterYawDeg(self->getOrientation());
-                renderer->getCameraController()->setFacingYaw(facingDeg);
+                if (renderer->getCameraController()) {
+                    renderer->getCameraController()->setFacingYaw(facingDeg);
+                }
                 renderer->setCharacterYaw(facingDeg);
+                if (splineJustLanded && movement) {
+                    const glm::vec3 settledCanonical = core::coords::renderToCanonical(renderPos);
+                    self->setPosition(settledCanonical.x, settledCanonical.y, settledCanonical.z,
+                                      self->getOrientation());
+                    self->markServerSplinePosition(splineFlags);
+                    movement->commitServerSplineArrival(settledCanonical, self->getOrientation());
+                }
             }
         }
 
@@ -4223,10 +4280,15 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
             }
 
             // Match creature projection: terrain alone is not a valid floor in
-            // WMO overlap regions (tunnels, buildings, bridges).
-            const bool groundPlayer = !airborne && !_pCreatureFlyingState.count(guid) &&
+            // WMO overlap regions (tunnels, buildings, bridges), and server-authored
+            // splines (such as CMaNGOS MoveCharge, which adds +1.0 yd to spline Z)
+            // require floor projection after arrival while the player stands still.
+            const bool levitating = hasMoveFlag(game::MovementFlags::LEVITATING);
+            const bool onTransport = gameHandler->transportAttachmentsRef().count(guid) != 0;
+            const bool groundPlayer = !airborne && !levitating && !onTransport &&
+                                      !_pCreatureFlyingState.count(guid) &&
                                       !_pCreatureSwimmingState.count(guid);
-            if (entity->isActivelyMoving() && groundPlayer) {
+            if ((entity->isActivelyMoving() || entity->hasServerSplinePosition()) && groundPlayer) {
                 if (auto floorZ = movingEntityFloor(renderer.get(), renderPos,
                                                     previousMountPos)) {
                     renderPos.z = *floorZ;

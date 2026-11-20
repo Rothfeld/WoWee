@@ -3073,6 +3073,7 @@ if(NOT ANDROID)
     target_sources(test_game_replay PRIVATE test_game_replay_follow_sync.cpp)
     target_sources(test_game_replay PRIVATE test_game_replay_spell_power_cost.cpp)
     target_sources(test_game_replay PRIVATE test_game_replay_weapon_icons.cpp)
+    target_sources(test_game_replay PRIVATE test_game_replay_warrior_charge.cpp)
 
     # Same complete client objects as game_replay: never replace client classes
     # with test implementations or copy an input-routing branch into a seam.

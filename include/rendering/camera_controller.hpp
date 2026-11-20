@@ -373,14 +373,16 @@ public:
     /// the unit named by PLAYER_FARSIGHT (a possessed unit), or nothing.
     void setViewTarget(std::optional<glm::vec3> target) { viewTarget_ = target; }
     void setExternalMoving(bool moving) { externalMoving_ = moving; }
-    /// The server holds the character (SMSG_CLIENT_CONTROL_UPDATE allowMove=0:
-    /// confuse, fear, charm). Keys and mouse steering no longer move or turn it;
-    /// its position and facing are placed from the server's spline each frame.
-    /// moving/run describe that spline, for the locomotion animation.
-    void setServerControlled(bool controlled, bool moving, bool run) {
+    /// The server holds or propels the character (SMSG_CLIENT_CONTROL_UPDATE
+    /// allowMove=0: confuse, fear, charm; or an authoritative SMSG_MONSTER_MOVE
+    /// spline such as Charge / Intercept). Keys and mouse steering no longer
+    /// move or turn it; its position and facing are placed from the server's
+    /// spline each frame. moving/run/speed describe that spline for locomotion.
+    void setServerControlled(bool controlled, bool moving, bool run, float speed = 0.0f) {
         serverControlled_ = controlled;
         serverDrivenMoving_ = controlled && moving;
         serverDrivenRun_ = controlled && moving && run;
+        serverDrivenSpeed_ = (controlled && moving) ? speed : 0.0f;
     }
     [[nodiscard]] bool isServerControlled() const { return serverControlled_; }
     void setFacingYaw(float yaw) { facingYaw = yaw; }  // For taxi/scripted movement
@@ -1106,6 +1108,7 @@ private:
     bool serverControlled_ = false;
     bool serverDrivenMoving_ = false;
     bool serverDrivenRun_ = false;
+    float serverDrivenSpeed_ = 0.0f;
 
     // Online mode: trust server position, don't prefer outdoors over WMO floors
     bool onlineMode = false;

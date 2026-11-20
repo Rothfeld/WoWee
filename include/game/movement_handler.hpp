@@ -191,6 +191,18 @@ public:
     float& timeSinceLastMoveHeartbeatRef() { return timeSinceLastMoveHeartbeat_; }
     [[nodiscard]] float getMoveHeartbeatInterval() const { return moveHeartbeatInterval_; }
     [[nodiscard]] bool isServerMovementAllowed() const { return serverMovementAllowed_; }
+    /// True while an authoritative SMSG_MONSTER_MOVE spline is actively driving
+    /// the local player (including control=1 splines such as Warrior Charge/Intercept).
+    [[nodiscard]] bool isPlayerServerSplineActive() const;
+    /// Advances facing-target tracking on active server splines and settles local
+    /// movementInfo / sent-state bookkeeping when a player server spline finishes.
+    void syncPlayerServerSpline();
+    /// Returns true once on the frame a local player server spline completes,
+    /// providing the spline flags so the renderer can commit grounded Z.
+    [[nodiscard]] bool consumePlayerServerSplineLanding(uint32_t& outSplineFlags);
+    /// Updates movementInfo and last-sent state to the authoritative spline
+    /// endpoint (with settled ground Z) without emitting a wire movement packet.
+    void commitServerSplineArrival(const glm::vec3& canonicalPos, float canonicalYaw);
     /// A unit other than the player whose movement this client was handed
     /// (SMSG_CLIENT_CONTROL_UPDATE allow=1), or 0.
     [[nodiscard]] uint64_t clientControlledUnit() const { return clientControlledUnit_; }
@@ -218,6 +230,10 @@ public:
         lastPacketTimeMs_ = 0;
         sample_.reset();
         previousSample_.reset();
+        playerServerSplinePendingSettle_ = false;
+        playerServerSplineJustLanded_ = false;
+        playerServerSplineFlags_ = 0;
+        playerServerSplineFacingTarget_ = 0;
     }
 
     // --- Packet clock of the local physics ---
@@ -322,6 +338,10 @@ private:
     std::chrono::steady_clock::time_point movementClockStart_ = std::chrono::steady_clock::now();
     uint32_t lastMovementTimestampMs_ = 0;
     bool serverMovementAllowed_ = true;
+    bool playerServerSplinePendingSettle_ = false;
+    bool playerServerSplineJustLanded_ = false;
+    uint32_t playerServerSplineFlags_ = 0;
+    uint64_t playerServerSplineFacingTarget_ = 0;
     bool worldportAckPending_ = false;
     uint64_t clientControlledUnit_ = 0;
     uint32_t monsterMovePacketsThisTick_ = 0;

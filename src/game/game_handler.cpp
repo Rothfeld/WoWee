@@ -554,6 +554,13 @@ for (const auto& [guid, entity] : entityController_->getEntityManager().getEntit
         entity->updateMovement(deltaTime);
     }
 }
+if (movementHandler_) {
+    movementHandler_->syncPlayerServerSpline();
+}
+}
+
+bool GameHandler::isPlayerServerSplineActive() const {
+    return movementHandler_ && movementHandler_->isPlayerServerSplineActive();
 }
 
 void GameHandler::updateTimers(float deltaTime) {
@@ -963,8 +970,10 @@ void GameHandler::update(float deltaTime) {
         // auto-attack cadences and a client without local physics.
         const bool sampledHeartbeats = movementHandler_ && movementHandler_->samplesHeartbeats() &&
                                        !classicLikeCombatSync;
-        if (movementHandler_ && !sampledHeartbeats && movementHandler_->isServerMovementAllowed() &&
-            movementHandler_->timeSinceLastMoveHeartbeatRef() >= heartbeatInterval) {
+        if (movementHandler_ && movementHandler_->isPlayerServerSplineActive()) {
+            movementHandler_->timeSinceLastMoveHeartbeatRef() = 0.0f;
+        } else if (movementHandler_ && !sampledHeartbeats && movementHandler_->isServerMovementAllowed() &&
+                   movementHandler_->timeSinceLastMoveHeartbeatRef() >= heartbeatInterval) {
             sendMovement(Opcode::MSG_MOVE_HEARTBEAT);
             movementHandler_->timeSinceLastMoveHeartbeatRef() = 0.0f;
         }

@@ -2955,16 +2955,12 @@ public:
     bool isServerMovementAllowed() const;
     /// The possessed unit this client moves, or 0 (see MovementHandler).
     uint64_t getClientControlledUnit() const;
+    bool isPlayerServerSplineActive() const;
     void sendSetActiveMover(uint64_t guid);
 
     // Quest giver status (! and ? markers)
     QuestGiverStatus getQuestGiverStatus(uint64_t guid) const;
     const std::unordered_map<uint64_t, QuestGiverStatus>& getNpcQuestStatuses() const;
-
-    // Charge callback - fires when player casts a charge spell toward target
-    // Parameters: targetGuid, targetX, targetY, targetZ (canonical WoW coordinates)
-    using ChargeCallback = std::function<void(uint64_t targetGuid, float x, float y, float z)>;
-    void setChargeCallback(ChargeCallback cb) { chargeCallback_ = std::move(cb); }
 
     // Level-up callback - fires when the player gains a level (newLevel > 1)
     using LevelUpCallback = std::function<void(uint32_t newLevel)>;
@@ -4356,7 +4352,6 @@ public:
     auto& appearanceChangedCallbackRef() { return appearanceChangedCallback_; }
     auto& playerModelRebuildCallbackRef() { return playerModelRebuildCallback_; }
     auto& autoFollowCallbackRef() { return autoFollowCallback_; }
-    auto& chargeCallbackRef() { return chargeCallback_; }
     auto& chatBubbleCallbackRef() { return chatBubbleCallback_; }
     auto& creatureDespawnCallbackRef() { return creatureDespawnCallback_; }
     auto& creatureMoveCallbackRef() { return creatureMoveCallback_; }
@@ -5753,7 +5748,6 @@ private:
     NpcPanelEmotesCallback npcPanelEmotesCallback_;
     NpcFarewellCallback npcFarewellCallback_;
     NpcVendorCallback npcVendorCallback_;
-    ChargeCallback chargeCallback_;
     LevelUpCallback levelUpCallback_;
     LevelUpDeltas lastLevelUpDeltas_;
     std::vector<TempEnchantTimer> tempEnchantTimers_;
