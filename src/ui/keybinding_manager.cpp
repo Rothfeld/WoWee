@@ -101,6 +101,36 @@ constexpr ActionBinding actions[] = {
     {"TOGGLEAUTORUN", "toggle_autorun", "Autorun", "`", "NUMLOCK"},
 };
 static_assert(std::size(actions) == KeybindingManager::getActionCount());
+// The full keyboard defaults that the pre-diff wowee-bindings-v2 writer
+// saved verbatim. Rows in a v2 file that still match these defaults were not
+// customized by the user and must not shadow later TBC 2.4.3 defaults
+// (notably SHAPESHIFTBUTTON1..8 -> CTRL-1..8 stealing BONUSACTIONBUTTON1..8).
+const KeybindingManager::Bindings& legacyV2KeyboardDefaults() {
+    static const KeybindingManager::Bindings table = [] {
+        KeybindingManager::Bindings out = {
+            {"MOVEFORWARD", {"W", "UP"}}, {"MOVEBACKWARD", {"S", "DOWN"}},
+            {"TURNLEFT", {"A", "LEFT"}}, {"TURNRIGHT", {"D", "RIGHT"}},
+            {"STRAFELEFT", {"Q", ""}}, {"STRAFERIGHT", {"E", ""}},
+            {"TOGGLECHARACTER2", {"U", ""}},
+            {"JUMP", {"SPACE", ""}}, {"SITORSTAND", {"X", ""}},
+            {"TOGGLERUN", {"NUMPADDIVIDE", ""}}, {"TOGGLESHEATH", {"Z", ""}},
+            {"OPENCHATSLASH", {"/", ""}}, {"TARGETNEARESTENEMY", {"TAB", ""}},
+            {"SCREENSHOT", {"PRINTSCREEN", ""}}, {"FRIENDNAMEPLATES", {"SHIFT-V", ""}},
+            {"WOWEETOGGLERECORDING", {"SHIFT-PRINTSCREEN", ""}},
+            {"CAMERAZOOMIN", {"MOUSEWHEELUP", ""}}, {"CAMERAZOOMOUT", {"MOUSEWHEELDOWN", ""}},
+            {"WOWEERESETCAMERA", {"R", ""}},
+        };
+        for (const auto& action : actions) out[action.command] = {action.key, action.secondKey};
+        for (int i = 1; i <= 12; ++i) {
+            const std::string key = i < 10 ? std::to_string(i) : i == 10 ? "0" : i == 11 ? "-" : "=";
+            out["ACTIONBUTTON" + std::to_string(i)] = {key, ""};
+            out["MULTIACTIONBAR1BUTTON" + std::to_string(i)] = {"SHIFT-" + key, ""};
+            if (i <= 8) out["SHAPESHIFTBUTTON" + std::to_string(i)] = {"CTRL-" + key, ""};
+        }
+        return out;
+    }();
+    return table;
+}
 std::string upper(std::string s) {
     for (char& c : s) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
     return s;
@@ -348,9 +378,16 @@ bool KeybindingManager::loadBindings(const std::string& path) {
     auto candidate = *this;
     candidate.resetToDefaults();
     const auto defaults = candidate.bindings_;
+    const auto isLegacyV2Default = [&](const std::string& command, const std::array<std::string, 2>& slots, Device device) {
+        if (saved.version != 2 || device != Device::KeyboardMouse) return false;
+        const auto& legacy = legacyV2KeyboardDefaults();
+        const auto it = legacy.find(command);
+        return it != legacy.end() && it->second == slots;
+    };
     const auto apply = [&](const Bindings& rows, Device device) {
         for (const auto& [command, slots] : rows) {
             if (!validCommand(command)) return false;
+            if (isLegacyV2Default(command, slots, device)) continue;
             if (saved.versioned) candidate.bindings(device)[command] = {};
             else {
                 // Master mixed device identities in the same two slots. An empty
@@ -363,6 +400,7 @@ bool KeybindingManager::loadBindings(const std::string& path) {
             }
         }
         for (const auto& [command, slots] : rows) {
+            if (isLegacyV2Default(command, slots, device)) continue;
             for (size_t i = 0; i < slots.size(); ++i) {
                 if (slots[i].empty()) continue;
                 std::string key = slots[i];

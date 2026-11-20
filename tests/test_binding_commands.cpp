@@ -311,3 +311,44 @@ TEST_CASE_METHOD(Fixture, "DefaultBindings.wtf replaces keyboard defaults and sa
     CHECK(manager.commandForKey("J") == "TOGGLELFGPARENT");
     CHECK(manager.commandForKey("R") == "REPLY");
 }
+
+TEST_CASE_METHOD(Fixture, "Legacy v2 full-snapshot bindings do not steal BONUSACTIONBUTTON CTRL-1..8", "[bindings][v2-migration]") {
+    const auto file = path("legacy-v2-snapshot.cfg");
+    writeFile(file,
+        "# wowee-bindings-v2\n"
+        "[KeyboardMouse]\n"
+        "ACTIONBUTTON1\t1\t\n"
+        "MULTIACTIONBAR1BUTTON1\tSHIFT-1\t\n"
+        "OPENALLBAGS\tI\t\n"
+        "SHAPESHIFTBUTTON1\tCTRL-1\t\n"
+        "SHAPESHIFTBUTTON2\tCTRL-2\t\n"
+        "SHAPESHIFTBUTTON3\tCTRL-3\t\n"
+        "SHAPESHIFTBUTTON4\tCTRL-4\t\n"
+        "SHAPESHIFTBUTTON8\tCTRL-8\t\n"
+        "TOGGLECHARACTER0\tF9\t\n"
+        "TOGGLEQUESTLOG\t\t\n"
+        "[Controller]\n"
+        "JUMP\tPAD1\t\n");
+    REQUIRE(manager.loadBindings(file.string()));
+    // Unmodified legacy v2 defaults yield to TBC 2.4.3 defaults:
+    CHECK(manager.commandForKey("CTRL-1") == "BONUSACTIONBUTTON1");
+    CHECK(manager.commandForKey("CTRL-2") == "BONUSACTIONBUTTON2");
+    CHECK(manager.commandForKey("CTRL-3") == "BONUSACTIONBUTTON3");
+    CHECK(manager.commandForKey("CTRL-4") == "BONUSACTIONBUTTON4");
+    CHECK(manager.commandForKey("CTRL-8") == "BONUSACTIONBUTTON8");
+    CHECK(manager.commandForKey("CTRL-0") == "BONUSACTIONBUTTON10");
+    CHECK(manager.commandForKey("CTRL-F1") == "SHAPESHIFTBUTTON1");
+    CHECK(manager.commandForKey("SHIFT-1") == "ACTIONPAGE1");
+    // Genuine user customizations and explicit unbinds in v2 survive:
+    CHECK(manager.commandForKey("F9") == "TOGGLECHARACTER0");
+    CHECK(manager.bindings().at("TOGGLEQUESTLOG") == std::array<std::string, 2>{"", ""});
+    // Saving writes v3 diff-only format; explicit v3 binding of SHAPESHIFTBUTTON1 to CTRL-1 is preserved.
+    REQUIRE(manager.setBinding("CTRL-1", "SHAPESHIFTBUTTON1"));
+    const auto v3File = path("saved-v3.cfg");
+    REQUIRE(manager.saveBindings(v3File.string()));
+    CHECK(contents(v3File).starts_with("# wowee-bindings-v3\n"));
+    manager.resetToDefaults();
+    REQUIRE(manager.loadBindings(v3File.string()));
+    CHECK(manager.commandForKey("CTRL-1") == "SHAPESHIFTBUTTON1");
+    CHECK(manager.commandForKey("CTRL-8") == "BONUSACTIONBUTTON8");
+}

@@ -11,13 +11,15 @@
 namespace wowee::addons {
 
 using SavedBindings = std::map<std::string, std::array<std::string, 2>>;
-inline constexpr const char* bindingFileVersion = "# wowee-bindings-v2";
+inline constexpr const char* bindingFileVersionV2 = "# wowee-bindings-v2";
+inline constexpr const char* bindingFileVersion = "# wowee-bindings-v3";
 inline constexpr const char* nativeSettingsMarker = "# wowee-native-settings-merged-v1";
 
 struct SavedBindingFile {
     SavedBindings keyboardMouse;
     SavedBindings controller;
     std::set<std::string> implicitSecondary; // master's writer emitted a trailing comma
+    int version = 1;
     bool versioned = false;
     bool nativeSettingsMerged = false;
     bool valid = true;
@@ -31,7 +33,8 @@ inline SavedBindingFile parseBindingFile(std::istream& in) {
     while (std::getline(in, line)) {
         if (!line.empty() && line.back() == '\r') line.pop_back();
         if (line.empty()) continue;
-        if (line == bindingFileVersion && !sawRow) { out.versioned = true; continue; }
+        if (!sawRow && line == bindingFileVersion) { out.version = 3; out.versioned = true; continue; }
+        if (!sawRow && line == bindingFileVersionV2) { out.version = 2; out.versioned = true; continue; }
         if (line == nativeSettingsMarker) { out.nativeSettingsMerged = true; continue; }
         const bool comment = line.find(out.versioned ? '\t' : '=') == std::string::npos && (line[0] == '#' || line[0] == ';');
         if (comment && line.starts_with("# wowee-bindings-")) { out.valid = false; continue; }
