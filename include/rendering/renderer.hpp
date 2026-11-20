@@ -203,6 +203,8 @@ public:
     uint32_t getCharacterInstanceId() const { return characterInstanceId; }
     float getCharacterYaw() const { return characterYaw; }
     void setCharacterYaw(float yawDeg) { characterYaw = yawDeg; }
+    /// Smoothed lower-body yaw offset relative to characterYaw, in [-pi/2, +pi/2] rad.
+    float getCharacterLegYawOffsetRad() const { return characterLegYawOffsetRad_; }
     /// While the player moves a possessed unit, characterPosition and
     /// characterYaw are that unit's; the player's own model stays here.
     void setPlayerBodyHeld(std::optional<glm::vec4> positionAndYawDeg) { playerBodyHeld_ = positionAndYawDeg; }
@@ -484,6 +486,7 @@ private:
     glm::vec3 characterPosition = glm::vec3(0.0f);
     uint32_t characterInstanceId = 0;
     float characterYaw = 0.0f;
+    float characterLegYawOffsetRad_ = 0.0f;
 
     // Where the player was, for shaders that react to them moving through the
     // world. playerWakePos_ chases characterPosition with a fixed time

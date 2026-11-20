@@ -467,6 +467,53 @@ TEST_CASE("Legs keep the takeoff direction until landing", "[movement][animation
     REQUIRE(airborneLegDirection(held, false, none).modelYawOffset == 0);
 }
 
+TEST_CASE("Strafe and diagonal leg yaw slews smoothly through front", "[movement][animation]") {
+    using wowee::rendering::stepLegYawOffset;
+    constexpr float halfPi = 1.57079632679f;
+    constexpr float quarterPi = 0.78539816339f;
+
+    // Strafe left (+90 deg) -> strafe right (-90 deg) at 60 fps:
+    // pivots monotonically through 0 (front), hits 0 at 125ms, reaches -90 deg at 250ms.
+    float yaw = halfPi;
+    for (int i = 0; i < 15; ++i) {
+        const float next = stepLegYawOffset(yaw, -halfPi, true, 1.0f / 60.0f);
+        REQUIRE(next < yaw);
+        REQUIRE(next >= -halfPi);
+        REQUIRE(next <= halfPi);
+        yaw = next;
+    }
+    REQUIRE(yaw == Catch::Approx(-halfPi).margin(1e-4f));
+
+    // Midpoint check at 125ms: passes straight through 0 (front).
+    REQUIRE(stepLegYawOffset(halfPi, -halfPi, true, 0.125f) == Catch::Approx(0.0f).margin(1e-4f));
+    REQUIRE(stepLegYawOffset(-halfPi, halfPi, true, 0.125f) == Catch::Approx(0.0f).margin(1e-4f));
+
+    // Diagonal F+L (+45 deg) -> F+R (-45 deg) and Back+L (-45 deg) -> Back+R (+45 deg): 125ms.
+    REQUIRE(stepLegYawOffset(quarterPi, -quarterPi, true, 0.0625f) == Catch::Approx(0.0f).margin(1e-4f));
+    REQUIRE(stepLegYawOffset(quarterPi, -quarterPi, true, 0.125f) == Catch::Approx(-quarterPi).margin(1e-4f));
+    REQUIRE(stepLegYawOffset(-quarterPi, quarterPi, true, 0.125f) == Catch::Approx(quarterPi).margin(1e-4f));
+
+    // Stand (0) -> Strafe L (+90 deg): 125ms.
+    REQUIRE(stepLegYawOffset(0.0f, halfPi, true, 0.0625f) == Catch::Approx(quarterPi).margin(1e-4f));
+    REQUIRE(stepLegYawOffset(0.0f, halfPi, true, 0.125f) == Catch::Approx(halfPi).margin(1e-4f));
+
+    // Strafe R (-90 deg) -> Stop (0, moving=false): unwinds slower (~250ms for 90 deg).
+    REQUIRE(stepLegYawOffset(-halfPi, 0.0f, false, 0.125f) == Catch::Approx(-quarterPi).margin(1e-4f));
+    REQUIRE(stepLegYawOffset(-halfPi, 0.0f, false, 0.250f) == Catch::Approx(0.0f).margin(1e-4f));
+
+    // Frame-rate invariance: 30 fps vs 120 fps over 125ms.
+    float y30 = halfPi;
+    for (int i = 0; i < 3; ++i) y30 = stepLegYawOffset(y30, -halfPi, true, 1.0f / 24.0f);
+    float y120 = halfPi;
+    for (int i = 0; i < 15; ++i) y120 = stepLegYawOffset(y120, -halfPi, true, 1.0f / 120.0f);
+    REQUIRE(y30 == Catch::Approx(y120).margin(1e-4f));
+
+    // Non-positive dt is a no-op; huge dt lands cleanly on target without overshoot.
+    REQUIRE(stepLegYawOffset(halfPi, -halfPi, true, 0.0f) == Catch::Approx(halfPi));
+    REQUIRE(stepLegYawOffset(halfPi, -halfPi, true, -0.1f) == Catch::Approx(halfPi));
+    REQUIRE(stepLegYawOffset(halfPi, -halfPi, true, 10.0f) == Catch::Approx(-halfPi));
+}
+
 TEST_CASE("Remote jump follows an arc across heartbeats and lands", "[entity][movement]") {
     Player p;
     constexpr float launch = 7.955547f;

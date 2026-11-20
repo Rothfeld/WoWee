@@ -1236,17 +1236,7 @@ void EntitySpawner::despawnPlayer(uint64_t guid) {
     creatureSwimmingState_.erase(guid);
     creatureWalkingState_.erase(guid);
     creatureFlyingState_.erase(guid);
-    creatureWasMoving_.erase(guid);
-    creatureWasSwimming_.erase(guid);
-    creatureWasFlying_.erase(guid);
-    creatureWasWalking_.erase(guid);
-    remoteMovementFlags_.erase(guid);
-    remoteWasMovingBackward_.erase(guid);
-    remoteWasAirborne_.erase(guid);
-    remoteAirborneLegs_.erase(guid);
-    remoteTurns_.erase(guid);
-    hoverAirborne_.erase(guid);
-    liftOffEmoted_.erase(guid);
+    clearRemoteMotionState(guid);
 }
 
 // ---------------------------------------------------------------------------

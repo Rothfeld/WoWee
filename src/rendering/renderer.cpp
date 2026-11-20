@@ -11,6 +11,7 @@
 #include "core/coordinates.hpp"
 #include "rendering/camera.hpp"
 #include "rendering/camera_controller.hpp"
+#include "rendering/animation/ground_direction.hpp"
 #include "rendering/terrain_renderer.hpp"
 #include "rendering/terrain_manager.hpp"
 #include "pipeline/custom_zone_discovery.hpp"
@@ -2275,7 +2276,6 @@ void Renderer::update(float deltaTime) {
 
         // Movement-facing comes from camera controller and is decoupled from LMB orbit.
         bool taxiFlight = animationController_ && animationController_->isTaxiFlight();
-        float torsoYawDeltaDeg = 0.0f;
         if (taxiFlight || cameraController->isServerControlled()) {
             characterYaw = cameraController->getFacingYaw();
         } else if (cameraController->isMoving() || cameraController->isRightMouseHeld() ||
@@ -2308,19 +2308,26 @@ void Renderer::update(float deltaTime) {
         }
         // characterYaw is also sent as gameplay facing. Turning the legs toward
         // strafe travel must not rotate the heading used with movement flags.
-        float modelYaw = characterYaw;
-        // Swim-left/right sequences already contain the lateral body pose.
-        // Applying the land-stride yaw and spine counter-rotation twists it twice.
-        if (!taxiFlight && !cameraController->isSwimming() && cameraController->legsFollowTravel()) {
-            modelYaw = cameraController->getTravelYaw();
-            torsoYawDeltaDeg = characterYaw - modelYaw;
+        // Smoothly slew the relative lower-body offset within [-pi/2, +pi/2]
+        // (through 0 / front on direction reversal) to match Native TBC 2.4.3.
+        const bool mounted = animationController_ && animationController_->isMounted();
+        const bool resetLegYaw = taxiFlight || playerBodyHeld_.has_value() ||
+                                 cameraController->isFlightAirborne();
+        if (resetLegYaw) {
+            characterLegYawOffsetRad_ = 0.0f;
+        } else {
+            // Swim-left/right sequences already contain the lateral body pose.
+            // Applying the land-stride yaw and spine counter-rotation twists it twice.
+            const bool swimming = cameraController->isSwimming();
+            const float targetLegYawRad = swimming ? 0.0f : cameraController->getTargetLegYawOffsetRad();
+            const bool legMoving = !swimming && cameraController->isLegDirectionMoving();
+            characterLegYawOffsetRad_ = stepLegYawOffset(
+                characterLegYawOffsetRad_, targetLegYawRad, legMoving, deltaTime);
         }
-        float yawRad = glm::radians(modelYaw);
-        characterRenderer->setInstanceRotation(characterInstanceId, glm::vec3(0.0f, 0.0f, yawRad));
-
-        while (torsoYawDeltaDeg > 180.0f) torsoYawDeltaDeg -= 360.0f;
-        while (torsoYawDeltaDeg < -180.0f) torsoYawDeltaDeg += 360.0f;
-        characterRenderer->setInstanceTorsoYaw(characterInstanceId, glm::radians(torsoYawDeltaDeg));
+        const float modelYawRad = glm::radians(characterYaw) + characterLegYawOffsetRad_;
+        characterRenderer->setInstanceRotation(characterInstanceId, glm::vec3(0.0f, 0.0f, modelYawRad));
+        characterRenderer->setInstanceTorsoYaw(characterInstanceId,
+            mounted ? 0.0f : -characterLegYawOffsetRad_);
 
         if (playerBodyHeld_) {
             characterRenderer->setInstancePosition(characterInstanceId, glm::vec3(*playerBodyHeld_));

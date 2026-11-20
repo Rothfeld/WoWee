@@ -96,6 +96,7 @@ private:
     // Freeze or animate a spawned game object based on its type, deferring the
     // decision when the type has not been queried yet.
     void applyGameObjectAnimationPolicy(uint64_t guid, uint32_t entry, uint32_t instanceId);
+    void clearRemoteMotionState(uint64_t guid);
 
 public:
 
@@ -387,6 +388,8 @@ public:
     std::unordered_map<uint64_t, std::optional<rendering::GroundDirection>>& getRemoteAirborneLegs() {
         return remoteAirborneLegs_;
     }
+    // Smoothed lower-body yaw offset relative to facing (rendering::stepLegYawOffset).
+    std::unordered_map<uint64_t, float>& getRemoteLegYawOffsets() { return remoteLegYawOffsets_; }
     // Another player's facing seen by the previous frame and its turn shuffle.
     struct RemoteTurn {
         std::optional<float> lastFacing;
@@ -623,6 +626,7 @@ private:
     std::unordered_map<uint64_t, bool> remoteWasMovingBackward_;
     std::unordered_map<uint64_t, bool> remoteWasAirborne_;
     std::unordered_map<uint64_t, std::optional<rendering::GroundDirection>> remoteAirborneLegs_;
+    std::unordered_map<uint64_t, float> remoteLegYawOffsets_;
     std::unordered_map<uint64_t, RemoteTurn> remoteTurns_;
     std::unordered_map<uint64_t, bool> creatureWasWalking_;
     std::unordered_map<uint64_t, bool> creatureSwimmingState_;

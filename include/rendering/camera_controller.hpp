@@ -1,6 +1,7 @@
 #pragma once
 
 #include "rendering/camera.hpp"
+#include "rendering/animation/ground_direction.hpp"
 #include "core/input.hpp"
 #include <SDL3/SDL.h>
 #include <algorithm>
@@ -180,6 +181,10 @@ public:
     // The lower body turns onto getTravelYaw: strafing, not backing up, on the
     // ground by the held keys, in the air by the momentum the keys gave it.
     [[nodiscard]] bool legsFollowTravel() const { return legsFollowTravel_; }
+    /// Target relative lower-body yaw offset in [-pi/2, +pi/2] radians (see groundDirection).
+    [[nodiscard]] float getTargetLegYawOffsetRad() const { return targetLegYawOffsetRad_; }
+    /// True while directional ground/airborne locomotion is active for leg-yaw slewing.
+    [[nodiscard]] bool isLegDirectionMoving() const { return legDirectionMoving_; }
     [[nodiscard]] bool isThirdPerson() const { return thirdPerson; }
     [[nodiscard]] bool isFirstPersonView() const { return thirdPerson && (userTargetDistance <= FIRST_PERSON_DISTANCE); }
     [[nodiscard]] bool shouldHidePlayer() const { return playerCameraOpacity_ <= 0.0f; }
@@ -566,6 +571,9 @@ private:
     float facingYaw = 180.0f;  // Character-facing yaw (can differ from camera yaw)
     float travelYaw_ = 180.0f; // Heading of actual movement vector (see getTravelYaw)
     bool legsFollowTravel_ = false;
+    std::optional<GroundDirection> airborneLegDir_;
+    float targetLegYawOffsetRad_ = 0.0f;
+    bool legDirectionMoving_ = false;
 
     // Movement settings
     float groundLocomotionSpeed_ = 0.0f;

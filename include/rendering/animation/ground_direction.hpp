@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cmath>
 #include <optional>
 
@@ -11,6 +12,29 @@ struct GroundDirection {
     bool backwards = false;
     bool moving = false;  // any direction key held
 };
+
+// Native TBC 2.4.3 (build 8606) slews the lower-body yaw offset smoothly
+// within [-pi/2, +pi/2] instead of snapping 1 frame to the new strafe/diagonal
+// angle. Because the offset is a signed scalar in [-pi/2, +pi/2], reversing
+// strafe direction (+pi/2 <-> -pi/2) always pivots through 0 (front), keeping
+// torso counter-rotation within [-90 deg, +90 deg].
+// Measured from 30 fps Native 2.4.3 captures across Human Male, Tauren Male,
+// and Druid Cat (Run, Walk, diagonal, back+strafe, stand->strafe, strafe->stop):
+//   - Moving transitions (L<->R 180 deg in ~250ms; 90 deg in ~125ms): 4*pi rad/s (720 deg/s)
+//   - Stopping return to idle (90 deg -> 0 in ~250ms):                2*pi rad/s (360 deg/s)
+constexpr float kLegYawMaxOffsetRad      = 0.5f * 3.14159265358979323846f;
+constexpr float kLegYawMoveRateRadPerSec = 4.0f * 3.14159265358979323846f;
+constexpr float kLegYawStopRateRadPerSec = 2.0f * 3.14159265358979323846f;
+
+inline float stepLegYawOffset(float currentRad, float targetRad, bool moving, float dt) {
+    if (!(dt > 0.0f) || !std::isfinite(dt)) return currentRad;
+    const float clampedCurrent = std::clamp(currentRad, -kLegYawMaxOffsetRad, kLegYawMaxOffsetRad);
+    const float clampedTarget  = std::clamp(targetRad,  -kLegYawMaxOffsetRad, kLegYawMaxOffsetRad);
+    const float diff = clampedTarget - clampedCurrent;
+    const float maxStep = (moving ? kLegYawMoveRateRadPerSec : kLegYawStopRateRadPerSec) * dt;
+    if (std::abs(diff) <= maxStep) return clampedTarget;
+    return clampedCurrent + (diff > 0.0f ? maxStep : -maxStep);
+}
 
 // Models run along local +X. Backpedal plays along local -X. Rotate the
 // legs onto the travel axis while preserving the packet's upper-body facing.

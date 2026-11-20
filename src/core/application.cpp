@@ -4478,9 +4478,17 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
             // they keep the direction they left the ground with.
             const bool legsTravel = (airborne || entity->isActivelyMoving()) &&
                 !_pCreatureFlyingState.count(guid) && !_pCreatureSwimmingState.count(guid);
-            const float renderYaw = facingYaw + (legsTravel ? legs.modelYawOffset : 0.0f);
+            const float targetLegYaw = legsTravel ? legs.modelYawOffset : 0.0f;
+            float& smoothedLegYaw = entitySpawner_->getRemoteLegYawOffsets()[guid];
+            if (_pCreatureFlyingState.count(guid)) {
+                smoothedLegYaw = 0.0f;
+            } else {
+                smoothedLegYaw = rendering::stepLegYawOffset(
+                    smoothedLegYaw, targetLegYaw, legsTravel && legs.moving, deltaTime);
+            }
+            const float renderYaw = facingYaw + smoothedLegYaw;
             charRenderer->setInstanceTorsoYaw(instanceId,
-                legsTravel && !remoteMount ? legs.torsoYawOffset : 0.0f);
+                !remoteMount ? -smoothedLegYaw : 0.0f);
             charRenderer->setInstanceRotation(instanceId, glm::vec3(0.0f, 0.0f, renderYaw));
             if (remoteMount) {
                 charRenderer->setInstanceRotation(remoteMount->instanceId,

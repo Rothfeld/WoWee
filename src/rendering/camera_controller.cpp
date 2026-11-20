@@ -3247,6 +3247,17 @@ void CameraController::update(float deltaTime) {
         travelYaw_ = facingYaw;
         legsFollowTravel_ = false;
     }
+    const bool airborneLegs = !grounded && !swimming && !isFlightAirborne();
+    const GroundDirection keyDir = groundDirection(
+        nowForward || autoRunning, nowBackward, nowStrafeLeft, nowStrafeRight);
+    const GroundDirection activeLegs = airborneLegDirection(airborneLegDir_, airborneLegs, keyDir);
+    if (swimming || isFlightAirborne() || knockbackActive_ || serverControlled_) {
+        targetLegYawOffsetRad_ = 0.0f;
+        legDirectionMoving_ = false;
+    } else {
+        targetLegYawOffsetRad_ = activeLegs.modelYawOffset;
+        legDirectionMoving_ = activeLegs.moving;
+    }
 
     // --- Post-physics transitions: jump takeoff, landing, swim, flight vertical ---
     if (movementCallback) {

@@ -905,7 +905,11 @@ void AnimationController::applyMountPositioning(float mountBob, float mountRoll,
     uint32_t characterInstanceId = renderer_->getCharacterInstanceId();
     if (!characterRenderer || characterInstanceId == 0) return;
 
-    float mountYawRad = glm::radians(characterYaw);
+    auto* cameraController = renderer_->getCameraController();
+    const bool groundMountStrafe = !taxiFlight_ && cameraController &&
+        !cameraController->isFlightAirborne() && !cameraController->isSwimming();
+    float mountYawRad = glm::radians(characterYaw) +
+        (groundMountStrafe ? renderer_->getCharacterLegYawOffsetRad() : 0.0f);
 
     // Position mount model
     if (mountInstanceId_ > 0) {
