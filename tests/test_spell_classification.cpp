@@ -610,3 +610,33 @@ TEST_CASE("Learning a higher spell rank upgrades only the previous highest known
         CHECK(findActionBarRankUpgradeSource(695, known, reusedLookup) == 686);
     }
 }
+
+TEST_CASE("isProfessionSkillLine excludes racial, riding, and survival lines in category 9",
+          "[spell][classification][profession][warstomp]") {
+    using namespace wowee::game::spellclass;
+
+    // Category 11 (Professions): every primary profession qualifies.
+    for (uint32_t sl : {164u, 165u, 171u, 182u, 186u, 197u, 202u, 333u, 393u, 755u}) {
+        CHECK(isProfessionSkillLine(sl, 11u));
+    }
+
+    // Category 9 (Secondary Skills): only First Aid (129), Cooking (185), Fishing (356).
+    CHECK(isProfessionSkillLine(129u, 9u));
+    CHECK(isProfessionSkillLine(185u, 9u));
+    CHECK(isProfessionSkillLine(356u, 9u));
+
+    // Regression: SkillLine.dbc category 9 also holds all ten racial skill lines
+    // (124 Tauren Racial -> War Stomp 20549, etc.), Riding, Survival, and Swimming.
+    // Treating all of category 9 as profession spells suppressed War Stomp's and
+    // every other racial ability's SpellVisual, sound, and miss reactions.
+    for (uint32_t racialSl : {101u, 124u, 125u, 126u, 220u, 733u, 753u, 754u, 756u, 760u}) {
+        CHECK_FALSE(isProfessionSkillLine(racialSl, 9u));
+    }
+    for (uint32_t nonProfSl : {142u, 148u, 149u, 150u, 152u, 155u, 533u, 553u, 554u, 713u, 762u}) {
+        CHECK_FALSE(isProfessionSkillLine(nonProfSl, 9u));
+    }
+
+    // Class skills (cat 7) and weapon skills (cat 6) are never professions.
+    CHECK_FALSE(isProfessionSkillLine(26u, 7u));
+    CHECK_FALSE(isProfessionSkillLine(43u, 6u));
+}

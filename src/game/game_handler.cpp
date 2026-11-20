@@ -1411,8 +1411,7 @@ bool GameHandler::isProfessionSpell(uint32_t spellId) const {
     if (slIt == spellToSkillLine_.end()) return false;
     auto catIt = skillLineCategories_.find(slIt->second);
     if (catIt == skillLineCategories_.end()) return false;
-    // Category 11 = profession (Blacksmithing, etc.), 9 = secondary (Cooking, First Aid, Fishing)
-    return catIt->second == 11 || catIt->second == 9;
+    return spellclass::isProfessionSkillLine(slIt->second, catIt->second);
 }
 
 void GameHandler::loadSkillLineDbc() const {

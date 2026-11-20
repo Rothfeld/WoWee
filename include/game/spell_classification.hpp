@@ -235,6 +235,21 @@ inline bool isFishingCast(uint32_t spellId) {
            spellId == 51294;    // Fishing (Grand Master)
 }
 
+/// Whether a SkillLine.dbc (skillLineId, categoryId) belongs to a primary
+/// profession (category 11) or a secondary profession (First Aid 129, Cooking
+/// 185, Fishing 356). Category 9 ("Secondary Skills") also holds all ten
+/// racial skill lines (e.g. 124 Tauren Racial -> War Stomp 20549), Riding,
+/// Survival, and Swimming, which are NOT professions.
+inline constexpr bool isProfessionSkillLine(uint32_t skillLineId, uint32_t categoryId) {
+    if (categoryId == 11u) return true;
+    if (categoryId == 9u) {
+        return skillLineId == 129u   // First Aid
+            || skillLineId == 185u   // Cooking
+            || skillLineId == 356u;  // Fishing
+    }
+    return false;
+}
+
 /// Restoration food/water and instant potions use the dedicated consumption
 /// animation. Match canonical Food/Drink names and actual potion-use suffixes
 /// without classifying recipe spells that create potions.

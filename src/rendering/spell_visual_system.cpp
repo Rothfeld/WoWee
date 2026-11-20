@@ -8,6 +8,7 @@
 #include "rendering/character_renderer.hpp"
 #include "rendering/chain_effect.hpp"
 #include "rendering/camera.hpp"
+#include "rendering/camera_controller.hpp"
 #include "rendering/placement_transform.hpp"
 #include "rendering/projected_texture.hpp"
 #include "rendering/terrain_manager.hpp"
@@ -183,6 +184,10 @@ void SpellVisualSystem::loadSpellVisualDbc() {
                 if (const uint32_t soundId = kitDbc->getUInt32(i, 15); soundId != 0)
                     kitSounds_[kitId] = soundId;
             }
+            if (fc > 16) {
+                if (const uint32_t shakeId = kitDbc->getUInt32(i, 16); shakeId != 0)
+                    kitShakes_[kitId] = shakeId;
+            }
             // Attachment semantics come from the kit slot, not the filename.
             // HeadEffect uses the model's overhead anchor, not its animated
             // anatomical head. Mounted detection eyes and Dazed stars share
@@ -321,6 +326,72 @@ void SpellVisualSystem::loadSpellVisualDbc() {
     LOG_INFO("SpellVisual: loaded ", kitEffects_.size(), " kits with effects, missile=", loadedMissile,
              " (of ", svDbc->getRecordCount(), " visual records)");
     loadChainEffects();
+    loadCameraShakes();
+}
+
+void SpellVisualSystem::loadCameraShakes() {
+    auto effDbc = cachedAssetManager_->loadDBC("SpellEffectCameraShakes.dbc");
+    if (effDbc && effDbc->isLoaded() && effDbc->getFieldCount() >= 4) {
+        for (uint32_t i = 0; i < effDbc->getRecordCount(); ++i) {
+            const uint32_t id = effDbc->getUInt32(i, 0);
+            if (!id) continue;
+            spellEffectShakes_[id] = {effDbc->getUInt32(i, 1), effDbc->getUInt32(i, 2), effDbc->getUInt32(i, 3)};
+        }
+    }
+    auto csDbc = cachedAssetManager_->loadDBC("CameraShakes.dbc");
+    if (csDbc && csDbc->isLoaded() && csDbc->getFieldCount() >= 6) {
+        for (uint32_t i = 0; i < csDbc->getRecordCount(); ++i) {
+            const uint32_t id = csDbc->getUInt32(i, 0);
+            if (!id) continue;
+            const float amp = csDbc->getFloat(i, 3);
+            const float freq = csDbc->getFloat(i, 4);
+            const float dur = csDbc->getFloat(i, 5);
+            if (std::isfinite(amp) && std::isfinite(freq) && std::isfinite(dur) && amp > 0.0f && dur > 0.0f) {
+                cameraShakes_[id] = {.amplitude = amp, .frequency = freq, .duration = dur};
+            }
+        }
+    }
+    LOG_INFO("SpellVisual: loaded ", spellEffectShakes_.size(), " effect shakes, ",
+             cameraShakes_.size(), " camera shakes, ", kitShakes_.size(), " kits shake");
+}
+
+void SpellVisualSystem::playKitShake(uint32_t kitId, const glm::vec3& worldPosition) {
+    if (!renderer_) return;
+    auto* camCtrl = renderer_->getCameraController();
+    if (!camCtrl) return;
+    const auto ksIt = kitShakes_.find(kitId);
+    if (ksIt == kitShakes_.end()) return;
+    const auto esIt = spellEffectShakes_.find(ksIt->second);
+    if (esIt == spellEffectShakes_.end()) return;
+
+    float maxAmp = 0.0f;
+    float bestFreq = 0.0f;
+    float maxDur = 0.0f;
+    for (uint32_t csId : esIt->second) {
+        if (!csId) continue;
+        const auto csIt = cameraShakes_.find(csId);
+        if (csIt == cameraShakes_.end()) continue;
+        if (csIt->second.amplitude > maxAmp) {
+            maxAmp = csIt->second.amplitude;
+            bestFreq = csIt->second.frequency;
+        }
+        maxDur = std::max(maxDur, csIt->second.duration);
+    }
+    if (maxAmp <= 0.0f || maxDur <= 0.0f) return;
+
+    // Attenuate spell camera shakes with distance from the effect origin so
+    // distant AoE stomps do not shake the observer's camera at full strength.
+    constexpr float kMaxShakeRange = 50.0f;
+    float atten = 1.0f;
+    if (const auto* cam = renderer_->getCamera()) {
+        const float dist = glm::length(cam->getPosition() - worldPosition);
+        atten = std::clamp(1.0f - dist / kMaxShakeRange, 0.0f, 1.0f);
+    }
+    if (atten <= 0.0f) return;
+
+    const float magnitude = std::min(maxAmp * 0.03f, 0.45f) * atten;
+    const float frequency = bestFreq > 0.0f ? bestFreq : 6.0f;
+    camCtrl->triggerShake(magnitude, frequency, maxDur);
 }
 
 void SpellVisualSystem::loadChainEffects() {
@@ -715,6 +786,7 @@ void SpellVisualSystem::playSpellVisual(uint32_t visualId, const glm::vec3& worl
     if (kit == castKits_.end() || !kit->second) return;
     if (attachInstanceId != 0) stopPrecastSound(attachInstanceId);
     playKitSound(kit->second, worldPosition, attachInstanceId, /*stoppable=*/false);
+    playKitShake(kit->second, worldPosition);
     spawnKitEffects(kit->second, worldPosition, attachInstanceId, -1.0f, KitStage::Cast);
 }
 
@@ -1317,6 +1389,7 @@ void SpellVisualSystem::playCastKit(uint32_t visualId, const glm::vec3& casterPo
     if (kit == castKits_.end() || !kit->second) return;
     if (casterInstanceId != 0) stopPrecastSound(casterInstanceId);
     playKitSound(kit->second, casterPosition, casterInstanceId, /*stoppable=*/false);
+    playKitShake(kit->second, casterPosition);
     const float models = spawnKitEffects(kit->second, casterPosition, casterInstanceId, -1.0f, KitStage::Cast);
     const auto chainId = kitChainEffects_.find(kit->second);
     if (chainId == kitChainEffects_.end() || ends.empty()) return;
@@ -1364,6 +1437,7 @@ void SpellVisualSystem::playInstantAreaKit(uint32_t visualId, const glm::vec3& d
     LOG_INFO("SpellVisual: instant area kit ", kit->second, " of visual ", visualId, " at (",
              destination.x, ",", destination.y, ",", destination.z, ")");
     playKitSound(kit->second, destination, /*attachInstanceId=*/0, /*stoppable=*/false);
+    playKitShake(kit->second, destination);
     spawnKitEffects(kit->second, destination, /*attachInstanceId=*/0, /*duration=*/-1.0f,
                     KitStage::Other);
 }
@@ -1375,6 +1449,7 @@ void SpellVisualSystem::playImpactAreaKit(uint32_t visualId, const glm::vec3& de
     LOG_INFO("SpellVisual: impact area kit ", kit->second, " of visual ", visualId, " at (",
              destination.x, ",", destination.y, ",", destination.z, ")");
     playKitSound(kit->second, destination, /*attachInstanceId=*/0, /*stoppable=*/false);
+    playKitShake(kit->second, destination);
     spawnKitEffects(kit->second, destination, /*attachInstanceId=*/0, /*duration=*/-1.0f,
                     KitStage::Other);
 }
@@ -1412,6 +1487,7 @@ void SpellVisualSystem::playSpellVisualKit(uint32_t kitId, const glm::vec3& worl
     LOG_DEBUG("SpellVisualKit: id=", kitId, " animation=", animation->second);
     startKitLight(kitId, attachInstanceId);
     playKitSound(kitId, worldPosition, attachInstanceId, /*stoppable=*/false);
+    playKitShake(kitId, worldPosition);
     spawnKitEffects(kitId, worldPosition, attachInstanceId, -1.0f, KitStage::Other);
 }
 

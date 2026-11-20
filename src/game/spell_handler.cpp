@@ -3746,8 +3746,8 @@ void SpellHandler::handleSpellStart(network::Packet& packet) {
     }
 
     // Trigger cast visual effect (precast/cast kit M2) at the caster's position.
-    // Skip profession spells (crafting has no flashy cast effects).
-    if (data.castTime > 0 && !owner_.isProfessionSpell(data.spellId) && !rangedWeaponAttack) {
+    // Every spell with a SpellVisual in Spell.dbc plays its authored PrecastKit.
+    if (data.castTime > 0 && !rangedWeaponAttack) {
         triggerCastVisual(data.spellId, data.casterUnit, data.castTime);
     }
 }
@@ -3999,8 +3999,8 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
         playSpellImpactSound(data.spellId);
 
     // Trigger spell visual effects: cast kit at caster + impact kit at each hit target.
-    // Skip profession spells and melee (schoolMask == 1) abilities.
-    if (!owner_.isProfessionSpell(data.spellId) && !rangedWeaponAttack) {
+    // Driven by Spell.dbc SpellVisualID for all non-ranged-auto spells (including racials).
+    if (!rangedWeaponAttack) {
         uint32_t visualId = resolveSpellVisualId(data.spellId);
         if (visualId != 0) {
             // Cast-complete visual at caster (for instant spells that skip SPELL_START)
@@ -4141,7 +4141,7 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
     //   missile back to the caster on SPELL_MISS_REFLECT.
     // - Non-missile spells (instant magic, melee abilities, ranged ammo) play
     //   the victim's reaction animation immediately with no resist forcefield.
-    if (!data.missTargets.empty() && !owner_.isProfessionSpell(data.spellId)) {
+    if (!data.missTargets.empty()) {
         const uint64_t casterGuid = data.casterUnit != 0 ? data.casterUnit : data.casterGuid;
         const uint32_t visualId = rangedWeaponAttack ? 0 : resolveSpellVisualId(data.spellId);
         for (const auto& miss : data.missTargets) {
@@ -5724,9 +5724,6 @@ uint32_t SpellHandler::tradeskillOpenerSkillLine(uint32_t spellId) {
     owner_.loadSkillLineDbc();
     owner_.loadSkillLineAbilityDbc();
 
-    // SkillLine.dbc categories that hold crafting recipes
-    static constexpr uint32_t CAT_SECONDARY  = 9;   // Cooking, First Aid, Fishing
-    static constexpr uint32_t CAT_PROFESSION = 11;  // Alchemy, Blacksmithing, ...
     // What "this spell opens the trade skill window" is actually written as.
     static constexpr uint32_t SPELL_EFFECT_TRADE_SKILL = 47;
 
@@ -5749,7 +5746,7 @@ uint32_t SpellHandler::tradeskillOpenerSkillLine(uint32_t spellId) {
                     ", which SkillLine.dbc has no category for - not opening a window");
         return 0;
     }
-    if (catIt->second != CAT_SECONDARY && catIt->second != CAT_PROFESSION) return 0;
+    if (!spellclass::isProfessionSkillLine(skillLine, catIt->second)) return 0;
 
     // Spell.dbc says which spells open this window: effect 47, on eighty-one of
     // them, and on nothing else. That is the answer rather than a sign of it.
