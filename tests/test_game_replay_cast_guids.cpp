@@ -122,3 +122,154 @@ TEST_CASE("a pushed-back cast names its caster as the server writes it", "[repla
         CHECK(events.names == std::vector<std::string>{"UNIT_SPELLCAST_DELAYED"});
     }
 }
+
+namespace {
+
+Packet tbcSpellStart(uint64_t caster, uint32_t spellId, uint32_t castTimeMs, uint64_t target) {
+    Packet p(wireOpcode(Opcode::SMSG_SPELL_START));
+    p.writePackedGuid(caster);
+    p.writePackedGuid(caster);
+    p.writeUInt32(spellId);
+    p.writeUInt8(1);           // castCount
+    p.writeUInt16(0);          // castFlags
+    p.writeUInt32(castTimeMs); // castTime
+    p.writeUInt32(0x02);       // TARGET_FLAG_UNIT
+    p.writePackedGuid(target);
+    return p;
+}
+
+Packet tbcSpellGo(uint64_t caster, uint32_t spellId, uint64_t target) {
+    Packet p(wireOpcode(Opcode::SMSG_SPELL_GO));
+    p.writePackedGuid(caster);
+    p.writePackedGuid(caster);
+    p.writeUInt32(spellId);
+    p.writeUInt16(0);          // castFlags
+    p.writeUInt32(1000);       // timestamp
+    p.writeUInt8(1);           // hitCount
+    p.writeUInt64(target);     // full uint64 in TBC hit list
+    p.writeUInt8(0);           // missCount
+    p.writeUInt32(0x02);       // TARGET_FLAG_UNIT
+    p.writePackedGuid(target);
+    return p;
+}
+
+Packet tbcSpellDelayed(uint64_t caster, uint32_t delayMs) {
+    Packet p(wireOpcode(Opcode::SMSG_SPELL_DELAYED));
+    p.writePackedGuid(caster);
+    p.writeUInt32(delayMs);
+    return p;
+}
+
+// CMaNGOS TBC SMSG_ATTACKERSTATEUPDATE (normal melee hit -> CombatWound + BloodSpurt).
+Packet tbcMeleeHit(uint64_t attacker, uint64_t victim, uint32_t damage) {
+    Packet p(wireOpcode(Opcode::SMSG_ATTACKERSTATEUPDATE));
+    p.writeUInt32(0x00000002); // HITINFO_NORMALSWING2
+    p.writePackedGuid(attacker);
+    p.writePackedGuid(victim);
+    p.writeUInt32(damage);
+    p.writeUInt8(1);           // subDamageCount
+    p.writeUInt32(1);          // schoolMask (physical)
+    p.writeFloat(static_cast<float>(damage));
+    p.writeUInt32(damage);
+    p.writeUInt32(0);          // absorbed
+    p.writeUInt32(0);          // resisted
+    p.writeUInt32(1);          // victimState = VICTIMSTATE_NORMAL
+    p.writeUInt32(0);          // attackerState
+    p.writeUInt32(0);          // meleeSpellId
+    p.writeUInt32(0);          // blocked
+    return p;
+}
+
+}  // namespace
+
+TEST_CASE("TBC Wrath cast persists across melee flinch and SMSG_SPELL_DELAYED pushback past initial castTime",
+          "[replay][castguid][pushback]") {
+    constexpr uint32_t kWrathSpellId = 5176;
+    Session s("tbc");
+    s.handler().setTargetGuidRaw(kMob);
+
+    std::vector<std::string> playerEvents;
+    s.handler().setAddonEventCallback([&](const std::string& name, const std::vector<std::string>& args) {
+        if (!args.empty() && args.front() == "player") playerEvents.push_back(name);
+    });
+
+    int hitReactions = 0;
+    s.handler().setHitReactionCallback([&](uint64_t /*attacker*/, uint64_t victim, wowee::game::GameHandler::HitReaction r) {
+        if (victim == Session::kPlayerGuid && r == wowee::game::GameHandler::HitReaction::WOUND) {
+            ++hitReactions;
+        }
+    });
+
+    std::vector<wowee::game::SpellAnimPhase> animPhases;
+    s.handler().setSpellCastAnimCallback([&](uint64_t guid, wowee::game::SpellAnimPhase phase, uint32_t) {
+        if (guid == Session::kPlayerGuid) animPhases.push_back(phase);
+    });
+
+    // 1. Start 1500ms Wrath cast.
+    s.receive(tbcSpellStart(Session::kPlayerGuid, kWrathSpellId, 1500, kMob));
+    REQUIRE(s.handler().isCasting());
+    CHECK(s.handler().getCurrentCastSpellId() == kWrathSpellId);
+    CHECK(s.handler().getCastTimeTotal() == Catch::Approx(1.5f));
+    CHECK(s.handler().getCastTimeRemaining() == Catch::Approx(1.5f));
+
+    // 2. Melee hit (CombatWound + BloodSpurt) + two SMSG_SPELL_DELAYED pushbacks (800ms + 500ms).
+    s.receive(tbcMeleeHit(kMob, Session::kPlayerGuid, 12));
+    s.receive(tbcSpellDelayed(Session::kPlayerGuid, 800));
+    s.receive(tbcSpellDelayed(Session::kPlayerGuid, 500));
+    CHECK(hitReactions == 1);
+    CHECK(s.handler().isCasting());
+    CHECK(s.handler().getCastTimeTotal() == Catch::Approx(2.8f));
+    CHECK(s.handler().getCastTimeRemaining() == Catch::Approx(2.8f));
+
+    // 3. SMSG_SPELL_GO completes the pushed-back cast cleanly.
+    s.receive(tbcSpellGo(Session::kPlayerGuid, kWrathSpellId, kMob));
+    CHECK_FALSE(s.handler().isCasting());
+    CHECK(animPhases == std::vector<wowee::game::SpellAnimPhase>{
+        wowee::game::SpellAnimPhase::PRECAST,
+        wowee::game::SpellAnimPhase::CAST,
+    });
+    CHECK(std::find(playerEvents.begin(), playerEvents.end(), "UNIT_SPELLCAST_DELAYED") != playerEvents.end());
+
+    // 4. Starting another Wrath, pushing it back, and interrupting via SMSG_SPELL_FAILURE clears cast cleanly.
+    s.receive(tbcSpellStart(Session::kPlayerGuid, kWrathSpellId, 1500, kMob));
+    s.receive(tbcSpellDelayed(Session::kPlayerGuid, 800));
+    REQUIRE(s.handler().isCasting());
+    CHECK(s.handler().getCastTimeTotal() == Catch::Approx(2.3f));
+    Packet failure(wireOpcode(Opcode::SMSG_SPELL_FAILURE));
+    failure.writePackedGuid(Session::kPlayerGuid);
+    failure.writeUInt32(kWrathSpellId);
+    failure.writeUInt8(0x25); // SPELL_FAILED_INTERRUPTED
+    s.receive(failure);
+    CHECK_FALSE(s.handler().isCasting());
+}
+
+TEST_CASE("TBC remote cast pushback extends state and SMSG_SPELL_FAILED_OTHER stops cast animation",
+          "[replay][castguid][pushback]") {
+    constexpr uint32_t kWrathSpellId = 5176;
+    Session s("tbc");
+    s.handler().setTargetGuidRaw(kMob);
+
+    std::vector<wowee::game::SpellAnimPhase> remotePhases;
+    s.handler().setSpellCastAnimCallback([&](uint64_t guid, wowee::game::SpellAnimPhase phase, uint32_t) {
+        if (guid == kMob) remotePhases.push_back(phase);
+    });
+
+    s.receive(tbcSpellStart(kMob, kWrathSpellId, 1500, Session::kPlayerGuid));
+    REQUIRE(s.handler().getUnitCastState(kMob) != nullptr);
+    CHECK(s.handler().getUnitCastState(kMob)->timeTotal == Catch::Approx(1.5f));
+
+    s.receive(tbcSpellDelayed(kMob, 800));
+    REQUIRE(s.handler().getUnitCastState(kMob) != nullptr);
+    CHECK(s.handler().getUnitCastState(kMob)->timeTotal == Catch::Approx(2.3f));
+    CHECK(s.handler().getUnitCastState(kMob)->timeRemaining == Catch::Approx(2.3f));
+
+    Packet failOther(wireOpcode(Opcode::SMSG_SPELL_FAILED_OTHER));
+    failOther.writePackedGuid(kMob);
+    failOther.writeUInt32(kWrathSpellId);
+    s.receive(failOther);
+    CHECK(s.handler().getUnitCastState(kMob) == nullptr);
+    CHECK(remotePhases == std::vector<wowee::game::SpellAnimPhase>{
+        wowee::game::SpellAnimPhase::PRECAST,
+        wowee::game::SpellAnimPhase::STOP,
+    });
+}

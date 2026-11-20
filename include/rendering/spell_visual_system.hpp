@@ -164,11 +164,33 @@ public:
     // kit 370) spins through its two-second aura the same way.
     uint32_t auraStateAnimation(uint32_t attachInstanceId) const;
 
+    /// Grace window past the server cast time so a precast visual does not
+    /// flicker out from network/tick jitter before SMSG_SPELL_GO arrives.
+    /// Explicit cancellation on SMSG_SPELL_GO / SMSG_SPELL_FAILURE / cancel
+    /// retires the precast immediately when the cast ends.
+    static constexpr float kPrecastGraceSec = 2.0f;
+
+    /// Initial lifetime in seconds for a PrecastKit spawned from SMSG_SPELL_START.
+    /// Returns -1 when castTimeMs == 0 (fall back to the M2's authored length).
+    static constexpr float precastDurationSeconds(uint32_t castTimeMs) {
+        return castTimeMs > 0
+            ? (static_cast<float>(castTimeMs) / 1000.0f) + kPrecastGraceSec
+            : -1.0f;
+    }
+
     // Spawn a precast visual effect at a world position.
     // castTimeMs: server cast time in milliseconds (0 = use anim duration).
     // attachInstanceId: see playSpellVisual.
     void playSpellVisualPrecast(uint32_t visualId, const glm::vec3& worldPosition,
                                 uint32_t castTimeMs = 0, uint32_t attachInstanceId = 0);
+
+    /// Extend active precast visuals on attachInstanceId by delayMs when
+    /// SMSG_SPELL_DELAYED pushes a cast back (local or remote caster).
+    void delayPrecastVisuals(uint32_t attachInstanceId, uint32_t delayMs);
+
+    /// Ensure active precast visuals on attachInstanceId last at least
+    /// remainingMs from now (SMSG_RESUME_CAST_BAR).
+    void extendPrecastVisualsToRemaining(uint32_t attachInstanceId, uint32_t remainingMs);
 
     // A DynamicObject's ground effect: the visual's PersistentAreaKit models at
     // worldPosition, held until stopPersistentArea with the same key, and the

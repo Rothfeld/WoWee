@@ -101,6 +101,18 @@ TEST_CASE("SpellVisualSystem::slotFollowsBone covers Breath, SpellLeftHand/Right
     CHECK_FALSE(SpellVisualSystem::slotFollowsBone(34)); // Chest
 }
 
+TEST_CASE("SpellVisualSystem::precastDurationSeconds includes grace window for all positive cast times",
+          "[spell-visual]") {
+    using wowee::rendering::SpellVisualSystem;
+    CHECK(SpellVisualSystem::precastDurationSeconds(0) < 0.0f);
+    CHECK(SpellVisualSystem::precastDurationSeconds(300) ==
+          Catch::Approx(0.3f + SpellVisualSystem::kPrecastGraceSec));
+    CHECK(SpellVisualSystem::precastDurationSeconds(1500) ==
+          Catch::Approx(1.5f + SpellVisualSystem::kPrecastGraceSec));
+    CHECK(SpellVisualSystem::precastDurationSeconds(35000) ==
+          Catch::Approx(35.0f + SpellVisualSystem::kPrecastGraceSec));
+}
+
 // Cone of Cold (spell 120, visual 1007, cast kit 1027) attaches
 // Spells\ConeofCold_Hand.m2 to LeftHandEffect (attachment 21, SpellLeftHand)
 // during SpellCastDirected (anim 53). All 11 emitters fire along local -Z in

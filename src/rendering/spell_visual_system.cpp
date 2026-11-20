@@ -479,15 +479,37 @@ void SpellVisualSystem::playSpellVisualPrecast(uint32_t visualId, const glm::vec
     // An absent stage has no effect; do not substitute a different stage.
     const auto kit = precastKits_.find(visualId);
     if (kit == precastKits_.end() || !kit->second) return;
-    // A precast lasts the server cast time when there is one.
-    const float duration = castTimeMs >= 500
-        ? std::clamp(static_cast<float>(castTimeMs) / 1000.0f, 0.5f, 30.0f) : -1.0f;
-    if (attachInstanceId != 0) stopPrecastSound(attachInstanceId);
+    // A precast lasts the server cast time plus pushbacks and ends on
+    // SMSG_SPELL_GO / SMSG_SPELL_FAILURE / cancel; a small grace window
+    // prevents premature expiry from network jitter before SMSG_SPELL_GO.
+    const float duration = precastDurationSeconds(castTimeMs);
+    if (attachInstanceId != 0) cancelPrecastVisuals(attachInstanceId);
     if (const uint32_t snd = playKitSound(kit->second, worldPosition, attachInstanceId, /*stoppable=*/attachInstanceId != 0);
         snd != 0 && attachInstanceId != 0) {
         activePrecastSounds_[attachInstanceId] = snd;
     }
     spawnKitEffects(kit->second, worldPosition, attachInstanceId, duration, KitStage::Precast);
+}
+
+void SpellVisualSystem::delayPrecastVisuals(uint32_t attachInstanceId, uint32_t delayMs) {
+    if (!attachInstanceId || delayMs == 0) return;
+    const float delaySec = static_cast<float>(delayMs) / 1000.0f;
+    for (auto& visual : activeSpellVisuals_) {
+        if (visual.isPrecast && visual.attachInstanceId == attachInstanceId) {
+            visual.duration = std::max(visual.duration + delaySec,
+                                       visual.elapsed + delaySec + kPrecastGraceSec);
+        }
+    }
+}
+
+void SpellVisualSystem::extendPrecastVisualsToRemaining(uint32_t attachInstanceId, uint32_t remainingMs) {
+    if (!attachInstanceId || remainingMs == 0) return;
+    const float remainSec = static_cast<float>(remainingMs) / 1000.0f;
+    for (auto& visual : activeSpellVisuals_) {
+        if (visual.isPrecast && visual.attachInstanceId == attachInstanceId) {
+            visual.duration = std::max(visual.duration, visual.elapsed + remainSec + kPrecastGraceSec);
+        }
+    }
 }
 
 uint32_t SpellVisualSystem::playKitSound(uint32_t kitId, const glm::vec3& worldPosition,
@@ -578,7 +600,11 @@ float SpellVisualSystem::spawnKitEffects(uint32_t kitId, const glm::vec3& worldP
             continue;
         }
         m2Renderer_->setInstanceIsSpellVisual(instanceId);
-        m2Renderer_->restartInstanceAnimation(instanceId);
+        if (stage == KitStage::Precast) {
+            m2Renderer_->startInstanceStateEffect(instanceId);
+        } else {
+            m2Renderer_->restartInstanceAnimation(instanceId);
+        }
         // Without a stage length (cast time, aura, channel) the effect lives
         // one play of the sequence it shows. Authored lengths run from 0.33 s
         // to 31 s across TBC kit models (Moonfire_Impact_Base and
@@ -1993,6 +2019,15 @@ void SpellVisualSystem::update(float deltaTime) {
                 continue;
             }
             if (!it->attachmentId) placeOnUnit(*it, charRenderer, position, 1.0f);
+        } else if ((it->isPrecast || it->isChannel) && it->attachInstanceId != 0) {
+            glm::vec3 position;
+            if (!charRenderer || !charRenderer->getInstancePosition(it->attachInstanceId, position)) {
+                if (it->isPrecast) stopPrecastSound(it->attachInstanceId);
+                if (it->isChannel) stopChannelSound(it->attachInstanceId);
+                m2Renderer_->removeInstance(it->instanceId);
+                it = activeSpellVisuals_.erase(it);
+                continue;
+            }
         }
         it->elapsed += deltaTime;
         if (it->elapsed >= it->duration) {

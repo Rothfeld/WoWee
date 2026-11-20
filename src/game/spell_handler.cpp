@@ -3760,6 +3760,7 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
     // (_experiments/20261118T091949Z.creature_swing_anim, arrow).
     if (data.casterUnit != owner_.getPlayerGuid() && data.ammoDisplayId != 0) launchAmmoProjectile(data);
 
+    bool casterFinishedTimedCast = false;
     if (data.casterUnit == owner_.getPlayerGuid()) {
         if (data.spellId == nextSwingSpellId_) nextSwingSpellId_ = 0;
         if (data.spellId == pendingCastSpellId_) pendingCastSpellId_ = 0;
@@ -3863,6 +3864,7 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
         }
 
         const bool wasInTimedCast = casting_ && (data.spellId == currentCastSpellId_);
+        casterFinishedTimedCast = wasInTimedCast && !castIsChannel_;
 
         // The cast kit's animation plays once, timed and instant casts alike
         // (including melee special attacks, whose SpellVisualKit AnimID is
@@ -3961,8 +3963,23 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
             playSpellCastSound(data.spellId);
     }
 
-    // Clear unit cast bar
+    // Clear unit cast bar and retire any precast visuals for a timed cast
+    // that just completed (local or remote), before CastKit spawns below.
+    if (data.casterUnit != owner_.getPlayerGuid()) {
+        if (const auto it = unitCastStates_.find(data.casterUnit);
+            it != unitCastStates_.end() && it->second.casting && !it->second.isChannel &&
+            it->second.spellId == data.spellId) {
+            casterFinishedTimedCast = true;
+        }
+    }
     unitCastStates_.erase(data.casterUnit);
+    if (casterFinishedTimedCast) {
+        if (auto* renderer = owner_.services().renderer) {
+            if (auto* svs = renderer->getSpellVisualSystem()) {
+                svs->cancelPrecastVisuals(owner_.resolveUnitRenderInstance(data.casterUnit));
+            }
+        }
+    }
 
     // Miss combat text
     if (!data.missTargets.empty()) {
@@ -6309,6 +6326,14 @@ void SpellHandler::handleSpellFailedOther(network::Packet& packet) {
         uint32_t failedSpellId = 0;
         if (const auto* st = getUnitCastState(failOtherGuid)) failedSpellId = st->spellId;
         unitCastStates_.erase(failOtherGuid);
+        if (auto* renderer = owner_.services().renderer) {
+            if (auto* svs = renderer->getSpellVisualSystem()) {
+                svs->cancelPrecastVisuals(owner_.resolveUnitRenderInstance(failOtherGuid));
+            }
+        }
+        if (owner_.spellCastAnimCallbackRef()) {
+            owner_.spellCastAnimCallbackRef()(failOtherGuid, SpellAnimPhase::STOP, failedSpellId);
+        }
         if (owner_.addonEventCallbackRef()) {
             std::string unitId;
             if (failOtherGuid == owner_.getTargetGuid())     unitId = "target";
@@ -6426,16 +6451,28 @@ void SpellHandler::handleSpellDelayed(network::Packet& packet) {
     uint32_t delayMs = packet.readUInt32();
     if (delayMs == 0) return;
     float delaySec = delayMs / 1000.0f;
+    bool castActive = false;
     if (caster == owner_.getPlayerGuid()) {
-        if (casting_) {
+        if (casting_ && !castIsChannel_) {
             castTimeRemaining_ += delaySec;
             castTimeTotal_     += delaySec;
+            castActive = true;
         }
     } else {
         auto it = unitCastStates_.find(caster);
-        if (it != unitCastStates_.end() && it->second.casting) {
+        if (it != unitCastStates_.end() && it->second.casting && !it->second.isChannel) {
             it->second.timeRemaining += delaySec;
             it->second.timeTotal     += delaySec;
+            castActive = true;
+        }
+    }
+    // Extend precast hand/base visuals so melee pushback does not expire them
+    // before SMSG_SPELL_GO arrives (both local and remote casters).
+    if (castActive) {
+        if (auto* renderer = owner_.services().renderer) {
+            if (auto* svs = renderer->getSpellVisualSystem()) {
+                svs->delayPrecastVisuals(owner_.resolveUnitRenderInstance(caster), delayMs);
+            }
         }
     }
     // The cast bar redraws itself from this: it is already on screen and its
@@ -7210,8 +7247,13 @@ void SpellHandler::parseEffectInterruptCast(network::Packet& packet, uint32_t ef
         if (!readEffectLogTarget(packet, icTarget)) { packet.skipAll(); break; }
         if (!packet.hasRemaining(4)) { packet.skipAll(); break; }
         uint32_t icSpellId = packet.readUInt32();
-        // Clear the interrupted unit's cast bar immediately
+        // Clear the interrupted unit's cast bar and precast visuals immediately
         unitCastStates_.erase(icTarget);
+        if (auto* renderer = owner_.services().renderer) {
+            if (auto* svs = renderer->getSpellVisualSystem()) {
+                svs->cancelPrecastVisuals(owner_.resolveUnitRenderInstance(icTarget));
+            }
+        }
         // Record interrupt in combat log when player is involved
         if (isPlayerCaster || icTarget == playerGuid)
             owner_.addCombatText(CombatTextEntry::INTERRUPT, 0, icSpellId, isPlayerCaster, 0,
@@ -7417,6 +7459,11 @@ void SpellHandler::handleResumeCastBar(network::Packet& packet) {
             s.spellId       = spellId;
             s.timeTotal     = totalMs  / 1000.0f;
             s.timeRemaining = remainMs / 1000.0f;
+        }
+        if (auto* renderer = owner_.services().renderer) {
+            if (auto* svs = renderer->getSpellVisualSystem()) {
+                svs->extendPrecastVisualsToRemaining(owner_.resolveUnitRenderInstance(caster), remainMs);
+            }
         }
         LOG_DEBUG("SMSG_RESUME_CAST_BAR: caster=0x", std::hex, caster, std::dec,
                   " spell=", spellId, " remaining=", remainMs, "ms total=", totalMs, "ms");
