@@ -7,6 +7,7 @@
 #include "rendering/wmo_vertex.hpp"
 #include "rendering/shadow_params.hpp"
 #include "rendering/wmo_renderer.hpp"
+#include "rendering/wmo_portal_visibility.hpp"
 #include "rendering/visual_mesh_pick.hpp"
 #include "rendering/rt_bvh.hpp"
 #include "rendering/rt_scene.hpp"
@@ -1615,6 +1616,11 @@ void WMORenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const
             result.visibleGroups = sealedInterior_->groups;
             return;
         }
+        if (exteriorHiddenWmo_ && instance.id != *exteriorHiddenWmo_) {
+            result.model = nullptr;
+            return;
+        }
+        const bool skipExteriorGroups = exteriorHiddenWmo_.has_value() && instance.id == *exteriorHiddenWmo_;
 
         // Portal-based visibility - reuse member scratch buffer (avoid per-frame alloc)
         portalVisibleGroupSet_.clear();
@@ -1625,6 +1631,7 @@ void WMORenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const
             hiddenUnreachableGroups(instance, model, camPos, portalViewerPos, frustum);
 
         for (size_t gi = 0; gi < model.groups.size(); ++gi) {
+            if (skipExteriorGroups && wmoGroupSeesExterior(model.groups[gi].groupFlags)) continue;
             if (!hiddenUnreachable.empty() && hiddenUnreachable[gi]) continue;
             if (usePortalCulling &&
                 portalVisibleGroupSet_.find(static_cast<uint32_t>(gi)) == portalVisibleGroupSet_.end()) {
@@ -2370,14 +2377,22 @@ void WMORenderer::updateRoomVisibility(const Camera& camera, const glm::vec3* vi
         instance.drawnGroups.clear();
         const auto mdlIt = loadedModels.find(instance.modelId);
         if (mdlIt == loadedModels.end()) continue;
+        if (exteriorHiddenWmo_ && instance.id != *exteriorHiddenWmo_) {
+            instance.drawnGroups.assign(mdlIt->second.groups.size(), 0);
+            continue;
+        }
+        const bool skipExteriorGroups = exteriorHiddenWmo_.has_value() && instance.id == *exteriorHiddenWmo_;
         drawn.clear();
         const auto hidden = hiddenUnreachableGroups(instance, mdlIt->second, camPos, viewer, frustum);
         if (!portalVisibleGroups(instance, mdlIt->second, camPos, viewer, frustum, viewProj, cullIndoors, drawn)) {
-            if (hidden.empty()) continue;
+            if (hidden.empty() && !skipExteriorGroups) continue;
             for (size_t g = 0; g < mdlIt->second.groups.size(); ++g) drawn.insert(static_cast<uint32_t>(g));
         }
         instance.drawnGroups.assign(mdlIt->second.groups.size(), 0);
-        for (uint32_t g : drawn) instance.drawnGroups[g] = hidden.empty() || !hidden[g];
+        for (uint32_t g : drawn) {
+            if (skipExteriorGroups && wmoGroupSeesExterior(mdlIt->second.groups[g].groupFlags)) continue;
+            instance.drawnGroups[g] = hidden.empty() || !hidden[g];
+        }
     }
     // The units' walk always runs indoors too: The Eye's entrance hall shows
     // no Bloodwarder pack through its walls on native, 60 yards on in the
@@ -4492,6 +4507,56 @@ std::optional<WMORenderer::SealedInterior> WMORenderer::findSealedInterior(const
         sealed.worldMax = glm::max(sealed.worldMax, instance->worldGroupBounds[group].second);
     }
     return sealed;
+}
+
+std::optional<uint32_t> WMORenderer::findHiddenExteriorInterior(const Camera& camera) const {
+    const glm::vec3 camPos = camera.getPosition();
+    const auto location = getInteriorLocation(camPos, /*indoorOnly=*/true);
+    if (!location) return std::nullopt;
+    const auto instance = std::find_if(instances.begin(), instances.end(),
+        [&](const auto& value) { return value.id == location->instanceId; });
+    assert(instance != instances.end());
+    const auto modelIt = loadedModels.find(instance->modelId);
+    if (modelIt == loadedModels.end()) return std::nullopt;
+    const auto& model = modelIt->second;
+    if (location->groupIndex >= model.groups.size()) return std::nullopt;
+    if (wmoGroupSeesExterior(model.groups[location->groupIndex].groupFlags)) return std::nullopt;
+
+    std::vector<PortalGroupInfo> groups;
+    groups.reserve(model.groups.size());
+    for (size_t gi = 0; gi < model.groups.size(); ++gi) {
+        PortalGroupInfo info{};
+        info.groupFlags = model.groups[gi].groupFlags;
+        if (gi < model.groupPortalRefs.size()) {
+            info.portalStart = model.groupPortalRefs[gi].first;
+            info.portalCount = model.groupPortalRefs[gi].second;
+        }
+        groups.push_back(info);
+    }
+
+    std::vector<PortalPlaneInfo> portals;
+    portals.reserve(model.portals.size());
+    for (const auto& p : model.portals) {
+        portals.push_back({p.startVertex, p.vertexCount, p.normal, p.distance});
+    }
+
+    std::vector<PortalRefInfo> refs;
+    refs.reserve(model.portalRefs.size());
+    for (const auto& r : model.portalRefs) {
+        refs.push_back({r.portalIndex, r.groupIndex, r.side});
+    }
+
+    Frustum frustum;
+    const glm::mat4 viewProj = camera.getProjectionMatrix() * camera.getViewMatrix();
+    frustum.extractFromMatrix(viewProj);
+    const glm::vec3 localCam(instance->invModelMatrix * glm::vec4(camPos, 1.0f));
+
+    if (isExteriorVisibleThroughPortals(groups, portals, model.portalVertices, refs,
+                                        location->groupIndex, localCam, frustum,
+                                        viewProj, instance->modelMatrix)) {
+        return std::nullopt;
+    }
+    return instance->id;
 }
 
 std::optional<WMORenderer::InteriorLocation> WMORenderer::getInteriorLocation(const glm::vec3& position, bool indoorOnly) const {

@@ -448,6 +448,14 @@ public:
     /// What the next render draws of the WMOs: only these groups of this
     /// instance while set.
     void setSealedInterior(std::optional<SealedInterior> sealed) { sealedInterior_ = std::move(sealed); }
+    /// When the camera is inside an interior-only WMO group whose in-frustum
+    /// portal traversal never reaches an exterior-seeing group, returns that
+    /// WMO's instance ID so the renderer can skip outdoor terrain, sky, grass,
+    /// other WMOs, exterior WMO groups, and ADT MDDF doodads.
+    [[nodiscard]] std::optional<uint32_t> findHiddenExteriorInterior(const Camera& camera) const;
+    void setExteriorHiddenWmo(std::optional<uint32_t> interiorInstanceId) {
+        exteriorHiddenWmo_ = interiorInstanceId;
+    }
 
     /// Light of a unit or game object standing at `position`, or nothing when
     /// it stands outdoors. The closest WMO surface below its feet decides:
@@ -1099,6 +1107,7 @@ private:
     std::vector<InstanceDrawList> drawLists_;    // reused per frame
     std::unordered_set<uint32_t> portalVisibleGroupSet_; // reused per frame (portal culling scratch)
     std::optional<SealedInterior> sealedInterior_;
+    std::optional<uint32_t> exteriorHiddenWmo_;
 
     // Collision query profiling - atomic because getFloorHeight is dispatched
     // on async threads from camera_controller while the main thread reads these.

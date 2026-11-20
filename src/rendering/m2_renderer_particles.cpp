@@ -496,7 +496,7 @@ void M2Renderer::renderParticleMeshes(VkCommandBuffer cmd, VkDescriptorSet perFr
         const auto& gpu = *inst.cachedModel;
         const glm::vec3 distance = inst.position - cachedCamPos_;
         if (glm::dot(distance, distance) > particleMaxDistSq(inst)) continue;
-        if (outsideVisibleRegion(inst.position) || roomCulled(inst)) continue;
+        if (outsideVisibleRegion(inst.position) || exteriorCulled(inst) || roomCulled(inst)) continue;
         for (const auto& p : inst.particles) {
             if (p.emitterIndex < 0 || static_cast<size_t>(p.emitterIndex) >= gpu.particleGeometry.size()) continue;
             const auto& mesh = gpu.particleGeometry[p.emitterIndex];
@@ -621,7 +621,7 @@ void M2Renderer::renderM2Ribbons(VkCommandBuffer cmd, VkDescriptorSet perFrameSe
 
     for (const auto& inst : instances) {
         if (!inst.cachedModel) continue;
-        if (outsideVisibleRegion(inst.position) || roomCulled(inst)) continue;
+        if (outsideVisibleRegion(inst.position) || exteriorCulled(inst) || roomCulled(inst)) continue;
         const auto& gpu = *inst.cachedModel;
         if (gpu.ribbonEmitters.empty()) continue;
 
@@ -848,7 +848,7 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
         if (!inst.cachedModel) continue;
         const glm::vec3 distance = inst.position - cachedCamPos_;
         if (glm::dot(distance, distance) > particleMaxDistSq(inst)) continue;
-        if (outsideVisibleRegion(inst.position) || roomCulled(inst)) continue;
+        if (outsideVisibleRegion(inst.position) || exteriorCulled(inst) || roomCulled(inst)) continue;
         for (const auto& particle : inst.particles) {
             const auto& emitter = inst.cachedModel->particleEmitters.at(particle.emitterIndex);
             requiredVertices += emitter.headOrTail == 2 ? 2 : 1;
@@ -914,7 +914,7 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
         const auto& gpu = *inst.cachedModel;
         const glm::vec3 distance = inst.position - cachedCamPos_;
         if (glm::dot(distance, distance) > particleMaxDistSq(inst)) continue;
-        if (outsideVisibleRegion(inst.position) || roomCulled(inst)) continue;
+        if (outsideVisibleRegion(inst.position) || exteriorCulled(inst) || roomCulled(inst)) continue;
 
         // Cache the last emitter's per-emitter state so adjacent particles
         // sharing an emitter (the common case - particles from one source

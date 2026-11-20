@@ -1425,7 +1425,7 @@ void Renderer::beginFrame() {
     // behind everything (Spectral Realm: (59,28,107) on screen against MFOG
     // 0's (56,27,98)). Last frame's decision: the pass begins before this
     // frame's world is culled.
-    const glm::vec3 clear = lastFrameSealedInterior_ ? sealedClearColor_ : glm::vec3(0.0f);
+    const glm::vec3 clear = lastFrameExteriorHidden_ ? sealedClearColor_ : glm::vec3(0.0f);
     clearValues[0].color = {{clear.r, clear.g, clear.b, 1.0f}};
     clearValues[1].depthStencil = {.depth = 1.0f, .stencil = 0};
     clearValues[2].color = {{clear.r, clear.g, clear.b, 1.0f}};
@@ -3264,12 +3264,22 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
     const auto sealedInterior = (wmoRenderer && camera)
         ? wmoRenderer->findSealedInterior(camera->getPosition())
         : std::optional<WMORenderer::SealedInterior>{};
-    if (wmoRenderer) wmoRenderer->setSealedInterior(sealedInterior);
+    const auto exteriorHiddenWmo = (!sealedInterior && wmoRenderer && camera)
+        ? wmoRenderer->findHiddenExteriorInterior(*camera)
+        : std::optional<uint32_t>{};
+    if (wmoRenderer) {
+        wmoRenderer->setSealedInterior(sealedInterior);
+        wmoRenderer->setExteriorHiddenWmo(exteriorHiddenWmo);
+    }
+    const bool hideExterior = sealedInterior.has_value() || exteriorHiddenWmo.has_value();
     {
         const auto region = sealedInterior
             ? std::optional(std::pair(sealedInterior->worldMin, sealedInterior->worldMax))
             : std::nullopt;
-        if (m2Renderer) m2Renderer->setVisibleRegion(region);
+        if (m2Renderer) {
+            m2Renderer->setVisibleRegion(region);
+            m2Renderer->setExteriorHidden(hideExterior);
+        }
         if (characterRenderer) characterRenderer->setVisibleRegion(region);
     }
     if (sealedInterior.has_value() != lastFrameSealedInterior_) {
@@ -3277,10 +3287,11 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
         LOG_INFO("Sealed interior ", lastFrameSealedInterior_ ? "entered" : "left",
                  lastFrameSealedInterior_ ? ": exterior terrain, water and models not drawn" : "");
     }
-    const bool skipTerrain = envSkipTerrain || ablated(AblationPass::Terrain) || sealedInterior;
-    if (sealedInterior) sealedClearColor_ = glm::vec3(currentFrameData.fogColor);
-    const bool skipSky = envSkipSky || ablated(AblationPass::Sky) || sealedInterior;
-    const bool skipGrass = ablated(AblationPass::Grass) || sealedInterior;
+    lastFrameExteriorHidden_ = hideExterior;
+    const bool skipTerrain = envSkipTerrain || ablated(AblationPass::Terrain) || hideExterior;
+    if (hideExterior) sealedClearColor_ = glm::vec3(currentFrameData.fogColor);
+    const bool skipSky = envSkipSky || ablated(AblationPass::Sky) || hideExterior;
+    const bool skipGrass = ablated(AblationPass::Grass) || hideExterior;
     // Liquid in the scene pass goes between the opaque and the blended world
     // models. Blended batches write no depth, so a surface drawn after them
     // covered every one standing in it: Magisters' Terrace's energy cubes

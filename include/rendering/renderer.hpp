@@ -678,6 +678,7 @@ private:
     double lastCameraUpdateMs = 0.0;
     double lastTerrainRenderMs = 0.0;
     bool lastFrameSealedInterior_ = false;
+    bool lastFrameExteriorHidden_ = false;
     glm::vec3 sealedClearColor_{0.0f};
     double lastWMORenderMs = 0.0;
     double lastM2RenderMs = 0.0;

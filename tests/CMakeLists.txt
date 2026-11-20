@@ -737,6 +737,17 @@ target_link_libraries(test_wmo_doodad_rooms PRIVATE catch2_main)
 add_test(NAME wmo_doodad_rooms COMMAND test_wmo_doodad_rooms)
 register_test_target(test_wmo_doodad_rooms)
 
+# ── test_wmo_portal_visibility ──────────────────────────────
+add_executable(test_wmo_portal_visibility
+    test_wmo_portal_visibility.cpp
+    ${CMAKE_SOURCE_DIR}/src/rendering/frustum.cpp
+)
+target_include_directories(test_wmo_portal_visibility PRIVATE ${TEST_INCLUDE_DIRS})
+target_include_directories(test_wmo_portal_visibility SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
+target_link_libraries(test_wmo_portal_visibility PRIVATE catch2_main)
+add_test(NAME wmo_portal_visibility COMMAND test_wmo_portal_visibility)
+register_test_target(test_wmo_portal_visibility)
+
 # ── test_addon_globals ──────────────────────────────────────
 add_executable(test_addon_globals
     test_addon_globals.cpp

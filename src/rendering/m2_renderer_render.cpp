@@ -1073,7 +1073,7 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
         out.transparent.reserve((end - begin) / 12);
         for (uint32_t i = begin; i < end; ++i) {
             const auto& instance = instances[i];
-            if (outsideVisibleRegion(instance.position)) continue;
+            if (outsideVisibleRegion(instance.position) || exteriorCulled(instance)) continue;
             float distSq;
             float effectiveMaxDistSq;
 
