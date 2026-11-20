@@ -770,7 +770,12 @@ static void applySoundCVars(lua_State* L) {
     // Not folded into the sfx switch below: this is the one people actually
     // reach for, and turning it off should leave every other effect alone.
     if (auto* voice = ac->getPlayerVoiceManager()) {
-        voice->setEnabled(soundCVar("sound_enableerrorspeech", 1.0f) != 0.0f);
+        const bool charSpeechOn =
+            (svc && svc->getClientSetting)
+                ? (svc->getClientSetting("characterspeech") != "0")
+                : true;
+        voice->setEnabled(charSpeechOn &&
+                          soundCVar("sound_enableerrorspeech", 1.0f) != 0.0f);
     }
     ac->setEmoteSoundsEnabled(soundCVar("sound_enableemotesounds", 1.0f) != 0.0f);
     ac->setListenerAtCharacter(soundCVar("sound_listeneratcharacter", 1.0f) != 0.0f);

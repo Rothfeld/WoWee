@@ -362,7 +362,10 @@ std::string AddonManager::loadBlocker(const TocFile& addon) {
     // Measured: 20300 (Bongos2), 30000 (ItemRack) and 30300 (OneBag3) are
     // INTERFACE_VERSION and a .toc with no Interface line is INCOMPATIBLE;
     // none of them loads. Blizzard's own addons are the client's and exempt.
-    if (lowered(addon.addonName).rfind("blizzard_", 0) != 0) {
+    // Blizzard's own addons and bundled WoWee* addons belong to the client and
+    // are exempt across expansions (matching AddonManager::loadAddon).
+    const std::string lowerName = lowered(addon.addonName);
+    if (lowerName.rfind("blizzard_", 0) != 0 && lowerName.rfind("wowee", 0) != 0) {
         lua_State* L = luaEngine_.getState();
         lua_getglobal(L, "__WoweeInterfaceVersion");
         const int client = lua_isnumber(L, -1) ? static_cast<int>(lua_tonumber(L, -1)) : 0;

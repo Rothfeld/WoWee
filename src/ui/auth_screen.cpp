@@ -1764,9 +1764,9 @@ void AuthScreen::renderLoginSettingsSheet(float screenW, float screenH) {
     const float controlRow = labelRow + px(kControl);
     const float smallRow = ui_.lineHeight(px(kSmall));
 
-    // Seven switches on the left, six things with a range on the right. The
+    // Six switches on the left, six things with a range on the right. The
     // taller of the two columns is what the sheet has to be tall enough for.
-    const float leftH = 7.0f * px(kCheckStep);
+    const float leftH = 6.0f * px(kCheckStep);
     const float rightH = 6.0f * (controlRow + px(8));
     const float contentH = px(kTitle) * 1.05f + smallRow + px(16)   // title block
                          + controlRow + px(20)                       // preset
@@ -1792,6 +1792,7 @@ void AuthScreen::renderLoginSettingsSheet(float screenW, float screenH) {
         const float r = px(kSmall) * 0.95f;
         if (ui_.glyphButton("gfx.close", ImVec2(col.x1 - r, col.y + r), r,
                             PaperUI::Glyph::Cross)) {
+            loginGfxLoaded_ = false;
             settingsOpen_ = false;
         }
     }
@@ -1826,17 +1827,18 @@ void AuthScreen::renderLoginSettingsSheet(float screenW, float screenH) {
     // ---- the switches -----------------------------------------------------
     {
         Column left{col.x0, col.x0 + columnW, columnTop};
-        const auto toggle = [&](const char* id, const char* label, bool* value) {
-            ui_.checkbox(id, ImVec2(left.x0, left.y), px(kCheckBox), label, value);
+        const auto toggle = [&](const char* id, const char* label, bool* value, bool inPreset) {
+            if (ui_.checkbox(id, ImVec2(left.x0, left.y), px(kCheckBox), label, value) && inPreset) {
+                loginGfx_.preset = 0;
+            }
             left.gap(px(kCheckStep));
         };
-        toggle("gfx.shadows", "Shadows", &loginGfx_.shadows);
-        toggle("gfx.fxaa", "FXAA", &loginGfx_.fxaa);
-        toggle("gfx.normals", "Normal mapping", &loginGfx_.normalMapping);
-        toggle("gfx.pom", "Parallax occlusion", &loginGfx_.pom);
-        toggle("gfx.water", "Water refraction", &loginGfx_.waterRefraction);
-        toggle("gfx.vsync", "V-Sync", &loginGfx_.vsync);
-        toggle("gfx.fullscreen", "Fullscreen", &loginGfx_.fullscreen);
+        toggle("gfx.shadows", "Shadows", &loginGfx_.shadows, true);
+        toggle("gfx.fxaa", "FXAA", &loginGfx_.fxaa, true);
+        toggle("gfx.normals", "Normal mapping", &loginGfx_.normalMapping, true);
+        toggle("gfx.pom", "Parallax occlusion", &loginGfx_.pom, true);
+        toggle("gfx.vsync", "V-Sync", &loginGfx_.vsync, false);
+        toggle("gfx.fullscreen", "Fullscreen", &loginGfx_.fullscreen, false);
     }
 
     // ---- the ranges -------------------------------------------------------
@@ -1855,8 +1857,10 @@ void AuthScreen::renderLoginSettingsSheet(float screenW, float screenH) {
             // silently rewritten by anything picked here instead.
             const std::vector<std::string> names = {"Off", "2x MSAA", "4x MSAA", "8x MSAA"};
             int aa = std::clamp(loginGfx_.antiAliasing, 0, 3);
-            if (ui_.dropdown("gfx.aa", ra, rb, names[static_cast<size_t>(aa)], names, &aa))
+            if (ui_.dropdown("gfx.aa", ra, rb, names[static_cast<size_t>(aa)], names, &aa)) {
                 loginGfx_.antiAliasing = aa;
+                loginGfx_.preset = 0;
+            }
             right.gap(px(8));
         }
         {
@@ -1869,25 +1873,30 @@ void AuthScreen::renderLoginSettingsSheet(float screenW, float screenH) {
                 names.emplace_back(rendering::kPomQualityLabels[i]);
             int quality = std::clamp(loginGfx_.pomQuality, 0, rendering::kPomQualityCount - 1);
             if (ui_.dropdown("gfx.pomq", ra, rb, names[static_cast<size_t>(quality)], names,
-                             &quality))
+                             &quality)) {
                 loginGfx_.pomQuality = quality;
+                loginGfx_.preset = 0;
+            }
             right.gap(px(8));
         }
         {
             const auto [ra, rb] = labelled("Shadow distance");
-            ui_.sliderFloat("gfx.shadowdist", ra, rb, &loginGfx_.shadowDistance, 50.0f, 600.0f);
+            if (ui_.sliderFloat("gfx.shadowdist", ra, rb, &loginGfx_.shadowDistance, 40.0f, 500.0f))
+                loginGfx_.preset = 0;
             right.gap(px(8));
         }
         {
             const auto [ra, rb] = labelled("View distance");
-            ui_.sliderFloat("gfx.viewdist", ra, rb, &loginGfx_.viewDistance, 400.0f, 2400.0f);
+            if (ui_.sliderFloat("gfx.viewdist", ra, rb, &loginGfx_.viewDistance, 400.0f, 2400.0f))
+                loginGfx_.preset = 0;
             right.gap(px(8));
         }
         {
             // 150, not 200: GameScreen::loadSettings clamps there, so the last
             // fifty units of this slider were silently discarded at login.
             const auto [ra, rb] = labelled("Ground clutter");
-            ui_.sliderFloat("gfx.clutter", ra, rb, &loginGfx_.groundClutter, 0.0f, 150.0f);
+            if (ui_.sliderFloat("gfx.clutter", ra, rb, &loginGfx_.groundClutter, 0.0f, 150.0f))
+                loginGfx_.preset = 0;
             right.gap(px(8));
         }
         {
@@ -1912,13 +1921,19 @@ void AuthScreen::renderLoginSettingsSheet(float screenW, float screenH) {
         const float cancelW = px(110);
         if (ui_.button("gfx.cancel", ImVec2(col.x1 - applyW - px(12) - cancelW, y),
                        ImVec2(col.x1 - applyW - px(12), y + bh), "Cancel")) {
+            loginGfxLoaded_ = false;
             settingsOpen_ = false;
         }
         if (ui_.button("gfx.apply", ImVec2(col.x1 - applyW, y), ImVec2(col.x1, y + bh), "Apply",
                        PaperUI::ButtonKind::Primary)) {
             saveLoginGraphicsState();
-            if (services_.window && services_.window->isVsyncEnabled() != loginGfx_.vsync) {
-                services_.window->setVsync(loginGfx_.vsync);
+            if (services_.window) {
+                if (services_.window->isVsyncEnabled() != loginGfx_.vsync) {
+                    services_.window->setVsync(loginGfx_.vsync);
+                }
+                if (services_.window->isFullscreen() != loginGfx_.fullscreen) {
+                    services_.window->setFullscreen(loginGfx_.fullscreen);
+                }
             }
             settingsOpen_ = false;
         }

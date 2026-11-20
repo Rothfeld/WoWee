@@ -15,6 +15,7 @@
 #include "addons/lua_engine.hpp"
 #include "addons/lua_api_helpers.hpp"
 #include "addons/addon_lua_snippets.hpp"
+#include "addons/addon_manager.hpp"
 #include "addons/lua_api_registrations.hpp"
 #include "core/gamepad.hpp"
 #include "core/input.hpp"
@@ -5014,4 +5015,39 @@ TEST_CASE_METHOD(Integration, "TBC video CVar aliases and gamma brightness bridg
     truth("GetCVar('gamma') == '1.0'");
 
     lua.setLuaServices({});
+}
+
+TEST_CASE("Bundled Wowee addons load on TBC 20400 even when checkAddonVersion is enabled", "[options][addons][tbc]") {
+    namespace fs = std::filesystem;
+    const fs::path tempDir = fs::temp_directory_path() / "wowee_test_tbc_addons";
+    std::error_code ec;
+    fs::remove_all(tempDir, ec);
+    fs::create_directories(tempDir / "WoweeAllBags", ec);
+    fs::create_directories(tempDir / "OutdatedThirdParty", ec);
+
+    {
+        std::ofstream toc(tempDir / "WoweeAllBags" / "WoweeAllBags.toc");
+        toc << "## Interface: 30300\n## Title: Wowee All Bags\nWoweeAllBags.lua\n";
+        std::ofstream luaFile(tempDir / "WoweeAllBags" / "WoweeAllBags.lua");
+        luaFile << "WOWEE_ALL_BAGS_TEST_LOADED = true\n";
+    }
+    {
+        std::ofstream toc(tempDir / "OutdatedThirdParty" / "OutdatedThirdParty.toc");
+        toc << "## Interface: 30300\n## Title: Outdated Third Party\nOutdatedThirdParty.lua\n";
+        std::ofstream luaFile(tempDir / "OutdatedThirdParty" / "OutdatedThirdParty.lua");
+        luaFile << "OUTDATED_THIRD_PARTY_LOADED = true\n";
+    }
+
+    addons::AddonManager am;
+    REQUIRE(am.initialize(nullptr));
+    am.scanAddons(tempDir.string());
+    REQUIRE(am.getLuaEngine()->executeString(
+        "__WoweeInterfaceVersion = 20400\nSetCVar('checkAddonVersion', '1')\n"));
+    am.loadAllAddons();
+
+    CHECK(am.isAddOnLoadedByName("WoweeAllBags"));
+    CHECK_FALSE(am.isAddOnLoadedByName("OutdatedThirdParty"));
+
+    am.shutdown();
+    fs::remove_all(tempDir, ec);
 }

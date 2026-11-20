@@ -8,6 +8,8 @@
 #include "core/config_paths.hpp"
 #include "core/logger.hpp"
 #include "addons/addon_manager.hpp"
+#include "addons/lua_api_registrations.hpp"
+#include "game/expansion_profile.hpp"
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <algorithm>
@@ -646,12 +648,32 @@ void CharacterScreen::renderAddonsSheet(float screenW, float screenH) {
     }
 
     const auto& addons = am->getAddons();
+    bool loadOutOfDate = addons::storedCVarValue("checkAddonVersion", "1") == "0";
+    {
+        const float boxSize = px(17);
+        const float labelW = ui_.textWidth("Load out of date AddOns", smallSize, false);
+        const float cbX = std::max(col.x0, col.x1 - boxSize - px(8) - labelW);
+        if (ui_.checkbox("addons.outofdate", ImVec2(cbX, col.y), boxSize,
+                         "Load out of date AddOns", &loadOutOfDate)) {
+            addons::setStoredCVar("checkaddonversion", loadOutOfDate ? "0" : "1");
+        }
+    }
     ui_.text(col.at(), "Enabled addons load when you enter the world, or on /reload.",
              smallSize, theme.pencil);
-    col.gap(ui_.lineHeight(smallSize) + px(8));
+    col.gap(std::max(ui_.lineHeight(smallSize), px(19)) + px(8));
     ui_.rule(ImVec2(col.x0, col.y), ImVec2(col.x1, col.y), paperFade(theme.ink, 0.45f),
              px(1.2f), 0x7712u);
     col.gap(px(8));
+
+    int expectedInterface = 0;
+    if (auto* reg = services_.expansionRegistry
+                        ? services_.expansionRegistry
+                        : core::Application::getInstance().getExpansionRegistry()) {
+        if (const auto* active = reg->getActive()) {
+            expectedInterface = active->majorVersion * 10000 +
+                                active->minorVersion * 100;
+        }
+    }
 
     const float listBottom = b.y - px(28);
     if (addons.empty()) {
@@ -682,10 +704,26 @@ void CharacterScreen::renderAddonsSheet(float screenW, float screenH) {
                 am->setAddonEnabled(addon.addonName, value);
             }
 
+            std::string lowerAddon = addon.addonName;
+            for (char& ch : lowerAddon) {
+                ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+            }
+            const bool builtIn = (lowerAddon.rfind("blizzard_", 0) == 0) ||
+                                 (lowerAddon.rfind("wowee", 0) == 0);
+            bool outOfDate = false;
+            if (!builtIn && expectedInterface > 0) {
+                const auto ifaceIt = addon.directives.find("Interface");
+                outOfDate = (ifaceIt == addon.directives.end()) ||
+                            ifaceIt->second.empty() ||
+                            (std::atoi(ifaceIt->second.c_str()) != expectedInterface);
+            }
+
             const float textX = rowA.x + px(8) + boxSize + px(12);
             const std::string title = addon.getTitle();
-            ui_.text(ImVec2(textX, rowA.y + px(4)), title.c_str(), px(kBodySize),
-                     enabled ? theme.ink : theme.pencil);
+            const ImU32 titleCol = !enabled
+                ? theme.pencil
+                : (outOfDate && !loadOutOfDate ? theme.crayonRed : theme.ink);
+            ui_.text(ImVec2(textX, rowA.y + px(4)), title.c_str(), px(kBodySize), titleCol);
 
             std::string sub;
             if (auto it = addon.directives.find("Version");
@@ -697,9 +735,13 @@ void CharacterScreen::renderAddonsSheet(float screenW, float screenH) {
                 if (!sub.empty()) sub += "  ";
                 sub += "by " + it->second;
             }
+            if (outOfDate) {
+                if (!sub.empty()) sub += "  ";
+                sub += loadOutOfDate ? "(out of date - allowed)" : "(out of date)";
+            }
             if (!sub.empty()) {
                 ui_.text(ImVec2(textX, rowA.y + px(4) + px(kBodySize) * 1.15f), sub.c_str(),
-                         smallSize, theme.pencil);
+                         smallSize, outOfDate && !loadOutOfDate ? theme.crayonRed : theme.pencil);
             }
         });
     (void)picked;

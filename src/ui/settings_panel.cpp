@@ -830,17 +830,22 @@ bool SettingsPanel::setSettingValue(const std::string& key, const std::string& v
 void SettingsPanel::applyAudioVolumes(audio::AudioCoordinator* ac) {
     if (!ac) return;
     // Every effect volume is its own balance; this is the one slider over them,
-    // which is what Blizzard's Sound Effects control drives.
-    const float fx = static_cast<float>(pendingEffectsVolume) / 100.0f;
+    // which is what Blizzard's Sound Effects control drives. Gated by each
+    // enable switch so dragging a volume slider while a channel is disabled
+    // updates its saved level without unmuting it.
+    const float fx = pendingEnableSoundEffects
+        ? static_cast<float>(pendingEffectsVolume) / 100.0f
+        : 0.0f;
     ac->setSfxVolumeScale(fx);
+    const float ambGate = pendingEnableAmbience ? 1.0f : 0.0f;
     float masterScale = soundMuted_ ? 0.0f : static_cast<float>(pendingMasterVolume) / 100.0f;
     audio::AudioEngine::instance().setMasterVolume(masterScale);
     if (auto* music = ac->getMusicManager())
-        music->setVolume(pendingMusicVolume);
+        music->setVolume(pendingEnableMusic ? pendingMusicVolume : 0);
     if (auto* ambient = ac->getAmbientSoundManager())
     {
-        ambient->setVolumeScale(pendingAmbientVolume / 100.0f);
-        ambient->setBellVolumeScale(pendingBellVolume / 100.0f);
+        ambient->setVolumeScale(ambGate * pendingAmbientVolume / 100.0f);
+        ambient->setBellVolumeScale(ambGate * pendingBellVolume / 100.0f);
     }
     if (auto* ui = ac->getUiSoundManager())
         ui->setVolumeScale(fx * pendingUiVolume / 100.0f);
@@ -855,7 +860,7 @@ void SettingsPanel::applyAudioVolumes(audio::AudioCoordinator* ac) {
     if (auto* npcVoice = ac->getNpcVoiceManager())
         npcVoice->setVolumeScale(fx * pendingNpcVoiceVolume / 100.0f);
     if (auto* playerVoice = ac->getPlayerVoiceManager()) {
-        playerVoice->setEnabled(pendingCharacterSpeech);
+        playerVoice->setEnabled(pendingCharacterSpeech && pendingErrorSpeech);
         // And its volume, which has no slider of its own but is an effect
         // channel like the eight above. The interface's Sound Effects switch
         // zeroes this scale along with theirs; restoring only `enabled` left
