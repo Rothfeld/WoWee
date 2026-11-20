@@ -60,6 +60,10 @@ public:
         auto it = creatureInfoCache.find(entry);
         return (it != creatureInfoCache.end()) ? it->second.family : 0;
     }
+    [[nodiscard]] bool isCreatureRacialLeader(uint32_t entry) const {
+        auto it = creatureInfoCache.find(entry);
+        return (it != creatureInfoCache.end()) ? it->second.racialLeader : false;
+    }
     [[nodiscard]] const GameObjectQueryResponseData* getCachedGameObjectInfo(uint32_t entry) const {
         auto it = gameObjectInfoCache_.find(entry);
         return (it != gameObjectInfoCache_.end()) ? &it->second : nullptr;

@@ -1119,6 +1119,10 @@ public:
     uint32_t getCreatureFamily(uint32_t entry) const {
         return entityController_->getCreatureFamily(entry);
     }
+    // Returns true if the creature template has the RacialLeader flag set
+    bool isCreatureRacialLeader(uint32_t entry) const {
+        return entityController_->isCreatureRacialLeader(entry);
+    }
 
     void startAutoAttack(uint64_t targetGuid);
     void stopAutoAttack();
@@ -2854,6 +2858,12 @@ public:
         if (f & FACTION_FLAG_HIDDEN) return false;
         if (f & FACTION_FLAG_INVISIBLE_FORCED) return false;
         return (f & FACTION_FLAG_VISIBLE) != 0;
+    }
+    // Returns true if the faction is hidden from the player (e.g. opposing-faction cities)
+    bool isFactionHidden(uint32_t repListId) const {
+        if (repListId >= initialFactions_.size()) return false;
+        const uint8_t f = initialFactions_[repListId].flags;
+        return (f & (FACTION_FLAG_HIDDEN | FACTION_FLAG_INVISIBLE_FORCED)) != 0;
     }
     // Returns true if the faction has been set inactive (hidden from the active list)
     bool isFactionInactive(uint32_t repListId) const {

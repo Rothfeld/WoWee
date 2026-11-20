@@ -3937,6 +3937,155 @@ TEST_CASE_METHOD(Integration, "Unit tooltip never names creature type Not specif
     lua.setGameHandler(nullptr);
 }
 
+TEST_CASE_METHOD(Integration, "Racial leader creature tooltip shows Leader line", "[unit-tooltip]") {
+    using namespace wowee::game;
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    lua.setGameHandler(&handler);
+    // 1604 = Silvermoon City (friendly to Horde, hostile to Alliance); 14 = hostile monster
+    handler.setFactionFriendlyMap({{1604, true}, {1605, false}, {14, false}});
+    handler.setFactionHostileMap({{1604, false}, {1605, true}, {14, true}});
+    run(R"lua(
+        TOOLTIP_UNIT_LEVEL = 'Level %s'
+        TOOLTIP_UNIT_LEVEL_CLASS = 'Level %s %s'
+        TOOLTIP_UNIT_LEVEL_CLASS_TYPE = 'Level %s %s (%s)'
+        TOOLTIP_UNIT_LEVEL_TYPE = 'Level %s (%s)'
+        TOOLTIP_UNIT_LEVEL_RACE_CLASS_TYPE = 'Level %s %s %s (%s)'
+        ELITE = 'Elite'
+        BOSS = 'Boss'
+        PLAYER = 'Player'
+        CORPSE = 'Corpse'
+        PVP_RANK_LEADER = 'Leader'
+        leaderTip = CreateFrame('GameTooltip', 'LeaderTip', UIParent)
+    )lua");
+
+    auto sendQuery = [&](uint32_t entry, const char* name, const char* subName,
+                         uint32_t creatureType, uint32_t rank, uint8_t racialLeader) {
+        wowee::network::Packet info(wireOpcode(Opcode::SMSG_CREATURE_QUERY_RESPONSE));
+        info.writeUInt32(entry);
+        info.writeString(name);
+        info.writeString("");
+        info.writeString("");
+        info.writeString("");
+        info.writeString(subName);
+        info.writeString(""); // iconName
+        info.writeUInt32(0);  // typeFlags
+        info.writeUInt32(creatureType);
+        info.writeUInt32(0);  // family
+        info.writeUInt32(rank);
+        for (int i = 0; i < 6; ++i) info.writeUInt32(0); // wdbField11, petSpellDataId, displayId[4]
+        info.writeFloat(1.0f);
+        info.writeFloat(1.0f);
+        info.writeUInt8(racialLeader);
+        session.receive(info);
+    };
+
+    // 1. Friendly racial leader (Lor'themar Theron, entry 16802)
+    sendQuery(16802, "Lor'themar Theron", "Regent Lord of Quel'Thalas", 7, 3, 1);
+    REQUIRE(handler.isCreatureRacialLeader(16802));
+    {
+        constexpr uint64_t guid = 0xf130000000300001ull;
+        auto unit = std::make_shared<Unit>(guid);
+        unit->setName("Lor'themar Theron");
+        unit->setEntry(16802);
+        unit->setLevel(73);
+        unit->setHealth(100);
+        unit->setMaxHealth(100);
+        unit->setField(fieldIndex(UF::UNIT_FIELD_LEVEL), 73);
+        unit->setField(fieldIndex(UF::UNIT_FIELD_FLAGS), 0x1000); // UNIT_FLAG_PVP
+        unit->setFactionTemplate(1604);
+        unit->setHostile(false);
+        handler.getEntityManager().addEntity(guid, unit);
+        handler.setTarget(guid);
+        run("assert(leaderTip:SetUnit('target'))");
+        const auto* tip = lua.widgets().findByName("LeaderTip");
+        REQUIRE(tip);
+        REQUIRE(tip->tooltipLines.size() == 5);
+        CHECK(tip->tooltipLines[0].left == "Lor'themar Theron");
+        CHECK(tip->tooltipLines[1].left == "Regent Lord of Quel'Thalas");
+        CHECK(tip->tooltipLines[2].left == "Level ?? (Boss)");
+        CHECK(tip->tooltipLines[3].left == "PvP");
+        CHECK(tip->tooltipLines[4].left == "Leader");
+        CHECK(tip->tooltipLines[4].lc[0] == Catch::Approx(1.0f));
+        CHECK(tip->tooltipLines[4].lc[1] == Catch::Approx(1.0f));
+        CHECK(tip->tooltipLines[4].lc[2] == Catch::Approx(1.0f));
+    }
+
+    // 2. Hostile racial leader (same creature viewed as hostile)
+    {
+        constexpr uint64_t guid = 0xf130000000300002ull;
+        auto unit = std::make_shared<Unit>(guid);
+        unit->setName("Lor'themar Theron");
+        unit->setEntry(16802);
+        unit->setLevel(73);
+        unit->setHealth(100);
+        unit->setMaxHealth(100);
+        unit->setField(fieldIndex(UF::UNIT_FIELD_LEVEL), 73);
+        unit->setField(fieldIndex(UF::UNIT_FIELD_FLAGS), 0x1000); // UNIT_FLAG_PVP
+        unit->setFactionTemplate(1605);
+        unit->setHostile(true);
+        handler.getEntityManager().addEntity(guid, unit);
+        handler.setTarget(guid);
+        run("assert(leaderTip:SetUnit('target'))");
+        const auto* tip = lua.widgets().findByName("LeaderTip");
+        REQUIRE(tip);
+        REQUIRE(tip->tooltipLines.size() == 5);
+        CHECK(tip->tooltipLines[0].left == "Lor'themar Theron");
+        CHECK(tip->tooltipLines[1].left == "Regent Lord of Quel'Thalas");
+        CHECK(tip->tooltipLines[2].left == "Level ?? Humanoid (Boss)");
+        CHECK(tip->tooltipLines[3].left == "PvP");
+        CHECK(tip->tooltipLines[4].left == "Leader");
+    }
+
+    // 3. Non-leader boss (racialLeader = 0): must NOT show Leader line
+    sendQuery(15990, "Kel'Thuzad", "", 6, 3, 0);
+    REQUIRE_FALSE(handler.isCreatureRacialLeader(15990));
+    {
+        constexpr uint64_t guid = 0xf130000000300003ull;
+        auto unit = std::make_shared<Unit>(guid);
+        unit->setName("Kel'Thuzad");
+        unit->setEntry(15990);
+        unit->setLevel(63);
+        unit->setHealth(100);
+        unit->setMaxHealth(100);
+        unit->setField(fieldIndex(UF::UNIT_FIELD_LEVEL), 63);
+        unit->setField(fieldIndex(UF::UNIT_FIELD_FLAGS), 0x1000); // UNIT_FLAG_PVP
+        unit->setFactionTemplate(14);
+        unit->setHostile(true);
+        handler.getEntityManager().addEntity(guid, unit);
+        handler.setTarget(guid);
+        run("assert(leaderTip:SetUnit('target'))");
+        const auto* tip = lua.widgets().findByName("LeaderTip");
+        REQUIRE(tip);
+        REQUIRE(tip->tooltipLines.size() == 3);
+        CHECK(tip->tooltipLines[0].left == "Kel'Thuzad");
+        CHECK(tip->tooltipLines[1].left == "Level ?? Undead (Boss)");
+        CHECK(tip->tooltipLines[2].left == "PvP");
+    }
+
+    // 4. Hidden vs visible faction flags (SMSG_INITIALIZE_FACTIONS)
+    {
+        wowee::network::Packet initFactions(wireOpcode(Opcode::SMSG_INITIALIZE_FACTIONS));
+        initFactions.writeUInt32(4);
+        initFactions.writeUInt8(GameHandler::FACTION_FLAG_VISIBLE | GameHandler::FACTION_FLAG_PEACE_FORCED);
+        initFactions.writeUInt32(0); // repListId 0: visible (e.g. Ironforge for Alliance)
+        initFactions.writeUInt8(0);
+        initFactions.writeUInt32(0); // repListId 1: unmet neutral (e.g. Gadgetzan)
+        initFactions.writeUInt8(GameHandler::FACTION_FLAG_AT_WAR | GameHandler::FACTION_FLAG_HIDDEN);
+        initFactions.writeUInt32(0); // repListId 2: hidden opposing city (e.g. Silvermoon City for Alliance)
+        initFactions.writeUInt8(GameHandler::FACTION_FLAG_INVISIBLE_FORCED);
+        initFactions.writeUInt32(0); // repListId 3: forced invisible
+        session.receive(initFactions);
+        CHECK_FALSE(handler.isFactionHidden(0));
+        CHECK_FALSE(handler.isFactionHidden(1));
+        CHECK(handler.isFactionHidden(2));
+        CHECK(handler.isFactionHidden(3));
+        CHECK_FALSE(handler.isFactionHidden(99));
+    }
+
+    lua.setGameHandler(nullptr);
+}
+
 TEST_CASE_METHOD(Integration, "Party roster identity and map coordinates survive reconnect", "[party-reconnect]") {
     using namespace wowee::game;
     replay::Session session("tbc");

@@ -1856,6 +1856,7 @@ struct CreatureQueryResponseData {
     uint32_t family = 0;
     uint32_t rank = 0;         // 0=Normal, 1=Elite, 2=Rare Elite, 3=Boss, 4=Rare
     uint32_t displayId[4] = {};  // Up to 4 random display models (0 = unused)
+    bool racialLeader = false;   // Faction/racial leader flag (shows "Leader" in unit tooltip)
 
     [[nodiscard]] bool isValid() const { return entry != 0 && !name.empty(); }
 };

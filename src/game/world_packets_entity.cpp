@@ -190,10 +190,19 @@ bool CreatureQueryResponseParser::parse(network::Packet& packet, CreatureQueryRe
     data.displayId[2] = packet.readUInt32();
     data.displayId[3] = packet.readUInt32();
 
-    // Skip remaining fields (healthMultiplier, powerMultiplier, racialLeader, questItems, movementId)
+    // healthMultiplier (float) + powerMultiplier (float) + racialLeader (uint8) = 9 bytes
+    // TBC 2.4.3 ends after racialLeader; WotLK 3.3.5a appends questItems[6] and movementId.
+    if (!packet.hasRemaining(9)) {
+        LOG_WARNING("SMSG_CREATURE_QUERY_RESPONSE: truncated before racialLeader (entry=", data.entry, ")");
+        data.racialLeader = false;
+    } else {
+        packet.readFloat(); // healthMultiplier
+        packet.readFloat(); // powerMultiplier
+        data.racialLeader = packet.readUInt8() != 0;
+    }
 
     LOG_DEBUG("Creature query response: ", data.name, " (type=", data.creatureType,
-             " rank=", data.rank, " displayIds=[", data.displayId[0], ",",
+             " rank=", data.rank, " leader=", data.racialLeader, " displayIds=[", data.displayId[0], ",",
              data.displayId[1], ",", data.displayId[2], ",", data.displayId[3], "])");
     return true;
 }

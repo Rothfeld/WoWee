@@ -3667,9 +3667,11 @@ int lua_Tooltip_SetUnit(lua_State* L) {
                 const auto factions = assets->loadDBC("Faction.dbc");
                 const auto* factionLayout = layouts->getLayout("Faction");
                 const int32_t factionRecord = factions ? factions->findRecordById(faction) : -1;
-                if (factionRecord >= 0 && factionLayout &&
-                    static_cast<int32_t>(factions->getUInt32(factionRecord,
-                        (*factionLayout)["ReputationListID"])) >= 0) {
+                const int32_t repListId = (factionRecord >= 0 && factionLayout)
+                    ? static_cast<int32_t>(factions->getUInt32(factionRecord,
+                        (*factionLayout)["ReputationListID"]))
+                    : -1;
+                if (repListId >= 0 && !gh->isFactionHidden(static_cast<uint32_t>(repListId))) {
                     addLine(gh->getFactionNamePublic(faction), 1.0f, 1.0f, 1.0f);
                 }
             }
@@ -3677,6 +3679,8 @@ int lua_Tooltip_SetUnit(lua_State* L) {
     }
     if (entity && (entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_FLAGS)) & 0x1000))
         addLine("PvP", 1.0f, 1.0f, 1.0f);
+    if (!isPlayer && unit && gh->isCreatureRacialLeader(unit->getEntry()))
+        addLine(global("PVP_RANK_LEADER"), 1.0f, 1.0f, 1.0f);
 
     if (unit) {
         if (const auto harvesting = ui::corpseHarvestPresentation(*gh, *unit)) {
