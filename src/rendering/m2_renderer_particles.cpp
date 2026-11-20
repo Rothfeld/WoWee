@@ -224,6 +224,7 @@ void M2Renderer::emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt
                 prevAnimTime, inst.animTime, inst.animDuration, includeStartBoundary,
                 inst.globalSequenceTime, gpu.globalSequenceDurations,
                 particleDensity_, dt,
+                [&]() { return (distN(particleRng_) + 1.0f) * 0.5f; },
                 [&](uint32_t burstCount, float ageSeconds, float localKeyMs) {
                     for (uint32_t b = 0; b < burstCount && inst.particles.size() < MAX_M2_PARTICLES; ++b) {
                         spawnParticle(localKeyMs, ageSeconds, static_cast<float>(burstCount));

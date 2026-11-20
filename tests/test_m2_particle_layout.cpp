@@ -69,6 +69,7 @@ TEST_CASE("TBC and Wrath particle headers preserve emitter shape", "[m2][particl
     }
 }
 
+#include "rendering/m2_billboard.hpp"
 #include "rendering/particle_emission.hpp"
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -763,10 +764,11 @@ TEST_CASE("Discrete Squirt (0x8000) emitters fire keyframe bursts once and stay 
     enabled.sequences[0].timestamps = {33, 800, 900};
     enabled.sequences[0].floatValues = {0.0f, 1.0f, 0.0f};
 
-    auto countStep = [&](float prevMs, float currMs, bool startBoundary, float dtSec) {
+    auto countStep = [&](float prevMs, float currMs, bool startBoundary, float dtSec, float random01 = 1.0f) {
         uint32_t total = 0;
         forEachSquirtBurst(rate, enabled, 0, prevMs, currMs, 3300.0f, startBoundary,
                            0.0f, {}, 1.0f, dtSec,
+                           [random01]() { return random01; },
                            [&](uint32_t n, float age, float) {
                                CHECK(age >= 0.0f);
                                CHECK(age <= dtSec);
@@ -778,14 +780,17 @@ TEST_CASE("Discrete Squirt (0x8000) emitters fire keyframe bursts once and stay 
     // Initial step and falling shard phase (0 -> 760 ms local): nothing emitted.
     CHECK(countStep(0.0f, 33.0f, true, 0.033f) == 0);
     CHECK(countStep(33.0f, 760.0f, false, 0.727f) == 0);
-    // Crossing local 767 ms (global 800 ms) fires all 35 particles once, even if
+    // Crossing local 767 ms (global 800 ms) fires up to 35 particles once, even if
     // the frame ends at 880 ms (global 913 ms, past EnabledIn's 900 ms turn-off).
-    CHECK(countStep(760.0f, 880.0f, false, 0.120f) == 35);
+    CHECK(countStep(760.0f, 880.0f, false, 0.120f, 1.0f) == 35);
+    CHECK(countStep(760.0f, 880.0f, false, 0.120f, 0.5f) == 18);
+    CHECK(countStep(760.0f, 880.0f, false, 0.120f, 0.0f) == 0);
     // Remaining Stand duration and held final frame emit nothing.
     CHECK(countStep(880.0f, 3300.0f, false, 2.420f) == 0);
     CHECK(countStep(3300.0f, 3300.0f, false, 0.033f) == 0);
 
-    // DecisiveStrike_Impact_Chest #0 disables EnabledIn at 3400 ms where key 50 sits.
+    // DecisiveStrike_Impact_Chest #0 / Strike_Impact_Chest #0 disables EnabledIn
+    // at 3400 ms where key 50 sits (must not even draw from RNG).
     wowee::pipeline::M2AnimationTrack disabledAtKey;
     disabledAtKey.interpolationType = 0;
     disabledAtKey.sequences.resize(1);
@@ -801,10 +806,85 @@ TEST_CASE("Discrete Squirt (0x8000) emitters fire keyframe bursts once and stay 
     strikeRate.sequences[0].floatValues = {0.0f, 50.0f};
 
     uint32_t suppressed = 0;
+    uint32_t rngDraws = 0;
     forEachSquirtBurst(strikeRate, disabledAtKey, 0, 0.0f, 100.0f, 667.0f, true,
                        0.0f, {}, 1.0f, 0.100f,
+                       [&]() { ++rngDraws; return 1.0f; },
                        [&](uint32_t n, float, float) { suppressed += n; });
     CHECK(suppressed == 0);
+    CHECK(rngDraws == 0);
+}
+
+TEST_CASE("Squirt burst count scales by uniform [0, 1] with exact half-rate expectation",
+          "[m2][particle][tbc]") {
+    using namespace wowee::rendering;
+    CHECK(particleSquirtBurstCount(0.0f, 1.0f, 1.0f) == 0u);
+    CHECK(particleSquirtBurstCount(30.0f, 0.0f, 1.0f) == 0u);
+    CHECK(particleSquirtBurstCount(30.0f, 1.0f, 0.0f) == 0u);
+    CHECK(particleSquirtBurstCount(30.0f, 1.0f, 0.5f) == 15u);
+    CHECK(particleSquirtBurstCount(30.0f, 1.0f, 1.0f) == 30u);
+    CHECK(particleSquirtBurstCount(30.0f, 0.5f, 1.0f) == 15u);
+
+    // Every positive integer Squirt key (including 2.0 on wisp.m2 #10 /
+    // decisivestrike_impact_chest.m2 #2 and 30.0 on Strike_Impact_Chest.m2 #1)
+    // averages exactly 0.5 * keyValue * density under uniform [0, 1] sampling.
+    constexpr int kSamples = 20000;
+    for (const float keyVal : {2.0f, 5.0f, 30.0f, 35.0f, 200.0f}) {
+        uint64_t sum = 0;
+        uint32_t minSeen = 1000000u, maxSeen = 0u;
+        for (int i = 0; i < kSamples; ++i) {
+            const float u = (static_cast<float>(i) + 0.5f) / static_cast<float>(kSamples);
+            const uint32_t c = particleSquirtBurstCount(keyVal, 1.0f, u);
+            sum += c;
+            minSeen = std::min(minSeen, c);
+            maxSeen = std::max(maxSeen, c);
+        }
+        const double mean = static_cast<double>(sum) / static_cast<double>(kSamples);
+        CHECK(mean == Catch::Approx(0.5 * static_cast<double>(keyVal)).margin(0.01));
+        CHECK(minSeen == 0u);
+        CHECK(maxSeen == static_cast<uint32_t>(keyVal));
+    }
+
+    // Shipped TBC Strike_Impact_Chest.m2 (Flurry 12970 CastKit 3010 LeftHand/RightHand
+    // & Mortal Strike / Heroic Strike ImpactKit 437 Chest):
+    // Emitter #0 (FLARE.BLP) is suppressed by EnabledIn=0 at 3400 ms;
+    // Emitter #1 (FIREPLUME64.BLP, flags 0x8429, sphere type 2, tail-only) fires
+    // one stochastic [0..30] Squirt burst (mean 15) at local 34 ms (global 3367 ms).
+    const auto bytes = wowee::test::readTbcData("spells/strike_impact_chest.m2");
+    const auto model = wowee::pipeline::M2Loader::load(bytes);
+    REQUIRE(model.bones.size() == 3);
+    CHECK((model.bones[0].flags & kM2BoneSphericalBillboard) != 0);
+    REQUIRE(model.sequences.size() == 1);
+    CHECK(model.sequences[0].duration == 667u);
+    REQUIRE(model.particleEmitters.size() == 2);
+
+    const auto& flare = model.particleEmitters[0];
+    uint32_t flareTotal = 0;
+    forEachSquirtBurst(flare.emissionRate, flare.enabledIn, 0, 0.0f, 667.0f, 667.0f, true,
+                       0.0f, model.globalSequenceDurations, 1.0f, 0.667f,
+                       []() { return 1.0f; },
+                       [&](uint32_t n, float, float) { flareTotal += n; });
+    CHECK(flareTotal == 0u);
+
+    const auto& streaks = model.particleEmitters[1];
+    CHECK(streaks.flags == 0x8429u);
+    CHECK(streaks.emitterType == 2u);
+    CHECK(streaks.headOrTail == 1u);
+    CHECK(streaks.blendingType == 4u);
+    CHECK(streaks.tailLength == Catch::Approx(10.0f));
+    uint64_t streakSum = 0;
+    for (int i = 0; i < 1000; ++i) {
+        const float u = (static_cast<float>(i) + 0.5f) / 1000.0f;
+        forEachSquirtBurst(streaks.emissionRate, streaks.enabledIn, 0, 0.0f, 100.0f, 667.0f, true,
+                           0.0f, model.globalSequenceDurations, 1.0f, 0.100f,
+                           [u]() { return u; },
+                           [&](uint32_t n, float ageSec, float localKeyMs) {
+                               CHECK(localKeyMs == Catch::Approx(34.0f));
+                               CHECK(ageSec == Catch::Approx(0.066f));
+                               streakSum += n;
+                           });
+    }
+    CHECK(static_cast<double>(streakSum) / 1000.0 == Catch::Approx(15.0).margin(0.05));
 }
 
 TEST_CASE("Plane emitter spans areaLength along Y and areaWidth along X", "[m2][particle]") {

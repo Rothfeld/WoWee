@@ -321,17 +321,34 @@ inline glm::vec3 planeParticleDirection(float inclination, float azimuth) {
 /// `0.5 * rate` (independent of frame rate) and natural stochastic puff spacing,
 /// matching TBC 2.4.3 continuous smoke, mist, and spark emitters (e.g.
 /// `d_smoke.m2` on the crashed Exodar escape pod and `ashtreesmoke01.m2` in
-/// Ammen Vale) while leaving discrete Squirt (`0x8000`) bursts untouched.
+/// Ammen Vale).
 inline float particleContinuousEmissionIncrement(float rate, float dt, float random01) {
     assert(random01 >= 0.0f && random01 <= 1.0f);
     return rate * dt * random01;
 }
 
+/// Discrete Squirt (`0x8000`) particle count for one crossed positive rate
+/// keyframe. Like `particleContinuousEmissionIncrement`, pre-264 TBC 2.4.3
+/// emitters draw `keyValue * density * random01` with `random01` uniform in
+/// [0, 1] (WotLK v264 later replaced this implicit [0, rate] draw with explicit
+/// `emissionRateVary`). Rounding `keyValue * density * random01` preserves exact
+/// mean `0.5 * keyValue * density` across `[0 .. round(keyValue * density)]`
+/// (e.g. `2.0` -> mean `1.0` on `wisp.m2` #10 / `decisivestrike_impact_chest.m2`
+/// #2, and `30.0` -> mean `15.0` across `[0..30]` on `Strike_Impact_Chest.m2` #1
+/// for Warrior `Flurry` `12970` / `Mortal Strike` `30330`, matching build 8606).
+inline uint32_t particleSquirtBurstCount(float keyValue, float density, float random01) {
+    assert(random01 >= 0.0f && random01 <= 1.0f);
+    const float scaled = keyValue * density;
+    if (scaled <= 0.0f) return 0u;
+    return static_cast<uint32_t>(std::floor(scaled * random01 + 0.5f));
+}
+
 /// Discrete Squirt (0x8000, interpolationType == 0) bursts crossed during one
 /// step of an emitter's sequence clock. Each crossed positive rate keyframe
-/// whose EnabledIn track is on at that keyframe's timestamp invokes
-/// onBurst(count, ageSeconds, localKeyMs) with floor(value * density) particles.
-template <typename Fn>
+/// whose EnabledIn track is on at that keyframe's timestamp draws one uniform
+/// `sampleRandom01()` in [0, 1] and invokes `onBurst(count, ageSeconds, localKeyMs)`
+/// when `particleSquirtBurstCount(val, density, random01) > 0`.
+template <typename RandomFn, typename Fn>
 inline void forEachSquirtBurst(
     const pipeline::M2AnimationTrack& emissionRate,
     const pipeline::M2AnimationTrack& enabledIn,
@@ -344,6 +361,7 @@ inline void forEachSquirtBurst(
     const std::vector<uint32_t>& globalSequenceDurations,
     float density,
     float stepSeconds,
+    RandomFn&& sampleRandom01,
     Fn&& onBurst) {
     if (emissionRate.interpolationType != 0) return;
     if (sequenceIndex < 0 || static_cast<size_t>(sequenceIndex) >= emissionRate.sequences.size()) return;
@@ -364,8 +382,7 @@ inline void forEachSquirtBurst(
                                       globalSequenceTimeMs, globalSequenceDurations, 1.0f) <= 0.0f) {
                 continue;
             }
-            const uint32_t burstCount =
-                static_cast<uint32_t>(std::max(0.0f, std::floor(val * density)));
+            const uint32_t burstCount = particleSquirtBurstCount(val, density, sampleRandom01());
             if (burstCount == 0) continue;
             const float ageSec = std::clamp(((hiMs - localKeyMs) + ageOffsetMs) * 0.001f,
                                             0.0f, std::max(0.0f, stepSeconds));

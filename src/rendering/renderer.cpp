@@ -2477,11 +2477,43 @@ void Renderer::update(float deltaTime) {
     if (chargeEffect) {
         chargeEffect->update(deltaTime);
     }
+    // Pose character skeletons before SpellVisualSystem and M2Renderer step
+    // attached spell visuals: hand/chest/breath CastKits (e.g. Warrior Flurry
+    // 12970 Strike_Impact_Chest.m2 on SpellLeftHand/SpellRightHand during
+    // Attack1H) and NoTrail StateKits (BloodLust_State_Hand.m2) must sample
+    // this frame's animated bone matrices rather than lagging one frame behind.
+    if (characterRenderer && camera) {
+        WMORenderer* wmo = wmoRenderer.get();
+        TerrainManager* tm = terrainManager.get();
+        characterRenderer->setInteriorLightQuery(wmo ? CharacterRenderer::InteriorLightQuery(
+            [wmo](const glm::vec3& position) { return wmo->interiorObjectLight(position); })
+            : CharacterRenderer::InteriorLightQuery{});
+        characterRenderer->setUnitFloorLightQuery([wmo, tm](const glm::vec3& position, float sampleHeight) {
+            CharacterRenderer::UnitFloorLight res{.valid = true};
+            auto sample = wmo ? wmo->sampleFloorLight(position, sampleHeight, true) : std::nullopt;
+            if (sample && tm && !tm->isHoleAt(position.x, position.y)) {
+                if (const auto tz = tm->getHeightAt(position.x, position.y);
+                    tz && *tz <= position.z + 0.5f && *tz > sample->floorZ + 0.1f) {
+                    sample.reset();
+                }
+            }
+            if (sample && sample->isInterior) {
+                res.isInterior = true;
+                res.exteriorBlend = sample->exteriorBlend;
+                res.indoorRig = sample->indoorRig;
+            } else {
+                const bool onWmoExterior = sample.has_value();
+                res.terrainShadowed = !onWmoExterior && tm && tm->isShadowedAt(position.x, position.y);
+            }
+            return res;
+        });
+        characterRenderer->update(deltaTime, camera->getPosition());
+    }
+
     // Update transient spell visual instances (delegated to SpellVisualSystem §4.4)
     if (spellVisualSystem_) spellVisualSystem_->update(deltaTime);
 
-
-    // Launch M2 doodad animation on background thread (overlaps with character animation + audio)
+    // Launch M2 doodad and spell-visual animation on background thread (overlaps with audio)
     std::future<void> m2AnimFuture;
     bool m2AnimLaunched = false;
     if (m2Renderer && camera) {
@@ -2528,35 +2560,6 @@ void Renderer::update(float deltaTime) {
                 m2Renderer->update(m2DeltaTime, m2CamPos, m2ViewProj);
             });
         m2AnimLaunched = true;
-    }
-
-    // Update character animations (runs in parallel with M2 animation above)
-    if (characterRenderer && camera) {
-        WMORenderer* wmo = wmoRenderer.get();
-        TerrainManager* tm = terrainManager.get();
-        characterRenderer->setInteriorLightQuery(wmo ? CharacterRenderer::InteriorLightQuery(
-            [wmo](const glm::vec3& position) { return wmo->interiorObjectLight(position); })
-            : CharacterRenderer::InteriorLightQuery{});
-        characterRenderer->setUnitFloorLightQuery([wmo, tm](const glm::vec3& position, float sampleHeight) {
-            CharacterRenderer::UnitFloorLight res{.valid = true};
-            auto sample = wmo ? wmo->sampleFloorLight(position, sampleHeight, true) : std::nullopt;
-            if (sample && tm && !tm->isHoleAt(position.x, position.y)) {
-                if (const auto tz = tm->getHeightAt(position.x, position.y);
-                    tz && *tz <= position.z + 0.5f && *tz > sample->floorZ + 0.1f) {
-                    sample.reset();
-                }
-            }
-            if (sample && sample->isInterior) {
-                res.isInterior = true;
-                res.exteriorBlend = sample->exteriorBlend;
-                res.indoorRig = sample->indoorRig;
-            } else {
-                const bool onWmoExterior = sample.has_value();
-                res.terrainShadowed = !onWmoExterior && tm && tm->isShadowedAt(position.x, position.y);
-            }
-            return res;
-        });
-        characterRenderer->update(deltaTime, camera->getPosition());
     }
 
     // Update AudioEngine (cleanup finished sounds, etc.)
