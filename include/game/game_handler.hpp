@@ -2817,15 +2817,22 @@ public:
         /// The Inactive group's heading (factionId 0): its name is the
         /// interface's FACTION_INACTIVE string.
         bool isInactiveGroup = false;
+        /// The Other group's heading (factionId kOtherFactionGroupId): holds
+        /// standalone top-level factions with no parent or children; its name
+        /// is the interface's FACTION_OTHER string.
+        bool isOtherGroup = false;
     };
+    static constexpr uint32_t kOtherFactionGroupId = 0xFFFFFFFFu;
     /// The rows currently on screen: headers, plus the children of every header
     /// that is not collapsed. This is what GetNumFactions counts and what
     /// GetFactionInfo indexes, so every binding taking a "faction index" must
     /// resolve it through here rather than through the flat list.
     const std::vector<ReputationRow>& getReputationRows() const;
-    /// Faction id 0 is the Inactive group, which starts closed.
+    /// Faction id 0 is the Inactive group (starts closed); kOtherFactionGroupId
+    /// is the Other group (starts open).
     bool isFactionCollapsed(uint32_t factionId) const {
         if (factionId == 0) return !inactiveGroupExpanded_;
+        if (factionId == kOtherFactionGroupId) return otherGroupCollapsed_;
         return collapsedFactionIds_.count(factionId) > 0;
     }
     void setFactionCollapsed(uint32_t factionId, bool collapsed);
@@ -5512,6 +5519,7 @@ private:
     /// opinion about it, so it is saved with the rest of the character config.
     std::unordered_set<uint32_t> collapsedFactionIds_;
     bool inactiveGroupExpanded_ = false;
+    bool otherGroupCollapsed_ = false;
     std::unordered_map<uint32_t, std::string> achievementDescCache_;
     std::unordered_map<uint32_t, uint32_t>    achievementPointsCache_;
     std::unordered_map<uint32_t, uint32_t>    achievementIconCache_;  // achievementId → SpellIcon.dbc ID

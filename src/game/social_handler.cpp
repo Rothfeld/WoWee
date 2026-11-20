@@ -5515,24 +5515,37 @@ void SocialHandler::handleSetFactionAtWar(network::Packet& packet) {
     if (!packet.hasRemaining(5)) { packet.skipAll(); return; }
     uint32_t repListId = packet.readUInt32();
     uint8_t  setAtWar  = packet.readUInt8();
-    if (repListId < owner_.initialFactionsRef().size()) {
+    if (repListId < owner_.getInitialFactions().size()) {
         if (setAtWar)
             owner_.initialFactionsRef()[repListId].flags |=  GameHandler::FACTION_FLAG_AT_WAR;
         else
             owner_.initialFactionsRef()[repListId].flags &= ~GameHandler::FACTION_FLAG_AT_WAR;
         owner_.refreshUnitHostility();
+        owner_.fireAddonEvent("UPDATE_FACTION", {});
     }
 }
 
 void SocialHandler::handleSetFactionVisible(network::Packet& packet) {
-    if (!packet.hasRemaining(5)) { packet.skipAll(); return; }
-    uint32_t repListId = packet.readUInt32();
-    uint8_t  visible   = packet.readUInt8();
-    if (repListId < owner_.initialFactionsRef().size()) {
-        if (visible)
-            owner_.initialFactionsRef()[repListId].flags |=  GameHandler::FACTION_FLAG_VISIBLE;
-        else
-            owner_.initialFactionsRef()[repListId].flags &= ~GameHandler::FACTION_FLAG_VISIBLE;
+    // CMaNGOS-TBC ReputationMgr::SendVisible writes only uint32 repListId (4 bytes).
+    if (!packet.hasRemaining(4)) { packet.skipAll(); return; }
+    const uint32_t repListId = packet.readUInt32();
+    if (repListId >= owner_.getInitialFactions().size()) { packet.skipAll(); return; }
+
+    auto& fs = owner_.initialFactionsRef()[repListId];
+    const bool wasVisible = (fs.flags & GameHandler::FACTION_FLAG_VISIBLE) != 0;
+    fs.flags |= GameHandler::FACTION_FLAG_VISIBLE;
+
+    if (!wasVisible) {
+        owner_.loadFactionNameCache();
+        const uint32_t factionId = owner_.getFactionIdByRepListId(repListId);
+        if (factionId != 0) {
+            const auto& standing = reputationStandingFor(fs.standing);
+            const std::string label = owner_.globalString(
+                ("FACTION_STANDING_LABEL" + std::to_string(standing.id)).c_str());
+            const std::string name = owner_.getFactionName(factionId);
+            owner_.systemGlobal("FACTION_STANDING_CHANGED", {label, name});
+        }
+        owner_.fireAddonEvent("UPDATE_FACTION", {});
     }
 }
 

@@ -49,6 +49,17 @@ struct GameHandlerTestAccess {
         gh.areaNameCache_[area] = name;
         gh.areaNameCacheLoaded_ = true;
     }
+    // Faction.dbc without the DBC: name, repListId, optional parentFactionId.
+    static void setFaction(GameHandler& gh, uint32_t factionId, uint32_t repListId,
+                           const std::string& name, uint32_t parentId = 0) {
+        gh.factionNameCacheLoaded_ = true;
+        gh.factionNameCache_[factionId] = name;
+        if (repListId != 0xFFFFFFFFu) {
+            gh.factionRepListToId_[repListId] = factionId;
+            gh.factionIdToRepList_[factionId] = repListId;
+        }
+        if (parentId != 0) gh.factionParent_[factionId] = parentId;
+    }
     // Queued and drained the way update() drains the socket's packets, frame
     // after frame, since update object blocks are applied after their packet
     // rather than inside it. Bounded, so work that never drains fails here

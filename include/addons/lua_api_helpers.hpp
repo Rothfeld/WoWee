@@ -626,11 +626,11 @@ inline int pushFactionInfo(lua_State* L, game::GameHandler* gh,
     // `..., isHeader, isCollapsed, isWatched = GetFactionInfo(i)`); hasRep and
     // isChild are 3.x additions.
     if (game::isActiveExpansion("tbc")) {
-        lua_pushboolean(L, f.factionId == gh->getWatchedFactionId() ? 1 : 0);  // 11: isWatched
+        lua_pushboolean(L, (f.factionId != 0 && f.factionId == gh->getWatchedFactionId()) ? 1 : 0);  // 11: isWatched
         return 11;
     }
     lua_pushboolean(L, hasRep ? 1 : 0);                         // 11: hasRep
-    lua_pushboolean(L, f.factionId == gh->getWatchedFactionId() ? 1 : 0);  // 12: isWatched
+    lua_pushboolean(L, (f.factionId != 0 && f.factionId == gh->getWatchedFactionId()) ? 1 : 0);  // 12: isWatched
     lua_pushboolean(L, isChild ? 1 : 0);                        // 13: isChild
     return 13;
 }
@@ -665,6 +665,11 @@ inline int pushFactionRow(lua_State* L, game::GameHandler* gh,
         e.name = lua_isstring(L, -1) ? lua_tostring(L, -1) : "";
         lua_pop(L, 1);
         assert(!e.name.empty() && "FrameXML defines FACTION_INACTIVE");
+    } else if (row.isOtherGroup) {
+        lua_getglobal(L, "FACTION_OTHER");
+        e.name = lua_isstring(L, -1) ? lua_tostring(L, -1) : "";
+        lua_pop(L, 1);
+        assert(!e.name.empty() && "FrameXML defines FACTION_OTHER");
     }
     e.flags = row.flags;
     return pushFactionInfo(L, gh, e, row.isHeader,

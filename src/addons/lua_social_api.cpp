@@ -3073,7 +3073,8 @@ void registerSocialLuaAPI(lua_State* L) {
             if (gh && selectedFactionId() != 0) {
                 const auto& rows = gh->getReputationRows();
                 for (size_t i = 0; i < rows.size(); ++i) {
-                    if (rows[i].factionId == selectedFactionId() && !rows[i].isInactiveGroup) {
+                    if (rows[i].factionId == selectedFactionId() &&
+                        !rows[i].isInactiveGroup && !rows[i].isOtherGroup) {
                         index = static_cast<int>(i) + 1;
                         break;
                     }
@@ -3088,7 +3089,9 @@ void registerSocialLuaAPI(lua_State* L) {
             selectedFactionId() = 0;
             if (gh && index >= 1) {
                 const auto& rows = gh->getReputationRows();
-                if (index <= static_cast<int>(rows.size()) && !rows[static_cast<size_t>(index) - 1].isInactiveGroup)
+                if (index <= static_cast<int>(rows.size()) &&
+                    !rows[static_cast<size_t>(index) - 1].isInactiveGroup &&
+                    !rows[static_cast<size_t>(index) - 1].isOtherGroup)
                     selectedFactionId() = rows[static_cast<size_t>(index) - 1].factionId;
             }
             return 0;

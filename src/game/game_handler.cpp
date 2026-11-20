@@ -5020,6 +5020,11 @@ void GameHandler::setFactionCollapsed(uint32_t factionId, bool collapsed) {
         inactiveGroupExpanded_ = !collapsed;
         return;
     }
+    if (factionId == kOtherFactionGroupId) {
+        if (otherGroupCollapsed_ != collapsed) reputationRowsDirty_ = true;
+        otherGroupCollapsed_ = collapsed;
+        return;
+    }
     const bool changed = collapsed ? collapsedFactionIds_.insert(factionId).second
                                    : collapsedFactionIds_.erase(factionId) > 0;
     // Rebuilding on a no-op would be harmless but the redraw is not: the
@@ -5102,13 +5107,28 @@ const std::vector<GameHandler::ReputationRow>& GameHandler::getReputationRows() 
         std::sort(kids.begin(), kids.end(), byRank);
     }
 
+    // Top-level factions that have no parent and no children (e.g. Argent Dawn,
+    // Cenarion Circle, Timbermaw Hold in TBC 2.4.3) are grouped under a
+    // synthetic "Other" heading after the named faction groups and before
+    // Inactive, matching native ReputationFrame.
+    std::vector<uint32_t> topGroups;
+    std::vector<uint32_t> otherFactions;
+    for (uint32_t id : children[0]) {
+        auto kidsIt = children.find(id);
+        if (kidsIt != children.end() && !kidsIt->second.empty()) {
+            topGroups.push_back(id);
+        } else {
+            otherFactions.push_back(id);
+        }
+    }
+
     // Depth first, so a heading is immediately followed by what is under it.
     // FrameXML draws a flat list and takes the nesting from isHeader/isChild,
     // which means the order *is* the grouping: emitting in the server's order
     // and relying on the flags would file each faction under whichever heading
     // happened to be printed last.
     std::vector<std::pair<uint32_t, int>> stack;
-    for (uint32_t child : std::views::reverse(children[0])) {
+    for (uint32_t child : std::views::reverse(topGroups)) {
         stack.emplace_back(child, 0);
     }
     while (!stack.empty()) {
@@ -5144,6 +5164,28 @@ const std::vector<GameHandler::ReputationRow>& GameHandler::getReputationRows() 
         if (!isHeader || isFactionCollapsed(factionId)) continue;
         for (uint32_t child : std::views::reverse(kidsIt->second)) {
             stack.emplace_back(child, depth + 1);
+        }
+    }
+
+    if (!otherFactions.empty()) {
+        ReputationRow heading;
+        heading.factionId = kOtherFactionGroupId;
+        heading.isHeader = true;
+        heading.isOtherGroup = true;
+        reputationRows_.push_back(std::move(heading));
+        if (!isFactionCollapsed(kOtherFactionGroupId)) {
+            for (uint32_t factionId : otherFactions) {
+                auto entry = byId.find(factionId);
+                if (entry == byId.end()) continue;
+                ReputationRow row;
+                row.factionId = factionId;
+                row.reputationIndex = entry->second->reputationIndex;
+                row.name = entry->second->name;
+                row.flags = entry->second->flags;
+                row.isChild = true;
+                row.hasRep = true;
+                reputationRows_.push_back(std::move(row));
+            }
         }
     }
 

@@ -105,6 +105,11 @@ public:
         lua_pop(L, 1);
         return out;
     }
+    void exec(const std::string& chunk) {
+        const int rc = luaL_dostring(L, chunk.c_str());
+        INFO(chunk << ": " << (rc ? lua_tostring(L, -1) : ""));
+        REQUIRE(rc == 0);
+    }
 
 private:
     lua_State* L;
@@ -230,4 +235,120 @@ TEST_CASE("Who rows carry their zone and sort by a chain of keys", "[replay][soc
     // Name back to the front keeps its descending direction.
     lua.run("SortWho('name')");
     CHECK(lua.run(names) == "Edrikn Edrikg Edrikb Edricn Edricg Edrice Edricb");
+}
+
+TEST_CASE("First-time faction discovery via 4-byte SMSG_SET_FACTION_VISIBLE announces standing and adds Other group",
+          "[replay][social][reputation]") {
+    Session s("tbc");
+    auto& gh = s.handler();
+
+    // Wire TBC Faction.dbc entries: Horde + 5 cities, plus standalone Argent Dawn & Cenarion Circle.
+    wowee::game::GameHandlerTestAccess::setFaction(gh, 67, 12, "Horde", 0);
+    wowee::game::GameHandlerTestAccess::setFaction(gh, 530, 15, "Darkspear Trolls", 67);
+    wowee::game::GameHandlerTestAccess::setFaction(gh, 76, 14, "Orgrimmar", 67);
+    wowee::game::GameHandlerTestAccess::setFaction(gh, 911, 55, "Silvermoon City", 67);
+    wowee::game::GameHandlerTestAccess::setFaction(gh, 81, 16, "Thunder Bluff", 67);
+    wowee::game::GameHandlerTestAccess::setFaction(gh, 68, 17, "Undercity", 67);
+    wowee::game::GameHandlerTestAccess::setFaction(gh, 529, 13, "Argent Dawn", 0);
+    wowee::game::GameHandlerTestAccess::setFaction(gh, 609, 36, "Cenarion Circle", 0);
+
+    gh.setGlobalStringLookup([](const char* key) -> std::string {
+        const std::string k(key);
+        if (k == "FACTION_STANDING_CHANGED") return "You are now %s with %s.";
+        if (k == "FACTION_STANDING_LABEL4") return "Neutral";
+        if (k == "FACTION_STANDING_LABEL5") return "Friendly";
+        return {};
+    });
+
+    std::vector<std::string> events;
+    gh.setAddonEventCallback([&](const std::string& e, const std::vector<std::string>&) {
+        events.push_back(e);
+    });
+
+    // ReputationMgr::SendInitialReputations: 128 slots of (uint8 flags, int32 standing).
+    Packet init = packetFor(Opcode::SMSG_INITIALIZE_FACTIONS);
+    init.writeUInt32(128);
+    for (uint32_t i = 0; i < 128; ++i) {
+        uint8_t flags = 0;
+        int32_t standing = 0;
+        if (i == 14 || i == 15 || i == 16) {
+            flags = wowee::game::GameHandler::FACTION_FLAG_VISIBLE;
+            standing = 3000;  // Friendly
+        } else if (i == 17 || i == 55) {
+            flags = wowee::game::GameHandler::FACTION_FLAG_VISIBLE;
+            standing = 0;  // Neutral
+        }
+        init.writeUInt8(flags);
+        init.writeUInt32(static_cast<uint32_t>(standing));
+    }
+    s.receive(init);
+
+    Lua lua(s);
+    lua.exec("FACTION_OTHER = 'Other'; FACTION_INACTIVE = 'Inactive'");
+
+    // Before discovery: only Horde header + 5 Horde cities, no Other header.
+    CHECK(lua.run("GetNumFactions()") == "6");
+    CHECK(lua.run("(select(1, GetFactionInfo(1))), (select(9, GetFactionInfo(1)))") == "Horde,true");
+    CHECK(lua.run("(select(1, GetFactionInfo(2)))") == "Darkspear Trolls");
+    CHECK(lua.run("(select(1, GetFactionInfo(6)))") == "Undercity");
+
+    // ReputationMgr::SendVisible: 4-byte uint32 repListId only.
+    events.clear();
+    const size_t chatBefore = gh.getChatHistory().size();
+    Packet visArgent = packetFor(Opcode::SMSG_SET_FACTION_VISIBLE);
+    visArgent.writeUInt32(13);  // Argent Dawn
+    s.receive(visArgent);
+
+    CHECK(events == std::vector<std::string>{"CHAT_MSG_SYSTEM", "UPDATE_FACTION"});
+    REQUIRE(gh.getChatHistory().size() == chatBefore + 1);
+    CHECK(gh.getChatHistory().back().type == wowee::game::ChatType::SYSTEM);
+    CHECK(gh.getChatHistory().back().message == "You are now Neutral with Argent Dawn.");
+
+    // ReputationFrame rows now include "- Other" header followed by Argent Dawn (Neutral).
+    CHECK(lua.run("GetNumFactions()") == "8");
+    CHECK(lua.run("(select(1, GetFactionInfo(7))), (select(9, GetFactionInfo(7))), (select(10, GetFactionInfo(7)))") ==
+          "Other,true,false");
+    CHECK(lua.run("(select(1, GetFactionInfo(8))), (select(3, GetFactionInfo(8))), (select(9, GetFactionInfo(8)))") ==
+          "Argent Dawn,4,false");
+
+    // Re-receiving SMSG_SET_FACTION_VISIBLE for an already-visible faction is a no-op.
+    events.clear();
+    const size_t chatAfterFirst = gh.getChatHistory().size();
+    Packet visArgentAgain = packetFor(Opcode::SMSG_SET_FACTION_VISIBLE);
+    visArgentAgain.writeUInt32(13);
+    s.receive(visArgentAgain);
+    CHECK(events.empty());
+    CHECK(gh.getChatHistory().size() == chatAfterFirst);
+
+    // Discovering a second standalone faction appends under Other in alphabetical order.
+    events.clear();
+    Packet visCenarion = packetFor(Opcode::SMSG_SET_FACTION_VISIBLE);
+    visCenarion.writeUInt32(36);  // Cenarion Circle
+    s.receive(visCenarion);
+    CHECK(events == std::vector<std::string>{"CHAT_MSG_SYSTEM", "UPDATE_FACTION"});
+    CHECK(gh.getChatHistory().back().message == "You are now Neutral with Cenarion Circle.");
+    CHECK(lua.run("GetNumFactions()") == "9");
+    CHECK(lua.run("(select(1, GetFactionInfo(7))), (select(1, GetFactionInfo(8))), (select(1, GetFactionInfo(9)))") ==
+          "Other,Argent Dawn,Cenarion Circle");
+
+    // Collapsing and expanding the Other header toggles visibility of its children.
+    events.clear();
+    lua.run("CollapseFactionHeader(7)");
+    CHECK(events == std::vector<std::string>{"UPDATE_FACTION"});
+    CHECK(lua.run("GetNumFactions()") == "7");
+    CHECK(lua.run("(select(1, GetFactionInfo(7))), (select(9, GetFactionInfo(7))), (select(10, GetFactionInfo(7)))") ==
+          "Other,true,true");
+
+    events.clear();
+    lua.run("ExpandFactionHeader(7)");
+    CHECK(events == std::vector<std::string>{"UPDATE_FACTION"});
+    CHECK(lua.run("GetNumFactions()") == "9");
+    CHECK(lua.run("(select(1, GetFactionInfo(7))), (select(10, GetFactionInfo(7)))") == "Other,false");
+
+    // Moving all Other factions to Inactive removes the Other header and reveals Inactive.
+    lua.run("SetFactionInactive(9)");
+    lua.run("SetFactionInactive(8)");
+    CHECK(lua.run("GetNumFactions()") == "7");
+    CHECK(lua.run("(select(1, GetFactionInfo(7))), (select(9, GetFactionInfo(7))), (select(10, GetFactionInfo(7)))") ==
+          "Inactive,true,true");
 }
