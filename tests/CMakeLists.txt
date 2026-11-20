@@ -2883,6 +2883,15 @@ wowee_add_test(test_adt_alpha
             ${CMAKE_SOURCE_DIR}/src/pipeline/adt_loader.cpp
             ${CMAKE_SOURCE_DIR}/src/pipeline/wdt_loader.cpp)
 
+# ── test_ground_clutter_scatter ────────────────────────
+# TBC 2.4.3 ground-effect clutter density (N/256), patchy chunk sampling,
+# monotonicity across density levels, and MCNK layer/noEffectDoodad/hole rules.
+wowee_add_test(test_ground_clutter_scatter
+    SOURCES test_ground_clutter_scatter.cpp
+            ${TEST_COMMON_SOURCES}
+            ${CMAKE_SOURCE_DIR}/src/pipeline/adt_alpha.cpp
+            ${CMAKE_SOURCE_DIR}/src/pipeline/adt_loader.cpp)
+
 # ── test_grass_terrain ─────────────────────────────────
 # Whether grass grows at a point, answered from the ADT's own ground-effect
 # ids rather than from a classifier of ours. Headless: the chunks are built by

@@ -6,6 +6,7 @@
 #include <tuple>
 
 #include "pipeline/adt_alpha.hpp"
+#include "pipeline/ground_clutter_scatter.hpp"
 #include "pipeline/wdt_loader.hpp"
 #include "pipeline/grass_profile.hpp"
 #include "rendering/terrain_renderer.hpp"
@@ -1979,70 +1980,32 @@ void TerrainManager::generateGroundClutterPlacements(std::shared_ptr<PendingTile
     };
 
     constexpr float unitSize = CHUNK_SIZE / 8.0f;
-    constexpr float pi = core::coords::PI;
-    // Placement follows the authored 8x8 effect grid, not terrain alpha.
-    const float densityScale = glm::clamp(groundClutterDensityScale_ / 1.5f, 0.0f, 1.0f);
     size_t added = 0;
     size_t attemptsTotal = 0;
     size_t noEffectMatch = 0;
     size_t noDoodadModel = 0;
 
+    auto lookupEffect = [&](uint32_t effectId) -> const pipeline::GroundClutterEffectSpec* {
+        auto it = groundEffectById_.find(effectId);
+        if (it == groundEffectById_.end()) return nullptr;
+        thread_local pipeline::GroundClutterEffectSpec spec;
+        spec.doodadIds = it->second.doodadIds;
+        spec.weights = it->second.weights;
+        spec.density = it->second.density;
+        return &spec;
+    };
+
     for (int cy = 0; cy < 16; ++cy) {
         for (int cx = 0; cx < 16; ++cx) {
             const auto& chunk = pending->terrain.getChunk(cx, cy);
-            if (!chunk.hasHeightMap() || chunk.layers.empty()) continue;
-
-            for (int cell = 0; cell < 64; ++cell) {
-                const int qx = cell % 8;
-                const int qy = cell / 8;
-                if (chunk.isHole(qy, qx) || chunk.isEffectDisabled(qy, qx)) continue;
-                const size_t layerIdx = chunk.effectLayerFor(qy, qx);
-                if (layerIdx >= chunk.layers.size()) continue;
-                const auto& layer = chunk.layers[layerIdx];
-                if (layer.effectId == 0) continue;
-
-                auto geIt = groundEffectById_.find(layer.effectId);
-                if (geIt == groundEffectById_.end()) {
-                    noEffectMatch++;
-                    continue;
-                }
-                const GroundEffectEntry& ge = geIt->second;
-
-                uint32_t totalWeight = ge.weights[0] + ge.weights[1] + ge.weights[2] + ge.weights[3];
-                if (totalWeight == 0) continue;
-
-                uint32_t seed = static_cast<uint32_t>(
-                    ((pending->coord.x & 0x3F) << 20) |
-                    ((pending->coord.y & 0x3F) << 14) |
-                    (cy << 10) | (cx << 6) | cell);
-                auto nextRand = [&seed]() -> uint32_t {
-                    seed = seed * 1664525u + 1013904223u;
-                    return seed;
-                };
-                const float count = static_cast<float>(ge.density) * densityScale;
-                uint32_t attempts = static_cast<uint32_t>(count);
-                if ((nextRand() >> 8) / 16777216.0f < count - attempts) ++attempts;
-                attemptsTotal += attempts;
-
-                for (uint32_t a = 0; a < attempts; ++a) {
-                    const float fracX = qx + (nextRand() >> 8) / 16777216.0f;
-                    const float fracY = qy + (nextRand() >> 8) / 16777216.0f;
-
-                    uint32_t roll = (nextRand() >> 8) % totalWeight;
-                    int pick = 0;
-                    uint32_t acc = 0;
-                    for (int i = 0; i < 4; ++i) {
-                        uint32_t w = ge.weights[i];
-                        acc += w;
-                        if (roll < acc) { pick = i; break; }
-                    }
-                    uint32_t doodadId = ge.doodadIds[pick];
-                    if (doodadId == UINT32_MAX) continue;
-
-                    auto doodadIt = groundDoodadModelById_.find(doodadId);
+            attemptsTotal += pipeline::scatterChunkGroundClutter(
+                chunk, pending->coord.x, pending->coord.y, cx, cy, groundClutterDensityScale_,
+                lookupEffect,
+                [&](const pipeline::GroundClutterSample& sample) {
+                    auto doodadIt = groundDoodadModelById_.find(sample.doodadId);
                     if (doodadIt == groundDoodadModelById_.end()) {
                         noDoodadModel++;
-                        continue;
+                        return;
                     }
                     const std::string& doodadModelPath = doodadIt->second;
                     // Its own id space: ADTs and WMOs place some of these
@@ -2053,28 +2016,25 @@ void TerrainManager::generateGroundClutterPlacements(std::shared_ptr<PendingTile
                     if (!ensureModelPrepared(doodadModelPath, modelId)) {
                         LOG_ERROR("Ground clutter model could not load: ", doodadModelPath);
                         assert(false && "Authored ground detail model failed to load");
-                        continue;
+                        return;
                     }
 
                     const glm::vec3 surfacePoint = pipeline::TerrainMeshGenerator::chunkSurfacePoint(
-                        chunk.position, chunk.heightMap, fracX, fracY, unitSize);
-                    const float worldX = surfacePoint.x;
-                    const float worldY = surfacePoint.y;
-                    const float worldZ = surfacePoint.z;
+                        chunk.position, chunk.heightMap, sample.fracX, sample.fracY, unitSize);
 
                     GroundDetailPlacement p;
                     p.modelId = modelId;
                     // MCNK chunk.position is already in terrain/render world space.
                     // Do not convert via ADT placement mapping (that is for MDDF/MODF records).
-                    p.rotation = glm::vec3(0.0f, 0.0f, (nextRand() & 0xFFFFu) / kRand16Max * (2.0f * pi));
-                    p.scale = 0.80f + ((nextRand() & 0xFFFFu) / kRand16Max) * 0.35f;
+                    p.rotation = glm::vec3(0.0f, 0.0f, sample.yaw);
+                    p.scale = sample.scale;
                     // Snap directly to sampled terrain height.
-                    p.position = glm::vec3(worldX, worldY, worldZ + 0.01f);
+                    p.position = glm::vec3(surfacePoint.x, surfacePoint.y, surfacePoint.z + 0.01f);
                     pending->groundDetail[cy * 16 + cx].placements.push_back(p);
                     pending->groundDetailModels.insert(modelId);
                     added++;
-                }
-            }
+                },
+                &noEffectMatch);
         }
     }
 
