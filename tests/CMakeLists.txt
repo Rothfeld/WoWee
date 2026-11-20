@@ -2539,6 +2539,19 @@ target_link_libraries(test_chain_effect PRIVATE catch2_main)
 add_test(NAME chain_effect COMMAND test_chain_effect)
 register_test_target(test_chain_effect)
 
+# ── test_missile_homing ──────────────────────────────────────
+# Homing spell/ranged missile pursuit math: lateral curve, tangent orientation,
+# closing/fleeing arrival timing, despawn fallback, and edge cases.
+add_executable(test_missile_homing
+    test_missile_homing.cpp
+    ${TEST_COMMON_SOURCES})
+target_include_directories(test_missile_homing PRIVATE ${TEST_INCLUDE_DIRS})
+target_include_directories(test_missile_homing SYSTEM PRIVATE
+    ${TEST_SYSTEM_INCLUDE_DIRS})
+target_link_libraries(test_missile_homing PRIVATE catch2_main)
+add_test(NAME missile_homing COMMAND test_missile_homing)
+register_test_target(test_missile_homing)
+
 # ── test_m2_glow_card ────────────────────────────────────────
 # What the renderer does with a glow-card batch. Three decisions the two
 # render passes each made for themselves, in expressions identical down to

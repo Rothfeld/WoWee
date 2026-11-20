@@ -1434,7 +1434,8 @@ bool SpellVisualSystem::playSpellMissile(uint32_t visualId, const glm::vec3& sta
                                          bool impactAtEnd, bool areaImpactAtEnd,
                                          bool resistEffectAtEnd, std::function<void()> onArrive,
                                          uint32_t casterInstanceId, SpellLaunchOrigin launchOrigin,
-                                         uint32_t targetInstanceId, uint32_t destinationAttachment) {
+                                         uint32_t targetInstanceId, uint32_t destinationAttachment,
+                                         MissileTargetResolver targetResolver) {
     if (!m2Renderer_ || !hasSpellMissile(visualId)) return false;
     if (!cachedAssetManager_) return false;
     if (!std::isfinite(speed) || speed <= 0.0f) return false;
@@ -1444,6 +1445,15 @@ bool SpellVisualSystem::playSpellMissile(uint32_t visualId, const glm::vec3& sta
     const uint32_t modelId = loadSpellModel(modelPath);
     if (modelId == 0) return false;
 
+    glm::vec3 resolvedEnd = end;
+    uint32_t targetAttachInstanceId = 0;
+    if (targetResolver) {
+        if (const auto sample = targetResolver()) {
+            resolvedEnd = sample->position;
+            targetAttachInstanceId = sample->attachInstanceId;
+        }
+    }
+
     // Speed is yards a second and fixes the landing, as the server's hit delay
     // does. The original keeps that landing however late the missile leaves the
     // hand: Fireball 133 at 16.5 and 32 yards, Frostbolt 116 at 16.4, Shadow Bolt
@@ -1451,15 +1461,21 @@ bool SpellVisualSystem::playSpellMissile(uint32_t visualId, const glm::vec3& sta
     // speed, after leaving 0.17-0.31 s late. Long flights are not cut short:
     // Hyjal's Infernal 32148 (speed 20) from a relay 116 yd up falls for about
     // 6 s in the original.
-    const float distance = glm::length(end - start);
+    const glm::vec3 delta = resolvedEnd - start;
+    const float distance = glm::length(delta);
     const float duration = distance / speed;
+    const glm::vec3 initDir = (distance > 1e-4f) ? (delta / distance) : glm::vec3(1.0f, 0.0f, 0.0f);
+    const float flightSpeed = missileFlightSpeed(distance, speed, launchDelay);
     spellMissiles_.push_back({.instanceId = 0, .modelId = modelId, .visualId = visualId, .start = start,
-                              .end = end, .elapsed = 0.0f, .launchAt = launchDelay, .duration = duration,
+                              .end = resolvedEnd, .pos = start, .dir = initDir, .elapsed = 0.0f,
+                              .launchAt = launchDelay, .duration = duration, .flightSpeed = flightSpeed,
+                              .distanceTraveled = 0.0f, .targetAttachInstanceId = targetAttachInstanceId,
                               .impactAtEnd = impactAtEnd, .scale = spellVisualMissileScale_.at(visualId),
                               .areaImpactAtEnd = areaImpactAtEnd, .resistEffectAtEnd = resistEffectAtEnd,
                               .onArrive = std::move(onArrive), .casterInstanceId = casterInstanceId,
                               .launchOrigin = launchOrigin, .targetInstanceId = targetInstanceId,
-                              .destinationAttachment = destinationAttachment});
+                              .destinationAttachment = destinationAttachment,
+                              .targetResolver = std::move(targetResolver)});
     LOG_INFO("SpellVisual: missile visualId=", visualId, " model=", modelPath,
              " distance=", distance, " speed=", speed, " lands=", duration, "s leaves=", launchDelay, "s");
     return true;
@@ -1467,16 +1483,8 @@ bool SpellVisualSystem::playSpellMissile(uint32_t visualId, const glm::vec3& sta
 
 // The missile models point down +X. Turn it to face along its path, with the
 // nose pitched up or down to follow a target above or below the caster.
-void SpellVisualSystem::placeSpellMissile(const SpellMissile& missile, float t) {
-    const glm::vec3 pos = glm::mix(missile.start, missile.end, t);
-    const glm::vec3 path = missile.end - missile.start;
-    const float len = glm::length(path);
-    glm::vec3 rotation(0.0f);
-    if (len > 1e-4f) {
-        const glm::vec3 dir = path / len;
-        rotation.z = std::atan2(dir.y, dir.x);
-        rotation.y = -std::asin(std::clamp(dir.z, -1.0f, 1.0f));
-    }
+void SpellVisualSystem::placeSpellMissileAt(const SpellMissile& missile, const glm::vec3& pos,
+                                            const glm::vec3& rotation, float animProgress) {
     m2Renderer_->setInstanceTransform(missile.instanceId, placementModelMatrix(pos, rotation, missile.scale));
     // The model's sequence plays once over the flight, whatever its length.
     // Arcane_Missile_Lvl3.m2 (Darkmaster Gandling's Arcane Missiles 15791,
@@ -1486,7 +1494,12 @@ void SpellVisualSystem::placeSpellMissile(const SpellMissile& missile, float t) 
     // 16 yd (0.81 s) they part wider and meet at the target too. Played at
     // the clock, the first landed at full spread, 2.5 yd apart, and a melee
     // range one barely parted.
-    m2Renderer_->setInstanceAnimationProgress(missile.instanceId, t);
+    m2Renderer_->setInstanceAnimationProgress(missile.instanceId, animProgress);
+}
+
+void SpellVisualSystem::placeSpellMissile(const SpellMissile& missile, float t) {
+    const glm::vec3 pos = glm::mix(missile.start, missile.end, t);
+    placeSpellMissileAt(missile, pos, missileDirectionToEuler(missile.end - missile.start), t);
 }
 
 void SpellVisualSystem::playPhysicalProjectile(const std::string& modelPath,
@@ -1494,7 +1507,9 @@ void SpellVisualSystem::playPhysicalProjectile(const std::string& modelPath,
                                                 const glm::vec3& start,
                                                 const glm::vec3& end,
                                                 float duration,
-                                                bool spin) {
+                                                bool spin,
+                                                MissileTargetResolver targetResolver,
+                                                float speed) {
     if (!renderer_ || modelPath.empty()) return;
     auto* characterRenderer = renderer_->getCharacterRenderer();
     if (!characterRenderer) return;
@@ -1530,16 +1545,23 @@ void SpellVisualSystem::playPhysicalProjectile(const std::string& modelPath,
         }
     }
 
-    const glm::vec3 delta = end - start;
-    const float horizontal = std::sqrt(delta.x * delta.x + delta.y * delta.y);
-    glm::vec3 rotation(0.0f);
-    rotation.z = std::atan2(delta.y, delta.x);
-    rotation.y = -std::atan2(delta.z, std::max(horizontal, 0.001f));
+    glm::vec3 resolvedEnd = end;
+    if (targetResolver) {
+        if (const auto sample = targetResolver()) resolvedEnd = sample->position;
+    }
+    const glm::vec3 delta = resolvedEnd - start;
+    const float dist = glm::length(delta);
+    const glm::vec3 initDir = (dist > 1e-4f) ? (delta / dist) : glm::vec3(1.0f, 0.0f, 0.0f);
+    const glm::vec3 rotation = missileDirectionToEuler(initDir);
 
     const uint32_t instanceId = characterRenderer->createInstance(modelId, start, rotation, 1.0f);
     if (instanceId == 0) return;
-    physicalProjectiles_.push_back({.instanceId = instanceId, .start = start, .end = end, .rotation = rotation, .elapsed = 0.0f,
-                                    .duration = std::max(duration, 0.05f), .spin = spin});
+    physicalProjectiles_.push_back({.instanceId = instanceId, .start = start, .end = resolvedEnd,
+                                    .pos = start, .dir = initDir, .rotation = rotation, .elapsed = 0.0f,
+                                    .duration = std::max(duration, 0.05f),
+                                    .speed = (std::isfinite(speed) && speed > 0.0f) ? speed : 0.0f,
+                                    .distanceTraveled = 0.0f, .spin = spin,
+                                    .targetResolver = std::move(targetResolver)});
 }
 
 // An effect on a unit faces the way the unit faces: its model's +X turns with
@@ -1654,12 +1676,23 @@ void SpellVisualSystem::update(float deltaTime) {
 
     // Collected first: the impact spawns into activeSpellVisuals_, and a
     // missile's arrival is the moment its impact/resist kit belongs to.
-    std::vector<std::pair<uint32_t, glm::vec3>> arrivals;
+    struct ImpactArrival { uint32_t visualId; glm::vec3 pos; uint32_t attachInstanceId; };
+    std::vector<ImpactArrival> arrivals;
     std::vector<std::pair<uint32_t, glm::vec3>> areaArrivals;
     std::vector<std::pair<glm::vec3, glm::vec3>> resistArrivals;
     std::vector<std::function<void()>> arriveCallbacks;
     for (auto it = spellMissiles_.begin(); it != spellMissiles_.end(); ) {
         it->elapsed += deltaTime;
+        // Refresh live target position for unit-targeted homing missiles; if the
+        // target despawned mid-flight, preserve the last resolved position.
+        if (it->targetResolver) {
+            if (const auto sample = it->targetResolver()) {
+                it->end = sample->position;
+                it->targetAttachInstanceId = sample->attachInstanceId;
+            } else {
+                it->targetAttachInstanceId = 0;
+            }
+        }
         // A missile is drawn from the hand at its release even when its landing
         // time has already passed; it then crosses in the next frame. Native
         // Frostbolt Volley 8398 from Ras Frostwhisper (release 0.37 s, speed 28):
@@ -1670,9 +1703,9 @@ void SpellVisualSystem::update(float deltaTime) {
         // It lands the frame after it was drawn at the end, and its trail
         // lives out where it lies.
         if (it->landed) {
-            if (it->impactAtEnd) arrivals.emplace_back(it->visualId, it->end);
+            if (it->impactAtEnd) arrivals.push_back({it->visualId, it->end, it->targetAttachInstanceId});
             if (it->areaImpactAtEnd) areaArrivals.emplace_back(it->visualId, it->end);
-            if (it->resistEffectAtEnd) resistArrivals.emplace_back(it->end, it->end - it->start);
+            if (it->resistEffectAtEnd) resistArrivals.emplace_back(it->end, it->dir);
             if (it->onArrive) arriveCallbacks.push_back(std::move(it->onArrive));
             m2Renderer_->retireMissileInstance(it->instanceId);
             it = spellMissiles_.erase(it);
@@ -1698,7 +1731,7 @@ void SpellVisualSystem::update(float deltaTime) {
                         it->start = glm::vec3(mat[3]);
                     }
                 }
-                if (it->targetInstanceId != 0) {
+                if (!it->targetResolver && it->targetInstanceId != 0) {
                     glm::mat4 mat(1.0f);
                     if (characters->getAttachmentTransform(it->targetInstanceId,
                                                            it->destinationAttachment, mat)) {
@@ -1709,26 +1742,39 @@ void SpellVisualSystem::update(float deltaTime) {
             it->instanceId = m2Renderer_->createInstance(it->modelId, it->start, glm::vec3(0.0f), it->scale);
             if (!it->instanceId) {
                 LOG_WARNING("SpellVisual: failed to create missile instance for visualId=", it->visualId);
-                if (it->impactAtEnd) arrivals.emplace_back(it->visualId, it->end);
+                if (it->impactAtEnd) arrivals.push_back({it->visualId, it->end, it->targetAttachInstanceId});
                 if (it->areaImpactAtEnd) areaArrivals.emplace_back(it->visualId, it->end);
-                if (it->resistEffectAtEnd) resistArrivals.emplace_back(it->end, it->end - it->start);
+                if (it->resistEffectAtEnd) resistArrivals.emplace_back(it->end, it->dir);
                 if (it->onArrive) arriveCallbacks.push_back(std::move(it->onArrive));
                 it = spellMissiles_.erase(it);
                 continue;
             }
             m2Renderer_->setInstanceIsSpellVisual(it->instanceId);
-            placeSpellMissile(*it, 0.0f);
+            it->pos = it->start;
+            const glm::vec3 toEnd = it->end - it->start;
+            if (const float len = glm::length(toEnd); len > 1e-4f) it->dir = toEnd / len;
+            placeSpellMissileAt(*it, it->pos, missileDirectionToEuler(it->dir), 0.0f);
             ++it;
             continue;
         }
-        const float flight = it->duration - it->launchAt;
-        const float t = flight > 0.0f ? std::min(1.0f, (it->elapsed - it->launchAt) / flight) : 1.0f;
-        placeSpellMissile(*it, t);
-        it->landed = t >= 1.0f;
+        if (it->targetResolver) {
+            const float stepSpeed = (it->elapsed >= missileMaxFlightDuration(it->duration)) ? 0.0f : it->flightSpeed;
+            const HomingStepResult step = stepHomingMissile(
+                it->pos, it->end, it->dir, stepSpeed, deltaTime, it->distanceTraveled);
+            it->pos = step.position;
+            it->dir = step.direction;
+            placeSpellMissileAt(*it, it->pos, step.rotation, step.animProgress);
+            it->landed = step.arrived;
+        } else {
+            const float flight = it->duration - it->launchAt;
+            const float t = flight > 0.0f ? std::min(1.0f, (it->elapsed - it->launchAt) / flight) : 1.0f;
+            placeSpellMissile(*it, t);
+            it->landed = t >= 1.0f;
+        }
         ++it;
     }
-    for (const auto& [visualId, pos] : arrivals)
-        playSpellVisual(visualId, pos, /*useImpactKit=*/true);
+    for (const auto& arrival : arrivals)
+        playSpellVisual(arrival.visualId, arrival.pos, /*useImpactKit=*/true, arrival.attachInstanceId);
     for (const auto& [visualId, pos] : areaArrivals)
         playImpactAreaKit(visualId, pos);
     for (const auto& [pos, dir] : resistArrivals)
@@ -1806,15 +1852,32 @@ void SpellVisualSystem::update(float deltaTime) {
     if (charRenderer) {
         for (auto it = physicalProjectiles_.begin(); it != physicalProjectiles_.end(); ) {
             it->elapsed += deltaTime;
-            const float t = std::min(it->elapsed / it->duration, 1.0f);
-            charRenderer->setInstancePosition(
-                it->instanceId, glm::mix(it->start, it->end, t));
-            if (it->spin) {
+            bool arrived = false;
+            if (it->targetResolver && it->speed > 0.0f) {
+                if (const auto sample = it->targetResolver()) it->end = sample->position;
+                const float stepSpeed = (it->elapsed >= missileMaxFlightDuration(it->duration)) ? 0.0f : it->speed;
+                const HomingStepResult step = stepHomingMissile(
+                    it->pos, it->end, it->dir, stepSpeed, deltaTime, it->distanceTraveled);
+                it->pos = step.position;
+                it->dir = step.direction;
+                it->rotation = step.rotation;
+                charRenderer->setInstancePosition(it->instanceId, it->pos);
                 glm::vec3 rotation = it->rotation;
-                rotation.x += t * glm::two_pi<float>() * 2.0f;
+                if (it->spin) rotation.x += step.animProgress * glm::two_pi<float>() * 2.0f;
                 charRenderer->setInstanceRotation(it->instanceId, rotation);
+                arrived = step.arrived;
+            } else {
+                const float t = std::min(it->elapsed / it->duration, 1.0f);
+                charRenderer->setInstancePosition(
+                    it->instanceId, glm::mix(it->start, it->end, t));
+                if (it->spin) {
+                    glm::vec3 rotation = it->rotation;
+                    rotation.x += t * glm::two_pi<float>() * 2.0f;
+                    charRenderer->setInstanceRotation(it->instanceId, rotation);
+                }
+                arrived = t >= 1.0f;
             }
-            if (t >= 1.0f) {
+            if (arrived) {
                 charRenderer->removeInstance(it->instanceId);
                 it = physicalProjectiles_.erase(it);
             } else {

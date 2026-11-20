@@ -9,6 +9,7 @@
 #include <unordered_set>
 #include <glm/glm.hpp>
 #include "rendering/chain_effect.hpp"
+#include "rendering/missile_homing.hpp"
 #include "rendering/m2_renderer.hpp"
 #include "rendering/spell_launch_origin.hpp"
 
@@ -184,6 +185,8 @@ public:
     /// on the channel animation when MissileAttachment == -1, else chest 34).
     SpellLaunchOrigin beamStartOrigin(uint32_t visualId, const pipeline::M2Model* casterModel);
 
+    using MissileTargetResolver = std::function<std::optional<MissileTargetSample>()>;
+
     // Missile of the visual from start to end. It lands distance / speed
     // seconds from now (Spell.dbc Speed, yards a second) and leaves the caster
     // launchDelay seconds from now, flying whatever speed that leaves. A delay
@@ -196,20 +199,26 @@ public:
     // When casterInstanceId != 0, start is re-sampled live from the caster's
     // animated bone/attachment at t = launchDelay so the missile leaves the
     // extended hand instead of the stale Precast/Stand pose from SMSG_SPELL_GO.
+    // targetResolver: when non-empty, samples the target unit's live impact
+    // position every frame so unit-targeted missiles home onto moving targets.
     bool playSpellMissile(uint32_t visualId, const glm::vec3& start, const glm::vec3& end,
                           float speed, float launchDelay, bool impactAtEnd, bool areaImpactAtEnd = false,
                           bool resistEffectAtEnd = false, std::function<void()> onArrive = {},
                           uint32_t casterInstanceId = 0, SpellLaunchOrigin launchOrigin = {},
-                          uint32_t targetInstanceId = 0, uint32_t destinationAttachment = kAttachChestBloodFrontId);
+                          uint32_t targetInstanceId = 0, uint32_t destinationAttachment = kAttachChestBloodFrontId,
+                          MissileTargetResolver targetResolver = {});
 
     // Launch a physical weapon projectile (arrow, bullet, or thrown item)
     // without invoking the spell visual pipeline.
+    // targetResolver + speed > 0 enables per-frame homing toward a moving unit.
     void playPhysicalProjectile(const std::string& modelPath,
                                 const std::string& texturePath,
                                 const glm::vec3& start,
                                 const glm::vec3& end,
                                 float duration,
-                                bool spin);
+                                bool spin,
+                                MissileTargetResolver targetResolver = {},
+                                float speed = 0.0f);
 
     // Advance lifetime timers and remove expired instances.
     void update(float deltaTime);
@@ -258,10 +267,15 @@ private:
         uint32_t instanceId = 0;
         glm::vec3 start{0.0f};
         glm::vec3 end{0.0f};
+        glm::vec3 pos{0.0f};
+        glm::vec3 dir{1.0f, 0.0f, 0.0f};
         glm::vec3 rotation{0.0f};
         float elapsed = 0.0f;
         float duration = 0.0f;
+        float speed = 0.0f;
+        float distanceTraveled = 0.0f;
         bool spin = false;
+        MissileTargetResolver targetResolver;
     };
 
     struct SpellMissile {
@@ -270,9 +284,14 @@ private:
         uint32_t visualId = 0;
         glm::vec3 start{0.0f};
         glm::vec3 end{0.0f};
+        glm::vec3 pos{0.0f};
+        glm::vec3 dir{1.0f, 0.0f, 0.0f};
         float elapsed = 0.0f;
         float launchAt = 0.0f;       // seconds after scheduling
         float duration = 0.0f;       // landing, seconds after scheduling
+        float flightSpeed = 0.0f;    // pursuit speed after launchAt (0 = close-range 1-frame cross)
+        float distanceTraveled = 0.0f;
+        uint32_t targetAttachInstanceId = 0;
         bool impactAtEnd = false;
         float scale = 1.0f;          // SpellVisualEffectName.Scale of the missile model
         bool areaImpactAtEnd = false;
@@ -283,6 +302,7 @@ private:
         SpellLaunchOrigin launchOrigin;
         uint32_t targetInstanceId = 0;
         uint32_t destinationAttachment = kAttachChestBloodFrontId;
+        MissileTargetResolver targetResolver;
     };
 
     void loadSpellVisualDbc();
@@ -481,6 +501,8 @@ private:
     // 0 when it cannot be loaded.
     uint32_t loadSpellModel(const std::string& modelPath);
     void placeSpellMissile(const SpellMissile& missile, float t);
+    void placeSpellMissileAt(const SpellMissile& missile, const glm::vec3& pos,
+                             const glm::vec3& rotation, float animProgress);
 
     M2Renderer* m2Renderer_ = nullptr;
     Renderer* renderer_ = nullptr;

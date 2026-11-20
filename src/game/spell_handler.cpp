@@ -843,9 +843,27 @@ bool SpellHandler::launchSpellMissile(uint32_t spellId, uint32_t visualId, uint6
                         std::dec, "; using the unit position");
         }
     }
+    auto makeTargetResolver = [this](uint64_t guid, uint32_t attachment)
+        -> rendering::SpellVisualSystem::MissileTargetResolver {
+        return [this, guid, attachment]() -> std::optional<rendering::MissileTargetSample> {
+            glm::vec3 pos;
+            if (!resolveUnitPosition(guid, pos)) return std::nullopt;
+            uint32_t instance = 0;
+            if (auto* r = owner_.services().renderer) {
+                if (auto* chars = r->getCharacterRenderer()) {
+                    instance = owner_.resolveUnitRenderInstance(guid);
+                    glm::mat4 transform(1.0f);
+                    if (instance != 0 && chars->getAttachmentTransform(instance, attachment, transform))
+                        pos = glm::vec3(transform[3]);
+                }
+            }
+            return rendering::MissileTargetSample{pos, instance};
+        };
+    };
     return svs->playSpellMissile(visualId, start, end, speed, launchDelay, impactAtEnd,
                                  /*areaImpactAtEnd=*/false, resistEffectAtEnd, std::move(onArrive),
-                                 casterInstance, launchOrigin, targetInstance, kAttachChestFront);
+                                 casterInstance, launchOrigin, targetInstance, kAttachChestFront,
+                                 makeTargetResolver(targetGuid, kAttachChestFront));
 }
 
 void SpellHandler::launchAmmoProjectile(const SpellGoData& data) {
@@ -899,8 +917,23 @@ void SpellHandler::launchAmmoProjectile(const SpellGoData& data) {
         if (targetInstance && characters->getAttachmentTransform(targetInstance, kAttachChestFront, transform))
             end = glm::vec3(transform[3]);
         LOG_DEBUG("Ammo projectile: spell ", data.spellId, " ", directory, model, " speed ", speed);
+        auto targetResolver = [this, target]() -> std::optional<rendering::MissileTargetSample> {
+            glm::vec3 pos;
+            if (!resolveUnitPosition(target, pos)) return std::nullopt;
+            uint32_t instance = 0;
+            if (auto* r = owner_.services().renderer) {
+                if (auto* chars = r->getCharacterRenderer()) {
+                    instance = owner_.resolveUnitRenderInstance(target);
+                    glm::mat4 xform(1.0f);
+                    if (instance != 0 && chars->getAttachmentTransform(instance, kAttachChestFront, xform))
+                        pos = glm::vec3(xform[3]);
+                }
+            }
+            return rendering::MissileTargetSample{pos, instance};
+        };
         visuals->playPhysicalProjectile(directory + model, texture.empty() ? "" : directory + texture + ".blp",
-                                        start, end, glm::length(end - start) / speed, thrown);
+                                        start, end, glm::length(end - start) / speed, thrown,
+                                        std::move(targetResolver), speed);
     }
 }
 
@@ -1051,9 +1084,28 @@ void SpellHandler::launchRangedWeaponProjectile(uint32_t spellId, uint64_t targe
         modelPath = "Item\\ObjectComponents\\Ammo\\BulletFlight_01.m2";
     }
 
+    const float dbcSpeed = resolveSpellMissileSpeed(spellId);
+    const float speed = (std::isfinite(dbcSpeed) && dbcSpeed >= 1.0f && dbcSpeed <= 200.0f) ? dbcSpeed : 35.0f;
     const float distance = glm::length(end - start);
-    const float duration = std::clamp(distance / 35.0f, 0.12f, 0.8f);
-    visuals->playPhysicalProjectile(modelPath, texturePath, start, end, duration, spin);
+    const float duration = std::clamp(distance / speed, 0.12f, 0.8f);
+    auto targetResolver = [this, targetGuid]() -> std::optional<rendering::MissileTargetSample> {
+        glm::vec3 pos;
+        if (!resolveUnitPosition(targetGuid, pos)) return std::nullopt;
+        uint32_t instance = 0;
+        if (auto* r = owner_.services().renderer) {
+            if (auto* chars = r->getCharacterRenderer()) {
+                instance = owner_.resolveUnitRenderInstance(targetGuid);
+                glm::mat4 xform(1.0f);
+                if (instance != 0 && chars->getAttachmentTransform(instance, 15, xform)) {
+                    return rendering::MissileTargetSample{glm::vec3(xform[3]), instance};
+                }
+            }
+        }
+        pos.z += 1.0f;
+        return rendering::MissileTargetSample{pos, instance};
+    };
+    visuals->playPhysicalProjectile(modelPath, texturePath, start, end, duration, spin,
+                                    std::move(targetResolver), speed);
 }
 
 
