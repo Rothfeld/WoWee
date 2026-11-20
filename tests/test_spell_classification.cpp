@@ -503,3 +503,49 @@ TEST_CASE("unitAim reads EffectImplicitTargetA and SpellCastTargetFlags", "[spel
     CHECK(unitAim(28, 0x40) == UnitAim::None);       // Blizzard
     CHECK(unitAim(63) == UnitAim::None);             // destination coordinates
 }
+
+TEST_CASE("isAuraVisible and isAuraCancellable match native TBC 2.4.3 Spell.dbc flags",
+          "[spell][classification][aura]") {
+    using namespace wowee::game::spellclass;
+    constexpr uint32_t kApplyAura[3]   = {6, 0, 0};
+    constexpr uint32_t kAreaParty[3]   = {35, 0, 0};
+    constexpr uint32_t kShapeshift[3]  = {6, 6, 0};
+
+    // Pure passive spells without area aura: hidden & uncancellable.
+    CHECK_FALSE(isAuraVisible(0x00000040u, 0x00000000u, kApplyAura)); // Magic Resistance 822
+    CHECK_FALSE(isAuraVisible(0x00000050u, 0x00000000u, kApplyAura)); // Gemcutting 28875, Arcane Affinity 28877, Shadow Resistance 20579
+    CHECK_FALSE(isAuraCancellable(0x00000040u, 0x00000000u, false));
+    CHECK_FALSE(isAuraCancellable(0x00000050u, 0x00000000u, false));
+
+    // SPELL_ATTR_DO_NOT_DISPLAY (0x80): hidden even if area aura.
+    CHECK_FALSE(isAuraVisible(0x000001d0u, 0x00000000u, kApplyAura)); // Predatory Strikes 16972, Heart of the Wild 17003
+    CHECK_FALSE(isAuraVisible(0x000000c0u, 0x00000000u, kAreaParty));
+
+    // SPELL_ATTR_EX_NO_AURA_ICON (0x10000000): hidden & uncancellable.
+    CHECK_FALSE(isAuraVisible(0x29050010u, 0x90000400u, kApplyAura)); // Battle Stance 2457
+    CHECK_FALSE(isAuraVisible(0x29050010u, 0x10000400u, kApplyAura)); // Defensive Stance 71
+    CHECK_FALSE(isAuraVisible(0x09040010u, 0x10020020u, kApplyAura)); // Track Humanoids 19883
+    CHECK_FALSE(isAuraCancellable(0x29050010u, 0x90000400u, false));
+
+    // Passive area-aura buffs (Heroic Presence 6562, Inspiring Presence 28878,
+    // Totem of Wrath 30708, Strength of Earth 8076): visible, uncancellable.
+    CHECK(isAuraVisible(0x09050040u, 0x00000000u, kAreaParty)); // Heroic Presence 6562
+    CHECK(isAuraVisible(0x00000140u, 0x00000000u, kAreaParty)); // Totem of Wrath 30708
+    CHECK_FALSE(isAuraCancellable(0x09050040u, 0x00000000u, false));
+
+    // Active area-aura buffs (Moonkin Aura 24907, Leader of the Pack 24932, Tree of Life party 34123): visible.
+    CHECK(isAuraVisible(0x00000010u, 0x00000400u, kAreaParty));
+    CHECK(isAuraVisible(0x00000000u, 0x00000400u, kAreaParty));
+    CHECK(isAuraVisible(0x08000000u, 0x00000400u, kAreaParty));
+
+    // Shapeshift forms (Dire Bear 9634, Cat 768, Moonkin 24858, Tree of Life 33891, Ghost Wolf 2645) and normal buffs (Thorns 26992).
+    CHECK(isAuraVisible(0x00050010u, 0x00018000u, kShapeshift));
+    CHECK(isAuraCancellable(0x00050010u, 0x00018000u, false));
+    CHECK(isAuraVisible(0x00010000u, 0x00000000u, kApplyAura));
+    CHECK(isAuraCancellable(0x00010000u, 0x00000000u, false));
+
+    // SPELL_ATTR_NO_AURA_CANCEL (0x80000000) and debuffs: visible, not cancellable.
+    CHECK(isAuraVisible(0x88000100u, 0x00000000u, kApplyAura));
+    CHECK_FALSE(isAuraCancellable(0x88000100u, 0x00000000u, false));
+    CHECK_FALSE(isAuraCancellable(0x00010000u, 0x00000000u, true));
+}

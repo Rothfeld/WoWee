@@ -1053,6 +1053,42 @@ TEST_CASE("a refreshed aura's duration does not pass to the next aura in its slo
     CHECK(s.handler().getPlayerAuras().at(0).durationMs == 30000);
 }
 
+TEST_CASE("TBC extra-aura info ignores non-visible passive slots >= 56", "[replay][tbc][aura]") {
+    // CMaNGOS TBC assigns passive auras (Magic Resistance 822, Gemcutting 28875,
+    // Arcane Affinity 28877, Shadow Resistance 20579) theoretical slots >= 56
+    // (MAX_AURAS) and still sends SMSG_SET_EXTRA_AURA_INFO for them. They must
+    // not enter playerAuras_ or trigger PLAYER_AURAS_CHANGED.
+    Session s("tbc");
+    s.receive(UpdateObject().tbc().create(Session::kPlayerGuid, wowee::game::ObjectType::PLAYER,
+        {{UF::UNIT_FIELD_HEALTH, 100}, {UF::UNIT_FIELD_MAXHEALTH, 100}}, true));
+    int auraEvents = 0;
+    s.handler().setAddonEventCallback([&](const std::string& e, const std::vector<std::string>&) {
+        if (e == "PLAYER_AURAS_CHANGED") ++auraEvents;
+    });
+    const auto sendExtra = [&](uint8_t slot, uint32_t spellId, int32_t maxDur, uint32_t remDur) {
+        wowee::network::Packet p(wowee::game::wireOpcode(wowee::game::Opcode::SMSG_SET_EXTRA_AURA_INFO_OBSOLETE));
+        p.writePackedGuid(Session::kPlayerGuid);
+        p.writeUInt8(slot);
+        p.writeUInt32(spellId);
+        p.writeUInt32(static_cast<uint32_t>(maxDur));
+        p.writeUInt32(remDur);
+        s.receive(p);
+    };
+    sendExtra(56, 822, -1, 0);
+    sendExtra(57, 28875, -1, 0);
+    sendExtra(58, 28877, -1, 0);
+    sendExtra(59, 20579, -1, 0);
+    CHECK(s.handler().getPlayerAuras().size() <= 56u);
+    CHECK(auraEvents == 0);
+
+    // Visible slot (< 56) still records duration/caster metadata and notifies UI.
+    sendExtra(0, 26992, 600000, 600000);
+    REQUIRE(!s.handler().getPlayerAuras().empty());
+    CHECK(s.handler().getPlayerAuras().at(0).spellId == 26992u);
+    CHECK(s.handler().getPlayerAuras().at(0).durationMs == 600000);
+    CHECK(auraEvents == 1);
+}
+
 TEST_CASE("every power in a values block is announced, in field order", "[replay][tbc][power]") {
     // A night elf druid shifting into Cat Form (pair 13, CMaNGOS TBC
     // Player::Regenerate and the form's power change in one block): mana,

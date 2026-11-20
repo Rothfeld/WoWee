@@ -413,6 +413,52 @@ inline SpellDisposition spellDisposition(const uint32_t targetsA[3], const uint3
     return SpellDisposition::Neither;
 }
 
+/// Area-aura spell effects in Spell.dbc (CMaNGOS SpellEffectDefines.h):
+/// PARTY (35), PET (119), FRIEND (128), ENEMY (129), OWNER (143).
+inline bool isAreaAuraEffect(uint32_t effectId) {
+    switch (effectId) {
+        case 35: case 119: case 128: case 129: case 143: return true;
+        default: return false;
+    }
+}
+
+/// Whether an aura in a unit's aura list should be shown in BuffFrame /
+/// UnitBuff / UnitDebuff, matching native TBC 2.4.3 (verified on pair 8):
+/// - SPELL_ATTR_DO_NOT_DISPLAY (attr 0x80): always hidden
+/// - SPELL_ATTR_EX_NO_AURA_ICON (attrEx 0x10000000): hidden (stances, tracking)
+/// - SPELL_ATTR_PASSIVE (attr 0x40): hidden unless the spell applies an area
+///   aura (Heroic Presence 6562, Inspiring Presence 28878, Totem of Wrath
+///   30708, Strength of Earth 8076, Mana Spring 5677 are passive area auras
+///   that native 2.4.3 displays).
+inline bool isAuraVisible(uint32_t attr, uint32_t attrEx, const uint32_t effectIds[3]) {
+    constexpr uint32_t kAttrPassive       = 0x00000040u;
+    constexpr uint32_t kAttrDoNotDisplay  = 0x00000080u;
+    constexpr uint32_t kAttrExNoAuraIcon  = 0x10000000u;
+    if ((attr & kAttrDoNotDisplay) != 0) return false;
+    if ((attrEx & kAttrExNoAuraIcon) != 0) return false;
+    if ((attr & kAttrPassive) != 0) {
+        for (int e = 0; e < 3; ++e) {
+            if (isAreaAuraEffect(effectIds[e])) return true;
+        }
+        return false;
+    }
+    return true;
+}
+
+/// Whether the player can cancel an aura via CancelPlayerBuff / CancelUnitBuff
+/// (CMaNGOS WorldSession::HandleCancelAuraOpcode): debuffs, SPELL_ATTR_PASSIVE
+/// (0x40), SPELL_ATTR_NO_AURA_CANCEL (0x80000000), and SPELL_ATTR_EX_NO_AURA_ICON
+/// (0x10000000) cannot be cancelled.
+inline bool isAuraCancellable(uint32_t attr, uint32_t attrEx, bool isDebuff) {
+    constexpr uint32_t kAttrPassive       = 0x00000040u;
+    constexpr uint32_t kAttrNoAuraCancel  = 0x80000000u;
+    constexpr uint32_t kAttrExNoAuraIcon  = 0x10000000u;
+    if (isDebuff) return false;
+    if ((attr & (kAttrPassive | kAttrNoAuraCancel)) != 0) return false;
+    if ((attrEx & kAttrExNoAuraIcon) != 0) return false;
+    return true;
+}
+
 } // namespace spellclass
 } // namespace game
 } // namespace wowee

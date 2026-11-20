@@ -1,4 +1,5 @@
 #include "game/spell_prerequisites.hpp"
+#include "game/spell_classification.hpp"
 // lua_spell_api.cpp - Spell info, casting, auras, and targeting Lua API bindings.
 // Extracted from lua_engine.cpp as part of §5.1 (Tame LuaEngine).
 #include "game/shapeshift_forms.hpp"
@@ -265,7 +266,16 @@ static bool auraVisible(game::GameHandler& gh, uint32_t spellId) {
     const auto found = gh.spellNameCacheRef().find(spellId);
     // Server-only helper spells have no client DBC entry or display icon.
     if (found == gh.spellNameCacheRef().end()) return false;
-    return !(found->second.attr & 0x80u) && !(found->second.attrEx & 0x10000000u);
+    return game::spellclass::isAuraVisible(found->second.attr, found->second.attrEx,
+                                           found->second.effectIds);
+}
+
+static bool auraCancellable(game::GameHandler& gh, const game::AuraSlot& aura) {
+    gh.getSpellName(aura.spellId);
+    const auto found = gh.spellNameCacheRef().find(aura.spellId);
+    if (found == gh.spellNameCacheRef().end()) return false;
+    const bool isDebuff = (aura.flags & 0x80) != 0;
+    return game::spellclass::isAuraCancellable(found->second.attr, found->second.attrEx, isDebuff);
 }
 
 /// Milliseconds on the same clock AuraSlot::receivedAtMs was stamped from.
@@ -461,16 +471,6 @@ static const game::AuraSlot* playerAuraAt(lua_State* L, game::GameHandler* gh, i
     return aura.isEmpty() ? nullptr : &aura;
 }
 
-/// Whether a filter asks for debuffs. 1.12 spells that "HARMFUL"; the other
-/// words it can carry - PASSIVE, CANCELABLE - do not change which half is
-/// wanted, so they are not read.
-static bool filterWantsHarmful(const char* filter) {
-    if (!filter) return false;
-    std::string upper(filter);
-    for (char& c : upper) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-    return upper.find("HARMFUL") != std::string::npos;
-}
-
 // GetPlayerBuff(index, filter) -> slot, untilCancelled
 //
 // Vanilla uses zero-based indexes and -1 for no buff; TBC uses one-based
@@ -479,7 +479,12 @@ static int lua_GetPlayerBuff(lua_State* L) {
     auto* gh = getGameHandler(L);
     const int base = interfaceVersion(L) >= 20000 ? 1 : 0;
     const int wanted = static_cast<int>(luaL_optnumber(L, 1, base)) - base;
-    const bool harmful = filterWantsHarmful(luaL_optstring(L, 2, "HELPFUL"));
+    const char* rawFilter = luaL_optstring(L, 2, "HELPFUL");
+    std::string upperFilter(rawFilter ? rawFilter : "HELPFUL");
+    for (char& c : upperFilter) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    const bool harmful = upperFilter.find("HARMFUL") != std::string::npos;
+    const bool wantNotCancelable = upperFilter.find("NOT_CANCELABLE") != std::string::npos;
+    const bool wantCancelable = !wantNotCancelable && upperFilter.find("CANCELABLE") != std::string::npos;
     if (gh && wanted >= 0) {
         const auto& auras = gh->getPlayerAuras();
         int seen = 0;
@@ -488,6 +493,8 @@ static int lua_GetPlayerBuff(lua_State* L) {
             if (aura.isEmpty() || !auraVisible(*gh, aura.spellId)) continue;
             const bool isDebuff = (aura.flags & 0x80) != 0;
             if (isDebuff != harmful) continue;
+            if (wantCancelable && !auraCancellable(*gh, aura)) continue;
+            if (wantNotCancelable && auraCancellable(*gh, aura)) continue;
             if (seen++ != wanted) continue;
             lua_pushnumber(L, static_cast<double>(i + base));
             // A buff with no duration is one the player dismisses rather than
@@ -571,12 +578,16 @@ static int lua_CancelPlayerBuff(lua_State* L) {
             else gh->cancelAura(possess);
             return 0;
         }
-        for (const auto& a : gh->getPlayerAuras())
-            if (!a.isEmpty() && gh->getSpellName(a.spellId) == name) { gh->cancelAura(a.spellId); return 0; }
+        for (const auto& a : gh->getPlayerAuras()) {
+            if (!a.isEmpty() && auraCancellable(*gh, a) && gh->getSpellName(a.spellId) == name) {
+                gh->cancelAura(a.spellId);
+                return 0;
+            }
+        }
         return 0;
     }
     const auto* aura = playerAuraAt(L, gh, static_cast<int>(luaL_optnumber(L, 1, -1)));
-    if (aura) gh->cancelAura(aura->spellId);
+    if (aura && auraCancellable(*gh, *aura)) gh->cancelAura(aura->spellId);
     return 0;
 }
 
@@ -1392,7 +1403,7 @@ static int lua_CancelUnitBuff(lua_State* L) {
         std::string want(lua_tostring(L, 2));
         toLowerInPlace(want);
         for (const auto& a : auras) {
-            if (a.isEmpty() || (a.flags & 0x80) != 0) continue;
+            if (a.isEmpty() || !auraCancellable(*gh, a)) continue;
             std::string have = gh->getSpellName(a.spellId);
             toLowerInPlace(have);
             if (have == want) { gh->cancelAura(a.spellId); return 0; }
@@ -1404,9 +1415,12 @@ static int lua_CancelUnitBuff(lua_State* L) {
     if (index < 1) return 0;
     int buffCount = 0;
     for (const auto& a : auras) {
-        if (a.isEmpty()) continue;
+        if (a.isEmpty() || !auraVisible(*gh, a.spellId)) continue;
         if ((a.flags & 0x80) != 0) continue;   // debuffs are not cancellable
-        if (++buffCount == index) { gh->cancelAura(a.spellId); return 0; }
+        if (++buffCount == index) {
+            if (auraCancellable(*gh, a)) gh->cancelAura(a.spellId);
+            return 0;
+        }
     }
     return 0;
 }

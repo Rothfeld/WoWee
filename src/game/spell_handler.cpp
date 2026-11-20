@@ -6502,11 +6502,18 @@ void SpellHandler::handleExtraAuraInfo(network::Packet& packet, bool isInit) {
     else if (auraTargetGuid != 0) auraList = &unitAurasCache_[auraTargetGuid];
     const auto nowMs = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now().time_since_epoch()).count());
+    // TBC visible aura slots are 0..55 (40 positive + 16 negative; Classic: 0..47).
+    // CMaNGOS assigns non-visible/passive auras theoretical slots >= MAX_AURAS (56..255)
+    // and still sends SMSG_SET_EXTRA_AURA_INFO for them; never insert those into the
+    // visible aura table or BuffFrame/UnitBuff will display racial/class passives.
+    const uint8_t maxVisibleSlots = isActiveExpansion("tbc") ? 56u : 48u;
+    bool updatedVisibleSlot = false;
     while (packet.hasRemaining(13)) {
         const uint8_t slot = packet.readUInt8();
         const uint32_t spellId = packet.readUInt32();
         const int32_t maximum = static_cast<int32_t>(packet.readUInt32());
         const uint32_t remaining = packet.readUInt32();
+        if (slot >= maxVisibleSlots) continue;
         if (auraList) {
             if (auraList->size() <= slot) auraList->resize(slot + 1);
             auto& aura = (*auraList)[slot];
@@ -6517,7 +6524,12 @@ void SpellHandler::handleExtraAuraInfo(network::Packet& packet, bool isInit) {
             aura.receivedAtMs = nowMs;
             aura.playerCast = true;
             aura.casterGuid = owner_.getPlayerGuid();
+            updatedVisibleSlot = true;
         }
+    }
+    if (!updatedVisibleSlot) {
+        packet.skipAll();
+        return;
     }
     if (auraList) mirrorAurasByGuid(auraTargetGuid, *auraList);
     if (auraList && owner_.addonEventCallbackRef()) {
