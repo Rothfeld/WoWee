@@ -67,6 +67,7 @@ static const UFNameEntry kUFNames[] = {
     {.name = "UNIT_FIELD_MAXRANGEDDAMAGE", .field = UF::UNIT_FIELD_MAXRANGEDDAMAGE},
     {.name = "PLAYER_SHIELD_BLOCK", .field = UF::PLAYER_SHIELD_BLOCK},
     {.name = "PLAYER_AMMO_ID", .field = UF::PLAYER_AMMO_ID},
+    {.name = "PLAYER_SELF_RES_SPELL", .field = UF::PLAYER_SELF_RES_SPELL},
     {.name = "UNIT_FIELD_BASEATTACKTIME", .field = UF::UNIT_FIELD_BASEATTACKTIME},
     {.name = "UNIT_FIELD_RANGEDATTACKTIME", .field = UF::UNIT_FIELD_RANGEDATTACKTIME},
 

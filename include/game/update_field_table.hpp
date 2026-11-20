@@ -218,6 +218,8 @@ enum class UF : uint16_t {
     PLAYER_SHIELD_BLOCK,
     /// The item entry the ammo slot names; the ammo itself stays in the bags.
     PLAYER_AMMO_ID,
+    /// Self-resurrection spell id (Soulstone Resurrection, Reincarnation, Twisting Nether).
+    PLAYER_SELF_RES_SPELL,
     /// Main-hand and off-hand attack time, ms (2 fields).
     UNIT_FIELD_BASEATTACKTIME,
     UNIT_FIELD_RANGEDATTACKTIME,

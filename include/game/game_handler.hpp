@@ -2050,9 +2050,13 @@ public:
         return true;
     }
     bool showResurrectDialog() const { return resurrectRequestPending_; }
-    /** True when SMSG_PRE_RESURRECT arrived - Reincarnation/Twisting Nether available. */
-    bool canSelfRes() const { return selfResAvailable_; }
-    /** Send CMSG_SELF_RES to use Reincarnation / Twisting Nether. */
+    /** True when PLAYER_SELF_RES_SPELL is set or SMSG_PRE_RESURRECT arrived. */
+    bool canSelfRes() const { return selfResSpellId_ != 0 || selfResAvailable_; }
+    /** Active PLAYER_SELF_RES_SPELL id (0 when none). */
+    uint32_t getSelfResSpellId() const { return selfResSpellId_; }
+    /** Button text for HasSoulstone(): Spell.dbc name of PLAYER_SELF_RES_SPELL, or empty. */
+    std::string getSelfResOptionText() const;
+    /** Send CMSG_SELF_RES to use Soulstone / Reincarnation / Twisting Nether. */
     void useSelfRes();
     const std::string& getResurrectCasterName() const { return resurrectCasterName_; }
     bool showTalentWipeConfirmDialog() const;
@@ -4263,6 +4267,7 @@ public:
     auto& resurrectPendingRef() { return resurrectPending_; }
     auto& resurrectRequestPendingRef() { return resurrectRequestPending_; }
     auto& selfResAvailableRef() { return selfResAvailable_; }
+    auto& selfResSpellIdRef() { return selfResSpellId_; }
 
     // ── Summon & Battlefield ─────────────────────────────────────────
     auto& pendingSummonRequestRef() { return pendingSummonRequest_; }
@@ -5757,6 +5762,7 @@ private:
     bool resurrectPending_ = false;
     bool resurrectRequestPending_ = false;
     bool selfResAvailable_ = false;  // SMSG_PRE_RESURRECT received - Reincarnation/Twisting Nether
+    uint32_t selfResSpellId_ = 0;    // PLAYER_SELF_RES_SPELL update field (Soulstone / Reincarnation / Twisting Nether)
     // ---- Talent wipe confirm dialog ----
     // (talent wipe confirm state lives in SpellHandler)
     // ---- Pet talent respec confirm dialog ----

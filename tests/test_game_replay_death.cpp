@@ -218,3 +218,77 @@ TEST_CASE("the interface's first build sees no target, focus or mouseover", "[re
     CHECK(wowee::addons::resolveUnitGuid(&gh, "target") == kQuilguard);
     CHECK(wowee::addons::resolveUnitGuid(&gh, "focus") == kQuilguard);
 }
+
+TEST_CASE("dying with PLAYER_SELF_RES_SPELL populates HasSoulstone before PLAYER_DEAD and sends CMSG_SELF_RES",
+          "[replay][death][soulstone]") {
+    Session s("tbc");
+    auto& gh = s.handler();
+    gh.spellNameCacheRef()[3026].name = "Use Soulstone";
+    gh.spellNameCacheRef()[21169].name = "Reincarnation";
+    gh.spellNameCacheRef()[23700].name = "Twisting Nether";
+    gh.spellNameCacheLoadedRef() = true;
+
+    spawnAlivePlayer(s);
+    CHECK_FALSE(gh.canSelfRes());
+    CHECK(gh.getSelfResSpellId() == 0);
+    CHECK(gh.getSelfResOptionText().empty());
+
+    // CMaNGOS TBC Player::SetDeathState(JUST_DIED) sets UNIT_FIELD_HEALTH=0
+    // (index 22) and PLAYER_SELF_RES_SPELL (index 1488) in one update block.
+    // PLAYER_DEAD must fire only after PLAYER_SELF_RES_SPELL is applied so
+    // StaticPopupDialogs["DEATH"].OnShow sees the self-res button text.
+    std::string textAtPlayerDead;
+    bool canSelfResAtPlayerDead = false;
+    uint32_t spellIdAtPlayerDead = 0;
+    int playerDeadCount = 0;
+    gh.setAddonEventCallback([&](const std::string& e, const std::vector<std::string>&) {
+        if (e == "PLAYER_DEAD") {
+            ++playerDeadCount;
+            canSelfResAtPlayerDead = gh.canSelfRes();
+            spellIdAtPlayerDead = gh.getSelfResSpellId();
+            textAtPlayerDead = gh.getSelfResOptionText();
+        }
+    });
+
+    s.receive(UpdateObject().tbc().values(Session::kPlayerGuid,
+                                          {{UF::UNIT_FIELD_HEALTH, 0},
+                                           {UF::PLAYER_FIELD_BYTES, 0x08},
+                                           {UF::PLAYER_SELF_RES_SPELL, 3026}}));
+    REQUIRE(playerDeadCount == 1);
+    CHECK(canSelfResAtPlayerDead);
+    CHECK(spellIdAtPlayerDead == 3026);
+    CHECK(textAtPlayerDead == "Use Soulstone");
+
+    // Clicking Button2 calls UseSoulstone() -> CMSG_SELF_RES (0x2B3, empty payload).
+    gh.useSelfRes();
+    const auto selfResPackets = s.sent().of(wowee::game::Opcode::CMSG_SELF_RES);
+    REQUIRE(selfResPackets.size() == 1);
+    CHECK(selfResPackets.front().getOpcode() == 0x2B3);
+    CHECK(selfResPackets.front().getSize() == 0);
+    CHECK_FALSE(gh.canSelfRes());
+    CHECK(gh.getSelfResSpellId() == 0);
+    CHECK(gh.getSelfResOptionText().empty());
+
+    // Resurrect, then die with Shaman Reincarnation (21169).
+    s.receive(UpdateObject().tbc().values(Session::kPlayerGuid,
+                                          {{UF::UNIT_FIELD_HEALTH, 100},
+                                           {UF::PLAYER_SELF_RES_SPELL, 0}}));
+    s.receive(UpdateObject().tbc().values(Session::kPlayerGuid,
+                                          {{UF::UNIT_FIELD_HEALTH, 0},
+                                           {UF::PLAYER_FIELD_BYTES, 0x08},
+                                           {UF::PLAYER_SELF_RES_SPELL, 21169}}));
+    REQUIRE(playerDeadCount == 2);
+    CHECK(canSelfResAtPlayerDead);
+    CHECK(spellIdAtPlayerDead == 21169);
+    CHECK(textAtPlayerDead == "Reincarnation");
+
+    // Twisting Nether (23700) updates the option text; clearing to 0 removes it.
+    s.receive(UpdateObject().tbc().values(Session::kPlayerGuid,
+                                          {{UF::PLAYER_SELF_RES_SPELL, 23700}}));
+    CHECK(gh.getSelfResOptionText() == "Twisting Nether");
+
+    s.receive(UpdateObject().tbc().values(Session::kPlayerGuid,
+                                          {{UF::PLAYER_SELF_RES_SPELL, 0}}));
+    CHECK_FALSE(gh.canSelfRes());
+    CHECK(gh.getSelfResOptionText().empty());
+}

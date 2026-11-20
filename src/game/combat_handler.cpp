@@ -1886,6 +1886,7 @@ void CombatHandler::releaseSpirit() {
         auto packet = RepopRequestPacket::build();
         owner_.getSocket()->send(packet);
         owner_.selfResAvailableRef() = false;
+        owner_.selfResSpellIdRef() = 0;
         owner_.repopPendingRef() = true;
         owner_.lastRepopRequestMsRef() = static_cast<uint64_t>(now);
         LOG_INFO("Sent CMSG_REPOP_REQUEST (Release Spirit)");
@@ -1925,11 +1926,12 @@ void CombatHandler::reclaimCorpse() {
 }
 
 void CombatHandler::useSelfRes() {
-    if (!owner_.selfResAvailableRef() || !owner_.getSocket()) return;
+    if (!owner_.canSelfRes() || !owner_.getSocket()) return;
     network::Packet pkt(wireOpcode(Opcode::CMSG_SELF_RES));
     owner_.getSocket()->send(pkt);
     owner_.selfResAvailableRef() = false;
-    LOG_INFO("Sent CMSG_SELF_RES (Reincarnation / Twisting Nether)");
+    owner_.selfResSpellIdRef() = 0;
+    LOG_INFO("Sent CMSG_SELF_RES (Soulstone / Reincarnation / Twisting Nether)");
 }
 
 void CombatHandler::activateSpiritHealer(uint64_t npcGuid) {

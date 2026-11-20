@@ -62,6 +62,8 @@ TEST_CASE("TBC 8606 character fields match the server wire layout", "[updatefiel
     REQUIRE(table.index(UF::PLAYER_BYTES) == 234 + 5);
     REQUIRE(table.index(UF::PLAYER_FIELD_COINAGE) == 234 + 0x4CB);
     REQUIRE(table.index(UF::PLAYER_FIELD_BYTES) == 234 + 0x4E4);
+    REQUIRE(table.index(UF::PLAYER_AMMO_ID) == 234 + 0x4E5);
+    REQUIRE(table.index(UF::PLAYER_SELF_RES_SPELL) == 234 + 0x4E6);
     REQUIRE(table.index(UF::PLAYER_FIELD_BYTES2) == 234 + 0x504);
     REQUIRE(table.index(UF::PLAYER_FIELD_KEYRING_SLOT_1) == 822);
     REQUIRE(table.index(UF::PLAYER_CRIT_PERCENTAGE) == 1321);

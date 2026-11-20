@@ -3497,12 +3497,16 @@ void registerSocialLuaAPI(lua_State* L) {
             return 0;
         }},
                 // The text for the second button, or nil for no button at all.
-                // This client knows the same thing as canSelfRes: the server
-                // sent SMSG_PRE_RESURRECT because a Reincarnation or Twisting
-                // Nether is up.
+                // Driven by PLAYER_SELF_RES_SPELL (Soulstone Resurrection,
+                // Reincarnation, Twisting Nether) or SMSG_PRE_RESURRECT.
                 {"HasSoulstone", [](lua_State* L) -> int {
-            auto* gh = getGameHandler(L);
-            if (gh && gh->canSelfRes()) { lua_pushstring(L, "Use Soulstone"); return 1; }
+            if (auto* gh = getGameHandler(L)) {
+                const std::string text = gh->getSelfResOptionText();
+                if (!text.empty()) {
+                    lua_pushlstring(L, text.data(), text.size());
+                    return 1;
+                }
+            }
             lua_pushnil(L);
             return 1;
         }},

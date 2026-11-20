@@ -962,7 +962,8 @@ EntityController::PlayerFieldIndices EntityController::PlayerFieldIndices::resol
         // (while-casting) twin sit at the base of each seven-wide array.
         .manaRegen = fieldIndex(UF::UNIT_FIELD_POWER_REGEN_FLAT_MODIFIER),
         .manaRegenCasting = fieldIndex(UF::UNIT_FIELD_POWER_REGEN_INTERRUPTED_FLAT_MODIFIER),
-        .characterPoints1 = fieldIndex(UF::PLAYER_CHARACTER_POINTS1)
+        .characterPoints1 = fieldIndex(UF::PLAYER_CHARACTER_POINTS1),
+        .selfResSpell = fieldIndex(UF::PLAYER_SELF_RES_SPELL)
     };
 }
 
@@ -1288,6 +1289,8 @@ EntityController::UnitFieldUpdateResult EntityController::applyUnitFieldsOnUpdat
                 if (block.guid == owner_.getPlayerGuid()) {
                     bool wasGhost = owner_.releasedSpiritRef();
                     owner_.playerDeadRef() = false;
+                    owner_.selfResAvailableRef() = false;
+                    owner_.selfResSpellIdRef() = 0;
                     if (!wasGhost) {
                         LOG_INFO("Player resurrected!");
                         pendingEvents_.emit("PLAYER_ALIVE", {});
@@ -1419,6 +1422,7 @@ EntityController::UnitFieldUpdateResult EntityController::applyUnitFieldsOnUpdat
                     owner_.playerDeadRef() = false;
                     owner_.releasedSpiritRef() = false;
                     owner_.selfResAvailableRef() = false;
+                    owner_.selfResSpellIdRef() = 0;
                     LOG_INFO("Player resurrected (dynamic flags)");
                     // The other side of the same signal. PLAYER_ALIVE is what
                     // hides the death popup and restores the interface, and
@@ -1615,6 +1619,10 @@ bool EntityController::applyPlayerStatFields(const FlatFieldMap& fields,
         else if (pfi.characterPoints1 != 0xFFFF && key == pfi.characterPoints1) {
             if (auto* spells = owner_.getSpellHandler()) spells->setCharacterPointsField(val);
         }
+        else if (pfi.selfResSpell != 0xFFFF && key == pfi.selfResSpell) {
+            owner_.selfResSpellIdRef() = val;
+            LOG_DEBUG("PLAYER_SELF_RES_SPELL ", isCreate ? "from create: " : "updated: ", val);
+        }
         else if (key == pfi.coinage) {
             uint64_t oldMoney = owner_.playerMoneyCopperRef();
             owner_.playerMoneyCopperRef() = val;
@@ -1746,6 +1754,7 @@ bool EntityController::applyPlayerStatFields(const FlatFieldMap& fields,
                 owner_.repopPendingRef() = false;
                 owner_.resurrectPendingRef() = false;
                 owner_.selfResAvailableRef() = false;
+                owner_.selfResSpellIdRef() = 0;
                 owner_.corpseMapIdRef() = 0;  // corpse reclaimed
                 owner_.corpsePositionValidRef() = false;
                 owner_.corpseGuidRef() = 0;

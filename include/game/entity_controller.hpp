@@ -260,6 +260,7 @@ private:
         uint16_t expertise, offhandExpertise;
         uint16_t manaRegen, manaRegenCasting;
         uint16_t characterPoints1;
+        uint16_t selfResSpell;
         static PlayerFieldIndices resolve();
     };
     struct UnitFieldUpdateResult {

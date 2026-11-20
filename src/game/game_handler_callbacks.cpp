@@ -819,6 +819,7 @@ void GameHandler::handleLoginVerifyWorld(network::Packet& packet) {
     resurrectPending_ = false;
     resurrectRequestPending_ = false;
     selfResAvailable_ = false;
+    selfResSpellId_ = 0;
     onTaxiFlight_ = false;
     taxiMountActive_ = false;
     taxiActivatePending_ = false;
@@ -2072,6 +2073,16 @@ bool GameHandler::hasInvisibilityGlow() const {
 
 void GameHandler::reclaimCorpse() {
     if (combatHandler_) combatHandler_->reclaimCorpse();
+}
+
+std::string GameHandler::getSelfResOptionText() const {
+    if (selfResSpellId_ != 0) {
+        const std::string& spellName = getSpellName(selfResSpellId_);
+        if (!spellName.empty()) return spellName;
+        return "Use Soulstone";
+    }
+    if (selfResAvailable_) return "Use Soulstone";
+    return {};
 }
 
 void GameHandler::useSelfRes() {
