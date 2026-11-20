@@ -7,8 +7,37 @@
 #include <catch_amalgamated.hpp>
 #include "core/geoset_rules.hpp"
 #include "core/npc_equipment_geosets.hpp"
+#include "pipeline/dbc_loader.hpp"
+#include "pipeline/m2_loader.hpp"
+
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <string>
+#include <vector>
 
 using namespace wowee::core;
+
+namespace {
+
+std::vector<uint8_t> readBinaryFile(const std::filesystem::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return {};
+    return {std::istreambuf_iterator<char>(in), {}};
+}
+
+std::unordered_set<uint16_t> loadM2SubmeshIds(const std::filesystem::path& m2Path) {
+    const auto bytes = readBinaryFile(m2Path);
+    if (bytes.empty()) return {};
+    const auto model = wowee::pipeline::M2Loader::load(bytes);
+    std::unordered_set<uint16_t> ids;
+    for (const auto& batch : model.batches) {
+        ids.insert(batch.submeshId);
+    }
+    return ids;
+}
+
+} // namespace
 
 TEST_CASE("NPC lower-body equipment removes unselected authored alternatives", "[geoset][npc-equipment]") {
     // Original Draenei male and Night Elf female carry no bare 901/1101 mesh.
@@ -265,4 +294,186 @@ TEST_CASE("the belt's base variant is the waist, not nothing", "[geoset]") {
     // A belt worn is the variant after it, which is what the model carries for
     // a buckle on both asset sets.
     CHECK(equippedGeoset(wowee::core::equipment::kBeltBase, 1) == 1802);
+}
+
+TEST_CASE("player equipment geosets select 1302 for leg-slot kilts and chest robes", "[geoset][equipment]") {
+    const std::unordered_set<uint16_t> trollModel{
+        0, 1, 401, 402, 501, 502, 503, 504, 702, 801, 802,
+        902, 903, 1002, 1102, 1202, 1301, 1302, 1501, 1502
+    };
+
+    SECTION("leg-slot kilt (GG3=1) selects skirt 1302 and suppresses tabard and boot cuffs") {
+        auto geosets = bareCharacterGeosets(1, 0, 0, 0, 8);
+        PlayerEquipmentGeosetInput input;
+        input.legsGG3 = 1;    // e.g. Primitive Kilt (ItemDisplayInfo 10050)
+        input.bootsGG1 = 3;   // cuffed boots
+        input.hasTabard = true;
+        input.tabardGG1 = 1;
+        applyPlayerEquipmentGeosets(geosets, trollModel, input);
+
+        CHECK(geosets.count(1302) == 1);
+        CHECK(geosets.count(1301) == 0);
+        CHECK(geosets.count(1202) == 0); // tabard flap hidden by leg-slot kilt
+        CHECK(geosets.count(501) == 1);  // bare shins under skirt
+        CHECK(geosets.count(504) == 0);
+    }
+
+    SECTION("chest robe (GG3=1) selects 1302 and suppresses legs kneepads/cuff and tabard") {
+        auto geosets = bareCharacterGeosets(1, 0, 0, 0, 8);
+        PlayerEquipmentGeosetInput input;
+        input.chestGG1 = 1;
+        input.chestGG3 = 1;
+        input.legsGG1 = 1;    // waist cuff
+        input.legsGG2 = 1;    // kneepads
+        input.bootsGG1 = 2;
+        input.hasTabard = true;
+        input.tabardGG1 = 1;
+        applyPlayerEquipmentGeosets(geosets, trollModel, input);
+
+        CHECK(geosets.count(1302) == 1);
+        CHECK(geosets.count(1301) == 0);
+        CHECK(geosets.count(802) == 1);
+        CHECK(geosets.count(902) == 0);
+        CHECK(geosets.count(1102) == 0);
+        CHECK(geosets.count(1202) == 0);
+        CHECK(geosets.count(501) == 1);
+    }
+
+    SECTION("ordinary pants with GG1/GG2 keep trousers 1301 and select cuff 1102 and kneepads 902") {
+        auto geosets = bareCharacterGeosets(1, 0, 0, 0, 8);
+        PlayerEquipmentGeosetInput input;
+        input.legsGG1 = 1;
+        input.legsGG2 = 1;
+        input.bootsGG1 = 2;
+        input.hasTabard = true;
+        input.tabardGG1 = 1;
+        applyPlayerEquipmentGeosets(geosets, trollModel, input);
+
+        CHECK(geosets.count(1301) == 1);
+        CHECK(geosets.count(1302) == 0); // GG1 on legs must NOT select skirt 1302
+        CHECK(geosets.count(1102) == 1);
+        CHECK(geosets.count(902) == 1);
+        CHECK(geosets.count(503) == 1);
+        CHECK(geosets.count(1202) == 1);
+    }
+
+    SECTION("Gnome/Dwarf Female bare shins fall back to lowest group-5 geoset") {
+        const std::unordered_set<uint16_t> gnomeModel{
+            0, 1, 401, 502, 503, 504, 702, 801, 1301, 1302, 1501
+        };
+        auto geosets = bareCharacterGeosets(1, 0, 0, 0, 7);
+        PlayerEquipmentGeosetInput input;
+        input.legsGG3 = 1;
+        applyPlayerEquipmentGeosets(geosets, gnomeModel, input);
+
+        CHECK(geosets.count(1302) == 1);
+        CHECK(geosets.count(502) == 1);
+    }
+
+    SECTION("texture compositing layer orders leg-slot kilts over boots and under chest robes") {
+        // Normal pants: pants(1) < boots(2) < chest(3)
+        CHECK(equipmentTextureLayer(7, false) < equipmentTextureLayer(8, false));
+        CHECK(equipmentTextureLayer(8, false) < equipmentTextureLayer(5, false));
+        // Leg-slot kilt: boots(1) < kilt(2) < chest robe(3)
+        CHECK(equipmentTextureLayer(8, true) < equipmentTextureLayer(7, true));
+        CHECK(equipmentTextureLayer(7, true) < equipmentTextureLayer(20, true));
+    }
+}
+
+TEST_CASE("shipped TBC ItemDisplayInfo.dbc and all 20 playable race M2s resolve kilts, robes, and pants",
+          "[geoset][equipment][tbc-assets]") {
+    const std::filesystem::path tbcRoot("/workspace/azerothcore/client/wowee-data/expansions/tbc");
+    const auto idiPath = tbcRoot / "dbfilesclient" / "itemdisplayinfo.dbc";
+    if (!std::filesystem::exists(idiPath)) {
+        SKIP("Shipped TBC extracted assets not present at " + tbcRoot.string());
+    }
+
+    const auto idiBytes = readBinaryFile(idiPath);
+    REQUIRE_FALSE(idiBytes.empty());
+    wowee::pipeline::DBCFile idi;
+    REQUIRE(idi.load(idiBytes));
+
+    constexpr uint32_t kGG1 = 7;
+    constexpr uint32_t kGG2 = 8;
+    constexpr uint32_t kGG3 = 9;
+    constexpr uint32_t kTexLegUpper = 20;
+    constexpr uint32_t kTexLegLower = 21;
+
+    auto readGG = [&](uint32_t displayId, uint32_t field) -> uint32_t {
+        const int32_t rec = idi.findRecordById(displayId);
+        REQUIRE(rec >= 0);
+        return idi.getUInt32(static_cast<uint32_t>(rec), field);
+    };
+
+    // Primitive Kilt (Item 153 -> DisplayInfo 10050) & Troll Shaman kilt (Item 6135 -> 10109)
+    for (uint32_t kiltDisplayId : {10050u, 10109u}) {
+        CHECK(readGG(kiltDisplayId, kGG1) == 0);
+        CHECK(readGG(kiltDisplayId, kGG2) == 0);
+        CHECK(readGG(kiltDisplayId, kGG3) == 1);
+        const int32_t rec = idi.findRecordById(kiltDisplayId);
+        CHECK_FALSE(idi.getString(static_cast<uint32_t>(rec), kTexLegUpper).empty());
+        CHECK_FALSE(idi.getString(static_cast<uint32_t>(rec), kTexLegLower).empty());
+    }
+
+    // Chest robe (DisplayInfo 1867), pants with kneepads (386), pants with waist cuff (45666)
+    CHECK(readGG(1867, kGG3) == 1);
+    CHECK(readGG(386, kGG2) == 1);
+    CHECK(readGG(386, kGG3) == 0);
+    CHECK(readGG(45666, kGG1) == 1);
+    CHECK(readGG(45666, kGG3) == 0);
+
+    const char* races[] = {
+        "human", "orc", "dwarf", "nightelf", "scourge",
+        "tauren", "gnome", "troll", "bloodelf", "draenei"
+    };
+    const char* sexes[] = {"male", "female"};
+
+    for (const char* race : races) {
+        for (const char* sex : sexes) {
+            const auto m2Path = tbcRoot / "character" / race / sex /
+                                (std::string(race) + sex + ".m2");
+            REQUIRE(std::filesystem::exists(m2Path));
+            const auto available = loadM2SubmeshIds(m2Path);
+            INFO("Model: " << race << " " << sex);
+            REQUIRE(available.count(1301) == 1);
+            REQUIRE(available.count(1302) == 1);
+
+            // 1. Primitive Kilt (legs GG3=1) -> 1302 skirt on every race/gender
+            {
+                auto geosets = bareCharacterGeosets(1, 0, 0, 0, 0);
+                PlayerEquipmentGeosetInput input;
+                input.legsGG1 = readGG(10050, kGG1);
+                input.legsGG2 = readGG(10050, kGG2);
+                input.legsGG3 = readGG(10050, kGG3);
+                applyPlayerEquipmentGeosets(geosets, available, input);
+                CHECK(geosets.count(1302) == 1);
+                CHECK(geosets.count(1301) == 0);
+            }
+
+            // 2. Chest robe (chest GG3=1) -> 1302 skirt on every race/gender
+            {
+                auto geosets = bareCharacterGeosets(1, 0, 0, 0, 0);
+                PlayerEquipmentGeosetInput input;
+                input.chestGG1 = readGG(1867, kGG1);
+                input.chestGG2 = readGG(1867, kGG2);
+                input.chestGG3 = readGG(1867, kGG3);
+                applyPlayerEquipmentGeosets(geosets, available, input);
+                CHECK(geosets.count(1302) == 1);
+                CHECK(geosets.count(1301) == 0);
+            }
+
+            // 3. Normal pants with waist cuff (DisplayInfo 45666: GG1=1, GG3=0) -> 1301 trousers + 1102 cuff
+            {
+                auto geosets = bareCharacterGeosets(1, 0, 0, 0, 0);
+                PlayerEquipmentGeosetInput input;
+                input.legsGG1 = readGG(45666, kGG1);
+                input.legsGG2 = readGG(45666, kGG2);
+                input.legsGG3 = readGG(45666, kGG3);
+                applyPlayerEquipmentGeosets(geosets, available, input);
+                CHECK(geosets.count(1301) == 1);
+                CHECK(geosets.count(1302) == 0);
+                CHECK(geosets.count(1102) == 1);
+            }
+        }
+    }
 }

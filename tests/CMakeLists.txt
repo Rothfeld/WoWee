@@ -285,14 +285,13 @@ wowee_add_test(test_shared_rules
             ${TEST_COMMON_SOURCES})
 
 # ── test_geoset_rules ────────────────────────────────────────
-# Choosing a geoset when the model lacks the one asked for. Pure header, so the
-# test needs nothing but Catch.
-add_executable(test_geoset_rules test_geoset_rules.cpp ${TEST_COMMON_SOURCES})
-target_include_directories(test_geoset_rules PRIVATE ${TEST_INCLUDE_DIRS})
-target_include_directories(test_geoset_rules SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
-target_link_libraries(test_geoset_rules PRIVATE catch2_main)
-add_test(NAME geoset_rules COMMAND test_geoset_rules)
-register_test_target(test_geoset_rules)
+# Choosing a geoset when the model lacks the one asked for, plus player
+# equipment geoset parity against shipped TBC ItemDisplayInfo.dbc and race M2s.
+wowee_add_test(test_geoset_rules
+    SOURCES test_geoset_rules.cpp
+            ${CMAKE_SOURCE_DIR}/src/pipeline/dbc_loader.cpp
+            ${CMAKE_SOURCE_DIR}/src/pipeline/m2_loader.cpp
+            ${TEST_COMMON_SOURCES})
 
 # ── test_framexml ───────────────────────────────────────────
 add_executable(test_framexml

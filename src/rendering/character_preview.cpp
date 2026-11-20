@@ -904,17 +904,6 @@ bool CharacterPreview::applyEquipment(const std::vector<game::EquipmentItem>& eq
     // provides the variant offset per equipped item; base IDs are per-group constants.
     std::unordered_set<uint16_t> geosets = buildBaseGeosets();
 
-    auto eraseGroup = [&](uint16_t group) {
-        for (auto it = geosets.begin(); it != geosets.end();) {
-            if ((*it / 100) == group) {
-                it = geosets.erase(it);
-            } else {
-                ++it;
-            }
-        }
-    };
-
-    // CharGeosets: group 4=gloves(forearm), 5=boots(shin), 8=sleeves, 13=pants
     std::unordered_set<uint16_t> modelGeosets;
     if (const auto* modelData = charRenderer_->getModelData(modelId_)) {
         for (const auto& batch : modelData->batches) {
@@ -922,103 +911,31 @@ bool CharacterPreview::applyEquipment(const std::vector<game::EquipmentItem>& eq
         }
     }
 
-    // core/geoset_rules.hpp, the same rule the world paths use.
-    //
-    // This copy took a second id as its fallback rather than looking inside the
-    // group, so where the two ids given were the same - which every call below
-    // does - it could only answer "the model has it" or "nothing", and a model
-    // spelling that part with a different variant lost it entirely.
-    auto pickGeoset = [&](uint16_t preferred, uint16_t fallback) -> uint16_t {
-        const uint16_t chosen = core::resolveGeoset(preferred, modelGeosets);
-        if (chosen != 0) return chosen;
-        return (fallback != 0 && modelGeosets.count(fallback) > 0) ? fallback : 0;
-    };
-
-    auto lowestInGroup = [&](uint16_t group) -> uint16_t {
-        return core::resolveGeoset(static_cast<uint16_t>(group * 100 + 2), modelGeosets);
-    };
-
-    uint16_t geosetGloves = pickGeoset(core::kGeosetBareForearms, core::kGeosetBareForearms);
-    uint16_t geosetBoots = pickGeoset(core::kGeosetBareShins, lowestInGroup(5));
-    uint16_t geosetSleeves = pickGeoset(core::kGeosetBareSleeves, core::kGeosetBareSleeves);
-    uint16_t geosetPants = pickGeoset(core::kGeosetBarePants, core::kGeosetBarePants);
-    uint16_t geosetChestFlap = 0;
-    bool wearsRobe = false;  // a robe's skirt replaces the tabard flap
-
-    // Chest/Shirt/Robe → group 8 (sleeves)
+    const uint32_t geosetGroup2Field = geosetGroup1Field + 1;
+    core::PlayerEquipmentGeosetInput equipInput;
     {
         uint32_t did = findDisplayId({5, 20});
         if (did == 0) did = findDisplayId({4});
-        uint32_t gg = getGeosetGroup(did, geosetGroup1Field);
-        if (gg > 0) geosetSleeves = pickGeoset(core::equippedGeoset(core::equipment::kChestBare, gg), core::kGeosetBareSleeves);
-        // Robe kilt legs
-        uint32_t gg3 = getGeosetGroup(did, geosetGroup3Field);
-        if (gg3 > 0) geosetPants = pickGeoset(core::equippedGeoset(core::equipment::kRobeKiltBare, gg3), core::kGeosetBarePants);
-        wearsRobe = gg3 > 0;
-        // Flap below the waist → group 10, from the second column (1001 is none)
-        geosetChestFlap = pickGeoset(core::equippedGeoset(core::equipment::kChestFlapBare,
-            getGeosetGroup(did, geosetGroup1Field + 1)), 0);
+        equipInput.chestGG1 = getGeosetGroup(did, geosetGroup1Field);
+        equipInput.chestGG2 = getGeosetGroup(did, geosetGroup2Field);
+        equipInput.chestGG3 = getGeosetGroup(did, geosetGroup3Field);
     }
-    // Legs → group 13 (trousers)
+    equipInput.wristsGG1 = getGeosetGroup(findDisplayId({9}), geosetGroup1Field);
     {
-        uint32_t did = findDisplayId({7});
-        uint32_t gg = getGeosetGroup(did, geosetGroup1Field);
-        if (gg > 0 && geosetPants == core::kGeosetBarePants)
-            geosetPants = pickGeoset(core::equippedGeoset(core::equipment::kLegsBare, gg), core::kGeosetBarePants);
+        const uint32_t did = findDisplayId({7});
+        equipInput.legsGG1 = getGeosetGroup(did, geosetGroup1Field);
+        equipInput.legsGG2 = getGeosetGroup(did, geosetGroup2Field);
+        equipInput.legsGG3 = getGeosetGroup(did, geosetGroup3Field);
     }
-    // Boots → group 5 (shins)
-    {
-        uint32_t did = findDisplayId({8});
-        uint32_t gg = getGeosetGroup(did, geosetGroup1Field);
-        if (gg > 0) geosetBoots = pickGeoset(core::equippedGeoset(core::equipment::kBootsBare, gg), lowestInGroup(5));
-    }
-    // Gloves → group 4 (forearms)
-    {
-        uint32_t did = findDisplayId({10});
-        uint32_t gg = getGeosetGroup(did, geosetGroup1Field);
-        if (gg > 0) geosetGloves = pickGeoset(core::equippedGeoset(core::equipment::kGlovesBare, gg), core::kGeosetBareForearms);
-    }
-    // Wrists/Bracers → group 8 (sleeves, only if chest/shirt didn't set it)
-    {
-        uint32_t did = findDisplayId({9});
-        if (did != 0 && geosetSleeves == pickGeoset(core::kGeosetBareSleeves, core::kGeosetBareSleeves)) {
-            uint32_t gg = getGeosetGroup(did, geosetGroup1Field);
-            if (gg > 0) geosetSleeves = pickGeoset(core::equippedGeoset(core::equipment::kChestBare, gg), core::kGeosetBareSleeves);
-        }
-    }
-    // Belt → group 18 (buckle), falling back to the base variant so the waist
-    // is not left empty - see the spawner's copy for what that costs.
-    uint16_t geosetBelt = 0;
-    {
-        uint32_t did = findDisplayId({6});
-        uint32_t gg = getGeosetGroup(did, geosetGroup1Field);
-        geosetBelt = pickGeoset(
-            gg > 0 ? core::equippedGeoset(core::equipment::kBeltBase, gg) : 0,
-            core::equipment::kBeltBase);
-    }
+    equipInput.bootsGG1  = getGeosetGroup(findDisplayId({8}), geosetGroup1Field);
+    equipInput.glovesGG1 = getGeosetGroup(findDisplayId({10}), geosetGroup1Field);
+    equipInput.beltGG1   = getGeosetGroup(findDisplayId({6}), geosetGroup1Field);
+    equipInput.hasCape   = hasInvType({16});
+    equipInput.capeGG1   = getGeosetGroup(findDisplayId({16}), geosetGroup1Field);
+    equipInput.hasTabard = hasInvType({19});
+    equipInput.tabardGG1 = getGeosetGroup(findDisplayId({19}), geosetGroup1Field);
 
-    eraseGroup(4);
-    eraseGroup(5);
-    eraseGroup(8);
-    eraseGroup(13);
-    eraseGroup(15);
-    eraseGroup(18);
-    if (geosetGloves != 0) geosets.insert(geosetGloves);
-    if (geosetBoots != 0) geosets.insert(geosetBoots);
-    if (geosetSleeves != 0) geosets.insert(geosetSleeves);
-    if (geosetPants != 0) geosets.insert(geosetPants);
-    if (geosetBelt != 0) geosets.insert(geosetBelt);
-    if (geosetChestFlap != 0) geosets.insert(geosetChestFlap);
-    uint32_t capeGG = getGeosetGroup(findDisplayId({16}), geosetGroup1Field);
-    uint16_t geosetCape = pickGeoset(
-        hasInvType({16}) ? core::cloakGeoset(capeGG) : core::kGeosetNoCape,
-        core::kGeosetNoCape);
-    if (geosetCape != 0) geosets.insert(geosetCape); // Cloak mesh toggle (visual may still be limited)
-    if (hasInvType({19}) && !wearsRobe) {
-        uint16_t geosetTabard = pickGeoset(core::equippedGeoset(core::equipment::kTabardBare,
-            getGeosetGroup(findDisplayId({19}), geosetGroup1Field)), 0);
-        if (geosetTabard != 0) geosets.insert(geosetTabard);
-    }
+    core::applyPlayerEquipmentGeosets(geosets, modelGeosets, equipInput);
 
     core::hideGeosetGroups(geosets, core::helmHiddenGeosetGroups(
         *assetManager_, findDisplayId({1}), static_cast<uint8_t>(race_),
@@ -1037,20 +954,13 @@ bool CharacterPreview::applyEquipment(const std::vector<game::EquipmentItem>& eq
     std::vector<std::pair<int, std::string>> regionLayers;
     regionLayers.reserve(32);
 
+    const bool legsHasSkirt = equipInput.legsGG3 > 0;
     auto textureEquipment = equipment;
-    // Chest/robes cover the lower-body texture supplied by leggings and boots.
-    std::stable_sort(textureEquipment.begin(), textureEquipment.end(), [](const auto& a, const auto& b) {
-        const auto layer = [](uint8_t type) {
-            switch (type) {
-                case 4: return 0;  // shirt
-                case 7: return 1;  // leggings
-                case 8: return 2;  // boots
-                case 5: case 20: return 3; // chest / robe
-                case 19: return 5; // tabard on top of chest/belt
-                default: return 4;
-            }
-        };
-        return layer(a.inventoryType) < layer(b.inventoryType);
+    // Chest/robes cover the lower-body texture supplied by leggings and boots;
+    // leg-slot kilts (legsGG3 > 0) cover boot shins the same way.
+    std::stable_sort(textureEquipment.begin(), textureEquipment.end(), [legsHasSkirt](const auto& a, const auto& b) {
+        return core::equipmentTextureLayer(a.inventoryType, legsHasSkirt) <
+               core::equipmentTextureLayer(b.inventoryType, legsHasSkirt);
     });
     for (const auto& it : textureEquipment) {
         if (it.displayModel == 0) continue;

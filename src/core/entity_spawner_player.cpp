@@ -463,144 +463,31 @@ void EntitySpawner::setOnlinePlayerEquipment(uint64_t guid,
         }
     }
 
-    auto eraseGroup = [&](uint16_t group) {
-        for (auto it = geosets.begin(); it != geosets.end();) {
-            if ((*it / 100) == group) {
-                it = geosets.erase(it);
-            } else {
-                ++it;
-            }
-        }
-    };
-
-    // NOTE (2026-08-11, unverified): this does NOT use core::resolveGeoset,
-    // and the character preview's identically-named lambda does.
-    //
-    // geoset_rules.hpp says of that rule "it lives here now, with a test, and
-    // the call sites ask rather than decide". This call site still decides -
-    // it takes an exact match or the caller's fallback and nothing else.
-    //
-    // Where the two differ: an *equipped* geoset (a real variant, not a bare
-    // 401/501/801/1301, which both treat as none and never substitute) that
-    // the model does not carry. The preview substitutes the lowest member of
-    // that group and shows some armour mesh; this returns the bare default, or
-    // nothing at all if the model lacks that too. So a race whose model is
-    // missing a variant would look bare in the world and dressed on the
-    // character screen.
-    //
-    // Deliberately not changed here. It is a difference in what gets drawn on
-    // the character you play, in the same area as the unresolved bare-shin
-    // width bug, and it wants someone looking at the screen - which is the one
-    // thing this pass could not do.
-    auto pickGeoset = [&](uint16_t preferred, uint16_t fallback) -> uint16_t {
-        if (preferred != 0 && modelGeosets.count(preferred) > 0) return preferred;
-        if (fallback != 0 && modelGeosets.count(fallback) > 0) return fallback;
-        return 0;
-    };
-
-    // Find the lowest submesh ID in a group (e.g., group 5 → lowest 5xx).
-    // Races like Gnome (no 501) and Tauren (only 505) need this fallback.
-    auto lowestInGroup = [&](uint16_t group) -> uint16_t {
-        uint16_t best = 0;
-        for (uint16_t g : modelGeosets) {
-            if (g / 100 == group && (best == 0 || g < best)) best = g;
-        }
-        return best;
-    };
-
-    // Per-group defaults - overridden below when equipment provides a geoset value.
-    uint16_t geosetGloves  = pickGeoset(kGeosetBareForearms, kGeosetBareForearms);
-    uint16_t geosetBoots   = pickGeoset(kGeosetBareShins, lowestInGroup(5));
-    uint16_t geosetSleeves = pickGeoset(kGeosetBareSleeves, kGeosetBareSleeves);
-    uint16_t geosetPants   = pickGeoset(kGeosetBarePants, kGeosetBarePants);
-    uint16_t geosetChestFlap = 0;
-    bool wearsRobe = false;  // a robe's skirt replaces the tabard flap
-
-    // Chest/Shirt/Robe (invType 4,5,20) → wrist/sleeve group 8
+    const uint32_t geosetGroup2Field = geosetGroup1Field + 1;
+    PlayerEquipmentGeosetInput equipInput;
     {
         uint32_t did = findDisplayIdByInvType({5, 20});
         if (did == 0) did = findDisplayIdByInvType({4});
-        uint32_t gg1 = getGeosetGroup(did, geosetGroup1Field);
-        if (gg1 > 0) geosetSleeves = pickGeoset(equippedGeoset(equipment::kChestBare, gg1), kGeosetBareSleeves);
-        // Robe kilt → leg group 13
-        uint32_t gg3 = getGeosetGroup(did, geosetGroup3Field);
-        if (gg3 > 0) geosetPants = pickGeoset(equippedGeoset(equipment::kRobeKiltBare, gg3), kGeosetBarePants);
-        wearsRobe = gg3 > 0;
-        // Flap below the waist → group 10, from the second column
-        geosetChestFlap = pickGeoset(equippedGeoset(equipment::kChestFlapBare,
-            getGeosetGroup(did, geosetGroup1Field + 1)), 0);
+        equipInput.chestGG1 = getGeosetGroup(did, geosetGroup1Field);
+        equipInput.chestGG2 = getGeosetGroup(did, geosetGroup2Field);
+        equipInput.chestGG3 = getGeosetGroup(did, geosetGroup3Field);
     }
-
-    // Legs (invType 7) → leg group 13
+    equipInput.wristsGG1 = getGeosetGroup(findDisplayIdByInvType({9}), geosetGroup1Field);
     {
-        uint32_t did = findDisplayIdByInvType({7});
-        uint32_t gg1 = getGeosetGroup(did, geosetGroup1Field);
-        if (gg1 > 0 && geosetPants == kGeosetBarePants)
-            geosetPants = pickGeoset(equippedGeoset(equipment::kLegsBare, gg1), kGeosetBarePants);
+        const uint32_t did = findDisplayIdByInvType({7});
+        equipInput.legsGG1 = getGeosetGroup(did, geosetGroup1Field);
+        equipInput.legsGG2 = getGeosetGroup(did, geosetGroup2Field);
+        equipInput.legsGG3 = getGeosetGroup(did, geosetGroup3Field);
     }
+    equipInput.bootsGG1  = getGeosetGroup(findDisplayIdByInvType({8}), geosetGroup1Field);
+    equipInput.glovesGG1 = getGeosetGroup(findDisplayIdByInvType({10}), geosetGroup1Field);
+    equipInput.beltGG1   = getGeosetGroup(findDisplayIdByInvType({6}), geosetGroup1Field);
+    equipInput.hasCape   = hasInvType({16});
+    equipInput.capeGG1   = getGeosetGroup(findDisplayIdByInvType({16}), geosetGroup1Field);
+    equipInput.hasTabard = hasInvType({19});
+    equipInput.tabardGG1 = getGeosetGroup(findDisplayIdByInvType({19}), geosetGroup1Field);
 
-    // Feet/Boots (invType 8) → shin group 5
-    {
-        uint32_t did = findDisplayIdByInvType({8});
-        uint32_t gg1 = getGeosetGroup(did, geosetGroup1Field);
-        if (gg1 > 0) geosetBoots = pickGeoset(equippedGeoset(equipment::kBootsBare, gg1), lowestInGroup(5));
-    }
-
-    // Hands/Gloves (invType 10) → forearm group 4
-    {
-        uint32_t did = findDisplayIdByInvType({10});
-        uint32_t gg1 = getGeosetGroup(did, geosetGroup1Field);
-        if (gg1 > 0) geosetGloves = pickGeoset(equippedGeoset(equipment::kGlovesBare, gg1), kGeosetBareForearms);
-    }
-
-    // Wrists/Bracers (invType 9) → sleeve group 8 (only if chest/shirt didn't set it)
-    {
-        uint32_t did = findDisplayIdByInvType({9});
-        if (did != 0 && geosetSleeves == kGeosetBareSleeves) {
-            uint32_t gg1 = getGeosetGroup(did, geosetGroup1Field);
-            if (gg1 > 0) geosetSleeves = pickGeoset(equippedGeoset(equipment::kChestBare, gg1), kGeosetBareSleeves);
-        }
-    }
-
-    // Waist/Belt (invType 6) → buckle group 18
-    //
-    // The base variant when no belt is worn, rather than nothing. Group 18 is
-    // erased below, and on the Legion human male 1801 is the waist itself, so
-    // dropping it with nothing in its place left a gap between the torso and
-    // the legs. The older models carry no 1801, where pickGeoset resolves this
-    // to nothing exactly as before.
-    uint16_t geosetBelt = 0;
-    {
-        uint32_t did = findDisplayIdByInvType({6});
-        uint32_t gg1 = getGeosetGroup(did, geosetGroup1Field);
-        geosetBelt = pickGeoset(gg1 > 0 ? equippedGeoset(equipment::kBeltBase, gg1) : 0,
-                                equipment::kBeltBase);
-    }
-
-    eraseGroup(4);
-    eraseGroup(5);
-    eraseGroup(8);
-    eraseGroup(13);
-    eraseGroup(15);
-    eraseGroup(18);
-    if (geosetGloves != 0) geosets.insert(geosetGloves);
-    if (geosetBoots != 0) geosets.insert(geosetBoots);
-    if (geosetSleeves != 0) geosets.insert(geosetSleeves);
-    if (geosetPants != 0) geosets.insert(geosetPants);
-    if (geosetBelt != 0) geosets.insert(geosetBelt);
-    if (geosetChestFlap != 0) geosets.insert(geosetChestFlap);
-    // Back/Cloak (invType 16)
-    uint32_t capeGG = getGeosetGroup(findDisplayIdByInvType({16}), geosetGroup1Field);
-    uint16_t geosetCape = pickGeoset(
-        hasInvType({16}) ? cloakGeoset(capeGG) : kGeosetNoCape,
-        kGeosetNoCape);
-    if (geosetCape != 0) geosets.insert(geosetCape);
-    // Tabard (invType 19): 1201 + its GeosetGroup1, the flap 1202 for a tabard of 1.
-    if (hasInvType({19}) && !wearsRobe) {
-        const uint32_t tabardGG = getGeosetGroup(findDisplayIdByInvType({19}), geosetGroup1Field);
-        const uint16_t geosetTabard = pickGeoset(equippedGeoset(equipment::kTabardBare, tabardGG), 0);
-        if (geosetTabard != 0) geosets.insert(geosetTabard);
-    }
+    applyPlayerEquipmentGeosets(geosets, modelGeosets, equipInput);
 
     // What the helm covers - hair, beard channels, ears - per race and gender
     // from HelmetGeosetVisData. HEAD slot is index 0 of the equipment array.
@@ -770,7 +657,11 @@ void EntitySpawner::setOnlinePlayerEquipment(uint64_t guid,
         }
     }
 
-    for (int s : {0, 1, 2, 3, 6, 7, 4, 8, 9, 5, 10, 11, 12, 13, 14, 15, 16, 17, 18}) {
+    const bool legsHasSkirt = equipInput.legsGG3 > 0;
+    const std::array<int, 19> slotOrder = legsHasSkirt
+        ? std::array<int, 19>{0, 1, 2, 3, 7, 6, 4, 8, 9, 5, 10, 11, 12, 13, 14, 15, 16, 17, 18}
+        : std::array<int, 19>{0, 1, 2, 3, 6, 7, 4, 8, 9, 5, 10, 11, 12, 13, 14, 15, 16, 17, 18};
+    for (int s : slotOrder) {
         uint32_t did = displayInfoIds[s];
         if (did == 0) continue;
         int32_t recIdx = displayInfoDbc->findRecordById(did);

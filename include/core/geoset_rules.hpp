@@ -218,12 +218,14 @@ constexpr uint16_t cloakGeoset(uint32_t geosetGroupValue) {
 /// of them and a table would only be looked up by an enum that says the same
 /// thing. What matters is that "a chest changes the sleeves" is written once.
 namespace equipment {
-constexpr uint16_t kChestBare  = kGeosetBareSleeves;   ///< group 8
-constexpr uint16_t kLegsBare   = kGeosetBarePants;     ///< group 13
-constexpr uint16_t kBootsBare  = kGeosetBareShins;     ///< group 5
-constexpr uint16_t kGlovesBare = kGeosetBareForearms;  ///< group 4
-constexpr uint16_t kWristBare  = kGeosetBareSleeves;   ///< group 8, same as chest
-constexpr uint16_t kBeltBase   = 1801;                 ///< group 18, the buckle
+constexpr uint16_t kChestBare     = kGeosetBareSleeves;   ///< group 8
+constexpr uint16_t kLegsBare      = kGeosetBarePants;     ///< group 13
+constexpr uint16_t kKneepadsBare  = 901;                  ///< group 9, from legs GeosetGroup2
+constexpr uint16_t kPantsCuffBare = 1101;                 ///< group 11, from legs GeosetGroup1
+constexpr uint16_t kBootsBare     = kGeosetBareShins;     ///< group 5
+constexpr uint16_t kGlovesBare    = kGeosetBareForearms;  ///< group 4
+constexpr uint16_t kWristBare     = kGeosetBareSleeves;   ///< group 8, same as chest
+constexpr uint16_t kBeltBase      = 1801;                 ///< group 18, the buckle
 /// Group 12. A tabard's GeosetGroup1 is 1 (1098 of 1286 CreatureDisplayInfoExtra
 /// tabards) and selects 1202, the flap every character model carries; 0 selects
 /// nothing. Scholomance Adept 11150 (gnome male) wears tabard 3454.
@@ -232,11 +234,161 @@ constexpr uint16_t kTabardBare = kGeosetNoTabard;
 /// below the waist, 1001 none.
 constexpr uint16_t kChestFlapBare = kGeosetNoChestFlap;
 
-/// A robe's chest piece also names the kilt over the legs, in its second geoset
-/// column rather than its first. Reading only the first is why an NPC in a robe
-/// wore trousers under it while a player in the same robe did not.
-constexpr uint16_t kRobeKiltBare = kGeosetBarePants;   ///< group 13
+/// A robe's chest piece or a leg-slot kilt names the skirt over the legs in
+/// GeosetGroup3 (1301 + value -> 1302), with chest taking priority over legs.
+constexpr uint16_t kRobeKiltBare = kGeosetBarePants;      ///< group 13
 }  // namespace equipment
+
+/// Authored ItemDisplayInfo GeosetGroup values for a player's worn equipment.
+///
+/// TBC ItemDisplayInfo.dbc maps the three GeosetGroup columns per slot:
+/// - Chest/Robe/Shirt: GG1 = sleeves (group 8), GG2 = chest flap (group 10),
+///   GG3 = robe skirt (group 13).
+/// - Legs: GG1 = waist cuff (group 11), GG2 = kneepads (group 9),
+///   GG3 = leg-slot kilt/skirt (group 13, when chest GG3 is 0).
+/// - Boots: GG1 = shins/boots (group 5).
+/// - Gloves: GG1 = forearms/gloves (group 4).
+/// - Wrists: GG1 = sleeves fallback (group 8, when chest/shirt GG1 is 0).
+/// - Belt: GG1 = buckle (group 18).
+/// - Back/Cloak: GG1 = cape style (group 15).
+/// - Tabard: GG1 = tabard flap (group 12, hidden when wearing a robe or kilt).
+struct PlayerEquipmentGeosetInput {
+    uint32_t chestGG1 = 0;
+    uint32_t chestGG2 = 0;
+    uint32_t chestGG3 = 0;
+    uint32_t wristsGG1 = 0;
+    uint32_t legsGG1 = 0;
+    uint32_t legsGG2 = 0;
+    uint32_t legsGG3 = 0;
+    uint32_t bootsGG1 = 0;
+    uint32_t glovesGG1 = 0;
+    uint32_t beltGG1 = 0;
+    bool hasCape = false;
+    uint32_t capeGG1 = 0;
+    bool hasTabard = false;
+    uint32_t tabardGG1 = 0;
+};
+
+/// Apply equipment geosets onto a character's base geoset set, resolving each
+/// group against `available` (the submesh IDs carried by the M2 model).
+///
+/// Shared by local world player (GameScreen::updateCharacterGeosets), remote
+/// world players (EntitySpawner::setOnlinePlayerEquipment), and paperdoll /
+/// portrait previews (CharacterPreview::applyEquipment).
+inline void applyPlayerEquipmentGeosets(std::unordered_set<uint16_t>& geosets,
+                                        const std::unordered_set<uint16_t>& available,
+                                        const PlayerEquipmentGeosetInput& input) {
+    for (auto it = geosets.begin(); it != geosets.end();) {
+        const uint16_t g = geosetGroup(*it);
+        if (g == 4 || g == 5 || g == 8 || g == 9 || g == 10 ||
+            g == 11 || g == 12 || g == 13 || g == 15 || g == 18) {
+            it = geosets.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+    auto insertResolved = [&](uint16_t preferred, uint16_t fallback = 0) {
+        uint16_t chosen = resolveGeoset(preferred, available);
+        if (chosen == 0 && fallback != 0) {
+            chosen = resolveGeoset(fallback, available);
+        }
+        if (chosen != 0) geosets.insert(chosen);
+    };
+
+    // Lowest authored geoset in a group (used for group 5 bare-shin fallback on
+    // races like Gnome and Dwarf Female that carry 502..504 without 501).
+    auto lowestInGroup = [&](uint16_t group) -> uint16_t {
+        uint16_t lowest = 0;
+        for (uint16_t id : available) {
+            if (geosetGroup(id) != group) continue;
+            if (lowest == 0 || id < lowest) lowest = id;
+        }
+        return lowest;
+    };
+
+    const uint32_t robeGG = input.chestGG3 > 0 ? input.chestGG3 : input.legsGG3;
+    const bool wearsSkirt = (robeGG > 0);
+
+    // Group 4: gloves / forearms
+    insertResolved(
+        input.glovesGG1 > 0 ? equippedGeoset(equipment::kGlovesBare, input.glovesGG1)
+                            : kGeosetBareForearms,
+        kGeosetBareForearms);
+
+    // Group 5: boots / shins. A robe or leg-slot kilt (1302) covers the shins,
+    // so keep bare shins underneath rather than bulky cuffed boot meshes.
+    const uint16_t wantBoots = (!wearsSkirt && input.bootsGG1 > 0)
+        ? equippedGeoset(equipment::kBootsBare, input.bootsGG1)
+        : kGeosetBareShins;
+    insertResolved(wantBoots, lowestInGroup(5));
+
+    // Group 8: sleeves (chest/shirt takes priority over wrists)
+    const uint32_t sleeveGG = input.chestGG1 > 0 ? input.chestGG1 : input.wristsGG1;
+    insertResolved(
+        sleeveGG > 0 ? equippedGeoset(equipment::kChestBare, sleeveGG)
+                     : kGeosetBareSleeves,
+        kGeosetBareSleeves);
+
+    // Group 10: chest flap below the waist (from chest GeosetGroup2)
+    if (input.chestGG2 > 0) {
+        insertResolved(equippedGeoset(equipment::kChestFlapBare, input.chestGG2));
+    }
+
+    // Group 9 (kneepads, legs GG2) and Group 11 (waist cuff, legs GG1):
+    // suppressed when a robe or leg-slot kilt covers the lower body.
+    if (!wearsSkirt) {
+        if (input.legsGG2 > 0) {
+            insertResolved(equippedGeoset(equipment::kKneepadsBare, input.legsGG2));
+        }
+        if (input.legsGG1 > 0) {
+            insertResolved(equippedGeoset(equipment::kPantsCuffBare, input.legsGG1));
+        }
+    }
+
+    // Group 13: trousers (1301) or robe/kilt skirt (1302+)
+    insertResolved(
+        wearsSkirt ? equippedGeoset(equipment::kRobeKiltBare, robeGG)
+                   : kGeosetBarePants,
+        kGeosetBarePants);
+
+    // Group 18: belt buckle (HD models carry 1801 waist base + 1802+ buckles;
+    // stock TBC models carry no group 18 and resolve to 0).
+    if (!available.empty() || input.beltGG1 > 0) {
+        insertResolved(
+            input.beltGG1 > 0 ? equippedGeoset(equipment::kBeltBase, input.beltGG1)
+                              : equipment::kBeltBase,
+            equipment::kBeltBase);
+    }
+
+    // Group 15: cloak mesh or no-cape back panel
+    insertResolved(
+        input.hasCape ? cloakGeoset(input.capeGG1) : kGeosetNoCape,
+        kGeosetNoCape);
+
+    // Group 12: tabard flap (suppressed by both chest robes and leg-slot kilts)
+    if (input.hasTabard && !wearsSkirt && input.tabardGG1 > 0) {
+        insertResolved(equippedGeoset(equipment::kTabardBare, input.tabardGG1));
+    }
+}
+
+/// Texture compositing layer priority by WoW inventoryType.
+///
+/// Ordinary pants composite under boots so boot shins cover lower pant legs.
+/// A leg-slot kilt/skirt (`legsHasSkirt == true`, legs GeosetGroup3 > 0) uses
+/// the skirt mesh (1302) and composites over boots so the kilt's LegLower hem
+/// is not overwritten by boot shins, while still yielding to a chest robe.
+constexpr int equipmentTextureLayer(uint8_t inventoryType, bool legsHasSkirt) {
+    switch (inventoryType) {
+        case 4:  return 0;                       // shirt
+        case 7:  return legsHasSkirt ? 2 : 1;    // leggings / leg-slot kilt
+        case 8:  return legsHasSkirt ? 1 : 2;    // boots
+        case 5:
+        case 20: return 3;                       // chest / robe
+        case 19: return 5;                       // tabard on top of chest/belt
+        default: return 4;
+    }
+}
 
 }  // namespace core
 }  // namespace wowee

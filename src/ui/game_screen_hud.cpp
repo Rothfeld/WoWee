@@ -174,105 +174,12 @@ void GameScreen::updateCharacterGeosets(game::Inventory& inventory) {
         geosets = core::bareCharacterGeosets(0, 0, 0, 0, 0);
     }
 
-    auto eraseGroup = [&](uint16_t group) {
-        for (auto it = geosets.begin(); it != geosets.end();) {
-            if ((*it / 100) == group) it = geosets.erase(it);
-            else ++it;
-        }
-    };
-
     // Build set of geoset IDs present in the model for validation.
-    // Races like Gnome (no 501) and Tauren (only 505) need fallback.
+    // Races like Gnome (no 501) and Tauren (no group 5) need fallback.
     std::unordered_set<uint16_t> modelGeosets;
     if (const auto* modelData = charRenderer->getInstanceModelData(instanceId)) {
         for (const auto& batch : modelData->batches) {
             modelGeosets.insert(batch.submeshId);
-        }
-    }
-
-    // The same rule the player, NPC and portrait paths use, from
-    // core::geoset_rules - ask for a variant, get the one this model has.
-    auto pickGeoset = [&](uint16_t preferred) {
-        return core::resolveGeoset(preferred, modelGeosets);
-    };
-
-    eraseGroup(4);
-    eraseGroup(5);
-    eraseGroup(8);
-    eraseGroup(13);
-    eraseGroup(15);
-    eraseGroup(12);
-    eraseGroup(10);
-
-    // CharGeosets mapping (verified via vertex bounding boxes):
-    //   Group 4 (401+) = GLOVES (forearm area, Z~1.1-1.4)
-    //   Group 5 (501+) = BOOTS  (shin area, Z~0.1-0.6)
-    //   Group 8 (801+) = WRISTBANDS/SLEEVES (controlled by chest armor)
-    //   Group 9 (901+) = KNEEPADS
-    //   Group 13 (1301+) = TROUSERS/PANTS
-    //   Group 15 (1501+) = CAPE/CLOAK
-    //   Group 20 (2002) = FEET
-
-    // Gloves: inventoryType 10 → group 4 (forearms)
-    {
-        uint32_t did = findEquippedDisplayId({10});
-        uint32_t gg = getGeosetGroup(did, geosetGroup1Field);
-        geosets.insert(pickGeoset(gg > 0 ? core::equippedGeoset(core::equipment::kGlovesBare, gg)
-                                          : core::kGeosetBareForearms));
-    }
-
-    // Boots: inventoryType 8 → group 5 (shins/lower legs)
-    {
-        uint32_t did = findEquippedDisplayId({8});
-        uint32_t gg = getGeosetGroup(did, geosetGroup1Field);
-        uint16_t selectedShin = pickGeoset(gg > 0 ? core::equippedGeoset(core::equipment::kBootsBare, gg)
-                                                  : core::kGeosetBareShins);
-        geosets.insert(selectedShin);
-    }
-
-    bool wearsRobe = false;  // a robe's skirt replaces the tabard flap
-    // Chest/Shirt: inventoryType 4 (shirt), 5 (chest), 20 (robe)
-    // Controls group 8 (wristbands/sleeve length): 801=bare wrists, 802+=sleeve styles
-    // Also controls group 13 (trousers) via GeosetGroup[2] for robes
-    {
-        uint32_t did = findEquippedDisplayId({5, 20});
-        if (did == 0) did = findEquippedDisplayId({4});
-        uint32_t gg = getGeosetGroup(did, geosetGroup1Field);
-        geosets.insert(gg > 0 ? core::equippedGeoset(core::equipment::kChestBare, gg)
-                              : core::kGeosetBareSleeves);
-        uint32_t gg3 = getGeosetGroup(did, geosetGroup3Field);
-        if (gg3 > 0) {
-            geosets.insert(core::equippedGeoset(core::equipment::kRobeKiltBare, gg3));
-        }
-        wearsRobe = gg3 > 0;
-        // Flap below the waist: group 10 from the second column, 1001 is none.
-        const uint16_t flap = core::resolveGeoset(core::equippedGeoset(core::equipment::kChestFlapBare,
-            getGeosetGroup(did, geosetGroup1Field + 1)), modelGeosets);
-        if (flap != 0) geosets.insert(flap);
-    }
-
-    // Kneepads: group 9 is not worn bare. 902 is a kneepad mesh - on the human
-    // female a band twice the shin's radius from mid-shin to above the knee -
-    // and on a character with no leg armour it reads as the top of a boot. The
-    // knee is already carried by the bare pants (1301) and shins (501).
-
-    // Legs/Pants: inventoryType 7 → group 13 (trousers/thighs)
-    // 1301=bare legs, 1302+=pant/kilt styles
-    {
-        uint32_t did = findEquippedDisplayId({7});
-        uint32_t gg = getGeosetGroup(did, geosetGroup1Field);
-        // Only add if robe hasn't already set a kilt geoset
-        // Only when the robe above has not already put a kilt on the legs.
-        // 1302 and 1303 are the first two kilt variants; anything in group 13
-        // beyond the bare one means something is already covering them.
-        const bool kiltAlreadySet = std::any_of(
-            geosets.begin(), geosets.end(), [](uint16_t g) {
-                return core::geosetGroup(g) == core::geosetGroup(core::kGeosetBarePants) &&
-                       !core::geosetMeansNone(g);
-            });
-        if (!kiltAlreadySet) {
-            geosets.insert(gg > 0 ? core::equippedGeoset(core::equipment::kLegsBare, gg)
-                                  : core::kGeosetBarePants);
         }
     }
 
@@ -286,17 +193,31 @@ void GameScreen::updateCharacterGeosets(game::Inventory& inventory) {
         cloakShown = gh->isCloakVisible();
     }
 
-    // Back/Cloak: inventoryType 16 → group 15
-    uint32_t capeGG = getGeosetGroup(findEquippedDisplayId({16}), geosetGroup1Field);
-    geosets.insert((hasEquippedType({16}) && cloakShown) ? core::cloakGeoset(capeGG)
-                                                         : core::kGeosetNoCape);
-
-    // Tabard: inventoryType 19 → group 12, 1201 + its GeosetGroup1 (1202, the flap)
-    if (hasEquippedType({19}) && !wearsRobe) {
-        const uint16_t tabard = core::resolveGeoset(core::equippedGeoset(core::equipment::kTabardBare,
-            getGeosetGroup(findEquippedDisplayId({19}), geosetGroup1Field)), modelGeosets);
-        if (tabard != 0) geosets.insert(tabard);
+    const uint32_t geosetGroup2Field = geosetGroup1Field + 1;
+    core::PlayerEquipmentGeosetInput equipInput;
+    {
+        uint32_t did = findEquippedDisplayId({5, 20});
+        if (did == 0) did = findEquippedDisplayId({4});
+        equipInput.chestGG1 = getGeosetGroup(did, geosetGroup1Field);
+        equipInput.chestGG2 = getGeosetGroup(did, geosetGroup2Field);
+        equipInput.chestGG3 = getGeosetGroup(did, geosetGroup3Field);
     }
+    equipInput.wristsGG1 = getGeosetGroup(findEquippedDisplayId({9}), geosetGroup1Field);
+    {
+        const uint32_t did = findEquippedDisplayId({7});
+        equipInput.legsGG1 = getGeosetGroup(did, geosetGroup1Field);
+        equipInput.legsGG2 = getGeosetGroup(did, geosetGroup2Field);
+        equipInput.legsGG3 = getGeosetGroup(did, geosetGroup3Field);
+    }
+    equipInput.bootsGG1  = getGeosetGroup(findEquippedDisplayId({8}), geosetGroup1Field);
+    equipInput.glovesGG1 = getGeosetGroup(findEquippedDisplayId({10}), geosetGroup1Field);
+    equipInput.beltGG1   = getGeosetGroup(findEquippedDisplayId({6}), geosetGroup1Field);
+    equipInput.hasCape   = hasEquippedType({16}) && cloakShown;
+    equipInput.capeGG1   = getGeosetGroup(findEquippedDisplayId({16}), geosetGroup1Field);
+    equipInput.hasTabard = hasEquippedType({19});
+    equipInput.tabardGG1 = getGeosetGroup(findEquippedDisplayId({19}), geosetGroup1Field);
+
+    core::applyPlayerEquipmentGeosets(geosets, modelGeosets, equipInput);
 
     // Hide what a helm covers: hair scalp -> bald cap, beard channels, ears.
     // Only while it is actually on the head. The show-helm toggle takes the
@@ -400,7 +321,22 @@ void GameScreen::updateCharacterTextures(game::Inventory& inventory) {
         }
     }
 
-    for (int s : {0, 1, 2, 3, 6, 7, 4, 8, 9, 5, 10, 11, 12, 13, 14, 15, 16, 17, 18}) {
+    const uint32_t geosetGroup3Field = idiL ? (*idiL)["GeosetGroup3"] : 9;
+    bool legsHasSkirt = false;
+    {
+        const auto& legsSlot = inventory.getEquipSlot(game::EquipSlot::LEGS);
+        if (!legsSlot.empty() && legsSlot.item.displayInfoId != 0) {
+            const int32_t legsRec = displayInfoDbc->findRecordById(legsSlot.item.displayInfoId);
+            if (legsRec >= 0) {
+                legsHasSkirt = displayInfoDbc->getUInt32(
+                    static_cast<uint32_t>(legsRec), geosetGroup3Field) > 0;
+            }
+        }
+    }
+    const std::array<int, 19> slotOrder = legsHasSkirt
+        ? std::array<int, 19>{0, 1, 2, 3, 7, 6, 4, 8, 9, 5, 10, 11, 12, 13, 14, 15, 16, 17, 18}
+        : std::array<int, 19>{0, 1, 2, 3, 6, 7, 4, 8, 9, 5, 10, 11, 12, 13, 14, 15, 16, 17, 18};
+    for (int s : slotOrder) {
         const auto& slot = inventory.getEquipSlot(static_cast<game::EquipSlot>(s));
         if (slot.empty() || slot.item.displayInfoId == 0) continue;
 
