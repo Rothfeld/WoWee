@@ -3255,8 +3255,7 @@ void registerUnitLuaAPI(lua_State* L) {
             if (!sb || !sb->isArena || faction < 0 || faction > 1) return luaReturnNil(L);
             const auto& team = sb->arenaTeams[faction];
             lua_pushstring(L, team.teamName.c_str());
-            lua_pushnumber(L, static_cast<double>(team.newRating) -
-                              static_cast<double>(team.ratingChange));
+            lua_pushnumber(L, static_cast<double>(team.oldRating));
             lua_pushnumber(L, static_cast<double>(team.newRating));
             lua_pushnil(L);
             return 4;

@@ -16,6 +16,7 @@
 // battleground queue with no tracker, no chat line and no invitation.
 #include <catch_amalgamated.hpp>
 #include "game/world_packets.hpp"
+#include "game/handler_types.hpp"
 #include "core/application.hpp"
 
 namespace wowee {
@@ -167,5 +168,109 @@ TEST_CASE("SMSG_BATTLEFIELD_STATUS reads the status the server sent",
         auto p = packetOf(body);
         BattlefieldStatusData d;
         CHECK_FALSE(BattlefieldStatusPacket::parse(p, d));
+    }
+}
+
+TEST_CASE("MSG_PVP_LOG_DATA parses TBC 2.4.3 Arena and EotS layouts",
+          "[battleground][arena][packet]") {
+    auto pushU32 = [](std::vector<uint8_t>& b, uint32_t v) {
+        b.push_back(uint8_t(v)); b.push_back(uint8_t(v >> 8));
+        b.push_back(uint8_t(v >> 16)); b.push_back(uint8_t(v >> 24));
+    };
+    auto pushU64 = [&](std::vector<uint8_t>& b, uint64_t v) {
+        pushU32(b, uint32_t(v)); pushU32(b, uint32_t(v >> 32));
+    };
+    auto pushStr = [](std::vector<uint8_t>& b, const char* s) {
+        while (*s) b.push_back(uint8_t(*s++));
+        b.push_back(0);
+    };
+
+    SECTION("TBC 2.4.3 Arena Skirmish parses 4 uint32s + 2 team names and player teams") {
+        std::vector<uint8_t> body;
+        body.push_back(1);            // isArena = 1
+        pushU32(body, 1500);          // team1 (Gold) oldRating
+        pushU32(body, 1516);          // team1 (Gold) newRating
+        pushU32(body, 1500);          // team0 (Green) oldRating
+        pushU32(body, 1484);          // team0 (Green) newRating
+        pushStr(body, "GoldTeam");    // team1 name
+        pushStr(body, "GreenTeam");   // team0 name
+        body.push_back(1);            // hasWinner = 1
+        body.push_back(1);            // winner = 1 (Gold)
+        pushU32(body, 2);             // playerCount = 2
+        // Player 1: Gold (team=1)
+        pushU64(body, 0x33);
+        pushU32(body, 1);             // killingBlows
+        body.push_back(1);            // team = 1 (Gold)
+        pushU32(body, 4200);          // damageDone
+        pushU32(body, 500);           // healingDone
+        pushU32(body, 0);             // statCount = 0
+        // Player 2: Green (team=0)
+        pushU64(body, 0x34);
+        pushU32(body, 0);             // killingBlows
+        body.push_back(0);            // team = 0 (Green)
+        pushU32(body, 1800);          // damageDone
+        pushU32(body, 0);             // healingDone
+        pushU32(body, 0);             // statCount = 0
+
+        wowee::network::Packet pkt(0x2E0, body);
+        BgScoreboardData sb;
+        REQUIRE(PvpLogDataPacket::parse(pkt, sb, /*wotlkFormat=*/false));
+        CHECK(sb.isArena);
+        CHECK(sb.hasWinner);
+        CHECK(sb.winner == 1);
+        CHECK(sb.arenaTeams[1].teamName == "GoldTeam");
+        CHECK(sb.arenaTeams[1].oldRating == 1500);
+        CHECK(sb.arenaTeams[1].newRating == 1516);
+        CHECK(sb.arenaTeams[1].ratingChange == 16);
+        CHECK(sb.arenaTeams[0].teamName == "GreenTeam");
+        CHECK(sb.arenaTeams[0].oldRating == 1500);
+        CHECK(sb.arenaTeams[0].newRating == 1484);
+        CHECK(sb.arenaTeams[0].ratingChange == -16);
+        REQUIRE(sb.players.size() == 2);
+        CHECK(sb.players[0].guid == 0x33u);
+        CHECK(sb.players[0].hasTeam);
+        CHECK(sb.players[0].team == 1);
+        CHECK(sb.players[0].killingBlows == 1u);
+        CHECK(sb.players[0].damageDone == 4200u);
+        CHECK(sb.players[0].healingDone == 500u);
+        CHECK(sb.players[1].guid == 0x34u);
+        CHECK(sb.players[1].team == 0);
+        CHECK(sb.players[1].damageDone == 1800u);
+    }
+
+    SECTION("TBC EotS battleground row carries 1 flag capture objective stat") {
+        std::vector<uint8_t> body;
+        body.push_back(0);            // isArena = 0
+        body.push_back(0);            // hasWinner = 0
+        pushU32(body, 1);             // playerCount = 1
+        pushU64(body, 0x33);
+        pushU32(body, 2);             // killingBlows
+        pushU32(body, 5);             // honorableKills
+        pushU32(body, 1);             // deaths
+        pushU32(body, 42);            // bonusHonor
+        pushU32(body, 9000);          // damageDone
+        pushU32(body, 1200);          // healingDone
+        pushU32(body, 1);             // statCount = 1 (Flag Captures)
+        pushU32(body, 3);             // flagCaptures = 3
+
+        wowee::network::Packet pkt(0x2E0, body);
+        BgScoreboardData sb;
+        REQUIRE(PvpLogDataPacket::parse(pkt, sb, /*wotlkFormat=*/false));
+        CHECK_FALSE(sb.isArena);
+        CHECK_FALSE(sb.hasWinner);
+        REQUIRE(sb.players.size() == 1);
+        CHECK(sb.players[0].honorableKills == 5u);
+        CHECK(sb.players[0].bonusHonor == 42u);
+        REQUIRE(sb.players[0].bgStats.size() == 1);
+        CHECK(sb.players[0].bgStats[0].second == 3u);
+    }
+
+    SECTION("CMSG_BATTLEMASTER_JOIN_ARENA encodes guid, slot, asGroup, isRated") {
+        auto pkt = BattlemasterJoinArenaPacket::build(0xF130004DC7596DC1ULL, 0, false, false);
+        REQUIRE(pkt.getSize() == 11);
+        CHECK(pkt.readUInt64() == 0xF130004DC7596DC1ULL);
+        CHECK(pkt.readUInt8() == 0);
+        CHECK(pkt.readUInt8() == 0);
+        CHECK(pkt.readUInt8() == 0);
     }
 }

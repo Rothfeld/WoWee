@@ -1,4 +1,5 @@
 #include "game/world_packets.hpp"
+#include "game/handler_types.hpp"
 #include "game/packet_parsers.hpp"
 #include "game/opcodes.hpp"
 #include "game/game_utils.hpp"
@@ -1842,6 +1843,95 @@ bool BattlefieldStatusPacket::parse(network::Packet& packet, BattlefieldStatusDa
             break;
     }
     return true;
+}
+
+bool PvpLogDataPacket::parse(network::Packet& packet, BgScoreboardData& out,
+                             bool wotlkFormat) {
+    auto remaining = [&]() { return packet.getRemainingSize(); };
+    if (remaining() < 1) return false;
+
+    out = BgScoreboardData{};
+    out.isArena = (packet.readUInt8() != 0);
+    if (out.isArena) {
+        if (!wotlkFormat) {
+            // CMaNGOS TBC BuildPvpLogDataPacket:
+            // uint32 team1OldRating, uint32 team1NewRating,
+            // uint32 team0OldRating, uint32 team0NewRating,
+            // cstring team1Name, cstring team0Name.
+            if (remaining() < 16) { packet.skipAll(); return false; }
+            const int32_t team1Old = static_cast<int32_t>(packet.readUInt32());
+            const int32_t team1New = static_cast<int32_t>(packet.readUInt32());
+            const int32_t team0Old = static_cast<int32_t>(packet.readUInt32());
+            const int32_t team0New = static_cast<int32_t>(packet.readUInt32());
+            out.arenaTeams[1].oldRating    = team1Old;
+            out.arenaTeams[1].newRating    = team1New;
+            out.arenaTeams[1].ratingChange = team1New - team1Old;
+            out.arenaTeams[0].oldRating    = team0Old;
+            out.arenaTeams[0].newRating    = team0New;
+            out.arenaTeams[0].ratingChange = team0New - team0Old;
+            out.arenaTeams[1].teamName = remaining() > 0 ? packet.readString() : "";
+            out.arenaTeams[0].teamName = remaining() > 0 ? packet.readString() : "";
+        } else {
+            for (auto& arenaTeam : out.arenaTeams) {
+                if (remaining() < 20) { packet.skipAll(); return false; }
+                arenaTeam.ratingChange = static_cast<int32_t>(packet.readUInt32());
+                arenaTeam.newRating    = static_cast<int32_t>(packet.readUInt32());
+                arenaTeam.oldRating    = arenaTeam.newRating - arenaTeam.ratingChange;
+                packet.readUInt32(); packet.readUInt32(); packet.readUInt32();
+                arenaTeam.teamName = remaining() > 0 ? packet.readString() : "";
+            }
+        }
+    }
+
+    if (remaining() < 1) return false;
+    out.hasWinner = (packet.readUInt8() != 0);
+    if (out.hasWinner) {
+        if (remaining() < 1) return false;
+        out.winner = packet.readUInt8();
+    }
+
+    if (remaining() < 4) return false;
+    const uint32_t playerCount = packet.readUInt32();
+    out.players.reserve(playerCount);
+    for (uint32_t i = 0; i < playerCount && remaining() >= 12; ++i) {
+        BgPlayerScore ps;
+        ps.guid = packet.readUInt64();
+        ps.killingBlows = packet.readUInt32();
+        if (out.isArena) {
+            if (remaining() < 1) { out.players.push_back(std::move(ps)); break; }
+            ps.team = packet.readUInt8();
+            ps.hasTeam = true;
+        } else {
+            if (remaining() < 12) { out.players.push_back(std::move(ps)); break; }
+            ps.honorableKills = packet.readUInt32();
+            ps.deaths         = packet.readUInt32();
+            ps.bonusHonor     = packet.readUInt32();
+        }
+        if (remaining() < 8) { out.players.push_back(std::move(ps)); break; }
+        ps.damageDone  = packet.readUInt32();
+        ps.healingDone = packet.readUInt32();
+
+        if (remaining() >= 4) {
+            const uint32_t statCount = packet.readUInt32();
+            for (uint32_t st = 0; st < statCount && remaining() >= 4; ++st) {
+                ps.bgStats.emplace_back(std::string(), packet.readUInt32());
+            }
+        }
+        out.players.push_back(std::move(ps));
+    }
+    return true;
+}
+
+network::Packet BattlemasterJoinArenaPacket::build(uint64_t battlemasterGuid,
+                                                   uint8_t arenaSlot,
+                                                   bool asGroup,
+                                                   bool isRated) {
+    network::Packet packet(wireOpcode(Opcode::CMSG_BATTLEMASTER_JOIN_ARENA));
+    packet.writeUInt64(battlemasterGuid);
+    packet.writeUInt8(arenaSlot);
+    packet.writeUInt8(asGroup ? 1 : 0);
+    packet.writeUInt8(isRated ? 1 : 0);
+    return packet;
 }
 
 network::Packet LfgJoinPacket::build(const std::vector<uint32_t>& dungeonIds,

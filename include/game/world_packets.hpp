@@ -3083,6 +3083,28 @@ public:
                       bool classicFormat = false, bool wotlkFormat = true);
 };
 
+struct BgScoreboardData;
+
+/**
+ * MSG_PVP_LOG_DATA parser.
+ *
+ * TBC 2.4.3 arena header writes 4 uint32s (team1 old/new rating, team0 old/new
+ * rating) followed by 2 team-name strings (team1, team0). WotLK 3.3.5a writes
+ * 2 blocks of 5 uint32s + 1 team-name string.
+ */
+class PvpLogDataPacket {
+public:
+    static bool parse(network::Packet& packet, BgScoreboardData& out,
+                      bool wotlkFormat = true);
+};
+
+/** CMSG_BATTLEMASTER_JOIN_ARENA packet builder. */
+class BattlemasterJoinArenaPacket {
+public:
+    static network::Packet build(uint64_t battlemasterGuid, uint8_t arenaSlot,
+                                 bool asGroup, bool isRated);
+};
+
 /** CMSG_LFG_JOIN packet builder */
 class LfgJoinPacket {
 public:

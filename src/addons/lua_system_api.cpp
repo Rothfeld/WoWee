@@ -4692,9 +4692,20 @@ static int lua_IsBattlefieldArena(lua_State* L) {
 // nil, and the frame treats that as unregistered - which a skirmish is.
 static int lua_IsActiveBattlefieldArena(lua_State* L) {
     auto* gh = getGameHandler(L);
-    if (gh && gh->isArenaMap(gh->getCurrentMapId())) lua_pushboolean(L, 1);
+    const bool isArena = gh && gh->isArenaMap(gh->getCurrentMapId());
+    if (isArena) lua_pushboolean(L, 1);
     else lua_pushnil(L);
-    lua_pushnil(L);
+    bool isRegistered = false;
+    if (isArena) {
+        for (const auto& q : gh->getBgQueues()) {
+            if ((q.statusId == 3 || q.statusId == 4) && q.arenaType > 0 && q.isRated) {
+                isRegistered = true;
+                break;
+            }
+        }
+    }
+    if (isRegistered) lua_pushboolean(L, 1);
+    else lua_pushnil(L);
     return 2;
 }
 
@@ -4989,6 +5000,21 @@ static int lua_JoinBattlefield(lua_State* L) {
     const uint64_t battlemaster = tbc && !bgs.empty()
         ? bgs.back().battlemasterGuid
         : (gh->isGossipWindowOpen() ? gh->getCurrentGossip().npcGuid : 0);
+
+    const auto* bmInfo = gh->getBattlemasterInfo(bgTypeId);
+    if (bmInfo && bmInfo->instanceType == 4) {
+        // ArenaFrameJoinButton_OnClick passes (1..3, asGroup, isRated):
+        // index 1 = 2v2 (slot 0), 2 = 3v3 (slot 1), 3 = 5v5 (slot 2).
+        const uint8_t arenaSlot =
+            (index >= 1 && index <= 3) ? static_cast<uint8_t>(index - 1) : 0u;
+        const bool isRated = lua_toboolean(L, 3) != 0;
+        LOG_WARNING("CMSG_BATTLEMASTER_JOIN_ARENA: slot=", static_cast<int>(arenaSlot),
+                    " asGroup=", asGroup, " isRated=", isRated,
+                    " battlemaster=0x", std::hex, battlemaster, std::dec);
+        gh->joinArena(battlemaster, arenaSlot, asGroup, isRated);
+        return 0;
+    }
+
     LOG_WARNING("CMSG_BATTLEMASTER_JOIN: bgTypeId=", bgTypeId, " instance=", instanceId,
              " asGroup=", asGroup, " battlemaster=0x", std::hex, battlemaster, std::dec);
     gh->joinBattlefield(battlemaster, bgTypeId, instanceId, asGroup);

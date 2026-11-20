@@ -221,8 +221,9 @@ struct BgPlayerScore {
 
 struct ArenaTeamScore {
     std::string teamName;
-    uint32_t    ratingChange = 0;
-    uint32_t    newRating    = 0;
+    int32_t     oldRating    = 0;
+    int32_t     ratingChange = 0;
+    int32_t     newRating    = 0;
 };
 
 struct BgScoreboardData {

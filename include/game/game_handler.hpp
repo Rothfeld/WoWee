@@ -730,6 +730,8 @@ public:
     void reportPvpAfk(uint64_t playerGuid);
     void joinBattlefield(uint64_t battlemasterGuid, uint32_t bgTypeId,
                          uint32_t instanceId, bool asGroup);
+    void joinArena(uint64_t battlemasterGuid, uint8_t arenaSlot,
+                   bool asGroup, bool isRated);
     const std::array<BgQueueSlot, 3>& getBgQueues() const override;
     const std::vector<AvailableBgInfo>& getAvailableBgs() const override;
 
