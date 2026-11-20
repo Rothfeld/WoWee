@@ -5,6 +5,7 @@
 #include "rendering/m2_blend_mode.hpp"
 #include "rendering/m2_foliage_culling.hpp"
 #include "rendering/m2_glow_card.hpp"
+#include "rendering/m2_sequence_variation.hpp"
 #include "game/game_utils.hpp"
 #include "core/thread_pool.hpp"
 #include "rendering/m2_model_classifier.hpp"
@@ -64,10 +65,14 @@ void M2Renderer::seedInstanceAnimation(const M2ModelGPU& model, uint32_t modelId
             // looped, the brazier went out and back on and the cage doors
             // swung open forever, where the original stands lit and shut.
             const int stand = model.standSequenceIndex;
-            instance.currentSequenceIndex = stand;
+            const int initialSeq = (model.idleVariationIndices.size() > 1 &&
+                                    model.sequences[stand].id == 0)
+                ? selectSequenceVariation(model.sequences, stand, randRange(0x7FFFFFFFu))
+                : stand;
+            instance.currentSequenceIndex = initialSeq;
             instance.idleSequenceIndex = stand;
-            instance.animDuration = static_cast<float>(model.sequences[stand].duration);
-            instance.animTime = static_cast<float>(randRange(std::max(1u, model.sequences[stand].duration)));
+            instance.animDuration = static_cast<float>(model.sequences[initialSeq].duration);
+            instance.animTime = static_cast<float>(randRange(std::max(1u, model.sequences[initialSeq].duration)));
             instance.variationTimer = randFloat(rendering::M2_VARIATION_TIMER_MIN_MS, rendering::M2_VARIATION_TIMER_MAX_MS);
         }
 
@@ -511,13 +516,32 @@ void M2Renderer::update(float deltaTime, const glm::vec3& cameraPos, const glm::
                 // Hold 4.5 s emitting its first 1.5 s) is lit 4.4 s after it
                 // lands, dark 1.7 s, lit 2 s in the original; looping Stand
                 // burned without a break.
-                instance.animTime -= instance.animDuration;
+                const float overflow = instance.animTime - instance.animDuration;
                 instance.playingVariation = false;
-                instance.currentSequenceIndex = instance.idleSequenceIndex;
-                instance.animDuration = static_cast<float>(
-                    instance.cachedModel->sequences[instance.idleSequenceIndex].duration);
-                if (instance.animDuration > 0.0f)
-                    instance.animTime = std::fmod(instance.animTime, instance.animDuration);
+                const auto& seqs = instance.cachedModel->sequences;
+                const int base = instance.idleSequenceIndex;
+                const int nextSeq = (!instance.stateEffectAnimation &&
+                                     instance.cachedModel->idleVariationIndices.size() > 1 &&
+                                     seqs[base].id == 0)
+                    ? selectSequenceVariation(seqs, base, randRange(0x7FFFFFFFu))
+                    : base;
+                instance.currentSequenceIndex = nextSeq;
+                instance.animDuration = static_cast<float>(seqs[nextSeq].duration);
+                instance.animTime = instance.animDuration > 0.0f
+                    ? std::fmod(overflow, instance.animDuration) : 0.0f;
+            } else if (!instance.stateEffectAnimation && instance.cachedModel &&
+                       instance.cachedModel->idleVariationIndices.size() > 1 &&
+                       instance.idleSequenceIndex >= 0 &&
+                       instance.idleSequenceIndex < static_cast<int>(instance.cachedModel->sequences.size()) &&
+                       instance.cachedModel->sequences[instance.idleSequenceIndex].id == 0) {
+                const float overflow = std::fmod(instance.animTime, std::max(1.0f, instance.animDuration));
+                const auto& seqs = instance.cachedModel->sequences;
+                const int nextSeq = selectSequenceVariation(
+                    seqs, instance.idleSequenceIndex, randRange(0x7FFFFFFFu));
+                instance.currentSequenceIndex = nextSeq;
+                instance.animDuration = static_cast<float>(seqs[nextSeq].duration);
+                instance.animTime = instance.animDuration > 0.0f
+                    ? std::fmod(overflow, instance.animDuration) : 0.0f;
             } else {
                 instance.animTime = std::fmod(instance.animTime, instance.animDuration);
             }
@@ -615,36 +639,44 @@ void M2Renderer::update(float deltaTime, const glm::vec3& cameraPos, const glm::
                 instance.animTime = instance.animDuration;
                 instance.animSpeed = 0.0f;
             } else if (instance.playingVariation) {
+                const float overflow = std::fmod(instance.animTime, std::max(1.0f, instance.animDuration));
                 instance.playingVariation = false;
-                instance.currentSequenceIndex = instance.idleSequenceIndex;
-                if (instance.idleSequenceIndex < static_cast<int>(model.sequences.size())) {
-                    instance.animDuration = static_cast<float>(model.sequences[instance.idleSequenceIndex].duration);
+                int nextSeq = instance.idleSequenceIndex;
+                if (!instance.stateEffectAnimation &&
+                    model.idleVariationIndices.size() > 1 &&
+                    nextSeq >= 0 && nextSeq < static_cast<int>(model.sequences.size()) &&
+                    model.sequences[nextSeq].id == 0) {
+                    nextSeq = selectSequenceVariation(model.sequences, nextSeq, randRange(0x7FFFFFFFu));
                 }
-                instance.animTime = 0.0f;
-                instance.variationTimer = randFloat(rendering::M2_LOOP_VARIATION_TIMER_MIN_MS, rendering::M2_LOOP_VARIATION_TIMER_MAX_MS);
+                instance.currentSequenceIndex = nextSeq;
+                if (nextSeq >= 0 && nextSeq < static_cast<int>(model.sequences.size())) {
+                    instance.animDuration = static_cast<float>(model.sequences[nextSeq].duration);
+                }
+                instance.animTime = instance.animDuration > 0.0f
+                    ? std::fmod(overflow, instance.animDuration) : 0.0f;
             } else {
                 // Use iterative subtraction instead of fmod() to preserve precision
                 float duration = std::max(1.0f, instance.animDuration);
                 while (instance.animTime >= duration) {
                     instance.animTime -= duration;
                 }
-            }
-        }
-
-        // Idle variation timer
-        if (!instance.playingVariation && !instance.holdAtEnd && !instance.stateEffectAnimation &&
-            model.idleVariationIndices.size() > 1) {
-            instance.variationTimer -= dtMs;
-            if (instance.variationTimer <= 0.0f) {
-                int pick = static_cast<int>(randRange(static_cast<uint32_t>(model.idleVariationIndices.size())));
-                int newSeq = model.idleVariationIndices[pick];
-                if (newSeq != instance.currentSequenceIndex && newSeq < static_cast<int>(model.sequences.size())) {
-                    instance.playingVariation = true;
-                    instance.currentSequenceIndex = newSeq;
-                    instance.animDuration = static_cast<float>(model.sequences[newSeq].duration);
-                    instance.animTime = 0.0f;
-                } else {
-                    instance.variationTimer = randFloat(rendering::M2_IDLE_VARIATION_TIMER_MIN_MS, rendering::M2_IDLE_VARIATION_TIMER_MAX_MS);
+                // Roll authored Stand variation weights (M2Sequence::frequency /
+                // nextAnimation) at sequence completion rather than interrupting
+                // mid-cycle on an arbitrary timer.
+                if (!instance.stateEffectAnimation &&
+                    model.idleVariationIndices.size() > 1 &&
+                    instance.idleSequenceIndex >= 0 &&
+                    instance.idleSequenceIndex < static_cast<int>(model.sequences.size()) &&
+                    model.sequences[instance.idleSequenceIndex].id == 0) {
+                    const int nextSeq = selectSequenceVariation(
+                        model.sequences, instance.idleSequenceIndex, randRange(0x7FFFFFFFu));
+                    if (nextSeq >= 0 && nextSeq < static_cast<int>(model.sequences.size())) {
+                        instance.currentSequenceIndex = nextSeq;
+                        instance.animDuration = static_cast<float>(model.sequences[nextSeq].duration);
+                        if (instance.animDuration > 0.0f && instance.animTime >= instance.animDuration) {
+                            instance.animTime = std::fmod(instance.animTime, instance.animDuration);
+                        }
+                    }
                 }
             }
         }

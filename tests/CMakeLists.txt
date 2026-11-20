@@ -1414,6 +1414,20 @@ target_link_libraries(test_packed_time PRIVATE catch2_main)
 add_test(NAME packed_time COMMAND test_packed_time)
 register_test_target(test_packed_time)
 
+# ── test_m2_sequence_variation ───────────────────────────────
+add_executable(test_m2_sequence_variation
+    test_m2_sequence_variation.cpp
+    ${TEST_COMMON_SOURCES}
+    ${CMAKE_SOURCE_DIR}/src/pipeline/m2_loader.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/dbc_loader.cpp
+)
+target_include_directories(test_m2_sequence_variation PRIVATE ${TEST_INCLUDE_DIRS})
+target_include_directories(test_m2_sequence_variation SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
+target_link_libraries(test_m2_sequence_variation PRIVATE catch2_main)
+wowee_test_link_glm(test_m2_sequence_variation)
+add_test(NAME m2_sequence_variation COMMAND test_m2_sequence_variation)
+register_test_target(test_m2_sequence_variation)
+
 # ── test_animation_ids ───────────────────────────────────────
 add_executable(test_animation_ids
     test_animation_ids.cpp

@@ -23,12 +23,15 @@ constexpr bool gameObjectPoseIsStateDriven(uint32_t type) {
 }
 
 // Whether a stateful object without state sequences shows READY through its
-// bind pose. A trap does not: the Molten Core rune rings (TRAP 178187-178193,
-// FlameCircle.m2, Stand and Hold only) are READY and the original client
-// keeps their Stand running, a flame front running round the rune once a
-// second. Frozen at time zero every flame stood at one point of the ring.
+// bind pose. Traps and chests do not: the Molten Core rune rings (TRAP
+// 178187-178193, FlameCircle.m2, Stand and Hold only) and lootable world
+// objects without lid sequences (CHEST 176213 Blood of Heroes,
+// BloodOfHeroes.m2, two Stand variations only) are READY and the original
+// client keeps their Stand running. Opening chests (chest01..03, titanchest,
+// etc.) author explicit Close/Closed/Open/Opened sequences and never reach
+// this fallback.
 constexpr bool gameObjectBindPoseShowsReady(uint32_t type) {
-    return type != 6u && gameObjectPoseIsStateDriven(type);
+    return type != 3u && type != 6u && gameObjectPoseIsStateDriven(type);
 }
 
 // Whether ACTIVE shows the model's Destroy (150), held at its end, where a

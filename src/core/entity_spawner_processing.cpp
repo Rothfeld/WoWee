@@ -2024,8 +2024,8 @@ void EntitySpawner::applyGameObjectState(uint64_t guid, uint8_t goState) {
     // Unknown type: applyGameObjectAnimationPolicy has frozen the instance
     // and onGameObjectInfoReceived resolves it.
     if (goType != 0xFFFFFFFFu && !gameObjectPoseIsStateDriven(goType)) return;
-    // A trap keeps Stand running too (see gameObjectBindPoseShowsReady); its
-    // type froze it at spawn.
+    // Traps and chests without state sequences keep Stand running (see
+    // gameObjectBindPoseShowsReady); their type froze them at spawn.
     if (goType != 0xFFFFFFFFu && !gameObjectBindPoseShowsReady(goType)) {
         m2->setInstanceAnimationFrozen(instanceId, false);
         return;
