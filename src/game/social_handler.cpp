@@ -5661,6 +5661,7 @@ void SocialHandler::handleSummonRequest(network::Packet& packet) {
 
     std::string msg = owner_.summonerNameRef() + " is summoning you";
     std::string zoneName = owner_.getAreaName(zoneId);
+    owner_.summonAreaNameRef() = zoneName;
     if (!zoneName.empty())
         msg += " to " + zoneName;
     msg += '.';

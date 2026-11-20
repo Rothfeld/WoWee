@@ -2163,6 +2163,7 @@ public:
     // ---- Summon ----
     bool hasPendingSummonRequest() const { return pendingSummonRequest_; }
     const std::string& getSummonerName() const { return summonerName_; }
+    const std::string& getSummonAreaName() const { return summonAreaName_; }
     float getSummonTimeoutSec() const { return summonTimeoutSec_; }
     void acceptSummon();
     void declineSummon();
@@ -2172,6 +2173,7 @@ public:
         if (summonTimeoutSec_ <= 0.0f) {
             pendingSummonRequest_ = false;
             summonTimeoutSec_ = 0.0f;
+            summonAreaName_.clear();
         }
     }
 
@@ -4301,6 +4303,7 @@ public:
     auto& pendingSummonRequestRef() { return pendingSummonRequest_; }
     auto& summonerGuidRef() { return summonerGuid_; }
     auto& summonerNameRef() { return summonerName_; }
+    auto& summonAreaNameRef() { return summonAreaName_; }
     auto& summonTimeoutSecRef() { return summonTimeoutSec_; }
     auto& bfMgrInvitePendingRef() { return bfMgrInvitePending_; }
 
@@ -5255,6 +5258,7 @@ private:
     bool        pendingSummonRequest_ = false;
     uint64_t    summonerGuid_         = 0;
     std::string summonerName_;
+    std::string summonAreaName_;
     float       summonTimeoutSec_     = 0.0f;
 
     // Who results (last SMSG_WHO response)

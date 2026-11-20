@@ -1876,23 +1876,29 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             std::string objectLabel = game::entityDisplayName(entity);
             const auto object = std::static_pointer_cast<game::GameObject>(entity);
             const auto* info = gameHandler.getCachedGameObjectInfo(object->getEntry());
-            if (info && info->type == 23) {
-                const std::string area = gameHandler.getWhoAreaName(info->data[2]);
-                if (!area.empty()) objectLabel += "\n" + area;
-            }
+            auto encodeLuaString = [](const std::string& text) {
+                std::string out = "'";
+                for (const unsigned char c : text) {
+                    out += '\\';
+                    out += static_cast<char>('0' + c / 100);
+                    out += static_cast<char>('0' + c / 10 % 10);
+                    out += static_cast<char>('0' + c % 10);
+                }
+                out += "'";
+                return out;
+            };
             // Encode server text as Lua data, including quotes and control bytes.
-            std::string literal = "'";
-            for (const unsigned char c : objectLabel) {
-                literal += '\\';
-                literal += static_cast<char>('0' + c / 100);
-                literal += static_cast<char>('0' + c / 10 % 10);
-                literal += static_cast<char>('0' + c % 10);
-            }
-            literal += "'";
+            const std::string literal = encodeLuaString(objectLabel);
             script = worldObjectTooltipFloating_
                 ? "GameTooltip:SetOwner(WorldFrame, 'ANCHOR_CURSOR'); "
                 : "GameTooltip_SetDefaultAnchor(GameTooltip, WorldFrame); ";
             script += "GameTooltip:SetText(" + literal + "); ";
+            if (info && info->type == 23) {
+                const std::string area = gameHandler.getWhoAreaName(info->data[2]);
+                if (!area.empty()) {
+                    script += "GameTooltip:AddLine(" + encodeLuaString(area) + ", 1, 1, 1); ";
+                }
+            }
             // A locked object's tooltip, from the lock slots that apply now
             // (game::lockActionNow: Action 2 while it stands open, else 1 for
             // GO_FLAG_LOCKED and 0): LOCKED when GO_FLAG_LOCKED, then

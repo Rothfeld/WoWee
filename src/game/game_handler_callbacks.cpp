@@ -3726,11 +3726,45 @@ void GameHandler::performGameObjectInteractionNow(uint64_t guid) {
             return;
         }
         if (goInfo && goType == 23) {
-            // CMaNGOS silently rejects an ineligible summoner. TBC displays
-            // this error locally before sending a meeting-stone use packet.
+            // CMaNGOS GameObject::Use(GAMEOBJECT_TYPE_MEETINGSTONE) silently
+            // returns on every precondition failure. TBC 2.4.3 validates these
+            // locally in this exact order before sending CMSG_GAMEOBJ_USE.
+            if (!isInGroup()) {
+                errorGlobal("ERR_MEETING_STONE_NEED_PARTY");
+                return;
+            }
+            const uint64_t target = getTargetGuid();
+            if (target == 0) {
+                errorGlobal("ERR_GENERIC_NO_TARGET");
+                return;
+            }
+            if (target == getPlayerGuid()) {
+                return;
+            }
+            const GroupMember* targetMember = nullptr;
+            for (const auto& member : getPartyData().members) {
+                if (member.guid == target) {
+                    targetMember = &member;
+                    break;
+                }
+            }
+            if (!targetMember) {
+                errorGlobal("ERR_MEETING_STONE_TARGET_NOT_IN_PARTY");
+                return;
+            }
+            const uint32_t minLevel = goInfo->data[0];
+            const uint32_t maxLevel = goInfo->data[1];
             const uint32_t level = getPlayerLevel();
-            if (level < goInfo->data[0] || level > goInfo->data[1]) {
+            if (level < minLevel || (maxLevel != 0 && level > maxLevel)) {
                 errorGlobal("ERR_MEETING_STONE_INVALID_LEVEL");
+                return;
+            }
+            uint32_t targetLevel = targetMember->level;
+            if (auto* targetUnit = getUnitByGuid(target); targetUnit && targetUnit->getLevel() != 0) {
+                targetLevel = targetUnit->getLevel();
+            }
+            if (targetLevel != 0 && (targetLevel < minLevel || (maxLevel != 0 && targetLevel > maxLevel))) {
+                errorGlobal("ERR_MEETING_STONE_TARGET_INVALID_LEVEL");
                 return;
             }
         }

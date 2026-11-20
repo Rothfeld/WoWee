@@ -3443,11 +3443,10 @@ void registerSocialLuaAPI(lua_State* L) {
             lua_pushnumber(L, gh ? gh->getSummonTimeoutSec() : 0.0f);
             return 1;
         }},
-                // The destination is not carried in what this client parses,
-                // and the popup prints it into a sentence - so an empty string
-                // rather than nil, which would concatenate into a raise.
                 {"GetSummonConfirmAreaName", [](lua_State* L) -> int {
-            lua_pushstring(L, ""); return 1;
+            auto* gh = getGameHandler(L);
+            lua_pushstring(L, gh ? gh->getSummonAreaName().c_str() : "");
+            return 1;
         }},
                 // Asked every frame by the popup's OnUpdate to grey the accept
                 // button. The server refuses a summon it will not honour, so
