@@ -1050,6 +1050,32 @@ uint32_t WMORenderer::createInstance(uint32_t modelId, const glm::vec3& position
     return instance.id;
 }
 
+uint32_t WMORenderer::createInstanceWithMatrix(uint32_t modelId, const glm::mat4& modelMatrix,
+                                               uint32_t nameSet) {
+    if (loadedModels.find(modelId) == loadedModels.end()) {
+        core::Logger::getInstance().error("Cannot create instance of unloaded WMO model ", modelId);
+        return 0;
+    }
+
+    WMOInstance instance;
+    instance.id = nextInstanceId++;
+    instance.nameSet = nameSet;
+    instance.modelId = modelId;
+    instance.position = glm::vec3(modelMatrix[3]);
+    instance.rotation = glm::vec3(0.0f);
+    instance.scale = glm::length(glm::vec3(modelMatrix[0]));
+    instance.modelMatrix = modelMatrix;
+    instance.invModelMatrix = glm::inverse(modelMatrix);
+    refreshInstanceBounds(instance);
+
+    instances.push_back(instance);
+    size_t idx = instances.size() - 1;
+    instanceIndexById[instance.id] = idx;
+    insertBounds(spatialGrid, instance.worldBoundsMin, instance.worldBoundsMax, instance.id);
+    core::Logger::getInstance().debug("Created WMO instance (matrix) ", instance.id, " (model ", modelId, ")");
+    return instance.id;
+}
+
 /// Recomputes an instance's world bounds from its model matrix.
 ///
 /// Called whenever the matrix changes, which happens two ways: a plain move,

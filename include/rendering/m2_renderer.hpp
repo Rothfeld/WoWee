@@ -503,7 +503,8 @@ public:
                             float scale = 1.0f,
                             bool allowPositionDedup = true);
     uint32_t createInstanceWithMatrix(uint32_t modelId, const glm::mat4& modelMatrix,
-                                       const glm::vec3& position);
+                                       const glm::vec3& position,
+                                       bool allowPositionDedup = true);
 
     /// One frame's pose for an externally posed instance (M2Instance::externalPose).
     struct ExternalPose {

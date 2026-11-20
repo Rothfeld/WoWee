@@ -2426,12 +2426,68 @@ void EntityController::onCreatePlayer(const UpdateBlock& block, std::shared_ptr<
     }
 }
 
+namespace {
+
+bool readGameObjectQuaternionField(const Entity& entity, UF baseField, glm::quat& outRotation) {
+    const uint16_t base = fieldIndex(baseField);
+    if (base == 0xFFFF) return false;
+    const float qx = std::bit_cast<float>(entity.getField(base));
+    const float qy = std::bit_cast<float>(entity.getField(static_cast<uint16_t>(base + 1)));
+    const float qz = std::bit_cast<float>(entity.getField(static_cast<uint16_t>(base + 2)));
+    const float qw = std::bit_cast<float>(entity.getField(static_cast<uint16_t>(base + 3)));
+    const float lenSq = qx * qx + qy * qy + qz * qz + qw * qw;
+    if (!std::isfinite(lenSq) || lenSq <= 1e-6f) return false;
+    outRotation = glm::normalize(glm::quat(qw, qx, qy, qz));
+    return true;
+}
+
+bool blockHasGameObjectRotationFields(const UpdateBlock& block) {
+    auto hasAnyOfFour = [&](UF baseField) {
+        const uint16_t base = fieldIndex(baseField);
+        if (base == 0xFFFF) return false;
+        for (uint16_t offset = 0; offset < 4; ++offset) {
+            if (block.fields.find(static_cast<uint16_t>(base + offset)) != block.fields.end()) {
+                return true;
+            }
+        }
+        return false;
+    };
+    const uint16_t facingIdx = fieldIndex(UF::GAMEOBJECT_FACING);
+    const bool hasFacing = facingIdx != 0xFFFF && block.fields.find(facingIdx) != block.fields.end();
+    return block.hasPackedRotation ||
+           hasFacing ||
+           hasAnyOfFour(UF::GAMEOBJECT_ROTATION) ||
+           hasAnyOfFour(UF::GAMEOBJECT_PARENTROTATION);
+}
+
+glm::quat resolveGameObjectRotation(const UpdateBlock& block, const GameObject& go) {
+    glm::quat rot;
+    if (readGameObjectQuaternionField(go, UF::GAMEOBJECT_ROTATION, rot)) return rot;
+    if (readGameObjectQuaternionField(go, UF::GAMEOBJECT_PARENTROTATION, rot)) return rot;
+    if (block.hasPackedRotation) return unpackGameObjectRotation(block.packedRotation);
+    return gameObjectRotationFromCanonicalYaw(go.getOrientation());
+}
+
+} // namespace
+
 void EntityController::onCreateGameObject(const UpdateBlock& block, std::shared_ptr<Entity>& entity) {
     auto go = std::static_pointer_cast<GameObject>(entity);
     auto itDisp = block.fields.find(fieldIndex(UF::GAMEOBJECT_DISPLAYID));
     if (itDisp != block.fields.end()) {
         go->setDisplayId(itDisp->second);
     }
+    const uint16_t facingIdx = fieldIndex(UF::GAMEOBJECT_FACING);
+    if (!block.hasMovement && facingIdx != 0xFFFF) {
+        auto itFacing = block.fields.find(facingIdx);
+        if (itFacing != block.fields.end()) {
+            const float serverFacing = bitsToFloat(itFacing->second);
+            if (std::isfinite(serverFacing)) {
+                go->setOrientation(core::coords::serverToCanonicalYaw(serverFacing));
+            }
+        }
+    }
+    const glm::quat goRotation = resolveGameObjectRotation(block, *go);
+    go->setRotation(goRotation);
     auto itEntry = block.fields.find(fieldIndex(UF::OBJECT_FIELD_ENTRY));
     if (itEntry != block.fields.end() && itEntry->second != 0) {
         go->setEntry(itEntry->second);
@@ -2482,7 +2538,7 @@ void EntityController::onCreateGameObject(const UpdateBlock& block, std::shared_
             }
         }
         owner_.gameObjectSpawnCallbackRef()(block.guid, go->getEntry(), go->getDisplayId(),
-            go->getX(), go->getY(), go->getZ(), go->getOrientation(), goScale);
+            go->getX(), go->getY(), go->getZ(), go->getOrientation(), goScale, goRotation);
     }
     // Fire transport move callback for transports (position update on re-creation).
     // NOTE: do NOT mark the guid as server-updated here. A CREATE only carries the
@@ -2776,14 +2832,32 @@ void EntityController::onValuesUpdateItem(const UpdateBlock& block, std::shared_
 }
 
 void EntityController::onValuesUpdateGameObject(const UpdateBlock& block, std::shared_ptr<Entity>& entity) {
-    if (block.hasMovement) {
-        if (transportGuids_.count(block.guid) && owner_.transportMoveCallbackRef()) {
+    auto go = std::static_pointer_cast<GameObject>(entity);
+    const bool rotationUpdated = blockHasGameObjectRotationFields(block);
+    if (rotationUpdated) {
+        const uint16_t facingIdx = fieldIndex(UF::GAMEOBJECT_FACING);
+        if (!block.hasMovement && facingIdx != 0xFFFF) {
+            auto itFacing = block.fields.find(facingIdx);
+            if (itFacing != block.fields.end()) {
+                const float serverFacing = bitsToFloat(itFacing->second);
+                if (std::isfinite(serverFacing)) {
+                    go->setOrientation(core::coords::serverToCanonicalYaw(serverFacing));
+                }
+            }
+        }
+        go->setRotation(resolveGameObjectRotation(block, *go));
+    } else if (block.hasMovement && !go->hasRotation()) {
+        go->setRotation(gameObjectRotationFromCanonicalYaw(go->getOrientation()));
+    }
+
+    if (block.hasMovement || rotationUpdated) {
+        if (block.hasMovement && transportGuids_.count(block.guid) && owner_.transportMoveCallbackRef()) {
             serverUpdatedTransportGuids_.insert(block.guid);
             owner_.transportMoveCallbackRef()(block.guid, entity->getX(), entity->getY(),
                                    entity->getZ(), entity->getOrientation());
-        } else if (owner_.gameObjectMoveCallbackRef()) {
+        } else if (transportGuids_.count(block.guid) == 0 && owner_.gameObjectMoveCallbackRef()) {
             owner_.gameObjectMoveCallbackRef()(block.guid, entity->getX(), entity->getY(),
-                                    entity->getZ(), entity->getOrientation());
+                                    entity->getZ(), entity->getOrientation(), go->effectiveRotation());
         }
     }
 
@@ -3064,8 +3138,14 @@ void EntityController::handleMovementUpdate(const UpdateBlock& block) {
                 if (entity->getType() == ObjectType::GAMEOBJECT &&
                     transportGuids_.count(block.guid) == 0 &&
                     owner_.gameObjectMoveCallbackRef()) {
+                    auto go = std::static_pointer_cast<GameObject>(entity);
+                    if (block.hasPackedRotation) {
+                        go->setRotation(unpackGameObjectRotation(block.packedRotation));
+                    } else if (!go->hasRotation()) {
+                        go->setRotation(gameObjectRotationFromCanonicalYaw(go->getOrientation()));
+                    }
                     owner_.gameObjectMoveCallbackRef()(block.guid, entity->getX(), entity->getY(),
-                                            entity->getZ(), entity->getOrientation());
+                                            entity->getZ(), entity->getOrientation(), go->effectiveRotation());
                 }
                 // Fire move callback for non-player units (creatures).
                 // SMSG_MONSTER_MOVE handles smooth interpolated movement, but many

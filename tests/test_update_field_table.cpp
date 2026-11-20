@@ -76,4 +76,22 @@ TEST_CASE("TBC 8606 character fields match the server wire layout", "[updatefiel
     REQUIRE(table.index(UF::DYNAMICOBJECT_POS_X) == 11);
     REQUIRE(table.index(UF::DYNAMICOBJECT_POS_Y) == 12);
     REQUIRE(table.index(UF::DYNAMICOBJECT_POS_Z) == 13);
+
+    // GameObject rotation & facing fields (CMaNGOS TBC UpdateFields.h: OBJECT_END = 6).
+    REQUIRE(table.index(UF::GAMEOBJECT_ROTATION) == 10);
+    REQUIRE(table.index(UF::GAMEOBJECT_FACING) == 18);
+    REQUIRE_FALSE(table.hasField(UF::GAMEOBJECT_PARENTROTATION));
+}
+
+TEST_CASE("GameObject rotation update fields resolve per expansion", "[updatefields]") {
+    for (const auto& expansion : {"classic", "turtle", "tbc"}) {
+        UpdateFieldTable table;
+        REQUIRE(table.loadFromJson(fieldsPath(expansion)));
+        REQUIRE(table.index(UF::GAMEOBJECT_ROTATION) == 10);
+        REQUIRE(table.index(UF::GAMEOBJECT_FACING) == 18);
+    }
+    UpdateFieldTable wotlk;
+    REQUIRE(wotlk.loadFromJson(fieldsPath("wotlk")));
+    REQUIRE(wotlk.index(UF::GAMEOBJECT_PARENTROTATION) == 10);
+    REQUIRE_FALSE(wotlk.hasField(UF::GAMEOBJECT_ROTATION));
 }

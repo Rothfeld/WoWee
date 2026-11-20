@@ -135,6 +135,12 @@ public:
                            float scale = 1.0f, uint32_t nameSet = 0);
 
     /**
+     * Create an instance of a loaded WMO model from an explicit model matrix.
+     */
+    uint32_t createInstanceWithMatrix(uint32_t modelId, const glm::mat4& modelMatrix,
+                                      uint32_t nameSet = 0);
+
+    /**
      * Update the world position of an existing instance (e.g., for transports)
      * @param instanceId Instance to update
      * @param position New world position

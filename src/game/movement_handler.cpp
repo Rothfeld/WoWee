@@ -4048,7 +4048,11 @@ void MovementHandler::updateAttachedTransportChildren(float /*deltaTime*/) {
             }
         } else if (attachment.type == ObjectType::GAMEOBJECT) {
             if (owner_.gameObjectMoveCallbackRef()) {
-                owner_.gameObjectMoveCallbackRef()(childGuid, composed.x, composed.y, composed.z, composedOrientation);
+                const auto go = std::static_pointer_cast<GameObject>(entity);
+                const glm::quat rot = gameObjectRotationFromCanonicalYaw(composedOrientation);
+                go->setRotation(rot);
+                owner_.gameObjectMoveCallbackRef()(childGuid, composed.x, composed.y, composed.z,
+                                                   composedOrientation, rot);
             }
         }
     }

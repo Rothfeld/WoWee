@@ -175,6 +175,14 @@ enum class UF : uint16_t {
     GAMEOBJECT_CREATED_BY,
     GAMEOBJECT_DISPLAYID,
     GAMEOBJECT_FLAGS,
+    /// Full 3D orientation quaternion (4 consecutive floats: x, y, z, w) in
+    /// Classic/TBC/Turtle (OBJECT_END + 4 = 10).
+    GAMEOBJECT_ROTATION,
+    /// Full 3D parent/local orientation quaternion (4 consecutive floats: x, y, z, w)
+    /// in WotLK (OBJECT_END + 4 = 10).
+    GAMEOBJECT_PARENTROTATION,
+    /// Server-space yaw float in Classic/TBC/Turtle (OBJECT_END + 12 = 18).
+    GAMEOBJECT_FACING,
     GAMEOBJECT_BYTES_1,
     // MO_TRANSPORT route clock. LEVEL carries the route's period in ms; the high
     // int16 of DYNAMIC carries how far through that period the transport is, as a

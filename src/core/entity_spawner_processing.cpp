@@ -8,6 +8,7 @@
 #include "core/coordinates.hpp"
 #include "core/logger.hpp"
 #include "rendering/renderer.hpp"
+#include "rendering/placement_transform.hpp"
 #include "rendering/camera_controller.hpp"
 #include "rendering/animation_controller.hpp"
 #include "rendering/vk_context.hpp"
@@ -828,7 +829,8 @@ void EntitySpawner::processAsyncGameObjectResults() {
         if (!result.valid || !result.isWmo || !result.wmoModel) {
             // Fallback: spawn via sync path (likely an M2 or failed WMO)
             spawnOnlineGameObject(result.guid, result.entry, result.displayId,
-                                 result.x, result.y, result.z, result.orientation, result.scale);
+                                 result.x, result.y, result.z, result.orientation, result.scale,
+                                 result.rotation);
             continue;
         }
 
@@ -864,11 +866,12 @@ void EntitySpawner::finishWmoSpawn(const PreparedGameObjectWMO& result, uint32_t
 
     glm::vec3 renderPos = core::coords::canonicalToRender(
         glm::vec3(result.x, result.y, result.z));
-    uint32_t instanceId = wmoRenderer->createInstance(
-        modelId, renderPos, glm::vec3(0.0f, 0.0f, result.orientation), result.scale);
+    const glm::quat wmoRotation = result.rotation * glm::angleAxis(-glm::half_pi<float>(), glm::vec3(0.0f, 0.0f, 1.0f));
+    const glm::mat4 wmoModelMatrix = rendering::placementModelMatrix(renderPos, wmoRotation, result.scale);
+    uint32_t instanceId = wmoRenderer->createInstanceWithMatrix(modelId, wmoModelMatrix);
     if (instanceId == 0) return;
 
-    gameObjectInstances_[result.guid] = {.modelId = modelId, .instanceId = instanceId, .isWmo = true};
+    gameObjectInstances_[result.guid] = {.modelId = modelId, .instanceId = instanceId, .isWmo = true, .scale = result.scale};
 
     // The synchronous WMO path notifies TransportManager after creating the
     // render instance. Do the same here: unique/uncached transport WMOs (notably
@@ -1036,6 +1039,7 @@ void EntitySpawner::processGameObjectSpawnQueue() {
                     result.z = capture.z;
                     result.orientation = capture.orientation;
                     result.scale = capture.scale;
+                    result.rotation = capture.rotation;
                     result.modelPath = capturePath;
                     result.isWmo = true;
 
@@ -1103,7 +1107,7 @@ void EntitySpawner::processGameObjectSpawnQueue() {
         }
 
         // Cached WMO or M2 - spawn synchronously (cheap)
-        spawnOnlineGameObject(s.guid, s.entry, s.displayId, s.x, s.y, s.z, s.orientation, s.scale);
+        spawnOnlineGameObject(s.guid, s.entry, s.displayId, s.x, s.y, s.z, s.orientation, s.scale, s.rotation);
         pendingGameObjectSpawns_.erase(pendingGameObjectSpawns_.begin());
     }
 }

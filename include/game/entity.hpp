@@ -2,10 +2,12 @@
 
 #include "game/protocol_constants.hpp"
 #include "game/update_field_table.hpp"
+#include "core/coordinates.hpp"
 
 #include <cstdint>
 #include <cassert>
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <string>
 #include <array>
@@ -16,6 +18,7 @@
 #include <optional>
 #include <mutex>
 #include <chrono>
+#include <glm/gtc/quaternion.hpp>
 #include "math/spline.hpp"
 #include "game/flat_field_map.hpp"
 
@@ -713,6 +716,33 @@ public:
     explicit Player(uint64_t guid) : Unit(guid) { type = ObjectType::PLAYER; }
 };
 
+/// Builds a Z-only world-space GameObject quaternion from canonical yaw.
+/// Server/render space uses serverYaw = canonicalYaw + pi/2 around +Z.
+inline glm::quat gameObjectRotationFromCanonicalYaw(float canonicalYaw) {
+    const float serverYaw = core::coords::canonicalToServerYaw(canonicalYaw);
+    return glm::quat(std::cos(serverYaw * 0.5f), 0.0f, 0.0f, std::sin(serverYaw * 0.5f));
+}
+
+/// Unpacks WotLK UPDATEFLAG_ROTATION (0x0200) 64-bit packed quaternion.
+/// Layout: x = bits [0..21] / 2^21 (22-bit signed), y = bits [22..42] / 2^20
+/// (21-bit signed), z = bits [43..63] / 2^20 (21-bit signed),
+/// w = sqrt(max(0, 1 - x^2 - y^2 - z^2)).
+inline glm::quat unpackGameObjectRotation(int64_t packed) {
+    const uint64_t u = static_cast<uint64_t>(packed);
+    auto signExtend = [](uint64_t value, int bits) -> int64_t {
+        const uint64_t mask = uint64_t(1) << (bits - 1);
+        return static_cast<int64_t>(((value & ((uint64_t(1) << bits) - 1)) ^ mask) - mask);
+    };
+    const float x = static_cast<float>(signExtend(u, 22)) / 2097152.0f;
+    const float y = static_cast<float>(signExtend(u >> 22, 21)) / 1048576.0f;
+    const float z = static_cast<float>(signExtend(u >> 43, 21)) / 1048576.0f;
+    const float wSq = std::max(0.0f, 1.0f - (x * x + y * y + z * z));
+    const glm::quat q(std::sqrt(wSq), x, y, z);
+    const float lenSq = glm::dot(q, q);
+    return (lenSq > 1e-6f && std::isfinite(lenSq)) ? glm::normalize(q)
+                                                 : glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+}
+
 /**
  * GameObject entity (doors, chests, etc.)
  */
@@ -730,10 +760,30 @@ public:
     [[nodiscard]] uint32_t getDisplayId() const { return displayId; }
     void setDisplayId(uint32_t id) { displayId = id; }
 
+    /// Full 3D world-space orientation quaternion (x, y, z, w in server/render
+    /// coordinates) from GAMEOBJECT_ROTATION / GAMEOBJECT_PARENTROTATION /
+    /// UPDATEFLAG_ROTATION.
+    [[nodiscard]] bool hasRotation() const { return hasRotation_; }
+    [[nodiscard]] const glm::quat& getRotation() const { return rotation_; }
+    void setRotation(const glm::quat& q) {
+        [[maybe_unused]] const float lenSq = glm::dot(q, q);
+        assert(std::isfinite(lenSq) && lenSq > 1e-6f);
+        rotation_ = glm::normalize(q);
+        hasRotation_ = true;
+    }
+
+    /// Returns the explicit 3D quaternion when set, otherwise the Z-only
+    /// quaternion derived from canonical orientation.
+    [[nodiscard]] glm::quat effectiveRotation() const {
+        return hasRotation_ ? rotation_ : gameObjectRotationFromCanonicalYaw(orientation);
+    }
+
 protected:
     std::string name;
     uint32_t entry = 0;
     uint32_t displayId = 0;
+    glm::quat rotation_{1.0f, 0.0f, 0.0f, 0.0f};
+    bool hasRotation_ = false;
 };
 
 /// What to call this entity on screen, whatever kind it turns out to be.

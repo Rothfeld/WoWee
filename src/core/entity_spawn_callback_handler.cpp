@@ -4,6 +4,7 @@
 #include "core/logger.hpp"
 #include "game/game_object_interaction.hpp"
 #include "rendering/renderer.hpp"
+#include "rendering/placement_transform.hpp"
 #include "rendering/character_renderer.hpp"
 #include "rendering/m2_renderer.hpp"
 #include "rendering/wmo_renderer.hpp"
@@ -96,8 +97,8 @@ void EntitySpawnCallbackHandler::setupCallbacks() {
     });
 
     // GameObject spawn callback (online mode) - spawn static models (mailboxes, etc.)
-    gameHandler_.setGameObjectSpawnCallback([this](uint64_t guid, uint32_t entry, uint32_t displayId, float x, float y, float z, float orientation, float scale) {
-        entitySpawner_.queueGameObjectSpawn(guid, entry, displayId, x, y, z, orientation, scale);
+    gameHandler_.setGameObjectSpawnCallback([this](uint64_t guid, uint32_t entry, uint32_t displayId, float x, float y, float z, float orientation, float scale, const glm::quat& rotation) {
+        entitySpawner_.queueGameObjectSpawn(guid, entry, displayId, x, y, z, orientation, scale, rotation);
     });
 
     // GameObject despawn callback (online mode) - remove static models
@@ -196,7 +197,7 @@ void EntitySpawnCallbackHandler::setupCallbacks() {
         }
     });
 
-    gameHandler_.setGameObjectMoveCallback([this](uint64_t guid, float x, float y, float z, float orientation) {
+    gameHandler_.setGameObjectMoveCallback([this](uint64_t guid, float x, float y, float z, float /*orientation*/, const glm::quat& rotation) {
         auto& goInstMap = entitySpawner_.getGameObjectInstances();
         auto it = goInstMap.find(guid);
         if (it == goInstMap.end()) {
@@ -206,15 +207,13 @@ void EntitySpawnCallbackHandler::setupCallbacks() {
         auto& info = it->second;
         if (info.isWmo) {
             if (auto* wr = renderer_.getWMORenderer()) {
-                glm::mat4 transform(1.0f);
-                transform = glm::translate(transform, renderPos);
-                transform = glm::rotate(transform, orientation, glm::vec3(0, 0, 1));
+                const glm::quat wmoRot = rotation * glm::angleAxis(-glm::half_pi<float>(), glm::vec3(0.0f, 0.0f, 1.0f));
+                const glm::mat4 transform = rendering::placementModelMatrix(renderPos, wmoRot, info.scale);
                 wr->setInstanceTransform(info.instanceId, transform);
             }
         } else {
             if (auto* mr = renderer_.getM2Renderer()) {
-                glm::mat4 transform(1.0f);
-                transform = glm::translate(transform, renderPos);
+                const glm::mat4 transform = rendering::placementModelMatrix(renderPos, rotation, info.scale);
                 mr->setInstanceTransform(info.instanceId, transform);
             }
         }

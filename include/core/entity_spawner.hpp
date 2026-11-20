@@ -23,6 +23,7 @@
 #include <future>
 #include <mutex>
 #include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 namespace wowee {
 
@@ -59,7 +60,8 @@ public:
                           uint32_t appearanceBytes, uint8_t facialFeatures,
                           float x, float y, float z, float orientation);
     void queueGameObjectSpawn(uint64_t guid, uint32_t entry, uint32_t displayId,
-                              float x, float y, float z, float orientation, float scale = 1.0f);
+                              float x, float y, float z, float orientation, float scale = 1.0f,
+                              const glm::quat& rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f));
     void queuePlayerEquipment(uint64_t guid,
                               const std::array<uint32_t, 19>& displayInfoIds,
                               const std::array<uint8_t, 19>& inventoryTypes);
@@ -819,6 +821,7 @@ private:
         uint32_t modelId = 0;
         uint32_t instanceId = 0;
         bool isWmo = false;
+        float scale = 1.0f;
     };
     // Game objects spawned before their type was known, keyed by entry. Each is
     // frozen on the conservative assumption that it is state-driven until the
@@ -863,6 +866,7 @@ private:
         uint32_t displayId;
         float x, y, z, orientation;
         float scale = 1.0f;
+        glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
     };
     std::deque<PendingGameObjectSpawn> pendingGameObjectSpawns_;
     /// Every game object the server has in view, by guid, as it was queued:
@@ -878,6 +882,7 @@ private:
         uint32_t displayId;
         float x, y, z, orientation;
         float scale = 1.0f;
+        glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
         std::shared_ptr<pipeline::WMOModel> wmoModel;
         std::unordered_map<std::string, pipeline::BLPImage> predecodedTextures;
         bool valid = false;
@@ -948,7 +953,8 @@ private:
                                   const std::array<uint32_t, 19>& displayInfoIds,
                                   const std::array<uint8_t, 19>& inventoryTypes);
     void spawnOnlineGameObject(uint64_t guid, uint32_t entry, uint32_t displayId,
-                               float x, float y, float z, float orientation, float scale = 1.0f);
+                               float x, float y, float z, float orientation, float scale = 1.0f,
+                               const glm::quat& rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f));
     // OBJECT_FIELD_SCALE_X last applied per creature (raw float bits).
     std::unordered_map<uint64_t, uint32_t> creatureServerScaleBits_;
 };

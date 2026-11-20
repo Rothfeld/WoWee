@@ -173,3 +173,40 @@ TEST_CASE("scale is applied inside the rotation, not after it", "[placement]") {
     CHECK(m[3][1] == Catch::Approx(0.0f).margin(1e-6));
     CHECK(m[3][2] == Catch::Approx(0.0f).margin(1e-6));
 }
+
+TEST_CASE("quaternion placement matches SFK wall-mounted lever and Z-only door", "[placement][quaternion]") {
+    // Shadowfang Keep cell lever 18900 (tbcmangos.gameobject guid 3300018):
+    // wall-mounted plate vertical on stone wall, local +Z = wall normal out into corridor.
+    const glm::quat leverQuat(0.69469738f, -0.13189232f, -0.69469738f, -0.13189232f);
+    const glm::vec3 pos(-252.6959f, 2114.2236f, 82.8052f);
+    const glm::mat4 m = placementModelMatrix(pos, leverQuat, 1.5f);
+
+    CHECK(m[3][0] == Catch::Approx(pos.x));
+    CHECK(m[3][1] == Catch::Approx(pos.y));
+    CHECK(m[3][2] == Catch::Approx(pos.z));
+
+    const glm::vec3 axisX = glm::vec3(m[0]) / 1.5f;
+    const glm::vec3 axisY = glm::vec3(m[1]) / 1.5f;
+    const glm::vec3 axisZ = glm::vec3(m[2]) / 1.5f;
+    // Local +X points straight up (+Z); local +Y runs along cell wall; local +Z points out of wall.
+    CHECK(axisX.x == Catch::Approx(0.0f).margin(1e-4));
+    CHECK(axisX.y == Catch::Approx(0.0f).margin(1e-4));
+    CHECK(axisX.z == Catch::Approx(1.0f).margin(1e-4));
+    CHECK(axisY.x == Catch::Approx(0.3665f).margin(1e-3));
+    CHECK(axisY.y == Catch::Approx(0.9304f).margin(1e-3));
+    CHECK(axisY.z == Catch::Approx(0.0f).margin(1e-4));
+    CHECK(axisZ.x == Catch::Approx(-0.9304f).margin(1e-3));
+    CHECK(axisZ.y == Catch::Approx(0.3665f).margin(1e-3));
+    CHECK(axisZ.z == Catch::Approx(0.0f).margin(1e-4));
+
+    // SFK Courtyard Door 18895: pure Z-yaw quaternion must match Euler Z-only placement.
+    const float doorYaw = -1.94604f;
+    const glm::quat doorQuat(0.562805f, 0.0f, 0.0f, -0.826590f);
+    const glm::mat4 mQuat = placementModelMatrix({1.0f, 2.0f, 3.0f}, doorQuat, 2.0f);
+    const glm::mat4 mEuler = placementModelMatrix({1.0f, 2.0f, 3.0f}, glm::vec3(0.0f, 0.0f, doorYaw), 2.0f);
+    for (int col = 0; col < 4; ++col) {
+        for (int row = 0; row < 4; ++row) {
+            CHECK(mQuat[col][row] == Catch::Approx(mEuler[col][row]).margin(1e-4));
+        }
+    }
+}

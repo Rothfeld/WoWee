@@ -353,8 +353,9 @@ void M2Renderer::setInstanceTransform(uint32_t instanceId, const glm::mat4& tran
     inst.modelMatrix = transform;
     inst.invModelMatrix = glm::inverse(transform);
 
-    // Extract position from transform for bounds
+    // Extract position and uniform scale from transform for bounds and collision
     inst.position = glm::vec3(transform[3]);
+    inst.scale = glm::length(glm::vec3(transform[0]));
 
     // The dedup map is keyed on position, so it has to move with the instance.
     // It did not, and only rebuildSpatialIndex ever put it right - which this

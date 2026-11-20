@@ -1734,12 +1734,12 @@ public:
 
     // GameObject spawn callback (online mode - triggered when gameobject enters view)
     // Parameters: guid, entry, displayId, x, y, z (canonical), orientation, scale (OBJECT_FIELD_SCALE_X)
-    using GameObjectSpawnCallback = std::function<void(uint64_t guid, uint32_t entry, uint32_t displayId, float x, float y, float z, float orientation, float scale)>;
+    using GameObjectSpawnCallback = std::function<void(uint64_t guid, uint32_t entry, uint32_t displayId, float x, float y, float z, float orientation, float scale, const glm::quat& rotation)>;
     void setGameObjectSpawnCallback(GameObjectSpawnCallback cb) { gameObjectSpawnCallback_ = std::move(cb); }
 
-    // GameObject move callback (online mode - triggered when gameobject position updates)
-    // Parameters: guid, x, y, z (canonical), orientation
-    using GameObjectMoveCallback = std::function<void(uint64_t guid, float x, float y, float z, float orientation)>;
+    // GameObject move callback (online mode - triggered when gameobject position or rotation updates)
+    // Parameters: guid, x, y, z (canonical), orientation, rotation (server/render quaternion)
+    using GameObjectMoveCallback = std::function<void(uint64_t guid, float x, float y, float z, float orientation, const glm::quat& rotation)>;
     void setGameObjectMoveCallback(GameObjectMoveCallback cb) { gameObjectMoveCallback_ = std::move(cb); }
 
     // GameObject metadata callback (triggered when a GAMEOBJECT_QUERY_RESPONSE is

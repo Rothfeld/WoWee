@@ -1,6 +1,7 @@
 // Entity, Unit, Player, GameObject, EntityManager tests
 #include <catch_amalgamated.hpp>
 #include "game/entity.hpp"
+#include "game/game_object_reach.hpp"
 #include "game/remote_jump.hpp"
 #include "rendering/loot_sparkles.hpp"
 #include "rendering/animation/ground_direction.hpp"
@@ -551,4 +552,47 @@ TEST_CASE("Quest game objects sparkle by their SPARKLE bit, scaled by collision 
     CHECK(LootSparkles::objectScale(0.55f) == 1.0f);   // RuinedSteamTankGear01.m2
     CHECK(LootSparkles::objectScale(3.78f) == 3.78f);  // GnomeBigGear.m2
     CHECK(LootSparkles::objectScale(5.79f) == 5.79f);  // AllianceVeteranBanner02.m2
+}
+
+TEST_CASE("GameObject 3D quaternion rotation, WotLK packing, and local reach frame", "[entity][gorotation]") {
+    GameObject go(42);
+    CHECK_FALSE(go.hasRotation());
+    const float serverYaw = -1.94604f;
+    const float canonicalYaw = wowee::core::coords::serverToCanonicalYaw(serverYaw);
+    go.setPosition(10.0f, 20.0f, 30.0f, canonicalYaw);
+
+    // Without an explicit quaternion, effectiveRotation derives Z-yaw from canonical orientation.
+    const glm::quat derived = go.effectiveRotation();
+    const glm::quat expectedZ(std::cos(serverYaw * 0.5f), 0.0f, 0.0f, std::sin(serverYaw * 0.5f));
+    CHECK(std::abs(glm::dot(derived, expectedZ)) == Catch::Approx(1.0f).margin(1e-5));
+
+    // Local offset via quaternion must match the Z-yaw overload identically.
+    const glm::vec3 sampleOffset(3.2f, -1.7f, 0.85f);
+    const glm::vec3 localYaw = gameObjectLocalOffset(sampleOffset, canonicalYaw);
+    const glm::vec3 localQuat = gameObjectLocalOffset(sampleOffset, derived);
+    CHECK(localQuat.x == Catch::Approx(localYaw.x).margin(1e-5));
+    CHECK(localQuat.y == Catch::Approx(localYaw.y).margin(1e-5));
+    CHECK(localQuat.z == Catch::Approx(localYaw.z).margin(1e-5));
+
+    // Explicit 3D quaternion (SFK cell lever 18900): local +X = world +Z, local +Z = wall normal.
+    const glm::quat leverQuat(0.69469738f, -0.13189232f, -0.69469738f, -0.13189232f);
+    go.setRotation(leverQuat);
+    CHECK(go.hasRotation());
+    // A point 2 yards straight above the lever (canonical +Z = (0, 0, 2)) lies at local (+2, 0, 0).
+    const glm::vec3 aboveLocal = gameObjectLocalOffset(glm::vec3(0.0f, 0.0f, 2.0f), go.effectiveRotation());
+    CHECK(aboveLocal.x == Catch::Approx(2.0f).margin(1e-3));
+    CHECK(aboveLocal.y == Catch::Approx(0.0f).margin(1e-3));
+    CHECK(aboveLocal.z == Catch::Approx(0.0f).margin(1e-3));
+
+    // WotLK packed 64-bit quaternion unpack (negative components + w reconstruction).
+    auto packQuat = [](const glm::quat& qIn) -> int64_t {
+        glm::quat q = glm::normalize(qIn);
+        if (q.w < 0.0f) q = -q;
+        const uint64_t ux = static_cast<uint64_t>(static_cast<int64_t>(std::llround(q.x * 2097152.0f))) & ((uint64_t(1) << 22) - 1);
+        const uint64_t uy = static_cast<uint64_t>(static_cast<int64_t>(std::llround(q.y * 1048576.0f))) & ((uint64_t(1) << 21) - 1);
+        const uint64_t uz = static_cast<uint64_t>(static_cast<int64_t>(std::llround(q.z * 1048576.0f))) & ((uint64_t(1) << 21) - 1);
+        return static_cast<int64_t>(ux | (uy << 22) | (uz << 43));
+    };
+    const glm::quat unpacked = unpackGameObjectRotation(packQuat(leverQuat));
+    CHECK(std::abs(glm::dot(unpacked, glm::normalize(leverQuat))) == Catch::Approx(1.0f).margin(1e-5));
 }

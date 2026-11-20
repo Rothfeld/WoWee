@@ -30,8 +30,11 @@
 /// and checks the bounds this reproduces against the ones on disk, so the next
 /// change to the order answers to the data rather than to a screenshot.
 
+#include <cassert>
+#include <cmath>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 namespace wowee::rendering {
 
@@ -47,6 +50,24 @@ inline glm::mat4 placementModelMatrix(const glm::vec3& position,
     m = glm::rotate(m, eulerRadians.z, glm::vec3(0.0f, 0.0f, 1.0f));
     m = glm::rotate(m, eulerRadians.y, glm::vec3(0.0f, 1.0f, 0.0f));
     m = glm::rotate(m, eulerRadians.x, glm::vec3(1.0f, 0.0f, 0.0f));
+    m = glm::scale(m, glm::vec3(scale));
+    return m;
+}
+
+/// Translate, then rotate by unit quaternion, then scale uniformly.
+///
+/// Used for GameObjects whose 3D orientation arrives as a world-space
+/// quaternion (GAMEOBJECT_ROTATION in Classic/TBC, GAMEOBJECT_PARENTROTATION /
+/// UPDATEFLAG_ROTATION in WotLK).
+inline glm::mat4 placementModelMatrix(const glm::vec3& position,
+                                      const glm::quat& rotation,
+                                      float scale) {
+    [[maybe_unused]] const float lenSq = glm::dot(rotation, rotation);
+    assert(std::isfinite(lenSq) && lenSq > 1e-6f);
+    const glm::quat q = glm::normalize(rotation);
+    glm::mat4 m(1.0f);
+    m = glm::translate(m, position);
+    m *= glm::mat4_cast(q);
     m = glm::scale(m, glm::vec3(scale));
     return m;
 }

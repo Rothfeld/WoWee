@@ -1,7 +1,9 @@
 #pragma once
 
 #include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
 
+#include <cassert>
 #include <cmath>
 
 namespace wowee::game {
@@ -16,6 +18,18 @@ namespace wowee::game {
 inline glm::vec3 gameObjectLocalOffset(const glm::vec3& offset, float canonicalYaw) {
     const float c = std::cos(canonicalYaw), s = std::sin(canonicalYaw);
     return {offset.x * c - offset.y * s, -offset.x * s - offset.y * c, offset.z};
+}
+
+/// Full 3D quaternion version of gameObjectLocalOffset.
+/// `offset` is in canonical coordinates (+X north, +Y west, +Z up);
+/// `worldRotation` maps model-local coordinates into server/render space
+/// (+X west, +Y north, +Z up). For Z-only rotation by server yaw s = c + pi/2,
+/// this matches gameObjectLocalOffset(offset, c) identically.
+inline glm::vec3 gameObjectLocalOffset(const glm::vec3& offset, const glm::quat& worldRotation) {
+    [[maybe_unused]] const float lenSq = glm::dot(worldRotation, worldRotation);
+    assert(std::isfinite(lenSq) && lenSq > 1e-6f);
+    const glm::vec3 serverOffset(offset.y, offset.x, offset.z);
+    return glm::conjugate(glm::normalize(worldRotation)) * serverOffset;
 }
 
 /// Whether `local` (a point in the object's own frame, in yards) lies inside

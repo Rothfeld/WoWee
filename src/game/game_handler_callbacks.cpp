@@ -134,9 +134,11 @@ std::optional<bool> withinGameObjectReach(pipeline::AssetManager* assets,
         scale = std::bit_cast<float>(go.getField(scaleField));
         if (scale <= 0.01f || scale > 100.0f) scale = 1.0f;
     }
-    // Into the model's frame: +X along its facing, +Y to its left. Canonical
-    // yaw c faces (cos c, -sin c) in (north, west).
-    const glm::vec3 local = gameObjectLocalOffset(offset, go.getOrientation());
+    // Into the model's frame: full 3D inverse rotation for GameObjects (which
+    // reduces identically to canonical yaw for Z-only objects).
+    const glm::vec3 local = (go.getType() == ObjectType::GAMEOBJECT)
+        ? gameObjectLocalOffset(offset, static_cast<const GameObject&>(go).effectiveRotation())
+        : gameObjectLocalOffset(offset, go.getOrientation());
     constexpr uint32_t kGoTypeDoor = 0;
     if (info->type == kGoTypeDoor) {
         // Stand bounds, or for a door model without Stand the bounds of the

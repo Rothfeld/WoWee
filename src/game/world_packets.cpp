@@ -1154,7 +1154,8 @@ bool UpdateObjectParser::parseMovementBlock(network::Packet& packet, UpdateBlock
     // Rotation (GameObjects)
     if (updateFlags & UPDATEFLAG_ROTATION) {
         if (rem() < 8) return false;
-        /*int64_t rotation =*/ packet.readUInt64();
+        block.hasPackedRotation = true;
+        block.packedRotation = static_cast<int64_t>(packet.readUInt64());
     }
 
     // Low GUID

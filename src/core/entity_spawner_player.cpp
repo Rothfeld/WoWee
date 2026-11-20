@@ -14,6 +14,7 @@
 #include "core/coordinates.hpp"
 #include "core/logger.hpp"
 #include "rendering/renderer.hpp"
+#include "rendering/placement_transform.hpp"
 #include "rendering/animation_controller.hpp"
 #include "rendering/vk_context.hpp"
 #include "rendering/character_renderer.hpp"
@@ -1428,7 +1429,7 @@ std::string EntitySpawner::transportModelPath(uint32_t entry, uint32_t displayId
     return "";
 }
 
-void EntitySpawner::spawnOnlineGameObject(uint64_t guid, uint32_t entry, uint32_t displayId, float x, float y, float z, float orientation, float scale) {
+void EntitySpawner::spawnOnlineGameObject(uint64_t guid, uint32_t entry, uint32_t displayId, float x, float y, float z, float orientation, float scale, const glm::quat& rotation) {
     if (!renderer_ || !assetManager_) return;
 
     if (!gameObjectLookupsBuilt_) {
@@ -1489,23 +1490,22 @@ void EntitySpawner::spawnOnlineGameObject(uint64_t guid, uint32_t entry, uint32_
             return;
         }
 
-        // Already have a render instance - update its position (e.g. transport re-creation)
+        // Already have a render instance - update its position/rotation (e.g. transport re-creation)
         auto& info = goIt->second;
+        info.scale = scale;
         glm::vec3 renderPos = core::coords::canonicalToRender(glm::vec3(x, y, z));
         LOG_DEBUG("GameObject position update: displayId=", displayId, " guid=0x", std::hex, guid, std::dec,
                  " pos=(", x, ", ", y, ", ", z, ")");
         if (renderer_) {
             if (info.isWmo) {
                 if (auto* wr = renderer_->getWMORenderer()) {
-                    glm::mat4 transform(1.0f);
-                    transform = glm::translate(transform, renderPos);
-                    transform = glm::rotate(transform, orientation, glm::vec3(0, 0, 1));
+                    const glm::quat wmoRot = rotation * glm::angleAxis(-glm::half_pi<float>(), glm::vec3(0.0f, 0.0f, 1.0f));
+                    const glm::mat4 transform = rendering::placementModelMatrix(renderPos, wmoRot, scale);
                     wr->setInstanceTransform(info.instanceId, transform);
                 }
             } else {
                 if (auto* mr = renderer_->getM2Renderer()) {
-                    glm::mat4 transform(1.0f);
-                    transform = glm::translate(transform, renderPos);
+                    const glm::mat4 transform = rendering::placementModelMatrix(renderPos, rotation, scale);
                     mr->setInstanceTransform(info.instanceId, transform);
                 }
             }
@@ -1542,10 +1542,10 @@ void EntitySpawner::spawnOnlineGameObject(uint64_t guid, uint32_t entry, uint32_
     bool isWmo = lowerPath.size() >= 4 && lowerPath.substr(lowerPath.size() - 4) == ".wmo";
 
     glm::vec3 renderPos = core::coords::canonicalToRender(glm::vec3(x, y, z));
-    const float renderYawWmo = orientation;
-    // M2 game objects: model default faces +renderX. renderYaw = canonical + 90° = server_yaw
-    // (same offset as creature/character renderer_ so all M2 models face consistently)
-    const float renderYawM2go = orientation + glm::radians(90.0f);
+    // Full 3D server/render quaternion: for Z-only objects with server yaw s,
+    // rotation = angleAxis(s, +Z) matches renderYawM2go = canonical + 90 deg = s,
+    // while WMOs carry a -90 deg local Z offset (matching renderYawWmo = canonical).
+    const glm::quat wmoRotation = rotation * glm::angleAxis(-glm::half_pi<float>(), glm::vec3(0.0f, 0.0f, 1.0f));
 
     bool loadedAsWmo = false;
     if (isWmo) {
@@ -1607,14 +1607,14 @@ void EntitySpawner::spawnOnlineGameObject(uint64_t guid, uint32_t entry, uint32_
         }
 
         if (loadedAsWmo) {
-            uint32_t instanceId = wmoRenderer->createInstance(modelId, renderPos,
-                glm::vec3(0.0f, 0.0f, renderYawWmo), scale);
+            const glm::mat4 wmoModelMatrix = rendering::placementModelMatrix(renderPos, wmoRotation, scale);
+            uint32_t instanceId = wmoRenderer->createInstanceWithMatrix(modelId, wmoModelMatrix);
             if (instanceId == 0) {
                 LOG_WARNING("Failed to create gameobject WMO instance for guid 0x", std::hex, guid, std::dec);
                 return;
             }
 
-            gameObjectInstances_[guid] = {.modelId = modelId, .instanceId = instanceId, .isWmo = true};
+            gameObjectInstances_[guid] = {.modelId = modelId, .instanceId = instanceId, .isWmo = true, .scale = scale};
             LOG_DEBUG("Spawned gameobject WMO: guid=0x", std::hex, guid, std::dec,
                      " displayId=", displayId, " at (", x, ", ", y, ", ", z, ")");
 
@@ -1752,8 +1752,9 @@ void EntitySpawner::spawnOnlineGameObject(uint64_t guid, uint32_t entry, uint32_
         // same display 7362) on the impaled player; when the trap arrived
         // first only a size-1 spine at the feet was drawn, and despawning
         // either object removed both.
-        uint32_t instanceId = m2Renderer->createInstance(modelId, renderPos,
-            glm::vec3(0.0f, 0.0f, renderYawM2go), scale, /*allowPositionDedup=*/false);
+        const glm::mat4 m2ModelMatrix = rendering::placementModelMatrix(renderPos, rotation, scale);
+        uint32_t instanceId = m2Renderer->createInstanceWithMatrix(modelId, m2ModelMatrix,
+            renderPos, /*allowPositionDedup=*/false);
         if (instanceId == 0) {
             LOG_WARNING("Failed to create gameobject instance for guid 0x", std::hex, guid, std::dec);
             return;
@@ -1782,7 +1783,7 @@ void EntitySpawner::spawnOnlineGameObject(uint64_t guid, uint32_t entry, uint32_
             applyGameObjectAnimationPolicy(guid, entry, instanceId);
         }
 
-        gameObjectInstances_[guid] = {.modelId = modelId, .instanceId = instanceId, .isWmo = false};
+        gameObjectInstances_[guid] = {.modelId = modelId, .instanceId = instanceId, .isWmo = false, .scale = scale};
 
         // ...and the pose the server described before this model existed.
         if (auto pending = gameObjectPendingState_.find(guid);

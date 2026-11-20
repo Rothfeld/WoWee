@@ -506,8 +506,9 @@ void EntitySpawner::queuePlayerSpawn(uint64_t guid, uint8_t raceId, uint8_t gend
 }
 
 void EntitySpawner::queueGameObjectSpawn(uint64_t guid, uint32_t entry, uint32_t displayId,
-                                          float x, float y, float z, float orientation, float scale) {
-    pendingGameObjectSpawns_.push_back({guid, entry, displayId, x, y, z, orientation, scale});
+                                          float x, float y, float z, float orientation, float scale,
+                                          const glm::quat& rotation) {
+    pendingGameObjectSpawns_.push_back({guid, entry, displayId, x, y, z, orientation, scale, rotation});
     serverGameObjectSpawns_[guid] = pendingGameObjectSpawns_.back();
 }
 
