@@ -3634,9 +3634,14 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
 
         // Instant melee abilities → trigger attack animation. Range decides this, not
         // school: physical abilities cast at range (Steady Shot, Taunt) would otherwise
-        // play a melee swing.
+        // play a melee swing. Channeled spells (e.g. Uldaman Boss Object Visual 11206,
+        // RangeIndex 12 = 5 yd, AttributesEx 0x10000004) are never melee swings.
+        constexpr uint32_t kAttrExChanneled = 0x00000004u | 0x00000040u;
+        const bool isChanneledSpell = cast != owner_.spellNameCacheRef().end() &&
+            (cast->second.attrEx & kAttrExChanneled) != 0;
         bool isMeleeAbility = false;
-        if (!owner_.isProfessionSpell(sid) && !spellclass::isRangedWeaponAutoAttack(sid)) {
+        if (!owner_.isProfessionSpell(sid) && !spellclass::isRangedWeaponAutoAttack(sid) &&
+            !isChanneledSpell) {
             if (spellclass::isMeleeRange(getSpellMaxRange(sid))) {
                 isMeleeAbility = (currentCastSpellId_ != sid);
             }

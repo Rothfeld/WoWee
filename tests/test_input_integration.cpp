@@ -3619,6 +3619,65 @@ TEST_CASE_METHOD(Integration, "A channel's bar text is CHANNELING, not the spell
     lua.setGameHandler(nullptr);
 }
 
+// Altar of Archaedas (133234, GAMEOBJECT_TYPE_SUMMONING_RITUAL): clicking sends
+// CMSG_GAMEOBJ_USE and the server casts Uldaman Boss Object Visual (11206,
+// RangeIndex 12 = 5 yd, AttributesEx 0x10000004 channeled) via SMSG_SPELL_GO +
+// MSG_CHANNEL_START. Because it is channeled, SMSG_SPELL_GO must not classify it
+// as a melee swing (which previously overwrote the channel animation with
+// SPECIAL_UNARMED 118 and left the player standing with weapons unsheathed).
+TEST_CASE_METHOD(Integration, "Server-started 5-yard ritual channel does not trigger melee swing", "[ritual-channel]") {
+    using namespace wowee::game;
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    handler.spellNameCacheLoadedRef() = true;
+    auto& spell = handler.spellNameCacheRef()[11206];
+    spell.name = "Uldaman Boss Object Visual";
+    spell.maxRange = 5.0f;
+    spell.attrEx = 0x10000004u;
+
+    std::vector<uint32_t> meleeSwings;
+    handler.setMeleeSwingCallback([&](uint32_t spellId) { meleeSwings.push_back(spellId); });
+    std::vector<std::pair<SpellAnimPhase, uint32_t>> animPhases;
+    handler.setSpellCastAnimCallback([&](uint64_t guid, SpellAnimPhase phase, uint32_t spellId) {
+        if (guid == replay::Session::kPlayerGuid) animPhases.emplace_back(phase, spellId);
+    });
+
+    // Server sends SMSG_SPELL_GO (hit self, no prior CMSG_CAST_SPELL) then MSG_CHANNEL_START.
+    wowee::network::Packet go(wireOpcode(Opcode::SMSG_SPELL_GO));
+    go.writePackedGuid(replay::Session::kPlayerGuid);
+    go.writePackedGuid(replay::Session::kPlayerGuid);
+    go.writeUInt32(11206);
+    go.writeUInt16(0);        // castFlags
+    go.writeUInt32(0);        // timestamp
+    go.writeUInt8(1);         // hitCount
+    go.writeUInt64(replay::Session::kPlayerGuid);
+    go.writeUInt8(0);         // missCount
+    go.writeUInt32(0x2);      // TARGET_FLAG_UNIT
+    go.writePackedGuid(replay::Session::kPlayerGuid);
+    session.receive(go);
+
+    wowee::network::Packet start(wireOpcode(Opcode::MSG_CHANNEL_START));
+    start.writePackedGuid(replay::Session::kPlayerGuid);
+    start.writeUInt32(11206);
+    start.writeUInt32(600000);
+    session.receive(start);
+
+    REQUIRE(meleeSwings.empty());
+    REQUIRE(handler.isChanneling());
+    REQUIRE(animPhases.size() == 2);
+    CHECK(animPhases[0] == std::pair{SpellAnimPhase::CAST, 11206u});
+    CHECK(animPhases[1] == std::pair{SpellAnimPhase::CHANNEL, 11206u});
+
+    wowee::network::Packet stop(wireOpcode(Opcode::MSG_CHANNEL_UPDATE));
+    stop.writePackedGuid(replay::Session::kPlayerGuid);
+    stop.writeUInt32(0);
+    session.receive(stop);
+
+    REQUIRE(!handler.isChanneling());
+    REQUIRE(animPhases.size() == 3);
+    CHECK(animPhases[2] == std::pair{SpellAnimPhase::STOP, 0u});
+}
+
 // Original 2.4.3 (pair 8, _experiments/20261119T1330Z.castbar_text):
 // UnitCastingInfo answers seven values (Hearthstone, "", "Hearthstone",
 // texture, start, end, false) and UnitChannelInfo none at all meanwhile. A

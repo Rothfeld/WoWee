@@ -377,8 +377,13 @@ private:
     std::unordered_map<uint32_t, KitLight> kitLights_;
     /// Start the kit's CharProc 13 light on the unit, where the kit has one.
     void startKitLight(uint32_t kitId, uint32_t attachInstanceId);
-    void applyCharacterProcedures(uint32_t attachInstanceId, const std::vector<uint32_t>& applied);
+    void applyCharacterProcedures(uint32_t attachInstanceId);
     std::unordered_map<uint32_t, UnitAuraVisuals> unitAuraVisuals_;
+    struct ActiveChannelVisual {
+        uint32_t visualId = 0;
+        float remaining = 0.0f;  // seconds; inf for field-driven channels
+    };
+    std::unordered_map<uint32_t, ActiveChannelVisual> unitChannelVisuals_;
     /// SpellChainEffects.dbc, TBC 2.4.3 173-byte records: dwords 0-38, then
     /// bytes Alpha, Red, Green, Blue, BlendMode at +156, Combo string +161,
     /// RenderLayer +165, TextureLength float +169 (not read).

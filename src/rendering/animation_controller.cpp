@@ -193,6 +193,12 @@ bool AnimationController::isStateEmoteById(uint32_t emoteId) {
 
 void AnimationController::startSpellCast(uint32_t precastAnimId, uint32_t castAnimId, bool castLoop,
                                          uint32_t finalizeAnimId) {
+    // A starting cast or channel takes over from any in-flight swing timer;
+    // otherwise CombatFSM::updateTransitions's melee/ranged override clears
+    // the spell state on the very next frame.
+    meleeSwingTimer_ = 0.0f;
+    specialAttackAnimId_ = 0;
+    rangedShootTimer_ = 0.0f;
     characterAnimator_.startSpellCast(precastAnimId, castAnimId, castLoop, finalizeAnimId);
 }
 

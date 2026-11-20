@@ -151,21 +151,28 @@ aura visuals use `SpellVisual.StateKit` and its authored attachment slots;
 their lifetime follows aura fields and owner existence, not cast duration.
 For example, Draenei Survivor (16483) sleeps (state 3) under spell 35046,
 visual 8270, kit 6608, `Spells/RedGhost_state.m2`.
-State kits also change the unit's own model through `CharProc`: type 1
-multiplies the shaded model by `CharParamZero` (an `0xRRGGBB` integer stored
-as a float), type 11 freezes the unit's animation clock and current pose in
-place while any active aura carries it (Stoned 10255, Freeze Anim 16245, Ice
-Block 27619/45438, Petrification 17624; attached spell effects and particle
-emitters keep running, and removing the aura resumes animation immediately),
-and type 14 sets its opacity to `CharParamZero`. The latest applied aura's kit
-wins for colour and opacity; removing it restores the previous one. A ghost is
+State kits and active channel kits also change the unit's own model through
+`CharProc`: type 1 multiplies the shaded model by `CharParamZero` (an `0xRRGGBB`
+integer stored as a float), type 11 freezes the unit's animation clock and
+current pose in place while any active kit carries it (Stoned 10255, Freeze
+Anim 16245, Ice Block 27619/45438, Petrification 17624; attached spell effects
+and particle emitters keep running, and removing the aura resumes animation
+immediately), type 13 starts a timed kit light, and type 14 sets its opacity to
+`CharParamZero`. An active `ChannelKit` (e.g. Uldaman Boss Object Visual 11206
+at Altar of Archaedas 133234, visual 2166, kit 2044: colour `0xEA00F0`) takes
+precedence over background aura `StateKit`s while channeling and restores them
+when `MSG_CHANNEL_UPDATE 0`, `UNIT_CHANNEL_SPELL` clear, expiry, or caster death
+ends the channel. For auras, the latest applied aura's kit wins for colour and
+opacity; removing it restores the previous one. A ghost is
 Ghost (8326), visual 886, kit 989: colour `0x8CB9FD`, opacity 0.5. Vertex Color
 Black (39662) draws a black silhouette, Transparency (75%) (37802) opacity 0.25.
 The colour changes in one frame and stays for the aura's lifetime;
 `CharParamOne`-`Three` do not modulate it (original 2.4.3: Brood Affliction
 Blue/Red, Ignite Flesh, Enrage, also during a Chromaggus fight). Opacity moves
 to the new value over 1 s as the cube of elapsed time, both ways, whatever the
-kit's parameters (Transparency 25%/75%, Steal Magic, Banish).
+kit's parameters (Transparency 25%/75%, Steal Magic, Banish). Evidence for
+ritual channel animation, weapon sheath, and `ChannelKit` `CharProc`:
+`_experiments/20261120T094200Z.ritual_channel_anim/` in the workspace.
 Placed doodads, banners, boats and ground clutter move only by their own keyed
 bones: no shader wind, cloth sway, boat bob or player push-aside, whatever the name. `StranglethornTree02` and `BadlandsPalmTree02` sway their canopies from keyed
 bones; `StranglethornRoot01`-`03`, Elwynn bushes and trees, the palm trunks and the

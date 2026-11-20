@@ -638,6 +638,12 @@ void SpellVisualSystem::startChannelVisual(uint32_t visualId, const glm::vec3& p
     updateChannelVisual(attachInstanceId, 0);
     const auto kit = channelKits_.find(visualId);
     if (kit == channelKits_.end() || !kit->second) return;
+    const float remaining = durationMs == std::numeric_limits<uint32_t>::max()
+        ? std::numeric_limits<float>::infinity()
+        : durationMs / 1000.0f;
+    unitChannelVisuals_[attachInstanceId] = {visualId, remaining};
+    startKitLight(kit->second, attachInstanceId);
+    applyCharacterProcedures(attachInstanceId);
     const auto effects = kitEffects_.find(kit->second);
     if (effects == kitEffects_.end()) return;
     auto* characters = renderer_->getCharacterRenderer();
@@ -773,9 +779,9 @@ void SpellVisualSystem::syncAuraVisuals(uint32_t attachInstanceId,
     for (uint32_t visual : visualIds)
         if (std::find(applied.begin(), applied.end(), visual) == applied.end())
             applied.push_back(visual);
-    applyCharacterProcedures(attachInstanceId, applied);
     if (visualIds.empty()) unitAuraVisuals_.erase(attachInstanceId);
     else unitAuraVisuals_[attachInstanceId] = {visualIds, observerConcealed, std::move(applied)};
+    applyCharacterProcedures(attachInstanceId);
 }
 
 uint32_t SpellVisualSystem::auraStateAnimation(uint32_t attachInstanceId) const {
@@ -791,24 +797,37 @@ uint32_t SpellVisualSystem::auraStateAnimation(uint32_t attachInstanceId) const 
     return kNoAnimation;
 }
 
-void SpellVisualSystem::applyCharacterProcedures(uint32_t attachInstanceId,
-                                                 const std::vector<uint32_t>& applied) {
+void SpellVisualSystem::applyCharacterProcedures(uint32_t attachInstanceId) {
+    auto* characters = renderer_ ? renderer_->getCharacterRenderer() : nullptr;
+    if (!characters || !characters->hasInstance(attachInstanceId)) return;
     glm::vec3 color(1.0f);
     float opacity = 1.0f;
     bool colored = false, faded = false, frozen = false;
-    for (auto visual = applied.rbegin(); visual != applied.rend() && !(colored && faded && frozen); ++visual) {
-        const auto kit = stateKits_.find(*visual);
-        if (kit == stateKits_.end() || !kit->second) continue;
-        const auto procedures = kitCharacterProcedures_.find(kit->second);
-        if (procedures == kitCharacterProcedures_.end()) continue;
+    auto applyKit = [&](uint32_t kitId) {
+        if (!kitId) return;
+        const auto procedures = kitCharacterProcedures_.find(kitId);
+        if (procedures == kitCharacterProcedures_.end()) return;
         if (!colored && procedures->second.color) { color = *procedures->second.color; colored = true; }
         if (!faded && procedures->second.opacity) { opacity = *procedures->second.opacity; faded = true; }
         if (procedures->second.freezeAnimation) frozen = true;
+    };
+    if (const auto chan = unitChannelVisuals_.find(attachInstanceId); chan != unitChannelVisuals_.end()) {
+        if (const auto kit = channelKits_.find(chan->second.visualId); kit != channelKits_.end())
+            applyKit(kit->second);
     }
-    LOG_DEBUG("Kit appearance: owner=", attachInstanceId, " visuals=", applied.size(),
+    if (const auto auras = unitAuraVisuals_.find(attachInstanceId);
+        auras != unitAuraVisuals_.end() && !(colored && faded && frozen)) {
+        for (auto visual = auras->second.applied.rbegin();
+             visual != auras->second.applied.rend() && !(colored && faded && frozen); ++visual) {
+            const auto kit = stateKits_.find(*visual);
+            if (kit != stateKits_.end()) applyKit(kit->second);
+        }
+    }
+    LOG_DEBUG("Kit appearance: owner=", attachInstanceId,
+              " channel=", unitChannelVisuals_.count(attachInstanceId),
               " color=(", color.r, ",", color.g, ",", color.b, ") opacity=", opacity,
               " frozen=", frozen);
-    renderer_->getCharacterRenderer()->setInstanceKitAppearance(attachInstanceId, color, opacity, frozen);
+    characters->setInstanceKitAppearance(attachInstanceId, color, opacity, frozen);
 }
 
 void SpellVisualSystem::updateChannelVisual(uint32_t attachInstanceId, uint32_t remainingMs) {
@@ -822,6 +841,13 @@ void SpellVisualSystem::updateChannelVisual(uint32_t attachInstanceId, uint32_t 
             it->duration = it->elapsed + remainingMs / 1000.0f;
         }
         ++it;
+    }
+    if (!remainingMs) {
+        if (unitChannelVisuals_.erase(attachInstanceId))
+            applyCharacterProcedures(attachInstanceId);
+    } else if (const auto chan = unitChannelVisuals_.find(attachInstanceId);
+               chan != unitChannelVisuals_.end()) {
+        chan->second.remaining = remainingMs / 1000.0f;
     }
 }
 
@@ -1060,7 +1086,8 @@ void SpellVisualSystem::syncChannels(const std::vector<UnitChannel>& fieldChanne
     for (auto it = fieldChannels_.begin(); it != fieldChannels_.end();) {
         const auto now = current.find(it->first);
         if (now == current.end() || now->second != it->second) {
-            if (heldChannelKits_.erase(it->first)) updateChannelVisual(it->first, 0);
+            if (heldChannelKits_.erase(it->first) || unitChannelVisuals_.count(it->first))
+                updateChannelVisual(it->first, 0);
             it = fieldChannels_.erase(it);
         } else {
             ++it;
@@ -1069,8 +1096,9 @@ void SpellVisualSystem::syncChannels(const std::vector<UnitChannel>& fieldChanne
     for (const auto& channel : channels) {
         if (!channel.casterInstanceId || fieldChannels_.count(channel.casterInstanceId)) continue;
         fieldChannels_[channel.casterInstanceId] = channel.visualId;
-        const bool playing = std::any_of(activeSpellVisuals_.begin(), activeSpellVisuals_.end(),
-            [&](const SpellVisualInstance& v) { return v.isChannel && v.attachInstanceId == channel.casterInstanceId; });
+        const bool playing = unitChannelVisuals_.count(channel.casterInstanceId) != 0 ||
+            std::any_of(activeSpellVisuals_.begin(), activeSpellVisuals_.end(),
+                [&](const SpellVisualInstance& v) { return v.isChannel && v.attachInstanceId == channel.casterInstanceId; });
         if (playing) continue;
         startChannelVisual(channel.visualId, channel.casterPosition, std::numeric_limits<uint32_t>::max(),
                            channel.casterInstanceId);
@@ -1535,6 +1563,23 @@ void SpellVisualSystem::update(float deltaTime) {
             glm::vec3 position;
             return !characters->getInstancePosition(entry.first, position);
         });
+        for (auto it = unitChannelVisuals_.begin(); it != unitChannelVisuals_.end();) {
+            glm::vec3 position;
+            if (!characters->getInstancePosition(it->first, position)) {
+                it = unitChannelVisuals_.erase(it);
+                continue;
+            }
+            if (std::isfinite(it->second.remaining)) {
+                it->second.remaining -= deltaTime;
+                if (it->second.remaining <= 0.0f) {
+                    const uint32_t owner = it->first;
+                    it = unitChannelVisuals_.erase(it);
+                    applyCharacterProcedures(owner);
+                    continue;
+                }
+            }
+            ++it;
+        }
     }
     for (auto it = pendingAreaImpacts_.begin(); it != pendingAreaImpacts_.end(); ) {
         it->remaining -= deltaTime;
@@ -1715,6 +1760,8 @@ void SpellVisualSystem::removeCasterStages(uint32_t attachInstanceId) {
         m2Renderer_->removeInstance(effect.instanceId);
         return true;
     });
+    if (unitChannelVisuals_.erase(attachInstanceId))
+        applyCharacterProcedures(attachInstanceId);
 }
 
 void SpellVisualSystem::retireEffect(const SpellVisualInstance& effect) {
@@ -1744,6 +1791,7 @@ void SpellVisualSystem::cancelPrecastVisuals(uint32_t attachInstanceId) {
 
 void SpellVisualSystem::reset() {
     unitAuraVisuals_.clear();
+    unitChannelVisuals_.clear();
     beams_.clear();
     hopBeams_.clear();
     channelTargets_.clear();
