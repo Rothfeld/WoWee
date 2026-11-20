@@ -22,6 +22,7 @@
 #include "rendering/clouds.hpp"
 #include "rendering/lens_flare.hpp"
 #include "rendering/weather.hpp"
+#include "rendering/weather_mist_math.hpp"
 #include "rendering/sand_storm.hpp"
 #include "rendering/lightning.hpp"
 #include "rendering/lighting_manager.hpp"
@@ -3861,8 +3862,17 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
         VkExtent2D waterExtent = activeRenderExtent_;
         if (msaaOn) {
             contRp.renderPass = waterRenderer->getWater1xRenderPass();
-            contRp.framebuffer = waterRenderer->getWater1xFramebuffer(currentImageIndex);
-            waterExtent = vkCtx->getSwapchainExtent();
+            const bool offscreenScene =
+                postProcessPipeline_ && postProcessPipeline_->getSceneFramebuffer() != VK_NULL_HANDLE;
+            if (offscreenScene) {
+                contRp.framebuffer =
+                    postProcessPipeline_->getSceneContinue1xFramebuffer(contRp.renderPass);
+                waterExtent = sceneExtent;
+            } else {
+                contRp.framebuffer = waterRenderer->getWater1xFramebuffer(currentImageIndex);
+                waterExtent = vkCtx->getSwapchainExtent();
+            }
+            assert(contRp.framebuffer != VK_NULL_HANDLE);
         } else {
             contRp.renderPass = vkCtx->getSceneContinueRenderPass();
             contRp.framebuffer = activeFramebuffer_;
@@ -4095,14 +4105,16 @@ void Renderer::renderMinimapOverlay(VkCommandBuffer cmd,
 
 bool Renderer::waterDrawsInContinuePass() const {
     if (!waterRenderer || !vkCtx) return false;
-    if (vkCtx->getMsaaSamples() > VK_SAMPLE_COUNT_1_BIT) {
-        // The 1x water pass targets the swapchain directly, so it cannot serve a
-        // frame whose scene went to an off-screen post-processing target.
-        const bool offscreenScene =
-            postProcessPipeline_ && postProcessPipeline_->getSceneFramebuffer() != VK_NULL_HANDLE;
-        return !offscreenScene && waterRenderer->hasWater1xPass();
-    }
-    return vkCtx->getSceneContinueRenderPass() != VK_NULL_HANDLE;
+    const bool msaaEnabled = vkCtx->getMsaaSamples() > VK_SAMPLE_COUNT_1_BIT;
+    const bool offscreenScene =
+        postProcessPipeline_ && postProcessPipeline_->getSceneFramebuffer() != VK_NULL_HANDLE;
+    const bool hasResolvedOffscreen =
+        offscreenScene && postProcessPipeline_->hasResolvedSceneAttachments();
+    return canUseWaterContinuePass(msaaEnabled,
+                                   waterRenderer->hasWater1xPass(),
+                                   offscreenScene,
+                                   hasResolvedOffscreen,
+                                   vkCtx->getSceneContinueRenderPass() != VK_NULL_HANDLE);
 }
 
 // initPostProcess(), resizePostProcess(), shutdownPostProcess() removed -

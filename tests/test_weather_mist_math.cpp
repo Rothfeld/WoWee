@@ -4,6 +4,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
+using wowee::rendering::canUseWaterContinuePass;
 using wowee::rendering::kMistSoftFadeFactor;
 using wowee::rendering::linearizeMistDepth;
 using wowee::rendering::mistSoftDepthFade;
@@ -90,4 +91,23 @@ TEST_CASE("mistSoftDepthFadeNdc eliminates hard seam on sloped terrain in NDC sp
     CHECK(partial < 0.35f);
     CHECK(mistSoftDepthFadeNdc(farTerrainNdc, quadNdc, nearPlane, farPlane, fadeRange) == 1.0f);
     CHECK(mistSoftDepthFadeNdc(skyNdc, quadNdc, nearPlane, farPlane, fadeRange) == 1.0f);
+}
+
+TEST_CASE("canUseWaterContinuePass enables 1x continuation for MSAA off-screen post-processing", "[weather_mist]") {
+    SECTION("non-MSAA relies on scene continuation pass regardless of off-screen target") {
+        CHECK(canUseWaterContinuePass(false, false, false, false, true));
+        CHECK(canUseWaterContinuePass(false, false, true, false, true));
+        CHECK_FALSE(canUseWaterContinuePass(false, true, false, false, false));
+    }
+
+    SECTION("MSAA direct swapchain uses 1x water pass when available") {
+        CHECK(canUseWaterContinuePass(true, true, false, false, false));
+        CHECK_FALSE(canUseWaterContinuePass(true, false, false, false, true));
+    }
+
+    SECTION("MSAA with off-screen post-process (ffxGlow/FXAA/FSR/FSR2) uses 1x continuation when resolved attachments exist") {
+        CHECK(canUseWaterContinuePass(true, true, true, true, false));
+        CHECK_FALSE(canUseWaterContinuePass(true, true, true, false, false));
+        CHECK_FALSE(canUseWaterContinuePass(true, false, true, true, false));
+    }
 }

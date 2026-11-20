@@ -45,4 +45,22 @@ inline constexpr float kMistSoftFadeFactor = 0.40f;
     return mistSoftDepthFade(sceneLin, fragLin, fadeRange);
 }
 
+/// Decide whether water, swim spray, and depth-softened weather mist can leave
+/// the main scene pass and draw in the single-sampled continuation pass after
+/// opaque scene depth is captured.
+/// Under MSAA, an off-screen post-processing target (ffxGlow, FXAA, FSR, FSR2,
+/// death/nether compositing) can still use the 1x continuation pass whenever it
+/// resolves both color and depth into 1x attachments.
+[[nodiscard]] inline bool canUseWaterContinuePass(bool msaaEnabled,
+                                                  bool hasWater1xPass,
+                                                  bool offscreenScene,
+                                                  bool hasResolvedOffscreenAttachments,
+                                                  bool hasSceneContinuePass) {
+    if (msaaEnabled) {
+        if (!hasWater1xPass) return false;
+        return !offscreenScene || hasResolvedOffscreenAttachments;
+    }
+    return hasSceneContinuePass;
+}
+
 } // namespace wowee::rendering

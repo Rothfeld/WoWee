@@ -178,6 +178,76 @@ bool PostProcessPipeline::sceneDepthIsMsaa() const {
     if (fsr_.enabled && fsr_.sceneFramebuffer) return fsr_.sceneDepthResolve.image == VK_NULL_HANDLE;
     return true;
 }
+
+bool PostProcessPipeline::hasResolvedSceneAttachments() const {
+    if (fsr2_.enabled && fsr2_.sceneFramebuffer) {
+        return fsr2_.sceneColor.imageView != VK_NULL_HANDLE &&
+               fsr2_.sceneDepthResolve.imageView != VK_NULL_HANDLE;
+    }
+    if (needsFXAAPass() && fxaa_.sceneFramebuffer) {
+        return fxaa_.sceneColor.imageView != VK_NULL_HANDLE &&
+               fxaa_.sceneDepthResolve.imageView != VK_NULL_HANDLE;
+    }
+    if (fsr_.enabled && fsr_.sceneFramebuffer) {
+        return fsr_.sceneColor.imageView != VK_NULL_HANDLE &&
+               fsr_.sceneDepthResolve.imageView != VK_NULL_HANDLE;
+    }
+    return false;
+}
+
+VkFramebuffer PostProcessPipeline::getSceneContinue1xFramebuffer(VkRenderPass water1xRenderPass) {
+    if (!vkCtx_ || water1xRenderPass == VK_NULL_HANDLE) return VK_NULL_HANDLE;
+
+    auto ensureFb = [&](VkFramebuffer& fb, VkRenderPass& cachedRp,
+                        VkImageView colorView, VkImageView depthView,
+                        VkExtent2D extent) -> VkFramebuffer {
+        if (!colorView || !depthView || extent.width == 0 || extent.height == 0) {
+            return VK_NULL_HANDLE;
+        }
+        if (fb != VK_NULL_HANDLE && cachedRp == water1xRenderPass) {
+            return fb;
+        }
+        VkDevice device = vkCtx_->getDevice();
+        if (fb != VK_NULL_HANDLE) {
+            vkDeviceWaitIdle(device);
+            vkDestroyFramebuffer(device, fb, nullptr);
+            fb = VK_NULL_HANDLE;
+            cachedRp = VK_NULL_HANDLE;
+        }
+        VkImageView views[2] = { colorView, depthView };
+        VkFramebufferCreateInfo fbCI{};
+        fbCI.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        fbCI.renderPass = water1xRenderPass;
+        fbCI.attachmentCount = 2;
+        fbCI.pAttachments = views;
+        fbCI.width = extent.width;
+        fbCI.height = extent.height;
+        fbCI.layers = 1;
+        if (vkCreateFramebuffer(device, &fbCI, nullptr, &fb) != VK_SUCCESS) {
+            LOG_ERROR("PostProcessPipeline: failed to create 1x continuation framebuffer");
+            return VK_NULL_HANDLE;
+        }
+        cachedRp = water1xRenderPass;
+        return fb;
+    };
+
+    if (fsr2_.enabled && fsr2_.sceneFramebuffer) {
+        return ensureFb(fsr2_.sceneContinue1xFramebuffer, fsr2_.sceneContinue1xRenderPass,
+                        fsr2_.sceneColor.imageView, fsr2_.sceneDepthResolve.imageView,
+                        {.width = fsr2_.internalWidth, .height = fsr2_.internalHeight});
+    }
+    if (needsFXAAPass() && fxaa_.sceneFramebuffer) {
+        return ensureFb(fxaa_.sceneContinue1xFramebuffer, fxaa_.sceneContinue1xRenderPass,
+                        fxaa_.sceneColor.imageView, fxaa_.sceneDepthResolve.imageView,
+                        vkCtx_->getSwapchainExtent());
+    }
+    if (fsr_.enabled && fsr_.sceneFramebuffer) {
+        return ensureFb(fsr_.sceneContinue1xFramebuffer, fsr_.sceneContinue1xRenderPass,
+                        fsr_.sceneColor.imageView, fsr_.sceneDepthResolve.imageView,
+                        {.width = fsr_.internalWidth, .height = fsr_.internalHeight});
+    }
+    return VK_NULL_HANDLE;
+}
 bool PostProcessPipeline::executePostProcessing(VkCommandBuffer cmd, uint32_t imageIndex,
                                                   Camera* camera, float deltaTime) {
     ZoneScopedN("PostProcess::execute");
@@ -774,6 +844,7 @@ void PostProcessPipeline::destroyFSRResources() {
     destroy(device, fsr_.pipelineLayout);
     if (fsr_.descPool) { vkDestroyDescriptorPool(device, fsr_.descPool, nullptr); fsr_.descPool = VK_NULL_HANDLE; fsr_.descSet = VK_NULL_HANDLE; }
     destroy(device, fsr_.descSetLayout);
+    if (fsr_.sceneContinue1xFramebuffer) { vkDestroyFramebuffer(device, fsr_.sceneContinue1xFramebuffer, nullptr); fsr_.sceneContinue1xFramebuffer = VK_NULL_HANDLE; fsr_.sceneContinue1xRenderPass = VK_NULL_HANDLE; }
     if (fsr_.sceneFramebuffer) { vkDestroyFramebuffer(device, fsr_.sceneFramebuffer, nullptr); fsr_.sceneFramebuffer = VK_NULL_HANDLE; }
     fsr_.sceneSampler = VK_NULL_HANDLE; // Owned by VkContext sampler cache
     destroyImage(device, alloc, fsr_.sceneDepthResolve);
@@ -1355,6 +1426,7 @@ void PostProcessPipeline::destroyFSR2Resources() {
     if (fsr2_.motionVecDescPool) { vkDestroyDescriptorPool(device, fsr2_.motionVecDescPool, nullptr); fsr2_.motionVecDescPool = VK_NULL_HANDLE; fsr2_.motionVecDescSet = VK_NULL_HANDLE; }
     destroy(device, fsr2_.motionVecDescSetLayout);
 
+    if (fsr2_.sceneContinue1xFramebuffer) { vkDestroyFramebuffer(device, fsr2_.sceneContinue1xFramebuffer, nullptr); fsr2_.sceneContinue1xFramebuffer = VK_NULL_HANDLE; fsr2_.sceneContinue1xRenderPass = VK_NULL_HANDLE; }
     if (fsr2_.sceneFramebuffer) { vkDestroyFramebuffer(device, fsr2_.sceneFramebuffer, nullptr); fsr2_.sceneFramebuffer = VK_NULL_HANDLE; }
     fsr2_.linearSampler = VK_NULL_HANDLE;  // Owned by VkContext sampler cache
     fsr2_.nearestSampler = VK_NULL_HANDLE; // Owned by VkContext sampler cache
@@ -1867,6 +1939,7 @@ void PostProcessPipeline::destroyFXAAResources() {
     destroy(device, fxaa_.pipelineLayout);
     if (fxaa_.descPool)       { vkDestroyDescriptorPool(device, fxaa_.descPool, nullptr);       fxaa_.descPool = VK_NULL_HANDLE; for (auto& s : fxaa_.descSet) s = VK_NULL_HANDLE; }
     destroy(device, fxaa_.descSetLayout);
+    if (fxaa_.sceneContinue1xFramebuffer) { vkDestroyFramebuffer(device, fxaa_.sceneContinue1xFramebuffer, nullptr); fxaa_.sceneContinue1xFramebuffer = VK_NULL_HANDLE; fxaa_.sceneContinue1xRenderPass = VK_NULL_HANDLE; }
     if (fxaa_.sceneFramebuffer) { vkDestroyFramebuffer(device, fxaa_.sceneFramebuffer, nullptr); fxaa_.sceneFramebuffer = VK_NULL_HANDLE; }
     if (fxaa_.sharpenFramebuffer) { vkDestroyFramebuffer(device, fxaa_.sharpenFramebuffer, nullptr); fxaa_.sharpenFramebuffer = VK_NULL_HANDLE; }
     fxaa_.sceneSampler = VK_NULL_HANDLE; // Owned by VkContext sampler cache

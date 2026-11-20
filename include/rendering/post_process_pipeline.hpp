@@ -62,6 +62,12 @@ public:
     [[nodiscard]] VkImage getSceneColorImage() const;
     [[nodiscard]] VkImage getSceneDepthImage() const;
     [[nodiscard]] bool sceneDepthIsMsaa() const;
+    /// True when the active off-screen target has a 1x resolved color + depth
+    /// pair usable by the single-sampled water/mist continuation pass under MSAA.
+    [[nodiscard]] bool hasResolvedSceneAttachments() const;
+    /// Lazily returns a 1x framebuffer wrapping the active off-screen target's
+    /// resolved color and resolved depth attachments for `water1xRenderPass`.
+    [[nodiscard]] VkFramebuffer getSceneContinue1xFramebuffer(VkRenderPass water1xRenderPass);
 
 
     /// True when FXAA alone (no FSR2) needs its own off-screen pass.
@@ -191,6 +197,8 @@ private:
         AllocatedImage sceneMsaaColor{};    // MSAA color target (only when MSAA > 1x)
         AllocatedImage sceneDepthResolve{}; // Depth resolve (only when MSAA + depth resolve)
         VkFramebuffer sceneFramebuffer = VK_NULL_HANDLE;
+        VkFramebuffer sceneContinue1xFramebuffer = VK_NULL_HANDLE;
+        VkRenderPass sceneContinue1xRenderPass = VK_NULL_HANDLE;
         VkSampler sceneSampler = VK_NULL_HANDLE;
 
         // Upscale pipeline
@@ -216,6 +224,8 @@ private:
         AllocatedImage sceneMsaaColor{};    // MSAA color target (when MSAA > 1x)
         AllocatedImage sceneDepthResolve{}; // Depth resolve (MSAA + depth resolve)
         VkFramebuffer sceneFramebuffer = VK_NULL_HANDLE;
+        VkFramebuffer sceneContinue1xFramebuffer = VK_NULL_HANDLE;
+        VkRenderPass sceneContinue1xRenderPass = VK_NULL_HANDLE;
         VkSampler sceneSampler         = VK_NULL_HANDLE;
         /// sceneColor as a single-sampled colour target of its own. While the
         /// temporal upscaler owns the scene this image is otherwise idle, so
@@ -257,6 +267,8 @@ private:
         AllocatedImage sceneMsaaColor{};    // MSAA colour target, only while MSAA is on
         AllocatedImage sceneDepthResolve{}; // 1x depth, only while MSAA is on
         VkFramebuffer sceneFramebuffer = VK_NULL_HANDLE;
+        VkFramebuffer sceneContinue1xFramebuffer = VK_NULL_HANDLE;
+        VkRenderPass sceneContinue1xRenderPass = VK_NULL_HANDLE;
 
         // Samplers
         VkSampler linearSampler = VK_NULL_HANDLE;   // For color
