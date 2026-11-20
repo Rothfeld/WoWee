@@ -832,6 +832,7 @@ void SettingsPanel::applyAudioVolumes(audio::AudioCoordinator* ac) {
     // Every effect volume is its own balance; this is the one slider over them,
     // which is what Blizzard's Sound Effects control drives.
     const float fx = static_cast<float>(pendingEffectsVolume) / 100.0f;
+    ac->setSfxVolumeScale(fx);
     float masterScale = soundMuted_ ? 0.0f : static_cast<float>(pendingMasterVolume) / 100.0f;
     audio::AudioEngine::instance().setMasterVolume(masterScale);
     if (auto* music = ac->getMusicManager())

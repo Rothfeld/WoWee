@@ -301,7 +301,8 @@ static int lua_PlaySound(lua_State* L) {
     std::string sound;
     if (lua_isnumber(L, 1)) {
         uint32_t id = static_cast<uint32_t>(lua_tonumber(L, 1));
-        // Map common WoW sound IDs to named sounds
+        if (sfx->playById(id)) return 0;
+        // Fallback map for installs without SoundEntries.dbc
         switch (id) {
             case 856: case 1115: sfx->playButtonClick(); return 0; // igMainMenuOption
             case 840: sfx->playQuestActivate(); return 0;          // igQuestListOpen
@@ -443,6 +444,23 @@ static int lua_PlaySoundFile(lua_State* L) {
     auto* sfx = ac ? ac->getUiSoundManager() : nullptr;
     const char* path = luaL_optstring(L, 1, "");
     if (sfx && path && *path) sfx->playFile(path);
+    return 0;
+}
+
+static int lua_PlayMusic(lua_State* L) {
+    auto* svc = getLuaServices(L);
+    auto* ac = svc ? svc->audioCoordinator : nullptr;
+    auto* music = ac ? ac->getMusicManager() : nullptr;
+    const char* path = luaL_optstring(L, 1, "");
+    if (music && path && *path) music->playMusic(path, /*loop=*/true);
+    return 0;
+}
+
+static int lua_StopMusic(lua_State* L) {
+    auto* svc = getLuaServices(L);
+    auto* ac = svc ? svc->audioCoordinator : nullptr;
+    auto* music = ac ? ac->getMusicManager() : nullptr;
+    if (music) music->stopMusic(500.0f);
     return 0;
 }
 
@@ -754,6 +772,8 @@ static void applySoundCVars(lua_State* L) {
     if (auto* voice = ac->getPlayerVoiceManager()) {
         voice->setEnabled(soundCVar("sound_enableerrorspeech", 1.0f) != 0.0f);
     }
+    ac->setEmoteSoundsEnabled(soundCVar("sound_enableemotesounds", 1.0f) != 0.0f);
+    ac->setListenerAtCharacter(soundCVar("sound_listeneratcharacter", 1.0f) != 0.0f);
 
     // The volume itself is a client setting now, reached through SetCVar, and
     // applied by applyAudioVolumes as one scale over the seven effect volumes
@@ -761,6 +781,7 @@ static void applySoundCVars(lua_State* L) {
     // them on top of whatever that applied.
     const bool sfxOn = soundCVar("sound_enablesfx", 1.0f) != 0.0f;
     if (!sfxOn) {
+        ac->setSfxVolumeScale(0.0f);
         if (auto* m = ac->getUiSoundManager())        m->setVolumeScale(0.0f);
         if (auto* m = ac->getCombatSoundManager())    m->setVolumeScale(0.0f);
         if (auto* m = ac->getSpellSoundManager())     m->setVolumeScale(0.0f);
@@ -823,8 +844,9 @@ static void pushCvarDefault(lua_State* L, const std::string& n) {
     // other value has to be stated before it rather than after.
     if (n == "sound_enablesoundwhengameisinbg") lua_pushstring(L, "0");
     else if (n.rfind("sound_enable", 0) == 0) lua_pushstring(L, "1");
+    else if (n == "sound_listeneratcharacter") lua_pushstring(L, "1");
     else if (n == "sound_mastervolume" || n == "sound_musicvolume" ||
-             n == "sound_ambiencevolume") {
+             n == "sound_ambiencevolume" || n == "sound_sfxvolume") {
         lua_pushstring(L, "1");
     }
     // Both at their maximum, because this client has no lower setting to be
@@ -6228,6 +6250,7 @@ void registerSystemLuaAPI(lua_State* L) {
             return 0;
         }},
                 {"Sound_GameSystem_RestartSoundSystem", lua_ReturnNothing},
+                {"Sound_RestartSoundEngine", lua_ReturnNothing},
                 // A separate render scale for the player model, which this
                 // client does not have. False disables the control rather than
                 // leaving it offering something that would do nothing.
@@ -7471,6 +7494,8 @@ void registerSystemLuaAPI(lua_State* L) {
                 {"Sound_GameSystem_GetOutputDriverNameByIndex", lua_Sound_GetOutputDriverNameByIndex},
                 {"PlaySound",           lua_PlaySound},
                 {"PlaySoundFile",       lua_PlaySoundFile},
+                {"PlayMusic",           lua_PlayMusic},
+                {"StopMusic",           lua_StopMusic},
                 {"GetPlayerMapPosition", lua_GetPlayerMapPosition},
                 {"GetPlayerFacing",     lua_GetPlayerFacing},
                 {"GetCVar",             lua_GetCVar},

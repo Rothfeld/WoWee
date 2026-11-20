@@ -54,7 +54,17 @@ size_t byteForCodepoint(const std::string& s, size_t index) {
     return s.size();
 }
 
+PaperUI::ClickSoundCallback s_clickSoundCallback;
+
+void emitPaperClickSound(bool primary) {
+    if (s_clickSoundCallback) s_clickSoundCallback(primary);
+}
+
 } // namespace
+
+void PaperUI::setClickSoundCallback(ClickSoundCallback cb) {
+    s_clickSoundCallback = std::move(cb);
+}
 
 // ---------------------------------------------------------------------------
 // Frame
@@ -461,6 +471,7 @@ bool PaperUI::button(const char* idStr, ImVec2 a, ImVec2 b, const char* label,
     if (active_ == id && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
         clicked = over;
         active_ = 0;
+        if (clicked) emitPaperClickSound(kind == ButtonKind::Primary);
     }
 
     // Pressing pushes the button into the paper rather than moving it.
@@ -523,6 +534,7 @@ bool PaperUI::chip(const char* idStr, ImVec2 a, ImVec2 b, const char* label, boo
     if (active_ == id && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
         clicked = over;
         active_ = 0;
+        if (clicked) emitPaperClickSound(false);
     }
 
     const float h = b.y - a.y;
@@ -601,6 +613,7 @@ bool PaperUI::glyphButton(const char* idStr, ImVec2 center, float radius, Glyph 
     if (active_ == id && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
         clicked = over;
         active_ = 0;
+        if (clicked) emitPaperClickSound(false);
     }
     const bool held = (active_ == id && ImGui::IsMouseDown(ImGuiMouseButton_Left));
 
@@ -624,6 +637,7 @@ bool PaperUI::link(const char* idStr, ImVec2 at, const char* label, float size, 
     if (active_ == id && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
         clicked = over;
         active_ = 0;
+        if (clicked) emitPaperClickSound(false);
     }
 
     const ImU32 base = col ? col : theme_.inkSoft;
@@ -1017,6 +1031,7 @@ PaperUI::ListResult PaperUI::list(const char* idStr, ImVec2 a, ImVec2 b, int row
         if (rowHovered && pressed()) {
             out.clicked = i;
             if (ImGui::GetMouseClickedCount(ImGuiMouseButton_Left) >= 2) out.activated = i;
+            emitPaperClickSound(out.activated >= 0);
         }
     }
     dl_->PopClipRect();
@@ -1128,6 +1143,7 @@ bool PaperUI::radio(const char* idStr, ImVec2 at, float boxSize, const char* lab
     if (active_ == id && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
         chosen = over && !selected;
         active_ = 0;
+        if (chosen) emitPaperClickSound(false);
     }
 
     // A ring drawn by hand rather than a box, which is what says "one of".
@@ -1206,6 +1222,7 @@ bool PaperUI::dropdown(const char* idStr, ImVec2 a, ImVec2 b, const std::string&
                 if (index && *index != hoveredRow) {
                     *index = hoveredRow;
                     changed = true;
+                    emitPaperClickSound(false);
                 }
                 openPopup_ = 0;
             } else if (!hovered(la, lb) && !over) {
@@ -1217,6 +1234,7 @@ bool PaperUI::dropdown(const char* idStr, ImVec2 a, ImVec2 b, const std::string&
 
     if (over && live && pressed()) {
         openPopup_ = open ? 0u : id;
+        emitPaperClickSound(false);
     }
 
     // The closed control looks like a field that cannot be typed into.
@@ -1275,6 +1293,7 @@ bool PaperUI::checkbox(const char* idStr, ImVec2 at, float boxSize, const char* 
         if (over && value) {
             *value = !*value;
             changed = true;
+            emitPaperClickSound(false);
         }
         active_ = 0;
     }

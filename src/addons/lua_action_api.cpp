@@ -22,6 +22,8 @@
 #include "pipeline/dbc_loader.hpp"
 #include "core/logger.hpp"
 #include "core/application.hpp"
+#include "audio/audio_coordinator.hpp"
+#include "audio/ui_sound_manager.hpp"
 #include <algorithm>
 #include <optional>
 #include <cctype>
@@ -1503,6 +1505,22 @@ bool boughtHeldMerchantItem(lua_State* L) {
 /// `announceLock` is false where the item was locked already and stays so -
 /// the auction sell slot handing its item back to the cursor - because 2.4.3
 /// says nothing about a lock that did not change.
+static void playHeldOrSlotItemSound(game::GameHandler* gh, uint32_t itemId, bool pickup) {
+    if (!gh || itemId == 0) return;
+    auto* ac = gh->services().audioCoordinator;
+    auto* sfx = ac ? ac->getUiSoundManager() : nullptr;
+    if (!sfx) return;
+    uint32_t displayInfoId = 0;
+    if (const auto* info = gh->getItemInfo(itemId); info && info->displayInfoId != 0) {
+        displayInfoId = info->displayInfoId;
+    } else {
+        gh->ensureItemInfo(itemId);
+    }
+    if (displayInfoId == 0 || !sfx->playItemDisplaySound(displayInfoId, pickup)) {
+        sfx->playPickupBag();
+    }
+}
+
 static void pickupFromContainerSlot(lua_State* L, game::GameHandler* gh,
                                     int bag, int slot, bool announceLock = true) {
     const auto& inv = gh->getInventory();
@@ -1519,6 +1537,7 @@ static void pickupFromContainerSlot(lua_State* L, game::GameHandler* gh,
         s_cursorBag = bag;
         s_cursorSlot = slot;
         cursorItemSlot() = {bag, slot, false};
+        playHeldOrSlotItemSound(gh, itemSlot->item.itemId, /*pickup=*/true);
         // The slot draws greyed while its item is on the cursor, which is how a
         // bag shows that something has been picked up out of it.
         if (announceLock) {
@@ -1666,13 +1685,16 @@ static int lua_PickupContainerItem(lua_State* L) {
         // back where it came from and quietly did nothing.
         if (s_cursorBag == bag && s_cursorSlot == slot && !cursorItemSlot().equipped) {
             const int sameBag = bag, sameSlot = slot;
+            const uint32_t droppedId = s_cursorId;
             clearCursorItem(L);
+            playHeldOrSlotItemSound(gh, droppedId, /*pickup=*/false);
             gh->fireAddonEvent("ITEM_LOCK_CHANGED",
                                {std::to_string(sameBag), std::to_string(sameSlot)});
             return 0;
         }
 
         const int wasBag = s_cursorBag, wasSlot = s_cursorSlot;
+        const uint32_t droppedId = s_cursorId;
         // Part of a stack moves as a split rather than a swap: a swap would
         // send the whole thing, which is not what was picked up.
         if (s_cursorSplit > 0) {
@@ -1682,6 +1704,7 @@ static int lua_PickupContainerItem(lua_State* L) {
             gh->swapContainerItems(srcBag, srcSlot, dstBag, dstSlot);
         }
         clearCursorItem(L);
+        playHeldOrSlotItemSound(gh, droppedId, /*pickup=*/false);
         gh->fireAddonEvent("ITEM_LOCK_CHANGED",
                            {std::to_string(wasBag), std::to_string(wasSlot)});
         gh->fireAddonEvent("ITEM_LOCK_CHANGED",
@@ -1930,10 +1953,12 @@ static int lua_PickupInventoryItem(lua_State* L) {
     uint8_t srcBag = 0, srcSlot = 0;
     if (cursorWireSlot(srcBag, srcSlot)) {
         const auto held = cursorItemSlot();
+        const uint32_t droppedId = s_cursorId;
         // An item this would bind stays on the cursor while EQUIP_BIND asks,
         // as native 2.4.3 keeps it; EquipPendingItem finishes the drop.
         if (gh->equipFromWireToSlot(srcBag, srcSlot, static_cast<uint8_t>(slot - 1))) return 0;
         clearCursorItem(L);
+        playHeldOrSlotItemSound(gh, droppedId, /*pickup=*/false);
         // The slot it was picked up from is no longer held: without this the
         // bag button stayed greyed after the drop, and for good when the
         // server refused the equip (can't dual wield).
@@ -1951,6 +1976,7 @@ static int lua_PickupInventoryItem(lua_State* L) {
         s_cursorId = eq.item.itemId;
         s_cursorSlot = slot;
         s_cursorBag = -1;
+        playHeldOrSlotItemSound(gh, eq.item.itemId, /*pickup=*/true);
         // What a container pickup does: remember where it came from and say
         // the slot is locked. Without them dragging off the character sheet
         // left the slot looking untouched.

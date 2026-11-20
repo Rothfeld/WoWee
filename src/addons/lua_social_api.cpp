@@ -12,6 +12,9 @@
 #include "ui/chat/macro_evaluator.hpp"
 #include <cassert>
 #include "rendering/animation_controller.hpp"
+#include "audio/audio_coordinator.hpp"
+#include "audio/player_voice_manager.hpp"
+#include "game/update_field_table.hpp"
 
 namespace wowee::addons {
 
@@ -2567,6 +2570,15 @@ void registerSocialLuaAPI(lua_State* L) {
                 target = gh->hasTarget() ? gh->getTargetGuid() : 0;
             }
             gh->sendTextEmote(emoteId, target);
+            if (auto* ac = gh->services().audioCoordinator;
+                ac && ac->areEmoteSoundsEnabled() && ac->getPlayerVoiceManager()) {
+                uint8_t gender = 0;
+                if (const auto player = gh->getEntityManager().getEntity(gh->getPlayerGuid())) {
+                    const uint32_t bytes0 = player->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_0));
+                    gender = static_cast<uint8_t>((bytes0 >> 16u) & 0xFFu);
+                }
+                ac->getPlayerVoiceManager()->playEmote(emoteId, gh->getPlayerRace(), gender);
+            }
             // And the animation, which this did not do. Telling the server is
             // the half that is seen by everyone else; playing it is the half
             // seen by the player, and standing still while the room is told you

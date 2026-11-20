@@ -233,6 +233,9 @@ public:
         Primary,  ///< filled crayon; one to a card
         Quiet,    ///< outline only
     };
+    using ClickSoundCallback = std::function<void(bool primary)>;
+    static void setClickSoundCallback(ClickSoundCallback cb);
+
     bool button(const char* id, ImVec2 a, ImVec2 b, const char* label,
                 ButtonKind kind = ButtonKind::Quiet, bool enabled = true);
 

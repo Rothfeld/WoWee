@@ -15,6 +15,8 @@
 #include "core/window.hpp"
 #include "core/application.hpp"
 #include "core/logger.hpp"
+#include "audio/audio_coordinator.hpp"
+#include "audio/ui_sound_manager.hpp"
 #include "auth/auth_handler.hpp"
 #include "game/game_handler.hpp"
 #include "rendering/vk_context.hpp"
@@ -111,6 +113,16 @@ bool UIManager::initialize(core::Window* win) {
     // The look, shared with the asset manager so the two agree.
     ImGuiStyle& style = ImGui::GetStyle();
     ui::applyWoweeStyle(style);
+
+    PaperUI::setClickSoundCallback([](bool primary) {
+        auto* ac = core::Application::getInstance().getAudioCoordinator();
+        auto* sfx = ac ? ac->getUiSoundManager() : nullptr;
+        if (!sfx) return;
+        if (!sfx->playByName(primary ? "gsTitleOptionOK" : "igMainMenuOptionCheckBoxOn")) {
+            if (primary) sfx->playButtonClick();
+            else sfx->playMenuButtonClick();
+        }
+    });
 
     // Padding, rounding, scrollbars and the rest, before the backend starts.
     // Fonts are scaled where the atlas is built, so they stay crisp rather than
