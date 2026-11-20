@@ -172,6 +172,29 @@ inline bool autoAcquiresHostileTarget(uint32_t spellId, uint32_t attr,
            (attrEx2 & kAttrEx2AutoRepeat) != 0;
 }
 
+/// Spell.dbc AttributesEx combo-point / reactive-proc flags (CMaNGOS SpellDefines.h):
+/// - 0x00100000 SPELL_ATTR_EX_FINISHING_MOVE_DAMAGE (Eviscerate, Rip, Overpower, ...)
+/// - 0x00400000 SPELL_ATTR_EX_FINISHING_MOVE_DURATION (Slice and Dice, Kidney Shot, Maim)
+/// - 0x40000000 SPELL_ATTR_EX_COMBO_ON_BLOCK (Warrior Overpower: the server reuses
+///   SMSG_UPDATE_COMBO_POINTS(target, 1) on target dodge to enable Overpower on that
+///   specific target, and rejects inactive casts with SPELL_FAILED_CASTER_AURASTATE
+///   ("You can't do that yet") rather than SPELL_FAILED_NO_COMBO_POINTS).
+inline constexpr bool isReactiveComboSpell(uint32_t attrEx) {
+    constexpr uint32_t kAttrExComboOnBlock = 0x40000000u;
+    return (attrEx & kAttrExComboOnBlock) != 0;
+}
+
+inline constexpr bool usesComboPointsForUsability(uint32_t attrEx) {
+    constexpr uint32_t kAttrExFinishingMoveMask = 0x00500000u;
+    return (attrEx & kAttrExFinishingMoveMask) != 0;
+}
+
+/// True only for genuine Rogue/Druid combo-point finishers, not reactive abilities
+/// like Warrior Overpower that borrow the combo-target channel for proc usability.
+inline constexpr bool requiresComboPointsPrerequisite(uint32_t attrEx) {
+    return usesComboPointsForUsability(attrEx) && !isReactiveComboSpell(attrEx);
+}
+
 /// Which units a single-unit spell can be cast at, from Spell.dbc's first
 /// EffectImplicitTargetA and SpellCastTargetFlags (Targets).
 ///

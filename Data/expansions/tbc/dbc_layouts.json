@@ -421,6 +421,7 @@
     "Speed": 41,
     "SpellVisualID": 122,
     "TargetAuraState": 19,
+    "TargetAuraStateNot": 21,
     "Targets": 14,
     "Tooltip": 178,
     "SpellFamilyName": 199,

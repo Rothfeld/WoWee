@@ -408,6 +408,13 @@ std::string castFailureText(GameHandler& owner, uint32_t spellId, uint8_t result
 
     std::vector<std::string> args;
     switch (result) {
+        case 4: { // SPELL_FAILED_ALREADY_AT_FULL_POWER (TBC: ERR_SPELL_FAILED_ALREADY_AT_FULL_POWER_S)
+            if (const char* powerKey = powerTypeGlobalName(owner.getSpellData(spellId).powerType)) {
+                const std::string powerLabel = owner.globalString(powerKey);
+                if (!powerLabel.empty()) args = {powerLabel};
+            }
+            break;
+        }
         case kCastResultRequiresSpellFocus:
             // SpellFocusObject.dbc: ID, Name locstring. "Requires Forge".
             args = {dbcStringById(owner, "SpellFocusObject.dbc", arg1, 1)};
@@ -1382,7 +1389,7 @@ SpellPrerequisite spellPrerequisite(GameHandler& owner, uint32_t spellId, uint64
         }
         if (!stealthed) return SpellPrerequisite::Stealth;
     }
-    if ((entry.attrEx & 0x500000u) &&
+    if (spellclass::requiresComboPointsPrerequisite(entry.attrEx) &&
         (owner.getComboPoints() == 0 || owner.getComboTarget() != target))
         return SpellPrerequisite::NoComboPoints;
     const auto data = owner.getSpellData(spellId);
@@ -1466,8 +1473,13 @@ bool auraStateAllows(GameHandler& owner, const GameHandler::SpellNameEntry& entr
     const auto has = [](uint32_t states, uint32_t state) {
         return state != 0 && (states & (1u << (state - 1)));
     };
-    if (entry.targetAuraState != 0 && !has(statesOf(owner.getTargetGuid()), entry.targetAuraState))
-        return false;
+    if (entry.targetAuraState != 0 || entry.targetAuraStateNot != 0) {
+        const uint32_t targetStates = statesOf(owner.getTargetGuid());
+        if (entry.targetAuraState != 0 && !has(targetStates, entry.targetAuraState))
+            return false;
+        if (entry.targetAuraStateNot != 0 && has(targetStates, entry.targetAuraStateNot))
+            return false;
+    }
     if (entry.casterAuraState == 0 && entry.casterAuraStateNot == 0) return true;
     const uint32_t states = statesOf(owner.getPlayerGuid());
     if (entry.casterAuraState != 0 && !has(states, entry.casterAuraState)) return false;
@@ -1510,8 +1522,10 @@ SpellUsability castableNow(GameHandler& owner, uint32_t spellId) {
     for (const auto& reagent : entry.reagents)
         if (reagent.itemId != 0 && reagent.count > 0 &&
             owner.getInventory().countItem(reagent.itemId) < reagent.count) return {};
-    // Finishing moves: Eviscerate (0x100000) and Slice and Dice (0x400000).
-    if ((entry.attrEx & 0x500000u) &&
+    // Finishing moves (Eviscerate 0x100000, Slice and Dice 0x400000) and
+    // Warrior Overpower (0x40100000, which uses SMSG_UPDATE_COMBO_POINTS on
+    // target dodge to mark the dodged target as eligible).
+    if (spellclass::usesComboPointsForUsability(entry.attrEx) &&
         (owner.getComboPoints() == 0 || owner.getComboTarget() != owner.getTargetGuid()))
         return {};
     const auto data = owner.getSpellData(spellId);
@@ -5436,6 +5450,7 @@ void SpellHandler::loadSpellNameCache() const {
     const uint32_t stancesNotField = column("StancesNot");
     const uint32_t casterAuraStateField = column("CasterAuraState");
     const uint32_t casterAuraStateNotField = column("CasterAuraStateNot");
+    const uint32_t targetAuraStateNotField = column("TargetAuraStateNot");
     const uint32_t targetCreatureTypeField = column("TargetCreatureType");
     const uint32_t startRecoveryCategoryField = column("StartRecoveryCategory");
     const uint32_t startRecoveryTimeField = column("StartRecoveryTime");
@@ -5570,6 +5585,7 @@ void SpellHandler::loadSpellNameCache() const {
             entry.stancesNot = read(i, stancesNotField);
             entry.casterAuraState = read(i, casterAuraStateField);
             entry.casterAuraStateNot = read(i, casterAuraStateNotField);
+            entry.targetAuraStateNot = read(i, targetAuraStateNotField);
             entry.targetCreatureType = read(i, targetCreatureTypeField);
             entry.startRecoveryCategory = read(i, startRecoveryCategoryField);
             entry.startRecoveryMs = read(i, startRecoveryTimeField);

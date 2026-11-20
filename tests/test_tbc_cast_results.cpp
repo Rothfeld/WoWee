@@ -25,8 +25,16 @@ TEST_CASE("TBC result insertions and removals preserve meanings", "[tbc][spells]
 
 TEST_CASE("Cast results name their GlobalStrings line", "[tbc][spells]") {
     // Riposte without a parry: TBC 0x14 -> CASTER_AURASTATE, "You can't do that yet".
+    CHECK(std::string_view(castResultGlobalName(kTbcCastResults.at(0x03), true)) ==
+          "ERR_SPELL_FAILED_ALREADY_AT_FULL_POWER_S");
     CHECK(std::string_view(castResultGlobalName(kTbcCastResults.at(0x14), true)) ==
           "SPELL_FAILED_CASTER_AURASTATE");
+    CHECK(std::string_view(castResultGlobalName(kTbcCastResults.at(0x3F), true)) ==
+          "SPELL_FAILED_NOT_READY");
+    CHECK(std::string_view(castResultGlobalName(kTbcCastResults.at(0x49), true)) ==
+          "SPELL_FAILED_NO_COMBO_POINTS");
+    CHECK(std::string_view(castResultGlobalName(kTbcCastResults.at(0x5C), true)) ==
+          "SPELL_FAILED_OUT_OF_RANGE");
     CHECK(std::string_view(castResultGlobalName(kTbcCastResults.at(0x6A), true)) ==
           "SPELL_FAILED_TARGET_AURASTATE");
     CHECK(std::string_view(castResultGlobalName(kTbcCastResults.at(0x61), true)) ==
@@ -35,8 +43,15 @@ TEST_CASE("Cast results name their GlobalStrings line", "[tbc][spells]") {
           "SPELL_FAILED_TRAINING_POINTS");
     CHECK(std::string_view(castResultGlobalName(kTbcCastResults.at(0x89), true)) ==
           "SPELL_FAILED_PROSPECT_NEED_MORE");
+    CHECK(std::string_view(castResultGlobalName(kTbcCastResults.at(0x93), true)) ==
+          "ERR_PLAY_TIME_EXCEEDED");
     CHECK(std::string_view(castResultGlobalName(55, false)) == "SPELL_FAILED_NEED_MORE_ITEMS");
     CHECK(castResultGlobalName(kTbcCastResults.at(0x19), true) == nullptr); // DONT_REPORT
+    CHECK(std::string_view(powerTypeGlobalName(0)) == "MANA");
+    CHECK(std::string_view(powerTypeGlobalName(1)) == "RAGE");
+    CHECK(std::string_view(powerTypeGlobalName(2)) == "FOCUS");
+    CHECK(std::string_view(powerTypeGlobalName(3)) == "ENERGY");
+    CHECK(powerTypeGlobalName(4) == nullptr);
     // Every TBC wire value but DONT_REPORT has a name; the TBC enum comment
     // beside each table entry is that name.
     for (size_t raw = 0; raw < kTbcCastResults.size(); ++raw) {

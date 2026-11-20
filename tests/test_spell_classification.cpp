@@ -640,3 +640,34 @@ TEST_CASE("isProfessionSkillLine excludes racial, riding, and survival lines in 
     CHECK_FALSE(isProfessionSkillLine(26u, 7u));
     CHECK_FALSE(isProfessionSkillLine(43u, 6u));
 }
+
+TEST_CASE("Overpower reactive combo-point flag is distinguished from Rogue/Druid finishers",
+          "[spell][classification][overpower][tbc]") {
+    using namespace wowee::game::spellclass;
+
+    // Overpower (7384/7887/11584/11585): FINISHING_MOVE_DAMAGE (0x100000) | COMBO_ON_BLOCK (0x40000000).
+    // Uses SMSG_UPDATE_COMBO_POINTS for bar usability, NOT a combo-point finisher prerequisite.
+    constexpr uint32_t kOverpowerAttrEx = 0x48100200u;
+    CHECK(isReactiveComboSpell(kOverpowerAttrEx));
+    CHECK(usesComboPointsForUsability(kOverpowerAttrEx));
+    CHECK_FALSE(requiresComboPointsPrerequisite(kOverpowerAttrEx));
+
+    // Genuine Rogue & Druid combo-point finishers.
+    for (uint32_t finisherAttrEx : {
+             0x00100200u, // Eviscerate, Rupture, Expose Armor, Envenom, Deadly Throw, Rip, Ferocious Bite
+             0x00400400u, // Slice and Dice
+             0x00440200u, // Kidney Shot
+             0x00540000u, // Maim
+         }) {
+        CHECK_FALSE(isReactiveComboSpell(finisherAttrEx));
+        CHECK(usesComboPointsForUsability(finisherAttrEx));
+        CHECK(requiresComboPointsPrerequisite(finisherAttrEx));
+    }
+
+    // Aura-state reactive abilities (Revenge, Execute, Victory Rush, Riposte, Mongoose Bite).
+    for (uint32_t reactiveAttrEx : {0x08000200u, 0x00020200u, 0x00000200u}) {
+        CHECK_FALSE(isReactiveComboSpell(reactiveAttrEx));
+        CHECK_FALSE(usesComboPointsForUsability(reactiveAttrEx));
+        CHECK_FALSE(requiresComboPointsPrerequisite(reactiveAttrEx));
+    }
+}

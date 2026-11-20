@@ -1122,6 +1122,7 @@ void CombatHandler::handleUpdateComboPoints(network::Packet& packet) {
     LOG_DEBUG("SMSG_UPDATE_COMBO_POINTS: target=0x", std::hex, target,
               std::dec, " points=", static_cast<int>(owner_.comboPointsRef()));
     owner_.fireAddonEvent("PLAYER_COMBO_POINTS", {});
+    owner_.fireAddonEvent("SPELL_UPDATE_USABLE", {});
 }
 
 void CombatHandler::handlePvpCredit(network::Packet& packet) {

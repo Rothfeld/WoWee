@@ -225,13 +225,25 @@ inline constexpr std::array<const char*, 192> kCastResultGlobalNames = {
 inline const char* castResultGlobalName(uint8_t result, bool tbc) {
     if (tbc) {
         switch (result) {
-            case 2:  return "ERR_SPELL_FAILED_ALREADY_AT_FULL_HEALTH";
-            case 3:  return "ERR_SPELL_FAILED_ALREADY_AT_FULL_MANA";
-            case 55: return "SPELL_FAILED_PROSPECT_NEED_MORE";
-            default: break;
+            case 2:   return "ERR_SPELL_FAILED_ALREADY_AT_FULL_HEALTH";
+            case 3:   return "ERR_SPELL_FAILED_ALREADY_AT_FULL_MANA";
+            case 4:   return "ERR_SPELL_FAILED_ALREADY_AT_FULL_POWER_S";
+            case 55:  return "SPELL_FAILED_PROSPECT_NEED_MORE";
+            case 148: return "ERR_PLAY_TIME_EXCEEDED";
+            default:  break;
         }
     }
     return result < kCastResultGlobalNames.size() ? kCastResultGlobalNames[result] : nullptr;
+}
+
+inline const char* powerTypeGlobalName(uint8_t powerType) {
+    switch (powerType) {
+        case 0: return "MANA";
+        case 1: return "RAGE";
+        case 2: return "FOCUS";
+        case 3: return "ENERGY";
+        default: return nullptr;
+    }
 }
 
 /// NO_POWER has no line of its own: the text names the spell's resource.

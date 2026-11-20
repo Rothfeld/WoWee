@@ -4565,9 +4565,11 @@ public:
         uint32_t trivialSkillHigh = 0;
         uint32_t trivialSkillLow = 0;
         uint32_t minSkillRank = 0;
-        // Spell.dbc TargetAuraState: the aura state the target must be in for the spell
-        // to be castable (e.g. Execute → AURA_STATE_HEALTHLESS_20_PERCENT). 0 = none.
+        // Spell.dbc TargetAuraState / TargetAuraStateNot: 1-based UNIT_FIELD_AURASTATE
+        // bits the target must have / must not have (e.g. Execute -> HEALTHLESS_20_PERCENT,
+        // Power Word: Shield -> not WEAKENED_SOUL). 0 = none.
         uint32_t targetAuraState = 0;
+        uint32_t targetAuraStateNot = 0;
         /// Spell.dbc SpellFamilyFlags, the 64-bit class mask. Bit n is the
         /// group n of SMSG_SET_FLAT/PCT_SPELL_MODIFIER.
         uint64_t familyFlags = 0;
