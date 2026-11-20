@@ -43,14 +43,6 @@ int questLogRowForQuest(game::GameHandler* gh, uint32_t questId);
 /// reward buttons tint an item red when this is false.
 bool playerCanUseItem(game::GameHandler* gh, const game::ItemQueryResponseData* info);
 
-/// Put FrameXML's quest log in front of `questId`.
-///
-/// Asked for by a quest link in chat and by the objective tracker, neither of
-/// which has a log of its own to open any more. Without a row the log is
-/// opened on whatever it had selected: an approximation of the ask beats
-/// nothing happening.
-void openInterfaceQuestLog(game::GameHandler& gh, uint32_t questId);
-
 }  // namespace wowee::addons
 
 extern "C" {

@@ -74,7 +74,7 @@ STATEMENT_START = re.compile(r"^\s*(?:return|else|do|case|co_return|throw)\b")
 
 DECL = re.compile(
     r"^\s{2,}(?:virtual\s+|static\s+|inline\s+|explicit\s+|\[\[nodiscard\]\]\s+)*"
-    r"(?:const\s+)?\w[\w:<>,\s\*&]*?[\s\*&](\w+)\s*\([^;{]*\)\s*(?:const\s*)?"
+    r"(?:const\s+)?[A-Za-z_][\w:<>\s\*&]*?[\s\*&](\w+)\s*\([^;{]*\)\s*(?:const\s*)?"
     r"(?:noexcept\s*)?(?:override\s*)?(?:=\s*0\s*)?;\s*$")
 
 # `void Class::name(` at the start of a line: the out-of-line definition.
@@ -83,7 +83,7 @@ DECL = re.compile(
 # line looks the same - `audio::AudioEngine::instance().setMasterVolume(x);`
 # reads as a definition of `instance` - so discarding the whole line loses
 # every other name on it, and setMasterVolume looked dead with three callers.
-DEFN = re.compile(r"^[\w:<>,\s\*&]*\b\w+::(\w+)\s*\(")
+DEFN = re.compile(r"^[A-Za-z_][\w:<>,\s\*&]*\b\w+::(\w+)\s*\(")
 
 # A free function at namespace scope, declared or defined inline in a header:
 # `bool waterCellRendered(...);` or `inline void foo(...) {`. These are the

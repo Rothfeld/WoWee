@@ -3037,76 +3037,66 @@ void Application::performLeaveWorld(LeaveWorldTo destination) {
 // an exception here has to say where here was.
 // Everything the server says about how the player moves, handed to the camera.
 //
+namespace {
+
+void syncServerSpeedsToCamera(rendering::Renderer* renderer,
+                              game::GameHandler* gameHandler,
+                              core::EntitySpawner* entitySpawner,
+                              bool playerCharacterSpawned) {
+    if (!renderer || !gameHandler || !renderer->getCameraController()) return;
+    auto* cam = renderer->getCameraController();
+    cam->setRunSpeedOverride(gameHandler->getServerRunSpeed());
+    cam->setWalkSpeedOverride(gameHandler->getServerWalkSpeed());
+    cam->setReportedSwimming(gameHandler->isSwimming());
+    cam->setSwimSpeedOverride(gameHandler->getServerSwimSpeed());
+    if (game::isActiveExpansion("tbc") && playerCharacterSpawned && entitySpawner) {
+        cam->setSwimmingDepth(entitySpawner->getPlayerSwimmingDepth());
+    }
+    cam->setSwimBackSpeedOverride(gameHandler->getServerSwimBackSpeed());
+    cam->setFlightSpeedOverride(gameHandler->getServerFlightSpeed());
+    cam->setFlightBackSpeedOverride(gameHandler->getServerFlightBackSpeed());
+    cam->setRunBackSpeedOverride(gameHandler->getServerRunBackSpeed());
+    cam->setTurnRateOverride(gameHandler->getServerTurnRate());
+    cam->setMovementRooted(gameHandler->isPlayerRooted());
+    {
+        const bool held = !gameHandler->isServerMovementAllowed();
+        auto self = gameHandler->getEntityManager().getEntity(gameHandler->getPlayerGuid());
+        const bool splineMoving = held && self && self->isActivelyMoving();
+        const float splineSpeed = splineMoving ? self->getLocomotionSpeed() : 0.0f;
+        const float walkSpeed = gameHandler->getServerWalkSpeed();
+        const float runSpeed = gameHandler->getServerRunSpeed();
+        const bool running = std::abs(splineSpeed - runSpeed) < std::abs(splineSpeed - walkSpeed);
+        cam->setServerControlled(held, splineMoving, running);
+    }
+    cam->setGravityDisabled(gameHandler->isGravityDisabled());
+    cam->setFeatherFallActive(gameHandler->isFeatherFalling());
+    cam->setWaterWalkActive(gameHandler->isWaterWalking());
+    cam->setFlyingActive(gameHandler->canFly());
+    gameHandler->setFlightAirborne(cam->isFlightAirborne());
+    cam->setHoverActive(gameHandler->isHovering());
+
+    if (gameHandler->isPlayerFlying()) {
+        const float pitchRad = cam->getFlightPitchRad();
+        gameHandler->setMovementPitch(pitchRad);
+        if (gameHandler->isMounted()) {
+            if (auto* ac = renderer->getAnimationController()) ac->setMountPitchRoll(pitchRad, 0.0f);
+        }
+    } else if (gameHandler->isSwimming()) {
+        gameHandler->setMovementPitch(cam->getSwimPitchRad());
+    } else if (gameHandler->isMounted()) {
+        if (auto* ac = renderer->getAnimationController()) ac->setMountPitchRoll(0.0f, 0.0f);
+    }
+}
+
+} // namespace
+
 // Run, walk, swim, flight and turn speeds, rooting, gravity, feather fall,
 // water walking, and which of them the current mount, taxi or transport
 // overrides. The camera owns the movement, so this is where the server's word
 // about it lands.
 void Application::applyServerMovementState(float deltaTime) {
-    if (renderer && gameHandler && renderer->getCameraController()) {
-        renderer->getCameraController()->setRunSpeedOverride(gameHandler->getServerRunSpeed());
-        renderer->getCameraController()->setWalkSpeedOverride(gameHandler->getServerWalkSpeed());
-        renderer->getCameraController()->setReportedSwimming(gameHandler->isSwimming());
-        renderer->getCameraController()->setSwimSpeedOverride(gameHandler->getServerSwimSpeed());
-        if (game::isActiveExpansion("tbc") && playerCharacterSpawned && entitySpawner_) {
-            renderer->getCameraController()->setSwimmingDepth(entitySpawner_->getPlayerSwimmingDepth());
-        }
-        renderer->getCameraController()->setSwimBackSpeedOverride(gameHandler->getServerSwimBackSpeed());
-        renderer->getCameraController()->setFlightSpeedOverride(gameHandler->getServerFlightSpeed());
-        renderer->getCameraController()->setFlightBackSpeedOverride(gameHandler->getServerFlightBackSpeed());
-        renderer->getCameraController()->setRunBackSpeedOverride(gameHandler->getServerRunBackSpeed());
-        renderer->getCameraController()->setTurnRateOverride(gameHandler->getServerTurnRate());
-        renderer->getCameraController()->setMovementRooted(gameHandler->isPlayerRooted());
-        // Confuse, fear and charm take the character from the player
-        // (SMSG_CLIENT_CONTROL_UPDATE allowMove=0) and the server walks it
-        // with SMSG_MONSTER_MOVE splines for the player's own guid, which
-        // the player's entity follows. The packet's Runmode bit is no gait:
-        // CMaNGOS PacketBuilder sets it on every spline. Its speed is:
-        // MoveSplineInit::Launch moves at the walk or the run speed
-        // (confuse walks, fear runs), so the nearer of the two names it.
-        {
-            const bool held = !gameHandler->isServerMovementAllowed();
-            auto self = gameHandler->getEntityManager().getEntity(gameHandler->getPlayerGuid());
-            const bool splineMoving = held && self && self->isActivelyMoving();
-            const float splineSpeed = splineMoving ? self->getLocomotionSpeed() : 0.0f;
-            const float walkSpeed = gameHandler->getServerWalkSpeed();
-            const float runSpeed = gameHandler->getServerRunSpeed();
-            const bool running = std::abs(splineSpeed - runSpeed) < std::abs(splineSpeed - walkSpeed);
-            renderer->getCameraController()->setServerControlled(held, splineMoving, running);
-        }
-        renderer->getCameraController()->setGravityDisabled(gameHandler->isGravityDisabled());
-        renderer->getCameraController()->setFeatherFallActive(gameHandler->isFeatherFalling());
-        renderer->getCameraController()->setWaterWalkActive(gameHandler->isWaterWalking());
-        // Flight physics engage on the CAN_FLY ability (flying mount
-        // or .gm fly), not isPlayerFlying() which also needs the
-        // FLYING flag the client only sets once already airborne.
-        renderer->getCameraController()->setFlyingActive(gameHandler->canFly());
-        // And whether the player is up in it, which the camera worked out
-        // last frame: take-off and landing are decided where the floor is.
-        gameHandler->setFlightAirborne(renderer->getCameraController()->isFlightAirborne());
-        renderer->getCameraController()->setHoverActive(gameHandler->isHovering());
-
-        // Sync camera forward pitch to movement packets during flight / swimming.
-        // The server writes the pitch field when FLYING or SWIMMING flags are set;
-        // without this sync it would always be 0 (horizontal), causing other
-        // players to see the character flying flat even when pitching up/down.
-        if (gameHandler->isPlayerFlying()) {
-            // The mount's pitch, which the camera sets only while it steers -
-            // orbiting it to look around does not tilt the mount or change
-            // what the server is told.
-            const float pitchRad = renderer->getCameraController()->getFlightPitchRad();
-            gameHandler->setMovementPitch(pitchRad);
-            // Tilt the mount/character model to match flight direction
-            // (taxi flight uses setTaxiOrientationCallback for this instead)
-            if (gameHandler->isMounted()) {
-                if (auto* ac = renderer->getAnimationController()) ac->setMountPitchRoll(pitchRad, 0.0f);
-            }
-        } else if (gameHandler->isSwimming()) {
-            gameHandler->setMovementPitch(renderer->getCameraController()->getSwimPitchRad());
-        } else if (gameHandler->isMounted()) {
-            // Reset mount pitch when not flying
-            if (auto* ac = renderer->getAnimationController()) ac->setMountPitchRoll(0.0f, 0.0f);
-        }
-    }
+    syncServerSpeedsToCamera(renderer.get(), gameHandler.get(),
+                             entitySpawner_.get(), playerCharacterSpawned);
 
     bool onTaxi = gameHandler &&
                   (gameHandler->isOnTaxiFlight() ||
@@ -4611,7 +4601,6 @@ void Application::updateInGame(float deltaTime, const char*& updateCheckpoint) {
                     info.jumpXYSpeed = speed;
                     info.jumpCosAngle = speed > 0.0f ? velocity.x / speed : 0.0f;
                     info.jumpSinAngle = speed > 0.0f ? velocity.y / speed : 0.0f;
-                    movement->setFalling(true);
                     // The camera's state is last frame's (see beginFrame).
                     const uint32_t airborneMs = static_cast<uint32_t>(
                         std::lround(camera->getAirborneSeconds() * 1000.0f));

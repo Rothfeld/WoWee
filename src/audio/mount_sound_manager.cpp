@@ -42,7 +42,6 @@ void MountSoundManager::onMount(uint32_t creatureDisplayId, bool isFlying, const
     mounted_ = true;
     flying_ = isFlying;
     moving_ = false;
-    displayId_ = creatureDisplayId;
     soundData_ = sounds_ ? sounds_->soundDataForDisplay(creatureDisplayId) : 0;
     LOG_INFO("Mount sound: display ", creatureDisplayId, " sound set ", soundData_,
              " flying=", flying_, " model=", modelPath);
@@ -52,7 +51,6 @@ void MountSoundManager::onMount(uint32_t creatureDisplayId, bool isFlying, const
 
 void MountSoundManager::onDismount() {
     mounted_ = false;
-    displayId_ = 0;
     soundData_ = 0;
 }
 

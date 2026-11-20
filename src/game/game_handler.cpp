@@ -5627,5 +5627,13 @@ bool GameHandler::isKnownTaxiNode(uint32_t nodeId) const {
     return movementHandler_ && movementHandler_->isKnownTaxiNode(nodeId);
 }
 
+uint32_t GameHandler::getWeaponProficiency() const {
+    return weaponProficiency_ | (spellHandler_ ? spellHandler_->getLearnedProficiency(2) : 0);
+}
+
+uint32_t GameHandler::getArmorProficiency() const {
+    return armorProficiency_ | (spellHandler_ ? spellHandler_->getLearnedProficiency(4) : 0);
+}
+
 } // namespace game
 } // namespace wowee

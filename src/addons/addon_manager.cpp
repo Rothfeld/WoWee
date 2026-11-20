@@ -735,6 +735,105 @@ void AddonManager::giveCoinAmountsClearance() {
     }
 }
 
+namespace {
+
+void applyPostLoadFrameXmlFixes(LuaEngine& luaEngine) {
+    // Screen insets the panel manager reads straight off UIParent.
+    luaEngine.executeString(
+        "if UIParent and UIParent.SetAttribute then\n"
+        "  local defaults = {\n"
+        "    TOP_OFFSET = 0, LEFT_OFFSET = 0, CENTER_OFFSET = 0,\n"
+        "    RIGHT_OFFSET = 0, RIGHT_OFFSET_BUFFER = 0,\n"
+        "    DEFAULT_FRAME_WIDTH = 338,\n"
+        "  }\n"
+        // Written straight into the private attribute table rather than through
+        // SetAttribute, which fires OnAttributeChanged before all six exist.
+        "  local priv = __WoweePriv(UIParent)\n"
+        "  local store = priv.__attributes\n"
+        "  if not store then store = {}; priv.__attributes = store end\n"
+        "  for name, value in pairs(defaults) do\n"
+        "    if store[name] == nil then store[name] = value end\n"
+        "  end\n"
+        "end\n");
+
+    // Rebuild CURRENT_MAP_QUESTS from the quest log's zone headers.
+    luaEngine.executeString(
+        "if WatchFrame_GetCurrentMapQuests and CURRENT_MAP_QUESTS then\n"
+        "  WatchFrame_GetCurrentMapQuests = function()\n"
+        "    table.wipe(CURRENT_MAP_QUESTS)\n"
+        "    local zone = GetRealZoneText and GetRealZoneText() or nil\n"
+        "    if not zone or zone == '' then return end\n"
+        "    local header = nil\n"
+        "    for i = 1, GetNumQuestLogEntries() do\n"
+        "      local title, _, _, _, isHeader, _, _, _, questID = GetQuestLogTitle(i)\n"
+        "      if isHeader then\n"
+        "        header = title\n"
+        "      elseif header == zone and questID and questID ~= 0 then\n"
+        "        CURRENT_MAP_QUESTS[questID] = i\n"
+        "      end\n"
+        "    end\n"
+        "    if not next(CURRENT_MAP_QUESTS) then\n"
+        "      for i = 1, GetNumQuestLogEntries() do\n"
+        "        local _, _, _, _, isHeader, _, _, _, questID = GetQuestLogTitle(i)\n"
+        "        if not isHeader and questID and questID ~= 0 then\n"
+        "          CURRENT_MAP_QUESTS[questID] = i\n"
+        "        end\n"
+        "      end\n"
+        "    end\n"
+        "  end\n"
+        "end\n");
+
+    // Sort single-page AuctionFrameBrowse results client-side before drawing.
+    luaEngine.executeString(
+        "do\n"
+        "  local f = CreateFrame('Frame')\n"
+        "  f:RegisterEvent('ADDON_LOADED')\n"
+        "  f:SetScript('OnEvent', function(self, event, name)\n"
+        "    if name ~= 'Blizzard_AuctionUI' then return end\n"
+        "    self:UnregisterEvent('ADDON_LOADED')\n"
+        "    if not AuctionFrameBrowse_Update or not SortAuctionApplySort then return end\n"
+        "    local inner = AuctionFrameBrowse_Update\n"
+        "    AuctionFrameBrowse_Update = function(...)\n"
+        "      SortAuctionApplySort('list')\n"
+        "      return inner(...)\n"
+        "    end\n"
+        "  end)\n"
+        "end\n");
+
+    // Let bags, character sheet and PvP panels be dragged around.
+    luaEngine.executeString(
+        "local function draggable(f)\n"
+        "  if not f then return end\n"
+        "  f:SetMovable(true)\n"
+        "  f:EnableMouse(true)\n"
+        "  f:RegisterForDrag('LeftButton')\n"
+        "  f:SetScript('OnDragStart', function(self) self:StartMoving() end)\n"
+        "  f:SetScript('OnDragStop', function(self) self:StopMovingOrSizing() end)\n"
+        "end\n"
+        "for i = 1, 13 do draggable(_G['ContainerFrame' .. i]) end\n"
+        "draggable(CharacterFrame)\n"
+        "draggable(PVPParentFrame)\n"
+        "draggable(BattlefieldFrame)\n"
+        "draggable(WorldStateScoreFrame)\n");
+
+    // Center PVPParentFrame instead of pinning it to UIPanelWindows left slot.
+    luaEngine.executeString(
+        "local function centered(f)\n"
+        "  if type(f) ~= 'table' or not f.GetName or not UIPanelWindows then return end\n"
+        "  local name = f:GetName()\n"
+        "  if not name then return end\n"
+        "  UIPanelWindows[name] = nil\n"
+        "  if UISpecialFrames then tinsert(UISpecialFrames, name) end\n"
+        "  f:HookScript('OnShow', function(self)\n"
+        "    self:ClearAllPoints()\n"
+        "    self:SetPoint('CENTER', UIParent, 'CENTER')\n"
+        "  end)\n"
+        "end\n"
+        "centered(PVPParentFrame)\n");
+}
+
+} // namespace
+
 bool AddonManager::loadFrameXml(const std::string& frameXmlDir) {
     std::error_code ec;
     std::filesystem::path dir(frameXmlDir);
@@ -1325,181 +1424,7 @@ bool AddonManager::loadFrameXml(const std::string& frameXmlDir) {
         "  end\n"
         "end\n");
 
-    // Screen insets the panel manager reads straight off UIParent. The real
-    // client supplies these; FrameXML only ever reads them, and
-    // UIParentManageFramePositions adds them to a coordinate on the next line,
-    // so absent they are arithmetic on nil the first time a panel opens.
-    //
-    // All six of them, because setting one wakes the panel manager and it then
-    // reads the rest: seeding only the two offsets moved the failure from
-    // LEFT_OFFSET to DEFAULT_FRAME_WIDTH one call deeper. The widths are
-    // Blizzard's own defaults for a standard panel.
-    luaEngine_.executeString(
-        "if UIParent and UIParent.SetAttribute then\n"
-        "  local defaults = {\n"
-        "    TOP_OFFSET = 0, LEFT_OFFSET = 0, CENTER_OFFSET = 0,\n"
-        "    RIGHT_OFFSET = 0, RIGHT_OFFSET_BUFFER = 0,\n"
-        "    DEFAULT_FRAME_WIDTH = 338,\n"
-        "  }\n"
-        // Written straight into the attribute table rather than through
-        // SetAttribute, which fires OnAttributeChanged: the panel manager runs
-        // on the first one and reads the rest before the loop has set them, so
-        // seeding through the setter failed on whichever name pairs() happened
-        // to leave for last. These are initial values, not changes.
-        "  local store = rawget(UIParent, '__attributes')\n"
-        "  if not store then store = {}; rawset(UIParent, '__attributes', store) end\n"
-        "  for name, value in pairs(defaults) do\n"
-        "    if store[name] == nil then store[name] = value end\n"
-        "  end\n"
-        "end\n");
-
-    // The tracker's "quests in this zone" filter, which needs a table this
-    // client never filled.
-    //
-    // watchframe.lua drops a watched quest unless CURRENT_MAP_QUESTS holds it,
-    // and WatchFrame_GetCurrentMapQuests builds that from the map's quest
-    // markers - QuestMapUpdateAllQuests and QuestPOIGetQuestIDByVisibleIndex,
-    // both of which answer from the POIs the server has sent for whatever it
-    // was asked about rather than from the zone the player is standing in. So
-    // the table was never the current zone's quests, and the only way to see a
-    // tracker at all was to leave the remote-zones bit set and show every
-    // watched quest in the log.
-    //
-    // Rebuilt from the quest log instead. The log is already grouped under
-    // zone headers, and the header a quest sits under is the zone it belongs
-    // to - which is the question being asked, and one this client can answer
-    // without the server sending anything. Quests under a profession or class
-    // header match no zone name and are correctly left out.
-    //
-    // After FrameXML, because this replaces one of its functions. The tracker
-    // re-runs it on ZONE_CHANGED_NEW_AREA, so walking out of a zone empties it
-    // and walking into one fills it again.
-    luaEngine_.executeString(
-        "if WatchFrame_GetCurrentMapQuests and CURRENT_MAP_QUESTS then\n"
-        "  WatchFrame_GetCurrentMapQuests = function()\n"
-        "    table.wipe(CURRENT_MAP_QUESTS)\n"
-        "    local zone = GetRealZoneText and GetRealZoneText() or nil\n"
-        "    if not zone or zone == '' then return end\n"
-        "    local header = nil\n"
-        "    for i = 1, GetNumQuestLogEntries() do\n"
-        "      local title, _, _, _, isHeader, _, _, _, questID = GetQuestLogTitle(i)\n"
-        "      if isHeader then\n"
-        "        header = title\n"
-        // A collapsed header still holds its quests, and the tracker watches
-        // them whether the log shows them or not - so this walks the whole log
-        // rather than what is on screen.
-        "      elseif header == zone and questID and questID ~= 0 then\n"
-        "        CURRENT_MAP_QUESTS[questID] = i\n"
-        "      end\n"
-        "    end\n"
-        // Nothing matched, so the question could not be answered rather than
-        // answered with none. A quest sits under the zone its query response
-        // named, and until that lands it sits under Miscellaneous - which
-        // matches no zone, so a log of quests the server has not described yet
-        // filters down to an empty tracker. The panel then hides its own
-        // header and disables the button that would expand it, which reads as
-        // three faults: quests not being tracked, a collapsed panel, and a
-        // dead button. They are one.
-        //
-        // Showing a quest from the wrong zone is a smaller wrong than showing
-        // none, so an empty match falls back to every quest in the log.
-        "    if not next(CURRENT_MAP_QUESTS) then\n"
-        "      for i = 1, GetNumQuestLogEntries() do\n"
-        "        local _, _, _, _, isHeader, _, _, _, questID = GetQuestLogTitle(i)\n"
-        "        if not isHeader and questID and questID ~= 0 then\n"
-        "          CURRENT_MAP_QUESTS[questID] = i\n"
-        "        end\n"
-        "      end\n"
-        "    end\n"
-        "  end\n"
-        "end\n");
-
-    // The browse tab's column headers, which sort nothing on a single page.
-    //
-    // Clicking one calls AuctionFrameBrowse_Search rather than
-    // SortAuctionApplySort - the browse list is meant to be reordered by the
-    // realm and re-sent, and the ordering does travel with the query. But
-    // AzerothCore only sorts when the result runs past one page, so a search
-    // returning fifty rows or fewer comes back in the order the realm walked
-    // its map however the headers are clicked, and every click looked inert.
-    //
-    // Sorted here instead, immediately before the rows are drawn. The keys are
-    // the ones the header click already set, the sort is stable, and a page the
-    // realm ordered is left as it is - so this corrects the case the realm
-    // skipped and changes nothing in the case it did not.
-    //
-    // Wrapped rather than replaced: the body of that function is FrameXML's and
-    // this has no business being a copy of it.
-    //
-    // On ADDON_LOADED, because Blizzard_AuctionUI is load-on-demand and none of
-    // its functions exist until the player talks to an auctioneer - a wrapper
-    // written now would find nothing to wrap and fail quietly.
-    luaEngine_.executeString(
-        "do\n"
-        "  local f = CreateFrame('Frame')\n"
-        "  f:RegisterEvent('ADDON_LOADED')\n"
-        "  f:SetScript('OnEvent', function(self, event, name)\n"
-        "    if name ~= 'Blizzard_AuctionUI' then return end\n"
-        "    self:UnregisterEvent('ADDON_LOADED')\n"
-        "    if not AuctionFrameBrowse_Update or not SortAuctionApplySort then return end\n"
-        "    local inner = AuctionFrameBrowse_Update\n"
-        "    AuctionFrameBrowse_Update = function(...)\n"
-        "      SortAuctionApplySort('list')\n"
-        "      return inner(...)\n"
-        "    end\n"
-        "  end)\n"
-        "end\n");
-
-    // Let the bag windows, the character sheet and the PvP panels be dragged
-    // around.
-    //
-    // A deliberate departure from 3.3.5, where neither can be moved: the bags
-    // arrange themselves up the right-hand side and the character sheet is a
-    // fixed panel. Asked for, and harmless - the item buttons inside them are
-    // what a drag starting on a slot picks up, because a drag belongs to the
-    // frame the press landed on.
-    luaEngine_.executeString(
-        "local function draggable(f)\n"
-        "  if not f then return end\n"
-        "  f:SetMovable(true)\n"
-        "  f:EnableMouse(true)\n"
-        "  f:RegisterForDrag('LeftButton')\n"
-        "  f:SetScript('OnDragStart', function(self) self:StartMoving() end)\n"
-        "  f:SetScript('OnDragStop', function(self) self:StopMovingOrSizing() end)\n"
-        "end\n"
-        "for i = 1, 13 do draggable(_G['ContainerFrame' .. i]) end\n"
-        "draggable(CharacterFrame)\n"
-        // The PvP window (H), the battlemaster's list and the scoreboard -
-        // asked for with the rest, and fixed panels in 3.3.5 for the same
-        // reason the character sheet is.
-        "draggable(PVPParentFrame)\n"
-        "draggable(BattlefieldFrame)\n"
-        "draggable(WorldStateScoreFrame)\n");
-
-    // The PvP window and the battlemaster's list open in the middle of the
-    // screen, where they were asked for.
-    //
-    // Both are "left" panels in UIPanelWindows, which the panel manager
-    // re-anchors to the left edge every time one opens - so an anchor set
-    // here would be overwritten on the next show. Out of that table,
-    // ShowUIPanel and HideUIPanel simply show and hide them; UISpecialFrames
-    // keeps Escape closing them, which the panel table used to do.
-    luaEngine_.executeString(
-        // A frame this interface does not build answers through the API
-        // fallback as a stand-in with no name - 1.12 has no PVPParentFrame -
-        // and filing that under a nil key raised on every 1.12 login.
-        "local function centered(f)\n"
-        "  if type(f) ~= 'table' or not f.GetName or not UIPanelWindows then return end\n"
-        "  local name = f:GetName()\n"
-        "  if not name then return end\n"
-        "  UIPanelWindows[name] = nil\n"
-        "  if UISpecialFrames then tinsert(UISpecialFrames, name) end\n"
-        "  f:HookScript('OnShow', function(self)\n"
-        "    self:ClearAllPoints()\n"
-        "    self:SetPoint('CENTER', UIParent, 'CENTER')\n"
-        "  end)\n"
-        "end\n"
-        "centered(PVPParentFrame)\n");
+    applyPostLoadFrameXmlFixes(luaEngine_);
 
     LOG_WARNING("FrameXML: ", lua, " Lua files and ", xml, " XML files loaded, ",
                 failed, " failed in ", sinceMs(loadStart), "ms");

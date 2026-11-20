@@ -1008,7 +1008,6 @@ private:
     float savedBarberDistance_ = 10.0f;
     float savedBarberPivot_ = 0.0f;
     bool ignoreSlopeLimit_ = false;
-    float maxDistanceFactor_ = 1.0f;
     bool walking_ = false; // Persistent TOGGLERUN state; held Ctrl is a temporary override.
     bool sentWalking_ = false; // Walk mode last reported with SET_WALK_MODE / SET_RUN_MODE.
     bool runPace = false;

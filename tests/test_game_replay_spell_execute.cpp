@@ -106,7 +106,10 @@ TEST_CASE("feeding a pet is effect 101, with a packed caster on TBC too", "[repl
         Packet p = executeLog(kPlayer, 6991, kFeedPet);
         p.writeUInt32(4540);
         s.receive(p);
-        CHECK(chatHas(s, "You feed your pet"));
+        auto queries = s.sent().of(Opcode::CMSG_ITEM_QUERY_SINGLE);
+        REQUIRE(queries.size() == 1);
+        CHECK(queries[0].readUInt32() == 4540u);
+        CHECK_FALSE(chatHas(s, "You feed your pet"));
     }
 }
 

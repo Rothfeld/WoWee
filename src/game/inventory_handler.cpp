@@ -2193,12 +2193,8 @@ void InventoryHandler::beginSpellItemTargeting(uint32_t spellId, const std::stri
 }
 
 void InventoryHandler::beginSpellLockTargeting(uint32_t spellId, const std::string& spellName) {
-    PendingItemTarget pending;
-    pending.spellId = spellId;
-    pending.itemName = spellName;
-    pending.fromSpell = true;
-    pending.opensLock = true;
-    pendingItemTarget_ = pending;
+    beginSpellItemTargeting(spellId, spellName);
+    pendingItemTarget_->opensLock = true;
 }
 
 uint32_t InventoryHandler::pendingLockTargetSpell() const {

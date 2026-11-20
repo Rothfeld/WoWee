@@ -940,6 +940,7 @@ static void pushCvarDefault(lua_State* L, const std::string& n) {
     else if (n == "autoquestprogress") lua_pushstring(L, "1");
     else if (n == "consolidatebuffs") lua_pushstring(L, "0");
     else if (n == "watchframewidth") lua_pushstring(L, "0");
+    else if (n == "wowee_trackingservice") lua_pushstring(L, "0");
     // Nameplates and names for totems. The real client shows an enemy's totems
     // and hides your own side's, and names both when they are shown.
     else if (n == "nameplateshowenemytotems") lua_pushstring(L, "1");
@@ -4050,6 +4051,7 @@ static int lua_GetWeaponEnchantInfo(lua_State* L) {
     // nothing without an imbue and 1, 1740929, 0 with Windfury Weapon on the
     // main hand alone. An unenchanted main hand before an enchanted off hand
     // answers nil, nil, nil.
+    luaL_checkstack(L, 6, "GetWeaponEnchantInfo");
     int count = 0;
     for (int h = 0; h < 2; ++h) {
         const uint64_t guid = gh ? gh->getEquipSlotGuid(static_cast<int>(kHands[h])) : 0;
@@ -6987,6 +6989,7 @@ void registerSystemLuaAPI(lua_State* L) {
             // left alone; General with none at all is the wipe above.
             if (w->messageGroups.empty() && lua_tonumber(L, 1) == 1) {
                 const auto groups = defaultChatGroups(1);
+                luaL_checkstack(L, static_cast<int>(groups.size()), "GetChatWindowMessages");
                 for (const char* g : groups) lua_pushstring(L, g);
                 return static_cast<int>(groups.size());
             }
@@ -6995,9 +6998,13 @@ void registerSystemLuaAPI(lua_State* L) {
             // and the tab stayed empty however much fighting there was.
             if (w->messageGroups.empty() && lua_tonumber(L, 1) == 2 &&
                 interfaceVersion(L) > 0 && interfaceVersion(L) < 20000) {
+                luaL_checkstack(L, static_cast<int>(std::size(kClassicCombatLogGroups)),
+                                "GetChatWindowMessages");
                 for (const char* g : kClassicCombatLogGroups) lua_pushstring(L, g);
                 return static_cast<int>(std::size(kClassicCombatLogGroups));
             }
+            luaL_checkstack(L, static_cast<int>(w->messageGroups.size()) + 1,
+                            "GetChatWindowMessages");
             const bool isTbc = game::isActiveExpansion("tbc");
             bool hasGuildOfficer = false;
             if (isTbc) {
@@ -7030,12 +7037,16 @@ void registerSystemLuaAPI(lua_State* L) {
             // the group wipe in FCF_ResetChatWindows, and a General with no
             // channels matched every channel line against nothing.
             if (w->channels.empty() && lua_tonumber(L, 1) == 1) {
+                luaL_checkstack(L, static_cast<int>(std::size(kDefaultChatChannels)) * 2,
+                                "GetChatWindowChannels");
                 for (const char* c : kDefaultChatChannels) {
                     lua_pushstring(L, c);
                     lua_pushnumber(L, windowChannelZone(L, c, 0));
                 }
                 return static_cast<int>(std::size(kDefaultChatChannels)) * 2;
             }
+            luaL_checkstack(L, static_cast<int>(w->channels.size()) * 2,
+                            "GetChatWindowChannels");
             for (const auto& c : w->channels) {
                 lua_pushstring(L, c.first.c_str());
                 lua_pushnumber(L, windowChannelZone(L, c.first, c.second));

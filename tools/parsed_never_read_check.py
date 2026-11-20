@@ -114,6 +114,31 @@ EXPECTED = {
     # Same field on the per-charter struct inside that list, for the same
     # reason.
     ("Charter", "requiredSigs"): "shown from SMSG_PETITION_SHOW, not the list",
+    # Wire-framing count and integer twin of SubDamage.damage in
+    # SMSG_ATTACKERSTATEUPDATE; consumers iterate subDamages and read float
+    # damage directly.
+    ("AttackerStateUpdateData", "subDamageCount"): "sized into subDamages vector",
+    ("SubDamage", "intDamage"): "wire twin of float SubDamage.damage",
+    # Colon-delimited auction mail subject field 4 (auction lot id); OpenMail
+    # formats item name, count and invoice without displaying lot ids.
+    ("AuctionMailSubject", "lotId"): "wire subject token with no UI consumer",
+    # Channel flags byte preceding channelId on SMSG_CHANNEL_NOTIFY.
+    ("ChannelNotifyData", "channelFlags"): "wire framing byte before channelId",
+    # Legacy Vanilla/TBC PvP and city rank gates in SMSG_ITEM_QUERY_SINGLE_RESPONSE,
+    # read in sequence to reach requiredReputationFaction and stats.
+    ("ItemQueryResponseData", "requiredHonorRank"): "wire field before reputation",
+    ("ItemQueryResponseData", "requiredCityRank"): "wire field before reputation",
+    # Fixed-position header fields in SMSG_QUEST_QUERY_RESPONSE before the
+    # quest title/objectives/details strings; quest POIs and chain links are
+    # answered from SMSG_QUEST_POI_QUERY_RESPONSE and server gossip/quest menus.
+    ("QuestQueryResponseData", "nextQuestInChain"): "wire header field before strings",
+    ("QuestQueryResponseData", "pointMapId"): "wire header field before strings",
+    ("QuestQueryResponseData", "pointX"): "wire header field before strings",
+    ("QuestQueryResponseData", "pointY"): "wire header field before strings",
+    ("QuestQueryResponseData", "pointOpt"): "wire header field before strings",
+    ("QuestQueryResponseData", "repObjectiveFaction"): "wire header field before strings",
+    ("QuestQueryResponseData", "repObjectiveValue"): "wire header field before strings",
+    ("QuestQueryResponseData", "rewardSpellCast"): "wire header field before strings",
 }
 
 

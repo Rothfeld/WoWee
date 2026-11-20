@@ -762,6 +762,7 @@ static int lua_BNNothing(lua_State* L) { (void)L; return 0; }
 /// empty, so the count of values matters and none of them does.
 template <int N>
 static int lua_BNNilRow(lua_State* L) {
+    luaL_checkstack(L, N, "BNNilRow");
     for (int i = 0; i < N; ++i) lua_pushnil(L);
     return N;
 }

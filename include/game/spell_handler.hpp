@@ -618,7 +618,6 @@ private:
     uint32_t restorationSpellId_ = 0;
     bool restorationIsFood_ = false;
     float restorationTimeRemaining_ = 0.0f;
-    float restorationTimeTotal_ = 0.0f;
     float restorationSoundTimer_ = 0.0f; // repeats the consume sound while active
 
     // Repeat-craft queue

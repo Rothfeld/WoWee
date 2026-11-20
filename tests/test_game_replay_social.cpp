@@ -37,20 +37,6 @@ using Packet = wowee::network::Packet;
 
 Packet packetFor(Opcode op) { return Packet(wowee::game::wireOpcode(op)); }
 
-// CMaNGOS-TBC CharacterNameQueryResponse: guid, name, realm byte, race,
-// gender, class as uint32s, no declined names.
-Packet nameResponse(uint64_t guid, const std::string& name) {
-    Packet p = packetFor(Opcode::SMSG_NAME_QUERY_RESPONSE);
-    p.writeUInt64(guid);
-    p.writeString(name);
-    p.writeUInt8(0);
-    p.writeUInt32(1);
-    p.writeUInt32(0);
-    p.writeUInt32(4);
-    p.writeUInt8(0);
-    return p;
-}
-
 struct Contact {
     uint64_t guid;
     uint32_t flags;
@@ -140,12 +126,12 @@ TEST_CASE("Friends and ignores are named, ordered and shaped as 2.4.3 lists them
     CHECK(s.sent().of(Opcode::CMSG_NAME_QUERY).size() == 6);
 
     events.clear();
-    s.receive(nameResponse(kGearugsy, "Gearugsy"));
+    s.receive(replay::nameResponse(kGearugsy, "Gearugsy"));
     CHECK(events == std::vector<std::string>{"IGNORELIST_UPDATE"});
     for (const auto& [guid, name] : std::vector<std::pair<uint64_t, std::string>>{
              {kGearbefore, "Gearbefore"}, {kGearoqqtr, "Gearoqqtr"}, {kEdrikb, "Edrikb"},
              {kEdricc, "Edricc"}, {kEdricj, "Edricj"}})
-        s.receive(nameResponse(guid, name));
+        s.receive(replay::nameResponse(guid, name));
 
     Lua lua(s);
     CHECK(lua.run("GetNumFriends()") == "4,2");

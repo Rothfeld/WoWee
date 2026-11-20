@@ -5374,19 +5374,6 @@ bool CharacterRenderer::getAnimationSequences(uint32_t instanceId, std::vector<p
     return !out.empty();
 }
 
-bool CharacterRenderer::getInstanceModelName(uint32_t instanceId, std::string& modelName) const {
-    auto it = instances.find(instanceId);
-    if (it == instances.end()) {
-        return false;
-    }
-    auto modelIt = models.find(it->second.modelId);
-    if (modelIt == models.end()) {
-        return false;
-    }
-    modelName = modelIt->second.data.name;
-    return !modelName.empty();
-}
-
 bool CharacterRenderer::hasAttachmentPoint(uint32_t instanceId, uint32_t attachmentId) const {
     const auto it = instances.find(instanceId);
     if (it == instances.end()) return false;

@@ -734,6 +734,29 @@ void WorldLoader::loadMapGeometry(uint32_t mapId, const std::string& mapName,
     }
 }
 
+namespace {
+
+bool pumpLoadingWindowEvents(core::Window* window, rendering::Renderer* renderer) {
+    SDL_Event event;
+    while (SDL_PollEvent(&event)) {
+        if (event.type == SDL_EVENT_QUIT) {
+            window->setShouldClose(true);
+            return false;
+        }
+        if (event.type == SDL_EVENT_WINDOW_RESIZED) {
+            int w = event.window.data1;
+            int h = event.window.data2;
+            window->setSize(w, h);
+            if (renderer && renderer->getCamera()) {
+                renderer->getCamera()->setAspectRatio(static_cast<float>(w) / h);
+            }
+        }
+    }
+    return true;
+}
+
+} // namespace
+
 void WorldLoader::loadOnlineWorldTerrain(uint32_t mapId, float x, float y, float z) {
     if (!renderer_ || !assetManager_ || !assetManager_->isInitialized()) {
         LOG_WARNING("Cannot load online terrain: renderer or assets not ready");
@@ -759,22 +782,9 @@ void WorldLoader::loadOnlineWorldTerrain(uint32_t mapId, float x, float y, float
     bool loadingScreenOk = loadingScreen.initialize();
 
     auto showProgress = [&](const char* msg, float progress) {
-        SDL_Event event;
-        while (SDL_PollEvent(&event)) {
-            if (event.type == SDL_EVENT_QUIT) {
-                window_->setShouldClose(true);
-                loadingScreen.shutdown();
-                return;
-            }
-            if (event.type == SDL_EVENT_WINDOW_RESIZED) {
-                int w = event.window.data1;
-                int h = event.window.data2;
-                window_->setSize(w, h);
-                // Vulkan viewport set in command buffer
-                if (renderer_ && renderer_->getCamera()) {
-                    renderer_->getCamera()->setAspectRatio(static_cast<float>(w) / h);
-                }
-            }
+        if (!pumpLoadingWindowEvents(window_, renderer_)) {
+            loadingScreen.shutdown();
+            return;
         }
         // The world load blocks the main loop for over a second while presenting its
         // own frames. Beat the watchdog so it does not read a healthy load as a hang
@@ -1100,21 +1110,9 @@ void WorldLoader::loadOnlineWorldTerrain(uint32_t mapId, float x, float y, float
         float lastGroundNotReadyLogTime = -1000.0f;
 
         while (true) {
-            SDL_Event event;
-            while (SDL_PollEvent(&event)) {
-                if (event.type == SDL_EVENT_QUIT) {
-                    window_->setShouldClose(true);
-                    if (loadingScreenOk) loadingScreen.shutdown();
-                    return;
-                }
-                if (event.type == SDL_EVENT_WINDOW_RESIZED) {
-                    int w = event.window.data1;
-                    int h = event.window.data2;
-                    window_->setSize(w, h);
-                    if (renderer_ && renderer_->getCamera()) {
-                        renderer_->getCamera()->setAspectRatio(static_cast<float>(w) / h);
-                    }
-                }
+            if (!pumpLoadingWindowEvents(window_, renderer_)) {
+                if (loadingScreenOk) loadingScreen.shutdown();
+                return;
             }
 
             // Drain network and process deferred spawn/composite queues while hidden.

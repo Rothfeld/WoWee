@@ -2349,7 +2349,6 @@ public:
     bool hasPendingGameObjectLootOpen(uint64_t guid) const;
     void despawnGameObjectLocally(uint64_t guid);
     /// Remove a creature corpse client-side once it has been looted empty.
-    void despawnCreatureLocally(uint64_t guid);
     void activateSpiritHealer(uint64_t npcGuid);
     bool isLootWindowOpen() const;
     /// Within the range the server allows for loot / npc interaction.
@@ -5281,7 +5280,6 @@ private:
     std::unordered_map<uint32_t, std::string> guildNameCache_;  // guildId → guild name
     std::function<void(uint32_t)> guildEmblemChangedCallback_;
     std::unordered_set<uint32_t> pendingGuildNameQueries_;      // in-flight guild queries
-    PetitionInfo petitionInfo_;
 
     uint64_t activeCharacterGuid_ = 0;
     Race playerRace_ = Race::HUMAN;

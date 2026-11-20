@@ -65,26 +65,44 @@ Packet dispelFailed(bool classic, uint64_t caster, uint64_t victim) {
 }  // namespace
 
 TEST_CASE("a dispel log names its victim before its caster", "[replay][dispel]") {
+    using wowee::game::CombatTextEntry;
     for (const char* expansion : {"wotlk", "tbc", "classic"}) {
         CAPTURE(expansion);
         const bool classic = std::string(expansion) == "classic";
 
         {
             Session s(expansion);
+            s.handler().setTargetGuidRaw(kPlayer);
             s.receive(dispelLog(classic, kPlayer, kMob));
-            CHECK(chatHas(s, "spell 1243 was dispelled."));
-            CHECK_FALSE(chatHas(s, "You dispel"));
+            const auto& texts = s.handler().getCombatText();
+            REQUIRE(texts.size() == 1);
+            CHECK(texts[0].type == CombatTextEntry::DISPEL);
+            CHECK(texts[0].spellId == kPowerWordFortitude);
+            CHECK_FALSE(texts[0].isPlayerSource);
+            CHECK(texts[0].srcGuid == kMob);
+            CHECK(texts[0].dstGuid == kPlayer);
+            CHECK_FALSE(chatHas(s, "dispel"));
         }
         {
             Session s(expansion);
+            s.handler().setTargetGuidRaw(kMob);
             s.receive(dispelLog(classic, kMob, kPlayer));
-            CHECK(chatHas(s, "You dispel spell 1243."));
+            const auto& texts = s.handler().getCombatText();
+            REQUIRE(texts.size() == 1);
+            CHECK(texts[0].type == CombatTextEntry::DISPEL);
+            CHECK(texts[0].spellId == kPowerWordFortitude);
+            CHECK(texts[0].isPlayerSource);
+            CHECK(texts[0].srcGuid == kPlayer);
+            CHECK(texts[0].dstGuid == kMob);
+            CHECK_FALSE(chatHas(s, "dispel"));
         }
     }
 }
 
 TEST_CASE("a spellsteal log has packed guids on TBC", "[replay][dispel]") {
+    using wowee::game::CombatTextEntry;
     Session s("tbc");
+    s.handler().setTargetGuidRaw(kMob);
     Packet p(wireOpcode(Opcode::SMSG_SPELLSTEALLOG));
     p.writePackedGuid(kMob);
     p.writePackedGuid(kPlayer);
@@ -94,29 +112,61 @@ TEST_CASE("a spellsteal log has packed guids on TBC", "[replay][dispel]") {
     p.writeUInt32(kPowerWordFortitude);
     p.writeUInt8(0);
     s.receive(p);
-    CHECK(chatHas(s, "You stole spell 1243."));
+    const auto& texts = s.handler().getCombatText();
+    REQUIRE(texts.size() == 1);
+    CHECK(texts[0].type == CombatTextEntry::STEAL);
+    CHECK(texts[0].spellId == kPowerWordFortitude);
+    CHECK(texts[0].isPlayerSource);
+    CHECK(texts[0].srcGuid == kPlayer);
+    CHECK(texts[0].dstGuid == kMob);
+    CHECK_FALSE(chatHas(s, "stole"));
 }
 
 TEST_CASE("an instakill log has whole guids", "[replay][instakill]") {
+    using wowee::game::CombatTextEntry;
     for (const char* expansion : {"wotlk", "tbc", "classic"}) {
         CAPTURE(expansion);
+        const bool classic = std::string(expansion) == "classic";
         Session s(expansion);
-        s.receive(instaKillLog(std::string(expansion) == "classic", kMob, kPlayer));
-        CHECK(chatHas(s, "You were killed by an instant-kill effect."));
+        s.receive(instaKillLog(classic, kMob, kPlayer));
+        const auto& texts = s.handler().getCombatText();
+        REQUIRE(texts.size() == 1);
+        CHECK(texts[0].type == CombatTextEntry::INSTAKILL);
+        CHECK(texts[0].spellId == 5u);
+        CHECK_FALSE(texts[0].isPlayerSource);
+        CHECK(texts[0].srcGuid == (classic ? 0ull : kMob));
+        CHECK(texts[0].dstGuid == kPlayer);
+        CHECK_FALSE(chatHas(s, "instant-kill"));
     }
 }
 
 TEST_CASE("a failed dispel has whole guids, and classic has no dispel spell", "[replay][dispel]") {
+    using wowee::game::CombatTextEntry;
     SECTION("wotlk") {
         Session s;
+        s.handler().setTargetGuidRaw(kMob);
         s.receive(dispelFailed(false, kPlayer, kMob));
-        CHECK(chatHas(s, "Dispel failed! (spell 527)"));
+        const auto& texts = s.handler().getCombatText();
+        REQUIRE(texts.size() == 1);
+        CHECK(texts[0].type == CombatTextEntry::RESIST);
+        CHECK(texts[0].spellId == kDispelMagic);
+        CHECK(texts[0].isPlayerSource);
+        CHECK(texts[0].srcGuid == kPlayer);
+        CHECK(texts[0].dstGuid == kMob);
+        CHECK_FALSE(chatHas(s, "Dispel failed"));
     }
     SECTION("classic") {
         Session s("classic");
+        s.handler().setTargetGuidRaw(kMob);
         s.receive(dispelFailed(true, kPlayer, kMob));
-        CHECK(chatHas(s, "Dispel failed!"));
-        CHECK_FALSE(chatHas(s, "(spell"));
+        const auto& texts = s.handler().getCombatText();
+        REQUIRE(texts.size() == 1);
+        CHECK(texts[0].type == CombatTextEntry::RESIST);
+        CHECK(texts[0].spellId == kPowerWordFortitude);
+        CHECK(texts[0].isPlayerSource);
+        CHECK(texts[0].srcGuid == kPlayer);
+        CHECK(texts[0].dstGuid == kMob);
+        CHECK_FALSE(chatHas(s, "Dispel failed"));
     }
 }
 

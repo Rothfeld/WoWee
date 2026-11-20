@@ -9,30 +9,17 @@
 #include "pipeline/m2_loader.hpp"
 #include "rendering/animation/animation_ids.hpp"
 #include "rendering/animation/sequence_variation.hpp"
+#include "tbc_data_test_util.hpp"
 
-#include <cstdlib>
-#include <filesystem>
-#include <fstream>
-#include <iterator>
 #include <map>
 #include <random>
 
 using namespace wowee;
 
-namespace {
-std::vector<uint8_t> readData(const char* relative) {
-    const char* root = std::getenv("WOWEE_TBC_DATA_DIR");
-    if (!root || !*root) SKIP("Set WOWEE_TBC_DATA_DIR to client/wowee-data/expansions/tbc");
-    std::ifstream in(std::filesystem::path(root) / relative, std::ios::binary);
-    std::vector<uint8_t> bytes{std::istreambuf_iterator<char>(in), {}};
-    REQUIRE_FALSE(bytes.empty());
-    return bytes;
-}
-}
-
 TEST_CASE("AnimationData Fallback column chains ready stances to Stand", "[animation][assets]") {
+    const auto raw = test::readTbcData("dbfilesclient/animationdata.dbc");
     pipeline::DBCFile dbc;
-    REQUIRE(dbc.load(readData("dbfilesclient/animationdata.dbc")));
+    REQUIRE(dbc.load(raw));
     const auto fallback = [&](uint32_t id) {
         const int32_t row = dbc.findRecordById(id);
         REQUIRE(row >= 0);
@@ -46,7 +33,7 @@ TEST_CASE("AnimationData Fallback column chains ready stances to Stand", "[anima
 }
 
 TEST_CASE("Bear.m2 has no ready stance and a second Stand variation", "[animation][assets]") {
-    const auto model = pipeline::M2Loader::load(readData("creature/bear/bear.m2"));
+    const auto model = pipeline::M2Loader::load(test::readTbcData("creature/bear/bear.m2"));
     int stands = 0;
     for (const auto& sequence : model.sequences) {
         CHECK(sequence.id != rendering::anim::READY_UNARMED);
@@ -58,7 +45,7 @@ TEST_CASE("Bear.m2 has no ready stance and a second Stand variation", "[animatio
 TEST_CASE("DoomGuardOutland.m2 walks on two variations, Akama.m2 on one", "[animation][assets]") {
     // Native Illidari Fearbringers (22954, Black Temple) switch between
     // walking on their feet and beating their wings along a patrol.
-    const auto doomguard = pipeline::M2Loader::load(readData("creature/doomguardoutland/doomguardoutland.m2"));
+    const auto doomguard = pipeline::M2Loader::load(test::readTbcData("creature/doomguardoutland/doomguardoutland.m2"));
     std::mt19937 random(8606);
     std::map<int, int> drawn;
     for (int i = 0; i < 2000; ++i) {
@@ -78,7 +65,7 @@ TEST_CASE("DoomGuardOutland.m2 walks on two variations, Akama.m2 on one", "[anim
     CHECK(doomguard.sequences[33].replayMin == 3);
     CHECK(doomguard.sequences[33].replayMax == 5);
 
-    const auto akama = pipeline::M2Loader::load(readData("creature/akama/akama.m2"));
+    const auto akama = pipeline::M2Loader::load(test::readTbcData("creature/akama/akama.m2"));
     const auto walk = rendering::drawSequenceVariation(akama.sequences, rendering::anim::WALK, random);
     REQUIRE(walk);
     CHECK(walk->index == 0);

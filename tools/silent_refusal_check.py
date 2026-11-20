@@ -246,7 +246,8 @@ def guarded_returns(body, limit):
         # one: `if (cursorWireSlot(...)) { guildBankDepositItem(...); return; }`
         # opens before the first action in the body and so came out as a silent
         # refusal on the first run.
-        if ACTS.search(branch) and not READ_ONLY.match(ACTS.search(branch).group(1)):
+        if any(not READ_ONLY.match(am.group(1))
+               for am in ACTS.finditer(cond + " " + branch)):
             continue
         out.append((m.start(), cond.strip(), branch))
     return out

@@ -70,15 +70,27 @@ def functionsIn(text):
     return out
 
 
+def parenSpan(text, openParen):
+    """Index just past the `)` matching `text[openParen]`."""
+    depth = 0
+    for i in range(openParen, len(text)):
+        if text[i] == "(":
+            depth += 1
+        elif text[i] == ")":
+            depth -= 1
+            if depth == 0:
+                return i + 1
+    return len(text)
+
+
 def main():
     findings = []
     scanned = 0
     for path in sorted(BINDINGS.glob("*.cpp")):
         text = path.read_text(errors="ignore")
-        base = text[:0]
         for name, start, body in functionsIn(text):
             scanned += 1
-            if "lua_checkstack" in body:
+            if "lua_checkstack" in body or "luaL_checkstack" in body:
                 continue
             # Only bindings whose return *count* is a variable. A loop that
             # pushes and returns a literal is a search that pushes once -
@@ -87,16 +99,17 @@ def main():
             if not re.search(r"return\s+(?!\d)\w+\s*;", body):
                 continue
             for lm in LOOP.finditer(body):
-                header = body[lm.start():body.find("{", lm.start()) + 1] \
-                    if body.find("{", lm.start()) != -1 else ""
+                afterCond = parenSpan(body, lm.end() - 1)
+                header = body[lm.start():afterCond]
                 if FIXED_FOR.search(header):
                     continue
-                brace = body.find("{", lm.start())
-                if brace == -1:
-                    continue
-                # Only the loop's own body, so a push that merely follows the
-                # loop is not attributed to it.
-                inner, _ = bodyAt(body, brace)
+                rest = body[afterCond:].lstrip()
+                if rest.startswith("{"):
+                    brace = body.find("{", afterCond)
+                    inner, _ = bodyAt(body, brace)
+                else:
+                    semi = rest.find(";")
+                    inner = rest[:semi] if semi != -1 else rest
                 if "lua_push" not in inner:
                     continue
                 line = text.count("\n", 0, start) + body.count("\n", 0, lm.start()) + 1

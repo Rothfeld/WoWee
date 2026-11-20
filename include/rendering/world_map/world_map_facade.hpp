@@ -94,50 +94,12 @@ public:
     void closeTaxiMap();
     [[nodiscard]] bool isTaxiMapOpen() const;
 
-    // ── What the interface needs to draw the same map itself ─────────
-    //
-    // The client keeps all of this and drew it only from here. FrameXML's
-    // world map asks for the same two things through GetMapOverlayInfo and
-    // GetMapLandmarkInfo, and had no way to reach them - the facade's whole
-    // public surface was setters.
-
-    /// The overlays for whatever the map is showing, in draw order. Empty at
-    /// continent and cosmic level, which have no per-zone art.
-    [[nodiscard]] std::vector<OverlayEntry> currentOverlays() const;
-    struct Highlight {
-        std::string file;
-        float texU = 0, texV = 0, width = 0, height = 0, x = 0, y = 0;
-    };
-    [[nodiscard]] Highlight highlightAtMapPoint(float u, float v);
-
-
-    /// The folder this map's art lives in under Interface\WorldMap, which is
-    /// also what GetMapInfo answers with. Empty at continent and cosmic level,
-    /// where the interface has names of its own for those.
-    [[nodiscard]] std::string currentMapFolder() const;
-
-    /// One area POI, already projected into the [0,1] map space the interface
-    /// places its pins in.
-    struct Landmark {
-        std::string name;
-        std::string description;
-        uint32_t iconType = 0;
-        float x = 0.0f, y = 0.0f;
-    };
-    /// The POIs on the shown map. Only those belonging to it, and only those
-    /// that project inside it.
-    [[nodiscard]] std::vector<Landmark> currentLandmarks() const;
-
-
     /// The zone under a point on the map being shown, in [0,1] map space, or
     /// -1. Continent view only: a zone's own map has no child zones to name.
     ///
     /// The same ZMP lookup the hover highlight does, and pulled out of it so
     /// the interface can ask about a point rather than about the mouse.
     [[nodiscard]] int zoneAtMapPoint(float u, float v) const;
-
-    /// The name of that zone, or empty.
-    [[nodiscard]] std::string zoneNameAtMapPoint(float u, float v) const;
 
     /// Drill into the zone under that point, as clicking it would.
     bool clickMapPoint(float u, float v);
@@ -153,18 +115,6 @@ public:
     bool mapUVForCanonical(float wowX, float wowY, float wowZ,
                            float& u, float& v, std::optional<uint32_t> sourceMapId = std::nullopt) const;
 
-    /// Step out one level: zone to continent, continent to world.
-    void zoomOutOneLevel();
-
-    // ── Navigating by name, the way the interface's dropdowns do ─────
-    //
-    // The interface offers a continent list and a zone list and sets the map
-    // from a pair of indices into them. Only clicking the map itself reached
-    // this before, so the two dropdowns and the zoom-out button drove nothing.
-
-    /// The continents, in the order 3.3.5 indexes them: Kalimdor, Eastern
-    /// Kingdoms, Outland, Northrend. Fixed rather than discovered, because the
-    /// index is what the interface passes back and addons hard-code it.
     /// Whether the map moved itself since this was last asked, and clears it.
     ///
     /// The interface rebuilds its two dropdowns on WORLD_MAP_UPDATE, and the
@@ -179,35 +129,12 @@ public:
     /// One-based continent index; empty for anything else.
     [[nodiscard]] std::vector<std::string> zoneNames(int continentIndex) const;
 
-    /// Show a continent, or one zone on it. Both indices one-based, as the
-    /// interface counts; zone zero means the continent itself. Continent zero
-    /// means the world.
-    bool showMap(int continentIndex, int zoneIndex);
-
-    /// What is being shown, in those same one-based indices. Zero for the
-    /// world, and zero zone for a continent.
-    [[nodiscard]] int currentContinentIndex() const;
-    [[nodiscard]] int currentZoneIndex() const;
-
-    /// Whether there is a level above this one to step out to.
-    [[nodiscard]] bool canZoomOut() const;
-
     /// Show the zone the player is standing in. The interface asks for this
     /// every time the map is shown, and used to reach nothing.
     void showPlayerZone();
 
     /// Resolve selection immediately, including when the map is hidden.
     void showPlayerZone(const glm::vec3& playerRenderPos);
-
-    /// The WorldMapArea id of the zone being shown, or zero when the map is
-    /// not showing one. This is the id the interface passes back to
-    /// showWorldMapArea - not the AreaTable id, and not the physical map the
-    /// terrain came from.
-    [[nodiscard]] uint32_t currentWorldMapAreaId() const;
-
-    /// Show the zone or continent with that WorldMapArea id. False if the map
-    /// data has no such area.
-    bool showWorldMapArea(uint32_t worldMapAreaId);
 
     /// Show the zone with that AreaTable id - what a quest names as its zone.
     /// False when it is not a zone of the map now loaded.

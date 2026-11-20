@@ -512,7 +512,7 @@ CHECKS = [
     # The tool carries its own canary, because two separate mistakes make it
     # report a clean zero while seeing nothing at all.
     ("parsed_never_read_check.py",
-     r"^(\d+) parsed and never read", 3,
+     r"^(\d+) parsed and never read", 0,
      "packet fields stored by the parser and read by nobody"),
     # The mirror of the row above: a field every reader agrees on and no writer
     # ever fills, so they all agree on the declaration's initialiser. Zero,

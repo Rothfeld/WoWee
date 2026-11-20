@@ -3346,7 +3346,6 @@ void SpellHandler::stopRestorationPresentation() {
     restorationActive_ = false;
     restorationSpellId_ = 0;
     restorationTimeRemaining_ = 0.0f;
-    restorationTimeTotal_ = 0.0f;
 }
 
 void SpellHandler::refreshRestorationFromPlayerAuras() {
@@ -3397,7 +3396,6 @@ void SpellHandler::refreshRestorationFromPlayerAuras() {
     restorationActive_ = true;
     restorationSpellId_ = spellId;
     restorationIsFood_ = restorationIsFood;
-    restorationTimeTotal_ = static_cast<float>(totalMs) / 1000.0f;
     restorationTimeRemaining_ = static_cast<float>(remainingMs) / 1000.0f;
 
     if (newlyActive) {
@@ -5080,7 +5078,6 @@ void SpellHandler::resetCastState() {
     restorationActive_ = false;
     restorationSpellId_ = 0;
     restorationTimeRemaining_ = 0.0f;
-    restorationTimeTotal_ = 0.0f;
     casting_ = false;
     castIsChannel_ = false;
     currentCastSpellId_ = 0;
@@ -5177,14 +5174,6 @@ uint32_t SpellHandler::getLearnedProficiency(uint32_t itemClass) const {
         }
     }
     return mask;
-}
-
-uint32_t GameHandler::getWeaponProficiency() const {
-    return weaponProficiency_ | (spellHandler_ ? spellHandler_->getLearnedProficiency(2) : 0);
-}
-
-uint32_t GameHandler::getArmorProficiency() const {
-    return armorProficiency_ | (spellHandler_ ? spellHandler_->getLearnedProficiency(4) : 0);
 }
 
 void SpellHandler::loadSpellNameCache() const {
@@ -6597,13 +6586,23 @@ void SpellHandler::handleDispelFailed(network::Packet& packet) {
     // Classic/Turtle have no dispelSpellId.
     if (!packet.hasRemaining(16)) return;
     const uint64_t dispelCasterGuid = packet.readUInt64();
-    /*uint64_t victim =*/ packet.readUInt64();
+    const uint64_t dispelVictimGuid = packet.readUInt64();
     uint32_t dispelSpellId = 0;
     if (!isClassicLikeExpansion()) {
         if (!packet.hasRemaining(4)) return;
         dispelSpellId = packet.readUInt32();
     }
-    // Only show failure to the player who attempted the dispel
+    uint32_t firstFailedSpellId = 0;
+    while (packet.hasRemaining(4)) {
+        const uint32_t failedSpellId = packet.readUInt32();
+        if (firstFailedSpellId == 0 && failedSpellId != 0) firstFailedSpellId = failedSpellId;
+    }
+    if (dispelCasterGuid == owner_.getPlayerGuid() || dispelVictimGuid == owner_.getPlayerGuid()) {
+        const uint32_t loggedSpellId = dispelSpellId != 0 ? dispelSpellId : firstFailedSpellId;
+        owner_.addCombatText(CombatTextEntry::RESIST, 0, loggedSpellId,
+                             dispelCasterGuid == owner_.getPlayerGuid(), 0,
+                             dispelCasterGuid, dispelVictimGuid, 0, false, false);
+    }
     if (dispelCasterGuid == owner_.getPlayerGuid()) {
         const auto& name = owner_.getSpellName(dispelSpellId);
         char buf[128];

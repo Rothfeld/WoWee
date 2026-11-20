@@ -267,4 +267,18 @@ private:
     SentPackets* sent_ = nullptr;
 };
 
+// CMaNGOS-TBC CharacterNameQueryResponse: guid, name, realm byte, race,
+// gender, class as uint32s, no declined names.
+inline wowee::network::Packet nameResponse(uint64_t guid, const std::string& name) {
+    wowee::network::Packet p(wowee::game::wireOpcode(Opcode::SMSG_NAME_QUERY_RESPONSE));
+    p.writeUInt64(guid);
+    p.writeString(name);
+    p.writeUInt8(0);
+    p.writeUInt32(1);
+    p.writeUInt32(0);
+    p.writeUInt32(4);
+    p.writeUInt8(0);
+    return p;
+}
+
 }  // namespace replay

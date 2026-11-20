@@ -74,16 +74,6 @@ int questLogRowForQuest(game::GameHandler* gh, uint32_t questId) {
     return gh ? gh->questLogIndexOf(questId) : 0;
 }
 
-void openInterfaceQuestLog(game::GameHandler& gh, uint32_t questId) {
-    const int row = questLogRowForQuest(&gh, questId);
-    if (row > 0) {
-        gh.runInterfaceCommand("QuestLog_OpenToQuest(" + std::to_string(row) + ")");
-    } else {
-        // Open, through the panel manager, so Escape (CloseAllWindows) closes it.
-        gh.runInterfaceCommand("ShowUIPanel(QuestLogFrame)");
-    }
-}
-
 namespace {
 
 /// The quest at an index, or null when that row is a header or the index is off
@@ -974,7 +964,10 @@ static int lua_UseQuestLogSpecialItem(lua_State* L) {
     auto* gh = getGameHandler(L);
     const int index = static_cast<int>(luaL_optnumber(L, 1, 0));
     const QuestSpecialItem item = questSpecialItemAt(gh, index);
-    if (!item.itemId) return 0;
+    if (!item.itemId) {
+        LOG_WARNING("UseQuestLogSpecialItem: no special item at index=", index);
+        return 0;
+    }
     if (item.bag == 0) gh->useItemBySlot(item.slot - 1);
     else               gh->useItemInBag(item.bag - 1, item.slot - 1);
     return 0;
@@ -4646,8 +4639,12 @@ void registerQuestLuaAPI(lua_State* L) {
                 // the item to put it on, as any spell aimed at an item does.
                 {"DoCraft", [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
-            const auto* r = gh ? craftAt(gh, static_cast<int>(luaL_optnumber(L, 1, 0))) : nullptr;
-            if (!r) return 0;
+            const int index = static_cast<int>(luaL_optnumber(L, 1, 0));
+            const auto* r = gh ? craftAt(gh, index) : nullptr;
+            if (!r) {
+                if (gh) LOG_WARNING("DoCraft: no craft at index=", index);
+                return 0;
+            }
             LOG_WARNING("DoCraft: '", r->name, "' spell=", r->spellId);
             gh->castSpell(r->spellId, 0);
             return 0;

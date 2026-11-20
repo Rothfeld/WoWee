@@ -29,6 +29,10 @@ macro(register_test_target _target)
     if(WIN32)
         target_link_libraries(${_target} PRIVATE ws2_32)
     endif()
+    if(WOWEE_ENABLE_ASAN AND NOT MSVC)
+        target_compile_options(${_target} PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+        target_link_options(${_target} PRIVATE -fsanitize=address,undefined)
+    endif()
 endmacro()
 
 # Shared source files used across multiple tests: see wowee_test_common below,
@@ -696,6 +700,7 @@ add_executable(test_autocast_shine
 target_include_directories(test_autocast_shine PRIVATE ${TEST_INCLUDE_DIRS})
 target_include_directories(test_autocast_shine SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
 target_link_libraries(test_autocast_shine PRIVATE catch2_main)
+wowee_test_link_glm(test_autocast_shine)
 add_test(NAME autocast_shine COMMAND test_autocast_shine)
 register_test_target(test_autocast_shine)
 
@@ -758,6 +763,7 @@ add_executable(test_wmo_portal_visibility
 target_include_directories(test_wmo_portal_visibility PRIVATE ${TEST_INCLUDE_DIRS})
 target_include_directories(test_wmo_portal_visibility SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
 target_link_libraries(test_wmo_portal_visibility PRIVATE catch2_main)
+wowee_test_link_glm(test_wmo_portal_visibility)
 add_test(NAME wmo_portal_visibility COMMAND test_wmo_portal_visibility)
 register_test_target(test_wmo_portal_visibility)
 
@@ -2427,6 +2433,7 @@ target_include_directories(test_wmo_material_class PRIVATE ${TEST_INCLUDE_DIRS})
 target_include_directories(test_wmo_material_class SYSTEM PRIVATE
     ${TEST_SYSTEM_INCLUDE_DIRS})
 target_link_libraries(test_wmo_material_class PRIVATE catch2_main)
+wowee_test_link_glm(test_wmo_material_class)
 add_test(NAME wmo_material_class COMMAND test_wmo_material_class)
 register_test_target(test_wmo_material_class)
 
@@ -2576,6 +2583,7 @@ target_include_directories(test_missile_homing PRIVATE ${TEST_INCLUDE_DIRS})
 target_include_directories(test_missile_homing SYSTEM PRIVATE
     ${TEST_SYSTEM_INCLUDE_DIRS})
 target_link_libraries(test_missile_homing PRIVATE catch2_main)
+wowee_test_link_glm(test_missile_homing)
 add_test(NAME missile_homing COMMAND test_missile_homing)
 register_test_target(test_missile_homing)
 
@@ -3100,26 +3108,6 @@ wowee_add_test(test_character_animator
         ${CMAKE_SOURCE_DIR}/src/rendering/animation/locomotion_fsm.cpp
         ${CMAKE_SOURCE_DIR}/src/rendering/animation/mount_fsm.cpp)
 
-# ── Sanitizers, once every test target exists ────────────────
-# This must be the last thing in this file. The loop walks ALL_TEST_TARGETS,
-# which register_test_target appends to as each test is declared, so the
-# equivalent block higher up only ever saw the targets above it -- 47 tests are
-# declared after it. `./test.sh --asan` was building those uninstrumented and
-# reporting them as passing.
-#
-# Re-applying to targets the earlier block already covered is harmless: the
-# flags are identical and repeat on the command line.
-get_property(ALL_TEST_TARGETS GLOBAL PROPERTY WOWEE_ALL_TEST_TARGETS)
-list(LENGTH ALL_TEST_TARGETS _wowee_test_target_count)
-message(STATUS "Test targets registered: ${_wowee_test_target_count}")
-
-if(WOWEE_ENABLE_ASAN AND NOT MSVC)
-    foreach(_t IN LISTS ALL_TEST_TARGETS)
-        target_compile_options(${_t} PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
-        target_link_options(${_t} PRIVATE -fsanitize=address,undefined)
-    endforeach()
-endif()
-
 # A precompiled header for the test targets was tried here and removed: with
 # ~140 executables each generating its own PCH, building them cost as much as
 # the re-parsing it saved (950.8 s of CPU against 945.2 s without). The main
@@ -3148,3 +3136,7 @@ wowee_add_test(test_playable_animation
             ${CMAKE_SOURCE_DIR}/src/pipeline/dbc_loader.cpp
             ${CMAKE_SOURCE_DIR}/src/pipeline/m2_loader.cpp)
 set_tests_properties(playable_animation PROPERTIES SKIP_RETURN_CODE 4)
+
+get_property(ALL_TEST_TARGETS GLOBAL PROPERTY WOWEE_ALL_TEST_TARGETS)
+list(LENGTH ALL_TEST_TARGETS _wowee_test_target_count)
+message(STATUS "Test targets registered: ${_wowee_test_target_count}")

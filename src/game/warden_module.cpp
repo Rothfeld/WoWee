@@ -69,8 +69,9 @@ bool WardenModule::load(const std::vector<uint8_t>& moduleData,
     // Step 1: Verify MD5 hash
     if (!verifyMD5(moduleData, md5Hash)) {
         LOG_WARNING("WardenModule: MD5 verification failed; continuing in compatibility mode");
+    } else {
+        LOG_INFO("WardenModule: MD5 verified");
     }
-    LOG_INFO("WardenModule: MD5 verified");
 
     // Step 2: RC4 decrypt (Warden protocol-required legacy RC4; server-mandated, cannot be changed)
     if (!decryptRC4(moduleData, rc4Key, decryptedData_)) { // codeql[cpp/weak-cryptographic-algorithm]

@@ -755,63 +755,6 @@ int WorldMapFacade::zoneAtMapPoint(float u, float v) const {
     return zoneIdx;
 }
 
-WorldMapFacade::Highlight WorldMapFacade::highlightAtMapPoint(float u, float v) {
-    auto& d = *impl_;
-    const int index = zoneAtMapPoint(u, v);
-    if (index < 0) return {};
-    const auto& zone = d.data.zones()[index];
-    bool continent = false;
-    const auto bounds = projectionBoundsFor(d.data.zones(), d.viewState.continentIdx(), continent);
-    const float spanX = bounds.locLeft - bounds.locRight;
-    const float spanY = bounds.locTop - bounds.locBottom;
-    if (!continent || spanX <= 0 || spanY <= 0) return {};
-    auto size = d.highlightSizes.find(zone.areaName);
-    if (size == d.highlightSizes.end()) {
-        const auto path = "Interface\\WorldMap\\" + zone.areaName + "\\" + zone.areaName + "Highlight.blp";
-        const auto texture = d.assetManager->loadTexture(path);
-        if (!texture.isValid()) {
-            LOG_ERROR("World map highlight unavailable: ", path);
-            return {};
-        }
-        size = d.highlightSizes.emplace(zone.areaName, glm::vec2(texture.width, texture.height)).first;
-    }
-    const float width = zone.bounds.locLeft - zone.bounds.locRight;
-    const float height = zone.bounds.locTop - zone.bounds.locBottom;
-    const float scale = std::min(size->second.x / width, size->second.y / height);
-    return {.file = zone.areaName,
-            .texU = std::floor(width * scale + 0.001f) / size->second.x,
-            .texV = std::floor(height * scale + 0.001f) / size->second.y,
-            .width = width / spanX, .height = height / spanY,
-            .x = (bounds.locLeft - zone.bounds.locLeft) / spanX,
-            .y = (bounds.locTop - zone.bounds.locTop) / spanY};
-}
-
-std::string WorldMapFacade::zoneNameAtMapPoint(float u, float v) const {
-    const auto& d = *impl_;
-    if (d.viewState.currentLevel() == ViewLevel::ZONE) {
-        const int index = d.viewState.currentZoneIdx();
-        if (index < 0 || index >= static_cast<int>(d.data.zones().size())) return {};
-        const auto& zone = d.data.zones()[index];
-        const int overlay = SubzoneTooltipLayer::overlayAt(zone, u, v);
-        if (overlay < 0 || !d.exploration.exploredOverlays().contains(overlay)) return {};
-        for (const auto areaId : zone.overlays[overlay].areaIDs) {
-            const auto found = d.data.areaNameByAreaId().find(areaId);
-            if (found != d.data.areaNameByAreaId().end()) return found->second;
-        }
-        return {};
-    }
-    const int idx = zoneAtMapPoint(u, v);
-    const auto& zones = impl_->data.zones();
-    if (idx < 0 || idx >= static_cast<int>(zones.size())) return {};
-    const uint32_t areaId = zones[static_cast<size_t>(idx)].areaID;
-    const auto& names = impl_->data.areaNameByAreaId();
-    auto it = names.find(areaId);
-    // The DBC's own area name, not the texture folder the zone is keyed by -
-    // those differ, and the folder is not what anyone wants to read.
-    if (it != names.end()) return it->second;
-    return zones[static_cast<size_t>(idx)].areaName;
-}
-
 bool WorldMapFacade::clickMapPoint(float u, float v) {
     const int idx = zoneAtMapPoint(u, v);
     if (idx < 0) return false;
@@ -819,33 +762,6 @@ bool WorldMapFacade::clickMapPoint(float u, float v) {
     return true;
 }
 
-void WorldMapFacade::zoomOutOneLevel() {
-    impl_->viewState.zoomOut();
-}
-
-std::string WorldMapFacade::currentMapFolder() const {
-    const int idx = impl_->viewState.currentZoneIdx();
-    const auto& zones = impl_->data.zones();
-    if (idx < 0 || idx >= static_cast<int>(zones.size())) return {};
-    return zones[static_cast<size_t>(idx)].areaName;
-}
-
-std::vector<OverlayEntry> WorldMapFacade::currentOverlays() const {
-    const int idx = impl_->viewState.currentZoneIdx();
-    const auto& zones = impl_->data.zones();
-    if (idx < 0 || idx >= static_cast<int>(zones.size())) return {};
-    // A continent has no overlay art of its own; its detail is the child
-    // zones' maps, which the interface reaches by drilling in.
-    if (zones[static_cast<size_t>(idx)].areaID == 0) return {};
-    std::vector<OverlayEntry> visible;
-    for (const auto& overlay : zones[static_cast<size_t>(idx)].overlays) {
-        // Query the server mask directly: Lua can switch maps and request
-        // overlays before the next render updates the cached zone indices.
-        if (impl_->exploration.isOverlayExplored(overlay, impl_->data.exploreFlagByAreaId()))
-            visible.push_back(overlay);
-    }
-    return visible;
-}
 bool WorldMapFacade::mapUVForCanonical(float wowX, float wowY, float wowZ,
                                        float& u, float& v, std::optional<uint32_t> sourceMapId) const {
     const int physicalMapId = folderToMapId(impl_->physicalMapName);
@@ -870,35 +786,6 @@ bool WorldMapFacade::mapUVForCanonical(float wowX, float wowY, float wowZ,
     u = uv.x;
     v = uv.y;
     return true;
-}
-
-std::vector<WorldMapFacade::Landmark> WorldMapFacade::currentLandmarks() const {
-    const int idx = impl_->viewState.currentZoneIdx();
-    const auto& zones = impl_->data.zones();
-    if (idx < 0 || idx >= static_cast<int>(zones.size())) return {};
-    const Zone& zone = zones[static_cast<size_t>(idx)];
-    const bool isContinent = (zone.areaID == 0);
-
-    std::vector<Landmark> out;
-    for (const POI& poi : impl_->data.poiMarkers()) {
-        if (poi.mapId != zone.mapID) continue;
-        // The POI carries canonical WoW coordinates and the projection wants
-        // render space, which is the same swap every other caller makes.
-        const glm::vec2 uv = renderPosToMapUV(
-            core::coords::canonicalToRender(glm::vec3(poi.wowX, poi.wowY, poi.wowZ)),
-            zone.bounds, isContinent);
-        // Outside the map it is on some other part of the continent, and a pin
-        // clamped to the edge is worse than no pin.
-        if (uv.x < 0.0f || uv.x > 1.0f || uv.y < 0.0f || uv.y > 1.0f) continue;
-        Landmark mark;
-        mark.name = poi.name;
-        mark.description = poi.description;
-        mark.iconType = poi.iconType;
-        mark.x = uv.x;
-        mark.y = uv.y;
-        out.push_back(std::move(mark));
-    }
-    return out;
 }
 
 void WorldMapFacade::setPlayerZoneId(uint32_t zoneId) {
@@ -1657,61 +1544,6 @@ std::vector<std::string> WorldMapFacade::zoneNames(int continentIndex) const {
     return out;
 }
 
-bool WorldMapFacade::showMap(int continentIndex, int zoneIndex) {
-    // Continent zero is the world, which is what the zoom-out button asks for
-    // from a continent.
-    if (continentIndex <= 0) {
-        impl_->viewState.enterWorldView();
-        return true;
-    }
-    if (continentIndex > kContinentCount) return false;
-    impl_->switchToMap(mapIdToFolder(kContinents[continentIndex - 1].mapId));
-    impl_->userMapOverride = true;
-    const auto& zones = impl_->data.zones();
-    const int contIdx = continentZoneIdx(
-        zones, kContinents[continentIndex - 1].mapId);
-    if (contIdx < 0) return false;
-
-    if (zoneIndex <= 0) {
-        impl_->viewState.setContinentIdx(contIdx);
-        impl_->viewState.setCurrentZoneIdx(contIdx);
-        impl_->viewState.setLevel(ViewLevel::CONTINENT);
-        return true;
-    }
-    const auto rows = zonesOnContinent(zones, impl_->data.areaNameByAreaId(), contIdx);
-    if (zoneIndex > static_cast<int>(rows.size())) return false;
-    impl_->viewState.setContinentIdx(contIdx);
-    impl_->viewState.enterZone(rows[static_cast<size_t>(zoneIndex) - 1].second);
-    return true;
-}
-
-int WorldMapFacade::currentContinentIndex() const {
-    const auto& zones = impl_->data.zones();
-    const int contIdx = impl_->viewState.continentIdx();
-    if (contIdx < 0 || contIdx >= static_cast<int>(zones.size())) return 0;
-    if (impl_->viewState.currentLevel() == ViewLevel::WORLD ||
-        impl_->viewState.currentLevel() == ViewLevel::COSMIC) {
-        return 0;
-    }
-    const uint32_t mapId = zones[static_cast<size_t>(contIdx)].mapID;
-    for (int i = 0; i < kContinentCount; ++i) {
-        if (kContinents[i].mapId == mapId) return i + 1;
-    }
-    return 0;
-}
-
-int WorldMapFacade::currentZoneIndex() const {
-    if (impl_->viewState.currentLevel() != ViewLevel::ZONE) return 0;
-    const int contIdx = impl_->viewState.continentIdx();
-    const int zoneIdx = impl_->viewState.currentZoneIdx();
-    const auto rows = zonesOnContinent(
-        impl_->data.zones(), impl_->data.areaNameByAreaId(), contIdx);
-    for (size_t i = 0; i < rows.size(); ++i) {
-        if (rows[i].second == zoneIdx) return static_cast<int>(i) + 1;
-    }
-    return 0;
-}
-
 bool WorldMapFacade::takeViewChanged() {
     const bool was = impl_->viewChanged;
     impl_->viewChanged = false;
@@ -1732,38 +1564,6 @@ void WorldMapFacade::showPlayerZone(const glm::vec3& playerRenderPos) {
     preparePlayerZone(playerRenderPos);
 }
 
-uint32_t WorldMapFacade::currentWorldMapAreaId() const {
-    // Zero unless a zone is being shown. The interface branches on exactly
-    // that: a continent has no area of its own to name, and the caller falls
-    // back to asking which continent instead.
-    if (impl_->viewState.currentLevel() != ViewLevel::ZONE) return 0;
-    const int idx = impl_->viewState.currentZoneIdx();
-    const auto& zones = impl_->data.zones();
-    if (idx < 0 || idx >= static_cast<int>(zones.size())) return 0;
-    if (zones[static_cast<size_t>(idx)].areaID == 0) return 0;
-    return zones[static_cast<size_t>(idx)].wmaID;
-}
-
-bool WorldMapFacade::showWorldMapArea(uint32_t worldMapAreaId) {
-    if (worldMapAreaId == 0) return false;
-    const auto& zones = impl_->data.zones();
-    for (size_t i = 0; i < zones.size(); ++i) {
-        if (zones[i].wmaID != worldMapAreaId) continue;
-        // A continent is a zone with no area of its own, and entering one as
-        // if it were a zone would show its overview at zone level.
-        if (zones[i].areaID == 0) {
-            impl_->viewState.setContinentIdx(static_cast<int>(i));
-            impl_->viewState.setCurrentZoneIdx(static_cast<int>(i));
-            impl_->viewState.setLevel(ViewLevel::CONTINENT);
-        } else {
-            impl_->viewState.enterZone(static_cast<int>(i));
-        }
-        impl_->userMapOverride = true;
-        return true;
-    }
-    return false;
-}
-
 bool WorldMapFacade::showAreaZone(uint32_t areaTableId) {
     if (areaTableId == 0) return false;
     auto& d = *impl_;
@@ -1780,15 +1580,6 @@ bool WorldMapFacade::showAreaZone(uint32_t areaTableId) {
         return true;
     }
     return false;
-}
-
-bool WorldMapFacade::canZoomOut() const {
-    // Everything but the outermost view has somewhere to go. The button that
-    // asks this was disabled at all times, so the only way out of a zone map
-    // was the right-click the same handler also answers.
-    const ViewLevel level = impl_->viewState.currentLevel();
-    return level == ViewLevel::ZONE || level == ViewLevel::CONTINENT ||
-           (level == ViewLevel::WORLD && impl_->viewState.cosmicEnabled());
 }
 
 } // namespace world_map

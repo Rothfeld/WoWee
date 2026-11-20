@@ -53,7 +53,6 @@ private:
     bool mounted_ = false;
     bool moving_ = false;
     bool flying_ = false;
-    uint32_t displayId_ = 0;
     uint32_t soundData_ = 0;
     float volumeScale_ = 0.7f;
 };

@@ -8,12 +8,9 @@
 #include "pipeline/m2_loader.hpp"
 #include "rendering/animation/animation_ids.hpp"
 #include "rendering/animation/playable_animation.hpp"
+#include "tbc_data_test_util.hpp"
 
 #include <algorithm>
-#include <cstdlib>
-#include <filesystem>
-#include <fstream>
-#include <iterator>
 #include <map>
 
 using namespace wowee;
@@ -42,18 +39,10 @@ std::optional<rendering::PlayableStandIn> standIn(const pipeline::M2Model& model
         [&](uint32_t want) { return data.flags.count(want) ? data.flags.at(want) : 0u; });
 }
 
-std::vector<uint8_t> readData(const char* relative) {
-    const char* root = std::getenv("WOWEE_TBC_DATA_DIR");
-    if (!root || !*root) SKIP("Set WOWEE_TBC_DATA_DIR to client/wowee-data/expansions/tbc");
-    std::ifstream in(std::filesystem::path(root) / relative, std::ios::binary);
-    std::vector<uint8_t> bytes{std::istreambuf_iterator<char>(in), {}};
-    REQUIRE_FALSE(bytes.empty());
-    return bytes;
-}
-
 AnimationData loadAnimationData() {
+    const auto raw = test::readTbcData("dbfilesclient/animationdata.dbc");
     pipeline::DBCFile dbc;
-    REQUIRE(dbc.load(readData("dbfilesclient/animationdata.dbc")));
+    REQUIRE(dbc.load(raw));
     AnimationData data;
     for (uint32_t row = 0; row < dbc.getRecordCount(); ++row) {
         data.flags[dbc.getUInt32(row, 0)] = dbc.getUInt32(row, 5);
@@ -80,7 +69,7 @@ TEST_CASE("The playable lookup decides where it disagrees with AnimationData", "
     // NetherDragon.m2 has ReadyUnarmed but no StandWound or parry. The DBC
     // chain ParryUnarmed -> StandWound -> ReadyUnarmed; its lookup and native
     // 8606 (`.npc playemote 39` on JAB Nether Serpent 21329): Stand.
-    const auto serpent = pipeline::M2Loader::load(readData("creature/netherdragon/netherdragon.m2"));
+    const auto serpent = pipeline::M2Loader::load(test::readTbcData("creature/netherdragon/netherdragon.m2"));
     REQUIRE(serpent.playableAnimations.size() == 203);
     CHECK(data.fallback.at(A::PARRY_UNARMED) == A::STAND_WOUND);
     CHECK(data.fallback.at(A::STAND_WOUND) == A::READY_UNARMED);
@@ -92,7 +81,7 @@ TEST_CASE("The playable lookup decides where it disagrees with AnimationData", "
         CHECK_FALSE(shown->frozenAtEnd);
     }
     // Wendigo.m2 (Ice Thistle Yeti) has no ready stance at all.
-    const auto yeti = pipeline::M2Loader::load(readData("creature/wendigo/wendigo.m2"));
+    const auto yeti = pipeline::M2Loader::load(test::readTbcData("creature/wendigo/wendigo.m2"));
     CHECK(standIn(yeti, A::READY_UNARMED, data)->animationId == A::STAND);
     CHECK(standIn(yeti, A::READY_2H, data)->animationId == A::STAND);
     CHECK(standIn(yeti, A::ATTACK_2H, data)->animationId == A::ATTACK_1H);
@@ -100,7 +89,7 @@ TEST_CASE("The playable lookup decides where it disagrees with AnimationData", "
 
 TEST_CASE("Playable lookup flags: 3 frozen on the last frame, 1 backwards", "[animation][assets]") {
     const auto data = loadAnimationData();
-    const auto human = pipeline::M2Loader::load(readData("character/human/male/humanmale.m2"));
+    const auto human = pipeline::M2Loader::load(test::readTbcData("character/human/male/humanmale.m2"));
     const auto dead = standIn(human, A::DEAD, data);
     REQUIRE(dead);
     CHECK(dead->animationId == A::DEATH);
@@ -114,7 +103,7 @@ TEST_CASE("Playable lookup flags: 3 frozen on the last frame, 1 backwards", "[an
     CHECK(lootUp->animationId == A::LOOT);
     CHECK(lootUp->reversed);
     CHECK_FALSE(lootUp->frozenAtEnd);
-    const auto gnoll = pipeline::M2Loader::load(readData("creature/gnoll/gnoll.m2"));
+    const auto gnoll = pipeline::M2Loader::load(test::readTbcData("creature/gnoll/gnoll.m2"));
     const auto backwards = standIn(gnoll, A::WALK_BACKWARDS, data);
     REQUIRE(backwards);
     CHECK(backwards->animationId == A::WALK);

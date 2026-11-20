@@ -64,20 +64,6 @@ Packet channelLine(const std::string& channel, uint64_t sender, const std::strin
     return p;
 }
 
-// CMaNGOS-TBC CharacterNameQueryResponse: guid, name, realm byte, race,
-// gender, class as uint32s, no declined names.
-Packet nameResponse(uint64_t guid, const std::string& name) {
-    Packet p(wowee::game::wireOpcode(Opcode::SMSG_NAME_QUERY_RESPONSE));
-    p.writeUInt64(guid);
-    p.writeString(name);
-    p.writeUInt8(0);
-    p.writeUInt32(1);
-    p.writeUInt32(0);
-    p.writeUInt32(4);
-    p.writeUInt8(0);
-    return p;
-}
-
 std::string luaAnswer(lua_State* L, const std::string& chunk) {
     const std::string code = "local out = {} local r = {" + chunk +
         "} for i = 1, table.maxn(r) do out[i] = tostring(r[i]) end return table.concat(out, ',')";
@@ -120,7 +106,7 @@ TEST_CASE("Channel numbers stay put when a channel is left", "[replay][social][c
     s.receive(youJoined("ee"));
     CHECK(luaAnswer(L, "GetChannelList()") == "1,aa,2,dd,3,ee");
 
-    s.receive(nameResponse(77, "Edriko"));
+    s.receive(replay::nameResponse(77, "Edriko"));
     s.receive(channelLine("dd", 77, "hello"));
     REQUIRE(lines.size() == 1);
     REQUIRE(lines[0].size() >= 9);

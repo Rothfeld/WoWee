@@ -326,14 +326,25 @@ std::vector<std::string> chatLines(Session& s) {
 
 }  // namespace
 
-TEST_CASE("weather is announced once per kind, and clears only after weather", "[replay]") {
+TEST_CASE("weather updates state and fires WEATHER_CHANGED without chat lines", "[replay]") {
     Session s;
+    std::vector<std::pair<std::string, std::vector<std::string>>> events;
+    s.handler().setAddonEventCallback(
+        [&events](const std::string& name, const std::vector<std::string>& args) {
+            if (name == "WEATHER_CHANGED") events.emplace_back(name, args);
+        });
     s.receive(weather(3, 0.3f));
+    CHECK(s.handler().isRaining());
     s.receive(weather(5, 0.9f));
+    CHECK(s.handler().isRaining());
     s.receive(weather(0, 0.0f));
+    CHECK_FALSE(s.handler().isRaining());
     s.receive(weather(1, 0.5f));
+    CHECK_FALSE(s.handler().isRaining());
     s.receive(weather(0, 0.0f));
-    CHECK(chatLines(s) == std::vector<std::string>{"It begins to rain.", "The weather clears."});
+    CHECK_FALSE(s.handler().isRaining());
+    CHECK(chatLines(s).empty());
+    CHECK(events.size() == 5);
 }
 
 TEST_CASE("faint rain is not rain", "[replay]") {
@@ -821,6 +832,25 @@ TEST_CASE("TBC daze speed changes and recovery are applied and acknowledged", "[
 
 TEST_CASE("TBC loot setting feedback follows server changes once", "[party][tbc][loot-settings]") {
     Session s("tbc");
+    s.handler().setGlobalStringLookup([](const char* name) -> std::string {
+        static const std::vector<std::pair<std::string, std::string>> strings = {
+            {"ERR_SET_LOOT_FREEFORALL", "Looting changed to Free for All."},
+            {"ERR_SET_LOOT_ROUNDROBIN", "Looting changed to Round Robin."},
+            {"ERR_SET_LOOT_MASTER", "Looting changed to Master Looter."},
+            {"ERR_SET_LOOT_GROUP", "Looting changed to Group Loot."},
+            {"ERR_SET_LOOT_NBG", "Looting set to Need Before Greed."},
+            {"ERR_SET_LOOT_THRESHOLD_S", "Loot threshold set to %s."},
+            {"ERR_NEW_LOOT_MASTER_S", "%s is now the loot master."},
+            {"ITEM_QUALITY2_DESC", "Uncommon"},
+            {"ITEM_QUALITY3_DESC", "Rare"},
+            {"OPT_OUT_LOOT_TOGGLE_ON", "You are now passing on random loot."},
+            {"OPT_OUT_LOOT_TOGGLE_OFF", "You are now eligible for random loot."},
+        };
+        for (const auto& [key, text] : strings) {
+            if (key == name) return text;
+        }
+        return {};
+    });
     auto roster = [&](uint8_t method, uint8_t threshold, uint64_t master) {
         wowee::network::Packet p(wowee::game::wireOpcode(wowee::game::Opcode::SMSG_GROUP_LIST));
         p.writeUInt8(0); p.writeUInt8(0); p.writeUInt8(0); p.writeUInt8(0);

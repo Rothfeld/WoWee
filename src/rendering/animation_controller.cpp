@@ -116,13 +116,6 @@ void AnimationController::playEmote(const std::string& emoteName) {
     }
 }
 
-void AnimationController::playOneShotAnimation(uint32_t animationId) {
-    characterAnimator_.playEmote(animationId, false);
-    renderer_->getCharacterRenderer()->playAnimation(renderer_->getCharacterInstanceId(), animationId, false);
-    lastPlayerAnimRequest_ = animationId;
-    lastPlayerAnimLoopRequest_ = false;
-}
-
 void AnimationController::playWeaponSheathAnimation(SheathSpot mainHand, SheathSpot offHand) {
     if (!renderer_) return;
     auto* characterRenderer = renderer_->getCharacterRenderer();

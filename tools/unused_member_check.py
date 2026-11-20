@@ -130,7 +130,8 @@ def main():
             if init.search(raw):
                 continue                       # a constructor initialiser
             m = assign.search(raw)
-            if m and name not in raw[m.end():]:
+            if m and not re.search(r"\b%s\b" % re.escape(name), raw[:m.start()]) \
+                    and name not in raw[m.end():]:
                 continue                       # written and not also read here
             return False                       # anything else reads it
         return True
@@ -213,25 +214,21 @@ def main():
             # A static or constexpr constant is not one, and `operator` is the
             # tail of a deleted assignment operator rather than a member name.
             if name == "operator" or re.search(
-                    r"\b(?:static|constexpr|enum|using|typedef)\b", decl_line):
+                    r"\b(?:static|constexpr|enum|using|typedef|friend|return)\b", decl_line):
                 continue
-            if not is_write_only(name, header, decl_line, scope):
-                continue
-            line = text.count("\n", 0, m.start()) + 1
-            entry = (str(header.relative_to(ROOT)), line, name)
-            # The debt count stays on the trailing-underscore convention it
-            # was built for: its read/write analysis works off an index keyed
-            # that way, and widening it there would report every local that
-            # shares a name. The clang question below is asked of every member.
             if name.endswith("_"):
+                if not is_write_only(name, header, decl_line, scope):
+                    continue
+                line = text.count("\n", 0, m.start()) + 1
+                entry = (str(header.relative_to(ROOT)), line, name)
                 dead.append(entry)
-            # Clang's -Wunused-private-field fires only for a member nothing
-            # mentions at all; a write still counts as a use. That subset is a
-            # build failure on the Windows image, so it is counted apart from
-            # the rest, which is debt rather than breakage.
-            if never_referenced(name, header, decl_line, scope) and \
-                    is_private_at(text, m.start()):
-                unreferenced.append(entry)
+                if is_private_at(text, m.start()) and \
+                        never_referenced(name, header, decl_line, scope):
+                    unreferenced.append(entry)
+            elif is_private_at(text, m.start()) and \
+                    never_referenced(name, header, decl_line, scope):
+                line = text.count("\n", 0, m.start()) + 1
+                unreferenced.append((str(header.relative_to(ROOT)), line, name))
 
     print(f"{len(headers)} headers, {len(lines_for)} member names\n")
     print(f"{len(dead)} members stored and never read:")

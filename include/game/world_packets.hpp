@@ -3455,7 +3455,6 @@ struct GuildBankTab {
 struct GuildBankData {
     uint64_t money = 0;
     uint8_t tabId = 0;
-    int32_t withdrawAmount = -1;  // Tab remaining item withdrawals from SMSG_GUILD_BANK_LIST (-1 = unlimited)
     int32_t moneyWithdrawRemaining = -1;  // Remaining daily copper from MSG_GUILD_BANK_MONEY_WITHDRAWN / MSG_GUILD_PERMISSIONS
     bool hasMoneyWithdrawRemaining = false;
     int32_t playerRankId = -1;  // Guild rank id from MSG_GUILD_PERMISSIONS (0 = GM)

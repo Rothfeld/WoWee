@@ -90,6 +90,7 @@ EXPECTED_FIELD_ONLY = {
     # behaviour from drifting apart.
     "IsEventRegistered": "__events",
     "UnregisterAllEvents": "__events",
+    "SetAttribute": "__scripts for OnAttributeChanged; attributes live in __WoweePriv",
 }
 
 

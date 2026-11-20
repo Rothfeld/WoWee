@@ -68,24 +68,7 @@ layout(location = 7) in vec3 VertexSpecular;
 
 layout(location = 0) out vec4 outColor;
 
-// One texel of the shadow map, handed in by the renderer. The map is 512,
-// 1024, 2048 or 4096 a side by the quality setting; this used to be a
-// constant for 4096, so at 512 the filter taps all landed inside one texel
-// and the bias shrank eightfold. The fallback covers a per-frame block that
-// never filled the slot in, such as the character preview's.
-float shadowTexel() {
-    return shadowParams.z > 0.0 ? shadowParams.z : 1.0 / 4096.0;
-}
-
-float sampleShadowPCF(sampler2DShadow smap, vec3 coords) {
-    float shadow = 0.0;
-    for (int x = -1; x <= 1; ++x) {
-        for (int y = -1; y <= 1; ++y) {
-            shadow += texture(smap, vec3(coords.xy + vec2(x, y) * shadowTexel(), coords.z));
-        }
-    }
-    return shadow / 9.0;
-}
+#include "shadow_pcf.glsli"
 
 vec3 localLightContribution(vec3 pos, vec3 normal, vec3 albedo) {
     vec3 sum = vec3(0.0);

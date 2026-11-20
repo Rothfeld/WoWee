@@ -1605,8 +1605,13 @@ static int lua_DeleteEquipmentSet(lua_State* L) {
 
 static int lua_UseEquipmentSet(lua_State* L) {
     auto* gh = getGameHandler(L);
-    const auto* set = equipmentSetByName(gh, luaL_optstring(L, 1, ""));
-    if (!gh || !set) { lua_pushboolean(L, 0); return 1; }
+    const char* name = luaL_optstring(L, 1, "");
+    const auto* set = equipmentSetByName(gh, name);
+    if (!gh || !set) {
+        if (gh) LOG_WARNING("UseEquipmentSet: unknown set '", name, "'");
+        lua_pushboolean(L, 0);
+        return 1;
+    }
     gh->useEquipmentSet(set->setId);
     // The manager waits on this before refreshing and clearing the slots it was
     // told to ignore.
@@ -1807,7 +1812,10 @@ static int lua_EquipItemByName(lua_State* L) {
     auto* gh = getGameHandler(L);
     if (!gh) return 0;
     const uint32_t itemId = carriedItemMatching(gh, L, 1);
-    if (itemId == 0) return 0;
+    if (itemId == 0) {
+        LOG_WARNING("EquipItemByName: no carried item matched");
+        return 0;
+    }
     const int wantSlot = static_cast<int>(luaL_optnumber(L, 2, 0));
     // Zero is "no slot named", not slot zero - the interface's own numbering
     // starts at one, so there is no ambiguity to resolve.
@@ -3832,9 +3840,15 @@ static int lua_RollOnLoot(lua_State* L) {
     auto* gh = getGameHandler(L);
     const int rollId = static_cast<int>(luaL_optnumber(L, 1, 0));
     const auto* roll = rollFor(gh, rollId);
-    if (!roll) return 0;
+    if (!roll) {
+        LOG_WARNING("RollOnLoot: unknown rollId=", rollId);
+        return 0;
+    }
     const int type = static_cast<int>(luaL_optnumber(L, 2, 0));
-    if (type < 0 || type > 3) return 0;
+    if (type < 0 || type > 3) {
+        LOG_WARNING("RollOnLoot: invalid roll type=", type);
+        return 0;
+    }
 
     // Rolling for something that will bind asks first. CONFIRM_LOOT_ROLL is
     // raised by the client rather than the server - uiparent.lua answers it
@@ -3862,10 +3876,17 @@ static int lua_RollOnLoot(lua_State* L) {
 // the only caller. Sends without asking again, because this *is* the asking.
 static int lua_ConfirmLootRoll(lua_State* L) {
     auto* gh = getGameHandler(L);
-    const auto* roll = rollFor(gh, static_cast<int>(luaL_optnumber(L, 1, 0)));
-    if (!roll) return 0;
+    const int rollId = static_cast<int>(luaL_optnumber(L, 1, 0));
+    const auto* roll = rollFor(gh, rollId);
+    if (!roll) {
+        LOG_WARNING("ConfirmLootRoll: unknown rollId=", rollId);
+        return 0;
+    }
     const int type = static_cast<int>(luaL_optnumber(L, 2, 0));
-    if (type < 0 || type > 3) return 0;
+    if (type < 0 || type > 3) {
+        LOG_WARNING("ConfirmLootRoll: invalid roll type=", type);
+        return 0;
+    }
     gh->sendLootRoll(roll->objectGuid, roll->slot, static_cast<uint8_t>(type));
     return 0;
 }
@@ -5075,7 +5096,10 @@ void registerInventoryLuaAPI(lua_State* L) {
             const uint32_t bid = static_cast<uint32_t>(luaL_optnumber(L, 3, 0));
             if (!gh) return 0;
             const auto& res = auctionListFor(gh, list);
-            if (index < 1 || index > static_cast<int>(res.auctions.size())) return 0;
+            if (index < 1 || index > static_cast<int>(res.auctions.size())) {
+                LOG_WARNING("PlaceAuctionBid: index ", index, " out of range (", res.auctions.size(), ")");
+                return 0;
+            }
             const auto& a = res.auctions[index - 1];
             if (a.buyoutPrice != 0 && bid >= a.buyoutPrice) {
                 gh->auctionBuyout(a.auctionId, a.buyoutPrice);
@@ -5089,7 +5113,10 @@ void registerInventoryLuaAPI(lua_State* L) {
             const int index = static_cast<int>(luaL_optnumber(L, 1, 0));
             if (!gh) return 0;
             const auto& res = gh->getAuctionOwnerResults();
-            if (index < 1 || index > static_cast<int>(res.auctions.size())) return 0;
+            if (index < 1 || index > static_cast<int>(res.auctions.size())) {
+                LOG_WARNING("CancelAuction: index ", index, " out of range (", res.auctions.size(), ")");
+                return 0;
+            }
             gh->auctionCancelItem(res.auctions[index - 1].auctionId);
             return 0;
         }},
@@ -5119,7 +5146,10 @@ void registerInventoryLuaAPI(lua_State* L) {
                 static_cast<uint32_t>(luaL_optnumber(L, 3, 1)));
             uint64_t guid = 0;
             const auto* item = auctionSellItemSlot(gh, &guid);
-            if (!item || guid == 0) return 0;
+            if (!item || guid == 0) {
+                LOG_WARNING("StartAuction: no item in auction sell slot");
+                return 0;
+            }
             // The fourth argument is the size of one stack; the fifth is how
             // many such stacks to post, which this sends one of - the request
             // builder writes a single item and posting several would be a

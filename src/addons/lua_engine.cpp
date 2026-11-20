@@ -1769,24 +1769,25 @@ int lua_Frame_SetAttribute(lua_State* L) {
     luaL_checktype(L, 1, LUA_TTABLE);
     luaL_checkany(L, 2);
     luaL_checkany(L, 3);
-    lua_getfield(L, 1, "__attributes");
+    privGetField(L, 1, "__attributes");
     if (!lua_istable(L, -1)) {
         lua_pop(L, 1);
         lua_newtable(L);
         lua_pushvalue(L, -1);
-        lua_setfield(L, 1, "__attributes");
+        privSetField(L, 1, "__attributes");
     }
     lua_pushvalue(L, 2);
     lua_pushvalue(L, 3);
     lua_settable(L, -3);
     lua_pop(L, 1);
     lua_getfield(L, 1, "__scripts");
-    if (!lua_istable(L, -1)) return 0;
+    if (!lua_istable(L, -1)) { lua_pop(L, 1); return 0; }
     lua_getfield(L, -1, "OnAttributeChanged");
-    if (!lua_isfunction(L, -1)) return 0;
+    if (!lua_isfunction(L, -1)) { lua_pop(L, 2); return 0; }
     lua_remove(L, -2);
     for (int i = 1; i <= 3; ++i) lua_pushvalue(L, i);
-    if (pcallScript(L, "OnAttributeChanged", 3, 0) != 0) return lua_error(L);
+    if (pcallScript(L, "OnAttributeChanged", 3, 0) != 0)
+        recordScriptError(L, "OnAttributeChanged");
     return 0;
 }
 /// GetChecked. 1 when ticked and nil when not, which is what 3.3.5 answers and
@@ -8833,9 +8834,9 @@ void LuaEngine::registerCoreAPI() {
         //
         // The order is the client's: most specific first, the bare name last.
         "function mt:GetAttribute(a, b, c)\n"
-        "    if not self.__attributes then return nil end\n"
-        "    if b == nil then return self.__attributes[a] end\n"
-        "    local at = self.__attributes\n"
+        "    local at = __WoweePriv(self).__attributes\n"
+        "    if not at then return nil end\n"
+        "    if b == nil then return at[a] end\n"
         "    local p, s = a or '', c or ''\n"
         "    local v = at[p .. b .. s]\n"
         "    if v == nil then v = at['*' .. b .. s] end\n"

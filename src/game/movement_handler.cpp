@@ -772,7 +772,6 @@ void MovementHandler::sendMovement(Opcode opcode) {
             break;
         case Opcode::MSG_MOVE_JUMP:
             movementInfo.flags |= static_cast<uint32_t>(MovementFlags::FALLING);
-            isFalling_ = true;
             fallStartMs_ = movementInfo.time;
             movementInfo.fallTime = 0;
             movementInfo.jumpVelocity = movementInfo.hasFlag(MovementFlags::SWIMMING) ? 9.1f : 7.96f;
@@ -822,7 +821,6 @@ void MovementHandler::sendMovement(Opcode opcode) {
             }
             movementInfo.flags &= ~static_cast<uint32_t>(MovementFlags::FALLING);
             applyPendingStops();
-            isFalling_ = false;
             fallStartMs_ = 0;
             movementInfo.jumpVelocity = 0.0f;
             movementInfo.jumpSinAngle = 0.0f;
@@ -859,7 +857,6 @@ void MovementHandler::sendMovement(Opcode opcode) {
             // jump into a lake left FALLING set with fallTime still climbing.
             movementInfo.flags &= ~static_cast<uint32_t>(MovementFlags::FALLING);
             applyPendingStops();
-            isFalling_ = false;
             fallStartMs_ = 0;
             movementInfo.fallTime = 0;
             movementInfo.jumpVelocity = 0.0f;
@@ -919,7 +916,6 @@ void MovementHandler::sendMovement(Opcode opcode) {
         assert(movementInfo.time >= fallStartMs_);
         movementInfo.fallTime = movementInfo.time - fallStartMs_;
     } else {
-        isFalling_ = false;
         fallStartMs_ = 0;
     }
 

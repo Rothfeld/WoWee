@@ -130,7 +130,6 @@ public:
     /// Leave spell cast animation state at once, with no release animation.
     void cancelSpellCast();
     void setSeatedLoopAnimation(uint32_t animationId);
-    void playOneShotAnimation(uint32_t animationId);
 
     // ── Loot animation ─────────────────────────────────────────────────────
     void startLooting();

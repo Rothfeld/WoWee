@@ -249,7 +249,6 @@ public:
         if (!hasSentMovement_) return std::nullopt;
         return lastSentOrientation_;
     }
-    void setFalling(bool falling) { isFalling_ = falling; }
     void setFallStartMs(uint32_t ms) { fallStartMs_ = ms; }
 
     // Taxi state references for GameHandler update/processing
@@ -326,7 +325,6 @@ private:
     uint32_t monsterMovePacketsDroppedThisTick_ = 0;
 
     // Fall/jump tracking
-    bool isFalling_ = false;
     uint32_t fallStartMs_ = 0;
 
     // Physics samples for packet timestamps; see beginFrame.
