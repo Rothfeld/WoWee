@@ -116,6 +116,7 @@ const KeybindingManager::Bindings& legacyV2KeyboardDefaults() {
             {"TOGGLERUN", {"NUMPADDIVIDE", ""}}, {"TOGGLESHEATH", {"Z", ""}},
             {"OPENCHATSLASH", {"/", ""}}, {"TARGETNEARESTENEMY", {"TAB", ""}},
             {"SCREENSHOT", {"PRINTSCREEN", ""}}, {"FRIENDNAMEPLATES", {"SHIFT-V", ""}},
+        {"ALLNAMEPLATES", {"CTRL-V", ""}},
             {"WOWEETOGGLERECORDING", {"SHIFT-PRINTSCREEN", ""}},
             {"CAMERAZOOMIN", {"MOUSEWHEELUP", ""}}, {"CAMERAZOOMOUT", {"MOUSEWHEELDOWN", ""}},
             {"WOWEERESETCAMERA", {"R", ""}},
@@ -188,6 +189,7 @@ void KeybindingManager::initializeDefaults(Device device) {
         {"TOGGLERUN", {"NUMPADDIVIDE", ""}}, {"TOGGLESHEATH", {"Z", ""}},
         {"OPENCHATSLASH", {"/", ""}}, {"TARGETNEARESTENEMY", {"TAB", ""}},
         {"SCREENSHOT", {"PRINTSCREEN", ""}}, {"FRIENDNAMEPLATES", {"SHIFT-V", ""}},
+        {"ALLNAMEPLATES", {"CTRL-V", ""}},
         {"WOWEETOGGLERECORDING", {"SHIFT-PRINTSCREEN", ""}},
         {"CAMERAZOOMIN", {"MOUSEWHEELUP", ""}}, {"CAMERAZOOMOUT", {"MOUSEWHEELDOWN", ""}},
         {"WOWEERESETCAMERA", {"R", ""}},
@@ -754,7 +756,7 @@ bool clientActsOnBinding(const std::string& command) {
     static constexpr const char* native[] = {
         "MOVEFORWARD", "MOVEBACKWARD", "TURNLEFT", "TURNRIGHT", "STRAFELEFT", "STRAFERIGHT",
         "JUMP", "SITORSTAND", "TOGGLERUN", "OPENCHATSLASH", "TARGETNEARESTENEMY",
-        "SCREENSHOT", "WOWEETOGGLERECORDING", "TOGGLESHEATH", "FRIENDNAMEPLATES", "CAMERAZOOMIN", "CAMERAZOOMOUT",
+        "SCREENSHOT", "WOWEETOGGLERECORDING", "TOGGLESHEATH", "FRIENDNAMEPLATES", "ALLNAMEPLATES", "CAMERAZOOMIN", "CAMERAZOOMOUT",
         "WOWEERESETCAMERA", "NEXTVIEW", "PREVVIEW",
     };
     for (const char* name : native) if (command == name) return true;

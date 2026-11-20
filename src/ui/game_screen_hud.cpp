@@ -958,30 +958,59 @@ GameScreen::UnitLabelVisibility GameScreen::unitLabelVisibility(
     const uint64_t playerGuid = gameHandler.getPlayerGuid();
     const bool ownPet = !isPlayer && playerGuid != 0 &&
                         (guid == gameHandler.getPetGuid() || summonedBy == playerGuid || charmedBy == playerGuid);
-    const bool enemyPlate = hostile || (!isPlayer && !ownPet && gameHandler.unitReactionToPlayer(unit) <= 4);
-    bool plate = enemyPlate ? settingsPanel_.showEnemyNameplates_ : settingsPanel_.showFriendlyNameplates_;
-    if (totem) plate = plate && addons::storedCVarValue(
-        hostile ? "nameplateShowEnemyTotems" : "nameplateShowFriendlyTotems", hostile ? "1" : "0") != "0";
-    if (pet || guardian) {
-        const char* key = pet ? (hostile ? "nameplateShowEnemyPets" : "nameplateShowFriendlyPets")
-                             : (hostile ? "nameplateShowEnemyGuardians" : "nameplateShowFriendlyGuardians");
-        plate = plate && addons::storedCVarValue(key, "1") != "0";
-    }
-    // Build 8606 never draws a 2D healthbar nameplate over the player's own pet
-    // (even with Shift+V friendly nameplates enabled), keeping its 3D overhead
-    // name + <Owner's Minion/Pet> title.
-    if (own || companion || (game::isPreWotlk() && (ownPet || !unit.getHealth()))) plate = false;
-    if (!game::isPreWotlk() && !unit.getHealth() && !target) return {};
+    const bool playerControlled = (unit.getUnitFlags() & game::UNIT_FLAG_PLAYER_CONTROLLED) != 0;
+    const bool friendlyPlayerControlled = !isPlayer && !hostile && (ownPet || playerControlled);
+    const int reaction = gameHandler.unitReactionToPlayer(unit);
+    const bool showEnemyTotems = addons::storedCVarValue("nameplateShowEnemyTotems", "1") != "0";
+    const bool showFriendlyTotems = addons::storedCVarValue("nameplateShowFriendlyTotems", "0") != "0";
+    const bool showEnemyPets = addons::storedCVarValue("nameplateShowEnemyPets", "1") != "0";
+    const bool showFriendlyPets = addons::storedCVarValue("nameplateShowFriendlyPets", "1") != "0";
+    const bool showEnemyGuardians = addons::storedCVarValue("nameplateShowEnemyGuardians", "1") != "0";
+    const bool showFriendlyGuardians = addons::storedCVarValue("nameplateShowFriendlyGuardians", "1") != "0";
+
+    bool plate = false;
     const glm::mat4 viewProj = camera.getProjectionMatrix() * camera.getViewMatrix();
-    if (plate && game::isPreWotlk()) {
-        const auto player = gameHandler.getEntityManager().getEntity(gameHandler.getPlayerGuid());
+    if (game::isPreWotlk()) {
+        // Build 8606 draws 2D healthbars over friendly players (blue) and both
+        // own and other friendly players' pets (bright green) under Shift+V
+        // within 20 yd while alive (measured on pair 8).
+        const auto player = gameHandler.getEntityManager().getEntity(playerGuid);
         if (!player) return {};
         const glm::vec3 playerPosition = core::coords::canonicalToRender(
             glm::vec3(player->getX(), player->getY(), player->getZ()));
         const glm::vec3 delta = unitPosition - playerPosition;
         const glm::vec4 clip = viewProj * glm::vec4(nameAnchor + glm::vec3(0, 0, 2.0f / 3.0f), 1);
-        plate = glm::dot(delta, delta) <= 400.0f &&
-            ui::legacyPlateAnchorVisible(clip.x, clip.y, clip.z, clip.w);
+        plate = ui::legacyPlateEligible({
+            .isPlayer = isPlayer,
+            .isOwnCharacter = own,
+            .isHostile = hostile,
+            .isOwnPet = ownPet,
+            .isPlayerControlled = playerControlled,
+            .isCompanion = companion,
+            .isTotem = totem,
+            .isPet = pet,
+            .isGuardian = guardian,
+            .isAlive = unit.getHealth() != 0,
+            .reactionToPlayer = reaction,
+            .distSqFromPlayer = glm::dot(delta, delta),
+            .anchorInViewport = ui::legacyPlateAnchorVisible(clip.x, clip.y, clip.z, clip.w),
+            .showEnemyPlates = settingsPanel_.showEnemyNameplates_,
+            .showFriendlyPlates = settingsPanel_.showFriendlyNameplates_,
+            .showEnemyTotems = showEnemyTotems,
+            .showFriendlyTotems = showFriendlyTotems,
+            .showEnemyPets = showEnemyPets,
+            .showFriendlyPets = showFriendlyPets,
+            .showEnemyGuardians = showEnemyGuardians,
+            .showFriendlyGuardians = showFriendlyGuardians,
+        });
+    } else {
+        if (!unit.getHealth() && !target) return {};
+        const bool enemyPlate = ui::isEnemyNameplateUnit(isPlayer, hostile, friendlyPlayerControlled, reaction);
+        plate = enemyPlate ? settingsPanel_.showEnemyNameplates_ : settingsPanel_.showFriendlyNameplates_;
+        if (totem) plate = plate && (hostile ? showEnemyTotems : showFriendlyTotems);
+        if (pet) plate = plate && (hostile ? showEnemyPets : showFriendlyPets);
+        else if (guardian) plate = plate && (hostile ? showEnemyGuardians : showFriendlyGuardians);
+        if (own || companion) plate = false;
     }
     // Build 8606 has its own eleven name CVars (ui::tbcUnitNameCVar); the
     // totem, guardian and critter ones below are Wrath's.
@@ -1304,10 +1333,15 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         if (showPlate) {
         if (legacyPlates) {
             const int reaction = gameHandler.unitReactionToPlayer(*unit);
-            ImU32 fill = isPlayer && !isHostile ? IM_COL32(0, 0, 255, 255)
-                : reaction <= 2 ? IM_COL32(255, 0, 0, 255)
-                : reaction <= 4 ? IM_COL32(255, 255, 0, 255) : IM_COL32(0, 255, 0, 255);
-            if (game::unitTappedByOther(unit->getDynamicFlags(), true)) fill = IM_COL32(128, 128, 128, 255);
+            const bool friendlyPlayerControlled = !isPlayer && !isHostile && (
+                guid == gameHandler.getPetGuid() ||
+                (playerGuid != 0 && (game::unitSummonedByGuid(*entityPtr) == playerGuid ||
+                                     game::unitCharmedByGuid(*entityPtr) == playerGuid)) ||
+                (unit->getUnitFlags() & game::UNIT_FLAG_PLAYER_CONTROLLED) != 0);
+            const ui::LegacyPlateRgb rgb = ui::legacyPlateFillColor(
+                isPlayer, isHostile, friendlyPlayerControlled, reaction,
+                game::unitTappedByOther(unit->getDynamicFlags(), true));
+            const ImU32 fill = IM_COL32(rgb.r, rgb.g, rgb.b, 255);
             // Original Nameplate-Border leaves its interior transparent. Empty
             // health shows the world through that opening, including ghosts.
             drawList->AddImage((ImTextureID)(uintptr_t)plateFill,
@@ -1790,13 +1824,18 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
 
         if (showThisName && !showPlate) drawList->AddCallback(ImDrawCallback_ResetRenderState, nullptr);
 
-        // TBC dims every non-target plate while a target is selected. Apply
-        // frame opacity to border, fill, name, level and hover glow together.
-        if (showPlate && legacyPlates && targetGuid != 0 && !isTarget) {
-            for (int vertex = plateVertexStart; vertex < drawList->VtxBuffer.Size; ++vertex) {
-                auto& color = drawList->VtxBuffer[vertex].col;
-                const ImU32 alphaByte = ((color >> IM_COL32_A_SHIFT) & 0xffu) / 2u;
-                color = (color & ~IM_COL32_A_MASK) | (alphaByte << IM_COL32_A_SHIFT);
+        // TBC dims every non-target plate to 0.5 alpha while a target is
+        // selected (measured on pair 8 via WorldFrame child GetAlpha()),
+        // keeping all plates at 1.0 alpha when nothing is targeted.
+        if (showPlate && legacyPlates) {
+            const float plateAlpha = ui::legacyPlateAlpha(targetGuid != 0, isTarget);
+            if (plateAlpha < 1.0f) {
+                for (int vertex = plateVertexStart; vertex < drawList->VtxBuffer.Size; ++vertex) {
+                    auto& color = drawList->VtxBuffer[vertex].col;
+                    const ImU32 alphaByte = static_cast<ImU32>(
+                        static_cast<float>((color >> IM_COL32_A_SHIFT) & 0xffu) * plateAlpha);
+                    color = (color & ~IM_COL32_A_MASK) | (alphaByte << IM_COL32_A_SHIFT);
+                }
             }
         }
 

@@ -230,3 +230,131 @@ TEST_CASE("Build 8606 grows plain names over tall name attachments", "[names]") 
     CHECK(unitNameScale(4.09f) == Catch::Approx(1.55f).margin(0.03f));  // human x1.85: 1.565
     CHECK(unitNameScale(8.59f) == Catch::Approx(3.27f).margin(0.03f));  // Mountain Giant: 3.265
 }
+
+TEST_CASE("TBC 2.4.3 V / Shift+V / Ctrl+V toggle state machine matches Bindings.xml", "[nameplates][bindings]") {
+    NameplateToggleState s{};
+    // Shift+V turns friendly ON, enemy OFF
+    s = toggleNameplates(s, NameplateToggleCommand::Friends, true);
+    CHECK_FALSE(s.showEnemies);
+    CHECK(s.showFriends);
+    // V while Shift+V is ON switches to enemy ON, friendly OFF (mutually exclusive)
+    s = toggleNameplates(s, NameplateToggleCommand::Enemies, true);
+    CHECK(s.showEnemies);
+    CHECK_FALSE(s.showFriends);
+    // V again turns both OFF
+    s = toggleNameplates(s, NameplateToggleCommand::Enemies, true);
+    CHECK_FALSE(s.showEnemies);
+    CHECK_FALSE(s.showFriends);
+    // Ctrl+V turns both ON
+    s = toggleNameplates(s, NameplateToggleCommand::All, true);
+    CHECK(s.showEnemies);
+    CHECK(s.showFriends);
+    // Shift+V while both ON switches to friendly-only
+    s = toggleNameplates(s, NameplateToggleCommand::Friends, true);
+    CHECK_FALSE(s.showEnemies);
+    CHECK(s.showFriends);
+    // Ctrl+V while only friendly ON turns both ON
+    s = toggleNameplates(s, NameplateToggleCommand::All, true);
+    CHECK(s.showEnemies);
+    CHECK(s.showFriends);
+    // Ctrl+V while both ON turns both OFF
+    s = toggleNameplates(s, NameplateToggleCommand::All, true);
+    CHECK_FALSE(s.showEnemies);
+    CHECK_FALSE(s.showFriends);
+
+    // WotLK (preWotlk=false) toggles V and Shift+V independently
+    NameplateToggleState w{};
+    w = toggleNameplates(w, NameplateToggleCommand::Friends, false);
+    w = toggleNameplates(w, NameplateToggleCommand::Enemies, false);
+    CHECK(w.showEnemies);
+    CHECK(w.showFriends);
+}
+
+TEST_CASE("TBC 2.4.3 nameplate visibility matrix for pets, players, NPCs, range, and corpses", "[nameplates][tbc]") {
+    auto checkUnit = [](LegacyPlateEligibilityInput in, bool expOff, bool expV, bool expShiftV, bool expCtrlV) {
+        in.showEnemyPlates = false; in.showFriendlyPlates = false;
+        CHECK(legacyPlateEligible(in) == expOff);
+        in.showEnemyPlates = true; in.showFriendlyPlates = false;
+        CHECK(legacyPlateEligible(in) == expV);
+        in.showEnemyPlates = false; in.showFriendlyPlates = true;
+        CHECK(legacyPlateEligible(in) == expShiftV);
+        in.showEnemyPlates = true; in.showFriendlyPlates = true;
+        CHECK(legacyPlateEligible(in) == expCtrlV);
+    };
+
+    // Own character: never gets a 2D plate
+    checkUnit({.isPlayer = true, .isOwnCharacter = true, .reactionToPlayer = 5}, false, false, false, false);
+    // Own pet (e.g. Felguard): shown with Shift+V and Ctrl+V (NOT excluded!)
+    checkUnit({.isOwnPet = true, .isPlayerControlled = true, .isPet = true, .reactionToPlayer = 5, .distSqFromPlayer = 25.0f},
+              false, false, true, true);
+    // Other friendly player's pet (even if reaction is 4): shown with Shift+V and Ctrl+V
+    checkUnit({.isPlayerControlled = true, .isPet = true, .reactionToPlayer = 4, .distSqFromPlayer = 64.0f},
+              false, false, true, true);
+    // Friendly player: shown with Shift+V and Ctrl+V
+    checkUnit({.isPlayer = true, .reactionToPlayer = 5, .distSqFromPlayer = 64.0f},
+              false, false, true, true);
+    // Friendly NPC: shown with Shift+V and Ctrl+V
+    checkUnit({.reactionToPlayer = 5, .distSqFromPlayer = 64.0f},
+              false, false, true, true);
+    // Companion (non-combat pet): never gets a 2D plate
+    checkUnit({.isCompanion = true, .reactionToPlayer = 5, .distSqFromPlayer = 9.0f},
+              false, false, false, false);
+    // Neutral creature (reaction 4): shown with V and Ctrl+V
+    checkUnit({.reactionToPlayer = 4, .distSqFromPlayer = 100.0f},
+              false, true, false, true);
+    // Hostile creature: shown with V and Ctrl+V
+    checkUnit({.isHostile = true, .reactionToPlayer = 2, .distSqFromPlayer = 100.0f},
+              false, true, false, true);
+    // Hostile player: shown with V and Ctrl+V
+    checkUnit({.isPlayer = true, .isHostile = true, .reactionToPlayer = 2, .distSqFromPlayer = 100.0f},
+              false, true, false, true);
+    // Enemy player's pet: shown with V and Ctrl+V
+    checkUnit({.isHostile = true, .isPlayerControlled = true, .isPet = true, .reactionToPlayer = 2, .distSqFromPlayer = 100.0f},
+              false, true, false, true);
+    // Dead/corpse in TBC: never gets a 2D plate
+    checkUnit({.isOwnPet = true, .isPlayerControlled = true, .isPet = true, .isAlive = false, .reactionToPlayer = 5},
+              false, false, false, false);
+
+    // Distance cutoff: 20.0 yd from player (400.0f sq)
+    LegacyPlateEligibilityInput rangeUnit{.isOwnPet = true, .isPlayerControlled = true, .isPet = true,
+                                          .reactionToPlayer = 5, .showFriendlyPlates = true};
+    rangeUnit.distSqFromPlayer = 19.8f * 19.8f;
+    CHECK(legacyPlateEligible(rangeUnit));
+    rangeUnit.distSqFromPlayer = 20.0f * 20.0f;
+    CHECK(legacyPlateEligible(rangeUnit));
+    rangeUnit.distSqFromPlayer = 20.2f * 20.2f;
+    CHECK_FALSE(legacyPlateEligible(rangeUnit));
+
+    // Anchor outside viewport hides plate
+    rangeUnit.distSqFromPlayer = 25.0f;
+    rangeUnit.anchorInViewport = false;
+    CHECK_FALSE(legacyPlateEligible(rangeUnit));
+}
+
+TEST_CASE("TBC 2.4.3 nameplate fill colors and target opacity rules", "[nameplates][tbc]") {
+    // Friendly player = blue (0, 0, 255)
+    auto c = legacyPlateFillColor(true, false, false, 5, false);
+    CHECK((c.r == 0 && c.g == 0 && c.b == 255));
+    // Friendly pet (own or other, even if reaction==4) = bright green (0, 255, 0)
+    c = legacyPlateFillColor(false, false, true, 4, false);
+    CHECK((c.r == 0 && c.g == 255 && c.b == 0));
+    // Friendly NPC = bright green (0, 255, 0)
+    c = legacyPlateFillColor(false, false, false, 5, false);
+    CHECK((c.r == 0 && c.g == 255 && c.b == 0));
+    // Neutral mob = yellow (255, 255, 0)
+    c = legacyPlateFillColor(false, false, false, 4, false);
+    CHECK((c.r == 255 && c.g == 255 && c.b == 0));
+    // Hostile mob / hostile player / enemy pet = red (255, 0, 0)
+    c = legacyPlateFillColor(false, true, false, 2, false);
+    CHECK((c.r == 255 && c.g == 0 && c.b == 0));
+    c = legacyPlateFillColor(true, true, false, 2, false);
+    CHECK((c.r == 255 && c.g == 0 && c.b == 0));
+    // Tapped by other = grey (128, 128, 128)
+    c = legacyPlateFillColor(false, true, false, 2, true);
+    CHECK((c.r == 128 && c.g == 128 && c.b == 128));
+
+    // Opacity: 1.0 when no target or when targeted, 0.5 for non-target when another unit is targeted
+    CHECK(legacyPlateAlpha(false, false) == 1.0f);
+    CHECK(legacyPlateAlpha(true, true) == 1.0f);
+    CHECK(legacyPlateAlpha(true, false) == 0.5f);
+}

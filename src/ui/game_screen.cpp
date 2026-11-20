@@ -4,6 +4,7 @@
 #include "game/game_object_interaction.hpp"
 #include "game/game_object_cursor.hpp"
 #include "ui/game_screen.hpp"
+#include "ui/nameplate_stacking.hpp"
 #include "ui/gamepad_controls.hpp"
 #include "core/gamepad.hpp"
 
@@ -1479,16 +1480,21 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
                 gameHandler.runInterfaceCommand(bindingScriptLua("OPENALLBAGS"));
             }
 
-            if ((bindings.isCommandPressed("NAMEPLATES") || bindings.isCommandPressed("FRIENDNAMEPLATES"))) {
-                // Through the setter and saved, like the panel's boxes. Both
-                // are bound to CVars, and the store is applied over the
-                // settings file at start-up - flipped here alone, the choice
-                // lasted until the client was closed.
-                const bool friendly = bindings.isCommandPressed("FRIENDNAMEPLATES");
-                const bool shown = friendly ? settingsPanel_.showFriendlyNameplates_
-                                            : settingsPanel_.showEnemyNameplates_;
-                settingsPanel_.setSettingValue(friendly ? "friendlyplates" : "enemyplates",
-                                               shown ? "0" : "1");
+            if (bindings.isCommandPressed("NAMEPLATES") ||
+                bindings.isCommandPressed("FRIENDNAMEPLATES") ||
+                bindings.isCommandPressed("ALLNAMEPLATES")) {
+                // Match TBC 2.4.3 Bindings.xml toggle semantics (V and Shift+V
+                // are mutually exclusive, Ctrl+V toggles both) and persist both
+                // CVars via the settings panel so the choice survives restart.
+                const ui::NameplateToggleCommand cmd =
+                    bindings.isCommandPressed("ALLNAMEPLATES") ? ui::NameplateToggleCommand::All :
+                    bindings.isCommandPressed("FRIENDNAMEPLATES") ? ui::NameplateToggleCommand::Friends :
+                    ui::NameplateToggleCommand::Enemies;
+                const ui::NameplateToggleState next = ui::toggleNameplates(
+                    {settingsPanel_.showEnemyNameplates_, settingsPanel_.showFriendlyNameplates_},
+                    cmd, game::isPreWotlk());
+                settingsPanel_.setSettingValue("enemyplates", next.showEnemies ? "1" : "0");
+                settingsPanel_.setSettingValue("friendlyplates", next.showFriends ? "1" : "0");
                 saveSettings();
             }
 

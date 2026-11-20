@@ -198,6 +198,133 @@ struct PlateHit {
     PlateBox box;
 };
 
+/// Nameplate toggle keybinding commands (DefaultBindings.wtf: V / Shift+V / Ctrl+V).
+enum class NameplateToggleCommand { Enemies, Friends, All };
+
+struct NameplateToggleState {
+    bool showEnemies = false;
+    bool showFriends = false;
+};
+
+/// Exact TBC 2.4.3 FrameXML Bindings.xml toggle state machine for V (NAMEPLATES),
+/// Shift+V (FRIENDNAMEPLATES), and Ctrl+V (ALLNAMEPLATES).
+/// In TBC 2.4.3, V and Shift+V are mutually exclusive (pressing Shift+V turns off
+/// enemy plates; pressing V turns off friendly plates), while Ctrl+V toggles both.
+/// In WotLK 3.3.5+, V and Shift+V toggle independently.
+inline NameplateToggleState toggleNameplates(NameplateToggleState state,
+                                             NameplateToggleCommand cmd,
+                                             bool preWotlk) {
+    if (preWotlk) {
+        switch (cmd) {
+            case NameplateToggleCommand::Enemies:
+                if (state.showEnemies && !state.showFriends) return {false, false};
+                return {true, false};
+            case NameplateToggleCommand::Friends:
+                if (state.showFriends && !state.showEnemies) return {false, false};
+                return {false, true};
+            case NameplateToggleCommand::All:
+                if (!(state.showEnemies && state.showFriends)) return {true, true};
+                return {false, false};
+        }
+    }
+    switch (cmd) {
+        case NameplateToggleCommand::Enemies:
+            return {!state.showEnemies, state.showFriends};
+        case NameplateToggleCommand::Friends:
+            return {state.showEnemies, !state.showFriends};
+        case NameplateToggleCommand::All:
+            if (!(state.showEnemies && state.showFriends)) return {true, true};
+            return {false, false};
+    }
+    return state;
+}
+
+/// TBC 2.4.3 (build 8606) nameplate maximum distance from player: 20 yards
+/// (measured on pair 8: visible at 19.8 yd, hidden at 20.2 yd).
+constexpr float kLegacyPlateMaxRangeSq = 20.0f * 20.0f;
+
+/// Whether a unit belongs to the enemy nameplate toggle (V) rather than the
+/// friendly nameplate toggle (Shift+V). Friendly players, friendly NPCs
+/// (reaction >= 5), and friendly player-controlled pets belong to Shift+V.
+inline bool isEnemyNameplateUnit(bool isPlayer, bool isHostile,
+                                 bool isFriendlyPlayerControlled,
+                                 int reactionToPlayer) {
+    return isHostile || (!isPlayer && !isFriendlyPlayerControlled && reactionToPlayer <= 4);
+}
+
+struct LegacyPlateEligibilityInput {
+    bool isPlayer = false;
+    bool isOwnCharacter = false;
+    bool isHostile = false;
+    bool isOwnPet = false;
+    bool isPlayerControlled = false;
+    bool isCompanion = false;
+    bool isTotem = false;
+    bool isPet = false;
+    bool isGuardian = false;
+    bool isAlive = true;
+    int reactionToPlayer = 4;
+    float distSqFromPlayer = 0.0f;
+    bool anchorInViewport = true;
+    bool showEnemyPlates = false;
+    bool showFriendlyPlates = false;
+    bool showEnemyTotems = true;
+    bool showFriendlyTotems = false;
+    bool showEnemyPets = true;
+    bool showFriendlyPets = true;
+    bool showEnemyGuardians = true;
+    bool showFriendlyGuardians = true;
+};
+
+/// TBC 2.4.3 (build 8606) 2D nameplate eligibility.
+/// Both the player's own pet and other friendly players' pets receive green 2D
+/// health bars when Shift+V (FRIENDNAMEPLATES) is active, within 20 yd and alive.
+inline bool legacyPlateEligible(const LegacyPlateEligibilityInput& in) {
+    if (in.isOwnCharacter || in.isCompanion || !in.isAlive) return false;
+    const bool friendlyPlayerControlled =
+        !in.isPlayer && !in.isHostile && (in.isOwnPet || in.isPlayerControlled);
+    const bool enemyPlate = isEnemyNameplateUnit(
+        in.isPlayer, in.isHostile, friendlyPlayerControlled, in.reactionToPlayer);
+    bool plate = enemyPlate ? in.showEnemyPlates : in.showFriendlyPlates;
+    if (in.isTotem) {
+        plate = plate && (in.isHostile ? in.showEnemyTotems : in.showFriendlyTotems);
+    }
+    if (in.isPet) {
+        plate = plate && (in.isHostile ? in.showEnemyPets : in.showFriendlyPets);
+    } else if (in.isGuardian) {
+        plate = plate && (in.isHostile ? in.showEnemyGuardians : in.showFriendlyGuardians);
+    }
+    if (!plate) return false;
+    return in.distSqFromPlayer <= kLegacyPlateMaxRangeSq && in.anchorInViewport;
+}
+
+struct LegacyPlateRgb {
+    uint8_t r = 0;
+    uint8_t g = 0;
+    uint8_t b = 0;
+};
+
+/// TBC 2.4.3 (build 8606) nameplate health bar fill RGB:
+/// friendly player = blue (0,0,255), friendly pet/NPC = green (0,255,0),
+/// neutral = yellow (255,255,0), hostile = red (255,0,0), tapped = grey (128,128,128).
+inline LegacyPlateRgb legacyPlateFillColor(bool isPlayer, bool isHostile,
+                                           bool isFriendlyPlayerControlled,
+                                           int reactionToPlayer,
+                                           bool tappedByOther) {
+    if (tappedByOther) return {128, 128, 128};
+    if (isPlayer && !isHostile) return {0, 0, 255};
+    if (isHostile || (!isFriendlyPlayerControlled && reactionToPlayer <= 2)) return {255, 0, 0};
+    if (!isFriendlyPlayerControlled && reactionToPlayer <= 4) return {255, 255, 0};
+    return {0, 255, 0};
+}
+
+/// TBC 2.4.3 (build 8606) nameplate opacity: 1.0 when no target is selected or
+/// when this unit is the current target; 0.5 for non-target plates while another
+/// unit is targeted (measured on pair 8 via WorldFrame child GetAlpha()).
+inline float legacyPlateAlpha(bool hasTarget, bool isTarget) {
+    return (!hasTarget || isTarget) ? 1.0f : 0.5f;
+}
+
 /// The unit whose plate is under the pointer, or 0. Plates are listed in draw
 /// order, so the last one containing the point is the one drawn on top.
 ///
