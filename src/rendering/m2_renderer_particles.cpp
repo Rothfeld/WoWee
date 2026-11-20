@@ -919,21 +919,6 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
         if (glm::dot(distance, distance) > particleMaxDistSq(inst)) continue;
         if (outsideVisibleRegion(inst.position) || exteriorCulled(inst) || roomCulled(inst)) continue;
 
-        // Cache the last emitter's per-emitter state so adjacent particles
-        // sharing an emitter (the common case - particles from one source
-        // cluster together) skip the texture/key/map-lookup work entirely.
-        int lastEmitterIdx = -1;
-        VkTexture* cachedTex = nullptr;
-        uint16_t cachedTilesX = 1, cachedTilesY = 1;
-        uint32_t cachedTotalTiles = 1;
-        uint16_t cachedBlendType = 0;
-        const pipeline::M2ParticleEmitter* cachedEm = nullptr;
-        ParticleGroup* cachedGroup = nullptr;
-        // animFrame depends only on inst.animTime + totalTiles, so it's also
-        // emitter-stable within one frame.
-        glm::mat4 cachedParticleTransform(1.0f);
-        std::pair<glm::vec3, glm::vec3> cachedQuadAxes{glm::vec3(1, 0, 0), glm::vec3(0, 1, 0)};
-
         // How far this instance's particles actually reach, against how far
         // the model says it extends. A fire twice the height of the hut behind
         // it is either particles outliving their authored lifespan, flying at
@@ -958,110 +943,111 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
                         (inst.indoorLighting >> 24) & 255u) / 255.0f
             : outdoorParticleLight(outdoorAmbient_, outdoorDiffuse_, outdoorLightDir_);
 
-        for (const auto& p : inst.particles) {
-            if (p.emitterIndex < 0 || p.emitterIndex >= static_cast<int>(gpu.particleEmitters.size())) continue;
-            if (!inPhase(gpu.particleEmitters[p.emitterIndex])) continue;
+        // Emit in authored emitter order rather than swap-and-pop particle
+        // order: keeps later additive flames (e.g. StratholmeFireSmokeEmberM
+        // emitter #2) drawn over earlier alpha smoke (emitter #0) and keeps
+        // each emitter in one contiguous ParticleRun.
+        for (size_t ei = 0; ei < gpu.particleEmitters.size(); ++ei) {
+            const auto& em = gpu.particleEmitters[ei];
+            if (!inPhase(em)) continue;
             // Drawn as its geometry model in renderParticleMeshes.
-            if (p.emitterIndex < static_cast<int>(gpu.particleGeometry.size()) &&
-                !gpu.particleGeometry[p.emitterIndex].indices.empty()) continue;
+            if (ei < gpu.particleGeometry.size() && !gpu.particleGeometry[ei].indices.empty()) continue;
 
-            if (p.emitterIndex != lastEmitterIdx) {
-                lastEmitterIdx = p.emitterIndex;
-                cachedEm = &gpu.particleEmitters[p.emitterIndex];
-                const glm::mat4 emitterBone = gpu.bones.empty() ? glm::mat4(1.0f)
-                                                                : inst.boneMatrices.at(cachedEm->bone);
-                const glm::mat4 bone = (cachedEm->flags & kParticleNoTrail) ? emitterBone : glm::mat4(1.0f);
-                cachedParticleTransform = particleRenderTransform(
-                    cachedEm->flags, inst.modelMatrix, bone);
-                cachedQuadAxes = particleQuadAxes(inst.modelMatrix * emitterBone);
+            const glm::mat4 emitterBone = gpu.bones.empty() ? glm::mat4(1.0f)
+                                                            : inst.boneMatrices.at(em.bone);
+            const glm::mat4 bone = (em.flags & kParticleNoTrail) ? emitterBone : glm::mat4(1.0f);
+            const glm::mat4 cachedParticleTransform = particleRenderTransform(
+                em.flags, inst.modelMatrix, bone);
+            const std::pair<glm::vec3, glm::vec3> cachedQuadAxes =
+                particleQuadAxes(inst.modelMatrix * emitterBone);
 
-                cachedTex = whiteTexture_.get();
-                if (p.emitterIndex < static_cast<int>(gpu.particleTextures.size())) {
-                    cachedTex = gpu.particleTextures[p.emitterIndex];
-                }
-                cachedTilesX = std::max<uint16_t>(cachedEm->textureCols, 1);
-                cachedTilesY = std::max<uint16_t>(cachedEm->textureRows, 1);
-                cachedTotalTiles = static_cast<uint32_t>(cachedTilesX) *
-                                   static_cast<uint32_t>(cachedTilesY);
-                cachedBlendType = cachedEm->blendingType;
-                ParticleGroupKey key{.texture = cachedTex, .blendType = static_cast<uint8_t>(cachedBlendType), .tilesX = cachedTilesX, .tilesY = cachedTilesY};
-                cachedGroup = &groups[key];
-                cachedGroup->texture = cachedTex;
-                cachedGroup->blendType = cachedBlendType;
-                cachedGroup->tilesX = cachedTilesX;
-                cachedGroup->tilesY = cachedTilesY;
-                if (cachedGroup->preAllocSet == VK_NULL_HANDLE &&
-                    p.emitterIndex < static_cast<int>(gpu.particleTexSets.size())) {
-                    cachedGroup->preAllocSet = gpu.particleTexSets[p.emitterIndex];
-                }
-
+            VkTexture* cachedTex = whiteTexture_.get();
+            if (ei < gpu.particleTextures.size()) {
+                cachedTex = gpu.particleTextures[ei];
             }
-
-            const auto& em = *cachedEm;
-            float lifeRatio = p.life / std::max(p.maxLife, 0.001f);
-            glm::vec3 color = interpFBlockVec3(em.particleColor, lifeRatio);
-            if (!(em.flags & kParticleOwnColor)) color *= placementLight;
-            // Scaled by the instance fade, as its mesh is: an owner fading
-            // out (a creature's death, a hidden player) takes its particles
-            // with it.
-            float alpha = std::min(interpFBlockFloat(em.particleAlpha, lifeRatio), 1.0f) * inst.fade;
-            // Authored lifecycle size for every model. GnomereganVent smoke
-            // grows 2.78 -> 4.44 -> 8.33; a former 1.5 cap on models not named
-            // like spell effects shrank it to thin puffs.
-            const float twinkle = particleTwinkleScale(p.twinkleSeed, p.life, em.twinkleSpeed,
-                                                       em.twinkleScaleMin, em.twinkleScaleMax);
-            const float scale = interpFBlockFloat(em.particleScale, lifeRatio) * twinkle;
-
-            assert(vbWritten < particleVertexCapacity_[frame]);
-            // A run per stretch of particles sharing a group. The group only
-            // changes when the emitter does, and particles from one emitter
-            // are adjacent, so this closes a run about once per emitter.
-            if (cachedGroup != runGroup) {
-                runGroup = cachedGroup;
-                particleRuns_.push_back({.group = cachedGroup, .first = vbWritten, .count = 0});
+            const uint16_t cachedTilesX = std::max<uint16_t>(em.textureCols, 1);
+            const uint16_t cachedTilesY = std::max<uint16_t>(em.textureRows, 1);
+            const uint32_t cachedTotalTiles = static_cast<uint32_t>(cachedTilesX) *
+                                              static_cast<uint32_t>(cachedTilesY);
+            const uint16_t cachedBlendType = em.blendingType;
+            ParticleGroupKey key{.texture = cachedTex, .blendType = static_cast<uint8_t>(cachedBlendType),
+                                 .tilesX = cachedTilesX, .tilesY = cachedTilesY};
+            ParticleGroup* cachedGroup = &groups[key];
+            cachedGroup->texture = cachedTex;
+            cachedGroup->blendType = cachedBlendType;
+            cachedGroup->tilesX = cachedTilesX;
+            cachedGroup->tilesY = cachedTilesY;
+            if (cachedGroup->preAllocSet == VK_NULL_HANDLE && ei < gpu.particleTexSets.size()) {
+                cachedGroup->preAllocSet = gpu.particleTexSets[ei];
             }
-            const glm::vec3 worldPosition = glm::vec3(cachedParticleTransform * glm::vec4(p.position, 1));
-            const glm::vec3 worldVelocity = glm::mat3(cachedParticleTransform) * p.velocity;
-            highestParticleZ = std::max(highestParticleZ, worldPosition.z);
-            widestParticle = std::max(widestParticle, scale);
 
             const bool xyQuad = (em.flags & kParticleXYQuad) != 0;
             const unsigned sprites = em.headOrTail == 2 ? 2 : 1;
-            for (unsigned sprite = 0; sprite < sprites; ++sprite) {
+            const int targetEmitter = static_cast<int>(ei);
+
+            for (const auto& p : inst.particles) {
+                if (p.emitterIndex != targetEmitter) continue;
+
+                float lifeRatio = p.life / std::max(p.maxLife, 0.001f);
+                glm::vec3 color = interpFBlockVec3(em.particleColor, lifeRatio);
+                if (!(em.flags & kParticleOwnColor)) color *= placementLight;
+                // Scaled by the instance fade, as its mesh is: an owner fading
+                // out (a creature's death, a hidden player) takes its particles
+                // with it.
+                float alpha = std::min(interpFBlockFloat(em.particleAlpha, lifeRatio), 1.0f) * inst.fade;
+                // Authored lifecycle size for every model. GnomereganVent smoke
+                // grows 2.78 -> 4.44 -> 8.33; a former 1.5 cap on models not named
+                // like spell effects shrank it to thin puffs.
+                const float twinkle = particleTwinkleScale(p.twinkleSeed, p.life, em.twinkleSpeed,
+                                                           em.twinkleScaleMin, em.twinkleScaleMax);
+                const float scale = interpFBlockFloat(em.particleScale, lifeRatio) * twinkle;
+
                 assert(vbWritten < particleVertexCapacity_[frame]);
-                float* vd = vbBase + static_cast<size_t>(vbWritten) * kParticleVertexFloats;
-                vd[0] = worldPosition.x;
-                vd[1] = worldPosition.y;
-                vd[2] = worldPosition.z;
-                vd[3] = color.r;
-                vd[4] = color.g;
-                vd[5] = color.b;
-                vd[6] = alpha;
-                // XYQuad (flag 0x1000) sprites lie in their emitter bone's
-                // XY plane instead of facing the camera. Marked by a negative
-                // size; the tail slot carries the quad's X axis, the last
-                // three floats its Y axis.
-                const float halfWidth = particleSpriteHalfWidth(em.flags, scale, placementScale);
-                vd[7] = xyQuad ? -halfWidth : halfWidth;
-                const bool tail = em.headOrTail == 1 || (em.headOrTail == 2 && sprite == 1);
-                vd[8] = static_cast<float>(particleCell(em, lifeRatio, tail, cachedTotalTiles));
-                const glm::vec3 displacement = xyQuad ? cachedQuadAxes.first
-                    : tail ? particleTailVector(em.flags, worldVelocity, em.tailLength,
-                        glm::vec3(cachedParticleTransform * glm::vec4(p.birthPosition, 1)) - worldPosition,
-                        p.life)
-                    : glm::vec3(0);
-                vd[9] = displacement.x;
-                vd[10] = displacement.y;
-                vd[11] = displacement.z;
-                vd[12] = particleRotation(em.spin, p.life);
-                const glm::vec3 quadY = xyQuad ? cachedQuadAxes.second : glm::vec3(0);
-                vd[13] = quadY.x;
-                vd[14] = quadY.y;
-                vd[15] = quadY.z;
-                ++vbWritten;
-                ++particleRuns_.back().count;
+                if (cachedGroup != runGroup) {
+                    runGroup = cachedGroup;
+                    particleRuns_.push_back({.group = cachedGroup, .first = vbWritten, .count = 0});
+                }
+                const glm::vec3 worldPosition = glm::vec3(cachedParticleTransform * glm::vec4(p.position, 1));
+                const glm::vec3 worldVelocity = glm::mat3(cachedParticleTransform) * p.velocity;
+                highestParticleZ = std::max(highestParticleZ, worldPosition.z);
+                widestParticle = std::max(widestParticle, scale);
+
+                for (unsigned sprite = 0; sprite < sprites; ++sprite) {
+                    assert(vbWritten < particleVertexCapacity_[frame]);
+                    float* vd = vbBase + static_cast<size_t>(vbWritten) * kParticleVertexFloats;
+                    vd[0] = worldPosition.x;
+                    vd[1] = worldPosition.y;
+                    vd[2] = worldPosition.z;
+                    vd[3] = color.r;
+                    vd[4] = color.g;
+                    vd[5] = color.b;
+                    vd[6] = alpha;
+                    // XYQuad (flag 0x1000) sprites lie in their emitter bone's
+                    // XY plane instead of facing the camera. Marked by a negative
+                    // size; the tail slot carries the quad's X axis, the last
+                    // three floats its Y axis.
+                    const float halfWidth = particleSpriteHalfWidth(em.flags, scale, placementScale);
+                    vd[7] = xyQuad ? -halfWidth : halfWidth;
+                    const bool tail = em.headOrTail == 1 || (em.headOrTail == 2 && sprite == 1);
+                    vd[8] = static_cast<float>(particleCell(em, lifeRatio, tail, cachedTotalTiles));
+                    const glm::vec3 displacement = xyQuad ? cachedQuadAxes.first
+                        : tail ? particleTailVector(em.flags, worldVelocity, em.tailLength,
+                            glm::vec3(cachedParticleTransform * glm::vec4(p.birthPosition, 1)) - worldPosition,
+                            p.life)
+                        : glm::vec3(0);
+                    vd[9] = displacement.x;
+                    vd[10] = displacement.y;
+                    vd[11] = displacement.z;
+                    vd[12] = particleRotation(em.spin, p.life);
+                    const glm::vec3 quadY = xyQuad ? cachedQuadAxes.second : glm::vec3(0);
+                    vd[13] = quadY.x;
+                    vd[14] = quadY.y;
+                    vd[15] = quadY.z;
+                    ++vbWritten;
+                    ++particleRuns_.back().count;
+                }
+                totalParticles++;
             }
-            totalParticles++;
         }
 
         // Opt-in effect diagnostics for captured visual comparisons.

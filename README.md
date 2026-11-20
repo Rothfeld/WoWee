@@ -816,8 +816,12 @@ Continuous (non-Squirt) particle emitters advance their accumulator by
 independent of frame rate), matching TBC 2.4.3's wispy plume density and
 stochastic puff spacing on `d_smoke.m2` (crashed Exodar escape pod in Ammen Vale
 and Bloodmyst Isle), `ashtreesmoke01.m2`, and `blacksmith_smoke.m2` while
-leaving discrete Squirt (`0x8000`) bursts untouched. Evidence:
-`_experiments/20261120T113500Z.exodar_smoke_parity/` in the workspace.
+leaving discrete Squirt (`0x8000`) bursts untouched. `M2Renderer::renderM2Particles`
+emits per-instance particles in authored emitter-index order so multi-emitter
+models keep later additive flames over earlier alpha smoke and form one
+contiguous `ParticleRun` per emitter. Evidence:
+`_experiments/20261120T113500Z.exodar_smoke_parity/` and
+`_experiments/20261120T100500Z.m2_smoke_density/` in the workspace.
 Flag 0x1000 (XYQuad) sprites lie in the XY plane of their emitter bone as
 placed in the world (`particleQuadAxes`): `WaterElemental.m2` #16/#21 sit on
 unrotated bones and are the ground rings under an Aqua Guardian; Time Rift
