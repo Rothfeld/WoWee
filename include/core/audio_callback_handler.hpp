@@ -26,9 +26,6 @@ public:
     void setupCallbacks();
 
 private:
-    /// Resolve SoundEntries.dbc → file path for a given soundId (eliminates 3x copy-paste)
-    [[nodiscard]] std::optional<std::string> resolveSoundEntryPath(uint32_t soundId) const;
-
     pipeline::AssetManager& assetManager_;
     audio::AudioCoordinator* audioCoordinator_;
     rendering::Renderer* renderer_;

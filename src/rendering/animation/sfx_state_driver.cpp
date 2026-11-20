@@ -26,7 +26,7 @@ void SfxStateDriver::update(float deltaTime, Renderer* renderer,
     auto* cameraController = renderer->getCameraController();
 
     activitySoundManager->update(deltaTime);
-    if (cameraController && cameraController->isThirdPerson()) {
+    if (cameraController) {
         bool grounded = cameraController->isGrounded();
         bool jumping = cameraController->isJumping();
         bool falling = cameraController->isFalling();

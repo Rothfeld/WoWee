@@ -59,6 +59,8 @@ private:
     };
     EventTracker playerFootsteps_;
     EventTracker mountFootsteps_;
+    EventTracker mountWingFlaps_;
+    EventTracker mountWingGlides_;
 };
 
 } // namespace rendering

@@ -2,6 +2,7 @@
 #include "rendering/renderer.hpp"
 #include "rendering/camera_controller.hpp"
 #include "rendering/character_renderer.hpp"
+#include "rendering/m2_renderer.hpp"
 #include "rendering/terrain_manager.hpp"
 #include "rendering/wmo_renderer.hpp"
 #include "rendering/water_renderer.hpp"
@@ -82,9 +83,6 @@ bool FootstepDriver::shouldTriggerFootstepEvent(uint32_t animationId, float anim
 }
 
 void FootstepDriver::playWaterStepExtras(Renderer* renderer) const {
-    if (renderer->getAudioCoordinator()->getMovementSoundManager()) {
-        renderer->getAudioCoordinator()->getMovementSoundManager()->playWaterFootstep(audio::MovementSoundManager::CharacterSize::MEDIUM);
-    }
     auto* swimEffects = renderer->getSwimEffects();
     auto* waterRenderer = renderer->getWaterRenderer();
     if (swimEffects && waterRenderer) {
@@ -110,8 +108,30 @@ void FootstepDriver::update(float deltaTime, Renderer* renderer,
 
     footstepManager->update(deltaTime);
 
+    if (characterRenderer && mounted && mountInstanceId > 0) {
+        uint32_t wingAnimId = 0;
+        float wingAnimTimeMs = 0.0f, wingAnimDurationMs = 0.0f;
+        auto* mountSounds = renderer->getAudioCoordinator()->getMountSoundManager();
+        if (mountSounds &&
+            characterRenderer->getAnimationState(mountInstanceId, wingAnimId, wingAnimTimeMs, wingAnimDurationMs)) {
+            if (mountWingFlaps_.shouldTriggerFootstepEvent(
+                    wingAnimId, wingAnimTimeMs, wingAnimDurationMs,
+                    characterRenderer->getWingFlapEventTimes(mountInstanceId))) {
+                mountSounds->playWingFlapSound();
+            }
+            if (mountWingGlides_.shouldTriggerFootstepEvent(
+                    wingAnimId, wingAnimTimeMs, wingAnimDurationMs,
+                    characterRenderer->getWingGlideEventTimes(mountInstanceId))) {
+                mountSounds->playWingGlideSound();
+            }
+        }
+    } else {
+        mountWingFlaps_.reset();
+        mountWingGlides_.reset();
+    }
+
     bool canPlayFootsteps = characterRenderer && characterInstanceId > 0 &&
-        cameraController && cameraController->isThirdPerson() &&
+        cameraController &&
         cameraController->isGrounded() && !cameraController->isSwimming();
 
     if (canPlayFootsteps && mounted && mountInstanceId > 0 && !taxiFlight) {
@@ -157,11 +177,38 @@ void FootstepDriver::playStep(Renderer* renderer, uint32_t instanceId) {
     // The footprint renderer is created with the renderer but initialised with
     // the world; a step during world load (an impact or stance animation's
     // footfall) arrived before that and dereferenced its null owner.
-    const auto terrainType = footprints && footprints->isInitialized()
+    auto terrainType = footprints && footprints->isInitialized()
         ? footprints->terrainTypeAt(position) : std::nullopt;
     if (!terrainType) {
-        LOG_DEBUG("Footstep: no TerrainType under the character at ", position.x, ",", position.y,
-                  ",", position.z, "; no sound");
+        // M2 bridges, docks, ships and platforms carry no TerrainType in
+        // FootprintRenderer (so they do not receive snow/mud footprint decals),
+        // and WMO-only dungeon maps have no ADT terrain chunks. Resolve WMO
+        // floor material or default Wood (4) / Stone (2) so steps stay audible.
+        if (auto* wmo = renderer->getWMORenderer()) {
+            std::optional<uint32_t> mat;
+            const auto h = wmo->getFloorHeight(position.x, position.y, position.z + 0.85f,
+                                               nullptr, position.z, &mat);
+            if (h && std::abs(*h - position.z) <= 0.85f) {
+                terrainType = mat.value_or(2u); // TerrainType 2 = Stone
+            }
+        }
+        if (!terrainType) {
+            if (auto* m2 = renderer->getM2Renderer()) {
+                const auto h = m2->getFloorHeight(position.x, position.y, position.z + 0.85f);
+                if (h && std::abs(*h - position.z) <= 0.85f) {
+                    terrainType = 4u; // TerrainType 4 = Wood
+                }
+            }
+        }
+    }
+    if (!terrainType) {
+        if (wading && renderer->getAudioCoordinator()->getMovementSoundManager()) {
+            renderer->getAudioCoordinator()->getMovementSoundManager()->playWaterFootstep(
+                audio::MovementSoundManager::CharacterSize::MEDIUM);
+        } else {
+            LOG_DEBUG("Footstep: no TerrainType under the character at ", position.x, ",", position.y,
+                      ",", position.z, "; no sound");
+        }
         return;
     }
     footstepManager->playFootstep(renderer->getCharacterRenderer()->getInstanceDisplayId(instanceId),

@@ -1175,8 +1175,23 @@ void EntitySpawner::buildGameObjectDisplayLookups() {
     // Col 1: ModelName
     if (auto godi = assetManager_->loadDBC("GameObjectDisplayInfo.dbc"); godi && godi->isLoaded()) {
         const auto* godiL = pipeline::getActiveDBCLayout() ? pipeline::getActiveDBCLayout()->getLayout("GameObjectDisplayInfo") : nullptr;
+        const uint32_t fc = godi->getFieldCount();
         for (uint32_t i = 0; i < godi->getRecordCount(); i++) {
             uint32_t displayId = godi->getUInt32(i, godiL ? (*godiL)["ID"] : 0);
+            if (displayId != 0 && fc > 11) {
+                GameObjectDisplaySounds snd;
+                snd.openSoundId = godi->getUInt32(i, 3);
+                snd.closeSoundId = godi->getUInt32(i, 5);
+                snd.destroySoundId = godi->getUInt32(i, 6);
+                for (uint32_t c = 0; c < 4; ++c) {
+                    snd.customSoundIds[c] = godi->getUInt32(i, 8 + c);
+                }
+                if (snd.openSoundId || snd.closeSoundId || snd.destroySoundId ||
+                    snd.customSoundIds[0] || snd.customSoundIds[1] ||
+                    snd.customSoundIds[2] || snd.customSoundIds[3]) {
+                    gameObjectDisplaySounds_[displayId] = snd;
+                }
+            }
             std::string modelName = godi->getString(i, godiL ? (*godiL)["ModelName"] : 1);
             if (modelName.empty()) continue;
             // GameObjectDisplayInfo names .mdx and .mdl alike; this knew only
@@ -1184,7 +1199,8 @@ void EntitySpawner::buildGameObjectDisplayLookups() {
             modelName = pipeline::modelPathToM2(modelName);
             gameObjectDisplayIdToPath_[displayId] = modelName;
         }
-        LOG_INFO("Loaded ", gameObjectDisplayIdToPath_.size(), " gameobject display mappings");
+        LOG_INFO("Loaded ", gameObjectDisplayIdToPath_.size(), " gameobject display mappings (",
+                 gameObjectDisplaySounds_.size(), " with sounds)");
     } else {
         LOG_WARNING("GameObjectDisplayInfo.dbc failed to load - no GO display mappings available");
     }

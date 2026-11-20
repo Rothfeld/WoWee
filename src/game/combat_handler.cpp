@@ -840,16 +840,41 @@ void CombatHandler::handleAttackerStateUpdate(network::Packet& packet) {
     auto* ac = isPlayerAttacker || isPlayerTarget ? owner_.services().audioCoordinator : nullptr;
     if (ac) {
         if (auto* csm = ac->getCombatSoundManager()) {
-            auto weaponSize = audio::CombatSoundManager::WeaponSize::MEDIUM;
-            if (data.isMiss()) {
-                csm->playWeaponMiss(false);
-            } else if (data.victimState == VICTIMSTATE_DODGE || data.victimState == VICTIMSTATE_PARRY) {
-                // Dodge/parry - swing whoosh but no impact
+            auto weaponSize = audio::CombatSoundManager::WeaponSize::SMALL;
+            uint32_t weaponSubClass = 13u; // Unarmed / Fist default
+            bool metalWeapon = false;
+            bool twoHanded = false;
+            if (isPlayerAttacker) {
+                const auto& mh = owner_.getInventory().getEquipSlot(EquipSlot::MAIN_HAND);
+                if (!mh.empty()) {
+                    if (const auto* info = owner_.getItemInfo(mh.item.itemId); info && info->valid) {
+                        weaponSubClass = info->subClass;
+                        metalWeapon = (info->material == 1);
+                        twoHanded = (info->inventoryType == 17);
+                        if (weaponSubClass == 6 || weaponSubClass == 10) {
+                            weaponSize = audio::CombatSoundManager::WeaponSize::LARGE;
+                        } else if (twoHanded || weaponSubClass == 1 || weaponSubClass == 5 || weaponSubClass == 8) {
+                            weaponSize = audio::CombatSoundManager::WeaponSize::MEDIUM;
+                        }
+                    }
+                }
+            }
+            if (data.isMiss() || data.victimState == VICTIMSTATE_EVADES) {
+                csm->playWeaponMiss(twoHanded);
+            } else if (data.victimState == VICTIMSTATE_DODGE) {
                 csm->playWeaponSwing(weaponSize, false);
-            } else {
-                // Hit - swing + flesh impact
+            } else if (data.victimState == VICTIMSTATE_PARRY) {
+                csm->playWeaponSwing(weaponSize, false);
+                csm->playWeaponImpactBySubclass(
+                    weaponSubClass, metalWeapon, audio::CombatSoundManager::ImpactType::METAL_WEAPON, false);
+            } else if (data.victimState == VICTIMSTATE_BLOCKS || data.blocked > 0) {
                 csm->playWeaponSwing(weaponSize, data.isCrit());
-                csm->playImpact(weaponSize, audio::CombatSoundManager::ImpactType::FLESH, data.isCrit());
+                csm->playWeaponImpactBySubclass(
+                    weaponSubClass, metalWeapon, audio::CombatSoundManager::ImpactType::SHIELD, data.isCrit());
+            } else {
+                csm->playWeaponSwing(weaponSize, data.isCrit());
+                csm->playWeaponImpactBySubclass(
+                    weaponSubClass, metalWeapon, audio::CombatSoundManager::ImpactType::FLESH, data.isCrit());
             }
         }
         // Character vocalizations

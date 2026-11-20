@@ -131,6 +131,7 @@ void EntitySpawnCallbackHandler::setupCallbacks() {
             LOG_WARNING("GO custom animation ", animId, " outside Custom0-3: guid=0x", std::hex, guid);
             return;
         }
+        entitySpawner_.playGameObjectCustomSound(guid, animId);
         if (!m2r->hasAnimation(info.instanceId, *sequence)) {
             LOG_DEBUG("GO custom animation ", *sequence, " absent from model: guid=0x", std::hex, guid);
             return;

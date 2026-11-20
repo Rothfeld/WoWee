@@ -2129,7 +2129,11 @@ void Renderer::update(float deltaTime) {
             glm::vec3 up = glm::cross(right, fwd);
             float uLen = glm::length(up);
             up = (uLen < 1e-6f) ? glm::vec3(0.0f, 0.0f, 1.0f) : up / uLen;
-            audio::AudioEngine::instance().setListenerPosition(camera->getPosition());
+            const glm::vec3 listenerPos =
+                (audioCoordinator_ && audioCoordinator_->isListenerAtCharacter() && characterInstanceId > 0)
+                    ? (characterPosition + glm::vec3(0.0f, 0.0f, 1.6f))
+                    : camera->getPosition();
+            audio::AudioEngine::instance().setListenerPosition(listenerPos);
             audio::AudioEngine::instance().setListenerOrientation(fwd, up);
         }
     } else {
@@ -2592,6 +2596,7 @@ void Renderer::update(float deltaTime) {
                 playerArea->rootId, playerArea->nameSet, playerArea->groupId);
             zctx.wmoZoneMusicId = sounds.zoneMusicId;
             zctx.wmoAmbienceId = sounds.ambienceId;
+            zctx.wmoIntroSoundId = sounds.introSoundId;
         }
         zctx.areaId = interiorAreaId_;
         if (zctx.areaId == 0 && terrainManager) {
@@ -2659,7 +2664,9 @@ void Renderer::runDeferredWorldInitStep(float deltaTime) {
             }
             break;
         case 1:
-            if (audioCoordinator_->getUiSoundManager()) audioCoordinator_->getUiSoundManager()->initialize(cachedAssetManager);
+            if (auto* ui = audioCoordinator_->getUiSoundManager(); ui && !ui->isInitialized()) {
+                ui->initialize(cachedAssetManager);
+            }
             break;
         case 2:
             if (audioCoordinator_->getCombatSoundManager()) audioCoordinator_->getCombatSoundManager()->initialize(cachedAssetManager);

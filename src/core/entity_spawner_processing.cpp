@@ -16,7 +16,9 @@
 #include "rendering/character_emitters.hpp"
 #include "rendering/wmo_renderer.hpp"
 #include "rendering/m2_renderer.hpp"
+#include "audio/audio_coordinator.hpp"
 #include "audio/npc_voice_manager.hpp"
+#include "audio/sound_entries.hpp"
 #include "pipeline/m2_loader.hpp"
 #include "pipeline/wmo_loader.hpp"
 #include "pipeline/wmo_group_path.hpp"
@@ -871,7 +873,7 @@ void EntitySpawner::finishWmoSpawn(const PreparedGameObjectWMO& result, uint32_t
     uint32_t instanceId = wmoRenderer->createInstanceWithMatrix(modelId, wmoModelMatrix);
     if (instanceId == 0) return;
 
-    gameObjectInstances_[result.guid] = {.modelId = modelId, .instanceId = instanceId, .isWmo = true, .scale = result.scale};
+    gameObjectInstances_[result.guid] = {.modelId = modelId, .instanceId = instanceId, .displayId = result.displayId, .isWmo = true, .scale = result.scale};
 
     // The synchronous WMO path notifies TransportManager after creating the
     // render instance. Do the same here: unique/uncached transport WMOs (notably
@@ -1929,6 +1931,51 @@ void EntitySpawner::applyGameObjectAnimationPolicy(uint64_t guid, uint32_t entry
               " entry=", entry, " type=", info->type, " frozen=", freeze);
 }
 
+void EntitySpawner::playGameObjectStateSound(uint64_t guid, uint8_t goState) {
+    auto instIt = gameObjectInstances_.find(guid);
+    if (instIt == gameObjectInstances_.end()) return;
+    auto sndIt = gameObjectDisplaySounds_.find(instIt->second.displayId);
+    if (sndIt == gameObjectDisplaySounds_.end()) return;
+
+    uint32_t soundId = 0;
+    if (goState == 0) soundId = sndIt->second.openSoundId;
+    else if (goState == 1) soundId = sndIt->second.closeSoundId;
+    else if (goState == 2) soundId = sndIt->second.destroySoundId;
+    if (soundId == 0 || !assetManager_ || !renderer_) return;
+    auto* ac = renderer_->getAudioCoordinator();
+    if (!ac || ac->getSfxVolumeScale() <= 0.0f) return;
+
+    glm::vec3 renderPos(0.0f);
+    if (!getRenderPositionForGuid(guid, renderPos)) {
+        auto srvIt = serverGameObjectSpawns_.find(guid);
+        if (srvIt == serverGameObjectSpawns_.end()) return;
+        renderPos = core::coords::canonicalToRender(glm::vec3(srvIt->second.x, srvIt->second.y, srvIt->second.z));
+    }
+    audio::SoundEntryTable::instance().play3D(assetManager_, soundId, renderPos, ac->getSfxVolumeScale());
+}
+
+void EntitySpawner::playGameObjectCustomSound(uint64_t guid, uint32_t customIndex) {
+    if (customIndex >= 4 || !assetManager_ || !renderer_) return;
+    auto* ac = renderer_->getAudioCoordinator();
+    if (!ac || ac->getSfxVolumeScale() <= 0.0f) return;
+
+    auto instIt = gameObjectInstances_.find(guid);
+    if (instIt == gameObjectInstances_.end()) return;
+    auto sndIt = gameObjectDisplaySounds_.find(instIt->second.displayId);
+    if (sndIt == gameObjectDisplaySounds_.end()) return;
+
+    const uint32_t soundId = sndIt->second.customSoundIds[customIndex];
+    if (soundId == 0) return;
+
+    glm::vec3 renderPos(0.0f);
+    if (!getRenderPositionForGuid(guid, renderPos)) {
+        auto srvIt = serverGameObjectSpawns_.find(guid);
+        if (srvIt == serverGameObjectSpawns_.end()) return;
+        renderPos = core::coords::canonicalToRender(glm::vec3(srvIt->second.x, srvIt->second.y, srvIt->second.z));
+    }
+    audio::SoundEntryTable::instance().play3D(assetManager_, soundId, renderPos, ac->getSfxVolumeScale());
+}
+
 void EntitySpawner::applyGameObjectState(uint64_t guid, uint8_t goState) {
     auto it = gameObjectInstances_.find(guid);
     if (it == gameObjectInstances_.end()) {
@@ -1950,6 +1997,9 @@ void EntitySpawner::applyGameObjectState(uint64_t guid, uint8_t goState) {
     // Straight to the end when the state arrived before the model: the swing
     // belongs to the moment a door opens, not to the moment it is first seen.
     const bool skipToEnd = gameObjectPendingState_.erase(guid) > 0;
+    if (!skipToEnd) {
+        playGameObjectStateSound(guid, goState);
+    }
 
     // Whether an open pose should also stop blocking.
     //

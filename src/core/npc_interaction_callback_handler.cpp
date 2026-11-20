@@ -30,48 +30,50 @@ audio::VoiceType NPCInteractionCallbackHandler::resolveNpcVoiceType(uint64_t gui
 }
 
 void NPCInteractionCallbackHandler::setupCallbacks() {
+    auto displayIdOf = [this](uint64_t guid) -> uint32_t {
+        auto entity = gameHandler_.getEntityManager().getEntity(guid);
+        if (entity && entity->getType() == game::ObjectType::UNIT)
+            return std::static_pointer_cast<game::Unit>(entity)->getDisplayId();
+        return 0;
+    };
+
     // NPC greeting callback - play voice line
-    gameHandler_.setNpcGreetingCallback([this](uint64_t guid, const glm::vec3& position) {
+    gameHandler_.setNpcGreetingCallback([this, displayIdOf](uint64_t guid, const glm::vec3& position) {
         // Greeting audio does not imply a body emote. Server emote packets
         // own NPC animations; replaying a welcome here resets every click.
         if (audioCoordinator_ && audioCoordinator_->getNpcVoiceManager()) {
             // Convert canonical to render coords for 3D audio
             glm::vec3 renderPos = core::coords::canonicalToRender(position);
             audio::VoiceType voiceType = resolveNpcVoiceType(guid);
-            audioCoordinator_->getNpcVoiceManager()->playGreeting(guid, voiceType, renderPos);
+            audioCoordinator_->getNpcVoiceManager()->playGreeting(guid, voiceType, renderPos, displayIdOf(guid));
         }
     });
 
     // NPC farewell callback - play farewell voice line
-    gameHandler_.setNpcFarewellCallback([this](uint64_t guid, const glm::vec3& position) {
+    gameHandler_.setNpcFarewellCallback([this, displayIdOf](uint64_t guid, const glm::vec3& position) {
         if (audioCoordinator_ && audioCoordinator_->getNpcVoiceManager()) {
             glm::vec3 renderPos = core::coords::canonicalToRender(position);
             audio::VoiceType voiceType = resolveNpcVoiceType(guid);
-            audioCoordinator_->getNpcVoiceManager()->playFarewell(guid, voiceType, renderPos);
+            audioCoordinator_->getNpcVoiceManager()->playFarewell(guid, voiceType, renderPos, displayIdOf(guid));
         }
     });
 
     // NPC vendor callback - play vendor voice line
-    gameHandler_.setNpcVendorCallback([this](uint64_t guid, const glm::vec3& position) {
+    gameHandler_.setNpcVendorCallback([this, displayIdOf](uint64_t guid, const glm::vec3& position) {
         if (audioCoordinator_ && audioCoordinator_->getNpcVoiceManager()) {
             glm::vec3 renderPos = core::coords::canonicalToRender(position);
             audio::VoiceType voiceType = resolveNpcVoiceType(guid);
-            audioCoordinator_->getNpcVoiceManager()->playVendor(guid, voiceType, renderPos);
+            audioCoordinator_->getNpcVoiceManager()->playVendor(guid, voiceType, renderPos, displayIdOf(guid));
         }
     });
 
     // NPC aggro callback - play combat start voice line
-    gameHandler_.setNpcAggroCallback([this](uint64_t guid, const glm::vec3& position) {
+    gameHandler_.setNpcAggroCallback([this, displayIdOf](uint64_t guid, const glm::vec3& position) {
         if (audioCoordinator_ && audioCoordinator_->getNpcVoiceManager()) {
             glm::vec3 renderPos = core::coords::canonicalToRender(position);
             audio::VoiceType voiceType = resolveNpcVoiceType(guid);
-            uint32_t displayId = 0;
-            auto entity = gameHandler_.getEntityManager().getEntity(guid);
-            if (entity && entity->getType() == game::ObjectType::UNIT) {
-                displayId = std::static_pointer_cast<game::Unit>(entity)->getDisplayId();
-            }
             audioCoordinator_->getNpcVoiceManager()->playAggro(
-                guid, displayId, voiceType, renderPos);
+                guid, displayIdOf(guid), voiceType, renderPos);
         }
     });
 }

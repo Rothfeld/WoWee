@@ -5340,25 +5340,39 @@ void CharacterRenderer::emitFootprints(FootprintRenderer& footprints, const glm:
     }
 }
 
+namespace {
+const std::vector<uint32_t>* pickSequenceEventTimes(
+    const std::vector<std::vector<uint32_t>>& eventTimes, int seqIdx) {
+    if (seqIdx < 0 || seqIdx >= static_cast<int>(eventTimes.size()) ||
+        eventTimes[seqIdx].empty()) {
+        return nullptr;
+    }
+    return &eventTimes[seqIdx];
+}
+} // namespace
+
 const std::vector<uint32_t>* CharacterRenderer::getFootstepEventTimes(uint32_t instanceId) const {
     auto it = instances.find(instanceId);
-    if (it == instances.end()) {
-        return nullptr;
-    }
+    if (it == instances.end()) return nullptr;
+    auto modelIt = models.find(it->second.modelId);
+    if (modelIt == models.end()) return nullptr;
+    return pickSequenceEventTimes(modelIt->second.data.footstepEventTimes, it->second.currentSequenceIndex);
+}
 
-    const CharacterInstance& instance = it->second;
-    auto modelIt = models.find(instance.modelId);
-    if (modelIt == models.end()) {
-        return nullptr;
-    }
+const std::vector<uint32_t>* CharacterRenderer::getWingFlapEventTimes(uint32_t instanceId) const {
+    auto it = instances.find(instanceId);
+    if (it == instances.end()) return nullptr;
+    auto modelIt = models.find(it->second.modelId);
+    if (modelIt == models.end()) return nullptr;
+    return pickSequenceEventTimes(modelIt->second.data.wingFlapEventTimes, it->second.currentSequenceIndex);
+}
 
-    const auto& eventTimes = modelIt->second.data.footstepEventTimes;
-    if (instance.currentSequenceIndex < 0 ||
-        instance.currentSequenceIndex >= static_cast<int>(eventTimes.size()) ||
-        eventTimes[instance.currentSequenceIndex].empty()) {
-        return nullptr;
-    }
-    return &eventTimes[instance.currentSequenceIndex];
+const std::vector<uint32_t>* CharacterRenderer::getWingGlideEventTimes(uint32_t instanceId) const {
+    auto it = instances.find(instanceId);
+    if (it == instances.end()) return nullptr;
+    auto modelIt = models.find(it->second.modelId);
+    if (modelIt == models.end()) return nullptr;
+    return pickSequenceEventTimes(modelIt->second.data.wingGlideEventTimes, it->second.currentSequenceIndex);
 }
 
 std::optional<float> CharacterRenderer::locomotionStride(uint32_t instanceId, uint32_t animationId) const {

@@ -544,6 +544,10 @@ bool Application::initialize() {
     if (assetManager->initialize(assetPath)) {
         LOG_INFO("Asset manager initialized successfully");
 
+        if (audioCoordinator_) {
+            audioCoordinator_->initializeEarlyAssets(assetManager.get());
+        }
+
         // Fonts, now the archives are open and still before any frame is
         // drawn - the only moment the glyph atlas can take another face
         // without being rebuilt.

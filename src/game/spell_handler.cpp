@@ -713,6 +713,13 @@ void SpellHandler::playSpellCastSound(uint32_t spellId) {
     if (!ac) return;
     auto* ssm = ac->getSpellSoundManager();
     if (!ssm) return;
+    if (auto* renderer = owner_.services().renderer) {
+        if (auto* svs = renderer->getSpellVisualSystem();
+            svs && svs->hasCastSound(resolveSpellVisualId(spellId))) {
+            ssm->stopPrecast();
+            return;
+        }
+    }
     ssm->playCast(resolveSpellSchool(spellId));
 }
 
@@ -721,8 +728,14 @@ void SpellHandler::playSpellImpactSound(uint32_t spellId) {
     if (!ac) return;
     auto* ssm = ac->getSpellSoundManager();
     if (!ssm) return;
+    if (auto* renderer = owner_.services().renderer) {
+        if (auto* svs = renderer->getSpellVisualSystem();
+            svs && svs->hasImpactSound(resolveSpellVisualId(spellId))) {
+            return;
+        }
+    }
     ssm->playImpact(resolveSpellSchool(spellId),
-                     audio::SpellSoundManager::SpellPower::MEDIUM);
+                    audio::SpellSoundManager::SpellPower::MEDIUM);
 }
 
 // ---- Spell visual effect helpers ----
@@ -3672,8 +3685,13 @@ void SpellHandler::handleSpellStart(network::Packet& packet) {
         }
         castBarCaptionSpellId_ = data.spellId;
 
-        // Play precast sound - skip profession/tradeskill spells
-        if (!owner_.isProfessionSpell(data.spellId)) {
+        // Play precast sound - skip profession/tradeskill spells and spells whose PrecastKit authors SoundID
+        bool visualHasPrecastSound = false;
+        if (auto* renderer = owner_.services().renderer) {
+            if (auto* svs = renderer->getSpellVisualSystem())
+                visualHasPrecastSound = svs->hasPrecastSound(resolveSpellVisualId(data.spellId));
+        }
+        if (!owner_.isProfessionSpell(data.spellId) && !visualHasPrecastSound) {
             if (auto* ac = owner_.services().audioCoordinator) {
                 if (auto* ssm = ac->getSpellSoundManager()) {
                     owner_.loadSpellNameCache();
@@ -3793,6 +3811,17 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
         if (spellclass::isRangedWeaponAutoAttack(sid)) {
             if (owner_.meleeSwingCallbackRef()) owner_.meleeSwingCallbackRef()(sid);
             owner_.suppressNextMeleeSwingAnim();
+            if (auto* ac = owner_.services().audioCoordinator) {
+                if (auto* csm = ac->getCombatSoundManager()) {
+                    uint32_t rangedSub = (sid == 5019u) ? 19u : ((sid == 2764u) ? 16u : 2u);
+                    const auto& rngSlot = owner_.getInventory().getEquipSlot(EquipSlot::RANGED);
+                    if (!rngSlot.empty()) {
+                        if (const auto* info = owner_.getItemInfo(rngSlot.item.itemId); info && info->valid)
+                            rangedSub = info->subClass;
+                    }
+                    csm->playRangedShot(rangedSub);
+                }
+            }
             uint64_t projectileTarget = data.targetGuid;
             if (projectileTarget == 0 && !data.hitTargets.empty())
                 projectileTarget = data.hitTargets.front();

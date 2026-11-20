@@ -16,6 +16,9 @@
 #include "pipeline/dbc_loader.hpp"
 #include "pipeline/dbc_layout.hpp"
 #include "pipeline/m2_loader.hpp"
+#include "audio/audio_coordinator.hpp"
+#include "audio/audio_engine.hpp"
+#include "audio/sound_entries.hpp"
 #include "core/application.hpp"
 #include "core/logger.hpp"
 #include <algorithm>
@@ -176,6 +179,10 @@ void SpellVisualSystem::loadSpellVisualDbc() {
             uint32_t kitId = kitDbc->getUInt32(i, 0);
             if (!kitId) continue;
             kitAnimations_[kitId] = kitDbc->getUInt32(i, 2);
+            if (fc > 15) {
+                if (const uint32_t soundId = kitDbc->getUInt32(i, 15); soundId != 0)
+                    kitSounds_[kitId] = soundId;
+            }
             // Attachment semantics come from the kit slot, not the filename.
             // HeadEffect uses the model's overhead anchor, not its animated
             // anatomical head. Mounted detection eyes and Dazed stars share
@@ -402,7 +409,52 @@ void SpellVisualSystem::playSpellVisualPrecast(uint32_t visualId, const glm::vec
     // A precast lasts the server cast time when there is one.
     const float duration = castTimeMs >= 500
         ? std::clamp(static_cast<float>(castTimeMs) / 1000.0f, 0.5f, 30.0f) : -1.0f;
+    if (attachInstanceId != 0) stopPrecastSound(attachInstanceId);
+    if (const uint32_t snd = playKitSound(kit->second, worldPosition, attachInstanceId, /*stoppable=*/attachInstanceId != 0);
+        snd != 0 && attachInstanceId != 0) {
+        activePrecastSounds_[attachInstanceId] = snd;
+    }
     spawnKitEffects(kit->second, worldPosition, attachInstanceId, duration, KitStage::Precast);
+}
+
+uint32_t SpellVisualSystem::playKitSound(uint32_t kitId, const glm::vec3& worldPosition,
+                                         uint32_t attachInstanceId, bool stoppable) {
+    if (!cachedAssetManager_)
+        cachedAssetManager_ = core::Application::getInstance().getAssetManager();
+    if (!cachedAssetManager_ || !audio::AudioEngine::instance().isInitialized()) return 0;
+    const auto sndIt = kitSounds_.find(kitId);
+    if (sndIt == kitSounds_.end() || sndIt->second == 0) return 0;
+
+    float sfxScale = 1.0f;
+    if (auto* ac = renderer_ ? renderer_->getAudioCoordinator()
+                             : core::Application::getInstance().getAudioCoordinator()) {
+        sfxScale = ac->getSfxVolumeScale();
+    }
+    if (sfxScale <= 0.0f) return 0;
+
+    const bool isLocalPlayer = renderer_ && attachInstanceId != 0 &&
+                               attachInstanceId == renderer_->getCharacterInstanceId();
+    auto& table = audio::SoundEntryTable::instance();
+    if (isLocalPlayer) {
+        if (stoppable) return table.play2DStoppable(cachedAssetManager_, sndIt->second, sfxScale);
+        return table.play2D(cachedAssetManager_, sndIt->second, sfxScale) ? 1u : 0u;
+    }
+    if (stoppable) return table.play3DStoppable(cachedAssetManager_, sndIt->second, worldPosition, sfxScale);
+    return table.play3D(cachedAssetManager_, sndIt->second, worldPosition, sfxScale) ? 1u : 0u;
+}
+
+void SpellVisualSystem::stopPrecastSound(uint32_t attachInstanceId) {
+    if (auto it = activePrecastSounds_.find(attachInstanceId); it != activePrecastSounds_.end()) {
+        audio::AudioEngine::instance().stopSound(it->second);
+        activePrecastSounds_.erase(it);
+    }
+}
+
+void SpellVisualSystem::stopChannelSound(uint32_t attachInstanceId) {
+    if (auto it = activeChannelSounds_.find(attachInstanceId); it != activeChannelSounds_.end()) {
+        audio::AudioEngine::instance().stopSound(it->second);
+        activeChannelSounds_.erase(it);
+    }
 }
 
 // Every effect a kit names, each at the attachment its SpellVisualKit slot
@@ -659,6 +711,8 @@ void SpellVisualSystem::playSpellVisual(uint32_t visualId, const glm::vec3& worl
     }
     const auto kit = castKits_.find(visualId);
     if (kit == castKits_.end() || !kit->second) return;
+    if (attachInstanceId != 0) stopPrecastSound(attachInstanceId);
+    playKitSound(kit->second, worldPosition, attachInstanceId, /*stoppable=*/false);
     spawnKitEffects(kit->second, worldPosition, attachInstanceId, -1.0f, KitStage::Cast);
 }
 
@@ -675,6 +729,33 @@ uint32_t SpellVisualSystem::precastAnimation(uint32_t visualId) { return kitAnim
 uint32_t SpellVisualSystem::castAnimation(uint32_t visualId) { return kitAnimation(castKits_, visualId); }
 uint32_t SpellVisualSystem::channelAnimation(uint32_t visualId) { return kitAnimation(channelKits_, visualId); }
 
+bool SpellVisualSystem::hasPrecastSound(uint32_t visualId) {
+    if (visualId == 0) return false;
+    if (!spellVisualDbcLoaded_) loadSpellVisualDbc();
+    const auto it = precastKits_.find(visualId);
+    return it != precastKits_.end() && it->second != 0 && kitSounds_.count(it->second) != 0;
+}
+
+bool SpellVisualSystem::hasCastSound(uint32_t visualId) {
+    if (visualId == 0) return false;
+    if (!spellVisualDbcLoaded_) loadSpellVisualDbc();
+    auto check = [&](const std::unordered_map<uint32_t, uint32_t>& kits) {
+        const auto it = kits.find(visualId);
+        return it != kits.end() && it->second != 0 && kitSounds_.count(it->second) != 0;
+    };
+    return check(castKits_) || check(casterImpactKits_) || check(instantAreaKits_) || check(channelKits_);
+}
+
+bool SpellVisualSystem::hasImpactSound(uint32_t visualId) {
+    if (visualId == 0) return false;
+    if (!spellVisualDbcLoaded_) loadSpellVisualDbc();
+    auto check = [&](const std::unordered_map<uint32_t, uint32_t>& kits) {
+        const auto it = kits.find(visualId);
+        return it != kits.end() && it->second != 0 && kitSounds_.count(it->second) != 0;
+    };
+    return check(impactKits_) || check(targetImpactKits_) || check(impactAreaKits_);
+}
+
 void SpellVisualSystem::startChannelVisual(uint32_t visualId, const glm::vec3& position,
                                           uint32_t durationMs, uint32_t attachInstanceId) {
     if (!m2Renderer_ || !attachInstanceId) return;
@@ -688,6 +769,10 @@ void SpellVisualSystem::startChannelVisual(uint32_t visualId, const glm::vec3& p
     unitChannelVisuals_[attachInstanceId] = {visualId, remaining};
     startKitLight(kit->second, attachInstanceId);
     applyCharacterProcedures(attachInstanceId);
+    if (const uint32_t snd = playKitSound(kit->second, position, attachInstanceId, /*stoppable=*/true);
+        snd != 0) {
+        activeChannelSounds_[attachInstanceId] = snd;
+    }
     const auto effects = kitEffects_.find(kit->second);
     if (effects == kitEffects_.end()) return;
     auto* characters = renderer_->getCharacterRenderer();
@@ -762,8 +847,10 @@ void SpellVisualSystem::syncAuraVisuals(uint32_t attachInstanceId,
     // then runs its own time, removal of the aura does not end it.
     for (uint32_t visual : visualIds) {
         if (std::find(previous.begin(), previous.end(), visual) != previous.end()) continue;
-        if (const auto kit = stateKits_.find(visual); kit != stateKits_.end() && kit->second)
+        if (const auto kit = stateKits_.find(visual); kit != stateKits_.end() && kit->second) {
             startKitLight(kit->second, attachInstanceId);
+            playKitSound(kit->second, position, attachInstanceId, /*stoppable=*/false);
+        }
     }
     const bool revealMarkers = observerConcealed &&
         (found == unitAuraVisuals_.end() || !found->second.observerConcealed);
@@ -887,6 +974,7 @@ void SpellVisualSystem::updateChannelVisual(uint32_t attachInstanceId, uint32_t 
         ++it;
     }
     if (!remainingMs) {
+        stopChannelSound(attachInstanceId);
         if (unitChannelVisuals_.erase(attachInstanceId))
             applyCharacterProcedures(attachInstanceId);
     } else if (const auto chan = unitChannelVisuals_.find(attachInstanceId);
@@ -1222,6 +1310,8 @@ void SpellVisualSystem::playCastKit(uint32_t visualId, const glm::vec3& casterPo
     if (!spellVisualDbcLoaded_) loadSpellVisualDbc();
     const auto kit = castKits_.find(visualId);
     if (kit == castKits_.end() || !kit->second) return;
+    if (casterInstanceId != 0) stopPrecastSound(casterInstanceId);
+    playKitSound(kit->second, casterPosition, casterInstanceId, /*stoppable=*/false);
     const float models = spawnKitEffects(kit->second, casterPosition, casterInstanceId, -1.0f, KitStage::Cast);
     const auto chainId = kitChainEffects_.find(kit->second);
     if (chainId == kitChainEffects_.end() || ends.empty()) return;
@@ -1259,6 +1349,7 @@ void SpellVisualSystem::playInstantAreaKit(uint32_t visualId, const glm::vec3& d
     if (kit == instantAreaKits_.end() || !kit->second) return;
     LOG_INFO("SpellVisual: instant area kit ", kit->second, " of visual ", visualId, " at (",
              destination.x, ",", destination.y, ",", destination.z, ")");
+    playKitSound(kit->second, destination, /*attachInstanceId=*/0, /*stoppable=*/false);
     spawnKitEffects(kit->second, destination, /*attachInstanceId=*/0, /*duration=*/-1.0f,
                     KitStage::Other);
 }
@@ -1269,6 +1360,7 @@ void SpellVisualSystem::playImpactAreaKit(uint32_t visualId, const glm::vec3& de
     if (kit == impactAreaKits_.end() || !kit->second) return;
     LOG_INFO("SpellVisual: impact area kit ", kit->second, " of visual ", visualId, " at (",
              destination.x, ",", destination.y, ",", destination.z, ")");
+    playKitSound(kit->second, destination, /*attachInstanceId=*/0, /*stoppable=*/false);
     spawnKitEffects(kit->second, destination, /*attachInstanceId=*/0, /*duration=*/-1.0f,
                     KitStage::Other);
 }
@@ -1305,6 +1397,7 @@ void SpellVisualSystem::playSpellVisualKit(uint32_t kitId, const glm::vec3& worl
     }
     LOG_DEBUG("SpellVisualKit: id=", kitId, " animation=", animation->second);
     startKitLight(kitId, attachInstanceId);
+    playKitSound(kitId, worldPosition, attachInstanceId, /*stoppable=*/false);
     spawnKitEffects(kitId, worldPosition, attachInstanceId, -1.0f, KitStage::Other);
 }
 
@@ -1333,6 +1426,10 @@ void SpellVisualSystem::playPersistentArea(uint64_t key, uint32_t visualId, cons
     stopPersistentArea(key);
     const auto kit = persistentAreaKits_.find(visualId);
     if (kit == persistentAreaKits_.end() || kit->second == 0) return;
+    if (const uint32_t snd = playKitSound(kit->second, worldPosition, /*attachInstanceId=*/0, /*stoppable=*/true);
+        snd != 0) {
+        activeAreaSounds_[key] = snd;
+    }
     // Cave In 36240 (kit 9373): Smash_Impact_Chest glows at the centre, a
     // 1 s loop, while HellfireRaid_Dust_Impact_Base rock falls land around it
     // (original 2.4.3, pair 8). Rain of Fire 5740 (kit 9352, 5 a second)
@@ -1372,6 +1469,10 @@ void SpellVisualSystem::playPersistentArea(uint64_t key, uint32_t visualId, cons
 void SpellVisualSystem::stopPersistentArea(uint64_t key) {
     // Impacts already falling finish their fall.
     activeAreaImpacts_.erase(key);
+    if (auto sndIt = activeAreaSounds_.find(key); sndIt != activeAreaSounds_.end()) {
+        audio::AudioEngine::instance().stopSound(sndIt->second);
+        activeAreaSounds_.erase(sndIt);
+    }
     const auto it = persistentAreas_.find(key);
     if (it == persistentAreas_.end()) return;
     if (m2Renderer_) {
@@ -1653,6 +1754,7 @@ void SpellVisualSystem::update(float deltaTime) {
                 it->second.remaining -= deltaTime;
                 if (it->second.remaining <= 0.0f) {
                     const uint32_t owner = it->first;
+                    stopChannelSound(owner);
                     it = unitChannelVisuals_.erase(it);
                     applyCharacterProcedures(owner);
                     continue;
@@ -1900,6 +2002,8 @@ void SpellVisualSystem::update(float deltaTime) {
 // bmdie7_sheet.jpg, go8_sheet.jpg for the same CastKit playing out alive).
 void SpellVisualSystem::removeCasterStages(uint32_t attachInstanceId) {
     if (!m2Renderer_ || !attachInstanceId) return;
+    stopPrecastSound(attachInstanceId);
+    stopChannelSound(attachInstanceId);
     for (auto it = activeSpellVisuals_.begin(); it != activeSpellVisuals_.end();) {
         if (it->attachInstanceId == attachInstanceId && (it->isPrecast || it->isCast || it->isChannel)) {
             LOG_DEBUG("SpellVisual: caster died, effect instance ", it->instanceId, " removed");
@@ -1934,6 +2038,7 @@ void SpellVisualSystem::retireEffect(const SpellVisualInstance& effect) {
 // (_experiments/20261119T1300Z.channel_end, die1_kill.jpg).
 void SpellVisualSystem::cancelPrecastVisuals(uint32_t attachInstanceId) {
     if (!m2Renderer_ || !attachInstanceId) return;
+    stopPrecastSound(attachInstanceId);
     for (auto it = activeSpellVisuals_.begin(); it != activeSpellVisuals_.end(); ) {
         if (it->isPrecast && it->attachInstanceId == attachInstanceId) {
             retireEffect(*it);
@@ -1979,6 +2084,16 @@ void SpellVisualSystem::transferUnitVisuals(uint32_t fromInstanceId, uint32_t to
         unitChannelVisuals_.erase(toInstanceId);
         unitChannelVisuals_.insert(std::move(node));
     }
+    if (auto node = activePrecastSounds_.extract(fromInstanceId)) {
+        node.key() = toInstanceId;
+        activePrecastSounds_.erase(toInstanceId);
+        activePrecastSounds_.insert(std::move(node));
+    }
+    if (auto node = activeChannelSounds_.extract(fromInstanceId)) {
+        node.key() = toInstanceId;
+        activeChannelSounds_.erase(toInstanceId);
+        activeChannelSounds_.insert(std::move(node));
+    }
     if (auto node = fieldChannels_.extract(fromInstanceId)) {
         node.key() = toInstanceId;
         fieldChannels_.erase(toInstanceId);
@@ -1995,6 +2110,12 @@ void SpellVisualSystem::transferUnitVisuals(uint32_t fromInstanceId, uint32_t to
 }
 
 void SpellVisualSystem::reset() {
+    for (const auto& [inst, snd] : activePrecastSounds_) audio::AudioEngine::instance().stopSound(snd);
+    for (const auto& [inst, snd] : activeChannelSounds_) audio::AudioEngine::instance().stopSound(snd);
+    for (const auto& [key, snd] : activeAreaSounds_) audio::AudioEngine::instance().stopSound(snd);
+    activePrecastSounds_.clear();
+    activeChannelSounds_.clear();
+    activeAreaSounds_.clear();
     unitAuraVisuals_.clear();
     unitChannelVisuals_.clear();
     beams_.clear();

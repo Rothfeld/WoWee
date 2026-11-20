@@ -130,6 +130,8 @@ public:
     /// model existed and was dropped, so every door in the world was drawn in
     /// its closed pose however the server had it.
     void applyGameObjectState(uint64_t guid, uint8_t goState);
+    void playGameObjectStateSound(uint64_t guid, uint8_t goState);
+    void playGameObjectCustomSound(uint64_t guid, uint32_t customIndex);
     /// gameObjectActiveShowsDestroy's pose for a state-driven object without
     /// Open/Opened: Destroy held for ACTIVE, Stand otherwise. False (nothing
     /// done) when the rule does not apply to this type and model.
@@ -589,7 +591,14 @@ private:
     bool loadWeaponM2(const std::string& m2Path, pipeline::M2Model& outModel);
 
     // GameObject display lookups
+    struct GameObjectDisplaySounds {
+        uint32_t openSoundId = 0;
+        uint32_t closeSoundId = 0;
+        uint32_t destroySoundId = 0;
+        std::array<uint32_t, 4> customSoundIds{};
+    };
     std::unordered_map<uint32_t, std::string> gameObjectDisplayIdToPath_;
+    std::unordered_map<uint32_t, GameObjectDisplaySounds> gameObjectDisplaySounds_;
     bool gameObjectLookupsBuilt_ = false;
     void buildGameObjectDisplayLookups();
 
@@ -821,6 +830,7 @@ private:
     struct GameObjectInstanceInfo {
         uint32_t modelId = 0;
         uint32_t instanceId = 0;
+        uint32_t displayId = 0;
         bool isWmo = false;
         float scale = 1.0f;
     };

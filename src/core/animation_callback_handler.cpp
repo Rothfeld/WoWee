@@ -19,6 +19,8 @@
 #include "game/world_packets.hpp"
 #include "audio/audio_coordinator.hpp"
 #include "audio/audio_engine.hpp"
+#include "audio/activity_sound_manager.hpp"
+#include "audio/npc_voice_manager.hpp"
 #include "audio/ui_sound_manager.hpp"
 
 #include <cmath>
@@ -218,10 +220,13 @@ void AnimationCallbackHandler::setupCallbacks() {
 
         // Charge's cast kit points at SoundEntries 3330 ("HeroicLeap"), whose file name
         // carries Blizzard's own typo. There is no Sound\Spells\Charge.wav.
-        auto& audio = audio::AudioEngine::instance();
-        if (!audio.playSound2D("Sound\\Spells\\HeroricLeap.wav", 0.8f)) {
-            // Fallback: weapon whoosh
-            audio.playSound2D("Sound\\Item\\Weapons\\WeaponSwings\\mWooshLarge1.wav", 0.9f);
+        const float sfxScale = renderer_.getAudioCoordinator()
+            ? renderer_.getAudioCoordinator()->getSfxVolumeScale() : 1.0f;
+        if (sfxScale > 0.0f) {
+            auto& audio = audio::AudioEngine::instance();
+            if (!audio.playSound2D("Sound\\Spells\\HeroricLeap.wav", 0.8f * sfxScale)) {
+                audio.playSound2D("Sound\\Item\\Weapons\\WeaponSwings\\mWooshLarge1.wav", 0.9f * sfxScale);
+            }
         }
     });
 
@@ -250,6 +255,21 @@ void AnimationCallbackHandler::setupCallbacks() {
                 alreadyDead ? rendering::anim::DEAD : rendering::anim::DEATH, alreadyDead);
             // Its casting effects die with it (SpellVisualSystem::removeCasterStages).
             if (auto* visuals = renderer_.getSpellVisualSystem()) visuals->removeCasterStages(instanceId);
+        }
+        if (!alreadyDead && renderer_.getAudioCoordinator()) {
+            auto* ac = renderer_.getAudioCoordinator();
+            if (guid == gameHandler_.getPlayerGuid()) {
+                if (auto* act = ac->getActivitySoundManager()) act->playDeath();
+            } else if (auto* nvm = ac->getNpcVoiceManager()) {
+                if (auto ent = gameHandler_.getEntityManager().getEntity(guid);
+                    ent && ent->getType() == game::ObjectType::UNIT) {
+                    const uint32_t dispId = std::static_pointer_cast<game::Unit>(ent)->getDisplayId();
+                    glm::vec3 pos = core::coords::canonicalToRender(
+                        glm::vec3(ent->getX(), ent->getY(), ent->getZ()));
+                    entitySpawner_.getRenderPositionForGuid(guid, pos);
+                    nvm->playDeath(guid, dispId, pos);
+                }
+            }
         }
     });
 
@@ -388,6 +408,21 @@ void AnimationCallbackHandler::setupCallbacks() {
         if (isLocalPlayer) {
             if (ac) ac->triggerHitReaction(animId);
             return;
+        }
+        if ((reaction == game::GameHandler::HitReaction::WOUND ||
+             reaction == game::GameHandler::HitReaction::CRIT_WOUND) &&
+            renderer_.getAudioCoordinator()) {
+            if (auto* nvm = renderer_.getAudioCoordinator()->getNpcVoiceManager()) {
+                if (auto ent = gameHandler_.getEntityManager().getEntity(victimGuid);
+                    ent && ent->getType() == game::ObjectType::UNIT) {
+                    const uint32_t dispId = std::static_pointer_cast<game::Unit>(ent)->getDisplayId();
+                    glm::vec3 pos = core::coords::canonicalToRender(
+                        glm::vec3(ent->getX(), ent->getY(), ent->getZ()));
+                    entitySpawner_.getRenderPositionForGuid(victimGuid, pos);
+                    nvm->playWound(victimGuid, dispId,
+                                   reaction == game::GameHandler::HitReaction::CRIT_WOUND, pos);
+                }
+            }
         }
         cr->playAnimation(instanceId, animId, false, entitySpawner_.remoteResumeAnimation(victimGuid));
     });

@@ -314,6 +314,11 @@ struct M2Model {
     // the game client uses to sync footstep sounds to feet hitting the ground.
     // Empty inner list = no footfall events for that sequence.
     std::vector<std::vector<uint32_t>> footstepEventTimes;
+    // Wing flap ($WNG) and wing glide ($WGG) animation event times per sequence
+    // index, in ms from sequence start, sorted ascending (flying mounts, gryphons,
+    // wyverns, dragonhawks, nether drakes).
+    std::vector<std::vector<uint32_t>> wingFlapEventTimes;
+    std::vector<std::vector<uint32_t>> wingGlideEventTimes;
 
     // Per-foot ground contacts: events named '$' + F/R/B/S + L/R + digit,
     // authored at z = 0 under each foot and timed in Walk (F), Run (R),

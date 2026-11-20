@@ -9,6 +9,7 @@
 #include "audio/audio_coordinator.hpp"
 #include "audio/music_manager.hpp"
 #include "audio/audio_engine.hpp"
+#include "audio/sound_entries.hpp"
 #include "ui/ui_manager.hpp"
 
 namespace wowee { namespace core {
@@ -25,24 +26,6 @@ AudioCallbackHandler::AudioCallbackHandler(
     , uiManager_(uiManager)
     , gameHandler_(gameHandler)
 {
-}
-
-std::optional<std::string> AudioCallbackHandler::resolveSoundEntryPath(uint32_t soundId) const {
-    auto dbc = assetManager_.loadDBC("SoundEntries.dbc");
-    if (!dbc || !dbc->isLoaded()) return std::nullopt;
-
-    int32_t idx = dbc->findRecordById(soundId);
-    if (idx < 0) return std::nullopt;
-
-    // SoundEntries.dbc (WotLK): field 2 = Name (label), fields 3-12 = File[0..9], field 23 = DirectoryBase
-    const uint32_t row = static_cast<uint32_t>(idx);
-    std::string dir = dbc->getString(row, 23);
-    for (uint32_t f = 3; f <= 12; ++f) {
-        std::string name = dbc->getString(row, f);
-        if (name.empty()) continue;
-        return dir.empty() ? name : dir + "\\" + name;
-    }
-    return std::nullopt;
 }
 
 void AudioCallbackHandler::setupCallbacks() {
@@ -65,40 +48,38 @@ void AudioCallbackHandler::setupCallbacks() {
     });
 
     // Server-triggered music callback (SMSG_PLAY_MUSIC)
-    // Resolves soundId → SoundEntries.dbc → MPQ path → MusicManager.
+    // Resolves soundId -> SoundEntries.dbc -> MPQ path -> MusicManager.
     gameHandler_.setPlayMusicCallback([this](uint32_t soundId) {
-        if (!renderer_) return;
         auto* music = audioCoordinator_ ? audioCoordinator_->getMusicManager() : nullptr;
         if (!music) return;
 
-        auto path = resolveSoundEntryPath(soundId);
-        if (path) {
-            music->playMusic(*path, /*loop=*/false);
+        const auto* rec = audio::SoundEntryTable::instance().findById(&assetManager_, soundId);
+        if (!rec) return;
+        const std::string path = audio::SoundEntryTable::instance().pickExistingPath(&assetManager_, *rec);
+        if (!path.empty()) {
+            music->playMusic(path, /*loop=*/false);
         }
     });
 
     // SMSG_PLAY_SOUND: look up SoundEntries.dbc and play 2-D sound effect
     gameHandler_.setPlaySoundCallback([this](uint32_t soundId) {
-        auto path = resolveSoundEntryPath(soundId);
-        if (path) {
-            audio::AudioEngine::instance().playSound2D(*path);
-        }
+        const float sfxScale = audioCoordinator_ ? audioCoordinator_->getSfxVolumeScale() : 1.0f;
+        audio::SoundEntryTable::instance().play2D(&assetManager_, soundId, sfxScale);
     });
 
     // SMSG_PLAY_OBJECT_SOUND / SMSG_PLAY_SPELL_IMPACT: play as 3D positional sound at source entity
     gameHandler_.setPlayPositionalSoundCallback([this](uint32_t soundId, uint64_t sourceGuid) {
-        auto path = resolveSoundEntryPath(soundId);
-        if (!path) return;
+        const float sfxScale = audioCoordinator_ ? audioCoordinator_->getSfxVolumeScale() : 1.0f;
+        if (sfxScale <= 0.0f) return;
 
-        // Play as 3D sound if source entity position is available.
-        // Entity stores canonical coords; listener uses render coords (camera).
+        // Play as 3D sound if source entity position is available and not the local player.
         auto entity = gameHandler_.getEntityManager().getEntity(sourceGuid);
-        if (entity) {
+        if (entity && sourceGuid != gameHandler_.getPlayerGuid()) {
             glm::vec3 canonical{entity->getLatestX(), entity->getLatestY(), entity->getLatestZ()};
             glm::vec3 pos = core::coords::canonicalToRender(canonical);
-            audio::AudioEngine::instance().playSound3D(*path, pos);
+            audio::SoundEntryTable::instance().play3D(&assetManager_, soundId, pos, sfxScale);
         } else {
-            audio::AudioEngine::instance().playSound2D(*path);
+            audio::SoundEntryTable::instance().play2D(&assetManager_, soundId, sfxScale);
         }
     });
 

@@ -277,6 +277,8 @@ public:
     /// Footfall ($FSD) event times in ms for the sequence the instance is
     /// currently playing; nullptr if the model has none for that sequence.
     [[nodiscard]] const std::vector<uint32_t>* getFootstepEventTimes(uint32_t instanceId) const;
+    [[nodiscard]] const std::vector<uint32_t>* getWingFlapEventTimes(uint32_t instanceId) const;
+    [[nodiscard]] const std::vector<uint32_t>* getWingGlideEventTimes(uint32_t instanceId) const;
     [[nodiscard]] bool hasAnimation(uint32_t instanceId, uint32_t animationId) const;
     // In the corpse pose: Death or Dead was played and no revival (Stand) since.
     // Native 2.4.3 keeps a corpse lying through emotes and spell cast/kit

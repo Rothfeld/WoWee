@@ -16,6 +16,8 @@
 #include "pipeline/char_sections.hpp"
 #include "pipeline/dbc_layout.hpp"
 #include "game/game_handler.hpp"
+#include "audio/audio_coordinator.hpp"
+#include "audio/combat_sound_manager.hpp"
 #include <glm/gtc/matrix_transform.hpp>
 
 namespace wowee {
@@ -742,9 +744,33 @@ void AppearanceComposer::showRangedWeapon(bool show) {
 void AppearanceComposer::setSheathState(uint8_t sheathState) {
     assert(sheathState <= kSheathStateRanged);
     if (sheathState == sheathState_) return;
+    const uint8_t prevState = sheathState_;
     LOG_INFO("Local sheath state ", int(sheathState_), " -> ", int(sheathState));
     sheathState_ = sheathState;
     showingRanged_ = sheathState_ == kSheathStateRanged;
+    if (gameHandler_ && renderer_ && renderer_->getAudioCoordinator()) {
+        if (auto* csm = renderer_->getAudioCoordinator()->getCombatSoundManager()) {
+            const bool unsheathe = (sheathState != kSheathStateUnarmed);
+            const bool rangedChange = (sheathState == kSheathStateRanged || prevState == kSheathStateRanged);
+            const auto& inv = gameHandler_->getInventory();
+            const auto& slot = rangedChange
+                ? inv.getEquipSlot(game::EquipSlot::RANGED)
+                : inv.getEquipSlot(game::EquipSlot::MAIN_HAND);
+            if (!slot.empty()) {
+                if (const auto* info = gameHandler_->getItemInfo(slot.item.itemId); info && info->valid) {
+                    csm->playSheathe(info->itemClass, info->subClass, info->material, /*isShield=*/false, unsheathe);
+                }
+            } else if (!rangedChange) {
+                const auto& oh = inv.getEquipSlot(game::EquipSlot::OFF_HAND);
+                if (!oh.empty()) {
+                    if (const auto* info = gameHandler_->getItemInfo(oh.item.itemId); info && info->valid) {
+                        const bool shield = (info->itemClass == 4 && info->subClass == 6);
+                        csm->playSheathe(info->itemClass, info->subClass, info->material, shield, unsheathe);
+                    }
+                }
+            }
+        }
+    }
     if (renderer_ && renderer_->getAnimationController())
         renderer_->getAnimationController()->setRangedWeaponActive(showingRanged_);
     if (renderer_ && renderer_->getCharacterRenderer() && renderer_->getCharacterInstanceId())

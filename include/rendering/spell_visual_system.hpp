@@ -141,6 +141,9 @@ public:
     uint32_t precastAnimation(uint32_t visualId);
     uint32_t castAnimation(uint32_t visualId);
     uint32_t channelAnimation(uint32_t visualId);
+    [[nodiscard]] bool hasPrecastSound(uint32_t visualId);
+    [[nodiscard]] bool hasCastSound(uint32_t visualId);
+    [[nodiscard]] bool hasImpactSound(uint32_t visualId);
     // Persistent StateKit effects follow the unit's current aura set, and so
     // do the kits' character procedures that change the unit's own model:
     // SpellVisualKit CharProc 1 multiplies the model's colour by CharParamZero
@@ -348,7 +351,15 @@ private:
     std::vector<DrainingEffect> drainingCasterEffects_;
     float spawnKitEffects(uint32_t kitId, const glm::vec3& worldPosition, uint32_t attachInstanceId,
                           float duration, KitStage stage);
+    uint32_t playKitSound(uint32_t kitId, const glm::vec3& worldPosition, uint32_t attachInstanceId,
+                          bool stoppable);
+    void stopPrecastSound(uint32_t attachInstanceId);
+    void stopChannelSound(uint32_t attachInstanceId);
     std::unordered_map<uint32_t, uint32_t> kitAnimations_;
+    std::unordered_map<uint32_t, uint32_t> kitSounds_;       // SpellVisualKit col 15 -> SoundEntries ID
+    std::unordered_map<uint32_t, uint32_t> activePrecastSounds_;  // attachInstanceId -> AudioEngine soundId
+    std::unordered_map<uint32_t, uint32_t> activeChannelSounds_;  // attachInstanceId -> AudioEngine soundId
+    std::unordered_map<uint64_t, uint32_t> activeAreaSounds_;     // persistentArea key -> AudioEngine soundId
     // scale: SpellVisualEffectName.Scale, the size the effect is drawn at.
     struct KitEffect { std::string path; uint32_t attachment; float scale = 1.0f; };
     std::unordered_map<uint32_t, std::vector<KitEffect>> kitEffects_;

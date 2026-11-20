@@ -1601,7 +1601,7 @@ void EntitySpawner::spawnOnlineGameObject(uint64_t guid, uint32_t entry, uint32_
                 return;
             }
 
-            gameObjectInstances_[guid] = {.modelId = modelId, .instanceId = instanceId, .isWmo = true, .scale = scale};
+            gameObjectInstances_[guid] = {.modelId = modelId, .instanceId = instanceId, .displayId = displayId, .isWmo = true, .scale = scale};
             LOG_DEBUG("Spawned gameobject WMO: guid=0x", std::hex, guid, std::dec,
                      " displayId=", displayId, " at (", x, ", ", y, ", ", z, ")");
 
@@ -1770,7 +1770,7 @@ void EntitySpawner::spawnOnlineGameObject(uint64_t guid, uint32_t entry, uint32_
             applyGameObjectAnimationPolicy(guid, entry, instanceId);
         }
 
-        gameObjectInstances_[guid] = {.modelId = modelId, .instanceId = instanceId, .isWmo = false, .scale = scale};
+        gameObjectInstances_[guid] = {.modelId = modelId, .instanceId = instanceId, .displayId = displayId, .isWmo = false, .scale = scale};
 
         // ...and the pose the server described before this model existed.
         if (auto pending = gameObjectPendingState_.find(guid);

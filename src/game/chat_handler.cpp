@@ -17,6 +17,10 @@
 #include "network/world_socket.hpp"
 #include "rendering/renderer.hpp"
 #include "rendering/animation_controller.hpp"
+#include "audio/audio_coordinator.hpp"
+#include "audio/player_voice_manager.hpp"
+#include "core/coordinates.hpp"
+#include "game/update_field_table.hpp"
 #include "core/logger.hpp"
 #include "core/app_clock.hpp"
 #include <algorithm>
@@ -946,6 +950,20 @@ void ChatHandler::handleTextEmote(network::Packet& packet) {
 
     if (data.senderGuid == owner_.getPlayerGuid() && data.senderGuid != 0) {
         return;
+    }
+
+    if (auto* ac = owner_.services().audioCoordinator;
+        ac && ac->areEmoteSoundsEnabled() && ac->getPlayerVoiceManager()) {
+        if (const auto sender = owner_.getEntityManager().getEntity(data.senderGuid)) {
+            const uint32_t bytes0 = sender->getField(fieldIndex(UF::UNIT_FIELD_BYTES_0));
+            const uint8_t raceId = static_cast<uint8_t>(bytes0 & 0xFFu);
+            const uint8_t gender = static_cast<uint8_t>((bytes0 >> 16u) & 0xFFu);
+            if (raceId != 0) {
+                const glm::vec3 renderPos = core::coords::canonicalToRender(
+                    glm::vec3(sender->getX(), sender->getY(), sender->getZ()));
+                ac->getPlayerVoiceManager()->playEmote3D(data.textEmoteId, raceId, gender, renderPos);
+            }
+        }
     }
 
     std::string senderName = owner_.lookupName(data.senderGuid);
