@@ -686,6 +686,19 @@ target_link_libraries(test_widget_tree PRIVATE catch2_main)
 add_test(NAME widget_tree COMMAND test_widget_tree)
 register_test_target(test_widget_tree)
 
+# ── test_autocast_shine ─────────────────────────────────────
+add_executable(test_autocast_shine
+    test_autocast_shine.cpp
+    ${CMAKE_SOURCE_DIR}/src/ui/autocast_shine.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/m2_loader.cpp
+    ${CMAKE_SOURCE_DIR}/src/core/logger.cpp
+)
+target_include_directories(test_autocast_shine PRIVATE ${TEST_INCLUDE_DIRS})
+target_include_directories(test_autocast_shine SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
+target_link_libraries(test_autocast_shine PRIVATE catch2_main)
+add_test(NAME autocast_shine COMMAND test_autocast_shine)
+register_test_target(test_autocast_shine)
+
 # ── test_text_edit ──────────────────────────────────────────
 wowee_add_test(test_text_edit SOURCES
     test_text_edit.cpp

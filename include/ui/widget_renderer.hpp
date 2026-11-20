@@ -20,6 +20,7 @@
 
 #include <vulkan/vulkan.h>
 
+#include "ui/autocast_shine.hpp"
 #include "ui/tooltip_layout.hpp"
 
 struct ImDrawList;   // global, as ImGui declares it
@@ -202,6 +203,11 @@ private:
     std::unordered_map<std::string, std::pair<float, float>> textureSizes_;
     /// Which incarnation of ImGui's backend the cache above belongs to.
     uint32_t uiTextureGenerationSeen_ = 0;
+
+    /// Lazily loaded Interface\Buttons\UI-AutoCastButton.m2 for pet autocast shine.
+    bool autoCastShineLoaded_ = false;
+    AutoCastShineModel autoCastShineModel_;
+    std::vector<AutoCastShineSprite> autoCastShineScratch_;
 };
 
 } // namespace ui

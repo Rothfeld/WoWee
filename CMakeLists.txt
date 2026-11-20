@@ -1025,6 +1025,7 @@ set(WOWEE_SOURCES
     src/ui/native_glyph_loader.cpp
     src/ui/text_edit.cpp
     src/ui/paper_ui.cpp
+    src/ui/autocast_shine.cpp
     src/ui/widget_renderer.cpp
     src/ui/ui_raid_icons.cpp
     src/ui/ui_texture_load.cpp

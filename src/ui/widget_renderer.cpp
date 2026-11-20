@@ -17,6 +17,7 @@
 #include "ui/framexml_takeover.hpp"
 #include "pipeline/asset_manager.hpp"
 #include "pipeline/blp_loader.hpp"
+#include "pipeline/m2_loader.hpp"
 #include "stb_image.h"
 #include <filesystem>
 #include <fstream>
@@ -2548,41 +2549,57 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                              packColor(w->color, w->effAlpha));
             }
             if (w->isAutoCastShine) {
-                // Animated golden orbiting sparkles matching TBC UI-AutoCastButton.mdx
-                // around the perimeter of PetActionButton*AutoCast and SpellButton*AutoCast.
-                const float rw = x1 - x0;
-                const float rh = y1 - y0;
-                const float perim = 2.0f * (rw + rh);
-                if (perim > 1.0f) {
-                    const double now = ImGui::GetTime();
-                    const float baseSpeed = 0.45f; // revolutions per second
-                    const auto pointOnRect = [&](float t) -> ImVec2 {
-                        float d = std::fmod(t, 1.0f);
-                        if (d < 0.0f) d += 1.0f;
-                        float p = d * perim;
-                        if (p < rw) return ImVec2(x0 + p, y0);
-                        p -= rw;
-                        if (p < rh) return ImVec2(x1, y0 + p);
-                        p -= rh;
-                        if (p < rw) return ImVec2(x1 - p, y1);
-                        p -= rw;
-                        return ImVec2(x0, y1 - p);
-                    };
-                    // Soft golden border glow
-                    const ImU32 glowCol = IM_COL32(255, 220, 90, static_cast<int>(w->effAlpha * 110.0f));
-                    dl->AddRect(ImVec2(x0, y0), ImVec2(x1, y1), glowCol, 0.0f, 0, std::max(1.5f, 1.6f * ws));
-                    // 4 orbiting sparkle trails (head + 3 trailing dots each)
-                    for (int g = 0; g < 4; ++g) {
-                        const float headT = static_cast<float>(std::fmod(now * baseSpeed + g * 0.25, 1.0));
-                        for (int k = 0; k < 4; ++k) {
-                            const float t = headT - k * 0.022f;
-                            const ImVec2 pt = pointOnRect(t);
-                            const float radius = (k == 0 ? 2.8f : k == 1 ? 2.1f : k == 2 ? 1.5f : 1.0f) * ws;
-                            const float fade = (1.0f - k * 0.22f) * w->effAlpha;
-                            const ImU32 outerCol = IM_COL32(255, 210, 60, static_cast<int>(fade * 180.0f));
-                            const ImU32 coreCol  = IM_COL32(255, 252, 210, static_cast<int>(fade * 255.0f));
-                            dl->AddCircleFilled(pt, radius * 1.45f, outerCol, 10);
-                            dl->AddCircleFilled(pt, radius * 0.75f, coreCol, 8);
+                if (!autoCastShineLoaded_ && assets_) {
+                    autoCastShineLoaded_ = true;
+                    const auto m2Bytes = assets_->readFile("Interface\\Buttons\\UI-AutoCastButton.m2");
+                    if (!m2Bytes.empty()) {
+                        const auto m2Model = pipeline::M2Loader::load(m2Bytes);
+                        autoCastShineModel_ = AutoCastShineModel::fromM2(m2Model);
+                    }
+                    if (!autoCastShineModel_.isValid()) {
+                        LOG_WARNING("Failed to load Interface\\Buttons\\UI-AutoCastButton.m2 for autocast shine");
+                    }
+                }
+                if (autoCastShineModel_.isValid()) {
+                    const VkDescriptorSet starTex = texture(autoCastShineModel_.texturePath, /*add=*/true);
+                    if (starTex != VK_NULL_HANDLE) {
+                        autoCastShineModel_.evaluateSprites(
+                            ImGui::GetTime(), x0, y0, x1, y1, w->modelScale, w->effAlpha,
+                            autoCastShineScratch_);
+                        if (!autoCastShineScratch_.empty()) {
+                            dl->PushClipRect(ImVec2(x0, y0), ImVec2(x1, y1), true);
+                            dl->AddCallback([](const ImDrawList*, const ImDrawCmd* cmd) {
+                                auto* state = static_cast<ImGui_ImplVulkan_RenderState*>(
+                                    ImGui::GetPlatformIO().Renderer_RenderState);
+                                assert(state);
+                                auto* context = static_cast<rendering::VkContext*>(cmd->UserCallbackData);
+                                vkCmdBindPipeline(state->CommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                                  context->getImGuiAdditivePipeline(state->PipelineLayout));
+                            }, vkCtx_);
+
+                            const ImTextureID texId = reinterpret_cast<ImTextureID>(starTex);
+                            constexpr ImVec2 uv0(0.0f, 0.0f);
+                            constexpr ImVec2 uv1(1.0f, 0.0f);
+                            constexpr ImVec2 uv2(1.0f, 1.0f);
+                            constexpr ImVec2 uv3(0.0f, 1.0f);
+
+                            for (const auto& sp : autoCastShineScratch_) {
+                                const float cs = std::cos(sp.rotation) * sp.halfSize;
+                                const float sn = std::sin(sp.rotation) * sp.halfSize;
+                                const ImVec2 p0(sp.x - cs + sn, sp.y - sn - cs);
+                                const ImVec2 p1(sp.x + cs + sn, sp.y + sn - cs);
+                                const ImVec2 p2(sp.x + cs - sn, sp.y + sn + cs);
+                                const ImVec2 p3(sp.x - cs - sn, sp.y - sn + cs);
+                                const ImU32 col = IM_COL32(
+                                    static_cast<int>(sp.r * 255.0f + 0.5f),
+                                    static_cast<int>(sp.g * 255.0f + 0.5f),
+                                    static_cast<int>(sp.b * 255.0f + 0.5f),
+                                    static_cast<int>(sp.a * 255.0f + 0.5f));
+                                dl->AddImageQuad(texId, p0, p1, p2, p3, uv0, uv1, uv2, uv3, col);
+                            }
+
+                            dl->AddCallback(ImDrawCallback_ResetRenderState, nullptr);
+                            dl->PopClipRect();
                         }
                     }
                 }

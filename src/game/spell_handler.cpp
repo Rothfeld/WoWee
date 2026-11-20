@@ -4775,6 +4775,8 @@ void SpellHandler::handlePetSpells(network::Packet& packet) {
         // UNIT_PET alone tells them the pet changed but not that its interface
         // should be redrawn.
         owner_.fireAddonEvent("PET_UI_UPDATE", {});
+        owner_.fireAddonEvent("PET_BAR_UPDATE", {});
+        owner_.fireAddonEvent("SPELLS_CHANGED", {});
         return;
     }
 
@@ -4791,6 +4793,8 @@ void SpellHandler::handlePetSpells(network::Packet& packet) {
         // UNIT_PET alone tells them the pet changed but not that its interface
         // should be redrawn.
         owner_.fireAddonEvent("PET_UI_UPDATE", {});
+        owner_.fireAddonEvent("PET_BAR_UPDATE", {});
+        owner_.fireAddonEvent("SPELLS_CHANGED", {});
         return;
     }
 
@@ -4859,6 +4863,7 @@ void SpellHandler::handlePetSpells(network::Packet& packet) {
         // should be redrawn.
         owner_.fireAddonEvent("PET_UI_UPDATE", {});
     owner_.fireAddonEvent("PET_BAR_UPDATE", {});
+    owner_.fireAddonEvent("SPELLS_CHANGED", {});
 }
 
 void SpellHandler::sendPetAction(uint32_t action, uint64_t targetGuid) {
