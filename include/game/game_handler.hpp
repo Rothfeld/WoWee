@@ -2271,6 +2271,7 @@ public:
     uint32_t getLfgDungeonId() const;
     std::string getCurrentLfgDungeonName() const;
     std::string getMapName(uint32_t mapId) const;
+    std::string getMapDifficultyText(uint32_t mapId, uint8_t difficulty) const;
 
     /// How many boss encounters a map has, for the "%d of %d bosses" line.
     /// Counted from DungeonEncounter.dbc, which is the only place the total
@@ -5597,6 +5598,9 @@ private:
     // Map metadata cache (lazy-loaded from Map.dbc).
     mutable std::unordered_map<uint32_t, std::string> mapNameCache_;
     mutable std::unordered_map<uint32_t, uint32_t> mapInstanceTypeCache_;
+    // TBC 2.4.3 Map.dbc difficulty requirement text columns (0=Normal col 66,
+    // 1=Heroic col 83, 2=Epic col 100).
+    mutable std::unordered_map<uint32_t, std::array<std::string, 3>> mapDifficultyTextCache_;
     mutable bool mapNameCacheLoaded_ = false;
     // (mapId, difficulty) -> encounter count, and the same map with no
     // difficulty-specific rows under a difficulty of 0xFFFFFFFF.

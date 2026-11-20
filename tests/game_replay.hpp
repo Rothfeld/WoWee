@@ -49,6 +49,17 @@ struct GameHandlerTestAccess {
         gh.areaNameCache_[area] = name;
         gh.areaNameCacheLoaded_ = true;
     }
+    // Map.dbc without the DBC: name and optional TBC difficulty requirement texts.
+    static void setMapInfo(GameHandler& gh, uint32_t mapId, const std::string& name,
+                           std::array<std::string, 3> difficultyText = {}) {
+        gh.mapNameCacheLoaded_ = true;
+        gh.mapNameCache_[mapId] = name;
+        if (!difficultyText[0].empty() || !difficultyText[1].empty() || !difficultyText[2].empty()) {
+            gh.mapDifficultyTextCache_[mapId] = std::move(difficultyText);
+        } else {
+            gh.mapDifficultyTextCache_.erase(mapId);
+        }
+    }
     // Faction.dbc without the DBC: name, repListId, optional parentFactionId.
     static void setFaction(GameHandler& gh, uint32_t factionId, uint32_t repListId,
                            const std::string& name, uint32_t parentId = 0) {

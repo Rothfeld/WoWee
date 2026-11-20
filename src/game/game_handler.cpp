@@ -262,6 +262,10 @@ void GameHandler::resetDbcCaches() {
     areaTriggerDbcLoaded_ = false;
     areaTriggers_.clear();
     activeAreaTriggers_.clear();
+    mapNameCacheLoaded_ = false;
+    mapNameCache_.clear();
+    mapInstanceTypeCache_.clear();
+    mapDifficultyTextCache_.clear();
     talentCache_.clear();
     talentTabCache_.clear();
     // The copies that are actually read live in the sub-handlers - the getters
@@ -3820,14 +3824,37 @@ void GameHandler::loadMapNameCache() const {
     if (!dbc || !dbc->isLoaded()) return;
 
     // Map.dbc layout: 0=ID, 1=InternalName, 2=InstanceType, 3=Flags,
-    // 4=MapName_enUS (display name), fields 5+ = other locales
+    // 4..=MapName_lang (16 locales in TBC/WotLK, 8 in Classic).
+    // TBC 2.4.3 (125 fields) also carries per-difficulty requirement strings:
+    // 66..81=Normal, 83..98=Heroic, 100..115=Epic (16 locales each).
+    const uint32_t fieldCount = dbc->getFieldCount();
+    const uint32_t localeCount = (fieldCount >= 60) ? 16u : 8u;
+    const bool hasTbcDifficultyText = (fieldCount >= 116);
+    auto readLocalized = [&](uint32_t row, uint32_t baseCol, uint32_t count) -> std::string {
+        const uint32_t endCol = std::min(baseCol + count, fieldCount);
+        for (uint32_t col = baseCol; col < endCol; ++col) {
+            std::string value = dbc->getString(row, col);
+            if (!value.empty()) return value;
+        }
+        return {};
+    };
     for (uint32_t i = 0; i < dbc->getRecordCount(); ++i) {
         uint32_t id = dbc->getUInt32(i, 0);
         mapInstanceTypeCache_[id] = dbc->getUInt32(i, 2);
-        std::string name = dbc->getString(i, 4);
+        std::string name = readLocalized(i, 4, localeCount);
         if (name.empty()) name = dbc->getString(i, 1); // internal name fallback
         if (!name.empty() && !mapNameCache_.count(id)) {
             mapNameCache_[id] = std::move(name);
+        }
+        if (hasTbcDifficultyText) {
+            std::array<std::string, 3> diffText = {
+                readLocalized(i, 66, 16),
+                readLocalized(i, 83, 16),
+                readLocalized(i, 100, 16),
+            };
+            if (!diffText[0].empty() || !diffText[1].empty() || !diffText[2].empty()) {
+                mapDifficultyTextCache_[id] = std::move(diffText);
+            }
         }
     }
     LOG_INFO("Map.dbc: loaded ", mapNameCache_.size(), " map names");
@@ -3837,6 +3864,13 @@ std::string GameHandler::getMapName(uint32_t mapId) const {
     loadMapNameCache();
     auto it = mapNameCache_.find(mapId);
     return (it != mapNameCache_.end()) ? it->second : std::string{};
+}
+
+std::string GameHandler::getMapDifficultyText(uint32_t mapId, uint8_t difficulty) const {
+    if (difficulty >= 3) return {};
+    loadMapNameCache();
+    auto it = mapDifficultyTextCache_.find(mapId);
+    return (it != mapDifficultyTextCache_.end()) ? it->second[difficulty] : std::string{};
 }
 
 void GameHandler::sendOptOutOfLoot(bool optOut) {

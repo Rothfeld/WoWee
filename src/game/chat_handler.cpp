@@ -282,8 +282,10 @@ void ChatHandler::registerOpcodes(DispatchTable& table) {
             /*uint32_t len =*/ packet.readUInt32();
             std::string msg = packet.readString();
             if (!msg.empty()) {
-                owner_.addUIError(msg);
-                addSystemChatMessage(msg);
+                // Native 2.4.3 displays SMSG_AREA_TRIGGER_MESSAGE as yellow
+                // UI_INFO_MESSAGE in UIErrorsFrame, not red UI_ERROR_MESSAGE
+                // and not in CHAT_MSG_SYSTEM.
+                owner_.addUIInfoMessage(msg);
             }
         }
     };

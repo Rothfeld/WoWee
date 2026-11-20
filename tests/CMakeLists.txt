@@ -3061,6 +3061,7 @@ if(NOT ANDROID)
     target_sources(test_game_replay PRIVATE test_game_replay_loot_switch.cpp)
     target_sources(test_game_replay PRIVATE test_game_replay_attack_events.cpp)
     target_sources(test_game_replay PRIVATE test_game_replay_loot_roll.cpp)
+    target_sources(test_game_replay PRIVATE test_game_replay_transfer_abort.cpp)
     target_sources(test_game_replay PRIVATE test_game_replay_interact_range.cpp)
     target_sources(test_game_replay PRIVATE test_game_replay_meeting_stone.cpp)
 

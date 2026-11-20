@@ -1,6 +1,7 @@
 #include "ui/framexml_takeover.hpp"
 #include "core/env_flag.hpp"
 #include "game/game_handler.hpp"
+#include "game/cast_result_text.hpp"
 #include "game/achievement_criteria.hpp"
 #include "game/packed_time.hpp"
 #include "game/protocol_constants.hpp"
@@ -1109,44 +1110,172 @@ void GameHandler::registerCoreOpcodes() {
 
     // Teleport
     dispatchTable_[Opcode::SMSG_TRANSFER_ABORTED] = [this](network::Packet& packet) {
-        // uint32 mapId + uint8 reason, and a further uint8 for exactly three of
-        // them - the expansion level, the difficulty and the unique message.
+        // uint32 mapId + uint8 reason, plus optional uint8 arg (expansion level,
+        // difficulty, or unique message id depending on reason and expansion).
         //
-        // Every code from 0x01 on named the wrong failure. The table here was
-        // shifted against Player.h's own enum: 0x02 is a full instance and was
-        // read as a missing expansion, 0x06 is an encounter in progress and was
-        // read as a full instance, 0x07 is the missing expansion and was read
-        // as the encounter. Nothing above 0x09 was known at all, which
-        // includes the one a map refusing entry outright sends.
+        // Classic 1.12 / TBC 2.4.3 use TransferAbortReason starting at 0x01 =
+        // MAX_PLAYERS (0x06 = INSUF_EXPAN_LVL, 0x07 = DIFFICULTY). WotLK 3.3.5a
+        // inserted TRANSFER_ABORT_ERROR at 0x01, shifting every subsequent code
+        // by +1 (0x07 = INSUF_EXPAN_LVL, 0x08 = DIFFICULTY).
         //
-        // So a refusal always said something, and what it said was not why.
+        // On TBC 2.4.3 TRANSFER_ABORT_DIFFICULTY (0x07), Map.dbc carries custom
+        // per-map difficulty requirement text (cols 66/83/100 for Normal/Heroic/Epic,
+        // e.g. Heroic key or quest requirements); if absent, the client formats
+        // TRANSFER_ABORT_DIFFICULTY{arg+1} with the map's localized name.
+        //
+        // Displayed in yellow system chat (CHAT_MSG_SYSTEM), not UIErrorsFrame.
         if (!packet.hasRemaining(4)) { packet.skipAll(); return; }
-        /*uint32_t mapId =*/ packet.readUInt32();
+        const uint32_t mapId = packet.readUInt32();
         const uint8_t reason = packet.hasRemaining(1) ? packet.readUInt8() : 0;
-        const char* abortMsg = nullptr;
-        switch (reason) {
-            case 0x01: abortMsg = "Transfer aborted: an error occurred."; break;
-            case 0x02: abortMsg = "Transfer aborted: instance is full."; break;
-            case 0x03: abortMsg = "Transfer aborted: instance not found."; break;
-            case 0x04: abortMsg = "You have entered too many instances recently."; break;
-            case 0x06: abortMsg = "Unable to zone in while an encounter is in progress."; break;
-            case 0x07: abortMsg = "You do not have the expansion required to enter this area."; break;
-            case 0x08: abortMsg = "That difficulty is not available for this instance."; break;
-            case 0x09: abortMsg = "You cannot leave this place yet."; break;
-            case 0x0A: abortMsg = "Additional instances cannot be launched. Please try again later."; break;
-            case 0x0B: abortMsg = "Transfer aborted: you must be in a group to enter."; break;
-            case 0x0C:
-            case 0x0D:
-            case 0x0E: abortMsg = "Transfer aborted: instance not found."; break;
-            case 0x0F: abortMsg = "Transfer aborted: everyone in the party must be on the same realm."; break;
-            case 0x10: abortMsg = "This map cannot be entered at this time."; break;
-            default:   abortMsg = "Transfer aborted."; break;
-        }
+        const uint8_t arg = packet.hasRemaining(1) ? packet.readUInt8() : 0;
         packet.skipAll();
-        addUIError(abortMsg);
-        addSystemChatMessage(abortMsg);
-        LOG_WARNING("SMSG_TRANSFER_ABORTED: reason 0x", std::hex,
-                    static_cast<int>(reason), std::dec, " - ", abortMsg);
+
+        if (reason == 0x00) {
+            return;
+        }
+
+        auto resolveLine = [this](const char* globalKey,
+                                  const std::vector<std::string>& args,
+                                  const std::string& fallback) -> std::string {
+            if (globalKey && *globalKey) {
+                const std::string pattern = globalString(globalKey);
+                if (!pattern.empty()) {
+                    const std::string formatted = formatGlobalString(pattern, args);
+                    if (!formatted.empty()) return formatted;
+                }
+            }
+            return fallback;
+        };
+
+        auto formatDifficultyUnavailable = [&](uint8_t difficulty) -> std::string {
+            std::string mapName = getMapName(mapId);
+            if (mapName.empty()) mapName = "this instance";
+            const uint32_t keyIdx = static_cast<uint32_t>(difficulty) + 1u;
+            const std::string key = "TRANSFER_ABORT_DIFFICULTY" + std::to_string(keyIdx);
+            const char* diffLabel = "That";
+            switch (difficulty) {
+                case 0: diffLabel = "Normal"; break;
+                case 1: diffLabel = "Heroic"; break;
+                case 2: diffLabel = "Epic"; break;
+                default: break;
+            }
+            const std::string fallback = (difficulty <= 2)
+                ? (std::string(diffLabel) + " difficulty mode is not available for " + mapName + ".")
+                : "That difficulty is not available for this instance.";
+            return resolveLine(key.c_str(), {mapName}, fallback);
+        };
+
+        std::string abortMsg;
+        if (isPreWotlk()) {
+            switch (reason) {
+                case 0x01:
+                    abortMsg = resolveLine("TRANSFER_ABORT_MAX_PLAYERS", {},
+                                           "Transfer Aborted: instance is full");
+                    break;
+                case 0x02:
+                    abortMsg = resolveLine("TRANSFER_ABORT_NOT_FOUND", {},
+                                           "Transfer Aborted: instance not found");
+                    break;
+                case 0x03:
+                    abortMsg = resolveLine("TRANSFER_ABORT_TOO_MANY_INSTANCES", {},
+                                           "You have entered too many instances recently.");
+                    break;
+                case 0x05:
+                    abortMsg = resolveLine("TRANSFER_ABORT_ZONE_IN_COMBAT", {},
+                                           "Unable to zone in while an encounter is in progress.");
+                    break;
+                case 0x06: {
+                    const uint32_t expanIdx = (arg == 0) ? 1u : static_cast<uint32_t>(arg);
+                    const std::string key = "TRANSFER_ABORT_INSUF_EXPAN_LVL" + std::to_string(expanIdx);
+                    const std::string fallback = (expanIdx == 1u)
+                        ? "You must have The Burning Crusade expansion installed to access this area."
+                        : "You do not have the expansion required to enter this area.";
+                    abortMsg = resolveLine(key.c_str(), {}, fallback);
+                    break;
+                }
+                case 0x07: {
+                    abortMsg = getMapDifficultyText(mapId, arg);
+                    if (abortMsg.empty()) {
+                        abortMsg = formatDifficultyUnavailable(arg);
+                    }
+                    break;
+                }
+                default:
+                    abortMsg = "Transfer aborted.";
+                    break;
+            }
+        } else {
+            switch (reason) {
+                case 0x01:
+                    abortMsg = resolveLine("TRANSFER_ABORT_ERROR", {},
+                                           "Transfer aborted: an error occurred.");
+                    break;
+                case 0x02:
+                    abortMsg = resolveLine("TRANSFER_ABORT_MAX_PLAYERS", {},
+                                           "Transfer Aborted: instance is full");
+                    break;
+                case 0x03:
+                    abortMsg = resolveLine("TRANSFER_ABORT_NOT_FOUND", {},
+                                           "Transfer Aborted: instance not found");
+                    break;
+                case 0x04:
+                    abortMsg = resolveLine("TRANSFER_ABORT_TOO_MANY_INSTANCES", {},
+                                           "You have entered too many instances recently.");
+                    break;
+                case 0x06:
+                    abortMsg = resolveLine("TRANSFER_ABORT_ZONE_IN_COMBAT", {},
+                                           "Unable to zone in while an encounter is in progress.");
+                    break;
+                case 0x07: {
+                    const uint32_t expanIdx = (arg == 0) ? 1u : static_cast<uint32_t>(arg);
+                    const std::string key = "TRANSFER_ABORT_INSUF_EXPAN_LVL" + std::to_string(expanIdx);
+                    abortMsg = resolveLine(key.c_str(), {},
+                                           "You do not have the expansion required to enter this area.");
+                    break;
+                }
+                case 0x08:
+                    abortMsg = formatDifficultyUnavailable(arg);
+                    break;
+                case 0x09: {
+                    const uint32_t msgIdx = (arg == 0) ? 1u : static_cast<uint32_t>(arg);
+                    const std::string key = "TRANSFER_ABORT_UNIQUE_MESSAGE" + std::to_string(msgIdx);
+                    abortMsg = resolveLine(key.c_str(), {}, "You cannot leave this place yet.");
+                    break;
+                }
+                case 0x0A:
+                    abortMsg = resolveLine("TRANSFER_ABORT_TOO_MANY_REALM_INSTANCES", {},
+                                           "Additional instances cannot be launched. Please try again later.");
+                    break;
+                case 0x0B:
+                    abortMsg = resolveLine("TRANSFER_ABORT_NEED_GROUP", {},
+                                           "Transfer Aborted: you must be in a group to enter.");
+                    break;
+                case 0x0C:
+                case 0x0D:
+                case 0x0E:
+                    abortMsg = resolveLine("TRANSFER_ABORT_NOT_FOUND", {},
+                                           "Transfer Aborted: instance not found");
+                    break;
+                case 0x0F:
+                    abortMsg = resolveLine("TRANSFER_ABORT_REALM_ONLY", {},
+                                           "Transfer Aborted: everyone in the party must be on the same realm.");
+                    break;
+                case 0x10:
+                    abortMsg = resolveLine("TRANSFER_ABORT_MAP_NOT_ALLOWED", {},
+                                           "This map cannot be entered at this time.");
+                    break;
+                default:
+                    abortMsg = "Transfer aborted.";
+                    break;
+            }
+        }
+
+        if (!abortMsg.empty()) {
+            addSystemChatMessage(abortMsg);
+        }
+        LOG_WARNING("SMSG_TRANSFER_ABORTED: mapId=", mapId, " reason=0x", std::hex,
+                    static_cast<int>(reason), " arg=", std::dec, static_cast<int>(arg),
+                    " - ", abortMsg);
     };
 
     // Taxi
