@@ -76,4 +76,11 @@ void registerActionLuaAPI(lua_State* L);
 /// the key reads as dead. Consulted before running a binding.
 bool clientActsOnBinding(const std::string& command);
 
+/// Whether the modified-click action (`"SELFCAST"`, `"FOCUSCAST"`, ...) holds
+/// for the given modifier state, reading `__WoweeModifiedClick` when `L` is
+/// live and falling back to `cvars.cfg` (`modifiedclick_<action>`) or the 2.4.3
+/// Bindings.xml default (`"ALT"` for SELFCAST, `"NONE"` for FOCUSCAST).
+bool isModifiedClickActive(lua_State* L, const std::string& action,
+                           bool shift, bool ctrl, bool alt);
+
 } // namespace wowee::addons

@@ -280,9 +280,19 @@ public:
     bool isAwaitingUnitTarget() const;
     /// Entry of the item awaiting a unit (0 if none) - drives the cursor.
     uint32_t getPendingUnitTargetSourceItemId() const;
-    void cancelUnitTargeting();
-    /// Sends the parked CMSG_USE_ITEM against the unit the player clicked.
+    /// Puts the armed unit target down. For a spell, build 8606 fires
+    /// UNIT_SPELLCAST_FAILED on right-click (`failed = true`) and
+    /// UNIT_SPELLCAST_STOP on SpellStopTargeting / Escape (`failed = false`).
+    void cancelUnitTargeting(bool failed = false);
+    /// Sends the parked CMSG_USE_ITEM (or casts the waiting spell) against the unit.
     void completeItemUseOnUnit(uint64_t targetUnitGuid);
+
+    /// Arm the spell targeting cursor for a spell aimed at a unit that had none
+    /// to go to (SpellIsTargeting): the next click on a valid unit, or
+    /// SpellTargetUnit, casts it there.
+    void beginSpellUnitTargeting(uint32_t spellId, const std::string& spellName);
+    /// The spell waiting for a unit, 0 when none (or when an item is waiting).
+    [[nodiscard]] uint32_t pendingUnitTargetSpell() const;
 
     /// Arm item targeting for a spell that must be cast at an item. The cast is
     /// sent once the player picks one.

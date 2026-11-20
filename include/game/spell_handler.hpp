@@ -4,6 +4,7 @@
 #include "game/opcode_table.hpp"
 #include "game/spell_defines.hpp"
 #include "game/spell_prerequisites.hpp"
+#include "game/spell_classification.hpp"
 #include "game/handler_types.hpp"
 #include "audio/spell_sound_manager.hpp"
 #include "network/packet.hpp"
@@ -133,12 +134,9 @@ public:
     void clearAutoRepeat() { autoRepeatSpellId_ = 0; }
     [[nodiscard]] bool isGameObjectInteractionCasting() const;
     // The cast or channel in progress, else a cast sent and not yet answered,
-    // else the ability queued for the next swing.
-    [[nodiscard]] uint32_t getActiveActionSpellId() const {
-        if (casting_) return currentCastSpellId_;
-        if (pendingCastSpellId_) return pendingCastSpellId_;
-        return restorationActive_ ? restorationSpellId_ : nextSwingSpellId_;
-    }
+    // else a spell waiting on the targeting cursor, else the ability queued for
+    // the next swing.
+    [[nodiscard]] uint32_t getActiveActionSpellId() const;
     [[nodiscard]] uint32_t getCurrentCastSpellId() const {
         return casting_ ? currentCastSpellId_ : 0;
     }
@@ -382,6 +380,11 @@ public:
     /// True for "Self Only" range spells (shouts, self-buffs): they always land on
     /// the caster, so they take no explicit target and skip melee range checks.
     [[nodiscard]] bool isSelfCastSpell(uint32_t spellId) const;
+    /// Whether a spell aimed as `aim` can be cast at this unit. 0 and unknown
+    /// guids cannot.
+    [[nodiscard]] bool unitTakesAim(uint64_t guid, spellclass::UnitAim aim) const;
+    /// SpellCanTargetUnit / cursor affordance for a unit-targeted spell.
+    [[nodiscard]] bool canSpellTargetUnit(uint32_t spellId, uint64_t guid) const;
     /// Maps a superseded spell rank to the highest rank we actually know. Returns
     /// spellId unchanged when it is already known, or has no known same-name rank.
     [[nodiscard]] uint32_t resolveHighestKnownRank(uint32_t spellId) const;

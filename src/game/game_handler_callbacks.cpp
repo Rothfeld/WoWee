@@ -4141,12 +4141,25 @@ uint32_t GameHandler::getPendingUnitTargetSourceItemId() const {
     return inventoryHandler_ ? inventoryHandler_->getPendingUnitTargetSourceItemId() : 0;
 }
 
-void GameHandler::cancelUnitTargeting() {
-    if (inventoryHandler_) inventoryHandler_->cancelUnitTargeting();
+void GameHandler::cancelUnitTargeting(bool failed) {
+    if (inventoryHandler_) inventoryHandler_->cancelUnitTargeting(failed);
 }
 
 void GameHandler::completeItemUseOnUnit(uint64_t targetUnitGuid) {
     if (inventoryHandler_) inventoryHandler_->completeItemUseOnUnit(targetUnitGuid);
+}
+
+void GameHandler::beginSpellUnitTargeting(uint32_t spellId, const std::string& spellName) {
+    assert(inventoryHandler_);
+    inventoryHandler_->beginSpellUnitTargeting(spellId, spellName);
+}
+
+uint32_t GameHandler::pendingUnitTargetSpell() const {
+    return inventoryHandler_ ? inventoryHandler_->pendingUnitTargetSpell() : 0;
+}
+
+bool GameHandler::canSpellTargetUnit(uint32_t spellId, uint64_t guid) const {
+    return spellHandler_ && spellHandler_->canSpellTargetUnit(spellId, guid);
 }
 
 void GameHandler::beginSpellItemTargeting(uint32_t spellId, const std::string& spellName) {

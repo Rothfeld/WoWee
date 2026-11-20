@@ -449,3 +449,28 @@ TEST_CASE("Spell disposition follows the 2.4.3 client", "[spell_classification][
         CHECK(spellDisposition(r.a, r.b) == r.want);
     }
 }
+
+// Which units a single-unit spell takes decides whether the current target is
+// used, autoSelfCast applies, or the targeting cursor arms (native 2.4.3, pair 13).
+TEST_CASE("unitAim reads EffectImplicitTargetA and SpellCastTargetFlags", "[spell][classification]") {
+    using namespace wowee::game::spellclass;
+    CHECK(unitAim(6) == UnitAim::Enemy);             // Smite, Shadow Word: Pain
+    CHECK(unitAim(53) == UnitAim::Enemy);            // Shadowfiend
+    CHECK(unitAim(77) == UnitAim::Enemy);            // Arcane Missile
+    CHECK(unitAim(21) == UnitAim::Friend);           // Arcane Intellect, Flash Heal
+    CHECK(unitAim(37, 0x100) == UnitAim::Friend);    // Prayer of Fortitude, Arcane Brilliance
+    CHECK(unitAim(45) == UnitAim::Friend);           // Healing Wave, Chain Heal
+    CHECK(unitAim(35) == UnitAim::GroupMember);      // Fire Shield
+    CHECK(unitAim(57) == UnitAim::GroupMember);      // Power Word: Shield, Prayer of Mending
+    CHECK(unitAim(61) == UnitAim::GroupMember);      // Greater Blessing of Might
+    CHECK(unitAim(25) == UnitAim::Any);              // Dispel Magic, Holy Shock
+    CHECK(unitAim(0, 0x8000) == UnitAim::DeadFriend);// Resurrection, Redemption
+    CHECK(unitAim(22, 0x8000) == UnitAim::None);     // Mass Resurrection (caster AoE)
+    CHECK(unitAim(1) == UnitAim::None);              // Inner Fire
+    CHECK(unitAim(5) == UnitAim::None);              // Mend Pet
+    CHECK(unitAim(22) == UnitAim::None);             // Holy Nova
+    CHECK(unitAim(23, 0x4000) == UnitAim::None);     // Herb Gathering / Mining
+    CHECK(unitAim(26) == UnitAim::None);             // Pick Lock
+    CHECK(unitAim(28, 0x40) == UnitAim::None);       // Blizzard
+    CHECK(unitAim(63) == UnitAim::None);             // destination coordinates
+}

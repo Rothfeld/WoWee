@@ -369,6 +369,24 @@ std::optional<std::pair<uint8_t, uint32_t>> firstMissingTool(GameHandler& owner,
     return std::nullopt;
 }
 
+std::optional<uint32_t> firstMissingReagent(GameHandler& owner, uint32_t spellId) {
+    auto* am = owner.services().assetManager;
+    if (!am || !am->isInitialized()) return std::nullopt;
+    const auto* entry = owner.getSpellNameEntry(spellId);
+    if (!entry) return std::nullopt;
+    for (const auto& reagent : entry->reagents) {
+        if (reagent.itemId == 0 || reagent.count == 0) continue;
+        if (owner.getInventory().countItem(reagent.itemId) >= reagent.count) continue;
+        const auto* info = owner.getItemInfo(reagent.itemId);
+        if (!info || !info->valid) {
+            owner.ensureItemInfo(reagent.itemId);
+            return std::nullopt;
+        }
+        return reagent.itemId;
+    }
+    return std::nullopt;
+}
+
 std::string castFailureText(GameHandler& owner, uint32_t spellId, uint8_t result,
                             uint32_t arg1, uint32_t arg2) {
     const bool tbc = isPreWotlk() && !isClassicLikeExpansion();
@@ -1647,6 +1665,14 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid, std::optiona
         owner_.fireAddonEvent("UNIT_SPELLCAST_FAILED", spellcastArgs("player", spellId));
         return;
     }
+    if (const auto missingReagent = firstMissingReagent(owner_, spellId)) {
+        const std::string text = castFailureText(owner_, spellId, kCastResultReagents, *missingReagent, 0);
+        if (!text.empty()) owner_.raiseUiError(text);
+        // Native 2.4.3 (pair 13): Prayer of Fortitude Rank 1 without a Holy
+        // Candle refuses before arming SpellIsTargeting or sending the cast.
+        owner_.fireAddonEvent("UNIT_SPELLCAST_FAILED", spellcastArgs("player", spellId));
+        return;
+    }
 
     // Food and water are server auras, but using any action interrupts them.
     // Cancel the aura and stand first, then allow the requested action to proceed.
@@ -1913,46 +1939,57 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid, std::optiona
         }
     }
 
-    // Auto self-cast: a spell that has to be aimed at a friendly unit falls back
-    // to the caster when nothing friendly is selected - no target at all, or an
-    // enemy, which is the usual state mid-fight. Without it, healing yourself
-    // while fighting means dropping the target, casting, and picking it back up.
-    // Gated on the setting, which the interface offers and this ignored. With
-    // it off the cast goes out at whatever is selected and the server refuses
-    // it, which is what the real client does and what someone turning the
-    // option off is asking for.
-    if (owner_.isAutoSelfCast() &&
-        !selfCast && !fishingCast && getSpellImplicitTargetA(spellId) != 0 &&
-        spellclass::requiresFriendlyTarget(getSpellImplicitTargetA(spellId))) {
-        bool haveFriendlyTarget = false;
-        if (target != 0 && target != owner_.getPlayerGuid()) {
-            if (auto entity = owner_.getEntityManager().getEntity(target)) {
-                if (entity->isUnit()) {
-                    const auto* unit = static_cast<Unit*>(entity.get());
-                    // Friendly, not merely "not hostile". A faction can be
-                    // neither and most wildlife is: a neutral boar answered
-                    // false to isHostile, held the cast, and the server refused
-                    // it as an invalid target - which is what a heal aimed at
-                    // some enemies and not others looked like. A dead unit
-                    // cannot take a buff either, and a player may always be
-                    // helped once their faction is friendly.
-                    // Health is deliberately not asked about: it is zero for a
-                    // unit whose first update has not landed, and self-casting
-                    // a heal meant for a party member because their health had
-                    // not arrived yet would be a worse fault than the one this
-                    // fixes.
-                    haveFriendlyTarget =
-                        !unit->isHostile() &&
-                        owner_.isFriendlyFaction(unit->getFactionTemplate());
-                }
-            }
+    // A spell aimed at one unit goes to the unit named for it (the self-cast
+    // modifier's "player", a unit frame's unit, [target=...], the unit picked
+    // with the targeting cursor) when one is named, else to the current
+    // target, if that unit can take it. A named unit that cannot is not
+    // swapped for the target: Alt+Smite with the Defias Thug selected says
+    // "Invalid target". Otherwise native 2.4.3 (pair 13, autoSelfCast "0",
+    // its default):
+    //   - an enemy spell says "You have no target." with nothing selected and
+    //     "Invalid target" with a friend or the caster selected (Smite,
+    //     Shadow Word: Pain, Shadowfiend), named unit or not;
+    //   - anything else arms the targeting cursor (SpellIsTargeting): Arcane
+    //     Intellect, Flash Heal, Power Word: Shield, Dispel Magic, Resurrection
+    //     at nothing, at a hostile target, and Power Word: Shield / Greater
+    //     Blessing of Might at a friendly player outside the party.
+    //   - with autoSelfCast "1", when no unit was named and no friendly unit
+    //     is selected, a spell the caster can take goes to the caster instead;
+    //     when a friendly unit outside the party is selected, group-only
+    //     spells (Power Word: Shield, Greater Blessing of Might) still arm the
+    //     targeting cursor rather than self-casting.
+    if (const auto aim = spellclass::unitAim(implicitA, getSpellTargetFlags(spellId));
+        aim != spellclass::UnitAim::None && !selfCast && !fishingCast && !destination && heldItemGuid == 0) {
+        const uint64_t current = owner_.getTargetGuid();
+        const uint64_t asked = targetGuid != 0 ? targetGuid : current;
+        uint64_t chosen = unitTakesAim(asked, aim) ? asked : 0;
+        if (chosen == 0 && aim == spellclass::UnitAim::Enemy) {
+            if (owner_.pendingUnitTargetSpell() != 0) owner_.cancelUnitTargeting(false);
+            raiseGlobalStringError(owner_, current == 0 ? "ERR_GENERIC_NO_TARGET" : "SPELL_FAILED_BAD_TARGETS");
+            owner_.fireAddonEvent("UNIT_SPELLCAST_FAILED", spellcastArgs("player", spellId));
+            LOG_INFO("Cast refused: spell ", spellId, " needs an enemy; target 0x", std::hex, current, std::dec);
+            return;
         }
-        // Anything that is not a unit we can help - gone, dead, hostile,
-        // neutral, or never found - leaves the spell on the caster.
-        if (!haveFriendlyTarget) {
-            target = owner_.getPlayerGuid();
+        const auto isFriendlyUnit = [&](uint64_t guid) {
+            if (guid == 0) return false;
+            if (guid == owner_.getPlayerGuid()) return true;
+            const auto entity = owner_.getEntityManager().getEntity(guid);
+            if (!entity || !entity->isUnit()) return false;
+            const auto& u = static_cast<const Unit&>(*entity);
+            return !u.isHostile() && owner_.unitReactionToPlayer(u) >= 5;
+        };
+        if (chosen == 0 && targetGuid == 0 && owner_.isAutoSelfCast() &&
+            !isFriendlyUnit(current) && unitTakesAim(owner_.getPlayerGuid(), aim)) {
+            chosen = owner_.getPlayerGuid();
         }
+        if (chosen == 0) {
+            owner_.beginSpellUnitTargeting(spellId, getSpellName(spellId));
+            LOG_INFO("Spell ", spellId, " waits for a unit (targeting cursor)");
+            return;
+        }
+        target = chosen;
     }
+    if (owner_.pendingUnitTargetSpell() != 0) owner_.cancelUnitTargeting(false);
 
     // Track whether a spell-specific block already handled facing so the generic
     // facing block below doesn't send redundant SET_FACING packets.
@@ -2688,6 +2725,14 @@ void SpellHandler::buildTbcSpellBookTabs() {
     }
     std::sort(lines.begin(), lines.end(), [](const SpellBookTab& a, const SpellBookTab& b) { return a.name < b.name; });
     for (auto& tab : lines) spellBookTabs_.push_back(std::move(tab));
+    if (owner_.services().assetManager && owner_.services().assetManager->isInitialized()) {
+        for (uint32_t sid : knownSpells_) {
+            if (const auto* entry = owner_.getSpellNameEntry(sid)) {
+                for (const auto& reagent : entry->reagents)
+                    if (reagent.itemId != 0) owner_.ensureItemInfo(reagent.itemId);
+            }
+        }
+    }
 }
 
 const std::vector<SpellHandler::SpellBookTab>& SpellHandler::getSpellBookTabs() {
@@ -5487,6 +5532,47 @@ uint32_t SpellHandler::getSpellImplicitTargetA(uint32_t spellId) const {
     loadSpellNameCache();
     auto it = owner_.spellNameCacheRef().find(spellId);
     return (it != owner_.spellNameCacheRef().end()) ? it->second.implicitTargetA : 0;
+}
+
+uint32_t SpellHandler::getActiveActionSpellId() const {
+    if (casting_) return currentCastSpellId_;
+    if (pendingCastSpellId_) return pendingCastSpellId_;
+    if (const uint32_t targeting = owner_.pendingUnitTargetSpell(); targeting != 0) return targeting;
+    return restorationActive_ ? restorationSpellId_ : nextSwingSpellId_;
+}
+
+bool SpellHandler::unitTakesAim(uint64_t guid, spellclass::UnitAim aim) const {
+    if (guid == 0) return false;
+    if (guid == owner_.getPlayerGuid()) {
+        return aim != spellclass::UnitAim::Enemy &&
+               aim != spellclass::UnitAim::DeadFriend &&
+               aim != spellclass::UnitAim::None;
+    }
+    const auto entity = owner_.getEntityManager().getEntity(guid);
+    if (!entity || !entity->isUnit()) return false;
+    const auto& unit = static_cast<const Unit&>(*entity);
+    // Friendly as UnitCanAssist answers it: never merely neutral wildlife.
+    const bool friendly = !unit.isHostile() && owner_.unitReactionToPlayer(unit) >= 5;
+    switch (aim) {
+        case spellclass::UnitAim::Enemy: return owner_.canPlayerAttackUnit(unit);
+        case spellclass::UnitAim::Friend: return friendly;
+        case spellclass::UnitAim::GroupMember: {
+            if (!friendly || !owner_.isInGroup()) return false;
+            const auto& members = owner_.getPartyData().members;
+            return std::any_of(members.begin(), members.end(),
+                               [guid](const GroupMember& m) { return m.guid == guid; });
+        }
+        case spellclass::UnitAim::Any: return true;
+        case spellclass::UnitAim::DeadFriend: return friendly && unit.getHealth() == 0;
+        case spellclass::UnitAim::None: return false;
+    }
+    return false;
+}
+
+bool SpellHandler::canSpellTargetUnit(uint32_t spellId, uint64_t guid) const {
+    if (spellId == 0 || guid == 0) return false;
+    const auto aim = spellclass::unitAim(getSpellImplicitTargetA(spellId), getSpellTargetFlags(spellId));
+    return aim != spellclass::UnitAim::None && unitTakesAim(guid, aim);
 }
 
 bool SpellHandler::isSelfCastSpell(uint32_t spellId) const {

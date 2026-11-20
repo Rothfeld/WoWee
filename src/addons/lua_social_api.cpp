@@ -9,6 +9,7 @@
 #include "game/chat_handler.hpp"
 #include "game/reputation_standing.hpp"
 #include "game/stationery.hpp"
+#include "ui/chat/macro_evaluator.hpp"
 #include <cassert>
 #include "rendering/animation_controller.hpp"
 
@@ -3584,14 +3585,19 @@ void registerSocialLuaAPI(lua_State* L) {
                 // not there; a missing name takes the chat frame down with it.
 
                 // The conditional parser every secure slash command runs its
-                // argument through: "/cast [mod:shift] A; B". With no
-                // conditional support the whole argument is the action and
-                // there is no target clause, which is what an unconditional
-                // command means anyway.
+                // argument through: "/cast [target=player] Arcane Intellect",
+                // "/cast [mod:shift] A; B", "/stopcasting [combat]".
+                // Returns (action, target) when an alternative matches, nil
+                // when none does.
                 {"SecureCmdOptionParse", [](lua_State* L) -> int {
-            const char* msg = luaL_optstring(L, 1, "");
-            lua_pushstring(L, msg ? msg : "");
-            lua_pushnil(L);
+            if (lua_isnoneornil(L, 1)) { lua_pushnil(L); return 1; }
+            const char* msg = lua_tostring(L, 1);
+            if (!msg) { lua_pushnil(L); return 1; }
+            const auto res = ui::evaluateMacroDetailed(msg, getGameHandler(L));
+            if (!res.matched) { lua_pushnil(L); return 1; }
+            lua_pushstring(L, res.action.c_str());
+            if (!res.targetToken.empty()) lua_pushstring(L, res.targetToken.c_str());
+            else lua_pushnil(L);
             return 2;
         }},
                 {"GuildInfo", [](lua_State* L) -> int {

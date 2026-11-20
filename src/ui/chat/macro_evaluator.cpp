@@ -18,7 +18,7 @@ uint64_t MacroEvaluator::resolveEffectiveTarget(uint64_t tgt) const {
     return gameState_.getTargetGuid();
 }
 
-bool MacroEvaluator::evalCondition(const std::string& raw, uint64_t& tgt) const {
+bool MacroEvaluator::evalCondition(const std::string& raw, uint64_t& tgt, std::string& tgtToken) const {
     // Trim
     std::string c = raw;
     size_t s = c.find_first_not_of(" \t");
@@ -27,49 +27,49 @@ bool MacroEvaluator::evalCondition(const std::string& raw, uint64_t& tgt) const 
     if (e != std::string::npos) c.resize(e + 1);
     if (c.empty()) return true;
 
+    auto resolveSpec = [&](const std::string& rawSpec) -> bool {
+        std::string spec = rawSpec;
+        for (char& ch : spec) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        tgtToken = rawSpec;
+        if (spec == "player")          tgt = gameState_.getPlayerGuid();
+        else if (spec == "focus")      tgt = gameState_.getFocusGuid();
+        else if (spec == "target")     tgt = gameState_.getTargetGuid();
+        else if (spec == "pet") {
+            uint64_t pg = gameState_.getPetGuid();
+            if (pg != 0) tgt = pg; else return false;
+        }
+        else if (spec == "mouseover") {
+            uint64_t mo = gameState_.getMouseoverGuid();
+            if (mo != 0) tgt = mo; else return false;
+        }
+        return true;
+    };
+
     // --- @target specifiers ---
     if (c[0] == '@') {
-        std::string spec = c.substr(1);
-        if (spec == "player")          tgt = gameState_.getPlayerGuid();
-        else if (spec == "focus")      tgt = gameState_.getFocusGuid();
-        else if (spec == "target")     tgt = gameState_.getTargetGuid();
-        else if (spec == "pet") {
-            uint64_t pg = gameState_.getPetGuid();
-            if (pg != 0) tgt = pg; else return false;
-        }
-        else if (spec == "mouseover") {
-            uint64_t mo = gameState_.getMouseoverGuid();
-            if (mo != 0) tgt = mo; else return false;
-        }
-        return true;
+        return resolveSpec(c.substr(1));
     }
+
+    std::string cl = c;
+    for (char& ch : cl) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
 
     // --- target=X specifiers ---
-    if (c.rfind("target=", 0) == 0) {
-        std::string spec = c.substr(7);
-        if (spec == "player")          tgt = gameState_.getPlayerGuid();
-        else if (spec == "focus")      tgt = gameState_.getFocusGuid();
-        else if (spec == "target")     tgt = gameState_.getTargetGuid();
-        else if (spec == "pet") {
-            uint64_t pg = gameState_.getPetGuid();
-            if (pg != 0) tgt = pg; else return false;
-        }
-        else if (spec == "mouseover") {
-            uint64_t mo = gameState_.getMouseoverGuid();
-            if (mo != 0) tgt = mo; else return false;
-        }
-        return true;
+    if (cl.rfind("target=", 0) == 0) {
+        return resolveSpec(c.substr(7));
     }
 
-    // --- Modifier keys ---
+    // --- Modifier keys (both 2.0 modifier: and alias mod:) ---
     const bool shiftHeld = modState_.isShiftHeld();
     const bool ctrlHeld  = modState_.isCtrlHeld();
     const bool altHeld   = modState_.isAltHeld();
     const bool anyMod    = shiftHeld || ctrlHeld || altHeld;
 
-    if (c == "nomod" || c == "mod:none") return !anyMod;
-    if (c.rfind("mod:", 0) == 0) {
-        std::string mods = c.substr(4);
+    if (cl == "nomod" || cl == "nomodifier" || cl == "mod:none" || cl == "modifier:none")
+        return !anyMod;
+    if (cl == "mod" || cl == "modifier")
+        return anyMod;
+    if (cl.rfind("mod:", 0) == 0 || cl.rfind("modifier:", 0) == 0) {
+        std::string mods = cl.substr(cl.find(':') + 1);
         bool ok = true;
         if (mods.find("shift") != std::string::npos && !shiftHeld) ok = false;
         if (mods.find("ctrl")  != std::string::npos && !ctrlHeld)  ok = false;
@@ -166,8 +166,12 @@ bool MacroEvaluator::evalCondition(const std::string& raw, uint64_t& tgt) const 
 
 std::string MacroEvaluator::evaluate(const std::string& rawArg,
                                      uint64_t& targetOverride) const {
-    targetOverride = static_cast<uint64_t>(-1);
+    const MacroParseResult res = evaluateDetailed(rawArg);
+    targetOverride = res.targetGuid;
+    return res.matched ? res.action : std::string{};
+}
 
+MacroParseResult MacroEvaluator::evaluateDetailed(const std::string& rawArg) const {
     // Split rawArg on ';' → alternatives
     std::vector<std::string> alts;
     {
@@ -179,8 +183,13 @@ std::string MacroEvaluator::evaluate(const std::string& rawArg,
         alts.push_back(cur);
     }
 
+    // A bare empty / whitespace input (e.g. `/cleartarget` -> SecureCmdOptionParse(""))
+    // matches with an empty action.
+    if (alts.size() == 1 && alts[0].find_first_not_of(" \t") == std::string::npos) {
+        return {.matched = true, .action = {}, .targetToken = {}, .targetGuid = static_cast<uint64_t>(-1)};
+    }
+
     for (auto& alt : alts) {
-        // Trim
         size_t fs = alt.find_first_not_of(" \t");
         if (fs == std::string::npos) continue;
         alt = alt.substr(fs);
@@ -188,33 +197,56 @@ std::string MacroEvaluator::evaluate(const std::string& rawArg,
         if (ls != std::string::npos) alt.resize(ls + 1);
 
         if (!alt.empty() && alt[0] == '[') {
-            size_t close = alt.find(']');
-            if (close == std::string::npos) continue;
-            std::string condStr  = alt.substr(1, close - 1);
-            std::string argPart  = alt.substr(close + 1);
-            // Trim argPart
-            size_t as = argPart.find_first_not_of(" \t");
-            argPart = (as != std::string::npos) ? argPart.substr(as) : "";
+            // One or more [cond1,cond2][cond3] groups before the action text:
+            // the first group whose conditions all hold wins.
+            size_t pos = 0;
+            bool malformed = false;
+            bool matchedGroup = false;
+            uint64_t matchedGuid = static_cast<uint64_t>(-1);
+            std::string matchedToken;
 
-            // Evaluate comma-separated conditions
-            uint64_t tgt = static_cast<uint64_t>(-1);
-            bool pass = true;
-            size_t cp = 0;
-            while (pass) {
-                size_t comma = condStr.find(',', cp);
-                std::string tok = condStr.substr(cp,
-                    comma == std::string::npos ? std::string::npos : comma - cp);
-                if (!evalCondition(tok, tgt)) { pass = false; break; }
-                if (comma == std::string::npos) break;
-                cp = comma + 1;
+            while (pos < alt.size() && alt[pos] == '[') {
+                const size_t close = alt.find(']', pos + 1);
+                if (close == std::string::npos) {
+                    malformed = true;
+                    break;
+                }
+                const std::string condStr = alt.substr(pos + 1, close - pos - 1);
+                if (!matchedGroup) {
+                    uint64_t tgt = static_cast<uint64_t>(-1);
+                    std::string tokName;
+                    bool pass = true;
+                    size_t cp = 0;
+                    while (pass) {
+                        const size_t comma = condStr.find(',', cp);
+                        const std::string tok = condStr.substr(
+                            cp, comma == std::string::npos ? std::string::npos : comma - cp);
+                        if (!evalCondition(tok, tgt, tokName)) { pass = false; break; }
+                        if (comma == std::string::npos) break;
+                        cp = comma + 1;
+                    }
+                    if (pass) {
+                        matchedGroup = true;
+                        matchedGuid = tgt;
+                        matchedToken = std::move(tokName);
+                    }
+                }
+                pos = close + 1;
+                while (pos < alt.size() && (alt[pos] == ' ' || alt[pos] == '\t')) ++pos;
             }
-            if (pass) {
-                if (tgt != static_cast<uint64_t>(-1)) targetOverride = tgt;
-                return argPart;
+            if (malformed) continue;
+            if (matchedGroup) {
+                std::string argPart = pos < alt.size() ? alt.substr(pos) : std::string{};
+                const size_t as = argPart.find_first_not_of(" \t");
+                argPart = (as != std::string::npos) ? argPart.substr(as) : "";
+                return {.matched = true,
+                        .action = std::move(argPart),
+                        .targetToken = std::move(matchedToken),
+                        .targetGuid = matchedGuid};
             }
         } else {
             // No condition block - default fallback always matches
-            return alt;
+            return {.matched = true, .action = alt, .targetToken = {}, .targetGuid = static_cast<uint64_t>(-1)};
         }
     }
     return {};

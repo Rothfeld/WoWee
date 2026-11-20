@@ -13,6 +13,13 @@ namespace ui {
 class IGameState;
 class IModifierState;
 
+struct MacroParseResult {
+    bool matched = false;
+    std::string action;
+    std::string targetToken;
+    uint64_t targetGuid = static_cast<uint64_t>(-1);
+};
+
 /**
  * Evaluates WoW-style macro conditional expressions.
  *
@@ -36,9 +43,16 @@ public:
      */
     std::string evaluate(const std::string& rawArg, uint64_t& targetOverride) const;
 
+    /**
+     * Evaluate a macro conditional string and distinguish an unconditional /
+     * matched empty action ("", "[combat]") from no clause matching, while
+     * preserving the raw unit token for Lua's SecureCmdOptionParse.
+     */
+    [[nodiscard]] MacroParseResult evaluateDetailed(const std::string& rawArg) const;
+
 private:
     /** Evaluate a single condition token (e.g. "combat", "mod:shift", "@focus"). */
-    bool evalCondition(const std::string& cond, uint64_t& tgt) const;
+    bool evalCondition(const std::string& cond, uint64_t& tgt, std::string& tgtToken) const;
 
     /** Resolve effective target GUID (follows @/target= overrides). */
     [[nodiscard]] uint64_t resolveEffectiveTarget(uint64_t tgt) const;
@@ -52,6 +66,9 @@ private:
 std::string evaluateMacroConditionals(const std::string& rawArg,
                                       game::GameHandler& gameHandler,
                                       uint64_t& targetOverride);
+
+MacroParseResult evaluateMacroDetailed(const std::string& rawArg,
+                                       game::GameHandler* gameHandler);
 
 } // namespace ui
 } // namespace wowee

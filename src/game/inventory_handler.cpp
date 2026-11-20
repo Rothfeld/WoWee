@@ -2095,8 +2095,24 @@ uint32_t InventoryHandler::getPendingUnitTargetSourceItemId() const {
     return isAwaitingUnitTarget() ? pendingUnitTarget_->itemId : 0;
 }
 
-void InventoryHandler::cancelUnitTargeting() {
+void InventoryHandler::cancelUnitTargeting(bool failed) {
+    // Putting a spell's targeting cursor down answers UNIT_SPELLCAST_FAILED on
+    // right-click and UNIT_SPELLCAST_STOP on SpellStopTargeting / Escape
+    // (native 2.4.3, pair 13).
+    if (isAwaitingUnitTarget() && pendingUnitTarget_->fromSpell) {
+        owner_.fireAddonEvent(failed ? "UNIT_SPELLCAST_FAILED" : "UNIT_SPELLCAST_STOP",
+                              {"player", owner_.getSpellName(pendingUnitTarget_->spellId),
+                               owner_.getSpellRank(pendingUnitTarget_->spellId)});
+    }
     pendingUnitTarget_.reset();
+}
+
+void InventoryHandler::beginSpellUnitTargeting(uint32_t spellId, const std::string& spellName) {
+    pendingUnitTarget_ = PendingItemTarget{.spellId = spellId, .itemName = spellName, .fromSpell = true};
+}
+
+uint32_t InventoryHandler::pendingUnitTargetSpell() const {
+    return isAwaitingUnitTarget() && pendingUnitTarget_->fromSpell ? pendingUnitTarget_->spellId : 0;
 }
 
 void InventoryHandler::completeItemUseOnUnit(uint64_t targetUnitGuid) {
@@ -2104,6 +2120,12 @@ void InventoryHandler::completeItemUseOnUnit(uint64_t targetUnitGuid) {
     const PendingItemTarget pending = *pendingUnitTarget_;
     pendingUnitTarget_.reset();
     if (targetUnitGuid == 0) return;
+    if (pending.fromSpell) {
+        // The unit chosen with the cursor is named: the cast goes there (or is
+        // refused for range/aim), never re-aimed to the current target.
+        owner_.castSpell(pending.spellId, targetUnitGuid);
+        return;
+    }
 
     const auto* itemInfo = owner_.getItemInfo(pending.itemId);
     if (isBandageItem(itemInfo)) synchronizeStationaryBandageCast(owner_);

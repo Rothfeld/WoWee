@@ -2339,10 +2339,10 @@ public:
     void setAutoRepair(bool enabled);
     bool isAutoRepair() const;
 
-    /// Whether a friendly spell cast with nothing friendly selected falls back
-    /// to the caster. On by default, as the real client is, and turned off
-    /// through the interface's autoSelfCast option - which offered the choice
-    /// while the behaviour was unconditional.
+    /// The autoSelfCast CVar: whether a helpful or unit spell cast with no
+    /// friendly unit selected goes to the caster rather than onto the targeting
+    /// cursor. Off by default, as build 8606 has it (GetCVar "0" on a fresh
+    /// account).
     void setAutoSelfCast(bool enabled) { autoSelfCast_ = enabled; }
     bool isAutoSelfCast() const { return autoSelfCast_; }
 
@@ -3555,11 +3555,16 @@ public:
     /// Canonical coordinates in; sent in server order.
     void castPetSpellAtGround(uint32_t spellId, float x, float y, float z);
     mutable std::optional<GroundTarget> pendingGroundTarget_;
-    /// True while a used item is waiting for the player to click a unit.
+    /// True while a used item or unit-targeted spell is waiting for a unit click.
     bool isAwaitingUnitTarget() const;
     uint32_t getPendingUnitTargetSourceItemId() const;
-    void cancelUnitTargeting();
+    void cancelUnitTargeting(bool failed = false);
     void completeItemUseOnUnit(uint64_t targetUnitGuid);
+    /// InventoryHandler::beginSpellUnitTargeting: the spell waits for a unit;
+    /// completeItemUseOnUnit casts it there, cancelUnitTargeting puts it down.
+    void beginSpellUnitTargeting(uint32_t spellId, const std::string& spellName);
+    [[nodiscard]] uint32_t pendingUnitTargetSpell() const;
+    [[nodiscard]] bool canSpellTargetUnit(uint32_t spellId, uint64_t guid) const;
     /// Arm the item-picking cursor for a spell that must be cast at an item.
     void beginSpellItemTargeting(uint32_t spellId, const std::string& spellName);
     /// InventoryHandler::beginSpellLockTargeting and its completion.
@@ -5212,7 +5217,7 @@ private:
     bool lootWindowOpen = false;
     bool autoLoot_ = false;
     bool autoFaceTarget_ = false;
-    bool autoSelfCast_ = true;
+    bool autoSelfCast_ = false;
     bool autoSellGrey_ = false;
     bool autoRepair_ = false;
     LootResponseData currentLoot;

@@ -1571,10 +1571,24 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
                 "MULTIACTIONBAR1BUTTON10", "MULTIACTIONBAR1BUTTON11", "MULTIACTIONBAR1BUTTON12"};
             static_assert(actionCommands.size() == game::GameHandler::SLOTS_PER_BAR);
             static_assert(bottomCommands.size() == game::GameHandler::SLOTS_PER_BAR);
+            lua_State* luaState = (services_.addonManager && services_.addonManager->getLuaEngine())
+                ? services_.addonManager->getLuaEngine()->getState()
+                : nullptr;
+            const SDL_Keymod sdlMods = SDL_GetModState();
             const auto& bar = gameHandler.getActionBar();
             for (int i = 0; i < game::GameHandler::SLOTS_PER_BAR; ++i) {
                 for (const bool bottom : {false, true}) {
-                    if (!bindings.isCommandPressed((bottom ? bottomCommands : actionCommands)[i])) continue;
+                    const std::string& cmd = (bottom ? bottomCommands : actionCommands)[i];
+                    if (!bindings.isCommandPressed(cmd)) continue;
+                    const auto qMods = bindings.pressedCommandModifiers(cmd);
+                    const bool shift = qMods ? qMods->shift : (io.KeyShift || (sdlMods & SDL_KMOD_SHIFT) != 0);
+                    const bool ctrl  = qMods ? qMods->ctrl  : (io.KeyCtrl  || (sdlMods & SDL_KMOD_CTRL)  != 0);
+                    const bool alt   = qMods ? qMods->alt   : (io.KeyAlt   || (sdlMods & SDL_KMOD_ALT)   != 0);
+                    uint64_t namedTarget = 0;
+                    if (addons::isModifiedClickActive(luaState, "SELFCAST", shift, ctrl, alt))
+                        namedTarget = gameHandler.getPlayerGuid();
+                    else if (addons::isModifiedClickActive(luaState, "FOCUSCAST", shift, ctrl, alt))
+                        namedTarget = gameHandler.getFocusGuid();
                     const int page = bottom ? ActionBarPanel::kBottomLeftActionPage : actionBarPanel_.getMainActionBarPage();
                     int slot = ActionBarPanel::actionSlotForPage(page, i);
                     if (!bottom && page == 1) {
@@ -1582,9 +1596,9 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
                             slot = ActionBarPanel::actionSlotForPage(ActionBarPanel::kFrameXmlActionBarPages + static_cast<int>(bonus), i);
                     }
                     if (bar[slot].type == game::ActionBarSlot::SPELL && bar[slot].isReady()) {
-                        gameHandler.castSpell(bar[slot].id, gameHandler.hasTarget() ? gameHandler.getTargetGuid() : 0);
+                        gameHandler.castSpell(bar[slot].id, namedTarget);
                     } else if (bar[slot].type == game::ActionBarSlot::ITEM && bar[slot].id != 0) {
-                        gameHandler.useItemById(bar[slot].id);
+                        gameHandler.useItemById(bar[slot].id, namedTarget);
                     } else if (bar[slot].type == game::ActionBarSlot::MACRO) {
                         chatPanel_.executeMacroText(gameHandler, gameHandler.getMacroText(bar[slot].id));
                     }
@@ -1678,6 +1692,16 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
                 if (const auto texture = cursorTexture(services_.assetManager, services_.window,
                         aimed ? "Interface\\Cursor\\Cast.blp" : "Interface\\Cursor\\UnableCast.blp"))
                     selectCursorTexture(texture);
+            } else if (const uint32_t unitSpell = gameHandler.pendingUnitTargetSpell(); unitSpell != 0) {
+                const uint64_t unitGuid = hoverPick.resolve();
+                const bool aimed = unitGuid != 0 &&
+                                   gameHandler.canSpellTargetUnit(unitSpell, unitGuid) &&
+                                   gameHandler.unitSpellRange(unitSpell, unitGuid)
+                                       .value_or(game::spellclass::SpellRangeCheck::InRange) ==
+                                       game::spellclass::SpellRangeCheck::InRange;
+                if (const auto texture = cursorTexture(services_.assetManager, services_.window,
+                        aimed ? "Interface\\Cursor\\Cast.blp" : "Interface\\Cursor\\UnableCast.blp"))
+                    selectCursorTexture(texture);
             } else if (hoverPick.closestGuid != 0) {
                 if (!drawVendorCursor(gameHandler, hoverPick) &&
                     !drawWorldObjectCursor(gameHandler, hoverPick)) {
@@ -1723,8 +1747,13 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
                 selectCursorTexture(fallback);
             }
         } else if (ImGui::GetMouseCursor() != ImGuiMouseCursor_None) {
-            const auto texture = cursorTexture(services_.assetManager, services_.window,
-                                               "Interface\\Cursor\\Point.blp");
+            const bool spellTargeting = gameHandler.pendingUnitTargetSpell() != 0 ||
+                                        gameHandler.pendingLockTargetSpell() != 0 ||
+                                        gameHandler.isAwaitingGroundTarget();
+            const char* art = spellTargeting
+                ? "Interface\\Cursor\\UnableCast.blp"
+                : "Interface\\Cursor\\Point.blp";
+            const auto texture = cursorTexture(services_.assetManager, services_.window, art);
             if (!texture) throw std::runtime_error("Missing default WoW cursor texture");
             selectCursorTexture(texture);
         }
@@ -1783,8 +1812,14 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
             ui::plateUnitAt(plateHits_, leftClickPressPos_.x, leftClickPressPos_.y);
         if (dragDistSq < CLICK_THRESHOLD * CLICK_THRESHOLD && plateUnit != 0 &&
             !gameHandler.isAwaitingGroundTarget()) {
-            if (gameHandler.isAwaitingUnitTarget()) gameHandler.completeItemUseOnUnit(plateUnit);
-            else gameHandler.setTarget(plateUnit);
+            if (const uint32_t unitSpell = gameHandler.pendingUnitTargetSpell(); unitSpell != 0) {
+                if (gameHandler.canSpellTargetUnit(unitSpell, plateUnit))
+                    gameHandler.completeItemUseOnUnit(plateUnit);
+            } else if (gameHandler.isAwaitingUnitTarget()) {
+                gameHandler.completeItemUseOnUnit(plateUnit);
+            } else {
+                gameHandler.setTarget(plateUnit);
+            }
         } else if (dragDistSq < CLICK_THRESHOLD * CLICK_THRESHOLD) {
             auto* renderer = services_.renderer;
             auto* camera = renderer ? renderer->getCamera() : nullptr;
@@ -1883,11 +1918,13 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
                     return;
                 }
 
-                // An item waiting for a unit takes this click instead of it
-                // selecting anyone: "right-click the treat, then click the dog"
-                // is the whole of what the cursor is asking for.
+                // A spell or item waiting for a unit takes this click instead of
+                // selecting anyone or using scenery; over an invalid unit or
+                // game object a waiting spell stays armed.
                 if (closestGuid != 0 && gameHandler.isAwaitingUnitTarget()) {
-                    gameHandler.completeItemUseOnUnit(closestGuid);
+                    const uint32_t unitSpell = gameHandler.pendingUnitTargetSpell();
+                    if (unitSpell == 0 || gameHandler.canSpellTargetUnit(unitSpell, closestGuid))
+                        gameHandler.completeItemUseOnUnit(closestGuid);
                 } else if (closestGuid != 0) {
 #ifdef __ANDROID__
                     if (gameHandler.getTargetGuid() == closestGuid) {
@@ -1953,10 +1990,14 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
             // Treated as a camera rotate - do not interact/attack.
             return;
         }
-        // A right-click puts an armed ground spell down and does nothing else:
-        // native 2.4.3 fires UNIT_SPELLCAST_FAILED for it.
+        // A right-click puts an armed ground or unit spell down and does
+        // nothing else: native 2.4.3 fires UNIT_SPELLCAST_FAILED for it.
         if (gameHandler.isAwaitingGroundTarget()) {
             gameHandler.cancelGroundTarget(true);
+            return;
+        }
+        if (gameHandler.isAwaitingUnitTarget()) {
+            gameHandler.cancelUnitTargeting(true);
             return;
         }
         // A right-click on a plate is a right-click on its unit: target it,

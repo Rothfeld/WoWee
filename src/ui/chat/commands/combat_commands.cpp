@@ -112,9 +112,10 @@ public:
         // Numeric spell ID
         uint32_t numId = parseNumericSpellId(spellArg);
         if (numId) {
+            // [target=unit] names the unit; without it no unit is named and
+            // castSpell aims the spell.
             uint64_t targetGuid = (castTargetOverride != static_cast<uint64_t>(-1))
-                ? castTargetOverride
-                : (ctx.gameHandler.hasTarget() ? ctx.gameHandler.getTargetGuid() : 0);
+                ? castTargetOverride : 0;
             ctx.gameHandler.castSpell(numId, targetGuid);
             return {};
         }
@@ -122,9 +123,10 @@ public:
         // Name-based lookup
         uint32_t bestSpellId = resolveSpellByName(ctx.gameHandler, spellArg);
         if (bestSpellId) {
+            // [target=unit] names the unit; without it no unit is named and
+            // castSpell aims the spell.
             uint64_t targetGuid = (castTargetOverride != static_cast<uint64_t>(-1))
-                ? castTargetOverride
-                : (ctx.gameHandler.hasTarget() ? ctx.gameHandler.getTargetGuid() : 0);
+                ? castTargetOverride : 0;
             ctx.gameHandler.castSpell(bestSpellId, targetGuid);
         } else {
             // Build error message

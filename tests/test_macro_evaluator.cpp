@@ -526,3 +526,48 @@ TEST_CASE("Empty brackets match (empty condition = true)", "[macro_eval]") {
     TestFixture f;
     CHECK(f.run("[] Spell") == "Spell");
 }
+
+TEST_CASE("evaluateDetailed preserves target token and distinguishes unmatched from empty", "[macro_eval]") {
+    TestFixture f;
+    f.gs.playerGuid = 42;
+    f.gs.inCombat = false;
+
+    const auto empty = f.eval.evaluateDetailed("");
+    CHECK(empty.matched);
+    CHECK(empty.action.empty());
+    CHECK(empty.targetToken.empty());
+
+    const auto unmatched = f.eval.evaluateDetailed("[combat] Smite");
+    CHECK_FALSE(unmatched.matched);
+
+    const auto player = f.eval.evaluateDetailed("[target=player] Arcane Intellect");
+    CHECK(player.matched);
+    CHECK(player.action == "Arcane Intellect");
+    CHECK(player.targetToken == "player");
+    CHECK(player.targetGuid == 42);
+
+    const auto named = f.eval.evaluateDetailed("[target=Edricm] Flash Heal");
+    CHECK(named.matched);
+    CHECK(named.action == "Flash Heal");
+    CHECK(named.targetToken == "Edricm");
+
+    // Multiple bracket groups on one alternative: [mod:alt,target=player][] Spell
+    f.ms.alt = false;
+    const auto fallbackGroup = f.eval.evaluateDetailed("[mod:alt,target=player][] Arcane Intellect");
+    CHECK(fallbackGroup.matched);
+    CHECK(fallbackGroup.action == "Arcane Intellect");
+    CHECK(fallbackGroup.targetToken.empty());
+
+    f.ms.alt = true;
+    const auto altGroup = f.eval.evaluateDetailed("[mod:alt,target=player][] Arcane Intellect");
+    CHECK(altGroup.matched);
+    CHECK(altGroup.action == "Arcane Intellect");
+    CHECK(altGroup.targetToken == "player");
+    CHECK(altGroup.targetGuid == 42);
+
+    // 2.0 modifier: / nomodifier spelling (used by SecureStateDriver.lua)
+    f.ms.alt = false;
+    f.ms.shift = true;
+    CHECK(f.eval.evaluateDetailed("[modifier:shift] 1; 0").action == "1");
+    CHECK(f.eval.evaluateDetailed("[nomodifier] 1; 0").action == "0");
+}

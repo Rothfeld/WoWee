@@ -63,7 +63,15 @@ public:
     std::string commandForKey(const std::string& key) const;
     std::string resolveBindingKey(const std::string& key) const;
     std::string resolveCommand(const std::string& key) const;
+    struct Modifiers {
+        bool shift = false;
+        bool ctrl = false;
+        bool alt = false;
+    };
     bool isCommandPressed(const std::string& command, bool repeat = false) const;
+    /// Queue-time modifiers captured with the press edge of `command` in this
+    /// frame (or empty when not pressed via processInputEvent).
+    std::optional<Modifiers> pressedCommandModifiers(const std::string& command) const;
     bool isCommandDown(const std::string& command) const;
     static const char* commandForAction(Action action);
     static std::string keyName(ImGuiKey key);
@@ -123,6 +131,7 @@ private:
     // Base physical key -> command, latched at down, unaffected by later edits/modifiers.
     std::map<std::string, std::string> heldBindings_;
     std::set<std::pair<std::string, std::string>> pressedBindings_;
+    std::map<std::pair<std::string, std::string>, Modifiers> pressedBindingMods_;
     bool nativeInput_ = false;
     bool inputFocused_ = true;
     std::map<std::string, std::set<std::string>> virtualCommands_;

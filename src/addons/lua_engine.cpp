@@ -10563,13 +10563,6 @@ void LuaEngine::registerCoreAPI() {
         "    frame.offset = math.floor(value / (itemHeight or 1) + 0.5)\n"
         "    if updateFunction then updateFunction() end\n"
         "end\n"
-        // SecureCmdOptionParse - parses conditional macros like [target=focus]
-        "function SecureCmdOptionParse(options)\n"
-        "    if not options then return nil end\n"
-        "    -- Simple: return the unconditional fallback (text after last semicolon or the whole string)\n"
-        "    local result = options:match(';%s*(.-)$') or options:match('^%[.*%]%s*(.-)$') or options\n"
-        "    return result\n"
-        "end\n"
         // ChatFrame message group stubs
         "function ChatFrame_AddMessageGroup(frame, group) end\n"
         "function ChatFrame_RemoveMessageGroup(frame, group) end\n"

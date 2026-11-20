@@ -877,6 +877,8 @@ static void pushCvarDefault(lua_State* L, const std::string& n) {
     // itself ticked while the client went on clearing, the panel and the game
     // disagreeing about the same switch.
     else if (n == "deselectonclick") lua_pushstring(L, "1");
+    // Build 8606: GetCVar("autoSelfCast") "0" on an account that never set it.
+    else if (n == "autoselfcast") lua_pushstring(L, "0");
     // Off: build 8606 with no enableCombatText line in Config.wtf answers
     // "0" (pair 7, _experiments/20261118T074350Z.plates_fct), as
     // UIOptionsFrame's SHOW_COMBAT_TEXT default says. It governs

@@ -199,7 +199,17 @@ VkDescriptorSet InventoryScreen::castCursorTexture() {
 }
 
 void InventoryScreen::renderItemTargetCursor() {
-    // Both kinds of pending use: one waiting for an item to apply to, one
+    // Spells waiting for a lock or a unit draw the game's own Cast /
+    // UnableCast cursor in GameScreen and route Escape through FrameXML's
+    // ToggleGameMenu -> SpellStopTargeting.
+    if (gameHandler_ &&
+        (gameHandler_->pendingLockTargetSpell() != 0 ||
+         gameHandler_->pendingUnitTargetSpell() != 0)) {
+        itemTargetArmedFrame_ = -1;
+        return;
+    }
+
+    // Both kinds of pending item use: one waiting for an item to apply to, one
     // waiting for a unit. The cursor and the way out of it are the same.
     const bool awaitingItem = gameHandler_ && gameHandler_->isAwaitingItemTarget();
     const bool awaitingUnit = gameHandler_ && gameHandler_->isAwaitingUnitTarget();
@@ -215,15 +225,11 @@ void InventoryScreen::renderItemTargetCursor() {
         if (ImGui::IsMouseClicked(ImGuiMouseButton_Right) ||
             core::Input::getInstance().isKeyPressed(SDL_SCANCODE_ESCAPE)) {
             gameHandler_->cancelItemTargeting();
-            gameHandler_->cancelUnitTargeting();
+            gameHandler_->cancelUnitTargeting(true);
             itemTargetArmedFrame_ = -1;
             return;
         }
     }
-
-    // A spell waiting for its lock draws the game's own Cast / UnableCast
-    // cursor (GameScreen picks it over the world), not this overlay.
-    if (gameHandler_->pendingLockTargetSpell() != 0) return;
 
     ImVec2 mousePos = ImGui::GetIO().MousePos;
     constexpr float size = 36.0f;

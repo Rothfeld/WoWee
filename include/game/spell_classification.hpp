@@ -148,6 +148,43 @@ inline bool requiresHostileTarget(uint32_t implicitTargetA) {
     return implicitTargetA == kImplicitTargetEnemy;
 }
 
+/// Which units a single-unit spell can be cast at, from Spell.dbc's first
+/// EffectImplicitTargetA and SpellCastTargetFlags (Targets).
+///
+/// Measured on native 2.4.3 (pair 13):
+/// - Smite (6), Shadow Word: Pain (6), Shadowfiend (53): refused with "You have
+///   no target." at nothing and "Invalid target" at a friend or the caster;
+/// - Arcane Intellect (21), Flash Heal (21), Prayer of Fortitude (37): cast at
+///   a friendly unit (in or out of party) or the caster, else arm the cursor;
+/// - Power Word: Shield (57), Greater Blessing of Might (61): cast at the
+///   caster or a party/raid member, else arm the cursor (even with autoSelfCast
+///   "1" when a non-party friend is targeted);
+/// - Dispel Magic (25): cast at any unit, else arm the cursor (or self-cast at
+///   nothing when autoSelfCast is "1");
+/// - Resurrection (Targets 0x8000 TARGET_FLAG_CORPSE_ALLY, implicitA 0): cast
+///   at a dead friendly unit, else arm the cursor.
+enum class UnitAim {
+    None,         ///< Not aimed at a chosen unit (self, pet, area, object, item, ground).
+    Enemy,        ///< 6, 53, 77: a unit the player can attack.
+    Friend,       ///< 21, 37, 45: a friendly unit or the caster.
+    GroupMember,  ///< 35, 57, 61: the caster or a member of their party or raid.
+    Any,          ///< 25 TARGET_UNIT: any unit.
+    DeadFriend,   ///< Targets 0x8000 (TARGET_FLAG_CORPSE_ALLY) with implicitA 0.
+};
+
+inline UnitAim unitAim(uint32_t implicitTargetA, uint32_t targetFlags = 0) {
+    switch (implicitTargetA) {
+        case 6: case 53: case 77: return UnitAim::Enemy;
+        case 21: case 37: case 45: return UnitAim::Friend;
+        case 35: case 57: case 61: return UnitAim::GroupMember;
+        case 25: return UnitAim::Any;
+        case 0:
+            if ((targetFlags & 0x8000u) != 0) return UnitAim::DeadFriend;
+            return UnitAim::None;
+        default: return UnitAim::None;
+    }
+}
+
 /// Legacy client IDs for the three repeating ranged weapon attacks.
 ///
 /// Their Spell.dbc rows carry a dummy one-point rage cost even for classes that do

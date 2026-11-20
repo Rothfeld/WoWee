@@ -4381,3 +4381,88 @@ TEST_CASE_METHOD(Integration, "MessageFrame and ScrollingMessageFrame defaults, 
     lua.expireMessages(1.6f); // age = 8.1 s -> fully faded
     CHECK(mf->messages[1].color[3] == Catch::Approx(0.0f));
 }
+
+TEST_CASE_METHOD(Integration, "Spell unit targeting, autoSelfCast default, and SELFCAST modified click follow 2.4.3", "[input][screen][selfcast]") {
+    replay::Session session;
+    session.spawnPlayer({{wowee::game::UF::UNIT_FIELD_HEALTH, 100}});
+    auto& gh = session.handler();
+    gh.spellNameCacheLoadedRef() = true;
+
+    // Fresh 2.4.3 default: autoSelfCast is off ("0").
+    CHECK_FALSE(gh.isAutoSelfCast());
+    lua.setGameHandler(&gh);
+    run("assert(GetCVar('autoSelfCast') == '0')");
+
+    constexpr uint32_t kArcaneIntellect = 27126; // EffectImplicitTargetA = 21 (Friend)
+    constexpr uint32_t kPowerWordShield = 25218; // EffectImplicitTargetA = 57 (GroupMember)
+    constexpr uint32_t kSmite           = 25364; // EffectImplicitTargetA = 6  (Enemy)
+    gh.spellNameCacheRef()[kArcaneIntellect] = {.name = "Arcane Intellect", .rank = "Rank 6", .maxRange = 30.0f, .implicitTargetA = 21};
+    gh.spellNameCacheRef()[kPowerWordShield] = {.name = "Power Word: Shield", .rank = "Rank 12", .maxRange = 40.0f, .implicitTargetA = 57};
+    gh.spellNameCacheRef()[kSmite]           = {.name = "Smite", .rank = "Rank 10", .maxRange = 30.0f, .implicitTargetA = 6};
+    gh.setActionBarSlot(0, wowee::game::ActionBarSlot::SPELL, kArcaneIntellect);
+    gh.setActionBarSlot(1, wowee::game::ActionBarSlot::SPELL, kPowerWordShield);
+    gh.setActionBarSlot(2, wowee::game::ActionBarSlot::SPELL, kSmite);
+
+    ui::GameScreen screen;
+    const auto render = [&] {
+        ImGui::NewFrame();
+        screen.render(gh);
+        ImGui::EndFrame();
+    };
+    const auto casts = [&] { return session.sent().of(wowee::game::Opcode::CMSG_CAST_SPELL); };
+    render();
+
+    // 1. With no target and autoSelfCast "0", pressing '1' (Arcane Intellect)
+    // arms the targeting cursor rather than self-casting.
+    REQUIRE(manager.setBinding("1", "ACTIONBUTTON1"));
+    const auto before = casts().size();
+    manager.beginInputFrame();
+    event(SDL_SCANCODE_1);
+    event(SDL_SCANCODE_1, false);
+    render();
+    CHECK(casts().size() == before);
+    CHECK(gh.pendingUnitTargetSpell() == kArcaneIntellect);
+    run("assert(SpellIsTargeting())");
+    run("assert(SpellCanTargetUnit('player'))");
+
+    // SpellStopTargeting puts the cursor down without sending a cast.
+    run("assert(SpellStopTargeting())");
+    CHECK(gh.pendingUnitTargetSpell() == 0);
+    run("assert(not SpellIsTargeting())");
+
+    // 2. Holding Alt (default SELFCAST = ALT) self-casts Arcane Intellect.
+    manager.beginInputFrame();
+    event(SDL_SCANCODE_1, true, SDL_KMOD_ALT);
+    event(SDL_SCANCODE_1, false, SDL_KMOD_ALT);
+    render();
+    REQUIRE(casts().size() == before + 1);
+    CHECK(gh.pendingUnitTargetSpell() == 0);
+
+    // 3. Smite with no target refuses without sending or arming the cursor.
+    REQUIRE(manager.setBinding("3", "ACTIONBUTTON3"));
+    manager.beginInputFrame();
+    event(SDL_SCANCODE_3);
+    event(SDL_SCANCODE_3, false);
+    render();
+    CHECK(casts().size() == before + 1);
+    CHECK(gh.pendingUnitTargetSpell() == 0);
+
+    // 4. With autoSelfCast "1" and no target, Arcane Intellect self-casts.
+    gh.setAutoSelfCast(true);
+    manager.beginInputFrame();
+    event(SDL_SCANCODE_1);
+    event(SDL_SCANCODE_1, false);
+    render();
+    CHECK(casts().size() == before + 2);
+    gh.setAutoSelfCast(false);
+
+    // 5. SecureCmdOptionParse returns (action, target) for /cast [target=player].
+    run(R"lua(
+        local a, t = SecureCmdOptionParse("[target=player] Arcane Intellect")
+        assert(a == "Arcane Intellect" and t == "player")
+        local a2, t2 = SecureCmdOptionParse("Arcane Intellect")
+        assert(a2 == "Arcane Intellect" and t2 == nil)
+        assert(SecureCmdOptionParse("") == "")
+        assert(SecureCmdOptionParse("[combat] Smite") == nil)
+    )lua");
+}

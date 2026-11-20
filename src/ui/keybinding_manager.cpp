@@ -479,6 +479,7 @@ std::string KeybindingManager::resolveBindingKey(const std::string& key) const {
 std::string KeybindingManager::resolveCommand(const std::string& key) const { return resolve(key, true).second; }
 void KeybindingManager::beginInputFrame() {
     pressedBindings_.clear();
+    pressedBindingMods_.clear();
     virtualCommandPressed_.clear();
 }
 void KeybindingManager::processInputEvent(const SDL_Event& event) {
@@ -527,7 +528,10 @@ void KeybindingManager::processInputEvent(const SDL_Event& event) {
             ImGui::GetIO().WantTextInput || interfaceConsumedKey(key) ||
             (base.starts_with("BUTTON") && ImGui::GetIO().WantCaptureMouse);
         heldBindings_[base] = blocked ? "" : command;
-        if (!blocked && !command.empty()) pressedBindings_.emplace(base, command);
+        if (!blocked && !command.empty()) {
+            pressedBindings_.emplace(base, command);
+            pressedBindingMods_[{base, command}] = {shift, ctrl, alt};
+        }
     }
 }
 void KeybindingManager::updateInput() {
@@ -605,6 +609,12 @@ bool KeybindingManager::isCommandPressed(const std::string& command, bool repeat
     if (nativeInput_) return false;
     const auto it = bindings_.find(command);
     return it != bindings_.end() && (keyActive(it->second[0], true, repeat) || keyActive(it->second[1], true, repeat));
+}
+std::optional<KeybindingManager::Modifiers> KeybindingManager::pressedCommandModifiers(const std::string& command) const {
+    for (const auto& [pair, mods] : pressedBindingMods_) {
+        if (pair.second == command && inputAvailable(pair.first)) return mods;
+    }
+    return std::nullopt;
 }
 bool KeybindingManager::isCommandDown(const std::string& command) const {
     if (command.empty() || !inputFocused_ || interfaceTakingTypedInput() || ImGui::GetIO().WantTextInput) return false;

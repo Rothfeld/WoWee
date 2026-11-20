@@ -4,10 +4,12 @@
 #include "game/shapeshift_forms.hpp"
 #include "game/current_action.hpp"
 #include "addons/lua_api_helpers.hpp"
+#include "addons/lua_api_registrations.hpp"
 #include "game/item_text.hpp"
 #include "game/game_utils.hpp"
 #include "game/cast_bar_text.hpp"
 #include "addons/lua_engine.hpp"
+#include "ui/framexml_takeover.hpp"
 #include "core/logger.hpp"
 #include <set>
 #include <optional>
@@ -64,13 +66,46 @@ uint32_t highestKnownRankByName(game::GameHandler* gh, const std::string& name) 
 
 // ---- Finishing a spell that is waiting for a target ----
 //
-// A spell cast with no target leaves the cursor holding it until something is
-// clicked; these are what the unit and party frames call when that click lands
-// on them. This client resolves a target at cast time instead - there is no
-// pending spell on the cursor to complete - so each answers false: nothing was
-// waiting, so nothing was consumed, and the frame falls through to its ordinary
-// click handling rather than swallowing it.
-static int lua_SpellTargetUnit(lua_State* L) { lua_pushboolean(L, 0); return 1; }
+// A spell cast with no target it can go to leaves the cursor holding it until
+// something is clicked; SpellTargetUnit is what the unit and party frames call
+// when that click lands on them (SecureTemplates' "target" action while
+// SpellIsTargeting).
+static int lua_SpellTargetUnit(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    const char* unit = luaL_optstring(L, 1, nullptr);
+    if (!gh || !unit || !gh->isAwaitingUnitTarget()) { lua_pushboolean(L, 0); return 1; }
+    std::string u(unit);
+    toLowerInPlace(u);
+    const uint64_t guid = resolveUnitGuid(gh, u);
+    if (guid == 0) { lua_pushboolean(L, 0); return 1; }
+    if (const uint32_t spellId = gh->pendingUnitTargetSpell();
+        spellId != 0 && !gh->canSpellTargetUnit(spellId, guid)) {
+        gh->errorGlobal("SPELL_FAILED_BAD_TARGETS");
+        gh->cancelUnitTargeting(true);
+        lua_pushboolean(L, 1);
+        return 1;
+    }
+    gh->completeItemUseOnUnit(guid);
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+static int lua_SpellCanTargetUnit(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    const char* unit = luaL_optstring(L, 1, nullptr);
+    if (!gh || !unit || !gh->isAwaitingUnitTarget()) { lua_pushboolean(L, 0); return 1; }
+    std::string u(unit);
+    toLowerInPlace(u);
+    const uint64_t guid = resolveUnitGuid(gh, u);
+    if (guid == 0) { lua_pushboolean(L, 0); return 1; }
+    if (const uint32_t spellId = gh->pendingUnitTargetSpell(); spellId != 0) {
+        lua_pushboolean(L, gh->canSpellTargetUnit(spellId, guid) ? 1 : 0);
+        return 1;
+    }
+    const auto entity = gh->getEntityManager().getEntity(guid);
+    lua_pushboolean(L, (guid == gh->getPlayerGuid() || (entity && entity->isUnit())) ? 1 : 0);
+    return 1;
+}
 static int lua_SpellTargetItem(lua_State* L) { lua_pushboolean(L, 0); return 1; }
 
 // Dropping what the cursor holds onto a unit, which opens a trade. The cursor
@@ -678,12 +713,17 @@ static int lua_CastSpellByName(lua_State* L) {
         // reaches here: a spell named rather than numbered is cast by name, and
         // the unit clicked still says who it lands on.
         uint64_t target = 0;
-        if (const char* unit = luaL_optstring(L, 2, nullptr)) {
+        if (lua_isboolean(L, 2)) {
+            if (lua_toboolean(L, 2)) target = gh->getPlayerGuid();
+        } else if (lua_type(L, 2) == LUA_TNUMBER) {
+            if (lua_tonumber(L, 2) != 0) target = gh->getPlayerGuid();
+        } else if (const char* unit = luaL_optstring(L, 2, nullptr); unit && *unit) {
             std::string u(unit);
             toLowerInPlace(u);
             target = resolveUnitGuid(gh, u);
         }
-        if (target == 0 && gh->hasTarget()) target = gh->getTargetGuid();
+        // No unit named: castSpell aims it (current target, caster, or the
+        // targeting cursor).
         gh->castSpell(bestId, target);
     }
     return 0;
@@ -864,15 +904,15 @@ static int lua_GetSpellName(lua_State* L) {
     return 2;
 }
 
-/// CastSpell(slot, bookType) - cast what is in that slot at the current
-/// target, which is what clicking a spellbook entry does.
+/// CastSpell(slot, bookType) - cast what is in that slot, which is what
+/// clicking a spellbook entry does. It names no unit.
 static int lua_CastSpell(lua_State* L) {
     auto* gh = getGameHandler(L);
     // Same resolver, and here it decides what is cast: clicking a pet spell
     // resolved through the player's tabs cast whichever of the player's spells
     // sat at that index.
     const uint32_t id = spellIdForCall(L, gh);
-    if (id != 0) gh->castSpell(id, gh->getTargetGuid());
+    if (id != 0) gh->castSpell(id, 0);
     return 0;
 }
 
@@ -938,10 +978,16 @@ static int lua_IsPassiveSpell(lua_State* L) {
     return 1;
 }
 
-/// IsSelectedSpell(slot, bookType) → whether the book is highlighting it.
-/// Nothing selects a spell here; the highlight follows the cursor.
+/// IsSelectedSpell(slot, bookType) → whether the book is highlighting it
+/// (e.g. while its targeting cursor is armed).
 static int lua_IsSelectedSpell(lua_State* L) {
-    lua_pushboolean(L, 0);
+    auto* gh = getGameHandler(L);
+    const uint32_t id = gh ? spellIdForCall(L, gh) : 0;
+    const bool selected = gh && id != 0 &&
+                          (gh->pendingUnitTargetSpell() == id ||
+                           (gh->pendingGroundTarget() && !gh->pendingGroundTarget()->pet &&
+                            gh->pendingGroundTarget()->spellId == id));
+    lua_pushboolean(L, selected ? 1 : 0);
     return 1;
 }
 
@@ -1377,12 +1423,15 @@ static int lua_CastSpellByID(lua_State* L) {
     // targeted instead, so healing a party member through their frame hit the
     // current target.
     uint64_t target = 0;
-    if (const char* unit = luaL_optstring(L, 2, nullptr)) {
+    if (lua_isboolean(L, 2)) {
+        if (lua_toboolean(L, 2)) target = gh->getPlayerGuid();
+    } else if (lua_type(L, 2) == LUA_TNUMBER) {
+        if (lua_tonumber(L, 2) != 0) target = gh->getPlayerGuid();
+    } else if (const char* unit = luaL_optstring(L, 2, nullptr); unit && *unit) {
         std::string u(unit);
         toLowerInPlace(u);
         target = resolveUnitGuid(gh, u);
     }
-    if (target == 0 && gh->hasTarget()) target = gh->getTargetGuid();
     gh->castSpell(spellId, target);
     return 0;
 }
@@ -1427,20 +1476,23 @@ void registerSpellLuaAPI(lua_State* L) {
             return 1;
         }},
                 {"SpellStopTargeting", [](lua_State* L) -> int {
-            // No AoE reticle, but the item cursor a stone or an oil arms is a
-            // kind of targeting and escape has to put it down.
             auto* gh = getGameHandler(L);
-            const bool wasTargeting = gh && (gh->isAwaitingItemTarget() || gh->isAwaitingGroundTarget());
+            const bool wasTargeting = gh && (gh->isAwaitingItemTarget() || gh->isAwaitingGroundTarget() ||
+                                             gh->isAwaitingUnitTarget());
             if (gh && gh->isAwaitingItemTarget()) gh->cancelItemTargeting();
+            if (gh && gh->isAwaitingUnitTarget()) gh->cancelUnitTargeting(false);
             if (gh) gh->cancelGroundTarget();
+            ui::frameXmlSetCursorTexture({});
             lua_pushboolean(L, wasTargeting);
             return 1;
         }},
                 {"SpellIsTargeting", [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
-            lua_pushboolean(L, gh && (gh->isAwaitingItemTarget() || gh->isAwaitingGroundTarget()));
+            lua_pushboolean(L, gh && (gh->isAwaitingItemTarget() || gh->isAwaitingGroundTarget() ||
+                                      gh->isAwaitingUnitTarget()));
             return 1;
         }},
+                {"SpellCanTargetUnit", lua_SpellCanTargetUnit},
                 {"IsSpellInRange",    lua_IsSpellInRange},
                 {"UnitBuff",          lua_UnitBuff},
                 {"UnitDebuff",        lua_UnitDebuff},
