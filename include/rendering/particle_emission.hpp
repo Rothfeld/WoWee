@@ -260,6 +260,26 @@ inline ParticleEmission sphericalParticleEmission(float length, float width,
                     : magnitude > 0 ? offset / magnitude : glm::vec3(0)};
 }
 
+// Plane emitter (type 1) birth offset in the emitter bone's XY plane.
+// M2 emissionAreaLength spans Y and emissionAreaWidth spans X:
+// elwynntallwaterfall01.m2 (mesh dX=9.9, dY=25.8, bone 1 rotated 66.5 deg about
+// Y) authors length=18.0, width=1.37; newwaterfall.m2 (dX=1.9, dY=4.8) authors
+// length=2.61, width=0.69. Placing length on X rotated the 18 yd mist band into
+// a vertical wall shooting above the waterfall lip. Across TBC anisotropic
+// plane emitters, length-on-Y matches the mesh's long axis 54 to 18.
+inline glm::vec3 planeParticleOffset(float length, float width, float randX, float randY) {
+    return {randX * width * 0.5f, randY * length * 0.5f, 0.0f};
+}
+
+// Outdoor lighting for emitters without kParticleOwnColor (0x1): upward-normal
+// ambient + diffuse, matching water and terrain clutter lighting so outdoor
+// waterfall mist and smoke take the zone's lighting instead of glowing white.
+inline glm::vec3 outdoorParticleLight(const glm::vec3& ambient, const glm::vec3& diffuse,
+                                      const glm::vec3& lightDir) {
+    return glm::clamp(ambient + diffuse * std::max(-lightDir.z, 0.0f),
+                      glm::vec3(0.0f), glm::vec3(1.0f));
+}
+
 // Plane emitter (type 1) travel direction: inclination from +Z, azimuth from
 // +Y (matching sphericalParticleEmission). At horizontal range 0 the fan lies
 // in the emitter bone's YZ plane: Hurricane 16914 (LightningStorm_Cloud_State

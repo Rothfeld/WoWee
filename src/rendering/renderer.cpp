@@ -587,6 +587,11 @@ void Renderer::updatePerFrameUBO() {
                                                    lp.diffuseColor,
                                                    glm::vec3(currentFrameData.lightDir));
         }
+        if (m2Renderer) {
+            m2Renderer->setLighting(&currentFrameData.lightDir.x,
+                                    &lp.diffuseColor.x,
+                                    &lp.ambientColor.x);
+        }
         currentFrameData.specularColor = glm::vec4(lp.specularColor, 1.0f);
         currentFrameData.fogColor = glm::vec4(lp.fogColor, 1.0f);
         currentFrameData.fogParams.x = lp.fogStart;

@@ -136,8 +136,8 @@ void M2Renderer::emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt
                     inst.globalSequenceTime, inst.currentSequenceIndex, gpu.globalSequenceDurations);
                 const float width = interpFloat(em.emissionAreaWidth, sampleAnimTime,
                     inst.globalSequenceTime, inst.currentSequenceIndex, gpu.globalSequenceDurations);
-                localPos.x += distN(particleRng_) * length * 0.5f;
-                localPos.y += distN(particleRng_) * width * 0.5f;
+                localPos += planeParticleOffset(length, width,
+                    distN(particleRng_), distN(particleRng_));
             }
             if (em.emitterType == 2) {
                 const float length = interpFloat(em.emissionAreaLength, sampleAnimTime,
@@ -953,7 +953,7 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
         const glm::vec3 placementLight = (inst.indoorLighting & 2u)
             ? glm::vec3((inst.indoorLighting >> 8) & 255u, (inst.indoorLighting >> 16) & 255u,
                         (inst.indoorLighting >> 24) & 255u) / 255.0f
-            : glm::vec3(1.0f);
+            : outdoorParticleLight(outdoorAmbient_, outdoorDiffuse_, outdoorLightDir_);
 
         for (const auto& p : inst.particles) {
             if (p.emitterIndex < 0 || p.emitterIndex >= static_cast<int>(gpu.particleEmitters.size())) continue;

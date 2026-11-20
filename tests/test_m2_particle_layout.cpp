@@ -709,3 +709,38 @@ TEST_CASE("Discrete Squirt (0x8000) emitters fire keyframe bursts once and stay 
                        [&](uint32_t n, float, float) { suppressed += n; });
     CHECK(suppressed == 0);
 }
+
+TEST_CASE("Plane emitter spans areaLength along Y and areaWidth along X", "[m2][particle]") {
+    using wowee::rendering::planeParticleOffset;
+    // elwynntallwaterfall01.m2: length=18.0 along the Y waterfall lip, width=1.37 along X.
+    const glm::vec3 edge = planeParticleOffset(18.0f, 1.37f, 1.0f, 1.0f);
+    CHECK(edge.x == Catch::Approx(0.685f));
+    CHECK(edge.y == Catch::Approx(9.0f));
+    CHECK(edge.z == Catch::Approx(0.0f));
+    // Under bone 1's 66.5 deg Y rotation, the 18 yd lip stays horizontal in Y
+    // rather than tilting +-8.25 yd into Z.
+    const glm::mat4 rotY = glm::rotate(glm::mat4(1.0f), glm::radians(66.5f), glm::vec3(0, 1, 0));
+    const glm::vec3 rotated = glm::vec3(rotY * glm::vec4(edge, 0.0f));
+    CHECK(rotated.y == Catch::Approx(9.0f));
+    CHECK(std::abs(rotated.z) < 0.7f);
+}
+
+TEST_CASE("Outdoor lit particles take upward ambient and diffuse lighting", "[m2][particle]") {
+    using wowee::rendering::outdoorParticleLight;
+    // Ammen Vale 10:12: dim cool ambient + sun diffuse from above (-lightDir.z > 0).
+    const glm::vec3 lit = outdoorParticleLight(
+        glm::vec3(0.25f, 0.40f, 0.53f),
+        glm::vec3(0.79f, 0.63f, 0.44f),
+        glm::normalize(glm::vec3(0.0f, 0.6f, -0.8f)));
+    CHECK(lit.r == Catch::Approx(0.25f + 0.79f * 0.8f));
+    CHECK(lit.g == Catch::Approx(0.40f + 0.63f * 0.8f));
+    CHECK(lit.b == Catch::Approx(0.53f + 0.44f * 0.8f));
+    // Sun below horizon contributes zero diffuse.
+    const glm::vec3 night = outdoorParticleLight(
+        glm::vec3(0.10f, 0.15f, 0.25f),
+        glm::vec3(0.80f, 0.70f, 0.60f),
+        glm::vec3(0.0f, 0.0f, 1.0f));
+    CHECK(night.r == Catch::Approx(0.10f));
+    CHECK(night.g == Catch::Approx(0.15f));
+    CHECK(night.b == Catch::Approx(0.25f));
+}

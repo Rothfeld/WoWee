@@ -778,7 +778,21 @@ Particles of a doodad in an interior WMO group take its MODD placement colour,
 as its mesh does, unless the emitter has flag 0x1: `BFD_WaterFalls01.m2` splash
 (0x420, authored 190,218,220) is blue under placement (84,125,223) and
 `BFD_WaterFalls10.m2` teal under (43,91,100), while `Torch.m2` (0x21) and
-`Candle01.m2` (0x39) flames keep their authored yellow-white.
+`Candle01.m2` (0x39) flames keep their authored yellow-white. Outdoor emitters
+without flag 0x1 take the outdoor ambient plus upward-normal sun diffuse
+(`outdoorParticleLight`), so waterfall mist (`elwynntallwaterfall01.m2`,
+`newwaterfall.m2`, flags 0x2) matches the zone's lighting rather than glowing
+white. Plane emitters (type 1) span `emissionAreaLength` along Y and
+`emissionAreaWidth` along X (`planeParticleOffset`): `elwynntallwaterfall01.m2`
+(18.0 x 1.37 on bone 1, rotated 66.5 degrees about Y) lays its mist along the
+horizontal waterfall lip rather than standing vertically into the sky (54 of 72
+anisotropic TBC plane emitters align `areaLength` with the mesh's Y span).
+Legacy TBC water (`water.frag.glsl` `legacyWmoMode`) scales optical depth by
+`1 / max(|viewDir.z|, 0.05)` (and MCLQ `depth_byte = floor(9 * depth_yards)`
+by `255 / 90` for a 10-yard optical depth ramp), obscuring submerged geometry
+at grazing viewing angles while keeping shorelines smooth where `LiquidDepth`
+is zero. Evidence: `_experiments/20261120T100100Z.waterfall_and_water_fresnel/`
+in the workspace.
 Flag 0x1000 (XYQuad) sprites lie in the XY plane of their emitter bone as
 placed in the world (`particleQuadAxes`): `WaterElemental.m2` #16/#21 sit on
 unrotated bones and are the ground rings under an Aqua Guardian; Time Rift

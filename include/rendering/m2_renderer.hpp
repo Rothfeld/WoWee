@@ -830,10 +830,15 @@ public:
     void collectGrassClearings(float minX, float minY, float maxX, float maxY,
                                std::vector<pipeline::GrassClearingSource>& out) const;
 
-    // Lighting/fog/shadow are now in per-frame UBO; these are no-ops for API compat
+    // Lighting/fog/shadow are in per-frame UBO; setLighting also supplies
+    // outdoor ambient/diffuse/direction for lit outdoor particles (!(flags & 0x1)).
     void setFog(const glm::vec3& /*color*/, float /*start*/, float /*end*/) {}
-    void setLighting(const float /*lightDirIn*/[3], const float /*lightColorIn*/[3],
-                     const float /*ambientColorIn*/[3]) {}
+    void setLighting(const float lightDirIn[3], const float lightColorIn[3],
+                     const float ambientColorIn[3]) {
+        if (lightDirIn) outdoorLightDir_ = glm::vec3(lightDirIn[0], lightDirIn[1], lightDirIn[2]);
+        if (lightColorIn) outdoorDiffuse_ = glm::vec3(lightColorIn[0], lightColorIn[1], lightColorIn[2]);
+        if (ambientColorIn) outdoorAmbient_ = glm::vec3(ambientColorIn[0], ambientColorIn[1], ambientColorIn[2]);
+    }
     void setShadowMap(uint32_t /*depthTex*/, const glm::mat4& /*lightSpace*/) {}
     void clearShadowMap() {}
 
@@ -1407,6 +1412,9 @@ private:
     /// drawing stars. See BatchGPU::starLayer.
     bool suppressBakedStars_ = false;
     float particleDensity_ = 1.0f;
+    glm::vec3 outdoorLightDir_{0.0f, 0.0f, -1.0f};
+    glm::vec3 outdoorDiffuse_{0.0f, 0.0f, 0.0f};
+    glm::vec3 outdoorAmbient_{1.0f, 1.0f, 1.0f};
     float furthestDrawnSq_ = 0.0f;
     bool forceNoCull_ = false;
 

@@ -317,18 +317,27 @@ void main() {
         // TBC psLiquidWater: indoor depth lookup is white RGB, with alpha
         // interpolated between LightParams river shallow/deep values. The
         // animated texture alpha supplies the quarter-strength highlight.
+        // Optical path length through water grows as 1 / NdotV at grazing
+        // viewing angles, obscuring submerged objects while preserving the
+        // smooth shoreline fade where LiquidDepth == 0.
         vec4 texel = texture(LakeTexture, TexCoord * vec2(push.textureX, push.textureY));
+        vec3 viewDir = normalize(viewPos.xyz - FragPos);
+        float ndotv = max(abs(viewDir.z), 0.05);
         vec3 color = waterColor.rgb + texel.rgb + 0.25 * texel.a;
         if (push.legacyWmoMode > 1.5) {
             // Exterior WMO liquid uses the zone's deep river color, flat
             // vertex lighting and texture-masked sun sheen.
             color = riverDeepColor.rgb * VertexLighting + texel.rgb + (VertexSpecular + 0.25) * texel.a;
         }
-        float alpha = mix(liquidParams.x, liquidParams.y, clamp(LiquidDepth, 0.0, 1.0));
+        float alpha = mix(liquidParams.x, liquidParams.y, clamp(LiquidDepth / ndotv, 0.0, 1.0));
         if (push.legacyWmoMode > 2.5) {
+            // MCLQ depth bytes store floor(9 * depth_yards) normalized by 255.
+            // Scaling by 255/90 maps 10 yards of optical path length (depth / NdotV)
+            // to the deep end of the LightParams shallow->deep color/alpha ramp.
+            float opticalDepth = clamp(LiquidDepth * (255.0 / 90.0) / ndotv, 0.0, 1.0);
             vec4 shallow = basicType > 0.5 ? oceanShallowColor : vec4(riverShallowColor.rgb, liquidParams.x);
             vec4 deep = basicType > 0.5 ? oceanDeepColor : vec4(riverDeepColor.rgb, liquidParams.y);
-            vec4 depthColor = mix(shallow, deep, clamp(LiquidDepth, 0.0, 1.0));
+            vec4 depthColor = mix(shallow, deep, opticalDepth);
             color = depthColor.rgb * VertexLighting + texel.rgb + (VertexSpecular + 0.25) * texel.a;
             alpha = depthColor.a;
         }
