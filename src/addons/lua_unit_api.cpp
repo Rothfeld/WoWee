@@ -384,7 +384,7 @@ static int lua_UnitIsDeadOrGhost(lua_State* L) {
 ///
 /// PLAYER_FLAGS, not UNIT_FIELD_FLAGS: 0x01 there is UNIT_FLAG_SERVER_CONTROLLED
 /// and has nothing to do with being away.
-static int pushPlayerFlagPredicate(lua_State* L, uint32_t bit) {
+static int pushPlayerFlagPredicate(lua_State* L, uint32_t bit, uint16_t partyStatusBit) {
     const char* uid = luaL_optstring(L, 1, "player");
     auto* gh = getGameHandler(L);
     if (!gh) { return luaReturnFalse(L); }
@@ -398,6 +398,10 @@ static int pushPlayerFlagPredicate(lua_State* L, uint32_t bit) {
             if (playerFlags & bit) lua_pushnumber(L, 1); else lua_pushnil(L);
             return 1;
         }
+        if (const auto* pm = findPartyMember(gh, guid)) {
+            if (pm->onlineStatus & partyStatusBit) lua_pushnumber(L, 1); else lua_pushnil(L);
+            return 1;
+        }
     }
     lua_pushnil(L);
     return 1;
@@ -405,11 +409,11 @@ static int pushPlayerFlagPredicate(lua_State* L, uint32_t bit) {
 
 // PLAYER_FLAGS: 0x1 is the group leader, 0x2 AFK, 0x4 DND.
 static int lua_UnitIsAFK(lua_State* L) {
-    return pushPlayerFlagPredicate(L, 0x02);
+    return pushPlayerFlagPredicate(L, 0x02, 0x40);
 }
 
 static int lua_UnitIsDND(lua_State* L) {
-    return pushPlayerFlagPredicate(L, 0x04);
+    return pushPlayerFlagPredicate(L, 0x04, 0x80);
 }
 
 // UnitPlayerControlled(unit) - true for players and player-controlled pets
@@ -1194,7 +1198,11 @@ static int lua_UnitIsPlayer(lua_State* L) {
     toLowerInPlace(uidStr);
     uint64_t guid = resolveUnitGuid(gh, uidStr);
     auto entity = guid ? gh->getEntityManager().getEntity(guid) : nullptr;
-    lua_pushboolean(L, entity && entity->getType() == game::ObjectType::PLAYER);
+    if (entity) {
+        lua_pushboolean(L, entity->getType() == game::ObjectType::PLAYER);
+    } else {
+        lua_pushboolean(L, guid != 0 && findPartyMember(gh, guid) != nullptr);
+    }
     return 1;
 }
 
@@ -2923,7 +2931,11 @@ void registerUnitLuaAPI(lua_State* L) {
             uint64_t guid = resolveUnitGuid(gh, std::string(uid));
             if (guid == 0) { return luaReturnFalse(L); }
             auto entity = gh->getEntityManager().getEntity(guid);
-            if (!entity) { return luaReturnFalse(L); }
+            if (!entity) {
+                const auto* pm = findPartyMember(gh, guid);
+                lua_pushboolean(L, pm && (pm->onlineStatus & 0x0002u) != 0 ? 1 : 0);
+                return 1;
+            }
             // UNIT_FLAG_PVP = 0x00001000
             uint32_t flags = entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_FLAGS));
             lua_pushboolean(L, (flags & 0x00001000) ? 1 : 0);
@@ -2936,7 +2948,11 @@ void registerUnitLuaAPI(lua_State* L) {
             uint64_t guid = resolveUnitGuid(gh, std::string(uid));
             if (guid == 0) { return luaReturnFalse(L); }
             auto entity = gh->getEntityManager().getEntity(guid);
-            if (!entity) { return luaReturnFalse(L); }
+            if (!entity) {
+                const auto* pm = findPartyMember(gh, guid);
+                lua_pushboolean(L, pm && (pm->onlineStatus & 0x0010u) != 0 ? 1 : 0);
+                return 1;
+            }
             // FFA PvP is PLAYER_FLAGS bit 0x80, NOT UNIT_FIELD_FLAGS bit 0x00080000
             // (which is UNIT_FLAG_PACIFIED - would flag pacified mobs as FFA-PVP).
             uint32_t pf = entity->getField(game::fieldIndex(game::UF::PLAYER_FLAGS));

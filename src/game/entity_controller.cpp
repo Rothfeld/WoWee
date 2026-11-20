@@ -299,8 +299,9 @@ void EntityController::processOutOfRangeObjects(const std::vector<uint64_t>& gui
         // Trigger despawn callbacks before removing entity
         if (entity->getType() == ObjectType::UNIT && owner_.creatureDespawnCallbackRef()) {
             owner_.creatureDespawnCallbackRef()(guid);
-        } else if (entity->getType() == ObjectType::PLAYER && owner_.playerDespawnCallbackRef()) {
-            owner_.playerDespawnCallbackRef()(guid);
+        } else if (entity->getType() == ObjectType::PLAYER) {
+            mirrorGroupMemberState(*entity);
+            if (owner_.playerDespawnCallbackRef()) owner_.playerDespawnCallbackRef()(guid);
             owner_.otherPlayerVisibleItemEntriesRef().erase(guid);
             owner_.otherPlayerVisibleEnchantsRef().erase(guid);
             owner_.otherPlayerVisibleDirtyRef().erase(guid);
@@ -310,6 +311,7 @@ void EntityController::processOutOfRangeObjects(const std::vector<uint64_t>& gui
             // Clear pending name query so the query is re-sent when this player
             // comes back into range (entity is recreated as a new object).
             pendingNameQueries.erase(guid);
+            if (owner_.getSocialHandler()) owner_.getSocialHandler()->requestPartyMemberStats(guid);
         } else if (entity->getType() == ObjectType::GAMEOBJECT && owner_.gameObjectDespawnCallbackRef()) {
             owner_.gameObjectDespawnCallbackRef()(guid);
         } else if (entity->getType() == ObjectType::CORPSE && owner_.playerDespawnCallbackRef()) {
@@ -2749,10 +2751,32 @@ void EntityController::mirrorGroupMemberState(const Entity& entity) {
         const auto& unit = static_cast<const Unit&>(entity);
         member.curHealth = unit.getHealth();
         if (unit.getMaxHealth() != 0) member.maxHealth = unit.getMaxHealth();
-        const bool ghost = (entity.getField(fieldIndex(UF::PLAYER_FLAGS)) & 0x10u) != 0;
-        member.onlineStatus = static_cast<uint16_t>(member.onlineStatus & ~(0x04u | 0x08u));
+        const uint8_t pt = unit.getPowerType();
+        if (pt < 7) {
+            member.powerType = pt;
+            member.curPower = static_cast<uint16_t>(std::min<uint32_t>(unit.getPowerByType(pt), 0xFFFFu));
+            const uint32_t maxP = unit.getMaxPowerByType(pt);
+            if (maxP != 0 || pt == 1 || pt == 3) {
+                member.maxPower = static_cast<uint16_t>(std::min<uint32_t>(maxP, 0xFFFFu));
+            }
+        }
+        if (unit.getLevel() != 0) member.level = static_cast<uint16_t>(unit.getLevel());
+        const uint32_t playerFlags = entity.getField(fieldIndex(UF::PLAYER_FLAGS));
+        const uint32_t unitFlags = entity.getField(fieldIndex(UF::UNIT_FIELD_FLAGS));
+        const bool ghost = (playerFlags & 0x10u) != 0;
+        const bool pvp = (unitFlags & 0x00001000u) != 0;
+        const bool pvpFfa = (playerFlags & 0x80u) != 0;
+        const bool afk = (playerFlags & 0x02u) != 0;
+        const bool dnd = (playerFlags & 0x04u) != 0;
+        member.isOnline = 1;
+        member.onlineStatus = static_cast<uint16_t>(
+            (member.onlineStatus & ~(0x02u | 0x04u | 0x08u | 0x10u | 0x40u | 0x80u)) | 0x01u);
+        if (pvp) member.onlineStatus |= 0x02u;
         if (ghost) member.onlineStatus |= 0x08u;
         else if (unit.getHealth() == 0) member.onlineStatus |= 0x04u;
+        if (pvpFfa) member.onlineStatus |= 0x10u;
+        if (afk) member.onlineStatus |= 0x40u;
+        if (dnd) member.onlineStatus |= 0x80u;
         return;
     }
 }
@@ -3290,9 +3314,10 @@ void EntityController::handleDestroyObject(network::Packet& packet) {
         if (entity) {
             if (entity->getType() == ObjectType::UNIT && owner_.creatureDespawnCallbackRef()) {
                 owner_.creatureDespawnCallbackRef()(data.guid);
-            } else if (entity->getType() == ObjectType::PLAYER && owner_.playerDespawnCallbackRef()) {
+            } else if (entity->getType() == ObjectType::PLAYER) {
+                mirrorGroupMemberState(*entity);
                 // Player entities also need renderer cleanup on DESTROY_OBJECT, not just out-of-range.
-                owner_.playerDespawnCallbackRef()(data.guid);
+                if (owner_.playerDespawnCallbackRef()) owner_.playerDespawnCallbackRef()(data.guid);
                 owner_.otherPlayerVisibleItemEntriesRef().erase(data.guid);
                 owner_.otherPlayerVisibleEnchantsRef().erase(data.guid);
                 owner_.otherPlayerVisibleDirtyRef().erase(data.guid);
@@ -3300,6 +3325,7 @@ void EntityController::handleDestroyObject(network::Packet& packet) {
                 owner_.inspectedPlayerItemEntriesRef().erase(data.guid);
                 owner_.pendingAutoInspectRef().erase(data.guid);
                 pendingNameQueries.erase(data.guid);
+                if (owner_.getSocialHandler()) owner_.getSocialHandler()->requestPartyMemberStats(data.guid);
             } else if (entity->getType() == ObjectType::GAMEOBJECT && owner_.gameObjectDespawnCallbackRef()) {
                 owner_.gameObjectDespawnCallbackRef()(data.guid);
             } else if (entity->getType() == ObjectType::CORPSE && owner_.playerDespawnCallbackRef()) {

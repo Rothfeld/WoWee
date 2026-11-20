@@ -357,6 +357,8 @@ public:
     void sendSetLootMethod(uint32_t method, uint32_t threshold, uint64_t masterLooterGuid);
     [[nodiscard]] bool isInGroup() const { return !partyData.isEmpty(); }
     [[nodiscard]] const GroupListData& getPartyData() const { return partyData; }
+    void requestPartyMemberStats(uint64_t memberGuid);
+    void requestAllPartyMemberStats();
     [[nodiscard]] bool hasPendingGroupInvite() const { return pendingGroupInvite; }
     [[nodiscard]] const std::string& getPendingInviterName() const { return pendingInviterName; }
     void setGuildBankTabText(uint8_t tab, const std::string& text);

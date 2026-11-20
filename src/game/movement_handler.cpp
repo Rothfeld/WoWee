@@ -1,6 +1,7 @@
 #include "game/movement_handler.hpp"
 #include "game/remote_jump.hpp"
 #include "game/game_handler.hpp"
+#include "game/social_handler.hpp"
 #include "game/game_utils.hpp"
 #include "game/packet_parsers.hpp"
 #include "game/spline_packet.hpp"
@@ -2671,6 +2672,10 @@ void MovementHandler::sendPendingWorldportAck() {
     owner_.timeSinceLastPingRef() = 0.0f;
     LOG_WARNING("World transfer keepalive: sending immediate ping after MSG_MOVE_WORLDPORT_ACK");
     owner_.sendPing();
+
+    // Refresh out-of-range party/raid member stats after a map transfer:
+    // the server broadcasts our stats to teammates on worldport ack, not theirs to us.
+    if (owner_.getSocialHandler()) owner_.getSocialHandler()->requestAllPartyMemberStats();
 }
 
 void MovementHandler::handleTransferPending(network::Packet& packet) {
@@ -2846,6 +2851,7 @@ void MovementHandler::handleNewWorld(network::Packet& packet) {
 
             sendMovement(Opcode::MSG_MOVE_STOP);
             sendMovement(Opcode::MSG_MOVE_HEARTBEAT);
+            if (owner_.getSocialHandler()) owner_.getSocialHandler()->requestAllPartyMemberStats();
         }
         return;
     }

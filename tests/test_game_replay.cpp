@@ -1355,3 +1355,213 @@ TEST_CASE("Stable client packets match TBC mangos-tbc wire layouts", "[stable][t
     }
 }
 
+TEST_CASE("party member stats survive instance exit and refresh on worldport ack",
+          "[party][tbc][raid][worldport]") {
+    using wowee::game::Opcode;
+    using wowee::game::wireOpcode;
+
+    for (const bool raid : {false, true}) {
+        INFO((raid ? "raid" : "party"));
+        Session s("tbc");
+        constexpr uint64_t memberGuid = 96;
+        joinGroup(s, memberGuid, raid);
+        // Joining a group requests full stats for remote members.
+        CHECK(s.sent().of(Opcode::CMSG_REQUEST_PARTY_MEMBER_STATS).size() == 1);
+
+        // Teammate is in view inside an instance with mana, level, PvP, and >65535 HP.
+        const uint16_t power1 = wowee::game::fieldIndex(UF::UNIT_FIELD_POWER1);
+        const uint16_t maxPower1 = wowee::game::fieldIndex(UF::UNIT_FIELD_MAXPOWER1);
+        const uint16_t bytes0 = wowee::game::fieldIndex(UF::UNIT_FIELD_BYTES_0);
+        const uint16_t unitFlags = wowee::game::fieldIndex(UF::UNIT_FIELD_FLAGS);
+        const uint16_t playerFlags = wowee::game::fieldIndex(UF::PLAYER_FLAGS);
+        REQUIRE(power1 != 0xFFFF);
+        REQUIRE(maxPower1 != 0xFFFF);
+        s.receive(UpdateObject().tbc().create(memberGuid, wowee::game::ObjectType::PLAYER, {
+            {UF::UNIT_FIELD_HEALTH, 10000000},
+            {UF::UNIT_FIELD_MAXHEALTH, 10000000},
+            {UF::UNIT_FIELD_LEVEL, 70},
+            {UF::UNIT_FIELD_BYTES_0, 0x00000805}, // powerType 0 (mana), mage, undead
+            {UF::UNIT_FIELD_FLAGS, 0x00001000},   // UNIT_FLAG_PVP
+            {UF::PLAYER_FLAGS, 0x00000002},       // PLAYER_FLAGS_AFK
+        }));
+        s.receive(UpdateObject().tbc().valuesAt(memberGuid, {
+            {power1, 7420},
+            {maxPower1, 9800},
+            {bytes0, 0x00000805},
+            {unitFlags, 0x00001000},
+            {playerFlags, 0x00000002},
+        }));
+
+        // Mirrored into GroupMember while in view.
+        {
+            const auto& m = s.handler().getPartyData().members.front();
+            CHECK(m.curHealth == 10000000u);
+            CHECK(m.maxHealth == 10000000u);
+            CHECK(m.powerType == 0u);
+            CHECK(m.curPower == 7420u);
+            CHECK(m.maxPower == 9800u);
+            CHECK(m.level == 70u);
+            CHECK(m.isOnline == 1u);
+            CHECK((m.onlineStatus & 0x0002u) != 0); // PVP
+            CHECK((m.onlineStatus & 0x0040u) != 0); // AFK
+        }
+
+        // Local player exits the instance: SMSG_NEW_WORLD clears entities,
+        // MSG_MOVE_WORLDPORT_ACK re-requests party member stats.
+        wowee::network::Packet newWorld(wireOpcode(Opcode::SMSG_NEW_WORLD));
+        newWorld.writeUInt32(1);        // Kalimdor
+        newWorld.writeFloat(-8415.7f);
+        newWorld.writeFloat(1502.44f);
+        newWorld.writeFloat(30.68f);
+        newWorld.writeFloat(5.49f);
+        s.receive(newWorld);
+        CHECK_FALSE(s.handler().getEntityManager().hasEntity(memberGuid));
+
+        s.handler().sendPendingWorldportAck();
+        const auto requestsAfterAck = s.sent().of(Opcode::CMSG_REQUEST_PARTY_MEMBER_STATS).size();
+        CHECK(requestsAfterAck == 2);
+
+        // Even if a delta SMSG_PARTY_MEMBER_STATS (flags=2, CUR_HP only, uint16)
+        // arrives before SMSG_PARTY_MEMBER_STATS_FULL, maxHealth must not remain
+        // 32-bit 10000000 while curHealth is 16-bit 38528 (0.38% HP / red portrait).
+        const uint16_t low16 = static_cast<uint16_t>(10000000u & 0xFFFFu);
+        wowee::network::Packet delta(wireOpcode(Opcode::SMSG_PARTY_MEMBER_STATS));
+        delta.writePackedGuid(memberGuid);
+        delta.writeUInt32(0x0002u); // GROUP_UPDATE_FLAG_CUR_HP only
+        delta.writeUInt16(low16);
+        s.receive(delta);
+        {
+            const auto& m = s.handler().getPartyData().members.front();
+            CHECK(m.curHealth == low16);
+            CHECK(m.maxHealth == low16);
+            CHECK(m.curPower == 7420u);
+            CHECK(m.maxPower == 9800u);
+        }
+        CHECK(s.sent().of(Opcode::CMSG_REQUEST_PARTY_MEMBER_STATS).size() == 3);
+    }
+}
+
+TEST_CASE("TBC SMSG_PARTY_MEMBER_STATS_FULL parses all wire fields and fires pet/pvp events",
+          "[party][tbc]") {
+    using wowee::game::Opcode;
+    using wowee::game::wireOpcode;
+
+    Session s("tbc");
+    constexpr uint64_t memberGuid = 96;
+    constexpr uint64_t petGuid = 0xF140000000000123ULL;
+    joinGroup(s, memberGuid, false);
+
+    std::vector<std::pair<std::string, std::string>> events;
+    s.handler().setAddonEventCallback(
+        [&](const std::string& e, const std::vector<std::string>& args) {
+            events.emplace_back(e, args.empty() ? std::string() : args.front());
+        });
+
+    // Exact CMaNGOS-TBC HandleRequestPartyMemberStatsOpcode layout with pet (0x7FFFFFFF).
+    wowee::network::Packet full(wireOpcode(Opcode::SMSG_PARTY_MEMBER_STATS_FULL));
+    full.writePackedGuid(memberGuid);
+    full.writeUInt32(0x7FFFFFFFu);
+    full.writeUInt16(0x0003u);  // ONLINE | PVP
+    full.writeUInt16(6120u);    // CUR_HP
+    full.writeUInt16(6800u);    // MAX_HP
+    full.writeUInt8(1u);        // POWER_TYPE = Rage
+    full.writeUInt16(450u);     // CUR_POWER (45 rage in tenths)
+    full.writeUInt16(1000u);    // MAX_POWER (100 rage in tenths)
+    full.writeUInt16(70u);      // LEVEL
+    full.writeUInt16(3429u);    // ZONE (Ruins of Ahn'Qiraj)
+    full.writeUInt16(static_cast<uint16_t>(int16_t(-8429)));
+    full.writeUInt16(static_cast<uint16_t>(int16_t(1512)));
+    full.writeUInt64(0x1ull);   // AURAS: slot 0
+    full.writeUInt16(25389u);   // Power Word: Fortitude
+    full.writeUInt8(0x09u);     // aura flags
+    full.writeUInt64(petGuid);  // PET_GUID
+    full.writeString("Wolf");   // PET_NAME
+    full.writeUInt16(1234u);    // PET_MODEL_ID
+    full.writeUInt16(2400u);    // PET_CUR_HP
+    full.writeUInt16(2500u);    // PET_MAX_HP
+    full.writeUInt8(2u);        // PET_POWER_TYPE = Focus
+    full.writeUInt16(80u);      // PET_CUR_POWER
+    full.writeUInt16(100u);     // PET_MAX_POWER
+    full.writeUInt64(0ull);     // PET_AURAS
+    s.receive(full);
+
+    const auto& m = s.handler().getPartyData().members.front();
+    CHECK(m.hasPartyStats);
+    CHECK(m.isOnline == 1u);
+    CHECK(m.onlineStatus == 0x0003u);
+    CHECK(m.curHealth == 6120u);
+    CHECK(m.maxHealth == 6800u);
+    CHECK(m.powerType == 1u);
+    CHECK(m.curPower == 450u);
+    CHECK(m.maxPower == 1000u);
+    CHECK(m.level == 70u);
+    CHECK(m.zoneId == 3429u);
+    CHECK(m.posX == -8429);
+    CHECK(m.posY == 1512);
+    CHECK(m.petGuid == petGuid);
+
+    const auto fired = [&](const char* event, const char* unit) {
+        return std::find(events.begin(), events.end(),
+                         std::make_pair(std::string(event), std::string(unit))) != events.end();
+    };
+    CHECK(fired("UNIT_LEVEL", "party1"));
+    CHECK(fired("UNIT_HEALTH", "party1"));
+    CHECK(fired("UNIT_MAXHEALTH", "party1"));
+    CHECK(fired("UNIT_DISPLAYPOWER", "party1"));
+    CHECK(fired("UNIT_RAGE", "party1"));
+    CHECK(fired("UNIT_MAXRAGE", "party1"));
+    CHECK(fired("UNIT_AURA", "party1"));
+    CHECK(fired("UNIT_FACTION", "party1"));
+    CHECK(fired("UNIT_PET", "party1"));
+}
+
+TEST_CASE("out-of-range and destroy of in-view party member mirror stats and re-request",
+          "[party][tbc]") {
+    using wowee::game::Opcode;
+    using wowee::game::wireOpcode;
+
+    for (const bool destroy : {false, true}) {
+        INFO((destroy ? "SMSG_DESTROY_OBJECT" : "OUT_OF_RANGE_OBJECTS"));
+        Session s("tbc");
+        constexpr uint64_t memberGuid = 77;
+        joinGroup(s, memberGuid, false);
+        REQUIRE(s.sent().of(Opcode::CMSG_REQUEST_PARTY_MEMBER_STATS).size() == 1);
+
+        const uint16_t power1 = wowee::game::fieldIndex(UF::UNIT_FIELD_POWER1);
+        const uint16_t maxPower1 = wowee::game::fieldIndex(UF::UNIT_FIELD_MAXPOWER1);
+        s.receive(UpdateObject().tbc().create(memberGuid, wowee::game::ObjectType::PLAYER, {
+            {UF::UNIT_FIELD_HEALTH, 4100},
+            {UF::UNIT_FIELD_MAXHEALTH, 5200},
+            {UF::UNIT_FIELD_LEVEL, 64},
+            {UF::UNIT_FIELD_BYTES_0, 0x00000504}, // powerType 0 (mana)
+        }));
+        s.receive(UpdateObject().tbc().valuesAt(memberGuid, {
+            {power1, 3150},
+            {maxPower1, 4800},
+        }));
+
+        wowee::network::Packet despawn(wireOpcode(destroy ? Opcode::SMSG_DESTROY_OBJECT
+                                                          : Opcode::SMSG_UPDATE_OBJECT));
+        if (destroy) {
+            despawn.writeUInt64(memberGuid);
+            despawn.writeUInt8(0);
+        } else {
+            despawn.writeUInt32(1);
+            despawn.writeUInt8(static_cast<uint8_t>(wowee::game::UpdateType::OUT_OF_RANGE_OBJECTS));
+            despawn.writeUInt32(1);
+            despawn.writePackedGuid(memberGuid);
+        }
+        s.receive(despawn);
+
+        CHECK_FALSE(s.handler().getEntityManager().hasEntity(memberGuid));
+        const auto& m = s.handler().getPartyData().members.front();
+        CHECK(m.curHealth == 4100u);
+        CHECK(m.maxHealth == 5200u);
+        CHECK(m.curPower == 3150u);
+        CHECK(m.maxPower == 4800u);
+        CHECK(m.level == 64u);
+        CHECK(s.sent().of(Opcode::CMSG_REQUEST_PARTY_MEMBER_STATS).size() == 2);
+    }
+}
+
+

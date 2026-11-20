@@ -5752,12 +5752,15 @@ void Application::render() {
                     const char* alias = nullptr;
                 };
                 // Party guids in the interface's order, which excludes the
-                // player - party1 is the first other member.
+                // player - party1 is the first other member in our own subgroup.
                 std::array<uint64_t, 4> partyGuids{};
                 {
+                    const auto& party = gameHandler->getPartyData();
+                    const bool raid = game::groupIsRaid(party.groupType);
                     int found = 0;
-                    for (const auto& m : gameHandler->getPartyData().members) {
+                    for (const auto& m : party.members) {
                         if (m.guid == gameHandler->getPlayerGuid()) continue;
+                        if (raid && m.subGroup != party.subGroup) continue;
                         if (found >= 4) break;
                         partyGuids[static_cast<size_t>(found++)] = m.guid;
                     }

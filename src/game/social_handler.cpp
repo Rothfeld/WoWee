@@ -2477,6 +2477,26 @@ void SocialHandler::handleGroupDecline(network::Packet& packet) {
     owner_.systemGlobal("ERR_DECLINE_GROUP_S", {data.playerName});
 }
 
+void SocialHandler::requestPartyMemberStats(uint64_t memberGuid) {
+    if (memberGuid == 0 || memberGuid == owner_.getPlayerGuid() || !owner_.getSocket()) return;
+    const bool inGroup = std::any_of(partyData.members.begin(), partyData.members.end(),
+        [memberGuid](const auto& m) { return m.guid == memberGuid; });
+    if (!inGroup) return;
+    network::Packet request(wireOpcode(Opcode::CMSG_REQUEST_PARTY_MEMBER_STATS));
+    request.writeUInt64(memberGuid);
+    owner_.getSocket()->send(request);
+}
+
+void SocialHandler::requestAllPartyMemberStats() {
+    if (!owner_.getSocket()) return;
+    for (const auto& m : partyData.members) {
+        if (m.guid == 0 || m.guid == owner_.getPlayerGuid()) continue;
+        network::Packet request(wireOpcode(Opcode::CMSG_REQUEST_PARTY_MEMBER_STATS));
+        request.writeUInt64(m.guid);
+        owner_.getSocket()->send(request);
+    }
+}
+
 void SocialHandler::handleGroupList(network::Packet& packet) {
     const bool hasRoles = isActiveExpansion("wotlk");
     const bool hasBattleGroupFlag = isActiveExpansion("tbc");
@@ -2513,14 +2533,10 @@ void SocialHandler::handleGroupList(network::Packet& packet) {
     // every member would read as offline.
     for (auto& m : partyData.members) {
         if (m.isOnline) m.onlineStatus |= 0x0001;
-        // The roster has no health/power fields. Seed the party cache even
-        // when a member is outside object visibility or changing maps.
-        if (m.guid != owner_.getPlayerGuid() && owner_.getSocket()) {
-            network::Packet request(wireOpcode(Opcode::CMSG_REQUEST_PARTY_MEMBER_STATS));
-            request.writeUInt64(m.guid);
-            owner_.getSocket()->send(request);
-        }
     }
+    // The roster has no health/power fields. Seed the party cache even
+    // when a member is outside object visibility or changing maps.
+    requestAllPartyMemberStats();
 
     const bool nowInGroup = !partyData.isEmpty();
     const bool nowRaid = nowInGroup && groupIsRaid(partyData.groupType);
@@ -2755,9 +2771,22 @@ void SocialHandler::handlePartyMemberStats(network::Packet& packet, bool isFull)
             onlineChanged = (nowOnline != wasOnline);
         }
     }
+    bool needFullRefresh = false;
     if (updateFlags & 0x0002) {
         if (isWotLK) { if (remaining() >= 4) member->curHealth = packet.readUInt32(); }
-        else { if (remaining() >= 2) member->curHealth = packet.readUInt16(); }
+        else {
+            if (remaining() >= 2) {
+                member->curHealth = packet.readUInt16();
+                // Pre-WotLK party stats encode health as uint16. If a delta CUR_HP
+                // arrives without MAX_HP while maxHealth still holds a 32-bit value
+                // mirrored from an in-view entity (e.g. > 65535 HP), keep maxHealth
+                // in the same 16-bit wire domain and request a full snapshot.
+                if (!(updateFlags & 0x0004) && member->maxHealth > 0xFFFFu) {
+                    member->maxHealth = static_cast<uint16_t>(member->maxHealth);
+                    if (!isFull) needFullRefresh = true;
+                }
+            }
+        }
     }
     if (updateFlags & 0x0004) {
         if (isWotLK) { if (remaining() >= 4) member->maxHealth = packet.readUInt32(); }
@@ -2854,9 +2883,10 @@ void SocialHandler::handlePartyMemberStats(network::Packet& packet, bool isFull)
     if (isWotLK && (updateFlags & 0x80000)) { if (remaining() >= 4) packet.readUInt32(); }
 
     member->hasPartyStats = true;
-    LOG_DEBUG("Party stats guid=", memberGuid, " online=", member->isOnline,
+    LOG_DEBUG("Party stats guid=", memberGuid, " online=", static_cast<unsigned>(member->isOnline),
               " zone=", member->zoneId, " serverXY=", member->posX, ",", member->posY,
               " flags=", updateFlags);
+    if (needFullRefresh) requestPartyMemberStats(memberGuid);
 
     if (owner_.addonEventCallbackRef()) {
         // The per-power names, as for a unit in view (entity_controller.cpp):
@@ -2870,6 +2900,8 @@ void SocialHandler::handlePartyMemberStats(network::Packet& packet, bool isFull)
             "UNIT_MAXMANA", "UNIT_MAXRAGE", "UNIT_MAXFOCUS", "UNIT_MAXENERGY", "UNIT_MAXHAPPINESS"};
         const bool healthMoved = onlineChanged || member->curHealth != before.curHealth ||
                                  member->maxHealth != before.maxHealth;
+        const bool pvpChanged = ((member->onlineStatus ^ before.onlineStatus) & (0x0002u | 0x0010u)) != 0;
+        const bool petChanged = member->petGuid != before.petGuid;
         const bool powerKnown = member->powerType < 5;
         // In 2.4.3's order (pair 13): a member's level-up is UNIT_LEVEL,
         // UNIT_HEALTH, UNIT_MAXHEALTH; a shift into Cat Form UNIT_DISPLAYPOWER,
@@ -2884,6 +2916,8 @@ void SocialHandler::handlePartyMemberStats(network::Packet& packet, bool isFull)
             if (powerKnown && member->maxPower != before.maxPower)
                 owner_.addonEventCallbackRef()(kMaxPowerEvents[member->powerType], {unitId});
             if (updateFlags & 0x0200) owner_.addonEventCallbackRef()("UNIT_AURA", {unitId});
+            if (pvpChanged) owner_.addonEventCallbackRef()("UNIT_FACTION", {unitId});
+            if (petChanged) owner_.addonEventCallbackRef()("UNIT_PET", {unitId});
         }
         // Fired without arguments, as the retail client does - the interface
         // re-reads the whole roster rather than acting on one member. Not
