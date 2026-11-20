@@ -353,6 +353,10 @@ private:
     /// Announce where the caret is, which is what sets cursorOffset on the
     /// interface's scrolling edit boxes.
     void fireCursorChanged(uint32_t wid);
+    /// Map a window-pixel mouse position onto a caret byte offset inside an EditBox.
+    size_t editBoxCaretFromPoint(const ui::Widget& w, float rawMouseX, float rawMouseY, float screenH) const;
+    /// Move the caret up (-1) or down (+1) one visual line inside a multi-line EditBox.
+    void moveEditCaretVertical(ui::Widget& w, int deltaLine);
     /// Three string arguments, which OnHyperlinkClick takes: the link, the
     /// text it drew, and the mouse button.
     void callFrameScript3(uint32_t wid, const char* script, const char* a,
@@ -428,6 +432,9 @@ private:
     /// The edit box taking keystrokes, or zero. One at a time, which is
     /// what focus means.
     uint32_t focusedWid_ = 0;
+    /// Active left-button drag-selection inside an EditBox, and its anchor byte offset.
+    uint32_t editDragWid_ = 0;
+    size_t   editDragAnchor_ = 0;
     /// Per button, because a press and its release belong together: sliding off
     /// a button between them is how a player changes their mind, and holding
     /// one button while clicking another must not confuse the first.

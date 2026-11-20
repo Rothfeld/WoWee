@@ -1194,8 +1194,12 @@ void WidgetTree::layoutWidgetSelf(uint32_t id, float screenW, float screenH) {
         w->rectW  = parent->rectW;
         w->rectH  = parent->rectH;
     } else {
+        float explicitH = w->height * es;
+        if (w->isEditBox && w->editMultiLine && w->editContentH > 0.0f) {
+            explicitH = std::max(explicitH, w->editContentH * es);
+        }
         solveAxis(cx, w->width * es,  pLeft,   pW, w->left,   w->rectW);
-        solveAxis(cy, w->height * es, pBottom, pH, w->bottom, w->rectH);
+        solveAxis(cy, explicitH,      pBottom, pH, w->bottom, w->rectH);
         // A button's art fills the button on any axis its anchors left open.
         //
         // The rule above covers art that says nothing at all about where it

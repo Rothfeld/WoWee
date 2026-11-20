@@ -8,6 +8,7 @@
 #include "ui/link_hit.hpp"
 #include "ui/corpse_harvesting.hpp"
 #include "ui/text_markup.hpp"
+#include "ui/edit_caret.hpp"
 #include "ui/plural_escape.hpp"
 #include "ui/widget_tree.hpp"
 #include "ui/interface_fonts.hpp"
@@ -11564,6 +11565,29 @@ void LuaEngine::fireCursorChanged(uint32_t wid) {
     const auto* w = widgets_.get(wid);
     if (!w || !w->isEditBox) return;
     const size_t upTo = std::min(w->cursorPos, w->editText.size());
+    const float s = widgets_.uiScale() > 0.0f ? widgets_.uiScale() : 1.0f;
+    const float ws = s * (w->effScale > 0.0f ? w->effScale : 1.0f);
+    const float size = wowee::ui::interfaceFontSize(w->fontHeight, ws) * ws;
+    const int pixelHeight = static_cast<int>(std::floor(size + 0.5f));
+    const auto measure = wowee::ui::interfaceTextMeasure(w->fontFace, pixelHeight);
+    if (w->editMultiLine && measure.face != nullptr) {
+        const float pad = w->textInsetLeft * s;
+        const float wrapW = std::max(1.0f, w->rectW * s - pad - w->textInsetRight * s);
+        const float linePx = static_cast<float>(
+            wowee::ui::nativePixelHeight(w->fontHeight, ws) +
+            wowee::ui::spacingPixels(w->lineSpacing, ws));
+        const auto texWidth = [&](const wowee::ui::WrapRun& run) {
+            return wowee::ui::nativeTextureWidth(run, pixelHeight, ws);
+        };
+        const auto lines = wowee::ui::layoutEditLines(w->editText, wrapW, measure, texWidth);
+        const auto pos = wowee::ui::locateEditCaret(lines, upTo);
+        const double lineH = static_cast<double>(linePx / ws);
+        callFrameScript4Numbers(wid, "OnCursorChanged",
+                                static_cast<double>(pos.x / ws),
+                                -static_cast<double>(pos.lineIdx) * lineH,
+                                0.0, lineH);
+        return;
+    }
     size_t line = 0;
     for (size_t i = 0; i < upTo; ++i) {
         if (w->editText[i] == '\n') ++line;
@@ -11571,6 +11595,71 @@ void LuaEngine::fireCursorChanged(uint32_t wid) {
     const double lineH = wowee::ui::interfaceFontSize(w->fontHeight);
     callFrameScript4Numbers(wid, "OnCursorChanged", 0.0,
                             -static_cast<double>(line) * lineH, 0.0, lineH);
+}
+
+size_t LuaEngine::editBoxCaretFromPoint(const ui::Widget& w, float rawMouseX, float rawMouseY,
+                                        float screenH) const {
+    if (!w.isEditBox) return 0;
+    const float s = widgets_.uiScale() > 0.0f ? widgets_.uiScale() : 1.0f;
+    const float ws = s * (w.effScale > 0.0f ? w.effScale : 1.0f);
+    const float size = wowee::ui::interfaceFontSize(w.fontHeight, ws) * ws;
+    const int pixelHeight = static_cast<int>(std::floor(size + 0.5f));
+    const auto measure = wowee::ui::interfaceTextMeasure(w.fontFace, pixelHeight);
+    if (measure.face == nullptr) return w.editText.size();
+
+    const float x0 = w.left * s;
+    const float y0 = screenH - (w.bottom + w.rectH) * s;
+    const float x1 = (w.left + w.rectW) * s;
+    const float y1 = screenH - w.bottom * s;
+    const float boxTop = y0 + w.textInsetTop * s;
+    const float boxBottom = y1 - w.textInsetBottom * s;
+    const bool multi = w.editMultiLine;
+    const float ty = multi
+        ? boxTop
+        : std::round(boxTop + ((boxBottom - boxTop) - static_cast<float>(pixelHeight)) * 0.5f);
+    const float pad = w.textInsetLeft * s;
+    const float wrapW = multi
+        ? std::max(1.0f, (x1 - x0) - pad - w.textInsetRight * s)
+        : 0.0f;
+    const float linePx = multi
+        ? static_cast<float>(wowee::ui::nativePixelHeight(w.fontHeight, ws) +
+                             wowee::ui::spacingPixels(w.lineSpacing, ws))
+        : static_cast<float>(pixelHeight);
+    const auto texWidth = [&](const wowee::ui::WrapRun& run) {
+        return wowee::ui::nativeTextureWidth(run, pixelHeight, ws);
+    };
+    const auto lines = wowee::ui::layoutEditLines(w.editText, wrapW, measure, texWidth);
+    const float lineOriginX = wowee::ui::placeTextLine(x0 + pad, 0.0f, 0.0f, 0.0f, "LEFT");
+    const float originY = wowee::ui::textOriginY(ty);
+    return wowee::ui::hitTestEditCaret(lines, rawMouseX - lineOriginX, rawMouseY - originY,
+                                       linePx, multi);
+}
+
+void LuaEngine::moveEditCaretVertical(ui::Widget& w, int deltaLine) {
+    if (!w.isEditBox || !w.editMultiLine) return;
+    const float s = widgets_.uiScale() > 0.0f ? widgets_.uiScale() : 1.0f;
+    const float ws = s * (w.effScale > 0.0f ? w.effScale : 1.0f);
+    const float size = wowee::ui::interfaceFontSize(w.fontHeight, ws) * ws;
+    const int pixelHeight = static_cast<int>(std::floor(size + 0.5f));
+    const auto measure = wowee::ui::interfaceTextMeasure(w.fontFace, pixelHeight);
+    if (measure.face == nullptr) return;
+
+    const float pad = w.textInsetLeft * s;
+    const float wrapW = std::max(1.0f, w.rectW * s - pad - w.textInsetRight * s);
+    const float linePx = static_cast<float>(
+        wowee::ui::nativePixelHeight(w.fontHeight, ws) +
+        wowee::ui::spacingPixels(w.lineSpacing, ws));
+    if (linePx <= 0.0f) return;
+    const auto texWidth = [&](const wowee::ui::WrapRun& run) {
+        return wowee::ui::nativeTextureWidth(run, pixelHeight, ws);
+    };
+    const auto lines = wowee::ui::layoutEditLines(w.editText, wrapW, measure, texWidth);
+    if (lines.empty()) return;
+    const auto cur = wowee::ui::locateEditCaret(lines, std::min(w.cursorPos, w.editText.size()));
+    const int target = static_cast<int>(cur.lineIdx) + deltaLine;
+    if (target < 0 || target >= static_cast<int>(lines.size())) return;
+    w.cursorPos = wowee::ui::hitTestEditCaret(
+        lines, cur.x, (static_cast<float>(target) + 0.5f) * linePx, linePx, true);
 }
 
 void LuaEngine::callFrameScript4Numbers(uint32_t wid, const char* script,
@@ -12503,6 +12592,18 @@ void LuaEngine::dispatchKey(int sdlKeycode, bool ctrlHeld) {
             }
             break;
         case kDelete:
+            if (w->hasSelection) {
+                const size_t was = w->cursorPos;
+                w->cursorPos = ui::replaceSelection(
+                    w->editText, w->cursorPos,
+                    {true, w->selStart, w->selEnd});
+                w->hasSelection = false;
+                if (w->cursorPos != was || w->selEnd > w->selStart) {
+                    fireCursorChanged(focusedWid_);
+                    callFrameScript(focusedWid_, "OnTextChanged");
+                    break;
+                }
+            }
             if (w->cursorPos < len) {
                 const size_t to = ui::caretStepRight(w->editText, w->cursorPos);
                 w->editText.erase(w->cursorPos, to - w->cursorPos);
@@ -12516,18 +12617,31 @@ void LuaEngine::dispatchKey(int sdlKeycode, bool ctrlHeld) {
         // History is Alt+Up/Down in alt-arrow mode; plain arrows move.
         case kUp:
             if (focusedEditReleasesArrows((SDL_GetModState() & SDL_KMOD_ALT) != 0)) break;
+            if (w->editMultiLine && w->editHistory.empty()) {
+                moveEditCaretVertical(*w, -1);
+                w->hasSelection = false;
+                fireCursorChanged(focusedWid_);
+                break;
+            }
             if (!w->editHistory.empty()) {
                 const int last = static_cast<int>(w->editHistory.size()) - 1;
                 w->editHistoryPos = (w->editHistoryPos < 0)
                     ? last : std::max(0, w->editHistoryPos - 1);
                 w->editText = w->editHistory[static_cast<size_t>(w->editHistoryPos)];
                 w->cursorPos = w->editText.size();
+                w->hasSelection = false;
                 fireCursorChanged(focusedWid_);
                 callFrameScript(focusedWid_, "OnTextChanged");
             }
             break;
         case kDown:
             if (focusedEditReleasesArrows((SDL_GetModState() & SDL_KMOD_ALT) != 0)) break;
+            if (w->editMultiLine && w->editHistory.empty()) {
+                moveEditCaretVertical(*w, +1);
+                w->hasSelection = false;
+                fireCursorChanged(focusedWid_);
+                break;
+            }
             if (w->editHistoryPos >= 0) {
                 const int last = static_cast<int>(w->editHistory.size()) - 1;
                 if (w->editHistoryPos >= last) {
@@ -12538,6 +12652,7 @@ void LuaEngine::dispatchKey(int sdlKeycode, bool ctrlHeld) {
                     w->editText = w->editHistory[static_cast<size_t>(w->editHistoryPos)];
                 }
                 w->cursorPos = w->editText.size();
+                w->hasSelection = false;
                 fireCursorChanged(focusedWid_);
                 callFrameScript(focusedWid_, "OnTextChanged");
             }
@@ -12550,15 +12665,29 @@ void LuaEngine::dispatchKey(int sdlKeycode, bool ctrlHeld) {
         // Alt-arrow mode (ignoreArrows="true", SetAltArrowKeyMode): without
         // Alt the arrows belong to the game, with Alt to the caret.
         case kLeft:
-            if (!focusedEditReleasesArrows((SDL_GetModState() & SDL_KMOD_ALT) != 0) && w->cursorPos > 0)
-                w->cursorPos = ui::caretStepLeft(w->editText, w->cursorPos);
+            if (!focusedEditReleasesArrows((SDL_GetModState() & SDL_KMOD_ALT) != 0)) {
+                if (w->cursorPos > 0) w->cursorPos = ui::caretStepLeft(w->editText, w->cursorPos);
+                w->hasSelection = false;
+                fireCursorChanged(focusedWid_);
+            }
             break;
         case kRight:
-            if (!focusedEditReleasesArrows((SDL_GetModState() & SDL_KMOD_ALT) != 0) && w->cursorPos < len)
-                w->cursorPos = ui::caretStepRight(w->editText, w->cursorPos);
+            if (!focusedEditReleasesArrows((SDL_GetModState() & SDL_KMOD_ALT) != 0)) {
+                if (w->cursorPos < len) w->cursorPos = ui::caretStepRight(w->editText, w->cursorPos);
+                w->hasSelection = false;
+                fireCursorChanged(focusedWid_);
+            }
             break;
-        case kHome:  w->cursorPos = 0; break;
-        case kEnd:   w->cursorPos = len; break;
+        case kHome:
+            w->cursorPos = 0;
+            w->hasSelection = false;
+            fireCursorChanged(focusedWid_);
+            break;
+        case kEnd:
+            w->cursorPos = len;
+            w->hasSelection = false;
+            fireCursorChanged(focusedWid_);
+            break;
         case kReturn:
         case 0x40000058: // SDLK_KP_ENTER
             // A box declared multiLine takes the return as a line break rather
@@ -13104,6 +13233,8 @@ void LuaEngine::callClickScript(uint32_t wid, const char* script, const char* bu
 
 void LuaEngine::dispatchMouse(float x, float y, float screenH, MouseButtons buttons) {
     if (!L_) return;
+    const float rawMouseX = x;
+    const float rawMouseY = y;
     // The cursor arrives in window pixels measured from the top, and the tree
     // is in interface units measured from the bottom. ui::mouseToTreeSpace is
     // the one definition of that conversion - the link rects a draw pass files
@@ -13303,7 +13434,7 @@ void LuaEngine::dispatchMouse(float x, float y, float screenH, MouseButtons butt
                 // Said once a second so holding the button does not flood it.
                 // Not for a slider: it took the press deliberately, and the
                 // drag it is doing is its own.
-                if (movedEnough && !stoppedAtSlider) {
+                if (movedEnough && !stoppedAtSlider && editDragWid_ == 0) {
                     const double now = wowee::core::appTimeSeconds();
                     if (now - lastNoDragOwnerSaid_ > 1.0) {
                         lastNoDragOwnerSaid_ = now;
@@ -13406,6 +13537,20 @@ void LuaEngine::dispatchMouse(float x, float y, float screenH, MouseButtons butt
         }
     }
 
+    // Drag-selecting text inside an EditBox while LeftButton is held.
+    if (buttonDown_[0] && editDragWid_ != 0) {
+        if (auto* ew = widgets_.get(editDragWid_); ew && ew->isEditBox && ew->visible) {
+            const size_t dragPos = editBoxCaretFromPoint(*ew, rawMouseX, rawMouseY, screenH);
+            if (dragPos != ew->cursorPos) {
+                ew->cursorPos = dragPos;
+                ew->selStart = std::min(editDragAnchor_, dragPos);
+                ew->selEnd = std::max(editDragAnchor_, dragPos);
+                ew->hasSelection = (ew->selEnd > ew->selStart);
+                fireCursorChanged(editDragWid_);
+            }
+        }
+    }
+
     // The names WoW uses, in the order the state arrays are indexed.
     struct Button { const char* name; bool down; };
     const Button pressed[kMouseButtons] = {
@@ -13451,10 +13596,37 @@ void LuaEngine::dispatchMouse(float x, float y, float screenH, MouseButtons butt
             // Escape and Enter are what give the keyboard back, as they do in
             // WoW.
             if (b.name && std::strcmp(b.name, "LeftButton") == 0) {
+                editDragWid_ = 0;
                 for (uint32_t id = hit; id != 0;) {
-                    const auto* cand = widgets_.get(id);
+                    auto* cand = widgets_.get(id);
                     if (!cand) break;
-                    if (cand->isEditBox && cand->visible) { setEditFocus(id); break; }
+                    if (cand->isEditBox && cand->visible) {
+                        setEditFocus(id);
+                        if (auto* ew = widgets_.get(id); ew && ew->isEditBox) {
+                            const size_t clickedPos =
+                                editBoxCaretFromPoint(*ew, rawMouseX, rawMouseY, screenH);
+                            const bool shiftHeld = (SDL_GetModState() & SDL_KMOD_SHIFT) != 0;
+                            if (shiftHeld) {
+                                const size_t anchor = ew->hasSelection
+                                    ? (ew->cursorPos == ew->selEnd ? ew->selStart : ew->selEnd)
+                                    : std::min(ew->cursorPos, ew->editText.size());
+                                ew->cursorPos = clickedPos;
+                                ew->selStart = std::min(anchor, clickedPos);
+                                ew->selEnd = std::max(anchor, clickedPos);
+                                ew->hasSelection = (ew->selEnd > ew->selStart);
+                                editDragAnchor_ = anchor;
+                            } else {
+                                ew->cursorPos = clickedPos;
+                                ew->selStart = clickedPos;
+                                ew->selEnd = clickedPos;
+                                ew->hasSelection = false;
+                                editDragAnchor_ = clickedPos;
+                            }
+                            editDragWid_ = id;
+                            fireCursorChanged(id);
+                        }
+                        break;
+                    }
                     id = cand->parent;
                 }
             }
@@ -13488,6 +13660,7 @@ void LuaEngine::dispatchMouse(float x, float y, float screenH, MouseButtons butt
                 callClickScript(pressedWid_[i], "OnMouseDown", b.name);
         } else if (!b.down && buttonDown_[i]) {
             buttonDown_[i] = false;
+            if (i == 0) editDragWid_ = 0;
             // Before anything asks which frame was pressed, because a link is
             // not a frame's click to take and the frame it is drawn in need not
             // have taken the press at all.

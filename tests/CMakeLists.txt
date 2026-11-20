@@ -1588,6 +1588,18 @@ target_link_libraries(test_text_wrap PRIVATE catch2_main)
 add_test(NAME text_wrap COMMAND test_text_wrap)
 register_test_target(test_text_wrap)
 
+# ── test_edit_caret ──────────────────────────────────────────
+add_executable(test_edit_caret
+    test_edit_caret.cpp
+)
+target_include_directories(test_edit_caret PRIVATE ${TEST_INCLUDE_DIRS})
+target_include_directories(test_edit_caret SYSTEM PRIVATE
+    ${TEST_SYSTEM_INCLUDE_DIRS}
+)
+target_link_libraries(test_edit_caret PRIVATE catch2_main)
+add_test(NAME edit_caret COMMAND test_edit_caret)
+register_test_target(test_edit_caret)
+
 # ── test_native_text_metrics ─────────────────────────────────
 # GetStringWidth and line breaks as the original 2.4.3 client measures them,
 # checked against numbers read off that client.

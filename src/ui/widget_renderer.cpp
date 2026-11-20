@@ -5,6 +5,7 @@
 #include "ui/simple_html.hpp"
 #include "ui/link_hit.hpp"
 #include "ui/text_wrap.hpp"
+#include "ui/edit_caret.hpp"
 #include "ui/native_text_metrics.hpp"
 #include "ui/native_pixel_rules.hpp"
 #include "ui/tooltip_layout.hpp"
@@ -2810,32 +2811,33 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                 const auto textureWidth = [&](const WrapRun& run) {
                     return nativeTextureWidth(run, pixelHeight, ws);
                 };
-                // Pen sum: where the caret goes after a piece of text.
-                const auto penWidth = [&](const std::string& t) {
-                    float wsum = 0.0f;
-                    size_t at = 0;
-                    while (at < t.size()) {
-                        const uint32_t cp = nextCodepoint(t, at);
-                        size_t peek = at;
-                        const uint32_t next = at < t.size() ? nextCodepoint(t, peek) : 0;
-                        wsum += static_cast<float>(measure.pen(cp, next));
-                    }
-                    return wsum;
-                };
                 const float ty = multi ? boxTop
                                        : std::round(boxTop + ((boxBottom - boxTop) - static_cast<float>(pixelHeight)) * 0.5f);
                 const float pad = w->textInsetLeft * s;
                 const float wrapW = multi
                     ? std::max(1.0f, (x1 - x0) - pad - w->textInsetRight * s) : 0.0f;
-                // A multi-line box steps one line per rasterized font height,
-                // as native 2.4.3 does: MacroFrameText (FRIZQT 10) is 9.6
-                // units a line at 1280x720 - ten lines 96 - where size * 1.2
-                // made it 12.
-                const float linePx = multi ? static_cast<float>(nativePixelHeight(w->fontHeight, ws)) : 0.0f;
+                // A multi-line box steps one line per rasterized font height
+                // plus any configured line spacing, as native 2.4.3 does:
+                // MacroFrameText (FRIZQT 10) is 9.6 units a line at 1280x720.
+                const float linePx = multi
+                    ? static_cast<float>(nativePixelHeight(w->fontHeight, ws) + spacingPixels(w->lineSpacing, ws))
+                    : 0.0f;
+                const auto editLayout = layoutEditLines(w->editText, wrapW, measure, textureWidth);
                 if (multi) {
-                    const auto lines = wrapTextNative(parseMarkup(w->editText), wrapW, false, measure,
-                                                      textureWidth);
-                    w->editContentH = static_cast<float>(lines.size()) * linePx / ws;
+                    w->editContentH = static_cast<float>(editLayout.size()) * linePx / ws;
+                }
+                const float lineOriginX = placeTextLine(x0 + pad, 0.0f, 0.0f, 0.0f, "LEFT");
+                const float originY = textOriginY(ty);
+                if (w->editFocused && w->hasSelection && w->selEnd > w->selStart) {
+                    const float selLineStep = multi ? linePx : static_cast<float>(pixelHeight);
+                    const auto spans = editSelectionSpans(editLayout, w->selStart, w->selEnd);
+                    for (const auto& sp : spans) {
+                        const float ry = originY + static_cast<float>(sp.lineIdx) * selLineStep;
+                        dl->AddRectFilled(
+                            ImVec2(lineOriginX + sp.x0, ry),
+                            ImVec2(lineOriginX + sp.x1, ry + static_cast<float>(pixelHeight)),
+                            IM_COL32(160, 160, 160, 140));
+                    }
                 }
                 if (!w->editText.empty()) {
                     // The shadow first, under the words, as a font string's
@@ -2865,27 +2867,10 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                                    nullptr, 0, -1.0f, 0.0f, 0.0f, linePx);
                 }
                 if (w->editFocused) {
-                    // Measured against what is drawn, not what is held. The
-                    // caret sits after the text to its left, and to the left of
-                    // a link is its display name - measuring the raw string
-                    // would put the caret an escape sequence too far right.
-                    const std::string rawUpTo = w->editText.substr(
-                        0, std::min(w->cursorPos, w->editText.size()));
-                    float caret = 0.0f, caretY = ty;
-                    if (multi) {
-                        // The end of the text before the caret, laid out the
-                        // way the box draws it: its last line, that line's pens.
-                        const auto lines = wrapTextNative(parseMarkup(rawUpTo), wrapW, false, measure,
-                                                          textureWidth);
-                        if (!lines.empty()) {
-                            for (const auto& run : lines.back().runs)
-                                caret += run.texture.empty() ? penWidth(run.text) : textureWidth(run);
-                            caretY = ty + static_cast<float>(lines.size() - 1) * linePx;
-                        }
-                    } else {
-                        caret = penWidth(strippedText(rawUpTo));
-                    }
-                    const float cx = placeTextLine(x0 + pad, 0.0f, 0.0f, 0.0f, "LEFT") + caret;
+                    const size_t clampedPos = std::min(w->cursorPos, w->editText.size());
+                    const EditCaretPos cpos = locateEditCaret(editLayout, clampedPos);
+                    const float caretY = multi ? (ty + static_cast<float>(cpos.lineIdx) * linePx) : ty;
+                    const float cx = lineOriginX + cpos.x;
                     dl->AddLine(ImVec2(cx, textOriginY(caretY)),
                                 ImVec2(cx, textOriginY(caretY) + static_cast<float>(pixelHeight)), col);
                 }
