@@ -330,6 +330,10 @@ private:
     /// (_experiments/20261118T1800Z.cthun_beams in the workspace root).
     static constexpr uint32_t kCharProcCastChain = 12;
     static constexpr uint32_t kCharProcColor = 1;
+    /// SpellVisualKit CharProc 11: freezes the unit's model animation clock in
+    /// place while any active aura's StateKit carries it (10255 Stoned, 16245
+    /// Freeze Anim, 27619/45438 Ice Block, 17624 Petrification, etc.).
+    static constexpr uint32_t kCharProcFreezeAnim = 11;
     static constexpr uint32_t kCharProcOpacity = 14;
     /// SpellVisualKit CharProc 13: CharParamZero 0xRRGGBB tints the light on
     /// the unit for CharParamOne seconds (CharacterRenderer::startInstanceKitLight).
@@ -358,10 +362,12 @@ private:
         // The same visuals, oldest application first.
         std::vector<uint32_t> applied;
     };
-    // CharProc 1 colour and CharProc 14 opacity of a kit, where it has them.
+    // CharProc 1 colour, CharProc 11 animation freeze, and CharProc 14 opacity
+    // of a kit, where it has them.
     struct KitCharacterProcedures {
         std::optional<glm::vec3> color;
         std::optional<float> opacity;
+        bool freezeAnimation = false;
     };
     std::unordered_map<uint32_t, KitCharacterProcedures> kitCharacterProcedures_;
     struct KitLight {

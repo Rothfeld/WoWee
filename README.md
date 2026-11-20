@@ -153,8 +153,12 @@ For example, Draenei Survivor (16483) sleeps (state 3) under spell 35046,
 visual 8270, kit 6608, `Spells/RedGhost_state.m2`.
 State kits also change the unit's own model through `CharProc`: type 1
 multiplies the shaded model by `CharParamZero` (an `0xRRGGBB` integer stored
-as a float), type 14 sets its opacity to `CharParamZero`. The latest applied
-aura's kit wins for each; removing it restores the previous one. A ghost is
+as a float), type 11 freezes the unit's animation clock and current pose in
+place while any active aura carries it (Stoned 10255, Freeze Anim 16245, Ice
+Block 27619/45438, Petrification 17624; attached spell effects and particle
+emitters keep running, and removing the aura resumes animation immediately),
+and type 14 sets its opacity to `CharParamZero`. The latest applied aura's kit
+wins for colour and opacity; removing it restores the previous one. A ghost is
 Ghost (8326), visual 886, kit 989: colour `0x8CB9FD`, opacity 0.5. Vertex Color
 Black (39662) draws a black silhouette, Transparency (75%) (37802) opacity 0.25.
 The colour changes in one frame and stays for the aura's lifetime;

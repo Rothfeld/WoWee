@@ -40,6 +40,7 @@
 #include "rendering/m2_track_sampler.hpp"
 #include "rendering/animation/sequence_variation.hpp"
 #include "rendering/animation/animation_ids.hpp"
+#include "rendering/animation/freeze_anim_policy.hpp"
 #include "core/thread_pool.hpp"
 #include "rendering/vk_context.hpp"
 #include "rendering/bone_slots.hpp"
@@ -2153,6 +2154,12 @@ void CharacterRenderer::playAnimation(uint32_t instanceId, uint32_t animationId,
     }
 
     auto& instance = it->second;
+    // SpellVisualKit CharProc 11 freezes the unit in its current pose until
+    // the aura clears; allow only the initial sequence selection when none
+    // has been bound yet (e.g. a statue spawning already carrying Stoned).
+    if (!frozenAnimationAllowsPlay(instance.kitAnimationFrozen, instance.currentSequenceIndex)) {
+        return;
+    }
     auto& model = models[instance.modelId].data;
 
     // A rider keeps its seat (rider_pose.hpp): seat poses are Mount, the
@@ -2523,15 +2530,26 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
         float distSq = glm::distance2(inst.position, cameraPos);
         if (distSq > animUpdateRadiusSq && !inst.isSceneModel) continue;
 
-        // Advance global sequence timer (accumulates independently of animation wrapping)
-        inst.globalSequenceTime += deltaTime * 1000.0f;
-
         if (inst.scaleTransitionMs >= 0.0f) {
             inst.scaleTransitionMs += deltaTime * 1000.0f;
             const float u = std::min(1.0f, inst.scaleTransitionMs / kScaleTransitionMs);
             inst.scale = inst.scaleFrom + (inst.targetScale - inst.scaleFrom) * u;
             if (u >= 1.0f) inst.scaleTransitionMs = -1.0f;
         }
+
+        if (inst.cachedModel && !inst.cachedModel->data.sequences.empty() && inst.currentSequenceIndex < 0) {
+            inst.currentSequenceIndex = 0;
+            inst.currentAnimationId = inst.cachedModel->data.sequences[0].id;
+        }
+
+        if (inst.kitAnimationFrozen) {
+            toUpdate_.push_back(std::ref(inst));
+            continue;
+        }
+
+        // Advance global sequence timer (accumulates independently of animation wrapping)
+        inst.globalSequenceTime += deltaTime * 1000.0f;
+
         if (inst.upperBodyBlendSequence >= 0) {
             inst.upperBodyBlendElapsed += deltaTime * 1000.0f;
             if (inst.upperBodyBlendElapsed >= inst.upperBodyBlendDuration) inst.upperBodyBlendSequence = -1;
@@ -3096,6 +3114,7 @@ void CharacterRenderer::setUpperBodyAnimation(uint32_t instanceId, uint32_t anim
     auto found = instances.find(instanceId);
     assert(found != instances.end());
     auto& instance = found->second;
+    if (instance.kitAnimationFrozen) return;
     if (animationId == 0) {
         // The cleared pose stays the blend source for what follows.
         if (instance.upperBodySequenceIndex >= 0) {
@@ -4907,10 +4926,12 @@ void CharacterRenderer::startInstanceKitLight(uint32_t instanceId, const glm::ve
     }
 }
 
-void CharacterRenderer::setInstanceKitAppearance(uint32_t instanceId, const glm::vec3& color, float opacity) {
+void CharacterRenderer::setInstanceKitAppearance(uint32_t instanceId, const glm::vec3& color, float opacity,
+                                                 bool freezeAnimation) {
     assert(opacity >= 0.0f && opacity <= 1.0f);
     auto& instance = instances.at(instanceId);
     instance.kitColor = color;
+    instance.kitAnimationFrozen = freezeAnimation;
     if (opacity != instance.kitOpacityTarget) {
         instance.kitOpacityFrom = instance.kitOpacity;
         instance.kitOpacityTarget = opacity;

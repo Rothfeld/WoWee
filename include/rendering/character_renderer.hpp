@@ -207,7 +207,8 @@ public:
     /// of elapsed/duration, both ways (original 2.4.3: Transparency 25%/75%,
     /// Steal Magic, Banish, Stealth, whatever the kit's CharParamOne-Three;
     /// _experiments/20261118T001500Z.pair6_kit_colour_timing).
-    void setInstanceKitAppearance(uint32_t instanceId, const glm::vec3& color, float opacity);
+    void setInstanceKitAppearance(uint32_t instanceId, const glm::vec3& color, float opacity,
+                                  bool freezeAnimation = false);
     /// SpellVisualKit CharProc 13 ("Glowy"): all light on the model (ambient,
     /// sun, interior and local lights) is multiplied by color for seconds,
     /// from now, whatever happens to the aura or spell that played the kit;
@@ -559,6 +560,9 @@ private:
         float kitOpacityFrom = 1.0f;
         float kitOpacityTarget = 1.0f;
         float kitOpacityTime = 0.0f;
+        // SpellVisualKit CharProc 11: holds the instance's animation clock and
+        // current pose motionless until cleared.
+        bool kitAnimationFrozen = false;
         float fadeInTime = 0.0f;     // elapsed fade time (seconds)
         float fadeInDuration = 0.0f; // total fade duration (0 = no fade)
         // Fade-out ahead of removal (fadeOutAndRemove); 0 = not fading out.

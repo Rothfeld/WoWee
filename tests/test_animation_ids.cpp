@@ -8,6 +8,7 @@
 #include "rendering/animation/stand_pose.hpp"
 #include "rendering/animation/gesture_weapons.hpp"
 #include "rendering/animation/hit_reaction.hpp"
+#include "rendering/animation/freeze_anim_policy.hpp"
 #include <cstring>
 #include <vector>
 
@@ -385,4 +386,22 @@ TEST_CASE("Type flag 0x8 creatures and model flag 0x2 units do not flinch from h
     CHECK_FALSE(unitPlaysWound(anim::COMBAT_WOUND, false, 0, 0x2));       // a player morphed into one
     CHECK(unitPlaysWound(anim::DODGE, true, 0x8, 0x2));
     CHECK(unitPlaysWound(anim::COMBAT_WOUND, false, 0x8, 0x4));           // players have no type flags
+}
+
+TEST_CASE("SpellVisualKit CharProc 11 freezes animation in place once a sequence is bound", "[freeze-anim]") {
+    using namespace wowee::rendering;
+    // CharProc 11: Stoned (10255), Freeze Anim (16245), Ice Block (27619/45438), Petrification (17624).
+    CHECK(charProcFreezesAnimation(11));
+    // Other CharProc codes (0 chain, 1 color, 9 area impacts, 13 light, 14 opacity) do not freeze.
+    for (uint32_t proc : {0u, 1u, 2u, 7u, 9u, 12u, 13u, 14u}) {
+        CAPTURE(proc);
+        CHECK_FALSE(charProcFreezesAnimation(proc));
+    }
+    // Unfrozen units always allow playAnimation(); frozen units allow only initial bind (< 0).
+    CHECK(frozenAnimationAllowsPlay(false, -1));
+    CHECK(frozenAnimationAllowsPlay(false, 0));
+    CHECK(frozenAnimationAllowsPlay(false, 42));
+    CHECK(frozenAnimationAllowsPlay(true, -1));
+    CHECK_FALSE(frozenAnimationAllowsPlay(true, 0));
+    CHECK_FALSE(frozenAnimationAllowsPlay(true, 42));
 }

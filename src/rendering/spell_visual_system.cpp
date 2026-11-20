@@ -4,6 +4,7 @@
 #include "rendering/renderer.hpp"
 #include "rendering/animation_controller.hpp"
 #include "rendering/animation/animation_ids.hpp"
+#include "rendering/animation/freeze_anim_policy.hpp"
 #include "rendering/character_renderer.hpp"
 #include "rendering/chain_effect.hpp"
 #include "rendering/camera.hpp"
@@ -236,6 +237,8 @@ void SpellVisualSystem::loadSpellVisualDbc() {
                 } else if (procedure == kCharProcOpacity) {
                     assert(std::isfinite(param) && param >= 0.0f && param <= 1.0f);
                     kitCharacterProcedures_[kitId].opacity = param;
+                } else if (charProcFreezesAnimation(procedure)) {
+                    kitCharacterProcedures_[kitId].freezeAnimation = true;
                 } else if (procedure == kCharProcAreaImpacts) {
                     if (procParamOneFields[k] >= fc) {
                         static bool said = false;
@@ -792,18 +795,20 @@ void SpellVisualSystem::applyCharacterProcedures(uint32_t attachInstanceId,
                                                  const std::vector<uint32_t>& applied) {
     glm::vec3 color(1.0f);
     float opacity = 1.0f;
-    bool colored = false, faded = false;
-    for (auto visual = applied.rbegin(); visual != applied.rend() && !(colored && faded); ++visual) {
+    bool colored = false, faded = false, frozen = false;
+    for (auto visual = applied.rbegin(); visual != applied.rend() && !(colored && faded && frozen); ++visual) {
         const auto kit = stateKits_.find(*visual);
         if (kit == stateKits_.end() || !kit->second) continue;
         const auto procedures = kitCharacterProcedures_.find(kit->second);
         if (procedures == kitCharacterProcedures_.end()) continue;
         if (!colored && procedures->second.color) { color = *procedures->second.color; colored = true; }
         if (!faded && procedures->second.opacity) { opacity = *procedures->second.opacity; faded = true; }
+        if (procedures->second.freezeAnimation) frozen = true;
     }
     LOG_DEBUG("Kit appearance: owner=", attachInstanceId, " visuals=", applied.size(),
-              " color=(", color.r, ",", color.g, ",", color.b, ") opacity=", opacity);
-    renderer_->getCharacterRenderer()->setInstanceKitAppearance(attachInstanceId, color, opacity);
+              " color=(", color.r, ",", color.g, ",", color.b, ") opacity=", opacity,
+              " frozen=", frozen);
+    renderer_->getCharacterRenderer()->setInstanceKitAppearance(attachInstanceId, color, opacity, frozen);
 }
 
 void SpellVisualSystem::updateChannelVisual(uint32_t attachInstanceId, uint32_t remainingMs) {
