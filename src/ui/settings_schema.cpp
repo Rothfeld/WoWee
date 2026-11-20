@@ -649,7 +649,7 @@ constexpr SettingDesc kSchema[] = {
      "cvar:fctLowManaHealth", "", "COMBAT_TEXT_SHOW_LOW_HEALTH_MANA = v"},
     {"fctenergygains", "Energy gains", SettingKind::Bool, 0, 0, 0, "Combat Text", "",
      "Mana, rage, energy and runic power as it comes in.", "", 0, "combattext",
-     "cvar:fctEnergyGains", "", "COMBAT_TEXT_SHOW_ENERGIZE = v"},
+     "cvar:fctEnergyGains", "", "COMBAT_TEXT_SHOW_MANA = v COMBAT_TEXT_SHOW_ENERGIZE = v"},
     {"fctperiodicenergygains", "Periodic energy gains", SettingKind::Bool, 0, 0, 0, "Combat Text", "",
      "The same for the trickle from regeneration and effects over time.",
      "", 0, "combattext", "cvar:fctPeriodicEnergyGains", "", "COMBAT_TEXT_SHOW_PERIODIC_ENERGIZE = v"},

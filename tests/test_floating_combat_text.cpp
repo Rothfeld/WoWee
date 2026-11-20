@@ -120,3 +120,14 @@ TEST_CASE("outcome words stay opaque as long as a critical", "[fct]") {
     CHECK(alpha(0.9f, true) == Catch::Approx(1.0f));
     CHECK(alpha(0.9f, false) < 1.0f);
 }
+
+TEST_CASE("power gains, power drains and procs are not drawn as world text", "[fct]") {
+    using wowee::game::CombatTextEntry;
+    CHECK_FALSE(showsInWorld(CombatTextEntry::ENERGIZE));
+    CHECK_FALSE(showsInWorld(CombatTextEntry::POWER_DRAIN));
+    CHECK_FALSE(showsInWorld(CombatTextEntry::PROC_TRIGGER));
+    CHECK(showsInWorld(CombatTextEntry::MELEE_DAMAGE));
+    CHECK(showsInWorld(CombatTextEntry::SPELL_DAMAGE));
+    CHECK(showsInWorld(CombatTextEntry::HEAL));
+    CHECK(showsInWorld(CombatTextEntry::XP_GAIN));
+}

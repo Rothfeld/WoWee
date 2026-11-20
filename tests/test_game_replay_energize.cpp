@@ -17,8 +17,8 @@ TEST_CASE("an energize log has packed guids in every expansion", "[replay][energ
         p.writePackedGuid(Session::kPlayerGuid);
         p.writePackedGuid(kShaman);
         p.writeUInt32(2687);
-        p.writeUInt32(1);  // rage
-        p.writeUInt32(20);
+        p.writeUInt32(1);    // rage (wire amount is in tenths: 200 raw = 20 Rage)
+        p.writeUInt32(200);
         s.receive(p);
         const auto& texts = s.handler().getCombatText();
         REQUIRE(texts.size() == 1);

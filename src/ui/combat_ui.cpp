@@ -133,10 +133,10 @@ void CombatUI::renderCombatText(game::GameHandler& gameHandler) {
         const bool reward = experience || entry.type == game::CombatTextEntry::HONOR_GAIN;
         // Lines that land on the player are Blizzard_CombatText's, which
         // hears them as COMBAT_TEXT_UPDATE (CombatHandler::addCombatText);
-        // build 8606 draws nothing of its own for them, and nothing for a
-        // proc either.
+        // build 8606 draws nothing of its own for them, nor for power gains,
+        // power drains, or procs.
         if (!outgoing && !reward) continue;
-        if (entry.type == game::CombatTextEntry::PROC_TRIGGER) continue;
+        if (!fct::showsInWorld(entry.type)) continue;
         // The absorbed/resisted/blocked part of a hit that did damage.
         if (entry.reduction) continue;
         const fct::Presentation shown = fct::presentationFor(entry);
@@ -194,26 +194,6 @@ void CombatUI::renderCombatText(game::GameHandler& gameHandler) {
                 color = ImVec4(0.9f, 0.5f, 0.2f, alpha);
                 break;
             }
-            case game::CombatTextEntry::ENERGIZE:
-                snprintf(text, sizeof(text), "+%d", entry.amount);
-                switch (entry.powerType) {
-                    case 1:  color = ImVec4(1.0f, 0.2f, 0.2f, alpha); break;
-                    case 2:  color = ImVec4(1.0f, 0.6f, 0.1f, alpha); break;
-                    case 3:  color = ImVec4(1.0f, 0.9f, 0.2f, alpha); break;
-                    case 6:  color = ImVec4(0.3f, 0.9f, 0.8f, alpha); break;
-                    default: color = ImVec4(0.3f, 0.6f, 1.0f, alpha); break;
-                }
-                break;
-            case game::CombatTextEntry::POWER_DRAIN:
-                snprintf(text, sizeof(text), "-%d", entry.amount);
-                switch (entry.powerType) {
-                    case 1:  color = ImVec4(1.0f, 0.35f, 0.35f, alpha); break;
-                    case 2:  color = ImVec4(1.0f, 0.7f, 0.2f, alpha); break;
-                    case 3:  color = ImVec4(1.0f, 0.95f, 0.35f, alpha); break;
-                    case 6:  color = ImVec4(0.45f, 0.95f, 0.85f, alpha); break;
-                    default: color = ImVec4(0.45f, 0.75f, 1.0f, alpha); break;
-                }
-                break;
             case game::CombatTextEntry::XP_GAIN:
                 snprintf(text, sizeof(text), "XP: %d", entry.amount);
                 color = ImVec4(0.6f, 0.0f, 0.6f, alpha);

@@ -80,6 +80,13 @@ struct CombatTextEntry {
     [[nodiscard]] bool isExpired() const { return age >= lifetime(); }
 };
 
+/// Rage (1) and Runic Power (6) are transmitted in tenths on the wire
+/// (e.g. 100 raw wire units = 10 Rage in SMSG_SPELLENERGIZELOG and
+/// SMSG_PERIODICAURALOG). Combat text and combat log events report whole points.
+[[nodiscard]] inline int32_t displayPowerAmount(uint8_t powerType, int32_t rawAmount) {
+    return (powerType == 1 || powerType == 6) ? (rawAmount / 10) : rawAmount;
+}
+
 /**
  * Persistent combat log entry (stored in a rolling deque, survives beyond floating-text lifetime)
  */

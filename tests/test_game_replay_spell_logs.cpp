@@ -230,3 +230,95 @@ TEST_CASE("TBC SMSG_SPELL_GO miss targets fire victim hit reactions and parse re
         }
     }
 }
+
+TEST_CASE("energize and periodic power logs scale rage and runic power from tenths", "[replay][energize]") {
+    using wowee::game::CombatTextEntry;
+    using wowee::game::displayPowerAmount;
+
+    CHECK(displayPowerAmount(0, 100) == 100);  // Mana
+    CHECK(displayPowerAmount(1, 100) == 10);   // Rage (Furor / Bloodrage: 100 raw = 10 Rage)
+    CHECK(displayPowerAmount(1, 200) == 20);   // Rage (Enrage: 200 raw = 20 Rage)
+    CHECK(displayPowerAmount(1, 5) == 0);      // Sub-point rage rounds down
+    CHECK(displayPowerAmount(2, 50) == 50);    // Focus
+    CHECK(displayPowerAmount(3, 40) == 40);    // Energy (Cat Form Furor: 40 Energy)
+    CHECK(displayPowerAmount(6, 150) == 15);   // Runic Power
+
+    // TBC Furor (17057) on Dire Bear Form: SMSG_SPELLENERGIZELOG powerType=1, raw=100 -> +10 Rage
+    {
+        Session s("tbc");
+        std::vector<std::pair<std::string, std::vector<std::string>>> events;
+        s.handler().setAddonEventCallback([&](const std::string& ev, const std::vector<std::string>& args) {
+            events.emplace_back(ev, args);
+        });
+        Packet p(wireOpcode(Opcode::SMSG_SPELLENERGIZELOG));
+        p.writePackedGuid(kPlayer);
+        p.writePackedGuid(kPlayer);
+        p.writeUInt32(17057); // Furor
+        p.writeUInt32(1);     // POWER_RAGE
+        p.writeUInt32(100);   // 10 Rage in tenths
+        s.receive(p);
+
+        const auto& texts = s.handler().getCombatText();
+        REQUIRE(texts.size() == 1);
+        CHECK(texts[0].type == CombatTextEntry::ENERGIZE);
+        CHECK(texts[0].powerType == 1);
+        CHECK(texts[0].amount == 10);
+
+        bool sawCtu = false;
+        bool sawCleu = false;
+        for (const auto& [ev, args] : events) {
+            if (ev == "COMBAT_TEXT_UPDATE") {
+                REQUIRE(args.size() == 2);
+                CHECK(args[0] == "RAGE");
+                CHECK(args[1] == "10");
+                sawCtu = true;
+            } else if (ev == "COMBAT_LOG_EVENT_UNFILTERED") {
+                REQUIRE(args.size() >= 13);
+                CHECK(args[1] == "SPELL_ENERGIZE");
+                CHECK(args[8] == "17057");
+                CHECK(args[11] == "10");
+                CHECK(args[12] == "1");
+                sawCleu = true;
+            }
+        }
+        CHECK(sawCtu);
+        CHECK(sawCleu);
+    }
+
+    // TBC Cat Form Furor (17099): powerType=3 (Energy), raw=40 -> +40 Energy unscaled
+    {
+        Session s("tbc");
+        Packet p(wireOpcode(Opcode::SMSG_SPELLENERGIZELOG));
+        p.writePackedGuid(kPlayer);
+        p.writePackedGuid(kPlayer);
+        p.writeUInt32(17099);
+        p.writeUInt32(3);     // POWER_ENERGY
+        p.writeUInt32(40);
+        s.receive(p);
+
+        const auto& texts = s.handler().getCombatText();
+        REQUIRE(texts.size() == 1);
+        CHECK(texts[0].powerType == 3);
+        CHECK(texts[0].amount == 40);
+    }
+
+    // TBC Enrage (5229) periodic tick: SMSG_PERIODICAURALOG auraType=24, powerType=1, raw=20 -> +2 Rage
+    {
+        Session s("tbc");
+        Packet p(wireOpcode(Opcode::SMSG_PERIODICAURALOG));
+        p.writePackedGuid(kPlayer);
+        p.writePackedGuid(kPlayer);
+        p.writeUInt32(5229);  // Enrage
+        p.writeUInt32(1);     // count
+        p.writeUInt32(24);    // SPELL_AURA_PERIODIC_ENERGIZE
+        p.writeUInt32(1);     // POWER_RAGE
+        p.writeUInt32(20);    // 2 Rage in tenths
+        s.receive(p);
+
+        const auto& texts = s.handler().getCombatText();
+        REQUIRE(texts.size() == 1);
+        CHECK(texts[0].type == CombatTextEntry::ENERGIZE);
+        CHECK(texts[0].powerType == 1);
+        CHECK(texts[0].amount == 2);
+    }
+}

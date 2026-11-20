@@ -6420,24 +6420,27 @@ void SpellHandler::handlePeriodicAuraLog(network::Packet& packet) {
             // Common in WotLK: Replenishment, Mana Spring Totem, Divine Plea, etc.
             if (!packet.hasRemaining(8)) break;
             uint8_t periodicPowerType = static_cast<uint8_t>(packet.readUInt32());
-            uint32_t amount = packet.readUInt32();
+            uint32_t rawAmount = packet.readUInt32();
+            const int32_t amount = displayPowerAmount(periodicPowerType, static_cast<int32_t>(rawAmount));
             if ((isPlayerVictim || isPlayerCaster) && amount > 0)
-                owner_.addCombatText(CombatTextEntry::ENERGIZE, static_cast<int32_t>(amount),
+                owner_.addCombatText(CombatTextEntry::ENERGIZE, amount,
                               spellId, isPlayerCaster, periodicPowerType, casterGuid, victimGuid);
         } else if (auraType == 64) {
             // PERIODIC_MANA_LEECH: miscValue(powerType) + amount + float multiplier
             if (!packet.hasRemaining(12)) break;
             uint8_t powerType = static_cast<uint8_t>(packet.readUInt32());
-            uint32_t amount = packet.readUInt32();
+            uint32_t rawAmount = packet.readUInt32();
             float multiplier = packet.readFloat();
-            if (isPlayerVictim && amount > 0)
-                owner_.addCombatText(CombatTextEntry::POWER_DRAIN, static_cast<int32_t>(amount),
+            const int32_t drainedAmount = displayPowerAmount(powerType, static_cast<int32_t>(rawAmount));
+            if (isPlayerVictim && drainedAmount > 0)
+                owner_.addCombatText(CombatTextEntry::POWER_DRAIN, drainedAmount,
                               spellId, false, powerType, casterGuid, victimGuid);
-            if (isPlayerCaster && amount > 0 && multiplier > 0.0f && std::isfinite(multiplier)) {
-                const uint32_t gainedAmount = static_cast<uint32_t>(
-                    std::lround(static_cast<double>(amount) * static_cast<double>(multiplier)));
+            if (isPlayerCaster && rawAmount > 0 && multiplier > 0.0f && std::isfinite(multiplier)) {
+                const uint32_t rawGained = static_cast<uint32_t>(
+                    std::lround(static_cast<double>(rawAmount) * static_cast<double>(multiplier)));
+                const int32_t gainedAmount = displayPowerAmount(powerType, static_cast<int32_t>(rawGained));
                 if (gainedAmount > 0) {
-                    owner_.addCombatText(CombatTextEntry::ENERGIZE, static_cast<int32_t>(gainedAmount),
+                    owner_.addCombatText(CombatTextEntry::ENERGIZE, gainedAmount,
                                   spellId, true, powerType, casterGuid, casterGuid);
                 }
             }
@@ -6470,7 +6473,8 @@ void SpellHandler::handleSpellEnergizeLog(network::Packet& packet) {
     }
     uint32_t spellId       = packet.readUInt32();
     uint8_t  energizePowerType = static_cast<uint8_t>(packet.readUInt32());
-    int32_t  amount        = static_cast<int32_t>(packet.readUInt32());
+    int32_t  rawAmount     = static_cast<int32_t>(packet.readUInt32());
+    const int32_t amount   = displayPowerAmount(energizePowerType, rawAmount);
     bool isPlayerVictim = (victimGuid == owner_.getPlayerGuid());
     bool isPlayerCaster = (casterGuid == owner_.getPlayerGuid());
     if ((isPlayerVictim || isPlayerCaster) && amount > 0)
@@ -6768,21 +6772,24 @@ void SpellHandler::parseEffectPowerDrain(network::Packet& packet, uint32_t effec
         if (drainAmount == 0) continue;
 
         const auto powerByte = static_cast<uint8_t>(drainPower);
+        const int32_t displayDrained = displayPowerAmount(powerByte, static_cast<int32_t>(drainAmount));
+        if (displayDrained <= 0) continue;
         if (drainTarget == playerGuid)
             owner_.addCombatText(CombatTextEntry::POWER_DRAIN,
-                                 static_cast<int32_t>(drainAmount), spellId, false,
+                                 displayDrained, spellId, false,
                                  powerByte, caster, drainTarget);
         if (!isPlayerCaster) continue;
         if (drainTarget != playerGuid)
             owner_.addCombatText(CombatTextEntry::POWER_DRAIN,
-                                 static_cast<int32_t>(drainAmount), spellId, true,
+                                 displayDrained, spellId, true,
                                  powerByte, caster, drainTarget);
         if (drainMult <= 0.0f || !std::isfinite(drainMult)) continue;
-        const uint32_t gained = static_cast<uint32_t>(
+        const uint32_t rawGained = static_cast<uint32_t>(
             std::lround(static_cast<double>(drainAmount) * static_cast<double>(drainMult)));
+        const int32_t gained = displayPowerAmount(powerByte, static_cast<int32_t>(rawGained));
         if (gained > 0)
             owner_.addCombatText(CombatTextEntry::ENERGIZE,
-                                 static_cast<int32_t>(gained), spellId, true,
+                                 gained, spellId, true,
                                  powerByte, caster, caster);
     }
 }

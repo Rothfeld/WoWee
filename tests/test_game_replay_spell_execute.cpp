@@ -109,3 +109,21 @@ TEST_CASE("feeding a pet is effect 101, with a packed caster on TBC too", "[repl
         CHECK(chatHas(s, "You feed your pet"));
     }
 }
+
+TEST_CASE("power drain scales rage from tenths on wire", "[replay][execute]") {
+    Session s("tbc");
+    Packet p = executeLog(kPlayer, 5138, kPowerDrain);
+    writeTarget(p, false, kMob);
+    p.writeUInt32(100);  // 10 Rage in tenths
+    p.writeUInt32(1);    // POWER_RAGE
+    p.writeFloat(1.0f);
+    s.receive(p);
+    const auto& texts = s.handler().getCombatText();
+    REQUIRE(texts.size() == 2);
+    CHECK(texts[0].type == CombatTextEntry::POWER_DRAIN);
+    CHECK(texts[0].powerType == 1);
+    CHECK(texts[0].amount == 10);
+    CHECK(texts[1].type == CombatTextEntry::ENERGIZE);
+    CHECK(texts[1].powerType == 1);
+    CHECK(texts[1].amount == 10);
+}

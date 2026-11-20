@@ -121,6 +121,15 @@ inline Presentation presentationFor(const game::CombatTextEntry& e) {
     }
 }
 
+/// Whether build 8606 draws this entry as world-space floating text over a
+/// unit. Power gains and drains (Furor, Enrage, Bloodrage, Innervate, Drain
+/// Mana, ...) and proc triggers are never drawn as world text; power gains on
+/// the player are reported via COMBAT_TEXT_UPDATE to Blizzard_CombatText.
+inline bool showsInWorld(game::CombatTextEntry::Type type) {
+    using T = game::CombatTextEntry;
+    return type != T::ENERGIZE && type != T::POWER_DRAIN && type != T::PROC_TRIGGER;
+}
+
 /// Critical size multiplier on top of kCritScale: grows from 0.1 to 2 over
 /// the first 150 ms and shrinks back to 1 by 300 ms (measured widths 0.87,
 /// 1.30, 1.96, 1.60, 1.21, 1.00 of the settled size at ~50 ms steps).
