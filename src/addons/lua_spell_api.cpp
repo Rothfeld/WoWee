@@ -1120,20 +1120,22 @@ static int lua_GetSpellCooldown(lua_State* L) {
     if (!gh) { lua_pushnumber(L, 0); lua_pushnumber(L, 0); lua_pushnumber(L, 1); return 3; }
     // A name, an id, or a book slot with the book beside it - the spellbook
     // asks in the last of those three.
+    const bool isPetBook = !lua_isnoneornil(L, 2) && lua_isnumber(L, 1) &&
+                           lua_tostring(L, 2) && std::string(lua_tostring(L, 2)) == "pet";
     const uint32_t spellId = spellIdForCall(L, gh);
     if (pushPendingCooldown(L, *gh, spellId)) return 3;
-    float cd = gh->getSpellCooldown(spellId);
+    float cd = isPetBook ? gh->getPetSpellCooldown(spellId) : gh->getSpellCooldown(spellId);
     // Also check GCD - if spell has no individual cooldown but GCD is active,
     // return the GCD timing (this is how WoW handles it)
     // Only spells the global cooldown covers (StartRecoveryCategory 133).
-    float gcdRem = game::onGlobalCooldown(*gh, spellId) ? gh->getGCDRemaining() : 0.0f;
+    float gcdRem = (!isPetBook && game::onGlobalCooldown(*gh, spellId)) ? gh->getGCDRemaining() : 0.0f;
     float gcdTotal = gh->getGCDTotal();
 
     // WoW returns (start, duration, enabled) where remaining = start + duration - GetTime()
     double nowSec = luaGetTimeNow();
 
     if (cd > 0.01f) {
-        // Spell-specific cooldown (longer than GCD). The pair asked for is
+        // Spell-specific or category cooldown (longer than GCD). The pair asked for is
         // (start, duration), not (now, remaining) - the cooldown frame draws a
         // sweep of `duration` beginning at `start`, so saying it began now with
         // a length of whatever is left restarts the swirl at full every time
@@ -1141,7 +1143,8 @@ static int lua_GetSpellCooldown(lua_State* L) {
         // fires on every cast, so a five-minute cooldown looked like it kept
         // starting over. Wound back the same way the GCD branch below already
         // does it.
-        double total = gh->getSpellCooldownTotal(spellId);
+        double total = isPetBook ? gh->getPetSpellCooldownTotal(spellId)
+                                 : gh->getSpellCooldownTotal(spellId);
         if (total < cd) total = cd;   // a total never recorded falls back to what is left
         double start = nowSec - (total - cd);
         lua_pushnumber(L, start);

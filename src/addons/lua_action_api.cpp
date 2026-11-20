@@ -773,7 +773,25 @@ static int lua_GetActionCooldown(lua_State* L) {
             return 3;
         }
     }
-    if (action.cooldownRemaining > 0.0f) {
+    float cdRemaining = action.cooldownRemaining;
+    float cdTotal = action.cooldownTotal;
+    if (action.type == game::ActionBarSlot::SPELL) {
+        const float spellRem = gh->getSpellCooldown(action.id);
+        if (spellRem > cdRemaining) {
+            cdRemaining = spellRem;
+            cdTotal = gh->getSpellCooldownTotal(action.id);
+        }
+    } else if (action.type == game::ActionBarSlot::ITEM && cdRemaining <= 0.0f) {
+        double itemStart = 0.0, itemDuration = 0.0;
+        if (itemUseCooldown(gh, action.id, itemStart, itemDuration)) {
+            lua_pushnumber(L, itemStart);
+            lua_pushnumber(L, itemDuration);
+            lua_pushnumber(L, 1);
+            return 3;
+        }
+    }
+    if (cdRemaining > 0.0f) {
+        if (cdTotal < cdRemaining) cdTotal = cdRemaining;
         // WoW returns GetTime()-based start time; approximate
         double now = 0;
         lua_getglobal(L, "GetTime");
@@ -784,9 +802,9 @@ static int lua_GetActionCooldown(lua_State* L) {
         } else {
             lua_pop(L, 1);
         }
-        double start = now - (action.cooldownTotal - action.cooldownRemaining);
+        double start = now - (cdTotal - cdRemaining);
         lua_pushnumber(L, start);
-        lua_pushnumber(L, action.cooldownTotal);
+        lua_pushnumber(L, cdTotal);
         lua_pushnumber(L, 1);
     } else if (action.type == game::ActionBarSlot::SPELL && gh->isGCDActive() &&
                game::onGlobalCooldown(*gh, action.id)) {
@@ -3282,8 +3300,9 @@ void registerActionLuaAPI(lua_State* L) {
             }
             const uint32_t packed = gh->getPetActionSlot(index - 1);
             // A command or a stance has no cooldown of its own.
-            const float remaining = game::pet::isPetSpellAction(packed)
-                ? gh->getSpellCooldown(game::pet::petActionId(packed)) : 0.0f;
+            const uint32_t petSpellId = game::pet::isPetSpellAction(packed)
+                ? game::pet::petActionId(packed) : 0u;
+            const float remaining = petSpellId != 0 ? gh->getPetSpellCooldown(petSpellId) : 0.0f;
             // Ready: enable 1 for a spell (an imp's Firebolt), 0 for a
             // command or a stance, as native 2.4.3 answers.
             if (remaining <= 0.01f) {
@@ -3291,8 +3310,10 @@ void registerActionLuaAPI(lua_State* L) {
                 lua_pushnumber(L, game::pet::isPetSpellAction(packed) ? 1 : 0);
                 return 3;
             }
-            lua_pushnumber(L, luaGetTimeNow());
-            lua_pushnumber(L, remaining);
+            double total = gh->getPetSpellCooldownTotal(petSpellId);
+            if (total < remaining) total = remaining;
+            lua_pushnumber(L, luaGetTimeNow() - (total - remaining));
+            lua_pushnumber(L, total);
             lua_pushnumber(L, 1);
             return 3;
         }},

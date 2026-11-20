@@ -154,11 +154,12 @@ FacialHairFields detectFacialHairFields(const DBCFile* dbc, const DBCFieldMap* f
  * @param sieL JSON-derived field map (may be null - field count decides).
  * @return Name field index for this particular DBC binary.
  */
-/// Spell.dbc's three timing columns, which move together as the record grows.
+/// Spell.dbc's timing and cooldown-category columns, which move together as the record grows.
 struct SpellTimingFields {
     uint32_t castingTimeIndex;      ///< → SpellCastTimes.dbc
     uint32_t recoveryTime;          ///< the spell's own cooldown, in ms
     uint32_t categoryRecoveryTime;  ///< its category's cooldown, in ms
+    uint32_t category = 1;          ///< SpellCategory ID (Vanilla=2, TBC/WotLK=1)
 };
 
 /**

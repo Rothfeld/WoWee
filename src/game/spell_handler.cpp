@@ -2434,8 +2434,9 @@ void SpellHandler::cancelAura(uint32_t spellId) {
 }
 
 float SpellHandler::getSpellCooldown(uint32_t spellId) const {
-    auto it = spellCooldowns_.find(spellId);
-    return (it != spellCooldowns_.end()) ? it->second : 0.0f;
+    const auto* entry = owner_.getSpellNameEntry(spellId);
+    const uint32_t cat = entry ? entry->category : 0u;
+    return cooldowns_.query(spellId, cat).first;
 }
 
 // The length the running cooldown began with. Falls back to whatever is left
@@ -2443,37 +2444,88 @@ float SpellHandler::getSpellCooldown(uint32_t spellId) const {
 // a duration of zero reads as "no cooldown" to the interface and would clear a
 // swirl that is still running.
 float SpellHandler::getSpellCooldownTotal(uint32_t spellId) const {
-    auto it = spellCooldownTotals_.find(spellId);
-    if (it != spellCooldownTotals_.end()) return it->second;
-    return getSpellCooldown(spellId);
+    const auto* entry = owner_.getSpellNameEntry(spellId);
+    const uint32_t cat = entry ? entry->category : 0u;
+    return cooldowns_.query(spellId, cat).second;
 }
 
-void SpellHandler::seedCooldownFromSpellInfo(uint32_t spellId) {
+float SpellHandler::getPetSpellCooldown(uint32_t spellId) const {
+    const auto* entry = owner_.getSpellNameEntry(spellId);
+    const uint32_t cat = entry ? entry->category : 0u;
+    return petCooldowns_.query(spellId, cat).first;
+}
+
+float SpellHandler::getPetSpellCooldownTotal(uint32_t spellId) const {
+    const auto* entry = owner_.getSpellNameEntry(spellId);
+    const uint32_t cat = entry ? entry->category : 0u;
+    return petCooldowns_.query(spellId, cat).second;
+}
+
+void SpellHandler::syncActionBarCooldowns(uint32_t spellId, uint32_t categoryId) {
+    for (auto& slot : owner_.actionBarRef()) {
+        if (slot.type != ActionBarSlot::SPELL || slot.id == 0) continue;
+        bool match = (spellId != 0 && slot.id == spellId);
+        if (!match && categoryId != 0) {
+            const auto* se = owner_.getSpellNameEntry(slot.id);
+            match = (se && se->category == categoryId);
+        }
+        if (!match) continue;
+        const float rem = getSpellCooldown(slot.id);
+        slot.cooldownRemaining = rem;
+        slot.cooldownTotal = (rem > 0.0f) ? getSpellCooldownTotal(slot.id) : 0.0f;
+    }
+}
+
+void SpellHandler::seedCooldownFromSpellInfo(uint32_t spellId, bool isPet) {
     if (spellId == 0) return;
-    auto existing = spellCooldowns_.find(spellId);
-    if (existing != spellCooldowns_.end() && existing->second > 0.5f) return;
 
     owner_.loadSpellNameCache();
     auto it = owner_.spellNameCacheRef().find(spellId);
     if (it == owner_.spellNameCacheRef().end()) return;
 
-    const uint32_t cooldownMs = std::max(it->second.recoveryMs, it->second.categoryRecoveryMs);
-    if (cooldownMs <= 1500) return; // ignore GCD-sized recovery
+    const auto& entry = it->second;
+    uint32_t recMs = entry.recoveryMs;
+    uint32_t catRecMs = (entry.category != 0) ? entry.categoryRecoveryMs : 0u;
 
-    const float seconds = cooldownMs / 1000.0f;
-    spellCooldowns_[spellId] = seconds;
-    spellCooldownTotals_[spellId] = seconds;
-    for (auto& slot : owner_.actionBarRef()) {
-        if (slot.type != ActionBarSlot::SPELL || slot.id != spellId) continue;
-        slot.cooldownRemaining = seconds;
-        slot.cooldownTotal = seconds;
+    // Apply player SPELLMOD_COOLDOWN (flat + pct) the same way CMaNGOS Player::AddCooldown does.
+    if (!isPet && (recMs > 0 || catRecMs > 0)) {
+        const auto [flatMod, pctMod] = owner_.spellModifiersFor(spellId, GameHandler::SpellModOp::Cooldown);
+        if (recMs > 0) {
+            recMs = static_cast<uint32_t>(
+                GameHandler::applySpellMod(static_cast<int32_t>(recMs), flatMod, pctMod));
+        }
+        if (catRecMs > 0) {
+            catRecMs = static_cast<uint32_t>(
+                GameHandler::applySpellMod(static_cast<int32_t>(catRecMs), flatMod, pctMod));
+        }
     }
 
-    LOG_DEBUG("Seeded cooldown from Spell.dbc: spell=", spellId, " ms=", cooldownMs);
+    auto& state = isPet ? petCooldowns_ : cooldowns_;
+    bool seeded = false;
+    if (recMs > 0) {
+        seeded |= state.seedSpell(spellId, recMs / 1000.0f);
+    }
+    if (entry.category != 0 && catRecMs > 0) {
+        seeded |= state.seedCategory(entry.category, catRecMs / 1000.0f);
+    }
+    if (!seeded) return;
+
+    if (!isPet) {
+        syncActionBarCooldowns(spellId, entry.category);
+    }
+
+    LOG_DEBUG("Seeded cooldown from Spell.dbc: spell=", spellId,
+              " cat=", entry.category, " recMs=", recMs, " catRecMs=", catRecMs,
+              " isPet=", isPet ? 1 : 0);
     if (owner_.addonEventCallbackRef()) {
-        owner_.addonEventCallbackRef()("SPELL_UPDATE_COOLDOWN", {});
-        owner_.addonEventCallbackRef()("BAG_UPDATE_COOLDOWN", {});
-        owner_.addonEventCallbackRef()("ACTIONBAR_UPDATE_COOLDOWN", {});
+        if (isPet) {
+            owner_.addonEventCallbackRef()("PET_BAR_UPDATE_COOLDOWN", {});
+            owner_.addonEventCallbackRef()("SPELL_UPDATE_COOLDOWN", {});
+        } else {
+            owner_.addonEventCallbackRef()("SPELL_UPDATE_COOLDOWN", {});
+            owner_.addonEventCallbackRef()("BAG_UPDATE_COOLDOWN", {});
+            owner_.addonEventCallbackRef()("ACTIONBAR_UPDATE_COOLDOWN", {});
+        }
     }
 }
 
@@ -3159,27 +3211,24 @@ void SpellHandler::updateTimers(float dt) {
             }
         }
     }
-    // Tick down spell cooldowns
-    bool anyCooldownEnded = false;
-    for (auto it = spellCooldowns_.begin(); it != spellCooldowns_.end(); ) {
-        it->second -= dt;
-        if (it->second <= 0.0f) {
-            spellCooldownTotals_.erase(it->first);
-            it = spellCooldowns_.erase(it);
-            anyCooldownEnded = true;
-        } else {
-            ++it;
-        }
-    }
+    // Tick down player and pet spell/category cooldowns
+    const bool anyPlayerCooldownEnded = cooldowns_.tick(dt);
+    const bool anyPetCooldownEnded = petCooldowns_.tick(dt);
     // A cooldown running out is the one thing that makes a spell usable again
     // without the server saying anything, so nothing announced it and the
     // button stayed dimmed until the next time mana happened to change - the
     // only other place these two are fired from. Said once for the frame
     // however many ended in it.
-    if (anyCooldownEnded && owner_.addonEventCallbackRef()) {
+    if (anyPlayerCooldownEnded && owner_.addonEventCallbackRef()) {
         owner_.addonEventCallbackRef()("ACTIONBAR_UPDATE_COOLDOWN", {});
         owner_.addonEventCallbackRef()("SPELL_UPDATE_USABLE", {});
         owner_.addonEventCallbackRef()("SPELL_UPDATE_COOLDOWN", {});
+    }
+    if (anyPetCooldownEnded && owner_.addonEventCallbackRef()) {
+        owner_.addonEventCallbackRef()("PET_BAR_UPDATE_COOLDOWN", {});
+        if (!anyPlayerCooldownEnded) {
+            owner_.addonEventCallbackRef()("SPELL_UPDATE_COOLDOWN", {});
+        }
     }
     // A cast starts, finishes, fails or is interrupted along a dozen paths, and
     // the swing toggles along its own; the buttons only redraw their checked
@@ -3337,12 +3386,22 @@ void SpellHandler::handleInitialSpells(network::Packet& packet) {
         syncPreWotlkTalentsFromKnownSpells();
     }
 
-    // Set initial cooldowns
+    // Set initial cooldowns (both per-spell and per-category)
+    owner_.loadSpellNameCache();
     for (const auto& cd : data.cooldowns) {
-        uint32_t effectiveMs = std::max(cd.cooldownMs, cd.categoryCooldownMs);
-        if (effectiveMs > 0) {
-            spellCooldowns_[cd.spellId] = effectiveMs / 1000.0f;
-            spellCooldownTotals_[cd.spellId] = effectiveMs / 1000.0f;
+        if (cd.cooldownMs > 0) {
+            cooldowns_.mergeSpell(cd.spellId, cd.cooldownMs / 1000.0f);
+        }
+        if (cd.categoryCooldownMs > 0) {
+            uint32_t catId = cd.categoryId;
+            if (catId == 0) {
+                if (const auto* se = owner_.getSpellNameEntry(cd.spellId)) catId = se->category;
+            }
+            if (catId != 0) {
+                cooldowns_.mergeCategory(catId, cd.categoryCooldownMs / 1000.0f);
+            } else {
+                cooldowns_.mergeSpell(cd.spellId, cd.categoryCooldownMs / 1000.0f);
+            }
         }
     }
 
@@ -3351,20 +3410,20 @@ void SpellHandler::handleInitialSpells(network::Packet& packet) {
     // Sync login-time cooldowns into action bar slot overlays
     for (auto& slot : owner_.actionBarRef()) {
         if (slot.type == ActionBarSlot::SPELL && slot.id != 0) {
-            auto it = spellCooldowns_.find(slot.id);
-            if (it != spellCooldowns_.end() && it->second > 0.0f) {
-                slot.cooldownTotal     = it->second;
-                slot.cooldownRemaining = it->second;
+            const float rem = getSpellCooldown(slot.id);
+            if (rem > 0.0f) {
+                slot.cooldownTotal     = getSpellCooldownTotal(slot.id);
+                slot.cooldownRemaining = rem;
             }
         } else if (slot.type == ActionBarSlot::ITEM && slot.id != 0) {
             const auto* qi = owner_.getItemInfo(slot.id);
             if (qi && qi->valid) {
                 for (const auto& sp : qi->spells) {
                     if (sp.spellId == 0) continue;
-                    auto it = spellCooldowns_.find(sp.spellId);
-                    if (it != spellCooldowns_.end() && it->second > 0.0f) {
-                        slot.cooldownTotal     = it->second;
-                        slot.cooldownRemaining = it->second;
+                    const float rem = getSpellCooldown(sp.spellId);
+                    if (rem > 0.0f) {
+                        slot.cooldownTotal     = getSpellCooldownTotal(sp.spellId);
+                        slot.cooldownRemaining = rem;
                         break;
                     }
                 }
@@ -3800,6 +3859,18 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
             castSpell(nextSpell, nextTarget);
         }
     } else {
+        // Pet casts also seed their own Spell.dbc recovery/category cooldowns
+        // on SMSG_SPELL_GO (e.g. Felhunter Devour Magic cat=12, Voidwalker Suffering cat=84).
+        if (owner_.getPetGuid() != 0 && data.casterUnit == owner_.getPetGuid()) {
+            owner_.loadSpellNameCache();
+            constexpr uint32_t kAttrCooldownOnEvent = 0x02000000;
+            const auto cast = owner_.spellNameCacheRef().find(data.spellId);
+            if (cast != owner_.spellNameCacheRef().end() && (cast->second.attr & kAttrCooldownOnEvent)) {
+                cooldownEventPending_.insert(data.spellId);
+            } else {
+                seedCooldownFromSpellInfo(data.spellId, /*isPet=*/true);
+            }
+        }
         // Other casters, timed or instant: the cast kit's animation, once.
         if (!rangedWeaponAttack && owner_.spellCastAnimCallbackRef())
             owner_.spellCastAnimCallbackRef()(data.casterUnit, SpellAnimPhase::CAST, data.spellId);
@@ -4040,12 +4111,17 @@ void SpellHandler::handleSpellCooldown(network::Packet& packet) {
     const bool isClassicFormat = isClassicLikeExpansion();
 
     if (!packet.hasRemaining(8)) return;
-    /*guid*/ packet.readUInt64();
+    const uint64_t guid = packet.readUInt64();
+    const bool isPet = (owner_.getPetGuid() != 0 && guid == owner_.getPetGuid());
 
+    uint8_t flags = 0;
     if (!isClassicFormat) {
         if (!packet.hasRemaining(1)) return;
-        /*flags*/ packet.readUInt8();
+        flags = packet.readUInt8();
     }
+
+    auto& state = isPet ? petCooldowns_ : cooldowns_;
+    owner_.loadSpellNameCache();
 
     const size_t entrySize = isClassicFormat ? 12u : 8u;
     while (packet.getRemainingSize() >= entrySize) {
@@ -4057,66 +4133,86 @@ void SpellHandler::handleSpellCooldown(network::Packet& packet) {
         float seconds = cooldownMs / 1000.0f;
 
         // spellId=0 is the Global Cooldown marker
-        if (spellId == 0 && cooldownMs > 0 && cooldownMs <= 2000) {
+        if (!isPet && spellId == 0 && cooldownMs > 0 && cooldownMs <= 2000) {
             gcdTotal_ = seconds;
             gcdStartedAt_ = std::chrono::steady_clock::now();
             continue;
         }
 
-        auto it = spellCooldowns_.find(spellId);
-        if (it == spellCooldowns_.end()) {
-            spellCooldowns_[spellId] = seconds;
-            spellCooldownTotals_[spellId] = seconds;
-        } else {
-            it->second = mergeCooldownSeconds(it->second, seconds);
-            float& total = spellCooldownTotals_[spellId];
-            total = std::max(total, it->second);
+        // CMaNGOS Creature::AddCooldown sends recTime=0 with FLAG_INCLUDE_GCD for
+        // pet abilities whose cooldown lives in CategoryRecoveryTime (e.g. Devour Magic).
+        if (isPet && cooldownMs == 0 && (flags & 0x1u) != 0) {
+            seedCooldownFromSpellInfo(spellId, /*isPet=*/true);
+            continue;
         }
-        for (auto& slot : owner_.actionBarRef()) {
-            bool match = (slot.type == ActionBarSlot::SPELL && slot.id == spellId)
-                      || (cdItemId != 0 && slot.type == ActionBarSlot::ITEM && slot.id == cdItemId);
-            if (match) {
-                float prevRemaining = slot.cooldownRemaining;
-                float merged = mergeCooldownSeconds(slot.cooldownRemaining, seconds);
-                slot.cooldownRemaining = merged;
-                if (slot.cooldownTotal <= 0.0f || prevRemaining <= 0.0f) {
-                    slot.cooldownTotal = seconds;
-                } else {
-                    slot.cooldownTotal = std::max(slot.cooldownTotal, merged);
+
+        const auto* se = owner_.getSpellNameEntry(spellId);
+        const uint32_t catId = se ? se->category : 0u;
+        state.mergeSpell(spellId, seconds);
+        if (catId != 0 && se && se->categoryRecoveryMs > 0 && cooldownMs > 0) {
+            // If this spell's cooldown is a category cooldown, propagate to category siblings.
+            state.mergeCategory(catId, seconds);
+        }
+
+        if (!isPet) {
+            syncActionBarCooldowns(spellId, catId);
+            if (cdItemId != 0) {
+                for (auto& slot : owner_.actionBarRef()) {
+                    if (slot.type != ActionBarSlot::ITEM || slot.id != cdItemId) continue;
+                    float prevRemaining = slot.cooldownRemaining;
+                    float merged = mergeCooldownSeconds(slot.cooldownRemaining, seconds);
+                    slot.cooldownRemaining = merged;
+                    if (slot.cooldownTotal <= 0.0f || prevRemaining <= 0.0f) {
+                        slot.cooldownTotal = seconds;
+                    } else {
+                        slot.cooldownTotal = std::max(slot.cooldownTotal, merged);
+                    }
                 }
             }
         }
     }
     LOG_DEBUG("handleSpellCooldown: parsed for ",
-              isClassicFormat ? "Classic" : "TBC/WotLK", " format");
+              isClassicFormat ? "Classic" : "TBC/WotLK",
+              isPet ? " (pet)" : " (player)");
     if (owner_.addonEventCallbackRef()) {
-        owner_.addonEventCallbackRef()("SPELL_UPDATE_COOLDOWN", {});
-        owner_.addonEventCallbackRef()("BAG_UPDATE_COOLDOWN", {});
-        owner_.addonEventCallbackRef()("ACTIONBAR_UPDATE_COOLDOWN", {});
+        if (isPet) {
+            owner_.addonEventCallbackRef()("PET_BAR_UPDATE_COOLDOWN", {});
+            owner_.addonEventCallbackRef()("SPELL_UPDATE_COOLDOWN", {});
+        } else {
+            owner_.addonEventCallbackRef()("SPELL_UPDATE_COOLDOWN", {});
+            owner_.addonEventCallbackRef()("BAG_UPDATE_COOLDOWN", {});
+            owner_.addonEventCallbackRef()("ACTIONBAR_UPDATE_COOLDOWN", {});
+        }
     }
 }
 
 void SpellHandler::handleCooldownEvent(network::Packet& packet) {
     if (!packet.hasRemaining(4)) return;
     uint32_t spellId = packet.readUInt32();
+    uint64_t guid = 0;
     if (packet.hasRemaining(8))
-        packet.readUInt64();
+        guid = packet.readUInt64();
+    const bool isPet = (owner_.getPetGuid() != 0 && guid == owner_.getPetGuid());
     // The event starts the cooldown the cast left waiting (CMaNGOS
     // Player::AddCooldown: "send cooldown event to start cd client side").
     // Native 2.4.3: Stealth shows its 10 s sweep from the moment stealth ends.
     cooldownEventPending_.erase(spellId);
-    spellCooldowns_.erase(spellId);
-    spellCooldownTotals_.erase(spellId);
-    for (auto& slot : owner_.actionBarRef()) {
-        if (slot.type == ActionBarSlot::SPELL && slot.id == spellId) {
-            slot.cooldownRemaining = 0.0f;
-        }
+    const auto* se = owner_.getSpellNameEntry(spellId);
+    const uint32_t catId = se ? se->category : 0u;
+    (isPet ? petCooldowns_ : cooldowns_).clear(spellId, catId);
+    if (!isPet) {
+        syncActionBarCooldowns(spellId, catId);
     }
-    seedCooldownFromSpellInfo(spellId);
+    seedCooldownFromSpellInfo(spellId, isPet);
     if (owner_.addonEventCallbackRef()) {
-        owner_.addonEventCallbackRef()("SPELL_UPDATE_COOLDOWN", {});
-        owner_.addonEventCallbackRef()("BAG_UPDATE_COOLDOWN", {});
-        owner_.addonEventCallbackRef()("ACTIONBAR_UPDATE_COOLDOWN", {});
+        if (isPet) {
+            owner_.addonEventCallbackRef()("PET_BAR_UPDATE_COOLDOWN", {});
+            owner_.addonEventCallbackRef()("SPELL_UPDATE_COOLDOWN", {});
+        } else {
+            owner_.addonEventCallbackRef()("SPELL_UPDATE_COOLDOWN", {});
+            owner_.addonEventCallbackRef()("BAG_UPDATE_COOLDOWN", {});
+            owner_.addonEventCallbackRef()("ACTIONBAR_UPDATE_COOLDOWN", {});
+        }
     }
 }
 
@@ -4908,8 +5004,8 @@ void SpellHandler::resetAllState() {
     autoRepeatSpellId_ = 0;
     knownSpells_.clear();
     supercededSpells_.clear();
-    spellCooldowns_.clear();
-    spellCooldownTotals_.clear();
+    cooldowns_.clearAll();
+    petCooldowns_.clearAll();
     playerAuras_.clear();
     targetAuras_.clear();
     unitAurasCache_.clear();
@@ -5229,6 +5325,7 @@ void SpellHandler::loadSpellNameCache() const {
     const auto timing = pipeline::detectSpellTimingFields(dbc.get(), spellL);
     const uint32_t recoveryField = timing.recoveryTime;
     const uint32_t categoryRecoveryField = timing.categoryRecoveryTime;
+    const uint32_t categoryField = timing.category;
 
     uint32_t count = dbc->getRecordCount();
     for (uint32_t i = 0; i < count; ++i) {
@@ -5315,6 +5412,8 @@ void SpellHandler::loadSpellNameCache() const {
                 entry.spellVisualId = dbc->getUInt32(i, spellVisualIdField);
             if (speedField != 0xFFFFFFFF && speedField < fieldCount)
                 entry.missileSpeed = dbc->getFloat(i, speedField);
+            if (categoryField != 0 && categoryField < fieldCount)
+                entry.category = dbc->getUInt32(i, categoryField);
             if (recoveryField != 0xFFFFFFFF && recoveryField < fieldCount)
                 entry.recoveryMs = dbc->getUInt32(i, recoveryField);
             if (categoryRecoveryField != 0xFFFFFFFF && categoryRecoveryField < fieldCount)
@@ -6102,12 +6201,24 @@ void SpellHandler::handleSpellFailedOther(network::Packet& packet) {
 
 void SpellHandler::handleClearCooldown(network::Packet& packet) {
     if (packet.hasRemaining(4)) {
-        uint32_t spellId = packet.readUInt32();
-        spellCooldowns_.erase(spellId);
-        spellCooldownTotals_.erase(spellId);
-        for (auto& slot : owner_.actionBarRef()) {
-            if (slot.type == ActionBarSlot::SPELL && slot.id == spellId)
-                slot.cooldownRemaining = 0.0f;
+        const uint32_t spellId = packet.readUInt32();
+        uint64_t guid = 0;
+        if (packet.hasRemaining(8)) guid = packet.readUInt64();
+        const bool isPet = (owner_.getPetGuid() != 0 && guid == owner_.getPetGuid());
+        const auto* se = owner_.getSpellNameEntry(spellId);
+        const uint32_t catId = se ? se->category : 0u;
+        (isPet ? petCooldowns_ : cooldowns_).clear(spellId, catId);
+        if (!isPet) {
+            syncActionBarCooldowns(spellId, catId);
+        }
+        if (owner_.addonEventCallbackRef()) {
+            if (isPet) {
+                owner_.addonEventCallbackRef()("PET_BAR_UPDATE_COOLDOWN", {});
+                owner_.addonEventCallbackRef()("SPELL_UPDATE_COOLDOWN", {});
+            } else {
+                owner_.addonEventCallbackRef()("SPELL_UPDATE_COOLDOWN", {});
+                owner_.addonEventCallbackRef()("ACTIONBAR_UPDATE_COOLDOWN", {});
+            }
         }
     }
 }
@@ -6117,16 +6228,25 @@ void SpellHandler::handleModifyCooldown(network::Packet& packet) {
     // read, so the change in milliseconds came from its low half and the
     // cooldown moved by whatever that happened to be.
     if (packet.hasRemaining(16)) {
-        uint32_t spellId = packet.readUInt32();
-        (void)packet.readUInt64();  // the player it applies to, always this one
-        int32_t  diffMs  = static_cast<int32_t>(packet.readUInt32());
-        float diffSec = diffMs / 1000.0f;
-        auto it = spellCooldowns_.find(spellId);
-        if (it != spellCooldowns_.end()) {
-            it->second = std::max(0.0f, it->second + diffSec);
-            for (auto& slot : owner_.actionBarRef()) {
-                if (slot.type == ActionBarSlot::SPELL && slot.id == spellId)
-                    slot.cooldownRemaining = std::max(0.0f, slot.cooldownRemaining + diffSec);
+        const uint32_t spellId = packet.readUInt32();
+        const uint64_t guid    = packet.readUInt64();
+        const int32_t  diffMs  = static_cast<int32_t>(packet.readUInt32());
+        const float diffSec = diffMs / 1000.0f;
+        const bool isPet = (owner_.getPetGuid() != 0 && guid == owner_.getPetGuid());
+        const auto* se = owner_.getSpellNameEntry(spellId);
+        const uint32_t catId = se ? se->category : 0u;
+        if ((isPet ? petCooldowns_ : cooldowns_).modify(spellId, catId, diffSec)) {
+            if (!isPet) {
+                syncActionBarCooldowns(spellId, catId);
+            }
+            if (owner_.addonEventCallbackRef()) {
+                if (isPet) {
+                    owner_.addonEventCallbackRef()("PET_BAR_UPDATE_COOLDOWN", {});
+                    owner_.addonEventCallbackRef()("SPELL_UPDATE_COOLDOWN", {});
+                } else {
+                    owner_.addonEventCallbackRef()("SPELL_UPDATE_COOLDOWN", {});
+                    owner_.addonEventCallbackRef()("ACTIONBAR_UPDATE_COOLDOWN", {});
+                }
             }
         }
     }
@@ -6335,14 +6455,11 @@ void SpellHandler::handleItemCooldown(network::Packet& packet) {
         float cdSec = cdMs / 1000.0f;
         if (cdSec > 0.0f) {
             if (spellId != 0) {
-                auto it = spellCooldowns_.find(spellId);
-                if (it == spellCooldowns_.end()) {
-                    spellCooldowns_[spellId] = cdSec;
-                    spellCooldownTotals_[spellId] = cdSec;
-                } else {
-                    it->second = mergeCooldownSeconds(it->second, cdSec);
-                    float& total = spellCooldownTotals_[spellId];
-                    total = std::max(total, it->second);
+                cooldowns_.mergeSpell(spellId, cdSec);
+                owner_.loadSpellNameCache();
+                if (const auto* se = owner_.getSpellNameEntry(spellId);
+                    se && se->category != 0 && se->categoryRecoveryMs > 0) {
+                    cooldowns_.mergeCategory(se->category, cdSec);
                 }
             }
             // Resolve itemId from the GUID so item-type slots are also updated

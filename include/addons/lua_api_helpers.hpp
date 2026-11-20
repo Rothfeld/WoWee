@@ -1037,12 +1037,11 @@ inline bool itemUseCooldown(game::GameHandler* gh, uint32_t itemId,
     if (!info || !info->valid) return false;
     for (const auto& sp : info->spells) {
         if (sp.spellId == 0 || (sp.spellTrigger != 0 && sp.spellTrigger != 5)) continue;
-        const auto& cds = gh->getSpellCooldowns();
-        auto it = cds.find(sp.spellId);
-        if (it == cds.end() || it->second <= 0.0f) continue;
+        const float remaining = gh->getSpellCooldown(sp.spellId);
+        if (remaining <= 0.0f) continue;
         double total = gh->getSpellCooldownTotal(sp.spellId);
-        if (total < it->second) total = it->second;
-        start = luaGetTimeNow() - (total - it->second);
+        if (total < remaining) total = remaining;
+        start = luaGetTimeNow() - (total - remaining);
         duration = total;
         return true;
     }

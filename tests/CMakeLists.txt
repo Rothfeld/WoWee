@@ -2837,6 +2837,12 @@ wowee_add_test(test_spell_mod_ops
     SOURCES test_spell_mod_ops.cpp
             ${TEST_COMMON_SOURCES})
 
+# ── test_spell_cooldowns ─────────────────────────────────────
+# Cross-rank and shared-category spell cooldown tracking (SpellCooldownState).
+wowee_add_test(test_spell_cooldowns
+    SOURCES test_spell_cooldowns.cpp
+            ${TEST_COMMON_SOURCES})
+
 # ── test_adt_truncation ──────────────────────────────────────
 # What the ADT parser does with a file that lies about its own sizes. The
 # chunk readers took a bare pointer and a length as separate arguments and

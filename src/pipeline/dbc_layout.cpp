@@ -209,12 +209,12 @@ CharSectionsFields detectCharSectionsFields(const DBCFile* dbc, const DBCFieldMa
 SpellTimingFields detectSpellTimingFields(const DBCFile* dbc, const DBCFieldMap* spellL) {
     // WotLK is the fallback: it is the file this client ships and the one a
     // profile without its own Spell.dbc falls through to.
-    SpellTimingFields f{.castingTimeIndex = 28, .recoveryTime = 29, .categoryRecoveryTime = 30};
+    SpellTimingFields f{.castingTimeIndex = 28, .recoveryTime = 29, .categoryRecoveryTime = 30, .category = 1};
     if (!dbc || dbc->getRecordCount() == 0) return f;
 
     const uint32_t fieldCount = dbc->getFieldCount();
-    if (fieldCount < 216)      f = {.castingTimeIndex = 18, .recoveryTime = 19, .categoryRecoveryTime = 20};  // Vanilla 1.12 / Turtle
-    else if (fieldCount < 234) f = {.castingTimeIndex = 22, .recoveryTime = 23, .categoryRecoveryTime = 24};  // TBC 2.4.3
+    if (fieldCount < 216)      f = {.castingTimeIndex = 18, .recoveryTime = 19, .categoryRecoveryTime = 20, .category = 2};  // Vanilla 1.12 / Turtle
+    else if (fieldCount < 234) f = {.castingTimeIndex = 22, .recoveryTime = 23, .categoryRecoveryTime = 24, .category = 1};  // TBC 2.4.3
 
     // A layout may name CastingTimeIndex, and TBC's and WotLK's are right. It is
     // taken only when it matches the shape the file actually has, because the
@@ -223,7 +223,7 @@ SpellTimingFields detectSpellTimingFields(const DBCFile* dbc, const DBCFieldMap*
         const uint32_t named = spellL->field("CastingTimeIndex");
         if (named == f.castingTimeIndex) f.castingTimeIndex = named;
     }
-    if (f.categoryRecoveryTime >= fieldCount) return {.castingTimeIndex = 0, .recoveryTime = 0, .categoryRecoveryTime = 0};
+    if (f.categoryRecoveryTime >= fieldCount) return {.castingTimeIndex = 0, .recoveryTime = 0, .categoryRecoveryTime = 0, .category = 0};
     return f;
 }
 

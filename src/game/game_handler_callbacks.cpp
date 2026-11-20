@@ -2794,6 +2794,16 @@ float GameHandler::getSpellCooldownTotal(uint32_t spellId) const {
     return 0;
 }
 
+float GameHandler::getPetSpellCooldown(uint32_t spellId) const {
+    if (spellHandler_) return spellHandler_->getPetSpellCooldown(spellId);
+    return 0;
+}
+
+float GameHandler::getPetSpellCooldownTotal(uint32_t spellId) const {
+    if (spellHandler_) return spellHandler_->getPetSpellCooldownTotal(spellId);
+    return 0;
+}
+
 // ============================================================
 // Talents
 // ============================================================

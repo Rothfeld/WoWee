@@ -1991,6 +1991,8 @@ public:
     float getSpellCooldown(uint32_t spellId) const;
     bool isCooldownEventPending(uint32_t spellId) const;
     float getSpellCooldownTotal(uint32_t spellId) const;
+    float getPetSpellCooldown(uint32_t spellId) const;
+    float getPetSpellCooldownTotal(uint32_t spellId) const;
     const std::unordered_map<uint32_t, float>& getSpellCooldowns() const {
         static const std::unordered_map<uint32_t, float> empty;
         return spellHandler_ ? spellHandler_->getSpellCooldowns() : empty;
@@ -4516,6 +4518,7 @@ public:
         // Spell.dbc Speed: how fast the missile flies, in yards a second.
         // 0 for a spell that lands where it is cast.
         float missileSpeed = 0.0f;
+        uint32_t category = 0;
         uint32_t recoveryMs = 0;
         uint32_t categoryRecoveryMs = 0;
         uint32_t createdItemId = 0;

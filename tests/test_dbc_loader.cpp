@@ -449,18 +449,21 @@ TEST_CASE("Spell.dbc's timing columns come from the file's shape", "[dbc][spell]
         CHECK(f.castingTimeIndex == 18);
         CHECK(f.recoveryTime == 19);
         CHECK(f.categoryRecoveryTime == 20);
+        CHECK(f.category == 2);
     }
     SECTION("TBC 2.4.3") {
         const auto f = shapeOf(216);
         CHECK(f.castingTimeIndex == 22);
         CHECK(f.recoveryTime == 23);
         CHECK(f.categoryRecoveryTime == 24);
+        CHECK(f.category == 1);
     }
     SECTION("WotLK 3.3.5a") {
         const auto f = shapeOf(234);
         CHECK(f.castingTimeIndex == 28);
         CHECK(f.recoveryTime == 29);
         CHECK(f.categoryRecoveryTime == 30);
+        CHECK(f.category == 1);
     }
 
     SECTION("a layout that disagrees with the shape is not followed") {
@@ -481,6 +484,7 @@ TEST_CASE("Spell.dbc's timing columns come from the file's shape", "[dbc][spell]
         CHECK(f.castingTimeIndex == 0);
         CHECK(f.recoveryTime == 0);
         CHECK(f.categoryRecoveryTime == 0);
+        CHECK(f.category == 0);
     }
 }
 

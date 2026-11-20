@@ -3,6 +3,7 @@
 #include "game/world_packets.hpp"
 #include "game/opcode_table.hpp"
 #include "game/spell_defines.hpp"
+#include "game/spell_cooldown_state.hpp"
 #include "game/spell_prerequisites.hpp"
 #include "game/spell_classification.hpp"
 #include "game/handler_types.hpp"
@@ -116,7 +117,7 @@ public:
 
     // Known spells
     [[nodiscard]] const std::unordered_set<uint32_t>& getKnownSpells() const { return knownSpells_; }
-    [[nodiscard]] const std::unordered_map<uint32_t, float>& getSpellCooldowns() const { return spellCooldowns_; }
+    [[nodiscard]] const std::unordered_map<uint32_t, float>& getSpellCooldowns() const { return cooldowns_.spellRemaining; }
     [[nodiscard]] float getSpellCooldown(uint32_t spellId) const;
     /// A spell whose cooldown starts on an event (Spell.dbc attribute
     /// 0x02000000: Stealth, Cold Blood) between its cast and the server's
@@ -124,6 +125,8 @@ public:
     /// GetActionCooldown enable 0 for it meanwhile.
     [[nodiscard]] bool isCooldownEventPending(uint32_t spellId) const { return cooldownEventPending_.count(spellId) > 0; }
     [[nodiscard]] float getSpellCooldownTotal(uint32_t spellId) const;
+    [[nodiscard]] float getPetSpellCooldown(uint32_t spellId) const;
+    [[nodiscard]] float getPetSpellCooldownTotal(uint32_t spellId) const;
 
     // Cast state
     [[nodiscard]] bool isCasting() const { return casting_; }
@@ -559,7 +562,8 @@ private:
 
     // Find the on-use spell for an item (trigger=0 Use or trigger=5 NoDelay).
     // CMSG_USE_ITEM requires a valid spellId or the server silently ignores it.
-    void seedCooldownFromSpellInfo(uint32_t spellId);
+    void seedCooldownFromSpellInfo(uint32_t spellId, bool isPet = false);
+    void syncActionBarCooldowns(uint32_t spellId, uint32_t categoryId);
     void handleSupercededSpell(network::Packet& packet);
     void handleRemovedSpell(network::Packet& packet);
     void handleUnlearnSpells(network::Packet& packet);
@@ -574,14 +578,12 @@ private:
     // has them (CMaNGOS keeps them inactive); the 2.4.3 trainer lists them as
     // used, Garrote (Rank 1) after Rank 2 is learned.
     std::unordered_set<uint32_t> supercededSpells_;
-    std::unordered_map<uint32_t, float> spellCooldowns_;    // spellId -> remaining seconds
-    // spellId -> the length the cooldown had when it began. Kept beside the
-    // remaining time rather than derived from it because GetSpellCooldown is
-    // asked for (start, duration), and answering (now, remaining) redraws the
-    // swirl as a fresh full sweep every time the interface asks - which it does
-    // on every ACTIONBAR_UPDATE_COOLDOWN, so a long cooldown appears to restart
-    // whenever anything else is cast.
-    std::unordered_map<uint32_t, float> spellCooldownTotals_;
+    // Player and pet cooldowns tracked separately so shared Spell.dbc category
+    // IDs never collide between the player and their pet. Each tracks both
+    // per-spell and per-category remaining/total seconds so GetSpellCooldown
+    // can wind back the swirl start time across repeated queries.
+    SpellCooldownState cooldowns_;
+    SpellCooldownState petCooldowns_;
     uint8_t castCount_ = 0;
     bool casting_ = false;
     bool castIsChannel_ = false;
