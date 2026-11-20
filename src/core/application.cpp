@@ -2575,13 +2575,11 @@ void Application::setState(AppState newState) {
                 cc->setMovementCallback([this](uint32_t opcode) {
                     if (gameHandler) {
                         if (opcode == static_cast<uint32_t>(game::Opcode::MSG_MOVE_FALL_LAND) ||
-                            opcode == static_cast<uint32_t>(game::Opcode::MSG_MOVE_START_SWIM)) {
-                            // Physics has landed on ground or water; regular
-                            // position sync still contains the airborne frame.
-                            // That state is this frame's: the physics runs
-                            // from the instant last frame began to the instant
-                            // this one began. A touchdown inside it is reported
-                            // at its own instant and place.
+                            opcode == static_cast<uint32_t>(game::Opcode::MSG_MOVE_START_SWIM) ||
+                            opcode == static_cast<uint32_t>(game::Opcode::MSG_MOVE_STOP_SWIM)) {
+                            // Physics has landed on ground or crossed water; regular
+                            // position sync still contains the pre-step frame.
+                            // Report touchdown / swim transition at its exact instant and place.
                             auto* movement = gameHandler->getMovementHandler();
                             const auto* camera = renderer->getCameraController();
                             const auto touchdown = camera->getTouchdownSeconds();
@@ -2590,12 +2588,51 @@ void Application::setState(AppState newState) {
                             const auto position = core::coords::renderToCanonical(
                                 atTouchdown ? camera->getTouchdownPosition() : renderer->getCharacterPosition());
                             gameHandler->setPosition(position.x, position.y, position.z);
+                            gameHandler->setOrientation(
+                                core::coords::characterYawDegToCanonical(camera->getFacingYaw()));
                             movement->recordPhysicsSample(atTouchdown
                                 ? movement->previousFrameStartMs() +
                                       static_cast<uint32_t>(std::lround(*touchdown * 1000.0f))
                                 : movement->frameStartMs());
                         }
                         gameHandler->sendMovement(static_cast<game::Opcode>(opcode));
+                    }
+                });
+                cc->setPreIntentFacingSyncCallback([this](float facingYawDeg) {
+                    if (!renderer || !gameHandler) return;
+                    const auto* cam = renderer->getCameraController();
+                    if (cam && (cam->isOnTaxi() || cam->isServerControlled())) return;
+                    renderer->setCharacterYaw(facingYawDeg);
+                    const float canonicalYaw = core::coords::characterYawDegToCanonical(facingYawDeg);
+                    gameHandler->setOrientation(canonicalYaw);
+                    if (auto* movement = gameHandler->getMovementHandler()) {
+                        if (movement->previousFrameStartMs() != 0) {
+                            movement->recordPhysicsSample(movement->previousFrameStartMs());
+                        }
+                    }
+                });
+                cc->setPostIntentFacingSyncCallback([this](float dt) {
+                    if (!renderer || !gameHandler) return;
+                    const auto* cam = renderer->getCameraController();
+                    if (cam && (cam->isOnTaxi() || cam->isServerControlled())) return;
+                    facingSendCooldown_ = std::max(0.0f, facingSendCooldown_ - dt);
+                    const auto& mi = gameHandler->getMovementInfo();
+                    constexpr uint32_t kTurnFlags =
+                        static_cast<uint32_t>(game::MovementFlags::TURN_LEFT) |
+                        static_cast<uint32_t>(game::MovementFlags::TURN_RIGHT);
+                    if ((mi.flags & kTurnFlags) != 0) return;
+                    auto* movement = gameHandler->getMovementHandler();
+                    if (!movement) return;
+                    const auto sentYaw = movement->lastSentOrientation();
+                    const float yawDiff = sentYaw
+                        ? core::coords::normalizeAngleRad(mi.orientation - *sentYaw)
+                        : core::coords::PI;
+                    const float absDiff = std::abs(yawDiff);
+                    const bool fastSweep = absDiff >= glm::radians(8.0f) && facingSendCooldown_ <= 0.065f;
+                    const bool settledTurn = absDiff >= glm::radians(2.0f) && facingSendCooldown_ <= 0.0f;
+                    if (fastSweep || settledTurn) {
+                        gameHandler->sendMovement(game::Opcode::MSG_MOVE_SET_FACING);
+                        facingSendCooldown_ = 0.095f;
                     }
                 });
                 cc->setStandUpCallback([this]() {
@@ -3047,6 +3084,9 @@ void syncServerSpeedsToCamera(rendering::Renderer* renderer,
     auto* cam = renderer->getCameraController();
     cam->setRunSpeedOverride(gameHandler->getServerRunSpeed());
     cam->setWalkSpeedOverride(gameHandler->getServerWalkSpeed());
+    cam->setAutoFollowTargetMotion(
+        gameHandler->isFollowTargetMoving(),
+        gameHandler->isFollowTargetWalking());
     cam->setReportedSwimming(gameHandler->isSwimming());
     cam->setSwimSpeedOverride(gameHandler->getServerSwimSpeed());
     if (game::isActiveExpansion("tbc") && playerCharacterSpawned && entitySpawner) {
@@ -3660,34 +3700,12 @@ void Application::applyServerMovementState(float deltaTime) {
         float canonicalYaw = core::coords::characterYawDegToCanonical(yawDeg);
         gameHandler->setOrientation(canonicalYaw);
         // Last frame's physics produced this state, integrated up to the
-        // instant last frame began. Heartbeats fall due by that clock.
+        // instant last frame began. Heartbeats fall due by that clock;
+        // MSG_MOVE_SET_FACING is emitted causally by CameraController's
+        // post-intent callback after syncing this frame's pre-step heading.
         if (auto* movement = gameHandler->getMovementHandler()) {
             movement->recordPhysicsSample(movement->previousFrameStartMs());
             movement->sendDueHeartbeats();
-        }
-
-        // Send MSG_MOVE_SET_FACING when the player changes facing direction
-        // (e.g. via mouse-look). Without this, the server predicts movement in
-        // the old facing and position-corrects on the next heartbeat - the
-        // micro-teleporting the GM observed.
-        // Skip while keyboard-turning: the server tracks that via TURN_LEFT/RIGHT flags.
-        facingSendCooldown_ -= deltaTime;
-        const auto& mi = gameHandler->getMovementInfo();
-        constexpr uint32_t kTurnFlags =
-            static_cast<uint32_t>(game::MovementFlags::TURN_LEFT) |
-            static_cast<uint32_t>(game::MovementFlags::TURN_RIGHT);
-        bool keyboardTurning = (mi.flags & kTurnFlags) != 0;
-        // Measured against the facing in the last movement packet of any
-        // opcode: STOP_TURN already carries the final facing, and native
-        // sends no SET_FACING after it.
-        if (!keyboardTurning && facingSendCooldown_ <= 0.0f) {
-            const auto sentYaw = gameHandler->getMovementHandler()->lastSentOrientation();
-            const float yawDiff = sentYaw ? core::coords::normalizeAngleRad(canonicalYaw - *sentYaw)
-                                          : core::coords::PI;
-            if (std::abs(yawDiff) > glm::radians(3.0f)) {
-                gameHandler->sendMovement(game::Opcode::MSG_MOVE_SET_FACING);
-                facingSendCooldown_ = 0.1f;  // max 10 Hz
-            }
         }
 
         // Client-side transport board/disembark check - shared

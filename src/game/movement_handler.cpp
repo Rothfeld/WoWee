@@ -680,18 +680,34 @@ void MovementHandler::sendMovement(Opcode opcode) {
 
     // Strictly increasing, non-zero, and the instant the position belongs to
     // (see beginFrame). A position not written by the physics is the
-    // player's position now.
+    // player's position now. Restore lastMovementTimestampMs_ if an early
+    // filter suppresses the packet so unsent checks never advance the wire clock.
+    const uint32_t prevLastMovementTimestampMs = lastMovementTimestampMs_;
     const PhysicsSample* sample = currentPhysicsSample();
     const uint32_t movementTime =
         packetTimeMs_ ? reserveMovementTimestampMs(*packetTimeMs_)
         : sample ? reserveMovementTimestampMs(sample->timeMs)
                  : nextMovementTimestampMs();
+    bool packetSent = false;
+    struct TimestampRollbackGuard {
+        uint32_t& slot;
+        uint32_t saved;
+        const bool& committed;
+        ~TimestampRollbackGuard() {
+            if (!committed) slot = saved;
+        }
+    } rollbackTimestamp{lastMovementTimestampMs_, prevLastMovementTimestampMs, packetSent};
     movementInfo.time = movementTime;
 
     if (opcode == Opcode::MSG_MOVE_SET_FACING &&
         isPreWotlk()) {
+        const float referenceOrientation =
+            hasSentMovement_ ? lastSentOrientation_ : lastFacingSentOrientation_;
         const float facingDelta = core::coords::normalizeAngleRad(
-            movementInfo.orientation - lastFacingSentOrientation_);
+            movementInfo.orientation - referenceOrientation);
+        if (hasSentMovement_ && std::abs(facingDelta) < 0.005f) {
+            return;
+        }
         const uint32_t sinceLastFacingMs =
             lastFacingSendTimeMs_ != 0 && movementTime >= lastFacingSendTimeMs_
                 ? (movementTime - lastFacingSendTimeMs_)
@@ -737,11 +753,13 @@ void MovementHandler::sendMovement(Opcode opcode) {
         // the landing (native: STOP 0x5001, STOP_STRAFE 0xb008, FALL_LAND 0x0);
         // pressing it again in the air clears the pending stop (START 0x1001).
         case Opcode::MSG_MOVE_START_FORWARD:
-            movementInfo.flags &= ~static_cast<uint32_t>(MovementFlags::PENDING_STOP);
+            movementInfo.flags &= ~(static_cast<uint32_t>(MovementFlags::BACKWARD) |
+                                    static_cast<uint32_t>(MovementFlags::PENDING_STOP));
             movementInfo.flags |= static_cast<uint32_t>(MovementFlags::FORWARD);
             break;
         case Opcode::MSG_MOVE_START_BACKWARD:
-            movementInfo.flags &= ~static_cast<uint32_t>(MovementFlags::PENDING_STOP);
+            movementInfo.flags &= ~(static_cast<uint32_t>(MovementFlags::FORWARD) |
+                                    static_cast<uint32_t>(MovementFlags::PENDING_STOP));
             movementInfo.flags |= static_cast<uint32_t>(MovementFlags::BACKWARD);
             break;
         case Opcode::MSG_MOVE_STOP:
@@ -754,11 +772,13 @@ void MovementHandler::sendMovement(Opcode opcode) {
             }
             break;
         case Opcode::MSG_MOVE_START_STRAFE_LEFT:
-            movementInfo.flags &= ~static_cast<uint32_t>(MovementFlags::PENDING_STRAFE_STOP);
+            movementInfo.flags &= ~(static_cast<uint32_t>(MovementFlags::STRAFE_RIGHT) |
+                                    static_cast<uint32_t>(MovementFlags::PENDING_STRAFE_STOP));
             movementInfo.flags |= static_cast<uint32_t>(MovementFlags::STRAFE_LEFT);
             break;
         case Opcode::MSG_MOVE_START_STRAFE_RIGHT:
-            movementInfo.flags &= ~static_cast<uint32_t>(MovementFlags::PENDING_STRAFE_STOP);
+            movementInfo.flags &= ~(static_cast<uint32_t>(MovementFlags::STRAFE_LEFT) |
+                                    static_cast<uint32_t>(MovementFlags::PENDING_STRAFE_STOP));
             movementInfo.flags |= static_cast<uint32_t>(MovementFlags::STRAFE_RIGHT);
             break;
         case Opcode::MSG_MOVE_STOP_STRAFE:
@@ -804,9 +824,11 @@ void MovementHandler::sendMovement(Opcode opcode) {
             movementInfo.flags &= ~static_cast<uint32_t>(MovementFlags::WALKING);
             break;
         case Opcode::MSG_MOVE_START_TURN_LEFT:
+            movementInfo.flags &= ~static_cast<uint32_t>(MovementFlags::TURN_RIGHT);
             movementInfo.flags |= static_cast<uint32_t>(MovementFlags::TURN_LEFT);
             break;
         case Opcode::MSG_MOVE_START_TURN_RIGHT:
+            movementInfo.flags &= ~static_cast<uint32_t>(MovementFlags::TURN_LEFT);
             movementInfo.flags |= static_cast<uint32_t>(MovementFlags::TURN_RIGHT);
             break;
         case Opcode::MSG_MOVE_STOP_TURN:
@@ -1075,6 +1097,7 @@ void MovementHandler::sendMovement(Opcode opcode) {
         ? owner_.getPacketParsers()->buildMovementPacket(opcode, wireInfo, owner_.getPlayerGuid())
         : MovementPacket::build(opcode, wireInfo, owner_.getPlayerGuid());
     owner_.getSocket()->send(packet);
+    packetSent = true;
     lastSentPos_ = glm::vec3(movementInfo.x, movementInfo.y, movementInfo.z);
     lastSentOrientation_ = movementInfo.orientation;
     hasSentMovement_ = true;
@@ -1272,7 +1295,8 @@ network::Packet MovementHandler::buildForceAck(Opcode ackOpcode, uint32_t counte
     ack.writeUInt32(counter);
 
     MovementInfo wire = movementInfo;
-    wire.time = nextMovementTimestampMs();
+    const PhysicsSample* sample = currentPhysicsSample();
+    wire.time = sample ? reserveMovementTimestampMs(sample->timeMs) : nextMovementTimestampMs();
     if (wire.hasFlag(MovementFlags::ONTRANSPORT)) {
         wire.transportTime = wire.time;
         wire.transportTime2 = wire.time;
@@ -1281,6 +1305,7 @@ network::Packet MovementHandler::buildForceAck(Opcode ackOpcode, uint32_t counte
     wire.x = serverPos.x;
     wire.y = serverPos.y;
     wire.z = serverPos.z;
+    wire.orientation = core::coords::canonicalToServerYaw(wire.orientation);
     if (wire.hasFlag(MovementFlags::ONTRANSPORT)) {
         glm::vec3 serverTransport =
             owner_.getTransportManager()->transportLocalToServer(wire.transportGuid,
@@ -1610,8 +1635,10 @@ void MovementHandler::handleOtherPlayerMovement(network::Packet& packet) {
         static_cast<uint32_t>(MovementFlags::LEVITATING);
     const float shownYaw = entity->getOrientation();
     if (isTeleportOpcode) {
+        otherPlayerGroundSamples_.erase(moverGuid);
         entity->setPosition(canonical.x, canonical.y, canonical.z, canYaw);
     } else if (entity->getType() == ObjectType::PLAYER && !onTransport && airborne) {
+        otherPlayerGroundSamples_.erase(moverGuid);
         // Wire zspeed is downward-positive; native takeoff sends -7.95555.
         const bool retainedMomentum = !isJumpOpcode && entity->isRemoteAirborne() &&
             entity->getLocomotionSpeed() > 0.0001f;
@@ -1638,8 +1665,46 @@ void MovementHandler::handleOtherPlayerMovement(network::Packet& packet) {
                 (cosine * forward - sine * left) * speed / magnitude,
                 (sine * forward + cosine * left) * speed / magnitude, 0.0f));
         }
-        entity->updateRemoteGroundMotion(canonical, canYaw, glm::vec2(velocity));
+        glm::vec2 groundVel(velocity.x, velocity.y);
+        constexpr uint32_t kSteadyGroundMask =
+            static_cast<uint32_t>(MovementFlags::FORWARD) |
+            static_cast<uint32_t>(MovementFlags::BACKWARD) |
+            static_cast<uint32_t>(MovementFlags::STRAFE_LEFT) |
+            static_cast<uint32_t>(MovementFlags::STRAFE_RIGHT) |
+            static_cast<uint32_t>(MovementFlags::TURN_LEFT) |
+            static_cast<uint32_t>(MovementFlags::TURN_RIGHT) |
+            static_cast<uint32_t>(MovementFlags::WALKING) |
+            static_cast<uint32_t>(MovementFlags::ROOT);
+        constexpr uint32_t kTurnMask =
+            static_cast<uint32_t>(MovementFlags::TURN_LEFT) |
+            static_cast<uint32_t>(MovementFlags::TURN_RIGHT);
+        if (wireOp == wireOpcode(Opcode::MSG_MOVE_HEARTBEAT) &&
+            magnitude > 0.0f &&
+            (info.flags & kTurnMask) == 0) {
+            auto itGround = otherPlayerGroundSamples_.find(moverGuid);
+            if (itGround != otherPlayerGroundSamples_.end()) {
+                const uint32_t dtMs = info.time - itGround->second.timeMs;
+                if ((itGround->second.flags & kSteadyGroundMask) ==
+                        (info.flags & kSteadyGroundMask) &&
+                    dtMs >= 200U && dtMs <= 1000U) {
+                    const float dtSec = static_cast<float>(dtMs) * 0.001f;
+                    const glm::vec2 measuredVel(
+                        (canonical.x - itGround->second.canonicalPos.x) / dtSec,
+                        (canonical.y - itGround->second.canonicalPos.y) / dtSec);
+                    const float nominalSpeed = glm::length(groundVel);
+                    const float measuredSpeed = glm::length(measuredVel);
+                    if (nominalSpeed > 0.1f &&
+                        measuredSpeed <= nominalSpeed * 1.15f &&
+                        glm::distance(measuredVel, groundVel) > 0.35f * nominalSpeed) {
+                        groundVel = measuredVel;
+                    }
+                }
+            }
+        }
+        otherPlayerGroundSamples_[moverGuid] = {info.time, info.flags, canonical};
+        entity->updateRemoteGroundMotion(canonical, canYaw, groundVel);
     } else {
+        otherPlayerGroundSamples_.erase(moverGuid);
         entity->startMoveTo(canonical.x, canonical.y, canonical.z, canYaw, entityDuration);
     }
 
@@ -2639,6 +2704,8 @@ void MovementHandler::handleNewWorld(network::Packet& packet) {
     owner_.otherPlayerVisibleItemEntriesRef().clear();
     owner_.otherPlayerVisibleDirtyRef().clear();
     otherPlayerMoveTimeMs_.clear();
+    otherPlayerSmoothedIntervalMs_.clear();
+    otherPlayerGroundSamples_.clear();
     if (owner_.getSpellHandler()) owner_.getSpellHandler()->clearUnitCastStates();
     owner_.clearCombatText();
     owner_.getEntityManager().clear();
@@ -4083,9 +4150,15 @@ void MovementHandler::followTarget(uint64_t guid) {
 
     // Set follow target
     owner_.followTargetGuidRef() = guid;
+    followMoveMoving_ = false;
 
-    // Initialize render-space position from entity's canonical coords
+    // Initialize render-space position and target motion state from entity
     owner_.followRenderPosRef() = core::coords::canonicalToRender(glm::vec3(target->getX(), target->getY(), target->getZ()));
+    const bool targetMoving = target->isActivelyMoving();
+    const float walkRef = target->groundWalkSpeed > 0.1f ? target->groundWalkSpeed : 2.5f;
+    owner_.followTargetMovingRef() = targetMoving;
+    owner_.followTargetWalkingRef() =
+        targetMoving && target->getLocomotionSpeed() > 0.1f && target->getLocomotionSpeed() <= walkRef + 0.75f;
 
     // Tell camera controller to start auto-following
     if (owner_.autoFollowCallbackRef()) {
@@ -4115,6 +4188,8 @@ void MovementHandler::cancelFollow() {
         return;
     }
     owner_.followTargetGuidRef() = 0;
+    owner_.followTargetMovingRef() = false;
+    owner_.followTargetWalkingRef() = false;
     if (followMoveMoving_) {
         sendMovement(Opcode::MSG_MOVE_STOP);
         followMoveMoving_ = false;
@@ -4157,28 +4232,32 @@ void MovementHandler::updateFollowMovement(float deltaTime) {
         return;
     }
 
-    constexpr float kFollowStopDistance = 1.0f;
     const float dx = target->getX() - movementInfo.x;
     const float dy = target->getY() - movementInfo.y;
     const float dz = target->getZ() - movementInfo.z;
     const float horizontalDist = std::sqrt(dx * dx + dy * dy);
     const float distance = std::sqrt(dx * dx + dy * dy + dz * dz);
+    const float distanceThreshold = followMoveMoving_ ? kFollowStopDistance : kFollowResumeDistance;
 
-    if (distance <= kFollowStopDistance) {
+    if (horizontalDist <= distanceThreshold) {
         if (followMoveMoving_) {
             sendMovement(Opcode::MSG_MOVE_STOP);
             followMoveMoving_ = false;
+        } else if (horizontalDist > 0.25f) {
+            setOrientation(std::atan2(-dy, dx));
+            sendMovement(Opcode::MSG_MOVE_SET_FACING);
         }
         return;
     }
 
     if (horizontalDist > 0.001f) {
         setOrientation(std::atan2(-dy, dx));
-        sendMovement(Opcode::MSG_MOVE_SET_FACING);
     }
     if (!followMoveMoving_) {
         sendMovement(Opcode::MSG_MOVE_START_FORWARD);
         followMoveMoving_ = true;
+    } else if (horizontalDist > 0.001f) {
+        sendMovement(Opcode::MSG_MOVE_SET_FACING);
     }
 
     const float speed = std::max(0.1f, getServerRunSpeed());

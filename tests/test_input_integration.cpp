@@ -4808,3 +4808,151 @@ TEST_CASE("TBC SMSG_LEARNED_SPELL and SMSG_SUPERCEDED_SPELL auto-upgrade action 
 
     gh.setAddonEventCallback({});
 }
+
+TEST_CASE_METHOD(Integration,
+                 "Third-person /follow applies hysteresis, walk-speed matching, and causal pre-step facing",
+                 "[input][camera][follow]") {
+    auto& input = core::Input::getInstance();
+    rendering::Camera camera;
+    rendering::CameraController controller(&camera);
+    glm::vec3 playerPos(0.0f, 0.0f, 0.0f);
+    glm::vec3 leaderPos(0.0f, 5.0f, 0.0f);  // +Y => 90 deg render yaw
+    controller.setIdleOrbitEnabled(false);
+    controller.setFollowTarget(&playerPos);
+    controller.setUseWoWSpeed(true);
+    controller.setGravityDisabled(true);
+    controller.setFacingYaw(0.0f);
+
+    struct EmittedMove {
+        uint32_t opcode = 0;
+        glm::vec3 pos{0.0f};
+        float syncedYawDeg = 0.0f;
+    };
+    float syncedPreStepYawDeg = 0.0f;
+    std::vector<EmittedMove> emitted;
+    controller.setPreIntentFacingSyncCallback([&](float yawDeg) {
+        syncedPreStepYawDeg = yawDeg;
+    });
+    controller.setMovementCallback([&](uint32_t opcode) {
+        emitted.push_back({opcode, playerPos, syncedPreStepYawDeg});
+    });
+
+    controller.setAutoFollow(&leaderPos);
+    controller.setAutoFollowTargetMotion(true, true);  // Leader is walking within 6 yd
+    controller.setGrounded(true);
+    input.update();
+    controller.update(0.05f);
+
+    // Both SET_WALK_MODE and START_FORWARD must fire BEFORE playerPos steps away
+    // from (0, 0, 0), and already carry the 90 deg heading toward leaderPos.
+    REQUIRE(emitted.size() == 2);
+    CHECK(emitted[0].opcode == static_cast<uint32_t>(wowee::game::Opcode::MSG_MOVE_SET_WALK_MODE));
+    CHECK(emitted[1].opcode == static_cast<uint32_t>(wowee::game::Opcode::MSG_MOVE_START_FORWARD));
+    CHECK(glm::length(emitted[1].pos) < 1e-5f);
+    CHECK(emitted[1].syncedYawDeg == Catch::Approx(90.0f).margin(1e-3f));
+    // Stepped at walk speed (2.5 yd/s * 0.05 s = 0.125 yd), not run speed (0.35 yd).
+    CHECK(playerPos.y == Catch::Approx(0.125f).margin(1e-3f));
+    CHECK(std::abs(playerPos.x) < 1e-4f);
+
+    // Move into the [2.65, 3.75] hysteresis band while actively following: must NOT stop.
+    emitted.clear();
+    playerPos = glm::vec3(0.0f, 1.9f, 0.0f);  // 3.1 yd from leaderPos (0, 5, 0)
+    controller.setGrounded(true);
+    input.update();
+    controller.update(0.05f);
+    CHECK(emitted.empty());
+    CHECK(controller.isMovingForward());
+
+    // Enter stop threshold (< 2.65 yd): emits MSG_MOVE_STOP at pre-step position.
+    playerPos = glm::vec3(0.0f, 2.5f, 0.0f);  // 2.5 yd from leaderPos
+    controller.setGrounded(true);
+    input.update();
+    controller.update(0.05f);
+    REQUIRE(emitted.size() == 1);
+    CHECK(emitted[0].opcode == static_cast<uint32_t>(wowee::game::Opcode::MSG_MOVE_STOP));
+    CHECK(emitted[0].pos.y == Catch::Approx(2.5f).margin(1e-4f));
+    CHECK_FALSE(controller.isMovingForward());
+
+    // While stationary inside resume band (< 3.75 yd), shifting leader laterally updates
+    // facingYaw toward leader without chattering START_FORWARD.
+    emitted.clear();
+    leaderPos = glm::vec3(3.2f, 2.5f, 0.0f);  // 3.2 yd along +X => 0 deg yaw
+    controller.setGrounded(true);
+    input.update();
+    controller.update(0.05f);
+    CHECK(emitted.empty());
+    CHECK_FALSE(controller.isMovingForward());
+    CHECK(controller.getFacingYaw() == Catch::Approx(0.0f).margin(1e-3f));
+
+    // Leader runs past 3.75 yd: restores MSG_MOVE_SET_RUN_MODE + MSG_MOVE_START_FORWARD at 7.0 yd/s.
+    leaderPos = glm::vec3(5.0f, 2.5f, 0.0f);  // 5.0 yd along +X
+    controller.setAutoFollowTargetMotion(true, false);
+    controller.setGrounded(true);
+    input.update();
+    controller.update(0.05f);
+    REQUIRE(emitted.size() == 2);
+    CHECK(emitted[0].opcode == static_cast<uint32_t>(wowee::game::Opcode::MSG_MOVE_SET_RUN_MODE));
+    CHECK(emitted[1].opcode == static_cast<uint32_t>(wowee::game::Opcode::MSG_MOVE_START_FORWARD));
+    CHECK(playerPos.x == Catch::Approx(0.35f).margin(1e-3f));
+}
+
+TEST_CASE_METHOD(Integration,
+                 "Third-person keyboard turn chord matches analytical circle and clears opposite turn flags",
+                 "[input][camera][movement]") {
+    auto& input = core::Input::getInstance();
+    rendering::Camera camera;
+    rendering::CameraController controller(&camera);
+    glm::vec3 playerPos(0.0f, 0.0f, 0.0f);
+    controller.setIdleOrbitEnabled(false);
+    controller.setFollowTarget(&playerPos);
+    controller.setUseWoWSpeed(true);
+    controller.setGravityDisabled(true);
+    controller.setFacingYaw(0.0f);
+
+    std::vector<uint32_t> opcodes;
+    controller.setMovementCallback([&](uint32_t op) { opcodes.push_back(op); });
+
+    // Hold W + A across variable-dt frames: position must lie on exact circle R = v / omega.
+    event(SDL_SCANCODE_W);
+    event(SDL_SCANCODE_A);
+    const float dts[] = {0.016f, 0.033f, 0.050f, 0.021f, 0.040f};
+    float totalDt = 0.0f;
+    for (float dt : dts) {
+        controller.setGrounded(true);
+        input.update();
+        controller.update(dt);
+        totalDt += dt;
+    }
+    const float omega = glm::radians(180.0f);
+    const float radius = 7.0f / omega;
+    const float theta = omega * totalDt;
+    CHECK(playerPos.x == Catch::Approx(radius * std::sin(theta)).margin(1e-4f));
+    CHECK(playerPos.y == Catch::Approx(radius * (1.0f - std::cos(theta))).margin(1e-4f));
+
+    // Same-frame switch from A (TURNLEFT released) to D (TURNRIGHT pressed) must emit
+    // MSG_MOVE_STOP_TURN BEFORE MSG_MOVE_START_TURN_RIGHT.
+    opcodes.clear();
+    manager.beginInputFrame();
+    event(SDL_SCANCODE_A, false);
+    event(SDL_SCANCODE_D, true);
+    input.update();
+    controller.update(0.016f);
+    REQUIRE(opcodes.size() == 2);
+    CHECK(opcodes[0] == static_cast<uint32_t>(wowee::game::Opcode::MSG_MOVE_STOP_TURN));
+    CHECK(opcodes[1] == static_cast<uint32_t>(wowee::game::Opcode::MSG_MOVE_START_TURN_RIGHT));
+
+    // Holding A and D simultaneously cancels turning and emits MSG_MOVE_STOP_TURN.
+    opcodes.clear();
+    manager.beginInputFrame();
+    event(SDL_SCANCODE_A, true);
+    input.update();
+    controller.update(0.016f);
+    REQUIRE(opcodes.size() == 1);
+    CHECK(opcodes[0] == static_cast<uint32_t>(wowee::game::Opcode::MSG_MOVE_STOP_TURN));
+    CHECK_FALSE(controller.isTurningLeft());
+    CHECK_FALSE(controller.isTurningRight());
+
+    event(SDL_SCANCODE_W, false);
+    event(SDL_SCANCODE_A, false);
+    event(SDL_SCANCODE_D, false);
+}

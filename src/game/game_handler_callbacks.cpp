@@ -1577,6 +1577,11 @@ uint32_t GameHandler::nextMovementTimestampMs() {
     return 0;
 }
 
+uint32_t GameHandler::currentMovementClockMs() const {
+    if (movementHandler_) return movementHandler_->currentMovementClockMs();
+    return 0;
+}
+
 void GameHandler::sendMovement(Opcode opcode) {
     if (movementHandler_) movementHandler_->sendMovement(opcode);
 }

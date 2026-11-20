@@ -903,16 +903,12 @@ void GameHandler::update(float deltaTime) {
         clearTarget();
     }
 
-    // Update auto-follow: refresh render position or cancel if entity disappeared
-    if (followTargetGuid_ != 0) {
-        auto followEnt = entityController_->getEntityManager().getEntity(followTargetGuid_);
-        if (followEnt) {
-            followRenderPos_ = core::coords::canonicalToRender(
-                glm::vec3(followEnt->getX(), followEnt->getY(), followEnt->getZ()));
-            if (movementHandler_) movementHandler_->updateFollowMovement(deltaTime);
-        } else {
-            cancelFollow();
-        }
+    // Validate followed target still exists if not in world; when in world,
+    // follow coordinates are refreshed after updateEntityInterpolation() so
+    // /follow steers toward this frame's live target position rather than last frame's.
+    if (state != WorldState::IN_WORLD && followTargetGuid_ != 0 &&
+        !entityController_->getEntityManager().hasEntity(followTargetGuid_)) {
+        cancelFollow();
     }
 
     // Entering and leaving combat is fired from the update block that carries
@@ -1078,6 +1074,23 @@ void GameHandler::update(float deltaTime) {
         closeDistantNpcWindows();
 
         updateEntityInterpolation(deltaTime);
+
+        if (followTargetGuid_ != 0) {
+            auto followEnt = entityController_->getEntityManager().getEntity(followTargetGuid_);
+            if (followEnt) {
+                followRenderPos_ = core::coords::canonicalToRender(
+                    glm::vec3(followEnt->getX(), followEnt->getY(), followEnt->getZ()));
+                const bool targetMoving = followEnt->isActivelyMoving();
+                const float walkRef = followEnt->groundWalkSpeed > 0.1f ? followEnt->groundWalkSpeed : 2.5f;
+                followTargetMoving_ = targetMoving;
+                followTargetWalking_ = targetMoving &&
+                    followEnt->getLocomotionSpeed() > 0.1f &&
+                    followEnt->getLocomotionSpeed() <= walkRef + 0.75f;
+                if (movementHandler_) movementHandler_->updateFollowMovement(deltaTime);
+            } else {
+                cancelFollow();
+            }
+        }
 
     }
 }

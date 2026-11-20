@@ -2762,6 +2762,7 @@ static int lua_GetLatestThreeSenders(lua_State* L) {
 
     const auto senders = gh->getLatestThreeMailSenders();
     const int count = static_cast<int>(std::min<size_t>(senders.size(), 3));
+    if (!lua_checkstack(L, count)) return 0;
     for (int i = 0; i < count; ++i) {
         lua_pushstring(L, senders[i].c_str());
     }

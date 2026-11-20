@@ -304,6 +304,17 @@ public:
     using MovementCallback = std::function<void(uint32_t opcode)>;
     void setMovementCallback(MovementCallback cb) { movementCallback = std::move(cb); }
 
+    // Pre-intent and post-intent facing sync callbacks so movementInfo carries
+    // this frame's authoritative heading before START_*/STOP_*/SET_FACING go out.
+    using PreIntentFacingSyncCallback = std::function<void(float facingYawDeg)>;
+    void setPreIntentFacingSyncCallback(PreIntentFacingSyncCallback cb) {
+        preIntentFacingSyncCallback_ = std::move(cb);
+    }
+    using PostIntentFacingSyncCallback = std::function<void(float deltaTime)>;
+    void setPostIntentFacingSyncCallback(PostIntentFacingSyncCallback cb) {
+        postIntentFacingSyncCallback_ = std::move(cb);
+    }
+
     // Callback invoked when the player stands up via local input (space/X/movement key
     // while server-sitting), so the caller can send CMSG_STAND_STATE_CHANGE(0).
     using StandUpCallback = std::function<void()>;
@@ -393,12 +404,20 @@ public:
 
     // Auto-follow: walk toward a target position each frame (WoW /follow).
     // The caller updates *targetPos every frame with the followed entity's render position.
-    // Stops within FOLLOW_STOP_DIST; cancels on manual WASD input.
+    // Uses stop/resume distance hysteresis; cancels on manual WASD input.
     void setAutoFollow(const glm::vec3* targetPos) {
         autoRunning = false;
         autoFollowTarget_ = targetPos;
+        autoFollowMoving_ = false;
     }
-    void cancelAutoFollow() { autoFollowTarget_ = nullptr; }
+    void cancelAutoFollow() {
+        autoFollowTarget_ = nullptr;
+        autoFollowMoving_ = false;
+        autoFollowTargetWalking_ = false;
+    }
+    void setAutoFollowTargetMotion(bool moving, bool walking) {
+        autoFollowTargetWalking_ = moving && walking;
+    }
     [[nodiscard]] bool isAutoFollowing() const { return autoFollowTarget_ != nullptr; }
 
     // Trigger mount jump (applies vertical velocity for physics hop)
@@ -872,9 +891,6 @@ private:
     /// The followed character's head bone in model Z, zero until measured or
     /// if its skeleton names no head.
     float followedHeadZ_ = 0.0f;
-    /// Whether the terrain is currently raising the pivot, so that starting
-    /// and stopping is said once each rather than every frame.
-    bool pivotLiftActive_ = false;
     static constexpr float CAM_SPHERE_RADIUS = 0.32f;  // Keep camera farther from geometry to avoid clipping-through surfaces
     static constexpr float CAM_EPSILON = 0.22f;        // Extra wall offset to avoid near-plane clipping artifacts
     static constexpr float COLLISION_FOCUS_RADIUS_THIRD_PERSON = 20.0f;  // Reduced for performance
@@ -888,10 +904,6 @@ private:
     float traceWmoHit_ = 0.0f;
     float traceM2Hit_ = 0.0f;
     float traceTerrainLimit_ = 0.0f;
-    /// The ground's own limit, smoothed before it is combined with the built
-    /// geometry's. A hillside's marched height moves a little with every step
-    /// the player takes, and passing that straight through is a shudder.
-    float smoothedTerrainDist_ = -1.0f;
     /// How far the camera is currently being lifted clear of, or dropped
     /// below, the water surface. Eased both ways so crossing the water's
     /// edge does not jump the view.
@@ -936,15 +948,6 @@ private:
     glm::vec3 lastCamFloorQueryPos = glm::vec3(0.0f);
     std::optional<float> cachedCamWmoFloor;
     bool hasCachedCamFloor = false;
-
-    // Terrain-aware camera pivot lift cache (throttled for performance).
-    glm::vec3 lastPivotLiftQueryPos_ = glm::vec3(0.0f);
-    float lastPivotLiftDistance_ = 0.0f;
-    int pivotLiftQueryCounter_ = 0;
-    float cachedPivotLift_ = 0.0f;
-    static constexpr int PIVOT_LIFT_QUERY_INTERVAL = 3;
-    static constexpr float PIVOT_LIFT_POS_THRESHOLD = 0.5f;
-    static constexpr float PIVOT_LIFT_DIST_THRESHOLD = 0.5f;
 
     // Cached floor height queries (update every 5 frames or 2 unit movement)
     glm::vec3 lastFloorQueryPos = glm::vec3(0.0f);
@@ -1015,8 +1018,11 @@ private:
 
     // Auto-follow target position (WoW /follow). Non-null when following.
     const glm::vec3* autoFollowTarget_ = nullptr;
-    static constexpr float FOLLOW_STOP_DIST = 3.0f;   // Stop within 3 units of target
-    static constexpr float FOLLOW_MAX_DIST  = 40.0f;  // Cancel if > 40 units away
+    bool autoFollowMoving_ = false;
+    bool autoFollowTargetWalking_ = false;
+    static constexpr float FOLLOW_STOP_DIST   = 2.65f;  // Stop within ~2.65 yd (matches 2.4.3 oracle)
+    static constexpr float FOLLOW_RESUME_DIST = 3.75f;  // Resume past ~3.75 yd (prevents start/stop chatter)
+    static constexpr float FOLLOW_MAX_DIST    = 40.0f;  // Cancel if > 40 units away
 
     // Movement state tracking (for sending opcodes on state change)
     bool wasMovingForward = false;
@@ -1055,6 +1061,8 @@ private:
 
     // Movement callback
     MovementCallback movementCallback;
+    PreIntentFacingSyncCallback preIntentFacingSyncCallback_;
+    PostIntentFacingSyncCallback postIntentFacingSyncCallback_;
     StandUpCallback standUpCallback_;
     SitDownCallback sitDownCallback_;
     AutoFollowCancelCallback autoFollowCancelCallback_;

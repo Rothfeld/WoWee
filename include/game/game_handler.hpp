@@ -1726,6 +1726,8 @@ public:
     // Auto-follow callback: pass render-space position pointer to start, nullptr to cancel.
     using AutoFollowCallback = std::function<void(const glm::vec3* renderPos)>;
     void setAutoFollowCallback(AutoFollowCallback cb) { autoFollowCallback_ = std::move(cb); }
+    [[nodiscard]] bool isFollowTargetMoving() const { return followTargetMoving_; }
+    [[nodiscard]] bool isFollowTargetWalking() const { return followTargetWalking_; }
 
     // Unstuck callback (resets player Z to floor height)
     using UnstuckCallback = std::function<void()>;
@@ -4120,6 +4122,8 @@ public:
     // ── Movement & Transport ─────────────────────────────────────────
     auto& followRenderPosRef() { return followRenderPos_; }
     auto& followTargetGuidRef() { return followTargetGuid_; }
+    auto& followTargetMovingRef() { return followTargetMoving_; }
+    auto& followTargetWalkingRef() { return followTargetWalking_; }
     auto& onTaxiFlightRef() { return onTaxiFlight_; }
     auto& taxiLandingCooldownRef() { return taxiLandingCooldown_; }
     auto& taxiMountActiveRef() { return taxiMountActive_; }
@@ -5005,6 +5009,8 @@ private:
     // ---- Follow state ----
     uint64_t followTargetGuid_ = 0;
     glm::vec3 followRenderPos_{0.0f};  // Render-space position of followed entity (updated each frame)
+    bool followTargetMoving_ = false;
+    bool followTargetWalking_ = false;
 
     // ---- AFK/DND status ----
     bool afkStatus_ = false;
@@ -5423,6 +5429,7 @@ private:
     uint32_t taxiRecoverMapId_ = 0;
     glm::vec3 taxiRecoverPos_{0.0f};
     uint32_t nextMovementTimestampMs();
+    [[nodiscard]] uint32_t currentMovementClockMs() const;
     void updateClientTaxi(float deltaTime);
 
     // Mail

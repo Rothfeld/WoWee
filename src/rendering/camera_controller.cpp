@@ -1006,7 +1006,6 @@ glm::vec3 CameraController::moveFollowedCharacter(float /*deltaTime*/, FrameInpu
             if (cachedInsideWMO != prevInside || cachedInsideInteriorWMO != prevInsideInterior) {
                 hasCachedFloor_ = false;
                 hasCachedCamFloor = false;
-                cachedPivotLift_ = 0.0f;
             }
         }
     }
@@ -1746,7 +1745,7 @@ void CameraController::groundFollowedCharacter(float deltaTime, FrameInput& f,
             // Sample the swept body's lower envelope. A nearby prop can touch
             // its beveled side without raising the sole to the prop's top.
             const auto offsets = movement::bodySupportPoints(collisionRadius_);
-            float m2ProbeZ = std::max(targetPos.z, lastGroundZ) + 6.0f;
+            float m2ProbeZ = std::max(targetPos.z, lastGroundZ) + stepUpBudget + 1.0f;
             for (const auto& o : offsets) {
                 float m2NormalZ = 1.0f;
                 auto m2H = m2Renderer->getFloorHeight(
@@ -2027,10 +2026,10 @@ void CameraController::groundFollowedCharacter(float deltaTime, FrameInput& f,
                 }
             }
             // Not while climbing in flight: a frame's climb at a high frame
-            // rate is less than the quarter yard this reaches down, so taking
+            // rate is less than the step budget this reaches down, so taking
             // off was pulled back to the ground every frame and never left it.
-            bool slopeGrace = (grounded && verticalVelocity > -1.0f &&
-                               dz >= -0.25f && dz <= stepUp * 1.5f) &&
+            bool slopeGrace = (grounded && verticalVelocity > -2.0f &&
+                               dz >= -stepUp && dz <= stepUp * 1.5f) &&
                               !(isFlightAirborne() && f.spaceHeld);
 
             if (dz >= -fallCatch && (nearGround || airFalling || slopeGrace)) {
@@ -2141,7 +2140,6 @@ void CameraController::updateOrbitCamera(float deltaTime, FrameInput& f,
     // Native 2.4.3 keeps the pivot at a constant height over the feet across
     // flat ground and slopes (no terrain pivot lift).
     float mountedOffset = mounted_ ? mountHeightOffset_ : 0.0f;
-    cachedPivotLift_ = 0.0f;
     glm::vec3 pivot = targetPos + glm::vec3(0.0f, 0.0f, followedPivotHeight() + mountedOffset);
     // Surface swimmers keep the eye above water; divers keep it below.
     // Apply the same half-space constraint before and after camera smoothing.
@@ -2210,7 +2208,6 @@ void CameraController::updateOrbitCamera(float deltaTime, FrameInput& f,
     } else {
         smoothedCollisionDist_ = -1.0f;   // Reset when no collision sources available
         collisionEaseTime_ = kCollisionEaseSeconds;
-        smoothedTerrainDist_ = -1.0f;
         floorContactPitch_.reset();
     }
 
@@ -2761,7 +2758,6 @@ void CameraController::update(float deltaTime) {
         // ground as it is at the landing.
         smoothedCollisionDist_ = -1.0f;
         collisionEaseTime_ = kCollisionEaseSeconds;
-        smoothedTerrainDist_ = -1.0f;
 
         return;
     }
@@ -2870,7 +2866,7 @@ void CameraController::update(float deltaTime) {
     // Helper: cancel auto-follow and notify game handler
     auto doCancelAutoFollow = [&]() {
         if (autoFollowTarget_) {
-            autoFollowTarget_ = nullptr;
+            cancelAutoFollow();
             if (autoFollowCancelCallback_) autoFollowCancelCallback_();
         }
     };
@@ -2887,37 +2883,52 @@ void CameraController::update(float deltaTime) {
         doCancelAutoFollow();
     }
 
-    // Auto-follow: face target and run toward them when within range
+    // Auto-follow: face target and move toward them with stop/resume hysteresis
     bool autoFollowMove = false;
+    float followDistSq2D = 0.0f;
     if (autoFollowTarget_ && followTarget && !movementRooted_ && !serverControlled_) {
-        glm::vec3 myPos = *followTarget;
-        glm::vec3 tgtPos = *autoFollowTarget_;
-        float dx = tgtPos.x - myPos.x;
-        float dy = tgtPos.y - myPos.y;
-        float distSq2D = dx * dx + dy * dy;
-
-        if (distSq2D > FOLLOW_MAX_DIST * FOLLOW_MAX_DIST) {
-            doCancelAutoFollow();
-        } else if (distSq2D > FOLLOW_STOP_DIST * FOLLOW_STOP_DIST) {
-            // Match forward = (cos(yaw), sin(yaw)) in render coordinates.
-            float targetYawRad = std::atan2(dy, dx);
-            float targetYawDeg = targetYawRad * 180.0f / core::coords::PI;
-            facingYaw = targetYawDeg;
-            yaw = targetYawDeg;
-            autoFollowMove = true;
-        }
-        // else: within stop distance, stay put
-
-        // Cancel on strafe/turn keys
         if (keyA || keyD || keyQ || keyE) {
             doCancelAutoFollow();
-            autoFollowMove = false;
+        } else {
+            const glm::vec3 myPos = *followTarget;
+            const glm::vec3 tgtPos = *autoFollowTarget_;
+            const float dx = tgtPos.x - myPos.x;
+            const float dy = tgtPos.y - myPos.y;
+            followDistSq2D = dx * dx + dy * dy;
+
+            if (followDistSq2D > FOLLOW_MAX_DIST * FOLLOW_MAX_DIST) {
+                doCancelAutoFollow();
+            } else {
+                const bool wasAutoFollowMoving = autoFollowMoving_;
+                const float threshold = wasAutoFollowMoving ? FOLLOW_STOP_DIST : FOLLOW_RESUME_DIST;
+                autoFollowMove = (followDistSq2D > threshold * threshold);
+                autoFollowMoving_ = autoFollowMove;
+                const float minFaceDist = autoFollowMove ? 0.25f : 1.35f;
+                if (followDistSq2D > minFaceDist * minFaceDist) {
+                    // Match forward = (cos(yaw), sin(yaw)) in render coordinates.
+                    const float targetYawRad = std::atan2(dy, dx);
+                    const float targetYawDeg = targetYawRad * 180.0f / core::coords::PI;
+                    if (!autoFollowMove || !wasAutoFollowMoving || deltaTime <= 0.0f) {
+                        facingYaw = targetYawDeg;
+                    } else {
+                        const float yawErr = std::remainder(targetYawDeg - facingYaw, 360.0f);
+                        const float maxStep = 360.0f * deltaTime;
+                        facingYaw += std::clamp(yawErr, -maxStep, maxStep);
+                    }
+                    if (!leftMouseDown && !rightMouseDown && deltaTime > 0.0f) {
+                        const float yawDiff = std::remainder(targetYawDeg - yaw, 360.0f);
+                        yaw += yawDiff * (1.0f - std::exp(-8.0f * deltaTime));
+                        camera->setRotation(yaw, pitch);
+                    }
+                }
+            }
         }
+    } else {
+        autoFollowMoving_ = false;
     }
 
     // When the server has rooted the player, suppress all horizontal movement input.
     const bool movBlocked = movementRooted_;
-    // Auto-follow uses run speed (same as auto-run), not walk speed
     bool nowForward = !movBlocked && (keyW || mouseAutorun || autoRunning || autoFollowMove);
     bool nowBackward = !movBlocked && keyS;
     bool nowStrafeLeft = false;
@@ -2939,23 +2950,25 @@ void CameraController::update(float deltaTime) {
         nowStrafeRight = !movBlocked && (keyD || keyE);
     }
 
-    // Keyboard turning updates camera yaw (character follows yaw in renderer).
-    // Use server turn rate (rad/s) when set; otherwise fall back to WOW_TURN_SPEED (deg/s).
-    const float activeTurnSpeedDeg = (turnRateOverride_ > 0.0f && turnRateOverride_ < 20.0f
-                                       && !std::isnan(turnRateOverride_))
-                                         ? glm::degrees(turnRateOverride_)
-                                         : WOW_TURN_SPEED;
-    // The character turns from its own facing and the camera turns with it.
-    // Facing and camera yaw differ after a server-set facing (teleport) or a
-    // camera orbit; copying the camera yaw snapped the character to it on
-    // the first turning frame.
-    const float turnDeltaDeg = (nowTurnLeft == nowTurnRight) ? 0.0f
-        : (nowTurnLeft ? activeTurnSpeedDeg : -activeTurnSpeedDeg) * deltaTime;
-    if (nowTurnLeft || nowTurnRight) {
-        yaw += turnDeltaDeg;
-        facingYaw += turnDeltaDeg;
-        camera->setRotation(yaw, pitch);
+    // Opposing movement/turn inputs cancel locally; clear both so wire flags
+    // never advertise conflicting bits (e.g. TURN_LEFT | TURN_RIGHT = 0x30).
+    if (nowForward && nowBackward) {
+        nowForward = false;
+        nowBackward = false;
     }
+    if (nowStrafeLeft && nowStrafeRight) {
+        nowStrafeLeft = false;
+        nowStrafeRight = false;
+    }
+    if (nowTurnLeft && nowTurnRight) {
+        nowTurnLeft = false;
+        nowTurnRight = false;
+    }
+
+    const bool followWalkMatch = (autoFollowTarget_ != nullptr) &&
+                                 autoFollowTargetWalking_ &&
+                                 (followDistSq2D < 6.0f * 6.0f);
+    const bool effectiveWalking = walking || followWalkMatch;
 
     // Tick down gravity suspension timer (used after world entry to prevent
     // falling through WMO floors before collision is loaded)
@@ -2983,7 +2996,7 @@ void CameraController::update(float deltaTime) {
             speed = (runBackSpeedOverride_ > 0.0f && runBackSpeedOverride_ < 100.0f
                      && !std::isnan(runBackSpeedOverride_))
                         ? runBackSpeedOverride_ : WOW_BACK_SPEED;
-        } else if (walking) {
+        } else if (effectiveWalking) {
             speed = (walkSpeedOverride_ > 0.0f && walkSpeedOverride_ < 100.0f && !std::isnan(walkSpeedOverride_))
                         ? walkSpeedOverride_ : WOW_WALK_SPEED;
         } else if (runSpeedOverride_ > 0.0f && runSpeedOverride_ < 100.0f && !std::isnan(runSpeedOverride_)) {
@@ -3006,33 +3019,143 @@ void CameraController::update(float deltaTime) {
     if (useWoWSpeed) {
         // "Sprinting" flag drives run animation/stronger footstep set.
         // In WoW mode this means running pace (not walk/backpedal), not Shift.
-        runPace = hasMoveInput && !walking && !nowBackward;
+        runPace = hasMoveInput && !effectiveWalking && !nowBackward;
     } else {
         runPace = hasMoveInput && shiftDown;
     }
     if (serverControlled_) runPace = serverDrivenRun_;
 
-    // Get camera axes - project forward onto XY plane for walking
-    glm::vec3 forward3D = camera->getForward();
     // Left-button orbit changes the view while movement retains character
     // facing. Right-button/touch steering owns facing on land and in water.
-    // steering_ is the touch controls saying a finger is dragging the view.
-    // On a phone that is what the right mouse button is on a desktop: the
-    // character turns to face where the player is looking, so that walking
-    // forward goes where the screen points.
-    // A chair owns body orientation. Mouse/touch orbit may move the camera,
-    // but must not replace the server's seat heading or send a new facing.
-    // Only once the mouse has actually turned the view during this hold; see
-    // CameraController::cameraDrivesFacing.
-    // The server's spline owns the facing while it holds the character; the
-    // mouse still orbits the camera.
     bool cameraDrivesFacing = !serverControlled_ && CameraController::cameraDrivesFacing(
         rightMouseDown, rotateArmed_, mouseAutorun, steering_, seatedInChair_);
     // During taxi flights, orientation is controlled by the flight path, not player input
     if (cameraDrivesFacing && !externalFollow_) {
         facingYaw = yaw;
     }
-    float moveYaw = cameraDrivesFacing ? yaw : facingYaw;
+    const float preTurnFacingYaw = facingYaw;
+
+    // Retain short taps/wheel pulses for sitting; diving still needs held input.
+    bool prevSitting = sitting;
+    bool xDown = !serverControlled_ && bindings.isCommandDown("SITORSTAND");
+    if (!serverControlled_ && bindings.isCommandPressed("SITORSTAND") && !mounted_ && !swimming) {
+        sitting = !sitting;
+    }
+    if (mounted_) sitting = false;
+
+    // Stand up on any movement input or jump while sitting (WoW behaviour)
+    if (sitting && !movementSuppressed) {
+        const bool anyMoveKey = bindings.isCommandDown("MOVEFORWARD") ||
+            bindings.isCommandDown("MOVEBACKWARD") || bindings.isCommandDown("TURNLEFT") ||
+            bindings.isCommandDown("TURNRIGHT") || bindings.isCommandDown("STRAFELEFT") ||
+            bindings.isCommandDown("STRAFERIGHT") || bindings.isCommandDown("JUMP");
+        const bool mouseWalk = leftMouseDown && rightMouseDown;
+        if (anyMoveKey || mouseWalk) sitting = false;
+    }
+
+    // Notify server when the player stands up via local input
+    if (prevSitting && !sitting && standUpCallback_) {
+        standUpCallback_();
+    }
+
+    // Notify server when the player sits down via local input
+    if (!prevSitting && sitting && sitDownCallback_) {
+        sitDownCallback_();
+    }
+
+    // Sync pre-step facing and emit ground-intent movement packets BEFORE
+    // stepping physics across [T_{k-1}, T_k] so every START_*/STOP_*/SET_FACING
+    // packet carries the exact position and heading at the start of the step.
+    if (thirdPerson && followTarget && preIntentFacingSyncCallback_ &&
+        !externalFollow_ && !serverControlled_) {
+        preIntentFacingSyncCallback_(preTurnFacingYaw);
+    }
+
+    if (movementCallback) {
+        // Walk/run mode goes out when it changes, moving or not (native
+        // MSG_MOVE_SET_WALK_MODE 0x100 / MSG_MOVE_SET_RUN_MODE), before a
+        // start in the same frame so that start already carries it.
+        if (effectiveWalking != sentWalking_) {
+            sentWalking_ = effectiveWalking;
+            movementCallback(static_cast<uint32_t>(effectiveWalking ? game::Opcode::MSG_MOVE_SET_WALK_MODE
+                                                                    : game::Opcode::MSG_MOVE_SET_RUN_MODE));
+        }
+
+        // Forward/backward: clear a released direction before starting the opposite.
+        const bool releasedMove = (!nowForward && wasMovingForward) ||
+                                  (!nowBackward && wasMovingBackward);
+        if (releasedMove) {
+            movementCallback(static_cast<uint32_t>(game::Opcode::MSG_MOVE_STOP));
+        }
+        if (nowForward && (!wasMovingForward || releasedMove)) {
+            movementCallback(static_cast<uint32_t>(game::Opcode::MSG_MOVE_START_FORWARD));
+        }
+        if (nowBackward && (!wasMovingBackward || releasedMove)) {
+            movementCallback(static_cast<uint32_t>(game::Opcode::MSG_MOVE_START_BACKWARD));
+        }
+
+        // STOP_STRAFE clears both wire flags. Clear released directions first,
+        // then restore any held direction, including a direct left/right switch.
+        const bool releasedStrafe = (!nowStrafeLeft && wasStrafingLeft) ||
+                                    (!nowStrafeRight && wasStrafingRight);
+        if (releasedStrafe) {
+            movementCallback(static_cast<uint32_t>(game::Opcode::MSG_MOVE_STOP_STRAFE));
+        }
+        if (nowStrafeLeft && (!wasStrafingLeft || releasedStrafe)) {
+            movementCallback(static_cast<uint32_t>(game::Opcode::MSG_MOVE_START_STRAFE_LEFT));
+        }
+        if (nowStrafeRight && (!wasStrafingRight || releasedStrafe)) {
+            movementCallback(static_cast<uint32_t>(game::Opcode::MSG_MOVE_START_STRAFE_RIGHT));
+        }
+
+        // Turning: STOP_TURN clears both turn flags, preventing same-frame
+        // A->D or D->A switches from leaving TURN_LEFT | TURN_RIGHT (0x30) set.
+        const bool releasedTurn = (!nowTurnLeft && wasTurningLeft) ||
+                                  (!nowTurnRight && wasTurningRight);
+        if (releasedTurn) {
+            movementCallback(static_cast<uint32_t>(game::Opcode::MSG_MOVE_STOP_TURN));
+        }
+        if (nowTurnLeft && (!wasTurningLeft || releasedTurn)) {
+            movementCallback(static_cast<uint32_t>(game::Opcode::MSG_MOVE_START_TURN_LEFT));
+        }
+        if (nowTurnRight && (!wasTurningRight || releasedTurn)) {
+            movementCallback(static_cast<uint32_t>(game::Opcode::MSG_MOVE_START_TURN_RIGHT));
+        }
+    }
+
+    if (thirdPerson && followTarget && postIntentFacingSyncCallback_ &&
+        !externalFollow_ && !serverControlled_) {
+        postIntentFacingSyncCallback_(deltaTime);
+    }
+
+    // Keyboard turning updates camera yaw (character follows yaw in renderer).
+    // Use server turn rate (rad/s) when set; otherwise fall back to WOW_TURN_SPEED (deg/s).
+    const float activeTurnSpeedDeg = (turnRateOverride_ > 0.0f && turnRateOverride_ < 20.0f
+                                       && !std::isnan(turnRateOverride_))
+                                         ? glm::degrees(turnRateOverride_)
+                                         : WOW_TURN_SPEED;
+    // The character turns from its own facing and the camera turns with it.
+    const float turnDeltaDeg = (nowTurnLeft == nowTurnRight) ? 0.0f
+        : (nowTurnLeft ? activeTurnSpeedDeg : -activeTurnSpeedDeg) * deltaTime;
+    if (nowTurnLeft != nowTurnRight) {
+        yaw += turnDeltaDeg;
+        facingYaw = preTurnFacingYaw + turnDeltaDeg;
+        camera->setRotation(yaw, pitch);
+    }
+
+    // Get camera axes after rotation updates - project forward onto XY plane for walking
+    glm::vec3 forward3D = camera->getForward();
+    // Integrate turned ground motion along the mid-arc chord of the circular trajectory
+    // (radius v / omega) so local integration matches CMaNGOS / 2.4.3 dead-reckoning
+    // identically across arbitrary frame rates.
+    float moveYaw = cameraDrivesFacing ? yaw : (preTurnFacingYaw + 0.5f * turnDeltaDeg);
+    float turnChordScale = 1.0f;
+    if ((nowTurnLeft != nowTurnRight) && !cameraDrivesFacing) {
+        const float halfTurnRad = 0.5f * glm::radians(turnDeltaDeg);
+        if (std::abs(halfTurnRad) > 1e-5f) {
+            turnChordScale = std::sin(halfTurnRad) / halfTurnRad;
+        }
+    }
     if (intoxication_ > 0.34f) {
         // Drunk and smashed characters weave while trying to walk. Keep facing
         // authoritative; only the travel direction stumbles side to side.
@@ -3042,11 +3165,7 @@ void CameraController::update(float deltaTime) {
     glm::vec3 forward(std::cos(moveYawRad), std::sin(moveYawRad), 0.0f);
     glm::vec3 right(-std::sin(moveYawRad), std::cos(moveYawRad), 0.0f);
 
-    // Flight goes where the mount faces, not where the camera looks. Orbiting
-    // the camera with the left button is looking around, and it took the
-    // flight direction with it: W flew toward the camera's view, whatever the
-    // mount was pointing at. The pitch follows the camera only while the
-    // camera steers, as the facing does, and holds otherwise.
+    // Flight goes where the mount faces, not where the camera looks.
     if (cameraDrivesFacing && !externalFollow_) {
         const float len = glm::length(forward3D);
         if (len > 1e-4f) {
@@ -3069,43 +3188,6 @@ void CameraController::update(float deltaTime) {
                                   std::sin(moveYawRad) * std::cos(flightPitchRad),
                                   std::sin(flightPitchRad));
 
-    // Retain short taps/wheel pulses for sitting; diving still needs held input.
-    bool prevSitting = sitting;
-    bool xDown = !serverControlled_ && bindings.isCommandDown("SITORSTAND");
-    if (!serverControlled_ && bindings.isCommandPressed("SITORSTAND") && !mounted_ && !swimming) {
-        sitting = !sitting;
-    }
-    if (mounted_) sitting = false;
-
-    // Stand up on any movement input or jump while sitting (WoW behaviour)
-    //
-    // Both mouse buttons is a way of walking forward, and it was missing from
-    // this list while every key that does the same was on it. Sitting gates
-    // the autorun it produces, so the two together meant that after eating
-    // there was no way to move with the mouse at all: the input that would
-    // have stood the character up was the one input that could not.
-    if (sitting && !movementSuppressed) {
-        const bool anyMoveKey = bindings.isCommandDown("MOVEFORWARD") ||
-            bindings.isCommandDown("MOVEBACKWARD") || bindings.isCommandDown("TURNLEFT") ||
-            bindings.isCommandDown("TURNRIGHT") || bindings.isCommandDown("STRAFELEFT") ||
-            bindings.isCommandDown("STRAFERIGHT") || bindings.isCommandDown("JUMP");
-        // Not gated on uiWantsKeyboard, which is a different question, and not
-        // on the interface wanting the mouse either: both flags are already
-        // cleared at the press when it did.
-        const bool mouseWalk = leftMouseDown && rightMouseDown;
-        if (anyMoveKey || mouseWalk) sitting = false;
-    }
-
-    // Notify server when the player stands up via local input
-    if (prevSitting && !sitting && standUpCallback_) {
-        standUpCallback_();
-    }
-
-    // Notify server when the player sits down via local input
-    if (!prevSitting && sitting && sitDownCallback_) {
-        sitDownCallback_();
-    }
-
     // Update eye height based on crouch state (smooth transition)
     float targetEyeHeight = sitting ? CROUCH_EYE_HEIGHT : STAND_EYE_HEIGHT;
     float heightLerpSpeed = 10.0f * deltaTime;
@@ -3124,7 +3206,7 @@ void CameraController::update(float deltaTime) {
     f.physicsDeltaTime = physicsDeltaTime;
     f.gravity = gravity;
     f.jumpVel = jumpVel;
-    f.speed = speed;
+    f.speed = speed * turnChordScale;
     groundLocomotionSpeed_ = glm::dot(movement, movement) > 0.0001f ? speed : 0.0f;
     f.forward = forward;
     f.right = right;
@@ -3170,56 +3252,8 @@ void CameraController::update(float deltaTime) {
         legsFollowTravel_ = false;
     }
 
-    // --- Edge-detection: send movement opcodes on state transitions ---
+    // --- Post-physics transitions: jump takeoff, landing, swim, flight vertical ---
     if (movementCallback) {
-        // Walk/run mode goes out when it changes, moving or not (native
-        // MSG_MOVE_SET_WALK_MODE 0x100 / MSG_MOVE_SET_RUN_MODE), before a
-        // start in the same frame so that start already carries it.
-        if (walking != sentWalking_) {
-            sentWalking_ = walking;
-            movementCallback(static_cast<uint32_t>(walking ? game::Opcode::MSG_MOVE_SET_WALK_MODE
-                                                           : game::Opcode::MSG_MOVE_SET_RUN_MODE));
-        }
-        // Forward/backward
-        if (nowForward && !wasMovingForward) {
-            movementCallback(static_cast<uint32_t>(game::Opcode::MSG_MOVE_START_FORWARD));
-        }
-        if (nowBackward && !wasMovingBackward) {
-            movementCallback(static_cast<uint32_t>(game::Opcode::MSG_MOVE_START_BACKWARD));
-        }
-        if ((!nowForward && wasMovingForward) || (!nowBackward && wasMovingBackward)) {
-            if (!nowForward && !nowBackward) {
-                movementCallback(static_cast<uint32_t>(game::Opcode::MSG_MOVE_STOP));
-            }
-        }
-
-        // STOP_STRAFE clears both wire flags. Clear released directions first,
-        // then restore any held direction, including a direct left/right switch.
-        const bool releasedStrafe = (!nowStrafeLeft && wasStrafingLeft) ||
-                                    (!nowStrafeRight && wasStrafingRight);
-        if (releasedStrafe) {
-            movementCallback(static_cast<uint32_t>(game::Opcode::MSG_MOVE_STOP_STRAFE));
-        }
-        if (nowStrafeLeft && (!wasStrafingLeft || releasedStrafe)) {
-            movementCallback(static_cast<uint32_t>(game::Opcode::MSG_MOVE_START_STRAFE_LEFT));
-        }
-        if (nowStrafeRight && (!wasStrafingRight || releasedStrafe)) {
-            movementCallback(static_cast<uint32_t>(game::Opcode::MSG_MOVE_START_STRAFE_RIGHT));
-        }
-
-        // Turning
-        if (nowTurnLeft && !wasTurningLeft) {
-            movementCallback(static_cast<uint32_t>(game::Opcode::MSG_MOVE_START_TURN_LEFT));
-        }
-        if (nowTurnRight && !wasTurningRight) {
-            movementCallback(static_cast<uint32_t>(game::Opcode::MSG_MOVE_START_TURN_RIGHT));
-        }
-        if ((!nowTurnLeft && wasTurningLeft) || (!nowTurnRight && wasTurningRight)) {
-            if (!nowTurnLeft && !nowTurnRight) {
-                movementCallback(static_cast<uint32_t>(game::Opcode::MSG_MOVE_STOP_TURN));
-            }
-        }
-
         // Physics has already cleared grounded. Report its successful takeoff
         // event, including buffered jumps, rather than rechecking input/ground.
         if (f.startedJump) {
@@ -3228,16 +3262,6 @@ void CameraController::update(float deltaTime) {
         }
 
         // Fall landing, for a fall that actually happened.
-        //
-        // A bump at riding speed breaks ground contact for a frame, and the
-        // frame after it this read as a landing: the packet went out, and
-        // every client in range played the landing animation on the mount.
-        // Crossing open ground did that several times a second, which is what
-        // other players see as a mount behaving erratically.
-        //
-        // Long enough to be a fall rather than a step. Well under the shortest
-        // real drop - a jump is airborne for about a second - so nothing a
-        // player would call a fall is lost.
         constexpr float kFallReportSeconds = 0.15f;
         if (grounded && (jumpReported_ ||
                 (wasFalling && airborneSeconds_ >= kFallReportSeconds))) {

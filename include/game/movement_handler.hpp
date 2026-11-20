@@ -41,6 +41,8 @@ public:
     void dismount();
 
     // Follow target (moved from GameHandler)
+    static constexpr float kFollowStopDistance = 2.65f;
+    static constexpr float kFollowResumeDistance = 3.75f;
     void followTarget(uint64_t guid = 0);
     void cancelFollow();
     // Per-frame movement toward the followed target's live position, called
@@ -182,6 +184,7 @@ public:
     // its final waypoint. Only treat those signals as authoritative near arrival.
     [[nodiscard]] bool isNearTaxiDestination(float maxDistance = 24.0f) const;
     uint32_t nextMovementTimestampMs();
+    [[nodiscard]] uint32_t currentMovementClockMs() const { return movementClockNowMs(); }
     void sanitizeMovementForTaxi();
 
     // Heartbeat / movement timing (for GameHandler::update())
@@ -407,8 +410,14 @@ private:
     float serverPitchRate_ = core::coords::PI;
 
     // Other-player movement smoothing
+    struct RemotePlayerGroundSample {
+        uint32_t timeMs = 0;
+        uint32_t flags = 0;
+        glm::vec3 canonicalPos{0.0f};
+    };
     std::unordered_map<uint64_t, uint32_t> otherPlayerMoveTimeMs_;
     std::unordered_map<uint64_t, float>    otherPlayerSmoothedIntervalMs_;
+    std::unordered_map<uint64_t, RemotePlayerGroundSample> otherPlayerGroundSamples_;
 
     // --- Taxi / Flight Path state ---
     std::unordered_map<uint64_t, bool> taxiNpcHasRoutes_;
