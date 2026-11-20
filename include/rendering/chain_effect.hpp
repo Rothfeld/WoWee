@@ -178,4 +178,34 @@ inline CastBeamTiming castBeamTiming(uint32_t segDurationMs, uint32_t segDelayMs
     return {.delay = delay, .duration = duration};
 }
 
+/// Segment count for a chain beam `length` yards long with DBC AvgSegLen.
+/// At least 2 segments (3 spine vertices) so interior width and endpoint
+/// tapers always exist even when length <= avgSegLen (e.g. melee-range casts
+/// or Eye Beam's AvgSegLen 100).
+inline int chainSegmentCount(float length, float avgSegLen) {
+    assert(length > 0.0f);
+    return std::max(2, static_cast<int>(std::ceil(length / std::max(avgSegLen, 0.05f))));
+}
+
+/// Width scale (0..1) at vertex `index` of a chain beam with `vertexCount`
+/// spine vertices. Native build 8606 pinches both endpoints (index 0 and
+/// vertexCount - 1) to a point so the first and last segments taper linearly
+/// between 0 and full width across one segment (measured on Chain Lightning
+/// row 1 at 7 yd / 16 yd / bounce, Chain Heal row 2, Hydross Blue Beam row 17,
+/// Sinister Beam row 173, and Discombobulate row 157 AvgSegLen 0.1).
+/// A 2-vertex strip keeps full width so it never collapses to zero area.
+inline float chainEndTaper(size_t index, size_t vertexCount) {
+    assert(index < vertexCount);
+    if (vertexCount < 3) return 1.0f;
+    return (index == 0 || index + 1 == vertexCount) ? 0.0f : 1.0f;
+}
+
+/// Cross-beam texture coordinate v at vertex `index` (edge 0 or 1). Tapered
+/// tip vertices collapse to v = 0.5 (beam centreline) so the bright core meets
+/// the point symmetrically and the diagonal edges sample from 0.5 toward 0 / 1.
+inline float chainEndTexV(size_t index, size_t vertexCount, int edge) {
+    assert(edge == 0 || edge == 1);
+    return chainEndTaper(index, vertexCount) == 0.0f ? 0.5f : static_cast<float>(edge);
+}
+
 }  // namespace wowee::rendering

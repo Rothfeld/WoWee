@@ -1,3 +1,4 @@
+#include "rendering/chain_effect.hpp"
 #include "rendering/particle_emission.hpp"
 #include "rendering/m2_renderer.hpp"
 #include <unordered_set>
@@ -729,14 +730,15 @@ void M2Renderer::renderM2Ribbons(VkCommandBuffer cmd, VkDescriptorSet perFrameSe
             glm::vec3 side = upWorld;
             const glm::vec3 cross = glm::cross(dir, camPos - p);
             if (glm::length(cross) > 1e-6f) side = glm::normalize(cross);
+            const float halfWidth = strip.halfWidth * chainEndTaper(i, strip.spine.size());
             for (int edge = 0; edge < 2; ++edge) {
-                const glm::vec3 v = p + side * (edge == 0 ? strip.halfWidth : -strip.halfWidth);
+                const glm::vec3 v = p + side * (edge == 0 ? halfWidth : -halfWidth);
                 float* out = dst + written * 9;
                 out[0] = v.x; out[1] = v.y; out[2] = v.z;
                 out[3] = strip.color.r; out[4] = strip.color.g; out[5] = strip.color.b;
                 out[6] = strip.alpha * (strip.fade.empty() ? 1.0f : strip.fade[i]);
                 out[7] = strip.u[i];
-                out[8] = static_cast<float>(edge);
+                out[8] = chainEndTexV(i, strip.spine.size(), edge);
                 ++written;
             }
         }

@@ -11,9 +11,12 @@
 using wowee::rendering::CastBeamTiming;
 using wowee::rendering::castBeamTiming;
 using wowee::rendering::chainComboStrands;
+using wowee::rendering::chainEndTaper;
+using wowee::rendering::chainEndTexV;
 using wowee::rendering::chainNoiseRadius;
 using wowee::rendering::chainNoiseStep;
 using wowee::rendering::chainPulse;
+using wowee::rendering::chainSegmentCount;
 using wowee::rendering::chainTexCoord;
 using wowee::rendering::ChainJoints;
 using wowee::rendering::chainJointOffsetAt;
@@ -217,4 +220,40 @@ TEST_CASE("Shipped TBC SpellChainEffects.dbc carries Chain Heal 2000 ms / 200 ms
     const auto [spDur, spDel] = findRow(220); // Spite
     CHECK(spDur == 6499);
     CHECK(spDel == 300);
+}
+
+TEST_CASE("Chain beam endpoints taper to a point over the first and last segment with centred V", "[chain]") {
+    // Chain Lightning (AvgSegLen 2.78): 7.5 yd -> 3 segments (4 vertices), 16 yd -> 6 segments (7 vertices).
+    CHECK(chainSegmentCount(7.5f, 2.78f) == 3);
+    CHECK(chainSegmentCount(16.0f, 2.78f) == 6);
+    // Discombobulate (AvgSegLen 0.1): 10 yd -> 100 segments.
+    CHECK(chainSegmentCount(10.0f, 0.1f) == 100);
+    // Short melee cast or Eye Beam (AvgSegLen 100): at least 2 segments (3 vertices) so interior width exists.
+    CHECK(chainSegmentCount(2.0f, 2.78f) == 2);
+    CHECK(chainSegmentCount(20.0f, 100.0f) == 2);
+
+    // 4-vertex strip (3 segments): pinched to 0 at both ends, full width inside.
+    CHECK(chainEndTaper(0, 4) == 0.0f);
+    CHECK(chainEndTaper(1, 4) == 1.0f);
+    CHECK(chainEndTaper(2, 4) == 1.0f);
+    CHECK(chainEndTaper(3, 4) == 0.0f);
+
+    // 3-vertex strip (minimum 2 segments): midpoint keeps full width.
+    CHECK(chainEndTaper(0, 3) == 0.0f);
+    CHECK(chainEndTaper(1, 3) == 1.0f);
+    CHECK(chainEndTaper(2, 3) == 0.0f);
+
+    // Tapered tips sample texture centreline v = 0.5; interior vertices keep edge 0 / 1.
+    CHECK(chainEndTexV(0, 4, 0) == 0.5f);
+    CHECK(chainEndTexV(0, 4, 1) == 0.5f);
+    CHECK(chainEndTexV(1, 4, 0) == 0.0f);
+    CHECK(chainEndTexV(1, 4, 1) == 1.0f);
+    CHECK(chainEndTexV(3, 4, 0) == 0.5f);
+    CHECK(chainEndTexV(3, 4, 1) == 0.5f);
+
+    // Degenerate 2-vertex strip does not collapse to zero area.
+    CHECK(chainEndTaper(0, 2) == 1.0f);
+    CHECK(chainEndTaper(1, 2) == 1.0f);
+    CHECK(chainEndTexV(0, 2, 0) == 0.0f);
+    CHECK(chainEndTexV(1, 2, 1) == 1.0f);
 }

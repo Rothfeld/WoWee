@@ -1049,7 +1049,7 @@ void SpellVisualSystem::appendBeamStrip(std::vector<M2Renderer::ChainStrip>& str
                             " is not drawn (only 2, 3 and 4 are implemented)");
             continue;
         }
-        const int segments = std::max(1, static_cast<int>(std::ceil(length / std::max(effect.avgSegLen, 0.05f))));
+        const int segments = chainSegmentCount(length, effect.avgSegLen);
         auto drawNoise = [&](std::vector<glm::vec2>& out) {
             // Uniform in the disc across the beam; the ends stay on their units.
             std::uniform_real_distribution<float> unit(0.0f, 1.0f);
