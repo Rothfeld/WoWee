@@ -3,9 +3,13 @@
 #include <catch_amalgamated.hpp>
 
 #include "rendering/chain_effect.hpp"
+#include "tbc_data_test_util.hpp"
 
 #include <cmath>
+#include <cstring>
 
+using wowee::rendering::CastBeamTiming;
+using wowee::rendering::castBeamTiming;
 using wowee::rendering::chainComboStrands;
 using wowee::rendering::chainNoiseRadius;
 using wowee::rendering::chainNoiseStep;
@@ -144,4 +148,73 @@ TEST_CASE("A new segment count keeps the beam's bends where they were", "[chain]
     CHECK(more[4] == Catch::Approx(1.0f));
     CHECK(more[2] == Catch::Approx(0.5f));
     CHECK(chainResample(offsets, 5) == offsets);
+}
+
+TEST_CASE("CastKit beam timing uses SpellChainEffects SegDuration and SegDelay", "[chain]") {
+    // Chain Heal (row 2): SegDuration 2000 ms, SegDelay 200 ms.
+    const auto ch0 = castBeamTiming(2000, 200, 1.0f, 0, true);
+    CHECK(ch0.delay == Catch::Approx(0.2f));
+    CHECK(ch0.duration == Catch::Approx(2.0f));
+    const auto ch1 = castBeamTiming(2000, 200, 1.0f, 1, true);
+    CHECK(ch1.delay == Catch::Approx(0.4f));
+    CHECK(ch1.duration == Catch::Approx(2.0f));
+
+    // Chain Lightning (row 1): SegDuration 1000 ms, SegDelay 300 ms.
+    const auto cl0 = castBeamTiming(1000, 300, 1.0f, 0, true);
+    CHECK(cl0.delay == Catch::Approx(0.3f));
+    CHECK(cl0.duration == Catch::Approx(1.0f));
+
+    // Forked Lightning (row 95): SegDuration 1000 ms, SegDelay 0 ms, fan-out (not chained).
+    const auto fl = castBeamTiming(1000, 0, 1.0f, 2, false);
+    CHECK(fl.delay == Catch::Approx(0.0f));
+    CHECK(fl.duration == Catch::Approx(1.0f));
+
+    // When SegDuration is 0, fall back to the kit model/spell duration.
+    const auto fb = castBeamTiming(0, 0, 1.5f, 0, false);
+    CHECK(fb.delay == Catch::Approx(0.0f));
+    CHECK(fb.duration == Catch::Approx(1.5f));
+}
+
+TEST_CASE("Shipped TBC SpellChainEffects.dbc carries Chain Heal 2000 ms / 200 ms and Chain Lightning 1000 ms / 300 ms",
+          "[chain][tbc]") {
+    const auto bytes = wowee::test::readTbcData("dbfilesclient/spellchaineffects.dbc");
+    REQUIRE(bytes.size() >= 20);
+    uint32_t nrec = 0, nfields = 0, recSize = 0;
+    std::memcpy(&nrec, bytes.data() + 4, 4);
+    std::memcpy(&nfields, bytes.data() + 8, 4);
+    std::memcpy(&recSize, bytes.data() + 12, 4);
+    REQUIRE(recSize == 173);
+    REQUIRE(20 + static_cast<size_t>(nrec) * recSize <= bytes.size());
+
+    auto findRow = [&](uint32_t targetId) -> std::pair<uint32_t, uint32_t> {
+        for (uint32_t i = 0; i < nrec; ++i) {
+            const uint8_t* r = bytes.data() + 20 + static_cast<size_t>(i) * recSize;
+            uint32_t id = 0;
+            std::memcpy(&id, r, 4);
+            if (id == targetId) {
+                uint32_t segDur = 0, segDel = 0;
+                std::memcpy(&segDur, r + 5 * 4, 4);
+                std::memcpy(&segDel, r + 6 * 4, 4);
+                return {segDur, segDel};
+            }
+        }
+        FAIL("SpellChainEffects row not found: " << targetId);
+        return {0, 0};
+    };
+
+    const auto [clDur, clDel] = findRow(1);   // Chain Lightning
+    CHECK(clDur == 1000);
+    CHECK(clDel == 300);
+
+    const auto [chDur, chDel] = findRow(2);   // Chain Heal
+    CHECK(chDur == 2000);
+    CHECK(chDel == 200);
+
+    const auto [flDur, flDel] = findRow(95);  // Forked Lightning
+    CHECK(flDur == 1000);
+    CHECK(flDel == 0);
+
+    const auto [spDur, spDel] = findRow(220); // Spite
+    CHECK(spDur == 6499);
+    CHECK(spDel == 300);
 }

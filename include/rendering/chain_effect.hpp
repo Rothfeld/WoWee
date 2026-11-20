@@ -151,4 +151,31 @@ std::vector<T> chainResample(const std::vector<T>& offsets, size_t count) {
     return out;
 }
 
+/// CastKit chain beam segment timing (seconds after SMSG_SPELL_GO).
+struct CastBeamTiming {
+    float delay = 0.0f;     // seconds before this segment lights
+    float duration = 0.0f;  // seconds this segment stays lit
+};
+
+/// Timing of a CastKit chain beam segment `hopIndex` (0-based) from
+/// SpellChainEffects.dbc SegDuration (field 5, ms) and SegDelay (field 6, ms).
+///
+/// Measured against build 8606:
+/// - Chain Heal (chain 2: SegDuration 2000 ms, SegDelay 200 ms): lights 0.20 s
+///   after SMSG_SPELL_GO and stays lit 2.00 s (single-target and multi-target).
+/// - Chain Lightning (chain 1: 1000 ms, 300 ms): lights 0.30 s after SPELL_GO.
+/// - Forked Lightning (chain 95: 1000 ms, 0 ms): lights immediately for 1.00 s.
+/// - Spite (chain 220: 6499 ms, 300 ms): lasts 6.5 s.
+/// When SegDuration is 0, falls back to the kit's model/spell duration.
+inline CastBeamTiming castBeamTiming(uint32_t segDurationMs, uint32_t segDelayMs,
+                                     float fallbackSeconds, size_t hopIndex = 0,
+                                     bool chained = false) {
+    const float duration = segDurationMs > 0
+        ? static_cast<float>(segDurationMs) / 1000.0f
+        : std::max(0.0f, fallbackSeconds);
+    const float delaySec = static_cast<float>(segDelayMs) / 1000.0f;
+    const float delay = chained ? delaySec * static_cast<float>(hopIndex + 1) : delaySec;
+    return {.delay = delay, .duration = duration};
+}
+
 }  // namespace wowee::rendering

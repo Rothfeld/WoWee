@@ -1,5 +1,6 @@
 #include <catch_amalgamated.hpp>
 #include "pipeline/m2_loader.hpp"
+#include "tbc_data_test_util.hpp"
 #include <cstring>
 #include <vector>
 #include "rendering/m2_track_sampler.hpp"
@@ -474,19 +475,51 @@ TEST_CASE("Pinned particle tails end at the birth point", "[m2][particle]") {
     const glm::vec3 drop = particleTailVector(0x429, glm::vec3(0, 4.44f, 0), 0.1f, glm::vec3(0, -3.0f, 0));
     CHECK(drop.y == Catch::Approx(-0.444f));
     // Purge_Impact_Chest #1 (0x19, non-pinned): speed 0.556, drag 30, tailLength 4.75 s.
-    // A newborn particle cannot trail behind its birth time; drag + age clamp keep tails short.
-    for (float age : {0.002f, 0.01f, 0.033f, 0.1f, 0.25f}) {
+    // Drag-integrated tail span (1 - exp(-30*4.75))/30 = 0.0333 s keeps newborn tails tiny (< 0.02 yd).
+    for (float age : {0.0f, 0.002f, 0.01f, 0.033f, 0.1f, 0.25f}) {
         const float v = 0.556f * std::exp(-30.0f * age);
         const float dist = 0.556f * particleDragTravel(30.0f, age);
         const glm::vec3 t = particleTailVector(0x19, glm::vec3(v, 0.0f, 0.0f), 4.75f,
-                                               glm::vec3(-dist, 0.0f, 0.0f), age);
-        CHECK(glm::length(t) < 0.01f);
+                                               glm::vec3(-dist, 0.0f, 0.0f), 30.0f);
+        CHECK(glm::length(t) < 0.02f);
     }
-    // Shaman Water/Air/Earth totem top flame (flags 0x9, unpinned, not NoTrail):
-    // keeps full authored -velocity * tailLength even at young age so the flame
-    // streak reaches down into the totem bowl instead of floating above the horns.
+    // Holy_Precast_High_Base #0/#2 (Chain Heal precast ground sunburst, flags 0xb9, non-pinned):
+    // #0 peaks at age=0 (drag 0.5, tailLength 0.40 s) and #2 peaks at age=0.12 s (drag 0.8, tailLength 0.35 s).
+    // Both preserve their full drag-integrated radial streaks (> 0.45 yd) instead of collapsing at birth.
+    const glm::vec3 ch0 = particleTailVector(0xb9, glm::vec3(-1.667f, 0.0f, 0.0f), 0.40f,
+                                             glm::vec3(0.0f), 0.50f);
+    CHECK(glm::length(ch0) == Catch::Approx(1.667f * particleDragTravel(0.50f, 0.40f)));
+    CHECK(glm::length(ch0) > 0.55f);
+    const float v2 = 1.667f * std::exp(-0.80f * 0.12f);
+    const glm::vec3 ch2 = particleTailVector(0xb9, glm::vec3(-v2, 0.0f, 0.0f), 0.35f,
+                                             glm::vec3(0.19f, 0.0f, 0.0f), 0.80f);
+    CHECK(glm::length(ch2) == Catch::Approx(v2 * particleDragTravel(0.80f, 0.35f)));
+    CHECK(glm::length(ch2) > 0.45f);
+}
+
+TEST_CASE("Shipped TBC Holy_Precast_High_Base.m2 ground sunburst emitters preserve full radial tails",
+          "[m2][particle][tbc]") {
+    using namespace wowee::rendering;
+    const auto bytes = wowee::test::readTbcData("spells/holy_precast_high_base.m2");
+    const auto model = wowee::pipeline::M2Loader::load(bytes);
+    REQUIRE(model.particleEmitters.size() == 5);
+    // Emitter #0 (z=0.16, peak alpha at birth) and #2 (z=0.10, 400/s ground sunburst ring).
+    for (size_t idx : {size_t{0}, size_t{2}}) {
+        const auto& em = model.particleEmitters[idx];
+        CHECK(em.emitterType == 2);
+        CHECK(em.headOrTail == 1);
+        CHECK((em.flags & kParticlePinned) == 0);
+        CHECK(em.tailLength == Catch::Approx(idx == 0 ? 0.40f : 0.35f));
+        CHECK(em.drag == Catch::Approx(idx == 0 ? 0.50f : 0.80f));
+        const glm::vec3 tail = particleTailVector(em.flags, glm::vec3(-1.667f, 0.0f, 0.0f),
+                                                  em.tailLength, glm::vec3(0.0f), em.drag);
+        CHECK(glm::length(tail) > 0.50f);
+    }
+    // Shaman Water/Air/Earth totem top flame (flags 0x9, unpinned, drag 0):
+    // keeps full authored -velocity * tailLength so the flame streak reaches
+    // down into the totem bowl instead of floating above the horns.
     const glm::vec3 totemTail = particleTailVector(0x9, glm::vec3(0.0f, 0.0f, 0.908f), 1.2f,
-                                                   glm::vec3(0.0f, 0.0f, -0.1f), 0.1f);
+                                                   glm::vec3(0.0f, 0.0f, -0.1f), 0.0f);
     CHECK(totemTail.z == Catch::Approx(-0.908f * 1.2f));
 }
 

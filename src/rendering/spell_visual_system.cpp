@@ -341,6 +341,8 @@ void SpellVisualSystem::loadChainEffects() {
         effect.width = dbc->getFloat(i, 2);
         effect.noiseScale = dbc->getFloat(i, 3);
         effect.texCoordScale = dbc->getFloat(i, 4);
+        effect.segDurationMs = dbc->getUInt32(i, 5);
+        effect.segDelayMs = dbc->getUInt32(i, 6);
         effect.flags = dbc->getUInt32(i, 8);
         effect.jointSmoothness = dbc->getFloat(i, 16);
         assert(effect.jointSmoothness >= 0.0f && effect.jointSmoothness <= 1.0f);
@@ -1276,10 +1278,13 @@ void SpellVisualSystem::syncChannels(const std::vector<UnitChannel>& fieldChanne
             from = channel.hops[i];
         }
     }
-    // Cast kit beams, for as long as their kit plays.
-    std::erase_if(castBeams_, [&](const CastBeam& beam) { return beamClock_ - beam.born >= beam.lifetime; });
+    // Cast kit beams, from startAt for their SegDuration (or fallback lifetime).
+    std::erase_if(castBeams_, [&](const CastBeam& beam) {
+        return beamClock_ >= beam.startAt + beam.lifetime;
+    });
     for (auto& beam : castBeams_) {
-        appendBeamStrip(strips, beamEnd(beam.start), beamEnd(beam.end), beamClock_ - beam.born, beam.state);
+        if (beamClock_ < beam.startAt) continue;
+        appendBeamStrip(strips, beamEnd(beam.start), beamEnd(beam.end), beamClock_ - beam.startAt, beam.state);
     }
     std::erase_if(beams_, [&](const auto& entry) { return !live.count(entry.first); });
     std::erase_if(hopBeams_, [&](const auto& entry) { return !live.count(entry.first); });
@@ -1316,22 +1321,31 @@ void SpellVisualSystem::playCastKit(uint32_t visualId, const glm::vec3& casterPo
     const auto chainId = kitChainEffects_.find(kit->second);
     if (chainId == kitChainEffects_.end() || ends.empty()) return;
     const bool hasModels = kitEffects_.count(kit->second) != 0;
-    const float plays = hasModels ? models : spellSeconds;
-    if (plays <= 0.0f) {
+    const float fallback = hasModels ? models : spellSeconds;
+    const auto chainIt = chainEffects_.find(chainId->second);
+    if (chainIt == chainEffects_.end()) return;
+    const auto firstTiming = castBeamTiming(chainIt->second.segDurationMs, chainIt->second.segDelayMs,
+                                            fallback, 0, chained);
+    if (firstTiming.duration <= 0.0f) {
         static std::unordered_set<uint32_t> said;
         if (said.insert(kit->second).second)
             LOG_WARNING("SpellVisual: cast kit ", kit->second, " draws chain ", chainId->second,
-                        " but neither an effect model nor a spell duration times it; beam not drawn");
+                        " but neither SegDuration, an effect model, nor a spell duration times it; beam not drawn");
         return;
     }
     ChainEnd from{casterInstanceId, casterPosition, beamStartAttachment(visualId)};
-    for (const auto& end : ends) {
-        castBeams_.push_back({.chainId = chainId->second, .start = from, .end = end, .born = beamClock_,
-                              .lifetime = plays, .state = newBeamState(chainId->second)});
+    for (size_t hop = 0; hop < ends.size(); ++hop) {
+        const auto& end = ends[hop];
+        const auto timing = castBeamTiming(chainIt->second.segDurationMs, chainIt->second.segDelayMs,
+                                           fallback, hop, chained);
+        castBeams_.push_back({.chainId = chainId->second, .start = from, .end = end,
+                              .startAt = beamClock_ + timing.delay, .lifetime = timing.duration,
+                              .state = newBeamState(chainId->second)});
         if (chained) from = end;
     }
     LOG_INFO("SpellVisual: cast kit ", kit->second, " beam chain ", chainId->second, " to ", ends.size(),
-             " end(s) for ", plays, " s", chained ? ", hopping" : "");
+             " end(s) for ", firstTiming.duration, " s (delay ", firstTiming.delay, " s)",
+             chained ? ", hopping" : "");
 }
 
 void SpellVisualSystem::playCasterImpactKit(uint32_t visualId, const glm::vec3& casterPosition,

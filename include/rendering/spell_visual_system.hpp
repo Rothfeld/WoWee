@@ -456,6 +456,7 @@ private:
     struct ChainEffect {
         std::string texture;
         float avgSegLen = 0, width = 0, noiseScale = 0, texCoordScale = 0;
+        uint32_t segDurationMs = 0, segDelayMs = 0;
         float minDurBetweenJoints = 0, jointSmoothness = 0;
         uint32_t flags = 0;
         float pulseSpeed = 0, pulseOnLength = 0, pulseFadeLength = 0;
@@ -506,7 +507,7 @@ private:
         uint32_t chainId = 0;
         ChainEnd start;
         ChainEnd end;
-        float born = 0.0f, lifetime = 0.0f;
+        float startAt = 0.0f, lifetime = 0.0f;
         BeamState state;
     };
     std::vector<CastBeam> castBeams_;

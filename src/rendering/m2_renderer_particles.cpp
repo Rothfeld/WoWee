@@ -1044,7 +1044,7 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
                     const glm::vec3 displacement = xyQuad ? cachedQuadAxes.first
                         : tail ? particleTailVector(em.flags, worldVelocity, em.tailLength,
                             glm::vec3(cachedParticleTransform * glm::vec4(p.birthPosition, 1)) - worldPosition,
-                            p.life)
+                            em.drag)
                         : glm::vec3(0);
                     vd[9] = displacement.x;
                     vd[10] = displacement.y;

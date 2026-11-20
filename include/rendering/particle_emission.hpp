@@ -93,10 +93,27 @@ inline float particleTwinkleScale(uint32_t seed, float age, float speed,
     return scaleMin + (scaleMax - scaleMin) * (static_cast<float>(h >> 8) / 16777215.0f);
 }
 
-// A tail quad runs from the particle back along -velocity * min(tailLength, age).
-// A particle cannot trail behind its birth time (Purge_Impact_Chest.m2 #1,
-// flags 0x19, speed 0.556 yd/s, drag 30, tailLength 4.75 s otherwise draws
-// 2.6 yd spikes on newborn frames that native 2.4.3 does not show).
+// Drag (emitter +0x194, pre-264 layout) scales speed by exp(-drag * t).
+// Travel over dt at unit starting speed is the integral of that. Zero drag
+// is straight-line motion. BFD_WallLight03 #0 authors 5.5: its sparks stop
+// within 0.2 yd of the basin instead of rising for their 4 s life.
+// 249 TBC emitters author negative drag (Blink_Impact_Chest #8 -8.95): they
+// speed up by the same law.
+inline float particleDragTravel(float drag, float dt) {
+    if (drag == 0.0f) return dt;
+    return (1.0f - std::exp(-drag * dt)) / drag;
+}
+
+// A tail quad runs from the particle back along -velocity * span, where span
+// integrates drag over tailLength (particleDragTravel(drag, tailLength) when
+// drag > 0, else tailLength):
+// - Purge_Impact_Chest.m2 #1 (flags 0x19, speed 0.556 yd/s, drag 30, tailLength
+//   4.75 s) decays over 1/30 s = 0.033 s, keeping newborn tails ~0.018 yd rather
+//   than 2.6 yd spikes.
+// - Holy_Precast_High_Base.m2 #0/#2 (Chain Heal precast ground sunburst, flags
+//   0xb9, drag 0.5/0.8, tailLength 0.40/0.35 s, peak alpha at age 0.0/0.12 s)
+//   keeps its full authored radial streaks at birth and peak alpha (clamping
+//   tailLength to particle age erased #0 at birth and truncated #2 by 3x).
 // Pinned tails (0x400) end at the particle's birth point at most. 2204 of
 // the 3522 TBC tail emitters are pinned, many authoring tailLength 10 s:
 // Bloodlust/Summon hand rings (0x479, 0.28 yd/s, 10 s) and the fire precast
@@ -104,15 +121,8 @@ inline float particleTwinkleScale(uint32_t seed, float age, float speed,
 // the original client does not show. Acid breath drops (0x429, 4.44 yd/s,
 // 0.1 s) keep their short velocity tail once past their birth point.
 inline glm::vec3 particleTailVector(uint32_t flags, const glm::vec3& velocity, float tailLength,
-                                    const glm::vec3& toBirth,
-                                    float age = std::numeric_limits<float>::infinity()) {
-    // Pinned (0x400) and NoTrail (0x10, e.g. Purge_Impact_Chest #1 with drag 30)
-    // tails cannot trail behind their birth time. Unpinned world-space tail
-    // emitters (e.g. Shaman Water/Air/Earth totem top flames, flags 0x9,
-    // tailLength 1.2 s) keep their full authored velocity * tailLength so the
-    // streak reaches back into the totem bowl rather than floating above it.
-    const bool clampToAge = (flags & (kParticlePinned | kParticleNoTrail)) != 0;
-    const float span = clampToAge ? std::min(tailLength, std::max(age, 0.0f)) : tailLength;
+                                    const glm::vec3& toBirth, float drag = 0.0f) {
+    const float span = drag > 0.0f ? particleDragTravel(drag, tailLength) : tailLength;
     const glm::vec3 tail = -velocity * span;
     if (!(flags & kParticlePinned)) return tail;
     return glm::dot(tail, tail) > glm::dot(toBirth, toBirth) ? toBirth : tail;
@@ -163,17 +173,6 @@ inline glm::mat4 particleBirthTransform(uint32_t flags,
                                        const glm::mat4& model, const glm::mat4& bone) {
     if (flags & kParticleNoTrail) return glm::mat4(1.0f);
     return flags & kParticleModelFrame ? bone : model * bone;
-}
-
-// Drag (emitter +0x194, pre-264 layout) scales speed by exp(-drag * t).
-// Travel over dt at unit starting speed is the integral of that. Zero drag
-// is straight-line motion. BFD_WallLight03 #0 authors 5.5: its sparks stop
-// within 0.2 yd of the basin instead of rising for their 4 s life.
-// 249 TBC emitters author negative drag (Blink_Impact_Chest #8 -8.95): they
-// speed up by the same law.
-inline float particleDragTravel(float drag, float dt) {
-    if (drag == 0.0f) return dt;
-    return (1.0f - std::exp(-drag * dt)) / drag;
 }
 
 // Emitter position of a particle born `age` seconds before the end of a step
