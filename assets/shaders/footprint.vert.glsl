@@ -21,8 +21,13 @@ layout(push_constant) uniform Push {
 layout(location = 0) in vec3 aPos;
 layout(location = 1) in vec2 aTexCoord;
 layout(location = 0) out vec2 texCoord;
+layout(location = 1) out float fogVisibility;
 
 void main() {
     texCoord = aTexCoord;
-    gl_Position = projection * view * push.model * vec4(aPos, 1.0);
+    vec4 worldPos = push.model * vec4(aPos, 1.0);
+    float dist = length(worldPos.xyz - viewPos.xyz);
+    float fogRange = max(fogParams.y - fogParams.x, 1.0);
+    fogVisibility = 1.0 - clamp((dist - fogParams.x) / fogRange, 0.0, 1.0);
+    gl_Position = projection * view * worldPos;
 }

@@ -15,5 +15,19 @@ namespace rendering {
     return t > fromMs || t <= toMs;
 }
 
+/// Footprint decal opacity multiplier by print age (seconds).
+/// Measured against original TBC 2.4.3 on Dun Morogh snow: full 0.5x BLP alpha
+/// for 3 s, then linear fade to 0 at 6 s.
+inline constexpr float kFootprintPeakOpacity = 0.5f;
+inline constexpr float kFootprintFadeStart = 3.0f;
+inline constexpr float kFootprintLifetime = 6.0f;
+
+[[nodiscard]] constexpr float footprintOpacity(float ageSeconds) {
+    if (ageSeconds <= kFootprintFadeStart) return kFootprintPeakOpacity;
+    if (ageSeconds >= kFootprintLifetime) return 0.0f;
+    const float t = (ageSeconds - kFootprintFadeStart) / (kFootprintLifetime - kFootprintFadeStart);
+    return kFootprintPeakOpacity * (1.0f - t);
+}
+
 } // namespace rendering
 } // namespace wowee

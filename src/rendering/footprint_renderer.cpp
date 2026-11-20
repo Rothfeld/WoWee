@@ -28,13 +28,11 @@
 namespace wowee::rendering {
 namespace {
 
-constexpr float kLifetime = 12.0f;
-constexpr float kFadeStart = 1.5f;
 constexpr size_t kMaxPrints = 512;
 
 struct FootprintPushConstants {
     glm::mat4 model{1.0f};
-    glm::vec4 tint{0.075f, 0.065f, 0.05f, 1.0f};
+    glm::vec4 tint{1.0f, 1.0f, 1.0f, 1.0f};
 };
 
 } // namespace
@@ -370,12 +368,7 @@ void FootprintRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
             !frustum.intersectsSphere(print.position, std::max(print.length, std::abs(print.signedWidth))))
             continue;
 
-        float alpha = 1.0f;
-        if (print.age > kFadeStart) {
-            float t = glm::clamp((print.age - kFadeStart) / (kLifetime - kFadeStart), 0.0f, 1.0f);
-            t = t * t * (3.0f - 2.0f * t);
-            alpha = 1.0f - t;
-        }
+        const float alpha = computeOpacity(print.age);
         if (alpha <= 0.001f || print.textureIndex >= kTextureCount) continue;
 
         glm::mat4 model = glm::translate(glm::mat4(1.0f), print.position);

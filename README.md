@@ -230,6 +230,13 @@ clamps tail span to `min(tailLength, age)` so high-drag tail emitters such as
 `Purge_Impact_Chest.m2` #1 (`drag=30`, `tailLength=4.75`) do not draw multi-yard
 spikes on birth frames. Evidence: `_experiments/20261120T115300Z.ghost_wolf_visuals/`
 in the workspace.
+Footprint decals (`FootprintRenderer`, `footprint.vert.glsl`, `footprint.frag.glsl`)
+render on `TerrainType.dbc` surfaces with bit 0 set (`Snow`, `Sand`) using the
+shipped `FootprintTextures.dbc` BLP RGB (pure black, neutral darkening rather
+than a fixed brown tint) at `0.5x` BLP alpha (`kFootprintPeakOpacity`), held
+for 3 s and faded linearly to 0 at 6 s (`footprintOpacity`), attenuated by
+distance fog. Evidence: `_experiments/20261120T125526Z.snow_footprints_parity/`
+in the workspace.
 TBC group finder: [LFG/LFM protocol and validation](docs/tbc-lfg.md).
 Party frames and map transfers: [protocol and input lifecycle](docs/party-stats-and-map-input.md).
 Interior minimaps: [authored room tiles and validation](docs/interior-minimap.md).

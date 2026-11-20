@@ -11,6 +11,7 @@
 #include <vulkan/vulkan.h>
 #include <vk_mem_alloc.h>
 
+#include "rendering/footfall_window.hpp"
 #include "rendering/vk_texture.hpp"
 
 namespace wowee {
@@ -40,6 +41,10 @@ public:
 
     void update(float deltaTime);
     void clear();
+    static constexpr float kPeakOpacity = kFootprintPeakOpacity;
+    static constexpr float kFadeStart = kFootprintFadeStart;
+    static constexpr float kLifetime = kFootprintLifetime;
+    [[nodiscard]] static constexpr float computeOpacity(float age) { return footprintOpacity(age); }
     /// One print of CreatureModelData row `creatureModelDataId`'s footprint
     /// mask, centred on `footPosition` and turned with the body's yaw.
     void spawn(uint32_t creatureModelDataId, const glm::vec3& footPosition,

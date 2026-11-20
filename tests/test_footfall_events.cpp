@@ -79,3 +79,16 @@ TEST_CASE("Footfall side letter agrees with the foot's side", "[footfall][assets
             CHECK(event.left == (event.position.y > 0.0f));
     }
 }
+
+TEST_CASE("Footprint opacity holds 0.5x for 3s then fades linearly to 0 at 6s", "[footfall][footprint]") {
+    using wowee::rendering::footprintOpacity;
+    using wowee::rendering::kFootprintPeakOpacity;
+    CHECK(footprintOpacity(0.0f) == Catch::Approx(0.5f));
+    CHECK(footprintOpacity(1.5f) == Catch::Approx(kFootprintPeakOpacity));
+    CHECK(footprintOpacity(3.0f) == Catch::Approx(0.5f));
+    CHECK(footprintOpacity(3.75f) == Catch::Approx(0.375f));
+    CHECK(footprintOpacity(4.5f) == Catch::Approx(0.25f));
+    CHECK(footprintOpacity(5.25f) == Catch::Approx(0.125f));
+    CHECK(footprintOpacity(6.0f) == Catch::Approx(0.0f));
+    CHECK(footprintOpacity(10.0f) == Catch::Approx(0.0f));
+}
