@@ -194,11 +194,12 @@ void ZoneManager::enrichFromDBC(pipeline::AssetManager* assets) {
     for (uint32_t row = 0; row < wmoAreas->getRecordCount(); ++row) {
         wmoAreaIds_[{wmoAreas->getUInt32(row, 1), wmoAreas->getUInt32(row, 2),
                      wmoAreas->getUInt32(row, 3)}] = wmoAreas->getUInt32(row, 10);
-        // AmbienceID (6) and ZoneMusic (7): a tavern's room names
-        // Zone-TavernAlliance and the Tavern ambience, a smithy BlackSmith.
+        // AmbienceID (6), ZoneMusic (7) and IntroSound (8): a tavern's room
+        // names Zone-TavernAlliance and the Tavern ambience, a smithy BlackSmith.
         wmoAreaSounds_[{wmoAreas->getUInt32(row, 1), wmoAreas->getUInt32(row, 2),
                         wmoAreas->getUInt32(row, 3)}] =
-            WmoAreaSounds{wmoAreas->getUInt32(row, 7), wmoAreas->getUInt32(row, 6)};
+            WmoAreaSounds{wmoAreas->getUInt32(row, 7), wmoAreas->getUInt32(row, 6),
+                          wmoAreas->getUInt32(row, 8)};
         const auto name = wmoAreas->getString(row, 11);
         if (!name.empty()) wmoAreaNames_[{wmoAreas->getUInt32(row, 1),
             wmoAreas->getUInt32(row, 2), wmoAreas->getUInt32(row, 3)}] = name;
@@ -271,49 +272,99 @@ void ZoneManager::enrichFromDBC(pipeline::AssetManager* assets) {
         return paths;
     };
 
+    auto getSoundVolume = [&](uint32_t soundId) -> float {
+        if (soundId == 0 || soundDbc->getFieldCount() <= 24) return 1.0f;
+        int32_t idx = soundDbc->findRecordById(soundId);
+        if (idx < 0) return 1.0f;
+        const float v = soundDbc->getFloat(static_cast<uint32_t>(idx), 24);
+        return (std::isfinite(v) && v > 0.0f) ? std::clamp(v, 0.0f, 1.0f) : 1.0f;
+    };
+
     if (areaFields < 9) {
         LOG_WARNING("ZoneManager::enrichFromDBC: AreaTable.dbc has too few fields (", areaFields, ")");
         return;
     }
 
-    // Every ZoneMusic set's tracks, day and night: an area, a WMO room or
-    // a set chosen any other way plays from here.
+    // ZoneMusic.dbc: 0=ID, 1=SetName, 2=SilenceMinDay, 3=SilenceMinNight,
+    // 4=SilenceMaxDay, 5=SilenceMaxNight, 6=DayMusic, 7=NightMusic.
     zoneMusicTracks_.clear();
+    zoneMusicSets_.clear();
     if (zoneMusicDbc->getFieldCount() < 8)
         throw std::runtime_error("ZoneMusic.dbc has fewer than 8 fields");
     for (uint32_t row = 0; row < zoneMusicDbc->getRecordCount(); ++row) {
-        auto& tracks = zoneMusicTracks_[zoneMusicDbc->getUInt32(row, 0)];
-        for (const uint32_t sound : {zoneMusicDbc->getUInt32(row, 6), zoneMusicDbc->getUInt32(row, 7)})
-            for (auto& path : getSoundPaths(sound))
-                if (std::find(tracks.begin(), tracks.end(), path) == tracks.end())
-                    tracks.push_back(std::move(path));
+        const uint32_t setId = zoneMusicDbc->getUInt32(row, 0);
+        auto& tracks = zoneMusicTracks_[setId];
+        ZoneMusicSet& set = zoneMusicSets_[setId];
+        set.daySilenceMinSec   = static_cast<float>(zoneMusicDbc->getUInt32(row, 2)) / 1000.0f;
+        set.nightSilenceMinSec = static_cast<float>(zoneMusicDbc->getUInt32(row, 3)) / 1000.0f;
+        set.daySilenceMaxSec   = std::max(set.daySilenceMinSec,
+                                          static_cast<float>(zoneMusicDbc->getUInt32(row, 4)) / 1000.0f);
+        set.nightSilenceMaxSec = std::max(set.nightSilenceMinSec,
+                                          static_cast<float>(zoneMusicDbc->getUInt32(row, 5)) / 1000.0f);
+        for (auto& path : getSoundPaths(zoneMusicDbc->getUInt32(row, 6))) {
+            if (std::find(set.dayTracks.begin(), set.dayTracks.end(), path) == set.dayTracks.end())
+                set.dayTracks.push_back(path);
+            if (std::find(tracks.begin(), tracks.end(), path) == tracks.end())
+                tracks.push_back(std::move(path));
+        }
+        for (auto& path : getSoundPaths(zoneMusicDbc->getUInt32(row, 7))) {
+            if (std::find(set.nightTracks.begin(), set.nightTracks.end(), path) == set.nightTracks.end())
+                set.nightTracks.push_back(path);
+            if (std::find(tracks.begin(), tracks.end(), path) == tracks.end())
+                tracks.push_back(std::move(path));
+        }
+    }
+
+    // ZoneIntroMusicTable.dbc: 0=ID, 1=Name, 2=SoundID, 3=Priority, 4=MinDelayMinutes.
+    zoneIntroMusic_.clear();
+    if (auto introDbc = assets->loadDBC("ZoneIntroMusicTable.dbc");
+        introDbc && introDbc->isLoaded() && introDbc->getFieldCount() >= 5) {
+        for (uint32_t row = 0; row < introDbc->getRecordCount(); ++row) {
+            const uint32_t introId = introDbc->getUInt32(row, 0);
+            if (introId == 0) continue;
+            ZoneIntroMusic intro;
+            intro.id = introId;
+            intro.tracks = getSoundPaths(introDbc->getUInt32(row, 2));
+            intro.priority = introDbc->getUInt32(row, 3);
+            const uint32_t minDelayMin = introDbc->getUInt32(row, 4);
+            intro.minDelaySeconds = static_cast<float>(minDelayMin) * 60.0f;
+            if (!intro.tracks.empty()) {
+                zoneIntroMusic_[introId] = std::move(intro);
+            }
+        }
     }
 
     // SoundAmbience: day and night SoundEntries per ambience id. AreaTable
     // and WMOAreaTable name these, so a client without it cannot place any.
     ambiencePaths_.clear();
+    ambienceVolumes_.clear();
     const auto ambience = assets->loadDBC("SoundAmbience.dbc");
     if (!ambience || !ambience->isLoaded() || ambience->getFieldCount() < 3)
         throw std::runtime_error("SoundAmbience.dbc missing or invalid");
     for (uint32_t row = 0; row < ambience->getRecordCount(); ++row) {
-        auto day = getSoundPaths(ambience->getUInt32(row, 1));
-        auto night = getSoundPaths(ambience->getUInt32(row, 2));
-        ambiencePaths_[ambience->getUInt32(row, 0)] = {
+        const uint32_t ambId = ambience->getUInt32(row, 0);
+        const uint32_t daySid = ambience->getUInt32(row, 1);
+        const uint32_t nightSid = ambience->getUInt32(row, 2);
+        auto day = getSoundPaths(daySid);
+        auto night = getSoundPaths(nightSid);
+        ambiencePaths_[ambId] = {
             day.empty() ? std::string() : day.front(),
             night.empty() ? std::string() : night.front()};
+        ambienceVolumes_[ambId] = {getSoundVolume(daySid), getSoundVolume(nightSid)};
     }
 
-    // Each area: its name, and the music (ZoneMusic, 8) and ambience
-    // (AmbienceID, 7) of the nearest of itself and its ancestors that names
-    // one. Gates of Ironforge (809) names neither and takes Dun Morogh's;
-    // Goldshire (87) names Elwynn's ForestNormal ambience itself.
+    // Each area: its name, and the music (ZoneMusic, 8), intro (IntroSound, 9),
+    // and ambience (AmbienceID, 7) of the nearest of itself and its ancestors
+    // that names one.
     std::unordered_map<uint32_t, uint32_t> ownMusic;
+    std::unordered_map<uint32_t, uint32_t> ownIntro;
     std::unordered_map<uint32_t, uint32_t> ownAmbience;
     std::unordered_map<uint32_t, std::string> names;
     for (uint32_t i = 0; i < numAreas; ++i) {
         const uint32_t areaId = areaDbc->getUInt32(i, 0);
         if (areaId == 0) continue;
         ownMusic[areaId] = areaDbc->getUInt32(i, 8);
+        if (areaFields > 9) ownIntro[areaId] = areaDbc->getUInt32(i, 9);
         ownAmbience[areaId] = areaDbc->getUInt32(i, 7);
         if (areaFields > 11) names[areaId] = areaDbc->getString(i, 11);
     }
@@ -329,10 +380,12 @@ void ZoneManager::enrichFromDBC(pipeline::AssetManager* assets) {
         return 0u;
     };
     areaZoneMusic_.clear();
+    areaIntroMusic_.clear();
     areaAmbience_.clear();
     for (const auto& [areaId, music] : ownMusic) {
         const uint32_t found = nearest(ownMusic, areaId);
         areaZoneMusic_[areaId] = found;
+        areaIntroMusic_[areaId] = nearest(ownIntro, areaId);
         areaAmbience_[areaId] = nearest(ownAmbience, areaId);
         ZoneInfo& zone = zones[areaId];
         zone.id = areaId;
@@ -360,6 +413,11 @@ void ZoneManager::enrichFromDBC(pipeline::AssetManager* assets) {
     std::vector<std::vector<std::string>*> pools;
     for (auto& [zoneId, zone] : zones) pools.push_back(&zone.musicPaths);
     for (auto& [setId, tracks] : zoneMusicTracks_) pools.push_back(&tracks);
+    for (auto& [setId, set] : zoneMusicSets_) {
+        pools.push_back(&set.dayTracks);
+        pools.push_back(&set.nightTracks);
+    }
+    for (auto& [introId, intro] : zoneIntroMusic_) pools.push_back(&intro.tracks);
     for (auto* poolPtr : pools) {
         auto& paths = *poolPtr;
         const auto missing = [&](const std::string& path) {
@@ -386,6 +444,7 @@ ZoneManager::WmoAreaSounds ZoneManager::getWmoAreaSounds(uint32_t root, uint32_t
         if (it == wmoAreaSounds_.end()) continue;
         if (out.zoneMusicId == 0) out.zoneMusicId = it->second.zoneMusicId;
         if (out.ambienceId == 0) out.ambienceId = it->second.ambienceId;
+        if (out.introSoundId == 0) out.introSoundId = it->second.introSoundId;
     }
     return out;
 }
@@ -395,9 +454,50 @@ const std::vector<std::string>* ZoneManager::getZoneMusicTracks(uint32_t zoneMus
     return it == zoneMusicTracks_.end() ? nullptr : &it->second;
 }
 
+const ZoneManager::ZoneMusicSet* ZoneManager::getZoneMusicSet(uint32_t zoneMusicId) const {
+    const auto it = zoneMusicSets_.find(zoneMusicId);
+    return it == zoneMusicSets_.end() ? nullptr : &it->second;
+}
+
+std::string ZoneManager::pickZoneMusicTrack(uint32_t zoneId, uint32_t zoneMusicId,
+                                            bool night, bool includeWoweeTracks) {
+    std::vector<std::string> combined;
+    if (const auto* set = getZoneMusicSet(zoneMusicId)) {
+        const auto& base = (night && !set->nightTracks.empty()) ? set->nightTracks : set->dayTracks;
+        combined.insert(combined.end(), base.begin(), base.end());
+    }
+    if (includeWoweeTracks && useOriginalSoundtrack_ && zoneId != 0) {
+        if (const auto zIt = zones.find(zoneId); zIt != zones.end()) {
+            for (const auto& p : zIt->second.musicPaths) {
+                if (p.rfind("file:", 0) == 0) combined.push_back(p);
+            }
+        }
+    }
+    return pickTrack(combined);
+}
+
+std::pair<float, float> ZoneManager::getZoneSilenceInterval(uint32_t zoneMusicId, bool night) const {
+    const auto* set = getZoneMusicSet(zoneMusicId);
+    if (!set) return {0.0f, 0.0f};
+    if (night && (set->nightSilenceMaxSec > 0.0f || !set->nightTracks.empty())) {
+        return {set->nightSilenceMinSec, set->nightSilenceMaxSec};
+    }
+    return {set->daySilenceMinSec, set->daySilenceMaxSec};
+}
+
 uint32_t ZoneManager::getAreaZoneMusicId(uint32_t areaId) const {
     const auto it = areaZoneMusic_.find(areaId);
     return it == areaZoneMusic_.end() ? 0 : it->second;
+}
+
+uint32_t ZoneManager::getAreaIntroMusicId(uint32_t areaId) const {
+    const auto it = areaIntroMusic_.find(areaId);
+    return it == areaIntroMusic_.end() ? 0 : it->second;
+}
+
+const ZoneManager::ZoneIntroMusic* ZoneManager::getZoneIntroMusic(uint32_t introId) const {
+    const auto it = zoneIntroMusic_.find(introId);
+    return it == zoneIntroMusic_.end() ? nullptr : &it->second;
 }
 
 uint32_t ZoneManager::getAreaAmbienceId(uint32_t areaId) const {
@@ -411,6 +511,12 @@ std::string ZoneManager::getAmbienceSound(uint32_t ambienceId, bool night) const
         LOG_ERROR("ZoneManager: SoundAmbience has no row ", ambienceId);
         return {};
     }
+    return night ? it->second.second : it->second.first;
+}
+
+float ZoneManager::getAmbienceVolume(uint32_t ambienceId, bool night) const {
+    const auto it = ambienceVolumes_.find(ambienceId);
+    if (it == ambienceVolumes_.end()) return 1.0f;
     return night ? it->second.second : it->second.first;
 }
 

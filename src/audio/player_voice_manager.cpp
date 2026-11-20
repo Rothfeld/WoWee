@@ -1,6 +1,8 @@
 #include "audio/player_voice_manager.hpp"
 #include "audio/audio_engine.hpp"
+#include "audio/sound_entries.hpp"
 #include "pipeline/asset_manager.hpp"
+#include "pipeline/dbc_loader.hpp"
 #include "core/logger.hpp"
 
 #include <algorithm>
@@ -129,6 +131,8 @@ bool PlayerVoiceManager::initialize(pipeline::AssetManager* assets) {
 
 void PlayerVoiceManager::shutdown() {
     library_.clear();
+    emoteSounds_.clear();
+    emoteSoundsLoaded_ = false;
     loadedRace_ = -1;
     loadedGender_ = -1;
     assetManager_ = nullptr;
@@ -201,6 +205,41 @@ void PlayerVoiceManager::playError(PlayerErrorSpeech type, uint8_t raceId, uint8
     if (AudioEngine::instance().playSound2D(sample.data, volumeScale_, 1.0f)) {
         lastPlayTime_ = now;
     }
+}
+
+void PlayerVoiceManager::ensureEmoteSoundsLoaded() {
+    if (emoteSoundsLoaded_ || !assetManager_ || !assetManager_->isInitialized()) return;
+    auto dbc = assetManager_->loadDBC("EmotesTextSound.dbc");
+    if (!dbc || !dbc->isLoaded() || dbc->getFieldCount() < 5) return;
+    emoteSoundsLoaded_ = true;
+    for (uint32_t r = 0; r < dbc->getRecordCount(); ++r) {
+        const uint32_t textEmoteId = dbc->getUInt32(r, 1);
+        const uint32_t raceId = dbc->getUInt32(r, 2);
+        const uint32_t sexId = dbc->getUInt32(r, 3);
+        const uint32_t soundId = dbc->getUInt32(r, 4);
+        if (textEmoteId == 0 || soundId == 0) continue;
+        const uint32_t key = (textEmoteId << 16u) | ((raceId & 0xFFu) << 8u) | (sexId & 0xFFu);
+        emoteSounds_[key] = soundId;
+    }
+}
+
+bool PlayerVoiceManager::playEmote(uint32_t emotesTextId, uint8_t raceId, uint8_t gender) {
+    if (!assetManager_ || emotesTextId == 0 || raceId == 0 || volumeScale_ <= 0.0f) return false;
+    ensureEmoteSoundsLoaded();
+    const uint32_t key = (emotesTextId << 16u) | (static_cast<uint32_t>(raceId) << 8u) | (gender ? 1u : 0u);
+    const auto it = emoteSounds_.find(key);
+    if (it == emoteSounds_.end()) return false;
+    return SoundEntryTable::instance().play2D(assetManager_, it->second, volumeScale_);
+}
+
+bool PlayerVoiceManager::playEmote3D(uint32_t emotesTextId, uint8_t raceId, uint8_t gender,
+                                     const glm::vec3& position) {
+    if (!assetManager_ || emotesTextId == 0 || raceId == 0 || volumeScale_ <= 0.0f) return false;
+    ensureEmoteSoundsLoaded();
+    const uint32_t key = (emotesTextId << 16u) | (static_cast<uint32_t>(raceId) << 8u) | (gender ? 1u : 0u);
+    const auto it = emoteSounds_.find(key);
+    if (it == emoteSounds_.end()) return false;
+    return SoundEntryTable::instance().play3D(assetManager_, it->second, position, volumeScale_);
 }
 
 } // namespace audio

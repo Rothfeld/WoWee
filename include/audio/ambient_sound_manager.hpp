@@ -27,10 +27,15 @@ public:
     /// The ambience file to loop: the WMO room's or the area's SoundAmbience
     /// day or night sound, as AudioCoordinator picks it; empty for none.
     /// Loaded and restarted on change.
-    void setAmbience(const std::string& path);
+    void setAmbience(const std::string& path, float entryVolume = 1.0f);
 
     // Weather control
-    enum class WeatherType { NONE, RAIN_LIGHT, RAIN_MEDIUM, RAIN_HEAVY, SNOW_LIGHT, SNOW_MEDIUM, SNOW_HEAVY };
+    enum class WeatherType {
+        NONE,
+        RAIN_LIGHT, RAIN_MEDIUM, RAIN_HEAVY,
+        SNOW_LIGHT, SNOW_MEDIUM, SNOW_HEAVY,
+        STORM_LIGHT, STORM_MEDIUM, STORM_HEAVY
+    };
     void setWeather(WeatherType type);
     [[nodiscard]] WeatherType getCurrentWeather() const { return currentWeather_; }
 
@@ -98,6 +103,7 @@ private:
     std::vector<AmbientSample> waterfallSounds_;
     std::vector<AmbientSample> fountainSounds_;
     AmbientSample ambience_{};
+    float ambienceEntryVolume_ = 1.0f;
     float ambienceDuration_ = 0.0f;
     float ambienceLoopTime_ = 0.0f;
     uint32_t ambienceSoundId_ = 0;
@@ -110,6 +116,9 @@ private:
     std::vector<AmbientSample> snowLightSounds_;
     std::vector<AmbientSample> snowMediumSounds_;
     std::vector<AmbientSample> snowHeavySounds_;
+    std::vector<AmbientSample> stormLightSounds_;
+    std::vector<AmbientSample> stormMediumSounds_;
+    std::vector<AmbientSample> stormHeavySounds_;
 
     // Water ambience libraries
     std::vector<AmbientSample> underwaterSounds_;

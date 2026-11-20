@@ -1,7 +1,9 @@
 #include "audio/ui_sound_manager.hpp"
 #include "audio/sample_load.hpp"
 #include "audio/audio_engine.hpp"
+#include "audio/sound_entries.hpp"
 #include "pipeline/asset_manager.hpp"
+#include "pipeline/dbc_loader.hpp"
 #include "core/logger.hpp"
 
 namespace wowee {
@@ -12,16 +14,21 @@ bool UiSoundManager::initialize(pipeline::AssetManager* assets) {
         LOG_ERROR("UISoundManager: AssetManager is null");
         return false;
     }
+    if (initialized_ && assets_ == assets) {
+        return true;
+    }
 
     assets_ = assets;
     LOG_INFO("UISoundManager: Initializing...");
 
-    // Load window sounds
+    // Load window sounds (TBC 2.4.3 uses iEquipmentContainerOpenA/CloseA; WotLK added iBackPackOpen/Close)
     bagOpenSounds_.resize(1);
-    bool bagOpenLoaded = loadSound("Sound\\Interface\\iBackPackOpen.wav", bagOpenSounds_[0], assets);
+    bool bagOpenLoaded = loadSound("Sound\\Interface\\iBackPackOpen.wav", bagOpenSounds_[0], assets) ||
+                         loadSound("Sound\\Interface\\iEquipmentContainerOpenA.wav", bagOpenSounds_[0], assets);
 
     bagCloseSounds_.resize(1);
-    bool bagCloseLoaded = loadSound("Sound\\Interface\\iBackPackClose.wav", bagCloseSounds_[0], assets);
+    bool bagCloseLoaded = loadSound("Sound\\Interface\\iBackPackClose.wav", bagCloseSounds_[0], assets) ||
+                          loadSound("Sound\\Interface\\iEquipmentContainerCloseA.wav", bagCloseSounds_[0], assets);
 
     questLogOpenSounds_.resize(1);
     bool questLogOpenLoaded = loadSound("Sound\\Interface\\iQuestLogOpenA.wav", questLogOpenSounds_[0], assets);
@@ -68,9 +75,13 @@ bool UiSoundManager::initialize(pipeline::AssetManager* assets) {
     loadSound("Sound\\Interface\\iQuestUpdate.wav", questUpdateSounds_[0], assets);
 
     fishingBiteSounds_.resize(3);
-    loadSound("Sound\\Spell\\FishingBobber_Ver2_1.wav", fishingBiteSounds_[0], assets);
-    loadSound("Sound\\Spell\\FishingBobber_Ver2_2.wav", fishingBiteSounds_[1], assets);
-    loadSound("Sound\\Spell\\FishingBobber_Ver2_3.wav", fishingBiteSounds_[2], assets);
+    if (!loadSound("Sound\\Spell\\FishingBobber_Ver2_1.wav", fishingBiteSounds_[0], assets)) {
+        fishingBiteSounds_.resize(1);
+        loadSound("Sound\\Spells\\Tradeskills\\FishBite.wav", fishingBiteSounds_[0], assets);
+    } else {
+        loadSound("Sound\\Spell\\FishingBobber_Ver2_2.wav", fishingBiteSounds_[1], assets);
+        loadSound("Sound\\Spell\\FishingBobber_Ver2_3.wav", fishingBiteSounds_[2], assets);
+    }
 
     // Load loot sounds
     lootCoinSmallSounds_.resize(1);
@@ -123,11 +134,13 @@ bool UiSoundManager::initialize(pipeline::AssetManager* assets) {
     deselectTargetSounds_.resize(1);
     loadSound("Sound\\Interface\\iDeselectTarget.wav", deselectTargetSounds_[0], assets);
 
-    // Whisper notification (falls back to iSelectTarget if the dedicated file is absent)
+    // Whisper notification (TBC 2.4.3 uses iTellMessage.wav; WotLK added Whisper_TellMale/Female)
     whisperSounds_.resize(1);
     if (!loadSound("Sound\\Interface\\Whisper_TellMale.wav", whisperSounds_[0], assets)) {
         if (!loadSound("Sound\\Interface\\Whisper_TellFemale.wav", whisperSounds_[0], assets)) {
-            whisperSounds_ = selectTargetSounds_;
+            if (!loadSound("Sound\\Interface\\iTellMessage.wav", whisperSounds_[0], assets)) {
+                whisperSounds_ = selectTargetSounds_;
+            }
         }
     }
 
@@ -166,83 +179,69 @@ bool UiSoundManager::initialize(pipeline::AssetManager* assets) {
 
 void UiSoundManager::shutdown() {
     initialized_ = false;
+    itemGroupSoundsBuilt_ = false;
+    itemGroupSounds_.clear();
+    itemDisplayGroupSounds_.clear();
+    namedSamples_.clear();
+    assets_ = nullptr;
 }
 
 bool UiSoundManager::loadSound(const std::string& path, UISample& sample, pipeline::AssetManager* assets) {
     return loadSampleFile(path, sample, assets, "UISoundManager");
 }
 
-void UiSoundManager::ensureSoundEntriesLoaded() {
-    if (soundEntriesBuilt_) return;
-    soundEntriesBuilt_ = true;          // once, whether or not it works
-    if (!assets_) return;
-
-    auto dbc = assets_->loadDBC("SoundEntries.dbc");
-    if (!dbc || !dbc->isLoaded()) {
-        LOG_WARNING("UISoundManager: SoundEntries.dbc not available; "
-                    "PlaySound falls back to the names mapped by hand");
-        return;
-    }
-    // 3.3.5a layout: 0 ID, 1 SoundType, 2 Name, 3..12 File[0..9],
-    // 13..22 Freq[0..9], 23 DirectoryBase. The same reading zone_manager and
-    // npc_voice_manager already make of this table.
-    if (dbc->getFieldCount() < 24) {
-        LOG_WARNING("UISoundManager: SoundEntries.dbc has ", dbc->getFieldCount(),
-                    " fields, expected at least 24");
-        return;
-    }
+void UiSoundManager::ensureItemGroupSoundsLoaded() {
+    if (itemGroupSoundsBuilt_ || !assets_ || !assets_->isInitialized()) return;
+    auto dbc = assets_->loadDBC("ItemGroupSounds.dbc");
+    if (!dbc || !dbc->isLoaded() || dbc->getFieldCount() < 3) return;
+    itemGroupSoundsBuilt_ = true;
     for (uint32_t row = 0; row < dbc->getRecordCount(); ++row) {
-        std::string name = dbc->getString(row, 2);
-        if (name.empty()) continue;
-        for (char& ch : name) {
-            ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
-        }
-        const std::string dir = dbc->getString(row, 23);
-        std::vector<std::string> paths;
-        for (uint32_t f = 3; f <= 12; ++f) {
-            const std::string file = dbc->getString(row, f);
-            if (file.empty()) continue;
-            paths.push_back(dir.empty() ? file : dir + "\\" + file);
-        }
-        // The first row wins. Names repeat in this table and the later rows
-        // are variants; a UI click wants one sound, not a different one each
-        // time.
-        if (!paths.empty()) soundPathsByName_.emplace(name, std::move(paths));
+        const uint32_t id = dbc->getUInt32(row, 0);
+        if (id == 0) continue;
+        itemGroupSounds_[id] = ItemGroupSoundRow{
+            .pickupSoundId = dbc->getUInt32(row, 1),
+            .putdownSoundId = dbc->getUInt32(row, 2),
+        };
     }
-    LOG_INFO("UISoundManager: ", soundPathsByName_.size(),
-             " sound names from SoundEntries.dbc");
+    if (auto dispDbc = assets_->loadDBC("ItemDisplayInfo.dbc");
+        dispDbc && dispDbc->isLoaded() && dispDbc->getFieldCount() > 12) {
+        for (uint32_t row = 0; row < dispDbc->getRecordCount(); ++row) {
+            const uint32_t dispId = dispDbc->getUInt32(row, 0);
+            const uint32_t grpIdx = dispDbc->getUInt32(row, 12);
+            if (dispId != 0 && grpIdx != 0) itemDisplayGroupSounds_[dispId] = grpIdx;
+        }
+    }
+}
+
+bool UiSoundManager::playById(uint32_t soundId) {
+    if (!initialized_ || !assets_ || soundId == 0 || volumeScale_ <= 0.0f) return false;
+    return SoundEntryTable::instance().play2D(assets_, soundId, volumeScale_, 1.0f);
+}
+
+bool UiSoundManager::playItemGroupSound(uint32_t groupSoundIndex, bool pickup) {
+    if (!initialized_ || !assets_ || groupSoundIndex == 0) return false;
+    ensureItemGroupSoundsLoaded();
+    const auto it = itemGroupSounds_.find(groupSoundIndex);
+    if (it == itemGroupSounds_.end()) return false;
+    const uint32_t sid = pickup ? it->second.pickupSoundId : it->second.putdownSoundId;
+    return playById(sid);
+}
+
+bool UiSoundManager::playItemDisplaySound(uint32_t displayInfoId, bool pickup) {
+    if (!initialized_ || !assets_ || displayInfoId == 0) return false;
+    ensureItemGroupSoundsLoaded();
+    const auto it = itemDisplayGroupSounds_.find(displayInfoId);
+    if (it == itemDisplayGroupSounds_.end()) return false;
+    return playItemGroupSound(it->second, pickup);
 }
 
 bool UiSoundManager::playByName(const std::string& soundName) {
-    if (!initialized_ || soundName.empty()) return false;
-    ensureSoundEntriesLoaded();
+    if (!initialized_ || soundName.empty() || !assets_) return false;
+    if (volumeScale_ <= 0.0f) return true; // Muted SFX counts as handled, not missing
 
-    std::string key = soundName;
-    for (char& ch : key) {
-        ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
-    }
-
-    auto cached = namedSamples_.find(key);
-    if (cached == namedSamples_.end()) {
-        auto it = soundPathsByName_.find(key);
-        if (it == soundPathsByName_.end()) return false;
-        UISample sample;
-        sample.loaded = false;
-        for (const std::string& path : it->second) {
-            if (loadSound(path, sample, assets_)) break;
-        }
-        // Remembered even when nothing loaded, so a name whose file this
-        // install does not have is looked for once rather than on every click.
-        cached = namedSamples_.emplace(key, std::move(sample)).first;
-    }
-    if (!cached->second.loaded) return false;
-
-    // What happened, not what was attempted. playSound2D decodes WAV and
-    // answers false for anything else, and SoundEntries lists a couple of
-    // thousand mp3s among its wavs - claiming success for one of those would
-    // skip the fallback below this and play nothing at all.
-    return AudioEngine::instance().playSound2D(cached->second.data,
-                                               0.7f * volumeScale_, 1.0f);
+    const auto* entry = SoundEntryTable::instance().findByName(assets_, soundName);
+    if (!entry) return false;
+    return SoundEntryTable::instance().play2D(assets_, entry->id, volumeScale_, 1.0f);
 }
 
 bool UiSoundManager::playFile(const std::string& path) {

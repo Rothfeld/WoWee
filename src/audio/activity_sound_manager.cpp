@@ -81,7 +81,7 @@ void ActivitySoundManager::update([[maybe_unused]] float deltaTime) {
 
             // Play as one-shot 2D sound
             float volume = 0.6f * volumeScale;
-            AudioEngine::instance().playSound2D(sample.data, volume, false);
+            AudioEngine::instance().playSound2D(sample.data, volume, 1.0f);
 
             lastSwimStrokeAt = now;
         }
@@ -105,9 +105,11 @@ static std::vector<std::string> exertionPrefixes(const std::string& raceBase, bo
     const std::string base = "Sound\\Character\\PlayerExertions\\";
 
     std::vector<std::string> prefixes;
-    prefixes.push_back(base + stem + "Final\\" + stem + "Main");   // most races
+    prefixes.push_back(base + stem + "Final\\" + stem + "Main");   // most Vanilla races
     prefixes.push_back(base + stem + "\\" + stem + "Main");        // OrcMale folder
     prefixes.push_back(base + stem + "Final\\" + stem + "Final");  // TaurenFemale/UndeadFemale stem
+    // TBC 2.4.3 BloodElf and Draenei player combat vocals live in Sound\Character\{Race}{Gender}PC
+    prefixes.push_back("Sound\\Character\\" + stem + "PC\\" + stem + "PC");
     if (race == "Human" && !male) {
         prefixes.push_back(base + stem + "Final\\HumanFeamleMain");
     }
@@ -151,7 +153,7 @@ void ActivitySoundManager::rebuildJumpClipsForProfile(const std::string& raceFol
     candidates.push_back(prefix + stem + "\\" + stem + "Jump02.wav");
     preloadCandidates(jumpClips, candidates);
     if (jumpClips.empty()) {
-        LOG_WARNING("No jump clips found for ", stem);
+        LOG_DEBUG("No vocal jump clips authored for ", stem);
     } else {
         LOG_INFO("Loaded ", jumpClips.size(), " jump clips for ", stem);
     }
@@ -181,12 +183,16 @@ void ActivitySoundManager::rebuildHardLandClipsForProfile(const std::string& rac
     const std::string gender = male ? "Male" : "Female";
     const std::string prefix = "Sound\\Character\\" + raceFolder + "\\";
     const std::string stem = raceBase + gender;
-    preloadCandidates(hardLandClips, {
+    std::vector<std::string> candidates = {
         prefix + stem + "\\" + stem + "LandHard01.wav",
         prefix + stem + "\\" + stem + "LandHard02.wav",
         prefix + stem + "LandHard01.wav",
         prefix + stem + "LandHard02.wav"
-    });
+    };
+    for (const auto& exert : exertionPrefixes(raceBase, male)) {
+        candidates.push_back(exert + "Land.wav");
+    }
+    preloadCandidates(hardLandClips, candidates);
 }
 
 void ActivitySoundManager::startSwimLoop() {
@@ -330,6 +336,10 @@ void ActivitySoundManager::setCharacterVoiceProfile(const std::string& modelName
     std::string key = folder + "|" + base + "|" + (male ? "M" : "F");
     if (key == voiceProfileKey) return;
     voiceProfileKey = key;
+    lastJumpAt = {};
+    lastLandAt = {};
+    lastAttackGruntAt = {};
+    lastWoundAt = {};
     rebuildJumpClipsForProfile(folder, base, male);
     rebuildSwimLoopClipsForProfile(folder, base, male);
     rebuildHardLandClipsForProfile(folder, base, male);
@@ -348,6 +358,10 @@ void ActivitySoundManager::setCharacterVoiceProfile(const std::string& raceFolde
     std::string key = raceFolder + "|" + raceBase + "|" + (male ? "M" : "F");
     if (key == voiceProfileKey) return;
     voiceProfileKey = key;
+    lastJumpAt = {};
+    lastLandAt = {};
+    lastAttackGruntAt = {};
+    lastWoundAt = {};
     rebuildJumpClipsForProfile(raceFolder, raceBase, male);
     rebuildSwimLoopClipsForProfile(raceFolder, raceBase, male);
     rebuildHardLandClipsForProfile(raceFolder, raceBase, male);
@@ -431,9 +445,9 @@ void ActivitySoundManager::rebuildCombatVocalClipsForProfile(const std::string& 
     const std::vector<std::string> exertPrefixes_ = exertionPrefixes(raceBase, male);
     const std::string voxPrefix = "Sound\\Character\\" + raceFolder + "\\" + gender + "\\m" + stem;
 
-    // Attack grunts
+    // Attack grunts (TBC BloodElf/Draenei ship A..I)
     std::vector<std::string> attackPaths;
-    for (char c = 'A'; c <= 'F'; ++c) {
+    for (char c = 'A'; c <= 'I'; ++c) {
         std::string s(1, c);
         for (const auto& exert : exertPrefixes_) {
             attackPaths.push_back(exert + "Attack" + s + ".wav");
@@ -442,9 +456,9 @@ void ActivitySoundManager::rebuildCombatVocalClipsForProfile(const std::string& 
     }
     preloadCandidates(attackGruntClips, attackPaths);
 
-    // Wound sounds (UndeadFemale ships one variant with no letter suffix)
+    // Wound sounds (UndeadFemale and BloodElfFemalePC ship one variant with no letter suffix)
     std::vector<std::string> woundPaths;
-    for (char c = 'A'; c <= 'F'; ++c) {
+    for (char c = 'A'; c <= 'I'; ++c) {
         std::string s(1, c);
         for (const auto& exert : exertPrefixes_) {
             woundPaths.push_back(exert + "Wound" + s + ".wav");
@@ -456,14 +470,14 @@ void ActivitySoundManager::rebuildCombatVocalClipsForProfile(const std::string& 
     }
     preloadCandidates(woundClips, woundPaths);
 
-    // Wound crit sounds. Some races have WoundCrit without a letter suffix,
-    // and UndeadFemale's is typo'd "WoundCriatA".
+    // Wound crit sounds: UndeadFemale has "WoundCriatA", BloodElfFemalePC has "CritA..C".
     std::vector<std::string> woundCritPaths;
-    for (char c = 'A'; c <= 'C'; ++c) {
+    for (char c = 'A'; c <= 'E'; ++c) {
         std::string s(1, c);
         for (const auto& exert : exertPrefixes_) {
             woundCritPaths.push_back(exert + "WoundCrit" + s + ".wav");
             woundCritPaths.push_back(exert + "WoundCriat" + s + ".wav");
+            woundCritPaths.push_back(exert + "Crit" + s + ".wav");
         }
         woundCritPaths.push_back(voxPrefix + "WoundCriticalVox" + s + ".wav");
     }
@@ -472,7 +486,7 @@ void ActivitySoundManager::rebuildCombatVocalClipsForProfile(const std::string& 
     }
     preloadCandidates(woundCritClips, woundCritPaths);
 
-    // Death sounds (NightElf/Troll/Undead ship "Death" with no letter suffix)
+    // Death sounds (NightElf/Troll/Undead/Draenei/BloodElf ship "Death", BloodElfMalePC adds "Death2")
     std::vector<std::string> deathPaths;
     for (char c = 'A'; c <= 'C'; ++c) {
         std::string s(1, c);
@@ -483,6 +497,7 @@ void ActivitySoundManager::rebuildCombatVocalClipsForProfile(const std::string& 
     }
     for (const auto& exert : exertPrefixes_) {
         deathPaths.push_back(exert + "Death.wav");
+        deathPaths.push_back(exert + "Death2.wav");
     }
     preloadCandidates(deathClips, deathPaths);
 
@@ -533,6 +548,13 @@ void ActivitySoundManager::playWound(bool isCrit) {
     if (AudioEngine::instance().playSound2D(sample.data, vol * volumeScale, pitchDist(rng))) {
         lastWoundAt = now;
     }
+}
+
+void ActivitySoundManager::playDeath() {
+    if (!AudioEngine::instance().isInitialized() || deathClips.empty()) return;
+    std::uniform_int_distribution<size_t> dist(0, deathClips.size() - 1);
+    const Sample& sample = deathClips[dist(rng)];
+    AudioEngine::instance().playSound2D(sample.data, 0.85f * volumeScale, 1.0f);
 }
 } // namespace audio
 } // namespace wowee

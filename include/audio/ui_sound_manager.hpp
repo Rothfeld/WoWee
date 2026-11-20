@@ -21,6 +21,16 @@ public:
     // Initialization
     bool initialize(pipeline::AssetManager* assets);
     void shutdown();
+    [[nodiscard]] bool isInitialized() const { return initialized_; }
+
+    /// Play a sound by SoundEntries.dbc numeric ID (used by PlaySound(id) and ItemGroupSounds).
+    bool playById(uint32_t soundId);
+
+    /// Play an item pickup or putdown sound via ItemGroupSounds.dbc (id = ItemDisplayInfo.GroupSoundIndex).
+    bool playItemGroupSound(uint32_t groupSoundIndex, bool pickup);
+
+    /// Play an item pickup or putdown sound resolved from ItemDisplayInfo.dbc col 12 -> ItemGroupSounds.dbc.
+    bool playItemDisplaySound(uint32_t displayInfoId, bool pickup);
 
     /// Play a sound by the name FrameXML asks for - PlaySound("igQuestFailed")
     /// and its sixty-seven siblings.
@@ -156,15 +166,14 @@ private:
 
     // Helper methods
     bool loadSound(const std::string& path, UISample& sample, pipeline::AssetManager* assets);
-    /// SoundEntries rows by upper-cased name, built on the first playByName.
-    /// Empty after a build that found no table, which is also how the build is
-    /// stopped from being attempted on every click.
-    void ensureSoundEntriesLoaded();
-    bool soundEntriesBuilt_ = false;
-    std::unordered_map<std::string, std::vector<std::string>> soundPathsByName_;
-    /// Samples loaded on demand by name. Kept because a UI sound is played
-    /// again and again, and reading it from the archive each time is the one
-    /// cost this has that the preloaded libraries do not.
+    void ensureItemGroupSoundsLoaded();
+    bool itemGroupSoundsBuilt_ = false;
+    struct ItemGroupSoundRow {
+        uint32_t pickupSoundId = 0;
+        uint32_t putdownSoundId = 0;
+    };
+    std::unordered_map<uint32_t, ItemGroupSoundRow> itemGroupSounds_;
+    std::unordered_map<uint32_t, uint32_t> itemDisplayGroupSounds_;
     std::unordered_map<std::string, UISample> namedSamples_;
     pipeline::AssetManager* assets_ = nullptr;
     void playSound(const std::vector<UISample>& library);

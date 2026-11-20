@@ -144,7 +144,7 @@ static bool decodeWavCached(const std::vector<uint8_t>& wavData, DecodedWavCache
     ma_uint64 framesRead = 0;
     result = ma_decoder_read_pcm_frames(&decoder, pcmData->data(), totalFrames, &framesRead);
     ma_decoder_uninit(&decoder);
-    if (result != MA_SUCCESS || framesRead == 0) {
+    if ((result != MA_SUCCESS && result != MA_AT_END) || framesRead == 0) {
         LOG_ERROR("AudioEngine: Failed to read frames from WAV: error ", result, ", framesRead=", framesRead);
         return false;
     }
@@ -240,12 +240,40 @@ bool AudioEngine::initialize() {
     }
 
     initialized_ = true;
+    headless_ = false;
     LOG_INFO("AudioEngine initialized (miniaudio, backend: ", backendName, ")");
+    return true;
+}
+
+bool AudioEngine::initializeHeadless(uint32_t sampleRate, uint32_t channels) {
+    if (initialized_) {
+        shutdown();
+    }
+
+    engine_ = new ma_engine();
+    ma_engine_config engineConfig = ma_engine_config_init();
+    engineConfig.noDevice = MA_TRUE;
+    engineConfig.channels = std::max(1u, channels);
+    engineConfig.sampleRate = std::max(8000u, sampleRate);
+    ma_result result = ma_engine_init(&engineConfig, engine_);
+    if (result != MA_SUCCESS) {
+        LOG_ERROR("Failed to initialize headless miniaudio engine: ", result);
+        delete engine_;
+        engine_ = nullptr;
+        return false;
+    }
+
+    ma_engine_set_volume(engine_, suspended_ ? 0.0f : masterVolume_);
+    initialized_ = true;
+    headless_ = true;
+    LOG_INFO("AudioEngine initialized in headless test mode (", engineConfig.sampleRate, " Hz, ",
+             engineConfig.channels, " ch)");
     return true;
 }
 
 std::string AudioEngine::getOutputDeviceName() const {
     if (!initialized_ || !engine_) return {};
+    if (headless_) return "Headless Test Mixer";
     const ma_device* device = ma_engine_get_device(const_cast<ma_engine*>(engine_));
     if (!device || device->playback.name[0] == '\0') return {};
     return device->playback.name;
@@ -284,6 +312,7 @@ void AudioEngine::shutdown() {
     }
 
     initialized_ = false;
+    headless_ = false;
     LOG_INFO("AudioEngine shutdown");
 }
 
@@ -318,114 +347,107 @@ void AudioEngine::setListenerOrientation(const glm::vec3& forward, const glm::ve
     }
 }
 
-bool AudioEngine::playSound2D(const std::vector<uint8_t>& wavData, float volume, float pitch) {
-    // Size and volume, because this overload is handed decoded bytes and has
-    // no name to report. The sample managers all cache their clips and call
-    // this one, so the path-named log above never fires for them - and a sound
-    // reported as playing loudly on every world entry produced no sfx: line at
-    // all. A byte count identifies the file well enough to find it on disk.
+uint32_t AudioEngine::startSound2DInternal(const std::vector<uint8_t>& wavData, float volume,
+                                           float pitch, bool stoppable,
+                                           const std::string& debugPath) {
     LOG_INFO("sfx2d: bytes=", wavData.size(), " vol=", volume);
-    (void)pitch;
-    if (!initialized_ || !engine_ || wavData.empty()) return false;
-    if (masterVolume_ <= 0.0f) return false;
+    const float clampedPitch = glm::clamp(pitch, 0.25f, 4.0f);
+    auto notify = [&](bool started, const DecodedWavCacheEntry& dec) {
+        if (!playbackObserver_) return;
+        PlaybackEvent ev;
+        ev.path = debugPath;
+        ev.byteSize = wavData.size();
+        ev.decodedFrames = dec.frames;
+        ev.sampleRate = dec.sampleRate;
+        ev.volume = volume;
+        ev.pitch = clampedPitch;
+        ev.spatial = false;
+        ev.music = false;
+        ev.started = started;
+        playbackObserver_(ev);
+    };
+
+    DecodedWavCacheEntry emptyDec;
+    if (!initialized_ || !engine_ || wavData.empty() || masterVolume_ <= 0.0f || volume <= 0.0f) {
+        notify(false, emptyDec);
+        return 0;
+    }
 
     DecodedWavCacheEntry decoded;
     if (!decodeWavCached(wavData, decoded) || !decoded.pcmData || decoded.frames == 0) {
-        return false;
+        notify(false, emptyDec);
+        return 0;
     }
 
-    // Create audio buffer from decoded PCM data (heap allocated to keep alive)
     ma_audio_buffer_config bufferConfig = ma_audio_buffer_config_init(
         decoded.format,
         decoded.channels,
         decoded.frames,
         decoded.pcmData->data(),
-        nullptr  // No custom allocator
+        nullptr
     );
-    // Must set explicitly - miniaudio defaults to device sample rate, which causes
-    // pitch distortion if it differs from the file's native rate (e.g. 22050 vs 44100 Hz).
     bufferConfig.sampleRate = decoded.sampleRate;
 
     AudioBufferStorage audioBuffer;
-    if (!audioBuffer) return false;
-    ma_result result = ma_audio_buffer_init(&bufferConfig, audioBuffer.get());
-    if (result != MA_SUCCESS) {
-        LOG_WARNING("Failed to create audio buffer: ", result);
-        return false;
+    if (!audioBuffer || ma_audio_buffer_init(&bufferConfig, audioBuffer.get()) != MA_SUCCESS) {
+        notify(false, decoded);
+        return 0;
     }
     audioBuffer.markInitialised();
 
-    // Create sound from audio buffer
-    SoundStorage sound;
-    if (!sound) return false;
-    result = ma_sound_init_from_data_source(
-        engine_,
-        audioBuffer.get(),
-        MA_SOUND_FLAG_DECODE | MA_SOUND_FLAG_ASYNC | MA_SOUND_FLAG_NO_PITCH | MA_SOUND_FLAG_NO_SPATIALIZATION,
-        nullptr,
-        sound.get()
-    );
+    const bool customPitch = std::abs(clampedPitch - 1.0f) > 1e-3f;
+    const ma_uint32 flags = static_cast<ma_uint32>(MA_SOUND_FLAG_DECODE) |
+                            static_cast<ma_uint32>(MA_SOUND_FLAG_ASYNC) |
+                            static_cast<ma_uint32>(MA_SOUND_FLAG_NO_SPATIALIZATION) |
+                            (customPitch ? 0u : static_cast<ma_uint32>(MA_SOUND_FLAG_NO_PITCH));
 
-    if (result != MA_SUCCESS) {
-        LOG_WARNING("Failed to create sound: ", result);
-        return false;
+    SoundStorage sound;
+    if (!sound ||
+        ma_sound_init_from_data_source(engine_, audioBuffer.get(), flags, nullptr, sound.get()) != MA_SUCCESS) {
+        notify(false, decoded);
+        return 0;
     }
     sound.markInitialised();
 
-    // Set volume (pitch not supported with NO_PITCH flag)
     ma_sound_set_volume(sound.get(), volume);
-
-    // Start playback
-    result = ma_sound_start(sound.get());
-    if (result != MA_SUCCESS) {
-        LOG_WARNING("Failed to start sound: ", result);
-        return false;
+    if (customPitch) {
+        ma_sound_set_pitch(sound.get(), clampedPitch);
+    }
+    if (ma_sound_start(sound.get()) != MA_SUCCESS) {
+        notify(false, decoded);
+        return 0;
     }
 
-    // Track this sound for cleanup (decoded PCM shared across plays)
-    activeSounds_.push_back({sound.release(), audioBuffer.release(), decoded.pcmData, 0u});
-
-    return true;
+    uint32_t id = 0;
+    if (stoppable) {
+        id = nextSoundId_++;
+        if (nextSoundId_ == 0) nextSoundId_ = 1;
+    }
+    activeSounds_.push_back({sound.release(), audioBuffer.release(), decoded.pcmData, id});
+    notify(true, decoded);
+    return stoppable ? id : 1u;
 }
 
-uint32_t AudioEngine::playSound2DStoppable(const std::vector<uint8_t>& wavData, float volume) {
-    if (!initialized_ || !engine_ || wavData.empty()) return 0;
-    if (masterVolume_ <= 0.0f) return 0;
+bool AudioEngine::playSound2D(const std::vector<uint8_t>& wavData, float volume, float pitch) {
+    return startSound2DInternal(wavData, volume, pitch, false, {}) != 0;
+}
 
-    DecodedWavCacheEntry decoded;
-    if (!decodeWavCached(wavData, decoded) || !decoded.pcmData || decoded.frames == 0) return 0;
+uint32_t AudioEngine::playSound2DStoppable(const std::vector<uint8_t>& wavData, float volume, float pitch) {
+    return startSound2DInternal(wavData, volume, pitch, true, {});
+}
 
-    ma_audio_buffer_config bufferConfig = ma_audio_buffer_config_init(
-        decoded.format, decoded.channels, decoded.frames, decoded.pcmData->data(), nullptr);
-    bufferConfig.sampleRate = decoded.sampleRate;
-
-    AudioBufferStorage audioBuffer;
-    if (!audioBuffer) return 0;
-    if (ma_audio_buffer_init(&bufferConfig, audioBuffer.get()) != MA_SUCCESS) {
+uint32_t AudioEngine::playSound2DStoppable(const std::string& mpqPath, float volume, float pitch) {
+    LOG_INFO("sfx: ", mpqPath, " vol=", volume);
+    if (!assetManager_) {
+        LOG_WARNING("AudioEngine::playSound2DStoppable(path): no AssetManager set");
         return 0;
     }
-    audioBuffer.markInitialised();
-
-    SoundStorage sound;
-    if (!sound) return 0;
-    ma_result result = ma_sound_init_from_data_source(
-        engine_, audioBuffer.get(),
-        MA_SOUND_FLAG_DECODE | MA_SOUND_FLAG_ASYNC | MA_SOUND_FLAG_NO_PITCH | MA_SOUND_FLAG_NO_SPATIALIZATION,
-        nullptr, sound.get());
-    if (result != MA_SUCCESS) {
+    auto data = assetManager_->readFile(mpqPath);
+    if (data.empty()) {
+        LOG_WARNING("AudioEngine::playSound2DStoppable: failed to load '", mpqPath, "'");
         return 0;
     }
-    sound.markInitialised();
-
-    ma_sound_set_volume(sound.get(), volume);
-    if (ma_sound_start(sound.get()) != MA_SUCCESS) {
-        return 0;
-    }
-
-    uint32_t id = nextSoundId_++;
-    if (nextSoundId_ == 0) nextSoundId_ = 1;  // Skip 0 (sentinel)
-    activeSounds_.push_back({sound.release(), audioBuffer.release(), decoded.pcmData, id});
-    return id;
+    return startSound2DInternal(data, volume, pitch, true, mpqPath);
 }
 
 void AudioEngine::stopSound(uint32_t id) {
@@ -445,12 +467,6 @@ void AudioEngine::stopSound(uint32_t id) {
 }
 
 bool AudioEngine::playSound2D(const std::string& mpqPath, float volume, float pitch) {
-    // Which file, and how loud, for the one-shots that name a path.
-    //
-    // A sound reported as playing loudly on every world entry cannot be found
-    // by reading: a dozen managers reach this and none of them is obviously the
-    // one. This says so in a line, and the timestamp beside the world-entry
-    // lines in the same log is what pins it.
     LOG_INFO("sfx: ", mpqPath, " vol=", volume);
     if (!assetManager_) {
         LOG_WARNING("AudioEngine::playSound2D(path): no AssetManager set");
@@ -461,24 +477,46 @@ bool AudioEngine::playSound2D(const std::string& mpqPath, float volume, float pi
         LOG_WARNING("AudioEngine::playSound2D: failed to load '", mpqPath, "'");
         return false;
     }
-    return playSound2D(data, volume, pitch);
+    return startSound2DInternal(data, volume, pitch, false, mpqPath) != 0;
 }
 
-bool AudioEngine::playSound3D(const std::vector<uint8_t>& wavData, const glm::vec3& position,
-                              float volume, float pitch, float maxDistance) {
-    if (!initialized_ || !engine_ || wavData.empty()) return false;
-    if (masterVolume_ <= 0.0f) return false;
+uint32_t AudioEngine::startSound3DInternal(const std::vector<uint8_t>& wavData, const glm::vec3& position,
+                                           float volume, float pitch, float maxDistance,
+                                           float minDistance, bool stoppable,
+                                           const std::string& debugPath) {
+    const float clampedPitch = glm::clamp(pitch, 0.25f, 4.0f);
+    const float safeMinDist = std::max(0.1f, minDistance);
+    const float safeMaxDist = std::max(safeMinDist, maxDistance);
+    auto notify = [&](bool started, const DecodedWavCacheEntry& dec) {
+        if (!playbackObserver_) return;
+        PlaybackEvent ev;
+        ev.path = debugPath;
+        ev.byteSize = wavData.size();
+        ev.decodedFrames = dec.frames;
+        ev.sampleRate = dec.sampleRate;
+        ev.volume = volume;
+        ev.pitch = clampedPitch;
+        ev.spatial = true;
+        ev.music = false;
+        ev.position = position;
+        ev.minDistance = safeMinDist;
+        ev.maxDistance = safeMaxDist;
+        ev.started = started;
+        playbackObserver_(ev);
+    };
+
+    DecodedWavCacheEntry emptyDec;
+    if (!initialized_ || !engine_ || wavData.empty() || masterVolume_ <= 0.0f || volume <= 0.0f) {
+        notify(false, emptyDec);
+        return 0;
+    }
 
     DecodedWavCacheEntry decoded;
     if (!decodeWavCached(wavData, decoded) || !decoded.pcmData || decoded.frames == 0) {
-        return false;
+        notify(false, emptyDec);
+        return 0;
     }
 
-    LOG_DEBUG("playSound3D: cached WAV - format:", decoded.format,
-              " channels:", decoded.channels, " sampleRate:", decoded.sampleRate,
-              " pitch:", pitch);
-
-    // Create audio buffer with correct sample rate
     ma_audio_buffer_config bufferConfig = ma_audio_buffer_config_init(
         decoded.format,
         decoded.channels,
@@ -486,59 +524,57 @@ bool AudioEngine::playSound3D(const std::vector<uint8_t>& wavData, const glm::ve
         decoded.pcmData->data(),
         nullptr
     );
-    // Must set explicitly - miniaudio defaults to device sample rate, which causes
-    // pitch distortion if it differs from the file's native rate (e.g. 22050 vs 44100 Hz).
     bufferConfig.sampleRate = decoded.sampleRate;
 
     AudioBufferStorage audioBuffer;
-    if (!audioBuffer) return false;
-    ma_result result = ma_audio_buffer_init(&bufferConfig, audioBuffer.get());
-    if (result != MA_SUCCESS) {
-        return false;
+    if (!audioBuffer || ma_audio_buffer_init(&bufferConfig, audioBuffer.get()) != MA_SUCCESS) {
+        notify(false, decoded);
+        return 0;
     }
     audioBuffer.markInitialised();
 
-    // Create 3D sound (spatialization enabled, pitch enabled)
     SoundStorage sound;
-    if (!sound) return false;
-    result = ma_sound_init_from_data_source(
-        engine_,
-        audioBuffer.get(),
-        MA_SOUND_FLAG_DECODE | MA_SOUND_FLAG_ASYNC,  // Removed NO_PITCH flag
-        nullptr,
-        sound.get()
-    );
-
-    if (result != MA_SUCCESS) {
-        LOG_WARNING("playSound3D: Failed to create sound, error: ", result);
-        return false;
+    if (!sound ||
+        ma_sound_init_from_data_source(engine_, audioBuffer.get(),
+                                       MA_SOUND_FLAG_DECODE | MA_SOUND_FLAG_ASYNC,
+                                       nullptr, sound.get()) != MA_SUCCESS) {
+        notify(false, decoded);
+        return 0;
     }
     sound.markInitialised();
 
-    // Set 3D position and attenuation
     ma_sound_set_position(sound.get(), position.x, position.y, position.z);
     ma_sound_set_volume(sound.get(), volume);
-    ma_sound_set_pitch(sound.get(), pitch);  // Enable pitch variation
+    ma_sound_set_pitch(sound.get(), clampedPitch);
     ma_sound_set_attenuation_model(sound.get(), ma_attenuation_model_inverse);
     ma_sound_set_min_gain(sound.get(), 0.0f);
     ma_sound_set_max_gain(sound.get(), 1.0f);
-    ma_sound_set_min_distance(sound.get(), 1.0f);
-    ma_sound_set_max_distance(sound.get(), maxDistance);
+    ma_sound_set_min_distance(sound.get(), safeMinDist);
+    ma_sound_set_max_distance(sound.get(), safeMaxDist);
     ma_sound_set_rolloff(sound.get(), 1.0f);
 
-    result = ma_sound_start(sound.get());
-    if (result != MA_SUCCESS) {
-        return false;
+    if (ma_sound_start(sound.get()) != MA_SUCCESS) {
+        notify(false, decoded);
+        return 0;
     }
 
-    // Track for cleanup
-    activeSounds_.push_back({sound.release(), audioBuffer.release(), decoded.pcmData});
+    uint32_t id = 0;
+    if (stoppable) {
+        id = nextSoundId_++;
+        if (nextSoundId_ == 0) nextSoundId_ = 1;
+    }
+    activeSounds_.push_back({sound.release(), audioBuffer.release(), decoded.pcmData, id});
+    notify(true, decoded);
+    return stoppable ? id : 1u;
+}
 
-    return true;
+bool AudioEngine::playSound3D(const std::vector<uint8_t>& wavData, const glm::vec3& position,
+                              float volume, float pitch, float maxDistance, float minDistance) {
+    return startSound3DInternal(wavData, position, volume, pitch, maxDistance, minDistance, false, {}) != 0;
 }
 
 bool AudioEngine::playSound3D(const std::string& mpqPath, const glm::vec3& position,
-                              float volume, float pitch, float maxDistance) {
+                              float volume, float pitch, float maxDistance, float minDistance) {
     if (!assetManager_) {
         LOG_WARNING("AudioEngine::playSound3D(path): no AssetManager set");
         return false;
@@ -548,7 +584,26 @@ bool AudioEngine::playSound3D(const std::string& mpqPath, const glm::vec3& posit
         LOG_WARNING("AudioEngine::playSound3D: failed to load '", mpqPath, "'");
         return false;
     }
-    return playSound3D(data, position, volume, pitch, maxDistance);
+    return startSound3DInternal(data, position, volume, pitch, maxDistance, minDistance, false, mpqPath) != 0;
+}
+
+uint32_t AudioEngine::playSound3DStoppable(const std::vector<uint8_t>& wavData, const glm::vec3& position,
+                                           float volume, float pitch, float maxDistance, float minDistance) {
+    return startSound3DInternal(wavData, position, volume, pitch, maxDistance, minDistance, true, {});
+}
+
+uint32_t AudioEngine::playSound3DStoppable(const std::string& mpqPath, const glm::vec3& position,
+                                           float volume, float pitch, float maxDistance, float minDistance) {
+    if (!assetManager_) {
+        LOG_WARNING("AudioEngine::playSound3DStoppable(path): no AssetManager set");
+        return 0;
+    }
+    auto data = assetManager_->readFile(mpqPath);
+    if (data.empty()) {
+        LOG_WARNING("AudioEngine::playSound3DStoppable: failed to load '", mpqPath, "'");
+        return 0;
+    }
+    return startSound3DInternal(data, position, volume, pitch, maxDistance, minDistance, true, mpqPath);
 }
 
 bool AudioEngine::playMusic(std::shared_ptr<const std::vector<uint8_t>> musicData,
@@ -641,6 +696,15 @@ bool AudioEngine::playMusic(std::shared_ptr<const std::vector<uint8_t>> musicDat
     LOG_INFO("Music playback started successfully - volume: ", volume,
              ", loop: ", loop,
              ", is_playing: ", ma_sound_is_playing(musicSound_));
+    if (playbackObserver_) {
+        PlaybackEvent ev;
+        ev.byteSize = musicData_ ? musicData_->size() : 0;
+        ev.sampleRate = decoder->outputSampleRate;
+        ev.volume = volume;
+        ev.music = true;
+        ev.started = true;
+        playbackObserver_(ev);
+    }
 
     return true;
 }
@@ -779,6 +843,19 @@ uint32_t AudioEngine::getOutputChannels() const {
 
 uint32_t AudioEngine::getOutputSampleRate() const {
     return engine_ ? ma_engine_get_sample_rate(engine_) : 0;
+}
+
+uint32_t AudioEngine::renderMixFrames(float* dstInterleaved, uint32_t frameCount) {
+    if (!initialized_ || !engine_ || !dstInterleaved || frameCount == 0) return 0;
+    const uint32_t ch = std::max(1u, ma_engine_get_channels(engine_));
+    std::memset(dstInterleaved, 0, static_cast<size_t>(frameCount) * ch * sizeof(float));
+    ma_uint64 framesRead = 0;
+    const ma_result res = ma_engine_read_pcm_frames(engine_, dstInterleaved, frameCount, &framesRead);
+    if (res != MA_SUCCESS && res != MA_AT_END) {
+        return 0;
+    }
+    update(static_cast<float>(frameCount) / static_cast<float>(std::max(1u, ma_engine_get_sample_rate(engine_))));
+    return frameCount;
 }
 
 } // namespace audio

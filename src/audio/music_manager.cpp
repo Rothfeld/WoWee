@@ -250,7 +250,8 @@ void MusicManager::setUnderwaterMode(bool underwater) {
 void MusicManager::crossfadeTo(const std::string& mpqPath, float fadeMs) {
     if (mpqPath == currentTrack && playing) return;
 
-    // Simple implementation: stop and start (no actual crossfade yet)
+    // Zone tracks play once per pass so multi-track sets rotate cleanly;
+    // AudioCoordinator handles Sound_ZoneMusicNoDelay vs silence intervals.
     if (fadeMs > 0 && playing) {
         crossfading = true;
         pendingTrack = mpqPath;
@@ -259,7 +260,7 @@ void MusicManager::crossfadeTo(const std::string& mpqPath, float fadeMs) {
         fadeDuration = fadeMs / 1000.0f;
         AudioEngine::instance().stopMusic();
     } else {
-        playMusic(mpqPath, loopTracks_);
+        playMusic(mpqPath, false);
     }
 }
 
@@ -274,7 +275,7 @@ void MusicManager::crossfadeToFile(const std::string& filePath, float fadeMs) {
         fadeDuration = fadeMs / 1000.0f;
         AudioEngine::instance().stopMusic();
     } else {
-        playFilePath(filePath, loopTracks_);
+        playFilePath(filePath, false);
     }
 }
 
@@ -319,9 +320,9 @@ void MusicManager::update(float deltaTime) {
             // Start new track after brief pause
             crossfading = false;
             if (pendingIsFile) {
-                playFilePath(pendingTrack, loopTracks_);
+                playFilePath(pendingTrack, false);
             } else {
-                playMusic(pendingTrack, loopTracks_);
+                playMusic(pendingTrack, false);
             }
             pendingTrack.clear();
             pendingIsFile = false;

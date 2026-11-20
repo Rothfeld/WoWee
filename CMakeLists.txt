@@ -718,6 +718,7 @@ set(WOWEE_SOURCES
 
     # Audio
     src/audio/audio_engine.cpp
+    src/audio/sound_entries.cpp
     src/audio/audio_coordinator.cpp
     src/audio/music_manager.cpp
     src/audio/footstep_manager.cpp
@@ -988,6 +989,7 @@ set(WOWEE_HEADERS
     include/game/character.hpp
 
     include/audio/audio_engine.hpp
+    include/audio/sound_entries.hpp
     include/audio/music_manager.hpp
     include/audio/footstep_manager.hpp
     include/audio/creature_sound_index.hpp

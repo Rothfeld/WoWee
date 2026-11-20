@@ -54,16 +54,20 @@ public:
     void shutdown();
 
     // Play NPC interaction sounds
-    void playGreeting(uint64_t npcGuid, VoiceType voiceType, const glm::vec3& position);
-    void playFarewell(uint64_t npcGuid, VoiceType voiceType, const glm::vec3& position);
-    void playVendor(uint64_t npcGuid, VoiceType voiceType, const glm::vec3& position);
-    void playPissed(uint64_t npcGuid, VoiceType voiceType, const glm::vec3& position);
+    void playGreeting(uint64_t npcGuid, VoiceType voiceType, const glm::vec3& position, uint32_t displayId = 0);
+    void playFarewell(uint64_t npcGuid, VoiceType voiceType, const glm::vec3& position, uint32_t displayId = 0);
+    void playVendor(uint64_t npcGuid, VoiceType voiceType, const glm::vec3& position, uint32_t displayId = 0);
+    void playPissed(uint64_t npcGuid, VoiceType voiceType, const glm::vec3& position, uint32_t displayId = 0);
 
     // Play NPC combat sounds
     void playAggro(uint64_t npcGuid, uint32_t displayId, VoiceType voiceType,
                    const glm::vec3& position);
     void playCombatAttack(uint64_t npcGuid, uint32_t displayId,
                           const glm::vec3& position);
+    void playWound(uint64_t npcGuid, uint32_t displayId, bool isCrit,
+                   const glm::vec3& position);
+    void playDeath(uint64_t npcGuid, uint32_t displayId,
+                   const glm::vec3& position);
 
     void setVolumeScale(float scale) { volumeScale_ = scale; }
     [[nodiscard]] float getVolumeScale() const { return volumeScale_; }
@@ -99,8 +103,18 @@ private:
     // CreatureSoundData.SoundAggroID. These are the model-specific combat
     // barks used by hostile creatures; the race voice library above is only
     // a fallback for incomplete DBC rows.
+    struct NpcSoundSet {
+        uint32_t greeting = 0;
+        uint32_t farewell = 0;
+        uint32_t pissed = 0;
+        uint32_t vendor = 0;
+    };
+    std::unordered_map<uint32_t, NpcSoundSet> npcSoundsByDisplay_;
     std::unordered_map<uint32_t, uint32_t> creatureAggroSoundByDisplay_;
     std::unordered_map<uint32_t, uint32_t> creatureAttackSoundByDisplay_;
+    std::unordered_map<uint32_t, uint32_t> creatureWoundSoundByDisplay_;
+    std::unordered_map<uint32_t, uint32_t> creatureCritWoundSoundByDisplay_;
+    std::unordered_map<uint32_t, uint32_t> creatureDeathSoundByDisplay_;
 
     // Cooldown tracking (prevent spam clicking same NPC)
     std::unordered_map<uint64_t, std::chrono::steady_clock::time_point> lastPlayTime_;

@@ -93,15 +93,18 @@ bool AmbientSoundManager::initialize(pipeline::AssetManager* assets) {
     fountainSounds_.resize(1);
     loadSound("Sound\\Doodad\\FountainSmallMediumLoop.wav", fountainSounds_[0], assets);
 
-    // Load weather sounds
+    // Load weather sounds (TBC 2.4.3 uses Rain*Loop.wav and SandStorm*.wav)
     rainLightSounds_.resize(1);
-    bool rainLightLoaded = loadSound("Sound\\Ambience\\Weather\\RainLight.wav", rainLightSounds_[0], assets);
+    bool rainLightLoaded = loadSound("Sound\\Ambience\\Weather\\RainLightLoop.wav", rainLightSounds_[0], assets) ||
+                           loadSound("Sound\\Ambience\\Weather\\RainLight.wav", rainLightSounds_[0], assets);
 
     rainMediumSounds_.resize(1);
-    bool rainMediumLoaded = loadSound("Sound\\Ambience\\Weather\\RainMedium.wav", rainMediumSounds_[0], assets);
+    bool rainMediumLoaded = loadSound("Sound\\Ambience\\Weather\\RainMediumLoop.wav", rainMediumSounds_[0], assets) ||
+                            loadSound("Sound\\Ambience\\Weather\\RainMedium.wav", rainMediumSounds_[0], assets);
 
     rainHeavySounds_.resize(1);
-    bool rainHeavyLoaded = loadSound("Sound\\Ambience\\Weather\\RainHeavy.wav", rainHeavySounds_[0], assets);
+    bool rainHeavyLoaded = loadSound("Sound\\Ambience\\Weather\\RainHeavyLoop.wav", rainHeavySounds_[0], assets) ||
+                           loadSound("Sound\\Ambience\\Weather\\RainHeavy.wav", rainHeavySounds_[0], assets);
 
     snowLightSounds_.resize(1);
     bool snowLightLoaded = loadSound("Sound\\Ambience\\Weather\\SnowLight.wav", snowLightSounds_[0], assets);
@@ -112,10 +115,19 @@ bool AmbientSoundManager::initialize(pipeline::AssetManager* assets) {
     snowHeavySounds_.resize(1);
     bool snowHeavyLoaded = loadSound("Sound\\Ambience\\Weather\\SnowHeavy.wav", snowHeavySounds_[0], assets);
 
-    // Load water ambience sounds
+    stormLightSounds_.resize(1);
+    bool stormLightLoaded = loadSound("Sound\\Ambience\\Weather\\SandStormLight.wav", stormLightSounds_[0], assets);
 
+    stormMediumSounds_.resize(1);
+    bool stormMediumLoaded = loadSound("Sound\\Ambience\\Weather\\SandStormMedium.wav", stormMediumSounds_[0], assets);
+
+    stormHeavySounds_.resize(1);
+    bool stormHeavyLoaded = loadSound("Sound\\Ambience\\Weather\\SandStormHeavy.wav", stormHeavySounds_[0], assets);
+
+    // Load water ambience sounds (TBC 2.4.3 uses Sound\Ambience\UndwaterLoop.wav)
     underwaterSounds_.resize(1);
-    bool underwaterLoaded = loadSound("Sound\\Ambience\\Water\\UnderwaterSwim.wav", underwaterSounds_[0], assets);
+    bool underwaterLoaded = loadSound("Sound\\Ambience\\UndwaterLoop.wav", underwaterSounds_[0], assets) ||
+                            loadSound("Sound\\Ambience\\Water\\UnderwaterSwim.wav", underwaterSounds_[0], assets);
 
     // Load bell toll sounds
     bellAllianceSounds_.resize(1);
@@ -131,7 +143,8 @@ bool AmbientSoundManager::initialize(pipeline::AssetManager* assets) {
     bool bellTribalLoaded = loadSound("Sound\\Doodad\\BellTollTribal.wav", bellTribalSounds_[0], assets);
 
     LOG_INFO("AmbientSoundManager: Weather sounds - Rain: ", (rainLightLoaded && rainMediumLoaded && rainHeavyLoaded) ? "YES" : "NO",
-             ", Snow: ", (snowLightLoaded && snowMediumLoaded && snowHeavyLoaded) ? "YES" : "NO");
+             ", Snow: ", (snowLightLoaded && snowMediumLoaded && snowHeavyLoaded) ? "YES" : "NO",
+             ", Storm: ", (stormLightLoaded && stormMediumLoaded && stormHeavyLoaded) ? "YES" : "NO");
     LOG_INFO("AmbientSoundManager: Water sounds - Underwater: ",
              underwaterLoaded ? "YES" : "NO");
     LOG_INFO("AmbientSoundManager: Bell tolls - Alliance: ", bellAllianceLoaded ? "YES" : "NO",
@@ -157,15 +170,17 @@ bool AmbientSoundManager::loadSound(const std::string& path, AmbientSample& samp
     return loadSampleFile(path, sample, assets, "AmbientSoundManager");
 }
 
-void AmbientSoundManager::setAmbience(const std::string& path) {
+void AmbientSoundManager::setAmbience(const std::string& path, float entryVolume) {
     // AudioCoordinator asks every frame, from before the asset manager is
     // handed over (login, world entry); the request is taken once it is.
     if (!initialized_) return;
-    if (path == ambience_.path) return;
+    const float clampedEntry = std::clamp(entryVolume, 0.0f, 1.0f);
+    if (path == ambience_.path && std::abs(clampedEntry - ambienceEntryVolume_) < 1e-3f) return;
     if (ambienceSoundId_ != 0) AudioEngine::instance().stopSound(ambienceSoundId_);
     ambienceSoundId_ = 0;
     ambience_ = AmbientSample{};
     ambience_.path = path;
+    ambienceEntryVolume_ = clampedEntry;
     ambienceDuration_ = 0.0f;
     ambienceLoopTime_ = 0.0f;
     if (path.empty()) {
@@ -202,7 +217,7 @@ void AmbientSoundManager::updateAmbience(float deltaTime) {
     ambienceLoopTime_ -= deltaTime;
     if (ambienceLoopTime_ > 0.0f) return;
     ambienceSoundId_ = AudioEngine::instance().playSound2DStoppable(
-        ambience_.data, AMBIENCE_VOLUME * volumeScale_);
+        ambience_.data, AMBIENCE_VOLUME * ambienceEntryVolume_ * volumeScale_);
     ambienceLoopTime_ = ambienceDuration_;
 }
 
@@ -351,7 +366,7 @@ void AmbientSoundManager::setWeather(WeatherType type) {
         LOG_INFO("AmbientSoundManager: Weather changed from ", static_cast<int>(currentWeather_),
                  " to ", static_cast<int>(type));
         currentWeather_ = type;
-        weatherLoopTime_ = 0.0f;  // Reset timer on weather change
+        weatherLoopTime_ = (type != WeatherType::NONE) ? 100.0f : 0.0f;  // Play immediately on onset
     }
 }
 
@@ -414,6 +429,18 @@ void AmbientSoundManager::updateWeatherAmbience(float deltaTime, bool isIndoor) 
             weatherLibrary = &snowHeavySounds_;
             loopInterval = 22.0f;
             break;
+        case WeatherType::STORM_LIGHT:
+            weatherLibrary = &stormLightSounds_;
+            loopInterval = 25.0f;
+            break;
+        case WeatherType::STORM_MEDIUM:
+            weatherLibrary = &stormMediumSounds_;
+            loopInterval = 20.0f;
+            break;
+        case WeatherType::STORM_HEAVY:
+            weatherLibrary = &stormHeavySounds_;
+            loopInterval = 18.0f;
+            break;
         default:
             return;
     }
@@ -434,7 +461,7 @@ void AmbientSoundManager::updateWaterAmbience(float deltaTime, bool isSwimming) 
 
     if (stateChanged) {
         LOG_INFO("Ambient: ", isSwimming ? "ENTERED WATER" : "EXITED WATER");
-        oceanLoopTime_ = 0.0f;  // Reset timer on state change
+        oceanLoopTime_ = isSwimming ? 100.0f : 0.0f;  // Play immediately when submerging
     }
 
     wasSwimming_ = isSwimming;

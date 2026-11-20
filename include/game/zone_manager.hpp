@@ -48,19 +48,44 @@ public:
     [[nodiscard]] uint32_t getMapZoneId(uint32_t mapId) const;
     uint32_t getWmoAreaId(uint32_t root, uint32_t nameSet, uint32_t group) const;
 
-    /// WMOAreaTable's ZoneMusic and AmbienceID for a WMO room, falling back
-    /// field by field to the WMO's root row; 0 where neither names one.
-    struct WmoAreaSounds { uint32_t zoneMusicId = 0; uint32_t ambienceId = 0; };
+    /// WMOAreaTable's ZoneMusic, AmbienceID and IntroSound for a WMO room,
+    /// falling back field by field to the WMO's root row; 0 where neither names one.
+    struct WmoAreaSounds {
+        uint32_t zoneMusicId = 0;
+        uint32_t ambienceId = 0;
+        uint32_t introSoundId = 0;
+    };
+    struct ZoneMusicSet {
+        std::vector<std::string> dayTracks;
+        std::vector<std::string> nightTracks;
+        float daySilenceMinSec = 0.0f;
+        float daySilenceMaxSec = 0.0f;
+        float nightSilenceMinSec = 0.0f;
+        float nightSilenceMaxSec = 0.0f;
+    };
+    struct ZoneIntroMusic {
+        uint32_t id = 0;
+        std::vector<std::string> tracks;
+        uint32_t priority = 1;
+        float minDelaySeconds = 600.0f;
+    };
     [[nodiscard]] WmoAreaSounds getWmoAreaSounds(uint32_t root, uint32_t nameSet, uint32_t group) const;
     /// The tracks of a ZoneMusic set (day and night SoundEntries).
     [[nodiscard]] const std::vector<std::string>* getZoneMusicTracks(uint32_t zoneMusicId) const;
+    [[nodiscard]] const ZoneMusicSet* getZoneMusicSet(uint32_t zoneMusicId) const;
+    std::string pickZoneMusicTrack(uint32_t zoneId, uint32_t zoneMusicId, bool night, bool includeWoweeTracks);
+    [[nodiscard]] std::pair<float, float> getZoneSilenceInterval(uint32_t zoneMusicId, bool night) const;
     /// The ZoneMusic set an area plays: its own, else its nearest ancestor's.
     [[nodiscard]] uint32_t getAreaZoneMusicId(uint32_t areaId) const;
+    /// The ZoneIntroMusicTable id an area plays: its own, else its nearest ancestor's.
+    [[nodiscard]] uint32_t getAreaIntroMusicId(uint32_t areaId) const;
+    [[nodiscard]] const ZoneIntroMusic* getZoneIntroMusic(uint32_t introId) const;
     /// The SoundAmbience id an area plays: its own, else its nearest ancestor's.
     [[nodiscard]] uint32_t getAreaAmbienceId(uint32_t areaId) const;
     /// SoundAmbience's day or night sound file for an ambience id; empty
     /// where the row names none for that half of the day.
     [[nodiscard]] std::string getAmbienceSound(uint32_t ambienceId, bool night) const;
+    [[nodiscard]] float getAmbienceVolume(uint32_t ambienceId, bool night) const;
     /// A random track of a list, honouring the WoWee soundtrack setting and
     /// avoiding an immediate repeat.
     std::string pickTrack(const std::vector<std::string>& tracks);
@@ -107,9 +132,13 @@ private:
     std::map<std::tuple<uint32_t, uint32_t, uint32_t>, std::string> wmoAreaNames_;
     std::map<std::tuple<uint32_t, uint32_t, uint32_t>, WmoAreaSounds> wmoAreaSounds_;
     std::unordered_map<uint32_t, std::vector<std::string>> zoneMusicTracks_;
+    std::unordered_map<uint32_t, ZoneMusicSet> zoneMusicSets_;
+    std::unordered_map<uint32_t, ZoneIntroMusic> zoneIntroMusic_;
     std::unordered_map<uint32_t, uint32_t> areaZoneMusic_;
+    std::unordered_map<uint32_t, uint32_t> areaIntroMusic_;
     std::unordered_map<uint32_t, uint32_t> areaAmbience_;
     std::unordered_map<uint32_t, std::pair<std::string, std::string>> ambiencePaths_;
+    std::unordered_map<uint32_t, std::pair<float, float>> ambienceVolumes_;
     std::unordered_map<uint32_t, ZoneInfo> zones;
     std::unordered_map<uint32_t, uint32_t> areaParents_;
     /// AreaTable's Flags column, by area id. Read in the same pass as the

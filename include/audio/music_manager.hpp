@@ -36,7 +36,7 @@ public:
     void setUnderwaterMode(bool underwater);
     void preloadMusic(const std::string& mpqPath);
 
-    [[nodiscard]] bool isPlaying() const { return playing; }
+    [[nodiscard]] bool isPlaying() const { return playing || crossfading; }
     /// True while a track is being read on the worker but has not started yet.
     /// Callers must treat this as "in progress", not as failure.
     [[nodiscard]] bool isLoading() const { return pendingFileLoad_.has_value(); }

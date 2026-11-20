@@ -1,7 +1,9 @@
 #include "audio/combat_sound_manager.hpp"
 #include "audio/sample_load.hpp"
 #include "audio/audio_engine.hpp"
+#include "audio/sound_entries.hpp"
 #include "pipeline/asset_manager.hpp"
+#include "pipeline/dbc_loader.hpp"
 #include "core/logger.hpp"
 #include <random>
 
@@ -18,6 +20,10 @@ bool CombatSoundManager::initialize(pipeline::AssetManager* assets) {
         LOG_ERROR("CombatSoundManager: AssetManager is null");
         return false;
     }
+    assets_ = assets;
+    weaponDbcBuilt_ = false;
+    weaponImpactRows_.clear();
+    sheatheRows_.clear();
 
     LOG_INFO("CombatSoundManager: Initializing...");
 
@@ -106,6 +112,10 @@ bool CombatSoundManager::initialize(pipeline::AssetManager* assets) {
 
 void CombatSoundManager::shutdown() {
     initialized_ = false;
+    weaponDbcBuilt_ = false;
+    weaponImpactRows_.clear();
+    sheatheRows_.clear();
+    assets_ = nullptr;
 }
 
 bool CombatSoundManager::loadSound(const std::string& path, CombatSample& sample, pipeline::AssetManager* assets) {
@@ -211,6 +221,126 @@ void CombatSoundManager::playImpact([[maybe_unused]] WeaponSize weaponSize, Impa
     } else {
         playRandomSound(*normalLibrary);
     }
+}
+
+void CombatSoundManager::ensureWeaponDbcLoaded() {
+    if (weaponDbcBuilt_ || !assets_ || !assets_->isInitialized()) return;
+    weaponDbcBuilt_ = true;
+
+    if (auto dbc = assets_->loadDBC("WeaponImpactSounds.dbc");
+        dbc && dbc->isLoaded() && dbc->getFieldCount() >= 18) {
+        for (uint32_t r = 0; r < dbc->getRecordCount(); ++r) {
+            const uint32_t subClass = dbc->getUInt32(r, 1);
+            const uint32_t parryType = dbc->getUInt32(r, 2) ? 1u : 0u;
+            const uint64_t key = (static_cast<uint64_t>(subClass) << 1u) | parryType;
+            weaponImpactRows_[key] = WeaponImpactRow{
+                .flesh = dbc->getUInt32(r, 3),
+                .chain = dbc->getUInt32(r, 4),
+                .plate = dbc->getUInt32(r, 5),
+                .shieldMetal = dbc->getUInt32(r, 6),
+                .shieldWood = dbc->getUInt32(r, 7),
+                .parry = dbc->getUInt32(r, 8),
+                .critFlesh = dbc->getUInt32(r, 13),
+                .critChain = dbc->getUInt32(r, 14),
+                .critPlate = dbc->getUInt32(r, 15),
+                .critShieldMetal = dbc->getUInt32(r, 16),
+            };
+        }
+    }
+
+    if (auto dbc = assets_->loadDBC("SheatheSoundLookups.dbc");
+        dbc && dbc->isLoaded() && dbc->getFieldCount() >= 7) {
+        for (uint32_t r = 0; r < dbc->getRecordCount(); ++r) {
+            const uint32_t itemClass = dbc->getUInt32(r, 1);
+            const uint32_t subClass = dbc->getUInt32(r, 2);
+            const uint32_t matEnv = dbc->getUInt32(r, 3);
+            const uint64_t key = (static_cast<uint64_t>(itemClass) << 16u) |
+                                 (static_cast<uint64_t>(subClass & 0xFFu) << 8u) |
+                                 (matEnv & 0xFFu);
+            sheatheRows_[key] = SheatheSoundRow{
+                .sheatheSoundId = dbc->getUInt32(r, 5),
+                .unsheatheSoundId = dbc->getUInt32(r, 6),
+            };
+        }
+    }
+}
+
+void CombatSoundManager::playWeaponImpactBySubclass(uint32_t weaponSubClass, bool metalWeapon,
+                                                    ImpactType impactType, bool isCrit) {
+    if (!initialized_ || volumeScale_ <= 0.0f) return;
+    ensureWeaponDbcLoaded();
+
+    const uint64_t keyPrimary = (static_cast<uint64_t>(weaponSubClass) << 1u) | (metalWeapon ? 1u : 0u);
+    const uint64_t keyFallback = (static_cast<uint64_t>(weaponSubClass) << 1u) | (metalWeapon ? 0u : 1u);
+    auto it = weaponImpactRows_.find(keyPrimary);
+    if (it == weaponImpactRows_.end()) it = weaponImpactRows_.find(keyFallback);
+
+    if (it != weaponImpactRows_.end() && assets_) {
+        uint32_t soundId = 0;
+        switch (impactType) {
+            case ImpactType::FLESH:
+                soundId = (isCrit && it->second.critFlesh) ? it->second.critFlesh : it->second.flesh;
+                break;
+            case ImpactType::CHAIN:
+                soundId = (isCrit && it->second.critChain) ? it->second.critChain : it->second.chain;
+                break;
+            case ImpactType::PLATE:
+                soundId = (isCrit && it->second.critPlate) ? it->second.critPlate : it->second.plate;
+                break;
+            case ImpactType::SHIELD:
+                soundId = (isCrit && it->second.critShieldMetal)
+                    ? it->second.critShieldMetal
+                    : (it->second.shieldMetal ? it->second.shieldMetal : it->second.shieldWood);
+                break;
+            case ImpactType::METAL_WEAPON:
+                soundId = it->second.parry;
+                break;
+            case ImpactType::WOOD:
+            case ImpactType::STONE:
+                break;
+        }
+        if (soundId != 0 && SoundEntryTable::instance().play2D(assets_, soundId, volumeScale_)) {
+            return;
+        }
+    }
+
+    playImpact(WeaponSize::MEDIUM, impactType, isCrit);
+}
+
+bool CombatSoundManager::playSheathe(uint32_t itemClass, uint32_t itemSubClass, int32_t material,
+                                     bool isShield, bool unsheathe) {
+    if (!initialized_ || !assets_ || volumeScale_ <= 0.0f) return false;
+    ensureWeaponDbcLoaded();
+
+    const uint32_t matEnv = isShield ? 0u : (material == 1 ? 1u : 2u);
+    const uint64_t key = (static_cast<uint64_t>(itemClass) << 16u) |
+                         (static_cast<uint64_t>(itemSubClass & 0xFFu) << 8u) |
+                         (matEnv & 0xFFu);
+    uint32_t soundId = 0;
+    if (auto it = sheatheRows_.find(key); it != sheatheRows_.end()) {
+        soundId = unsheathe ? it->second.unsheatheSoundId : it->second.sheatheSoundId;
+    }
+    if (soundId == 0) {
+        if (isShield) soundId = unsheathe ? 701u : 696u;
+        else if (material == 1) soundId = unsheathe ? 700u : 698u;
+        else soundId = unsheathe ? 699u : 697u;
+    }
+    return SoundEntryTable::instance().play2D(assets_, soundId, volumeScale_);
+}
+
+bool CombatSoundManager::playRangedShot(uint32_t rangedSubClass) {
+    if (!initialized_ || !assets_ || volumeScale_ <= 0.0f) return false;
+    // TBC 2.4.3 SoundEntries IDs: 1146=BowShoot, 1148=GunFire01, 5414=WandShoot, 7140=ThrownThrow
+    uint32_t soundId = 1146u;
+    switch (rangedSubClass) {
+        case 3:  soundId = 1148u; break; // Gun
+        case 16: soundId = 7140u; break; // Thrown
+        case 19: soundId = 5414u; break; // Wand
+        case 2:                          // Bow
+        case 18:                         // Crossbow
+        default: soundId = 1146u; break;
+    }
+    return SoundEntryTable::instance().play2D(assets_, soundId, volumeScale_);
 }
 } // namespace audio
 } // namespace wowee

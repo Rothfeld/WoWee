@@ -1,6 +1,7 @@
 #include "audio/audio_coordinator.hpp"
 #include <cmath>
 #include "audio/audio_engine.hpp"
+#include "audio/sound_entries.hpp"
 #include "audio/music_manager.hpp"
 #include "audio/footstep_manager.hpp"
 #include "audio/activity_sound_manager.hpp"
@@ -50,7 +51,24 @@ bool AudioCoordinator::initialize() {
     LOG_INFO("AudioCoordinator initialized with ", 11, " audio managers");
     return true;
 }
+
+void AudioCoordinator::initializeEarlyAssets(pipeline::AssetManager* assets) {
+    if (!assets || !audioAvailable_) return;
+    AudioEngine::instance().setAssetManager(assets);
+    SoundEntryTable::instance().ensureLoaded(assets);
+    if (musicManager_ && !musicManager_->isInitialized()) {
+        musicManager_->initialize(assets);
+    }
+    if (uiSoundManager_ && !uiSoundManager_->isInitialized()) {
+        uiSoundManager_->initialize(assets);
+    }
+    if (playerVoiceManager_) {
+        playerVoiceManager_->initialize(assets);
+    }
+}
+
 void AudioCoordinator::shutdown() {
+    SoundEntryTable::instance().reset();
     // Reset all managers first (they may reference AudioEngine)
     movementSoundManager_.reset();
     spellSoundManager_.reset();
@@ -106,6 +124,7 @@ void AudioCoordinator::onOriginalSoundtrackDisabled(game::ZoneManager* zm) {
 
 void AudioCoordinator::updateZoneAudio(const ZoneAudioContext& ctx) {
     float deltaTime = ctx.deltaTime;
+    audioClockSeconds_ += std::max(0.0f, deltaTime);
     if (musicSwitchCooldown_ > 0.0f) {
         musicSwitchCooldown_ = std::max(0.0f, musicSwitchCooldown_ - deltaTime);
     }
@@ -118,6 +137,8 @@ void AudioCoordinator::updateZoneAudio(const ZoneAudioContext& ctx) {
         ? zm->resolveAreaZoneId(ctx.serverZoneId)
         : ctx.serverZoneId;
     uint32_t zoneId = serverZoneId != 0 ? serverZoneId : tileZoneId;
+    const float hour = std::fmod(std::fmod(ctx.gameTimeHours, 24.0f) + 24.0f, 24.0f);
+    const bool night = hour < 6.0f || hour >= 20.0f;
 
     // ── Ambient weather audio sync ──
     if (ambientSoundManager_) {
@@ -134,20 +155,15 @@ void AudioCoordinator::updateZoneAudio(const ZoneAudioContext& ctx) {
             if (ctx.weatherIntensity < 0.33f)      audioWeatherType = AmbientSoundManager::WeatherType::SNOW_LIGHT;
             else if (ctx.weatherIntensity < 0.66f)  audioWeatherType = AmbientSoundManager::WeatherType::SNOW_MEDIUM;
             else                                     audioWeatherType = AmbientSoundManager::WeatherType::SNOW_HEAVY;
+        } else if (ctx.weatherType == 3) { // STORM / SANDSTORM
+            if (ctx.weatherIntensity < 0.33f)      audioWeatherType = AmbientSoundManager::WeatherType::STORM_LIGHT;
+            else if (ctx.weatherIntensity < 0.66f)  audioWeatherType = AmbientSoundManager::WeatherType::STORM_MEDIUM;
+            else                                     audioWeatherType = AmbientSoundManager::WeatherType::STORM_HEAVY;
         }
         ambientSoundManager_->setWeather(audioWeatherType);
-        // Ambience by the same precedence as music: the WMO room's
-        // WMOAreaTable AmbienceID (Tavern in an inn, BlackSmith in a smithy),
-        // else the area's AreaTable AmbienceID or its nearest ancestor's
-        // (ForestNormal in Elwynn, ForestScary in Duskwood), else the zone's.
-        // Nothing is keyed on a WMO model or zone id.
         uint32_t ambienceId = ctx.wmoAmbienceId;
         if (ambienceId == 0 && zm) ambienceId = zm->getAreaAmbienceId(ctx.areaId);
         if (ambienceId == 0 && zm) ambienceId = zm->getAreaAmbienceId(zoneId);
-        // SoundAmbience names a day and a night sound; the hours it switches
-        // at are not in the data, so 06:00 and 20:00 here are WoWee's.
-        const float hour = std::fmod(std::fmod(ctx.gameTimeHours, 24.0f) + 24.0f, 24.0f);
-        const bool night = hour < 6.0f || hour >= 20.0f;
         if (ambienceId != currentAmbienceId_ || night != ambienceNight_) {
             currentAmbienceId_ = ambienceId;
             ambienceNight_ = night;
@@ -155,7 +171,8 @@ void AudioCoordinator::updateZoneAudio(const ZoneAudioContext& ctx) {
                      " area ", ctx.areaId, " zone ", zoneId);
         }
         ambientSoundManager_->setAmbience(
-            zm && ambienceId ? zm->getAmbienceSound(ambienceId, night) : std::string());
+            zm && ambienceId ? zm->getAmbienceSound(ambienceId, night) : std::string(),
+            zm && ambienceId ? zm->getAmbienceVolume(ambienceId, night) : 1.0f);
         ambientSoundManager_->update(deltaTime, ctx.cameraPosition, ctx.insideWmo, ctx.isSwimming);
     }
 
@@ -170,40 +187,85 @@ void AudioCoordinator::updateZoneAudio(const ZoneAudioContext& ctx) {
         }
     }
 
-    // Which ZoneMusic set plays: the WMO room's when it names one (an inn's
-    // Zone-TavernAlliance), else the area's (its own or its nearest
-    // ancestor's), else the zone's. One rule for taverns, cities and fields;
-    // nothing is keyed on a WMO model id.
+    // ZoneIntroMusicTable: play area/WMO intro fanfare (Stormwind Valley of
+    // Heroes, Orgrimmar Intro, Undercity Intro, Silvermoon Intro) once per
+    // MinDelayMinutes cooldown before settling into regular ZoneMusic.
+    uint32_t introId = ctx.wmoIntroSoundId;
+    if (introId == 0) introId = zm->getAreaIntroMusicId(ctx.areaId);
+    if (introId == 0) introId = zm->getAreaIntroMusicId(zoneId);
+    if (introId != currentIntroId_) {
+        currentIntroId_ = introId;
+        if (introPlaying_) {
+            introPlaying_ = false;
+            musicSwitchCooldown_ = 0.0f;
+        }
+        if (introId != 0) {
+            const auto* intro = zm->getZoneIntroMusic(introId);
+            const auto readyIt = introReadyAt_.find(introId);
+            if (intro && !intro->tracks.empty() &&
+                (readyIt == introReadyAt_.end() || audioClockSeconds_ >= readyIt->second)) {
+                const std::string track = zm->pickTrack(intro->tracks);
+                if (!track.empty()) {
+                    playZoneMusic(track);
+                    introReadyAt_[introId] = audioClockSeconds_ + intro->minDelaySeconds;
+                    introPlaying_ = true;
+                    musicSwitchCooldown_ = 2.0f;
+                    LOG_INFO("Zone intro music: id=", introId, " track=", track);
+                }
+            }
+        }
+    }
+
     uint32_t musicSet = ctx.wmoZoneMusicId;
     if (musicSet == 0) musicSet = zm->getAreaZoneMusicId(ctx.areaId);
     if (musicSet == 0) musicSet = zm->getAreaZoneMusicId(zoneId);
     const auto pickForSet = [&]() -> std::string {
-        // The zone's pool carries WoWee's own tracks as well; a WMO room's
-        // set is played as authored.
-        if (ctx.wmoZoneMusicId == 0 && currentZoneId_ != 0 &&
-            zm->getAreaZoneMusicId(currentZoneId_) == musicSet)
-            return zm->getRandomMusic(currentZoneId_);
-        const auto* tracks = zm->getZoneMusicTracks(musicSet);
-        return tracks ? zm->pickTrack(*tracks) : std::string();
+        const bool includeWowee = (ctx.wmoZoneMusicId == 0 && currentZoneId_ != 0 &&
+                                   zm->getAreaZoneMusicId(currentZoneId_) == musicSet);
+        return zm->pickZoneMusicTrack(currentZoneId_, musicSet, night, includeWowee);
     };
 
-    if (musicSet != currentMusicSetId_ && musicSet != 0 && musicSwitchCooldown_ <= 0.0f) {
+    const bool setChanged = (musicSet != currentMusicSetId_);
+    const bool dayNightChanged = (night != currentMusicNight_);
+    if ((setChanged || dayNightChanged) && musicSet != 0 && !introPlaying_ && musicSwitchCooldown_ <= 0.0f) {
         currentMusicSetId_ = musicSet;
+        currentMusicNight_ = night;
         const std::string music = pickForSet();
         if (!music.empty()) {
             playZoneMusic(music);
-            musicSwitchCooldown_ = 6.0f;
+            musicSwitchCooldown_ = 4.0f;
         }
+    } else if (setChanged) {
+        currentMusicSetId_ = musicSet;
+        currentMusicNight_ = night;
     }
 
     musicManager_->update(deltaTime);
 
-    // When a track finishes, pick another from the same set.
-    if (!musicManager_->isPlaying() && currentMusicSetId_ != 0 && musicSwitchCooldown_ <= 0.0f) {
-        const std::string music = pickForSet();
-        if (!music.empty()) {
-            playZoneMusic(music);
-            musicSwitchCooldown_ = 2.0f;
+    // When a track finishes, clear any intro state and either rotate
+    // immediately (Sound_ZoneMusicNoDelay / Loop Music) or wait the ZoneMusic
+    // silence interval [SilenceMin, SilenceMax].
+    if (!musicManager_->isPlaying() && !musicManager_->isLoading() && currentMusicSetId_ != 0) {
+        if (introPlaying_) {
+            introPlaying_ = false;
+            musicSwitchCooldown_ = 1.0f;
+        }
+        if (musicSwitchCooldown_ <= 0.0f) {
+            const std::string music = pickForSet();
+            if (!music.empty()) {
+                playZoneMusic(music);
+                if (musicManager_->isLooping()) {
+                    musicSwitchCooldown_ = 0.5f;
+                } else {
+                    auto [minSil, maxSil] = zm->getZoneSilenceInterval(currentMusicSetId_, night);
+                    if (maxSil > 0.0f) {
+                        std::uniform_real_distribution<float> dist(minSil, std::max(minSil, maxSil));
+                        musicSwitchCooldown_ = dist(rng_);
+                    } else {
+                        musicSwitchCooldown_ = 2.0f;
+                    }
+                }
+            }
         }
     }
 }

@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <random>
 #include <chrono>
+#include <glm/glm.hpp>
 
 namespace wowee {
 namespace pipeline { class AssetManager; }
@@ -75,6 +76,10 @@ public:
     /// raceId: game Race enum value (1=Human .. 11=Draenei); gender: 0=male, 1=female
     void playError(PlayerErrorSpeech type, uint8_t raceId, uint8_t gender);
 
+    /// Play a vocal emote from EmotesTextSound.dbc (2D local or 3D remote).
+    bool playEmote(uint32_t emotesTextId, uint8_t raceId, uint8_t gender);
+    bool playEmote3D(uint32_t emotesTextId, uint8_t raceId, uint8_t gender, const glm::vec3& position);
+
 private:
     struct SpeechSample {
         std::string path;
@@ -83,10 +88,15 @@ private:
 
     // (Re)load the voice library when the active race/gender changes
     void ensureLibrary(uint8_t raceId, uint8_t gender);
+    void ensureEmoteSoundsLoaded();
 
     pipeline::AssetManager* assetManager_ = nullptr;
     bool enabled_ = true;
+    bool emoteSoundsLoaded_ = false;
     float volumeScale_ = 1.0f;
+
+    // EmotesTextSound.dbc: (emotesTextId << 16 | raceId << 8 | sexId) -> SoundEntries ID
+    std::unordered_map<uint32_t, uint32_t> emoteSounds_;
 
     // Library for the currently loaded race/gender, keyed by PlayerErrorSpeech
     int loadedRace_ = -1;

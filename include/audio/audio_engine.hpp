@@ -2,6 +2,7 @@
 
 #include <glm/glm.hpp>
 #include <atomic>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -28,6 +29,9 @@ public:
 
     // Initialization
     [[nodiscard]] bool initialize();
+    /// Deterministic device-less initialization for automated tests: mixes on
+    /// demand via renderMixFrames() without background device threads.
+    [[nodiscard]] bool initializeHeadless(uint32_t sampleRate = 48000, uint32_t channels = 2);
     void shutdown();
     [[nodiscard]] bool isInitialized() const { return initialized_; }
 
@@ -68,15 +72,24 @@ public:
     bool playSound2D(const std::string& mpqPath, float volume = 1.0f, float pitch = 1.0f);
 
     // Stoppable 2D sound - returns a non-zero handle, or 0 on failure
-    uint32_t playSound2DStoppable(const std::vector<uint8_t>& wavData, float volume = 1.0f);
-    // Stop a sound started with playSound2DStoppable (no-op if already finished)
+    uint32_t playSound2DStoppable(const std::vector<uint8_t>& wavData, float volume = 1.0f, float pitch = 1.0f);
+    uint32_t playSound2DStoppable(const std::string& mpqPath, float volume = 1.0f, float pitch = 1.0f);
+    // Stop a sound started with playSound2DStoppable / playSound3DStoppable (no-op if already finished)
     void stopSound(uint32_t id);
 
     // 3D positional sound playback
     bool playSound3D(const std::vector<uint8_t>& wavData, const glm::vec3& position,
-                     float volume = 1.0f, float pitch = 1.0f, float maxDistance = 100.0f);
+                     float volume = 1.0f, float pitch = 1.0f, float maxDistance = 100.0f,
+                     float minDistance = 1.0f);
     bool playSound3D(const std::string& mpqPath, const glm::vec3& position,
-                     float volume = 1.0f, float pitch = 1.0f, float maxDistance = 100.0f);
+                     float volume = 1.0f, float pitch = 1.0f, float maxDistance = 100.0f,
+                     float minDistance = 1.0f);
+    uint32_t playSound3DStoppable(const std::vector<uint8_t>& wavData, const glm::vec3& position,
+                                  float volume = 1.0f, float pitch = 1.0f, float maxDistance = 100.0f,
+                                  float minDistance = 1.0f);
+    uint32_t playSound3DStoppable(const std::string& mpqPath, const glm::vec3& position,
+                                  float volume = 1.0f, float pitch = 1.0f, float maxDistance = 100.0f,
+                                  float minDistance = 1.0f);
 
     // Music streaming (for background music)
     // Retains shared ownership: the decoder streams directly from encoded tracks that
@@ -105,8 +118,35 @@ public:
     [[nodiscard]] uint32_t capturedOutputAvailable() const;
     [[nodiscard]] uint32_t getOutputChannels() const;
     [[nodiscard]] uint32_t getOutputSampleRate() const;
+    [[nodiscard]] size_t getActiveSoundCount() const { return activeSounds_.size(); }
+
+    /// Synchronously render interleaved float32 PCM frames from the mixer
+    /// (used in headless mode for deterministic audio verification).
+    uint32_t renderMixFrames(float* dstInterleaved, uint32_t frameCount);
+
+    struct PlaybackEvent {
+        std::string path;
+        size_t byteSize = 0;
+        uint64_t decodedFrames = 0;
+        uint32_t sampleRate = 0;
+        float volume = 0.0f;
+        float pitch = 1.0f;
+        bool spatial = false;
+        bool music = false;
+        glm::vec3 position{0.0f};
+        float minDistance = 1.0f;
+        float maxDistance = 100.0f;
+        bool started = false;
+    };
+    using PlaybackObserver = std::function<void(const PlaybackEvent&)>;
+    void setPlaybackObserver(PlaybackObserver observer) { playbackObserver_ = std::move(observer); }
 
 private:
+    uint32_t startSound2DInternal(const std::vector<uint8_t>& wavData, float volume, float pitch,
+                                  bool stoppable, const std::string& debugPath);
+    uint32_t startSound3DInternal(const std::vector<uint8_t>& wavData, const glm::vec3& position,
+                                  float volume, float pitch, float maxDistance, float minDistance,
+                                  bool stoppable, const std::string& debugPath);
     AudioEngine();
     AudioEngine(const AudioEngine&) = delete;
     AudioEngine& operator=(const AudioEngine&) = delete;
@@ -147,6 +187,8 @@ private:
     // the audio thread might still be writing is the one race not worth having.
     void* captureRing_ = nullptr;
     std::atomic<bool> capturing_{false};
+    bool headless_ = false;
+    PlaybackObserver playbackObserver_;
 };
 
 } // namespace audio

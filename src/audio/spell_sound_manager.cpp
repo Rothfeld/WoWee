@@ -230,6 +230,9 @@ void SpellSoundManager::playCast(MagicSchool school) {
         case MagicSchool::SHADOW:
             playSound(castShadowSounds_);
             break;
+        case MagicSchool::ARCANE:
+            playSound(precastArcaneSounds_);
+            break;
         default:
             break;
     }

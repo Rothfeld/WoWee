@@ -2,7 +2,9 @@
 
 #include <cstdint>
 #include <memory>
+#include <random>
 #include <string>
+#include <unordered_map>
 #include <glm/vec3.hpp>
 
 namespace wowee {
@@ -30,9 +32,10 @@ struct ZoneAudioContext {
     bool isSwimming = false;
     bool insideWmo = false;
     // WMOAreaTable sounds of the WMO room the player stands in (0 = none):
-    // its ZoneMusic set and SoundAmbience id.
+    // its ZoneMusic set, SoundAmbience id and IntroSound id.
     uint32_t wmoZoneMusicId = 0;
     uint32_t wmoAmbienceId = 0;
+    uint32_t wmoIntroSoundId = 0;
     // The precise area at the player (WMOAreaTable's or the MCNK's), whose
     // ZoneMusic, or its nearest ancestor's, plays outside such rooms.
     uint32_t areaId = 0;
@@ -66,6 +69,20 @@ public:
     /// Initialize the audio engine and all managers.
     /// @return true if audio is available (engine initialized successfully)
     [[nodiscard]] bool initialize();
+
+    /// Bind AssetManager early at startup so glue screens (login, realm,
+    /// character select/create) and early world-entry packets can play audio
+    /// before terrain finishes loading.
+    void initializeEarlyAssets(pipeline::AssetManager* assets);
+
+    void setSfxVolumeScale(float scale) { sfxVolumeScale_ = scale; }
+    [[nodiscard]] float getSfxVolumeScale() const { return sfxVolumeScale_; }
+
+    void setEmoteSoundsEnabled(bool enabled) { emoteSoundsEnabled_ = enabled; }
+    [[nodiscard]] bool areEmoteSoundsEnabled() const { return emoteSoundsEnabled_; }
+
+    void setListenerAtCharacter(bool atChar) { listenerAtCharacter_ = atChar; }
+    [[nodiscard]] bool isListenerAtCharacter() const { return listenerAtCharacter_; }
 
 
     /// Shutdown all audio managers and engine.
@@ -113,15 +130,24 @@ private:
     std::unique_ptr<MovementSoundManager> movementSoundManager_;
 
     bool audioAvailable_ = false;
+    float sfxVolumeScale_ = 1.0f;
+    bool emoteSoundsEnabled_ = true;
+    bool listenerAtCharacter_ = false;
 
     // Zone/music state - moved from Renderer
     uint32_t currentZoneId_ = 0;
     std::string currentZoneName_;
     /// The ZoneMusic set now playing (0 = none chosen yet).
     uint32_t currentMusicSetId_ = 0;
+    bool currentMusicNight_ = false;
+    uint32_t currentIntroId_ = 0;
+    bool introPlaying_ = false;
     uint32_t currentAmbienceId_ = 0;
     bool ambienceNight_ = false;
     float musicSwitchCooldown_ = 0.0f;
+    float audioClockSeconds_ = 0.0f;
+    std::unordered_map<uint32_t, float> introReadyAt_;
+    std::mt19937 rng_{std::random_device{}()};
 };
 
 } // namespace audio

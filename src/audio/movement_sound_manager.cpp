@@ -21,15 +21,21 @@ bool MovementSoundManager::initialize(pipeline::AssetManager* assets) {
 
     LOG_INFO("MovementSoundManager: Initializing...");
 
-    // Load water splash sounds - entering water
+    // Load water splash sounds - entering water (TBC uses EnterWaterSplash\EnterWater*A.wav)
     enterWaterSmallSounds_.resize(1);
-    loadSound("Sound\\Spells\\EnterWaterSmall.wav", enterWaterSmallSounds_[0], assets);
+    if (!loadSound("Sound\\Spells\\EnterWaterSmall.wav", enterWaterSmallSounds_[0], assets)) {
+        loadSound("Sound\\Character\\Footsteps\\EnterWaterSplash\\EnterWaterSmallA.wav", enterWaterSmallSounds_[0], assets);
+    }
 
     enterWaterMediumSounds_.resize(1);
-    loadSound("Sound\\Spells\\EnterWaterMedium.wav", enterWaterMediumSounds_[0], assets);
+    if (!loadSound("Sound\\Spells\\EnterWaterMedium.wav", enterWaterMediumSounds_[0], assets)) {
+        loadSound("Sound\\Character\\Footsteps\\EnterWaterSplash\\EnterWaterMediumA.wav", enterWaterMediumSounds_[0], assets);
+    }
 
     enterWaterGiantSounds_.resize(1);
-    loadSound("Sound\\Spells\\EnterWaterGiant.wav", enterWaterGiantSounds_[0], assets);
+    if (!loadSound("Sound\\Spells\\EnterWaterGiant.wav", enterWaterGiantSounds_[0], assets)) {
+        loadSound("Sound\\Character\\Footsteps\\EnterWaterSplash\\EnterWaterGiantA.wav", enterWaterGiantSounds_[0], assets);
+    }
 
     // Water footsteps - walking through the shallows. These used to point at
     // Sound\\Spells\\WaterFootstep*, which does not exist in the data, so every

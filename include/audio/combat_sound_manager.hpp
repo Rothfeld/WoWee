@@ -1,6 +1,7 @@
 #pragma once
 
 #include <vector>
+#include <unordered_map>
 #include <memory>
 #include <string>
 #include <cstdint>
@@ -47,6 +48,11 @@ public:
     };
 
     void playImpact(WeaponSize weaponSize, ImpactType impactType, bool isCrit = false);
+    void playWeaponImpactBySubclass(uint32_t weaponSubClass, bool metalWeapon,
+                                    ImpactType impactType, bool isCrit = false);
+    bool playSheathe(uint32_t itemClass, uint32_t itemSubClass, int32_t material,
+                     bool isShield, bool unsheathe);
+    bool playRangedShot(uint32_t rangedSubClass);
 
 
     // Player character vocals
@@ -96,8 +102,24 @@ private:
 
 
     // State tracking
+    pipeline::AssetManager* assets_ = nullptr;
     float volumeScale_ = 1.0f;
     bool initialized_ = false;
+    bool weaponDbcBuilt_ = false;
+
+    struct WeaponImpactRow {
+        uint32_t flesh = 0, chain = 0, plate = 0, shieldMetal = 0, shieldWood = 0, parry = 0;
+        uint32_t critFlesh = 0, critChain = 0, critPlate = 0, critShieldMetal = 0;
+    };
+    std::unordered_map<uint64_t, WeaponImpactRow> weaponImpactRows_; // (subClass << 1) | parrySoundType
+
+    struct SheatheSoundRow {
+        uint32_t sheatheSoundId = 0;
+        uint32_t unsheatheSoundId = 0;
+    };
+    std::unordered_map<uint64_t, SheatheSoundRow> sheatheRows_; // (itemClass << 16) | (subClass << 8) | matEnv
+
+    void ensureWeaponDbcLoaded();
 
     // Helper methods
     bool loadSound(const std::string& path, CombatSample& sample, pipeline::AssetManager* assets);

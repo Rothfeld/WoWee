@@ -37,6 +37,8 @@ public:
     void playJumpSound();
     void playLandSound();
     void playIdleSound();
+    void playWingFlapSound();
+    void playWingGlideSound();
 
     [[nodiscard]] bool isMounted() const { return mounted_; }
     void setVolumeScale(float scale) { volumeScale_ = scale; }

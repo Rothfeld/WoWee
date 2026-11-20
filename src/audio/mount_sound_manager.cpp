@@ -1,6 +1,7 @@
 #include "audio/mount_sound_manager.hpp"
 #include "audio/audio_engine.hpp"
 #include "audio/creature_sound_index.hpp"
+#include "audio/sound_entries.hpp"
 #include "pipeline/asset_manager.hpp"
 #include "pipeline/dbc_loader.hpp"
 #include "core/logger.hpp"
@@ -55,20 +56,10 @@ void MountSoundManager::onDismount() {
 }
 
 void MountSoundManager::playSoundEntry(uint32_t soundId, const char* what) {
-    if (!assetManager_ || !AudioEngine::instance().isInitialized()) return;
-    const auto soundEntries = assetManager_->loadDBC("SoundEntries.dbc");
-    if (!soundEntries) {
-        LOG_ERROR("Mount sound: SoundEntries.dbc unavailable");
-        return;
+    if (!assetManager_ || !AudioEngine::instance().isInitialized() || volumeScale_ <= 0.0f) return;
+    if (!SoundEntryTable::instance().play2D(assetManager_, soundId, volumeScale_, 1.0f)) {
+        LOG_DEBUG("Mount sound: ", what, " SoundEntries row ", soundId, " did not play");
     }
-    const auto entry = readSoundEntry(*soundEntries, soundId);
-    if (!entry) {
-        LOG_ERROR("Mount sound: ", what, " SoundEntries row ", soundId, " missing or names no file");
-        return;
-    }
-    const std::string& file = pickSoundFile(*entry, rng_);
-    if (!AudioEngine::instance().playSound2D(file, entry->volume * volumeScale_, 1.0f))
-        LOG_WARNING("Mount sound: could not play ", file);
 }
 
 void MountSoundManager::play(CreatureSoundColumn column, const char* what) {
@@ -93,6 +84,14 @@ void MountSoundManager::playJumpSound() {
 
 void MountSoundManager::playLandSound() {
     play(CreatureSoundColumn::JumpEnd, "JumpEnd");
+}
+
+void MountSoundManager::playWingFlapSound() {
+    play(CreatureSoundColumn::WingFlap, "WingFlap");
+}
+
+void MountSoundManager::playWingGlideSound() {
+    play(CreatureSoundColumn::WingGlide, "WingGlide");
 }
 
 void MountSoundManager::playIdleSound() {
