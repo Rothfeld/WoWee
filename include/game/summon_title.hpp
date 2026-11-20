@@ -31,21 +31,32 @@
 
 namespace wowee::game {
 
-enum class SummonTitle { None, Companion, Pet, Guardian, Minion, Totem };
+enum class SummonTitle { None, Companion, Pet, Guardian, Minion, Totem, Charm };
 
 /// A player guid has a zero high word; creatures, pets and vehicles do not.
 inline bool isPlayerGuid(uint64_t guid) { return guid != 0 && (guid >> 48) == 0; }
 
-inline SummonTitle summonTitle(uint32_t creatureType, uint64_t creatorGuid, uint64_t summonedByGuid) {
+/// Authoritative owner guid for a summoned, created, or charmed unit.
+inline uint64_t summonOwnerGuid(uint64_t creatorGuid, uint64_t summonedByGuid, uint64_t charmedByGuid = 0) {
+    if (creatorGuid != 0) return creatorGuid;
+    if (summonedByGuid != 0) return summonedByGuid;
+    return charmedByGuid;
+}
+
+inline SummonTitle summonTitle(uint32_t creatureType, uint64_t creatorGuid, uint64_t summonedByGuid,
+                               uint64_t charmedByGuid = 0) {
     constexpr uint32_t kCreatureTypeBeast = 1;
     constexpr uint32_t kCreatureTypeTotem = 11;
     constexpr uint32_t kCreatureTypeNonCombatPet = 12;
-    if (creatorGuid == 0) return SummonTitle::None;
+    const uint64_t owner = creatorGuid != 0 ? creatorGuid : summonedByGuid;
+    if (owner == 0) {
+        return charmedByGuid != 0 ? SummonTitle::Charm : SummonTitle::None;
+    }
     if (creatureType == kCreatureTypeNonCombatPet) return SummonTitle::Companion;
     const bool beast = creatureType == kCreatureTypeBeast;
-    if (!isPlayerGuid(creatorGuid)) return beast ? SummonTitle::Pet : SummonTitle::Minion;
+    if (!isPlayerGuid(owner)) return beast ? SummonTitle::Pet : SummonTitle::Minion;
     if (creatureType == kCreatureTypeTotem) return SummonTitle::Totem;
-    if (summonedByGuid == creatorGuid) return beast ? SummonTitle::None : SummonTitle::Minion;
+    if (summonedByGuid == owner) return beast ? SummonTitle::Pet : SummonTitle::Minion;
     return SummonTitle::Guardian;
 }
 
@@ -57,6 +68,7 @@ inline const char* summonTitleGlobal(SummonTitle title) {
     case SummonTitle::Guardian:  return "UNITNAME_TITLE_GUARDIAN";
     case SummonTitle::Totem:     return "UNITNAME_SUMMON_TITLE4";
     case SummonTitle::Minion:    return "UNITNAME_TITLE_MINION";
+    case SummonTitle::Charm:     return "UNITNAME_TITLE_CHARM";
     case SummonTitle::None:      return nullptr;
     }
     return nullptr;

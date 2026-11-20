@@ -950,10 +950,15 @@ GameScreen::UnitLabelVisibility GameScreen::unitLabelVisibility(
     const uint32_t creatureType = isPlayer ? 0 : gameHandler.getCreatureType(unit.getEntry());
     const bool totem = creatureType == 11;
     const bool companion = creatureType == 12;
-    const bool summon = !isPlayer && !totem && game::unitSummonedByGuid(*entity) != 0;
+    const uint64_t summonedBy = game::unitSummonedByGuid(*entity);
+    const uint64_t charmedBy = game::unitCharmedByGuid(*entity);
+    const bool summon = !isPlayer && !totem && summonedBy != 0;
     const bool pet = summon && (unit.getUnitFlags() & game::UNIT_FLAG_PLAYER_CONTROLLED);
     const bool guardian = summon && !pet;
-    const bool enemyPlate = hostile || (!isPlayer && gameHandler.unitReactionToPlayer(unit) <= 4);
+    const uint64_t playerGuid = gameHandler.getPlayerGuid();
+    const bool ownPet = !isPlayer && playerGuid != 0 &&
+                        (guid == gameHandler.getPetGuid() || summonedBy == playerGuid || charmedBy == playerGuid);
+    const bool enemyPlate = hostile || (!isPlayer && !ownPet && gameHandler.unitReactionToPlayer(unit) <= 4);
     bool plate = enemyPlate ? settingsPanel_.showEnemyNameplates_ : settingsPanel_.showFriendlyNameplates_;
     if (totem) plate = plate && addons::storedCVarValue(
         hostile ? "nameplateShowEnemyTotems" : "nameplateShowFriendlyTotems", hostile ? "1" : "0") != "0";
@@ -962,7 +967,10 @@ GameScreen::UnitLabelVisibility GameScreen::unitLabelVisibility(
                              : (hostile ? "nameplateShowEnemyGuardians" : "nameplateShowFriendlyGuardians");
         plate = plate && addons::storedCVarValue(key, "1") != "0";
     }
-    if (own || companion || (game::isPreWotlk() && !unit.getHealth())) plate = false;
+    // Build 8606 never draws a 2D healthbar nameplate over the player's own pet
+    // (even with Shift+V friendly nameplates enabled), keeping its 3D overhead
+    // name + <Owner's Minion/Pet> title.
+    if (own || companion || (game::isPreWotlk() && (ownPet || !unit.getHealth()))) plate = false;
     if (!game::isPreWotlk() && !unit.getHealth() && !target) return {};
     const glm::mat4 viewProj = camera.getProjectionMatrix() * camera.getViewMatrix();
     if (plate && game::isPreWotlk()) {
@@ -1691,14 +1699,18 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
                 if (!gn.empty()) subLabel = "<" + gn + ">";
             }
         } else if (const auto title = game::summonTitle(creatureType, game::unitCreatedByGuid(*unit),
-                                                            game::unitSummonedByGuid(*unit));
+                                                        game::unitSummonedByGuid(*unit),
+                                                        game::unitCharmedByGuid(*unit));
                    title != game::SummonTitle::None) {
-            // "<Owner's Companion>" / "<Owner's Minion>" from GlobalStrings.
-            const uint64_t creator = game::unitCreatedByGuid(*unit);
-            std::string owner = gameHandler.lookupName(creator);
+            // "<Owner's Companion>" / "<Owner's Pet>" / "<Owner's Minion>" from GlobalStrings.
+            const uint64_t ownerGuid = game::summonOwnerGuid(
+                game::unitCreatedByGuid(*unit), game::unitSummonedByGuid(*unit), game::unitCharmedByGuid(*unit));
+            std::string owner = gameHandler.lookupName(ownerGuid);
             if (owner.empty())
-                if (const auto c = gameHandler.getEntityManager().getEntity(creator))
+                if (const auto c = gameHandler.getEntityManager().getEntity(ownerGuid))
                     owner = game::entityDisplayName(c);
+            if (owner.empty() && game::isPlayerGuid(ownerGuid))
+                gameHandler.queryPlayerName(ownerGuid);
             auto* lua = services_.addonManager ? services_.addonManager->getLuaEngine() : nullptr;
             const std::string pattern = lua ? lua->globalString(game::summonTitleGlobal(title)) : std::string{};
             if (!owner.empty() && !pattern.empty())

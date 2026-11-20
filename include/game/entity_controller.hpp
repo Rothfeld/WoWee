@@ -237,7 +237,7 @@ private:
         uint16_t bytes0, bytes1, bytes2;
         /// A hunter pet carries its own experience, on the pet's unit rather
         /// than on the player's.
-        uint16_t petXp, petNextLevelXp;
+        uint16_t petXp, petNextLevelXp, petTrainingPoints;
         /// ...and its own stats and resistances, which the pet paperdoll reads
         /// through UnitStat("pet") and UnitResistance("pet"). Armor is
         /// resistances index 0.

@@ -3517,16 +3517,20 @@ int lua_Tooltip_SetUnit(lua_State* L) {
             if (!guildName.empty()) addLine(guildName, 1.0f, 1.0f, 1.0f);
         }
     } else if (const auto title = unit ? game::summonTitle(gh->getCreatureType(unit->getEntry()),
-                                                         game::unitCreatedByGuid(*entity),
-                                                         game::unitSummonedByGuid(*entity))
+                                                           game::unitCreatedByGuid(*entity),
+                                                           game::unitSummonedByGuid(*entity),
+                                                           game::unitCharmedByGuid(*entity))
                                        : game::SummonTitle::None;
                title != game::SummonTitle::None) {
-        // Companion or a creature's minion (game/summon_title.hpp).
-        const uint64_t creator = game::unitCreatedByGuid(*entity);
-        std::string owner = gh->lookupName(creator);
+        // Companion, pet, minion, totem, guardian, or charmed unit (game/summon_title.hpp).
+        const uint64_t ownerGuid = game::summonOwnerGuid(
+            game::unitCreatedByGuid(*entity), game::unitSummonedByGuid(*entity), game::unitCharmedByGuid(*entity));
+        std::string owner = gh->lookupName(ownerGuid);
         if (owner.empty())
-            if (const auto c = gh->getEntityManager().getEntity(creator))
+            if (const auto c = gh->getEntityManager().getEntity(ownerGuid))
                 owner = game::entityDisplayName(c);
+        if (owner.empty() && game::isPlayerGuid(ownerGuid))
+            gh->queryPlayerName(ownerGuid);
         if (!owner.empty()) {
             lua_getglobal(L, game::summonTitleGlobal(title));
             assert(lua_isstring(L, -1));
@@ -10520,8 +10524,7 @@ void LuaEngine::registerCoreAPI() {
         // down the branch it takes when there is nothing to show.
         "function __WoweeFrameMT:SetSpell(slot, bookType)\n"
         "    self:ClearLines()\n"
-        "    if bookType == BOOKTYPE_PET then return false end\n"
-        "    local _, spellId = GetSpellBookItemInfo(slot)\n"
+        "    local _, spellId = GetSpellBookItemInfo(slot, bookType)\n"
         "    if not spellId or spellId == 0 then return false end\n"
         "    self:SetSpellByID(spellId)\n"
         "    if spellId == 6603 or spellId == 81 then\n"

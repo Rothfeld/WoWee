@@ -928,7 +928,15 @@ static int lua_UnitStat(lua_State* L) {
     toLowerInPlace(who);
     int32_t val = 0;
     if (who == "pet") {
-        if (statIdx >= 0 && statIdx < 5) val = gh->getPetStats()[static_cast<size_t>(statIdx)];
+        if (statIdx >= 0 && statIdx < 5) {
+            // Read directly off the pet entity's fields (create blocks arrive before
+            // SMSG_PET_SPELLS sets petGuid_, leaving the cached copy at 0).
+            if (auto w = unitFieldWord(L, "pet", game::UF::UNIT_FIELD_STAT0, statIdx)) {
+                val = static_cast<int32_t>(*w);
+            } else {
+                val = gh->getPetStats()[static_cast<size_t>(statIdx)];
+            }
+        }
     } else if (who == "player") {
         val = gh->getPlayerStat(statIdx);
     }
@@ -1613,7 +1621,12 @@ static int lua_UnitAttackPower(lua_State* L) {
     std::string who(luaL_optstring(L, 1, "player"));
     toLowerInPlace(who);
     if (who == "pet") {
-        const int32_t petAp = gh ? gh->getPetAttackPower() : 0;
+        int32_t petAp = 0;
+        if (auto w = unitFieldWord(L, "pet", game::UF::UNIT_FIELD_ATTACK_POWER)) {
+            petAp = static_cast<int32_t>(*w);
+        } else if (gh) {
+            petAp = gh->getPetAttackPower();
+        }
         lua_pushnumber(L, petAp > 0 ? petAp : 0);
         lua_pushnumber(L, 0);
         lua_pushnumber(L, 0);
@@ -1719,15 +1732,25 @@ static int lua_UnitDamage(lua_State* L) {
     std::string who(luaL_optstring(L, 1, "player"));
     toLowerInPlace(who);
     if (who == "pet") {
-        const double lo = gh ? gh->getPetMinDamage() : 0.0;
-        const double hi = gh ? gh->getPetMaxDamage() : 0.0;
-        lua_pushnumber(L, lo);   // minDamage
-        lua_pushnumber(L, hi);   // maxDamage
-        lua_pushnumber(L, 0.0);  // minOffHand
-        lua_pushnumber(L, 0.0);  // maxOffHand
-        lua_pushnumber(L, 0.0);  // physical bonus, positive
-        lua_pushnumber(L, 0.0);  // ...and negative
-        lua_pushnumber(L, 1.0);  // damage percent
+        double lo = gh ? gh->getPetMinDamage() : 0.0;
+        double hi = gh ? gh->getPetMaxDamage() : 0.0;
+        if (auto fLo = unitFieldFloat(L, "pet", game::UF::UNIT_FIELD_MINDAMAGE)) lo = *fLo;
+        if (auto fHi = unitFieldFloat(L, "pet", game::UF::UNIT_FIELD_MAXDAMAGE)) hi = *fHi;
+        double dmgPct = 1.0;
+        if (auto* pet = resolveUnit(L, "pet")) {
+            const uint32_t maxHap = pet->getMaxPowerByType(4);
+            if (maxHap > 0) {
+                const uint32_t hap = pet->getPowerByType(4);
+                dmgPct = (hap * 3 >= maxHap * 2) ? 1.25 : (hap * 3 >= maxHap) ? 1.0 : 0.75;
+            }
+        }
+        lua_pushnumber(L, lo);     // minDamage
+        lua_pushnumber(L, hi);     // maxDamage
+        lua_pushnumber(L, 0.0);    // minOffHand
+        lua_pushnumber(L, 0.0);    // maxOffHand
+        lua_pushnumber(L, 0.0);    // physical bonus, positive
+        lua_pushnumber(L, 0.0);    // ...and negative
+        lua_pushnumber(L, dmgPct); // damage percent
         return 7;
     }
     // The server works both hands' damage out (UNIT_FIELD_MINDAMAGE,

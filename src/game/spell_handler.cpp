@@ -4763,7 +4763,8 @@ void SpellHandler::togglePetSpellAutocast(uint32_t spellId) {
         owner_.petAutocastSpellsRef().insert(spellId);
     else
         owner_.petAutocastSpellsRef().erase(spellId);
-    // Keep packed pet action bar slots synchronized (ACT_ENABLED=0xC1 <-> ACT_DISABLED=0x81).
+    // Keep packed pet action bar slots synchronized (ACT_ENABLED=0xC1 <-> ACT_DISABLED=0x81)
+    // and notify both PetActionBarFrame and SpellBookFrame (BOOKTYPE_PET).
     for (int i = 0; i < GameHandler::PET_ACTION_BAR_SLOTS; ++i) {
         uint32_t packed = owner_.petActionSlotsRef()[i];
         if (pet::isPetSpellAction(packed) && pet::petActionId(packed) == spellId) {

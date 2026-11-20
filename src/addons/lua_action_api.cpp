@@ -3008,16 +3008,16 @@ void registerActionLuaAPI(lua_State* L) {
             lua_pushstring(L, dbc->getString(static_cast<uint32_t>(row), layout->field("Name")).c_str());
             return 1;
         }},
-                // GetPetTrainingPoints() → the two halves of
-                // UNIT_TRAINING_POINTS. Native 2.4.3: 65535, 65535 for a pet
-                // with no points (the server's -1), 0, 0 without a pet. Which
-                // half is total and which spent was not told apart.
+                // GetPetTrainingPoints() → totalPoints, spent from UNIT_TRAINING_POINTS.
+                // High 16 bits = total, low 16 bits = spent (CMaNGOS Pet::GetDispTP
+                // writes -(TP+1) for TP >= 0 and -TP for TP < 0, so (value >> 16) -
+                // (value & 0xFFFF) == TP in all cases; 0, 0 without a pet).
                 {"GetPetTrainingPoints", [](lua_State* L) -> int {
             auto* pet = resolveUnit(L, "pet");
             const uint16_t field = game::fieldIndex(game::UF::UNIT_TRAINING_POINTS);
             const uint32_t value = pet && field != 0xFFFF ? pet->getField(field) : 0;
-            lua_pushnumber(L, value & 0xFFFF);
             lua_pushnumber(L, value >> 16);
+            lua_pushnumber(L, value & 0xFFFF);
             return 2;
         }},
                 // 1 while a pet is out (native 2.4.3 with a hunter's wolf),

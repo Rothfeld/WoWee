@@ -1,5 +1,6 @@
 #include "game/spell_prerequisites.hpp"
 #include "game/spell_classification.hpp"
+#include "game/pet_action.hpp"
 // lua_spell_api.cpp - Spell info, casting, auras, and targeting Lua API bindings.
 // Extracted from lua_engine.cpp as part of §5.1 (Tame LuaEngine).
 #include "game/shapeshift_forms.hpp"
@@ -835,13 +836,22 @@ static int lua_GetSpellTabInfo(lua_State* L) {
 }
 
 // GetSpellBookItemInfo(slot, bookType) → "SPELL", spellId
-// slot is 1-based global spell book index
+// slot is 1-based global spell book index (or pet spellbook index when bookType == "pet")
 static int lua_GetSpellBookItemInfo(lua_State* L) {
     auto* gh = getGameHandler(L);
     int slot = static_cast<int>(luaL_checknumber(L, 1));
+    const char* book = luaL_optstring(L, 2, "spell");
     if (!gh || slot < 1) {
         lua_pushstring(L, "SPELL");
         lua_pushnumber(L, 0);
+        return 2;
+    }
+    if (std::string_view(book) == "pet") {
+        const auto petSpells = gh->getPetSpellbook();
+        const uint32_t spellId = (slot <= static_cast<int>(petSpells.size()))
+            ? petSpells[static_cast<size_t>(slot - 1)] : 0;
+        lua_pushstring(L, "SPELL");
+        lua_pushnumber(L, spellId);
         return 2;
     }
     const auto& tabs = gh->getSpellBookTabs();
@@ -863,7 +873,20 @@ static int lua_GetSpellBookItemInfo(lua_State* L) {
 static int lua_GetSpellBookItemName(lua_State* L) {
     auto* gh = getGameHandler(L);
     int slot = static_cast<int>(luaL_checknumber(L, 1));
+    const char* book = luaL_optstring(L, 2, "spell");
     if (!gh || slot < 1) { return luaReturnNil(L); }
+    if (std::string_view(book) == "pet") {
+        const auto petSpells = gh->getPetSpellbook();
+        if (slot <= static_cast<int>(petSpells.size())) {
+            const uint32_t spellId = petSpells[static_cast<size_t>(slot - 1)];
+            const std::string& name = gh->getSpellName(spellId);
+            lua_pushstring(L, name.empty() ? "Unknown" : name.c_str());
+            lua_pushstring(L, gh->getSpellRank(spellId).c_str());
+            return 2;
+        }
+        lua_pushnil(L);
+        return 1;
+    }
     const auto& tabs = gh->getSpellBookTabs();
     int idx = slot;
     for (const auto& tab : tabs) {
@@ -925,7 +948,19 @@ static int lua_CastSpell(lua_State* L) {
     // resolved through the player's tabs cast whichever of the player's spells
     // sat at that index.
     const uint32_t id = spellIdForCall(L, gh);
-    if (id != 0) gh->castSpell(id, 0);
+    if (gh && id != 0) {
+        const char* book = luaL_optstring(L, 2, "spell");
+        if (std::string_view(book) == "pet") {
+            if (!gh->isSpellPassive(id)) {
+                const auto actType = gh->isPetSpellAutocast(id)
+                    ? game::pet::ActionType::Enabled : game::pet::ActionType::Disabled;
+                gh->sendPetAction(game::pet::packPetAction(actType, id),
+                                  gh->getTargetGuid());
+            }
+        } else {
+            gh->castSpell(id, 0);
+        }
+    }
     return 0;
 }
 

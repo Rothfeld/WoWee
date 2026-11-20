@@ -29,21 +29,28 @@ TEST_CASE("a non-combat pet is its owner's companion", "[summon-title]") {
     CHECK(std::string(summonTitleGlobal(SummonTitle::Companion)) == "UNITNAME_TITLE_COMPANION");
 }
 
-TEST_CASE("no title without a creator or for a player's other summons", "[summon-title]") {
+TEST_CASE("no title without a creator or charmer", "[summon-title]") {
     CHECK(summonTitle(4, 0, 0) == SummonTitle::None);
-    // A player's beast pet (hunter pet): not observed.
-    CHECK(summonTitle(1, 0x0000000000000004ull, 0x0000000000000004ull) == SummonTitle::None);
     CHECK(summonTitleGlobal(SummonTitle::None) == nullptr);
     CHECK(formatSummonTitle("no placeholder", "x").empty());
 }
 
-TEST_CASE("a player's summons: totem, minion and guardian", "[summon-title]") {
+TEST_CASE("a player's hunter pet, demon minion, totem, guardian and charmed demon", "[summon-title]") {
     // Original captures, 20261117T165200Z.pair4_kits/original-summons.png.
     constexpr uint64_t player = 0x0000000000000004ull;
+    CHECK(summonTitle(1, player, player) == SummonTitle::Pet);      // Hunter tamed beast
+    CHECK(std::string(summonTitleGlobal(SummonTitle::Pet)) == "UNITNAME_TITLE_PET");
     CHECK(summonTitle(11, player, 0) == SummonTitle::Totem);        // Stoneskin Totem
     CHECK(std::string(summonTitleGlobal(SummonTitle::Totem)) == "UNITNAME_SUMMON_TITLE4");
-    CHECK(summonTitle(3, player, player) == SummonTitle::Minion);   // Imp (SUMMON_PET)
+    CHECK(summonTitle(3, player, player) == SummonTitle::Minion);   // Imp / Felhunter (SUMMON_PET)
+    CHECK(summonTitle(3, 0, player) == SummonTitle::Minion);        // Summoned demon without CREATEDBY
     CHECK(summonTitle(6, player, 0) == SummonTitle::Guardian);      // Skeletal Warrior
     CHECK(summonTitle(1, player, 0) == SummonTitle::Guardian);      // Boar Spirit
     CHECK(std::string(summonTitleGlobal(SummonTitle::Guardian)) == "UNITNAME_TITLE_GUARDIAN");
+    // Enslave Demon / Mind Control sets UNIT_FIELD_CHARMEDBY on a wild unit
+    CHECK(summonTitle(3, 0, 0, player) == SummonTitle::Charm);
+    CHECK(std::string(summonTitleGlobal(SummonTitle::Charm)) == "UNITNAME_TITLE_CHARM");
+    CHECK(summonOwnerGuid(0, 0, player) == player);
+    CHECK(summonOwnerGuid(0, player, 0) == player);
+    CHECK(summonOwnerGuid(player, 0, 0) == player);
 }

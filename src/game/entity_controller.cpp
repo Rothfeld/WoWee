@@ -905,6 +905,7 @@ EntityController::UnitFieldIndices EntityController::UnitFieldIndices::resolve()
         .bytes2 = fieldIndex(UF::UNIT_FIELD_BYTES_2),
         .petXp = fieldIndex(UF::UNIT_FIELD_PETEXPERIENCE),
         .petNextLevelXp = fieldIndex(UF::UNIT_FIELD_PETNEXTLEVELEXP),
+        .petTrainingPoints = fieldIndex(UF::UNIT_TRAINING_POINTS),
         .stat0 = fieldIndex(UF::UNIT_FIELD_STAT0),
         .resistances = fieldIndex(UF::UNIT_FIELD_RESISTANCES),
         .attackPower = fieldIndex(UF::UNIT_FIELD_ATTACK_POWER),
@@ -1520,6 +1521,9 @@ EntityController::UnitFieldUpdateResult EntityController::applyUnitFieldsOnUpdat
                 owner_.petNextLevelExpRef() = val;
                 petExperienceChanged = true;
             }
+        } else if (ufi.petTrainingPoints != 0xFFFF && key == ufi.petTrainingPoints &&
+                   block.guid == owner_.petGuidRef()) {
+            pendingEvents_.emit("UNIT_PET_TRAINING_POINTS", {});
         } else if (key == ufi.npcFlags) { unit->setNpcFlags(val); }
         else if (key == ufi.npcEmoteState) {
             uint32_t oldEmote = unit->getNpcEmoteState();
