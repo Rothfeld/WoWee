@@ -6998,8 +6998,27 @@ void registerSystemLuaAPI(lua_State* L) {
                 for (const char* g : kClassicCombatLogGroups) lua_pushstring(L, g);
                 return static_cast<int>(std::size(kClassicCombatLogGroups));
             }
-            for (const auto& g : w->messageGroups) lua_pushstring(L, g.c_str());
-            return static_cast<int>(w->messageGroups.size());
+            const bool isTbc = game::isActiveExpansion("tbc");
+            bool hasGuildOfficer = false;
+            if (isTbc) {
+                for (const auto& g : w->messageGroups) {
+                    if (g == "GUILD_OFFICER") { hasGuildOfficer = true; break; }
+                }
+            }
+            int pushed = 0;
+            for (const auto& g : w->messageGroups) {
+                if (isTbc && g == "OFFICER") {
+                    if (!hasGuildOfficer) {
+                        lua_pushstring(L, "GUILD_OFFICER");
+                        hasGuildOfficer = true;
+                        ++pushed;
+                    }
+                    continue;
+                }
+                lua_pushstring(L, g.c_str());
+                ++pushed;
+            }
+            return pushed;
         }},
                 // Name and zone-channel id in pairs, which is the shape
                 // ChatFrame_RegisterForChannels reads: it steps two at a time

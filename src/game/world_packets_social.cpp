@@ -829,6 +829,24 @@ network::Packet GuildDelRankPacket::build() {
     return packet;
 }
 
+network::Packet GuildRankPacket::build(uint32_t rankId, uint32_t rights,
+                                       const std::string& rankName,
+                                       uint32_t goldLimit,
+                                       const uint32_t* tabRights,
+                                       const uint32_t* tabSlots) {
+    network::Packet packet(wireOpcode(Opcode::CMSG_GUILD_RANK));
+    packet.writeUInt32(rankId);
+    packet.writeUInt32(rights);
+    packet.writeString(rankName);
+    packet.writeUInt32(goldLimit);
+    for (int t = 0; t < 6; ++t) {
+        packet.writeUInt32(tabRights ? tabRights[t] : 0);
+        packet.writeUInt32(tabSlots ? tabSlots[t] : 0);
+    }
+    LOG_DEBUG("Built CMSG_GUILD_RANK: rankId=", rankId, " name=", rankName, " rights=0x", std::hex, rights, std::dec);
+    return packet;
+}
+
 network::Packet PetitionShowlistPacket::build(uint64_t npcGuid) {
     network::Packet packet(wireOpcode(Opcode::CMSG_PETITION_SHOWLIST));
     packet.writeUInt64(npcGuid);
@@ -968,18 +986,32 @@ bool GuildInfoParser::parse(network::Packet& packet, GuildInfoData& data) {
         LOG_ERROR("SMSG_GUILD_INFO too small: ", packet.getSize());
         return false;
     }
+    data = GuildInfoData{};
     data.guildName = packet.readString();
-    // One packed uint32, not three. Guild::SendInfo writes the creation date
-    // with AppendPackedTime, so reading a day, a month and a year took twelve
-    // bytes where the server sent four - the date was nonsense and the two
-    // counts after it were read from the wrong offset as well.
-    // Read and dropped. Nothing shows a guild's founding date since the roster
-    // window went to FrameXML, but the four bytes still have to come off the
-    // packet or the two counts after them are read from the wrong offset.
-    packet.readUInt32();
-    data.numMembers = packet.readUInt32();
-    data.numAccounts = packet.readUInt32();
-    LOG_INFO("Parsed SMSG_GUILD_INFO: ", data.guildName, " members=", data.numMembers);
+    // Classic / TBC 2.4.3 (CMaNGOS HandleGuildInfoOpcode) sends 5 uint32s:
+    //   createdDay, createdMonth, createdYear, numMembers, numAccounts (20 bytes).
+    // WotLK 3.3.5a (AzerothCore Guild::SendInfo) sends 3 uint32s:
+    //   packedTime, numMembers, numAccounts (12 bytes).
+    if (packet.hasRemaining(20)) {
+        data.createdDay   = packet.readUInt32();
+        data.createdMonth = packet.readUInt32();
+        data.createdYear  = packet.readUInt32();
+        data.numMembers   = packet.readUInt32();
+        data.numAccounts  = packet.readUInt32();
+    } else if (packet.hasRemaining(12)) {
+        const uint32_t packed = packet.readUInt32();
+        data.createdYear  = ((packed >> 24) & 0x1Fu) + 2000u;
+        data.createdMonth = ((packed >> 20) & 0x0Fu) + 1u;
+        data.createdDay   = ((packed >> 14) & 0x3Fu) + 1u;
+        data.numMembers   = packet.readUInt32();
+        data.numAccounts  = packet.readUInt32();
+    } else {
+        LOG_WARNING("SMSG_GUILD_INFO truncated after guild name: remaining=", packet.getRemainingSize());
+        return false;
+    }
+    LOG_INFO("Parsed SMSG_GUILD_INFO: ", data.guildName,
+             " created=", data.createdMonth, "-", data.createdDay, "-", data.createdYear,
+             " members=", data.numMembers, " accounts=", data.numAccounts);
     return true;
 }
 

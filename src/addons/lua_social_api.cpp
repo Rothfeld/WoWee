@@ -1709,7 +1709,7 @@ void registerSocialLuaAPI(lua_State* L) {
             lua_pushboolean(L, (flags & 0x01u) ? 1 : 0);   // 1: canView
             lua_pushboolean(L, (flags & 0x02u) ? 1 : 0);   // 2: canDeposit
             lua_pushboolean(L, (flags & 0x04u) ? 1 : 0);   // 3: canUpdateText
-            lua_pushnumber(L, rank.bankTabSlotsPerDay[static_cast<size_t>(tab) - 1]);
+            lua_pushnumber(L, static_cast<int32_t>(rank.bankTabSlotsPerDay[static_cast<size_t>(tab) - 1]));
             return 4;
         }},
                 // GetGuildBankWithdrawLimit() → gold per day for the selected
@@ -1720,7 +1720,7 @@ void registerSocialLuaAPI(lua_State* L) {
             const auto& roster = gh->getGuildRoster();
             const int sel = gh->getSelectedGuildRank();
             if (sel < 1 || sel > static_cast<int>(roster.ranks.size())) { lua_pushnumber(L, 0); return 1; }
-            lua_pushnumber(L, roster.ranks[static_cast<size_t>(sel) - 1].goldLimit);
+            lua_pushnumber(L, static_cast<int32_t>(roster.ranks[static_cast<size_t>(sel) - 1].goldLimit));
             return 1;
         }},
                 // The three that stage the bank half of a rank edit. Bits are
@@ -1730,7 +1730,10 @@ void registerSocialLuaAPI(lua_State* L) {
             auto* gh = getGameHandler(L);
             const int tab  = static_cast<int>(luaL_optnumber(L, 1, 0));
             const int perm = static_cast<int>(luaL_optnumber(L, 2, 0));
-            const bool on  = lua_toboolean(L, 3) != 0;
+            // SavePendingGuildBankTabPermissions passes 0 when unchecked, and 0
+            // is truthy in Lua.
+            const bool on  = lua_isnumber(L, 3) ? (lua_tonumber(L, 3) != 0)
+                                                : (lua_toboolean(L, 3) != 0);
             if (!gh || tab < 1 || tab > 6 || perm < 1 || perm > 3) return 0;
             const uint32_t bit = 1u << (perm - 1);
             auto& p = gh->pendingGuildRankRef();
@@ -2051,7 +2054,8 @@ void registerSocialLuaAPI(lua_State* L) {
                 {"GuildControlSetRankFlag", [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
             const int idx = static_cast<int>(luaL_optnumber(L, 1, 0));
-            const bool on = lua_toboolean(L, 2) != 0;
+            const bool on = lua_isnumber(L, 2) ? (lua_tonumber(L, 2) != 0)
+                                               : (lua_toboolean(L, 2) != 0);
             if (!gh || idx < 1 || idx > static_cast<int>(kGuildRankFlagCount)) return 0;
             const uint32_t bit = kGuildRankFlagBits[static_cast<size_t>(idx) - 1];
             // Slot 14 has no bit to set. Nothing calls it - the checkbox that

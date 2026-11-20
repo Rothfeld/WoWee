@@ -847,7 +847,7 @@ void SocialHandler::registerOpcodes(DispatchTable& table) {
     table[Opcode::SMSG_GUILD_DECLINE] = [this](network::Packet& packet) {
         if (packet.hasData()) {
             std::string name = packet.readString();
-            owner_.addSystemChatMessage(name + " declined your guild invitation.");
+            owner_.systemGlobal("ERR_GUILD_DECLINE_S", {name});
         }
     };
     table[Opcode::SMSG_REFER_A_FRIEND_EXPIRED] = [this](network::Packet& packet) {
@@ -1086,8 +1086,16 @@ std::string SocialHandler::getCurrentLfgDungeonName() const {
 uint32_t SocialHandler::ownGuildId() const {
     // The player's own field first: it is what the server keeps current, and
     // the character list's copy was taken at login - before any guild joined
-    // or left since.
-    if (const uint32_t live = getEntityGuildId(owner_.getPlayerGuid())) return live;
+    // or left since. Once the player entity is in world, a 0 field is
+    // authoritative (the character left, was kicked, or the guild disbanded)
+    // and must not fall back to the stale login record.
+    auto entity = owner_.getEntityManager().getEntity(owner_.getPlayerGuid());
+    if (entity && entity->getType() == ObjectType::PLAYER) {
+        const uint16_t ufUnitEnd = fieldIndex(UF::UNIT_END);
+        if (ufUnitEnd != 0xFFFF) {
+            return entity->getField(ufUnitEnd + 3);
+        }
+    }
     const Character* ch = owner_.getActiveCharacter();
     return ch ? ch->guildId : 0;
 }
@@ -1098,6 +1106,27 @@ void SocialHandler::onGuildLeft() {
     inGuild_ = false;
     if (addons::storedCVarValue("guildRecruitmentChannel", "1") == "0") return;
     if (auto* chat = owner_.getChatHandler()) chat->joinBuiltinChannels(ChatHandler::kChannelNoGuild);
+}
+
+void SocialHandler::onPlayerGuildIdUpdated(uint32_t newGuildId) {
+    if (newGuildId == 0) {
+        if (inGuild_ || !guildName_.empty() || hasGuildRoster_) {
+            onGuildLeft();
+            joinedGuildName_.clear();
+            guildName_.clear();
+            guildRankNames_.clear();
+            guildRoster_ = GuildRosterData{};
+            hasGuildRoster_ = false;
+            guildQueryData_ = GuildQueryResponseData{};
+            if (owner_.addonEventCallbackRef()) {
+                owner_.addonEventCallbackRef()("PLAYER_GUILD_UPDATE", {});
+                owner_.addonEventCallbackRef()("GUILD_ROSTER_UPDATE", {eventBool(false)});
+            }
+        }
+    } else if (!inGuild_) {
+        queryGuildInfo(newGuildId);
+        requestGuildRoster();
+    }
 }
 
 bool SocialHandler::isInGuild() const {
@@ -1621,6 +1650,7 @@ void SocialHandler::cancelLogout() {
 
 void SocialHandler::requestGuildInfo() {
     if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
+    guildInfoRequested_ = true;
     auto packet = GuildInfoPacket::build();
     owner_.getSocket()->send(packet);
 }
@@ -2753,23 +2783,28 @@ void SocialHandler::handleGuildInfo(network::Packet& packet) {
     GuildInfoData data;
     if (!GuildInfoParser::parse(packet, data)) return;
     if (!data.guildName.empty()) {
-        if (const Character* ch = owner_.getActiveCharacter(); ch && ch->hasGuild()) {
-            rememberGuildName(ch->guildId, data.guildName);
+        if (const uint32_t gid = ownGuildId(); gid != 0) {
+            rememberGuildName(gid, data.guildName);
             if (guildName_.empty()) guildName_ = data.guildName;
         }
     }
-    // SMSG_GUILD_INFO is pushed by the server on every guild roster sync
-    // (login, member join/leave, periodic refreshes). Only print when
-    // something the user can see has actually changed; otherwise the
-    // guild banner spams chat on every tick.
-    const bool changed = (guildInfoData_.guildName != data.guildName) ||
-                         (guildInfoData_.numMembers != data.numMembers) ||
-                         (guildInfoData_.numAccounts != data.numAccounts);
     guildInfoData_ = data;
-    // No line from here: /ginfo's answer is GuildInfoFrame's (TBC
-    // GlobalStrings GUILD_INFO_TEMPLATE is the panel's), and the old
-    // "Guild: X (N members, M accounts)" was this client's own words.
-    (void)changed;
+    // /ginfo (CMSG_GUILD_INFO) prints two system chat lines in 2.4.3:
+    //   GUILD_NAME_TEMPLATE ("Guild: %s")
+    //   GUILD_INFO_TEMPLATE ("Guild created %d-%d-%d, %d players, %d accounts")
+    if (guildInfoRequested_) {
+        guildInfoRequested_ = false;
+        if (!data.guildName.empty()) {
+            owner_.systemGlobal("GUILD_NAME_TEMPLATE", {data.guildName});
+        }
+        owner_.systemGlobal("GUILD_INFO_TEMPLATE", {
+            std::to_string(data.createdMonth),
+            std::to_string(data.createdDay),
+            std::to_string(data.createdYear),
+            std::to_string(data.numMembers),
+            std::to_string(data.numAccounts),
+        });
+    }
 }
 
 void SocialHandler::handleGuildRoster(network::Packet& packet) {
@@ -2823,15 +2858,7 @@ void SocialHandler::saveGuildRank(uint32_t rankId, uint32_t rights, const std::s
                                   uint32_t goldLimit, const uint32_t* tabRights,
                                   const uint32_t* tabSlots) {
     if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
-    network::Packet packet(wireOpcode(Opcode::CMSG_GUILD_RANK));
-    packet.writeUInt32(rankId);
-    packet.writeUInt32(rights);
-    packet.writeString(rankName);
-    packet.writeUInt32(goldLimit);
-    for (int t = 0; t < 6; ++t) {
-        packet.writeUInt32(tabRights ? tabRights[t] : 0);
-        packet.writeUInt32(tabSlots ? tabSlots[t] : 0);
-    }
+    auto packet = GuildRankPacket::build(rankId, rights, rankName, goldLimit, tabRights, tabSlots);
     owner_.getSocket()->send(packet);
     requestGuildRoster();
 }
@@ -2900,14 +2927,15 @@ void SocialHandler::handleGuildEvent(network::Packet& packet) {
     // online."
     std::string msg;
     bool guildLine = false;  // the MOTD, which is the one that is guild chat
+    bool selfRemoved = false;
     switch (data.eventType) {
         case GuildEvent::PROMOTION:
             if (data.numStrings >= 3)
-                msg = data.strings[0] + " has promoted " + data.strings[1] + " to " + data.strings[2] + ".";
+                owner_.systemGlobal("ERR_GUILD_PROMOTE_SSS", {data.strings[0], data.strings[1], data.strings[2]});
             break;
         case GuildEvent::DEMOTION:
             if (data.numStrings >= 3)
-                msg = data.strings[0] + " has demoted " + data.strings[1] + " to " + data.strings[2] + ".";
+                owner_.systemGlobal("ERR_GUILD_DEMOTE_SSS", {data.strings[0], data.strings[1], data.strings[2]});
             break;
         case GuildEvent::MOTD:
             // The interface writes this one itself, from the GUILD_MOTD event
@@ -2919,29 +2947,48 @@ void SocialHandler::handleGuildEvent(network::Packet& packet) {
             }
             break;
         case GuildEvent::JOINED:
-            if (data.numStrings >= 1) msg = data.strings[0] + " has joined the guild.";
+            if (data.numStrings >= 1)
+                owner_.systemGlobal("ERR_GUILD_JOIN_S", {data.strings[0]});
             break;
         case GuildEvent::LEFT:
-            if (data.numStrings >= 1) msg = data.strings[0] + " has left the guild.";
+            if (data.numStrings >= 1)
+                owner_.systemGlobal("ERR_GUILD_LEAVE_S", {data.strings[0]});
             break;
         case GuildEvent::REMOVED:
             // The member removed, then who removed them - the order the server
             // sends and ERR_GUILD_REMOVE_SS reads them in.
-            if (data.numStrings >= 2) msg = data.strings[0] + " has been kicked out of the guild by " + data.strings[1] + ".";
+            if (data.numStrings >= 2)
+                owner_.systemGlobal("ERR_GUILD_REMOVE_SS", {data.strings[0], data.strings[1]});
+            if (const Character* ch = owner_.getActiveCharacter();
+                ch && data.numStrings >= 1 && data.strings[0] == ch->name) {
+                selfRemoved = true;
+                onGuildLeft();
+                joinedGuildName_.clear();
+                guildName_.clear();
+                guildRankNames_.clear();
+                guildRoster_ = GuildRosterData{};
+                hasGuildRoster_ = false;
+                guildQueryData_ = GuildQueryResponseData{};
+                if (owner_.addonEventCallbackRef()) owner_.addonEventCallbackRef()("PLAYER_GUILD_UPDATE", {});
+            }
             break;
         case GuildEvent::LEADER_IS:
-            if (data.numStrings >= 1) msg = data.strings[0] + " is the leader of your guild.";
+            if (data.numStrings >= 1)
+                owner_.systemGlobal("ERR_GUILD_LEADER_IS_S", {data.strings[0]});
             break;
         case GuildEvent::LEADER_CHANGED:
-            if (data.numStrings >= 2) msg = data.strings[0] + " has made " + data.strings[1] + " the new Guild Master.";
+            if (data.numStrings >= 2)
+                owner_.systemGlobal("ERR_GUILD_LEADER_CHANGED_SS", {data.strings[0], data.strings[1]});
             break;
         case GuildEvent::DISBANDED:
-            msg = "Guild has been disbanded.";
+            owner_.systemGlobal("ERR_GUILD_DISBANDED", {});
             onGuildLeft();
+            joinedGuildName_.clear();
             guildName_.clear();
             guildRankNames_.clear();
             guildRoster_ = GuildRosterData{};
             hasGuildRoster_ = false;
+            guildQueryData_ = GuildQueryResponseData{};
             if (owner_.addonEventCallbackRef()) owner_.addonEventCallbackRef()("PLAYER_GUILD_UPDATE", {});
             break;
         case GuildEvent::SIGNED_ON:
@@ -3014,7 +3061,7 @@ void SocialHandler::handleGuildEvent(network::Packet& packet) {
     // already has costs a second roster for a large guild, and FrameXML not
     // requesting when the client has not leaves every guild panel drawing from
     // a copy that no longer says who is online.
-    const bool clientWillRequest = hasGuildRoster_ && (
+    const bool clientWillRequest = !selfRemoved && hasGuildRoster_ && (
         data.eventType == GuildEvent::PROMOTION ||
         data.eventType == GuildEvent::DEMOTION ||
         data.eventType == GuildEvent::JOINED ||
@@ -3119,8 +3166,14 @@ void SocialHandler::handleGuildCommandResult(network::Packet& packet) {
             case 3:
                 owner_.systemGlobal("ERR_GUILD_QUIT_S", {data.name});
                 onGuildLeft();
+                joinedGuildName_.clear();
                 guildName_.clear(); guildRankNames_.clear();
                 guildRoster_ = GuildRosterData{}; hasGuildRoster_ = false;
+                guildQueryData_ = GuildQueryResponseData{};
+                membershipChanged = true;
+                break;
+            case 0x0E:
+                owner_.systemGlobal("ERR_GUILD_FOUNDER_S", {data.name});
                 membershipChanged = true;
                 break;
             default: break;
@@ -3149,8 +3202,13 @@ void SocialHandler::handleGuildCommandResult(network::Packet& packet) {
         case 0x03: name = "ERR_ALREADY_IN_GUILD_S"; break;
         case 0x04: name = "ERR_INVITED_TO_GUILD"; break;
         case 0x05: name = "ERR_ALREADY_INVITED_TO_GUILD_S"; break;
+        case 0x06: name = "ERR_GUILD_NAME_INVALID"; break;
         case 0x07: name = "ERR_GUILD_NAME_EXISTS_S"; break;
-        case 0x08: name = "ERR_GUILD_PERMISSIONS"; break;
+        case 0x08:
+            // Both ERR_GUILD_LEADER_LEAVE and ERR_GUILD_PERMISSIONS share 0x08;
+            // CMaNGOS distinguishes them by Typecommand (GUILD_QUIT_S = 3).
+            name = (data.command == 3) ? "ERR_GUILD_LEADER_LEAVE" : "ERR_GUILD_PERMISSIONS";
+            break;
         case 0x09: name = "ERR_GUILD_PLAYER_NOT_IN_GUILD"; break;
         case 0x0A: name = "ERR_GUILD_PLAYER_NOT_IN_GUILD_S"; break;
         case 0x0B: name = "ERR_GUILD_PLAYER_NOT_FOUND_S"; break;
@@ -3163,6 +3221,7 @@ void SocialHandler::handleGuildCommandResult(network::Packet& packet) {
         case 0x18: name = "ERR_GUILD_WITHDRAW_LIMIT"; break;
         case 0x19: name = "ERR_GUILD_NOT_ENOUGH_MONEY"; break;
         case 0x1B: name = "ERR_GUILD_BANK_FULL"; break;
+        case 0x1C: name = "ERR_ITEM_NOT_FOUND"; break;
         default: break;
     }
     if (!name) {

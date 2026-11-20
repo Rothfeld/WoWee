@@ -2809,6 +2809,14 @@ void EntityController::onValuesUpdatePlayer(const UpdateBlock& block, std::share
         for (const auto& [key, val] : block.fields) {
             owner_.lastPlayerFieldsRef().insert_or_assign(key, val);
         }
+        if (const uint16_t ufUnitEnd = fieldIndex(UF::UNIT_END); ufUnitEnd != 0xFFFF) {
+            if (auto guildIt = block.fields.find(static_cast<uint16_t>(ufUnitEnd + 3));
+                guildIt != block.fields.end()) {
+                if (auto* social = owner_.getSocialHandler()) {
+                    social->onPlayerGuildIdUpdated(guildIt->second);
+                }
+            }
+        }
         if (needCoinageDetectSnapshot) {
             maybeDetectCoinageIndex(oldFieldsSnapshot, owner_.lastPlayerFieldsRef());
         }

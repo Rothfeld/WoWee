@@ -210,6 +210,9 @@ public:
     /// The player left or lost their guild: no longer a member, and
     /// GuildRecruitment is joined again when its CVar is on.
     void onGuildLeft();
+    /// Called when the local player's PLAYER_GUILDID update field changes live
+    /// (e.g. kicked by an officer or added via GM command).
+    void onPlayerGuildIdUpdated(uint32_t newGuildId);
     [[nodiscard]] const std::string& getGuildName() const { return guildName_; }
     [[nodiscard]] const GuildRosterData& getGuildRoster() const { return guildRoster_; }
     [[nodiscard]] bool hasGuildRoster() const { return hasGuildRoster_; }
@@ -664,6 +667,7 @@ private:
     GuildInfoData guildInfoData_;
     GuildQueryResponseData guildQueryData_;
     bool hasGuildRoster_ = false;
+    bool guildInfoRequested_ = false;
     std::unordered_map<uint32_t, std::string> guildNameCache_;
     std::unordered_map<uint32_t, std::chrono::steady_clock::time_point> pendingGuildNameQueries_;
     bool pendingGuildInvite_ = false;

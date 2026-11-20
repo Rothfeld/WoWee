@@ -254,3 +254,111 @@ TEST_CASE("a truncated roster stops rather than reading past the end",
         CHECK(data.members.size() <= 2);
     }
 }
+
+TEST_CASE("SMSG_GUILD_INFO parses TBC 5-uint32 format and WotLK packed format", "[guild][wire]") {
+    SECTION("TBC 2.4.3 sends day, month, year, members, accounts") {
+        Writer w;
+        w.cstr("Roster XVI");
+        w.u32(20);    // createdDay
+        w.u32(11);    // createdMonth
+        w.u32(2026);  // createdYear
+        w.u32(2);     // numMembers
+        w.u32(2);     // numAccounts
+
+        auto packet = makePacket(w.bytes);
+        GuildInfoData info;
+        REQUIRE(GuildInfoParser::parse(packet, info));
+        CHECK(info.guildName == "Roster XVI");
+        CHECK(info.createdDay == 20);
+        CHECK(info.createdMonth == 11);
+        CHECK(info.createdYear == 2026);
+        CHECK(info.numMembers == 2);
+        CHECK(info.numAccounts == 2);
+    }
+
+    SECTION("WotLK 3.3.5a sends packedTime, members, accounts") {
+        Writer w;
+        w.cstr("Wrath Guild");
+        // packed: year-2000 in bits 24..28 (26), month-1 in bits 20..23 (10 = Nov), day-1 in bits 14..19 (19 = 20th)
+        const uint32_t packed = (26u << 24) | (10u << 20) | (19u << 14);
+        w.u32(packed);
+        w.u32(42);
+        w.u32(19);
+
+        auto packet = makePacket(w.bytes);
+        GuildInfoData info;
+        REQUIRE(GuildInfoParser::parse(packet, info));
+        CHECK(info.guildName == "Wrath Guild");
+        CHECK(info.createdYear == 2026);
+        CHECK(info.createdMonth == 11);
+        CHECK(info.createdDay == 20);
+        CHECK(info.numMembers == 42);
+        CHECK(info.numAccounts == 19);
+    }
+}
+
+TEST_CASE("CMSG_GUILD_RANK builds TBC rank payload with gold limit and 6 bank tabs", "[guild][wire]") {
+    const uint32_t tabRights[6] = {0x01, 0x03, 0x07, 0x00, 0x01, 0x03};
+    const uint32_t tabSlots[6]  = {10, 20, 30, 0, 5, 0xFFFFFFFFu};
+
+    auto pkt = GuildRankPacket::build(1, 0x000DF1FFu, "Quartermaster", 250, tabRights, tabSlots);
+    CHECK(pkt.readUInt32() == 1u);
+    CHECK(pkt.readUInt32() == 0x000DF1FFu);
+    CHECK(pkt.readString() == "Quartermaster");
+    CHECK(pkt.readUInt32() == 250u);
+    for (int t = 0; t < 6; ++t) {
+        INFO("tab " << t);
+        CHECK(pkt.readUInt32() == tabRights[t]);
+        CHECK(pkt.readUInt32() == tabSlots[t]);
+    }
+    CHECK(pkt.getRemainingSize() == 0u);
+}
+
+TEST_CASE("SMSG_GUILD_EVENT parses lifecycle events with 0-3 strings and optional guid", "[guild][wire]") {
+    auto parseEv = [](uint8_t evType, const std::vector<std::string>& strs, uint64_t guid = 0) {
+        Writer w;
+        w.u8(evType);
+        w.u8(static_cast<uint8_t>(strs.size()));
+        for (const auto& s : strs) w.cstr(s);
+        if (guid != 0) w.u64(guid);
+        auto pkt = makePacket(w.bytes);
+        GuildEventData d;
+        REQUIRE(GuildEventParser::parse(pkt, d));
+        return d;
+    };
+
+    const auto promo = parseEv(GuildEvent::PROMOTION, {"Edricp", "Edrikp", "Officer"});
+    CHECK(promo.eventType == GuildEvent::PROMOTION);
+    CHECK(promo.numStrings == 3);
+    CHECK(promo.strings[0] == "Edricp");
+    CHECK(promo.strings[1] == "Edrikp");
+    CHECK(promo.strings[2] == "Officer");
+
+    const auto joined = parseEv(GuildEvent::JOINED, {"Edrikp"}, 0x12345678ull);
+    CHECK(joined.eventType == GuildEvent::JOINED);
+    CHECK(joined.strings[0] == "Edrikp");
+    CHECK(joined.guid == 0x12345678ull);
+
+    const auto removed = parseEv(GuildEvent::REMOVED, {"Edrikp", "Edricp"});
+    CHECK(removed.eventType == GuildEvent::REMOVED);
+    CHECK(removed.strings[0] == "Edrikp");
+    CHECK(removed.strings[1] == "Edricp");
+
+    const auto disband = parseEv(GuildEvent::DISBANDED, {});
+    CHECK(disband.eventType == GuildEvent::DISBANDED);
+    CHECK(disband.numStrings == 0);
+}
+
+TEST_CASE("SMSG_GUILD_COMMAND_RESULT parses command, target name, and error code", "[guild][wire]") {
+    Writer w;
+    w.u32(3);              // GUILD_QUIT_S
+    w.cstr("Roster XVI");  // name
+    w.u32(0x08);           // ERR_GUILD_LEADER_LEAVE
+
+    auto pkt = makePacket(w.bytes);
+    GuildCommandResultData res;
+    REQUIRE(GuildCommandResultParser::parse(pkt, res));
+    CHECK(res.command == 3u);
+    CHECK(res.name == "Roster XVI");
+    CHECK(res.errorCode == 0x08u);
+}

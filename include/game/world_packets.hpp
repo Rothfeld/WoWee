@@ -1392,10 +1392,23 @@ public:
 /** SMSG_GUILD_INFO data */
 struct GuildInfoData {
     std::string guildName;
+    uint32_t createdDay = 0;
+    uint32_t createdMonth = 0;
+    uint32_t createdYear = 0;
     uint32_t numMembers = 0;
     uint32_t numAccounts = 0;
 
     [[nodiscard]] bool isValid() const { return !guildName.empty(); }
+};
+
+/** CMSG_GUILD_RANK packet builder (TBC/WotLK wire format) */
+class GuildRankPacket {
+public:
+    static network::Packet build(uint32_t rankId, uint32_t rights,
+                                 const std::string& rankName,
+                                 uint32_t goldLimit,
+                                 const uint32_t* tabRights,
+                                 const uint32_t* tabSlots);
 };
 
 /** SMSG_GUILD_INFO parser */
