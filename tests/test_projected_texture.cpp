@@ -16,6 +16,53 @@ TEST_CASE("quad corners come out in order around the quad", "[projected_texture]
     REQUIRE(((c[0] == 121 && c[2] == 123) || (c[0] == 123 && c[2] == 121)));
 }
 
+TEST_CASE("orderQuadCorners and buildGrid preserve authored front-face winding", "[projected_texture]") {
+    // ResistanceAura_Base.m2 (Shadow/Frost/Fire Resistance, Sanctity, Crusader
+    // Auras) authors single-sided quads with CCW (+Z) index order [0,1,2, 2,3,0].
+    // DevotionAura_Base.m2 authors [3,2,1, 0,1,2]. Both must keep +Z winding in
+    // buildGrid so Vulkan backface culling does not discard the projected quad.
+    const std::array<glm::vec3, 4> resPos{{
+        {0.0f, -0.78f, 0.06f},
+        {0.0f,  0.00f, 0.06f},
+        {-0.78f, 0.00f, 0.06f},
+        {-0.78f, -0.78f, 0.06f},
+    }};
+    const std::array<uint16_t, 6> resTri{0, 1, 2, 2, 3, 0};
+    const auto resOrd = pt::orderQuadCorners(std::span<const uint16_t, 6>(resTri));
+    REQUIRE(resOrd == std::array<uint16_t, 4>{1, 2, 3, 0});
+
+    std::array<pt::Corner, 4> corners;
+    for (int k = 0; k < 4; ++k) {
+        corners[k] = {resPos[resOrd[k]], {0, 0, 1}, {0, 0}, {0, 0}};
+    }
+    std::vector<pt::Vertex> out;
+    pt::buildGrid(corners, glm::vec3(0), [](float, float, float, float) { return std::optional<float>{}; }, out);
+    REQUIRE(!out.empty());
+    REQUIRE(out.size() % 3 == 0);
+    for (size_t i = 0; i < out.size(); i += 3) {
+        const glm::vec3 a(out[i].data[0], out[i].data[1], out[i].data[2]);
+        const glm::vec3 b(out[i + 1].data[0], out[i + 1].data[1], out[i + 1].data[2]);
+        const glm::vec3 c(out[i + 2].data[0], out[i + 2].data[1], out[i + 2].data[2]);
+        REQUIRE(glm::cross(b - a, c - a).z > 0.0f);
+    }
+
+    const std::array<glm::vec3, 4> devPos{{
+        {-0.34f, -1.48f, 0.23f},
+        { 0.34f, -1.48f, 0.23f},
+        {-0.34f, -0.33f, 0.23f},
+        { 0.34f, -0.33f, 0.23f},
+    }};
+    const std::array<uint16_t, 6> devTri{3, 2, 1, 0, 1, 2};
+    const auto devOrd = pt::orderQuadCorners(std::span<const uint16_t, 6>(devTri));
+    REQUIRE(devOrd == std::array<uint16_t, 4>{3, 2, 0, 1});
+    const glm::vec3 origN = glm::cross(devPos[devTri[1]] - devPos[devTri[0]],
+                                       devPos[devTri[2]] - devPos[devTri[0]]);
+    const glm::vec3 gridN = glm::cross(devPos[devOrd[1]] - devPos[devOrd[0]],
+                                       devPos[devOrd[2]] - devPos[devOrd[0]]);
+    REQUIRE(origN.z > 0.0f);
+    REQUIRE(gridN.z > 0.0f);
+}
+
 TEST_CASE("grid follows the surface and keeps the quad's texture mapping", "[projected_texture]") {
     std::array<pt::Corner, 4> c{{
         {{0, 0, 10}, {0, 0, 1}, {0, 0}, {0, 0}},

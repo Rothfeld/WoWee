@@ -36,30 +36,41 @@ inline constexpr int kMaxCellsPerSide = 48;
 /// Raised off the surface it lies on so the depth test keeps it in front.
 inline constexpr float kSurfaceLift = 0.04f;
 
-/// The quad's corners in the order (0,0) (1,0) (1,1) (0,1), from its two
-/// triangles: the two vertices both triangles share are the diagonal.
+/// The quad's corners in the order (0,0) (1,0) (1,1) (0,1), preserving the
+/// authored winding of the first triangle: the two vertices shared by both
+/// triangles form the diagonal, and rotating the first triangle cyclically to
+/// start at its outer corner gives (outer0, diagA, diagB) with the same winding
+/// as (tri[0], tri[1], tri[2]). Placing outer1 opposite outer0 yields the
+/// perimeter cycle (outer0, diagA, outer1, diagB), so buildGrid's triangles
+/// keep the authored front-face orientation and single-sided projected quads
+/// (such as ResistanceAura_Base.m2) are not backface-culled.
 inline std::array<uint16_t, 4> orderQuadCorners(std::span<const uint16_t, 6> tri) {
-    std::array<uint16_t, 2> diagonal{};
-    int found = 0;
+    const auto inSecond = [&](uint16_t v) {
+        return v == tri[3] || v == tri[4] || v == tri[5];
+    };
+    int outer0Pos = -1;
+    int sharedCount = 0;
     for (int i = 0; i < 3; ++i) {
-        for (int j = 3; j < 6; ++j) {
-            if (tri[i] == tri[j]) {
-                assert(found < 2);
-                diagonal[found++] = tri[i];
-            }
+        if (inSecond(tri[i])) {
+            ++sharedCount;
+        } else {
+            outer0Pos = i;
         }
     }
-    assert(found == 2);
-    std::array<uint16_t, 2> outer{};
-    int outerCount = 0;
-    for (uint16_t v : tri) {
-        if (v == diagonal[0] || v == diagonal[1]) continue;
-        if (outerCount == 1 && outer[0] == v) continue;
-        assert(outerCount < 2);
-        outer[outerCount++] = v;
+    assert(sharedCount == 2 && outer0Pos >= 0);
+    const uint16_t outer0 = tri[outer0Pos];
+    const uint16_t diagA = tri[(outer0Pos + 1) % 3];
+    const uint16_t diagB = tri[(outer0Pos + 2) % 3];
+    uint16_t outer1 = 0;
+    int outer1Count = 0;
+    for (int j = 3; j < 6; ++j) {
+        if (tri[j] != diagA && tri[j] != diagB) {
+            outer1 = tri[j];
+            ++outer1Count;
+        }
     }
-    assert(outerCount == 2);
-    return {outer[0], diagonal[0], outer[1], diagonal[1]};
+    assert(outer1Count == 1);
+    return {outer0, diagA, outer1, diagB};
 }
 
 struct Corner {

@@ -205,6 +205,13 @@ arrival, together with the victim's reaction animation (`Dodge`/`Parry`/`ShieldB
 without the resist dome. `M2Renderer` samples `M2TextureTransform::scale` around
 `(0.5, 0.5)` so UV-scaled shockwaves expand at their authored size. Evidence:
 `_experiments/20261120T092500Z.spell_miss_resist_fx/` in the workspace.
+Projected-texture M2 quads (`M2Batch::flags & 0x4`, `projected_texture::orderQuadCorners`)
+preserve the authored winding of their first triangle by rotating it cyclically
+around its outer corner before draping the grid. Ordering the shared diagonal
+arbitrarily flipped single-sided quads such as `Spells\ResistanceAura_Base.m2`
+(Shadow/Frost/Fire Resistance, Sanctity, and Crusader Auras) and `g_blanket.m2`
+to back-facing so Vulkan backface culling dropped them. Evidence:
+`_experiments/20261120T112000Z.paladin_aura_visuals/` in the workspace.
 TBC group finder: [LFG/LFM protocol and validation](docs/tbc-lfg.md).
 Party frames and map transfers: [protocol and input lifecycle](docs/party-stats-and-map-input.md).
 Interior minimaps: [authored room tiles and validation](docs/interior-minimap.md).
