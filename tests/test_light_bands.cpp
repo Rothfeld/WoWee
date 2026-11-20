@@ -306,4 +306,6 @@ TEST_CASE("channel 7 is the fog and channel 6 is the smog above it", "[light]") 
     CHECK(std::abs(smog[0] - smog[2]) <= 1);
     // The fog is not: it leans blue, like the sky it is seen against.
     CHECK(fog[2] > fog[0] + 40);
+    // Channel 10 is the DBC cloud tint channel.
+    CHECK(Profile::CLOUD_SUN_COLOR == 10);
 }

@@ -29,6 +29,7 @@ struct SkyParams {
     glm::vec3 skyMiddleColor{0.7f, 0.85f, 1.0f};
     glm::vec3 skyBand1Color{0.9f, 0.95f, 1.0f};
     glm::vec3 skyBand2Color{1.0f, 0.98f, 0.9f};
+    glm::vec3 cloudColor{0.9f, 0.95f, 1.0f};
 
     // Atmospheric effects
     float cloudDensity = 0.0f;      // 0-1

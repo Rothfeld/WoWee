@@ -13,9 +13,42 @@
 /// climbing the sky and let it through unweakened. The sun shafts ask too now,
 /// and would have streamed from the same invented sun.
 
+#include <cmath>
 #include <glm/glm.hpp>
 
 namespace wowee::rendering {
+
+/// Light travel direction (pointing FROM the sun) for a given day fraction in
+/// [0, 1). The sun rises in the east (-Y) at 06:00, reaches 60 deg elevation
+/// toward north (+X) at 12:00 noon, sets in the west (+Y) at 18:00, and passes
+/// below the horizon at night.
+inline glm::vec3 sunLightDirectionForDayFraction(float dayFraction) {
+    constexpr float kTwoPi = 6.28318530717958647692f;
+    constexpr float kSinTilt = 0.5f;        // sin(30 deg)
+    constexpr float kCosTilt = 0.8660254f;  // cos(30 deg)
+    const float angle = dayFraction * kTwoPi;
+    const float c = std::cos(angle);
+    const float s = std::sin(angle);
+    return glm::vec3(c * kSinTilt, s, c * kCosTilt);
+}
+
+/// World-space vertex position for a celestial billboard quad tangent to the
+/// celestial sphere at `center`. Keeping the quad perpendicular to `center`
+/// prevents elevation foreshortening into a horizontal oval while keeping +Y
+/// aligned toward zenith.
+inline glm::vec3 celestialBillboardWorldPos(const glm::vec3& center,
+                                            const glm::vec2& size,
+                                            const glm::vec2& localOffset) {
+    const float lenSq = glm::dot(center, center);
+    if (lenSq < 1e-8f) return center;
+    const glm::vec3 toBody = center * glm::inversesqrt(lenSq);
+    const glm::vec3 refUp = std::abs(toBody.z) < 0.99f
+        ? glm::vec3(0.0f, 0.0f, 1.0f)
+        : glm::vec3(1.0f, 0.0f, 0.0f);
+    const glm::vec3 right = glm::normalize(glm::cross(toBody, refUp));
+    const glm::vec3 up = glm::cross(right, toBody);
+    return center + right * (localOffset.x * size.x) + up * (localOffset.y * size.y);
+}
 
 /// The unit direction from the eye toward the sun.
 ///

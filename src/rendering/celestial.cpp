@@ -1,4 +1,5 @@
 #include "rendering/celestial.hpp"
+#include "rendering/sun_direction.hpp"
 #include "rendering/vk_context.hpp"
 #include "rendering/vk_shader.hpp"
 #include "rendering/vk_pipeline.hpp"
@@ -158,11 +159,11 @@ void Celestial::renderSun(VkCommandBuffer cmd, VkDescriptorSet /*perFrameSet*/,
         return;
     }
 
-    // Resolve sun direction - prefer opposite of incoming light ray, clamp below horizon
-    glm::vec3 lightDir = sunDir ? glm::normalize(*sunDir) : glm::vec3(0.0f, 0.0f, -1.0f);
-    glm::vec3 dir = -lightDir;
-    if (dir.z < 0.0f) {
-        dir = lightDir;
+    // Resolve sun direction opposite incoming light ray; do not mirror a
+    // below-horizon sun back into the sky.
+    glm::vec3 dir = sunDir ? sunDirectionFromLightDir(*sunDir) : glm::vec3(0.0f, 0.0f, 1.0f);
+    if (dir.z < -0.05f) {
+        return;
     }
 
     const float sunDistance = 800.0f;
@@ -170,7 +171,7 @@ void Celestial::renderSun(VkCommandBuffer cmd, VkDescriptorSet /*perFrameSet*/,
 
     glm::mat4 model = glm::mat4(1.0f);
     model = glm::translate(model, sunPos);
-    model = glm::scale(model, glm::vec3(95.0f, 95.0f, 1.0f));
+    model = glm::scale(model, glm::vec3(150.0f, 150.0f, 1.0f));
 
     glm::vec3 color = sunColor ? *sunColor : getSunColor(timeOfDay);
     const glm::vec3 warmSun(1.0f, 0.88f, 0.55f);

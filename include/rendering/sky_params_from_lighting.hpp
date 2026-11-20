@@ -36,6 +36,7 @@ inline SkyParams skyParamsFromLighting(float timeOfDay, float gameTime,
         params.skyMiddleColor = lighting->skyMiddleColor;
         params.skyBand1Color = lighting->skyBand1Color;
         params.skyBand2Color = lighting->skyBand2Color;
+        params.cloudColor = lighting->cloudColor;
         params.cloudDensity = lighting->cloudDensity;
         params.fogDensity = lighting->fogDensity;
         params.horizonGlow = lighting->horizonGlow;

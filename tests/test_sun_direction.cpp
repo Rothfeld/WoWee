@@ -14,7 +14,9 @@
 
 #include <glm/gtc/matrix_transform.hpp>
 
+using wowee::rendering::celestialBillboardWorldPos;
 using wowee::rendering::sunDirectionFromLightDir;
+using wowee::rendering::sunLightDirectionForDayFraction;
 using wowee::rendering::sunScreenPosition;
 
 TEST_CASE("the sun is opposite the direction its light travels", "[sky][sun]") {
@@ -74,4 +76,71 @@ TEST_CASE("the sun lands on screen where it is in the sky", "[sky][sun]") {
 
     // Behind the camera it has no place on screen at all.
     CHECK_FALSE(sunScreenPosition(view, proj, -forward).inFront);
+}
+
+TEST_CASE("sun arc matches TBC 2.4.3 elevation and azimuth across the day", "[sky][sun]") {
+    // Noon: 60 deg elevation toward +X, unit length
+    const glm::vec3 noonSun = sunDirectionFromLightDir(sunLightDirectionForDayFraction(0.5f));
+    CHECK(glm::length(noonSun) == Catch::Approx(1.0f).margin(1e-5f));
+    CHECK(noonSun.z == Catch::Approx(0.8660254f).margin(1e-4f));
+    CHECK(noonSun.y == Catch::Approx(0.0f).margin(1e-4f));
+    CHECK(noonSun.x > 0.0f);
+
+    // 13:57 (13.95h): measured Native TBC 2.4.3 in Elwynn Forest had elevation 49.2 deg
+    // and direction ~(0.407, 0.511, 0.757).
+    const glm::vec3 afternoonSun = sunDirectionFromLightDir(
+        sunLightDirectionForDayFraction((13.0f + 57.0f / 60.0f) / 24.0f));
+    CHECK(glm::degrees(std::asin(afternoonSun.z)) == Catch::Approx(49.1f).margin(1.0f));
+    CHECK(afternoonSun.x > 0.35f);
+    CHECK(afternoonSun.y > 0.45f);
+
+    // Sunrise (06:00) at east horizon (-Y), sunset (18:00) at west horizon (+Y),
+    // midnight (00:00) below horizon.
+    const glm::vec3 sunrise = sunDirectionFromLightDir(sunLightDirectionForDayFraction(0.25f));
+    const glm::vec3 sunset  = sunDirectionFromLightDir(sunLightDirectionForDayFraction(0.75f));
+    const glm::vec3 midnight = sunDirectionFromLightDir(sunLightDirectionForDayFraction(0.0f));
+    CHECK(sunrise.z == Catch::Approx(0.0f).margin(1e-5f));
+    CHECK(sunrise.y == Catch::Approx(-1.0f).margin(1e-5f));
+    CHECK(sunset.z == Catch::Approx(0.0f).margin(1e-5f));
+    CHECK(sunset.y == Catch::Approx(1.0f).margin(1e-5f));
+    CHECK(midnight.z < -0.8f);
+}
+
+TEST_CASE("celestial billboard projects as a circle at all elevations and aspect ratios", "[sky][sun]") {
+    const float elevationsDeg[] = {15.0f, 49.0f, 85.0f};
+    const float aspects[] = {4.0f / 3.0f, 16.0f / 9.0f, 21.0f / 9.0f};
+
+    for (float elevDeg : elevationsDeg) {
+        const float elev = glm::radians(elevDeg);
+        const glm::vec3 dir(std::cos(elev), 0.0f, std::sin(elev));
+        const glm::vec3 center = dir * 800.0f;
+        const glm::vec2 size(150.0f, 150.0f);
+
+        // Quad vertices must lie strictly perpendicular to the radial vector
+        const glm::vec3 pRight = celestialBillboardWorldPos(center, size, {0.5f, 0.0f});
+        const glm::vec3 pLeft  = celestialBillboardWorldPos(center, size, {-0.5f, 0.0f});
+        const glm::vec3 pTop   = celestialBillboardWorldPos(center, size, {0.0f, 0.5f});
+        const glm::vec3 pBot   = celestialBillboardWorldPos(center, size, {0.0f, -0.5f});
+        CHECK(glm::dot(pRight - center, dir) == Catch::Approx(0.0f).margin(1e-3f));
+        CHECK(glm::dot(pTop - center, dir) == Catch::Approx(0.0f).margin(1e-3f));
+        CHECK(glm::length(pRight - pLeft) == Catch::Approx(150.0f).margin(1e-3f));
+        CHECK(glm::length(pTop - pBot) == Catch::Approx(150.0f).margin(1e-3f));
+
+        // Project onto viewport looking directly at the celestial body:
+        // screen pixel width must equal screen pixel height (1:1 circle, never a 2:1 oval).
+        const glm::mat4 rotView = glm::lookAt(glm::vec3(0.0f), dir, glm::vec3(0.0f, 0.0f, 1.0f));
+        for (float aspect : aspects) {
+            glm::mat4 proj = glm::perspective(glm::radians(50.0f), aspect, 0.5f, 30000.0f);
+            proj[1][1] *= -1.0f;
+            auto toPixels = [&](const glm::vec3& p) {
+                glm::vec4 clip = proj * rotView * glm::vec4(p, 1.0f);
+                glm::vec2 ndc = glm::vec2(clip) / clip.w;
+                return glm::vec2((ndc.x * 0.5f + 0.5f) * (720.0f * aspect),
+                                 (ndc.y * 0.5f + 0.5f) * 720.0f);
+            };
+            const float pxWidth  = glm::length(toPixels(pRight) - toPixels(pLeft));
+            const float pxHeight = glm::length(toPixels(pTop)   - toPixels(pBot));
+            CHECK(pxWidth / pxHeight == Catch::Approx(1.0f).margin(1e-3f));
+        }
+    }
 }

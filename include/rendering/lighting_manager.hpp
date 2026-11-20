@@ -37,6 +37,7 @@ struct LightingParams {
     glm::vec3 skyMiddleColor{0.7f, 0.85f, 1.0f};   // Sky horizon color
     glm::vec3 skyBand1Color{0.9f, 0.95f, 1.0f};    // Sky band 1
     glm::vec3 skyBand2Color{1.0f, 0.98f, 0.9f};    // Sky band 2
+    glm::vec3 cloudColor{0.9f, 0.95f, 1.0f};       // DBC cloud sun/tint color
 
     float cloudDensity = 0.3f;                      // Cloud density/opacity
     float horizonGlow = 0.3f;                       // Horizon glow intensity
@@ -145,6 +146,7 @@ struct LightParamsProfile {
         SKY_SMOG_COLOR = 6,
         FOG_COLOR = 7,
         SUN_COLOR = 9,
+        CLOUD_SUN_COLOR = 10,
         OCEAN_SHALLOW_COLOR = 14,
         OCEAN_DEEP_COLOR = 15,
         RIVER_SHALLOW_COLOR = 16,

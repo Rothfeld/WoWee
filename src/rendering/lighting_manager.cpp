@@ -1,6 +1,7 @@
 #include "core/local_time.hpp"
 #include "game/game_utils.hpp"
 #include "rendering/legacy_light_direction.hpp"
+#include "rendering/sun_direction.hpp"
 #include "rendering/lighting_manager.hpp"
 #include "rendering/light_coords.hpp"
 #include "rendering/light_band_block.hpp"
@@ -449,6 +450,7 @@ void LightingManager::update(const glm::vec3& playerPos, uint32_t mapId, uint32_
         newParams.skyMiddleColor = glm::vec3(0.0f);
         newParams.skyBand1Color = glm::vec3(0.0f);
         newParams.skyBand2Color = glm::vec3(0.0f);
+        newParams.cloudColor = glm::vec3(0.0f);
         newParams.fogStart = newParams.fogEnd = newParams.fogDensity = 0.0f;
         newParams.cloudDensity = newParams.horizonGlow = 0.0f;
         newParams.riverAlpha = glm::vec2(0.0f);
@@ -488,6 +490,7 @@ void LightingManager::update(const glm::vec3& playerPos, uint32_t mapId, uint32_
                 newParams.skyMiddleColor += params.skyMiddleColor * wv.weight;
                 newParams.skyBand1Color += params.skyBand1Color * wv.weight;
                 newParams.skyBand2Color += params.skyBand2Color * wv.weight;
+                newParams.cloudColor += params.cloudColor * wv.weight;
 
                 newParams.fogStart += params.fogStart * wv.weight;
                 newParams.fogEnd += params.fogEnd * wv.weight;
@@ -520,12 +523,7 @@ void LightingManager::update(const glm::vec3& playerPos, uint32_t mapId, uint32_
         newParams = fallbackParams_;
 
         // Animate sun direction
-        float angle = timeOfDay_ * glm::two_pi<float>();
-        newParams.directionalDir = glm::normalize(glm::vec3(
-            std::sin(angle) * 0.6f,
-            -0.6f + std::cos(angle) * 0.4f,
-            std::cos(angle) * 0.6f
-        ));
+        newParams.directionalDir = sunLightDirectionForDayFraction(timeOfDay_);
 
         // Time-of-day color adjustments
         if (timeOfDay_ < 0.25f || timeOfDay_ > 0.75f) {
@@ -645,6 +643,7 @@ void LightingManager::update(const glm::vec3& playerPos, uint32_t mapId, uint32_
     currentParams_.skyMiddleColor = glm::mix(currentParams_.skyMiddleColor, newParams.skyMiddleColor, blendFactor);
     currentParams_.skyBand1Color = glm::mix(currentParams_.skyBand1Color, newParams.skyBand1Color, blendFactor);
     currentParams_.skyBand2Color = glm::mix(currentParams_.skyBand2Color, newParams.skyBand2Color, blendFactor);
+    currentParams_.cloudColor = glm::mix(currentParams_.cloudColor, newParams.cloudColor, blendFactor);
     currentParams_.fogStart = glm::mix(currentParams_.fogStart, newParams.fogStart, blendFactor);
     currentParams_.fogEnd = glm::mix(currentParams_.fogEnd, newParams.fogEnd, blendFactor);
     currentParams_.fogDensity = glm::mix(currentParams_.fogDensity, newParams.fogDensity, blendFactor);
@@ -784,6 +783,10 @@ LightingParams LightingManager::sampleLightParams(const LightParamsProfile* prof
     params.skyMiddleColor = sampleColorBand(profile->colorBands[LightParamsProfile::SKY_MIDDLE_COLOR], timeHalfMinutes);
     params.skyBand1Color = sampleColorBand(profile->colorBands[LightParamsProfile::SKY_BAND1_COLOR], timeHalfMinutes);
     params.skyBand2Color = sampleColorBand(profile->colorBands[LightParamsProfile::SKY_BAND2_COLOR], timeHalfMinutes);
+    const auto& cloudBand = profile->colorBands[LightParamsProfile::CLOUD_SUN_COLOR];
+    params.cloudColor = (cloudBand.numKeyframes > 0)
+        ? sampleColorBand(cloudBand, timeHalfMinutes)
+        : params.skyBand1Color;
 
     // Sample float bands. The fog distance is stored in the same
     // thirty-sixths of a yard as the light positions, and was being used raw:
@@ -808,12 +811,8 @@ LightingParams LightingManager::sampleLightParams(const LightParamsProfile* prof
     }
 
     // Compute sun direction from time
-    float angle = (timeHalfMinutes / static_cast<float>(kHalfMinutesPerDay)) * glm::two_pi<float>();
-    params.directionalDir = glm::normalize(glm::vec3(
-        std::sin(angle) * 0.6f,
-        -0.6f + std::cos(angle) * 0.4f,
-        std::cos(angle) * 0.6f
-    ));
+    params.directionalDir = sunLightDirectionForDayFraction(
+        timeHalfMinutes / static_cast<float>(kHalfMinutesPerDay));
 
     return params;
 }

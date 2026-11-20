@@ -27,32 +27,25 @@ void main() {
     vec2 uv = TexCoord - 0.5;
     float dist = length(uv);
 
-    // Hard circular cutoff - nothing beyond radius 0.35
-    if (dist > 0.35) discard;
-
     bool isMoon = push.celestialColor.w < 0.5;
+    // Circular cutoff: 0.50 for sun's soft radial glare, 0.35 for moon disc
+    float maxRadius = isMoon ? 0.35 : 0.50;
+    if (dist > maxRadius) discard;
+
     vec3 color = push.celestialColor.rgb;
     float alpha;
 
     if (!isMoon) {
         // ---------------- Sun ----------------
-        // Hard disc with smooth edge
-        float disc = smoothstep(0.35, 0.28, dist);
+        // Soft core + smooth radial glare matching TBC SunCenter + SunGlare
+        float core = smoothstep(0.24, 0.13, dist);
+        float innerGlow = exp(-dist * dist * 28.0) * 0.65;
+        float outerGlow = exp(-dist * dist * 8.0) * 0.28 * (1.0 - smoothstep(0.32, 0.50, dist));
 
-        // Soft glow confined within cutoff radius
-        float glow = exp(-dist * dist * 40.0) * 0.5;
+        alpha = clamp(max(core, innerGlow) + outerGlow, 0.0, 1.0) * push.intensity;
 
-        alpha = max(disc, glow) * push.intensity;
-
-        // Smooth fade to zero at cutoff boundary
-        float edgeFade = 1.0 - smoothstep(0.25, 0.35, dist);
-        alpha *= edgeFade;
-
-        // Animated haze/turbulence overlay for the sun disc
-        float noise  = valueNoise(uv * 8.0  + vec2(push.animTime * 0.3,  push.animTime * 0.2));
-        float noise2 = valueNoise(uv * 16.0 - vec2(push.animTime * 0.5,  push.animTime * 0.15));
-        float turbulence = (noise * 0.6 + noise2 * 0.4) * disc;
-        color += vec3(turbulence * 0.3, turbulence * 0.15, 0.0);
+        // Subtle warm-white core brightening
+        color = mix(color, vec3(1.0, 0.99, 0.94), core * 0.75);
     } else {
         // ---------------- Moon ----------------
         const float r = 0.30;              // moon disc radius in UV space

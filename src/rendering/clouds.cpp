@@ -129,22 +129,19 @@ void Clouds::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const SkyP
         return;
     }
 
-    // Derive cloud base color from DBC horizon band, slightly brightened
-    glm::vec3 cloudBaseColor = params.skyBand1Color * 1.1f;
-    cloudBaseColor = glm::clamp(cloudBaseColor, glm::vec3(0.0f), glm::vec3(1.0f));
+    // Derive cloud base color from DBC cloud channel blended with horizon band
+    glm::vec3 cloudBaseColor = glm::mix(params.skyBand1Color, params.cloudColor, 0.55f);
+    cloudBaseColor = glm::clamp(cloudBaseColor * 1.08f, glm::vec3(0.0f), glm::vec3(1.0f));
 
-    // Sun direction (opposite of light direction). Guard the hemisphere like
-    // Celestial/SkySystem do - directionalDir's sign convention is not stable,
-    // and a flipped vector puts the cloud scatter glow opposite the real sun.
+    // Sun direction (opposite of light direction).
     glm::vec3 sunDir = -glm::normalize(params.directionalDir);
-    if (sunDir.z < 0.0f) sunDir = -sunDir;
     float sunAboveHorizon = glm::clamp(sunDir.z, 0.0f, 1.0f);
 
     // Sun intensity based on elevation
     float sunIntensity = sunAboveHorizon;
 
-    // Ambient light - brighter during day, dimmer at night
-    float ambient = glm::mix(0.3f, 0.7f, sunAboveHorizon);
+    // Ambient light - bright during day so clouds stay soft and luminous, dimmer at night
+    float ambient = glm::mix(0.35f, 0.95f, glm::smoothstep(-0.05f, 0.25f, sunDir.z));
 
     CloudPush push{};
     push.cloudColor    = glm::vec4(cloudBaseColor, 1.0f);

@@ -113,37 +113,35 @@ void main() {
     // Overall visibility still follows DBC density (0 = clear sky)
     cloud *= clamp(density * 1.6, 0.0, 1.0);
 
-    // Horizon fade
-    cloud *= smoothstep(0.0, 0.15, altitude);
+    // Horizon fade: keep lower sky clean like TBC 2.4.3's smooth horizon gradient
+    // and bring clouds in smoothly at higher elevations.
+    cloud *= smoothstep(0.22, 0.52, altitude);
     if (cloud < 0.01) discard;
 
     // --- Lighting ---
     float sunUp = clamp(sunDir.z, 0.0, 1.0);      // day factor
     float sunView = max(dot(dir, sunDir), 0.0);   // view alignment with the sun
 
-    // Self-shadowing: re-sample the shape a step toward the sun; if the cloud
-    // is denser upstream, this point sits in its own shadow.
+    // Gentle self-shadowing: keep daytime clouds luminous and soft rather than
+    // darkening cloud cores into muddy grey blotches.
     float towardSun = fbm(p + q * 1.4 + sunDir.xy * 0.35, 5);
-    float shadow = clamp(1.0 - (towardSun - shape) * 2.2, 0.35, 1.0);
-
-    // Thick cores read darker - sunlight doesn't penetrate deep cloud
-    float coreDarken = mix(1.0, 0.55, cumulus * cumulus);
+    float shadow = clamp(1.0 - (towardSun - shape) * 0.65, 0.82, 1.0);
 
     vec3 baseColor = push.cloudColor.rgb;
-    vec3 shadowColor = baseColor * ambient * 0.75;
-    vec3 litColor = baseColor * (ambient + sunIntensity * 0.85 * sunUp);
-    vec3 cloudRgb = mix(shadowColor, litColor, shadow) * coreDarken;
+    vec3 shadowColor = baseColor * ambient * 0.90;
+    vec3 litColor = baseColor * (ambient + sunIntensity * 0.22 * sunUp);
+    vec3 cloudRgb = mix(shadowColor, litColor, shadow);
 
     // Forward scattering: thin cloud near the sun glows warm
     float scatter = pow(sunView, 6.0) * sunIntensity * sunUp;
-    cloudRgb += vec3(1.0, 0.92, 0.82) * (1.0 - cumulus) * scatter * 0.9;
+    cloudRgb += vec3(1.0, 0.94, 0.85) * (1.0 - cumulus) * scatter * 0.55;
 
-    // Silver lining on sunlit cloud edges
+    // Subtle silver lining on sunlit cloud edges
     float edge = smoothstep(0.0, 0.35, cloud) * (1.0 - smoothstep(0.35, 0.85, cloud));
-    cloudRgb += vec3(1.0, 0.95, 0.88) * edge * scatter * 0.6;
+    cloudRgb += vec3(1.0, 0.96, 0.90) * edge * scatter * 0.35;
 
     // --- Edge softness for alpha ---
-    float alpha = cloud * smoothstep(0.0, 0.25, cloud);
+    float alpha = cloud * smoothstep(0.0, 0.30, cloud) * 0.65;
 
     if (alpha < 0.01) discard;
 
