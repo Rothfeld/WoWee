@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/unit_size.hpp"
+#include "core/player_illusion.hpp"
 
 #include "game/character.hpp"
 #include "core/creature_scale.hpp"
@@ -212,6 +213,14 @@ public:
 
     bool getHumanoidAppearance(uint32_t displayId, uint8_t& race, uint8_t& sex,
                                uint32_t& appearanceBytes, uint8_t& facialHair) const;
+
+    /// Resolve a morphed player's displayId against CreatureDisplayInfoExtra.dbc
+    /// (col 19, CanEquip). Returns true when displayId has a humanoid extra row;
+    /// out.isEquipablePlayerIllusion is true when the player wears their live
+    /// equipment on the target race/sex model (e.g. Old Hillsbrad Human Illusion).
+    bool resolvePlayerIllusion(uint32_t displayId, uint32_t playerAppearanceBytes,
+                               uint8_t playerFacialHair, PlayerHumanoidMorph& out) const;
+    bool isEquipableHumanoidDisplay(uint32_t displayId) const;
 
     /// What that humanoid is wearing, as (ItemDisplayInfo id, inventory type)
     /// pairs - the shape applyEquipment reads. CreatureDisplayInfoExtra holds
@@ -555,11 +564,13 @@ private:
         uint8_t hairStyleId = 0;
         uint8_t hairColorId = 0;
         uint8_t facialHairId = 0;
+        bool canEquip = false;
         std::string bakeName;  // Pre-baked texture path if available
         // Equipment display IDs (from columns 8-18)
         // 0=helm, 1=shoulder, 2=shirt, 3=chest, 4=belt, 5=legs, 6=feet, 7=wrist, 8=hands, 9=tabard, 10=cape
         uint32_t equipDisplayId[11] = {0};
     };
+    std::unordered_map<uint16_t, PlayerIllusionRaceLimits> raceAppearanceLimits_; // (race<<8)|sex
     std::unordered_map<uint32_t, CreatureDisplayData> displayDataMap_;  // displayId → display data
     struct BloodTables {
         std::unordered_map<uint32_t, uint32_t> modelBlood;  // CreatureModelData ID -> BloodID
@@ -657,14 +668,43 @@ private:
     std::unordered_map<uint64_t, uint8_t> creatureWeaponAttachAttempts_;
     std::unordered_map<uint32_t, bool> modelIdIsWolfLike_;
 
+    struct OnlinePlayerAppearanceState {
+        uint32_t instanceId = 0;
+        uint32_t modelId = 0;
+        uint8_t raceId = 0;
+        uint8_t genderId = 0;
+        uint32_t appearanceBytes = 0;
+        uint8_t facialFeatures = 0;
+        std::string bodySkinPath;
+        std::vector<pipeline::SkinLayer> underwearPaths;  // face + underwear, with regions
+    };
+
     void syncCreatureVisualState();
     /// Players whose UNIT_FIELD_DISPLAYID differs from their native display
-    /// (Little Red Riding Hood, polymorph, `.modify morph`): drawn as that
-    /// creature display over the hidden character model.
+    /// (Little Red Riding Hood, polymorph, `.modify morph`, Human Illusion):
+    /// drawn as that creature display (or equipable player illusion) over the
+    /// hidden character model.
     void syncPlayerMorphs();
     void applyCreatureInstanceAppearance(uint32_t instanceId, uint32_t modelId, uint32_t displayId);
-    struct PlayerMorph { uint32_t displayId = 0; uint32_t instanceId = 0; uint32_t playerInstanceId = 0;
-                         uint32_t animation = 0xFFFFFFFFu; };
+    bool loadCharacterMorphModel(uint32_t displayId, uint8_t raceId, uint8_t sexId,
+                                 uint32_t& outModelId, std::string& outModelPath);
+    void buildPlayerBaseAppearance(uint32_t instanceId, uint32_t modelId,
+                                   uint8_t raceId, uint8_t genderId,
+                                   uint32_t appearanceBytes, uint8_t facialFeatures,
+                                   OnlinePlayerAppearanceState& outState);
+    void applyPlayerEquipmentToInstance(uint64_t guid, const OnlinePlayerAppearanceState& st,
+                                        const std::array<uint32_t, 19>& displayInfoIds,
+                                        const std::array<uint8_t, 19>& inventoryTypes);
+    struct PlayerMorph {
+        uint32_t displayId = 0;
+        uint32_t instanceId = 0;
+        uint32_t playerInstanceId = 0;
+        uint32_t animation = 0xFFFFFFFFu;
+        bool isEquipableIllusion = false;
+        OnlinePlayerAppearanceState illusionAppearance;
+        uint64_t illusionEquipHash = 0;
+        uint8_t sheathState = 0xFFu;
+    };
     std::unordered_map<uint64_t, PlayerMorph> playerMorphs_;
 
     // --- Creature async loads ---
@@ -791,16 +831,6 @@ private:
 
     // --- Player instances ---
     std::unordered_map<uint64_t, uint32_t> playerInstances_;  // guid → render instanceId
-    struct OnlinePlayerAppearanceState {
-        uint32_t instanceId = 0;
-        uint32_t modelId = 0;
-        uint8_t raceId = 0;
-        uint8_t genderId = 0;
-        uint32_t appearanceBytes = 0;
-        uint8_t facialFeatures = 0;
-        std::string bodySkinPath;
-        std::vector<pipeline::SkinLayer> underwearPaths;  // face + underwear, with regions
-    };
     std::unordered_map<uint64_t, OnlinePlayerAppearanceState> onlinePlayerAppearance_;
     std::unordered_map<uint64_t, std::pair<std::array<uint32_t, 19>, std::array<uint8_t, 19>>> pendingOnlinePlayerEquipment_;
     std::deque<std::pair<uint64_t, std::pair<std::array<uint32_t, 19>, std::array<uint8_t, 19>>>> deferredEquipmentQueue_;

@@ -156,6 +156,10 @@ void UnitPortrait::update(game::GameHandler& gameHandler,
                  " appearance ", appearanceBytes);
         loadedCreaturePath_.clear();
         loadedGuid_ = self->guid;
+        loadedRace_ = static_cast<uint8_t>(self->race);
+        loadedGender_ = (self->gender == game::Gender::FEMALE ||
+                         (self->gender == game::Gender::NONBINARY && self->useFemaleModel)) ? 1u : 0u;
+        loadedBake_.clear();
         loadedAppearance_ = appearanceBytes;
         loadedFacialFeatures_ = facialFeatures;
         loadedEquipHash_ = equipHash;

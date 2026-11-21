@@ -181,10 +181,31 @@ void EntitySpawner::syncPlayerMorphs() {
         if (!cr->getInstancePosition(playerInstance, position) || !cr->getInstanceRotation(playerInstance, rotation))
             continue;
         if (found == playerMorphs_.end()) {
+            uint32_t pAppearance = 0;
+            uint8_t pRace = 0, pGender = 0, pFacial = 0;
+            bool havePlayerLook = gameHandler_->getPlayerAppearance(guid, pRace, pGender, pAppearance, pFacial);
+            if (!havePlayerLook && guid == gameHandler_->getPlayerGuid()) {
+                for (const auto& ch : gameHandler_->getCharacters()) {
+                    if (ch.guid == guid) {
+                        pAppearance = ch.appearanceBytes;
+                        pFacial = ch.facialFeatures;
+                        havePlayerLook = true;
+                        break;
+                    }
+                }
+            }
+            PlayerHumanoidMorph illusion;
+            const bool isEquipableIllusion =
+                resolvePlayerIllusion(display, pAppearance, pFacial, illusion) &&
+                illusion.isEquipablePlayerIllusion;
+
             uint32_t modelId = 0;
             std::string modelPath;
             float unusedHeight = 0.0f;
-            if (!loadRemoteMountModel(display, modelId, modelPath, unusedHeight)) {
+            const bool modelLoaded = isEquipableIllusion
+                ? loadCharacterMorphModel(display, illusion.targetRace, illusion.targetSex, modelId, modelPath)
+                : loadRemoteMountModel(display, modelId, modelPath, unusedHeight);
+            if (!modelLoaded) {
                 LOG_WARNING("Player morph: display ", display, " has no loadable model; guid=0x", std::hex, guid);
                 playerMorphs_[guid] = {.displayId = display, .instanceId = 0, .playerInstanceId = playerInstance};
                 continue;
@@ -194,19 +215,99 @@ void EntitySpawner::syncPlayerMorphs() {
             const uint32_t instance = cr->createInstance(modelId, position, rotation, scale);
             if (!instance) continue;
             cr->setInstanceCreatureModel(instance, display, creatureModelDataIdForDisplay(display));
-            applyCreatureInstanceAppearance(instance, modelId, display);
+            PlayerMorph entry;
+            entry.displayId = display;
+            entry.instanceId = instance;
+            entry.playerInstanceId = playerInstance;
+            entry.isEquipableIllusion = isEquipableIllusion;
+            if (isEquipableIllusion) {
+                buildPlayerBaseAppearance(instance, modelId, illusion.targetRace, illusion.targetSex,
+                                          illusion.appearanceBytes, illusion.facialHair,
+                                          entry.illusionAppearance);
+            } else {
+                applyCreatureInstanceAppearance(instance, modelId, display);
+            }
             // The display's CreatureModelAlpha, as for a creature: Ghost Wolf
             // (display 4613, alpha 102) is drawn see-through in 2.4.3.
             cr->setInstanceOpacity(instance, creatureDisplayAlpha(display));
             LOG_INFO("Player morph: guid=0x", std::hex, guid, std::dec, " display ", display, " native ", native,
-                     " model=", modelPath, " scale=", scale);
-            found = playerMorphs_.emplace(guid, PlayerMorph{.displayId = display, .instanceId = instance,
-                                                              .playerInstanceId = playerInstance}).first;
+                     " model=", modelPath, " scale=", scale,
+                     isEquipableIllusion ? " (equipable player illusion)" : "");
+            found = playerMorphs_.emplace(guid, std::move(entry)).first;
             if (auto* visuals = renderer_->getSpellVisualSystem())
                 visuals->transferUnitVisuals(playerInstance, instance);
         }
         auto& morph = found->second;
         if (!morph.instanceId) continue;
+        if (morph.isEquipableIllusion) {
+            std::array<uint32_t, 19> displayIds{};
+            std::array<uint8_t, 19> invTypes{};
+            const bool hasEquip = gameHandler_->getOtherPlayerEquipment(guid, displayIds, invTypes);
+            bool hideHelm = false;
+            bool hideCloak = false;
+            if (guid == gameHandler_->getPlayerGuid()) {
+                hideHelm = !gameHandler_->isHelmVisible();
+                hideCloak = !gameHandler_->isCloakVisible();
+            } else {
+                const uint16_t pfIdx = game::fieldIndex(game::UF::PLAYER_FLAGS);
+                if (pfIdx != 0xFFFF) {
+                    const uint32_t pf = unit->getField(pfIdx);
+                    hideHelm = (pf & 0x00000400u) != 0;
+                    hideCloak = (pf & 0x00000800u) != 0;
+                }
+            }
+            if (hideHelm) {
+                displayIds[static_cast<size_t>(game::EquipSlot::HEAD)] = 0;
+                invTypes[static_cast<size_t>(game::EquipSlot::HEAD)] = 0;
+            }
+            if (hideCloak) {
+                displayIds[static_cast<size_t>(game::EquipSlot::BACK)] = 0;
+                invTypes[static_cast<size_t>(game::EquipSlot::BACK)] = 0;
+            }
+
+            uint64_t equipHash = 14695981039346656037ull;
+            auto mix = [&](uint32_t v) {
+                equipHash ^= static_cast<uint64_t>(v);
+                equipHash *= 1099511628211ull;
+            };
+            mix(hasEquip ? 1u : 0u);
+            mix(gameHandler_->getEntityGuildId(guid));
+            for (size_t s = 0; s < 19; ++s) {
+                mix(displayIds[s]);
+                mix(invTypes[s]);
+            }
+            if (guid == gameHandler_->getPlayerGuid()) {
+                for (const auto slot : {game::EquipSlot::MAIN_HAND, game::EquipSlot::OFF_HAND,
+                                        game::EquipSlot::RANGED}) {
+                    const uint64_t itemGuid = gameHandler_->getEquipSlotGuid(static_cast<int>(slot));
+                    const auto [perm, temp] = itemGuid != 0 ? gameHandler_->getItemEnchantIds(itemGuid)
+                                                            : std::pair<uint32_t, uint32_t>{0u, 0u};
+                    mix(perm);
+                    mix(temp);
+                }
+            } else if (const auto* enchants = gameHandler_->getOtherPlayerVisibleEnchants(guid)) {
+                for (const auto slot : {game::EquipSlot::MAIN_HAND, game::EquipSlot::OFF_HAND,
+                                        game::EquipSlot::RANGED}) {
+                    const auto [perm, temp] = (*enchants)[static_cast<size_t>(slot)];
+                    mix(perm);
+                    mix(temp);
+                }
+            }
+            if (equipHash == 0) equipHash = 1;
+            if (equipHash != morph.illusionEquipHash) {
+                applyPlayerEquipmentToInstance(guid, morph.illusionAppearance, displayIds, invTypes);
+                morph.illusionEquipHash = equipHash;
+                morph.sheathState = 0xFFu;
+            }
+            const uint16_t b2Idx = game::fieldIndex(game::UF::UNIT_FIELD_BYTES_2);
+            if (b2Idx != 0xFFFF) {
+                const uint8_t sheath = static_cast<uint8_t>(unit->getField(b2Idx) & 0xFFu);
+                if (sheath != morph.sheathState) {
+                    cr->setSheathState(morph.instanceId, sheath);
+                    morph.sheathState = sheath;
+                }
+            }
+        }
         cr->setInstanceScale(morph.instanceId, rendering::characterRenderScale(
             objectScale, creatureDisplayScale(display), creatureModelScale(display)));
         cr->setInstanceReplaced(playerInstance, true);
@@ -428,6 +529,7 @@ void EntitySpawner::rebuildLookups() {
     creatureLookupsBuilt_ = false;
     displayDataMap_.clear();
     humanoidExtraMap_.clear();
+    raceAppearanceLimits_.clear();
     creatureModelIds_.clear();
     creatureRenderPosCache_.clear();
     nonRenderableCreatureDisplayIds_.clear();
@@ -869,7 +971,10 @@ void EntitySpawner::buildCreatureDisplayLookups() {
             numEquipSlots = 11;
             bakeField = cdieL ? (*cdieL)["BakeName"] : 20;
         }
+        const uint32_t canEquipField = (cdieL && cdieL->field("CanEquip") != 0xFFFFFFFFu)
+            ? cdieL->field("CanEquip") : 19u;
         uint32_t withBakeName = 0;
+        uint32_t withCanEquip = 0;
         for (uint32_t i = 0; i < cdie->getRecordCount(); i++) {
             HumanoidDisplayExtra extra;
             extra.raceId = static_cast<uint8_t>(cdie->getUInt32(i, cdieL ? (*cdieL)["RaceID"] : 1));
@@ -882,13 +987,17 @@ void EntitySpawner::buildCreatureDisplayLookups() {
             for (int eq = 0; eq < numEquipSlots; eq++) {
                 extra.equipDisplayId[eq] = cdie->getUInt32(i, cdieEquip0 + eq);
             }
+            if (dbcFieldCount > 19 && canEquipField < dbcFieldCount) {
+                extra.canEquip = (cdie->getUInt32(i, canEquipField) & 0x1u) != 0;
+                if (extra.canEquip) withCanEquip++;
+            }
             extra.bakeName = cdie->getString(i, bakeField);
             if (!extra.bakeName.empty()) withBakeName++;
             humanoidExtraMap_[cdie->getUInt32(i, cdieL ? (*cdieL)["ID"] : 0)] = extra;
         }
         LOG_DEBUG("Loaded ", humanoidExtraMap_.size(), " humanoid display extra entries (",
-                 withBakeName, " with baked textures, ", numEquipSlots, " equip slots, ",
-                 dbcFieldCount, " DBC fields, bakeField=", bakeField, ")");
+                 withBakeName, " with baked textures, ", withCanEquip, " canEquip, ",
+                 numEquipSlots, " equip slots, ", dbcFieldCount, " DBC fields, bakeField=", bakeField, ")");
     }
 
     // A character-style NPC (CreatureDisplayInfoExtra) is drawn at its own
@@ -1051,6 +1160,10 @@ void EntitySpawner::buildCreatureDisplayLookups() {
                                               static_cast<uint8_t>(sexId),
                                               static_cast<uint8_t>(variation));
             hairGeosetMap_[key] = hairGeosetFromDbcRow(geosetId, useDefaultScalp);
+            if (raceId < 256 && sexId < 2 && variation < 255) {
+                auto& lim = raceAppearanceLimits_[static_cast<uint16_t>((raceId << 8) | sexId)];
+                lim.hairStyleCount = std::max<uint8_t>(lim.hairStyleCount, static_cast<uint8_t>(variation + 1));
+            }
         }
         LOG_INFO("Loaded ", hairGeosetMap_.size(), " hair geoset mappings from CharHairGeosets.dbc");
     }
@@ -1079,8 +1192,43 @@ void EntitySpawner::buildCreatureDisplayLookups() {
             fhg.geoset300 = static_cast<uint16_t>(cfh->getUInt32(i, fhF.geoset300));
             fhg.geoset200 = static_cast<uint16_t>(cfh->getUInt32(i, fhF.geoset200));
             facialHairGeosetMap_[key] = fhg;
+            if (raceId < 256 && sexId < 2 && variation < 255) {
+                auto& lim = raceAppearanceLimits_[static_cast<uint16_t>((raceId << 8) | sexId)];
+                lim.facialHairCount = std::max<uint8_t>(lim.facialHairCount, static_cast<uint8_t>(variation + 1));
+            }
         }
         LOG_INFO("Loaded ", facialHairGeosetMap_.size(), " facial hair geoset mappings from CharacterFacialHairStyles.dbc");
+    }
+
+    // CharSections.dbc: playable option counts per (race, sex) for mapping a
+    // player's PLAYER_BYTES onto a different race during CanEquip illusions.
+    if (auto cs = assetManager_->loadDBC("CharSections.dbc"); cs && cs->isLoaded()) {
+        const auto* csL = pipeline::getActiveDBCLayout()
+            ? pipeline::getActiveDBCLayout()->getLayout("CharSections") : nullptr;
+        const auto csF = pipeline::detectCharSectionsFields(cs.get(), csL);
+        const uint32_t flagsField = (csL && csL->field("Flags") != 0xFFFFFFFFu)
+            ? csL->field("Flags") : 9u;
+        const bool hasFlags = flagsField < cs->getFieldCount();
+        for (uint32_t r = 0; r < cs->getRecordCount(); ++r) {
+            if (hasFlags && (cs->getUInt32(r, flagsField) & 0x1u) != 0) continue; // NPC-only section
+            const uint32_t raceId = cs->getUInt32(r, csF.raceId);
+            const uint32_t sexId = cs->getUInt32(r, csF.sexId);
+            if (raceId >= 256 || sexId >= 2) continue;
+            const uint32_t sec = cs->getUInt32(r, csF.baseSection);
+            const uint32_t var = cs->getUInt32(r, csF.variationIndex);
+            const uint32_t col = cs->getUInt32(r, csF.colorIndex);
+            auto& lim = raceAppearanceLimits_[static_cast<uint16_t>((raceId << 8) | sexId)];
+            if (sec == 0 && col < 255) {
+                lim.skinCount = std::max<uint8_t>(lim.skinCount, static_cast<uint8_t>(col + 1));
+            } else if (sec == 1 && var < 255) {
+                lim.faceCount = std::max<uint8_t>(lim.faceCount, static_cast<uint8_t>(var + 1));
+            } else if (sec == 2 && var < 255) {
+                lim.facialHairCount = std::max<uint8_t>(lim.facialHairCount, static_cast<uint8_t>(var + 1));
+            } else if (sec == 3) {
+                if (var < 255) lim.hairStyleCount = std::max<uint8_t>(lim.hairStyleCount, static_cast<uint8_t>(var + 1));
+                if (col < 255) lim.hairColorCount = std::max<uint8_t>(lim.hairColorCount, static_cast<uint8_t>(col + 1));
+            }
+        }
     }
 
     creatureLookupsBuilt_ = true;
@@ -1506,6 +1654,42 @@ bool EntitySpawner::getHumanoidAppearance(uint32_t displayId, uint8_t& race,
     // target frame where a naga is standing is worse than the naga's own model
     // with no texture on it, which is what the creature path will give.
     return race != 0 && game::hasPlayerModel(static_cast<game::Race>(race));
+}
+
+bool EntitySpawner::resolvePlayerIllusion(uint32_t displayId,
+                                          uint32_t playerAppearanceBytes,
+                                          uint8_t playerFacialHair,
+                                          PlayerHumanoidMorph& out) const {
+    auto disp = displayDataMap_.find(displayId);
+    if (disp == displayDataMap_.end() || disp->second.extraDisplayId == 0) return false;
+    auto extraIt = humanoidExtraMap_.find(disp->second.extraDisplayId);
+    if (extraIt == humanoidExtraMap_.end()) return false;
+
+    const auto& e = extraIt->second;
+    HumanoidDisplayExtraInfo info;
+    info.raceId = e.raceId;
+    info.sexId = e.sexId;
+    info.skinId = e.skinId;
+    info.faceId = e.faceId;
+    info.hairStyleId = e.hairStyleId;
+    info.hairColorId = e.hairColorId;
+    info.facialHairId = e.facialHairId;
+    info.canEquip = e.canEquip;
+
+    PlayerIllusionRaceLimits limits;
+    if (auto limIt = raceAppearanceLimits_.find(static_cast<uint16_t>((e.raceId << 8) | e.sexId));
+        limIt != raceAppearanceLimits_.end()) {
+        limits = limIt->second;
+    }
+    out = resolvePlayerHumanoidMorph(info, playerAppearanceBytes, playerFacialHair, limits);
+    return true;
+}
+
+bool EntitySpawner::isEquipableHumanoidDisplay(uint32_t displayId) const {
+    auto disp = displayDataMap_.find(displayId);
+    if (disp == displayDataMap_.end() || disp->second.extraDisplayId == 0) return false;
+    auto extraIt = humanoidExtraMap_.find(disp->second.extraDisplayId);
+    return extraIt != humanoidExtraMap_.end() && extraIt->second.canEquip;
 }
 
 std::vector<std::pair<uint32_t, uint8_t>>

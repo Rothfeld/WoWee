@@ -5654,10 +5654,72 @@ void Application::render() {
                             }
                         }
                     }
-                    if (!shiftedModel.empty()) {
-                        unitPortrait_.updateCreature(shiftedModel,
-                            entitySpawner_->getCreatureSkinPaths(shiftedDisplay, shiftedModel),
-                            assetManager.get(), renderer.get(), io.DeltaTime);
+                    if (shiftedDisplay != 0 && entitySpawner_) {
+                        uint8_t pRace = 0, pGender = 0, pFacial = 0;
+                        uint32_t pAppearance = 0;
+                        if (!gameHandler->getPlayerAppearance(gameHandler->getPlayerGuid(),
+                                                              pRace, pGender, pAppearance, pFacial)) {
+                            for (const auto& c : gameHandler->getCharacters()) {
+                                if (c.guid == gameHandler->getPlayerGuid()) {
+                                    pAppearance = c.appearanceBytes;
+                                    pFacial = c.facialFeatures;
+                                    break;
+                                }
+                            }
+                        }
+                        core::PlayerHumanoidMorph illusion;
+                        bool renderedPortrait = false;
+                        if (entitySpawner_->resolvePlayerIllusion(shiftedDisplay, pAppearance, pFacial, illusion) &&
+                            illusion.isEquipablePlayerIllusion &&
+                            game::hasPlayerModel(static_cast<game::Race>(illusion.targetRace))) {
+                            const bool hideHelm = !gameHandler->isHelmVisible();
+                            const bool hideCloak = !gameHandler->isCloakVisible();
+                            std::vector<game::EquipmentItem> worn;
+                            std::array<uint32_t, 19> displayIds{};
+                            std::array<uint8_t, 19> invTypes{};
+                            if (gameHandler->getOtherPlayerEquipment(gameHandler->getPlayerGuid(),
+                                                                     displayIds, invTypes)) {
+                                for (size_t slot = 0; slot < displayIds.size(); ++slot) {
+                                    if (displayIds[slot] == 0) continue;
+                                    if (hideHelm && slot == static_cast<size_t>(game::EquipSlot::HEAD)) continue;
+                                    if (hideCloak && slot == static_cast<size_t>(game::EquipSlot::BACK)) continue;
+                                    uint8_t invType = invTypes[slot];
+                                    if (slot == static_cast<size_t>(game::EquipSlot::OFF_HAND) &&
+                                        invType == game::InvType::ONE_HAND) {
+                                        invType = game::InvType::OFF_HAND;
+                                    }
+                                    worn.push_back({.displayModel = displayIds[slot],
+                                                    .inventoryType = invType,
+                                                    .enchantment = 0u});
+                                }
+                            }
+                            unitPortrait_.setBakedSkin("");
+                            renderedPortrait = unitPortrait_.updatePlayer(
+                                illusion.targetRace, illusion.targetSex,
+                                illusion.appearanceBytes, illusion.facialHair, worn,
+                                assetManager.get(), renderer.get(), io.DeltaTime);
+                        } else {
+                            uint8_t nRace = 0, nSex = 0, nFacial = 0;
+                            uint32_t nBytes = 0;
+                            if (entitySpawner_->getHumanoidAppearance(shiftedDisplay, nRace, nSex,
+                                                                      nBytes, nFacial)) {
+                                std::vector<game::EquipmentItem> npcWorn;
+                                for (const auto& [did, invType] :
+                                         entitySpawner_->getHumanoidEquipment(shiftedDisplay)) {
+                                    npcWorn.push_back({.displayModel = did, .inventoryType = invType,
+                                                       .enchantment = 0u});
+                                }
+                                unitPortrait_.setBakedSkin(entitySpawner_->getHumanoidBakePath(shiftedDisplay));
+                                renderedPortrait = unitPortrait_.updatePlayer(
+                                    nRace, nSex, nBytes, nFacial, npcWorn,
+                                    assetManager.get(), renderer.get(), io.DeltaTime);
+                            }
+                        }
+                        if (!renderedPortrait && !shiftedModel.empty()) {
+                            unitPortrait_.updateCreature(shiftedModel,
+                                entitySpawner_->getCreatureSkinPaths(shiftedDisplay, shiftedModel),
+                                assetManager.get(), renderer.get(), io.DeltaTime);
+                        }
                     } else {
                         unitPortrait_.update(*gameHandler, assetManager.get(),
                                              renderer.get(), io.DeltaTime);
@@ -5764,22 +5826,47 @@ void Application::render() {
                     // A morphed player (Little Red Riding Hood, polymorph) is
                     // drawn from its display, as a creature is: the original's
                     // portrait shows the transform, not the character.
+                    uint32_t morphedDisplayId = 0;
                     bool morphed = false;
                     if (const uint16_t nativeField = game::fieldIndex(game::UF::UNIT_FIELD_NATIVEDISPLAYID);
                         face.guid != 0 && nativeField != 0xFFFF) {
                         if (game::Unit* u = gameHandler->getUnitByGuid(face.guid)) {
                             const uint32_t native = u->getField(nativeField);
                             morphed = native != 0 && u->getDisplayId() != 0 && u->getDisplayId() != native;
+                            if (morphed) morphedDisplayId = u->getDisplayId();
                         }
                     }
-                    if (face.guid != 0 && !morphed &&
+                    bool usePlayerPortrait = false;
+                    uint8_t drawRace = 0, drawGender = 0, drawFacial = 0;
+                    uint32_t drawAppearance = 0;
+                    if (face.guid != 0 &&
                         gameHandler->getPlayerAppearance(face.guid, race, gender,
                                                          appearance, facial)) {
+                        if (!morphed) {
+                            usePlayerPortrait = true;
+                            drawRace = race;
+                            drawGender = gender;
+                            drawAppearance = appearance;
+                            drawFacial = facial;
+                        } else if (entitySpawner_) {
+                            core::PlayerHumanoidMorph illusion;
+                            if (entitySpawner_->resolvePlayerIllusion(morphedDisplayId, appearance, facial, illusion) &&
+                                illusion.isEquipablePlayerIllusion &&
+                                game::hasPlayerModel(static_cast<game::Race>(illusion.targetRace))) {
+                                usePlayerPortrait = true;
+                                drawRace = illusion.targetRace;
+                                drawGender = illusion.targetSex;
+                                drawAppearance = illusion.appearanceBytes;
+                                drawFacial = illusion.facialHair;
+                            }
+                        }
+                    }
+                    if (usePlayerPortrait) {
                         // What they are visibly wearing, where it is known.
                         // Empty means the item queries have not come back, and
                         // the portrait leaves the model dressed as it was
                         // rather than stripping it.
-                        // A real player composites their own skin; no bake.
+                        // A real player (or CanEquip player illusion) composites their own skin; no bake.
                         face.portrait->setBakedSkin("");
                         bool hideHelm = false;
                         bool hideCloak = false;
@@ -5813,10 +5900,10 @@ void Application::render() {
                         // last unit's face, and a frame that has just changed
                         // unit would go on showing it.
                         built = face.portrait->updatePlayer(
-                            race, gender, appearance, facial, worn,
+                            drawRace, drawGender, drawAppearance, drawFacial, worn,
                             assetManager.get(), renderer.get(), io.DeltaTime);
                         face.portrait->setSubjectGuid(built ? face.guid : 0);
-                    } else if (std::string_view(face.unit).starts_with("party") &&
+                    } else if (!morphed && std::string_view(face.unit).starts_with("party") &&
                                face.portrait->updateKnownSubject(face.guid, io.DeltaTime)) {
                         built = true;
                     } else {

@@ -3281,6 +3281,22 @@ add_test(NAME weapon_trail COMMAND test_weapon_trail)
 set_tests_properties(weapon_trail PROPERTIES SKIP_RETURN_CODE 4)
 register_test_target(test_weapon_trail)
 
+# CreatureDisplayInfoExtra.CanEquip player racial illusion tests
+add_executable(test_player_illusion
+    test_player_illusion.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/dbc_loader.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/dbc_layout.cpp
+    ${CMAKE_SOURCE_DIR}/src/core/logger.cpp
+)
+target_include_directories(test_player_illusion PRIVATE ${TEST_INCLUDE_DIRS})
+target_include_directories(test_player_illusion SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
+target_compile_definitions(test_player_illusion PRIVATE
+    WOWEE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+target_link_libraries(test_player_illusion PRIVATE catch2_main)
+add_test(NAME player_illusion COMMAND test_player_illusion)
+set_tests_properties(player_illusion PROPERTIES SKIP_RETURN_CODE 4)
+register_test_target(test_player_illusion)
+
 get_property(ALL_TEST_TARGETS GLOBAL PROPERTY WOWEE_ALL_TEST_TARGETS)
 list(LENGTH ALL_TEST_TARGETS _wowee_test_target_count)
 message(STATUS "Test targets registered: ${_wowee_test_target_count}")

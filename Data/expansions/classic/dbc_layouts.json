@@ -42,6 +42,7 @@
   },
   "CreatureDisplayInfoExtra": {
     "BakeName": 20,
+    "CanEquip": 19,
     "EquipDisplay0": 8,
     "EquipDisplay1": 9,
     "EquipDisplay10": 18,
