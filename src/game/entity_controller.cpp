@@ -689,7 +689,7 @@ void EntityController::syncPreWotlkAurasFromFields(const std::shared_ptr<Entity>
                                [&](const AuraSlot& a) { return a.spellId == spellId; });
         };
         const auto announce = [&](const AuraSlot& a, const char* change) {
-            const std::string& name = owner_.getSpellName(a.spellId);
+            const std::string& name = owner_.auraCombatTextName(a.spellId);
             if (name.empty()) return;
             const std::string type = std::string("SPELL_AURA_") + change + ((a.flags & 0x80u) ? "_HARMFUL" : "");
             pendingEvents_.emit("COMBAT_TEXT_UPDATE", {type, name});

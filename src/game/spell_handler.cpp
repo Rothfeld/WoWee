@@ -6933,14 +6933,14 @@ void SpellHandler::handleExtraAuraInfo(network::Packet& packet, bool isInit) {
             updatedVisibleSlot = true;
             if (isPlayerLive) {
                 if (oldSpellId != 0 && oldSpellId != spellId && !hasSpell(oldSpellId)) {
-                    const std::string& oldName = owner_.getSpellName(oldSpellId);
+                    const std::string& oldName = owner_.auraCombatTextName(oldSpellId);
                     if (!oldName.empty()) {
                         auraCombatText.emplace_back(
                             (oldFlags & 0x80u) ? "SPELL_AURA_END_HARMFUL" : "SPELL_AURA_END", oldName);
                     }
                 }
                 if (spellId != 0 && !hadNewSpell) {
-                    const std::string& name = owner_.getSpellName(spellId);
+                    const std::string& name = owner_.auraCombatTextName(spellId);
                     if (!name.empty()) {
                         auraCombatText.emplace_back(
                             (aura.flags & 0x80u) ? "SPELL_AURA_START_HARMFUL" : "SPELL_AURA_START", name);
@@ -7401,7 +7401,7 @@ void SpellHandler::handleClearExtraAuraInfo(network::Packet& packet) {
         if (auraList && slot < auraList->size()) {
             if (clearGuid == owner_.getPlayerGuid() && !(*auraList)[slot].isEmpty() && owner_.addonEventCallbackRef()) {
                 const auto& dying = (*auraList)[slot];
-                const std::string& name = owner_.getSpellName(dying.spellId);
+                const std::string& name = owner_.auraCombatTextName(dying.spellId);
                 if (!name.empty()) {
                     const std::string type = (dying.flags & 0x80u) ? "SPELL_AURA_END_HARMFUL" : "SPELL_AURA_END";
                     owner_.addonEventCallbackRef()("COMBAT_TEXT_UPDATE", {type, name});

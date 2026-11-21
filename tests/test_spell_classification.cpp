@@ -550,6 +550,27 @@ TEST_CASE("isAuraVisible and isAuraCancellable match native TBC 2.4.3 Spell.dbc 
     CHECK_FALSE(isAuraCancellable(0x00010000u, 0x00000000u, true));
 }
 
+TEST_CASE("isAuraCombatTextLogged matches native TBC 2.4.3 Spell.dbc Attributes",
+          "[spell][classification][aura][fct]") {
+    using namespace wowee::game::spellclass;
+
+    // Suppressed by SPELL_ATTR_DO_NOT_DISPLAY (0x80) and/or SPELL_ATTR_DO_NOT_LOG (0x100):
+    CHECK_FALSE(isAuraCombatTextLogged(0x00000180u)); // Rampage Enabler (DND) 33380 (0x80 | 0x100)
+    CHECK_FALSE(isAuraCombatTextLogged(0x08000080u)); // Echeyakee's Grace 5320 (0x80 only)
+    CHECK_FALSE(isAuraCombatTextLogged(0x18000100u)); // Food 433 (0x100 only, visible buff)
+    CHECK_FALSE(isAuraCombatTextLogged(0x00000100u)); // Unscathed (DND) 29479 (0x100 only)
+    CHECK_FALSE(isAuraCombatTextLogged(0x00000140u)); // Totem of Wrath 30708 (0x40 | 0x100)
+
+    // Logged in COMBAT_TEXT_UPDATE (no 0x80 or 0x100):
+    CHECK(isAuraCombatTextLogged(0x00010000u));       // Prayer of Fortitude 21562
+    CHECK(isAuraCombatTextLogged(0x24000000u));       // Weakened Soul 6788
+    CHECK(isAuraCombatTextLogged(0x29050010u));       // Defensive Stance 71 (NO_AURA_ICON in attrEx still logs)
+    CHECK(isAuraCombatTextLogged(0x00040014u));       // Sundering Cleave 25174 (AQ20 Scarab Terrace)
+    CHECK(isAuraCombatTextLogged(0x04810000u));       // Hive'Zara Catalyst 25187 (AQ20 Scarab Terrace)
+    CHECK(isAuraCombatTextLogged(0x00040000u));       // Flurry 12970
+    CHECK(isAuraCombatTextLogged(0x00000010u));       // Dazed 1604
+}
+
 // ---------------------------------------------------------------------------
 // Action bar rank auto-upgrade (Native 2.4.3 SMSG_LEARNED_SPELL parity)
 // ---------------------------------------------------------------------------

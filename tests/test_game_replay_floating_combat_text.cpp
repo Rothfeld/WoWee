@@ -327,6 +327,80 @@ TEST_CASE("Blizzard_CombatText receives helpful & harmful aura start/fade via Ex
     CHECK(msgs[1].r == Catch::Approx(1.0));
 }
 
+TEST_CASE("Blizzard_CombatText suppresses DO_NOT_DISPLAY and DO_NOT_LOG auras across all TBC update paths", "[fct][framexml]") {
+    FctHarness h(/*warrior*/ 1, /*rage*/ 1);
+    auto& spells = h.session.handler().spellNameCacheRef();
+
+    // Real TBC 2.4.3 Spell.dbc entries:
+    // Suppressed:
+    spells[33380].name = "Rampage Enabler (DND)";
+    spells[33380].attr = 0x00000180u;  // SPELL_ATTR_DO_NOT_DISPLAY | SPELL_ATTR_DO_NOT_LOG
+    spells[5320].name  = "Echeyakee's Grace";
+    spells[5320].attr  = 0x08000080u;  // SPELL_ATTR_DO_NOT_DISPLAY only
+    spells[433].name   = "Food";
+    spells[433].attr   = 0x18000100u;  // SPELL_ATTR_DO_NOT_LOG only (visible buff icon)
+    spells[29479].name = "Unscathed (DND)";
+    spells[29479].attr = 0x00000100u;  // SPELL_ATTR_DO_NOT_LOG only
+    // Logged:
+    spells[71].name     = "Defensive Stance";
+    spells[71].attr     = 0x29050010u;
+    spells[71].attrEx   = 0x10000400u; // SPELL_ATTR_EX_NO_AURA_ICON (no BuffFrame icon, still logged in FCT)
+    spells[12970].name  = "Flurry";
+    spells[12970].attr  = 0x00040000u;
+    spells[25174].name  = "Sundering Cleave";
+    spells[25174].attr  = 0x00040014u; // AQ20 Scarab Terrace debuff
+    spells[32025].name  = "Test Buff (DND)";
+    spells[32025].attr  = 0x00010000u; // "(DND)" in name without 0x80/0x100 -> must NOT be string-filtered
+
+    const uint16_t auraBase = wowee::game::fieldIndex(UF::UNIT_FIELD_AURAS);
+
+    // 1. Gain + fade via SMSG_SET_EXTRA_AURA_INFO / SMSG_CLEAR_EXTRA_AURA_INFO
+    h.session.receive(buildSetExtraAuraInfo(Session::kPlayerGuid, 1, 33380, 5000, 5000));
+    h.session.receive(buildSetExtraAuraInfo(Session::kPlayerGuid, 2, 5320, 10000, 10000));
+    h.session.receive(buildSetExtraAuraInfo(Session::kPlayerGuid, 3, 433, 30000, 30000));
+    h.session.receive(buildSetExtraAuraInfo(Session::kPlayerGuid, 4, 29479, 10000, 10000));
+    h.session.receive(buildClearExtraAuraInfo(Session::kPlayerGuid, 1));
+    h.session.receive(buildClearExtraAuraInfo(Session::kPlayerGuid, 2));
+    h.session.receive(buildClearExtraAuraInfo(Session::kPlayerGuid, 3));
+    h.session.receive(buildClearExtraAuraInfo(Session::kPlayerGuid, 4));
+    CHECK(h.recorded().empty());
+
+    // 2. Gain + fade via UNIT_FIELD_AURAS VALUES updates (suppressed spells stay silent;
+    //    real visible/AQ20/stance/unflagged spells fire START & END)
+    h.session.receive(UpdateObject().tbc().valuesAt(
+        Session::kPlayerGuid,
+        {{static_cast<uint16_t>(auraBase + 1), 33380},
+         {static_cast<uint16_t>(auraBase + 2), 433},
+         {static_cast<uint16_t>(auraBase + 3), 71},
+         {static_cast<uint16_t>(auraBase + 4), 12970},
+         {static_cast<uint16_t>(auraBase + 5), 32025},
+         {static_cast<uint16_t>(auraBase + 40), 25174}}));
+    auto msgs = h.recorded();
+    REQUIRE(msgs.size() == 4);
+    CHECK(msgs[0].text == "<Defensive Stance>");
+    CHECK(msgs[1].text == "<Flurry>");
+    CHECK(msgs[2].text == "<Test Buff (DND)>");
+    CHECK(msgs[3].text == "<Sundering Cleave>");
+    CHECK(msgs[3].r == Catch::Approx(1.0));
+
+    h.clearRecorded();
+    h.session.receive(UpdateObject().tbc().valuesAt(
+        Session::kPlayerGuid,
+        {{static_cast<uint16_t>(auraBase + 1), 0},
+         {static_cast<uint16_t>(auraBase + 2), 0},
+         {static_cast<uint16_t>(auraBase + 3), 0},
+         {static_cast<uint16_t>(auraBase + 4), 0},
+         {static_cast<uint16_t>(auraBase + 5), 0},
+         {static_cast<uint16_t>(auraBase + 40), 0}}));
+    msgs = h.recorded();
+    REQUIRE(msgs.size() == 4);
+    CHECK(msgs[0].text == "<Defensive Stance> fades");
+    CHECK(msgs[1].text == "<Flurry> fades");
+    CHECK(msgs[2].text == "<Test Buff (DND)> fades");
+    CHECK(msgs[3].text == "<Sundering Cleave> fades");
+    CHECK(msgs[3].r == Catch::Approx(1.0));
+}
+
 TEST_CASE("Blizzard_CombatText receives reactive SPELL_ACTIVE for Overpower, Revenge, and Execute", "[fct][framexml]") {
     FctHarness h(/*warrior*/ 1, /*rage*/ 1);
     auto& spells = h.session.handler().spellNameCacheRef();

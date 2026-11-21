@@ -4651,6 +4651,16 @@ public:
         const auto it = spellNameCache_.find(spellId);
         return it == spellNameCache_.end() ? nullptr : &it->second;
     }
+    /// Spell name to emit for COMBAT_TEXT_UPDATE (SPELL_AURA_START / _END),
+    /// or empty if unknown or suppressed by Spell.dbc Attributes
+    /// (SPELL_ATTR_DO_NOT_DISPLAY | SPELL_ATTR_DO_NOT_LOG).
+    const std::string& auraCombatTextName(uint32_t spellId) const {
+        static const std::string kEmpty;
+        const SpellNameEntry* entry = getSpellNameEntry(spellId);
+        if (!entry || entry->name.empty() || !spellclass::isAuraCombatTextLogged(entry->attr))
+            return kEmpty;
+        return entry->name;
+    }
     static constexpr size_t PLAYER_EXPLORED_ZONES_COUNT = 128;
     std::string getAreaName(uint32_t areaId) const;
     uint32_t getRaceExplorationSoundId(uint8_t raceId) const;

@@ -529,6 +529,21 @@ inline bool isAuraVisible(uint32_t attr, uint32_t attrEx, const uint32_t effectI
     return true;
 }
 
+/// Whether an aura gain/fade should fire COMBAT_TEXT_UPDATE
+/// (SPELL_AURA_START / SPELL_AURA_END / _HARMFUL), matching native TBC 2.4.3
+/// (verified on pair 1):
+/// - SPELL_ATTR_DO_NOT_DISPLAY (attr 0x80): suppressed (e.g. Echeyakee's Grace
+///   5320, Rampage Enabler (DND) 33380)
+/// - SPELL_ATTR_DO_NOT_LOG (attr 0x100): suppressed even when BuffFrame shows
+///   an icon (e.g. Food 433, Unscathed (DND) 29479)
+/// - SPELL_ATTR_EX_NO_AURA_ICON (attrEx 0x10000000) does NOT suppress combat
+///   text (e.g. Defensive Stance 71 fires SPELL_AURA_START / _END natively).
+inline bool isAuraCombatTextLogged(uint32_t attr) {
+    constexpr uint32_t kAttrDoNotDisplay = 0x00000080u;
+    constexpr uint32_t kAttrDoNotLog     = 0x00000100u;
+    return (attr & (kAttrDoNotDisplay | kAttrDoNotLog)) == 0;
+}
+
 /// Whether the player can cancel an aura via CancelPlayerBuff / CancelUnitBuff
 /// (CMaNGOS WorldSession::HandleCancelAuraOpcode): debuffs, SPELL_ATTR_PASSIVE
 /// (0x40), SPELL_ATTR_NO_AURA_CANCEL (0x80000000), and SPELL_ATTR_EX_NO_AURA_ICON
