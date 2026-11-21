@@ -1593,7 +1593,7 @@ static int lua_GetMirrorTimerProgress(lua_State* L) {
     int type = -1;
     if (name == "exhaustion") type = 0;
     else if (name == "breath") type = 1;
-    else if (name == "death") type = 2;
+    else if (name == "feigndeath" || name == "death") type = 2;
     if (!gh || type < 0) { lua_pushnumber(L, 0); return 1; }
     lua_pushnumber(L, gh->getMirrorTimer(type).value);
     return 1;

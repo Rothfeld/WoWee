@@ -3078,6 +3078,7 @@ if(NOT ANDROID)
     target_sources(test_game_replay PRIVATE test_game_replay_weapon_icons.cpp)
     target_sources(test_game_replay PRIVATE test_game_replay_warrior_charge.cpp)
     target_sources(test_game_replay PRIVATE test_game_replay_overpower.cpp)
+    target_sources(test_game_replay PRIVATE test_game_replay_mirror_timer.cpp)
     target_sources(test_game_replay PRIVATE test_game_replay_go_facing.cpp)
 
     # Same complete client objects as game_replay: never replace client classes

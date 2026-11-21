@@ -2593,7 +2593,7 @@ public:
     static constexpr const char* kMirrorTimerNames[3] =
         {"EXHAUSTION", "BREATH", "FEIGNDEATH"};
     static constexpr const char* kMirrorTimerLabels[3] =
-        {"Exhaustion", "Breath", "Feign Death"};
+        {"Fatigue", "Breath", "Feign Death"};
 
     struct MirrorTimer {
         int32_t value    = 0;

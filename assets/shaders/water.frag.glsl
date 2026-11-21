@@ -347,6 +347,12 @@ void main() {
             color = depthColor.rgb * VertexLighting + texel.rgb + (VertexSpecular + 0.25) * texel.a;
             alpha = depthColor.a;
         }
+        // Viewing the underside of the water surface from underwater: TBC
+        // renders dark animated ripples fogged by the underwater LightParams
+        // fog rather than above-water ocean/river body color and sun specular.
+        if (viewPos.z < FragPos.z) {
+            color = texel.rgb + 0.25 * texel.a;
+        }
         color += contactLight() / max(alpha, 0.001);
         outColor = vec4(applyFog(color, FragPos, length(viewPos.xyz - FragPos)), alpha);
         return;

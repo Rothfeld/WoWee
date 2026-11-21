@@ -600,7 +600,12 @@ void Renderer::updatePerFrameUBO() {
         currentFrameData.fogParams.y = lp.fogEnd;
 
         // Shift fog to blue when the camera is underwater, including WMO pools.
-        if (waterRenderer && camera) {
+        // Pre-WotLK (Classic/TBC) already selects LightParamsIDUnderwater in
+        // LightingManager with authored underwater fogColor, negative fogStart,
+        // and fogEnd; overwriting those with a hardcoded blue tint and positive
+        // fogStart breaks underwater fog color and leaves the water ceiling
+        // unfogged.
+        if (!game::isPreWotlk() && waterRenderer && camera) {
             glm::vec3 camPos = camera->getPosition();
             auto waterH = waterRenderer->getNearestWaterHeightAt(camPos.x, camPos.y, camPos.z, 400.0f);
             constexpr float MIN_SUBMERSION = 2.0f;
@@ -3977,6 +3982,9 @@ void Renderer::syncSwimEffectsTargetPass() {
 }
 
 void Renderer::renderUnderwaterOverlay(VkCommandBuffer cmd) {
+    // Pre-WotLK (Classic/TBC) renders submersion through LightParamsIDUnderwater
+    // fog and lighting rather than a hardcoded blue fullscreen alpha quad.
+    if (game::isPreWotlk()) return;
     // One implementation, called from both recording paths.
     //
     // There were two. The parallel path had this one - a waterline that
