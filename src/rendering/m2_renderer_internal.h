@@ -25,9 +25,7 @@ namespace rendering {
 namespace m2_internal {
 
 inline bool opacityVaries(const pipeline::M2AnimationTrack& track) {
-    return track.sequences.size() > 1 || std::any_of(
-        track.sequences.begin(), track.sequences.end(),
-        [](const auto& keys) { return keys.floatValues.size() > 1; });
+    return m2_track::opacityVaries(track);
 }
 
 inline bool colorVaries(const pipeline::M2AnimationTrack& track) {

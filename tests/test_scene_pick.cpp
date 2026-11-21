@@ -1,4 +1,5 @@
 #include "rendering/visual_mesh_pick.hpp"
+#include "rendering/m2_track_sampler.hpp"
 // What a click acts on, ranked as build 8606 ranks it: the nearest surface
 // the ray reaches (CM2Scene 0x70b2b0), with dead units that have nothing left
 // to do considered only when nothing else is there (CGUnit_C 0x60e870).
@@ -544,5 +545,153 @@ TEST_CASE("Shipped TBC pillar-of-light, Lightwell, portal, campfire, and chest M
         const auto chest = loadM2("world/skillactivated/containers/treasurechest01.m2");
         CHECK(countPickable(chest, true) == 1);
         CHECK(countPickable(chest, false) == 1);
+    }
+
+    // Multi-sequence collision-only / hidden doodads whose transparency track
+    // is constant 0.0 across every sequence (e.g. Sunwell_BossCollision01/02
+    // entries 188523/188524, Coilfang raid bridge parts 184203/184204/184205):
+    // opacityVaries must be false, isAlwaysZero must be true, and resolved
+    // static batchOpacity must be 0.0 so they are never hoverable/pickable.
+    const auto resolvedStaticOpacity = [](const wowee::pipeline::M2Model& model,
+                                          const wowee::pipeline::M2Batch& b) {
+        float opacity = 1.0f;
+        if (b.transparencyIndex < model.textureWeightLookup.size()) {
+            const uint16_t wi = model.textureWeightLookup[b.transparencyIndex];
+            if (wi < model.textureWeightTracks.size() &&
+                !wowee::rendering::m2_track::opacityVaries(model.textureWeightTracks[wi]) &&
+                wowee::rendering::m2_track::isAlwaysZero(model.textureWeightTracks[wi])) {
+                opacity = 0.0f;
+            }
+        }
+        return opacity;
+    };
+
+    for (const char* rel : {
+             "world/expansion01/doodads/sunwell/passivedoodads/sunwell/sunwell_bosscollision01.m2",
+             "world/expansion01/doodads/sunwell/passivedoodads/sunwell/sunwell_bosscollision02.m2",
+             "world/khazmodan/ironforge/passivedoodads/auctionhouse/auctioneercollision.m2"}) {
+        const auto m = loadM2(rel);
+        REQUIRE_FALSE(m.batches.empty());
+        REQUIRE_FALSE(m.textureWeightTracks.empty());
+        CHECK_FALSE(wowee::rendering::m2_track::opacityVaries(m.textureWeightTracks[0]));
+        CHECK(wowee::rendering::m2_track::isAlwaysZero(m.textureWeightTracks[0]));
+        for (const auto& b : m.batches) {
+            const uint8_t blend = b.materialIndex < m.materials.size()
+                                      ? static_cast<uint8_t>(m.materials[b.materialIndex].blendMode)
+                                      : 0u;
+            const float op = resolvedStaticOpacity(m, b);
+            CHECK(op == 0.0f);
+            CHECK_FALSE(wowee::rendering::m2BatchIsPickable(
+                b.flags, b.submeshLevel, blend, op, false, true));
+            CHECK_FALSE(wowee::rendering::m2BatchIsPickable(
+                b.flags, b.submeshLevel, blend, op, false, false));
+        }
+    }
+
+    // Sunwell_BossForceField (188421): genuinely varies between 1.0 (closed)
+    // and 0.0 (open); pickable only when sampled opacity is visible.
+    {
+        const auto ff = loadM2("world/expansion01/doodads/sunwell/passivedoodads/sunwell/sunwell_bossforcefield.m2");
+        REQUIRE_FALSE(ff.batches.empty());
+        REQUIRE_FALSE(ff.textureWeightTracks.empty());
+        CHECK(wowee::rendering::m2_track::opacityVaries(ff.textureWeightTracks[0]));
+        CHECK_FALSE(wowee::rendering::m2_track::isAlwaysZero(ff.textureWeightTracks[0]));
+        const auto& b = ff.batches[0];
+        const uint8_t blend = static_cast<uint8_t>(ff.materials[b.materialIndex].blendMode);
+        CHECK(wowee::rendering::m2BatchIsPickable(b.flags, b.submeshLevel, blend, 1.0f, false, true));
+        CHECK_FALSE(wowee::rendering::m2BatchIsPickable(b.flags, b.submeshLevel, blend, 0.0f, false, true));
+    }
+}
+
+TEST_CASE("M2 opacityVaries distinguishes constant multi-sequence tracks from animated fades", "[go-pick][m2]") {
+    using wowee::rendering::m2_track::isAlwaysZero;
+    using wowee::rendering::m2_track::opacityVaries;
+    wowee::pipeline::M2AnimationTrack track;
+
+    CHECK_FALSE(opacityVaries(track));
+    CHECK_FALSE(isAlwaysZero(track));
+
+    // Four sequences all holding 0.0 (Sunwell_BossCollision01 layout): constant, always zero.
+    track.sequences.resize(4);
+    for (auto& seq : track.sequences) seq.floatValues = {0.0f};
+    CHECK_FALSE(opacityVaries(track));
+    CHECK(isAlwaysZero(track));
+
+    // Four sequences all holding 1.0: constant, not zero.
+    for (auto& seq : track.sequences) seq.floatValues = {1.0f};
+    CHECK_FALSE(opacityVaries(track));
+    CHECK_FALSE(isAlwaysZero(track));
+
+    // Sequence 0 holds 0.0 while sequence 1 is empty (defaults to 1.0): varies.
+    track.sequences.resize(2);
+    track.sequences[0].floatValues = {0.0f};
+    track.sequences[1].floatValues.clear();
+    CHECK(opacityVaries(track));
+    CHECK_FALSE(isAlwaysZero(track));
+
+    // Sequence 0 holds 1.0 and sequence 1 fades to 0.0: varies.
+    track.sequences[0].floatValues = {1.0f};
+    track.sequences[1].floatValues = {0.0f};
+    CHECK(opacityVaries(track));
+    CHECK_FALSE(isAlwaysZero(track));
+}
+
+TEST_CASE("TBC 2.4.3 GameObject selectability matrix covers GO_FLAG and GAMEOBJECT_TYPE combinations", "[go-pick][gameobject]") {
+    using wowee::game::gameObjectAffordance;
+    using wowee::game::gameObjectInteractionEnabled;
+    using wowee::game::ObjectNameTooltip;
+
+    constexpr uint32_t kInUse = 0x01;
+    constexpr uint32_t kLocked = 0x02;
+    constexpr uint32_t kInteractCond = 0x04;
+    constexpr uint32_t kTransport = 0x08;
+    constexpr uint32_t kNoInteract = 0x10;
+    constexpr uint32_t kNoDespawn = 0x20;
+    constexpr uint32_t kDynActivate = 0x01;
+
+    // Visible DOOR (type 0) with GO_FLAG_NODESPAWN (0x20) is interaction-enabled
+    // (e.g. Herod's Door 101854, King's Square Gate 175352); BossCollision01/02
+    // are excluded at the mesh layer because their M2 opacity is permanently 0.
+    CHECK(gameObjectInteractionEnabled(kNoDespawn, 0));
+    CHECK(gameObjectInteractionEnabled(kNoDespawn | kLocked, 0));
+    CHECK(gameObjectAffordance(0, 0, 86, gameObjectInteractionEnabled(kNoDespawn, 0)).hoverable());
+
+    // GO_FLAG_NO_INTERACT (0x10) disables hover/interaction on any type
+    // (e.g. Sunwell Orb of the Blue Flight 187869, type 10, flags 16).
+    CHECK_FALSE(gameObjectInteractionEnabled(kNoInteract, 0));
+    CHECK_FALSE(gameObjectInteractionEnabled(kNoInteract | kNoDespawn, kDynActivate));
+    CHECK_FALSE(gameObjectAffordance(10, 0, 0, gameObjectInteractionEnabled(kNoInteract, 0)).hoverable());
+
+    // GO_FLAG_IN_USE (0x01) disables interaction while animating.
+    CHECK_FALSE(gameObjectInteractionEnabled(kInUse, kDynActivate));
+
+    // GO_FLAG_INTERACT_COND (0x04) requires dynamic ACTIVATE (0x01)
+    // (e.g. Broken Trap 179485, type 2, flags 4).
+    CHECK_FALSE(gameObjectInteractionEnabled(kInteractCond, 0));
+    CHECK(gameObjectInteractionEnabled(kInteractCond, kDynActivate));
+    CHECK_FALSE(gameObjectAffordance(2, 43, 6392, gameObjectInteractionEnabled(kInteractCond, 0)).hoverable());
+    CHECK(gameObjectAffordance(2, 43, 6392, gameObjectInteractionEnabled(kInteractCond, kDynActivate)).hoverable());
+
+    // GENERIC (type 5): Collision PC Size (188215, data0=0, data1=0) and
+    // White Smoke Emitter (1605, data0=0, data1=0) are never hoverable;
+    // Monument to the Fallen (187116, data0=0, data1=1) shows default tooltip.
+    CHECK_FALSE(gameObjectAffordance(5, 0, 0, true).hoverable());
+    const auto monument = gameObjectAffordance(5, 0, 1, true);
+    CHECK(monument.hoverable());
+    CHECK_FALSE(monument.use);
+    CHECK(monument.tooltip == ObjectNameTooltip::Default);
+
+    // TRAP (type 6), SPELL_FOCUS (type 8), TRANSPORT (type 11 with 0x08|0x20),
+    // DUNGEON_DIFFICULTY (type 31): never hoverable with tooltip/cursor.
+    CHECK_FALSE(gameObjectAffordance(6, 0, 0, true).hoverable());
+    CHECK_FALSE(gameObjectAffordance(8, 0, 0, true).hoverable());
+    CHECK_FALSE(gameObjectAffordance(11, 0, 0, gameObjectInteractionEnabled(kTransport | kNoDespawn, 0)).hoverable());
+    CHECK_FALSE(gameObjectAffordance(31, 0, 1, true).hoverable());
+
+    // Standard interactables (CHEST 3, CHAIR 7, TEXT 9, MAILBOX 19, MEETINGSTONE 23) stay hoverable.
+    for (const uint32_t t : {3u, 7u, 9u, 19u, 23u}) {
+        const auto a = gameObjectAffordance(t, 0, 0, true);
+        CHECK(a.hoverable());
+        CHECK(a.use);
     }
 }

@@ -20,6 +20,38 @@ inline bool isAlwaysZero(const pipeline::M2AnimationTrack& track) {
     });
 }
 
+/// Whether an opacity track varies across its keys or sequences.
+/// Unpartitioned pre-Wrath tracks expand one constant key across every
+/// animation sequence (e.g. Sunwell_BossCollision01.m2 has 4 sequences all
+/// holding 0.0); treating those as constant lets loadModel bake
+/// batchOpacity = 0 so invisible collision/helper meshes skip both rendering
+/// and mouse picking.
+inline bool opacityVaries(const pipeline::M2AnimationTrack& track) {
+    bool hasValue = false;
+    float first = 1.0f;
+    for (const auto& sequence : track.sequences) {
+        if (sequence.floatValues.empty()) {
+            // An empty sequence samples the default opacity (1.0f).
+            if (!hasValue) {
+                first = 1.0f;
+                hasValue = true;
+            } else if (std::abs(1.0f - first) > 1e-4f) {
+                return true;
+            }
+            continue;
+        }
+        for (const float value : sequence.floatValues) {
+            if (!hasValue) {
+                first = value;
+                hasValue = true;
+            } else if (std::abs(value - first) > 1e-4f) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 struct SampleTime {
     int sequenceIndex = -1;
     float timeMs = 0.0f;

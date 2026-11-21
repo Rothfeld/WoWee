@@ -1568,8 +1568,12 @@ float M2Renderer::raycastVisibleGeometry(const glm::vec3& origin, const glm::vec
         for (const auto& batch : model.batches) {
             // Batch flag 0x08 marks non-pickable light/aura geometry; additive
             // glow cards skip occlusion queries while remaining pickable for portals.
+            // Animated opacity tracks (e.g. an open boss forcefield faded to 0)
+            // hide geometry from mouse picking while currently transparent.
+            const float effectiveOpacity =
+                batch.batchOpacity * m2_internal::animatedBatchOpacity(model, batch, instance);
             if (!m2BatchIsPickable(batch.batchFlags, batch.submeshLevel, batch.blendMode,
-                                   batch.batchOpacity, batch.starLayer, ownSurface)) continue;
+                                   effectiveOpacity, batch.starLayer, ownSurface)) continue;
             assert(batch.indexStart + batch.indexCount <= model.pickIndices.size());
             closest = pickVisualTriangles(positions,
                 std::span<const uint16_t>(model.pickIndices).subspan(batch.indexStart, batch.indexCount),
