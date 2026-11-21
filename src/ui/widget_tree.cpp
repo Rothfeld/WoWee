@@ -390,8 +390,14 @@ void WidgetTree::setHeight(uint32_t id, float height) {
     // zero and the tracker showed its POI badges over empty rows. Objectives
     // whose text had changed in the meantime - a kill count ticking over - were
     // re-measured and did appear, which is what made it look intermittent.
-    if (height <= 0.0f && w->kind == WidgetKind::FontString) {
-        w->measuredText.clear();
+    if (w->kind == WidgetKind::FontString) {
+        if (height <= 0.0f) {
+            w->measuredText.clear();
+        } else {
+            // An explicit positive height fixes the box height, leaving
+            // unbounded-height paragraph wrapping mode.
+            w->wrapsToWidth = false;
+        }
     }
     w->height = height;
     w->rectH = height;

@@ -1806,6 +1806,7 @@ add_executable(test_interface_text_lines
     ${TEST_COMMON_SOURCES}
     ${CMAKE_SOURCE_DIR}/src/ui/interface_fonts.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/native_text_metrics.cpp
+    ${CMAKE_SOURCE_DIR}/src/ui/widget_tree.cpp
 )
 target_include_directories(test_interface_text_lines PRIVATE ${TEST_INCLUDE_DIRS})
 target_include_directories(test_interface_text_lines SYSTEM PRIVATE

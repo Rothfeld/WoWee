@@ -3328,3 +3328,73 @@ TEST_CASE("Empty GameTooltip with backdrop is omitted from drawOrder",
     }
     CHECK(found);
 }
+
+TEST_CASE("Explicit positive SetHeight clears wrapsToWidth on a FontString",
+          "[widget][fontstring][quest]") {
+    WidgetTree tree;
+    const uint32_t text = tree.create(WidgetKind::FontString, tree.uiParentId(), "GreetingText");
+    Widget* w = tree.get(text);
+    REQUIRE(w != nullptr);
+    w->width = 270.0f;
+    w->wrapsToWidth = true;
+    w->measuredText = "Filler Text";
+
+    // Zero height keeps paragraph mode and invalidates measuredText.
+    tree.setHeight(text, 0.0f);
+    CHECK(w->wrapsToWidth);
+    CHECK(w->measuredText.empty());
+
+    // Positive height explicitly fixes the box height and exits wrapsToWidth.
+    tree.setHeight(text, 16.0f);
+    CHECK_FALSE(w->wrapsToWidth);
+    CHECK(w->height == 16.0f);
+}
+
+TEST_CASE("Disabled SpellButton without DisabledTexture keeps Background and NormalTexture visible as in TBC 2.4.3",
+          "[widget][button][spellbook]") {
+    WidgetTree tree;
+    const uint32_t btn = tree.create(WidgetKind::Frame, tree.uiParentId(), "SpellButton11");
+    tree.get(btn)->objectType = "CheckButton";
+    tree.get(btn)->width = 37.0f;
+    tree.get(btn)->height = 37.0f;
+    Anchor anchor;
+    anchor.point = "TOPLEFT";
+    anchor.relativePoint = "TOPLEFT";
+    tree.addPoint(btn, anchor);
+
+    const uint32_t bg = tree.create(WidgetKind::Texture, btn, "SpellButton11Background");
+    tree.get(bg)->texturePath = "Interface\\Spellbook\\UI-Spellbook-SpellBackground";
+    tree.get(bg)->layer = DrawLayer::Background;
+    tree.get(bg)->width = 64.0f;
+    tree.get(bg)->height = 64.0f;
+    tree.addPoint(bg, anchor);
+
+    const uint32_t normal = tree.create(WidgetKind::Texture, btn, "SpellButton11NormalTexture");
+    tree.get(normal)->texturePath = "Interface\\Buttons\\UI-Quickslot2";
+    tree.get(normal)->buttonArt = ButtonArt::Normal;
+    tree.get(normal)->width = 64.0f;
+    tree.get(normal)->height = 64.0f;
+    tree.addPoint(normal, anchor);
+
+    const uint32_t highlight = tree.create(WidgetKind::Texture, btn, "SpellButton11Highlight");
+    tree.get(highlight)->texturePath = "Interface\\Buttons\\ButtonHilight-Square";
+    tree.get(highlight)->buttonArt = ButtonArt::Highlight;
+    tree.get(highlight)->width = 37.0f;
+    tree.get(highlight)->height = 37.0f;
+    tree.addPoint(highlight, anchor);
+
+    // SpellButton_UpdateButton calls this:Disable() for unoccupied slots (id > offset + numSpells).
+    tree.get(btn)->enabled = false;
+    tree.get(btn)->highlightLocked = true;
+    tree.layout(kScreenW, kScreenH);
+
+    auto inDrawOrder = [&](uint32_t id) {
+        for (const Widget* w : tree.drawOrder()) {
+            if (w->id == id) return true;
+        }
+        return false;
+    };
+    CHECK(inDrawOrder(bg));
+    CHECK(inDrawOrder(normal));
+    CHECK_FALSE(inDrawOrder(highlight));
+}

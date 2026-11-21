@@ -10,6 +10,7 @@
 #include "ui/native_pixel_rules.hpp"
 #include "ui/tooltip_layout.hpp"
 #include "ui/message_frame_layout.hpp"
+#include "ui/font_string_sizing.hpp"
 #include <deque>
 #include <set>
 
@@ -348,108 +349,7 @@ void WidgetRenderer::sizeTextureWidget(Widget* w) {
 
 /// One label, sized from its own text. See sizeArtAndText.
 void WidgetRenderer::sizeFontStringWidget(Widget* w, float pixelScale) {
-    if (w->text.empty()) {
-        if (w->autoSized || w->wrapsToWidth) {
-            if (w->autoSized) w->width = 0.0f;
-            w->height = 0.0f;
-            w->wrappedLines = 0;
-            w->measuredText.clear();
-        }
-        return;
-    }
-    // Anchors that span an axis give the size on that axis, and the string
-    // does not get a say about it. Asked per axis, the way the texture
-    // sizing above asks it - anchorsSpanAxis exists for exactly this and
-    // this loop was counting instead.
-    //
-    // Counting is wrong whenever two anchors pin the same axis, or pin one
-    // axis twice and the other not at all. Every options category button
-    // is that: OptionsList_DisplayButton does
-    // `button.text:SetPoint("LEFT", 8, 2)` on a ButtonText that already
-    // carries one, so the label had two anchors, neither of which says how
-    // tall it is - and the measure that would have said was skipped. The
-    // label kept height 0 and drew nothing.
-    //
-    // That emptied the category list of every options frame at once:
-    // Video, Interface and Audio all list their categories with this
-    // button. The entries were there and the buttons were there; the names
-    // were invisible, so nothing could be read or clicked, and no setting
-    // added to the schema could be reached however correctly it registered.
-    const bool spansX = anchorsSpanAxis(w->anchors, true);
-    const bool spansY = anchorsSpanAxis(w->anchors, false);
-    const bool fixedW = spansX || (!w->autoSized && w->width > 0.0f);
-    const bool fixedH = spansY || (!w->autoSized && !w->wrapsToWidth && w->height > 0.0f);
-    if (fixedW && fixedH) return;
-
-    // A width (or horizontal anchor span) with no height is a paragraph, not a
-    // request to be measured on one unbounded line.
-    //
-    // `<AbsDimension x="285" y="0"/>` (or opposing LEFT/RIGHT anchors with
-    // y="0" or y="32") is WoW's way of saying "wrap inside that horizontal box".
-    // Measuring the text on one unbounded line replaced the box width with
-    // however wide the sentence happened to be and marked the string auto-sized,
-    // which also told the draw pass not to wrap it and pushed anything anchored
-    // to its right edge far outside the panel.
-    const bool paragraph =
-        w->wrapsToWidth ||
-        (fixedW && !fixedH);
-
-    // Measured by the original's rules - whole-pixel font height, whole-pixel
-    // pens - in the widget's own face, which is also how the draw lays it out.
-    const float size = interfaceFontSize(w->fontHeight, pixelScale);
-    const int outlinePx = outlinePixelsForFlag(w->fontOutline);
-    const bool sameMeasurement = w->measuredText == w->text &&
-                                 w->measuredSize == size &&
-                                 w->measuredFace == w->fontFace &&
-                                 w->measuredOutline == w->fontOutline;
-    if (paragraph) {
-        if (!spansX && sameMeasurement) return;
-    } else {
-        if (w->autoSized && sameMeasurement) return;
-    }
-
-    if (paragraph) {
-        // The width stays as declared (or anchor-spanned) and the height follows
-        // the wrap. autoSized stays false on purpose: it is what the draw reads
-        // to decide whether there is a box to wrap inside.
-        const float wrapWidth = spansX ? w->rectW : w->width;
-        if (spansX && wrapWidth <= 0.0f) {
-            w->wrappedLines = 1;
-            w->height = interfaceTextBlockHeight(1, w->fontHeight, w->lineSpacing, pixelScale);
-            return;
-        }
-        w->wrapsToWidth = true;
-        const int rows = interfaceTextLines(w->text, w->fontFace, w->fontHeight, wrapWidth,
-                                            w->nonSpaceWrap, pixelScale, w->hasShadow ? w->shadowX : 0.0f,
-                                            outlinePx);
-        w->wrappedLines = rows > 0 ? rows : 1;
-        w->height = interfaceTextBlockHeight(w->wrappedLines, w->fontHeight, w->lineSpacing, pixelScale);
-        if (!spansX) {
-            w->measuredText = w->text;
-            w->measuredSize = size;
-            w->measuredFace = w->fontFace;
-            w->measuredOutline = w->fontOutline;
-        }
-        return;
-    }
-
-    w->width = interfaceTextWidth(w->text, w->fontFace, w->fontHeight, pixelScale,
-                                  w->hasShadow ? w->shadowX : 0.0f, outlinePx);
-    // As tall as the lines it holds. A label sized by its own text can
-    // still be several lines: |n breaks one at any width, and giving it a
-    // single line's height put whatever anchors below it over the top of
-    // the rest.
-    const int rows = interfaceTextLines(w->text, w->fontFace, w->fontHeight, 0.0f, false, pixelScale,
-                                        0.0f, outlinePx);
-    w->wrappedLines = rows > 0 ? rows : 1;
-    if (w->height <= 0.0f || w->autoSized) {
-        w->height = interfaceTextBlockHeight(w->wrappedLines, w->fontHeight, w->lineSpacing, pixelScale);
-    }
-    w->autoSized = true;
-    w->measuredText = w->text;
-    w->measuredSize = size;
-    w->measuredFace = w->fontFace;
-    w->measuredOutline = w->fontOutline;
+    sizeFontStringLayout(w, pixelScale);
 }
 
 /// One tooltip, sized from its own lines - and the lines placed with it.

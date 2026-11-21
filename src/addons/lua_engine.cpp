@@ -1221,8 +1221,11 @@ int lua_Region_GetFieldSize(lua_State* L) {
 double fontStringTextHeight(const wowee::ui::Widget& w, float pixelScale) {
     // Rows of the whole pixel height it is drawn at, as the original
     // measures them, with the string's spacing between.
+    const bool spansX = wowee::ui::anchorsSpanAxis(w.anchors, true);
+    const float es = w.effScale > 0.0f ? w.effScale : 1.0f;
     const float wrapWidth =
-        (w.wrapsToWidth || (!w.autoSized && w.width > 0.0f)) ? w.width : 0.0f;
+        spansX ? (w.rectW / es)
+               : ((w.wrapsToWidth || (!w.autoSized && w.width > 0.0f)) ? w.width : 0.0f);
     const int lines = std::max(1, wowee::ui::interfaceTextLines(
                                       w.text, w.fontFace, w.fontHeight,
                                       wrapWidth, w.nonSpaceWrap, pixelScale,

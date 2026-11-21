@@ -14,6 +14,7 @@
 
 #include "ui/interface_fonts.hpp"
 #include "ui/message_frame_layout.hpp"
+#include "ui/font_string_sizing.hpp"
 #include "ui/text_wrap.hpp"
 
 using wowee::ui::interfaceTextLines;
@@ -166,4 +167,84 @@ TEST_CASE("MessageFrame and ScrollingMessageFrame line placement follows build 8
         CHECK(textOriginY(scrolled[1].top) == 255.0f);
         CHECK(textOriginY(scrolled[2].top) == 266.0f);
     }
+}
+
+TEST_CASE("QuestFrameGreetingPanel GreetingText re-measures from 1-line Filler Text to multi-line",
+          "[fonts][wrap][quest]") {
+    using namespace wowee::ui;
+    WidgetTree tree;
+    const uint32_t fsId = tree.create(WidgetKind::FontString, tree.uiParentId(), "GreetingText");
+    Widget* w = tree.get(fsId);
+    REQUIRE(w != nullptr);
+    // Mirrors QuestFrame.xml <FontString name="GreetingText" text="Filler Text"><Size x="270" y="0"/></FontString>
+    // and GossipFrame.xml GossipGreetingText.
+    w->width = 270.0f;
+    w->height = 0.0f;
+    w->fontHeight = 12.0f;
+    w->text = "Filler Text";
+
+    // Pass 1: initial XML placeholder text fits on 1 line and marks wrapsToWidth.
+    sizeFontStringLayout(w, 1.0f);
+    CHECK(w->wrapsToWidth);
+    CHECK_FALSE(w->autoSized);
+    CHECK(w->wrappedLines == 1);
+    const float oneLineH = w->height;
+    CHECK(oneLineH > 0.0f);
+
+    // Pass 2: QuestFrameGreetingPanel_OnShow sets a multi-line NPC greeting (Tran'rek).
+    // Must re-measure height to multiple lines rather than returning early with fixedH == true.
+    w->text = "Some people wonder what we're doing out here in the middle of the desert, "
+              "far from Booty Bay and Ratchet. I tell them that where there's trouble, "
+              "there's profit to be made!";
+    sizeFontStringLayout(w, 1.0f);
+    CHECK(w->wrapsToWidth);
+    CHECK_FALSE(w->autoSized);
+    CHECK(w->width == 270.0f);
+    CHECK(w->wrappedLines >= 3);
+    CHECK(w->height > oneLineH * 2.5f);
+
+    // Pass 3: Reusing the same FontString (e.g. QuestDescription / QuestProgressText /
+    // QuestRewardText) for a shorter quest shrinks height back down.
+    w->text = "Short quest reply.";
+    sizeFontStringLayout(w, 1.0f);
+    CHECK(w->wrappedLines == 1);
+    CHECK(w->height == Catch::Approx(oneLineH));
+
+    // Pass 4: Explicit SetHeight fixes box height and leaves paragraph mode.
+    tree.setHeight(fsId, 14.0f);
+    CHECK_FALSE(w->wrapsToWidth);
+    w->text = "Long single-line truncated title that must stay at explicit 14px height "
+              "without expanding into rows beneath it.";
+    sizeFontStringLayout(w, 1.0f);
+    CHECK(w->height == 14.0f);
+}
+
+TEST_CASE("Anchor-spanned paragraph FontString re-wraps once rectW is solved",
+          "[fonts][wrap][quest]") {
+    using namespace wowee::ui;
+    WidgetTree tree;
+    const uint32_t fsId = tree.create(WidgetKind::FontString, tree.uiParentId(), "SpannedParagraph");
+    Widget* w = tree.get(fsId);
+    REQUIRE(w != nullptr);
+    Anchor left;
+    left.point = "LEFT";
+    Anchor right;
+    right.point = "RIGHT";
+    w->anchors = {left, right};
+    w->width = 0.0f;
+    w->height = 0.0f;
+    w->rectW = 0.0f;
+    w->fontHeight = 12.0f;
+    w->text = "A long paragraph anchored to both LEFT and RIGHT edges that wraps once layout runs.";
+
+    // Frame 1: before rectW is solved, falls back to 1 line while marking wrapsToWidth.
+    sizeFontStringLayout(w, 1.0f);
+    CHECK(w->wrapsToWidth);
+    CHECK(w->wrappedLines == 1);
+
+    // Frame 2: layout solves rectW = 180; must re-measure to multiple lines.
+    w->rectW = 180.0f;
+    sizeFontStringLayout(w, 1.0f);
+    CHECK(w->wrapsToWidth);
+    CHECK(w->wrappedLines >= 3);
 }
