@@ -265,6 +265,7 @@ public:
     }
 
     wowee::game::GameHandler& handler() { return handler_; }
+    wowee::game::GameServices& services() { return services_; }
     const SentPackets& sent() const { return *sent_; }
 
     void receive(const wowee::network::Packet& packet) {

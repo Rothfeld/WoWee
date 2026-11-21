@@ -297,8 +297,8 @@
   "TaxiNodes": {
     "ID": 0,
     "MapID": 1,
-    "MountDisplayIdAlliance": 14,
-    "MountDisplayIdHorde": 15,
+    "MountDisplayIdAlliance": 15,
+    "MountDisplayIdHorde": 14,
     "Name": 5,
     "X": 2,
     "Y": 3,

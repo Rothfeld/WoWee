@@ -3081,13 +3081,12 @@ void MovementHandler::loadTaxiDbc() {
         const uint32_t tnYField    = tnL ? (*tnL)["Y"]     : 3;
         const uint32_t tnZField    = tnL ? (*tnL)["Z"]     : 4;
         const uint32_t tnNameField = tnL ? (*tnL)["Name"]  : 5;
-        // TaxiNodes.dbc ends with the two mount creature ids and nothing else.
-        // There used to be a "fallback" pair read when both were zero, at 20
-        // and 21 - which are the last name locale and the name flags word, so
-        // a node with no mount took 16712190 as a display id. There is no
-        // second pair to fall back to; a node without a mount has none.
-        const uint32_t mountAllianceField = tnL ? (*tnL)["MountDisplayIdAlliance"] : 22;
-        const uint32_t mountHordeField    = tnL ? (*tnL)["MountDisplayIdHorde"]    : 23;
+        // TaxiNodes.dbc ends with MountCreatureID[0] (Horde) and
+        // MountCreatureID[1] (Alliance) -- creature_template entry IDs, NOT
+        // CreatureDisplayInfo IDs. They tell us which faction(s) can use a
+        // node, never a displayId to pass to CharacterRenderer.
+        const uint32_t mountHordeField    = tnL ? (*tnL)["MountDisplayIdHorde"]    : 22;
+        const uint32_t mountAllianceField = tnL ? (*tnL)["MountDisplayIdAlliance"] : 23;
         const auto transforms = am->loadDBC("WorldMapTransforms.dbc");
         assert(transforms && transforms->isLoaded() && transforms->getFieldCount() >= 9);
         uint32_t fieldCount = nodesDbc->getFieldCount();
@@ -3111,7 +3110,7 @@ void MovementHandler::loadTaxiDbc() {
                 break;
             }
             node.name = nodesDbc->getString(i, tnNameField);
-            if (fieldCount > mountHordeField) {
+            if (fieldCount > std::max(mountAllianceField, mountHordeField)) {
                 node.mountDisplayIdAlliance = nodesDbc->getUInt32(i, mountAllianceField);
                 node.mountDisplayIdHorde = nodesDbc->getUInt32(i, mountHordeField);
             }
@@ -3218,19 +3217,11 @@ void MovementHandler::handleShowTaxiNodes(network::Packet& packet) {
 
 void MovementHandler::applyTaxiMountForCurrentNode() {
     if (taxiMountActive_ || !owner_.mountCallbackRef()) return;
-    auto it = taxiNodes_.find(currentTaxiData_.nearestNode);
-    if (it == taxiNodes_.end()) {
-        bool isAlliance = true;
-        switch (owner_.playerRaceRef()) {
-            case Race::ORC: case Race::UNDEAD: case Race::TAUREN: case Race::TROLL:
-            case Race::GOBLIN: case Race::BLOOD_ELF:
-                isAlliance = false; break;
-            default: break;
-        }
-        uint32_t mountId = isAlliance ? 1210u : 1310u;
+
+    // If the server already sent an authoritative UNIT_FIELD_MOUNTDISPLAYID
+    // for this flight, keep it instead of spawning a client-predicted mount.
+    if (owner_.currentMountDisplayIdRef() != 0) {
         taxiMountActive_ = true;
-        LOG_INFO("Taxi mount fallback (node ", currentTaxiData_.nearestNode, " not in DBC): displayId=", mountId);
-        owner_.mountCallbackRef()(mountId);
         return;
     }
 
@@ -3248,34 +3239,17 @@ void MovementHandler::applyTaxiMountForCurrentNode() {
             isAlliance = true;
             break;
     }
-    uint32_t mountId = isAlliance ? it->second.mountDisplayIdAlliance
-                                  : it->second.mountDisplayIdHorde;
-    if (mountId == 541) mountId = 0;
+
+    // TaxiNodes.dbc's MountCreatureID[0/1] are creature_template entry IDs
+    // (e.g. 2224 = Horde Wyvern, 541 = Alliance Gryphon), NOT CreatureDisplayInfo
+    // IDs (CreatureDisplayInfo 2224 is Character\NightElf\Female\NightElfFemale.m2).
+    // Use the DBC-resolved Gryphon/Wyvern displayIds for the brief window before
+    // the server's authoritative UNIT_FIELD_MOUNTDISPLAYID arrives.
+    const uint32_t gryphonId = owner_.services().gryphonDisplayId;
+    const uint32_t wyvernId  = owner_.services().wyvernDisplayId;
+    uint32_t mountId = isAlliance ? gryphonId : wyvernId;
     if (mountId == 0) {
-        mountId = isAlliance ? it->second.mountDisplayIdHorde
-                             : it->second.mountDisplayIdAlliance;
-        if (mountId == 541) mountId = 0;
-    }
-    if (mountId == 0) {
-        uint32_t gryphonId = owner_.services().gryphonDisplayId;
-        uint32_t wyvernId = owner_.services().wyvernDisplayId;
-        if (isAlliance && gryphonId != 0) mountId = gryphonId;
-        if (!isAlliance && wyvernId != 0) mountId = wyvernId;
-        if (mountId == 0) {
-            mountId = (isAlliance ? wyvernId : gryphonId);
-        }
-    }
-    if (mountId == 0) {
-        if (it->second.mountDisplayIdAlliance != 0) mountId = it->second.mountDisplayIdAlliance;
-        else if (it->second.mountDisplayIdHorde != 0) mountId = it->second.mountDisplayIdHorde;
-    }
-    if (mountId == 0) {
-        static constexpr uint32_t kAllianceTaxiDisplays[] = {1210u, 1211u, 1212u, 1213u};
-        static constexpr uint32_t kHordeTaxiDisplays[] = {1310u, 1311u, 1312u};
-        mountId = isAlliance ? kAllianceTaxiDisplays[0] : kHordeTaxiDisplays[0];
-    }
-    if (mountId == 0) {
-        mountId = isAlliance ? 30412u : 30413u;
+        mountId = isAlliance ? wyvernId : gryphonId;
     }
     if (mountId != 0) {
         taxiMountActive_ = true;

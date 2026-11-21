@@ -449,6 +449,7 @@ void EntitySpawner::clearMountState() {
     }
     mountInstanceId_ = 0;
     mountModelId_ = 0;
+    mountDisplayId_ = 0;
     pendingMountDisplayId_ = 0;
 }
 

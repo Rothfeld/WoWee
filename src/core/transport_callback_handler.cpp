@@ -34,12 +34,10 @@ void TransportCallbackHandler::setupCallbacks() {
     // Mount callback (online mode) - defer heavy model load to next frame
     gameHandler_.setMountCallback([this](uint32_t mountDisplayId) {
         if (mountDisplayId == 0) {
-            // Dismount is instant (no loading needed)
-            if (renderer_.getCharacterRenderer() && entitySpawner_.getMountInstanceId() != 0) {
-                renderer_.getCharacterRenderer()->removeInstance(entitySpawner_.getMountInstanceId());
-                entitySpawner_.clearMountState();
-            }
-            entitySpawner_.setMountDisplayId(0);
+            // Dismount is instant (no loading needed). clearMountState()
+            // removes the live mount instance (if any) and clears any queued
+            // pendingMountDisplayId_ that has not been instantiated yet.
+            entitySpawner_.clearMountState();
             if (auto* ac = renderer_.getAnimationController()) ac->clearMount();
             LOG_INFO("Dismounted");
             return;

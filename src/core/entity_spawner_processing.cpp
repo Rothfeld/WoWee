@@ -1488,10 +1488,18 @@ void EntitySpawner::processPendingMount() {
     if (pendingMountDisplayId_ == 0) return;
     uint32_t mountDisplayId = pendingMountDisplayId_;
     pendingMountDisplayId_ = 0;
-    LOG_INFO("processPendingMount: loading displayId ", mountDisplayId);
 
     if (!renderer_ || !renderer_->getCharacterRenderer() || !assetManager_) return;
     auto* charRenderer = renderer_->getCharacterRenderer();
+
+    // Already mounted on this exact displayId and its instance is still alive:
+    // skip redundant tear-down and recreation (mirrors processPendingRemotePlayerMounts).
+    if (mountInstanceId_ != 0 && mountDisplayId_ == mountDisplayId &&
+        charRenderer->hasInstance(mountInstanceId_)) {
+        return;
+    }
+
+    LOG_INFO("processPendingMount: loading displayId ", mountDisplayId);
 
     std::string m2Path = getModelPathForDisplayId(mountDisplayId);
     if (m2Path.empty()) {
@@ -1576,7 +1584,16 @@ void EntitySpawner::processPendingMount() {
 
     charRenderer->setInstanceCreatureMaterialRules(instanceId, true);
 
+    // Replacing an active mount directly (e.g. client-predicted taxi mount
+    // superseded by authoritative UNIT_FIELD_MOUNTDISPLAYID) must destroy the
+    // previous CharacterRenderer instance, otherwise the old mount stays
+    // orphaned in the world at its last position and pitch/roll.
+    if (mountInstanceId_ != 0) {
+        charRenderer->removeInstance(mountInstanceId_);
+    }
+
     mountInstanceId_ = instanceId;
+    mountDisplayId_ = mountDisplayId;
 
     // Compute height offset - place player above mount's back.
     //

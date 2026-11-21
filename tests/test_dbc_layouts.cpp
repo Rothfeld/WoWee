@@ -215,3 +215,29 @@ TEST_CASE("TBC SpellDispelType names the aura tooltip's dispel category", "[dbc]
     CHECK(dispel->field("Name") == 1);
     CHECK(dispel->field("ImmunityPossible") == 19);
 }
+
+TEST_CASE("TaxiNodes mount columns map Horde before Alliance", "[dbc][layout][taxi]") {
+    // TaxiNodes.dbc ends with MountCreatureID[0] (Horde: e.g. 2224 Wyvern,
+    // 3574 Bat) followed by MountCreatureID[1] (Alliance: e.g. 541 Gryphon,
+    // 3837 Hippogryph). Swapping them inverted world-map faction filtering and
+    // caused Crossroads (node 25) to report A=2224 H=0.
+    for (const auto& expansion : expansions()) {
+        INFO("expansion: " << expansion);
+        DBCLayout layout;
+        REQUIRE(layout.loadFromJson(layoutPath(expansion)));
+        const auto* tn = layout.getLayout("TaxiNodes");
+        REQUIRE(tn != nullptr);
+        const uint32_t horde = tn->field("MountDisplayIdHorde");
+        const uint32_t alliance = tn->field("MountDisplayIdAlliance");
+        REQUIRE(horde != kMissing);
+        REQUIRE(alliance != kMissing);
+        CHECK(alliance == horde + 1);
+        if (expansion == "classic" || expansion == "turtle") {
+            CHECK(horde == 14u);
+            CHECK(alliance == 15u);
+        } else {
+            CHECK(horde == 22u);
+            CHECK(alliance == 23u);
+        }
+    }
+}

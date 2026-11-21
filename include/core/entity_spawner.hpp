@@ -242,6 +242,7 @@ public:
     void setMountDisplayId(uint32_t displayId) { pendingMountDisplayId_ = displayId; }
     uint32_t getMountInstanceId() const { return mountInstanceId_; }
     uint32_t getMountModelId() const { return mountModelId_; }
+    uint32_t getMountDisplayId() const { return mountDisplayId_; }
 
     struct RemotePlayerMount {
         uint32_t displayId = 0;
@@ -947,6 +948,7 @@ private:
     // --- Mount ---
     uint32_t mountInstanceId_ = 0;
     uint32_t mountModelId_ = 0;
+    uint32_t mountDisplayId_ = 0;
     uint32_t pendingMountDisplayId_ = 0;
     void processPendingMount();
     std::unordered_map<uint64_t, RemotePlayerMount> remotePlayerMounts_;
