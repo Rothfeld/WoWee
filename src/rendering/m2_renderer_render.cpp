@@ -2,6 +2,7 @@
 #include "rendering/m2_renderer.hpp"
 #include "rendering/m2_renderer_internal.h"
 #include "rendering/m2_draw_mode.hpp"
+#include "rendering/m2_ground_detail_material.hpp"
 #include "rendering/m2_blend_mode.hpp"
 #include "rendering/m2_foliage_culling.hpp"
 #include "rendering/m2_glow_card.hpp"
@@ -1066,6 +1067,7 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
     // Build sorted visible instance list
     sortedVisible_.clear();
     transparentVisible_.clear();
+    groundDetailFringeDraws_.clear();
     skyDiagDrawsOpaque_ = 0;
     skyDiagDrawsTransparent_ = 0;
     const size_t expectedVisible = std::min(instances.size() / 3, size_t(600));
@@ -1862,9 +1864,13 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
 
                     VkPipeline desiredPipeline;
                     if (forceCutout && model.isGroundDetail) {
-                        // Blended, depth written: m2.frag keeps clutter's
-                        // texture alpha (alphaTest 3) for its soft edges.
-                        desiredPipeline = alphaTestPipeline_;
+                        // Two-pass TBC 2.4.3 ground-detail rendering:
+                        // Pass 1A writes solid blade cores (alpha >= 128/255)
+                        // opaque with depth so crossing quads never occlude
+                        // each other via faint fringes and water stays behind
+                        // solid stems. Pass 1B blends the [1/255, 128/255)
+                        // soft fringe without depth writes right after Pass 1A.
+                        desiredPipeline = opaquePipeline_;
                     } else if (forceCutout) {
                         desiredPipeline = cutoutPipeline_;
                     } else {
@@ -1915,6 +1921,20 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                     pc.instanceDataOffset = static_cast<int32_t>(drawOffset);
                     vkCmdPushConstants(cmd, pipelineLayout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(pc), &pc);
                     vkCmdDrawIndexed(cmd, batch.indexCount, groupSize, batch.indexStart, 0, 0);
+                    if (forceCutout && model.isGroundDetail && alphaPipeline_) {
+                        groundDetailFringeDraws_.push_back(GroundDetailFringeDraw{
+                            .vertexBuffer = model.vertexBuffer,
+                            .indexBuffer = model.indexBuffer,
+                            .materialSet = batch.materialSet,
+                            .texCoordSet = pc.texCoordSet,
+                            .texCoordSet2 = pc.texCoordSet2,
+                            .instanceDataOffset = pc.instanceDataOffset,
+                            .modelHeight = pc.modelHeight,
+                            .indexCount = batch.indexCount,
+                            .groupSize = groupSize,
+                            .indexStart = batch.indexStart,
+                        });
+                    }
                     if (skyMode_) ++skyDiagDrawsOpaque_;
                     lastDrawCallCount++;
                 }
@@ -1923,6 +1943,43 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
             }
 
             visStart = groupEnd;
+        }
+    }
+
+    // Pass 1B: Ground-detail soft blade fringes [1/255, 128/255) blended far-to-near
+    // without depth writes, after all opaque/core geometry is in the depth buffer and
+    // before water renders so coastal/lakeside fringes never trap seabed mud halos.
+    if (!groundDetailFringeDraws_.empty() && alphaPipeline_) {
+        if (currentPipeline != alphaPipeline_) {
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, alphaPipeline_);
+            currentPipeline = alphaPipeline_;
+        }
+        ::VkBuffer lastVB = VK_NULL_HANDLE;
+        ::VkBuffer lastIB = VK_NULL_HANDLE;
+        for (const auto& d : groundDetailFringeDraws_) {
+            if (d.vertexBuffer != lastVB) {
+                VkDeviceSize vbOffset = 0;
+                vkCmdBindVertexBuffers(cmd, 0, 1, &d.vertexBuffer, &vbOffset);
+                lastVB = d.vertexBuffer;
+            }
+            if (d.indexBuffer != lastIB) {
+                vkCmdBindIndexBuffer(cmd, d.indexBuffer, 0, VK_INDEX_TYPE_UINT16);
+                lastIB = d.indexBuffer;
+            }
+            if (d.materialSet != currentMaterialSet) {
+                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                        pipelineLayout_, 1, 1, &d.materialSet, 0, nullptr);
+                currentMaterialSet = d.materialSet;
+            }
+            M2PushConstants pc{};
+            pc.texCoordSet = d.texCoordSet;
+            pc.drawMode = kM2DrawModeGroundDetailFringe;
+            pc.instanceDataOffset = d.instanceDataOffset;
+            pc.modelHeight = d.modelHeight;
+            pc.texCoordSet2 = d.texCoordSet2;
+            vkCmdPushConstants(cmd, pipelineLayout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(pc), &pc);
+            vkCmdDrawIndexed(cmd, d.indexCount, d.groupSize, d.indexStart, 0, 0);
+            lastDrawCallCount++;
         }
     }
 

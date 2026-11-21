@@ -12,6 +12,7 @@
 #include "pipeline/model_bounds.hpp"
 #include "rendering/render_constants.hpp"
 #include "rendering/m2_model_classifier.hpp"
+#include "rendering/m2_ground_detail_material.hpp"
 #include "rendering/m2_track_sampler.hpp"
 #include "rendering/vk_context.hpp"
 #include "rendering/bone_slots.hpp"
@@ -1603,6 +1604,14 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId, boo
     std::vector<VkTexture*> allTextures;
     std::vector<bool> textureLoadFailed;
     std::vector<std::string> textureKeysLower;
+    const auto [gdUSpan0, gdVSpan0] = groundDetailModel
+        ? m2GroundDetailTextureUVSpan(model.vertices, 0)
+        : std::pair<float, float>{0.0f, 0.0f};
+    const auto [gdUSpan1, gdVSpan1] = groundDetailModel
+        ? m2GroundDetailTextureUVSpan(model.vertices, 1)
+        : std::pair<float, float>{0.0f, 0.0f};
+    const float gdUSpan = std::max(gdUSpan0, gdUSpan1);
+    const float gdVSpan = std::max(gdVSpan0, gdVSpan1);
     if (assetManager) {
         for (size_t ti = 0; ti < model.textures.size(); ti++) {
             const auto& tex = model.textures[ti];
@@ -1618,7 +1627,11 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId, boo
                 std::replace(texKey.begin(), texKey.end(), '/', '\\');
                 std::transform(texKey.begin(), texKey.end(), texKey.begin(),
                                [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-                VkTexture* texPtr = loadTexture(texPath, tex.flags);
+                const uint32_t effectiveTexFlags = groundDetailModel
+                    ? m2GroundDetailEffectiveTexFlags(tex.flags, gdUSpan, gdVSpan)
+                    : tex.flags;
+                VkTexture* texPtr = loadTexture(
+                    texPath, effectiveTexFlags, m2GroundDetailDisableMipmaps(groundDetailModel));
                 bool failed = (texPtr == whiteTexture_.get());
                 if (failed) {
                     static uint32_t loggedModelTextureFails = 0;

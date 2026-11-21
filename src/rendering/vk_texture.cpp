@@ -401,7 +401,8 @@ bool VkTexture::createSampler(VkDevice device,
     VkSamplerAddressMode addressModeU,
     VkSamplerAddressMode addressModeV,
     float maxAnisotropy,
-    float mipLodBias)
+    float mipLodBias,
+    bool disableMipmaps)
 {
     VkSamplerCreateInfo samplerInfo{};
     samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
@@ -410,16 +411,18 @@ bool VkTexture::createSampler(VkDevice device,
     samplerInfo.addressModeU = addressModeU;
     samplerInfo.addressModeV = addressModeV;
     samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-    samplerInfo.anisotropyEnable = maxAnisotropy > 1.0f ? VK_TRUE : VK_FALSE;
-    samplerInfo.maxAnisotropy = maxAnisotropy;
+    samplerInfo.anisotropyEnable = (!disableMipmaps && maxAnisotropy > 1.0f) ? VK_TRUE : VK_FALSE;
+    samplerInfo.maxAnisotropy = disableMipmaps ? 1.0f : maxAnisotropy;
     samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
     samplerInfo.unnormalizedCoordinates = VK_FALSE;
     samplerInfo.compareEnable = VK_FALSE;
-    samplerInfo.mipmapMode = (filter == VK_FILTER_LINEAR)
+    samplerInfo.mipmapMode = (!disableMipmaps && filter == VK_FILTER_LINEAR)
         ? VK_SAMPLER_MIPMAP_MODE_LINEAR : VK_SAMPLER_MIPMAP_MODE_NEAREST;
-    samplerInfo.mipLodBias = mipLodBias;
+    samplerInfo.mipLodBias = disableMipmaps ? 0.0f : mipLodBias;
     samplerInfo.minLod = 0.0f;
-    samplerInfo.maxLod = static_cast<float>(mipLevels_ > 0 ? mipLevels_ - 1 : 0);
+    samplerInfo.maxLod = disableMipmaps
+        ? 0.0f
+        : static_cast<float>(mipLevels_ > 0 ? mipLevels_ - 1 : 0);
     return finalizeSampler(device, samplerInfo);
 }
 void VkTexture::destroy(VkDevice device, VmaAllocator allocator) {

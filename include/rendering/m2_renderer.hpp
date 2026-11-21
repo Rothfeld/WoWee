@@ -1233,7 +1233,8 @@ private:
     size_t modelCacheLimit_ = 6000;
     uint32_t modelLimitRejectWarnings_ = 0;
 
-    VkTexture* loadTexture(const std::string& path, uint32_t texFlags = 0);
+    VkTexture* loadTexture(const std::string& path, uint32_t texFlags = 0,
+                           bool disableMipmaps = false);
     std::unordered_map<std::string, pipeline::BLPImage>* predecodedBLPCache_ = nullptr;
 
     struct TextureCacheEntry {
@@ -1308,6 +1309,19 @@ private:
     std::vector<VisibleEntry> sortedVisible_;  // Reused each frame
     std::vector<VisibleEntry> transparentVisible_; // Only models needing pass 2
     std::vector<std::pair<float, uint32_t>> transparentBatchOrder_; // pass 2: view z, batch index
+    struct GroundDetailFringeDraw {
+        ::VkBuffer vertexBuffer = VK_NULL_HANDLE;
+        ::VkBuffer indexBuffer = VK_NULL_HANDLE;
+        VkDescriptorSet materialSet = VK_NULL_HANDLE;
+        int32_t texCoordSet = 0;
+        int32_t texCoordSet2 = 0;
+        int32_t instanceDataOffset = 0;
+        float modelHeight = 0.0f;
+        uint32_t indexCount = 0;
+        uint32_t groupSize = 0;
+        uint32_t indexStart = 0;
+    };
+    std::vector<GroundDetailFringeDraw> groundDetailFringeDraws_;  // Pass 1B soft clutter fringes
     struct GlowSprite {
         glm::vec3 worldPos;
         glm::vec4 color;

@@ -904,7 +904,8 @@ size_t M2Renderer::evictUnreferencedTextures(size_t bytesNeeded) {
     return freed;
 }
 
-VkTexture* M2Renderer::loadTexture(const std::string& path, uint32_t texFlags) {
+VkTexture* M2Renderer::loadTexture(const std::string& path, uint32_t texFlags,
+                                   bool disableMipmaps) {
     constexpr uint64_t kFailedTextureRetryLookups = 512;
     auto normalizeKey = [](std::string key) {
         std::replace(key.begin(), key.end(), '/', '\\');
@@ -914,9 +915,11 @@ VkTexture* M2Renderer::loadTexture(const std::string& path, uint32_t texFlags) {
     };
     std::string key = normalizeKey(path);
     // A cached VkTexture owns both image and sampler. Models sharing a BLP
-    // can request different WrapS/WrapT modes (barrel01 vs barrellowpoly).
+    // can request different WrapS/WrapT modes (barrel01 vs barrellowpoly) or
+    // mip-0-only ground-detail sampling vs full mipchains on placed doodads.
     // Keep asset lookup keyed by path, but GPU entries by path and sampling.
-    const std::string cacheKey = key + "|wrap=" + std::to_string(texFlags & 0x3u);
+    std::string cacheKey = key + "|wrap=" + std::to_string(texFlags & 0x3u);
+    if (disableMipmaps) cacheKey += "|nomip=1";
     const uint64_t lookupSerial = ++textureLookupSerial_;
 
     // Check cache
@@ -1018,7 +1021,7 @@ VkTexture* M2Renderer::loadTexture(const std::string& path, uint32_t texFlags) {
         return set ? std::strtof(set, nullptr) : 0.0f;
     }();
     tex->createSampler(vkCtx_->getDevice(), VK_FILTER_LINEAR, wrapS, wrapT,
-                       16.0f, skyMode_ ? skyMipBias : 0.0f);
+                       16.0f, skyMode_ ? skyMipBias : 0.0f, disableMipmaps);
 
     VkTexture* texPtr = tex.get();
 

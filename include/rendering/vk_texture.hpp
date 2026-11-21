@@ -90,7 +90,8 @@ public:
         VkSamplerAddressMode addressModeU,
         VkSamplerAddressMode addressModeV,
         float maxAnisotropy = 16.0f,
-        float mipLodBias = 0.0f);
+        float mipLodBias = 0.0f,
+        bool disableMipmaps = false);
 
 
     /// Release now. Safe to call more than once, and unnecessary since the

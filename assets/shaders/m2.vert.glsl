@@ -133,14 +133,16 @@ void main() {
 
     FragPos = worldPos.xyz;
     Normal = mat3(model) * norm.xyz;
-    // Ground clutter is lit as the ground it stands on. Its quads carry
-    // horizontal normals, and lighting those turned every tuft facing away
-    // from the sun into ambient-only blue-grey; 2.4.3 draws the same tufts in
-    // the terrain's own light whichever way they face (Dustwallow Marsh, Beezil's Wreck).
-    vec3 lightingNormal = push.drawMode == 2 ? vec3(0.0, 0.0, 1.0) : normalizedNormal(Normal);
+    // Ground clutter (drawMode 2 core, drawMode 3 soft fringe) is lit as the
+    // ground it stands on. Its quads carry horizontal normals, and lighting
+    // those turned every tuft facing away from the sun into ambient-only
+    // blue-grey; 2.4.3 draws the same tufts in the terrain's own light
+    // whichever way they face (Dustwallow Marsh, Beezil's Wreck).
+    const bool isGroundClutter = (push.drawMode == 2 || push.drawMode == 3);
+    vec3 lightingNormal = isGroundClutter ? vec3(0.0, 0.0, 1.0) : normalizedNormal(Normal);
     uint lightFlags = uint(instanceData[instIdx].flags);
     bool hasCustomRig = (lightFlags & 2u) != 0u;
-    float outdoorDiffScale = (lightDir.w != 0.0 && push.drawMode != 2 && (lightFlags & 1u) != 0u)
+    float outdoorDiffScale = (lightDir.w != 0.0 && !isGroundClutter && (lightFlags & 1u) != 0u)
         ? 0.5 : 1.0;
     vec3 effAmbient = hasCustomRig ? instanceData[instIdx].customAmbient.rgb : ambientColor.rgb;
     vec3 effDiffuse = hasCustomRig ? instanceData[instIdx].customDiffuse.rgb : (lightColor.rgb * outdoorDiffScale);
@@ -175,7 +177,8 @@ void main() {
     vFadeAlpha = fade;
     vSkyMode = (push.drawMode < 0 ? 1 : 0) |
                (hasCustomRig ? 2 : 0) |
-               ((lightFlags & 4u) != 0u ? 4 : 0);
+               ((lightFlags & 4u) != 0u ? 4 : 0) |
+               (push.drawMode == 3 ? 8 : 0);
     vHighlight = instanceData[instIdx].highlight;
     vIndoorLighting = vec4(effAmbient, hasCustomRig ? 1.0 : 0.0);
     uint packedTint = instanceData[instIdx].tintPacked;

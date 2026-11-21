@@ -235,6 +235,7 @@ void main() {
     }
 
     const bool isInteriorFog = (vSkyMode & 4) != 0;
+    const bool isGroundDetailFringe = (vSkyMode & 8) != 0;
     selectFog(isInteriorFog);
     // An outdoor doodad is not drawn past the outdoor fog's end; the sky
     // shows there. Terrain goes on past it. Black Temple's floating rocks
@@ -246,10 +247,17 @@ void main() {
     if (!isInteriorFog && fogDepth > outdoorFogParams.y) discard;
     if (vFadeAlpha < 1.0 / 255.0) discard;
     if (alphaTest == 3) {
-        // Ground clutter blends by its texture alpha. 2.4.3 draws detail
-        // doodads with soft, see-through blade edges where its alpha-key
-        // trees keep hard ones, so the key below does not apply to them.
-        if (texColor.a < 1.0 / 255.0) discard;
+        // Two-pass TBC 2.4.3 ground-detail rendering:
+        // Pass 1A (!isGroundDetailFringe) writes opaque blade cores >= 128/255
+        // with depth; Pass 1B (isGroundDetailFringe) blends soft edges in
+        // [1/255, 128/255) without depth writes so crossing quads never punch
+        // holes through each other and water covers seabed fringes cleanly.
+        if (isGroundDetailFringe) {
+            if (texColor.a < 1.0 / 255.0 || texColor.a >= 128.0 / 255.0) discard;
+        } else {
+            if (texColor.a < 128.0 / 255.0) discard;
+            texColor.a = 1.0;
+        }
     } else if (alphaTest != 0) {
         // M2 alpha-key materials use an 8-bit reference of 224. Keep the
         // authored silhouette at every mip: promoting low-alpha texels to
@@ -376,7 +384,7 @@ void main() {
     // the coverage alone would give two steps at 2x MSAA and none with MSAA
     // off. Multiplying it into the coverage as well would take the leaf edges
     // with it, so the cutout keeps its own alpha.
-    if (alphaTest != 0 && blendMode <= 1) {
+    if (alphaTest != 0 && !isGroundDetailFringe && blendMode <= 1) {
         if (vFadeAlpha <= bayerDither4x4(ivec2(gl_FragCoord.xy))) discard;
         outAlpha = texColor.a;
     }

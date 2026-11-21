@@ -2584,6 +2584,22 @@ target_link_libraries(test_m2_blend_mode PRIVATE catch2_main)
 add_test(NAME m2_blend_mode COMMAND test_m2_blend_mode)
 register_test_target(test_m2_blend_mode)
 
+# ── test_m2_ground_detail_material ───────────────────────────
+# TBC 2.4.3 ground-effect detail doodad UV clamping, mip-0 sampling, and
+# disjoint two-pass core cutout + soft fringe alpha partitioning.
+add_executable(test_m2_ground_detail_material
+    test_m2_ground_detail_material.cpp
+    ${TEST_COMMON_SOURCES}
+    ${CMAKE_SOURCE_DIR}/src/pipeline/m2_loader.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/blp_loader.cpp)
+target_include_directories(test_m2_ground_detail_material PRIVATE ${TEST_INCLUDE_DIRS})
+target_include_directories(test_m2_ground_detail_material SYSTEM PRIVATE
+    ${TEST_SYSTEM_INCLUDE_DIRS})
+target_link_libraries(test_m2_ground_detail_material PRIVATE catch2_main)
+wowee_test_link_glm(test_m2_ground_detail_material)
+add_test(NAME m2_ground_detail_material COMMAND test_m2_ground_detail_material)
+register_test_target(test_m2_ground_detail_material)
+
 # ── test_chain_effect ────────────────────────────────────────
 # SpellChainEffects beam rules: texture repeats and scroll, Combo strands,
 # noise radius, as measured against build 8606.
