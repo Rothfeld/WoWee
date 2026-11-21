@@ -2528,9 +2528,46 @@ void CharacterRenderer::pickWeightedVariation(uint32_t instanceId) {
 
 void CharacterRenderer::retargetOneShotReturn(uint32_t instanceId, uint32_t from, uint32_t to) {
     auto& instance = instances.at(instanceId);
-    if (instance.animationLoop || instance.holdFinalPose) return;
-    const uint32_t resumes = instance.oneShotReturnAnim != 0 ? instance.oneShotReturnAnim : anim::STAND;
-    if (resumes == from) instance.oneShotReturnAnim = to;
+    if (!instance.animationLoop && !instance.holdFinalPose) {
+        const uint32_t resumes = instance.oneShotReturnAnim != 0 ? instance.oneShotReturnAnim : anim::STAND;
+        if (resumes == from) instance.oneShotReturnAnim = to;
+        return;
+    }
+    if (instance.upperBodySequenceIndex >= 0 && !instance.upperBodyAnimationLoop) {
+        if (instance.upperBodyReturnAnim == from) instance.upperBodyReturnAnim = to;
+    }
+}
+
+bool CharacterRenderer::isPlayingOneShot(uint32_t instanceId, uint32_t* outAnimId) const {
+    const auto it = instances.find(instanceId);
+    if (it == instances.end()) return false;
+    const auto& instance = it->second;
+    if (!instance.animationLoop && !instance.holdFinalPose && instance.currentSequenceIndex >= 0) {
+        if (outAnimId) *outAnimId = instance.currentAnimationId;
+        return true;
+    }
+    if (instance.upperBodySequenceIndex >= 0 && !instance.upperBodyAnimationLoop) {
+        const auto modelIt = models.find(instance.modelId);
+        if (modelIt != models.end() &&
+            static_cast<size_t>(instance.upperBodySequenceIndex) < modelIt->second.data.sequences.size()) {
+            if (outAnimId) *outAnimId = modelIt->second.data.sequences[instance.upperBodySequenceIndex].id;
+            return true;
+        }
+    }
+    return false;
+}
+
+void CharacterRenderer::setOneShotReturn(uint32_t instanceId, uint32_t returnAnim) {
+    auto it = instances.find(instanceId);
+    if (it == instances.end()) return;
+    auto& instance = it->second;
+    if (!instance.animationLoop && !instance.holdFinalPose) {
+        instance.oneShotReturnAnim = returnAnim;
+        return;
+    }
+    if (instance.upperBodySequenceIndex >= 0 && !instance.upperBodyAnimationLoop) {
+        instance.upperBodyReturnAnim = returnAnim;
+    }
 }
 
 void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos,

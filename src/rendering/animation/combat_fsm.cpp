@@ -85,6 +85,35 @@ void CombatFSM::onEvent(AnimEvent event) {
 
 void CombatFSM::startSpellCast(uint32_t precast, uint32_t cast, bool castLoop, uint32_t finalize) {
     resumeSpellAfterHit_ = false;
+    // A new looping precast/channel arriving while the previous cast's release
+    // one-shot is still playing lets that release animation complete first, then
+    // transitions into SPELL_CASTING (matching TBC 2.4.3 back-to-back cast parity).
+    if (state_ == State::SPELL_FINALIZE && precast == 0 && castLoop && cast != 0) {
+        const uint32_t activeRelease = spellFinalizeAnimId_ ? spellFinalizeAnimId_
+            : (spellCastAnimId_ ? spellCastAnimId_ : anim::SPELL);
+        spellPrecastAnimId_ = activeRelease;
+        spellPrecastAnimSeen_ = spellFinalizeAnimSeen_;
+        spellPrecastFrames_ = spellFinalizeFrames_;
+        spellCastAnimId_ = cast;
+        spellCastLoop_ = true;
+        spellFinalizeAnimId_ = finalize;
+        spellFinalizeAnimSeen_ = false;
+        spellFinalizeFrames_ = 0;
+        state_ = State::SPELL_PRECAST;
+        return;
+    }
+    // A back-to-back CAST one-shot with the exact same animation ID lets the
+    // running release animation complete instead of restarting from frame 0.
+    if (state_ == State::SPELL_FINALIZE && precast == 0 && !castLoop && finalize != 0) {
+        const uint32_t activeRelease = spellFinalizeAnimId_ ? spellFinalizeAnimId_
+            : (spellCastAnimId_ ? spellCastAnimId_ : anim::SPELL);
+        if (finalize == activeRelease) {
+            spellCastAnimId_ = cast;
+            spellCastLoop_ = false;
+            spellFinalizeAnimId_ = finalize;
+            return;
+        }
+    }
     spellPrecastAnimId_ = precast;
     spellCastAnimId_ = cast;
     spellCastLoop_ = castLoop;

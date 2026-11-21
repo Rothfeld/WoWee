@@ -511,37 +511,65 @@ void AnimationCallbackHandler::setupCallbacks() {
         // Honor Guard, where WoWee stood it up spinning (Leotheras the Blind
         // was left whirling on the ground).
         if (!isLocalPlayer && cr->isInstanceDead(instanceId)) {
-            castHolds_.erase(guid);
-            castOneShots_.erase(guid);
+            castAnimStates_.erase(guid);
             entitySpawner_.setRemoteCastHold(guid, 0);
             LOG_DEBUG("Cast animation phase ", static_cast<int>(phase), " of spell ", spellId,
                       " on corpse 0x", std::hex, guid, std::dec, " ignored");
             return;
         }
 
-        const auto idle = [&] { return entitySpawner_.remoteIdleAnimation(guid); };
-        const auto hold = [&](uint32_t spell, uint32_t animation, bool channel) {
-            castHolds_[guid] = {spell, animation, channel};
-            if (!isLocalPlayer) entitySpawner_.setRemoteCastHold(guid, animation);
+        auto& castState = castAnimStates_[guid];
+        const auto syncRemoteHold = [&] {
+            if (!isLocalPlayer) {
+                entitySpawner_.setRemoteCastHold(guid, castState.hold ? castState.hold->animation : 0);
+            }
         };
-        const auto release = [&] {
-            castHolds_.erase(guid);
-            if (!isLocalPlayer) entitySpawner_.setRemoteCastHold(guid, 0);
+        const auto nonCastIdle = [&] {
+            // Temporarily query the unit's non-cast idle/ready animation (Stand,
+            // Ready2HL, etc.) without any cast hold overlay.
+            if (!isLocalPlayer) {
+                const uint32_t prevHold = castState.hold ? castState.hold->animation : 0;
+                entitySpawner_.setRemoteCastHold(guid, 0);
+                const uint32_t baseIdle = entitySpawner_.remoteIdleAnimation(guid);
+                entitySpawner_.setRemoteCastHold(guid, prevHold);
+                return baseIdle;
+            }
+            return rendering::anim::STAND;
         };
-        const auto toIdle = [&] {
-            castOneShots_.erase(guid);
-            if (!castHolds_.contains(guid)) return;
-            release();
+        const auto applyRemoteAction = [&](const rendering::SpellCastAnimAction& action) {
+            syncRemoteHold();
+            switch (action.kind) {
+            case rendering::SpellCastAnimAction::Kind::NONE:
+                break;
+            case rendering::SpellCastAnimAction::Kind::PLAY_LOOP:
+                cr->playAnimation(instanceId, action.animation, true);
+                break;
+            case rendering::SpellCastAnimAction::Kind::PLAY_ONESHOT:
+                cr->playAnimation(instanceId, action.animation, false, action.returnAnimation);
+                break;
+            case rendering::SpellCastAnimAction::Kind::RETARGET_ONESHOT_RETURN:
+                cr->setOneShotReturn(instanceId, action.returnAnimation);
+                break;
+            }
+        };
+
+        if (phase == game::SpellAnimPhase::STOP) {
             if (isLocalPlayer) {
+                castState.oneShot.reset();
+                if (!castState.hold.has_value()) return;
+                castState.hold.reset();
                 appearanceComposer_.showMiningPick(false);
                 appearanceComposer_.showFishingPole(false);
                 ac->cancelSpellCast();
             } else {
-                cr->playAnimation(instanceId, idle(), true);
+                uint32_t playingAnim = 0;
+                const bool playingOneShot = cr->isPlayingOneShot(instanceId, &playingAnim);
+                const auto action = rendering::stepRemoteSpellCastAnim(
+                    castState, phase, spellId, rendering::SpellVisualSystem::kNoAnimation,
+                    rendering::SpellVisualSystem::kNoAnimation, nonCastIdle(),
+                    playingOneShot, playingAnim);
+                applyRemoteAction(action);
             }
-        };
-        if (phase == game::SpellAnimPhase::STOP) {
-            toIdle();
             return;
         }
 
@@ -572,14 +600,13 @@ void AnimationCallbackHandler::setupCallbacks() {
             const auto ranged = unit ? entitySpawner_.rangedWeaponAnimations(*unit) : std::nullopt;
             if (ranged && (phase == game::SpellAnimPhase::PRECAST || phase == game::SpellAnimPhase::CAST)) {
                 entitySpawner_.setCreatureRangedDrawn(guid, true);
-                castOneShots_.erase(guid);
-                if (phase == game::SpellAnimPhase::PRECAST) {
-                    hold(spellId, ranged->aim, false);
-                    cr->playAnimation(instanceId, ranged->aim, true);
-                } else {
-                    release();
-                    cr->playAnimation(instanceId, ranged->shot, false, idle());
-                }
+                uint32_t playingAnim = 0;
+                const bool playingOneShot = cr->isPlayingOneShot(instanceId, &playingAnim);
+                const uint32_t kitAnim = (phase == game::SpellAnimPhase::PRECAST) ? ranged->aim : ranged->shot;
+                const auto action = rendering::stepRemoteSpellCastAnim(
+                    castState, phase, spellId, kitAnim, none, nonCastIdle(),
+                    playingOneShot, playingAnim);
+                applyRemoteAction(action);
                 LOG_DEBUG("Ranged cast animation guid=0x", std::hex, guid, std::dec, " spell=", spellId,
                           " phase=", static_cast<int>(phase));
                 return;
@@ -588,18 +615,23 @@ void AnimationCallbackHandler::setupCallbacks() {
 
         switch (phase) {
         case game::SpellAnimPhase::PRECAST: {
-            castOneShots_.erase(guid);
             const uint32_t animation = visuals->precastAnimation(visual);
             LOG_DEBUG("Cast animation: precast guid=0x", std::hex, guid, std::dec,
                       " spell=", spellId, " visual=", visual, " animation=", animation);
             if (animation == none) return;
-            hold(spellId, animation, false);
             if (isLocalPlayer) {
+                castState.oneShot.reset();
+                castState.hold = rendering::SpellCastHold{spellId, animation, false};
                 // The pick is the Mining kit's prop: EmoteWork alone swings an empty hand.
                 if (game::isMiningRank(spellId)) appearanceComposer_.showMiningPick(true);
                 ac->startSpellCast(0, animation, true, 0);
             } else {
-                cr->playAnimation(instanceId, animation, true);
+                uint32_t playingAnim = 0;
+                const bool playingOneShot = cr->isPlayingOneShot(instanceId, &playingAnim);
+                const auto action = rendering::stepRemoteSpellCastAnim(
+                    castState, phase, spellId, animation, none, nonCastIdle(),
+                    playingOneShot, playingAnim);
+                applyRemoteAction(action);
             }
             return;
         }
@@ -619,48 +651,53 @@ void AnimationCallbackHandler::setupCallbacks() {
             LOG_DEBUG("Cast animation: cast guid=0x", std::hex, guid, std::dec,
                       " spell=", spellId, " visual=", visual,
                       " rawAnim=", rawAnimation, " animation=", animation);
-            const auto held = castHolds_.find(guid);
-            const bool underChannel = held != castHolds_.end() && held->second.channel &&
-                                      held->second.spellId != spellId;
+            if (!isLocalPlayer) {
+                uint32_t playingAnim = 0;
+                const bool playingOneShot = cr->isPlayingOneShot(instanceId, &playingAnim);
+                const auto action = rendering::stepRemoteSpellCastAnim(
+                    castState, phase, spellId, animation, none, nonCastIdle(),
+                    playingOneShot, playingAnim);
+                applyRemoteAction(action);
+                return;
+            }
+            const bool underOtherHold = castState.hold.has_value() && castState.hold->spellId != spellId;
             if (animation == none) {
                 // Only this spell's own precast ends here.
-                if (held != castHolds_.end() && !held->second.channel && held->second.spellId == spellId)
-                    toIdle();
+                if (castState.hold.has_value() && !castState.hold->channel && castState.hold->spellId == spellId) {
+                    castState.hold.reset();
+                    castState.oneShot.reset();
+                    appearanceComposer_.showMiningPick(false);
+                    appearanceComposer_.showFishingPole(false);
+                    ac->cancelSpellCast();
+                }
                 return;
             }
-            castOneShots_[guid] = {spellId, animation};
-            if (isLocalPlayer) {
-                appearanceComposer_.showMiningPick(false);
-                if (game::spellclass::isFishingCast(spellId)) {
-                    // The cast swings the equipped pole: draw it first.
-                    if (appearanceComposer_.isWeaponsSheathed()) {
-                        appearanceComposer_.setWeaponsSheathed(false);
-                        appearanceComposer_.loadEquippedWeapons();
-                    }
-                    appearanceComposer_.showFishingPole(true);
-                } else if (rendering::isMeleeWeaponSpellAnimation(animation)) {
-                    if (appearanceComposer_.isShowingRanged())
-                        appearanceComposer_.showRangedWeapon(false);
-                    if (appearanceComposer_.isWeaponsSheathed()) {
-                        appearanceComposer_.setWeaponsSheathed(false);
-                        appearanceComposer_.loadEquippedWeapons();
-                    }
+            castState.oneShot = rendering::SpellCastOneShot{spellId, animation};
+            appearanceComposer_.showMiningPick(false);
+            if (game::spellclass::isFishingCast(spellId)) {
+                // The cast swings the equipped pole: draw it first.
+                if (appearanceComposer_.isWeaponsSheathed()) {
+                    appearanceComposer_.setWeaponsSheathed(false);
+                    appearanceComposer_.loadEquippedWeapons();
+                }
+                appearanceComposer_.showFishingPole(true);
+            } else if (rendering::isMeleeWeaponSpellAnimation(animation)) {
+                if (appearanceComposer_.isShowingRanged())
+                    appearanceComposer_.showRangedWeapon(false);
+                if (appearanceComposer_.isWeaponsSheathed()) {
+                    appearanceComposer_.setWeaponsSheathed(false);
+                    appearanceComposer_.loadEquippedWeapons();
                 }
             }
-            if (underChannel) {
-                // Once, then the channel's hold again.
-                if (isLocalPlayer) ac->startSpellCast(animation, held->second.animation, true, 0);
-                else cr->playAnimation(instanceId, animation, false, idle());
+            if (underOtherHold) {
+                // Play once, then return to the active precast or channel hold.
+                ac->startSpellCast(animation, castState.hold->animation, true, 0);
                 return;
             }
-            release();
-            if (isLocalPlayer) {
-                // Plays once from the cast state, then idle.
-                ac->startSpellCast(0, animation, false, animation);
-                ac->stopSpellCast();
-            } else {
-                cr->playAnimation(instanceId, animation, false, idle());
-            }
+            castState.hold.reset();
+            // Plays once from the cast state, then idle.
+            ac->startSpellCast(0, animation, false, animation);
+            ac->stopSpellCast();
             return;
         }
         case game::SpellAnimPhase::CHANNEL: {
@@ -668,18 +705,19 @@ void AnimationCallbackHandler::setupCallbacks() {
             LOG_DEBUG("Cast animation: channel guid=0x", std::hex, guid, std::dec,
                       " spell=", spellId, " visual=", visual, " animation=", animation);
             if (animation == none) return;
-            const auto oneShot = castOneShots_.find(guid);
-            const uint32_t first = oneShot != castOneShots_.end() && oneShot->second.spellId == spellId
-                ? oneShot->second.animation : 0;
-            castOneShots_.erase(guid);
-            const uint32_t previousIdle = idle();
-            hold(spellId, animation, true);
             if (isLocalPlayer) {
+                const uint32_t first = castState.oneShot.has_value() && castState.oneShot->spellId == spellId
+                    ? castState.oneShot->animation : 0;
+                castState.oneShot.reset();
+                castState.hold = rendering::SpellCastHold{spellId, animation, true};
                 ac->startSpellCast(first, animation, true, 0);
-            } else if (first != 0) {
-                cr->retargetOneShotReturn(instanceId, previousIdle, animation);
             } else {
-                cr->playAnimation(instanceId, animation, true);
+                uint32_t playingAnim = 0;
+                const bool playingOneShot = cr->isPlayingOneShot(instanceId, &playingAnim);
+                const auto action = rendering::stepRemoteSpellCastAnim(
+                    castState, phase, spellId, animation, none, nonCastIdle(),
+                    playingOneShot, playingAnim);
+                applyRemoteAction(action);
             }
             return;
         }

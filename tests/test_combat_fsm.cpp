@@ -348,3 +348,41 @@ TEST_CASE("CombatFSM: a kit animation plays once over the stun its spell applies
     out = fsm.resolve(in, caps, wl);
     CHECK(out.animId == anim::STUN);
 }
+
+TEST_CASE("CombatFSM: back-to-back precast lets previous CAST finalize complete before looping",
+          "[combat][spell_cast_anim]") {
+    CombatFSM fsm;
+    auto caps = makeCombatCaps();
+    auto wl = unarmedLoadout();
+
+    // First spell finishes: plays SpellCastOmni (54) in SPELL_FINALIZE.
+    fsm.startSpellCast(0, anim::SPELL_CAST_OMNI, false, anim::SPELL_CAST_OMNI);
+    fsm.stopSpellCast();
+    REQUIRE(fsm.getState() == CombatFSM::State::SPELL_FINALIZE);
+
+    auto in = combatInput();
+    in.haveAnimState = true;
+    in.currentAnimId = anim::SPELL_CAST_OMNI;
+    in.currentAnimTime = 0.2f;
+    in.currentAnimDuration = 1.0f;
+    auto out = fsm.resolve(in, caps, wl);
+    CHECK(out.animId == anim::SPELL_CAST_OMNI);
+    CHECK_FALSE(out.loop);
+
+    // 200ms into SpellCastOmni, next spell's PRECAST (ReadySpellDirected 51) arrives:
+    fsm.startSpellCast(0, anim::READY_SPELL_DIRECTED, true, 0);
+    REQUIRE(fsm.getState() == CombatFSM::State::SPELL_PRECAST);
+
+    // SpellCastOmni continues until its 1.0s duration completes:
+    in.currentAnimTime = 0.6f;
+    out = fsm.resolve(in, caps, wl);
+    CHECK(out.animId == anim::SPELL_CAST_OMNI);
+    CHECK_FALSE(out.loop);
+
+    // Once SpellCastOmni finishes, transitions seamlessly into ReadySpellDirected (51) loop:
+    in.currentAnimTime = 1.0f;
+    out = fsm.resolve(in, caps, wl);
+    CHECK(fsm.getState() == CombatFSM::State::SPELL_CASTING);
+    CHECK(out.animId == anim::READY_SPELL_DIRECTED);
+    CHECK(out.loop);
+}

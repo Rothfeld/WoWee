@@ -1,5 +1,7 @@
 #pragma once
 
+#include "rendering/animation/spell_cast_anim_policy.hpp"
+
 #include <unordered_map>
 
 #include <cstdint>
@@ -34,18 +36,9 @@ private:
     game::GameHandler& gameHandler_;
     AppearanceComposer& appearanceComposer_;
 
-    // Cast-kit animation started by SMSG_SPELL_GO, per caster: a channel of
-    // the same spell starting right after holds its channel animation once
-    // this one has played (Fishing: FishingCast, then FishingLoop).
-    struct CastOneShot { uint32_t spellId; uint32_t animation; };
-    std::unordered_map<uint64_t, CastOneShot> castOneShots_;
-    // Precast or channel animation a caster holds. Only a held cast returns
-    // to idle when it ends; anything else the unit is doing (walking,
-    // fighting) is left alone. A channel's per-tick SMSG_SPELL_GO of another
-    // spell (Arcane Missile 7268 under Arcane Missiles 5143) plays its cast
-    // kit once and returns to the channel's hold.
-    struct CastHold { uint32_t spellId; uint32_t animation; bool channel; };
-    std::unordered_map<uint64_t, CastHold> castHolds_;
+    // Per-caster spell cast animation hold & active one-shot state (see
+    // spell_cast_anim_policy.hpp for the TBC 2.4.3 completion & transition rules).
+    std::unordered_map<uint64_t, rendering::SpellCastAnimState> castAnimStates_;
 };
 
 } // namespace core

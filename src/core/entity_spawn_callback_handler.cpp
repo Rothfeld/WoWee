@@ -1,4 +1,5 @@
 #include "core/entity_spawn_callback_handler.hpp"
+#include "rendering/animation/spell_cast_anim_policy.hpp"
 #include "core/entity_spawner.hpp"
 #include "core/coordinates.hpp"
 #include "core/logger.hpp"
@@ -166,7 +167,9 @@ void EntitySpawnCallbackHandler::setupCallbacks() {
             // WoW M2 animation IDs: 4=Walk, 5=Run.
             // Don't override Death animation (1). The per-frame sync loop will return to
             // Stand when movement stops.
-            if (durationMs > 0) {
+            const auto ent = gameHandler_.getEntityManager().getEntity(guid);
+            const float speed = ent ? ent->getLocomotionSpeed() : 0.0f;
+            if (rendering::shouldStartCreatureLocomotion(durationMs, speed)) {
                 // Player animation is managed by the local renderer state machine -
                 // don't reset it here or every server movement packet restarts the
                 // run cycle from frame 0, causing visible stutter.
@@ -189,7 +192,7 @@ void EntitySpawnCallbackHandler::setupCallbacks() {
                     uint32_t actualAnim = 0; float actualTime = 0.0f, actualDuration = 0.0f;
                     cr->getAnimationState(instanceId, actualAnim, actualTime, actualDuration);
                     LOG_DEBUG("Creature locomotion: guid=0x", std::hex, guid, std::dec,
-                              " speed=", gameHandler_.getEntityManager().getEntity(guid)->getLocomotionSpeed(),
+                              " speed=", speed,
                               " walking=", walking, " requested=", targetAnim,
                               " actual=", actualAnim, " duration=", actualDuration);
                     entitySpawner_.getCreatureWasMoving()[guid] = true;

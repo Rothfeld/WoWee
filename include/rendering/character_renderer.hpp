@@ -134,6 +134,11 @@ public:
     void pickWeightedVariation(uint32_t instanceId);
     /// A running one-shot that would resume `from` resumes `to` instead.
     void retargetOneShotReturn(uint32_t instanceId, uint32_t from, uint32_t to);
+    /// True when the instance is currently playing a non-looping one-shot
+    /// (full-body or upper-body) that has not been frozen on its final pose.
+    [[nodiscard]] bool isPlayingOneShot(uint32_t instanceId, uint32_t* outAnimId = nullptr) const;
+    /// Set the looping animation to resume when the currently playing one-shot ends.
+    void setOneShotReturn(uint32_t instanceId, uint32_t returnAnim);
     /// Play other animations on each arm alone, until the next playAnimation.
     void setArmAnimations(uint32_t instanceId, uint32_t leftArmAnim, uint32_t rightArmAnim);
     // Loop an animation on SpineLow and its descendants; zero removes the layer.

@@ -1575,6 +1575,16 @@ target_link_libraries(test_combat_fsm PRIVATE catch2_main)
 add_test(NAME combat_fsm COMMAND test_combat_fsm)
 register_test_target(test_combat_fsm)
 
+# ── test_spell_cast_anim_policy ──────────────────────────────
+add_executable(test_spell_cast_anim_policy
+    test_spell_cast_anim_policy.cpp
+)
+target_include_directories(test_spell_cast_anim_policy PRIVATE ${TEST_INCLUDE_DIRS})
+target_include_directories(test_spell_cast_anim_policy SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
+target_link_libraries(test_spell_cast_anim_policy PRIVATE catch2_main)
+add_test(NAME spell_cast_anim_policy COMMAND test_spell_cast_anim_policy)
+register_test_target(test_spell_cast_anim_policy)
+
 # ── test_activity_fsm ────────────────────────────────────────
 add_executable(test_activity_fsm
     test_activity_fsm.cpp

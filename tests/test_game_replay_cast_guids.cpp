@@ -5,6 +5,8 @@
 #include <catch_amalgamated.hpp>
 
 #include "game_replay.hpp"
+#include "rendering/animation/animation_ids.hpp"
+#include "rendering/animation/spell_cast_anim_policy.hpp"
 
 #include <string>
 #include <utility>
@@ -272,4 +274,57 @@ TEST_CASE("TBC remote cast pushback extends state and SMSG_SPELL_FAILED_OTHER st
         wowee::game::SpellAnimPhase::PRECAST,
         wowee::game::SpellAnimPhase::STOP,
     });
+}
+
+TEST_CASE("TBC back-to-back remote SMSG_SPELL_START / SMSG_SPELL_GO preserves CAST completion",
+          "[replay][castguid][spell_cast_anim]") {
+    using namespace wowee::rendering;
+    using wowee::game::SpellAnimPhase;
+
+    constexpr uint32_t kEarthgrabTotem = 8376;   // Precast 52, Cast 54
+    constexpr uint32_t kLightningBolt = 15234;   // Precast 51, Cast 53
+    constexpr uint32_t kNoAnim = ~0u;
+
+    Session s("tbc");
+    SpellCastAnimState animState{};
+    bool playingOneShot = false;
+    uint32_t playingOneShotAnim = 0;
+    std::vector<SpellCastAnimAction> actions;
+
+    s.handler().setSpellCastAnimCallback([&](uint64_t guid, SpellAnimPhase phase, uint32_t spellId) {
+        if (guid != kMob) return;
+        uint32_t kitAnim = kNoAnim;
+        if (spellId == kEarthgrabTotem) {
+            kitAnim = (phase == SpellAnimPhase::PRECAST) ? anim::READY_SPELL_OMNI : anim::SPELL_CAST_OMNI;
+        } else if (spellId == kLightningBolt) {
+            kitAnim = (phase == SpellAnimPhase::PRECAST) ? anim::READY_SPELL_DIRECTED : anim::SPELL_CAST_DIRECTED;
+        }
+        const auto action = stepRemoteSpellCastAnim(
+            animState, phase, spellId, kitAnim, kNoAnim, anim::STAND,
+            playingOneShot, playingOneShotAnim);
+        actions.push_back(action);
+        if (action.kind == SpellCastAnimAction::Kind::PLAY_ONESHOT) {
+            playingOneShot = true;
+            playingOneShotAnim = action.animation;
+        } else if (action.kind == SpellCastAnimAction::Kind::PLAY_LOOP) {
+            playingOneShot = false;
+            playingOneShotAnim = 0;
+        }
+    });
+
+    // Earthgrab Totem (500ms cast) -> SMSG_SPELL_GO -> 0ms later Lightning Bolt (3000ms cast)
+    s.receive(tbcSpellStart(kMob, kEarthgrabTotem, 500, Session::kPlayerGuid));
+    s.receive(tbcSpellGo(kMob, kEarthgrabTotem, Session::kPlayerGuid));
+    s.receive(tbcSpellStart(kMob, kLightningBolt, 3000, Session::kPlayerGuid));
+
+    REQUIRE(actions.size() == 3);
+    CHECK(actions[0].kind == SpellCastAnimAction::Kind::PLAY_LOOP);
+    CHECK(actions[0].animation == anim::READY_SPELL_OMNI);
+    CHECK(actions[1].kind == SpellCastAnimAction::Kind::PLAY_ONESHOT);
+    CHECK(actions[1].animation == anim::SPELL_CAST_OMNI);
+    CHECK(actions[1].returnAnimation == anim::STAND);
+    // 0ms back-to-back Lightning Bolt PRECAST retargets SpellCastOmni's return to ReadySpellDirected
+    // instead of cutting SpellCastOmni short:
+    CHECK(actions[2].kind == SpellCastAnimAction::Kind::RETARGET_ONESHOT_RETURN);
+    CHECK(actions[2].returnAnimation == anim::READY_SPELL_DIRECTED);
 }
