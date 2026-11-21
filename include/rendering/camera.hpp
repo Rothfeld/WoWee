@@ -78,7 +78,7 @@ private:
     float pitch = 0.0f;
     float fov = 45.0f;
     float aspectRatio = 16.0f / 9.0f;
-    float nearPlane = 0.5f;
+    float nearPlane = 0.22f;     // Matches Native TBC 2.4.3 (~0.222 yd = 8/36 yd); avoids close-up mesh clipping with D32_SFLOAT depth
     float farPlane = 30000.0f;   // Improves depth precision vs extremely large far clip
 
     glm::mat4 viewMatrix = glm::mat4(1.0f);

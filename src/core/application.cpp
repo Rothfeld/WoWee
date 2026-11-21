@@ -3893,9 +3893,12 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                         entitySpawner_->getUnitSwimmingDepth(guid, instanceId));
                 }
             }
+            const bool creatureDeadOrCorpse =
+                std::static_pointer_cast<game::Unit>(entity)->getHealth() == 0;
             if (groundCreature && !onTransport) {
                 const bool creatureSplineOrMoving =
-                    entity->isActivelyMoving() || entity->hasServerSplinePosition();
+                    !creatureDeadOrCorpse &&
+                    (entity->isActivelyMoving() || entity->hasServerSplinePosition());
                 if (auto floorZ = movingEntityFloor(renderer.get(), renderPos,
                                                     previousRenderPos,
                                                     creatureSplineOrMoving)) {

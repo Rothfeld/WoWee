@@ -205,6 +205,11 @@ TEST_CASE("Pivot follows CreatureModelData CollisionHeight as build 8606 does", 
     CHECK_THAT(1.568f + CameraController::nativePivotHeight(1.6f, 2.031f, true), WithinAbs(2.416, 0.01));
     // The setting moves it in proportion; the default is the original's.
     CHECK_THAT(CameraController::nativePivotHeight(0.8f, 2.031f, false), WithinAbs(1.864 / 2, 0.01));
+    // Morphed InvisibleStalker (11686) and Infernal (169) both have M2 boundMax.z = 2.0313
+    // (whereas CreatureModelData.CollisionHeight is 2.438 / 0.0); scaled by objectScale = 1.5
+    // Native TBC 2.4.3 measured 2.8798 yd over feet.
+    CHECK_THAT(CameraController::nativePivotHeight(1.6f, 2.03125f, false), WithinAbs(1.8643, 0.005));
+    CHECK_THAT(CameraController::nativePivotHeight(1.6f, 2.03125f * 1.5f, false), WithinAbs(2.8798, 0.005));
 }
 
 // ── upward pitch limit, flat-ground clearance & sloped terrain camera ──

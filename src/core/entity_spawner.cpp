@@ -152,15 +152,30 @@ void EntitySpawner::syncPlayerMorphs() {
         // .modify scale 1.5 grows character and horse alike
         // (_experiments/20261118T160000Z.player_scale).
         const float objectScale = unitObjectScale(*unit);
-        if (guid == gameHandler_->getPlayerGuid()) {
-            // The camera pivots on the model the player is drawn as, a
-            // morph's or a form's included (CameraController::nativePivotHeight).
-            const auto shown = displayDataMap_.find(display);
-            const auto height = shown != displayDataMap_.end()
-                ? modelIdToCollisionHeight_.find(shown->second.modelId) : modelIdToCollisionHeight_.end();
-            if (auto* camera = renderer_->getCameraController())
-                camera->setFollowedCollisionHeight(height != modelIdToCollisionHeight_.end() ? height->second : 0.0f);
-        }
+        auto syncLocalCameraPivot = [&](uint32_t activeInstance) {
+            if (guid != gameHandler_->getPlayerGuid()) return;
+            auto* camera = renderer_->getCameraController();
+            if (!camera) return;
+            // Native TBC 2.4.3 derives the camera pivot height from the active
+            // displayed M2 model's collision bounding box max Z scaled by
+            // OBJECT_FIELD_SCALE_X (falling back to CreatureModelData.CollisionHeight
+            // before the M2 finishes loading). This matches morphed displays whose
+            // CreatureModelData.CollisionHeight disagrees with the M2 header (e.g.
+            // InvisibleStalker 11686: M2 boundMax.z = 2.0313 vs DBC 2.4380; Infernal
+            // 169: M2 boundMax.z = 2.0313 vs DBC 0.0) and scaled players (.modify scale).
+            float baseHeight = 0.0f;
+            if (const auto* activeModel = cr->getInstanceModelData(activeInstance);
+                activeModel && activeModel->boundMax.z > 0.01f) {
+                baseHeight = activeModel->boundMax.z;
+            } else {
+                const auto shown = displayDataMap_.find(display);
+                if (shown != displayDataMap_.end()) {
+                    const auto hIt = modelIdToCollisionHeight_.find(shown->second.modelId);
+                    if (hIt != modelIdToCollisionHeight_.end()) baseHeight = hIt->second;
+                }
+            }
+            camera->setFollowedCollisionHeight(baseHeight * objectScale);
+        };
         if (native != 0) {
             const float characterScale = rendering::characterRenderScale(
                 objectScale, creatureDisplayScale(native), creatureModelScale(native));
@@ -176,7 +191,10 @@ void EntitySpawner::syncPlayerMorphs() {
             drop(guid);
             found = playerMorphs_.end();
         }
-        if (!morphed) continue;
+        if (!morphed) {
+            syncLocalCameraPivot(playerInstance);
+            continue;
+        }
         glm::vec3 position, rotation;
         if (!cr->getInstancePosition(playerInstance, position) || !cr->getInstanceRotation(playerInstance, rotation))
             continue;
@@ -238,7 +256,11 @@ void EntitySpawner::syncPlayerMorphs() {
                 visuals->transferUnitVisuals(playerInstance, instance);
         }
         auto& morph = found->second;
-        if (!morph.instanceId) continue;
+        if (!morph.instanceId) {
+            syncLocalCameraPivot(playerInstance);
+            continue;
+        }
+        syncLocalCameraPivot(morph.instanceId);
         if (morph.isEquipableIllusion) {
             std::array<uint32_t, 19> displayIds{};
             std::array<uint8_t, 19> invTypes{};

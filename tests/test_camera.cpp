@@ -242,3 +242,33 @@ TEST_CASE("transport-locked camera yaw keeps ship deck stationary in screen spac
         }
     }
 }
+
+TEST_CASE("Camera near plane matches Native TBC 2.4.3 (~0.22 yd) with D32_SFLOAT depth precision", "[camera][nearplane]") {
+    Camera cam;
+    CHECK(cam.getNearPlane() == Catch::Approx(0.22f));
+    CHECK(cam.getFarPlane() > 1000.0f);
+
+    // Close geometry at 0.30 yd (previously clipped by the old 0.50 yd near plane)
+    // must project cleanly inside Vulkan NDC depth [0, 1].
+    cam.setPosition(glm::vec3(0.0f, 0.0f, 0.0f));
+    cam.setRotation(0.0f, 0.0f);
+    const glm::mat4 vp = cam.getViewProjectionMatrix();
+
+    auto projectZ = [&](float dist) {
+        const glm::vec4 clip = vp * glm::vec4(dist, 0.0f, 0.0f, 1.0f);
+        REQUIRE(clip.w > 0.0f);
+        return clip.z / clip.w;
+    };
+
+    const float zNear = projectZ(0.30f);
+    CHECK(zNear > 0.0f);
+    CHECK(zNear < 1.0f);
+
+    // Depth stays strictly monotonic and separable in float32 at world/WMO/water distances.
+    const float z100a = projectZ(100.0f);
+    const float z100b = projectZ(100.05f);
+    CHECK(z100b > z100a);
+    const float z500a = projectZ(500.0f);
+    const float z500b = projectZ(500.5f);
+    CHECK(z500b > z500a);
+}

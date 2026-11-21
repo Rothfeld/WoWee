@@ -2232,8 +2232,9 @@ void CameraController::updateOrbitCamera(float deltaTime, FrameInput& f,
     // Compute actual camera position
     glm::vec3 actualCam;
     if (actualDist < FIRST_PERSON_DISTANCE) {
-        // First-person: position camera at pivot (player's eyes)
-        actualCam = pivot + f.forward3D * 0.1f;  // Slightly forward to not clip head
+        // First-person: Native TBC 2.4.3 places the camera directly at the pivot
+        // (zero horizontal offset; the player model is already hidden).
+        actualCam = pivot;
     } else {
         actualCam = pivot + camDir * actualDist;
     }

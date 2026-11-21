@@ -49,7 +49,7 @@ public:
     /// captured scene descriptor set (binding 1 = resolved scene depth).
     struct DepthContext {
         VkDescriptorSet sceneSet = VK_NULL_HANDLE;
-        float nearPlane = 0.5f;
+        float nearPlane = 0.22f;
         float farPlane = 1000.0f;
         float screenWidth = 1.0f;
         float screenHeight = 1.0f;

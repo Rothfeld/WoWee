@@ -115,3 +115,17 @@ TEST_CASE("mover in WMO tunnel ignores high terrain roof above",
     REQUIRE(chosen.has_value());
     CHECK(*chosen == Catch::Approx(40.02f));
 }
+
+TEST_CASE("corpse resting on low M2 stone ledge snaps onto ledge even after approaching on grass",
+          "[collision][floor][tbc]") {
+    // Wetlands graveyard lochmodanstonefence01.m2: grass terrain at 18.71, stone wall top at 19.94.
+    // Once dead (isSplineOrMoving = false), a corpse whose server Z is on the stone ledge must
+    // rest on the M2 stone ledge rather than staying locked to previous grass Z.
+    const glm::vec3 prevGrass(-3302.0f, -2449.0f, 18.71f);
+    const glm::vec3 corpseOnWall(-3302.1f, -2449.0f, 19.94f);
+    const auto chosen = arbitrateEntityFloor(
+        corpseOnWall, prevGrass, /*isSplineOrMoving=*/false,
+        /*terrainHeight=*/18.71f, /*wmoHeight=*/std::nullopt, /*m2Height=*/19.94f);
+    REQUIRE(chosen.has_value());
+    CHECK(*chosen == Catch::Approx(19.94f));
+}
