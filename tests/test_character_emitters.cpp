@@ -61,6 +61,9 @@ TEST_CASE("a model without emitters gets no emitter instance", "[character-emitt
 TEST_CASE("emitters fade and hide with their owner", "[character-emitters]") {
     CHECK(rendering::characterEmitterFade(true, 1.0f, 1.0f) == 1.0f);
     CHECK(rendering::characterEmitterFade(true, 0.5f, 0.5f) == 0.25f);  // fading in / camera fade
+    CHECK(rendering::characterEmitterFade(true, 1.0f, 1.0f, 0.3f) == Catch::Approx(0.3f));  // stealthed weapon/enchant particles
+    CHECK(rendering::characterEmitterFade(true, 1.0f, 0.5f, 0.3f) == Catch::Approx(0.15f)); // stealthed + close camera
+    CHECK(rendering::characterEmitterFade(false, 1.0f, 1.0f, 0.3f) == 0.0f);  // first person, hidden
     CHECK(rendering::characterEmitterFade(false, 1.0f, 1.0f) == 0.0f);  // first person, hidden
     CHECK(rendering::characterEmitterFade(true, 0.0f, 1.0f) == 0.0f);
 }

@@ -2664,9 +2664,8 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos,
         // Kit opacity transition, carried to the unit's weapons and their effects.
         if (inst.kitOpacity != inst.kitOpacityTarget) {
             inst.kitOpacityTime += deltaTime;
-            const float progress = std::min(1.0f, inst.kitOpacityTime / kKitOpacityTransition);
-            inst.kitOpacity = progress >= 1.0f ? inst.kitOpacityTarget
-                : inst.kitOpacityFrom + (inst.kitOpacityTarget - inst.kitOpacityFrom) * progress * progress * progress;
+            inst.kitOpacity = kitTransitionOpacity(inst.kitOpacityFrom, inst.kitOpacityTarget,
+                                                   inst.kitOpacityTime, kKitOpacityTransition);
             // Attachments follow the drawn value; their own target matches it so
             // their entries in this loop do not start a transition.
             for (const auto& attachment : inst.weaponAttachments) {
@@ -3041,6 +3040,12 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos,
             weapIt->second.position = instance.position;
             weapIt->second.floorLight = instance.floorLight;
             weapIt->second.interiorLight = instance.interiorLight;
+            weapIt->second.opacity = instance.opacity;
+            weapIt->second.cameraOpacity = instance.cameraOpacity;
+            weapIt->second.kitColor = instance.kitColor;
+            weapIt->second.kitLight = instance.kitLight;
+            weapIt->second.kitLightRemaining = instance.kitLightRemaining;
+            weapIt->second.kitOpacity = weapIt->second.kitOpacityTarget = instance.kitOpacity;
             if (weapIt->second.cachedModel && weapIt->second.cachedModel->hasBillboardBones)
                 calculateBoneMatrices(weapIt->second);
 
@@ -3060,6 +3065,12 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos,
                 fxIt->second.position = instance.position;
                 fxIt->second.floorLight = instance.floorLight;
                 fxIt->second.interiorLight = instance.interiorLight;
+                fxIt->second.opacity = instance.opacity;
+                fxIt->second.cameraOpacity = instance.cameraOpacity;
+                fxIt->second.kitColor = instance.kitColor;
+                fxIt->second.kitLight = instance.kitLight;
+                fxIt->second.kitLightRemaining = instance.kitLightRemaining;
+                fxIt->second.kitOpacity = fxIt->second.kitOpacityTarget = instance.kitOpacity;
                 if (fxIt->second.cachedModel && fxIt->second.cachedModel->hasBillboardBones)
                     calculateBoneMatrices(fxIt->second);
             }
@@ -3159,7 +3170,7 @@ void CharacterRenderer::syncEmitters(M2Renderer& m2Renderer) {
             owner->second.modelId == it->second.characterModelId &&
             displayParticleColorId(owner->second.displayId) == it->second.particleColorId &&
             characterEmitterFade(owner->second.visible && !owner->second.replaced, owner->second.opacity,
-                                 owner->second.cameraOpacity) > 0.0f &&
+                                 owner->second.cameraOpacity, owner->second.kitOpacity) > 0.0f &&
             m2Renderer.hasInstance(it->second.m2InstanceId);
         if (keep) { ++it; continue; }
         if (m2Renderer.hasInstance(it->second.m2InstanceId))
@@ -3168,8 +3179,8 @@ void CharacterRenderer::syncEmitters(M2Renderer& m2Renderer) {
     }
 
     for (const auto& [id, instance] : instances) {
-        const float fade = characterEmitterFade(instance.visible && !instance.replaced && !instance.roomHidden, instance.opacity,
-                                                instance.cameraOpacity);
+        const float fade = characterEmitterFade(instance.visible && !instance.replaced && !instance.roomHidden,
+                                                instance.opacity, instance.cameraOpacity, instance.kitOpacity);
         if (fade <= 0.0f) continue;
         const auto modelIt = models.find(instance.modelId);
         if (modelIt == models.end()) continue;
@@ -3662,9 +3673,11 @@ std::vector<std::pair<float, uint32_t>> CharacterRenderer::drawOrder(const Camer
     const auto& view = camera.getViewMatrix();
     for (const auto& [id, instance] : instances) {
         if (!instance.visible || instance.replaced || instance.roomHidden) continue;
-        const glm::vec3 position = instance.hasOverrideModelMatrix
-            ? glm::vec3(instance.overrideModelMatrix[3]) : instance.position;
-        order.emplace_back((view * glm::vec4(position, 1.0f)).z, id);
+        // Attached weapons, helms, shoulders, and enchant effects are expanded
+        // with their owning root character via drawOrderForInstance(). Emitting
+        // them here too drew every attachment twice in the merged blended pass.
+        if (instance.hasOverrideModelMatrix) continue;
+        order.emplace_back((view * glm::vec4(instance.position, 1.0f)).z, id);
     }
     std::sort(order.begin(), order.end());
     return order;
@@ -3796,29 +3809,46 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
     // compositing their blended surfaces back to front.
     //
     // Pass 0 draws solid batches. A fading instance has none: its depth
-    // prepass (-1) and blended colour (1) run together, one instance at a
-    // time, in the blended stream. Its prepass must not run with the solid
-    // geometry: a stealthed rogue in front of an opaque one then wrote depth
-    // before the opaque one was drawn, and cut it out of the picture where
-    // 2.4.3 shows it through the faded body.
-    const auto order = onlyInstance ? drawOrderForInstance(camera, onlyInstance)
-                                    : drawOrder(camera);
+    // prepass (-1) and blended colour (1) run together, one whole unit (root +
+    // attached helm, shoulders, weapons, enchants) at a time, in the blended
+    // stream. Its prepass must not run with the solid geometry: a stealthed
+    // rogue in front of an opaque one then wrote depth before the opaque one
+    // was drawn, and cut it out of the picture where 2.4.3 shows it through
+    // the faded body. Running (-1) across the entire unit before (1) prevents
+    // overlapping helm/shoulders/weapons from double-blending over the body.
+    const auto roots = onlyInstance
+        ? std::vector<std::pair<float, uint32_t>>{{0.0f, onlyInstance}}
+        : drawOrder(camera);
+    std::vector<std::vector<uint32_t>> unitGroups;
+    unitGroups.reserve(roots.size());
+    for (const auto& [depth, rootId] : roots) {
+        const auto members = drawOrderForInstance(camera, rootId);
+        if (members.empty()) continue;
+        std::vector<uint32_t> ids;
+        ids.reserve(members.size());
+        for (const auto& m : members) ids.push_back(m.second);
+        unitGroups.push_back(std::move(ids));
+    }
     std::vector<std::pair<int, uint32_t>> steps;
-    steps.reserve(order.size() * 3);
-    if (phase != RenderPhase::Blended)
-        for (const auto& entry : order) steps.emplace_back(0, entry.second);
-    if (phase != RenderPhase::Solid)
-        for (const auto& entry : order) {
-            steps.emplace_back(-1, entry.second);
-            steps.emplace_back(1, entry.second);
+    steps.reserve(unitGroups.size() * 6);
+    if (phase != RenderPhase::Blended) {
+        for (const auto& group : unitGroups) {
+            appendUnitRenderSteps(steps, group, /*includeSolid=*/true, /*includeBlended=*/false);
         }
+    }
+    if (phase != RenderPhase::Solid) {
+        for (const auto& group : unitGroups) {
+            appendUnitRenderSteps(steps, group, /*includeSolid=*/false, /*includeBlended=*/true);
+        }
+    }
     for (const auto& [pass, id] : steps) {
         auto& instance = instances.at(id);
         // Whole-model fades need the same nearest-surface depth prepass as
         // camera fading. Blending triangles while writing depth exposes mesh
         // submission order as dark patches on ghosts and stealth models.
-        const bool surfaceFade = instance.opacity * instance.cameraOpacity * instance.kitOpacity < 0.999f &&
-                                 !instance.isEffectModel;
+        const float renderOpacity = effectiveUnitOpacity(
+            instance.opacity, instance.cameraOpacity, instance.kitOpacity);
+        const bool surfaceFade = renderOpacity < 0.999f && !instance.isEffectModel;
         if (pass == -1 && !surfaceFade) continue;
 
         // Skip invisible instances (e.g., player in first-person mode)
@@ -3863,7 +3893,6 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
         if (!gpuModel.vertexBuffer) continue;
 
         // Skip fully transparent instances
-        const float renderOpacity = instance.opacity * instance.cameraOpacity * instance.kitOpacity;
         if (renderOpacity <= 0.0f) continue;
 
         // Set model matrix (use override for weapon instances)
@@ -4716,6 +4745,7 @@ void CharacterRenderer::renderShadow(VkCommandBuffer cmd, const glm::mat4& light
     for (auto& pair : instances) {
         auto& inst = pair.second;
         if (!inst.visible || inst.replaced || inst.roomHidden) continue;
+        if (effectiveUnitOpacity(inst.opacity, inst.cameraOpacity, inst.kitOpacity) <= 0.01f) continue;
 
         // Distance cull against shadow frustum
         glm::vec3 diff = inst.position - shadowCenter;
@@ -5207,9 +5237,14 @@ void CharacterRenderer::setInstanceKitAppearance(uint32_t instanceId, const glm:
         instance.kitOpacityTime = 0.0f;
     }
     for (const auto& attachment : instance.weaponAttachments) {
-        instances.at(attachment.weaponInstanceId).kitColor = color;
-        for (const auto& effect : attachment.effects)
-            instances.at(effect.effectInstanceId).kitColor = color;
+        auto& weapon = instances.at(attachment.weaponInstanceId);
+        weapon.kitColor = color;
+        weapon.kitOpacity = weapon.kitOpacityTarget = instance.kitOpacity;
+        for (const auto& effect : attachment.effects) {
+            auto& fx = instances.at(effect.effectInstanceId);
+            fx.kitColor = color;
+            fx.kitOpacity = fx.kitOpacityTarget = instance.kitOpacity;
+        }
     }
 }
 
@@ -5297,11 +5332,17 @@ void CharacterRenderer::setInstanceVisible(uint32_t instanceId, bool visible) {
         }
         it->second.visible = visible;
 
-        // Also hide/show attached weapons (for first-person mode)
+        // Also hide/show attached weapons and their effects (for first-person mode)
         for (const auto& wa : it->second.weaponAttachments) {
             auto weapIt = instances.find(wa.weaponInstanceId);
             if (weapIt != instances.end()) {
                 weapIt->second.visible = visible;
+            }
+            for (const auto& fx : wa.effects) {
+                auto fxIt = instances.find(fx.effectInstanceId);
+                if (fxIt != instances.end()) {
+                    fxIt->second.visible = visible;
+                }
             }
         }
     }

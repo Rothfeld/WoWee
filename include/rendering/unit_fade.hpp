@@ -9,10 +9,14 @@
 // recording of a corpse despawning is what would replace it.
 
 #include <algorithm>
+#include <cstdint>
+#include <utility>
+#include <vector>
 
 namespace wowee::rendering {
 
 inline constexpr float kUnitFadeSeconds = 0.5f;
+inline constexpr float kKitOpacityTransitionSeconds = 1.0f;
 
 /// Newly spawned/summoned units (SMSG_UPDATE_OBJECT UPDATETYPE_CREATE_OBJECT2)
 /// fade in over 2.0 s with a quadratic ease-in curve on TBC 2.4.3 build 8606
@@ -53,6 +57,46 @@ inline float fadeInOpacity(float targetOpacity, float elapsed, float duration) {
 inline float fadeOutOpacity(float startOpacity, float elapsed, float duration) {
     if (duration <= 0.0f) return 0.0f;
     return std::clamp(startOpacity * (1.0f - elapsed / duration), 0.0f, 1.0f);
+}
+
+/// Opacity `elapsed` seconds into a SpellVisualKit CharProc 14 transition
+/// (Stealth 0.3, Ghost 0.5, Transparency 75% 0.25, Banish, etc.). Native
+/// 2.4.3 eases both ways over 1 s as the cube of elapsed/duration.
+inline float kitTransitionOpacity(float fromOpacity, float targetOpacity, float elapsed,
+                                  float duration = kKitOpacityTransitionSeconds) {
+    const float clampedFrom = std::clamp(fromOpacity, 0.0f, 1.0f);
+    const float clampedTarget = std::clamp(targetOpacity, 0.0f, 1.0f);
+    if (duration <= 0.0f || elapsed >= duration) return clampedTarget;
+    const float progress = std::clamp(elapsed / duration, 0.0f, 1.0f);
+    return std::clamp(clampedFrom + (clampedTarget - clampedFrom) * progress * progress * progress,
+                      0.0f, 1.0f);
+}
+
+/// Combined unit opacity across display/spawn alpha, close-camera fade, and
+/// SpellVisualKit CharProc 14 (stealth/ghost/transparency).
+inline float effectiveUnitOpacity(float opacity, float cameraOpacity, float kitOpacity) {
+    return std::clamp(opacity * cameraOpacity * kitOpacity, 0.0f, 1.0f);
+}
+
+/// Schedule CharacterRenderer draw passes for one unit group (the root unit
+/// plus its attached helms, shoulders, weapons, and enchant effects).
+///
+/// Solid pass (0) draws every member once. Blended pass runs the whole-unit
+/// nearest-surface depth prepass (-1) across the root and all solid/alpha-key
+/// attachments BEFORE the color blend pass (1), so overlapping body, helm,
+/// shoulders, and weapons self-occlude into one coherent translucent silhouette
+/// instead of double-blending at overlap seams.
+inline void appendUnitRenderSteps(std::vector<std::pair<int, uint32_t>>& steps,
+                                  const std::vector<uint32_t>& unitMembers,
+                                  bool includeSolid, bool includeBlended) {
+    if (unitMembers.empty()) return;
+    if (includeSolid) {
+        for (const uint32_t id : unitMembers) steps.emplace_back(0, id);
+    }
+    if (includeBlended) {
+        for (const uint32_t id : unitMembers) steps.emplace_back(-1, id);
+        for (const uint32_t id : unitMembers) steps.emplace_back(1, id);
+    }
 }
 
 } // namespace wowee::rendering

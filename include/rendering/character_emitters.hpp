@@ -96,9 +96,11 @@ inline void applyParticleColors(pipeline::M2Model& model, const ParticleColorRow
 }
 
 /// The alpha the emitters are drawn at; 0 means the owner is not drawn and
-/// its emitters are dropped.
-inline float characterEmitterFade(bool visible, float opacity, float cameraOpacity) {
-    return visible ? opacity * cameraOpacity : 0.0f;
+/// its emitters are dropped. Combines display/spawn opacity, close-camera
+/// fade, and SpellVisualKit CharProc 14 opacity (Stealth, Ghost, etc.).
+inline float characterEmitterFade(bool visible, float opacity, float cameraOpacity,
+                                  float kitOpacity = 1.0f) {
+    return visible ? std::clamp(opacity * cameraOpacity * kitOpacity, 0.0f, 1.0f) : 0.0f;
 }
 
 /// Whether the owner holds a finished one-shot sequence on its last frame

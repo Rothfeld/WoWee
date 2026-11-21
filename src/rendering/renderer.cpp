@@ -2124,8 +2124,11 @@ void Renderer::update(float deltaTime) {
         if (camera && camera->hasExternalPose() && characterRenderer && characterInstanceId) {
             // Comparison cameras must not inherit first-person hiding from the
             // gameplay camera that the controller updated earlier this frame.
-            const float distance = glm::distance(camera->getPosition(), characterPosition);
-            const float opacity = glm::clamp((distance - 0.5f) / 1.0f, 0.0f, 1.0f);
+            // Measure from the camera pivot height (matching CameraController's
+            // 1.2 -> 0.2 yd linear fade on build 8606), not the feet.
+            const glm::vec3 pivot = characterPosition + glm::vec3(0.0f, 0.0f, cameraController->getPivotHeight());
+            const float distance = glm::distance(camera->getPosition(), pivot);
+            const float opacity = glm::clamp((distance - 0.2f) / 1.0f, 0.0f, 1.0f);
             characterRenderer->setInstanceCameraOpacity(characterInstanceId, opacity);
             characterRenderer->setInstanceVisible(characterInstanceId, opacity > 0.0f);
         }
