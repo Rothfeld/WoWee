@@ -239,13 +239,18 @@ LocomotionFSM::Input CharacterAnimator::locomotionInput() const {
 AnimOutput CharacterAnimator::applyOverlays(AnimOutput base) const {
     if (!stealthed_) return base;
 
-    // Stealth substitution based on locomotion state
-    auto locoState = locomotion_.getState();
-    if (locoState == LocomotionFSM::State::IDLE) {
+    // Stealth substitution applies only to idle stand/ready and forward/strafe
+    // walk/run/sprint locomotion. Backwards movement (Walkbackwards 13), turn
+    // shuffles (11/12), jumps (37-39), swimming, and active actions keep their
+    // base animation, matching Native TBC 2.4.3.
+    const bool isIdleBase = (base.animId == anim::STAND) ||
+                            (combat_.getState() == CombatFSM::State::COMBAT_IDLE &&
+                             locomotion_.getState() == LocomotionFSM::State::IDLE);
+    if (isIdleBase) {
         if (caps_.resolvedStealthIdle) base.animId = caps_.resolvedStealthIdle;
-    } else if (locoState == LocomotionFSM::State::WALK) {
+    } else if (base.animId == anim::WALK) {
         if (caps_.resolvedStealthWalk) base.animId = caps_.resolvedStealthWalk;
-    } else if (locoState == LocomotionFSM::State::RUN) {
+    } else if (base.animId == anim::RUN || base.animId == anim::SPRINT) {
         if (caps_.resolvedStealthRun) base.animId = caps_.resolvedStealthRun;
         else if (caps_.resolvedStealthWalk) base.animId = caps_.resolvedStealthWalk;
     }

@@ -410,6 +410,7 @@ public:
     };
     std::unordered_map<uint64_t, RemoteTurn>& getRemoteTurns() { return remoteTurns_; }
     std::unordered_map<uint64_t, bool>& getRemoteWasMovingBackward() { return remoteWasMovingBackward_; }
+    std::unordered_map<uint64_t, bool>& getRemoteWasStealthed() { return remoteWasStealthed_; }
     std::unordered_map<uint64_t, bool>& getCreatureWasWalking() { return creatureWasWalking_; }
     /// remoteAuraLocomotion each unit's locomotion was last chosen with.
     std::unordered_map<uint64_t, uint32_t>& getRemoteWasAuraLocomotion() { return remoteWasAuraLocomotion_; }
@@ -639,6 +640,7 @@ private:
     std::unordered_map<uint64_t, bool> creatureWasFlying_;
     std::unordered_map<uint64_t, uint32_t> remoteMovementFlags_;
     std::unordered_map<uint64_t, bool> remoteWasMovingBackward_;
+    std::unordered_map<uint64_t, bool> remoteWasStealthed_;
     std::unordered_map<uint64_t, bool> remoteWasAirborne_;
     std::unordered_map<uint64_t, std::optional<rendering::GroundDirection>> remoteAirborneLegs_;
     std::unordered_map<uint64_t, float> remoteLegYawOffsets_;

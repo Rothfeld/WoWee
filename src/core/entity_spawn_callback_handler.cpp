@@ -184,7 +184,9 @@ void EntitySpawnCallbackHandler::setupCallbacks() {
                     const bool walking = entitySpawner_.remoteGaitWalks(guid, instanceId);
                     const bool swimming = entitySpawner_.getCreatureSwimmingState().count(guid) > 0;
                     const bool flying = entitySpawner_.getCreatureFlyingState().count(guid) > 0;
-                    const uint32_t targetAnim = rendering::creatureMovingAnimation(flying, swimming, walking);
+                    const auto unit = std::dynamic_pointer_cast<game::Unit>(ent);
+                    const bool stealthed = unit && unit->hasCreepVisibility();
+                    const uint32_t targetAnim = rendering::creatureMovingAnimation(flying, swimming, walking, stealthed);
                     // Only restart when the selected locomotion animation changed.
                     if (!gotState || (!rendering::anim::isCorpsePose(curAnimId) && curAnimId != targetAnim)) {
                         cr->playAnimation(instanceId, targetAnim, /*loop=*/true);

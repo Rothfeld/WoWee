@@ -2,6 +2,7 @@
 #include "rendering/animation/stand_pose.hpp"
 #include "rendering/animation/rider_pose.hpp"
 #include "rendering/animation/upper_body_split.hpp"
+#include "rendering/animation/creature_locomotion.hpp"
 /**
  * CharacterRenderer - GPU rendering of M2 character models with skeletal animation (Vulkan)
  *
@@ -2779,12 +2780,8 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos,
                 inst.currentAnimationId = inst.cachedModel->data.sequences[0].id;
             }
             const auto& seq = inst.cachedModel->data.sequences[inst.currentSequenceIndex];
-            float playbackRate = 1.0f;
-            if ((seq.id == anim::WALK || seq.id == anim::RUN || seq.id == anim::WALK_BACKWARDS) &&
-                inst.locomotionSpeed >= 0.0f && seq.movingSpeed != 0.0f) {
-                assert(inst.scale > 0.0f);
-                playbackRate = inst.locomotionSpeed / (std::abs(seq.movingSpeed) * inst.scale);
-            }
+            float playbackRate = computeLocomotionPlaybackRate(
+                seq.id, inst.locomotionSpeed, seq.movingSpeed, inst.scale);
             if (!inst.animationLoop && inst.oneShotMaxDurationMs > 0.0f &&
                 static_cast<float>(seq.duration) > inst.oneShotMaxDurationMs)
                 playbackRate = static_cast<float>(seq.duration) / inst.oneShotMaxDurationMs;

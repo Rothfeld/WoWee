@@ -8,10 +8,40 @@
 namespace wowee::rendering {
 
 // WALKING selects ground speed, but does not turn a swimmer into a land animal.
-inline constexpr uint32_t creatureMovingAnimation(bool flying, bool swimming, bool walking) {
+inline constexpr uint32_t creatureMovingAnimation(bool flying, bool swimming, bool walking,
+                                                  bool stealthed = false) {
     if (flying) return anim::FLY_FORWARD;
     if (swimming) return anim::SWIM;
+    if (stealthed) return walking ? anim::STEALTH_WALK : anim::STEALTH_RUN;
     return walking ? anim::WALK : anim::RUN;
+}
+
+// Ground locomotion sequences whose playback rate scales with world speed /
+// (abs(M2Sequence::movingSpeed) * instanceScale). Matches Native TBC 2.4.3
+// where StealthWalk (119), StealthRun (223), and Sprint (143) scale identically
+// to Walk (4), Run (5), and Walkbackwards (13).
+inline constexpr bool isGroundLocomotionScaledAnimation(uint32_t animId) {
+    switch (animId) {
+        case anim::WALK:
+        case anim::RUN:
+        case anim::WALK_BACKWARDS:
+        case anim::STEALTH_WALK:
+        case anim::STEALTH_RUN:
+        case anim::SPRINT:
+            return true;
+        default:
+            return false;
+    }
+}
+
+inline float computeLocomotionPlaybackRate(uint32_t animId, float locomotionSpeed,
+                                           float seqMovingSpeed, float scale) {
+    if (!isGroundLocomotionScaledAnimation(animId) ||
+        locomotionSpeed < 0.0f || seqMovingSpeed == 0.0f) {
+        return 1.0f;
+    }
+    assert(scale > 0.0f);
+    return locomotionSpeed / (std::abs(seqMovingSpeed) * scale);
 }
 
 // Walk or Run for a server-driven (SMSG_MONSTER_MOVE spline) ground unit.

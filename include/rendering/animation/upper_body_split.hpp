@@ -39,6 +39,8 @@ inline constexpr bool isLocomotionBaseAnimation(uint32_t animationId, uint32_t b
         case anim::SWIM_LEFT:
         case anim::SWIM_RIGHT:
         case anim::SWIM_BACKWARDS:
+        case anim::STEALTH_WALK:
+        case anim::STEALTH_RUN:
         case anim::SPRINT:
         case anim::FLY_FORWARD:
             return true;

@@ -234,7 +234,8 @@ float wheelClicks(float delta, uint64_t timestampNs) {
 // standing: alive, still, on the ground, unmounted and idling in Stand, so
 // emotes, ready stances, stand states and casts keep their animation.
 void driveTurnShuffle(rendering::CharacterRenderer& characters, uint64_t guid, uint32_t instanceId,
-                      EntitySpawner::RemoteTurn& turn, float facing, bool standing) {
+                      EntitySpawner::RemoteTurn& turn, float facing, bool standing,
+                      uint32_t idleAnim = rendering::anim::STAND) {
     int turnDirection = 0;
     if (turn.lastFacing) {
         const float delta = coords::normalizeAngleRad(facing - *turn.lastFacing);
@@ -249,7 +250,7 @@ void driveTurnShuffle(rendering::CharacterRenderer& characters, uint64_t guid, u
     const bool haveState = characters.getAnimationState(instanceId, current, time, duration);
     const bool shuffling = current == rendering::anim::SHUFFLE_LEFT || current == rendering::anim::SHUFFLE_RIGHT;
     if (!turn.shuffle.active()) {
-        if (turnDirection == 0 || !haveState || current != rendering::anim::STAND) return;
+        if (turnDirection == 0 || !haveState || current != idleAnim) return;
         turn.shuffle.start(turnDirection);
         // A model without the sequence keeps standing.
         if (!characters.hasAnimation(instanceId, turn.shuffle.animation())) {
@@ -260,8 +261,8 @@ void driveTurnShuffle(rendering::CharacterRenderer& characters, uint64_t guid, u
         LOG_DEBUG("Turn shuffle: guid=", guid, " start ", turn.shuffle.animation());
     } else if (!turn.shuffle.update(turnDirection, haveState, current, time)) {
         LOG_DEBUG("Turn shuffle: guid=", guid, " end, playing ", current);
-        if (shuffling) characters.playAnimation(instanceId, rendering::anim::STAND, true);
-    } else if (current != turn.shuffle.animation() && (shuffling || current == rendering::anim::STAND) &&
+        if (shuffling) characters.playAnimation(instanceId, idleAnim, true);
+    } else if (current != turn.shuffle.animation() && (shuffling || current == idleAnim) &&
                characters.hasAnimation(instanceId, turn.shuffle.animation())) {
         // The turn reversed.
         characters.playAnimation(instanceId, turn.shuffle.animation(), true);
@@ -3986,10 +3987,12 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                 const bool isWalkingNow  = entitySpawner_->remoteGaitWalks(
                     guid, creatureMount ? creatureMount->instanceId : instanceId);
                 const bool isFlyingNow   = _creatureFlyingState.count(guid) > 0;
+                const bool isStealthedNow = !creatureMount && unitPtr && unitPtr->hasCreepVisibility();
                 bool prevMoving   = _creatureWasMoving[guid];
                 bool prevSwimming = _creatureWasSwimming[guid];
                 bool prevFlying   = _creatureWasFlying[guid];
                 bool prevWalking  = _creatureWasWalking[guid];
+                bool& prevStealthed = entitySpawner_->getRemoteWasStealthed()[guid];
                 // An aura's held animation replaces walk/run (Maulgar spins
                 // while moving under Whirlwind); applying or losing it mid-move
                 // switches the animation.
@@ -4002,12 +4005,14 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                                           (isSwimmingNow != prevSwimming) ||
                                           (isFlyingNow   != prevFlying)   ||
                                           (isWalkingNow  != prevWalking && isMovingNow) ||
+                                          (isStealthedNow != prevStealthed && isMovingNow) ||
                                           (auraLocomotion != prevAuraLocomotion && isMovingNow);
                 if (stateChanged) {
                     _creatureWasMoving[guid]   = isMovingNow;
                     _creatureWasSwimming[guid] = isSwimmingNow;
                     _creatureWasFlying[guid]   = isFlyingNow;
                     _creatureWasWalking[guid]  = isWalkingNow;
+                    prevStealthed = isStealthedNow;
                     prevAuraLocomotion = auraLocomotion;
                     uint32_t curAnimId = 0; float curT = 0.0f, curDur = 0.0f;
                     bool gotState = charRenderer->getAnimationState(instanceId, curAnimId, curT, curDur);
@@ -4017,7 +4022,7 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                             targetAnim = auraLocomotion;
                         } else if (isMovingNow) {
                             targetAnim = rendering::creatureMovingAnimation(
-                                isFlyingNow, isSwimmingNow, isWalkingNow);
+                                isFlyingNow, isSwimmingNow, isWalkingNow, isStealthedNow);
                         } else {
                             if (isFlyingNow)        targetAnim = rendering::anim::FLY_IDLE;
                             else if (isSwimmingNow) targetAnim = rendering::anim::SWIM_IDLE;
@@ -4097,9 +4102,11 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
             }
             // A conversation turn plays its own single shuffle above.
             if (!npcInteractionFacing_.contains(guid)) {
+                const uint32_t idleAnim = entitySpawner_->remoteIdleAnimation(guid);
                 driveTurnShuffle(*charRenderer, guid, instanceId, entitySpawner_->getRemoteTurns()[guid], facing,
                     groundCreature && !creatureMount && unit->getHealth() > 0 && !entity->isActivelyMoving() &&
-                    entitySpawner_->remoteIdleAnimation(guid) == rendering::anim::STAND);
+                    (idleAnim == rendering::anim::STAND || idleAnim == rendering::anim::STEALTH_STAND),
+                    idleAnim);
             }
             float renderYaw = facing + glm::radians(90.0f);
             glm::vec3 groundRotation(0.0f, 0.0f, renderYaw);
@@ -4305,12 +4312,15 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                 const bool isSwimmingNow = _pCreatureSwimmingState.count(guid) > 0;
                 const bool isWalkingNow  = _pCreatureWalkingState.count(guid) > 0;
                 const bool isFlyingNow   = _pCreatureFlyingState.count(guid) > 0;
+                const auto* playerUnit   = static_cast<const game::Unit*>(entity.get());
+                const bool isStealthedNow = !remoteMount && playerUnit && playerUnit->hasCreepVisibility();
                 // In Mount in the air too: 3.3.5 has no rider flight poses.
                 const uint32_t mountedRiderAnim = rendering::anim::MOUNT;
                 bool prevMoving   = _pCreatureWasMoving[guid];
                 bool prevSwimming = _pCreatureWasSwimming[guid];
                 bool prevFlying   = _pCreatureWasFlying[guid];
                 bool prevWalking  = _pCreatureWasWalking[guid];
+                bool& prevStealthed = entitySpawner_->getRemoteWasStealthed()[guid];
                 const bool movingBackward = isMovingNow && direction.backwards;
                 const bool prevBackward = entitySpawner_->getRemoteWasMovingBackward()[guid];
                 const bool wasAirborne = entitySpawner_->getRemoteWasAirborne()[guid];
@@ -4331,6 +4341,7 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                                           (isSwimmingNow != prevSwimming) ||
                                           (isFlyingNow   != prevFlying)   ||
                                           (isWalkingNow  != prevWalking && isMovingNow) ||
+                                          (isStealthedNow != prevStealthed && isMovingNow) ||
                                           (movingBackward != prevBackward) || (airborne != wasAirborne) || jumpFinished ||
                                           (auraLocomotion != prevAuraLocomotion && (isMovingNow || airborne));
                 if (stateChanged) {
@@ -4339,6 +4350,7 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                     _pCreatureWasSwimming[guid] = isSwimmingNow;
                     _pCreatureWasFlying[guid]   = isFlyingNow;
                     _pCreatureWasWalking[guid]  = isWalkingNow;
+                    prevStealthed = isStealthedNow;
                     entitySpawner_->getRemoteWasMovingBackward()[guid] = movingBackward;
                     entitySpawner_->getRemoteWasAirborne()[guid] = airborne;
                     if (!gotState || !rendering::anim::isCorpsePose(curAnimId)) {
@@ -4379,6 +4391,8 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                                 if (isFlyingNow)        targetAnim = rendering::anim::FLY_FORWARD;
                                 else if (isSwimmingNow) targetAnim = rendering::anim::SWIM;
                                 else if (movingBackward) targetAnim = rendering::anim::WALK_BACKWARDS;
+                                else if (isStealthedNow) targetAnim = isWalkingNow ? rendering::anim::STEALTH_WALK
+                                                                                   : rendering::anim::STEALTH_RUN;
                                 else if (isWalkingNow)  targetAnim = rendering::anim::WALK;
                                 else                    targetAnim = rendering::anim::RUN;
                             } else {
@@ -4414,11 +4428,15 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                     }
                 }
 
+                const uint32_t remoteIdleAnim = remoteMount ? rendering::anim::STAND
+                                                            : entitySpawner_->remoteIdleAnimation(guid);
                 driveTurnShuffle(*charRenderer, guid, moverInstance, entitySpawner_->getRemoteTurns()[guid],
                     entity->getOrientation(),
                     !deadOrCorpse && !isMovingNow && !airborne && !isSwimmingNow && !isFlyingNow &&
                     !auraLocomotion &&
-                    entitySpawner_->remoteIdleAnimation(guid) == rendering::anim::STAND);
+                    (remoteIdleAnim == rendering::anim::STAND ||
+                     remoteIdleAnim == rendering::anim::STEALTH_STAND),
+                    remoteIdleAnim);
             }
 
             // A unit standing in a WMO room the camera does not see is not

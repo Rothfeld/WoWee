@@ -1219,7 +1219,11 @@ bool EntityController::applyUnitFieldsOnCreate(const UpdateBlock& block,
         // permanently stealthed creatures (Wildspawn Shadowstalker, Sneak 22766)
         // drawn opaque.
         else if (ufi.bytes1 != 0xFFFF && key == ufi.bytes1) {
-            unit->setVisibilityFlags(static_cast<uint8_t>((val >> 16) & 0xFF));
+            const uint8_t visFlags = static_cast<uint8_t>((val >> 16) & 0xFF);
+            unit->setVisibilityFlags(visFlags);
+            if (block.guid == owner_.getPlayerGuid() && owner_.stealthStateCallbackRef()) {
+                owner_.stealthStateCallbackRef()((visFlags & UNIT_VIS_FLAG_CREEP) != 0);
+            }
         }
         else if (key == ufi.npcEmoteState) { unit->setNpcEmoteState(val); }
         else if (ufi.bytes2 != 0xFFFF && key == ufi.bytes2) {

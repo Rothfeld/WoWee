@@ -406,12 +406,12 @@ void EntitySpawner::spawnOnlinePlayer(uint64_t guid,
     OnlinePlayerAppearanceState st;
     buildPlayerBaseAppearance(instanceId, modelId, raceId, genderId, appearanceBytes, facialFeatures, st);
 
+    playerInstances_[guid] = instanceId;
     if (deadCreatureGuids_.count(guid)) {
         charRenderer->playAnimation(instanceId, rendering::anim::DEAD, true);
     } else {
-        charRenderer->playAnimation(instanceId, rendering::anim::STAND, true);
+        charRenderer->playAnimation(instanceId, remoteIdleAnimation(guid), true);
     }
-    playerInstances_[guid] = instanceId;
 
     // The mount field may have arrived before this render instance, or the
     // player may be re-created without another values update. Reconcile from
@@ -890,7 +890,21 @@ uint32_t EntitySpawner::remoteIdleAnimation(uint64_t guid) const {
     // never rolls Stand fidgets then (Ice Claw Bear, combat_observations).
     if (unit && unit->getMeleeVictimGuid() != 0 && unit->getHealth() > 0) return meleeReadyAnimation(*unit);
     if (auto it = creatureActiveEmotes_.find(guid); it != creatureActiveEmotes_.end()) return it->second;
-    return unit ? rendering::AnimationController::getEmoteAnimByEmotesId(unit->getNpcEmoteState()) : 0;
+    if (unit) {
+        if (const uint32_t emoteAnim = rendering::AnimationController::getEmoteAnimByEmotesId(unit->getNpcEmoteState());
+            emoteAnim != 0) {
+            return emoteAnim;
+        }
+        if (unit->hasCreepVisibility() && unit->getHealth() > 0) {
+            auto* cr = renderer_ ? renderer_->getCharacterRenderer() : nullptr;
+            uint32_t instance = getCreatureInstanceId(guid);
+            if (!instance) instance = getPlayerInstanceId(guid);
+            if (cr && instance != 0 && cr->hasAnimation(instance, rendering::anim::STEALTH_STAND)) {
+                return rendering::anim::STEALTH_STAND;
+            }
+        }
+    }
+    return rendering::anim::STAND;
 }
 
 bool EntitySpawner::remoteIdlesInHover(uint64_t guid) const {
@@ -961,9 +975,13 @@ uint32_t EntitySpawner::remoteResumeAnimation(uint64_t guid) const {
         if (const uint32_t aura = remoteAuraLocomotion(guid)) return aura;
         const uint32_t instanceId = creatureInstances_.count(guid) ? creatureInstances_.at(guid)
                                                                     : playerInstances_.at(guid);
+        const auto entity = gameHandler_->getEntityManager().getEntity(guid);
+        const auto unit = std::dynamic_pointer_cast<game::Unit>(entity);
+        const bool stealthed = unit && unit->hasCreepVisibility();
         return rendering::creatureMovingAnimation(creatureFlyingState_.count(guid) > 0,
                                                   creatureSwimmingState_.count(guid) > 0,
-                                                  remoteGaitWalks(guid, instanceId));
+                                                  remoteGaitWalks(guid, instanceId),
+                                                  stealthed);
     }
     return remoteIdleAnimation(guid);
 }
@@ -1356,6 +1374,7 @@ void EntitySpawner::updateRemoteUnitState(uint64_t guid, uint32_t instanceId, bo
 void EntitySpawner::despawnPlayer(uint64_t guid) {
     remoteCastHolds_.erase(guid);
     remoteWasAuraLocomotion_.erase(guid);
+    remoteWasStealthed_.erase(guid);
     if (!renderer_ || !renderer_->getCharacterRenderer()) return;
     remoteStandStates_.erase(guid);
     unitTransformAuraVisuals_.erase(guid);

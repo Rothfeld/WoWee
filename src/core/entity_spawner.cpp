@@ -411,6 +411,7 @@ void EntitySpawner::shutdown() {
     creatureWasWalking_.clear();
     remoteMovementFlags_.clear();
     remoteWasMovingBackward_.clear();
+    remoteWasStealthed_.clear();
     remoteWasAirborne_.clear();
     remoteAirborneLegs_.clear();
     remoteLegYawOffsets_.clear();
@@ -444,6 +445,7 @@ void EntitySpawner::clearRemoteMotionState(uint64_t guid) {
     creatureWasWalking_.erase(guid);
     remoteMovementFlags_.erase(guid);
     remoteWasMovingBackward_.erase(guid);
+    remoteWasStealthed_.erase(guid);
     remoteWasAirborne_.erase(guid);
     remoteAirborneLegs_.erase(guid);
     remoteLegYawOffsets_.erase(guid);
@@ -489,6 +491,7 @@ void EntitySpawner::resetAllState() {
     creatureWasWalking_.clear();
     remoteMovementFlags_.clear();
     remoteWasMovingBackward_.clear();
+    remoteWasStealthed_.clear();
     remoteWasAirborne_.clear();
     remoteAirborneLegs_.clear();
     remoteLegYawOffsets_.clear();
@@ -1884,17 +1887,15 @@ if (deadCreatureGuids_.count(guid)) {
         // creature: native 2.4.3 shows Tree Disguise (16977,
         // AshenvaleTreeFalling01.m2, Birth grows bone 1 from 0.09 over
         // 16.7 s) at full height right after .npc setmodel.
-        charRenderer->playAnimation(instanceId, remoteIdlesInHover(guid)
-            ? rendering::anim::FLY_IDLE : rendering::anim::STAND, true);
+        charRenderer->playAnimation(instanceId, remoteIdleAnimation(guid), true);
     } else if (charRenderer->hasAnimation(instanceId, rendering::anim::BIRTH)) {
-        // Play birth animation (one-shot) - will return to STAND after
-        charRenderer->playAnimation(instanceId, rendering::anim::BIRTH, false);
+        // Play birth animation (one-shot) - will return to idle after
+        charRenderer->playAnimation(instanceId, rendering::anim::BIRTH, false, remoteIdleAnimation(guid));
     } else if (charRenderer->hasAnimation(instanceId, rendering::anim::SPAWN)) {
-        charRenderer->playAnimation(instanceId, rendering::anim::SPAWN, false);
+        charRenderer->playAnimation(instanceId, rendering::anim::SPAWN, false, remoteIdleAnimation(guid));
     } else {
-        // Already hovering or levitating when it came into view: Hover, not Stand.
-        charRenderer->playAnimation(instanceId, remoteIdlesInHover(guid)
-            ? rendering::anim::FLY_IDLE : rendering::anim::STAND, true);
+        // Already hovering, levitating, or stealthed when it came into view.
+        charRenderer->playAnimation(instanceId, remoteIdleAnimation(guid), true);
     }
 }
 bool newlySpawned = false;
