@@ -397,3 +397,149 @@ TEST_CASE("Unit reaction follows the template rule against the player's live tem
     CHECK(factionTemplateReaction(defiasThug, gameMaster) == 4);
     CHECK(factionTemplateReaction(tamedBattleboar, dwarf) == 2);
 }
+
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+
+TEST_CASE("M2 skin batch flag 0x08 excludes non-pickable light columns while keeping portals and solid bowls", "[go-pick][highlight]") {
+    using wowee::rendering::kM2BatchFlagNonPickable;
+    using wowee::rendering::m2BatchIsPickable;
+    using wowee::rendering::pickSkinnedModel;
+
+    // AuraBlueVeryTall.m2 / AuraPurpleShort.m2: batchFlags = 0x18 (0x10 | 0x08), blendMode = 4.
+    CHECK_FALSE(m2BatchIsPickable(0x18, 0, 4, 1.0f, false, true));
+    CHECK_FALSE(m2BatchIsPickable(0x18, 0, 4, 1.0f, false, false));
+
+    // UtherShrineLightBeam.m2 / G_HolyLightWell.m2 batch 0 (vertical beam): batchFlags = 0x08.
+    CHECK_FALSE(m2BatchIsPickable(kM2BatchFlagNonPickable, 0, 2, 1.0f, false, true));
+    CHECK_FALSE(m2BatchIsPickable(kM2BatchFlagNonPickable, 0, 0, 1.0f, false, true));
+
+    // MagePortal_Ironforge.m2: batchFlags = 0x10, blendMode = 4 (additive).
+    // Pickable as ownSurface (portal hover/click), ignored as M2 occluder.
+    CHECK(m2BatchIsPickable(0x10, 0, 4, 1.0f, false, true));
+    CHECK_FALSE(m2BatchIsPickable(0x10, 0, 4, 1.0f, false, false));
+
+    // ElwynnCampfire.m2 / TreasureChest01.m2 / G_HolyLightWell.m2 batch 1 (bowl):
+    // batchFlags 0x00 or 0x10, blendMode <= 1: pickable for both ownSurface and occlusion.
+    CHECK(m2BatchIsPickable(0x10, 0, 0, 1.0f, false, true));
+    CHECK(m2BatchIsPickable(0x10, 0, 0, 1.0f, false, false));
+    CHECK(m2BatchIsPickable(0x00, 0, 1, 1.0f, false, true));
+    CHECK(m2BatchIsPickable(0x00, 0, 1, 1.0f, false, false));
+
+    // LOD > 0, faded-out batches, and sky star layers are never pickable.
+    CHECK_FALSE(m2BatchIsPickable(0x10, 1, 0, 1.0f, false, true));
+    CHECK_FALSE(m2BatchIsPickable(0x10, 0, 0, 0.0f, false, true));
+    CHECK_FALSE(m2BatchIsPickable(0x10, 0, 0, 1.0f, true, true));
+
+    // Synthetic two-batch model (beam quad at z=4 with flag 0x08 in front of solid bowl quad at z=1 with flag 0x00):
+    // ray from z=6 downward ignores the z=4 beam and hits the z=1 bowl at t=5.
+    wowee::pipeline::M2Model twoBatch;
+    for (const float z : {4.0f, 1.0f}) {
+        for (const glm::vec2 xy : {glm::vec2{-1, -1}, glm::vec2{1, -1}, glm::vec2{1, 1}, glm::vec2{-1, 1}}) {
+            wowee::pipeline::M2Vertex v{};
+            v.position = {xy.x, xy.y, z};
+            twoBatch.vertices.push_back(v);
+        }
+    }
+    twoBatch.indices = {0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7};
+    wowee::pipeline::M2Material addMat{};
+    addMat.blendMode = 4;
+    wowee::pipeline::M2Material solidMat{};
+    solidMat.blendMode = 0;
+    twoBatch.materials = {addMat, solidMat};
+
+    wowee::pipeline::M2Batch beamBatch{};
+    beamBatch.flags = 0x18;
+    beamBatch.materialIndex = 0;
+    beamBatch.indexStart = 0;
+    beamBatch.indexCount = 6;
+    wowee::pipeline::M2Batch bowlBatch{};
+    bowlBatch.flags = 0x00;
+    bowlBatch.materialIndex = 1;
+    bowlBatch.indexStart = 6;
+    bowlBatch.indexCount = 6;
+    twoBatch.batches = {beamBatch, bowlBatch};
+
+    const float hitT = pickSkinnedModel(
+        twoBatch, {},
+        [&](const wowee::pipeline::M2Batch& b) {
+            return m2BatchIsPickable(b.flags, b.submeshLevel,
+                                     twoBatch.materials[b.materialIndex].blendMode, 1.0f, false, true);
+        },
+        {0.0f, 0.0f, 6.0f}, {0.0f, 0.0f, -1.0f}, 20.0f);
+    CHECK(hitT == Catch::Approx(5.0f));
+}
+
+TEST_CASE("Shipped TBC pillar-of-light, Lightwell, portal, campfire, and chest M2s match pickability rules", "[go-pick][highlight][assets]") {
+    namespace fs = std::filesystem;
+    fs::path tbcRoot;
+    if (const char* env = std::getenv("WOWEE_TBC_DATA_DIR"); env && *env) {
+        tbcRoot = env;
+    } else {
+        tbcRoot = "/workspace/azerothcore/client/wowee-data/expansions/tbc";
+    }
+    if (!fs::is_directory(tbcRoot)) return;
+
+    const auto loadM2 = [&](const char* relPath) {
+        const fs::path full = tbcRoot / relPath;
+        INFO("loading " << full.string());
+        REQUIRE(fs::is_regular_file(full));
+        std::ifstream in(full, std::ios::binary | std::ios::ate);
+        REQUIRE(in.is_open());
+        const auto sz = in.tellg();
+        std::vector<uint8_t> bytes(static_cast<size_t>(sz));
+        in.seekg(0);
+        in.read(reinterpret_cast<char*>(bytes.data()), sz);
+        return wowee::pipeline::M2Loader::load(bytes);
+    };
+
+    const auto countPickable = [](const wowee::pipeline::M2Model& model, bool ownSurface) {
+        size_t count = 0;
+        for (const auto& b : model.batches) {
+            const uint8_t blend = b.materialIndex < model.materials.size()
+                                      ? static_cast<uint8_t>(model.materials[b.materialIndex].blendMode)
+                                      : 0u;
+            if (wowee::rendering::m2BatchIsPickable(b.flags, b.submeshLevel, blend, 1.0f, false, ownSurface))
+                ++count;
+        }
+        return count;
+    };
+
+    // Pure light-pillar / aura models: zero pickable batches.
+    for (const char* rel : {
+             "world/generic/passivedoodads/particleemitters/aurablueverytall.m2",
+             "world/generic/passivedoodads/particleemitters/aurapurpleshort.m2",
+             "world/nodxt/generic/passivedoodads/volumetriclights/uthershrinelightbeam.m2"}) {
+        const auto m = loadM2(rel);
+        REQUIRE_FALSE(m.batches.empty());
+        CHECK(countPickable(m, true) == 0);
+        CHECK(countPickable(m, false) == 0);
+    }
+
+    // Lightwell (G_HolyLightWell.m2): batch 0 (vertical beam, flag 0x08) skipped, batch 1 (bowl, flag 0x00) pickable.
+    {
+        const auto lw = loadM2("world/goober/g_holylightwell.m2");
+        REQUIRE(lw.batches.size() == 2);
+        CHECK((lw.batches[0].flags & wowee::rendering::kM2BatchFlagNonPickable) != 0);
+        CHECK((lw.batches[1].flags & wowee::rendering::kM2BatchFlagNonPickable) == 0);
+        CHECK(countPickable(lw, true) == 1);
+    }
+
+    // Shattrath portal (MagePortal_Ironforge.m2): pickable for ownSurface, non-occluding.
+    {
+        const auto portal = loadM2("world/generic/activedoodads/spellportals/mageportal_ironforge.m2");
+        REQUIRE(portal.batches.size() == 1);
+        CHECK(countPickable(portal, true) == 1);
+        CHECK(countPickable(portal, false) == 0);
+    }
+
+    // Campfire and chest: pickable for ownSurface and solid occlusion.
+    {
+        const auto camp = loadM2("world/azeroth/elwynn/passivedoodads/campfire/elwynncampfire.m2");
+        CHECK(countPickable(camp, true) >= 1);
+        const auto chest = loadM2("world/skillactivated/containers/treasurechest01.m2");
+        CHECK(countPickable(chest, true) == 1);
+        CHECK(countPickable(chest, false) == 1);
+    }
+}

@@ -78,6 +78,7 @@ struct M2ModelGPU {
         uint16_t textureAnimIndex = 0xFFFF; // 0xFFFF = no texture animation
         uint16_t blendMode = 0;   // 0=Opaque, 1=AlphaKey, 2=Alpha, 3=Add, etc.
         uint16_t materialFlags = 0; // M2 material flags (0x01=Unlit, 0x04=TwoSided, 0x10=NoDepthWrite)
+        uint8_t batchFlags = 0;     // M2Batch.flags (0x04=projected, 0x08=non-pickable)
         bool hasAuthoredMaterial = false; // missing flags must not be guessed as one-sided
         bool projected = false;   // skin batch flag 0x4: texture laid onto the ground under the quad
         uint16_t submeshLevel = 0; // LOD level: 0=base, 1=LOD1, 2=LOD2, 3=LOD3

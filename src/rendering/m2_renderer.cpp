@@ -1860,7 +1860,7 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId, boo
             }
             M2ModelGPU::BatchGPU bgpu;
             bgpu.indexStart = batch.indexStart;
-            bgpu.indexCount = batch.indexCount;
+            bgpu.indexCount = batch.indexCount; bgpu.batchFlags = batch.flags;
 
             // Store texture animation index from batch
             bgpu.textureAnimIndex = batch.textureAnimIndex;

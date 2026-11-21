@@ -58,7 +58,7 @@ std::vector<glm::mat4> poseModelBones(const pipeline::M2Model& model, int sequen
 
 bool unitPickBatchDrawn(const pipeline::M2Model& model, const pipeline::M2Batch& batch,
                         const UnitPickState& state) {
-    if (batch.flags & 0x08) return false;
+    if (batch.flags & kM2BatchFlagNonPickable) return false;
     bool filter = state.activeGeosets && !state.activeGeosets->empty();
     if (filter) {
         filter = std::any_of(model.batches.begin(), model.batches.end(), [&](const pipeline::M2Batch& b) {

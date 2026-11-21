@@ -42,6 +42,21 @@ inline float pickVisualTriangles(std::span<const glm::vec3> vertices,
 /// MOPY material of a WMO triangle no batch draws: collision only, invisible.
 inline constexpr uint8_t kWmoCollisionOnlyMaterial = 0xFF;
 
+/// M2 skin batch (texture-unit) flag 0x08 excludes the batch from CM2Scene
+/// narrow-phase ray picking (build 8606 0x70ae50; docs/unit-size-rules.md).
+/// Authored on aura/light-shaft columns (AuraBlueVeryTall.m2, AuraPurpleShort.m2,
+/// UtherShrineLightBeam.m2) and Lightwell's vertical beam (G_HolyLightWell.m2
+/// batch 0, while its solid bowl batch 1 has flag 0x00 and remains pickable).
+inline constexpr uint8_t kM2BatchFlagNonPickable = 0x08u;
+
+[[nodiscard]] constexpr bool m2BatchIsPickable(uint8_t batchFlags, uint16_t submeshLevel,
+                                               uint8_t blendMode, float batchOpacity,
+                                               bool starLayer, bool ownSurface) {
+    if ((batchFlags & kM2BatchFlagNonPickable) != 0) return false;
+    if (submeshLevel != 0 || batchOpacity < 0.01f || starLayer) return false;
+    return ownSurface || blendMode < 2;
+}
+
 /// The nearest drawn WMO triangle among `triangleStarts` (offsets into
 /// `indices`, one per triangle) before `limit`. A collision-only triangle
 /// stops the player and the camera but is not seen, so it does not hide what

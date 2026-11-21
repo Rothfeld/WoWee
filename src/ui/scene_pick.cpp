@@ -92,7 +92,7 @@ ScenePick pickScene(game::GameHandler& gameHandler,
             highlightOnly = !game::gameObjectAffordance(goInfo->type, goInfo->data[0], goInfo->data[1],
                                                         enabled).hoverable();
             // Flagged off or hostile (not enabled): nothing, as before.
-            highlightable = enabled && game::gameObjectHighlights(goInfo->type, goInfo->data[1]);
+            highlightable = enabled && game::gameObjectHighlights(goInfo->type, goInfo->data);
             if (highlightOnly && !highlightable) continue;
         }
 

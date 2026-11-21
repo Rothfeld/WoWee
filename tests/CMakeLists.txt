@@ -1834,7 +1834,10 @@ wowee_add_test(test_summon_title SOURCES test_summon_title.cpp)
 # Which of ScenePick's answers a caller wants. closestGuid and resolve()
 # disagree exactly where a wide object stands beside an NPC, which is where the
 # vendor cursor was asking the wrong one.
-wowee_add_test(test_scene_pick SOURCES test_scene_pick.cpp)
+wowee_add_test(test_scene_pick
+    SOURCES test_scene_pick.cpp
+            ${CMAKE_SOURCE_DIR}/src/pipeline/m2_loader.cpp
+            ${TEST_COMMON_SOURCES})
 
 # ── test_plural_escape ───────────────────────────────────────
 # WoW's |4singular:plural; escape, which nothing resolved - so the logout

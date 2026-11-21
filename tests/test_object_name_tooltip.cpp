@@ -138,3 +138,74 @@ TEST_CASE("a game object's cursor follows lock, quest marker and reach", "[gameo
     portal.inRange = false;
     CHECK(gameObjectCursorPath(portal) == "Interface\\Cursor\\UnableInteract.blp");
 }
+
+using wowee::game::gameObjectHighlights;
+
+TEST_CASE("TBC 2.4.3 game object hover highlight follows type and template highlight fields", "[gameobject][highlight]") {
+    std::uint32_t emptyData[24] = {};
+
+    // Every usable type (rule.use == true) highlights under the pointer.
+    for (uint32_t t = 0; t < 35; ++t) {
+        const auto& r = gameObjectTypeRule(t);
+        if (r.use) {
+            INFO("usable type " << t << " (" << r.name << ")");
+            CHECK(r.highlight);
+            CHECK(gameObjectHighlights(t, emptyData));
+        }
+    }
+
+    // Real interactable objects: doors, buttons/levers, quest notice boards,
+    // chests/herbs/veins, chairs, plaques/books, goobers, summoning altars,
+    // mailboxes, spellcasters/portals, meeting stones, PvP flags, mini-game
+    // teleport stones, and guild vaults.
+    for (uint32_t t : {0u, 1u, 2u, 3u, 7u, 9u, 10u, 13u, 17u, 18u, 19u, 22u, 23u, 24u, 26u, 27u, 34u}) {
+        INFO("interactable type " << t);
+        CHECK(gameObjectHighlights(t, emptyData));
+    }
+
+    // Non-click types measured brightening on Native 2.4.3 (pair 5 & pair 15):
+    // SPELL_FOCUS (8: Campfire 1798, Forge 1685), DUEL_ARBITER (16: Duel Flag
+    // 21680), and AURA_GENERATOR (30: Vanguard of the Alliance 183333).
+    for (uint32_t t : {8u, 16u, 30u}) {
+        INFO("non-click lit type " << t);
+        CHECK_FALSE(gameObjectTypeRule(t).use);
+        CHECK(gameObjectHighlights(t, emptyData));
+    }
+
+    // GAMEOBJECT_TYPE_TRAP (6) never highlights on hover in Native 2.4.3:
+    // Alliance Silithyst pillar 181618, Alliance Silithyst Extractor 181603,
+    // Drakonid Bones 179804, and Serpentbloom 19535 (even with data1 != 0).
+    std::uint32_t trapWithData1[24] = {};
+    trapWithData1[1] = 1;
+    trapWithData1[10] = 1;
+    CHECK_FALSE(gameObjectHighlights(6, emptyData));
+    CHECK_FALSE(gameObjectHighlights(6, trapWithData1));
+
+    // Non-interactable scenery/utility types stay dark on Native 2.4.3:
+    // BINDER (4), TRANSPORT (11: Vator 80023), AREADAMAGE (12), MAP_OBJECT (14),
+    // MO_TRANSPORT (15), AUCTIONHOUSE (20: Gadgetzan Auction 175904),
+    // GUARDPOST (21), FISHINGHOLE (25: Oily Blackmouth School 180582),
+    // LOTTERY_KIOSK (28), DUNGEON_DIFFICULTY (31: heroic icon 184128),
+    // BARBER_CHAIR (32), DESTRUCTIBLE (33), and unknown types >= 35.
+    for (uint32_t t : {4u, 11u, 12u, 14u, 15u, 20u, 21u, 25u, 28u, 31u, 32u, 33u, 35u, 99u}) {
+        INFO("non-lit type " << t);
+        CHECK_FALSE(gameObjectHighlights(t, trapWithData1));
+    }
+
+    // GAMEOBJECT_TYPE_GENERIC (5): highlights iff data[1] (_generic.highlight) != 0.
+    // Floating tooltip alone (data[0] != 0, data[1] == 0: Ironforge Auction house 176924) stays dark.
+    std::uint32_t genericData[24] = {};
+    CHECK_FALSE(gameObjectHighlights(5, genericData));
+    genericData[0] = 2;
+    CHECK_FALSE(gameObjectHighlights(5, genericData));
+    genericData[1] = 1;  // Guild Master & Tabards 183865 / Old Coast Road 80
+    CHECK(gameObjectHighlights(5, genericData));
+
+    // GAMEOBJECT_TYPE_CAPTURE_POINT (29): highlights iff data[19] (capturePoint.highlight) != 0.
+    // Visual Banner 184382 (data[18]=1 large, data[19]=0) stays dark on Native 2.4.3.
+    std::uint32_t captureData[24] = {};
+    captureData[18] = 1;
+    CHECK_FALSE(gameObjectHighlights(29, captureData));
+    captureData[19] = 1;
+    CHECK(gameObjectHighlights(29, captureData));
+}

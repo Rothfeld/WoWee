@@ -119,10 +119,10 @@ struct ScenePick {
     uint64_t namedObjectGuid = 0;
     float    namedObjectT = 1e30f;
 
-    /// The nearest game object hit that 2.4.3 lights under the pointer:
-    /// every type, a GENERIC one only with its highlight field (data1).
-    /// Includes objects the mouse otherwise passes through (a campfire, a
-    /// spell focus, has neither cursor nor name and still lights up).
+    /// The nearest game object hit that 2.4.3 lights under the pointer
+    /// (game::gameObjectHighlights): usable types plus SPELL_FOCUS,
+    /// DUEL_ARBITER and AURA_GENERATOR, and GENERIC / CAPTURE_POINT when
+    /// their template highlight field is set.
     uint64_t highlightObjectGuid = 0;
     float    highlightObjectT = 1e30f;
 

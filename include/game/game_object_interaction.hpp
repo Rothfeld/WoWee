@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <iterator>
 #include <optional>
+#include <span>
 #include <stdexcept>
 
 namespace wowee::game {
@@ -41,11 +42,12 @@ enum class ObjectNameTooltip { None, Floating, Default };
 enum class GameObjectRuleSource { Server, Native, NeedsCapture };
 
 /// What one GAMEOBJECT_TYPE offers the mouse. One table, used by the scene
-/// pick (hover), the name tooltip, the cursor and the click.
+/// pick (hover), hover highlight, the name tooltip, the cursor and the click.
 struct GameObjectTypeRule {
     uint32_t type;
     const char* name;
     bool use;                   ///< Cursor shows and a click sends a use.
+    bool highlight;             ///< Model brightens under the pointer (5 & 29 use data[]).
     ObjectNameTooltip tooltip;  ///< GENERIC overrides this from its data.
     const char* cursor;         ///< Interface\Cursor\<cursor>.blp when usable.
     GameObjectRuleSource source;
@@ -61,47 +63,47 @@ struct GameObjectTypeRule {
 //             (GetGameObjectIfCanInteractWith).
 //   Page    = TEXT is read through CMSG_PAGE_TEXT_QUERY from its pageID.
 inline constexpr GameObjectTypeRule kGameObjectTypeRules[] = {
-    {0,  "DOOR",               true,  ObjectNameTooltip::Default, "Interact",  GameObjectRuleSource::Server, "Use"},
-    {1,  "BUTTON",             true,  ObjectNameTooltip::Default, "Interact",  GameObjectRuleSource::Server, "Use"},
-    {2,  "QUESTGIVER",         true,  ObjectNameTooltip::Default, "Interact",  GameObjectRuleSource::Server, "Use (gossip); quest marker cursor from its status"},
-    {3,  "CHEST",              true,  ObjectNameTooltip::Default, "Interact",  GameObjectRuleSource::Server, "Use; gear natively (Warpwood Pod 179526)"},
-    {4,  "BINDER",             false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Server, "Absent"},
-    {5,  "GENERIC",            false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Server, "Refused; label from data0/data1"},
-    {6,  "TRAP",               false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Native, "Not interactive: Drakonid Bones 179804 in BWL"},
-    {7,  "CHAIR",              true,  ObjectNameTooltip::None,    "Interact",  GameObjectRuleSource::Server, "Use (sit); no name is WoWee's earlier rule"},
-    {8,  "SPELL_FOCUS",        false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Native, "Forge 1685: no cursor natively"},
-    {9,  "TEXT",               true,  ObjectNameTooltip::Default, "Inspect",   GameObjectRuleSource::Server, "Page"},
-    {10, "GOOBER",             true,  ObjectNameTooltip::Default, "Interact",  GameObjectRuleSource::Server, "Use"},
-    {11, "TRANSPORT",          false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Server, "Absent; Vator 80023 shows nothing natively"},
-    {12, "AREADAMAGE",         false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Server, "Absent; interaction distance 0"},
-    {13, "CAMERA",             true,  ObjectNameTooltip::Default, "Interact",  GameObjectRuleSource::Server, "Use (cinematic/event)"},
-    {14, "MAP_OBJECT",         false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Server, "Absent"},
-    {15, "MO_TRANSPORT",       false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Server, "Absent"},
-    {16, "DUEL_ARBITER",       false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Native, "Duel Flag 21680: no cursor natively"},
-    {17, "FISHINGNODE",        true,  ObjectNameTooltip::Default, "Fishing",   GameObjectRuleSource::Server, "Use"},
-    {18, "SUMMONING_RITUAL",   true,  ObjectNameTooltip::Default, "Interact",  GameObjectRuleSource::Server, "Use"},
-    {19, "MAILBOX",            true,  ObjectNameTooltip::Default, "Mail",      GameObjectRuleSource::Server, "Mail"},
-    {20, "AUCTIONHOUSE",       false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Server, "Absent"},
-    {21, "GUARDPOST",          false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Server, "Absent"},
-    {22, "SPELLCASTER",        true,  ObjectNameTooltip::Default, "Interact",  GameObjectRuleSource::Server, "Use"},
-    {23, "MEETINGSTONE",       true,  ObjectNameTooltip::Default, "Interact",  GameObjectRuleSource::Server, "Use"},
-    {24, "FLAGSTAND",          true,  ObjectNameTooltip::Default, "Interact",  GameObjectRuleSource::Server, "Use"},
-    {25, "FISHINGHOLE",        false, ObjectNameTooltip::Default, nullptr,     GameObjectRuleSource::Native, "Oily Blackmouth School 180582: no cursor natively; fished via the spell"},
-    {26, "FLAGDROP",           true,  ObjectNameTooltip::Default, "Interact",  GameObjectRuleSource::Server, "Use"},
-    {27, "MINI_GAME",          true,  ObjectNameTooltip::Default, "Interact",  GameObjectRuleSource::Native, "Teleport-Stone to Hyjal 211050: gear natively; server ignores the use"},
-    {28, "LOTTERY_KIOSK",      false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Server, "Absent"},
-    {29, "CAPTURE_POINT",      false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Server, "Absent (proximity)"},
-    {30, "AURA_GENERATOR",     false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Server, "Absent"},
-    {31, "DUNGEON_DIFFICULTY", false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Server, "Absent"},
-    {32, "BARBER_CHAIR",       false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Server, "Absent"},
-    {33, "DESTRUCTIBLE",       false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Server, "Absent"},
-    {34, "GUILD_BANK",         true,  ObjectNameTooltip::Default, "Buy",       GameObjectRuleSource::Native, "Guild Vault 187299: Buy natively"},
+    {0,  "DOOR",               true,  true,  ObjectNameTooltip::Default, "Interact",  GameObjectRuleSource::Server, "Use"},
+    {1,  "BUTTON",             true,  true,  ObjectNameTooltip::Default, "Interact",  GameObjectRuleSource::Server, "Use"},
+    {2,  "QUESTGIVER",         true,  true,  ObjectNameTooltip::Default, "Interact",  GameObjectRuleSource::Server, "Use (gossip); quest marker cursor from its status"},
+    {3,  "CHEST",              true,  true,  ObjectNameTooltip::Default, "Interact",  GameObjectRuleSource::Server, "Use; gear natively (Warpwood Pod 179526)"},
+    {4,  "BINDER",             false, false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Server, "Absent"},
+    {5,  "GENERIC",            false, false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Server, "Refused; label from data0/data1, highlight from data1"},
+    {6,  "TRAP",               false, false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Native, "Not interactive/lit: Silithyst 181603/181618, Drakonid Bones 179804"},
+    {7,  "CHAIR",              true,  true,  ObjectNameTooltip::None,    "Interact",  GameObjectRuleSource::Server, "Use (sit); no name is WoWee's earlier rule"},
+    {8,  "SPELL_FOCUS",        false, true,  ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Native, "Campfire 1798, Forge 1685: lit natively, no cursor"},
+    {9,  "TEXT",               true,  true,  ObjectNameTooltip::Default, "Inspect",   GameObjectRuleSource::Server, "Page"},
+    {10, "GOOBER",             true,  true,  ObjectNameTooltip::Default, "Interact",  GameObjectRuleSource::Server, "Use"},
+    {11, "TRANSPORT",          false, false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Server, "Absent; Vator 80023 neither cursor nor highlight natively"},
+    {12, "AREADAMAGE",         false, false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Server, "Absent; interaction distance 0"},
+    {13, "CAMERA",             true,  true,  ObjectNameTooltip::Default, "Interact",  GameObjectRuleSource::Server, "Use (cinematic/event)"},
+    {14, "MAP_OBJECT",         false, false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Server, "Absent"},
+    {15, "MO_TRANSPORT",       false, false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Server, "Absent"},
+    {16, "DUEL_ARBITER",       false, true,  ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Native, "Duel Flag 21680: lit natively (1.66x), no cursor"},
+    {17, "FISHINGNODE",        true,  true,  ObjectNameTooltip::Default, "Fishing",   GameObjectRuleSource::Server, "Use"},
+    {18, "SUMMONING_RITUAL",   true,  true,  ObjectNameTooltip::Default, "Interact",  GameObjectRuleSource::Server, "Use"},
+    {19, "MAILBOX",            true,  true,  ObjectNameTooltip::Default, "Mail",      GameObjectRuleSource::Server, "Mail"},
+    {20, "AUCTIONHOUSE",       false, false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Server, "Absent; Gadgetzan Auction 175904 dark natively"},
+    {21, "GUARDPOST",          false, false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Server, "Absent"},
+    {22, "SPELLCASTER",        true,  true,  ObjectNameTooltip::Default, "Interact",  GameObjectRuleSource::Server, "Use"},
+    {23, "MEETINGSTONE",       true,  true,  ObjectNameTooltip::Default, "Interact",  GameObjectRuleSource::Server, "Use"},
+    {24, "FLAGSTAND",          true,  true,  ObjectNameTooltip::Default, "Interact",  GameObjectRuleSource::Server, "Use"},
+    {25, "FISHINGHOLE",        false, false, ObjectNameTooltip::Default, nullptr,     GameObjectRuleSource::Native, "Oily Blackmouth School 180582: named, neither cursor nor highlight"},
+    {26, "FLAGDROP",           true,  true,  ObjectNameTooltip::Default, "Interact",  GameObjectRuleSource::Server, "Use"},
+    {27, "MINI_GAME",          true,  true,  ObjectNameTooltip::Default, "Interact",  GameObjectRuleSource::Native, "Teleport-Stone to Hyjal 211050: gear and highlight natively"},
+    {28, "LOTTERY_KIOSK",      false, false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Server, "Absent"},
+    {29, "CAPTURE_POINT",      false, false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Server, "Absent (proximity); highlight from data19"},
+    {30, "AURA_GENERATOR",     false, true,  ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Server, "Absent; Vanguard of the Alliance 183333 lit natively (2.04x)"},
+    {31, "DUNGEON_DIFFICULTY", false, false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Server, "Absent; heroic portal icon 184128 dark natively"},
+    {32, "BARBER_CHAIR",       false, false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Server, "Absent"},
+    {33, "DESTRUCTIBLE",       false, false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Server, "Absent"},
+    {34, "GUILD_BANK",         true,  true,  ObjectNameTooltip::Default, "Buy",       GameObjectRuleSource::Native, "Guild Vault 187299: Buy and highlight natively"},
 };
 
 /// The row for a type. Types past the table are not usable and unnamed.
 inline const GameObjectTypeRule& gameObjectTypeRule(uint32_t type) {
     static constexpr GameObjectTypeRule kUnknown{
-        0xFFFFFFFFu, "UNKNOWN", false, ObjectNameTooltip::None, nullptr,
+        0xFFFFFFFFu, "UNKNOWN", false, false, ObjectNameTooltip::None, nullptr,
         GameObjectRuleSource::Server, "no such type"};
     if (type >= std::size(kGameObjectTypeRules)) return kUnknown;
     const auto& row = kGameObjectTypeRules[type];
@@ -120,12 +122,19 @@ inline ObjectNameTooltip objectNameTooltip(uint32_t type, uint32_t data0, uint32
     return data1 != 0 ? ObjectNameTooltip::Default : ObjectNameTooltip::None;
 }
 
-/// Whether 2.4.3 lights the object under the pointer. Elwynn and Hellfire:
-/// a chest, Peacebloom, a mailbox, a wanted poster and a campfire (SPELL_FOCUS,
-/// no cursor and no name) all do; GENERIC only with data1, its highlight
-/// field (barrels and crates of scenery stay dark).
-inline bool gameObjectHighlights(uint32_t type, uint32_t data1) {
-    return type != 5 || data1 != 0;
+/// Whether 2.4.3 lights the object under the pointer. Measured on build 8606
+/// (pair 5 & pair 15): usable types plus SPELL_FOCUS (Campfire 1798, Forge
+/// 1685), DUEL_ARBITER (Duel Flag 21680) and AURA_GENERATOR (Vanguard of the
+/// Alliance 183333) brighten; GENERIC (5) and CAPTURE_POINT (29) consult their
+/// template highlight field (CMaNGOS GameObject.h _generic.highlight = data[1],
+/// capturePoint.highlight = data[19]); TRAP (6: Silithyst pillar 181618,
+/// Silithyst extractor 181603, Drakonid Bones 179804), TRANSPORT (11),
+/// AUCTIONHOUSE (20), FISHINGHOLE (25), DUNGEON_DIFFICULTY (31) and unused
+/// server types stay dark.
+inline bool gameObjectHighlights(uint32_t type, std::span<const uint32_t> data) {
+    if (type == 5) return data.size() > 1 && data[1] != 0;
+    if (type == 29) return data.size() > 19 && data[19] != 0;
+    return gameObjectTypeRule(type).highlight;
 }
 
 /// What the mouse gets from one object: whether a click uses it, which name

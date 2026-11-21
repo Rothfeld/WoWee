@@ -1521,10 +1521,10 @@ float M2Renderer::raycastVisibleGeometry(const glm::vec3& origin, const glm::vec
             positions.emplace_back(position);
         }
         for (const auto& batch : model.batches) {
-            // Additive flame/glow cards and invisible/alternate batches do not
-            // turn empty space between the solid candles into an occluder.
-            if (batch.submeshLevel != 0 || (batch.blendMode >= 2 && !ownSurface) ||
-                batch.batchOpacity < 0.01f || batch.starLayer) continue;
+            // Batch flag 0x08 marks non-pickable light/aura geometry; additive
+            // glow cards skip occlusion queries while remaining pickable for portals.
+            if (!m2BatchIsPickable(batch.batchFlags, batch.submeshLevel, batch.blendMode,
+                                   batch.batchOpacity, batch.starLayer, ownSurface)) continue;
             assert(batch.indexStart + batch.indexCount <= model.pickIndices.size());
             closest = pickVisualTriangles(positions,
                 std::span<const uint16_t>(model.pickIndices).subspan(batch.indexStart, batch.indexCount),
