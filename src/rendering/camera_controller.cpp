@@ -3982,25 +3982,24 @@ bool CameraController::isSprinting() const {
 
 void CameraController::applyKnockBack(float vcos, float vsin, float hspeed, float vspeed) {
     // The server sends (vcos, vsin) as the 2D direction vector in server/wire
-    // coordinate space.  After the server→canonical→render swaps, the direction
+    // coordinate space.  After the server->canonical->render swaps, the direction
     // in render space is simply (vcos, vsin) - the two swaps cancel each other.
     knockbackHorizVel_ = glm::vec2(vcos, vsin) * hspeed;
     knockbackActive_ = true;
 
     // vspeed in the wire packet is negative when the server wants to launch the
-    // player upward (matches TrinityCore: data << float(-speedZ)).  Negate it
-    // here to obtain the correct upward initial velocity.
+    // player upward (matches CMaNGOS/TrinityCore: data << float(-speedZ)).  Negate
+    // it here to obtain the correct upward initial velocity.
     verticalVelocity = -vspeed;
     grounded = false;
     coyoteTimer = 0.0f;
     jumpBufferTimer = 0.0f;
 
-    // Notify the server that the player left the ground so the FALLING flag is
-    // set in subsequent movement heartbeats.  The normal jump detection
-    // (nowJump && grounded) does not fire during a server-driven knockback.
-    if (movementCallback) {
-        movementCallback(static_cast<uint32_t>(game::Opcode::MSG_MOVE_JUMP));
-    }
+    // MovementHandler::handleMoveKnockBack sets MovementFlags::FALLING and the
+    // server-supplied knockback launch vector directly on movementInfo for
+    // CMSG_MOVE_KNOCK_BACK_ACK.  Never emit MSG_MOVE_JUMP here: sending a client
+    // jump overwrote the knockback velocity/angle and tripped CMaNGOS MultiJump
+    // anticheat detections on consecutive knockbacks.
 }
 
 } // namespace rendering

@@ -1662,7 +1662,7 @@ SpellUsability actionUsability(GameHandler& owner, const ActionBarSlot& slot) {
 void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid, std::optional<glm::vec3> destination) {
     LOG_DEBUG("castSpell: spellId=", spellId, " target=0x", std::hex, targetGuid, std::dec,
               destination ? " at a destination" : "");
-    if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
+    if (spellId == 0 || owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
 
     spellId = resolveHighestKnownRank(spellId);
 
@@ -2509,7 +2509,7 @@ void SpellHandler::cancelShapeshiftForm() {
 }
 
 void SpellHandler::cancelAura(uint32_t spellId) {
-    if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
+    if (spellId == 0 || owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
     auto packet = CancelAuraPacket::build(spellId);
     owner_.getSocket()->send(packet);
     LOG_DEBUG("CMSG_CANCEL_AURA: spellId=", spellId);

@@ -1485,12 +1485,14 @@ void MovementHandler::dismount() {
 // here so transport coordinate conversion can't diverge between handlers.
 network::Packet MovementHandler::buildForceAck(Opcode ackOpcode, uint32_t counter) {
     network::Packet ack(wireOpcode(ackOpcode));
+    const uint64_t moverGuid =
+        clientControlledUnit_ != 0 ? clientControlledUnit_ : owner_.getPlayerGuid();
     const bool legacyGuid =
         isActiveExpansion("classic") || isActiveExpansion("tbc") || isActiveExpansion("turtle");
     if (legacyGuid) {
-        ack.writeUInt64(owner_.getPlayerGuid());
+        ack.writeUInt64(moverGuid);
     } else {
-        ack.writePackedGuid(owner_.getPlayerGuid());
+        ack.writePackedGuid(moverGuid);
     }
     ack.writeUInt32(counter);
 
@@ -1535,12 +1537,25 @@ static bool forcedMoveGuidIsFull() {
 void MovementHandler::handleForceSpeedChange(network::Packet& packet, const char* name,
                                               Opcode ackOpcode, float* speedStorage) {
     const bool legacyGuid = forcedMoveGuidIsFull();
+    if (legacyGuid ? !packet.hasRemaining(8) : !packet.hasFullPackedGuid()) {
+        LOG_WARNING("SMSG_FORCE_", name, "_CHANGE malformed (truncated guid)");
+        packet.skipAll();
+        return;
+    }
     uint64_t guid = legacyGuid
         ? packet.readUInt64() : packet.readPackedGuid();
-    uint32_t counter = packet.readUInt32();
 
     // TBC 2.1+ adds a tracking byte only to forced run-speed changes.
-    if (!legacyGuid && ackOpcode == Opcode::CMSG_FORCE_RUN_SPEED_CHANGE_ACK) {
+    const bool hasRunSpeedByte =
+        !legacyGuid && ackOpcode == Opcode::CMSG_FORCE_RUN_SPEED_CHANGE_ACK;
+    const size_t minPayloadBytes = 4u + (hasRunSpeedByte ? 1u : 0u) + 4u;
+    if (!packet.hasRemaining(minPayloadBytes)) {
+        LOG_WARNING("SMSG_FORCE_", name, "_CHANGE too short: remaining=", packet.getRemainingSize());
+        packet.skipAll();
+        return;
+    }
+    uint32_t counter = packet.readUInt32();
+    if (hasRunSpeedByte) {
         packet.readUInt8();
     }
     float newSpeed = packet.readFloat();
@@ -1548,22 +1563,25 @@ void MovementHandler::handleForceSpeedChange(network::Packet& packet, const char
     LOG_INFO("SMSG_FORCE_", name, "_CHANGE: guid=0x", std::hex, guid, std::dec,
              " counter=", counter, " speed=", newSpeed);
 
-    if (guid != owner_.getPlayerGuid()) return;
+    const uint64_t moverGuid =
+        clientControlledUnit_ != 0 ? clientControlledUnit_ : owner_.getPlayerGuid();
+    if (guid == 0 || guid != moverGuid) return;
 
-    // Validate BEFORE sending ACK - if we echo a bad speed back to the server
-    // but don't apply it locally, the client and server desync on movement speed.
-    if (std::isnan(newSpeed) || newSpeed < 0.1f || newSpeed > 100.0f) {
+    // Validate BEFORE sending ACK - reject NaN/Inf/negative values, but accept all
+    // finite non-negative server speeds (e.g. 1% slow walk 0.025, 0.0 freeze, or
+    // GM .modify aspeed > 100) so the order counter is always acknowledged.
+    if (!std::isfinite(newSpeed) || newSpeed < 0.0f) {
         LOG_WARNING("Ignoring invalid ", name, " speed: ", newSpeed);
         return;
     }
 
-    if (owner_.getSocket()) {
+    if (owner_.getSocket() && wireOpcode(ackOpcode) != 0xFFFF) {
         auto ack = buildForceAck(ackOpcode, counter);
         ack.writeFloat(newSpeed);
         owner_.getSocket()->send(ack);
     }
 
-    if (speedStorage) *speedStorage = newSpeed;
+    if (speedStorage && guid == owner_.getPlayerGuid()) *speedStorage = newSpeed;
 }
 
 void MovementHandler::handleForceRunSpeedChange(network::Packet& packet) {
@@ -1574,7 +1592,10 @@ void MovementHandler::handleForceRunSpeedChange(network::Packet& packet) {
 
 void MovementHandler::handleForceMoveRootState(network::Packet& packet, bool rooted) {
     const bool rootTbc = forcedMoveGuidIsFull();
-    if (packet.getRemainingSize() < (rootTbc ? 8u : 2u)) return;
+    if (rootTbc ? !packet.hasRemaining(8) : !packet.hasFullPackedGuid()) {
+        packet.skipAll();
+        return;
+    }
     uint64_t guid = rootTbc
         ? packet.readUInt64() : packet.readPackedGuid();
     if (!packet.hasRemaining(4)) return;
@@ -1583,9 +1604,23 @@ void MovementHandler::handleForceMoveRootState(network::Packet& packet, bool roo
     LOG_INFO(rooted ? "SMSG_FORCE_MOVE_ROOT" : "SMSG_FORCE_MOVE_UNROOT",
              ": guid=0x", std::hex, guid, std::dec, " counter=", counter);
 
-    if (guid != owner_.getPlayerGuid()) return;
+    const uint64_t moverGuid =
+        clientControlledUnit_ != 0 ? clientControlledUnit_ : owner_.getPlayerGuid();
+    if (guid == 0 || guid != moverGuid) return;
 
     if (rooted) {
+        // CMaNGOS WorldSession::VerifyMovementInfo rejects CMSG_FORCE_MOVE_ROOT_ACK
+        // if MOVEFLAG_ROOT is sent alongside MOVEFLAG_MASK_MOVING.
+        constexpr uint32_t kClearOnRoot =
+            static_cast<uint32_t>(MovementFlags::FORWARD) |
+            static_cast<uint32_t>(MovementFlags::BACKWARD) |
+            static_cast<uint32_t>(MovementFlags::STRAFE_LEFT) |
+            static_cast<uint32_t>(MovementFlags::STRAFE_RIGHT) |
+            static_cast<uint32_t>(MovementFlags::PITCH_UP) |
+            static_cast<uint32_t>(MovementFlags::PITCH_DOWN) |
+            static_cast<uint32_t>(MovementFlags::PENDING_STOP) |
+            static_cast<uint32_t>(MovementFlags::PENDING_STRAFE_STOP);
+        movementInfo.flags &= ~kClearOnRoot;
         movementInfo.flags |= static_cast<uint32_t>(MovementFlags::ROOT);
     } else {
         movementInfo.flags &= ~static_cast<uint32_t>(MovementFlags::ROOT);
@@ -1600,7 +1635,10 @@ void MovementHandler::handleForceMoveRootState(network::Packet& packet, bool roo
 void MovementHandler::handleForceMoveFlagChange(network::Packet& packet, const char* name,
                                                   Opcode ackOpcode, uint32_t flag, bool set) {
     const bool fmfTbcLike = forcedMoveGuidIsFull();
-    if (packet.getRemainingSize() < (fmfTbcLike ? 8u : 2u)) return;
+    if (fmfTbcLike ? !packet.hasRemaining(8) : !packet.hasFullPackedGuid()) {
+        packet.skipAll();
+        return;
+    }
     uint64_t guid = fmfTbcLike
         ? packet.readUInt64() : packet.readPackedGuid();
     if (!packet.hasRemaining(4)) return;
@@ -1608,24 +1646,47 @@ void MovementHandler::handleForceMoveFlagChange(network::Packet& packet, const c
 
     LOG_INFO("SMSG_FORCE_", name, ": guid=0x", std::hex, guid, std::dec, " counter=", counter);
 
-    if (guid != owner_.getPlayerGuid()) return;
+    const uint64_t moverGuid =
+        clientControlledUnit_ != 0 ? clientControlledUnit_ : owner_.getPlayerGuid();
+    if (guid == 0 || guid != moverGuid) return;
 
     if (flag != 0) {
         if (set) {
             movementInfo.flags |= flag;
         } else {
             movementInfo.flags &= ~flag;
+            if (flag == static_cast<uint32_t>(MovementFlags::CAN_FLY)) {
+                // Revoking CAN_FLY while airborne must drop FLYING/ASCENDING/DESCENDING
+                // before building CMSG_MOVE_SET_CAN_FLY_ACK so the ACK payloadneither
+                // includes a flying pitch float nor trips server fly-hack validation.
+                movementInfo.flags &= ~(static_cast<uint32_t>(MovementFlags::FLYING) |
+                                        static_cast<uint32_t>(MovementFlags::ASCENDING) |
+                                        static_cast<uint32_t>(MovementFlags::DESCENDING));
+            }
         }
     }
 
     if (!owner_.getSocket()) return;
     if (wireOpcode(ackOpcode) == 0xFFFF) return;
-    owner_.getSocket()->send(buildForceAck(ackOpcode, counter));
+    auto ack = buildForceAck(ackOpcode, counter);
+    // Shared set/unset flag ACKs (HOVER_ACK, FEATHER_FALL_ACK, WATER_WALK_ACK,
+    // SET_CAN_FLY_ACK, FLIGHT_ACK, SET_CAN_TRANSITION_BETWEEN_SWIM_AND_FLY_ACK)
+    // carry trailing uint32 isApplied on Classic, TBC 2.4.3, and WotLK 3.3.5a
+    // (CMaNGOS WorldSession::HandleMoveFlagChangeOpcode: recv_data >> isApplied).
+    // WotLK GRAVITY_DISABLE_ACK / GRAVITY_ENABLE_ACK use distinct opcodes with no u32.
+    if (ackOpcode != Opcode::CMSG_MOVE_GRAVITY_DISABLE_ACK &&
+        ackOpcode != Opcode::CMSG_MOVE_GRAVITY_ENABLE_ACK) {
+        ack.writeUInt32(set ? 1u : 0u);
+    }
+    owner_.getSocket()->send(ack);
 }
 
 void MovementHandler::handleMoveSetCollisionHeight(network::Packet& packet) {
     const bool legacyGuid = forcedMoveGuidIsFull();
-    if (packet.getRemainingSize() < (legacyGuid ? 8u : 2u)) return;
+    if (legacyGuid ? !packet.hasRemaining(8) : !packet.hasFullPackedGuid()) {
+        packet.skipAll();
+        return;
+    }
     uint64_t guid = legacyGuid ? packet.readUInt64() : packet.readPackedGuid();
     if (!packet.hasRemaining(8)) return;
     uint32_t counter = packet.readUInt32();
@@ -1634,8 +1695,10 @@ void MovementHandler::handleMoveSetCollisionHeight(network::Packet& packet) {
     LOG_INFO("SMSG_MOVE_SET_COLLISION_HGT: guid=0x", std::hex, guid, std::dec,
              " counter=", counter, " height=", height);
 
-    if (guid != owner_.getPlayerGuid()) return;
-    if (!owner_.getSocket()) return;
+    const uint64_t moverGuid =
+        clientControlledUnit_ != 0 ? clientControlledUnit_ : owner_.getPlayerGuid();
+    if (guid == 0 || guid != moverGuid) return;
+    if (!std::isfinite(height) || !owner_.getSocket()) return;
 
     if (wireOpcode(Opcode::CMSG_MOVE_SET_COLLISION_HGT_ACK) == 0xFFFF) return;
     // buildForceAck now handles transport coordinate conversion, fixing the
@@ -1647,7 +1710,10 @@ void MovementHandler::handleMoveSetCollisionHeight(network::Packet& packet) {
 
 void MovementHandler::handleMoveKnockBack(network::Packet& packet) {
     const bool mkbTbc = forcedMoveGuidIsFull();
-    if (packet.getRemainingSize() < (mkbTbc ? 8u : 2u)) return;
+    if (mkbTbc ? !packet.hasRemaining(8) : !packet.hasFullPackedGuid()) {
+        packet.skipAll();
+        return;
+    }
     uint64_t guid = mkbTbc
         ? packet.readUInt64() : packet.readPackedGuid();
     if (!packet.hasRemaining(20)) return;
@@ -1661,7 +1727,45 @@ void MovementHandler::handleMoveKnockBack(network::Packet& packet) {
              " counter=", counter, " vcos=", vcos, " vsin=", vsin,
              " hspeed=", hspeed, " vspeed=", vspeed);
 
-    if (guid != owner_.getPlayerGuid()) return;
+    const uint64_t moverGuid =
+        clientControlledUnit_ != 0 ? clientControlledUnit_ : owner_.getPlayerGuid();
+    if (guid == 0 || guid != moverGuid) return;
+    if (!std::isfinite(vcos) || !std::isfinite(vsin) ||
+        !std::isfinite(hspeed) || !std::isfinite(vspeed)) {
+        LOG_WARNING("SMSG_MOVE_KNOCK_BACK: ignoring non-finite parameters");
+        return;
+    }
+
+    if (owner_.isRestoring() || (owner_.isCasting() && !owner_.isChanneling())) {
+        owner_.cancelCast();
+    }
+
+    // Apply server knockback launch state directly onto movementInfo before
+    // building CMSG_MOVE_KNOCK_BACK_ACK (matches CMaNGOS KnockBack + HandleMoveKnockBackAck:
+    // MOVEFLAG_FALLING set, moving/turning cleared, fallTime=0, zspeed=vspeed,
+    // cosAngle=vcos, sinAngle=vsin, xyspeed=hspeed). Never emit MSG_MOVE_JUMP here.
+    constexpr uint32_t kClearOnKnockBack =
+        static_cast<uint32_t>(MovementFlags::FORWARD) |
+        static_cast<uint32_t>(MovementFlags::BACKWARD) |
+        static_cast<uint32_t>(MovementFlags::STRAFE_LEFT) |
+        static_cast<uint32_t>(MovementFlags::STRAFE_RIGHT) |
+        static_cast<uint32_t>(MovementFlags::TURN_LEFT) |
+        static_cast<uint32_t>(MovementFlags::TURN_RIGHT) |
+        static_cast<uint32_t>(MovementFlags::PITCH_UP) |
+        static_cast<uint32_t>(MovementFlags::PITCH_DOWN) |
+        static_cast<uint32_t>(MovementFlags::PENDING_STOP) |
+        static_cast<uint32_t>(MovementFlags::PENDING_STRAFE_STOP) |
+        static_cast<uint32_t>(MovementFlags::SWIMMING) |
+        static_cast<uint32_t>(MovementFlags::FLYING) |
+        static_cast<uint32_t>(MovementFlags::ASCENDING) |
+        static_cast<uint32_t>(MovementFlags::DESCENDING);
+    movementInfo.flags &= ~kClearOnKnockBack;
+    movementInfo.flags |= static_cast<uint32_t>(MovementFlags::FALLING);
+    movementInfo.fallTime = 0;
+    movementInfo.jumpVelocity = -vspeed;
+    movementInfo.jumpCosAngle = vcos;
+    movementInfo.jumpSinAngle = vsin;
+    movementInfo.jumpXYSpeed = hspeed;
 
     if (owner_.knockBackCallbackRef()) {
         owner_.knockBackCallbackRef()(vcos, vsin, hspeed, vspeed);
@@ -1669,7 +1773,9 @@ void MovementHandler::handleMoveKnockBack(network::Packet& packet) {
 
     if (!owner_.getSocket()) return;
     if (wireOpcode(Opcode::CMSG_MOVE_KNOCK_BACK_ACK) == 0xFFFF) return;
-    owner_.getSocket()->send(buildForceAck(Opcode::CMSG_MOVE_KNOCK_BACK_ACK, counter));
+    auto ack = buildForceAck(Opcode::CMSG_MOVE_KNOCK_BACK_ACK, counter);
+    fallStartMs_ = lastMovementTimestampMs_;
+    owner_.getSocket()->send(ack);
 }
 
 // ============================================================
@@ -2579,8 +2685,9 @@ void MovementHandler::handleMonsterMoveTransport(network::Packet& packet) {
 // ============================================================
 
 void MovementHandler::handleTeleportAck(network::Packet& packet) {
-    if (packet.getRemainingSize() < 1u) {
+    if (!packet.hasFullPackedGuid()) {
         LOG_WARNING("MSG_MOVE_TELEPORT_ACK too short");
+        packet.skipAll();
         return;
     }
 
@@ -2632,7 +2739,9 @@ void MovementHandler::handleTeleportAck(network::Packet& packet) {
                 " pos=(", serverX, ", ", serverY, ", ", serverZ, ")",
                 " currentPos=(", movementInfo.x, ", ", movementInfo.y, ", ", movementInfo.z, ")");
 
-    if (guid != owner_.getPlayerGuid()) {
+    const uint64_t moverGuid =
+        clientControlledUnit_ != 0 ? clientControlledUnit_ : owner_.getPlayerGuid();
+    if (guid == 0 || guid != moverGuid) {
         glm::vec3 canonical = core::coords::serverToCanonical(glm::vec3(serverX, serverY, serverZ));
         auto entity = owner_.getEntityManager().getEntity(guid);
         if (entity) {
@@ -2729,9 +2838,9 @@ void MovementHandler::handleTeleportAck(network::Packet& packet) {
         const bool legacyGuidAck =
             isActiveExpansion("classic") || isActiveExpansion("tbc") || isActiveExpansion("turtle");
         if (legacyGuidAck) {
-            ack.writeUInt64(owner_.getPlayerGuid());
+            ack.writeUInt64(moverGuid);
         } else {
-            ack.writePackedGuid(owner_.getPlayerGuid());
+            ack.writePackedGuid(moverGuid);
         }
         ack.writeUInt32(counter);
         ack.writeUInt32(moveTime);
