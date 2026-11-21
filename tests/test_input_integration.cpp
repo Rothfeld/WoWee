@@ -4329,6 +4329,110 @@ TEST_CASE_METHOD(Integration, "Party roster identity and map coordinates survive
     lua.setLuaServices({});
 }
 
+TEST_CASE_METHOD(Integration, "TBC out-of-range party login stats, 16-bit high-HP wraparound, and UnitRace/UnitSex/TemporaryPortrait",
+                 "[party][tbc][lua]") {
+    using namespace wowee::game;
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    lua.setGameHandler(&handler);
+
+    constexpr uint64_t memberGuid = 96; // Legless-style out-of-range Undead Male Warrior
+    wowee::network::Packet groupList(wireOpcode(Opcode::SMSG_GROUP_LIST));
+    groupList.writeUInt8(0);  // groupType = party
+    groupList.writeUInt8(0);  // isBattleGroup (TBC)
+    groupList.writeUInt8(0);  // subGroup
+    groupList.writeUInt8(0);  // flags
+    groupList.writeUInt64(1); // groupId / counter
+    groupList.writeUInt32(1); // memberCount
+    groupList.writeString("Legless");
+    groupList.writeUInt64(memberGuid);
+    groupList.writeUInt8(1);  // isOnline
+    groupList.writeUInt8(0);  // subGroup
+    groupList.writeUInt8(0);  // flags
+    groupList.writeUInt64(1); // leaderGuid
+    groupList.writeUInt8(3);  // lootMethod (Group Loot)
+    groupList.writeUInt64(0); // looterGuid
+    groupList.writeUInt8(2);  // lootThreshold (Uncommon)
+    session.receive(groupList);
+
+    // Login group list must request full party stats and name/race/gender/class.
+    auto statsReqs = session.sent().of(Opcode::CMSG_REQUEST_PARTY_MEMBER_STATS);
+    REQUIRE(statsReqs.size() == 1);
+    CHECK(statsReqs[0].readUInt64() == memberGuid);
+    auto nameReqs = session.sent().of(Opcode::CMSG_NAME_QUERY);
+    REQUIRE(nameReqs.size() == 1);
+    CHECK(nameReqs[0].readUInt64() == memberGuid);
+
+    // Helper matching CMaNGOS-TBC HandleRequestPartyMemberStatsOpcode (0x00040BFF no-pet mask).
+    auto sendFullStats = [&](uint16_t curHp, uint16_t maxHp, uint8_t powerType,
+                             uint16_t curPower, uint16_t maxPower) {
+        wowee::network::Packet full(wireOpcode(Opcode::SMSG_PARTY_MEMBER_STATS_FULL));
+        full.writePackedGuid(memberGuid);
+        full.writeUInt32(0x00040BFFu);
+        full.writeUInt16(0x0001u);  // MEMBER_STATUS_ONLINE
+        full.writeUInt16(curHp);
+        full.writeUInt16(maxHp);
+        full.writeUInt8(powerType);
+        full.writeUInt16(curPower);
+        full.writeUInt16(maxPower);
+        full.writeUInt16(70u);      // level
+        full.writeUInt16(2557u);    // zone (Dire Maul)
+        full.writeUInt16(static_cast<uint16_t>(int16_t(270)));
+        full.writeUInt16(static_cast<uint16_t>(int16_t(-436)));
+        full.writeUInt64(0ull);     // auraMask
+        full.writeUInt8(0u);        // empty PET_NAME
+        full.writeUInt64(0ull);     // PET_AURAS
+        session.receive(full);
+    };
+
+    // 1. Normal HP (10000/10000) and Rage (250/1000 raw -> 25/100 in Lua).
+    sendFullStats(10000u, 10000u, 1u, 250u, 1000u);
+    truth("UnitHealth('party1') == 10000 and UnitHealthMax('party1') == 10000");
+    truth("UnitMana('party1') == 25 and UnitManaMax('party1') == 100");
+    truth("UnitPowerType('party1') == 1");
+    truth("UnitIsConnected('party1') and not UnitIsDead('party1')");
+
+    // 2. High HP (10,000,000 / 10,000,000): TBC 2.4.3 uint16 wire field truncates both to 38528.
+    const uint16_t high10m = static_cast<uint16_t>(10000000u & 0xFFFFu);
+    REQUIRE(high10m == 38528u);
+    sendFullStats(high10m, high10m, 1u, 0u, 1000u);
+    truth("UnitHealth('party1') == 38528 and UnitHealthMax('party1') == 38528");
+
+    // 3. Delta SMSG_PARTY_MEMBER_STATS (flags=0x0002 CUR_HP only) for 9,962,466 / 10,000,000 HP:
+    //    matches native 2.4.3 16-bit wire wraparound (994 / 38528 = 2.58%).
+    const uint16_t damagedLow16 = static_cast<uint16_t>(9962466u & 0xFFFFu);
+    REQUIRE(damagedLow16 == 994u);
+    wowee::network::Packet delta(wireOpcode(Opcode::SMSG_PARTY_MEMBER_STATS));
+    delta.writePackedGuid(memberGuid);
+    delta.writeUInt32(0x0002u); // GROUP_UPDATE_FLAG_CUR_HP
+    delta.writeUInt16(damagedLow16);
+    session.receive(delta);
+    truth("UnitHealth('party1') == 994 and UnitHealthMax('party1') == 38528");
+
+    // 4. TBC SMSG_NAME_QUERY_RESPONSE for Undead Male Warrior (race=5, gender=0, class=1).
+    wowee::network::Packet nameResp(wireOpcode(Opcode::SMSG_NAME_QUERY_RESPONSE));
+    nameResp.writeUInt64(memberGuid);
+    nameResp.writeString("Legless");
+    nameResp.writeString("");
+    nameResp.writeUInt32(5u); // Scourge / Undead
+    nameResp.writeUInt32(0u); // Male
+    nameResp.writeUInt32(1u); // Warrior
+    nameResp.writeUInt8(0u);  // not declined
+    session.receive(nameResp);
+
+    truth("select(1, UnitRace('party1')) == 'Undead' and select(2, UnitRace('party1')) == 'Scourge' and select(3, UnitRace('party1')) == 5");
+    truth("UnitSex('party1') == 2");
+    truth("select(2, UnitClass('party1')) == 'WARRIOR'");
+
+    // SetPortraitTexture must pick the stock Undead Male fallback portrait.
+    run("local f = CreateFrame('Frame', 'TestPartyPortraitFrame'); "
+        "TestPartyPortraitTex = f:CreateTexture('TestPartyPortraitTex'); "
+        "SetPortraitTexture(TestPartyPortraitTex, 'party1')");
+    const auto* portraitWidget = lua.widgets().findByName("TestPartyPortraitTex");
+    REQUIRE(portraitWidget != nullptr);
+    CHECK(portraitWidget->texturePath == "Interface\\CharacterFrame\\TemporaryPortrait-Male-Scourge");
+}
+
 TEST_CASE_METHOD(Integration, "TBC flight discovery queries once and follows server knowledge", "[taxi-discovery]") {
     using namespace wowee::game;
     replay::Session session("tbc");
