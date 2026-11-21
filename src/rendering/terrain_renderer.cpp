@@ -835,7 +835,7 @@ VkTexture* TerrainRenderer::createAlphaTexture(const std::vector<uint8_t>& alpha
 }
 
 VkTexture* TerrainRenderer::createShadowTexture(const std::array<uint8_t, 512>& shadowMap) {
-    const auto unpacked = pipeline::unpackMcshShadowMap(shadowMap);
+    const auto unpacked = pipeline::softenMcshShadowMap(pipeline::unpackMcshShadowMap(shadowMap));
 
     auto tex = std::make_unique<VkTexture>();
     if (!tex->upload(*vkCtx, unpacked.data(), 64, 64, VK_FORMAT_R8_UNORM, false)) {

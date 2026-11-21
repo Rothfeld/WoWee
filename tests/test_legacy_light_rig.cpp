@@ -119,3 +119,69 @@ TEST_CASE("unpackMcshShadowMap expands 512-byte 64x64 1-bit MCSH matching MapChu
     }
     CHECK(shadowedCount == 5);
 }
+
+TEST_CASE("softenMcshShadowMap preserves uniform maps and smoothly softens 1-bit step edges", "[adt][lighting][mcsh]") {
+    std::array<uint8_t, 4096> allLit{};
+    CHECK(wowee::pipeline::softenMcshShadowMap(allLit) == allLit);
+
+    std::array<uint8_t, 4096> allShadow{};
+    allShadow.fill(255u);
+    CHECK(wowee::pipeline::softenMcshShadowMap(allShadow) == allShadow);
+
+    // Vertical half-plane step: cols [0..31] lit (0), cols [32..63] shadowed (255).
+    std::array<uint8_t, 4096> halfPlane{};
+    for (size_t row = 0; row < 64; ++row) {
+        for (size_t col = 32; col < 64; ++col) {
+            halfPlane[row * 64 + col] = 255u;
+        }
+    }
+    const auto soft = wowee::pipeline::softenMcshShadowMap(halfPlane);
+    const size_t midRow = 32 * 64;
+    // Far from edge remains exact 0 and 255.
+    CHECK(soft[midRow + 20] == 0u);
+    CHECK(soft[midRow + 44] == 255u);
+    // 5-tap binomial ramp across cols 30..33: strictly monotonic and symmetric (sum to 255).
+    CHECK(soft[midRow + 29] == 0u);
+    CHECK(soft[midRow + 30] > 0u);
+    CHECK(soft[midRow + 31] > soft[midRow + 30]);
+    CHECK(soft[midRow + 32] > soft[midRow + 31]);
+    CHECK(soft[midRow + 33] > soft[midRow + 32]);
+    CHECK(soft[midRow + 34] == 255u);
+    CHECK(soft[midRow + 30] + soft[midRow + 33] == 255u);
+    CHECK(soft[midRow + 31] + soft[midRow + 32] == 255u);
+}
+
+TEST_CASE("computeTerrainMcshFactor applies 0.7x TBC attenuation across night and day LightIntBand values", "[adt][lighting][mcsh]") {
+    // Dynamic shadows off: 1.0 lit, 0.7 full MCSH shadow, 0.85 half-penumbra.
+    CHECK(wowee::pipeline::computeTerrainMcshFactor(0.0f, false, 1.0f) == Catch::Approx(1.0f));
+    CHECK(wowee::pipeline::computeTerrainMcshFactor(0.5f, false, 1.0f) == Catch::Approx(0.85f));
+    CHECK(wowee::pipeline::computeTerrainMcshFactor(1.0f, false, 1.0f) == Catch::Approx(0.7f));
+
+    // Dynamic shadows on: full dynamic shadow (shadow=0) avoids double-darkening;
+    // sunlit fragments (shadow=1) still receive full 0.7x MCSH shadow.
+    CHECK(wowee::pipeline::computeTerrainMcshFactor(1.0f, true, 0.0f) == Catch::Approx(1.0f));
+    CHECK(wowee::pipeline::computeTerrainMcshFactor(1.0f, true, 1.0f) == Catch::Approx(0.7f));
+    CHECK(wowee::pipeline::computeTerrainMcshFactor(0.0f, true, 0.0f) == Catch::Approx(1.0f));
+
+    // Verify terrain lighting equation preserves exact 0.7x achromatic ratio for
+    // both Ratchet night (23:07) and Ratchet/Everlook daytime (12:00) LightIntBand curves.
+    struct LightCase { glm::vec3 amb; glm::vec3 diff; float ndl; };
+    const LightCase cases[] = {
+        // Ratchet 23:07 (blended Light 205/203/191)
+        {{0.1841f, 0.4323f, 0.5074f}, {0.5361f, 0.7667f, 0.8288f}, 0.547f},
+        // Ratchet 12:00 noon
+        {{0.4237f, 0.3823f, 0.3506f}, {1.0000f, 0.6094f, 0.2861f}, 0.582f},
+        // Everlook 22:42 night
+        {{0.3920f, 0.2890f, 0.5870f}, {0.4140f, 0.3280f, 0.6190f}, 0.530f},
+        // Everlook 12:00 noon
+        {{0.4900f, 0.2820f, 0.5100f}, {0.6860f, 0.6350f, 0.8080f}, 0.582f},
+    };
+    const glm::vec3 albedo(0.45f, 0.60f, 0.35f);
+    for (const auto& c : cases) {
+        const glm::vec3 lit = (c.amb + c.ndl * c.diff) * albedo;
+        const glm::vec3 shd = lit * wowee::pipeline::computeTerrainMcshFactor(1.0f, false, 1.0f);
+        CHECK(shd.r / lit.r == Catch::Approx(0.7f));
+        CHECK(shd.g / lit.g == Catch::Approx(0.7f));
+        CHECK(shd.b / lit.b == Catch::Approx(0.7f));
+    }
+}
