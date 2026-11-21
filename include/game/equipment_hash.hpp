@@ -43,6 +43,7 @@ inline uint64_t hashEquipmentAppearance(const std::vector<EquipmentItem>& equipm
         mix32(item.displayModel);
         mix8(item.inventoryType);
         mix32(item.enchantment);
+        mix8(item.sheath);
     }
     return h;
 }

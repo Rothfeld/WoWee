@@ -810,12 +810,14 @@ void EntitySpawner::applyPlayerEquipmentToInstance(uint64_t guid,
         if (isLocalPlayer) {
             const auto& eqSlot = gameHandler_->getInventory().getEquipSlot(equipSlot);
             const auto* info = eqSlot.empty() ? nullptr : gameHandler_->getItemInfo(eqSlot.item.itemId);
-            if (info) {
-                heldState = static_cast<int8_t>(heldSheathState(equipSlot));
-                sheath = sheathAttachment(static_cast<uint8_t>(info->sheath), equipSlot);
-                if (sheath != UINT32_MAX && !charRenderer->hasAttachmentPoint(st.instanceId, sheath)) {
-                    sheath = UINT32_MAX;
-                }
+            if (!info) {
+                LOG_DEBUG("setOnlinePlayerEquipment: local item not yet queried; weapon waits for loadEquippedWeapons");
+                continue;
+            }
+            heldState = static_cast<int8_t>(heldSheathState(equipSlot));
+            sheath = sheathAttachment(static_cast<uint8_t>(info->sheath), equipSlot);
+            if (sheath != UINT32_MAX && !charRenderer->hasAttachmentPoint(st.instanceId, sheath)) {
+                sheath = UINT32_MAX;
             }
         } else if (visibleEntries) {
             const auto* info = gameHandler_->getItemInfo((*visibleEntries)[slotIndex]);

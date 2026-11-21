@@ -5804,6 +5804,12 @@ void CharacterRenderer::setSheathState(uint32_t instanceId, uint8_t sheathState)
     instance.sheathState = sheathState;
 }
 
+void CharacterRenderer::clearWeaponsDrawnByAnimation(uint32_t instanceId) {
+    auto it = instances.find(instanceId);
+    if (it == instances.end()) return;
+    it->second.weaponsDrawnByAnimation = false;
+}
+
 void CharacterRenderer::setStandState(uint32_t instanceId, uint8_t standState) {
     // Original, pair 1, a player at sheath state 1 (melee) with its stand
     // state set by field: Sit 1, Sleep 3, chairs 4-6 and Kneel 8 show the

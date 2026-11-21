@@ -5319,6 +5319,9 @@ void Application::render() {
                     sizeFor(paperdollModel_, doll);
                     paperdollModel_.setFraming(ui::UnitPortrait::Framing::FullBody);
                     paperdollModel_.setModelFrameView(doll->modelFacing, modelCameraScale(*doll));
+                    if (appearanceComposer_) {
+                        paperdollModel_.setSheathState(appearanceComposer_->sheathState());
+                    }
                     paperdollModel_.update(*gameHandler, assetManager.get(),
                                            renderer.get(), io.DeltaTime,
                                            appearanceComposer_

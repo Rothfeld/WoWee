@@ -7,6 +7,8 @@
 #include "pipeline/dbc_loader.hpp"
 #include "rendering/animation/stand_pose.hpp"
 #include "rendering/animation/gesture_weapons.hpp"
+#include "core/weapon_attachment.hpp"
+#include "game/equipment_hash.hpp"
 #include "rendering/animation/hit_reaction.hpp"
 #include "rendering/animation/freeze_anim_policy.hpp"
 #include <cstring>
@@ -19,6 +21,11 @@ TEST_CASE("Gesture weapon policy respects NOSHEATHE and both animation layers", 
     using namespace wowee::rendering;
     CHECK(gestureSheathesWeapons(0x800, 0x10)); // TBC Wave emote 3 / animation 67.
     CHECK_FALSE(gestureSheathesWeapons(4, 0x10)); // Wave NOSHEATHE 70, same animation.
+    CHECK(gestureSheathesWeapons(0x008c, 0x10)); // TBC ONESHOT_TALK emote 1 / animation 60.
+    CHECK(gestureSheathesWeapons(0x00a4, 0x10)); // TBC ONESHOT_EXCLAMATION emote 5 / animation 64 (Marshal Dughan).
+    CHECK(gestureSheathesWeapons(0x0094, 0x10)); // TBC ONESHOT_QUESTION emote 6 / animation 65.
+    CHECK(gestureSheathesWeapons(0x4404, 0x04)); // TBC ONESHOT_LOOT emote 381 / animation 50.
+    CHECK_FALSE(gestureSheathesWeapons(0x0088, 0x0)); // TBC ONESHOT_TALK_NOSHEATHE emote 396 / animation 208.
     CHECK(gestureSheathesWeapons(0, 4));
     CHECK_FALSE(gestureSheathesWeapons(0x800, 0));
     CHECK_FALSE(gestureSheathesWeapons(0, 0x20));
@@ -27,6 +34,29 @@ TEST_CASE("Gesture weapon policy respects NOSHEATHE and both animation layers", 
     CHECK_FALSE(gestureWeaponPoseActive(67, anim::SITTING, 0));
     CHECK_FALSE(gestureWeaponPoseActive(67, anim::RUN, 0));
     CHECK_FALSE(gestureWeaponPoseActive(0, anim::STAND, 0));
+}
+
+TEST_CASE("Weapon sheath attachments and EquipmentItem sheath hashing", "[gesture-weapons][sheath]") {
+    using namespace wowee::core;
+    using wowee::game::EquipSlot;
+    // Warglaive of Azzinoth (32837/32838) and 2H swords use SheatheType 1 -> crossed back 26/27.
+    CHECK(sheathAttachment(1, EquipSlot::MAIN_HAND) == kAttachSheathMainHand);
+    CHECK(sheathAttachment(1, EquipSlot::OFF_HAND) == kAttachSheathOffHand);
+    // Staves / polearms use SheatheType 2 -> large weapon 30/31.
+    CHECK(sheathAttachment(2, EquipSlot::MAIN_HAND) == kAttachLargeWeaponLeft);
+    CHECK(sheathAttachment(2, EquipSlot::OFF_HAND) == kAttachLargeWeaponRight);
+    // 1H swords / maces (Marshal Dughan 3361) use SheatheType 3 -> hip 32/33.
+    CHECK(sheathAttachment(3, EquipSlot::MAIN_HAND) == kAttachHipWeaponLeft);
+    CHECK(sheathAttachment(3, EquipSlot::OFF_HAND) == kAttachHipWeaponRight);
+    // Shields use SheatheType 4 -> back shield 28.
+    CHECK(sheathAttachment(4, EquipSlot::OFF_HAND) == kAttachSheathShield);
+    // SheatheType 0 hides weapon when sheathed.
+    CHECK(sheathAttachment(0, EquipSlot::MAIN_HAND) == UINT32_MAX);
+
+    // PaperDoll cache hash changes when weapon SheatheType arrives after item query.
+    std::vector<wowee::game::EquipmentItem> a = {{.displayModel = 45479, .inventoryType = 21, .enchantment = 0, .sheath = 0}};
+    std::vector<wowee::game::EquipmentItem> b = {{.displayModel = 45479, .inventoryType = 21, .enchantment = 0, .sheath = 1}};
+    CHECK(wowee::game::hashEquipmentAppearance(a) != wowee::game::hashEquipmentAppearance(b));
 }
 
 TEST_CASE("Weapon swings and ready stances draw melee weapons at any sheath state", "[gesture-weapons]") {

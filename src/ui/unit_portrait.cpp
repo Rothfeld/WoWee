@@ -76,9 +76,18 @@ void UnitPortrait::update(game::GameHandler& gameHandler,
                     invType == game::InvType::ONE_HAND) {
                     invType = game::InvType::OFF_HAND;
                 }
+                uint8_t sheathType = 0;
+                const auto& eqSlot = gameHandler.getInventory().getEquipSlot(
+                    static_cast<game::EquipSlot>(slot));
+                if (!eqSlot.empty()) {
+                    if (const auto* info = gameHandler.getItemInfo(eqSlot.item.itemId)) {
+                        sheathType = static_cast<uint8_t>(info->sheath);
+                    }
+                }
                 worn.push_back({.displayModel = displayIds[slot],
                                 .inventoryType = invType,
-                                .enchantment = 0u});
+                                .enchantment = 0u,
+                                .sheath = sheathType});
             }
         }
         if (worn.empty()) {
@@ -145,6 +154,7 @@ void UnitPortrait::update(game::GameHandler& gameHandler,
         if (preview_->loadCharacter(self->race, self->gender, skin, face,
                                     hairStyle, hairColor, facialFeatures,
                                     self->useFemaleModel)) {
+            preview_->setSheathState(sheathState_);
             preview_->applyEquipment(worn, activeTabard.isValid() ? &activeTabard : nullptr);
             // After the model, because its bounds are what the framing is
             // measured against.
@@ -183,6 +193,11 @@ bool UnitPortrait::applyModelFrameView() {
     }
     modelFrameViewMissing_ = true;
     return false;
+}
+
+void UnitPortrait::setSheathState(uint8_t sheathState) {
+    sheathState_ = sheathState;
+    if (preview_) preview_->setSheathState(sheathState);
 }
 
 bool UnitPortrait::updatePlayer(uint8_t race, uint8_t gender,

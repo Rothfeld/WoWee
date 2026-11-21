@@ -810,8 +810,12 @@ void AppearanceComposer::setSheathState(uint8_t sheathState) {
     }
     if (renderer_ && renderer_->getAnimationController())
         renderer_->getAnimationController()->setRangedWeaponActive(showingRanged_);
-    if (renderer_ && renderer_->getCharacterRenderer() && renderer_->getCharacterInstanceId())
-        renderer_->getCharacterRenderer()->setSheathState(renderer_->getCharacterInstanceId(), sheathState);
+    if (renderer_ && renderer_->getCharacterRenderer() && renderer_->getCharacterInstanceId()) {
+        auto* cr = renderer_->getCharacterRenderer();
+        const uint32_t cid = renderer_->getCharacterInstanceId();
+        if (sheathState == kSheathStateUnarmed) cr->clearWeaponsDrawnByAnimation(cid);
+        cr->setSheathState(cid, sheathState);
+    }
     if (gameHandler_) gameHandler_->sendSetSheathed(sheathState);
     // A sheath change draws the weapons that broke again.
     if (brokenWeapons_.any()) loadEquippedWeapons();
@@ -828,8 +832,12 @@ void AppearanceComposer::syncServerSheathState(uint8_t serverSheathState) {
     showingRanged_ = sheathState_ == kSheathStateRanged;
     if (renderer_ && renderer_->getAnimationController())
         renderer_->getAnimationController()->setRangedWeaponActive(showingRanged_);
-    if (renderer_ && renderer_->getCharacterRenderer() && renderer_->getCharacterInstanceId())
-        renderer_->getCharacterRenderer()->setSheathState(renderer_->getCharacterInstanceId(), sheathState_);
+    if (renderer_ && renderer_->getCharacterRenderer() && renderer_->getCharacterInstanceId()) {
+        auto* cr = renderer_->getCharacterRenderer();
+        const uint32_t cid = renderer_->getCharacterInstanceId();
+        if (sheathState_ == kSheathStateUnarmed) cr->clearWeaponsDrawnByAnimation(cid);
+        cr->setSheathState(cid, sheathState_);
+    }
     if (brokenWeapons_.any()) loadEquippedWeapons();
 }
 

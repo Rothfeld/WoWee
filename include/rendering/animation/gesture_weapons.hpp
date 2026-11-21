@@ -3,8 +3,11 @@
 
 namespace wowee::rendering {
 inline constexpr bool gestureSheathesWeapons(uint32_t emoteFlags, uint32_t animationWeaponFlags) {
-    // NOSHEATHE emotes can share the normal emote's animation (Wave 3/70).
-    return !(emoteFlags & 0x4u) && (animationWeaponFlags & 0x14u);
+    // Only pure-NOSHEATHE emotes (flags == 0x4: Wave 70, Cheer 71, Laugh 153)
+    // suppress AnimationData.WeaponFlags sheathing on a shared animation.
+    // Talk/Exclamation/Question (0x8c/0xa4/0x94) and Loot (0x4404) still
+    // follow AnimationData.WeaponFlags (0x04/0x10) and sheathe weapons.
+    return emoteFlags != 0x4u && (animationWeaponFlags & 0x14u) != 0;
 }
 inline constexpr bool gestureWeaponPoseActive(uint32_t gestureAnimation,
                                               uint32_t baseAnimation,

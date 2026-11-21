@@ -67,6 +67,9 @@ public:
     bool applyEquipment(const std::vector<game::EquipmentItem>& equipment,
                         const pipeline::GuildTabardEmblem* guildTabard = nullptr);
 
+    // Weapon sheath state (0 unarmed/sheathed, 1 melee drawn, 2 ranged drawn).
+    void setSheathState(uint8_t sheathState);
+
     void update(float deltaTime);
     void render();
     void rotate(float yawDelta);
@@ -132,7 +135,7 @@ private:
     // Hang the character's weapons off the preview model's hand attachments.
     void attachWeapons(const std::vector<game::EquipmentItem>& equipment);
     // Put the weapon's enchant glint on it (char enum reports the ItemVisual id directly).
-    void attachWeaponEnchantVisual(uint32_t attachmentId, uint32_t itemVisualId);
+    void attachWeaponEnchantVisual(uint32_t attachmentId, int8_t heldSheathState, uint32_t itemVisualId);
     // Load the race's glue scene (Stormwind for humans, Orgrimmar for orcs, ...) as a backdrop.
     void loadRacialBackdrop(game::Race race);
     void applyPreviewView();
@@ -219,6 +222,7 @@ private:
     glm::vec3 previewStandPosition_{0.0f};
     glm::vec3 previewViewDirection_{0.0f, 1.0f, 0.0f};
     bool transparentBackground_ = false;
+    uint8_t sheathState_ = 1;
 
     // Cached info from loadCharacter() for later recompositing.
     game::Race race_ = game::Race::HUMAN;

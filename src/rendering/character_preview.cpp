@@ -18,6 +18,7 @@
 #include "core/appearance_composer.hpp"
 #include "core/geoset_rules.hpp"
 #include "core/helm_visual.hpp"
+#include "core/weapon_attachment.hpp"
 #include "pipeline/item_textures.hpp"
 #include "pipeline/m2_asset_loader.hpp"
 #include "core/logger.hpp"
@@ -1209,6 +1210,14 @@ bool CharacterPreview::loadPreviewM2(const std::string& m2Path, pipeline::M2Mode
     return pipeline::loadM2WithSkin(*assetManager_, m2Path, outModel);  // m2_asset_loader.hpp
 }
 
+void CharacterPreview::setSheathState(uint8_t sheathState) {
+    assert(sheathState <= core::kSheathStateRanged);
+    sheathState_ = sheathState;
+    if (charRenderer_ && instanceId_ != 0) {
+        charRenderer_->setSheathState(instanceId_, sheathState_);
+    }
+}
+
 void CharacterPreview::attachWeapons(const std::vector<game::EquipmentItem>& equipment) {
     if (!charRenderer_ || !assetManager_ || instanceId_ == 0) return;
 
@@ -1253,34 +1262,39 @@ void CharacterPreview::attachWeapons(const std::vector<game::EquipmentItem>& equ
         break;
     }
 
-    // Attachment 1 = right hand, 2 = left hand.
-    charRenderer_->detachWeapon(instanceId_, 1);
-    charRenderer_->detachWeapon(instanceId_, 2);
+    // Attachment 0 = shield, 1 = right hand, 2 = left hand.
+    charRenderer_->detachWeapon(instanceId_, core::kAttachShield);
+    charRenderer_->detachWeapon(instanceId_, core::kAttachRightHand);
+    charRenderer_->detachWeapon(instanceId_, core::kAttachLeftHand);
+    charRenderer_->setSheathState(instanceId_, sheathState_);
 
     auto displayInfoDbc = assetManager_->loadDBC("ItemDisplayInfo.dbc");
     if (!displayInfoDbc || !displayInfoDbc->isLoaded()) return;
 
-
     struct WeaponSlot {
         std::initializer_list<uint8_t> invTypes;
-        uint32_t attachmentId;
+        game::EquipSlot equipSlot;
     };
     // Main hand also covers two-handers, thrown weapons, guns and wands; off
     // hand covers shields and held items, and a bow, which 2.4.3's dressing
     // room puts in the left hand.
     const WeaponSlot slots[] = {
-        { .invTypes = {13, 17, 21, 25, 26}, .attachmentId = 1 },
-        { .invTypes = {14, 22, 23, 15},     .attachmentId = 2 },
+        { .invTypes = {13, 17, 21, 25, 26}, .equipSlot = game::EquipSlot::MAIN_HAND },
+        { .invTypes = {14, 22, 23, 15},     .equipSlot = game::EquipSlot::OFF_HAND },
     };
 
     for (const auto& ws : slots) {
         uint32_t displayId = 0;
         uint32_t itemVisualId = 0;
+        uint8_t matchedInvType = 0;
+        uint8_t matchedSheath = 0;
         for (const auto& item : equipment) {
             if (item.displayModel == 0) continue;
             for (uint8_t t : ws.invTypes) {
                 if (item.inventoryType == t) {
                     displayId = item.displayModel;
+                    matchedInvType = item.inventoryType;
+                    matchedSheath = item.sheath;
                     // SMSG_CHAR_ENUM already reports the enchant as its ItemVisual id.
                     itemVisualId = item.enchantment;
                     break;
@@ -1317,12 +1331,20 @@ void CharacterPreview::attachWeapons(const std::vector<game::EquipmentItem>& equ
             }
         }
 
+        const uint32_t held = core::heldAttachment(ws.equipSlot, matchedInvType);
+        const int8_t heldState = static_cast<int8_t>(core::heldSheathState(ws.equipSlot));
+        uint32_t sheath = core::sheathAttachment(matchedSheath, ws.equipSlot);
+        if (sheath != UINT32_MAX && !charRenderer_->hasAttachmentPoint(instanceId_, sheath)) {
+            sheath = UINT32_MAX;
+        }
+
         const uint32_t weaponModelId = previewModelIdFor(m2Path + "|" + texturePath);
-        if (!charRenderer_->attachWeapon(instanceId_, ws.attachmentId, weaponModel,
-                                         weaponModelId, texturePath)) {
+        if (!charRenderer_->attachWeapon(instanceId_, held, weaponModel,
+                                         weaponModelId, texturePath,
+                                         glm::mat4(1.0f), heldState, sheath)) {
             continue;
         }
-        attachWeaponEnchantVisual(ws.attachmentId, itemVisualId);
+        attachWeaponEnchantVisual(held, heldState, itemVisualId);
     }
 }
 
@@ -1334,7 +1356,8 @@ uint32_t CharacterPreview::previewModelIdFor(const std::string& assetKey) {
     return id;
 }
 
-void CharacterPreview::attachWeaponEnchantVisual(uint32_t attachmentId, uint32_t itemVisualId) {
+void CharacterPreview::attachWeaponEnchantVisual(uint32_t attachmentId, int8_t heldSheathState,
+                                                 uint32_t itemVisualId) {
     if (itemVisualId == 0 || !charRenderer_ || !assetManager_) return;
 
     auto visualsDbc = assetManager_->loadDBC("ItemVisuals.dbc");
@@ -1357,7 +1380,7 @@ void CharacterPreview::attachWeaponEnchantVisual(uint32_t attachmentId, uint32_t
             LOG_WARNING("CharacterPreview: failed to load enchant visual ", m2Path);
             continue;
         }
-        charRenderer_->attachWeaponEffect(instanceId_, attachmentId, -1, visualSlot,
+        charRenderer_->attachWeaponEffect(instanceId_, attachmentId, heldSheathState, visualSlot,
                                           effectModel, previewModelIdFor(m2Path));
     }
 }

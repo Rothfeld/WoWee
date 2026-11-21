@@ -155,6 +155,9 @@ public:
         modelCameraScale_ = cameraScale;
     }
 
+    /// Weapon sheath state for full-body previews (e.g. PaperDoll CharacterModelFrame).
+    void setSheathState(uint8_t sheathState);
+
     /// The rendered portrait, or zero until the first composite has run. The
     /// value is a VkDescriptorSet, carried as an integer so this header does
     /// not drag Vulkan into the widget tree.
@@ -212,6 +215,7 @@ private:
     // pointer-sized field would truncate on a 32-bit build, where two outfits
     // sharing the low half would stop the portrait redrawing.
     uint64_t loadedEquipHash_ = 0;
+    uint8_t sheathState_ = 1;
 };
 
 } // namespace ui

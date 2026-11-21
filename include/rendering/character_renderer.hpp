@@ -352,6 +352,9 @@ public:
     uint32_t weaponSheathingAnimation(uint32_t instanceId) const;
     /** Unit sheath state (0 unarmed, 1 melee, 2 ranged) placing its attached weapons. */
     void setSheathState(uint32_t instanceId, uint8_t sheathState);
+    /** Clear the sticky combat-animation draw latch (e.g. when a player explicitly
+     *  sheathes with Z or swims after swinging a weapon). */
+    void clearWeaponsDrawnByAnimation(uint32_t instanceId);
     /** Unit stand state (UNIT_FIELD_BYTES_1 byte 0): a pose whose animation's
      *  AnimationData.WeaponFlags has 0x04 or 0x10 shows the weapons sheathed
      *  whatever the sheath state, as gestures do (gestureSheathesWeapons). */

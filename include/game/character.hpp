@@ -64,6 +64,7 @@ struct EquipmentItem {
     uint32_t displayModel;      // Display model ID
     uint8_t inventoryType;      // Inventory slot type
     uint32_t enchantment;       // Enchantment/effect ID
+    uint8_t sheath = 0;         // Item SheatheType (where weapon hangs when sheathed)
 
     [[nodiscard]] bool isEmpty() const { return displayModel == 0; }
 };
