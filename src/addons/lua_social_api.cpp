@@ -1926,16 +1926,32 @@ void registerSocialLuaAPI(lua_State* L) {
                 // Guarded with `if ( texture )` before being pasted into a
                 // path, so nil leaves the default parchment rather than
                 // building a texture name out of nothing.
-                // Reporting a mail as spam needs a GM channel this client does
-                // not have, so no mail can be complained about.
-                {"CanComplainInboxItem", luaReturnFalse},
+                // TBC 2.4.3 shows OpenMailReportSpamButton on ordinary player mail
+                // from another player (hidden on NPC/AH/GM mail and self-sent mail).
+                {"CanComplainInboxItem", [](lua_State* L) -> int {
+            auto* gh = getGameHandler(L);
+            const int index = static_cast<int>(luaL_optnumber(L, 1, 0));
+            if (!gh || index < 1) { lua_pushboolean(L, 0); return 1; }
+            const auto& inbox = gh->getMailInbox();
+            if (index > static_cast<int>(inbox.size())) { lua_pushboolean(L, 0); return 1; }
+            const auto& mail = inbox[static_cast<size_t>(index - 1)];
+            const bool canComplain = mail.messageType == 0 &&
+                                     mail.senderGuid != 0 &&
+                                     mail.senderGuid != gh->getPlayerGuid() &&
+                                     !game::isGmStationery(mail.stationeryId);
+            lua_pushboolean(L, canComplain ? 1 : 0);
+            return 1;
+        }},
                 // Turning a letter into a keepable item. Called from the mail
                 // frame's XML rather than its Lua, which is why a scan of the
                 // Lua alone never reported it.
                 {"TakeInboxTextItem", [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
-            const auto id = static_cast<uint32_t>(luaL_optnumber(L, 1, 0));
-            if (gh && id) gh->takeInboxTextItem(id);
+            const int index = static_cast<int>(luaL_optnumber(L, 1, 0));
+            if (!gh || index < 1) return 0;
+            const auto& inbox = gh->getMailInbox();
+            if (index > static_cast<int>(inbox.size())) return 0;
+            gh->takeInboxTextItem(inbox[static_cast<size_t>(index - 1)].messageId);
             return 0;
         }},
                 // SetSendMailShowing(showing) - the send-mail tab is open, or

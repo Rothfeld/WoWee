@@ -266,11 +266,15 @@ static int lua_SetPortraitToTexture(lua_State* L) {
         lua_replace(L, 1);
     }
     if (!lua_istable(L, 1)) return 0;
+    const uint32_t wid = tableWidgetId(L, 1);
     lua_getfield(L, 1, "SetTexture");
     if (!lua_isfunction(L, -1)) { lua_pop(L, 1); return 0; }
     lua_pushvalue(L, 1);
     lua_pushvalue(L, 2);
     lua_call(L, 2, 0);
+    if (auto* tree = getWidgetTree(L)) {
+        if (auto* w = tree->get(wid)) w->isCircularPortrait = true;
+    }
     return 0;
 }
 
@@ -1156,11 +1160,22 @@ const game::MailMessage* mailAt(game::GameHandler* gh, int index) {
     return &inbox[index - 1];
 }
 
-const game::MailAttachment* attachmentAt(const game::MailMessage* mail, int slot) {
-    if (!mail || slot < 1 || slot > static_cast<int>(mail->attachments.size())) {
-        return nullptr;
+const game::MailAttachment* attachmentAt(const game::MailMessage* mail, lua_State* L, int argIdx) {
+    const bool explicitSlot = !lua_isnoneornil(L, argIdx);
+    const int slot = explicitSlot ? static_cast<int>(luaL_optnumber(L, argIdx, 1)) : 1;
+    return game::findMailAttachment(mail, slot, explicitSlot);
+}
+
+std::string formatMailAttachmentName(game::GameHandler* gh,
+                                     const game::MailAttachment& att,
+                                     const game::ItemQueryResponseData& info) {
+    std::string name = info.name;
+    const int32_t randProp = static_cast<int32_t>(att.randomPropertyId);
+    if (gh && randProp != 0 && !name.empty()) {
+        const std::string suffix = gh->getRandomPropertyName(randProp);
+        if (!suffix.empty()) name += " " + suffix;
     }
-    return &mail->attachments[slot - 1];
+    return name;
 }
 
 }  // namespace
@@ -1169,14 +1184,17 @@ const game::MailAttachment* attachmentAt(const game::MailMessage* mail, int slot
 static int lua_GetInboxItem(lua_State* L) {
     auto* gh = getGameHandler(L);
     const auto* mail = mailAt(gh, static_cast<int>(luaL_optnumber(L, 1, 0)));
-    const auto* att = attachmentAt(mail, static_cast<int>(luaL_optnumber(L, 2, 1)));
-    if (!att) { return luaReturnNil(L); }
+    const auto* att = attachmentAt(mail, L, 2);
+    if (!att || att->itemId == 0) { return luaReturnNil(L); }
+    gh->ensureItemInfo(att->itemId);
     const auto* info = gh->getItemInfo(att->itemId);
-    lua_pushstring(L, info ? info->name.c_str() : "");
-    lua_pushstring(L, info ? gh->getItemIconPath(info->displayInfoId).c_str() : "");
+    if (!info || info->name.empty()) { return luaReturnNil(L); }
+    const std::string name = formatMailAttachmentName(gh, *att, *info);
+    lua_pushstring(L, name.c_str());
+    lua_pushstring(L, gh->getItemIconPath(info->displayInfoId).c_str());
     lua_pushnumber(L, att->stackCount);
-    lua_pushnumber(L, info ? info->quality : 1);
-    lua_pushboolean(L, 1);
+    lua_pushnumber(L, info->quality);
+    lua_pushboolean(L, playerCanUseItem(gh, info) ? 1 : 0);
     return 5;
 }
 
@@ -1184,10 +1202,18 @@ static int lua_GetInboxItem(lua_State* L) {
 static int lua_GetInboxItemLink(lua_State* L) {
     auto* gh = getGameHandler(L);
     const auto* mail = mailAt(gh, static_cast<int>(luaL_optnumber(L, 1, 0)));
-    const auto* att = attachmentAt(mail, static_cast<int>(luaL_optnumber(L, 2, 1)));
-    const auto* info = att ? gh->getItemInfo(att->itemId) : nullptr;
+    const auto* att = attachmentAt(mail, L, 2);
+    if (!att || att->itemId == 0) { return luaReturnNil(L); }
+    gh->ensureItemInfo(att->itemId);
+    const auto* info = gh->getItemInfo(att->itemId);
     if (!info || info->name.empty()) { return luaReturnNil(L); }
-    const std::string link = game::itemChatLink(att->itemId, static_cast<uint32_t>(info->quality), info->name);
+    const std::string name = formatMailAttachmentName(gh, *att, *info);
+    const std::string link = game::itemChatLink(
+        att->itemId,
+        static_cast<uint32_t>(info->quality),
+        name,
+        att->enchantId,
+        static_cast<int32_t>(att->randomPropertyId));
     lua_pushstring(L, link.c_str());
     return 1;
 }
@@ -1197,7 +1223,7 @@ static int lua_GetInboxItemLink(lua_State* L) {
 static int lua_TakeInboxItem(lua_State* L) {
     auto* gh = getGameHandler(L);
     const auto* mail = mailAt(gh, static_cast<int>(luaL_optnumber(L, 1, 0)));
-    const auto* att = attachmentAt(mail, static_cast<int>(luaL_optnumber(L, 2, 1)));
+    const auto* att = attachmentAt(mail, L, 2);
     if (gh && mail && att) gh->mailTakeItem(mail->messageId, att->itemGuidLow);
     return 0;
 }
@@ -1216,9 +1242,22 @@ static int lua_DeleteInboxItem(lua_State* L) {
     return 0;
 }
 
-// InboxItemCanDelete(index) - nothing here refuses a deletion
+// InboxItemCanDelete(index) - TBC 2.4.3 shows "Return" (false) on unreturned,
+// non-COD-payment MAIL_NORMAL mails that still hold money or items, and "Delete"
+// (true) on NPC/auction/returned/COD-payment/empty letters.
 static int lua_InboxItemCanDelete(lua_State* L) {
-    lua_pushboolean(L, 1);
+    auto* gh = getGameHandler(L);
+    const auto* mail = mailAt(gh, static_cast<int>(luaL_optnumber(L, 1, 0)));
+    if (!mail) {
+        lua_pushboolean(L, 1);
+        return 1;
+    }
+    const bool mustReturn =
+        mail->messageType == 0 &&
+        (mail->flags & 0x02u) == 0 && // MAIL_CHECK_MASK_RETURNED
+        (mail->flags & 0x08u) == 0 && // MAIL_CHECK_MASK_COD_PAYMENT
+        (mail->money > 0 || !mail->attachments.empty());
+    lua_pushboolean(L, mustReturn ? 0 : 1);
     return 1;
 }
 
@@ -5570,17 +5609,31 @@ void registerInventoryLuaAPI(lua_State* L) {
             // Darnassian Bleu and nil / "INV_Misc_Note_01" for a plain one
             // (pair 6); this answered INV_Letter_15 twice for everything.
             {
-                const game::ItemQueryResponseData* first = nullptr;
-                if (!mail.attachments.empty() && mail.attachments[0].itemId != 0) {
-                    gh->ensureItemInfo(mail.attachments[0].itemId);
-                    first = gh->getItemInfo(mail.attachments[0].itemId);
+                std::string package;
+                if (mail.packageId != 0) {
+                    package = gh->getPackageIcon(mail.packageId);
                 }
-                const std::string package = first ? gh->getItemIconPath(first->displayInfoId) : std::string{};
+                if (package.empty()) {
+                    if (mail.attachments.size() > 1) {
+                        package = "Interface\\Icons\\INV_Crate_02";
+                    } else if (mail.attachments.size() == 1 && mail.attachments[0].itemId != 0) {
+                        gh->ensureItemInfo(mail.attachments[0].itemId);
+                        if (const auto* first = gh->getItemInfo(mail.attachments[0].itemId)) {
+                            package = gh->getItemIconPath(first->displayInfoId);
+                        }
+                        if (package.empty()) package = "Interface\\Icons\\INV_Misc_QuestionMark";
+                    }
+                }
                 if (package.empty()) lua_pushnil(L);
                 else lua_pushstring(L, package.c_str());
-                const std::string stationery = gh->getMailStationeryIcon(mail);
-                if (stationery.empty()) lua_pushnil(L);
-                else lua_pushstring(L, stationery.c_str());
+
+                std::string stationery = gh->getMailStationeryIcon(mail);
+                if (stationery.empty()) {
+                    stationery = game::isGmStationery(mail.stationeryId)
+                        ? "Interface\\Icons\\Mail_GMIcon"
+                        : "Interface\\Icons\\INV_Misc_Note_01";
+                }
+                lua_pushstring(L, stationery.c_str());
             }
             // Through getMailSenderName, which is what turns a player's guid
             // into a name once the query comes back, and names the auction
@@ -5602,16 +5655,16 @@ void registerInventoryLuaAPI(lua_State* L) {
             // caller here tests it for truth.
             if (mail.attachments.empty()) lua_pushnil(L);
             else lua_pushnumber(L, static_cast<lua_Number>(mail.attachments.size()));
-            lua_pushboolean(L, mail.read ? 1 : 0);               // wasRead
-            lua_pushboolean(L, 0);                                // wasReturned
-            lua_pushboolean(L, !mail.body.empty() ? 1 : 0);      // textCreated
-            lua_pushboolean(L, mail.messageType == 0 && !game::isGmStationery(mail.stationeryId)); // canReply
+            lua_pushboolean(L, (mail.read || (mail.flags & 0x01u) != 0) ? 1 : 0); // wasRead
+            lua_pushboolean(L, (mail.flags & 0x02u) != 0 ? 1 : 0); // wasReturned (MAIL_CHECK_MASK_RETURNED)
+            lua_pushboolean(L, (mail.flags & 0x04u) != 0 ? 1 : 0); // textCreated (MAIL_CHECK_MASK_COPIED)
+            lua_pushboolean(L, mail.messageType == 0 && mail.senderGuid != 0 && !game::isGmStationery(mail.stationeryId)); // canReply
             lua_pushboolean(L, game::isGmStationery(mail.stationeryId)); // isGM
-            // How many of the first attachment there are, which is what the
-            // inbox button prints in its corner.
-            lua_pushnumber(L, mail.attachments.empty()
-                                  ? 0
-                                  : static_cast<lua_Number>(mail.attachments[0].stackCount));
+            // Single-attachment stack count for the inbox slot corner; multi-item
+            // mails display the crate icon with no corner stack number in 2.4.3.
+            lua_pushnumber(L, mail.attachments.size() == 1
+                                  ? static_cast<lua_Number>(mail.attachments[0].stackCount)
+                                  : 0);
             return 14;
         }},
                 // body, stationery texture, isTakeable, isInvoice
@@ -5642,20 +5695,30 @@ void registerInventoryLuaAPI(lua_State* L) {
             const auto* mail = mailAt(gh, static_cast<int>(luaL_optnumber(L, 1, 0)));
             if (!mail) { return luaReturnNil(L); }
             if (!mail->read && mail->messageId != 0) gh->mailMarkAsRead(mail->messageId);
-            lua_pushstring(L, mail->body.c_str());
-            lua_pushstring(L, game::stationeryTexture(mail->stationeryId, mail->messageType));
-            lua_pushboolean(L, (mail->money > 0 || !mail->attachments.empty()) ? 1 : 0);
-            // Whether this is an auction house invoice, which was answered no
-            // for every letter. OpenMail_Update asks here first and only calls
-            // GetInboxInvoiceInfo `if ( isInvoice )`, so saying no kept the
-            // whole invoice panel shut: a sale arrived as a letter with the
-            // raw colon-separated body in it and no breakdown at all.
-            //
-            // The body decides, not the sender: an auction mail's body parses
-            // as an invoice and nothing else does.
+
+            std::string bodyText = mail->body;
+            if (bodyText.empty() && mail->itemTextId == 0 && mail->mailTemplateId != 0) {
+                if (const auto* tmpl = gh->getMailTemplateText(mail->mailTemplateId)) {
+                    bodyText = serverText(L, tmpl->body);
+                }
+            } else if (!bodyText.empty() && mail->mailTemplateId != 0) {
+                bodyText = serverText(L, bodyText);
+            }
+
             game::AuctionMailInvoice invoice;
             const bool isInvoice = mail->messageType == 2 &&
                                    game::parseAuctionMailBody(mail->body, invoice);
+            // OpenMail_Update uses the 3rd value as letterIsTakeable (whether
+            // OpenMailLetterButton offers to save a permanent copy of the letter).
+            const bool letterIsTakeable =
+                !isInvoice &&
+                !game::isGmStationery(mail->stationeryId) &&
+                ((mail->flags & 0x10u) != 0 || mail->mailTemplateId != 0 ||
+                 (!bodyText.empty() && mail->itemTextId == 0 && (mail->flags & 0x04u) == 0));
+
+            lua_pushstring(L, bodyText.c_str());
+            lua_pushstring(L, game::stationeryTexture(mail->stationeryId, mail->messageType));
+            lua_pushboolean(L, letterIsTakeable ? 1 : 0);
             lua_pushboolean(L, isInvoice ? 1 : 0);
             return 4;
         }},

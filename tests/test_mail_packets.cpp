@@ -146,9 +146,9 @@ TEST_CASE("TBC mail list parses attached money and item wire layout", "[mail][tb
     entry.writeUInt32(0x10203040);          // item GUID low
     entry.writeUInt32(19019);               // item entry
     for (uint32_t enchantSlot = 0; enchantSlot < 6; ++enchantSlot) {
-        entry.writeUInt32(enchantSlot + 10);   // charges
+        entry.writeUInt32(enchantSlot == 0 ? 2673 : (enchantSlot == 2 ? 2734 : 0)); // enchant id
         entry.writeUInt32(enchantSlot + 20);   // duration
-        entry.writeUInt32(enchantSlot == 0 ? 2673 : 0); // enchant id
+        entry.writeUInt32(enchantSlot + 10);   // charges
     }
     entry.writeUInt32(44);                  // random property
     entry.writeUInt32(55);                  // suffix factor
@@ -169,6 +169,7 @@ TEST_CASE("TBC mail list parses attached money and item wire layout", "[mail][tb
     CHECK(inbox[0].messageId == 0x87654321);
     CHECK(inbox[0].senderGuid == 0x8877665544332211);
     CHECK(inbox[0].cod == 24680);
+    CHECK(inbox[0].itemTextId == 13579);
     CHECK(inbox[0].stationeryId == 41);
     CHECK(inbox[0].money == 765432);
     CHECK(inbox[0].expirationTime == Catch::Approx(7.25f));
@@ -178,12 +179,129 @@ TEST_CASE("TBC mail list parses attached money and item wire layout", "[mail][tb
     CHECK(inbox[0].attachments[0].itemGuidLow == 0x10203040);
     CHECK(inbox[0].attachments[0].itemId == 19019);
     CHECK(inbox[0].attachments[0].enchantId == 2673);
+    CHECK(inbox[0].attachments[0].enchantIds[0] == 2673);
+    CHECK(inbox[0].attachments[0].enchantIds[2] == 2734);
     CHECK(inbox[0].attachments[0].randomPropertyId == 44);
     CHECK(inbox[0].attachments[0].randomSuffix == 55);
     CHECK(inbox[0].attachments[0].stackCount == 7);
     CHECK(inbox[0].attachments[0].chargesOrDurability == 6);
     CHECK(inbox[0].attachments[0].maxDurability == 100);
+    CHECK(inbox[0].attachments[0].durability == 83);
     CHECK(packet.getRemainingSize() == 0);
+}
+
+TEST_CASE("TBC mail list parses no-item NPC template mail and 12-slot multi-item COD mail",
+          "[mail][tbc]") {
+    auto buildEntry = [](wowee::network::Packet& out, const wowee::network::Packet& body, bool nonPlayer) {
+        // CMaNGOS budgets 8-byte sender in next_mail_size even for 4-byte non-player senders.
+        out.writeUInt16(static_cast<uint16_t>(body.getSize() + 2 + (nonPlayer ? 4 : 0)));
+        out.writeBytes(body.getData().data(), body.getSize());
+    };
+
+    // Entry 0: Velma Warnam NPC MailTemplate (233) with empty wire subject and no attachments
+    wowee::network::Packet npcEntry;
+    npcEntry.writeUInt32(501);      // messageId
+    npcEntry.writeUInt8(3);         // MAIL_CREATURE
+    npcEntry.writeUInt32(4773);     // Velma Warnam creature entry
+    npcEntry.writeUInt32(0);        // COD
+    npcEntry.writeUInt32(0);        // itemTextId (template supplies body)
+    npcEntry.writeUInt32(0);        // packageId
+    npcEntry.writeUInt32(41);       // default stationery
+    npcEntry.writeUInt32(0);        // money
+    npcEntry.writeUInt32(0);        // unread flags
+    npcEntry.writeFloat(29.9f);     // days remaining
+    npcEntry.writeUInt32(233);      // MailTemplate.dbc ID
+    npcEntry.writeString("");       // empty wire subject for MailTemplate mail
+    npcEntry.writeUInt8(0);         // 0 attachments
+
+    // Entry 1: Player multi-item (12 attachments) COD mail with HAS_BODY flag (0x10)
+    wowee::network::Packet codEntry;
+    codEntry.writeUInt32(502);
+    codEntry.writeUInt8(0);                     // MAIL_NORMAL
+    codEntry.writeUInt64(0x000000000000002DULL);
+    codEntry.writeUInt32(50000);                // 5g COD
+    codEntry.writeUInt32(77);                   // itemTextId
+    codEntry.writeUInt32(0);                    // packageId
+    codEntry.writeUInt32(41);                   // stationery
+    codEntry.writeUInt32(0);                    // money
+    codEntry.writeUInt32(0x10);                 // MAIL_CHECK_MASK_HAS_BODY
+    codEntry.writeFloat(2.95f);                 // 3-day COD expiry
+    codEntry.writeUInt32(0);                    // mailTemplateId
+    codEntry.writeString("12-Slot COD Supplies");
+    codEntry.writeUInt8(12);
+    for (uint8_t s = 0; s < 12; ++s) {
+        codEntry.writeUInt8(s);
+        codEntry.writeUInt32(1000u + s);
+        codEntry.writeUInt32(2589u + s);
+        for (int e = 0; e < 6; ++e) {
+            codEntry.writeUInt32(e == 0 ? (100u + s) : 0u);
+            codEntry.writeUInt32(0);
+            codEntry.writeUInt32(0);
+        }
+        codEntry.writeUInt32(0);
+        codEntry.writeUInt32(0);
+        codEntry.writeUInt8(static_cast<uint8_t>(s + 1));
+        codEntry.writeUInt32(0);
+        codEntry.writeUInt32(60);
+        codEntry.writeUInt32(55);
+    }
+
+    wowee::network::Packet packet;
+    packet.writeUInt8(2);
+    buildEntry(packet, npcEntry, /*nonPlayer=*/true);
+    buildEntry(packet, codEntry, /*nonPlayer=*/false);
+
+    TbcPacketParsers parsers;
+    std::vector<MailMessage> inbox;
+    REQUIRE(parsers.parseMailList(packet, inbox));
+    REQUIRE(inbox.size() == 2);
+    CHECK(packet.getRemainingSize() == 0);
+
+    CHECK(inbox[0].messageId == 501);
+    CHECK(inbox[0].messageType == 3);
+    CHECK(inbox[0].senderEntry == 4773);
+    CHECK(inbox[0].mailTemplateId == 233);
+    CHECK(inbox[0].itemTextId == 0);
+    CHECK(inbox[0].subject.empty());
+    CHECK(inbox[0].attachments.empty());
+    CHECK_FALSE(inbox[0].read);
+
+    CHECK(inbox[1].messageId == 502);
+    CHECK(inbox[1].cod == 50000);
+    CHECK(inbox[1].itemTextId == 77);
+    CHECK(inbox[1].flags == 0x10);
+    REQUIRE(inbox[1].attachments.size() == 12);
+    for (size_t s = 0; s < 12; ++s) {
+        CHECK(inbox[1].attachments[s].slot == s);
+        CHECK(inbox[1].attachments[s].itemId == 2589u + s);
+        CHECK(inbox[1].attachments[s].enchantId == 100u + s);
+        CHECK(inbox[1].attachments[s].stackCount == s + 1);
+        CHECK(inbox[1].attachments[s].durability == 55);
+        CHECK(inbox[1].attachments[s].maxDurability == 60);
+        const auto* resolved = findMailAttachment(&inbox[1], static_cast<int>(s + 1), true);
+        REQUIRE(resolved != nullptr);
+        CHECK(resolved->itemId == 2589u + s);
+    }
+    CHECK(findMailAttachment(&inbox[1], 13, true) == nullptr);
+}
+
+TEST_CASE("TBC mail action packets encode mailbox GUID, template ID, and sender GUID",
+          "[mail][tbc]") {
+    TbcPacketParsers parsers;
+
+    auto createText = parsers.buildMailCreateTextItem(0xF1100022AE0068A0ULL, 38, 224);
+    wowee::network::Packet pCreate(createText.getOpcode(), createText.getData());
+    CHECK(pCreate.readUInt64() == 0xF1100022AE0068A0ULL);
+    CHECK(pCreate.readUInt32() == 38);
+    CHECK(pCreate.readUInt32() == 224);
+    CHECK(pCreate.getRemainingSize() == 0);
+
+    auto ret = parsers.buildMailReturnToSender(0xF1100022AE0068A0ULL, 502, 0x2DULL);
+    wowee::network::Packet pRet(ret.getOpcode(), ret.getData());
+    CHECK(pRet.readUInt64() == 0xF1100022AE0068A0ULL);
+    CHECK(pRet.readUInt32() == 502);
+    CHECK(pRet.readUInt64() == 0x2DULL);
+    CHECK(pRet.getRemainingSize() == 0);
 }
 
 TEST_CASE("TBC mail list accepts overstated non-player sender size", "[mail][tbc]") {

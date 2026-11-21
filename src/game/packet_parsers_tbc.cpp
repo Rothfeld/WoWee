@@ -859,9 +859,9 @@ bool TbcPacketParsers::parseItemQueryResponse(network::Packet& packet,
 //
 // Differences from WotLK 3.3.5a (base implementation):
 //   - Header: uint8 count only (WotLK: uint32 totalCount + uint8 shownCount)
-//   - No body field; the body is fetched separately through itemTextId
+//   - No body field; the body is fetched separately through itemTextId or MailTemplate.dbc
 //   - Header includes itemTextId + package before stationery
-//   - Attachment enchants are 6 × {charges, duration, id}
+//   - Attachment enchants are 6 x {id, duration, charges} (CMaNGOS MailHandler.cpp:649-651)
 //   - Attachment stack count is uint8 rather than uint32
 // ============================================================================
 bool TbcPacketParsers::parseMailList(network::Packet& packet, std::vector<MailMessage>& inbox) {
@@ -908,16 +908,16 @@ bool TbcPacketParsers::parseMailList(network::Packet& packet, std::vector<MailMe
             default: msg.senderEntry = packet.readUInt32(); break;
         }
 
-        msg.cod          = packet.readUInt32();
-        packet.readUInt32();         // itemTextId (body fetched separately)
-        packet.readUInt32();         // package (Package.dbc)
-        msg.stationeryId = packet.readUInt32();
-        msg.money        = packet.readUInt32();
-        msg.flags        = packet.readUInt32();
+        msg.cod            = packet.readUInt32();
+        msg.itemTextId     = packet.readUInt32();
+        msg.packageId      = packet.readUInt32();
+        msg.stationeryId   = packet.readUInt32();
+        msg.money          = packet.readUInt32();
+        msg.flags          = packet.readUInt32();
         msg.expirationTime = packet.readFloat();
         msg.mailTemplateId = packet.readUInt32();
-        msg.subject      = packet.readString();
-        // TBC has no separate body field at all
+        msg.subject        = packet.readString();
+        // TBC has no inline body string; body comes from itemTextId or MailTemplate.dbc.
 
         uint8_t attachCount = packet.readUInt8();
         msg.attachments.reserve(attachCount);
@@ -927,9 +927,10 @@ bool TbcPacketParsers::parseMailList(network::Packet& packet, std::vector<MailMe
             att.itemGuidLow  = packet.readUInt32();
             att.itemId       = packet.readUInt32();
             for (int e = 0; e < 6; ++e) {
-                packet.readUInt32(); // charges
-                packet.readUInt32(); // duration
-                uint32_t enchId = packet.readUInt32();
+                uint32_t enchId = packet.readUInt32(); // enchant id
+                packet.readUInt32();                   // duration
+                packet.readUInt32();                   // charges
+                att.enchantIds[static_cast<size_t>(e)] = enchId;
                 if (e == 0) att.enchantId = enchId;
             }
             att.randomPropertyId     = packet.readUInt32();
@@ -937,7 +938,7 @@ bool TbcPacketParsers::parseMailList(network::Packet& packet, std::vector<MailMe
             att.stackCount           = packet.readUInt8();
             att.chargesOrDurability  = packet.readUInt32();
             att.maxDurability        = packet.readUInt32();
-            packet.readUInt32();  // current durability (separate from chargesOrDurability)
+            att.durability           = packet.readUInt32();
             msg.attachments.push_back(att);
         }
 

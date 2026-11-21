@@ -1082,6 +1082,14 @@ public:
     std::string getAuctionHouseName(uint32_t auctionHouseId) const;
     /// Up to three resolved sender names for GetLatestThreeSenders().
     std::vector<std::string> getLatestThreeMailSenders() const;
+    struct MailTemplateText {
+        std::string subject;
+        std::string body;
+    };
+    /// Localized Subject and Body from MailTemplate.dbc, nullptr if absent.
+    const MailTemplateText* getMailTemplateText(uint32_t templateId) const;
+    /// Icon path from Package.dbc ("Interface\\Icons\\<Icon>"), empty if absent.
+    std::string getPackageIcon(uint32_t packageId) const;
     /// The item Stationery.dbc names for a letterhead (column 1), 0 if none.
     uint32_t getStationeryItemId(uint32_t stationeryId) const;
     /// GetInboxHeaderInfo's stationeryIcon: the icon of the stationery's item

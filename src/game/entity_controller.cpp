@@ -3521,10 +3521,15 @@ void EntityController::handleNameQueryResponse(network::Packet& packet) {
         }
 
         // Backfill mail inbox sender names
+        bool updatedInboxSender = false;
         for (auto& mail : owner_.mailInboxRef()) {
             if (mail.messageType == 0 && mail.senderGuid == data.guid) {
                 mail.senderName = data.name;
+                updatedInboxSender = true;
             }
+        }
+        if (updatedInboxSender && owner_.isMailboxOpen()) {
+            owner_.fireAddonEvent("MAIL_INBOX_UPDATE", {});
         }
         for (const auto& sender : owner_.getPendingMailSenders()) {
             const uint64_t senderGuid = sender.senderGuid != 0
@@ -3655,6 +3660,14 @@ void EntityController::handleCreatureQueryResponse(network::Packet& packet) {
                 break;
             }
         }
+        if (owner_.isMailboxOpen()) {
+            for (const auto& mail : owner_.getMailInbox()) {
+                if (mail.messageType == 3 && mail.senderEntry == data.entry) {
+                    owner_.fireAddonEvent("MAIL_INBOX_UPDATE", {});
+                    break;
+                }
+            }
+        }
     }
 }
 
@@ -3710,6 +3723,14 @@ void EntityController::handleGameObjectQueryResponse(network::Packet& packet) {
             if (sender.messageType == 4 && sender.senderId == data.entry) {
                 owner_.fireAddonEvent("UPDATE_PENDING_MAIL", {});
                 break;
+            }
+        }
+        if (owner_.isMailboxOpen()) {
+            for (const auto& mail : owner_.getMailInbox()) {
+                if (mail.messageType == 4 && mail.senderEntry == data.entry) {
+                    owner_.fireAddonEvent("MAIL_INBOX_UPDATE", {});
+                    break;
+                }
             }
         }
 

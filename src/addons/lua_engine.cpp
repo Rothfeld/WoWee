@@ -724,12 +724,17 @@ int lua_Region_SetPoint(lua_State* L) {
     if (lua_isnumber(L, argi))     a.x = static_cast<float>(lua_tonumber(L, argi));
     if (lua_isnumber(L, argi + 1)) a.y = static_cast<float>(lua_tonumber(L, argi + 1));
 
+    if (auto* self = tree->get(id)) self->isImplicitButtonText = false;
     tree->addPoint(id, a);
     return 0;
 }
 
 int lua_Region_ClearAllPoints(lua_State* L) {
-    if (auto* tree = wowee::addons::getWidgetTree(L)) tree->clearPoints(widgetIdOf(L, 1));
+    if (auto* tree = wowee::addons::getWidgetTree(L)) {
+        const uint32_t id = widgetIdOf(L, 1);
+        if (auto* self = tree->get(id)) self->isImplicitButtonText = false;
+        tree->clearPoints(id);
+    }
     return 0;
 }
 
@@ -747,7 +752,8 @@ int lua_Region_SetAllPoints(lua_State* L) {
     // the new frame under that name first, so by the time this runs the name
     // means the frame itself. Two identical constraints collapse to no size at
     // the origin, and everything anchored to it lands there too.
-    const auto* w = tree->get(id);
+    auto* w = tree->get(id);
+    if (w) w->isImplicitButtonText = false;
     if (target == 0 || target == id) target = w ? w->parent : 0;
     tree->setAllPoints(id, target);
     return 0;
@@ -2121,6 +2127,8 @@ int lua_Tooltip_AddLine(lua_State* L) {
     // call and dropped, and FrameXML passes it on every line of prose.
     line.wrap = lua_toboolean(L, 6) != 0;
     w->isTooltip = true;
+    if (w->width <= 0.0f) w->width = 10.0f;
+    if (w->height <= 0.0f) w->height = 10.0f;
     w->tooltipLines.push_back(std::move(line));
     return 0;
 }
@@ -2273,6 +2281,8 @@ int lua_Tooltip_AddDoubleLine(lua_State* L) {
     line.rc[2] = colour(9, kTooltipDefaultColour[2]);
     line.rc[3] = 1.0f;
     w->isTooltip = true;
+    if (w->width <= 0.0f) w->width = 10.0f;
+    if (w->height <= 0.0f) w->height = 10.0f;
     w->tooltipLines.push_back(std::move(line));
     return 0;
 }
@@ -2291,8 +2301,18 @@ int lua_Tooltip_SetOwner(lua_State* L) {
     if (!w) return 0;
     w->isTooltip = true;
     // Cleared here, because SetOwner is what precedes a fresh set of lines.
+    // Keep w->width / w->height intact so OnUpdate refreshes (which run after
+    // sizeTooltipWidget and before collectDrawOrder) do not collapse rectW/rectH
+    // to 0 and drop the tooltip from drawOrder; empty tooltips are already
+    // suppressed by lua_Region_Show and collectDrawOrder.
     clearTooltipUnit(L, *w);
     w->tooltipLines.clear();
+    w->tooltipMinWidth = 0.0f;
+    if (lua_istable(L, 1)) {
+        lua_pushnil(L);
+        lua_setfield(L, 1, "__itemId");
+    }
+    callScriptOnTable(L, 1, "OnTooltipCleared", 0);
 
     // Remembered, because IsOwned reads it and nothing wrote it - so every
     // check answered false and a tooltip outlived the frame it belonged to.
@@ -2407,6 +2427,8 @@ int lua_Tooltip_SetText(lua_State* L) {
     // SetText(text, r, g, b, a, textWrap) - the seventh here, since alpha sits
     // between the colour and the flag.
     line.wrap = lua_toboolean(L, 7) != 0;
+    if (w->width <= 0.0f) w->width = 10.0f;
+    if (w->height <= 0.0f) w->height = 10.0f;
     w->tooltipLines.push_back(std::move(line));
     w->shown = true;
     lua_pushboolean(L, 1);
@@ -4482,10 +4504,88 @@ int lua_Tooltip_SetGuildBankItem(lua_State* L) {
     return 1;
 }
 
+int lua_Tooltip_ClearLines(lua_State* L);
+
+int lua_Tooltip_SetInboxItem(lua_State* L) {
+    lua_Tooltip_ClearLines(L);
+    auto* w = widgetOf(L, 1);
+    auto* gh = wowee::addons::getGameHandler(L);
+    const int index = static_cast<int>(luaL_optnumber(L, 2, 0));
+    if (!w || !gh || index < 1) { lua_pushboolean(L, 0); return 1; }
+    const auto& inbox = gh->getMailInbox();
+    if (index > static_cast<int>(inbox.size())) { lua_pushboolean(L, 0); return 1; }
+    const auto& mail = inbox[static_cast<size_t>(index - 1)];
+    const bool explicitSlot = !lua_isnoneornil(L, 3);
+    const int slot = explicitSlot ? static_cast<int>(luaL_optnumber(L, 3, 1)) : 1;
+    const auto* att = game::findMailAttachment(&mail, slot, explicitSlot);
+    if (!att || att->itemId == 0) {
+        w->shown = false;
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+    gh->ensureItemInfo(att->itemId);
+
+    game::ItemDef inst;
+    inst.itemId = att->itemId;
+    inst.stackCount = att->stackCount;
+    inst.randomPropertyId = static_cast<int32_t>(att->randomPropertyId);
+    inst.suffixFactor = att->randomSuffix;
+    inst.curDurability = att->durability;
+    inst.maxDurability = att->maxDurability;
+
+    if (!fillItemTooltipById(L, gh, att->itemId, &inst)) {
+        w->shown = false;
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+    appendRandomSuffix(L, w, gh, inst);
+    bool anyArrayEnchant = false;
+    for (uint32_t enchId : att->enchantIds) {
+        if (enchId != 0) {
+            anyArrayEnchant = true;
+            appendEnchantLineById(w, gh, enchId);
+        }
+    }
+    if (!anyArrayEnchant && att->enchantId != 0) {
+        appendEnchantLineById(w, gh, att->enchantId);
+    }
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+int lua_Tooltip_SetSendMailItem(lua_State* L) {
+    lua_Tooltip_ClearLines(L);
+    auto* w = widgetOf(L, 1);
+    auto* gh = wowee::addons::getGameHandler(L);
+    const int slot = static_cast<int>(luaL_optnumber(L, 2, 0));
+    if (!w || !gh || slot < 1) { lua_pushboolean(L, 0); return 1; }
+    const auto& attachments = gh->getMailAttachments();
+    if (slot > static_cast<int>(attachments.size())) { lua_pushboolean(L, 0); return 1; }
+    const auto& att = attachments[static_cast<size_t>(slot - 1)];
+    if (!att.occupied() || att.item.itemId == 0) {
+        w->shown = false;
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+    gh->ensureItemInfo(att.item.itemId);
+    if (!fillItemTooltipById(L, gh, att.item.itemId, &att.item)) {
+        fillItemTooltip(w, att.item, gh);
+        noteTooltipItem(L, att.item.itemId);
+        fireTooltipSetItem(L);
+        appendDurabilityLine(w, att.item);
+    } else {
+        appendRandomSuffix(L, w, gh, att.item);
+    }
+    appendEnchantLines(w, gh, att.itemGuid);
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
 int lua_Tooltip_ClearLines(lua_State* L) {
     if (auto* w = widgetOf(L, 1)) {
         clearTooltipUnit(L, *w);
         w->tooltipLines.clear();
+        w->tooltipMinWidth = 0.0f;
     }
     // And what the tooltip was showing, which is a different question from
     // what is written in it.
@@ -4854,6 +4954,16 @@ static void fireOnShowNow(lua_State* L, int frameIndex, wowee::ui::Widget* w) {
 
 int lua_Region_Show(lua_State* L) {
     auto* w = widgetOf(L, 1);
+    // TBC 2.4.3 CGTooltip::Show: calling GameTooltip:Show() when NumLines() == 0
+    // (such as InboxFrameItem_OnEnter on a plain/NPC letter with no attachment,
+    // money or COD) keeps the tooltip hidden rather than drawing an empty box,
+    // while keeping __owner intact so OnUpdate can populate it if data arrives.
+    if (w && w->objectType == "GameTooltip" && w->tooltipLines.empty()) {
+        w->shown = false;
+        lua_pushboolean(L, 0);
+        lua_setfield(L, 1, "__visible");
+        return 0;
+    }
     bool becameShown = false;
     if (w) {
         // Counted, not just set. A hide and a show in the same breath leave the
@@ -5014,6 +5124,7 @@ int lua_Region_GetAlpha(lua_State* L) {
 int lua_Texture_SetTexture(lua_State* L) {
     auto* w = widgetOf(L, 1);
     if (!w) return 0;
+    w->isCircularPortrait = false;
     if (lua_isnumber(L, 2)) {
         w->solidColor = true;
         w->texturePath.clear();
@@ -5331,8 +5442,33 @@ int lua_FontString_GetText(lua_State* L) {
     else lua_pushnil(L);
     return 1;
 }
+static void syncImplicitButtonTextAnchor(lua_State* L, wowee::ui::Widget* fs) {
+    if (!fs || !fs->isImplicitButtonText || fs->id == 0) return;
+    auto* tree = wowee::addons::getWidgetTree(L);
+    if (!tree) return;
+    tree->clearPoints(fs->id);
+    if (fs->justifyH == "LEFT" || fs->justifyH == "RIGHT") {
+        wowee::ui::Anchor a;
+        a.point = fs->justifyH;
+        a.relativePoint = fs->justifyH;
+        a.relativeTo = 0; // parent button
+        tree->addPoint(fs->id, a);
+    }
+}
+
+int lua_FontString_MarkImplicitButtonText(lua_State* L) {
+    if (auto* w = widgetOf(L, 1)) {
+        w->isImplicitButtonText = true;
+        syncImplicitButtonTextAnchor(L, w);
+    }
+    return 0;
+}
+
 int lua_FontString_SetJustifyH(lua_State* L) {
-    if (auto* w = widgetOf(L, 1)) w->justifyH = luaL_optstring(L, 2, "CENTER");
+    if (auto* w = widgetOf(L, 1)) {
+        w->justifyH = luaL_optstring(L, 2, "CENTER");
+        syncImplicitButtonTextAnchor(L, w);
+    }
     return 0;
 }
 int lua_FontString_SetJustifyV(lua_State* L) {
@@ -5525,7 +5661,10 @@ static void applyFontObject(lua_State* L, int fontIndex, wowee::ui::Widget* w) {
         // being read off the object by nothing, so GameFontNormalLeft and
         // GameFontNormal drew identically.
         lua_getfield(L, -1, "justifyH");
-        if (lua_isstring(L, -1)) w->justifyH = lua_tostring(L, -1);
+        if (lua_isstring(L, -1)) {
+            w->justifyH = lua_tostring(L, -1);
+            syncImplicitButtonTextAnchor(L, w);
+        }
         lua_pop(L, 1);
         lua_getfield(L, -1, "justifyV");
         if (lua_isstring(L, -1)) w->justifyV = lua_tostring(L, -1);
@@ -8105,6 +8244,8 @@ void LuaEngine::registerCoreAPI() {
         {"SetAction",       lua_Tooltip_SetAction},
         {"SetInventoryItem", lua_Tooltip_SetInventoryItem},
         {"SetBagItem",      lua_Tooltip_SetBagItem},
+        {"SetInboxItem",    lua_Tooltip_SetInboxItem},
+        {"SetSendMailItem", lua_Tooltip_SetSendMailItem},
         {"SetQuestLogSpecialItem", lua_Tooltip_SetQuestLogSpecialItem},
         {"SetSocketGem",          lua_Tooltip_SetSocketGem},
         {"SetExistingSocketGem",  lua_Tooltip_SetExistingSocketGem},
@@ -8914,7 +9055,9 @@ void LuaEngine::registerCoreAPI() {
         "end\n"
         "function mt:GetFontString()\n"
         "    if not __WoweePriv(self).__fontString then\n"
-        "        __WoweePriv(self).__fontString = self:CreateFontString(nil, 'OVERLAY')\n"
+        "        local fs = self:CreateFontString(nil, 'OVERLAY')\n"
+        "        __WoweeMarkImplicitButtonText(fs)\n"
+        "        __WoweePriv(self).__fontString = fs\n"
         "    end\n"
         "    return __WoweePriv(self).__fontString\n"
         "end\n"
@@ -8974,7 +9117,6 @@ void LuaEngine::registerCoreAPI() {
         "       and self:IsObjectType('Button') then\n"
         "        self:GetFontString()\n"
         "        if __WoweePriv(self).__fontString then\n"
-        "            __WoweePriv(self).__fontString:SetPoint('CENTER')\n"
         "            local f = self.GetNormalFontObject and self:GetNormalFontObject()\n"
         "            if f and __WoweePriv(self).__fontString.SetFontObject then\n"
         "                __WoweePriv(self).__fontString:SetFontObject(f)\n"
@@ -9306,6 +9448,8 @@ void LuaEngine::registerCoreAPI() {
     // cover every slot from one loop.
     lua_pushcfunction(L_, lua_Texture_SetButtonArt);
     lua_setglobal(L_, "__WoweeSetButtonArt");
+    lua_pushcfunction(L_, lua_FontString_MarkImplicitButtonText);
+    lua_setglobal(L_, "__WoweeMarkImplicitButtonText");
 
     // Where XML templates land. A virtual frame compiles to a function that
     // replays itself onto a real frame, and inherits= calls it; both halves are
@@ -10049,18 +10193,6 @@ void LuaEngine::registerCoreAPI() {
         "    local link = GetBuybackItemLink and GetBuybackItemLink(index)\n"
         "    if link then return self:SetHyperlink(link) end\n"
         "    local name = GetBuybackItemInfo(index)\n"
-        "    if name then self:SetText(name, 1, 1, 1) end\n"
-        "end\n"
-        "function __WoweeFrameMT:SetInboxItem(index, attachIndex)\n"
-        "    self:ClearLines()\n"
-        "    local link = GetInboxItemLink and GetInboxItemLink(index, attachIndex)\n"
-        "    if link then return self:SetHyperlink(link) end\n"
-        "    local name = GetInboxItem(index, attachIndex)\n"
-        "    if name then self:SetText(name, 1, 1, 1) end\n"
-        "end\n"
-        "function __WoweeFrameMT:SetSendMailItem(index)\n"
-        "    self:ClearLines()\n"
-        "    local name = GetSendMailItem(index)\n"
         "    if name then self:SetText(name, 1, 1, 1) end\n"
         "end\n"
         // What the minimap's tracking button is showing. 1.12's Minimap.xml

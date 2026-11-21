@@ -1372,9 +1372,8 @@ bool ClassicPacketParsers::parseMailList(network::Packet& packet,
 
         msg.subject = packet.readString();
 
-        uint32_t itemTextId = packet.readUInt32();
-        (void)itemTextId;
-        packet.readUInt32(); // package (unused)
+        msg.itemTextId = packet.readUInt32();
+        msg.packageId  = packet.readUInt32();
         msg.stationeryId = packet.readUInt32();
 
         // Single inline item (Vanilla: one item per mail)
@@ -1393,10 +1392,12 @@ bool ClassicPacketParsers::parseMailList(network::Packet& packet,
             att.itemGuidLow = 0; // Not provided in Vanilla list
             att.itemId = itemEntry;
             att.enchantId = permanentEnchant;
+            att.enchantIds[0] = permanentEnchant;
             att.randomPropertyId = randomPropertyId;
             att.randomSuffix = suffixFactor;
             att.stackCount = stackCount;
             att.chargesOrDurability = durability;
+            att.durability = durability;
             att.maxDurability = maxDurability;
             msg.attachments.push_back(att);
         }
@@ -1436,6 +1437,24 @@ network::Packet ClassicPacketParsers::buildMailDelete(uint64_t mailboxGuid,
                                                        uint32_t mailId,
                                                        uint32_t /*mailTemplateId*/) {
     network::Packet packet(wireOpcode(Opcode::CMSG_MAIL_DELETE));
+    packet.writeUInt64(mailboxGuid);
+    packet.writeUInt32(mailId);
+    return packet;
+}
+
+network::Packet ClassicPacketParsers::buildMailReturnToSender(uint64_t mailboxGuid,
+                                                               uint32_t mailId,
+                                                               uint64_t /*senderGuid*/) {
+    network::Packet packet(wireOpcode(Opcode::CMSG_MAIL_RETURN_TO_SENDER));
+    packet.writeUInt64(mailboxGuid);
+    packet.writeUInt32(mailId);
+    return packet;
+}
+
+network::Packet ClassicPacketParsers::buildMailCreateTextItem(uint64_t mailboxGuid,
+                                                               uint32_t mailId,
+                                                               uint32_t /*mailTemplateId*/) {
+    network::Packet packet(wireOpcode(Opcode::CMSG_MAIL_CREATE_TEXT_ITEM));
     packet.writeUInt64(mailboxGuid);
     packet.writeUInt32(mailId);
     return packet;

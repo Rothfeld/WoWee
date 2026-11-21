@@ -3274,10 +3274,12 @@ struct MailAttachment {
     uint32_t itemGuidLow = 0;
     uint32_t itemId = 0;
     uint32_t enchantId = 0;
+    std::array<uint32_t, 6> enchantIds{};
     uint32_t randomPropertyId = 0;
     uint32_t randomSuffix = 0;
     uint32_t stackCount = 1;
     uint32_t chargesOrDurability = 0;
+    uint32_t durability = 0;
     uint32_t maxDurability = 0;
 };
 
@@ -3289,6 +3291,8 @@ struct MailMessage {
     std::string senderName;
     std::string subject;
     std::string body;
+    uint32_t itemTextId = 0;
+    uint32_t packageId = 0;
     uint32_t stationeryId = 0;
     uint64_t money = 0;
     uint64_t cod = 0;           // Cash on delivery
@@ -3298,6 +3302,32 @@ struct MailMessage {
     bool read = false;
     std::vector<MailAttachment> attachments;
 };
+
+inline const MailAttachment* findMailAttachment(const MailMessage* mail,
+                                                int oneBasedSlot,
+                                                bool slotExplicit) {
+    if (!mail || mail->attachments.empty()) return nullptr;
+    if (!slotExplicit) return &mail->attachments.front();
+    if (oneBasedSlot < 1 || oneBasedSlot > 16) return nullptr;
+    const uint8_t targetSlot = static_cast<uint8_t>(oneBasedSlot - 1);
+    bool anyNonZeroSlot = false;
+    for (const auto& att : mail->attachments) {
+        if (att.slot != 0) {
+            anyNonZeroSlot = true;
+            break;
+        }
+    }
+    if (anyNonZeroSlot || mail->attachments.size() == 1) {
+        for (const auto& att : mail->attachments) {
+            if (att.slot == targetSlot) return &att;
+        }
+        return nullptr;
+    }
+    if (static_cast<size_t>(oneBasedSlot) <= mail->attachments.size()) {
+        return &mail->attachments[static_cast<size_t>(oneBasedSlot - 1)];
+    }
+    return nullptr;
+}
 
 struct PendingMailSender {
     uint64_t senderGuid = 0;
@@ -3391,7 +3421,13 @@ public:
 /** CMSG_MAIL_RETURN_TO_SENDER packet builder */
 class MailReturnToSenderPacket {
 public:
-    static network::Packet build(uint64_t mailboxGuid, uint32_t mailId);
+    static network::Packet build(uint64_t mailboxGuid, uint32_t mailId, uint64_t senderGuid = 0);
+};
+
+/** CMSG_MAIL_CREATE_TEXT_ITEM packet builder */
+class MailCreateTextItemPacket {
+public:
+    static network::Packet build(uint64_t mailboxGuid, uint32_t mailId, uint32_t mailTemplateId = 0);
 };
 
 /** CMSG_MAIL_MARK_AS_READ packet builder */

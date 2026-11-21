@@ -418,7 +418,9 @@ public:
     void mailTakeItem(uint32_t mailId, uint32_t itemGuidLow);
     void mailDelete(uint32_t mailId);
     void mailReturnToSender(uint32_t mailId);
+    void mailCreateTextItem(uint32_t mailId);
     void mailMarkAsRead(uint32_t mailId);
+    void queryMailItemText(uint32_t itemTextId, uint32_t mailId);
     void refreshMailList();
 
     // ---- Item socketing ----
@@ -823,6 +825,8 @@ private:
     int selectedMailIndex_ = -1;
     bool showMailCompose_ = false;
     bool hasNewMail_ = false;
+    bool pendingBookItemText_ = false;
+    std::unordered_map<uint32_t, std::string> itemTextCache_;
     std::array<MailAttachSlot, MAIL_MAX_ATTACHMENTS> mailAttachments_{};
 
     // ---- Bank state ----

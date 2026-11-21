@@ -239,10 +239,19 @@ network::Packet MailDeletePacket::build(uint64_t mailboxGuid, uint32_t mailId, u
     return packet;
 }
 
-network::Packet MailReturnToSenderPacket::build(uint64_t mailboxGuid, uint32_t mailId) {
+network::Packet MailReturnToSenderPacket::build(uint64_t mailboxGuid, uint32_t mailId, uint64_t senderGuid) {
     network::Packet packet(wireOpcode(Opcode::CMSG_MAIL_RETURN_TO_SENDER));
     packet.writeUInt64(mailboxGuid);
     packet.writeUInt32(mailId);
+    packet.writeUInt64(senderGuid);
+    return packet;
+}
+
+network::Packet MailCreateTextItemPacket::build(uint64_t mailboxGuid, uint32_t mailId, uint32_t mailTemplateId) {
+    network::Packet packet(wireOpcode(Opcode::CMSG_MAIL_CREATE_TEXT_ITEM));
+    packet.writeUInt64(mailboxGuid);
+    packet.writeUInt32(mailId);
+    packet.writeUInt32(mailTemplateId);
     return packet;
 }
 
@@ -338,6 +347,7 @@ bool PacketParsers::parseMailList(network::Packet& packet, std::vector<MailMessa
                 uint32_t enchId = packet.readUInt32();
                 packet.readUInt32(); // duration
                 packet.readUInt32(); // charges
+                if (e < 6) att.enchantIds[static_cast<size_t>(e)] = enchId;
                 if (e == 0) att.enchantId = enchId;
             }
             att.randomPropertyId = packet.readUInt32();
@@ -345,7 +355,7 @@ bool PacketParsers::parseMailList(network::Packet& packet, std::vector<MailMessa
             att.stackCount = packet.readUInt32();
             att.chargesOrDurability = packet.readUInt32();
             att.maxDurability = packet.readUInt32();
-            packet.readUInt32(); // durability/current durability
+            att.durability = packet.readUInt32(); // durability/current durability
             packet.readUInt8();  // unknown WotLK trailing byte per attachment
             msg.attachments.push_back(att);
         }

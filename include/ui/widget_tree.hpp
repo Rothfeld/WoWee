@@ -291,6 +291,10 @@ struct Widget {
     /// render is a square with a corner in each of those places, so the
     /// renderer draws one as a disc - see the live-texture branch.
     bool isUnitPortrait = false;
+    /// A static icon masked to a circle by SetPortraitToTexture (OpenMailFrameIcon, bag portraits).
+    bool isCircularPortrait = false;
+    /// Implicit ButtonText created lazily via Button:GetFontString() without explicit SetPoint.
+    bool isImplicitButtonText = false;
 
     // Backdrop, the bordered panel look most of the original interface is
     // built from. The edge file is a strip of eight square tiles - verified

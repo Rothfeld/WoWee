@@ -1506,6 +1506,12 @@ struct Emitter {
         // other two would be calls that read as support and change nothing.
         for (const XmlNode& child : node.children) {
             if (child.name != "NormalFont") continue;
+            if (const std::string* n = child.attr("name"); n && !n->empty()) {
+                const std::string resolved = substituteParent(*n, name);
+                if (!resolved.empty()) {
+                    line("_G[" + quote(resolved) + "] = " + var + ":GetFontString()");
+                }
+            }
             if (const std::string* style = child.attr("style")) {
                 line(var + ":SetNormalFontObject(" + quote(*style) + ")");
             }

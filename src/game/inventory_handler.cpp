@@ -3400,7 +3400,16 @@ void InventoryHandler::mailTakeItem(uint32_t mailId, uint32_t itemGuidLow) {
 
 void InventoryHandler::mailReturnToSender(uint32_t mailId) {
     if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket() || mailboxGuid_ == 0) return;
-    auto packet = MailReturnToSenderPacket::build(mailboxGuid_, mailId);
+    uint64_t senderGuid = 0;
+    for (const auto& mail : mailInbox_) {
+        if (mail.messageId == mailId) {
+            senderGuid = mail.senderGuid;
+            break;
+        }
+    }
+    auto packet = owner_.getPacketParsers()
+        ? owner_.getPacketParsers()->buildMailReturnToSender(mailboxGuid_, mailId, senderGuid)
+        : MailReturnToSenderPacket::build(mailboxGuid_, mailId, senderGuid);
     owner_.getSocket()->send(packet);
     // Same as deleting: the letter being read is this one, and the view over it
     // hides when told which mail closed.
@@ -3411,13 +3420,49 @@ void InventoryHandler::mailReturnToSender(uint32_t mailId) {
 
 void InventoryHandler::mailDelete(uint32_t mailId) {
     if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket() || mailboxGuid_ == 0) return;
-    auto packet = MailDeletePacket::build(mailboxGuid_, mailId, 0);
+    uint32_t mailTemplateId = 0;
+    for (const auto& mail : mailInbox_) {
+        if (mail.messageId == mailId) {
+            mailTemplateId = mail.mailTemplateId;
+            break;
+        }
+    }
+    auto packet = owner_.getPacketParsers()
+        ? owner_.getPacketParsers()->buildMailDelete(mailboxGuid_, mailId, mailTemplateId)
+        : MailDeletePacket::build(mailboxGuid_, mailId, mailTemplateId);
     owner_.getSocket()->send(packet);
     // The letter being read is this one, so the view over it has to go: the
     // interface hides it when told which mail closed, and was never told.
     if (owner_.addonEventCallbackRef()) {
         owner_.addonEventCallbackRef()("CLOSE_INBOX_ITEM", {std::to_string(mailId)});
     }
+}
+
+void InventoryHandler::mailCreateTextItem(uint32_t mailId) {
+    if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket() || mailboxGuid_ == 0) return;
+    uint32_t mailTemplateId = 0;
+    for (const auto& mail : mailInbox_) {
+        if (mail.messageId == mailId) {
+            mailTemplateId = mail.mailTemplateId;
+            break;
+        }
+    }
+    auto packet = owner_.getPacketParsers()
+        ? owner_.getPacketParsers()->buildMailCreateTextItem(mailboxGuid_, mailId, mailTemplateId)
+        : MailCreateTextItemPacket::build(mailboxGuid_, mailId, mailTemplateId);
+    owner_.getSocket()->send(packet);
+}
+
+void InventoryHandler::queryMailItemText(uint32_t itemTextId, uint32_t mailId) {
+    if (itemTextId == 0) return;
+    if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
+    // CMaNGOS Classic/TBC HandleItemTextQuery reads 3 x uint32:
+    // itemTextId, mailOrItemId, unk (0).
+    network::Packet pkt(wireOpcode(Opcode::CMSG_ITEM_TEXT_QUERY));
+    pkt.writeUInt32(itemTextId);
+    pkt.writeUInt32(mailId);
+    pkt.writeUInt32(0);
+    owner_.getSocket()->send(pkt);
 }
 
 void InventoryHandler::mailMarkAsRead(uint32_t mailId) {
@@ -3472,6 +3517,15 @@ void InventoryHandler::handleShowMailbox(network::Packet& packet) {
 
 void InventoryHandler::handleMailListResult(network::Packet& packet) {
     if (!owner_.getPacketParsers()->parseMailList(packet, mailInbox_)) return;
+    for (auto& mail : mailInbox_) {
+        if (mail.body.empty() && mail.itemTextId != 0) {
+            if (auto it = itemTextCache_.find(mail.itemTextId); it != itemTextCache_.end()) {
+                mail.body = it->second;
+            } else if (isPreWotlk()) {
+                queryMailItemText(mail.itemTextId, mail.messageId);
+            }
+        }
+    }
     if (owner_.addonEventCallbackRef()) owner_.addonEventCallbackRef()("MAIL_INBOX_UPDATE", {});
     for (const auto& mail : mailInbox_) {
         // Player mail carries a GUID, not a name. Ask for it once here; the UI
@@ -3518,6 +3572,7 @@ void InventoryHandler::handleSendMailResult(network::Packet& packet) {
     constexpr uint32_t MAIL_ITEM_TAKEN = 2;
     constexpr uint32_t MAIL_RETURNED_TO_SENDER = 3;
     constexpr uint32_t MAIL_DELETED = 4;
+    constexpr uint32_t MAIL_MADE_PERMANENT = 5;
 
     auto mailIt = std::find_if(mailInbox_.begin(), mailInbox_.end(),
         [mailId](const MailMessage& mail) { return mail.messageId == mailId; });
@@ -3568,6 +3623,10 @@ void InventoryHandler::handleSendMailResult(network::Packet& packet) {
             if (selectedMailIndex_ == erasedIndex) selectedMailIndex_ = -1;
             else if (selectedMailIndex_ > erasedIndex) --selectedMailIndex_;
         }
+        owner_.fireAddonEvent("MAIL_INBOX_UPDATE");
+    } else if (action == MAIL_MADE_PERMANENT) {
+        if (mailIt != mailInbox_.end()) mailIt->flags |= 0x04u; // MAIL_CHECK_MASK_COPIED
+        if (owner_.addonEventCallbackRef()) fireBagUpdates();
         owner_.fireAddonEvent("MAIL_INBOX_UPDATE");
     }
     if (tbc || error != 0) owner_.fireAddonEvent("MAIL_FAILED");
@@ -4144,8 +4203,24 @@ void InventoryHandler::handleAuctionCommandResult(network::Packet& packet) {
 
 void InventoryHandler::queryItemText(uint64_t itemGuid) {
     if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
+    pendingBookItemText_ = true;
     network::Packet pkt(wireOpcode(Opcode::CMSG_ITEM_TEXT_QUERY));
-    pkt.writeUInt64(itemGuid);
+    if (isPreWotlk()) {
+        // Pre-Wotlk CMSG_ITEM_TEXT_QUERY: itemTextId(u32) + itemGuidLow(u32) + unk(u32)
+        uint32_t textId = 0;
+        const auto& guids = owner_.backpackSlotGuidsRef();
+        for (size_t i = 0; i < guids.size(); ++i) {
+            if (guids[i] == itemGuid) {
+                textId = owner_.inventoryRef().getBackpackSlot(static_cast<int>(i)).item.pageTextId;
+                break;
+            }
+        }
+        pkt.writeUInt32(textId);
+        pkt.writeUInt32(static_cast<uint32_t>(itemGuid & 0xFFFFFFFFu));
+        pkt.writeUInt32(0);
+    } else {
+        pkt.writeUInt64(itemGuid);
+    }
     owner_.getSocket()->send(pkt);
     // The read has started. The frame answers this by clearing the page and
     // picking the material's text colour, before any words have arrived -
@@ -4155,6 +4230,7 @@ void InventoryHandler::queryItemText(uint64_t itemGuid) {
 }
 
 void InventoryHandler::closeItemText() {
+    pendingBookItemText_ = false;
     if (!itemTextOpen_) return;
     itemTextOpen_ = false;
     // Announced so the interface's window closes with this client's own. Only
@@ -4165,8 +4241,30 @@ void InventoryHandler::closeItemText() {
 
 void InventoryHandler::handleItemTextQueryResponse(network::Packet& packet) {
     if (!packet.hasRemaining(1)) return;
-    std::string text = packet.readString();
-    if (!text.empty()) {
+    uint32_t itemTextId = 0;
+    std::string text;
+    if (isPreWotlk() && packet.hasRemaining(5)) {
+        // Classic/TBC SMSG_ITEM_TEXT_QUERY_RESPONSE: uint32 itemTextId + cstring text.
+        itemTextId = packet.readUInt32();
+        text = packet.readString();
+    } else {
+        text = packet.readString();
+    }
+    if (itemTextId != 0) {
+        itemTextCache_[itemTextId] = text;
+        bool updatedMail = false;
+        for (auto& mail : mailInbox_) {
+            if (mail.itemTextId == itemTextId && mail.body != text) {
+                mail.body = text;
+                updatedMail = true;
+            }
+        }
+        if (updatedMail && owner_.addonEventCallbackRef()) {
+            owner_.addonEventCallbackRef()("MAIL_INBOX_UPDATE", {});
+        }
+    }
+    if (pendingBookItemText_ && !text.empty()) {
+        pendingBookItemText_ = false;
         itemText_ = std::move(text);
         itemTextOpen_ = true;
         // ITEM_TEXT_READY is what the reading frame answers by asking for the
@@ -4813,8 +4911,11 @@ void InventoryHandler::handleItemQueryResponse(network::Packet& packet) {
                 resolvedAuctionSubject = true;
                 break;
             }
-            // ...or an inbox icon: the first attachment's or the letterhead's.
-            if ((!mail.attachments.empty() && mail.attachments[0].itemId == data.entry) ||
+            // ...or any attachment / letterhead icon in the open inbox.
+            const bool anyAttachmentMatches = std::any_of(
+                mail.attachments.begin(), mail.attachments.end(),
+                [&data](const MailAttachment& att) { return att.itemId == data.entry; });
+            if (anyAttachmentMatches ||
                 owner_.getStationeryItemId(mail.stationeryId) == data.entry) {
                 resolvedAuctionSubject = true;
                 break;

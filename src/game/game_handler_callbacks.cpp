@@ -1385,17 +1385,25 @@ std::vector<MailMessage>& GameHandler::mailInboxRef() {
     return mailInbox_;
 }
 std::string GameHandler::getMailDisplaySubject(const MailMessage& mail) {
-    if (mail.messageType != 2) return mail.subject;
+    if (mail.messageType == 2) {
+        AuctionMailSubject auction;
+        if (!parseAuctionMailSubject(mail.subject, auction)) return mail.subject;
 
-    AuctionMailSubject auction;
-    if (!parseAuctionMailSubject(mail.subject, auction)) return mail.subject;
+        ensureItemInfo(auction.itemEntry);
+        const auto* info = getItemInfo(auction.itemEntry);
+        const std::string itemName = info && !info->name.empty()
+            ? info->name
+            : "Item #" + std::to_string(auction.itemEntry);
+        return formatAuctionMailSubject(auction, itemName);
+    }
 
-    ensureItemInfo(auction.itemEntry);
-    const auto* info = getItemInfo(auction.itemEntry);
-    const std::string itemName = info && !info->name.empty()
-        ? info->name
-        : "Item #" + std::to_string(auction.itemEntry);
-    return formatAuctionMailSubject(auction, itemName);
+    if (!mail.subject.empty()) return mail.subject;
+    if (mail.mailTemplateId != 0) {
+        if (const auto* tmpl = getMailTemplateText(mail.mailTemplateId)) {
+            return tmpl->subject;
+        }
+    }
+    return mail.subject;
 }
 int GameHandler::getSelectedMailIndex() const {
     return inventoryHandler_ ? inventoryHandler_->getSelectedMailIndex() : selectedMailIndex_;
@@ -2181,6 +2189,66 @@ uint32_t GameHandler::getStationeryItemId(uint32_t stationeryId) const {
     return it != items.end() ? it->second : 0;
 }
 
+const GameHandler::MailTemplateText* GameHandler::getMailTemplateText(uint32_t templateId) const {
+    if (templateId == 0) return nullptr;
+    // MailTemplate.dbc: ID (col 0), Subject (localized cols 1..16, flags col 17),
+    // Body/Content (localized cols 18..33, flags col 34).
+    static std::unordered_map<uint32_t, MailTemplateText> templates;
+    static bool loaded = false;
+    if (!loaded) {
+        auto* am = services_.assetManager;
+        if (am && am->isInitialized()) {
+            loaded = true;
+            auto dbc = am->loadDBC("MailTemplate.dbc");
+            if (dbc && dbc->isLoaded() && dbc->getFieldCount() >= 35) {
+                for (uint32_t i = 0; i < dbc->getRecordCount(); ++i) {
+                    const uint32_t id = dbc->getUInt32(i, 0);
+                    MailTemplateText entry;
+                    for (uint32_t col = 1; col <= 16; ++col) {
+                        std::string s = dbc->getString(i, col);
+                        if (!s.empty()) { entry.subject = std::move(s); break; }
+                    }
+                    for (uint32_t col = 18; col <= 33; ++col) {
+                        std::string b = dbc->getString(i, col);
+                        if (!b.empty()) { entry.body = std::move(b); break; }
+                    }
+                    templates[id] = std::move(entry);
+                }
+            }
+        }
+    }
+    const auto it = templates.find(templateId);
+    return it != templates.end() ? &it->second : nullptr;
+}
+
+std::string GameHandler::getPackageIcon(uint32_t packageId) const {
+    if (packageId == 0) return {};
+    // Package.dbc: ID (col 0), Icon (col 1), Cost (col 2), Name (localized).
+    static std::unordered_map<uint32_t, std::string> icons;
+    static bool loaded = false;
+    if (!loaded) {
+        auto* am = services_.assetManager;
+        if (am && am->isInitialized()) {
+            loaded = true;
+            auto dbc = am->loadDBC("Package.dbc");
+            if (dbc && dbc->isLoaded() && dbc->getFieldCount() >= 2) {
+                for (uint32_t i = 0; i < dbc->getRecordCount(); ++i) {
+                    const uint32_t id = dbc->getUInt32(i, 0);
+                    std::string icon = dbc->getString(i, 1);
+                    if (!icon.empty()) {
+                        if (icon.find('\\') == std::string::npos && icon.find('/') == std::string::npos) {
+                            icon = "Interface\\Icons\\" + icon;
+                        }
+                        icons[id] = std::move(icon);
+                    }
+                }
+            }
+        }
+    }
+    const auto it = icons.find(packageId);
+    return it != icons.end() ? it->second : std::string{};
+}
+
 std::string GameHandler::getMailStationeryIcon(const MailMessage& mail) {
     const uint32_t item = getStationeryItemId(mail.stationeryId);
     if (item == 0) {
@@ -2568,7 +2636,7 @@ void GameHandler::setGuildInfoText(const std::string& text) {
 }
 
 void GameHandler::takeInboxTextItem(uint32_t mailId) {
-    if (socialHandler_) socialHandler_->takeInboxTextItem(mailId);
+    if (inventoryHandler_) inventoryHandler_->mailCreateTextItem(mailId);
 }
 
 uint32_t GameHandler::getPlayerGuildRankRights() const {

@@ -3293,3 +3293,38 @@ TEST_CASE("Changing width on a wrapsToWidth FontString invalidates its cached me
     CHECK(w->measuredText.empty());
     CHECK_FALSE(w->wrapsToWidth);
 }
+
+TEST_CASE("Empty GameTooltip with backdrop is omitted from drawOrder",
+          "[widget][tooltip][mail]") {
+    WidgetTree tree;
+    const uint32_t tip = tree.create(WidgetKind::Frame, tree.uiParentId(), "GameTooltip");
+    Widget* w = tree.get(tip);
+    REQUIRE(w != nullptr);
+    w->objectType = "GameTooltip";
+    w->isTooltip = true;
+    w->hasBackdrop = true;
+    w->bgFile = "Interface\\Tooltips\\UI-Tooltip-Background";
+    w->edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border";
+    // Simulate stale size left over from an earlier non-empty tooltip.
+    w->width = 160.0f;
+    w->height = 48.0f;
+    w->shown = true;
+    tree.addPoint(tip, Anchor{"TOPLEFT", tree.uiParentId(), "TOPLEFT", 50.0f, -50.0f});
+
+    // Zero lines (e.g. InboxFrameItem_OnEnter on a no-item NPC letter): must NOT draw.
+    tree.layout(1280.0f, 720.0f);
+    for (const Widget* drawn : tree.drawOrder()) {
+        CHECK(drawn->id != tip);
+    }
+
+    // With at least one tooltip line, GameTooltip draws normally.
+    Widget::TooltipLine line;
+    line.left = "Multiple Items (3)";
+    w->tooltipLines.push_back(line);
+    tree.layout(1280.0f, 720.0f);
+    bool found = false;
+    for (const Widget* drawn : tree.drawOrder()) {
+        if (drawn->id == tip) found = true;
+    }
+    CHECK(found);
+}

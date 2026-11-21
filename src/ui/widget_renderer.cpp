@@ -378,7 +378,7 @@ void WidgetRenderer::sizeFontStringWidget(Widget* w, float pixelScale) {
     const bool spansX = anchorsSpanAxis(w->anchors, true);
     const bool spansY = anchorsSpanAxis(w->anchors, false);
     const bool fixedW = spansX || (!w->autoSized && w->width > 0.0f);
-    const bool fixedH = spansY || (!w->autoSized && w->height > 0.0f);
+    const bool fixedH = spansY || (!w->autoSized && !w->wrapsToWidth && w->height > 0.0f);
     if (fixedW && fixedH) return;
 
     // A width (or horizontal anchor span) with no height is a paragraph, not a
@@ -418,7 +418,7 @@ void WidgetRenderer::sizeFontStringWidget(Widget* w, float pixelScale) {
             w->height = interfaceTextBlockHeight(1, w->fontHeight, w->lineSpacing, pixelScale);
             return;
         }
-        if (!spansX) w->wrapsToWidth = true;
+        w->wrapsToWidth = true;
         const int rows = interfaceTextLines(w->text, w->fontFace, w->fontHeight, wrapWidth,
                                             w->nonSpaceWrap, pixelScale, w->hasShadow ? w->shadowX : 0.0f,
                                             outlinePx);
@@ -3085,7 +3085,7 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                                        ImVec2(q[2], q[3])};  // lower-left
                 addImageQuadColors(dl, reinterpret_cast<ImTextureID>(tex), corners, uvs,
                                    cornerColors(*w, w->effAlpha));
-            } else if (live && w->isUnitPortrait &&
+            } else if (((live && w->isUnitPortrait) || (!live && w->isCircularPortrait)) &&
                        std::fabs((x1 - x0) - (y1 - y0)) <= 0.02f * (x1 - x0)) {
                 // A face, drawn as the disc the interface expects.
                 //

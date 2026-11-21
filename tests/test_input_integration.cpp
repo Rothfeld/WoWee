@@ -5761,3 +5761,203 @@ TEST_CASE_METHOD(Integration,
     // And arrival commits the transport baseline so standing on arrival emits 0 packets.
     CHECK(std::abs(mh->unsentFacingDeltaRad().value_or(1.0f)) < 1e-5f);
 }
+
+TEST_CASE_METHOD(Integration, "TBC mail Inbox/OpenMail APIs and empty hover tooltip parity", "[mail][tbc]") {
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    lua.setGameHandler(&handler);
+
+    // Seed item metadata for Linen Cloth (2589) and Wool Cloth (2592).
+    {
+        wowee::game::ItemQueryResponseData linen;
+        linen.entry = 2589;
+        linen.name = "Linen Cloth";
+        linen.displayInfoId = 5773;
+        linen.quality = 1;
+        linen.valid = true;
+        handler.itemInfoCacheRef()[2589] = linen;
+
+        wowee::game::ItemQueryResponseData wool;
+        wool.entry = 2592;
+        wool.name = "Wool Cloth";
+        wool.displayInfoId = 5774;
+        wool.quality = 1;
+        wool.valid = true;
+        handler.itemInfoCacheRef()[2592] = wool;
+    }
+
+    // 1. No-item NPC MailTemplate mail (e.g. Velma Warnam / Randal Hunter)
+    wowee::game::MailMessage npcMail;
+    npcMail.messageId = 101;
+    npcMail.messageType = 3; // MAIL_CREATURE
+    npcMail.senderEntry = 4773;
+    npcMail.stationeryId = 41;
+    npcMail.mailTemplateId = 233;
+    npcMail.expirationTime = 29.5f;
+    npcMail.flags = 0; // unread, not copied
+    {
+        wowee::network::Packet info(wireOpcode(wowee::game::Opcode::SMSG_CREATURE_QUERY_RESPONSE));
+        info.writeUInt32(4773);
+        info.writeString("Velma Warnam");
+        for (int i = 0; i < 5; ++i) info.writeString("");
+        info.writeUInt32(0);
+        info.writeUInt32(7); // Humanoid
+        for (int i = 0; i < 8; ++i) info.writeUInt32(0);
+        info.writeFloat(1.0f);
+        info.writeFloat(1.0f);
+        info.writeUInt8(0);
+        session.receive(info);
+    }
+
+    // 2. Single-item player mail (sparse wire slot 3, stack of 7 Linen Cloth, HAS_BODY)
+    wowee::game::MailMessage singleItemMail;
+    singleItemMail.messageId = 102;
+    singleItemMail.messageType = 0; // MAIL_NORMAL
+    singleItemMail.senderGuid = 0x2DULL;
+    singleItemMail.senderName = "Edrico";
+    singleItemMail.stationeryId = 41;
+    singleItemMail.subject = "Cloth Shipment";
+    singleItemMail.body = "Enjoy the cloth!";
+    singleItemMail.flags = 0x10; // MAIL_CHECK_MASK_HAS_BODY
+    singleItemMail.expirationTime = 29.0f;
+    {
+        wowee::game::MailAttachment att;
+        att.slot = 3;
+        att.itemGuidLow = 9001;
+        att.itemId = 2589;
+        att.stackCount = 7;
+        singleItemMail.attachments.push_back(att);
+    }
+
+    // 3. Multi-item + COD player mail
+    wowee::game::MailMessage codMultiMail;
+    codMultiMail.messageId = 103;
+    codMultiMail.messageType = 0;
+    codMultiMail.senderGuid = 0x2EULL;
+    codMultiMail.senderName = "Merchant";
+    codMultiMail.stationeryId = 41;
+    codMultiMail.subject = "COD Bundle";
+    codMultiMail.cod = 25000;
+    codMultiMail.flags = 0x04; // empty body -> MAIL_CHECK_MASK_COPIED
+    codMultiMail.expirationTime = 2.9f;
+    for (uint8_t s = 0; s < 2; ++s) {
+        wowee::game::MailAttachment att;
+        att.slot = s;
+        att.itemGuidLow = 9100u + s;
+        att.itemId = s == 0 ? 2589u : 2592u;
+        att.stackCount = s == 0 ? 5u : 3u;
+        codMultiMail.attachments.push_back(att);
+    }
+
+    handler.mailInboxRef() = {npcMail, singleItemMail, codMultiMail};
+
+    // Verify GetInboxHeaderInfo, GetInboxText, and InboxItemCanDelete across all 3 mails.
+    run("h1 = {GetInboxHeaderInfo(1)}; t1 = {GetInboxText(1)}");
+    truth("h1[1] == nil and h1[2] ~= nil and h1[3] == 'Velma Warnam'");
+    truth("h1[8] == nil and h1[10] == false and h1[11] == false and h1[12] == false and h1[13] == false");
+    truth("t1[3] == true and t1[4] == false and InboxItemCanDelete(1) == true");
+
+    run("h2 = {GetInboxHeaderInfo(2)}; t2 = {GetInboxText(2)}");
+    truth("h2[1] ~= nil and h2[3] == 'Edrico' and h2[4] == 'Cloth Shipment'");
+    truth("h2[8] == 1 and h2[11] == false and h2[12] == true and h2[14] == 7");
+    truth("t2[1] == 'Enjoy the cloth!' and t2[3] == true and InboxItemCanDelete(2) == false");
+    // Sparse wire slot 3 resolves at slot 4 for OpenMailFrame AND without slot for Inbox hover!
+    run("i2_none = {GetInboxItem(2)}; i2_s1 = {GetInboxItem(2, 1)}; i2_s4 = {GetInboxItem(2, 4)}");
+    truth("i2_none[1] == 'Linen Cloth' and i2_none[3] == 7 and i2_s1[1] == nil and i2_s4[1] == 'Linen Cloth'");
+
+    run("h3 = {GetInboxHeaderInfo(3)}; t3 = {GetInboxText(3)}");
+    truth("h3[1] == 'Interface\\\\Icons\\\\INV_Crate_02' and h3[14] == 0");
+    truth("h3[6] == 25000 and h3[8] == 2 and h3[11] == true and t3[3] == false and InboxItemCanDelete(3) == false");
+    truth("CanComplainInboxItem(1) == false and CanComplainInboxItem(2) == true and CanComplainInboxItem(3) == true");
+
+    // Verify GameTooltip hover behavior:
+    // - Hovering single-item mail populates GameTooltip, shows it, and keeps it in drawOrder across OnUpdate SetOwner refreshes.
+    // - SetOwner fires OnTooltipCleared (clearing stale money frames).
+    // - Subsequently calling SetOwner + Show with 0 lines (no-item NPC mail hover) keeps GameTooltip hidden!
+    run("tipCleared = 0; tip = CreateFrame('GameTooltip', 'TestMailTip', UIParent); tip:SetScript('OnTooltipCleared', function() tipCleared = tipCleared + 1 end); btn = CreateFrame('Button', 'TestMailBtn', UIParent); btn:SetSize(37, 37); btn:SetPoint('TOPLEFT', UIParent, 'TOPLEFT', 40, -180)");
+    run("tip:SetOwner(btn, 'ANCHOR_RIGHT'); tip:SetInboxItem(2); tip:Show()");
+    truth("tip:IsShown() == true and tip:NumLines() >= 1 and tipCleared >= 2");
+    {
+        lua.widgets().layout(1280.0f, 720.0f);
+        const auto& order = lua.widgets().drawOrder();
+        const auto* tipW = lua.widgets().findByName("TestMailTip");
+        REQUIRE(tipW != nullptr);
+        CHECK(std::find(order.begin(), order.end(), tipW) != order.end());
+    }
+    run("tip:SetOwner(btn, 'ANCHOR_RIGHT'); tip:Show()");
+    truth("tip:NumLines() == 0 and tip:IsShown() == false and tip:IsOwned(btn) == true");
+
+    // Implicit ButtonText NormalFont justifyH='RIGHT' (MailItemExpireTime "29 Days ") anchors to RIGHT edge.
+    run("exp = CreateFrame('Button', 'TestExpireBtn', UIParent); exp:SetSize(100, 16); exp:SetPoint('TOPLEFT', UIParent, 'TOPLEFT', 20, -20)");
+    run("exp:GetFontString():SetJustifyH('RIGHT'); exp:SetText('29 Days ')");
+    lua.widgets().layout(1280.0f, 720.0f);
+    run("pt, _, relPt = exp:GetFontString():GetPoint(1)");
+    truth("pt == 'RIGHT' and relPt == 'RIGHT'");
+
+    // TBC wire replay: SMSG_MAIL_LIST_RESULT with itemTextId triggers CMSG_ITEM_TEXT_QUERY,
+    // and SMSG_ITEM_TEXT_QUERY_RESPONSE backfills mail.body + fires MAIL_INBOX_UPDATE
+    // without opening ItemTextFrame (ITEM_TEXT_READY).
+    std::vector<std::string> events;
+    handler.setAddonEventCallback([&](const std::string& ev, const std::vector<std::string>&) {
+        events.push_back(ev);
+    });
+    handler.openMailbox(0xF1100022AE0068A0ULL);
+    {
+        wowee::network::Packet entry;
+        entry.writeUInt32(901);                 // messageId
+        entry.writeUInt8(0);                    // MAIL_NORMAL
+        entry.writeUInt64(0x2DULL);             // senderGuid
+        entry.writeUInt32(0);                   // COD
+        entry.writeUInt32(777);                 // itemTextId
+        entry.writeUInt32(0);                   // packageId
+        entry.writeUInt32(41);                  // stationeryId
+        entry.writeUInt32(0);                   // money
+        entry.writeUInt32(0x10);                // MAIL_CHECK_MASK_HAS_BODY
+        entry.writeFloat(29.9f);                // expiration
+        entry.writeUInt32(0);                   // mailTemplateId
+        entry.writeString("Wire Letter");       // subject
+        entry.writeUInt8(0);                    // 0 attachments
+
+        wowee::network::Packet mailList(wireOpcode(wowee::game::Opcode::SMSG_MAIL_LIST_RESULT));
+        mailList.writeUInt8(1);
+        mailList.writeUInt16(static_cast<uint16_t>(entry.getSize() + 2));
+        mailList.writeBytes(entry.getData().data(), entry.getSize());
+        session.receive(mailList);
+    }
+    const auto textQueries = session.sent().of(wowee::game::Opcode::CMSG_ITEM_TEXT_QUERY);
+    REQUIRE(textQueries.size() == 1);
+    {
+        wowee::network::Packet q(textQueries[0].getOpcode(), textQueries[0].getData());
+        CHECK(q.readUInt32() == 777);
+        CHECK(q.readUInt32() == 901);
+        CHECK(q.readUInt32() == 0);
+    }
+    events.clear();
+    {
+        wowee::network::Packet resp(wireOpcode(wowee::game::Opcode::SMSG_ITEM_TEXT_QUERY_RESPONSE));
+        resp.writeUInt32(777);
+        resp.writeString("Meet me in Goldshire!");
+        session.receive(resp);
+    }
+    CHECK(std::count(events.begin(), events.end(), "MAIL_INBOX_UPDATE") >= 1);
+    CHECK(std::count(events.begin(), events.end(), "ITEM_TEXT_READY") == 0);
+    run("wt = {GetInboxText(1)}");
+    truth("wt[1] == 'Meet me in Goldshire!' and wt[3] == true");
+
+    // Live TBC MailTemplate.dbc check when extracted TBC data is available.
+    if (const char* tbcDataDir = std::getenv("WOWEE_TBC_DATA_DIR")) {
+        wowee::pipeline::AssetManager assets;
+        if (assets.initialize(tbcDataDir)) {
+            const_cast<wowee::game::GameServices&>(handler.services()).assetManager = &assets;
+            handler.mailInboxRef() = {npcMail};
+            run("mh = {GetInboxHeaderInfo(1)}; mt = {GetInboxText(1)}");
+            truth("mh[4] == 'Learn to Ride in Tirisfal Glades'");
+            truth("string.find(mt[1], 'Velma Warnam', 1, true) ~= nil");
+            truth("string.find(mt[1], '$n', 1, true) == nil and string.find(mt[1], '$B', 1, true) == nil");
+            const_cast<wowee::game::GameServices&>(handler.services()).assetManager = nullptr;
+        }
+    }
+
+    handler.setAddonEventCallback({});
+    lua.setGameHandler(nullptr);
+}

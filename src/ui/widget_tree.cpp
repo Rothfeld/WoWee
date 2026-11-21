@@ -1441,6 +1441,10 @@ void WidgetTree::collectDrawOrder() {
         // listening, and an empty box still has to show it.
         // A cooldown paints its sweep while it has a duration set; drawCooldown
         // draws nothing once that time has passed.
+        // GameTooltip carries a Backdrop on its template, so without this early
+        // check an empty GameTooltip:Show() (such as InboxFrameItem_OnEnter on a
+        // plain/NPC letter with no item, money or COD) drew an empty tooltip box.
+        if (w.objectType == "GameTooltip" && w.tooltipLines.empty()) continue;
         if (w.kind == WidgetKind::Frame && !w.hasBackdrop && !w.isStatusBar &&
             !w.isEditBox && w.externalTexture == 0 && !w.isAutoCastShine &&
             !(w.isCooldown && w.cooldownDuration > 0.0) &&

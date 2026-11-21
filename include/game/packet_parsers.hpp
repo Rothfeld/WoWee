@@ -360,6 +360,16 @@ public:
         return MailDeletePacket::build(mailboxGuid, mailId, mailTemplateId);
     }
 
+    /** Build CMSG_MAIL_RETURN_TO_SENDER */
+    virtual network::Packet buildMailReturnToSender(uint64_t mailboxGuid, uint32_t mailId, uint64_t senderGuid) {
+        return MailReturnToSenderPacket::build(mailboxGuid, mailId, senderGuid);
+    }
+
+    /** Build CMSG_MAIL_CREATE_TEXT_ITEM */
+    virtual network::Packet buildMailCreateTextItem(uint64_t mailboxGuid, uint32_t mailId, uint32_t mailTemplateId) {
+        return MailCreateTextItemPacket::build(mailboxGuid, mailId, mailTemplateId);
+    }
+
     // --- Utility ---
 
     /** Read a packed GUID from the packet */
@@ -545,6 +555,8 @@ public:
     bool parseMailList(network::Packet& packet, std::vector<MailMessage>& inbox) override;
     network::Packet buildMailTakeItem(uint64_t mailboxGuid, uint32_t mailId, uint32_t itemGuidLow) override;
     network::Packet buildMailDelete(uint64_t mailboxGuid, uint32_t mailId, uint32_t mailTemplateId) override;
+    network::Packet buildMailReturnToSender(uint64_t mailboxGuid, uint32_t mailId, uint64_t senderGuid) override;
+    network::Packet buildMailCreateTextItem(uint64_t mailboxGuid, uint32_t mailId, uint32_t mailTemplateId) override;
     network::Packet buildItemQuery(uint32_t entry, uint64_t guid) override;
     bool parseItemQueryResponse(network::Packet& packet, ItemQueryResponseData& data) override;
     uint8_t readQuestGiverStatus(network::Packet& packet) override;
