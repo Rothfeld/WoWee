@@ -35,4 +35,12 @@ inline constexpr bool unitPlaysWound(uint32_t reactionAnimation, bool isCreature
     return !(isCreature && (creatureTypeFlags & kCreatureTypeDoNotPlayWoundAnim));
 }
 
+/// Stunned units (UNIT_FLAG_STUNNED = 0x00040000) hold their Stun (14) pose
+/// through incoming melee hits without playing wound/dodge/parry reactions.
+/// Observed on Native TBC 2.4.3 (Defias Miner under Hammer of Justice 10308).
+inline constexpr bool unitSuppressesHitReactionWhileStunned(uint32_t unitFlags) {
+    constexpr uint32_t kUnitFlagStunned = 0x00040000u;
+    return (unitFlags & kUnitFlagStunned) != 0;
+}
+
 } // namespace wowee::rendering

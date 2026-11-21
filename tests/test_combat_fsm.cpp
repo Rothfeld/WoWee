@@ -2,6 +2,7 @@
 #include <catch_amalgamated.hpp>
 #include "rendering/animation/combat_fsm.hpp"
 #include "rendering/animation/animation_ids.hpp"
+#include "rendering/animation/hit_reaction.hpp"
 #include "game/inventory.hpp"
 
 using namespace wowee::rendering;
@@ -384,5 +385,85 @@ TEST_CASE("CombatFSM: back-to-back precast lets previous CAST finalize complete 
     out = fsm.resolve(in, caps, wl);
     CHECK(fsm.getState() == CombatFSM::State::SPELL_CASTING);
     CHECK(out.animId == anim::READY_SPELL_DIRECTED);
+    CHECK(out.loop);
+}
+
+TEST_CASE("CombatFSM: isSpellCastActive stays true through precast, mid-cast hit flinch, and release finalize",
+          "[combat][spell_cast_anim]") {
+    CombatFSM fsm;
+    auto caps = makeCombatCaps();
+    auto wl = unarmedLoadout();
+    auto in = combatInput();
+    in.haveAnimState = true;
+
+    CHECK_FALSE(fsm.isSpellCastActive());
+
+    // 1. Start timed directed cast (ReadySpellDirected 51).
+    fsm.startSpellCast(0, anim::READY_SPELL_DIRECTED, true, 0);
+    CHECK(fsm.isSpellCastActive());
+    in.currentAnimId = anim::READY_SPELL_DIRECTED;
+    in.currentAnimTime = 0.2f;
+    in.currentAnimDuration = 1.0f;
+    CHECK(fsm.resolve(in, caps, wl).animId == anim::READY_SPELL_DIRECTED);
+
+    // 2. Melee hit arrives mid-cast -> CombatWound (9) plays while isSpellCastActive()
+    // stays true so auto-unsheathe does not redraw weapons mid-cast.
+    fsm.triggerHitReaction(anim::COMBAT_WOUND);
+    CHECK(fsm.getState() == CombatFSM::State::HIT_REACTION);
+    CHECK(fsm.isSpellCastActive());
+    in.currentAnimId = anim::COMBAT_WOUND;
+    in.currentAnimTime = 0.2f;
+    in.currentAnimDuration = 0.8f;
+    CHECK(fsm.resolve(in, caps, wl).animId == anim::COMBAT_WOUND);
+
+    // 3. Hit reaction finishes -> returns to ReadySpellDirected (51).
+    in.currentAnimTime = 0.8f;
+    auto back = fsm.resolve(in, caps, wl);
+    CHECK(fsm.getState() == CombatFSM::State::SPELL_CASTING);
+    CHECK(fsm.isSpellCastActive());
+    CHECK(back.animId == anim::READY_SPELL_DIRECTED);
+    CHECK(back.loop);
+
+    // 4. Cast completes (SMSG_SPELL_GO) -> SpellCastDirected (53) one-shot in SPELL_FINALIZE.
+    // isSpellCastActive() must stay true so auto-unsheathe does not cut off 53 with SHEATHE (89).
+    fsm.startSpellCast(0, anim::SPELL_CAST_DIRECTED, false, anim::SPELL_CAST_DIRECTED);
+    fsm.stopSpellCast();
+    CHECK(fsm.getState() == CombatFSM::State::SPELL_FINALIZE);
+    CHECK(fsm.isSpellCastActive());
+    in.currentAnimId = anim::SPELL_CAST_DIRECTED;
+    in.currentAnimTime = 0.3f;
+    in.currentAnimDuration = 1.0f;
+    CHECK(fsm.resolve(in, caps, wl).animId == anim::SPELL_CAST_DIRECTED);
+
+    // 5. Release animation finishes -> returns to COMBAT_IDLE and isSpellCastActive() clears.
+    in.currentAnimTime = 1.0f;
+    auto done = fsm.resolve(in, caps, wl);
+    CHECK(fsm.getState() == CombatFSM::State::COMBAT_IDLE);
+    CHECK_FALSE(fsm.isSpellCastActive());
+    CHECK(done.animId == anim::READY_UNARMED);
+
+    // 6. Out-of-cast hit reaction does NOT report isSpellCastActive().
+    fsm.triggerHitReaction(anim::COMBAT_WOUND);
+    CHECK(fsm.getState() == CombatFSM::State::HIT_REACTION);
+    CHECK_FALSE(fsm.isSpellCastActive());
+}
+
+TEST_CASE("Stunned units suppress hit reaction animations while holding Stun pose",
+          "[combat][stun]") {
+    constexpr uint32_t kUnitFlagStunned = 0x00040000u;
+    CHECK_FALSE(unitSuppressesHitReactionWhileStunned(0u));
+    CHECK(unitSuppressesHitReactionWhileStunned(kUnitFlagStunned));
+    CHECK(unitSuppressesHitReactionWhileStunned(kUnitFlagStunned | 0x00080000u));
+
+    // Local CombatFSM also ignores hit reactions while stunned.
+    CombatFSM fsm;
+    auto caps = makeCombatCaps();
+    auto wl = unarmedLoadout();
+    fsm.setStunned(true);
+    fsm.triggerHitReaction(anim::COMBAT_WOUND);
+    CHECK(fsm.isStunned());
+    auto out = fsm.resolve(combatInput(), caps, wl);
+    REQUIRE(out.valid);
+    CHECK(out.animId == anim::STUN);
     CHECK(out.loop);
 }

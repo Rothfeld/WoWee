@@ -223,6 +223,11 @@ void AnimationController::stopLooting() {
 // ── Hit reactions ────────────────────────────────────────────────────────────
 
 void AnimationController::triggerHitReaction(uint32_t animId) {
+    if (animId != 0 && meleeSwingTimer_ <= 0.0f && rangedShootTimer_ <= 0.0f &&
+        !charging_ && !characterAnimator_.getCombat().isStunned()) {
+        // Allow back-to-back hit reactions of the same animId to replay.
+        lastPlayerAnimRequest_ = UINT32_MAX;
+    }
     characterAnimator_.triggerHitReaction(animId);
 }
 

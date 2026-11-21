@@ -4707,9 +4707,17 @@ void Application::updateInGame(float deltaTime, const char*& updateCheckpoint) {
              ranged.item.inventoryType == game::InvType::RANGED_GUN ||
              ranged.item.inventoryType == game::InvType::THROWN);
         const bool hasDrawableWeapon = !mainHand.empty() || hasOffHandWeapon || hasRangedWeapon;
-        if (attackWeaponNeeded && hasDrawableWeapon && appearanceComposer_ &&
+        const auto* ac = renderer ? renderer->getAnimationController() : nullptr;
+        const auto* cr = renderer ? renderer->getCharacterRenderer() : nullptr;
+        const uint32_t charInstanceId = renderer ? renderer->getCharacterInstanceId() : 0;
+        const bool castingOrSheathingPose =
+            gameHandler->isCasting() ||
+            (ac && ac->isSpellCastActive()) ||
+            (cr && charInstanceId != 0 && cr->weaponSheathingAnimation(charInstanceId) != 0);
+        if (attackWeaponNeeded && !castingOrSheathingPose && hasDrawableWeapon && appearanceComposer_ &&
             appearanceComposer_->isWeaponsSheathed()) {
-            if (renderer && renderer->getAnimationController()) {
+            if (renderer && renderer->getAnimationController() &&
+                renderer->getAnimationController()->getCombatState() != rendering::CombatFSM::State::MELEE_SWING) {
                 renderer->getAnimationController()->playWeaponSheathAnimation(
                     appearanceComposer_->sheathSpot(game::EquipSlot::MAIN_HAND),
                     appearanceComposer_->sheathSpot(game::EquipSlot::OFF_HAND));

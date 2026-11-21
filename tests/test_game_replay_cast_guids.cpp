@@ -214,14 +214,20 @@ TEST_CASE("TBC Wrath cast persists across melee flinch and SMSG_SPELL_DELAYED pu
     CHECK(s.handler().getCastTimeTotal() == Catch::Approx(1.5f));
     CHECK(s.handler().getCastTimeRemaining() == Catch::Approx(1.5f));
 
-    // 2. Melee hit (CombatWound + BloodSpurt) + two SMSG_SPELL_DELAYED pushbacks (800ms + 500ms).
+    // 2. Advance 1.0s into the 1.5s cast (0.5s remaining), then take a melee hit
+    //    and two SMSG_SPELL_DELAYED pushbacks (500ms + 500ms). Total cast duration
+    //    stays 1.5s while remaining time pushes back toward 1.5s (clamped to total).
+    s.handler().updateTimers(1.0f);
+    CHECK(s.handler().getCastTimeRemaining() == Catch::Approx(0.5f));
     s.receive(tbcMeleeHit(kMob, Session::kPlayerGuid, 12));
-    s.receive(tbcSpellDelayed(Session::kPlayerGuid, 800));
     s.receive(tbcSpellDelayed(Session::kPlayerGuid, 500));
+    CHECK(s.handler().getCastTimeTotal() == Catch::Approx(1.5f));
+    CHECK(s.handler().getCastTimeRemaining() == Catch::Approx(1.0f));
+    s.receive(tbcSpellDelayed(Session::kPlayerGuid, 800));
     CHECK(hitReactions == 1);
     CHECK(s.handler().isCasting());
-    CHECK(s.handler().getCastTimeTotal() == Catch::Approx(2.8f));
-    CHECK(s.handler().getCastTimeRemaining() == Catch::Approx(2.8f));
+    CHECK(s.handler().getCastTimeTotal() == Catch::Approx(1.5f));
+    CHECK(s.handler().getCastTimeRemaining() == Catch::Approx(1.5f));
 
     // 3. SMSG_SPELL_GO completes the pushed-back cast cleanly.
     s.receive(tbcSpellGo(Session::kPlayerGuid, kWrathSpellId, kMob));
@@ -234,9 +240,11 @@ TEST_CASE("TBC Wrath cast persists across melee flinch and SMSG_SPELL_DELAYED pu
 
     // 4. Starting another Wrath, pushing it back, and interrupting via SMSG_SPELL_FAILURE clears cast cleanly.
     s.receive(tbcSpellStart(Session::kPlayerGuid, kWrathSpellId, 1500, kMob));
-    s.receive(tbcSpellDelayed(Session::kPlayerGuid, 800));
+    s.handler().updateTimers(0.9f);
+    s.receive(tbcSpellDelayed(Session::kPlayerGuid, 500));
     REQUIRE(s.handler().isCasting());
-    CHECK(s.handler().getCastTimeTotal() == Catch::Approx(2.3f));
+    CHECK(s.handler().getCastTimeTotal() == Catch::Approx(1.5f));
+    CHECK(s.handler().getCastTimeRemaining() == Catch::Approx(1.1f));
     Packet failure(wireOpcode(Opcode::SMSG_SPELL_FAILURE));
     failure.writePackedGuid(Session::kPlayerGuid);
     failure.writeUInt32(kWrathSpellId);
@@ -260,10 +268,11 @@ TEST_CASE("TBC remote cast pushback extends state and SMSG_SPELL_FAILED_OTHER st
     REQUIRE(s.handler().getUnitCastState(kMob) != nullptr);
     CHECK(s.handler().getUnitCastState(kMob)->timeTotal == Catch::Approx(1.5f));
 
-    s.receive(tbcSpellDelayed(kMob, 800));
+    s.handler().updateTimers(0.9f);
+    s.receive(tbcSpellDelayed(kMob, 500));
     REQUIRE(s.handler().getUnitCastState(kMob) != nullptr);
-    CHECK(s.handler().getUnitCastState(kMob)->timeTotal == Catch::Approx(2.3f));
-    CHECK(s.handler().getUnitCastState(kMob)->timeRemaining == Catch::Approx(2.3f));
+    CHECK(s.handler().getUnitCastState(kMob)->timeTotal == Catch::Approx(1.5f));
+    CHECK(s.handler().getUnitCastState(kMob)->timeRemaining == Catch::Approx(1.1f));
 
     Packet failOther(wireOpcode(Opcode::SMSG_SPELL_FAILED_OTHER));
     failOther.writePackedGuid(kMob);

@@ -6483,15 +6483,13 @@ void SpellHandler::handleSpellDelayed(network::Packet& packet) {
     bool castActive = false;
     if (caster == owner_.getPlayerGuid()) {
         if (casting_ && !castIsChannel_) {
-            castTimeRemaining_ += delaySec;
-            castTimeTotal_     += delaySec;
+            castTimeRemaining_ = std::min(castTimeTotal_, castTimeRemaining_ + delaySec);
             castActive = true;
         }
     } else {
         auto it = unitCastStates_.find(caster);
         if (it != unitCastStates_.end() && it->second.casting && !it->second.isChannel) {
-            it->second.timeRemaining += delaySec;
-            it->second.timeTotal     += delaySec;
+            it->second.timeRemaining = std::min(it->second.timeTotal, it->second.timeRemaining + delaySec);
             castActive = true;
         }
     }

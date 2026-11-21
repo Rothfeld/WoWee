@@ -79,6 +79,14 @@ public:
 
     [[nodiscard]] bool isStunned() const { return state_ == State::STUNNED; }
     [[nodiscard]] bool isActive() const { return state_ != State::INACTIVE; }
+    /// True while a spell precast, cast/channel hold, release one-shot, or a
+    /// mid-cast hit reaction returning to a cast is active.
+    [[nodiscard]] bool isSpellCastActive() const {
+        return state_ == State::SPELL_PRECAST ||
+               state_ == State::SPELL_CASTING ||
+               state_ == State::SPELL_FINALIZE ||
+               (state_ == State::HIT_REACTION && resumeSpellAfterHit_);
+    }
     void reset();
 
     // ── Spell cast management ───────────────────────────────────────────

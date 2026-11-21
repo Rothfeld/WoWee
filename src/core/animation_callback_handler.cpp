@@ -272,6 +272,10 @@ void AnimationCallbackHandler::setupCallbacks() {
                           std::dec);
                 return;
             }
+            if (!isLocalPlayer && rendering::unitSuppressesHitReactionWhileStunned(victim->getUnitFlags())) {
+                LOG_DEBUG("Hit reaction ", animId, " suppressed on stunned unit 0x", std::hex, victimGuid, std::dec);
+                return;
+            }
         }
         LOG_DEBUG("Hit reaction ", animId, " on 0x", std::hex, victimGuid, std::dec,
                   isLocalPlayer ? " (local player)" : "");

@@ -129,6 +129,12 @@ public:
     void stopSpellCast();
     /// Leave spell cast animation state at once, with no release animation.
     void cancelSpellCast();
+    [[nodiscard]] bool isSpellCastActive() const {
+        return characterAnimator_.getCombat().isSpellCastActive();
+    }
+    [[nodiscard]] CombatFSM::State getCombatState() const {
+        return characterAnimator_.getCombat().getState();
+    }
     void setSeatedLoopAnimation(uint32_t animationId);
 
     // ── Loot animation ─────────────────────────────────────────────────────

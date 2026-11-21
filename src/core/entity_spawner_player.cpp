@@ -876,12 +876,14 @@ uint32_t EntitySpawner::remoteIdleAnimation(uint64_t guid) const {
     if (!entity) return rendering::anim::STAND;
     const auto state = static_cast<uint8_t>(entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_1)));
     if (state != 0) return rendering::standPose(state).idle;
+    const auto unit = std::dynamic_pointer_cast<game::Unit>(entity);
+    if (unit && (unit->getUnitFlags() & game::UNIT_FLAG_STUNNED) != 0 && unit->getHealth() > 0)
+        return rendering::anim::STUN;
     if (const auto hold = remoteCastHolds_.find(guid); hold != remoteCastHolds_.end()) return hold->second;
     // An aura's state animation, e.g. Whirlwind (126) under Rend's Whirlwind.
     if (const uint32_t aura = remoteAuraStateAnimation(guid); aura != rendering::SpellVisualSystem::kNoAnimation)
         return aura;
     if (remoteIdlesInHover(guid)) return rendering::anim::FLY_IDLE;
-    const auto unit = std::dynamic_pointer_cast<game::Unit>(entity);
     // A unit meleeing holds its ready stance between swings; the original
     // never rolls Stand fidgets then (Ice Claw Bear, combat_observations).
     if (unit && unit->getMeleeVictimGuid() != 0 && unit->getHealth() > 0) return meleeReadyAnimation(*unit);
@@ -1306,22 +1308,34 @@ void EntitySpawner::updateRemoteUnitState(uint64_t guid, uint32_t instanceId, bo
     const uint8_t previous = it->second;
     it->second = state;
     {
-        // ATTACKSTART/STOP change the idle; a standing unit switches now, a
-        // swing in flight resumes the new idle when it ends.
+        // ATTACKSTART/STOP and UNIT_FLAG_STUNNED change the idle; a standing
+        // unit switches now, a swing in flight resumes the new idle when it
+        // ends. Entering STUN immediately overrides swings/wounds/emotes
+        // (except Knockdown 121, which chains into STUN on completion), and a
+        // unit entering view already stunned immediately plays STUN.
         const uint32_t idle = remoteIdleAnimation(guid);
         const auto [idleIt, firstIdle] = remoteIdleAnims_.try_emplace(guid, idle);
         const uint32_t previousIdle = idleIt->second;
         idleIt->second = idle;
         const auto unit = std::static_pointer_cast<game::Unit>(entity);
-        if (!firstIdle && previousIdle != idle && previous == state && !moving && !mounted &&
-            unit->getHealth() > 0) {
+        if (previous == state && !moving && !mounted && unit->getHealth() > 0) {
             auto* cr = renderer_->getCharacterRenderer();
             uint32_t current = 0; float time = 0.0f, duration = 0.0f;
-            if (cr->getAnimationState(instanceId, current, time, duration) && current == previousIdle)
-                cr->playAnimation(instanceId, idle, true);
-            else
-                cr->retargetOneShotReturn(instanceId, previousIdle, idle);
-            LOG_DEBUG("Remote idle: guid=", guid, " ", previousIdle, " -> ", idle, " current=", current);
+            const bool haveAnim = cr->getAnimationState(instanceId, current, time, duration);
+            if (idle == rendering::anim::STUN) {
+                if (!haveAnim || (current != rendering::anim::STUN && current != rendering::anim::KNOCKDOWN)) {
+                    cr->playAnimation(instanceId, rendering::anim::STUN, true);
+                    LOG_DEBUG("Remote stun enter: guid=", guid, " prev=", previousIdle, " current=", current);
+                } else if (haveAnim && current == rendering::anim::KNOCKDOWN) {
+                    cr->setOneShotReturn(instanceId, rendering::anim::STUN);
+                }
+            } else if (!firstIdle && previousIdle != idle) {
+                if (haveAnim && current == previousIdle)
+                    cr->playAnimation(instanceId, idle, true);
+                else
+                    cr->retargetOneShotReturn(instanceId, previousIdle, idle);
+                LOG_DEBUG("Remote idle: guid=", guid, " ", previousIdle, " -> ", idle, " current=", current);
+            }
         }
     }
     // A newly visible standing unit keeps its spawn/emote animation. Nonzero
