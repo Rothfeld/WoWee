@@ -389,6 +389,7 @@ struct Widget {
     bool   hasSelection = false;
     size_t selStart = 0;
     size_t selEnd = 0;
+    size_t selAnchor = 0;
     /// What has been typed into this box before, oldest first, and where the
     /// arrow keys are in it.
     ///
@@ -405,6 +406,7 @@ struct Widget {
     /// they reach the game instead and a player can turn while typing.
     bool  editFocused = false;
     bool  editNumeric = false;
+    bool  editPassword = false;
     bool  editMultiLine = false;
     /// A multi-line box's text height as last drawn, interface units, one
     /// line when empty; -1 before the first draw. Its scroll frame's range

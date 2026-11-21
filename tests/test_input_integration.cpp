@@ -6181,3 +6181,212 @@ TEST_CASE("GameTooltip:Hide runs OnHide synchronously so same-frame hover transi
     CHECK(f.lua.evaluateBoolean("tip.shownMoneyFrames == 1"));
     CHECK(f.lua.evaluateBoolean("mf1:IsShown() == 1"));
 }
+
+// Empirical TBC 2.4.3 build 8606 verification:
+// _experiments/20261121T085200Z.ctrl_backspace_word_delete_parity/native_editprobe_results.lua
+TEST_CASE_METHOD(Integration,
+                 "EditBox Ctrl+Backspace and sibling Ctrl/Shift word shortcuts match TBC 2.4.3",
+                 "[input][lua][editbox][ctrl_backspace]") {
+    run(R"lua(
+        eb = CreateFrame('EditBox', 'ParityEditBox', UIParent)
+        eb:SetAutoFocus(false); eb:SetSize(320, 28); eb:SetPoint('CENTER'); eb:Show()
+        ml = CreateFrame('EditBox', 'ParityMultiBox', UIParent)
+        ml:SetAutoFocus(false); ml:SetMultiLine(true); ml:SetSize(320, 80); ml:SetPoint('CENTER'); ml:Show()
+        pw = CreateFrame('EditBox', 'ParityPasswordBox', UIParent)
+        pw:SetAutoFocus(false); pw:SetPassword(1); pw:SetSize(200, 28); pw:SetPoint('CENTER'); pw:Show()
+        ig = CreateFrame('EditBox', 'ParityIgnoreArrowsBox', UIParent)
+        ig:SetAutoFocus(false); ig:SetAltArrowKeyMode(true); ig:SetSize(320, 28); ig:SetPoint('CENTER'); ig:Show()
+        plainFrame = CreateFrame('Frame', 'ParityPlainFrame', UIParent)
+
+        events = {}
+        local function attach(box)
+            box:SetScript('OnCursorChanged', function(self)
+                events[#events + 1] = 'C@' .. self:GetCursorPosition()
+            end)
+            box:SetScript('OnTextChanged', function(self, arg1)
+                events[#events + 1] = 'T(' .. tostring(arg1) .. ')@' .. self:GetCursorPosition()
+            end)
+        end
+        attach(eb); attach(ml); attach(pw); attach(ig)
+
+        function prep(box, text, cur, sa, sb)
+            box:SetText(text)
+            box:SetCursorPosition(cur)
+            if sa then box:HighlightText(sa, sb) else box:HighlightText(0, 0) end
+            box:SetFocus()
+        end
+    )lua");
+    layout();
+
+    // Per-instance SetPassword / IsPassword presence (absent on plain Frames, 1/nil on EditBox)
+    truth("plainFrame.SetPassword == nil and plainFrame.IsPassword == nil");
+    truth("pw:IsPassword() == 1 and eb:IsPassword() == nil");
+
+    auto prepare = [&](const std::string& luaCall) {
+        run(luaCall);
+        lua.drainPendingTextChanged();
+        run("events = {}");
+    };
+
+    // 1. Multi-word command + trailing space + punctuation/slashes (.tele booty bay, /cast Rank 1)
+    prepare("prep(eb, '.tele booty bay', 15)");
+    lua.dispatchKey(SDLK_BACKSPACE, /*ctrl=*/true);
+    truth("eb:GetText() == '.tele booty ' and eb:GetCursorPosition() == 12");
+    truth("#events == 2 and events[1] == 'C@12' and events[2] == 'T(nil)@12'");
+
+    // Second Ctrl+Backspace skips trailing space and deletes 'booty'
+    run("events = {}");
+    lua.dispatchKey(SDLK_BACKSPACE, /*ctrl=*/true);
+    truth("eb:GetText() == '.tele ' and eb:GetCursorPosition() == 6");
+
+    // Third Ctrl+Backspace skips trailing space and deletes '.tele' as one non-whitespace word
+    lua.dispatchKey(SDLK_BACKSPACE, /*ctrl=*/true);
+    truth("eb:GetText() == '' and eb:GetCursorPosition() == 0");
+
+    // Fourth Ctrl+Backspace at pos 0 is a strict no-op: neither OnCursorChanged nor OnTextChanged fires
+    run("events = {}");
+    lua.dispatchKey(SDLK_BACKSPACE, /*ctrl=*/true);
+    truth("eb:GetText() == '' and eb:GetCursorPosition() == 0 and #events == 0");
+
+    prepare("prep(eb, 'alpha', 0)");
+    lua.dispatchKey(SDLK_BACKSPACE, /*ctrl=*/true);
+    truth("eb:GetText() == 'alpha' and eb:GetCursorPosition() == 0 and #events == 0");
+
+    // Multiple spaces, mid-word cursor, slashes, underscores, hyphens, dots
+    prepare("prep(eb, 'alpha   beta', 8)");
+    lua.dispatchKey(SDLK_BACKSPACE, /*ctrl=*/true);
+    truth("eb:GetText() == 'beta' and eb:GetCursorPosition() == 0");
+
+    prepare("prep(eb, '/cast Rank 1', 12)");
+    lua.dispatchKey(SDLK_BACKSPACE, /*ctrl=*/true);
+    truth("eb:GetText() == '/cast Rank ' and eb:GetCursorPosition() == 11");
+    lua.dispatchKey(SDLK_BACKSPACE, /*ctrl=*/true);
+    lua.dispatchKey(SDLK_BACKSPACE, /*ctrl=*/true);
+    truth("eb:GetText() == '' and eb:GetCursorPosition() == 0");
+
+    prepare("prep(eb, 'foo_bar', 7)");
+    lua.dispatchKey(SDLK_BACKSPACE, /*ctrl=*/true);
+    truth("eb:GetText() == ''");
+
+    prepare("prep(eb, 'foo...bar', 6)");
+    lua.dispatchKey(SDLK_BACKSPACE, /*ctrl=*/true);
+    truth("eb:GetText() == 'bar' and eb:GetCursorPosition() == 0");
+
+    prepare("prep(eb, 'alpha beta', 8)"); // "alpha be|ta"
+    lua.dispatchKey(SDLK_BACKSPACE, /*ctrl=*/true);
+    truth("eb:GetText() == 'alpha ta' and eb:GetCursorPosition() == 6");
+
+    // 2. UTF-8 multi-byte codepoints & coloured hyperlinks
+    prepare("prep(eb, 'caf\\195\\169 cr\\195\\168me', 12)");
+    lua.dispatchKey(SDLK_BACKSPACE, /*ctrl=*/true);
+    truth("eb:GetText() == 'caf\\195\\169 ' and eb:GetCursorPosition() == 6 and eb:GetNumLetters() == 5");
+
+    prepare("prep(eb, 'a\\195\\169\\228\\184\\173', 6)");
+    lua.dispatchKey(SDLK_BACKSPACE, /*ctrl=*/false);
+    truth("eb:GetText() == 'a\\195\\169' and eb:GetCursorPosition() == 3 and eb:GetNumLetters() == 2");
+
+    prepare("prep(eb, 'hi |cff9d9d9d|Hitem:3299:0:0:0:0:0:0:0|h[Fractured Canine]|h|r', 62)");
+    lua.dispatchKey(SDLK_BACKSPACE, /*ctrl=*/true);
+    truth("eb:GetText() == 'hi ' and eb:GetCursorPosition() == 3");
+
+    // 3. Active selection: Ctrl+Backspace and Ctrl+Delete erase only the selection
+    prepare("prep(eb, 'one two three', 13, 4, 7)");
+    lua.dispatchKey(SDLK_BACKSPACE, /*ctrl=*/true);
+    truth("eb:GetText() == 'one  three' and eb:GetCursorPosition() == 4");
+
+    prepare("prep(eb, 'one two three', 0, 4, 7)");
+    lua.dispatchKey(SDLK_DELETE, /*ctrl=*/true);
+    truth("eb:GetText() == 'one  three' and eb:GetCursorPosition() == 4");
+
+    // 4. Multi-line EditBox: stops after '\n' mid-line, crosses '\n' when at start of line
+    prepare("prep(ml, 'aa bb\\ncc dd', 11)");
+    lua.dispatchKey(SDLK_BACKSPACE, /*ctrl=*/true);
+    truth("ml:GetText() == 'aa bb\\ncc ' and ml:GetCursorPosition() == 9");
+    lua.dispatchKey(SDLK_BACKSPACE, /*ctrl=*/true);
+    truth("ml:GetText() == 'aa bb\\n' and ml:GetCursorPosition() == 6");
+    lua.dispatchKey(SDLK_BACKSPACE, /*ctrl=*/true);
+    truth("ml:GetText() == 'aa ' and ml:GetCursorPosition() == 3");
+
+    prepare("prep(ml, 'aa bb\\ncc', 6)");
+    lua.dispatchKey(SDLK_BACKSPACE, /*ctrl=*/true);
+    truth("ml:GetText() == 'aa cc' and ml:GetCursorPosition() == 3");
+
+    // 5. Password EditBox: Ctrl+Backspace & Ctrl+Left match TBC 2.4.3; clipboard copy/cut blocked
+    const bool initDummyVideo = (SDL_WasInit(SDL_INIT_VIDEO) == 0);
+    if (initDummyVideo) {
+        SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "dummy");
+        REQUIRE(SDL_InitSubSystem(SDL_INIT_VIDEO));
+    }
+    REQUIRE(SDL_SetClipboardText("unchanged_sentinel"));
+    prepare("prep(pw, 'abc def', 7)");
+    lua.dispatchKey(SDLK_BACKSPACE, /*ctrl=*/true);
+    truth("pw:GetText() == 'abc ' and pw:GetCursorPosition() == 4");
+    prepare("prep(pw, 'secret', 6, 0, 6)");
+    lua.dispatchKey('c', /*ctrl=*/true);
+    lua.dispatchKey('x', /*ctrl=*/true);
+    truth("pw:GetText() == '' and pw:GetCursorPosition() == 0");
+    {
+        char* clip = SDL_GetClipboardText();
+        REQUIRE(clip != nullptr);
+        CHECK(std::string(clip) == "unchanged_sentinel");
+        SDL_free(clip);
+    }
+
+    // Normal EditBox Ctrl+X cut -> Home -> Ctrl+V paste (matching TBC 2.4.3 case 61_ctrlx_ctrlv)
+    prepare("prep(eb, 'alpha beta', 10, 6, 10)");
+    lua.dispatchKey('x', /*ctrl=*/true);
+    truth("eb:GetText() == 'alpha ' and eb:GetCursorPosition() == 6");
+    lua.dispatchKey(SDLK_HOME, /*ctrl=*/false);
+    lua.dispatchKey('v', /*ctrl=*/true);
+    truth("eb:GetText() == 'betaalpha ' and eb:GetCursorPosition() == 4");
+    if (initDummyVideo) {
+        SDL_QuitSubSystem(SDL_INIT_VIDEO);
+    }
+
+    // 6. Sibling Ctrl+Delete, Ctrl+Left, Ctrl+Right, Shift+Arrows, Ctrl+Shift+Arrows, Ctrl+A, Ctrl+X
+    prepare("prep(eb, 'alpha beta', 0)");
+    lua.dispatchKey(SDLK_DELETE, /*ctrl=*/true);
+    truth("eb:GetText() == ' beta' and eb:GetCursorPosition() == 0");
+    lua.dispatchKey(SDLK_DELETE, /*ctrl=*/true);
+    truth("eb:GetText() == '' and eb:GetCursorPosition() == 0");
+    run("events = {}");
+    lua.dispatchKey(SDLK_DELETE, /*ctrl=*/true);
+    truth("#events == 0");
+
+    prepare("prep(eb, '.tele booty  bay', 16)");
+    for (int i = 0; i < 5; ++i) lua.dispatchKey(SDLK_LEFT, /*ctrl=*/true);
+    truth("eb:GetCursorPosition() == 0 and #events == 3");
+    truth("events[1] == 'C@13' and events[2] == 'C@6' and events[3] == 'C@0'");
+
+    run("events = {}");
+    for (int i = 0; i < 5; ++i) lua.dispatchKey(SDLK_RIGHT, /*ctrl=*/true);
+    truth("eb:GetCursorPosition() == 16 and #events == 3");
+    truth("events[1] == 'C@6' and events[2] == 'C@13' and events[3] == 'C@16'");
+
+    prepare("prep(eb, 'alpha beta', 10)");
+    lua.dispatchKey(SDLK_LEFT, /*ctrl=*/true, /*shift=*/true);
+    lua.dispatchKey(SDLK_BACKSPACE, /*ctrl=*/false);
+    truth("eb:GetText() == 'alpha ' and eb:GetCursorPosition() == 6");
+
+    prepare("prep(eb, 'alpha beta', 0)");
+    lua.dispatchKey(SDLK_RIGHT, /*ctrl=*/true, /*shift=*/true);
+    lua.dispatchKey(SDLK_BACKSPACE, /*ctrl=*/false);
+    truth("eb:GetText() == 'beta' and eb:GetCursorPosition() == 0");
+
+    prepare("prep(eb, 'alpha beta', 5)");
+    lua.dispatchKey('a', /*ctrl=*/true);
+    lua.dispatchKey(SDLK_BACKSPACE, /*ctrl=*/false);
+    truth("eb:GetText() == '' and eb:GetCursorPosition() == 0");
+
+    // 7. ignoreArrows / AltArrowKeyMode: Ctrl+Left without Alt is ignored; Alt+Ctrl+Left moves word
+    prepare("prep(ig, '.tele booty bay', 15)");
+    lua.dispatchKey(SDLK_LEFT, /*ctrl=*/true, /*shift=*/false, /*alt=*/false);
+    truth("ig:GetCursorPosition() == 15 and #events == 0");
+    lua.dispatchKey(SDLK_LEFT, /*ctrl=*/true, /*shift=*/false, /*alt=*/true);
+    truth("ig:GetCursorPosition() == 12 and #events == 1 and events[1] == 'C@12'");
+
+    // 8. Stray 0x7F DEL / 0x08 BS control bytes in dispatchText are rejected
+    prepare("prep(eb, 'hello', 5)");
+    lua.dispatchText("\x7f\x08");
+    truth("eb:GetText() == 'hello' and eb:GetCursorPosition() == 5 and #events == 0");
+}

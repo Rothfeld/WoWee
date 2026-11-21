@@ -2880,7 +2880,8 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                 const float linePx = multi
                     ? static_cast<float>(nativePixelHeight(w->fontHeight, ws) + spacingPixels(w->lineSpacing, ws))
                     : 0.0f;
-                const auto editLayout = layoutEditLines(w->editText, wrapW, measure, textureWidth);
+                const auto editLayout = layoutEditLines(
+                    w->editText, wrapW, measure, textureWidth, w->editPassword);
                 if (multi) {
                     w->editContentH = static_cast<float>(editLayout.size()) * linePx / ws;
                 }
@@ -2898,6 +2899,9 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                     }
                 }
                 if (!w->editText.empty()) {
+                    const std::string maskedStorage =
+                        w->editPassword ? maskPasswordText(w->editText) : std::string();
+                    const std::string& drawnText = w->editPassword ? maskedStorage : w->editText;
                     // The shadow first, under the words, as a font string's
                     // is. ChatFontNormal declares one and every edit box in
                     // the interface inherits it, and this path drew none - so
@@ -2910,7 +2914,7 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                                        ImVec2(x0 + pad + std::round(w->shadowX * ws),
                                               ty + std::round(-w->shadowY * ws)),
                                        packColor(sc, w->effAlpha * w->shadowColor[3]),
-                                       w->effAlpha, w->editText, wrapW, false,
+                                       w->effAlpha, drawnText, wrapW, false,
                                        nullptr, true, nullptr, 0, -1.0f, 0.0f, 0.0f, linePx);
                     }
                     // Through the markup parser like everything else. An edit
@@ -2921,7 +2925,7 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                     // Links are only clickable at all as of this branch, so
                     // this became reachable at the same moment.
                     drawMarkupText(dl, font, size, ws, ImVec2(x0 + pad, ty), col,
-                                   w->effAlpha, w->editText, wrapW, false, nullptr, false,
+                                   w->effAlpha, drawnText, wrapW, false, nullptr, false,
                                    nullptr, 0, -1.0f, 0.0f, 0.0f, linePx);
                 }
                 if (w->editFocused) {

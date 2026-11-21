@@ -138,3 +138,23 @@ TEST_CASE("Selection spans cover single-line and multi-line selections", "[edit_
     CHECK(spans[1].x0 == Catch::Approx(0.0f));
     CHECK(spans[1].x1 == Catch::Approx(20.0f));
 }
+
+TEST_CASE("Password EditBox masks UTF-8 codepoints to asterisks while preserving raw byte offsets",
+          "[edit_caret][password]") {
+    const MonoMeasure m;
+    // "a" (1) + U+00E9 (2) + " " (1) + U+4E2D (3) = 7 bytes, 4 codepoints -> "****" (each '*' is 10px, not 6px space)
+    const std::string raw = "a\xC3\xA9 \xE4\xB8\xAD";
+    CHECK(wowee::ui::maskPasswordText(raw) == "****");
+    CHECK(wowee::ui::maskPasswordText("ab\ncd") == "**\n**");
+
+    const auto lines = wowee::ui::layoutEditLines(raw, 0.0f, m, zeroTexWidth, /*password=*/true);
+    REQUIRE(lines.size() == 1);
+    REQUIRE(lines[0].cells.size() == 4);
+    CHECK(lines[0].width == Catch::Approx(40.0f)); // 4 * 10px ('*'), hiding space width!
+    CHECK(lines[0].cells[0].rawStart == 0);
+    CHECK(lines[0].cells[1].rawStart == 1);
+    CHECK(lines[0].cells[2].rawStart == 3);
+    CHECK(lines[0].cells[3].rawStart == 4);
+    CHECK(lines[0].cells[3].rawEnd == 7);
+    CHECK(wowee::ui::hitTestEditCaret(lines, 26.0f, 0.0f, 12.0f, false) == 4);
+}

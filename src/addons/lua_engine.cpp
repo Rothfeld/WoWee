@@ -7040,6 +7040,19 @@ int lua_EditBox_SetNumeric(lua_State* L) {
     if (auto* w = widgetOf(L, 1)) w->editNumeric = lua_toboolean(L, 2) != 0;
     return 0;
 }
+int lua_EditBox_SetPassword(lua_State* L) {
+    if (auto* w = widgetOf(L, 1)) {
+        w->editPassword = lua_isnumber(L, 2)
+            ? (lua_tonumber(L, 2) != 0.0)
+            : (lua_toboolean(L, 2) != 0);
+    }
+    return 0;
+}
+int lua_EditBox_IsPassword(lua_State* L) {
+    const auto* w = widgetOf(L, 1);
+    if (w && w->editPassword) lua_pushnumber(L, 1); else lua_pushnil(L);
+    return 1;
+}
 int lua_EditBox_SetAutoFocus(lua_State* L) {
     if (auto* w = widgetOf(L, 1)) w->editAutoFocus = lua_toboolean(L, 2) != 0;
     return 0;
@@ -7071,6 +7084,7 @@ int lua_EditBox_HighlightText(lua_State* L) {
     if (a > b) std::swap(a, b);
     w->selStart = a;
     w->selEnd = b;
+    w->selAnchor = a;
     // An empty run is no selection: FrameXML calls this with equal offsets to
     // clear one, and a zero-width highlight that still counted would eat the
     // next character typed.
@@ -7481,6 +7495,7 @@ static int lua_CreateFrame(lua_State* L) {
     // below the metatable.
     bool createdStatusBar = false;
     bool createdSlider = false;
+    bool createdEditBox = false;
 
     // Create the frame table
     lua_newtable(L);
@@ -7574,6 +7589,7 @@ static int lua_CreateFrame(lua_State* L) {
             }
             // An edit box is clicked into, so it takes the mouse as well.
             w->isEditBox = (ft == "EditBox");
+            createdEditBox = w->isEditBox;
             if (w->isEditBox) {
                 w->mouseEnabled = true;
                 lua_pushboolean(L, 1);
@@ -7648,6 +7664,11 @@ static int lua_CreateFrame(lua_State* L) {
         // CVar only when it is absent.
         lua_pushcfunction(L, lua_StatusBar_SetValue);
         lua_setfield(L, -2, "SetDisplayValue");
+    } else if (createdEditBox) {
+        lua_pushcfunction(L, lua_EditBox_SetPassword);
+        lua_setfield(L, -2, "SetPassword");
+        lua_pushcfunction(L, lua_EditBox_IsPassword);
+        lua_setfield(L, -2, "IsPassword");
     }
 
     // The fourth argument names a template, which FrameXML uses constantly:
@@ -11772,7 +11793,8 @@ void LuaEngine::fireCursorChanged(uint32_t wid) {
         const auto texWidth = [&](const wowee::ui::WrapRun& run) {
             return wowee::ui::nativeTextureWidth(run, pixelHeight, ws);
         };
-        const auto lines = wowee::ui::layoutEditLines(w->editText, wrapW, measure, texWidth);
+        const auto lines = wowee::ui::layoutEditLines(
+            w->editText, wrapW, measure, texWidth, w->editPassword);
         const auto pos = wowee::ui::locateEditCaret(lines, upTo);
         const double lineH = static_cast<double>(linePx / ws);
         callFrameScript4Numbers(wid, "OnCursorChanged",
@@ -11821,7 +11843,8 @@ size_t LuaEngine::editBoxCaretFromPoint(const ui::Widget& w, float rawMouseX, fl
     const auto texWidth = [&](const wowee::ui::WrapRun& run) {
         return wowee::ui::nativeTextureWidth(run, pixelHeight, ws);
     };
-    const auto lines = wowee::ui::layoutEditLines(w.editText, wrapW, measure, texWidth);
+    const auto lines = wowee::ui::layoutEditLines(
+        w.editText, wrapW, measure, texWidth, w.editPassword);
     const float lineOriginX = wowee::ui::placeTextLine(x0 + pad, 0.0f, 0.0f, 0.0f, "LEFT");
     const float originY = wowee::ui::textOriginY(ty);
     return wowee::ui::hitTestEditCaret(lines, rawMouseX - lineOriginX, rawMouseY - originY,
@@ -11846,7 +11869,8 @@ void LuaEngine::moveEditCaretVertical(ui::Widget& w, int deltaLine) {
     const auto texWidth = [&](const wowee::ui::WrapRun& run) {
         return wowee::ui::nativeTextureWidth(run, pixelHeight, ws);
     };
-    const auto lines = wowee::ui::layoutEditLines(w.editText, wrapW, measure, texWidth);
+    const auto lines = wowee::ui::layoutEditLines(
+        w.editText, wrapW, measure, texWidth, w.editPassword);
     if (lines.empty()) return;
     const auto cur = wowee::ui::locateEditCaret(lines, std::min(w.cursorPos, w.editText.size()));
     const int target = static_cast<int>(cur.lineIdx) + deltaLine;
@@ -12408,6 +12432,12 @@ void LuaEngine::dispatchText(const char* utf8) {
     if (!w || !w->isEditBox) return;
 
     std::string add(utf8);
+    // Drop ASCII control bytes (such as 0x7F DEL / 0x08 BS emitted by some XIM
+    // setups on Ctrl+Backspace); multi-line boxes keep '\n' from pastes.
+    add.erase(std::remove_if(add.begin(), add.end(), [&](unsigned char c) {
+        if (c == '\n' && w->editMultiLine) return false;
+        return c < 0x20u || c == 0x7Fu;
+    }), add.end());
     if (add.empty()) return;
     // Typing leaves the history, for the same reason SetText does.
     w->editHistoryPos = -1;
@@ -12699,43 +12729,73 @@ void LuaEngine::releaseInput() {
         callFrameScript(recipient.frame, "OnKeyUp", recipient.key.c_str());
 }
 
-void LuaEngine::dispatchKey(int sdlKeycode, bool ctrlHeld) {
+void LuaEngine::dispatchKey(int sdlKeycode, bool ctrlHeld, bool shiftHeld, bool altHeld) {
     if (!L_ || focusedWid_ == 0) return;
     auto* w = widgets_.get(focusedWid_);
     if (!w || !w->isEditBox) return;
 
-    // Ctrl+V and Ctrl+C, which every box in every other program answers and
-    // this one ignored - the modifier was taken and thrown away one line below
-    // here. Pasting a web address into chat had to be typed out by hand.
-    //
-    // The clipboard comes in as one piece of text and a chat line is one line,
-    // so the newlines a copied block brings are turned into spaces rather than
-    // dropped: two lines pasted together should not become one word.
+    const SDL_Keymod liveMods = SDL_GetModState();
+    shiftHeld = shiftHeld || ((liveMods & SDL_KMOD_SHIFT) != 0);
+    altHeld   = altHeld   || ((liveMods & SDL_KMOD_ALT) != 0);
+
+    // Ctrl+V, Ctrl+C, Ctrl+X, and Ctrl+A matching TBC 2.4.3 EditBox shortcuts.
     if (ctrlHeld && (sdlKeycode == 'v' || sdlKeycode == 'V')) {
         char* clip = SDL_GetClipboardText();
         if (clip) {
-            std::string text(clip);
+            std::string rawClip(clip);
             SDL_free(clip);
-            for (char& c : text) {
-                if (c == '\n' || c == '\r' || c == '\t') c = ' ';
+            std::string text;
+            text.reserve(rawClip.size());
+            for (char c : rawClip) {
+                if (c == '\r') {
+                    if (!w->editMultiLine) text.push_back(' ');
+                    continue;
+                }
+                if (c == '\t' || (c == '\n' && !w->editMultiLine)) {
+                    text.push_back(' ');
+                    continue;
+                }
+                text.push_back(c);
             }
-            // Through the same path typing goes through, so the letter limit,
-            // the numeric-only boxes, the selection it replaces and the
-            // handlers that follow all behave as they do for typed text.
             if (!text.empty()) dispatchText(text.c_str());
         }
         return;
     }
     if (ctrlHeld && (sdlKeycode == 'c' || sdlKeycode == 'C')) {
-        // The highlighted run, or the whole line when nothing is highlighted -
-        // which is what a player copying a link out of chat wants.
-        std::string text = w->editText;
-        if (w->hasSelection) {
-            const size_t from = std::min(w->selStart, w->selEnd);
-            const size_t to   = std::min(std::max(w->selStart, w->selEnd), text.size());
-            text = (from < to) ? text.substr(from, to - from) : std::string();
+        if (!w->editPassword) {
+            std::string text = w->editText;
+            if (w->hasSelection) {
+                const size_t from = std::min(w->selStart, w->selEnd);
+                const size_t to   = std::min(std::max(w->selStart, w->selEnd), text.size());
+                text = (from < to) ? text.substr(from, to - from) : std::string();
+            }
+            if (!text.empty()) SDL_SetClipboardText(text.c_str());
         }
-        if (!text.empty()) SDL_SetClipboardText(text.c_str());
+        return;
+    }
+    if (ctrlHeld && (sdlKeycode == 'x' || sdlKeycode == 'X')) {
+        if (w->hasSelection && w->selEnd > w->selStart) {
+            const size_t from = std::min(w->selStart, w->editText.size());
+            const size_t to   = std::min(w->selEnd, w->editText.size());
+            if (!w->editPassword && from < to) {
+                SDL_SetClipboardText(w->editText.substr(from, to - from).c_str());
+            }
+            w->cursorPos = ui::replaceSelection(
+                w->editText, w->cursorPos, {true, w->selStart, w->selEnd});
+            w->hasSelection = false;
+            w->selAnchor = w->cursorPos;
+            w->editHistoryPos = -1;
+            fireCursorChanged(focusedWid_);
+            callFrameScript(focusedWid_, "OnTextChanged");
+        }
+        return;
+    }
+    if (ctrlHeld && (sdlKeycode == 'a' || sdlKeycode == 'A')) {
+        const size_t allLen = w->editText.size();
+        w->selStart = 0;
+        w->selEnd = allLen;
+        w->selAnchor = 0;
+        w->hasSelection = (allLen > 0);
         return;
     }
 
@@ -12755,53 +12815,88 @@ void LuaEngine::dispatchKey(int sdlKeycode, bool ctrlHeld) {
     constexpr int kDown      = 0x40000051;
 
     const size_t len = w->editText.size();
+    const auto moveCaret = [&](size_t target, bool extend) {
+        const size_t prev = std::min(w->cursorPos, len);
+        target = std::min(target, len);
+        if (extend) {
+            const size_t anchor = w->hasSelection
+                ? (w->cursorPos == w->selEnd ? w->selStart
+                   : (w->cursorPos == w->selStart ? w->selEnd : w->selAnchor))
+                : prev;
+            w->selAnchor = anchor;
+            w->cursorPos = target;
+            w->selStart = std::min(anchor, target);
+            w->selEnd = std::max(anchor, target);
+            w->hasSelection = (w->selEnd > w->selStart);
+        } else {
+            w->cursorPos = target;
+            w->selStart = target;
+            w->selEnd = target;
+            w->selAnchor = target;
+            w->hasSelection = false;
+        }
+        if (w->cursorPos != prev) {
+            fireCursorChanged(focusedWid_);
+        }
+    };
+
     switch (sdlKeycode) {
-        // Erasing a character means erasing what draws as one. A link is
-        // fifty-odd bytes, so taking a byte off either end leaves a mangled
-        // escape behind - half a payload, drawing as whatever the parser makes
-        // of the wreckage. The same step the caret moves by is the span to
-        // remove, which keeps the two from ever disagreeing.
         case kBackspace:
-            // The selection first, if there is one: backspace over a
-            // highlighted run removes the run, not the character before it.
             if (w->hasSelection) {
-                const size_t was = w->cursorPos;
+                const bool hadRange = (w->selEnd > w->selStart && w->selEnd <= len);
                 w->cursorPos = ui::replaceSelection(
                     w->editText, w->cursorPos,
                     {true, w->selStart, w->selEnd});
                 w->hasSelection = false;
-                if (w->cursorPos != was || w->selEnd > w->selStart) {
+                w->selAnchor = w->cursorPos;
+                if (hadRange) {
+                    w->editHistoryPos = -1;
                     fireCursorChanged(focusedWid_);
                     callFrameScript(focusedWid_, "OnTextChanged");
                     break;
                 }
             }
             if (w->cursorPos > 0 && len > 0) {
-                const size_t from = ui::caretStepLeft(w->editText, w->cursorPos);
-                w->editText.erase(from, w->cursorPos - from);
-                w->cursorPos = from;
-                fireCursorChanged(focusedWid_);
-                callFrameScript(focusedWid_, "OnTextChanged");
+                const size_t clamped = std::min(w->cursorPos, len);
+                const size_t from = ctrlHeld
+                    ? ui::caretWordLeft(w->editText, clamped)
+                    : ui::caretStepLeft(w->editText, clamped);
+                if (from < clamped) {
+                    w->editText.erase(from, clamped - from);
+                    w->cursorPos = from;
+                    w->selAnchor = from;
+                    w->editHistoryPos = -1;
+                    fireCursorChanged(focusedWid_);
+                    callFrameScript(focusedWid_, "OnTextChanged");
+                }
             }
             break;
         case kDelete:
             if (w->hasSelection) {
-                const size_t was = w->cursorPos;
+                const bool hadRange = (w->selEnd > w->selStart && w->selEnd <= len);
                 w->cursorPos = ui::replaceSelection(
                     w->editText, w->cursorPos,
                     {true, w->selStart, w->selEnd});
                 w->hasSelection = false;
-                if (w->cursorPos != was || w->selEnd > w->selStart) {
+                w->selAnchor = w->cursorPos;
+                if (hadRange) {
+                    w->editHistoryPos = -1;
                     fireCursorChanged(focusedWid_);
                     callFrameScript(focusedWid_, "OnTextChanged");
                     break;
                 }
             }
             if (w->cursorPos < len) {
-                const size_t to = ui::caretStepRight(w->editText, w->cursorPos);
-                w->editText.erase(w->cursorPos, to - w->cursorPos);
-                fireCursorChanged(focusedWid_);
-                callFrameScript(focusedWid_, "OnTextChanged");
+                const size_t to = ctrlHeld
+                    ? ui::caretDeleteWordRight(w->editText, w->cursorPos)
+                    : ui::caretStepRight(w->editText, w->cursorPos);
+                if (to > w->cursorPos) {
+                    w->editText.erase(w->cursorPos, to - w->cursorPos);
+                    w->selAnchor = w->cursorPos;
+                    w->editHistoryPos = -1;
+                    fireCursorChanged(focusedWid_);
+                    callFrameScript(focusedWid_, "OnTextChanged");
+                }
             }
             break;
         // Back and forward through what was typed here before. Stepping off
@@ -12809,7 +12904,7 @@ void LuaEngine::dispatchKey(int sdlKeycode, bool ctrlHeld) {
         // line, which is what leaving the history means.
         // History is Alt+Up/Down in alt-arrow mode; plain arrows move.
         case kUp:
-            if (focusedEditReleasesArrows((SDL_GetModState() & SDL_KMOD_ALT) != 0)) break;
+            if (focusedEditReleasesArrows(altHeld)) break;
             if (w->editMultiLine && w->editHistory.empty()) {
                 moveEditCaretVertical(*w, -1);
                 w->hasSelection = false;
@@ -12828,7 +12923,7 @@ void LuaEngine::dispatchKey(int sdlKeycode, bool ctrlHeld) {
             }
             break;
         case kDown:
-            if (focusedEditReleasesArrows((SDL_GetModState() & SDL_KMOD_ALT) != 0)) break;
+            if (focusedEditReleasesArrows(altHeld)) break;
             if (w->editMultiLine && w->editHistory.empty()) {
                 moveEditCaretVertical(*w, +1);
                 w->hasSelection = false;
@@ -12850,36 +12945,32 @@ void LuaEngine::dispatchKey(int sdlKeycode, bool ctrlHeld) {
                 callFrameScript(focusedWid_, "OnTextChanged");
             }
             break;
-        // Declared ignoreArrows means these belong to the game rather than to
-        // the cursor, which is how someone turns while the chat box is open.
-        // A step is one drawn character, not one byte. An item link is fifty
-        // bytes and eighteen characters, and stepping through it a byte at a
-        // time leaves the caret apparently stuck.
         // Alt-arrow mode (ignoreArrows="true", SetAltArrowKeyMode): without
-        // Alt the arrows belong to the game, with Alt to the caret.
+        // Alt the arrows belong to the game (even with Ctrl held, verified on
+        // TBC 2.4.3 build 8606), with Alt to the caret (Alt+Ctrl steps words).
         case kLeft:
-            if (!focusedEditReleasesArrows((SDL_GetModState() & SDL_KMOD_ALT) != 0)) {
-                if (w->cursorPos > 0) w->cursorPos = ui::caretStepLeft(w->editText, w->cursorPos);
-                w->hasSelection = false;
-                fireCursorChanged(focusedWid_);
+            if (!focusedEditReleasesArrows(altHeld)) {
+                const size_t cur = std::min(w->cursorPos, len);
+                const size_t next = ctrlHeld
+                    ? ui::caretWordLeft(w->editText, cur)
+                    : ui::caretStepLeft(w->editText, cur);
+                moveCaret(next, shiftHeld);
             }
             break;
         case kRight:
-            if (!focusedEditReleasesArrows((SDL_GetModState() & SDL_KMOD_ALT) != 0)) {
-                if (w->cursorPos < len) w->cursorPos = ui::caretStepRight(w->editText, w->cursorPos);
-                w->hasSelection = false;
-                fireCursorChanged(focusedWid_);
+            if (!focusedEditReleasesArrows(altHeld)) {
+                const size_t cur = std::min(w->cursorPos, len);
+                const size_t next = ctrlHeld
+                    ? ui::caretWordRight(w->editText, cur)
+                    : ui::caretStepRight(w->editText, cur);
+                moveCaret(next, shiftHeld);
             }
             break;
         case kHome:
-            w->cursorPos = 0;
-            w->hasSelection = false;
-            fireCursorChanged(focusedWid_);
+            moveCaret(0, shiftHeld);
             break;
         case kEnd:
-            w->cursorPos = len;
-            w->hasSelection = false;
-            fireCursorChanged(focusedWid_);
+            moveCaret(len, shiftHeld);
             break;
         case kReturn:
         case 0x40000058: // SDLK_KP_ENTER
@@ -13806,12 +13897,14 @@ void LuaEngine::dispatchMouse(float x, float y, float screenH, MouseButtons butt
                                 ew->cursorPos = clickedPos;
                                 ew->selStart = std::min(anchor, clickedPos);
                                 ew->selEnd = std::max(anchor, clickedPos);
+                                ew->selAnchor = anchor;
                                 ew->hasSelection = (ew->selEnd > ew->selStart);
                                 editDragAnchor_ = anchor;
                             } else {
                                 ew->cursorPos = clickedPos;
                                 ew->selStart = clickedPos;
                                 ew->selEnd = clickedPos;
+                                ew->selAnchor = clickedPos;
                                 ew->hasSelection = false;
                                 editDragAnchor_ = clickedPos;
                             }

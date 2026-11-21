@@ -108,12 +108,31 @@ float measurePlainDisplay(std::string_view display, const Measure& m) {
 
 }  // namespace detail
 
+/// Build the asterisk-masked display text for a `password` EditBox (one `*`
+/// per UTF-8 codepoint, preserving explicit `\n` line breaks).
+inline std::string maskPasswordText(std::string_view rawText) {
+    std::string out;
+    out.reserve(rawText.size());
+    size_t i = 0;
+    while (i < rawText.size()) {
+        if (rawText[i] == '\n') {
+            out.push_back('\n');
+            ++i;
+            continue;
+        }
+        (void)detail::decodeUtf8At(rawText, i);
+        out.push_back('*');
+    }
+    return out;
+}
+
 /// Lay out `rawText` into visual lines matching `wrapTextNative`, preserving
 /// exact raw byte spans for every codepoint, hyperlink, texture escape, and
 /// line break. `wrapPx <= 0` disables soft wrapping (single-line mode).
 template <typename Measure, typename TextureWidth>
 std::vector<EditVisualLine> layoutEditLines(std::string_view rawText, float wrapPx,
-                                            const Measure& m, TextureWidth textureWidth) {
+                                            const Measure& m, TextureWidth textureWidth,
+                                            bool password = false) {
     struct Atom {
         size_t   rawStart = 0;
         size_t   rawEnd = 0;
@@ -129,6 +148,12 @@ std::vector<EditVisualLine> layoutEditLines(std::string_view rawText, float wrap
         if (rawText[i] == '\n') {
             atoms.push_back({i, i + 1, '\n', 0.0f, true});
             ++i;
+            continue;
+        }
+        if (password) {
+            const size_t b0 = i;
+            (void)detail::decodeUtf8At(rawText, i);
+            atoms.push_back({b0, i, '*', 0.0f, false});
             continue;
         }
         if (rawText[i] == '|' && i + 1 < rawText.size()) {

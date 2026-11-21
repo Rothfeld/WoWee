@@ -405,3 +405,177 @@ TEST_CASE("the plural escape picks its word by the number before it", "[markup]"
     REQUIRE(drawn("11 |4hour:hours;") == "11 hours");
     REQUIRE(drawn("|4one:many;") == "many");
 }
+
+// Empirical TBC 2.4.3 build 8606 EditBox word-boundary & UTF-8 caret measurements
+// (_experiments/20261121T085200Z.ctrl_backspace_word_delete_parity/native_editprobe_results.lua).
+TEST_CASE("TBC 2.4.3 EditBox caret steps whole UTF-8 codepoints and coloured item links",
+          "[edit][markup][utf8]") {
+    SECTION("2-byte, 3-byte, and 4-byte UTF-8 codepoints step atomically") {
+        // "a" (1) + U+00E9 (2: C3 A9) + U+4E2D (3: E4 B8 AD) + U+1F600 (4: F0 9F 98 80) + "z" (1) = 11 bytes
+        const std::string utf8 = "a\xC3\xA9\xE4\xB8\xAD\xF0\x9F\x98\x80z";
+        CHECK(caretStepRight(utf8, 0) == 1);
+        CHECK(caretStepRight(utf8, 1) == 3);
+        CHECK(caretStepRight(utf8, 3) == 6);
+        CHECK(caretStepRight(utf8, 6) == 10);
+        CHECK(caretStepRight(utf8, 10) == 11);
+
+        CHECK(caretStepLeft(utf8, 11) == 10);
+        CHECK(caretStepLeft(utf8, 10) == 6);
+        CHECK(caretStepLeft(utf8, 6) == 3);
+        CHECK(caretStepLeft(utf8, 3) == 1);
+        CHECK(caretStepLeft(utf8, 1) == 0);
+
+        // Mid-codepoint bytes snap back to the lead byte
+        CHECK(caretSnap(utf8, 2) == 1);
+        CHECK(caretSnap(utf8, 4) == 3);
+        CHECK(caretSnap(utf8, 5) == 3);
+        CHECK(caretSnap(utf8, 9) == 6);
+    }
+
+    SECTION("a coloured item link with closing |r is one atomic step") {
+        const std::string msg = "hi |cff9d9d9d|Hitem:3299:0:0:0:0:0:0:0|h[Fractured Canine]|h|r";
+        CHECK(caretStepRight(msg, 3) == msg.size());
+        CHECK(caretStepLeft(msg, msg.size()) == 3);
+    }
+}
+
+TEST_CASE("TBC 2.4.3 EditBox word boundaries follow whitespace vs non-whitespace runs",
+          "[edit][markup][word]") {
+    using wowee::ui::caretDeleteWordRight;
+    using wowee::ui::caretWordLeft;
+    using wowee::ui::caretWordRight;
+
+    auto ctrlBackspace = [](std::string s, size_t& cur) {
+        const size_t from = caretWordLeft(s, cur);
+        s.erase(from, cur - from);
+        cur = from;
+        return s;
+    };
+    auto ctrlDelete = [](std::string s, size_t cur) {
+        const size_t to = caretDeleteWordRight(s, cur);
+        s.erase(cur, to - cur);
+        return s;
+    };
+
+    SECTION("Ctrl+Backspace across words, trailing spaces, multiple spaces, and leading spaces") {
+        size_t c = 10;
+        CHECK(ctrlBackspace("alpha beta", c) == "alpha ");
+        CHECK(c == 6);
+        // Second Ctrl+Backspace from "alpha " skips trailing space AND deletes "alpha"
+        CHECK(ctrlBackspace("alpha ", c) == "");
+        CHECK(c == 0);
+
+        c = 8;
+        CHECK(ctrlBackspace("alpha   ", c) == "");
+        CHECK(c == 0);
+
+        c = 8; // "alpha   |beta"
+        CHECK(ctrlBackspace("alpha   beta", c) == "beta");
+        CHECK(c == 0);
+
+        c = 8;
+        CHECK(ctrlBackspace("   alpha", c) == "   ");
+        CHECK(c == 3);
+        CHECK(ctrlBackspace("   alpha", c) == "alpha");
+        CHECK(c == 0);
+
+        c = 5;
+        CHECK(ctrlBackspace("     ", c) == "");
+        CHECK(c == 0);
+    }
+
+    SECTION("Ctrl+Backspace treats slashes, dots, underscores, hyphens, and parens as non-whitespace") {
+        size_t c = 5;
+        CHECK(ctrlBackspace(".tele", c) == "");
+        c = 1;
+        CHECK(ctrlBackspace(".", c) == "");
+        c = 5;
+        CHECK(ctrlBackspace("/cast", c) == "");
+        c = 12;
+        CHECK(ctrlBackspace("/cast Rank 1", c) == "/cast Rank ");
+        c = 7;
+        CHECK(ctrlBackspace("foo_bar", c) == "");
+        c = 7;
+        CHECK(ctrlBackspace("foo-bar", c) == "");
+        c = 9;
+        CHECK(ctrlBackspace("foo...bar", c) == "");
+        c = 6;
+        CHECK(ctrlBackspace("foo...bar", c) == "bar");
+        c = 5;
+        CHECK(ctrlBackspace("foo, bar", c) == "bar");
+        c = 14;
+        CHECK(ctrlBackspace("fn(arg1, arg2)", c) == "fn(arg1, ");
+        c = 8;
+        CHECK(ctrlBackspace("fn(arg1,", c) == "");
+    }
+
+    SECTION("Ctrl+Backspace across UTF-8, hyperlinks, mid-word cursor, and multi-line newlines") {
+        size_t c = 12;
+        CHECK(ctrlBackspace("caf\xC3\xA9 cr\xC3\xA8me", c) == "caf\xC3\xA9 ");
+        CHECK(c == 6);
+        c = 5;
+        CHECK(ctrlBackspace("caf\xC3\xA9", c) == "");
+
+        const std::string link = "hi |cff9d9d9d|Hitem:3299:0:0:0:0:0:0:0|h[Fractured Canine]|h|r";
+        c = link.size();
+        CHECK(ctrlBackspace(link, c) == "hi ");
+        CHECK(c == 3);
+
+        c = 8; // "alpha be|ta"
+        CHECK(ctrlBackspace("alpha beta", c) == "alpha ta");
+        CHECK(c == 6);
+
+        c = 11;
+        CHECK(ctrlBackspace("aa bb\ncc dd", c) == "aa bb\ncc ");
+        c = 8;
+        CHECK(ctrlBackspace("aa bb\ncc", c) == "aa bb\n");
+        c = 6; // "aa bb\n|cc" -> skips '\n' and deletes "bb"
+        CHECK(ctrlBackspace("aa bb\ncc", c) == "aa cc");
+        CHECK(c == 3);
+        c = 4; // "aa\n\n|bb" -> skips "\n\n" and deletes "aa"
+        CHECK(ctrlBackspace("aa\n\nbb", c) == "bb");
+        CHECK(c == 0);
+    }
+
+    SECTION("Ctrl+Delete mirrors Ctrl+Backspace forward") {
+        CHECK(ctrlDelete("alpha beta", 0) == " beta");
+        CHECK(ctrlDelete(" alpha", 0) == "");
+        CHECK(ctrlDelete("   alpha", 0) == "");
+        CHECK(ctrlDelete(".tele booty", 0) == " booty");
+        CHECK(ctrlDelete("foo...bar", 0) == "");
+        CHECK(ctrlDelete("foo...bar", 3) == "foo");
+        CHECK(ctrlDelete("foo, bar", 3) == "foo bar");
+        CHECK(ctrlDelete("alpha", 5) == "alpha");
+    }
+
+    SECTION("Ctrl+Left and Ctrl+Right walk exact TBC 2.4.3 word starts") {
+        const std::string tele = ".tele booty  bay";
+        CHECK(caretWordLeft(tele, 16) == 13);
+        CHECK(caretWordLeft(tele, 13) == 6);
+        CHECK(caretWordLeft(tele, 6) == 0);
+        CHECK(caretWordLeft(tele, 0) == 0);
+
+        CHECK(caretWordRight(tele, 0) == 6);
+        CHECK(caretWordRight(tele, 6) == 13);
+        CHECK(caretWordRight(tele, 13) == 16);
+        CHECK(caretWordRight(tele, 16) == 16);
+
+        const std::string punct = "foo_bar a-b c...d";
+        CHECK(caretWordLeft(punct, 17) == 12);
+        CHECK(caretWordLeft(punct, 12) == 8);
+        CHECK(caretWordLeft(punct, 8) == 0);
+        CHECK(caretWordRight(punct, 0) == 8);
+        CHECK(caretWordRight(punct, 8) == 12);
+        CHECK(caretWordRight(punct, 12) == 17);
+
+        const std::string ml = "aa bb\ncc dd";
+        CHECK(caretWordLeft(ml, 11) == 9);
+        CHECK(caretWordLeft(ml, 9) == 6);
+        CHECK(caretWordLeft(ml, 6) == 3);
+        CHECK(caretWordLeft(ml, 3) == 0);
+        CHECK(caretWordRight(ml, 0) == 3);
+        CHECK(caretWordRight(ml, 3) == 6);
+        CHECK(caretWordRight(ml, 6) == 9);
+        CHECK(caretWordRight(ml, 9) == 11);
+    }
+}

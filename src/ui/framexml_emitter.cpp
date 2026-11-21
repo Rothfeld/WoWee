@@ -1361,6 +1361,9 @@ struct Emitter {
         if (node.attr("numeric")) {
             line(var + ":SetNumeric(" + (node.attrBool("numeric") ? "true" : "false") + ")");
         }
+        if (node.attr("password")) {
+            line(var + ":SetPassword(" + (node.attrBool("password") ? "true" : "false") + ")");
+        }
         // How many sent lines the box keeps, which the client walks with the
         // arrow keys. The chat box asks for thirty-two; the money fields, the
         // mail recipient and the knowledge base ask for none, and a box told to

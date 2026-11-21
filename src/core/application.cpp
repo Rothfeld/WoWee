@@ -1943,7 +1943,11 @@ void Application::run() {
             // purpose, so the amount could only be reached with the arrows and
             // typing "12" did nothing at all.
             else if (event.type == SDL_EVENT_TEXT_INPUT) {
-                if (addonManager_ && addonsLoaded_) {
+                const SDL_Keymod textMods = SDL_GetModState();
+                const bool shortcutSuppressed =
+                    ((textMods & (SDL_KMOD_CTRL | SDL_KMOD_GUI)) != 0) &&
+                    ((textMods & SDL_KMOD_ALT) == 0);
+                if (!shortcutSuppressed && addonManager_ && addonsLoaded_) {
                     if (auto* engine = addonManager_->getLuaEngine()) {
                         if (engine->editBoxHasFocus()) {
                             // Unless it is the slash that opened this box,
@@ -2023,6 +2027,8 @@ void Application::run() {
                         // the player already knows on whichever they are on.
                         const bool ctrl =
                             (event.key.mod & (SDL_KMOD_CTRL | SDL_KMOD_GUI)) != 0;
+                        const bool shift = (event.key.mod & SDL_KMOD_SHIFT) != 0;
+                        const bool alt   = (event.key.mod & SDL_KMOD_ALT) != 0;
                         // Said before the dispatch, because dispatching is
                         // what lets go of the focus that the check above
                         // just used - ask afterwards and the box no longer
@@ -2052,7 +2058,7 @@ void Application::run() {
                                 break;
                             default: break;
                         }
-                        engine->dispatchKey(event.key.key, ctrl);
+                        engine->dispatchKey(event.key.key, ctrl, shift, alt);
                         continue;
                     }
                     // No edit box, but a dialog may still be listening -

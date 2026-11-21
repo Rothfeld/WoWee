@@ -189,22 +189,27 @@ inline std::vector<WrapRun> parseMarkup(const std::string& in) {
 /// backspace therefore removes the link rather than a byte of its payload.
 inline size_t caretStepRight(const std::string& s, size_t at) {
     if (at >= s.size()) return s.size();
+    bool sawColor = false;
     while (at + 1 < s.size() && s[at] == '|') {
         const char tag = s[at + 1];
         if (tag == '|') return at + 2;                     // a literal bar
-        if (tag == 'c' || tag == 'C') { at += 10; continue; }
+        if (tag == 'n' || tag == 'N') return at + 2;       // an explicit line break
+        if (tag == 'c' || tag == 'C') { sawColor = true; at = std::min(at + 10, s.size()); continue; }
         if (tag == 'r' || tag == 'R') { at += 2;  continue; }
         if (tag == 'H') {
             // A whole link is one step: payload, display text and closing
-            // marker together. The caret cannot rest inside one and a
-            // backspace takes all of it, which is the only arrangement where
-            // half an escape can never exist - erasing "]" out of
-            // "|Hitem:1|h[AB]|h" leaves "[AB|h", and the parser then reads the
-            // wreckage as whatever it resembles.
+            // marker together (plus its closing |r when opened inside |c).
+            // The caret cannot rest inside one and a backspace takes all of it,
+            // which is the only arrangement where half an escape can never exist.
             const size_t payload = s.find("|h", at + 2);
             const size_t close = (payload == std::string::npos)
                 ? std::string::npos : s.find("|h", payload + 2);
-            return (close == std::string::npos) ? s.size() : close + 2;
+            size_t end = (close == std::string::npos) ? s.size() : close + 2;
+            if (sawColor && end + 1 < s.size() && s[end] == '|' &&
+                (s[end + 1] == 'r' || s[end + 1] == 'R')) {
+                end += 2;
+            }
+            return end;
         }
         if (tag == 'h') { at += 2; continue; }   // a stray closing marker
         if (tag == 'T' || tag == 't') {
@@ -214,7 +219,108 @@ inline size_t caretStepRight(const std::string& s, size_t at) {
         }
         break;                                             // a bar meaning nothing
     }
-    return (at >= s.size()) ? s.size() : at + 1;
+    if (at >= s.size()) return s.size();
+    const unsigned char lead = static_cast<unsigned char>(s[at]);
+    const size_t cpLen = (lead < 0x80u) ? 1u
+                       : ((lead >> 5) == 0x6u) ? 2u
+                       : ((lead >> 4) == 0xEu) ? 3u
+                       : ((lead >> 3) == 0x1Eu) ? 4u : 1u;
+    if (at + cpLen <= s.size()) {
+        bool valid = true;
+        for (size_t i = 1; i < cpLen; ++i) {
+            if ((static_cast<unsigned char>(s[at + i]) & 0xC0u) != 0x80u) {
+                valid = false;
+                break;
+            }
+        }
+        if (valid) return at + cpLen;
+    }
+    return at + 1;
+}
+
+/// True when the caret step `[stepStart, stepEnd)` is an EditBox word separator
+/// (whitespace or line break). Verified empirically on TBC 2.4.3 build 8606:
+/// EditBox word motion and deletion classify characters strictly as whitespace
+/// vs non-whitespace (`.tele`, `/cast`, `foo_bar`, `foo-bar`, `foo...bar`,
+/// `fn(arg1,`, UTF-8 words, and atomic `|H...|h` links are single non-space runs).
+inline bool isEditWhitespaceStep(const std::string& s, size_t stepStart, size_t stepEnd) {
+    size_t i = stepStart;
+    while (i + 1 < stepEnd && s[i] == '|') {
+        const char tag = s[i + 1];
+        if (tag == '|') return false;
+        if (tag == 'n' || tag == 'N') return true;
+        if (tag == 'c' || tag == 'C') { i = std::min(i + 10, stepEnd); continue; }
+        if (tag == 'r' || tag == 'R' || tag == 'h') { i += 2; continue; }
+        if (tag == 'H') return false;
+        if (tag == 'T' || tag == 't') {
+            const size_t close = s.find("|t", i + 2);
+            i = (close == std::string::npos || close + 2 > stepEnd) ? stepEnd : close + 2;
+            continue;
+        }
+        break;
+    }
+    if (i >= stepEnd) return false;
+    const char c = s[i];
+    return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f';
+}
+
+/// Previous word boundary before `at` (`Ctrl+Backspace`, `Ctrl+Left`, `Ctrl+Shift+Left`
+/// in TBC 2.4.3): skips preceding whitespace steps, then skips preceding non-whitespace steps.
+inline size_t caretWordLeft(const std::string& s, size_t at) {
+    const size_t stop = std::min(at, s.size());
+    if (stop == 0) return 0;
+    std::vector<size_t> steps;
+    steps.push_back(0);
+    for (size_t p = 0; p < stop;) {
+        const size_t next = caretStepRight(s, p);
+        if (next <= p) break;
+        if (next >= stop) {
+            steps.push_back(stop);
+            break;
+        }
+        steps.push_back(next);
+        p = next;
+    }
+    size_t idx = steps.size() - 1;
+    while (idx > 0 && isEditWhitespaceStep(s, steps[idx - 1], steps[idx])) --idx;
+    while (idx > 0 && !isEditWhitespaceStep(s, steps[idx - 1], steps[idx])) --idx;
+    return steps[idx];
+}
+
+/// End of forward word deletion from `at` (`Ctrl+Delete` in TBC 2.4.3):
+/// skips leading whitespace steps at `at`, then skips one non-whitespace run,
+/// leaving any whitespace after that run intact (`"|alpha beta"` -> `" beta"`).
+inline size_t caretDeleteWordRight(const std::string& s, size_t at) {
+    size_t p = std::min(at, s.size());
+    while (p < s.size()) {
+        const size_t next = caretStepRight(s, p);
+        if (next <= p || !isEditWhitespaceStep(s, p, next)) break;
+        p = next;
+    }
+    while (p < s.size()) {
+        const size_t next = caretStepRight(s, p);
+        if (next <= p || isEditWhitespaceStep(s, p, next)) break;
+        p = next;
+    }
+    return p;
+}
+
+/// Next word boundary after `at` (`Ctrl+Right`, `Ctrl+Shift+Right` in TBC 2.4.3):
+/// skips non-whitespace steps at `at`, then skips trailing whitespace steps to
+/// land at the start of the next word (`"|alpha beta"` -> `"alpha |beta"`).
+inline size_t caretWordRight(const std::string& s, size_t at) {
+    size_t p = std::min(at, s.size());
+    while (p < s.size()) {
+        const size_t next = caretStepRight(s, p);
+        if (next <= p || isEditWhitespaceStep(s, p, next)) break;
+        p = next;
+    }
+    while (p < s.size()) {
+        const size_t next = caretStepRight(s, p);
+        if (next <= p || !isEditWhitespaceStep(s, p, next)) break;
+        p = next;
+    }
+    return p;
 }
 
 /// The previous caret position, by the same rule. Walked forward from the
