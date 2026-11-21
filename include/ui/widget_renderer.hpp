@@ -90,6 +90,9 @@ public:
         return textureSize(path, w, h);
     }
 
+    /// Resolve per-line font heights and faces from the tooltip's TextLeftN FontStrings.
+    static void resolveTooltipLineFonts(const Widget& w, const WidgetTree& tree, float ppu);
+
 private:
     /// Descriptor set for an Interface\ path, loading it on first use. Returns
     /// VK_NULL_HANDLE for anything missing, and remembers the failure so a

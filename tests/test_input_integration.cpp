@@ -7126,3 +7126,86 @@ TEST_CASE_METHOD(Integration,
     CHECK_FALSE(controller.isSwimming());
     CHECK(loco.getState() == rendering::LocomotionFSM::State::IDLE);
 }
+
+TEST_CASE("Minimap blip GameTooltipTemplate creates TextLeft1 with GameTooltipHeaderText (14pt) and survives post-layout SetOwner",
+          "[tooltip][minimaphover]") {
+    Integration f;
+    auto loadXml = [&](const std::string& path) {
+        std::ifstream in(path);
+        REQUIRE(in.is_open());
+        std::string xml((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        wowee::ui::XmlNode root;
+        std::string err;
+        REQUIRE(wowee::ui::parseXml(xml, root, err));
+        f.run(wowee::ui::emitFrameXml(root).lua);
+    };
+    loadXml("/workspace/azerothcore/client/wowee-data/expansions/tbc/interface/framexml/fonts.xml");
+    loadXml("/workspace/azerothcore/client/wowee-data/expansions/tbc/interface/framexml/gametooltiptemplate.xml");
+    f.run(R"lua(
+        TOOLTIP_DEFAULT_COLOR = { r = 1, g = 1, b = 1 }
+        TOOLTIP_DEFAULT_BACKGROUND_COLOR = { r = 0, g = 0, b = 0 }
+        function GameTooltip_OnLoad() end
+        function GameTooltip_OnHide() end
+        function GameTooltip_ClearMoney() end
+        CreateFrame('GameTooltip', 'WoweeMinimapBlipTooltip', UIParent, 'GameTooltipTemplate')
+    )lua");
+    auto& tree = f.lua.widgets();
+    auto* tip = tree.findByName("WoweeMinimapBlipTooltip");
+    REQUIRE(tip != nullptr);
+    auto* left1 = tree.findByName("WoweeMinimapBlipTooltipTextLeft1");
+    auto* left2 = tree.findByName("WoweeMinimapBlipTooltipTextLeft2");
+    REQUIRE(left1 != nullptr);
+    REQUIRE(left2 != nullptr);
+    CHECK(left1->fontHeight == Catch::Approx(14.0f));
+    CHECK(left2->fontHeight == Catch::Approx(12.0f));
+
+    // 1. Re-owning an already-shown tooltip after layout() calls clearPoints -> resolveWidget
+    //    while w->shown is transiently false, which clears w->visible. Verify shown + parent
+    //    visibleChain remain true and resolveTooltipLineFonts restores 14pt header font.
+    f.run(R"lua(
+        local tip = WoweeMinimapBlipTooltip
+        tip:SetOwner(UIParent, 'ANCHOR_NONE')
+        tip:SetPoint('BOTTOM', UIParent, 'BOTTOMLEFT', 640, 360)
+        tip:SetText('Copper Vein', 1, 0.82, 0)
+        tip:Show()
+    )lua");
+    tree.layout(1280.0f, 720.0f);
+    REQUIRE(tip->visible);
+
+    f.run(R"lua(
+        local tip = WoweeMinimapBlipTooltip
+        tip:SetOwner(UIParent, 'ANCHOR_NONE')
+        tip:ClearAllPoints()
+        tip:SetPoint('BOTTOM', UIParent, 'BOTTOMLEFT', 642, 360)
+        tip:SetText('Copper Vein', 1, 0.82, 0)
+        tip:Show()
+    )lua");
+    // SetText pushes a fresh TooltipLine defaulting to 12.0f; resolveTooltipLineFonts
+    // must resolve line 0 to GameTooltipHeaderText (14.0f) and keep shownInTree true.
+    REQUIRE(tip->tooltipLines.size() == 1);
+    CHECK(tip->shown);
+    const auto* parent = tree.get(tip->parent);
+    REQUIRE(parent != nullptr);
+    CHECK(parent->visibleChain);
+    wowee::ui::WidgetRenderer::resolveTooltipLineFonts(*tip, tree, tree.uiScale());
+    CHECK(tip->tooltipLines[0].fontHeight == Catch::Approx(14.0f));
+    CHECK(tip->tooltipLines[0].fontFace == "Fonts\\FRIZQT__.TTF");
+
+    // 2. ANCHOR_CURSOR + multi-blip newline text stays in line 0 at 14pt header size,
+    //    and Hide() clears shown immediately so draw() skips ghost frames.
+    f.run(R"lua(
+        local tip = WoweeMinimapBlipTooltip
+        tip:SetOwner(UIParent, 'ANCHOR_CURSOR')
+        tip:SetText('Edricd\nCopper Vein', 1, 0.82, 0)
+        tip:Show()
+    )lua");
+    CHECK(tip->tooltipAnchorCursor);
+    CHECK(tip->shown);
+    REQUIRE(tip->tooltipLines.size() == 1);
+    CHECK(tip->tooltipLines[0].left == "Edricd\nCopper Vein");
+    wowee::ui::WidgetRenderer::resolveTooltipLineFonts(*tip, tree, tree.uiScale());
+    CHECK(tip->tooltipLines[0].fontHeight == Catch::Approx(14.0f));
+
+    f.run("WoweeMinimapBlipTooltip:Hide()");
+    CHECK_FALSE(tip->shown);
+}

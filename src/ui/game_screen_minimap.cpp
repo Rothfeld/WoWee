@@ -1598,16 +1598,17 @@ void GameScreen::showMinimapBlipTooltip() {
         if WoweeMinimapBlipText ~= '' then
             if not WoweeMinimapBlipTooltip then
                 CreateFrame('GameTooltip', 'WoweeMinimapBlipTooltip', UIParent, 'GameTooltipTemplate')
+                WoweeMinimapBlipLastText = nil
             end
             local tip = WoweeMinimapBlipTooltip
-            tip:SetOwner(UIParent, 'ANCHOR_NONE')
-            tip:ClearAllPoints()
-            local x, y = GetCursorPosition()
-            local scale = UIParent:GetEffectiveScale()
-            tip:SetPoint('BOTTOM', UIParent, 'BOTTOMLEFT', x / scale, y / scale)
-            tip:SetText(WoweeMinimapBlipText, 1, 0.82, 0)
-            tip:Show()
-        elseif WoweeMinimapBlipTooltip then
+            if not tip:IsShown() or WoweeMinimapBlipLastText ~= WoweeMinimapBlipText then
+                WoweeMinimapBlipLastText = WoweeMinimapBlipText
+                tip:SetOwner(UIParent, 'ANCHOR_CURSOR')
+                tip:SetText(WoweeMinimapBlipText, 1, 0.82, 0)
+                tip:Show()
+            end
+        elseif WoweeMinimapBlipTooltip and WoweeMinimapBlipTooltip:IsShown() then
+            WoweeMinimapBlipLastText = nil
             WoweeMinimapBlipTooltip:Hide()
         end
     )lua")) {

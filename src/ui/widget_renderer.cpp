@@ -396,6 +396,26 @@ TooltipLayout WidgetRenderer::layoutTooltipLines(const Widget& w, float ppu) {
     });
 }
 
+void WidgetRenderer::resolveTooltipLineFonts(const Widget& w, const WidgetTree& tree, float ppu) {
+    // A line past the ones the template declares takes the font of the last
+    // declared one, as 2.4.3 makes it: ShoppingTooltip declares TextLeft1-4
+    // (GameFontNormalSmall, GameFontNormal, GameFontHighlightSmall,
+    // GameTooltipTextSmall) and native draws its lines 5 and on at 10, not
+    // at GameTooltipText's 12.
+    const Widget* lastDeclared = nullptr;
+    for (size_t i = 0; i < w.tooltipLines.size(); ++i) {
+        const auto* region = tree.findByName(w.name + "TextLeft" + std::to_string(i + 1));
+        // A stand-in Frame made for anchoring has no font of its own.
+        if (region && region->kind != WidgetKind::FontString) region = nullptr;
+        if (region) lastDeclared = region;
+        else region = lastDeclared;
+        auto& line = w.tooltipLines[i];
+        // TextLeft1 inherits GameTooltipHeaderText (14), the rest GameTooltipText (12).
+        line.fontHeight = region ? interfaceFontSize(region->fontHeight, ppu) : (i == 0 ? 14.0f : 12.0f);
+        line.fontFace = region ? region->fontFace : w.fontFace;
+    }
+}
+
 void WidgetRenderer::sizeTooltipWidget(Widget* w, ImFont* font, WidgetTree& tree) {
     (void)font;
     if (w->tooltipLines.empty()) return;
@@ -408,23 +428,7 @@ void WidgetRenderer::sizeTooltipWidget(Widget* w, ImFont* font, WidgetTree& tree
     if (w->objectType != "GameTooltip") return;
 
     const float ppu = tree.uiScale() * (w->effScale > 0.0f ? w->effScale : 1.0f);
-    // A line past the ones the template declares takes the font of the last
-    // declared one, as 2.4.3 makes it: ShoppingTooltip declares TextLeft1-4
-    // (GameFontNormalSmall, GameFontNormal, GameFontHighlightSmall,
-    // GameTooltipTextSmall) and native draws its lines 5 and on at 10, not
-    // at GameTooltipText's 12.
-    const Widget* lastDeclared = nullptr;
-    for (size_t i = 0; i < w->tooltipLines.size(); ++i) {
-        const auto* region = tree.findByName(w->name + "TextLeft" + std::to_string(i + 1));
-        // A stand-in Frame made for anchoring has no font of its own.
-        if (region && region->kind != WidgetKind::FontString) region = nullptr;
-        if (region) lastDeclared = region;
-        else region = lastDeclared;
-        auto& line = w->tooltipLines[i];
-        // TextLeft1 inherits GameTooltipHeaderText (14), the rest GameTooltipText (12).
-        line.fontHeight = region ? interfaceFontSize(region->fontHeight, ppu) : (i == 0 ? 14.0f : 12.0f);
-        line.fontFace = region ? region->fontFace : w->fontFace;
-    }
+    resolveTooltipLineFonts(*w, tree, ppu);
     if (!interfaceNativeFace(w->tooltipLines.front().fontFace)) {
         // Nothing is drawn without the interface faces either; the first
         // frame after they are registered sizes it.
@@ -2091,12 +2095,14 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
             ++seenTooltip;
             if (w->visible) ++seenVisible;
             if (!w->tooltipLines.empty()) ++seenWithLines;
-            // Cursor tooltips receive their anchor below. SetOwner clears the
-            // previous anchor, so layout initially marks them non-drawable.
-            // Admit a shown cursor tooltip before that anchor exists; hidden
-            // ancestors must still suppress it.
-            if ((!w->visible && !(w->tooltipAnchorCursor && w->visibleChain)) ||
-                w->tooltipLines.empty()) continue;
+            // Admit any shown tooltip whose parent chain is visible (including
+            // tooltips re-owned via SetOwner after layout, where clearPoints ->
+            // resolveWidget cleared w->visible while w->shown was transiently
+            // false, and cursor tooltips awaiting their anchor below). Skip
+            // tooltips hidden after layout so they do not resize or ghost-draw.
+            const Widget* parent = w->parent != 0 ? tree.get(w->parent) : nullptr;
+            const bool shownInTree = w->shown && (!parent || parent->visibleChain);
+            if (!shownInTree || w->tooltipLines.empty()) continue;
             // The same face the draw uses, not a different lookup: asking for
             // "frizqt__" here and falling back to ImGui's font skipped the
             // whole pass whenever that face was not loaded, which is why four
@@ -2303,6 +2309,9 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
     }
 
     for (const Widget* w : order) {
+        // A GameTooltip hidden after layout (e.g. OnLeave or minimap blip
+        // hover-off) must disappear on the same frame instead of ghost-drawing.
+        if (w->objectType == "GameTooltip" && !w->shown) continue;
         // Fullscreen dialogs and tooltips must also cover embedded ImGui maps.
         dl = (w->effStrata >= FrameStrata::FullscreenDialog ||
               (w->effStrata >= FrameStrata::Fullscreen && w->kind == WidgetKind::FontString))
@@ -2522,9 +2531,12 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                                        !w->tooltipLines.empty();
             TooltipLayout tipLayout;
             float tipHeight = 0.0f;
-            if (isGameTooltip && interfaceNativeFace(w->tooltipLines.front().fontFace)) {
-                tipLayout = layoutTooltipLines(*w, ws);
-                tipHeight = tipLayout.heightUnits() * ws;
+            if (isGameTooltip) {
+                resolveTooltipLineFonts(*w, tree, ws);
+                if (interfaceNativeFace(w->tooltipLines.front().fontFace)) {
+                    tipLayout = layoutTooltipLines(*w, ws);
+                    tipHeight = tipLayout.heightUnits() * ws;
+                }
             }
 
             // The box, grown to hold them and then moved up until it fits.
