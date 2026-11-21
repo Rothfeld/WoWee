@@ -4626,6 +4626,14 @@ void registerQuestLuaAPI(lua_State* L) {
             lua_pushstring(L, link.c_str());
             return 1;
         }},
+                {"GetCraftRecipeLink", [](lua_State* L) -> int {
+            auto* gh = getGameHandler(L);
+            const auto* r = gh ? craftAt(gh, static_cast<int>(luaL_optnumber(L, 1, 0))) : nullptr;
+            if (!r) return luaReturnNil(L);
+            const std::string link = "|cffffd000|Henchant:" + std::to_string(r->spellId) + "|h[" + r->name + "]|h|r";
+            lua_pushstring(L, link.c_str());
+            return 1;
+        }},
                 {"GetCraftCooldown", [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
             const auto* r = gh ? craftAt(gh, static_cast<int>(luaL_optnumber(L, 1, 0))) : nullptr;

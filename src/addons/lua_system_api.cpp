@@ -6862,6 +6862,40 @@ void registerSystemLuaAPI(lua_State* L) {
             lua_pushstring(L, questions->getString(questionRow, 1).c_str());
             return 1;
         }},
+                {"GMSurveyAnswerSubmit", [](lua_State* L) -> int {
+            const int question = static_cast<int>(luaL_optnumber(L, 1, 0));
+            const int rank = static_cast<int>(luaL_optnumber(L, 2, 0));
+            const char* comment = luaL_optstring(L, 3, "");
+            if (question < 1 || question > 10) return 0;
+            lua_getfield(L, LUA_REGISTRYINDEX, "wowee_gm_survey_answers");
+            if (!lua_istable(L, -1)) {
+                lua_pop(L, 1);
+                lua_newtable(L);
+                lua_pushvalue(L, -1);
+                lua_setfield(L, LUA_REGISTRYINDEX, "wowee_gm_survey_answers");
+            }
+            lua_newtable(L);
+            lua_pushinteger(L, rank);
+            lua_setfield(L, -2, "rank");
+            lua_pushstring(L, comment);
+            lua_setfield(L, -2, "comment");
+            lua_rawseti(L, -2, question);
+            lua_pop(L, 1);
+            return 0;
+        }},
+                {"GMSurveyCommentSubmit", [](lua_State* L) -> int {
+            const char* comment = luaL_optstring(L, 1, "");
+            lua_pushstring(L, comment);
+            lua_setfield(L, LUA_REGISTRYINDEX, "wowee_gm_survey_comment");
+            return 0;
+        }},
+                {"GMSurveySubmit", [](lua_State* L) -> int {
+            lua_pushnil(L);
+            lua_setfield(L, LUA_REGISTRYINDEX, "wowee_gm_survey_answers");
+            lua_pushnil(L);
+            lua_setfield(L, LUA_REGISTRYINDEX, "wowee_gm_survey_comment");
+            return 0;
+        }},
                 // Movie recording, which is a Mac client feature this build
                 // does not have. Its siblings above already answer; these are
                 // the ones MacOptionsFrame reaches as it loads, so each one

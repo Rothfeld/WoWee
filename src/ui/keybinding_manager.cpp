@@ -370,6 +370,36 @@ bool KeybindingManager::setBinding(const std::string& requestedKey, const std::s
     }
     return true;
 }
+bool KeybindingManager::setOverrideBinding(const std::string& owner, bool isPriority,
+                                           const std::string& requestedKey,
+                                           const std::string& command) {
+    std::string key = requestedKey;
+    if (owner.empty() || !normalizeKey(key) || (!command.empty() && !validCommand(command))) return false;
+    std::erase_if(overrideBindings_, [&](const OverrideBinding& b) {
+        return b.owner == owner && b.key == key;
+    });
+    if (!command.empty()) {
+        overrideBindings_.push_back({owner, isPriority, key, command});
+    }
+    return true;
+}
+void KeybindingManager::clearOverrideBindings(const std::string& owner) {
+    if (owner.empty()) return;
+    std::erase_if(overrideBindings_, [&](const OverrideBinding& b) { return b.owner == owner; });
+}
+std::string KeybindingManager::overrideCommandForKey(const std::string& requestedKey) const {
+    std::string key = requestedKey;
+    if (!normalizeKey(key)) return {};
+    // Priority overrides win over non-priority; most recent wins within same tier.
+    for (int wantPriority = 1; wantPriority >= 0; --wantPriority) {
+        for (auto it = overrideBindings_.rbegin(); it != overrideBindings_.rend(); ++it) {
+            if (it->priority == (wantPriority != 0) && it->key == key) {
+                return it->command;
+            }
+        }
+    }
+    return {};
+}
 bool KeybindingManager::loadBindings(const std::string& path) {
     std::ifstream in(path);
     if (!in) { LOG_WARNING("Could not read bindings from ", path); return false; }
@@ -506,6 +536,9 @@ std::pair<std::string, std::string> KeybindingManager::resolve(const std::string
     if (!normalizeKey(key)) return {};
     const auto& rows = bindings(deviceForKey(key));
     const auto exact = [&](const std::string& identity) -> std::pair<std::string, std::string> {
+        if (std::string ov = overrideCommandForKey(identity); !ov.empty()) {
+            return {identity, std::move(ov)};
+        }
         for (const auto& [command, slots] : rows)
             if (slots[0] == identity || slots[1] == identity) return {identity, command};
         return {};

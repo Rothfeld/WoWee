@@ -1061,8 +1061,10 @@ int ChatHandler::getChannelIndex(const std::string& channelName) const {
 const std::vector<ChatHandler::BuiltinChannel>& ChatHandler::builtinChannels() const {
     if (!builtinChannels_.empty()) return builtinChannels_;
     auto* am = owner_.services().assetManager;
-    auto dbc = am ? am->loadDBC("ChatChannels.dbc") : nullptr;
+    if (!am) return builtinChannels_;
+    auto dbc = am->loadDBC("ChatChannels.dbc");
     assert(dbc && dbc->isLoaded() && dbc->getFieldCount() >= 21 && "ChatChannels.dbc unreadable");
+    if (!dbc || !dbc->isLoaded() || dbc->getFieldCount() < 21) return builtinChannels_;
     // ID, flags, faction group, the pattern in 16 locales plus a mask
     // (column 3 on), then the name in the same shape: column 20.
     constexpr uint32_t kPatternColumn = 3;

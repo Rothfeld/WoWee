@@ -591,10 +591,30 @@ public:
     float getHealthRegenFromSpirit() const;
     float getManaRegenFromSpirit() const;
 
-    // Server-authoritative attack power (WotLK: UNIT_FIELD_ATTACK_POWER / RANGED).
-    // Returns -1 if not yet received.
-    int32_t getMeleeAttackPower()  const { return playerMeleeAP_; }
-    int32_t getRangedAttackPower() const { return playerRangedAP_; }
+    // Server-authoritative attack power (UNIT_FIELD_ATTACK_POWER / MODS / MULTIPLIER).
+    // getMeleeAttackPower / getRangedAttackPower return total effective AP, or -1 if not received.
+    int32_t getMeleeAttackPowerBase() const { return playerMeleeAP_; }
+    int32_t getMeleeAttackPowerPos()  const { return playerMeleeAPPos_; }
+    int32_t getMeleeAttackPowerNeg()  const { return playerMeleeAPNeg_; }
+    float   getMeleeAttackPowerMult() const { return playerMeleeAPMult_; }
+    int32_t getMeleeAttackPower() const {
+        if (playerMeleeAP_ < 0) return -1;
+        const float scale = 1.0f + playerMeleeAPMult_;
+        return static_cast<int32_t>(std::lround(static_cast<float>(playerMeleeAP_) * scale)) +
+               static_cast<int32_t>(std::lround(static_cast<float>(playerMeleeAPPos_) * scale)) +
+               static_cast<int32_t>(std::lround(static_cast<float>(playerMeleeAPNeg_) * scale));
+    }
+    int32_t getRangedAttackPowerBase() const { return playerRangedAP_; }
+    int32_t getRangedAttackPowerPos()  const { return playerRangedAPPos_; }
+    int32_t getRangedAttackPowerNeg()  const { return playerRangedAPNeg_; }
+    float   getRangedAttackPowerMult() const { return playerRangedAPMult_; }
+    int32_t getRangedAttackPower() const {
+        if (playerRangedAP_ < 0) return -1;
+        const float scale = 1.0f + playerRangedAPMult_;
+        return static_cast<int32_t>(std::lround(static_cast<float>(playerRangedAP_) * scale)) +
+               static_cast<int32_t>(std::lround(static_cast<float>(playerRangedAPPos_) * scale)) +
+               static_cast<int32_t>(std::lround(static_cast<float>(playerRangedAPNeg_) * scale));
+    }
 
     // Server-authoritative spell damage / healing bonus (WotLK: PLAYER_FIELD_MOD_*).
     // getSpellPower returns the max damage bonus across magic schools 1-6 (Holy/Fire/Nature/Frost/Shadow/Arcane).
@@ -4232,10 +4252,16 @@ public:
     auto& playerHealBonusRef() { return playerHealBonus_; }
     auto& playerHonorPointsRef() { return playerHonorPoints_; }
     auto& playerMeleeAPRef() { return playerMeleeAP_; }
+    auto& playerMeleeAPPosRef() { return playerMeleeAPPos_; }
+    auto& playerMeleeAPNegRef() { return playerMeleeAPNeg_; }
+    auto& playerMeleeAPMultRef() { return playerMeleeAPMult_; }
     auto& playerMoneyCopperRef() { return playerMoneyCopper_; }
     auto& playerNextLevelXpRef() { return playerNextLevelXp_; }
     auto& playerParryPctRef() { return playerParryPct_; }
     auto& playerRangedAPRef() { return playerRangedAP_; }
+    auto& playerRangedAPPosRef() { return playerRangedAPPos_; }
+    auto& playerRangedAPNegRef() { return playerRangedAPNeg_; }
+    auto& playerRangedAPMultRef() { return playerRangedAPMult_; }
     auto& playerRangedCritPctRef() { return playerRangedCritPct_; }
     auto* playerResistancesArr() { return playerResistances_; }
     auto& playerRestedXpRef() { return playerRestedXp_; }
@@ -5403,7 +5429,13 @@ private:
     int32_t playerStats_[5] = {-1, -1, -1, -1, -1};
     // WotLK secondary combat stats (-1 = not yet received)
     int32_t playerMeleeAP_    = -1;
+    int32_t playerMeleeAPPos_ = 0;
+    int32_t playerMeleeAPNeg_ = 0;
+    float   playerMeleeAPMult_ = 0.0f;
     int32_t playerRangedAP_   = -1;
+    int32_t playerRangedAPPos_ = 0;
+    int32_t playerRangedAPNeg_ = 0;
+    float   playerRangedAPMult_ = 0.0f;
     int32_t playerSpellDmgBonus_[7] = {-1,-1,-1,-1,-1,-1,-1}; // per school 0-6
     int32_t playerHealBonus_  = -1;
     float playerDodgePct_     = -1.0f;

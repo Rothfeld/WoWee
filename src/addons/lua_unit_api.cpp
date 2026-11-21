@@ -1082,14 +1082,26 @@ static int lua_GetAttackPowerForStat(lua_State* L) {
     return 1;
 }
 
+static int pushAttackPowerParts(lua_State* L, int32_t baseRaw, int32_t posMod, int32_t negMod, float mult) {
+    if (baseRaw < 0) baseRaw = 0;
+    const float scale = 1.0f + mult;
+    const int32_t baseOut = static_cast<int32_t>(std::lround(static_cast<float>(baseRaw) * scale));
+    const int32_t posOut  = static_cast<int32_t>(std::lround(static_cast<float>(posMod) * scale));
+    const int32_t negOut  = static_cast<int32_t>(std::lround(static_cast<float>(negMod) * scale));
+    lua_pushnumber(L, baseOut);
+    lua_pushnumber(L, posOut);
+    lua_pushnumber(L, negOut);
+    return 3;
+}
+
 static int lua_GetRangedAttackPower(lua_State* L) {
     auto* gh = getGameHandler(L);
-    int32_t ap = gh ? gh->getRangedAttackPower() : 0;
-    if (ap < 0) ap = 0;
-    lua_pushnumber(L, ap);
-    lua_pushnumber(L, 0);
-    lua_pushnumber(L, 0);
-    return 3;
+    if (!gh) return pushAttackPowerParts(L, 0, 0, 0, 0.0f);
+    return pushAttackPowerParts(L,
+                                gh->getRangedAttackPowerBase(),
+                                gh->getRangedAttackPowerPos(),
+                                gh->getRangedAttackPowerNeg(),
+                                gh->getRangedAttackPowerMult());
 }
 
 
@@ -1455,18 +1467,22 @@ static int lua_IsFalling(lua_State* L) {
 static int lua_IsStealthed(lua_State* L) {
     auto* gh = getGameHandler(L);
     if (!gh) { return luaReturnFalse(L); }
-    // Check for stealth auras (aura flags bit 0x40 = is harmful, stealth is a buff)
-    // WoW detects stealth via unit flags: UNIT_FLAG_IMMUNE (0x02) or specific aura IDs
-    // Simplified: check player auras for known stealth spell IDs
     bool stealthed = false;
-    for (const auto& a : gh->getPlayerAuras()) {
-        if (a.isEmpty() || a.spellId == 0) continue;
-        // Common stealth IDs: 1784 (Stealth), 5215 (Prowl), 66 (Invisibility)
-        if (a.spellId == 1784 || a.spellId == 5215 || a.spellId == 66 ||
-            a.spellId == 1785 || a.spellId == 1786 || a.spellId == 1787 ||
-            a.spellId == 11305 || a.spellId == 11306) {
-            stealthed = true;
-            break;
+    if (auto pe = gh->getEntityManager().getEntity(gh->getPlayerGuid())) {
+        if (auto pu = std::dynamic_pointer_cast<game::Unit>(pe)) {
+            if (pu->hasCreepVisibility()) stealthed = true;
+        }
+    }
+    if (!stealthed) {
+        for (const auto& a : gh->getPlayerAuras()) {
+            if (a.isEmpty() || a.spellId == 0) continue;
+            // Common stealth IDs: 1784 (Stealth), 5215 (Prowl), 66 (Invisibility)
+            if (a.spellId == 1784 || a.spellId == 5215 || a.spellId == 66 ||
+                a.spellId == 1785 || a.spellId == 1786 || a.spellId == 1787 ||
+                a.spellId == 11305 || a.spellId == 11306) {
+                stealthed = true;
+                break;
+            }
         }
     }
     lua_pushboolean(L, stealthed);
@@ -1625,10 +1641,6 @@ static int lua_GetTimeToWellRested(lua_State* L) {
 // answer is a zero of the right shape rather than nothing.
 
 /// UnitAttackPower(unit) → base, positive buff, negative buff.
-///
-/// The server sends one effective number, not the three parts, so it is
-/// reported as all base and no buffs. The sheet adds them together, which
-/// gives the right total either way.
 static int lua_UnitAttackPower(lua_State* L) {
     auto* gh = getGameHandler(L);
     // Whose. PaperDollFrame_SetAttackPower is shared and the pet tab calls it
@@ -1637,29 +1649,38 @@ static int lua_UnitAttackPower(lua_State* L) {
     toLowerInPlace(who);
     if (who == "pet") {
         int32_t petAp = 0;
+        int32_t posMod = 0;
+        int32_t negMod = 0;
+        float mult = 0.0f;
         if (auto w = unitFieldWord(L, "pet", game::UF::UNIT_FIELD_ATTACK_POWER)) {
             petAp = static_cast<int32_t>(*w);
         } else if (gh) {
             petAp = gh->getPetAttackPower();
         }
-        lua_pushnumber(L, petAp > 0 ? petAp : 0);
-        lua_pushnumber(L, 0);
-        lua_pushnumber(L, 0);
-        return 3;
+        if (auto m = unitFieldWord(L, "pet", game::UF::UNIT_FIELD_ATTACK_POWER_MODS)) {
+            posMod = static_cast<int16_t>(*m & 0xFFFFu);
+            negMod = static_cast<int16_t>((*m >> 16) & 0xFFFFu);
+        }
+        if (auto f = unitFieldFloat(L, "pet", game::UF::UNIT_FIELD_ATTACK_POWER_MULTIPLIER)) {
+            mult = *f;
+        }
+        return pushAttackPowerParts(L, petAp, posMod, negMod, mult);
     }
-    const int32_t ap = gh ? gh->getMeleeAttackPower() : -1;
-    lua_pushnumber(L, ap > 0 ? ap : 0);
-    lua_pushnumber(L, 0);
-    lua_pushnumber(L, 0);
-    return 3;
+    if (!gh) return pushAttackPowerParts(L, 0, 0, 0, 0.0f);
+    return pushAttackPowerParts(L,
+                                gh->getMeleeAttackPowerBase(),
+                                gh->getMeleeAttackPowerPos(),
+                                gh->getMeleeAttackPowerNeg(),
+                                gh->getMeleeAttackPowerMult());
 }
 static int lua_UnitRangedAttackPower(lua_State* L) {
     auto* gh = getGameHandler(L);
-    const int32_t ap = gh ? gh->getRangedAttackPower() : -1;
-    lua_pushnumber(L, ap > 0 ? ap : 0);
-    lua_pushnumber(L, 0);
-    lua_pushnumber(L, 0);
-    return 3;
+    if (!gh) return pushAttackPowerParts(L, 0, 0, 0, 0.0f);
+    return pushAttackPowerParts(L,
+                                gh->getRangedAttackPowerBase(),
+                                gh->getRangedAttackPowerPos(),
+                                gh->getRangedAttackPowerNeg(),
+                                gh->getRangedAttackPowerMult());
 }
 
 /// UnitDefense(unit) → base, modifier. Base defense skill is five per level -

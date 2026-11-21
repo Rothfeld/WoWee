@@ -939,13 +939,17 @@ EntityController::UnitFieldIndices EntityController::UnitFieldIndices::resolve()
         .stat0 = fieldIndex(UF::UNIT_FIELD_STAT0),
         .resistances = fieldIndex(UF::UNIT_FIELD_RESISTANCES),
         .attackPower = fieldIndex(UF::UNIT_FIELD_ATTACK_POWER),
+        .attackPowerMods = fieldIndex(UF::UNIT_FIELD_ATTACK_POWER_MODS),
+        .attackPowerMult = fieldIndex(UF::UNIT_FIELD_ATTACK_POWER_MULTIPLIER),
         .minDamage = fieldIndex(UF::UNIT_FIELD_MINDAMAGE),
-        .maxDamage = fieldIndex(UF::UNIT_FIELD_MAXDAMAGE)
+        .maxDamage = fieldIndex(UF::UNIT_FIELD_MAXDAMAGE),
+        .baseAttackTime = fieldIndex(UF::UNIT_FIELD_BASEATTACKTIME)
     };
 }
 
 void EntityController::setPlayerShapeshiftForm(uint8_t newForm) {
-    if (newForm != owner_.shapeshiftFormIdRef()) {
+    const uint8_t oldForm = owner_.shapeshiftFormIdRef();
+    if (newForm != oldForm) {
         owner_.shapeshiftFormIdRef() = newForm;
         LOG_INFO("Shapeshift form changed: ", static_cast<int>(newForm));
         // The bonus bar first, then the stance bar, and nothing else:
@@ -956,6 +960,10 @@ void EntityController::setPlayerShapeshiftForm(uint8_t newForm) {
         // learned), and the main page did not change.
         pendingEvents_.emit("UPDATE_BONUS_ACTIONBAR", {});
         pendingEvents_.emit("UPDATE_SHAPESHIFT_FORM", {});
+        constexpr uint8_t kFormStealth = 30;
+        if ((oldForm == kFormStealth) != (newForm == kFormStealth)) {
+            pendingEvents_.emit("UPDATE_STEALTH", {});
+        }
     }
 }
 
@@ -977,7 +985,17 @@ EntityController::PlayerFieldIndices EntityController::PlayerFieldIndices::resol
          fieldIndex(UF::UNIT_FIELD_STAT2), fieldIndex(UF::UNIT_FIELD_STAT3),
          fieldIndex(UF::UNIT_FIELD_STAT4)},
         .meleeAP = fieldIndex(UF::UNIT_FIELD_ATTACK_POWER),
+        .meleeAPMods = fieldIndex(UF::UNIT_FIELD_ATTACK_POWER_MODS),
+        .meleeAPMult = fieldIndex(UF::UNIT_FIELD_ATTACK_POWER_MULTIPLIER),
         .rangedAP = fieldIndex(UF::UNIT_FIELD_RANGED_ATTACK_POWER),
+        .rangedAPMods = fieldIndex(UF::UNIT_FIELD_RANGED_ATTACK_POWER_MODS),
+        .rangedAPMult = fieldIndex(UF::UNIT_FIELD_RANGED_ATTACK_POWER_MULTIPLIER),
+        .minDamage = fieldIndex(UF::UNIT_FIELD_MINDAMAGE),
+        .maxDamage = fieldIndex(UF::UNIT_FIELD_MAXDAMAGE),
+        .minRangedDamage = fieldIndex(UF::UNIT_FIELD_MINRANGEDDAMAGE),
+        .maxRangedDamage = fieldIndex(UF::UNIT_FIELD_MAXRANGEDDAMAGE),
+        .baseAttackTime = fieldIndex(UF::UNIT_FIELD_BASEATTACKTIME),
+        .rangedAttackTime = fieldIndex(UF::UNIT_FIELD_RANGEDATTACKTIME),
         .spDmg1 = fieldIndex(UF::PLAYER_FIELD_MOD_DAMAGE_DONE_POS),
         .healBonus = fieldIndex(UF::PLAYER_FIELD_MOD_HEALING_DONE_POS),
         .blockPct = fieldIndex(UF::PLAYER_BLOCK_PERCENTAGE),
@@ -1444,8 +1462,11 @@ EntityController::UnitFieldUpdateResult EntityController::applyUnitFieldsOnUpdat
             if (block.guid == owner_.getPlayerGuid()) {
                 const bool wasStealthed = (oldVisibilityFlags & UNIT_VIS_FLAG_CREEP) != 0;
                 const bool nowStealthed = (newVisibilityFlags & UNIT_VIS_FLAG_CREEP) != 0;
-                if (wasStealthed != nowStealthed && owner_.stealthStateCallbackRef()) {
-                    owner_.stealthStateCallbackRef()(nowStealthed);
+                if (wasStealthed != nowStealthed) {
+                    if (owner_.stealthStateCallbackRef()) {
+                        owner_.stealthStateCallbackRef()(nowStealthed);
+                    }
+                    pendingEvents_.emit("UPDATE_STEALTH", {});
                 }
 
                 // Where the expansion keeps the form here; WotLK moved it to
@@ -1557,15 +1578,30 @@ EntityController::UnitFieldUpdateResult EntityController::applyUnitFieldsOnUpdat
                    block.guid == owner_.petGuidRef()) {
             owner_.petAttackPowerRef() = static_cast<int32_t>(val);
             petStatsChanged = true;
+            pendingEvents_.emit("UNIT_ATTACK_POWER", {"pet"});
+            pendingEvents_.emit("UNIT_ATTACK", {"pet"});
+        } else if (((ufi.attackPowerMods != 0xFFFF && key == ufi.attackPowerMods) ||
+                    (ufi.attackPowerMult != 0xFFFF && key == ufi.attackPowerMult)) &&
+                   block.guid == owner_.petGuidRef()) {
+            petStatsChanged = true;
+            pendingEvents_.emit("UNIT_ATTACK_POWER", {"pet"});
+            pendingEvents_.emit("UNIT_ATTACK", {"pet"});
         } else if (ufi.minDamage != 0xFFFF && key == ufi.minDamage &&
                    block.guid == owner_.petGuidRef()) {
             // A float, sent as its bits like every other float field.
             std::memcpy(&owner_.petMinDamageRef(), &val, 4);
             petStatsChanged = true;
+            pendingEvents_.emit("UNIT_DAMAGE", {"pet"});
         } else if (ufi.maxDamage != 0xFFFF && key == ufi.maxDamage &&
                    block.guid == owner_.petGuidRef()) {
             std::memcpy(&owner_.petMaxDamageRef(), &val, 4);
             petStatsChanged = true;
+            pendingEvents_.emit("UNIT_DAMAGE", {"pet"});
+        } else if (ufi.baseAttackTime != 0xFFFF &&
+                   (key == ufi.baseAttackTime || key == ufi.baseAttackTime + 1) &&
+                   block.guid == owner_.petGuidRef()) {
+            petStatsChanged = true;
+            pendingEvents_.emit("UNIT_ATTACK_SPEED", {"pet"});
         } else if (ufi.stat0 != 0xFFFF && key >= ufi.stat0 && key < ufi.stat0 + 5 &&
                    block.guid == owner_.petGuidRef()) {
             // The pet's own five, not the player's. The paperdoll's pet tab
@@ -1579,6 +1615,7 @@ EntityController::UnitFieldUpdateResult EntityController::applyUnitFieldsOnUpdat
             // as the player's.
             owner_.petResistancesRef()[key - ufi.resistances] = static_cast<int32_t>(val);
             petStatsChanged = true;
+            if (key == ufi.resistances) pendingEvents_.emit("UNIT_DEFENSE", {"pet"});
         } else if (ufi.petXp != 0xFFFF && key == ufi.petXp &&
                    block.guid == owner_.petGuidRef()) {
             // Only the player's own pet. Every unit carries these fields and
@@ -1667,6 +1704,10 @@ bool EntityController::applyPlayerStatFields(const FlatFieldMap& fields,
     bool ratingsChanged = false;
     bool powerChanged = false;
     bool rangedPowerChanged = false;
+    bool damageChanged = false;
+    bool rangedDamageChanged = false;
+    bool attackSpeedChanged = false;
+    bool defenseChanged = false;
     bool resistancesChanged = false;
     bool spellBonusChanged = false;
     for (const auto& [key, val] : fields) {
@@ -1720,7 +1761,10 @@ bool EntityController::applyPlayerStatFields(const FlatFieldMap& fields,
         }
         else if (pfi.armor != 0xFFFF && key == pfi.armor) {
             const int32_t armorVal = static_cast<int32_t>(val);
-            if (owner_.playerArmorRatingRef() != armorVal) resistancesChanged = true;
+            if (owner_.playerArmorRatingRef() != armorVal) {
+                resistancesChanged = true;
+                defenseChanged = true;
+            }
             owner_.playerArmorRatingRef() = armorVal;
             if (isCreate) LOG_DEBUG("Armor rating from update fields: ", owner_.playerArmorRatingRef());
         }
@@ -1855,11 +1899,53 @@ bool EntityController::applyPlayerStatFields(const FlatFieldMap& fields,
             if (owner_.playerMeleeAPRef() != ap) powerChanged = true;
             owner_.playerMeleeAPRef() = ap;
         }
+        else if (pfi.meleeAPMods != 0xFFFF && key == pfi.meleeAPMods) {
+            const int32_t pos = static_cast<int16_t>(val & 0xFFFFu);
+            const int32_t neg = static_cast<int16_t>((val >> 16) & 0xFFFFu);
+            if (owner_.playerMeleeAPPosRef() != pos || owner_.playerMeleeAPNegRef() != neg) {
+                powerChanged = true;
+            }
+            owner_.playerMeleeAPPosRef() = pos;
+            owner_.playerMeleeAPNegRef() = neg;
+        }
+        else if (pfi.meleeAPMult != 0xFFFF && key == pfi.meleeAPMult) {
+            float mult = 0.0f;
+            std::memcpy(&mult, &val, 4);
+            if (owner_.playerMeleeAPMultRef() != mult) powerChanged = true;
+            owner_.playerMeleeAPMultRef() = mult;
+        }
         else if (pfi.rangedAP != 0xFFFF && key == pfi.rangedAP) {
             const int32_t ap = static_cast<int32_t>(val);
             // Its own flag, because its own event is the one that lands.
             if (owner_.playerRangedAPRef() != ap) rangedPowerChanged = true;
             owner_.playerRangedAPRef() = ap;
+        }
+        else if (pfi.rangedAPMods != 0xFFFF && key == pfi.rangedAPMods) {
+            const int32_t pos = static_cast<int16_t>(val & 0xFFFFu);
+            const int32_t neg = static_cast<int16_t>((val >> 16) & 0xFFFFu);
+            if (owner_.playerRangedAPPosRef() != pos || owner_.playerRangedAPNegRef() != neg) {
+                rangedPowerChanged = true;
+            }
+            owner_.playerRangedAPPosRef() = pos;
+            owner_.playerRangedAPNegRef() = neg;
+        }
+        else if (pfi.rangedAPMult != 0xFFFF && key == pfi.rangedAPMult) {
+            float mult = 0.0f;
+            std::memcpy(&mult, &val, 4);
+            if (owner_.playerRangedAPMultRef() != mult) rangedPowerChanged = true;
+            owner_.playerRangedAPMultRef() = mult;
+        }
+        else if ((pfi.minDamage != 0xFFFF && (key == pfi.minDamage || key == pfi.minDamage + 2 || key == pfi.minDamage + 3)) ||
+                 (pfi.maxDamage != 0xFFFF && key == pfi.maxDamage)) {
+            damageChanged = true;
+        }
+        else if ((pfi.minRangedDamage != 0xFFFF && key == pfi.minRangedDamage) ||
+                 (pfi.maxRangedDamage != 0xFFFF && key == pfi.maxRangedDamage)) {
+            rangedDamageChanged = true;
+        }
+        else if ((pfi.baseAttackTime != 0xFFFF && (key == pfi.baseAttackTime || key == pfi.baseAttackTime + 1)) ||
+                 (pfi.rangedAttackTime != 0xFFFF && key == pfi.rangedAttackTime)) {
+            attackSpeedChanged = true;
         }
         else if (pfi.spDmg1   != 0xFFFF && key >= pfi.spDmg1 && key < pfi.spDmg1 + 7) {
             const int32_t dmgVal = static_cast<int32_t>(val);
@@ -1903,7 +1989,10 @@ bool EntityController::applyPlayerStatFields(const FlatFieldMap& fields,
         }
         else if (pfi.rating1  != 0xFFFF && key >= pfi.rating1 && key < pfi.rating1 + 25) {
             const int32_t r = static_cast<int32_t>(val);
-            if (owner_.playerCombatRatingsRef()[key - pfi.rating1] != r) ratingsChanged = true;
+            if (owner_.playerCombatRatingsRef()[key - pfi.rating1] != r) {
+                ratingsChanged = true;
+                if (key - pfi.rating1 == 1) defenseChanged = true;
+            }
             owner_.playerCombatRatingsRef()[key - pfi.rating1] = r;
         }
         else {
@@ -1948,6 +2037,13 @@ bool EntityController::applyPlayerStatFields(const FlatFieldMap& fields,
         if (rangedPowerChanged) {
             pendingEvents_.emit("UNIT_RANGED_ATTACK_POWER", {"player"});
         }
+        if (damageChanged)       pendingEvents_.emit("UNIT_DAMAGE", {"player"});
+        if (rangedDamageChanged) pendingEvents_.emit("UNIT_RANGEDDAMAGE", {"player"});
+        if (attackSpeedChanged)  pendingEvents_.emit("UNIT_ATTACK_SPEED", {"player"});
+        if (damageChanged || attackSpeedChanged || powerChanged || rangedPowerChanged || slotsChanged) {
+            pendingEvents_.emit("UNIT_ATTACK", {"player"});
+        }
+        if (defenseChanged)      pendingEvents_.emit("UNIT_DEFENSE", {"player"});
         // Armor with the six resistances behind it, and the spell power and
         // healing bonus. The paperdoll refreshes its resistance panel from
         // UNIT_RESISTANCES alone - UNIT_DEFENSE is the *pet* sheet's event, not

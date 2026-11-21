@@ -142,6 +142,9 @@ static int lua_Frame_IsEventRegistered(lua_State* L) {
     luaL_checktype(L, 1, LUA_TTABLE);
     const char* eventName = luaL_optstring(L, 2, nullptr);
     if (!eventName || !*eventName) { lua_pushboolean(L, 0); return 1; }
+    lua_getfield(L, 1, "__allEvents");
+    if (lua_toboolean(L, -1)) { lua_pop(L, 1); lua_pushboolean(L, 1); return 1; }
+    lua_pop(L, 1);
     lua_getfield(L, 1, "__events");
     if (!lua_istable(L, -1)) { lua_pop(L, 1); lua_pushboolean(L, 0); return 1; }
     lua_getfield(L, -1, eventName);
@@ -149,6 +152,33 @@ static int lua_Frame_IsEventRegistered(lua_State* L) {
     lua_pop(L, 2);
     lua_pushboolean(L, on ? 1 : 0);
     return 1;
+}
+
+static int lua_Frame_RegisterAllEvents(lua_State* L) {
+    luaL_checktype(L, 1, LUA_TTABLE);
+    lua_pushboolean(L, 1);
+    lua_setfield(L, 1, "__allEvents");
+
+    lua_getglobal(L, "__WoweeAllEventFrames");
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        lua_newtable(L);
+        lua_pushvalue(L, -1);
+        lua_setglobal(L, "__WoweeAllEventFrames");
+    }
+    const int len = static_cast<int>(lua_objlen(L, -1));
+    bool already = false;
+    for (int i = 1; i <= len && !already; ++i) {
+        lua_rawgeti(L, -1, i);
+        already = lua_rawequal(L, -1, 1) != 0;
+        lua_pop(L, 1);
+    }
+    if (!already) {
+        lua_pushvalue(L, 1);
+        lua_rawseti(L, -2, len + 1);
+    }
+    lua_pop(L, 1);
+    return 0;
 }
 
 static int lua_Frame_RegisterEvent(lua_State* L) {
@@ -220,6 +250,27 @@ static int lua_Frame_RegisterEvent(lua_State* L) {
 static int lua_Frame_UnregisterEvent(lua_State* L);
 static int lua_Frame_UnregisterAllEvents(lua_State* L) {
     luaL_checktype(L, 1, LUA_TTABLE);
+    // Clear RegisterAllEvents() subscription if present.
+    lua_pushnil(L);
+    lua_setfield(L, 1, "__allEvents");
+    lua_getglobal(L, "__WoweeAllEventFrames");
+    if (lua_istable(L, -1)) {
+        const int listeners = static_cast<int>(lua_objlen(L, -1));
+        for (int i = listeners; i >= 1; --i) {
+            lua_rawgeti(L, -1, i);
+            const bool isSelf = lua_rawequal(L, -1, 1) != 0;
+            lua_pop(L, 1);
+            if (!isSelf) continue;
+            for (int j = i; j < listeners; ++j) {
+                lua_rawgeti(L, -1, j + 1);
+                lua_rawseti(L, -2, j);
+            }
+            lua_pushnil(L);
+            lua_rawseti(L, -2, listeners);
+            break;
+        }
+    }
+    lua_pop(L, 1);
     lua_getfield(L, 1, "__events");
     if (!lua_istable(L, -1)) { lua_pop(L, 1); return 0; }
     // Collected first: unregistering rewrites this table, and a traversal that
@@ -4878,6 +4929,22 @@ int lua_Minimap_PingLocation(lua_State* L) {
     return 0;
 }
 
+int lua_Minimap_GetPingPosition(lua_State* L) {
+    if (auto* w = widgetOf(L, 1)) {
+        lua_pushnumber(L, w->pingX);
+        lua_pushnumber(L, w->pingY);
+        return 2;
+    }
+    lua_pushnumber(L, 0);
+    lua_pushnumber(L, 0);
+    return 2;
+}
+
+int lua_EditBox_IsInIMECompositionMode(lua_State* L) {
+    lua_pushboolean(L, 0);
+    return 1;
+}
+
 /// Enable and Disable, with the handlers that go with them.
 ///
 /// A disabled button is greyed and takes no clicks, and FrameXML both sets
@@ -8242,6 +8309,7 @@ void LuaEngine::registerCoreAPI() {
 
     static const struct luaL_Reg frameMethods[] = {
         {"RegisterEvent",   lua_Frame_RegisterEvent},
+        {"RegisterAllEvents", lua_Frame_RegisterAllEvents},
         {"IsEventRegistered", lua_Frame_IsEventRegistered},
         {"UnregisterEvent", lua_Frame_UnregisterEvent},
         {"UnregisterAllEvents", lua_Frame_UnregisterAllEvents},
@@ -8439,6 +8507,7 @@ void LuaEngine::registerCoreAPI() {
         {"GetZoom",         lua_Minimap_GetZoom},
         {"GetZoomLevels",   lua_Minimap_GetZoomLevels},
         {"PingLocation",    lua_Minimap_PingLocation},
+        {"GetPingPosition", lua_Minimap_GetPingPosition},
         {"DrawQuestBlob",   lua_QuestBlobFrame_DrawQuestBlob},
         {"GetCenter",       lua_Region_GetCenter},
         {"SetAlpha",        lua_Region_SetAlpha},
@@ -8548,6 +8617,7 @@ void LuaEngine::registerCoreAPI() {
         {"SetFocus",              lua_EditBox_SetFocus},
         {"ClearFocus",            lua_EditBox_ClearFocus},
         {"HasFocus",              lua_EditBox_HasFocus},
+        {"IsInIMECompositionMode", lua_EditBox_IsInIMECompositionMode},
         {"GetCooldownTimes",      lua_Cooldown_GetCooldownTimes},
         {"SetFrameStrata",  lua_Frame_SetFrameStrata},
         {"GetFrameStrata",  lua_Frame_GetFrameStrata},
@@ -9331,7 +9401,6 @@ void LuaEngine::registerCoreAPI() {
         // "cannot describe it yet", and a name in it that works reads as a gap
         // that is not there, in the one place someone would check.
         "SetSocketGem=1,SetSocketedItem=1,SetExistingSocketGem=1,\n"
-        "RegisterAllEvents=1,\n"
         "SetStatusBarTexture=1,SetTexCoord=1,SetText=1,\n"
         "SetTexture=1,SetToplevel=1,\n"
         "SetUIPanel=1,SetUnit=1,\n"
@@ -11647,63 +11716,82 @@ void LuaEngine::fireEvent(const std::string& eventName,
         return out;
     }();
 
+    // Build a snapshot combining per-event listeners and RegisterAllEvents() frames.
+    lua_newtable(L_); // snapshot at top
+    int snapCount = 0;
     lua_getglobal(L_, "__WoweeFrameEvents");
     if (lua_istable(L_, -1)) {
         lua_getfield(L_, -1, eventName.c_str());
         if (lua_istable(L_, -1)) {
-            int frameCount = static_cast<int>(lua_objlen(L_, -1));
-            if (traced.count(eventName)) {
-                LOG_WARNING("EventTrace: ", eventName, " (",
-                            args.empty() ? "" : args[0], ") reached ",
-                            frameCount, " frames");
-            }
-            // Iterate a copy, because a handler is allowed to unregister while
-            // it runs and several do - answering an event by deciding you no
-            // longer want it is ordinary. UnregisterEvent shifts the tail down,
-            // so the frame that moved into the vacated index was stepped over
-            // and never heard that event at all. The list is a handful of
-            // entries, and this only copies references.
-            lua_createtable(L_, frameCount, 0);
-            for (int i = 1; i <= frameCount; ++i) {
-                lua_rawgeti(L_, -2, i);
-                lua_rawseti(L_, -2, i);
-            }
-            lua_remove(L_, -2);   // drop the live list; the copy stands in
-            for (int i = 1; i <= frameCount; i++) {
+            int n = static_cast<int>(lua_objlen(L_, -1));
+            for (int i = 1; i <= n; ++i) {
                 lua_rawgeti(L_, -1, i);
-                if (!lua_istable(L_, -1)) { lua_pop(L_, 1); continue; }
-
-                // Get the frame's OnEvent script
-                lua_getfield(L_, -1, "__scripts");
-                if (lua_istable(L_, -1)) {
-                    lua_getfield(L_, -1, "OnEvent");
-                    if (lua_isfunction(L_, -1)) {
-                        lua_pushvalue(L_, -3);  // self (frame)
-                        lua_pushstring(L_, eventName.c_str());
-                        for (const auto& arg : args) pushEventArg(L_, arg);
-                        int nargs = 2 + static_cast<int>(args.size());
-                        if (pcallScript(L_, "OnEvent", nargs, 0) != 0) {
-                            const char* ferr = lua_tostring(L_, -1);
-                            std::string ferrStr = ferr ? ferr : "(unknown)";
-                            LOG_ERROR("LuaEngine: frame OnEvent error: ", ferrStr);
-                            noteLuaError(ferrStr);
-        if (luaErrorCallback_) luaErrorCallback_(ferrStr);
-                            lua_pop(L_, 1);
-                        }
-                    } else {
-                        lua_pop(L_, 1); // pop non-function
-                    }
-                }
-                lua_pop(L_, 2); // pop __scripts + frame
+                lua_rawseti(L_, -4, ++snapCount);
             }
-        } else if (traced.count(eventName)) {
-            LOG_WARNING("EventTrace: ", eventName, " (",
-                        args.empty() ? "" : args[0],
-                        ") - no frame has registered for it");
         }
-        lua_pop(L_, 1); // pop event frame list
+        lua_pop(L_, 1);
     }
     lua_pop(L_, 1); // pop __WoweeFrameEvents
+
+    lua_getglobal(L_, "__WoweeAllEventFrames");
+    if (lua_istable(L_, -1)) {
+        int n = static_cast<int>(lua_objlen(L_, -1));
+        for (int i = 1; i <= n; ++i) {
+            lua_rawgeti(L_, -1, i);
+            bool dup = false;
+            for (int j = 1; j <= snapCount && !dup; ++j) {
+                lua_rawgeti(L_, -3, j);
+                dup = lua_rawequal(L_, -1, -2) != 0;
+                lua_pop(L_, 1);
+            }
+            if (!dup) {
+                lua_rawseti(L_, -3, ++snapCount);
+            } else {
+                lua_pop(L_, 1);
+            }
+        }
+    }
+    lua_pop(L_, 1); // pop __WoweeAllEventFrames
+
+    if (snapCount > 0) {
+        if (traced.count(eventName)) {
+            LOG_WARNING("EventTrace: ", eventName, " (",
+                        args.empty() ? "" : args[0], ") reached ",
+                        snapCount, " frames");
+        }
+        for (int i = 1; i <= snapCount; i++) {
+            lua_rawgeti(L_, -1, i);
+            if (!lua_istable(L_, -1)) { lua_pop(L_, 1); continue; }
+
+            // Get the frame's OnEvent script
+            lua_getfield(L_, -1, "__scripts");
+            if (lua_istable(L_, -1)) {
+                lua_getfield(L_, -1, "OnEvent");
+                if (lua_isfunction(L_, -1)) {
+                    lua_pushvalue(L_, -3);  // self (frame)
+                    lua_pushstring(L_, eventName.c_str());
+                    for (const auto& arg : args) pushEventArg(L_, arg);
+                    int nargs = 2 + static_cast<int>(args.size());
+                    if (pcallScript(L_, "OnEvent", nargs, 0) != 0) {
+                        const char* ferr = lua_tostring(L_, -1);
+                        std::string ferrStr = ferr ? ferr : "(unknown)";
+                        LOG_ERROR("LuaEngine: frame OnEvent error: ", ferrStr);
+                        noteLuaError(ferrStr);
+                        if (luaErrorCallback_) luaErrorCallback_(ferrStr);
+                        lua_pop(L_, 1);
+                    }
+                } else {
+                    lua_pop(L_, 1); // pop non-function
+                }
+            }
+            lua_pop(L_, 2); // pop __scripts + frame
+        }
+    } else if (traced.count(eventName)) {
+        LOG_WARNING("EventTrace: ", eventName, " (",
+                    args.empty() ? "" : args[0],
+                    ") - no frame has registered for it");
+    }
+    lua_pop(L_, 1); // pop snapshot
 
     // Closing the auction house lets go of the sell slot's item, after the
     // interface has heard the close: 2.4.3 sends AUCTION_HOUSE_CLOSED, then

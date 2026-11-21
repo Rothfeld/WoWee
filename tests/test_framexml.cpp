@@ -2,7 +2,10 @@
 
 #include "ui/xml_parser.hpp"
 #include "ui/framexml_emitter.hpp"
+#include "tbc_data_test_util.hpp"
 
+#include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <string>
@@ -152,16 +155,18 @@ namespace {
 /// checkout without it is not a broken emitter.
 XmlNode parseShippedFile(const std::string& name) {
     XmlNode root;
-    // Anchored to the source tree rather than the working directory. ctest runs
-    // from the build directory, where a relative path finds nothing and the
-    // test passes by skipping - which is worse than not having it.
-    std::ifstream in(std::string(WOWEE_SOURCE_DIR) +
-                     "/Data/interface/framexml/" + name);
-    if (!in) return root;
+    const char* tbcRoot = std::getenv("WOWEE_TBC_DATA_DIR");
+    if (!tbcRoot || !*tbcRoot) {
+        SKIP("Set WOWEE_TBC_DATA_DIR to client/wowee-data/expansions/tbc");
+    }
+    const std::filesystem::path fullPath =
+        std::filesystem::path(tbcRoot) / "interface" / "framexml" / name;
+    std::ifstream in(fullPath);
+    REQUIRE(in.good());
     std::string src((std::istreambuf_iterator<char>(in)),
                     std::istreambuf_iterator<char>());
     std::string err;
-    parseXml(src, root, err);
+    REQUIRE(parseXml(src, root, err));
     return root;
 }
 }  // namespace
@@ -1475,4 +1480,26 @@ TEST_CASE("Every Layers element of a frame is built", "[framexml][emit]") {
     const EmitResult r = emitFrameXml(root);
     REQUIRE(has(r.lua, "\"FA\""));
     REQUIRE(has(r.lua, "\"FText\""));
+}
+
+TEST_CASE("UI.xsd ResizeBounds, CheckButton checked, frameLevel, and TaxiRouteFrame emit", "[framexml][emit]") {
+    XmlNode root = parseOrFail(
+        "<Ui>"
+        "<Frame name=\"ResizableF\" frameLevel=\"7\">"
+        "  <ResizeBounds>"
+        "    <minResize><AbsDimension x=\"120\" y=\"80\"/></minResize>"
+        "    <maxResize><AbsDimension x=\"600\" y=\"400\"/></maxResize>"
+        "  </ResizeBounds>"
+        "</Frame>"
+        "<CheckButton name=\"TutCheck\" checked=\"true\"/>"
+        "<TaxiRouteFrame name=\"TaxiRouteMap\"/>"
+        "</Ui>");
+    const EmitResult r = emitFrameXml(root);
+    INFO(r.lua);
+    CHECK(has(r.lua, ":SetFrameLevel(7)"));
+    CHECK(has(r.lua, ":SetMinResize(120.000000, 80.000000)"));
+    CHECK(has(r.lua, ":SetMaxResize(600.000000, 400.000000)"));
+    CHECK(has(r.lua, ":SetChecked(true)"));
+    CHECK(has(r.lua, "CreateFrame(\"TaxiRouteFrame\", \"TaxiRouteMap\", nil)"));
+    CHECK(r.warnings.empty());
 }

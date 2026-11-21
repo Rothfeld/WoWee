@@ -56,6 +56,13 @@ public:
     static Device deviceForKey(const std::string& key);
     static bool isControllerKey(const std::string& key) { return deviceForKey(key) == Device::Controller; }
     bool setBinding(const std::string& key, const std::string& command = "");
+    /// Runtime-only override bindings (SetOverrideBinding* / ClearOverrideBindings).
+    /// Priority overrides take precedence over non-priority overrides, and both
+    /// take precedence over normal bindings. Never persisted to disk.
+    bool setOverrideBinding(const std::string& owner, bool isPriority,
+                            const std::string& key, const std::string& command = "");
+    void clearOverrideBindings(const std::string& owner);
+    std::string overrideCommandForKey(const std::string& key) const;
     bool loadBindings(const std::string& path);
     bool loadBindingsWithLegacy(const std::string& path, const std::string& legacyPath);
     bool saveBindings(const std::string& path) const;
@@ -125,6 +132,13 @@ private:
 
     Bindings bindings_;
     Bindings controllerBindings_;
+    struct OverrideBinding {
+        std::string owner;
+        bool priority = false;
+        std::string key;
+        std::string command;
+    };
+    std::vector<OverrideBinding> overrideBindings_;
     std::set<std::string> migratedPaths_;
     std::optional<std::vector<std::pair<std::string, std::string>>> dataKeyboardDefaults_;
     std::array<bool, ImGuiKey_NamedKey_COUNT> down_{};

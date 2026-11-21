@@ -45,4 +45,9 @@ void markInsecureRoot(lua_State* L, const std::string& directory, const std::str
 /// insecure.
 void markInsecureChunk(lua_State* L, const char* chunk);
 
+/// If TBC protected-call enforcement is active and the current Lua call stack
+/// contains insecure code (a /script chunk or non-Blizzard AddOn), fires
+/// MACRO_ACTION_FORBIDDEN or ADDON_ACTION_FORBIDDEN and returns true.
+bool blockProtectedCallIfInsecure(lua_State* L, const char* fallbackName);
+
 } // namespace wowee::addons

@@ -2619,17 +2619,62 @@ static int lua_RunBinding(lua_State* L) {
     lua_pop(L, 1);
     return 0;
 }
-// The override-binding family, none of which this client implements - only
-// the Click variant was ever *bound*, and the other four raised. They are
-// reached from restrictedframes.lua, the secure-frame machinery behind action
-// buttons and unit frames, so a raise there breaks the frame rather than the
-// binding. Bound alongside it, doing the same nothing.
-static int lua_SetOverrideBindingClick(lua_State* L) { (void)L; return 0; }
-static int lua_SetOverrideBinding(lua_State* L) { (void)L; return 0; }
-static int lua_SetOverrideBindingSpell(lua_State* L) { (void)L; return 0; }
-static int lua_SetOverrideBindingMacro(lua_State* L) { (void)L; return 0; }
-static int lua_SetOverrideBindingItem(lua_State* L) { (void)L; return 0; }
-static int lua_ClearOverrideBindings(lua_State* L) { (void)L; return 0; }
+static std::string overrideOwnerId(lua_State* L, int idx) {
+    if (const void* ptr = lua_topointer(L, idx)) {
+        char buf[32];
+        std::snprintf(buf, sizeof(buf), "%p", ptr);
+        return buf;
+    }
+    if (const char* s = lua_tostring(L, idx)) return s;
+    return {};
+}
+
+static int applyOverrideBinding(lua_State* L, const std::string& command) {
+    seedBindingDefaults(L);
+    const std::string owner = overrideOwnerId(L, 1);
+    const bool isPriority = lua_toboolean(L, 2) != 0;
+    const char* key = luaL_optstring(L, 3, nullptr);
+    if (owner.empty() || !key || !*key) return 0;
+    if (wowee::ui::KeybindingManager::getInstance().setOverrideBinding(owner, isPriority, key, command)) {
+        if (auto* gh = getGameHandler(L)) gh->fireAddonEvent("UPDATE_BINDINGS", {});
+    }
+    return 0;
+}
+
+static int lua_SetOverrideBinding(lua_State* L) {
+    const char* cmd = lua_isnoneornil(L, 4) ? "" : luaL_checkstring(L, 4);
+    return applyOverrideBinding(L, cmd);
+}
+static int lua_SetOverrideBindingClick(lua_State* L) {
+    const char* buttonName = luaL_optstring(L, 4, nullptr);
+    if (!buttonName || !*buttonName) return applyOverrideBinding(L, "");
+    const char* mouseClick = luaL_optstring(L, 5, "LeftButton");
+    std::string cmd = "CLICK ";
+    cmd += buttonName;
+    cmd += ":";
+    cmd += (mouseClick && *mouseClick) ? mouseClick : "LeftButton";
+    return applyOverrideBinding(L, cmd);
+}
+static int lua_SetOverrideBindingSpell(lua_State* L) {
+    const char* spell = luaL_optstring(L, 4, nullptr);
+    return applyOverrideBinding(L, (spell && *spell) ? std::string("SPELL ") + spell : "");
+}
+static int lua_SetOverrideBindingMacro(lua_State* L) {
+    const char* macro = luaL_optstring(L, 4, nullptr);
+    return applyOverrideBinding(L, (macro && *macro) ? std::string("MACRO ") + macro : "");
+}
+static int lua_SetOverrideBindingItem(lua_State* L) {
+    const char* item = luaL_optstring(L, 4, nullptr);
+    return applyOverrideBinding(L, (item && *item) ? std::string("ITEM ") + item : "");
+}
+static int lua_ClearOverrideBindings(lua_State* L) {
+    seedBindingDefaults(L);
+    const std::string owner = overrideOwnerId(L, 1);
+    if (owner.empty()) return 0;
+    wowee::ui::KeybindingManager::getInstance().clearOverrideBindings(owner);
+    if (auto* gh = getGameHandler(L)) gh->fireAddonEvent("UPDATE_BINDINGS", {});
+    return 0;
+}
 
 // Frame methods: SetPoint, SetSize, SetWidth, SetHeight, GetWidth, GetHeight, GetCenter, SetAlpha, GetAlpha
 

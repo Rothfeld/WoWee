@@ -148,6 +148,25 @@ TEST_CASE("TBC refuses protected functions from a macro script", "[addons][api_s
     CHECK(run(f.L, "return fired") == "MACRO_ACTION_FORBIDDEN TargetUnit()");
 }
 
+TEST_CASE("TBC blockProtectedCallIfInsecure blocks insecure /script and allows secure calls", "[addons][api_surface]") {
+    ConventionFixture f;
+    lua_register(f.L, "GuardedCall", [](lua_State* S) -> int {
+        if (wowee::addons::blockProtectedCallIfInsecure(S, "GuardedCall")) return 0;
+        lua_pushstring(S, "allowed");
+        return 1;
+    });
+    // Secure call succeeds.
+    CHECK(run(f.L, "return GuardedCall()") == "allowed");
+    // Insecure /script call is blocked with MACRO_ACTION_FORBIDDEN.
+    const char* script = "return GuardedCall()";
+    wowee::addons::markInsecureChunk(f.L, script);
+    REQUIRE(luaL_loadbuffer(f.L, script, std::strlen(script), script) == 0);
+    REQUIRE(lua_pcall(f.L, 0, 1, 0) == 0);
+    CHECK(lua_isnil(f.L, -1));
+    lua_settop(f.L, 0);
+    CHECK(run(f.L, "return fired") == "MACRO_ACTION_FORBIDDEN GuardedCall()");
+}
+
 TEST_CASE("TBC refuses protected functions from an AddOn", "[addons][api_surface]") {
     ConventionFixture f;
     wowee::addons::markInsecureRoot(f.L, "/x/Interface/AddOns/Probe", "Probe");

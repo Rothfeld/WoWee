@@ -251,7 +251,8 @@ private:
         uint16_t stat0, resistances;
         /// ...and what it hits for, which the pet tab's damage and
         /// attack-power lines read.
-        uint16_t attackPower, minDamage, maxDamage;
+        uint16_t attackPower, attackPowerMods, attackPowerMult;
+        uint16_t minDamage, maxDamage, baseAttackTime;
         static UnitFieldIndices resolve();
     };
     struct PlayerFieldIndices {
@@ -260,7 +261,10 @@ private:
         uint16_t playerFlags, armor;
         uint16_t pBytes, pBytes2, chosenTitle;
         uint16_t stats[5];
-        uint16_t meleeAP, rangedAP;
+        uint16_t meleeAP, meleeAPMods, meleeAPMult;
+        uint16_t rangedAP, rangedAPMods, rangedAPMult;
+        uint16_t minDamage, maxDamage, minRangedDamage, maxRangedDamage;
+        uint16_t baseAttackTime, rangedAttackTime;
         uint16_t spDmg1, healBonus;
         uint16_t blockPct, dodgePct, parryPct, critPct, rangedCritPct;
         uint16_t sCrit1, rating1;

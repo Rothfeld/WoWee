@@ -75,7 +75,11 @@ enum class UF : uint16_t {
     UNIT_FIELD_MINDAMAGE,            // Weapon damage low end (float bits)
     UNIT_FIELD_MAXDAMAGE,            // ...and high end
     UNIT_FIELD_ATTACK_POWER,         // Melee attack power (int32)
+    UNIT_FIELD_ATTACK_POWER_MODS,    // Melee AP buffs: low int16 = pos, high int16 = neg
+    UNIT_FIELD_ATTACK_POWER_MULTIPLIER, // Melee AP multiplier offset (float, 0.0 = 1.0x)
     UNIT_FIELD_RANGED_ATTACK_POWER,  // Ranged attack power (int32)
+    UNIT_FIELD_RANGED_ATTACK_POWER_MODS, // Ranged AP buffs: low int16 = pos, high int16 = neg
+    UNIT_FIELD_RANGED_ATTACK_POWER_MULTIPLIER, // Ranged AP multiplier offset (float, 0.0 = 1.0x)
     UNIT_FIELD_POWER_REGEN_FLAT_MODIFIER,             // Power regen while not casting (float[7], mana=0); PRIVATE/OWNER.
                                                       // TBC: PLAYER_FIELD_MOD_MANA_REGEN, mana only.
     UNIT_FIELD_POWER_REGEN_INTERRUPTED_FLAT_MODIFIER, // ...and the reduced rate during the five-second rule

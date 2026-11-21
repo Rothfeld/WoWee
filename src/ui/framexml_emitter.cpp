@@ -33,7 +33,7 @@ bool isFrameElement(const std::string& n) {
         // is inside them. Leaving Minimap out skipped the whole minimap
         // subtree, which is why every MinimapNorthTag and MiniMapLFGFrame in
         // the interface read as a missing global.
-        "Minimap", "WorldFrame"
+        "Minimap", "WorldFrame", "TaxiRouteFrame"
     };
     for (const char* f : kFrames) if (n == f) return true;
     return false;
@@ -1008,8 +1008,27 @@ struct Emitter {
             if (readDimension(*size, w, h))
                 line(var + ":SetWidth(" + std::to_string(w) + ") " + var + ":SetHeight(" + std::to_string(h) + ")");
         }
+        if (const XmlNode* rb = node.child("ResizeBounds")) {
+            if (const XmlNode* minR = rb->child("minResize")) {
+                float w = 0, h = 0;
+                if (readDimension(*minR, w, h))
+                    line(var + ":SetMinResize(" + std::to_string(w) + ", " + std::to_string(h) + ")");
+            }
+            if (const XmlNode* maxR = rb->child("maxResize")) {
+                float w = 0, h = 0;
+                if (readDimension(*maxR, w, h))
+                    line(var + ":SetMaxResize(" + std::to_string(w) + ", " + std::to_string(h) + ")");
+            }
+        }
         if (const std::string* strata = node.attr("frameStrata")) {
             line(var + ":SetFrameStrata(" + quote(*strata) + ")");
+        }
+        if (const std::string* fl = node.attr("frameLevel"); fl && !fl->empty()) {
+            line(var + ":SetFrameLevel(" +
+                 std::to_string(static_cast<int>(node.attrFloat("frameLevel", 0.0f))) + ")");
+        }
+        if (node.attr("checked")) {
+            line(var + ":SetChecked(" + (node.attrBool("checked") ? "true" : "false") + ")");
         }
         // A slider's range, step and orientation, declared as attributes. The
         // range has to be set before the value, or the value is clamped to a
@@ -1629,7 +1648,7 @@ const char* const kElementNames[] = {
     "PlayerModel", "PushedTextOffset", "PushedTexture", "QuestPOIFrame",
     "ResizeBounds", "Script", "Scripts", "ScrollChild", "ScrollFrame",
     "ScrollingMessageFrame", "Shadow", "SimpleHTML", "Size", "Slider",
-    "StatusBar", "TabardModel", "TexCoords", "Texture", "ThumbTexture",
+    "StatusBar", "TabardModel", "TaxiRouteFrame", "TexCoords", "Texture", "ThumbTexture",
     "TileSize", "TitleRegion", "Translation", "Ui", "WorldFrame",
     "maxResize", "minResize",
 };

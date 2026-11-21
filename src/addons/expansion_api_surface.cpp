@@ -161,7 +161,7 @@ constexpr Protected kProtectedTbc[] = {
     {"TargetNearestEnemyPlayer", 0}, {"TargetNearestFriend", 0},
     {"TargetNearestFriendPlayer", 0}, {"TargetNearestPartyMember", 0},
     {"TargetNearestRaidMember", 0}, {"TargetUnit", 0}, {"TogglePetAutocast", 0},
-    {"UseAction", 0}, {"UseContainerItem", 0}, {"UseItemByName", 0},
+    {"UseAction", 0}, {"UseItemByName", 0},
 };
 
 /// Widget methods measured the same way (each method of fresh and FrameXML
@@ -170,7 +170,7 @@ constexpr Protected kProtectedTbc[] = {
 /// TargetofTargetFrame:IsShown() with UnitExists("targettarget"), so the two
 /// must agree in kind.
 constexpr const char* kFlagMethodsTbc[] = {
-    "GetFading", "IsClampedToScreen", "IsKeyboardEnabled", "IsMouseEnabled", "IsMovable",
+    "GetFading", "IsClampedToScreen", "IsInIMECompositionMode", "IsKeyboardEnabled", "IsMouseEnabled", "IsMovable",
     "IsProtected", "IsResizable", "IsShown", "IsToplevel", "IsUserPlaced", "IsVisible",
 };
 
@@ -184,6 +184,7 @@ constexpr const char* kNilMethodsTbc[] = {"SetUnit", "SetHyperlink"};
 
 constexpr const char* kInsecureRoots = "wowee_insecure_roots";
 constexpr const char* kInsecureChunks = "wowee_insecure_chunks";
+constexpr const char* kTaintEnforced = "wowee_taint_enforced";
 
 enum ShapeBits : int { kFlags = 1, kProtect = 2, kNil = 4 };
 
@@ -415,6 +416,8 @@ void applyApiConventions(lua_State* L, std::string_view expansionId) {
     lua_setglobal(L, "issecure");
     lua_pushcfunction(L, lua_issecurevariable);
     lua_setglobal(L, "issecurevariable");
+    lua_pushboolean(L, 1);
+    lua_setfield(L, LUA_REGISTRYINDEX, kTaintEnforced);
 }
 
 int apiResultCount(std::string_view expansionId, std::string_view name) {
@@ -451,6 +454,24 @@ void markInsecureChunk(lua_State* L, const char* chunk) {
     lua_pushboolean(L, 1);
     lua_rawset(L, -3);
     lua_pop(L, 1);
+}
+
+bool blockProtectedCallIfInsecure(lua_State* L, const char* fallbackName) {
+    lua_getfield(L, LUA_REGISTRYINDEX, kTaintEnforced);
+    const bool enforced = lua_toboolean(L, -1) != 0;
+    lua_pop(L, 1);
+    if (!enforced) return false;
+    const Taint t = insecureCaller(L);
+    if (!t.found) return false;
+    lua_Debug self;
+    std::string name = fallbackName ? fallbackName : "UNKNOWN";
+    if (lua_getstack(L, 0, &self) && lua_getinfo(L, "n", &self) && self.name) {
+        name = self.name;
+    }
+    name += "()";
+    if (t.macro) fireEvent(L, "MACRO_ACTION_FORBIDDEN", {name});
+    else fireEvent(L, "ADDON_ACTION_FORBIDDEN", {t.addon, name});
+    return true;
 }
 
 } // namespace wowee::addons

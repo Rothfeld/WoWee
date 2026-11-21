@@ -5,6 +5,7 @@
 #include "game/item_text.hpp"
 #include "game/reputation_standing.hpp"
 #include "addons/lua_api_helpers.hpp"
+#include "addons/expansion_api_surface.hpp"
 #include "addons/lua_engine.hpp"
 #include "game/inventory_slots.hpp"
 #include "game/game_utils.hpp"
@@ -1968,6 +1969,9 @@ static int lua_UseContainerItem(lua_State* L) {
     // The click that picks what a stone or an oil is applied to. FrameXML
     // routes it here rather than to the pickup when SpellCanTargetItem says a
     // spell is waiting for one.
+    if (gh->isAwaitingItemTarget()) {
+        if (wowee::addons::blockProtectedCallIfInsecure(L, "UseContainerItem")) return 0;
+    }
     if (completedItemTarget(L, containerSlotGuid(gh, bag, slot))) return 0;
     const auto& inv = gh->getInventory();
     // The keyring counts here too: right-clicking a key is how a locked box or
@@ -2093,6 +2097,12 @@ static int lua_UseContainerItem(lua_State* L) {
 
     // By slot rather than by item id: the id searches the bags for a match and
     // can find a different stack of the same thing than the one clicked.
+    // Equipping gear, opening containers, reading pages, banking, mailing,
+    // selling, and starting quests are allowed from /run out of combat in TBC
+    // 2.4.3; only using a consumable/spell item is protected.
+    if (!readable && !equippable && !openable) {
+        if (wowee::addons::blockProtectedCallIfInsecure(L, "UseContainerItem")) return 0;
+    }
     if (bag == 0) {
         const int idx = slot - 1;
         if (readable)         gh->readItemBySlot(idx);

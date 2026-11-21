@@ -3163,6 +3163,7 @@ if(NOT ANDROID)
     target_sources(test_game_replay PRIVATE test_game_replay_mount_poof.cpp)
     target_sources(test_game_replay PRIVATE test_game_replay_taxi_mount.cpp)
     target_sources(test_game_replay PRIVATE test_game_replay_move_acks.cpp)
+    target_sources(test_game_replay PRIVATE test_game_replay_tbc_framexml_lod.cpp)
 
     # Same complete client objects as game_replay: never replace client classes
     # with test implementations or copy an input-routing branch into a seam.
