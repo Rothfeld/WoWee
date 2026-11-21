@@ -25,7 +25,10 @@ inline std::string unitCursorPath(bool alive, uint32_t dynamicFlags, int reactio
     if (!alive) {
         // A lootable corpse shows Pickup.blp, the bag (Gruul the Dragonkiller,
         // Clefthoof, Warmaul Brute; pixel-exact, pair 8), not LootAll.blp.
-        if (dynamicFlags & game::UNIT_DYNFLAG_LOOTABLE) return cursor("Pickup");
+        // Beyond loot reach (GameHandler::unitWithinLootReach), native 2.4.3
+        // greys it to UnablePickup.blp (General Rajaxx, Gruul, Swamp Jaguar).
+        if (dynamicFlags & game::UNIT_DYNFLAG_LOOTABLE)
+            return cursor(serviceInReach ? "Pickup" : "UnablePickup");
         if ((unitFlags & game::UNIT_FLAG_SKINNABLE) && knowsHarvestProfession)
             return cursor(canHarvest ? "Skin" : "SkinError");
         return cursor("Point");

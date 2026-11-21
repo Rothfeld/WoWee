@@ -289,6 +289,9 @@ TEST_CASE("Service cursors turn Unable beyond interaction reach", "[npc-cursor]"
           "Interface\\Cursor\\UnableQuest.blp");
     CHECK(far(true, 0, 5, NPC_FLAG_GOSSIP, QuestGiverStatus::NONE, "Directions", false) ==
           "Interface\\Cursor\\UnableDirections.blp");
+    // Lootable corpses turn UnablePickup beyond loot reach (General Rajaxx, Gruul, Swamp Jaguar).
+    CHECK(far(false, UNIT_DYNFLAG_LOOTABLE, 2, 0, QuestGiverStatus::NONE) ==
+          "Interface\\Cursor\\UnablePickup.blp");
     // The sword and the plain pointer have no out-of-reach look here.
     CHECK(far(true, 0, 2, 0, QuestGiverStatus::NONE) == "Interface\\Cursor\\Attack.blp");
     CHECK(far(true, 0, 5, 0x400000, QuestGiverStatus::NONE) == "Interface\\Cursor\\Point.blp");

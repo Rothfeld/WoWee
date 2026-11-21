@@ -827,6 +827,21 @@ bool GameHandler::unitWithinInteractionReach(const Unit& unit) const {
     return glm::dot(offset, offset) <= kInteractionReach * kInteractionReach;
 }
 
+bool GameHandler::unitWithinLootReach(const Unit& unit) const {
+    // CMaNGOS HandleLootOpcode and native 2.4.3 both test 3D centre distance
+    // against max(5.0, player.combatReach + unit.combatReach + 4/3) (empirical
+    // native 2.4.3 on General Rajaxx combatReach=6.0: Pickup at 8.827 yd,
+    // UnablePickup at 8.862 yd; threshold 8.833 yd).
+    const auto self = getEntityManager().getEntity(playerGuid);
+    const float playerReach = (self && self->isUnit())
+        ? static_cast<const Unit&>(*self).getCombatReach()
+        : 0.0f;
+    const float reach = spellclass::meleeReach(playerReach, unit.getCombatReach());
+    const glm::vec3 offset(unit.getX() - movementInfo.x, unit.getY() - movementInfo.y,
+                           unit.getZ() - movementInfo.z);
+    return glm::dot(offset, offset) <= reach * reach;
+}
+
 void GameHandler::update(float deltaTime) {
     // The char-create callback used to be deferred to here, out of the packet
     // handler and so out of any render pass. It is not any more: the

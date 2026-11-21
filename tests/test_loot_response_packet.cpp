@@ -129,6 +129,21 @@ TEST_CASE("a refusal is not loot", "[loot]") {
     auto packet = packetOf(p.b);
     LootResponseData data;
     CHECK_FALSE(LootResponseParser::parse(packet, data, /*isWotlkFormat=*/true));
+    CHECK_FALSE(data.lootError.has_value());
+}
+
+TEST_CASE("a loot error refusal preserves the LootError code", "[loot]") {
+    // CMaNGOS Player::SendLootError: guid(8) + lootType(0) + error(1).
+    Bytes p;
+    p.u64(0xF130003BED596DD2ull);
+    p.u8(0);
+    p.u8(4);  // LOOT_ERROR_TOO_FAR
+
+    auto packet = packetOf(p.b);
+    LootResponseData data;
+    CHECK_FALSE(LootResponseParser::parse(packet, data, /*isWotlkFormat=*/false));
+    REQUIRE(data.lootError.has_value());
+    CHECK(*data.lootError == 4);
 }
 
 TEST_CASE("a truncated regular list is refused outright", "[loot]") {

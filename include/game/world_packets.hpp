@@ -2570,6 +2570,7 @@ struct LootItem {
 struct LootResponseData {
     uint64_t lootGuid = 0;
     uint8_t lootType = 0;
+    std::optional<uint8_t> lootError; // Set on lootType=0 refusal packets carrying LootError
     uint32_t gold = 0;           // In copper
     bool goldLooted = false;     // Taken; the coin keeps its slot
     std::vector<LootItem> items;

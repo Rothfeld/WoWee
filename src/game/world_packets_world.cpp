@@ -626,13 +626,18 @@ bool LootResponseParser::parse(network::Packet& packet, LootResponseData& data, 
     data.lootType = packet.readUInt8();
 
     // Short failure packet - no gold/item data follows.
+    // CMaNGOS Player::SendLootError sends guid(8) + lootType(0) + error(1).
     avail = packet.getRemainingSize();
     if (avail < 5) {
+        if (data.lootType == 0 && avail >= 1) {
+            data.lootError = packet.readUInt8();
+        }
         // At warning, because this is the realm declining to open the loot and
         // it is the answer to "I clicked the chest and nothing happened". The
         // caller's own line is never reached from here, so without this the
         // refusal and a response that never arrived look identical in a log.
         LOG_WARNING("LootResponseParser: lootType=", static_cast<int>(data.lootType),
+                    " error=", data.lootError ? static_cast<int>(*data.lootError) : -1,
                     " with no loot behind it - the realm answered the use and"
                     " offered nothing, so no window opens");
         return false;

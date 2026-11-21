@@ -1021,6 +1021,17 @@ void InventoryHandler::lootTarget(uint64_t targetGuid) {
         LOG_DEBUG("Loot of 0x", std::hex, targetGuid, std::dec, " is already open");
         return;
     }
+    // Native 2.4.3 refuses to loot a unit corpse beyond loot reach
+    // (GameHandler::unitWithinLootReach, matching CMaNGOS HandleLootOpcode and
+    // the UnablePickup cursor) without sending CMSG_LOOT.
+    if (const auto entity = owner_.getEntityManager().getEntity(targetGuid);
+        entity && entity->isUnit()) {
+        if (!owner_.unitWithinLootReach(static_cast<const Unit&>(*entity))) {
+            LOG_DEBUG("lootTarget: 0x", std::hex, targetGuid, std::dec,
+                      " beyond loot reach; no CMSG_LOOT sent");
+            return;
+        }
+    }
     if (lootRequestGuid_ != targetGuid) prepareLoot(targetGuid, false);
     localLootState_[targetGuid].itemAutoLootSent = false;
     currentLoot_.items.clear();
@@ -1134,10 +1145,38 @@ void InventoryHandler::lootMasterGive(uint8_t lootSlot, uint64_t targetGuid) {
     owner_.getSocket()->send(pkt);
 }
 
+namespace {
+
+const char* lootErrorGlobal(uint8_t error) {
+    switch (error) {
+        case 0:  return "ERR_LOOT_DIDNT_KILL";
+        case 4:  return "ERR_LOOT_TOO_FAR";
+        case 5:  return "ERR_LOOT_BAD_FACING";
+        case 6:  return "ERR_LOOT_LOCKED";
+        case 8:  return "ERR_LOOT_NOTSTANDING";
+        case 9:  return "ERR_LOOT_STUNNED";
+        case 10: return "ERR_LOOT_PLAYER_NOT_FOUND";
+        case 12: return "ERR_LOOT_MASTER_INV_FULL";
+        case 13: return "ERR_LOOT_MASTER_UNIQUE_ITEM";
+        case 14: return "ERR_LOOT_MASTER_OTHER";
+        case 16: return "ERR_NOT_SHAPESHIFT";
+        default: return nullptr;
+    }
+}
+
+} // namespace
+
 void InventoryHandler::handleLootResponse(network::Packet& packet) {
     const bool wotlkLoot = isActiveExpansion("wotlk");
     LootResponseData receivedLoot;
-    if (!LootResponseParser::parse(packet, receivedLoot, wotlkLoot)) return;
+    if (!LootResponseParser::parse(packet, receivedLoot, wotlkLoot)) {
+        if (receivedLoot.lootError) {
+            if (const char* global = lootErrorGlobal(*receivedLoot.lootError)) {
+                owner_.errorGlobal(global);
+            }
+        }
+        return;
+    }
     currentLoot_ = std::move(receivedLoot);
     const bool hasLoot = !currentLoot_.items.empty() || currentLoot_.gold > 0;
     LOG_INFO("SMSG_LOOT_RESPONSE: guid=0x", std::hex, currentLoot_.lootGuid, std::dec,

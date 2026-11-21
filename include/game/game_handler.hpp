@@ -2401,6 +2401,12 @@ public:
     /// (pair 8): Newton Burnside (combat reach 1.5) and Ironbark the Redeemed
     /// (7.5) both Usable at 5.550 yards and Unable at 5.556.
     bool unitWithinInteractionReach(const Unit& unit) const;
+    /// Whether the player stands close enough to loot a dead unit corpse:
+    /// 3D centre distance within spellclass::meleeReach(playerReach, unitReach)
+    /// = max(5.0, player.combatReach + unit.combatReach + 4/3). Matches both
+    /// CMaNGOS HandleLootOpcode and native 2.4.3 (General Rajaxx combatReach
+    /// 6.0: Pickup at 8.827 yd, UnablePickup at 8.862 yd).
+    bool unitWithinLootReach(const Unit& unit) const;
     /// Where a unit stands against a spell's SpellRange.dbc range from the
     /// player - native 2.4.3 IsSpellInRange, measured 3D, centre to centre,
     /// with both units' UNIT_FIELD_COMBATREACH (spellclass::checkSpellRange).
