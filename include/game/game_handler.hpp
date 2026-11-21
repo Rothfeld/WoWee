@@ -3464,6 +3464,14 @@ public:
     using MountCallback = std::function<void(uint32_t mountDisplayId)>;  // 0 = dismount
     void setMountCallback(MountCallback cb) { mountCallback_ = std::move(cb); }
 
+    // Live mount-up transformation smoke (SpellVisualKit 2110 / Mount Impact,
+    // Spells\DruidMorph_Impact_Base.m2) fired when UNIT_FIELD_MOUNTDISPLAYID
+    // transitions 0 -> non-zero on a live VALUES update (taxi takeoff, regular
+    // mount, .modify mount, remote units mounting in view). Never fires on
+    // initial CREATE_OBJECT (login while already mounted) or on dismount.
+    using MountPoofCallback = std::function<void(uint64_t guid)>;
+    void setMountPoofCallback(MountPoofCallback cb) { mountPoofCallback_ = std::move(cb); }
+
     // Mount display changes for visible players other than the local character.
     using OtherPlayerMountCallback = std::function<void(uint64_t guid, uint32_t mountDisplayId)>;
     void setOtherPlayerMountCallback(OtherPlayerMountCallback cb) { otherPlayerMountCallback_ = std::move(cb); }
@@ -4404,6 +4412,7 @@ public:
     auto& openLfgCallbackRef() { return openLfgCallback_; }
     auto& otherPlayerLevelUpCallbackRef() { return otherPlayerLevelUpCallback_; }
     auto& otherPlayerMountCallbackRef() { return otherPlayerMountCallback_; }
+    auto& mountPoofCallbackRef() { return mountPoofCallback_; }
     auto& playerDespawnCallbackRef() { return playerDespawnCallback_; }
     auto& playerEquipmentCallbackRef() { return playerEquipmentCallback_; }
     auto& playerHealthCallbackRef() { return playerHealthCallback_; }
@@ -5797,6 +5806,7 @@ private:
     MountSpecialAnimCallback mountSpecialAnimCallback_;
     AchievementEarnedCallback achievementEarnedCallback_;
     MountCallback mountCallback_;
+    MountPoofCallback mountPoofCallback_;
     TaxiPrecacheCallback taxiPrecacheCallback_;
     TaxiOrientationCallback taxiOrientationCallback_;
     PlayerPositionCorrectionCallback playerPositionCorrectionCallback_;

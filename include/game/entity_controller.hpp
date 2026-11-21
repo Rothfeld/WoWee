@@ -219,8 +219,11 @@ private:
                                      const UpdateBlock* changed = nullptr);
     // Detect mount/dismount from UNIT_FIELD_MOUNTDISPLAYID changes (self-player only).
     //     Consolidates identical logic from CREATE and VALUES handlers.
+    //     isLiveUpdate=true for UPDATETYPE_VALUES (triggers mount-up smoke poof
+    //     on 0 -> non-zero), false for initial CREATE_OBJECT/CREATE_OBJECT2.
     void detectPlayerMountChange(uint32_t newMountDisplayId,
-                                 const FlatFieldMap& blockFields);
+                                 const FlatFieldMap& blockFields,
+                                 bool isLiveUpdate);
 
     // Shared player-death handler: caches corpse position, sets death state.
     void markPlayerDead(const char* source);

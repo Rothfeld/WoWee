@@ -8,6 +8,7 @@
 #include "rendering/animation_controller.hpp"
 #include "rendering/character_renderer.hpp"
 #include "rendering/camera_controller.hpp"
+#include "rendering/spell_visual_system.hpp"
 #include "rendering/terrain_manager.hpp"
 #include "rendering/m2_renderer.hpp"
 #include "game/game_handler.hpp"
@@ -51,6 +52,23 @@ void TransportCallbackHandler::setupCallbacks() {
             appearanceComposer_->setWeaponsSheathed(true);
             appearanceComposer_->loadEquippedWeapons();
         }
+    });
+
+    // Mount-up transformation smoke (TBC 2.4.3 SpellVisualKit.dbc row 2110:
+    // BaseEffect = 1183 "Mount Impact" -> Spells\DruidMorph_Impact_Base.m2,
+    // matching SpellVisualEffectName 1185 "HARDCODED Mount Poof"). Attaches to
+    // the rider's Base (19) so the smoke cloud rises around the saddle and
+    // follows the unit during taxi takeoff.
+    gameHandler_.setMountPoofCallback([this](uint64_t guid) {
+        auto* visuals = renderer_.getSpellVisualSystem();
+        auto* cr = renderer_.getCharacterRenderer();
+        if (!visuals || !cr) return;
+        const uint32_t instanceId = entitySpawner_.drawnInstanceIdForGuid(guid);
+        if (instanceId == 0) return;
+        glm::vec3 pos(0.0f);
+        if (!cr->getInstancePosition(instanceId, pos)) return;
+        static constexpr uint32_t kMountPoofKitId = 2110;
+        visuals->playSpellVisualKit(kMountPoofKitId, pos, instanceId);
     });
 
     // Taxi precache callback - preload terrain tiles along flight path

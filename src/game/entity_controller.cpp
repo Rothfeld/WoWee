@@ -744,7 +744,8 @@ void EntityController::syncPreWotlkAurasFromFields(const std::shared_ptr<Entity>
 
 // Detect player mount/dismount from UNIT_FIELD_MOUNTDISPLAYID changes
 void EntityController::detectPlayerMountChange(uint32_t newMountDisplayId,
-                                                const FlatFieldMap& blockFields) {
+                                                const FlatFieldMap& blockFields,
+                                                bool isLiveUpdate) {
     // Live-confirmed: CMaNGOS can push a player values-update mid-taxi-flight
     // that zeroes UNIT_FIELD_MOUNTDISPLAYID before the client's own flight
     // simulation actually finishes (same early-completion behavior already
@@ -802,6 +803,9 @@ void EntityController::detectPlayerMountChange(uint32_t newMountDisplayId,
     }
     owner_.currentMountDisplayIdRef() = newMountDisplayId;
     if (newMountDisplayId != old && owner_.mountCallbackRef()) owner_.mountCallbackRef()(newMountDisplayId);
+    if (isLiveUpdate && old == 0 && newMountDisplayId != 0 && owner_.mountPoofCallbackRef()) {
+        owner_.mountPoofCallbackRef()(owner_.getPlayerGuid());
+    }
     if (newMountDisplayId != old)
         pendingEvents_.emit("UNIT_MODEL_CHANGED", {"player"});
     if (old == 0 && newMountDisplayId != 0) {
@@ -1201,7 +1205,7 @@ bool EntityController::applyUnitFieldsOnCreate(const UpdateBlock& block,
         }
         else if (key == ufi.mountDisplayId) {
             if (block.guid == owner_.getPlayerGuid()) {
-                detectPlayerMountChange(val, block.fields);
+                detectPlayerMountChange(val, block.fields, /*isLiveUpdate=*/false);
             } else if (owner_.otherPlayerMountCallbackRef()) {
                 owner_.otherPlayerMountCallbackRef()(block.guid, val);
             }
@@ -1494,10 +1498,15 @@ EntityController::UnitFieldUpdateResult EntityController::applyUnitFieldsOnUpdat
             }
         } else if (key == ufi.mountDisplayId) {
             if (block.guid == owner_.getPlayerGuid()) {
-                detectPlayerMountChange(val, block.fields);
-            } else if (val != unit->getMountDisplayId() &&
-                       owner_.otherPlayerMountCallbackRef()) {
-                owner_.otherPlayerMountCallbackRef()(block.guid, val);
+                detectPlayerMountChange(val, block.fields, /*isLiveUpdate=*/true);
+            } else {
+                const uint32_t oldMount = unit->getMountDisplayId();
+                if (val != oldMount && owner_.otherPlayerMountCallbackRef()) {
+                    owner_.otherPlayerMountCallbackRef()(block.guid, val);
+                }
+                if (oldMount == 0 && val != 0 && owner_.mountPoofCallbackRef()) {
+                    owner_.mountPoofCallbackRef()(block.guid);
+                }
             }
             unit->setMountDisplayId(val);
         } else if (ufi.attackPower != 0xFFFF && key == ufi.attackPower &&
