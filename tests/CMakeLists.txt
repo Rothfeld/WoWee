@@ -806,6 +806,9 @@ wowee_add_test(test_monster_move_facing
             ${CMAKE_SOURCE_DIR}/src/network/packet.cpp
             ${CMAKE_SOURCE_DIR}/src/game/spline_packet.cpp)
 
+wowee_add_packet_test(test_tbc_spline_facing
+    SOURCES ${CMAKE_SOURCE_DIR}/src/math/spline.cpp)
+
 # ── test_packet ──────────────────────────────────────────────
 add_executable(test_packet
     test_packet.cpp

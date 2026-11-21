@@ -1375,8 +1375,13 @@ void MovementHandler::syncPlayerServerSpline() {
     auto& mgr = owner_.getEntityManager();
     for (const auto& [guid, entity] : mgr.getEntities()) {
         (void)guid;
-        if (!entity || !entity->isServerSplineActive()) continue;
-        const uint64_t faceGuid = entity->splineFacingTargetGuid();
+        if (!entity) continue;
+        uint64_t faceGuid = 0;
+        if (entity->isServerSplineActive()) {
+            faceGuid = entity->splineFacingTargetGuid();
+        } else {
+            faceGuid = entity->consumeSplineArrivalTargetGuid();
+        }
         if (faceGuid == 0) continue;
         if (auto target = mgr.getEntity(faceGuid)) {
             const float dx = target->getX() - entity->getX();
@@ -2384,44 +2389,43 @@ void MovementHandler::handleMonsterMove(network::Packet& packet) {
             glm::vec3(data.destX, data.destY, data.destZ));
 
         float orientation = entity->getOrientation();
-        if (data.moveType == 4) {
-            orientation = core::coords::serverToCanonicalYaw(data.facingAngle);
-        } else if (data.moveType == 3) {
-            bool resolvedTarget = false;
-            if (auto target = owner_.getEntityManager().getEntity(data.facingTarget)) {
-                const float dx = target->getX() - startCanonical.x;
-                const float dy = target->getY() - startCanonical.y;
-                if (std::abs(dx) > 0.01f || std::abs(dy) > 0.01f) {
-                    orientation = std::atan2(-dy, dx);
-                    resolvedTarget = true;
-                }
-            }
-            if (!resolvedTarget) {
-                const float dx = destCanonical.x - startCanonical.x;
-                const float dy = destCanonical.y - startCanonical.y;
-                if (std::abs(dx) > 0.01f || std::abs(dy) > 0.01f) {
-                    orientation = std::atan2(-dy, dx);
-                }
-            }
-        } else {
-            const float dx = destCanonical.x - startCanonical.x;
-            const float dy = destCanonical.y - startCanonical.y;
+        const glm::vec3 firstStepCanonical = !data.waypoints.empty()
+            ? core::coords::serverToCanonical(
+                  glm::vec3(data.waypoints.front().x, data.waypoints.front().y, data.waypoints.front().z))
+            : destCanonical;
+        {
+            const float dx = firstStepCanonical.x - startCanonical.x;
+            const float dy = firstStepCanonical.y - startCanonical.y;
             if (std::abs(dx) > 0.01f || std::abs(dy) > 0.01f) {
                 orientation = std::atan2(-dy, dx);
             }
         }
 
-        if (data.moveType != 3) {
-            float travelDx = destCanonical.x - startCanonical.x;
-            float travelDy = destCanonical.y - startCanonical.y;
-            float travelLen = std::sqrt(travelDx * travelDx + travelDy * travelDy);
-            if (travelLen > 0.5f) {
-                float travelAngle = std::atan2(-travelDy, travelDx);
-                float diff = orientation - travelAngle;
-                while (diff >  static_cast<float>(M_PI)) diff -= 2.0f * static_cast<float>(M_PI);
-                while (diff < -static_cast<float>(M_PI)) diff += 2.0f * static_cast<float>(M_PI);
-                if (std::abs(diff) > static_cast<float>(M_PI) * 0.5f) {
-                    orientation = travelAngle;
+        // CMaNGOS MoveSpline::ComputePosition faces along the spline tangent
+        // during travel and applies Final_Angle / Final_Point / Final_Target
+        // upon spline completion.
+        std::optional<float> finalOrientation;
+        if (data.moveType == 4) {
+            finalOrientation = core::coords::serverToCanonicalYaw(data.facingAngle);
+        } else if (data.moveType == 2) {
+            const glm::vec3 spotCanonical = core::coords::serverToCanonical(
+                glm::vec3(data.facingSpotX, data.facingSpotY, data.facingSpotZ));
+            const float dx = spotCanonical.x - destCanonical.x;
+            const float dy = spotCanonical.y - destCanonical.y;
+            if (dx * dx + dy * dy > 0.0001f) {
+                finalOrientation = std::atan2(-dy, dx);
+            }
+        } else if (data.moveType == 3) {
+            if (auto target = owner_.getEntityManager().getEntity(data.facingTarget)) {
+                const float startDx = target->getX() - startCanonical.x;
+                const float startDy = target->getY() - startCanonical.y;
+                if (std::abs(startDx) > 0.01f || std::abs(startDy) > 0.01f) {
+                    orientation = std::atan2(-startDy, startDx);
+                }
+                const float endDx = target->getX() - destCanonical.x;
+                const float endDy = target->getY() - destCanonical.y;
+                if (std::abs(endDx) > 0.01f || std::abs(endDy) > 0.01f) {
+                    finalOrientation = std::atan2(-endDy, endDx);
                 }
             }
         }
@@ -2448,8 +2452,8 @@ void MovementHandler::handleMonsterMove(network::Packet& packet) {
         const bool smooth = !isActiveExpansion("tbc") || (data.splineFlags & 0x200u) != 0;
         const uint64_t facingTargetGuid = (data.moveType == 3) ? data.facingTarget : 0;
         entity->startServerSpline(path, orientation, data.duration / 1000.0f,
-                                  smooth, data.moveType == 0,
-                                  data.splineFlags, facingTargetGuid);
+                                  smooth, data.moveType != 3,
+                                  data.splineFlags, facingTargetGuid, finalOrientation);
 
         if (isLocalPlayer) {
             movementInfo.flags &= ~kClearPlayerSplineWireFlags;
@@ -2530,6 +2534,29 @@ void MovementHandler::handleMonsterMove(network::Packet& packet) {
             owner_.creatureMoveCallbackRef()(data.guid,
                 posCanonical.x, posCanonical.y, posCanonical.z, 0);
         }
+    } else if (data.moveType == 2) {
+        glm::vec3 posCanonical = core::coords::serverToCanonical(
+            glm::vec3(data.x, data.y, data.z));
+        glm::vec3 spotCanonical = core::coords::serverToCanonical(
+            glm::vec3(data.facingSpotX, data.facingSpotY, data.facingSpotZ));
+        float orientation = entity->getOrientation();
+        const float dx = spotCanonical.x - posCanonical.x;
+        const float dy = spotCanonical.y - posCanonical.y;
+        if (dx * dx + dy * dy > 0.0001f) {
+            orientation = std::atan2(-dy, dx);
+        }
+        entity->setPosition(posCanonical.x, posCanonical.y, posCanonical.z, orientation);
+        entity->markServerSplinePosition(data.splineFlags);
+        if (isLocalPlayer && playerServerSplinePendingSettle_) {
+            movementInfo.flags &= ~kClearPlayerSplineWireFlags;
+            playerServerSplinePendingSettle_ = false;
+            playerServerSplineJustLanded_ = true;
+            commitServerSplineArrival(posCanonical, orientation);
+        }
+        if (owner_.creatureMoveCallbackRef()) {
+            owner_.creatureMoveCallbackRef()(data.guid,
+                posCanonical.x, posCanonical.y, posCanonical.z, 0);
+        }
     } else if (data.moveType == 4) {
         float orientation = core::coords::serverToCanonicalYaw(data.facingAngle);
         glm::vec3 posCanonical = core::coords::serverToCanonical(
@@ -2602,11 +2629,14 @@ void MovementHandler::handleMonsterMoveTransport(network::Packet& packet) {
     }
 
     float facingAngle = entity->getOrientation();
+    bool hasFacingSpot = false;
+    glm::vec3 facingSpotLocal{0.0f};
     if (moveType == 2) {
         if (packet.getReadPos() + 12 > packet.getSize()) return;
-        float sx = packet.readFloat(), sy = packet.readFloat(), sz = packet.readFloat();
-        facingAngle = std::atan2(-(sy - localY), sx - localX);
-        (void)sz;
+        facingSpotLocal.x = packet.readFloat();
+        facingSpotLocal.y = packet.readFloat();
+        facingSpotLocal.z = packet.readFloat();
+        hasFacingSpot = true;
     } else if (moveType == 3) {
         if (packet.getReadPos() + 8 > packet.getSize()) return;
         uint64_t tgtGuid = packet.readUInt64();
@@ -2649,6 +2679,20 @@ void MovementHandler::handleMonsterMoveTransport(network::Packet& packet) {
 
     glm::vec3 startLocalCanonical = owner_.getTransportManager()->serverToTransportLocal(
         transportGuid, glm::vec3(localX, localY, localZ));
+
+    if (hasFacingSpot) {
+        glm::vec3 spotCanonical = owner_.getTransportManager()->serverToTransportLocal(
+            transportGuid, facingSpotLocal);
+        glm::vec3 refCanonical = hasDest
+            ? owner_.getTransportManager()->serverToTransportLocal(
+                  transportGuid, glm::vec3(destLocalX, destLocalY, destLocalZ))
+            : startLocalCanonical;
+        const float dx = spotCanonical.x - refCanonical.x;
+        const float dy = spotCanonical.y - refCanonical.y;
+        if (dx * dx + dy * dy > 0.0001f) {
+            facingAngle = std::atan2(-dy, dx);
+        }
+    }
 
     if (hasDest && duration > 0) {
         glm::vec3 destLocalCanonical = owner_.getTransportManager()->serverToTransportLocal(

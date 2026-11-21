@@ -61,7 +61,7 @@ std::vector<std::string> unitEventTokens(const GameHandler& owner, uint64_t guid
     return tokens;
 }
 
-void restoreMovementSpline(const UpdateBlock& block, Entity& entity) {
+void restoreMovementSpline(const UpdateBlock& block, Entity& entity, const EntityManager& entities) {
     if (entity.getType() != ObjectType::UNIT || block.splinePath.size() < 2 ||
         block.splineDurationMs == 0 || (block.splineFlags & 1u) != 0) return;
     std::vector<std::array<float, 3>> path;
@@ -70,9 +70,32 @@ void restoreMovementSpline(const UpdateBlock& block, Entity& entity) {
         const auto p = core::coords::serverToCanonical({point[0], point[1], point[2]});
         path.push_back({p.x, p.y, p.z});
     }
+    std::optional<float> finalOrientation;
+    uint64_t facingTargetGuid = 0;
+    if (block.splineHasFinalAngle) {
+        finalOrientation = core::coords::serverToCanonicalYaw(block.splineFinalAngle);
+    } else if (block.splineHasFinalPoint) {
+        const auto spot = core::coords::serverToCanonical({
+            block.splineFinalPoint[0], block.splineFinalPoint[1], block.splineFinalPoint[2]});
+        const float dx = spot.x - path.back()[0];
+        const float dy = spot.y - path.back()[1];
+        if (dx * dx + dy * dy > 0.0001f) {
+            finalOrientation = std::atan2(-dy, dx);
+        }
+    } else if (block.splineHasFinalTarget && block.splineFinalTarget != 0) {
+        facingTargetGuid = block.splineFinalTarget;
+        if (auto target = entities.getEntity(facingTargetGuid)) {
+            const float dx = target->getX() - path.back()[0];
+            const float dy = target->getY() - path.back()[1];
+            if (dx * dx + dy * dy > 0.0001f) {
+                finalOrientation = std::atan2(-dy, dx);
+            }
+        }
+    }
     const bool cyclic = (block.splineFlags & 0x00100000u) != 0;
     entity.startMoveAlongPath(path, entity.getOrientation(), block.splineDurationMs / 1000.0f,
-                              (block.splineFlags & 0x200u) != 0, true, cyclic);
+                              (block.splineFlags & 0x200u) != 0,
+                              facingTargetGuid == 0, cyclic, finalOrientation, facingTargetGuid);
     entity.updateMovement(std::min(block.splineElapsedMs, block.splineDurationMs) / 1000.0f);
     LOG_DEBUG("Restored movement spline: guid=0x", std::hex, block.guid, std::dec,
               " elapsed=", block.splineElapsedMs, " duration=", block.splineDurationMs,
@@ -3114,7 +3137,7 @@ void EntityController::handleCreateObject(const UpdateBlock& block, bool& newIte
         glm::vec3 pos = core::coords::serverToCanonical(glm::vec3(block.x, block.y, block.z));
         float oCanonical = core::coords::serverToCanonicalYaw(block.orientation);
         entity->setPosition(pos.x, pos.y, pos.z, oCanonical);
-        restoreMovementSpline(block, *entity);
+        restoreMovementSpline(block, *entity, entityManager);
         if ((entity->getType() == ObjectType::PLAYER || entity->getType() == ObjectType::UNIT) &&
             block.runSpeed > 0.0f) {
             entity->groundWalkSpeed = block.walkSpeed;
@@ -3184,7 +3207,7 @@ void EntityController::handleValuesUpdate(const UpdateBlock& block) {
         glm::vec3 pos = core::coords::serverToCanonical(glm::vec3(block.x, block.y, block.z));
         float oCanonical = core::coords::serverToCanonicalYaw(block.orientation);
         entity->setPosition(pos.x, pos.y, pos.z, oCanonical);
-        restoreMovementSpline(block, *entity);
+        restoreMovementSpline(block, *entity, entityManager);
         if ((entity->getType() == ObjectType::PLAYER || entity->getType() == ObjectType::UNIT) &&
             block.runSpeed > 0.0f) {
             entity->groundWalkSpeed = block.walkSpeed;
@@ -3221,7 +3244,7 @@ void EntityController::handleMovementUpdate(const UpdateBlock& block) {
                 glm::vec3 pos = core::coords::serverToCanonical(glm::vec3(block.x, block.y, block.z));
                 float oCanonical = core::coords::serverToCanonicalYaw(block.orientation);
                 entity->setPosition(pos.x, pos.y, pos.z, oCanonical);
-                restoreMovementSpline(block, *entity);
+                restoreMovementSpline(block, *entity, entityManager);
                 if ((entity->getType() == ObjectType::PLAYER || entity->getType() == ObjectType::UNIT) &&
                     block.runSpeed > 0.0f) {
                     entity->groundWalkSpeed = block.walkSpeed;

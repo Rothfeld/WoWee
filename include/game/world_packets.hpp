@@ -565,6 +565,12 @@ struct UpdateBlock {
     uint32_t splineElapsedMs = 0;
     uint32_t splineDurationMs = 0;
     std::vector<std::array<float, 3>> splinePath;
+    bool splineHasFinalPoint = false;
+    std::array<float, 3> splineFinalPoint{0.0f, 0.0f, 0.0f};
+    bool splineHasFinalTarget = false;
+    uint64_t splineFinalTarget = 0;
+    bool splineHasFinalAngle = false;
+    float splineFinalAngle = 0.0f;
 
     // Transport data from LIVING movement block (MOVEMENTFLAG_ONTRANSPORT)
     bool onTransport = false;
@@ -2113,6 +2119,7 @@ struct MonsterMoveData {
     uint64_t guid = 0;
     float x = 0, y = 0, z = 0;  // Current position (server coords)
     uint8_t moveType = 0;  // 0=Normal, 1=Stop, 2=FacingSpot, 3=FacingTarget, 4=FacingAngle
+    float facingSpotX = 0, facingSpotY = 0, facingSpotZ = 0;  // Server coords (moveType == 2)
     float facingAngle = 0;
     uint64_t facingTarget = 0;
     uint32_t splineFlags = 0;

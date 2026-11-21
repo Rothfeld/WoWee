@@ -161,11 +161,11 @@ bool parseMonsterMoveFacing(network::Packet& packet, MonsterMoveData& data, bool
     }
 
     if (data.moveType == 2) {
-        // FacingSpot - a point to look at, which nothing here needs; read past.
+        // FacingSpot (Final_Point): world point (server coords) to face at spline arrival.
         if (!packet.hasRemaining(12)) return false;
-        packet.readFloat();
-        packet.readFloat();
-        packet.readFloat();
+        data.facingSpotX = packet.readFloat();
+        data.facingSpotY = packet.readFloat();
+        data.facingSpotZ = packet.readFloat();
     } else if (data.moveType == 3) {
         // FacingTarget
         if (!packet.hasRemaining(8)) return false;

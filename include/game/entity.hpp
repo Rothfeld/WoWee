@@ -170,6 +170,8 @@ public:
         hasServerSplinePosition_ = false;
         serverSplineFlags_ = 0;
         splineFacingTargetGuid_ = 0;
+        splineFinalOrientation_.reset();
+        splineArrivalTargetPending_ = false;
         activeSpline_.reset();
     }
 
@@ -181,16 +183,23 @@ public:
 
     // Multi-segment path movement (Catmull-Rom or piecewise-linear spline interpolation)
     void startMoveAlongPath(const std::vector<std::array<float, 3>>& path, float destO, float totalDuration,
-                            bool smooth = true, bool followPathFacing = false, bool cyclic = false) {
+                            bool smooth = true, bool followPathFacing = false, bool cyclic = false,
+                            std::optional<float> finalOrientation = std::nullopt,
+                            uint64_t facingTargetGuid = 0) {
         remotePredictedMotion_ = false;
         remoteAirborne_ = false;
         serverSpline_ = false;
         hasServerSplinePosition_ = false;
         serverSplineFlags_ = 0;
         splineFacingTargetGuid_ = 0;
+        splineFinalOrientation_.reset();
+        splineArrivalTargetPending_ = false;
         if (path.empty()) return;
         if (path.size() == 1 || totalDuration <= 0.0f) {
-            setPosition(path.back()[0], path.back()[1], path.back()[2], destO);
+            setPosition(path.back()[0], path.back()[1], path.back()[2],
+                        finalOrientation.value_or(destO));
+            splineFacingTargetGuid_ = facingTargetGuid;
+            splineArrivalTargetPending_ = facingTargetGuid != 0;
             return;
         }
         // Build cumulative distances for proportional time assignment.
@@ -206,7 +215,10 @@ public:
             cumDist[i] = totalDist;
         }
         if (totalDist < 0.001f) {
-            setPosition(path.back()[0], path.back()[1], path.back()[2], destO);
+            setPosition(path.back()[0], path.back()[1], path.back()[2],
+                        finalOrientation.value_or(destO));
+            splineFacingTargetGuid_ = facingTargetGuid;
+            splineArrivalTargetPending_ = facingTargetGuid != 0;
             return;
         }
         // Build SplineKeys with distance-proportional time
@@ -223,6 +235,8 @@ public:
         cyclicPath_ = cyclic;
         smoothPath_ = smooth;
         followPathFacing_ = followPathFacing;
+        splineFinalOrientation_ = finalOrientation;
+        splineFacingTargetGuid_ = facingTargetGuid;
         locomotionSpeed_ = totalDist / totalDuration;
 
         x = path.front()[0];
@@ -246,12 +260,13 @@ public:
     // (e.g. CMaNGOS MoveCharge adds +1.0 yd to spline Z).
     void startServerSpline(const std::vector<std::array<float, 3>>& path, float destO,
                            float totalDuration, bool smooth, bool followPathFacing,
-                           uint32_t splineFlags, uint64_t facingTargetGuid = 0) {
-        startMoveAlongPath(path, destO, totalDuration, smooth, followPathFacing, /*cyclic=*/false);
+                           uint32_t splineFlags, uint64_t facingTargetGuid = 0,
+                           std::optional<float> finalOrientation = std::nullopt) {
+        startMoveAlongPath(path, destO, totalDuration, smooth, followPathFacing,
+                           /*cyclic=*/false, finalOrientation, facingTargetGuid);
         serverSpline_ = isMoving_;
         hasServerSplinePosition_ = true;
         serverSplineFlags_ = splineFlags;
-        splineFacingTargetGuid_ = facingTargetGuid;
     }
 
     // Movement interpolation (syncs entity position with renderer during movement)
@@ -262,6 +277,8 @@ public:
         hasServerSplinePosition_ = false;
         serverSplineFlags_ = 0;
         splineFacingTargetGuid_ = 0;
+        splineFinalOrientation_.reset();
+        splineArrivalTargetPending_ = false;
         activeSpline_.reset();
         if (durationSec <= 0.0f) {
             setPosition(destX, destY, destZ, destO);
@@ -330,6 +347,8 @@ public:
         hasServerSplinePosition_ = false;
         serverSplineFlags_ = 0;
         splineFacingTargetGuid_ = 0;
+        splineFinalOrientation_.reset();
+        splineArrivalTargetPending_ = false;
         activeSpline_.reset();
         remoteVelocity_ = velocity;
         remoteCorrection_ = position - glm::vec3(x, y, z);
@@ -464,10 +483,18 @@ public:
             }
         } else if (usePathMode_ || serverSpline_) {
             // Authoritative spline path has reached its explicit endpoint: clamp
-            // directly to destination with zero dead-reckoning overrun.
+            // directly to destination with zero dead-reckoning overrun, and apply
+            // any server-authored final facing (Final_Angle / Final_Point / Final_Target).
             x = moveEndX_;
             y = moveEndY_;
             z = moveEndZ_;
+            if (splineFinalOrientation_) {
+                orientation = *splineFinalOrientation_;
+                splineFinalOrientation_.reset();
+            }
+            if (splineFacingTargetGuid_ != 0) {
+                splineArrivalTargetPending_ = true;
+            }
             velX_ = 0.0f;
             velY_ = 0.0f;
             velZ_ = 0.0f;
@@ -497,6 +524,11 @@ public:
     [[nodiscard]] bool hasServerSplinePosition() const { return hasServerSplinePosition_; }
     [[nodiscard]] uint32_t serverSplineFlags() const { return serverSplineFlags_; }
     [[nodiscard]] uint64_t splineFacingTargetGuid() const { return splineFacingTargetGuid_; }
+    [[nodiscard]] uint64_t consumeSplineArrivalTargetGuid() {
+        if (!splineArrivalTargetPending_) return 0;
+        splineArrivalTargetPending_ = false;
+        return splineFacingTargetGuid_;
+    }
 
     [[nodiscard]] float getLocomotionSpeed() const {
         return isActivelyMoving() ? locomotionSpeed_ : 0.0f;
@@ -624,6 +656,8 @@ protected:
     bool hasServerSplinePosition_ = false;
     uint32_t serverSplineFlags_ = 0;
     uint64_t splineFacingTargetGuid_ = 0;
+    std::optional<float> splineFinalOrientation_;
+    bool splineArrivalTargetPending_ = false;
 };
 
 /**

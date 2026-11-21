@@ -143,17 +143,20 @@ bool TbcPacketParsers::parseMovementBlock(network::Packet& packet, UpdateBlock& 
             block.splineFlags = splineFlags;
             LOG_DEBUG("  [TBC] Spline: flags=0x", std::hex, splineFlags, std::dec);
 
-            if (splineFlags & 0x00010000) { // FINAL_POINT
+            if (splineFlags & SplineFlag::FINAL_POINT) { // 0x00010000
                 if (rem() < 12) return false;
-                /*float finalX =*/ packet.readFloat();
-                /*float finalY =*/ packet.readFloat();
-                /*float finalZ =*/ packet.readFloat();
-            } else if (splineFlags & 0x00020000) { // FINAL_TARGET
+                block.splineHasFinalPoint = true;
+                block.splineFinalPoint[0] = packet.readFloat();
+                block.splineFinalPoint[1] = packet.readFloat();
+                block.splineFinalPoint[2] = packet.readFloat();
+            } else if (splineFlags & SplineFlag::FINAL_TARGET) { // 0x00020000
                 if (rem() < 8) return false;
-                /*uint64_t finalTarget =*/ packet.readUInt64();
-            } else if (splineFlags & 0x00040000) { // FINAL_ANGLE
+                block.splineHasFinalTarget = true;
+                block.splineFinalTarget = packet.readUInt64();
+            } else if (splineFlags & SplineFlag::FINAL_ANGLE) { // 0x00040000
                 if (rem() < 4) return false;
-                /*float finalAngle =*/ packet.readFloat();
+                block.splineHasFinalAngle = true;
+                block.splineFinalAngle = packet.readFloat();
             }
 
             // TBC spline: timePassed, duration, id, pointCount

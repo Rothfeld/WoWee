@@ -51,7 +51,7 @@ TEST_CASE("Stop ends the packet where the creature already is", "[monstermove]")
 }
 
 TEST_CASE("each facing kind consumes its own length", "[monstermove]") {
-    SECTION("FacingSpot is three floats, read past and not kept") {
+    SECTION("FacingSpot is three floats, and they are kept") {
         Packet p = withFacing(2, {1.0f, 2.0f, 3.0f});
         MonsterMoveData data;
         bool stopped = true;
@@ -59,6 +59,9 @@ TEST_CASE("each facing kind consumes its own length", "[monstermove]") {
         CHECK_FALSE(stopped);
         // Twelve bytes gone, and nothing left behind for the spline reader.
         CHECK_FALSE(p.hasData());
+        CHECK(data.facingSpotX == 1.0f);
+        CHECK(data.facingSpotY == 2.0f);
+        CHECK(data.facingSpotZ == 3.0f);
         CHECK(data.facingTarget == 0);
         CHECK(data.facingAngle == 0.0f);
     }
