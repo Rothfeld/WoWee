@@ -131,7 +131,7 @@ void CombatUI::renderCombatText(game::GameHandler& gameHandler) {
             entry.srcGuid != 0 && entry.srcGuid == gameHandler.getPetGuid();
         const bool outgoing = entry.isPlayerSource || isPetSource;
         const bool experience = entry.type == game::CombatTextEntry::XP_GAIN;
-        const bool reward = experience || entry.type == game::CombatTextEntry::HONOR_GAIN;
+        const bool reward = experience;
         // Lines that land on the player are Blizzard_CombatText's, which
         // hears them as COMBAT_TEXT_UPDATE (CombatHandler::addCombatText);
         // build 8606 draws nothing of its own for them, nor for power gains,

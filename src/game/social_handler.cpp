@@ -5533,6 +5533,8 @@ void SocialHandler::handleSetFactionStanding(network::Packet& packet) {
                 delta > 0 ? "FACTION_STANDING_INCREASED" : "FACTION_STANDING_DECREASED",
                 {name, std::to_string(std::abs(delta))});
             owner_.addLocalChatLine(ChatType::COMBAT_FACTION_CHANGE, line);
+            if (!name.empty())
+                owner_.fireAddonEvent("COMBAT_TEXT_UPDATE", {"FACTION", name, std::to_string(delta)});
             owner_.watchedFactionIdRef() = factionId;
         }
         const auto& before = reputationStandingFor(oldStanding);

@@ -6905,6 +6905,7 @@ void SpellHandler::handleExtraAuraInfo(network::Packet& packet, bool isInit) {
     // visible aura table or BuffFrame/UnitBuff will display racial/class passives.
     const uint8_t maxVisibleSlots = isActiveExpansion("tbc") ? 56u : 48u;
     bool updatedVisibleSlot = false;
+    std::vector<std::pair<std::string, std::string>> auraCombatText;
     while (packet.hasRemaining(13)) {
         const uint8_t slot = packet.readUInt8();
         const uint32_t spellId = packet.readUInt32();
@@ -6912,6 +6913,14 @@ void SpellHandler::handleExtraAuraInfo(network::Packet& packet, bool isInit) {
         const uint32_t remaining = packet.readUInt32();
         if (slot >= maxVisibleSlots) continue;
         if (auraList) {
+            const bool isPlayerLive = (!isInit && auraTargetGuid == owner_.getPlayerGuid());
+            const auto hasSpell = [&](uint32_t id) {
+                return id != 0 && std::any_of(auraList->begin(), auraList->end(),
+                                              [&](const AuraSlot& a) { return a.spellId == id; });
+            };
+            const bool hadNewSpell = isPlayerLive && hasSpell(spellId);
+            const uint32_t oldSpellId = (slot < auraList->size()) ? (*auraList)[slot].spellId : 0u;
+            const uint8_t oldFlags = (slot < auraList->size()) ? (*auraList)[slot].flags : 0u;
             if (auraList->size() <= slot) auraList->resize(slot + 1);
             auto& aura = (*auraList)[slot];
             aura.spellId = spellId;
@@ -6922,6 +6931,22 @@ void SpellHandler::handleExtraAuraInfo(network::Packet& packet, bool isInit) {
             aura.playerCast = true;
             aura.casterGuid = owner_.getPlayerGuid();
             updatedVisibleSlot = true;
+            if (isPlayerLive) {
+                if (oldSpellId != 0 && oldSpellId != spellId && !hasSpell(oldSpellId)) {
+                    const std::string& oldName = owner_.getSpellName(oldSpellId);
+                    if (!oldName.empty()) {
+                        auraCombatText.emplace_back(
+                            (oldFlags & 0x80u) ? "SPELL_AURA_END_HARMFUL" : "SPELL_AURA_END", oldName);
+                    }
+                }
+                if (spellId != 0 && !hadNewSpell) {
+                    const std::string& name = owner_.getSpellName(spellId);
+                    if (!name.empty()) {
+                        auraCombatText.emplace_back(
+                            (aura.flags & 0x80u) ? "SPELL_AURA_START_HARMFUL" : "SPELL_AURA_START", name);
+                    }
+                }
+            }
         }
     }
     if (!updatedVisibleSlot) {
@@ -6930,6 +6955,8 @@ void SpellHandler::handleExtraAuraInfo(network::Packet& packet, bool isInit) {
     }
     if (auraList) mirrorAurasByGuid(auraTargetGuid, *auraList);
     if (auraList && owner_.addonEventCallbackRef()) {
+        for (const auto& [type, name] : auraCombatText)
+            owner_.addonEventCallbackRef()("COMBAT_TEXT_UPDATE", {type, name});
         std::string unitId;
         if (auraTargetGuid == owner_.getPlayerGuid()) unitId = "player";
         else if (auraTargetGuid == owner_.getTargetGuid()) unitId = "target";
@@ -7372,6 +7399,14 @@ void SpellHandler::handleClearExtraAuraInfo(network::Packet& packet) {
         else if (clearGuid == owner_.getTargetGuid())   auraList = &targetAuras_;
         else if (clearGuid != 0)                         auraList = &unitAurasCache_[clearGuid];
         if (auraList && slot < auraList->size()) {
+            if (clearGuid == owner_.getPlayerGuid() && !(*auraList)[slot].isEmpty() && owner_.addonEventCallbackRef()) {
+                const auto& dying = (*auraList)[slot];
+                const std::string& name = owner_.getSpellName(dying.spellId);
+                if (!name.empty()) {
+                    const std::string type = (dying.flags & 0x80u) ? "SPELL_AURA_END_HARMFUL" : "SPELL_AURA_END";
+                    owner_.addonEventCallbackRef()("COMBAT_TEXT_UPDATE", {type, name});
+                }
+            }
             (*auraList)[slot] = AuraSlot{};
         }
         if (auraList) mirrorAurasByGuid(clearGuid, *auraList);

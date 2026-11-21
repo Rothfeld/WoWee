@@ -680,9 +680,10 @@ void EntityController::syncPreWotlkAurasFromFields(const std::shared_ptr<Entity>
     }
     // COMBAT_TEXT_UPDATE SPELL_AURA_START / SPELL_AURA_END, _HARMFUL for the
     // negative slots, with the spell's name (build 8606, pair 7: Power Word:
-    // Fortitude, Rejuvenation, Weakened Soul). The first rebuild after the
-    // list was dropped is the state the player arrived with, not a change.
-    if (!previousAuras.empty()) {
+    // Fortitude, Rejuvenation, Weakened Soul). Only live VALUES updates
+    // (`changed != nullptr`) announce changes; CREATE_OBJECT (`changed == nullptr`)
+    // is the state the player arrived with.
+    if (changed != nullptr) {
         const auto has = [](const std::vector<AuraSlot>& list, uint32_t spellId) {
             return std::any_of(list.begin(), list.end(),
                                [&](const AuraSlot& a) { return a.spellId == spellId; });
@@ -1390,7 +1391,27 @@ EntityController::UnitFieldUpdateResult EntityController::applyUnitFieldsOnUpdat
             }
         }
         else if (ufi.auraState != 0xFFFF && key == ufi.auraState) {
+            const uint32_t oldAuraState = unit->getAuraState();
             unit->setAuraState(val);
+            if (val != oldAuraState) {
+                const uint32_t addedBits = val & ~oldAuraState;
+                const bool isPlayer = (block.guid == owner_.getPlayerGuid());
+                const bool isTarget = (block.guid == owner_.getTargetGuid());
+                if (isPlayer || isTarget) {
+                    pendingEvents_.emit("SPELL_UPDATE_USABLE", {});
+                    if (addedBits != 0) {
+                        std::unordered_set<std::string> announced;
+                        for (uint32_t spellId : owner_.getKnownSpells()) {
+                            const auto* entry = owner_.getSpellNameEntry(spellId);
+                            if (!entry || (entry->attr & 0x40u) != 0) continue;
+                            const uint32_t state = isPlayer ? entry->casterAuraState : entry->targetAuraState;
+                            if (state == 0 || (addedBits & (1u << (state - 1))) == 0) continue;
+                            if (!entry->name.empty() && announced.insert(entry->name).second)
+                                pendingEvents_.emit("COMBAT_TEXT_UPDATE", {"SPELL_ACTIVE", entry->name});
+                        }
+                    }
+                }
+            }
         }
         else if (ufi.bytes1 != 0xFFFF && key == ufi.bytes1) {
             const uint8_t oldVisibilityFlags = unit->getVisibilityFlags();
@@ -1571,9 +1592,17 @@ EntityController::UnitFieldUpdateResult EntityController::applyUnitFieldsOnUpdat
         // Power/maxpower range checks AFTER all specific fields
         else if (key >= ufi.powerBase && key < ufi.powerBase + ufi.powerCount()) {
             const auto powerType = static_cast<uint8_t>(key - ufi.powerBase);
+            const uint32_t oldRaw = unit->getPowerByType(powerType);
             unit->setPowerByType(powerType, val);
             result.powerChanged = true;
             if (powerType < 7) emitForUnit(kPowerEvents[powerType]);
+            if (block.guid == owner_.getPlayerGuid() && powerType < 4 && owner_.getCombatHandler()) {
+                const int32_t delta = owner_.getCombatHandler()->consumePlayerPowerGain(powerType, oldRaw, val);
+                if (delta > 0) {
+                    static constexpr const char* kPowerNames[] = {"MANA", "RAGE", "FOCUS", "ENERGY"};
+                    pendingEvents_.emit("COMBAT_TEXT_UPDATE", {kPowerNames[powerType], std::to_string(delta)});
+                }
+            }
         } else if (key >= ufi.maxPowerBase && key < ufi.maxPowerBase + ufi.powerCount()) {
             const auto powerType = static_cast<uint8_t>(key - ufi.maxPowerBase);
             unit->setMaxPowerByType(powerType, val);

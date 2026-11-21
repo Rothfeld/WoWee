@@ -111,8 +111,20 @@ TEST_CASE("COMBAT_TEXT_UPDATE carries build 8606's message types and data", "[co
     CHECK(combatTextUpdateFor(CombatTextEntry::RESIST, 0, true, 0, "", -1)->type == "SPELL_RESIST");
     // A hit that did damage: Blizzard_CombatText's partial form.
     auto partial = combatTextUpdateFor(CombatTextEntry::ABSORB, 20, false, 0, "", 30);
+    CHECK(partial->type == "ABSORB");
     CHECK(partial->arg2 == "30");
     CHECK(partial->arg3 == "20");
+    // Partial spell resist uses RESIST (present in COMBAT_TEXT_TYPE_INFO).
+    auto partialSpellResist = combatTextUpdateFor(CombatTextEntry::RESIST, 50, true, 0, "", 200);
+    REQUIRE(partialSpellResist);
+    CHECK(partialSpellResist->type == "RESIST");
+    CHECK(partialSpellResist->arg2 == "200");
+    CHECK(partialSpellResist->arg3 == "50");
+    // Environmental damage reports as DAMAGE.
+    auto env = combatTextUpdateFor(CombatTextEntry::ENVIRONMENTAL, 125, false, 2, "", -1);
+    REQUIRE(env);
+    CHECK(env->type == "DAMAGE");
+    CHECK(env->arg2 == "125");
     // A full absorb arrives as a zero-damage hit first; that line says nothing.
     CHECK_FALSE(combatTextUpdateFor(CombatTextEntry::MELEE_DAMAGE, 0, false, 0, "", -1));
     CHECK_FALSE(combatTextUpdateFor(CombatTextEntry::XP_GAIN, 50, false, 0, "", -1));

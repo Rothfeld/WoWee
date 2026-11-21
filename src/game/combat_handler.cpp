@@ -456,10 +456,24 @@ void CombatHandler::addCombatText(CombatTextEntry::Type type, int32_t amount, ui
                 incomingHitDamage_ = damage && hitsPlayer ? amount : -1;
             }
             if (update && owner_.addonEventCallbackRef()) {
+                if (type == T::ENERGIZE && hitsPlayer && powerType < 4 && amount > 0) {
+                    const auto now = std::chrono::steady_clock::now();
+                    auto& slot = recentPowerEnergize_[powerType];
+                    if (slot.amount > 0 && now - slot.at < std::chrono::milliseconds(500))
+                        slot.amount += amount;
+                    else
+                        slot.amount = amount;
+                    slot.at = now;
+                }
                 // Absent data reaches Lua as nil: the addon tests arg3 for a partial block.
+                // Preserve positional arg2 when arg3 is present (e.g. HEAL with unknown caster).
                 std::vector<std::string> args{update->type};
-                if (!update->arg2.empty()) args.push_back(update->arg2);
-                if (!update->arg3.empty()) args.push_back(update->arg3);
+                if (!update->arg3.empty()) {
+                    args.push_back(update->arg2);
+                    args.push_back(update->arg3);
+                } else if (!update->arg2.empty()) {
+                    args.push_back(update->arg2);
+                }
                 owner_.addonEventCallbackRef()("COMBAT_TEXT_UPDATE", args);
             }
         }
@@ -1057,6 +1071,8 @@ void CombatHandler::resetAllCombatState() {
     autoAttackRangeWarnCooldown_ = 0.0f;
     autoAttackRangeRepeat_ = 0.0f;
     lastMeleeSwingMs_ = 0;
+    incomingHitDamage_ = -1;
+    for (auto& slot : recentPowerEnergize_) slot = {};
 }
 
 void CombatHandler::removeHostileAttacker(uint64_t guid) {
@@ -1093,6 +1109,26 @@ void CombatHandler::handleHealthUpdate(network::Packet& packet) {
     }
 }
 
+int32_t CombatHandler::consumePlayerPowerGain(uint8_t powerType, uint32_t oldRaw, uint32_t newRaw) {
+    if (powerType >= 4) return 0;
+    const int32_t oldDisp = displayPowerAmount(powerType, static_cast<int32_t>(oldRaw));
+    const int32_t newDisp = displayPowerAmount(powerType, static_cast<int32_t>(newRaw));
+    int32_t delta = newDisp - oldDisp;
+    if (delta <= 0) return 0;
+    auto& slot = recentPowerEnergize_[powerType];
+    if (slot.amount > 0) {
+        const auto now = std::chrono::steady_clock::now();
+        if (now - slot.at < std::chrono::milliseconds(500)) {
+            const int32_t used = std::min(delta, slot.amount);
+            delta -= used;
+            slot.amount -= used;
+        } else {
+            slot.amount = 0;
+        }
+    }
+    return delta;
+}
+
 void CombatHandler::handlePowerUpdate(network::Packet& packet) {
     const bool puTbc = isActiveExpansion("tbc");
     if (!packet.hasRemaining(puTbc ? 8u : 2u) ) return;
@@ -1100,14 +1136,33 @@ void CombatHandler::handlePowerUpdate(network::Packet& packet) {
     if (!packet.hasRemaining(5)) return;
     uint8_t  powerType = packet.readUInt8();
     uint32_t value     = packet.readUInt32();
-    if (auto* unit = owner_.getUnitByGuid(guid)) unit->setPowerByType(powerType, value);
+    uint32_t oldRaw = 0;
+    bool hadUnit = false;
+    if (auto* unit = owner_.getUnitByGuid(guid)) {
+        oldRaw = unit->getPowerByType(powerType);
+        hadUnit = true;
+        unit->setPowerByType(powerType, value);
+    }
     if (guid != 0) {
         auto unitId = owner_.guidToUnitId(guid);
         if (!unitId.empty()) {
-            owner_.fireAddonEvent("UNIT_POWER", {unitId});
+            static constexpr const char* kPowerEvents[] = {
+                "UNIT_MANA", "UNIT_RAGE", "UNIT_FOCUS", "UNIT_ENERGY", "UNIT_HAPPINESS"
+            };
+            if (powerType < std::size(kPowerEvents))
+                owner_.fireAddonEvent(kPowerEvents[powerType], {unitId});
             // ACTIONBAR_UPDATE_USABLE comes from SpellHandler::updateTimers,
             // only when a button's answer changed.
-            if (guid == owner_.getPlayerGuid()) owner_.fireAddonEvent("SPELL_UPDATE_USABLE", {});
+            if (guid == owner_.getPlayerGuid()) {
+                owner_.fireAddonEvent("SPELL_UPDATE_USABLE", {});
+                if (hadUnit && powerType < 4) {
+                    const int32_t delta = consumePlayerPowerGain(powerType, oldRaw, value);
+                    if (delta > 0) {
+                        static constexpr const char* kPowerNames[] = {"MANA", "RAGE", "FOCUS", "ENERGY"};
+                        owner_.fireAddonEvent("COMBAT_TEXT_UPDATE", {kPowerNames[powerType], std::to_string(delta)});
+                    }
+                }
+            }
         }
     }
 }
@@ -1117,12 +1172,28 @@ void CombatHandler::handleUpdateComboPoints(network::Packet& packet) {
     if (!packet.hasRemaining(2)) return;
     uint64_t target = packet.readPackedGuid();
     if (!packet.hasRemaining(1)) return;
-    owner_.comboPointsRef() = packet.readUInt8();
+    const uint8_t oldPoints = owner_.comboPointsRef();
+    const uint64_t oldTarget = owner_.comboTargetRef();
+    const uint8_t newPoints = packet.readUInt8();
+    owner_.comboPointsRef() = newPoints;
     owner_.comboTargetRef() = target;
     LOG_DEBUG("SMSG_UPDATE_COMBO_POINTS: target=0x", std::hex, target,
               std::dec, " points=", static_cast<int>(owner_.comboPointsRef()));
     owner_.fireAddonEvent("PLAYER_COMBO_POINTS", {});
     owner_.fireAddonEvent("SPELL_UPDATE_USABLE", {});
+    // Warrior Overpower (SPELL_ATTR_EX_COMBO_ON_BLOCK = 0x40000000) reuses
+    // SMSG_UPDATE_COMBO_POINTS(target, 1) on target dodge; announce SPELL_ACTIVE
+    // to Blizzard_CombatText when the reactive window opens.
+    if (newPoints > 0 && (oldPoints == 0 || target != oldTarget)) {
+        std::unordered_set<std::string> announced;
+        for (uint32_t spellId : owner_.getKnownSpells()) {
+            const auto* entry = owner_.getSpellNameEntry(spellId);
+            if (!entry || (entry->attr & 0x40u) != 0) continue;
+            if ((entry->attrEx & 0x40000000u) == 0) continue;
+            if (!entry->name.empty() && announced.insert(entry->name).second)
+                owner_.fireAddonEvent("COMBAT_TEXT_UPDATE", {"SPELL_ACTIVE", entry->name});
+        }
+    }
 }
 
 void CombatHandler::handlePvpCredit(network::Packet& packet) {
