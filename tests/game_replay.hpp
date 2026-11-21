@@ -50,6 +50,14 @@ struct GameHandlerTestAccess {
         gh.areaNameCache_[area] = name;
         gh.areaNameCacheLoaded_ = true;
     }
+    // ChrRaces without the DBC: column 3 exploration SoundEntries ID for a race.
+    static void setRaceExplorationSound(GameHandler& gh, uint8_t raceId, uint32_t soundId) {
+        gh.raceExplorationSoundCache_[raceId] = soundId;
+        gh.raceExplorationSoundCacheLoaded_ = true;
+    }
+    static void setNoticesInterfaceReady(GameHandler& gh, bool ready) {
+        gh.noticesInterfaceReady_ = ready;
+    }
     // Map.dbc without the DBC: name and optional TBC difficulty requirement texts.
     static void setMapInfo(GameHandler& gh, uint32_t mapId, const std::string& name,
                            std::array<std::string, 3> difficultyText = {}) {

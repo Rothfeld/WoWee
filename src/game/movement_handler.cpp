@@ -550,10 +550,28 @@ void MovementHandler::sendDueHeartbeats() {
         static_cast<uint32_t>(MovementFlags::FALLINGFAR) |
         static_cast<uint32_t>(MovementFlags::ASCENDING) |
         static_cast<uint32_t>(MovementFlags::DESCENDING);
-    if ((movementInfo.flags & kMoving) == 0) return;
+    const bool moving = (movementInfo.flags & kMoving) != 0;
+    if (!moving && !owner_.isOnTransport()) return;
     const uint32_t intervalMs = static_cast<uint32_t>(std::lround(moveHeartbeatInterval_ * 1000.0f));
     assert(intervalMs > 0);
     const PhysicsSample current = *sample_;
+    if (!moving) {
+        // Stationary passenger on a boat/zeppelin/lift: CMaNGOS GenericTransport
+        // calls Map::PlayerRelocation rather than Player::SetPosition, so
+        // CheckAreaExploreAndOutdoor only runs when a movement packet arrives.
+        // Emit one heartbeat per 500 ms interval (no multi-packet burst after a
+        // map-transfer stall) with the composed world position from sendMovement.
+        if (lastPacketTimeMs_ + intervalMs <= current.timeMs) {
+            packetTimeMs_ = current.timeMs;
+            sendMovement(Opcode::MSG_MOVE_HEARTBEAT);
+            packetTimeMs_.reset();
+            movementInfo.x = current.x;
+            movementInfo.y = current.y;
+            movementInfo.z = current.z;
+            movementInfo.orientation = current.orientation;
+        }
+        return;
+    }
     while (lastPacketTimeMs_ + intervalMs <= current.timeMs) {
         const uint32_t dueMs = lastPacketTimeMs_ + intervalMs;
         PhysicsSample at = current;

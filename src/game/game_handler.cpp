@@ -3788,15 +3788,20 @@ void GameHandler::loadAreaNameCache() const {
     areaNameCacheLoaded_ = true;
 
     // AreaTable.dbc has the canonical zone/area names keyed by AreaID.
-    // Field 0 = ID, field 11 = AreaName (enUS locale).
+    // Field 0 = ID, field 11..26 = AreaName_lang (11..18 in 8-locale Classic).
     auto areaDbc = am->loadDBC("AreaTable.dbc");
     if (areaDbc && areaDbc->isLoaded() && areaDbc->getFieldCount() > 11) {
+        const uint32_t fieldCount = areaDbc->getFieldCount();
+        const uint32_t localeEnd = std::min(fieldCount, fieldCount >= 27 ? 27u : 19u);
         for (uint32_t i = 0; i < areaDbc->getRecordCount(); ++i) {
             uint32_t areaId = areaDbc->getUInt32(i, 0);
             if (areaId == 0) continue;
             areaMapCache_[areaId] = areaDbc->getUInt32(i, 1);
             areaParentCache_[areaId] = areaDbc->getUInt32(i, 2);  // ParentAreaNum
-            std::string name = areaDbc->getString(i, 11);
+            std::string name;
+            for (uint32_t col = 11; col < localeEnd && name.empty(); ++col) {
+                name = areaDbc->getString(i, col);
+            }
             if (!name.empty()) {
                 areaNameCache_[areaId] = std::move(name);
             }
@@ -3860,6 +3865,31 @@ std::string GameHandler::getAreaName(uint32_t areaId) const {
     loadAreaNameCache();
     auto it = areaNameCache_.find(areaId);
     return (it != areaNameCache_.end()) ? it->second : std::string{};
+}
+
+void GameHandler::loadRaceExplorationSoundCache() const {
+    if (raceExplorationSoundCacheLoaded_) return;
+    auto* am = services_.assetManager;
+    if (!am || !am->isInitialized()) return;
+    raceExplorationSoundCacheLoaded_ = true;
+
+    // ChrRaces.dbc: col 0 = RaceID, col 3 = m_ExplorationSoundID (4140..4147 in TBC).
+    auto dbc = am->loadDBC("ChrRaces.dbc");
+    if (!dbc || !dbc->isLoaded() || dbc->getFieldCount() <= 3) return;
+    for (uint32_t i = 0; i < dbc->getRecordCount(); ++i) {
+        const uint32_t raceId = dbc->getUInt32(i, 0);
+        const uint32_t soundId = dbc->getUInt32(i, 3);
+        if (raceId > 0 && raceId <= 0xFFu && soundId != 0) {
+            raceExplorationSoundCache_[static_cast<uint8_t>(raceId)] = soundId;
+        }
+    }
+}
+
+uint32_t GameHandler::getRaceExplorationSoundId(uint8_t raceId) const {
+    if (raceId == 0) return 0;
+    loadRaceExplorationSoundCache();
+    const auto it = raceExplorationSoundCache_.find(raceId);
+    return (it != raceExplorationSoundCache_.end()) ? it->second : 0u;
 }
 
 void GameHandler::loadMapNameCache() const {

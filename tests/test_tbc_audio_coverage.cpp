@@ -344,10 +344,31 @@ TEST_CASE("SoundEntryTable and UiSoundManager resolve TBC SoundEntries, UISoundL
     expectPlays([&] { ui.playLootCoinSmall(); }, "playLootCoinSmall");
     expectPlays([&] { ui.playLevelUp(); }, "playLevelUp");
 
-    // Numeric SoundEntries ID (8959 = RaidWarning) + ItemGroupSounds + ItemDisplayInfo
+    // Numeric SoundEntries ID (8959 = RaidWarning) + ChrRaces col 3 exploration fanfare + ItemGroupSounds
     events.clear();
     CHECK(ui.playById(8959));
     CHECK_FALSE(events.empty());
+
+    auto chrRaces = tbc.assets.loadDBC("ChrRaces.dbc");
+    REQUIRE(chrRaces != nullptr);
+    REQUIRE(chrRaces->isLoaded());
+    REQUIRE(chrRaces->getFieldCount() > 3);
+    int playableExplorationSounds = 0;
+    for (uint32_t row = 0; row < chrRaces->getRecordCount(); ++row) {
+        const uint32_t raceId = chrRaces->getUInt32(row, 0);
+        const uint32_t exploreSoundId = chrRaces->getUInt32(row, 3);
+        if ((raceId >= 1 && raceId <= 8) || raceId == 10 || raceId == 11) {
+            INFO("Playable raceId=" << raceId << " exploreSoundId=" << exploreSoundId);
+            REQUIRE(exploreSoundId >= 4140);
+            REQUIRE(exploreSoundId <= 4147);
+            events.clear();
+            CHECK(ui.playById(exploreSoundId));
+            REQUIRE_FALSE(events.empty());
+            CHECK(events.back().started);
+            ++playableExplorationSounds;
+        }
+    }
+    CHECK(playableExplorationSounds == 10);
 
     events.clear();
     CHECK(ui.playItemGroupSound(7, /*pickup=*/true));

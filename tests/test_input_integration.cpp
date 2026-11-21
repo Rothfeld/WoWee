@@ -1614,6 +1614,65 @@ TEST_CASE_METHOD(Integration, "TBC outgoing boat offsets preserve model-local ax
     CHECK(manager->transportLocalToServer(boat, manager->serverToTransportLocal(boat, {4,-6,8})) == glm::vec3(4,-6,8));
 }
 
+TEST_CASE_METHOD(Integration, "Stationary TBC boat passengers send 500 ms heartbeats so server zone discovery fires", "[transport][explore]") {
+    using namespace wowee::game;
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    auto* movement = handler.getMovementHandler();
+    auto* manager = handler.getTransportManager();
+    REQUIRE(movement);
+    REQUIRE(manager);
+
+    constexpr uint64_t boat = 0x01fc00000002b067ULL;
+    announceTbcBoat(session, boat);
+    manager->loadPathFromNodes(176231, {{0, 0, 0}});
+    // Canonical x=-14350, y=720 -> server x=-14350, y=720 outside Booty Bay
+    manager->registerTransport(boat, 0, 176231,
+                               wowee::core::coords::serverToCanonical(glm::vec3(-14350.0f, 720.0f, 0.0f)),
+                               176231, 3015, false, 0.0f);
+    handler.setPlayerOnTransport(boat, {0.0f, 0.0f, 6.2f});
+
+    constexpr uint32_t t0 = 2000000;
+    const auto step = [&](uint32_t timeMs) {
+        movement->beginFrame();
+        const glm::vec3 worldPos = manager->getPlayerWorldPosition(boat, handler.playerTransportOffsetRef());
+        handler.setPosition(worldPos.x, worldPos.y, worldPos.z);
+        movement->recordPhysicsSample(timeMs);
+        movement->sendDueHeartbeats();
+    };
+
+    step(t0);
+    handler.sendMovement(Opcode::MSG_MOVE_STOP);
+    CHECK(session.sent().of(Opcode::MSG_MOVE_HEARTBEAT).empty());
+
+    // Boat sails into Booty Bay while passenger stands completely still on deck.
+    manager->updateServerTransport(
+        boat, wowee::core::coords::serverToCanonical(glm::vec3(-14270.0f, 580.0f, 0.0f)), 0.0f);
+    step(t0 + 450);
+    CHECK(session.sent().of(Opcode::MSG_MOVE_HEARTBEAT).empty());
+
+    step(t0 + 520);
+    auto beats = session.sent().of(Opcode::MSG_MOVE_HEARTBEAT);
+    REQUIRE(beats.size() == 1);
+    const auto beat1 = readSentMovement(beats[0]);
+    CHECK((beat1.flags & static_cast<uint32_t>(MovementFlags::ONTRANSPORT)) != 0);
+    CHECK(beat1.server.x == Catch::Approx(-14270.0f).margin(1e-2));
+    CHECK(beat1.server.y == Catch::Approx(580.0f).margin(1e-2));
+
+    // A multi-second map-transfer stall emits a single catch-up heartbeat rather than a burst.
+    manager->updateServerTransport(
+        boat, wowee::core::coords::serverToCanonical(glm::vec3(-14280.0f, 540.0f, 0.0f)), 0.0f);
+    step(t0 + 4000);
+    beats = session.sent().of(Opcode::MSG_MOVE_HEARTBEAT);
+    REQUIRE(beats.size() == 2);
+    CHECK(readSentMovement(beats[1]).server.y == Catch::Approx(540.0f).margin(1e-2));
+
+    // Disembarking stops stationary heartbeats on land.
+    handler.clearPlayerTransport();
+    for (uint32_t t = t0 + 4100; t <= t0 + 6000; t += 100) step(t);
+    CHECK(session.sent().of(Opcode::MSG_MOVE_HEARTBEAT).size() == 2);
+}
+
 TEST_CASE_METHOD(Integration, "Only announced boat transfers preserve passenger state across maps", "[transport]") {
     using namespace wowee::game;
     for (bool aboardTransfer : {false, true}) {

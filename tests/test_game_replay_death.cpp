@@ -106,34 +106,143 @@ TEST_CASE("a map change raises no zone event before the new map is loaded", "[re
     CHECK_FALSE(events.has("ZONE_CHANGED_NEW_AREA"));
 }
 
-TEST_CASE("an exploration discovery prints its experience in chat and on screen", "[replay][explore]") {
-    // CMaNGOS Player::CheckAreaExploreAndOutdoor: SMSG_EXPLORATION_EXPERIENCE
-    // area id, experience. Razorfen Kraul is area 491.
+TEST_CASE("an exploration discovery matches TBC 2.4.3 UIErrorsFrame, chat, combat text, and map state", "[replay][explore]") {
+    // CMaNGOS Player::CheckAreaExploreAndOutdoor:
+    //  - Sub-70 (xp > 0): GiveXP(XP, nullptr) -> SMSG_LOG_XPGAIN (type=1 non-kill),
+    //    then SendExplorationExperience(area, XP) -> SMSG_EXPLORATION_EXPERIENCE,
+    //    plus SMSG_UPDATE_OBJECT updating PLAYER_EXPLORED_ZONES_1.
+    //  - Level 70 (xp == 0): SendExplorationExperience(area, 0) + PLAYER_EXPLORED_ZONES_1.
+    // Native TBC 2.4.3 (verified on pair 19):
+    //  - UIErrorsFrame (UI_INFO_MESSAGE) ALWAYS shows ERR_ZONE_EXPLORED ("Discovered: %s").
+    //  - Chat receives ERR_ZONE_EXPLORED_XP ("Discovered %s: %d experience gained") in
+    //    yellow CHAT_MSG_SYSTEM when xp > 0 (while SMSG_LOG_XPGAIN logs "You gain %d
+    //    experience." to COMBAT_XP_GAIN and spawns the single XP_GAIN combat text).
+    //  - When xp == 0, chat receives nothing and no XP combat text spawns.
     Session s("tbc");
     wowee::game::GameHandlerTestAccess::setAreaName(s.handler(), 491, "Razorfen Kraul");
+    wowee::game::GameHandlerTestAccess::setAreaName(s.handler(), 35, "Booty Bay");
+    wowee::game::GameHandlerTestAccess::setRaceExplorationSound(s.handler(), 5, 4142); // Undead
+
+    std::vector<std::string> info;
+    int worldMapUpdates = 0;
+    s.handler().setAddonEventCallback([&](const std::string& e, const std::vector<std::string>& a) {
+        if (e == "UI_INFO_MESSAGE" && !a.empty()) info.push_back(a.front());
+        if (e == "WORLD_MAP_UPDATE") ++worldMapUpdates;
+    });
+
+    // 1. Login CREATE_OBJECT2 with pre-existing explored zones (Sentinel Hill bit 196 = word 6 bit 4)
+    //    must populate masks without false "Discovered: ..." or login WORLD_MAP_UPDATE spam.
+    const uint16_t exploredStart = wowee::game::fieldIndex(UF::PLAYER_EXPLORED_ZONES_START);
+    REQUIRE(exploredStart != 0xFFFF);
+    const uint16_t bytes0Idx = wowee::game::fieldIndex(UF::UNIT_FIELD_BYTES_0);
+    REQUIRE(bytes0Idx != 0xFFFF);
+    s.receive(UpdateObject().tbc().create(
+        Session::kPlayerGuid, ObjectType::PLAYER,
+        {{UF::UNIT_FIELD_HEALTH, 100},
+         {UF::UNIT_FIELD_MAXHEALTH, 100},
+         {UF::UNIT_FIELD_BYTES_0, 5u}}, // race = 5 (Undead)
+        true));
+    s.receive(UpdateObject().tbc().valuesAt(
+        Session::kPlayerGuid,
+        {{static_cast<uint16_t>(exploredStart + 6), (1u << 4)}}));
+    CHECK(s.handler().hasPlayerExploredZoneMasks());
+    CHECK((s.handler().getPlayerExploredZoneMasks()[6] & (1u << 4)) != 0);
+    CHECK(s.handler().getPlayerRace() == 5);
+    CHECK(s.handler().getRaceExplorationSoundId(s.handler().getPlayerRace()) == 4142);
+    CHECK(info.empty());
+    CHECK(s.handler().getChatHistory().empty());
+    CHECK(worldMapUpdates == 0); // first mask receipt initializes baseline without firing
+
+    const auto sendLogXpGainNonKill = [&](uint32_t xp) {
+        wowee::network::Packet p(wowee::game::wireOpcode(wowee::game::Opcode::SMSG_LOG_XPGAIN));
+        p.writeUInt64(0);   // victim == nullptr
+        p.writeUInt32(xp);  // GivenXP
+        p.writeUInt8(1);    // type = 1 (non_kill_xp)
+        p.writeUInt8(0);    // RAF bonus
+        s.receive(p);
+    };
+    const auto discover = [&](uint32_t areaId, uint32_t xp) {
+        wowee::network::Packet p(wowee::game::wireOpcode(wowee::game::Opcode::SMSG_EXPLORATION_EXPERIENCE));
+        p.writeUInt32(areaId);
+        p.writeUInt32(xp);
+        s.receive(p);
+    };
+
+    // 2. Sub-70 discovery (xp == 87): UI_INFO_MESSAGE is "Discovered: Razorfen Kraul",
+    //    SYSTEM chat is "Discovered Razorfen Kraul: 87 experience gained", COMBAT_XP_GAIN
+    //    is "You gain 87 experience.", and floating combat text spawns XP_GAIN once.
+    sendLogXpGainNonKill(87);
+    discover(491, 87);
+    s.receive(UpdateObject().tbc().valuesAt(
+        Session::kPlayerGuid,
+        {{static_cast<uint16_t>(exploredStart + 16), (1u << 3)}})); // exploreFlag 515
+
+    REQUIRE(info.size() == 1);
+    CHECK(info.back() == "Discovered: Razorfen Kraul");
+    const auto& chat = s.handler().getChatHistory();
+    REQUIRE(chat.size() == 2);
+    CHECK(chat[0].type == wowee::game::ChatType::COMBAT_XP_GAIN);
+    CHECK(chat[0].message == "You gain 87 experience.");
+    CHECK(chat[1].type == wowee::game::ChatType::SYSTEM);
+    CHECK(chat[1].message == "Discovered Razorfen Kraul: 87 experience gained");
+    int xpFloaters = 0;
+    for (const auto& ct : s.handler().getCombatText()) {
+        if (ct.type == wowee::game::CombatTextEntry::XP_GAIN) {
+            ++xpFloaters;
+            CHECK(ct.amount == 87);
+        }
+    }
+    CHECK(xpFloaters == 1);
+    CHECK(worldMapUpdates == 1);
+
+    // 3. Level 70 discovery (xp == 0): UI_INFO_MESSAGE is "Discovered: Booty Bay",
+    //    zero new chat lines, zero new XP floating combat text, and map mask updates.
+    const auto linesBefore = chat.size();
+    discover(35, 0);
+    s.receive(UpdateObject().tbc().valuesAt(
+        Session::kPlayerGuid,
+        {{static_cast<uint16_t>(exploredStart + 4), (1u << 14)}})); // exploreFlag 142
+
+    REQUIRE(info.size() == 2);
+    CHECK(info.back() == "Discovered: Booty Bay");
+    CHECK(s.handler().getChatHistory().size() == linesBefore);
+    xpFloaters = 0;
+    for (const auto& ct : s.handler().getCombatText()) {
+        if (ct.type == wowee::game::CombatTextEntry::XP_GAIN) ++xpFloaters;
+    }
+    CHECK(xpFloaters == 1);
+    CHECK(worldMapUpdates == 2);
+}
+
+TEST_CASE("exploration discovery notices hold while interface loads and format GlobalStrings", "[replay][explore]") {
+    Session s("tbc");
+    wowee::game::GameHandlerTestAccess::setAreaName(s.handler(), 107, "Saldean's Farm");
+    s.handler().setGlobalStringLookup([](const char* name) -> std::string {
+        const std::string key(name);
+        if (key == "ERR_ZONE_EXPLORED") return "Discovered: %s";
+        if (key == "ERR_ZONE_EXPLORED_XP") return "Discovered %s: %d experience gained";
+        return {};
+    });
     std::vector<std::string> info;
     s.handler().setAddonEventCallback([&](const std::string& e, const std::vector<std::string>& a) {
         if (e == "UI_INFO_MESSAGE" && !a.empty()) info.push_back(a.front());
     });
-    const auto discover = [&](uint32_t xp) {
-        wowee::network::Packet p(wowee::game::wireOpcode(wowee::game::Opcode::SMSG_EXPLORATION_EXPERIENCE));
-        p.writeUInt32(491);
-        p.writeUInt32(xp);
-        s.receive(p);
-    };
-    discover(87);
-    // ERR_ZONE_EXPLORED_XP, as the native chat line reads.
-    REQUIRE(info.size() == 1);
-    CHECK(info.back() == "Discovered Razorfen Kraul: 87 experience gained");
-    const auto& chat = s.handler().getChatHistory();
-    REQUIRE_FALSE(chat.empty());
-    CHECK(chat.back().type == wowee::game::ChatType::COMBAT_XP_GAIN);
-    CHECK(chat.back().message == "Discovered Razorfen Kraul: 87 experience gained");
 
-    const auto lines = chat.size();
-    discover(0);
-    CHECK(info.back() == "Discovered: Razorfen Kraul");
-    CHECK(s.handler().getChatHistory().size() == lines);
+    wowee::game::GameHandlerTestAccess::setNoticesInterfaceReady(s.handler(), false);
+    wowee::network::Packet p(wowee::game::wireOpcode(wowee::game::Opcode::SMSG_EXPLORATION_EXPERIENCE));
+    p.writeUInt32(107);
+    p.writeUInt32(100);
+    s.receive(p);
+
+    CHECK(info.empty());
+    CHECK(s.handler().getChatHistory().empty());
+
+    s.handler().onInterfaceReady(40);
+    REQUIRE(info.size() == 1);
+    CHECK(info.back() == "Discovered: Saldean's Farm");
+    REQUIRE(s.handler().getChatHistory().size() == 1);
+    CHECK(s.handler().getChatHistory().back().type == wowee::game::ChatType::SYSTEM);
+    CHECK(s.handler().getChatHistory().back().message == "Discovered Saldean's Farm: 100 experience gained");
 }
 
 TEST_CASE("a corpse keeps its death pose through server emotes", "[replay][death][emote]") {

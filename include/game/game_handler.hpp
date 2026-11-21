@@ -2045,8 +2045,14 @@ public:
         return ch ? static_cast<uint8_t>(ch->characterClass) : 0;
     }
     uint8_t getPlayerRace() const {
-        const Character* ch = getActiveCharacter();
-        return ch ? static_cast<uint8_t>(ch->race) : 0;
+        if (const Character* ch = getActiveCharacter()) return static_cast<uint8_t>(ch->race);
+        const uint16_t idx = fieldIndex(UF::UNIT_FIELD_BYTES_0);
+        if (idx != 0xFFFF) {
+            if (auto it = lastPlayerFields_.find(idx); it != lastPlayerFields_.end()) {
+                return static_cast<uint8_t>(it->second & 0xFFu);
+            }
+        }
+        return 0;
     }
     // Horde races: Orc, Undead, Tauren, Troll, Goblin, Blood Elf. Everything
     // else (including an unknown/zero race) defaults to Alliance.
@@ -4617,6 +4623,7 @@ public:
     }
     static constexpr size_t PLAYER_EXPLORED_ZONES_COUNT = 128;
     std::string getAreaName(uint32_t areaId) const;
+    uint32_t getRaceExplorationSoundId(uint8_t raceId) const;
     std::optional<uint32_t> getAreaMapId(uint32_t areaId) const;
     /// The zone an area belongs to: the AreaTable row reached by following
     /// ParentAreaNum to the top (Goldshire 87 -> Elwynn Forest 12). An area
@@ -5611,6 +5618,11 @@ private:
     mutable std::unordered_map<uint32_t, AreaPvpInfo> areaPvpCache_;
     mutable bool areaNameCacheLoaded_ = false;
     void loadAreaNameCache() const;
+
+    // ChrRaces.dbc col 3 (m_ExplorationSoundID) keyed by race ID.
+    mutable std::unordered_map<uint8_t, uint32_t> raceExplorationSoundCache_;
+    mutable bool raceExplorationSoundCacheLoaded_ = false;
+    void loadRaceExplorationSoundCache() const;
 
     // Map metadata cache (lazy-loaded from Map.dbc).
     mutable std::unordered_map<uint32_t, std::string> mapNameCache_;

@@ -6264,12 +6264,17 @@ void SpellHandler::extractExploredZoneFields(const FlatFieldMap& fields) {
         owner_.playerExploredZonesRef().assign(GameHandler::PLAYER_EXPLORED_ZONES_COUNT, 0u);
     }
 
+    const bool wasInitialized = owner_.hasPlayerExploredZonesRef();
     bool foundAny = false;
+    bool changed = false;
     for (size_t i = 0; i < zoneCount; i++) {
         const uint16_t fieldIdx = static_cast<uint16_t>(fieldIndex(UF::PLAYER_EXPLORED_ZONES_START) + i);
         auto it = fields.find(fieldIdx);
         if (it == fields.end()) continue;
-        owner_.playerExploredZonesRef()[i] = it->second;
+        if (owner_.playerExploredZonesRef()[i] != it->second) {
+            owner_.playerExploredZonesRef()[i] = it->second;
+            changed = true;
+        }
         foundAny = true;
     }
     for (size_t i = zoneCount; i < GameHandler::PLAYER_EXPLORED_ZONES_COUNT; i++) {
@@ -6278,6 +6283,9 @@ void SpellHandler::extractExploredZoneFields(const FlatFieldMap& fields) {
 
     if (foundAny) {
         owner_.hasPlayerExploredZonesRef() = true;
+        if (wasInitialized && changed) {
+            owner_.fireAddonEvent("WORLD_MAP_UPDATE", {});
+        }
     }
 }
 

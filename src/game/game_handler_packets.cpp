@@ -192,11 +192,16 @@ void GameHandler::registerCoreOpcodes() {
     // -----------------------------------------------------------------------
     registerHandler(Opcode::SMSG_LOG_XPGAIN, &GameHandler::handleXpGain);
     dispatchTable_[Opcode::SMSG_EXPLORATION_EXPERIENCE] = [this](network::Packet& packet) {
-        // Discovering an area shows the stock yellow UIErrorsFrame line on
-        // every discovery, with or without experience: ERR_ZONE_EXPLORED
-        // ("Discovered: %s") or ERR_ZONE_EXPLORED_XP ("Discovered %s: %d
-        // experience gained"). Only experience-giving discoveries were shown,
-        // and as a chat line, so a capped character saw nothing.
+        // Native 2.4.3 (verified on pair 19 at level 70 and level 15):
+        //  1. UIErrorsFrame (UI_INFO_MESSAGE, yellow 1,1,0) ALWAYS shows
+        //     ERR_ZONE_EXPLORED ("Discovered: %s"), whether xpGained is 0 or >0.
+        //  2. Chat prints nothing when xpGained == 0; when xpGained > 0, General
+        //     chat receives ERR_ZONE_EXPLORED_XP ("Discovered %s: %d experience
+        //     gained") in yellow CHAT_MSG_SYSTEM (SMSG_LOG_XPGAIN sent alongside
+        //     GiveXP already emits the purple COMBAT_XP_GAIN line for Combat Log
+        //     and the single floating XP_GAIN combat text).
+        //  3. Plays the character's racial exploration fanfare from ChrRaces.dbc
+        //     column 3 (m_ExplorationSoundID, SoundEntries 4140..4147).
         if (!packet.hasRemaining(8)) {
             LOG_WARNING("SMSG_EXPLORATION_EXPERIENCE too short: ", packet.getRemainingSize());
             return;
@@ -208,20 +213,23 @@ void GameHandler::registerCoreOpcodes() {
             LOG_ERROR("SMSG_EXPLORATION_EXPERIENCE: no AreaTable name for area ", areaId);
             return;
         }
-        char buf[256];
-        if (xpGained > 0)
-            std::snprintf(buf, sizeof(buf), "Discovered %s: %u experience gained", areaName.c_str(), xpGained);
-        else
-            std::snprintf(buf, sizeof(buf), "Discovered: %s", areaName.c_str());
-        addUIInfoMessage(buf);
+        if (!globalString("ERR_ZONE_EXPLORED").empty()) {
+            infoGlobal("ERR_ZONE_EXPLORED", {areaName});
+        } else {
+            addUIInfoMessage("Discovered: " + areaName);
+        }
         if (xpGained > 0) {
-            // The original also prints the experience line in chat ("Discovered
-            // Razorfen Kraul: 87 experience gained", native 15:2x), in the
-            // experience group the kill lines use, so the XP filter in the chat
-            // settings governs it with them. A discovery without experience is
-            // not known to print one.
-            addLocalChatLine(game::ChatType::COMBAT_XP_GAIN, buf);
-            addCombatText(CombatTextEntry::XP_GAIN, static_cast<int32_t>(xpGained), 0, true);
+            if (!globalString("ERR_ZONE_EXPLORED_XP").empty()) {
+                systemGlobal("ERR_ZONE_EXPLORED_XP", {areaName, std::to_string(xpGained)});
+            } else {
+                char buf[256];
+                std::snprintf(buf, sizeof(buf), "Discovered %s: %u experience gained", areaName.c_str(), xpGained);
+                addSystemChatMessage(buf);
+            }
+        }
+        if (const uint32_t soundId = getRaceExplorationSoundId(getPlayerRace()); soundId != 0) {
+            withSoundManager(&audio::AudioCoordinator::getUiSoundManager,
+                             [soundId](auto* sfx) { sfx->playById(soundId); });
         }
     };
 
