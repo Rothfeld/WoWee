@@ -2765,6 +2765,12 @@ wowee_add_test(test_collision_geometry
     SOURCES test_collision_geometry.cpp
             ${TEST_COMMON_SOURCES})
 
+# ── test_entity_floor_arbitration ────────────────────────────
+# Grounded-unit vertical placement across terrain, WMO and M2 doodad floors.
+wowee_add_test(test_entity_floor_arbitration
+    SOURCES test_entity_floor_arbitration.cpp
+            ${TEST_COMMON_SOURCES})
+
 # ── test_race_gender_suffix ──────────────────────────────────
 # The two-letter race code per-race models are suffixed with. Written out twice
 # - the helmet resolver and the shoulder attachment - and a wrong suffix reads

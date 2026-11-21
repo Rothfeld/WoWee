@@ -1507,11 +1507,16 @@ void WMORenderer::gatherCandidates(const glm::vec3& queryMin, const glm::vec3& q
               });
 
     // Safety fallback: if the grid misses due streaming/index drift, avoid
-    // tunneling by scanning all instances instead of returning no candidates.
+    // tunneling by scanning overlapping instances instead of returning none.
     if (outIndices.empty() && !instances.empty()) {
-        outIndices.reserve(instances.size());
         for (size_t i = 0; i < instances.size(); i++) {
-            if (!instances[i].hidden) outIndices.push_back(i);
+            const auto& inst = instances[i];
+            if (!inst.hidden &&
+                queryMax.x >= inst.worldBoundsMin.x && queryMin.x <= inst.worldBoundsMax.x &&
+                queryMax.y >= inst.worldBoundsMin.y && queryMin.y <= inst.worldBoundsMax.y &&
+                queryMax.z >= inst.worldBoundsMin.z && queryMin.z <= inst.worldBoundsMax.z) {
+                outIndices.push_back(i);
+            }
         }
     }
 }
@@ -3540,7 +3545,10 @@ std::optional<float> WMORenderer::getFloorHeight(float glX, float glY, float glZ
 
     for (size_t idx : tl_candidateScratch) {
         const auto& instance = instances[idx];
-        if (outsideCollisionFocus(instance)) continue;
+        if (glX < instance.worldBoundsMin.x || glX > instance.worldBoundsMax.x ||
+            glY < instance.worldBoundsMin.y || glY > instance.worldBoundsMax.y) {
+            continue;
+        }
 
         auto it = loadedModels.find(instance.modelId);
         if (it == loadedModels.end()) continue;

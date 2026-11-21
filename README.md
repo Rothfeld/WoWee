@@ -255,6 +255,7 @@ Party frames and map transfers: [protocol and input lifecycle](docs/party-stats-
 Interior minimaps: [authored room tiles and validation](docs/interior-minimap.md).
 Minimap blips, rim arrows and tooltips: [original rules](docs/minimap-markers.md).
 PvP menu: [preference, active flag, and validation](docs/pvp-menu.md).
+Entity floor grounding (`arbitrateEntityFloor` in `include/rendering/entity_floor_arbitration.hpp`, `M2Renderer::getFloorHeight`, `WMORenderer::getFloorHeight`): point floor queries filter M2 doodad and WMO candidates by `(x, y, z)` world AABB rather than the local player's 20-yard camera `collisionFocus`, consult WMO/M2 surfaces whenever `|terrainZ - serverZ| > 0.08` yd, and snap stationary non-spline units onto authored M2/WMO floors matching `serverZ` (such as `Webbed Creature` on `SpiderEggsGround_Yellow.m2`) even if `previousRenderPos` sat on terrain before async upload completed, while preserving horizontal spline continuity for `MoveCharge` and `kEntityFloorMaxDrop = 3.0` yd grounding under uncollidable canopies (`nastyspiderweb_yellow.m2`). Evidence: `_experiments/20261121T085530Z.webbed_cocoon_height_parity/` in the workspace.
 
 <p align="center">
   <img src="assets/hellfire-peninsula.png" alt="WoWee rendering Honor Hold in Hellfire Peninsula" width="100%" />

@@ -714,9 +714,13 @@ void M2Renderer::gatherCandidates(const glm::vec3& queryMin, const glm::vec3& qu
     // Safety fallback to preserve collision correctness if the spatial index
     // misses candidates (e.g. during streaming churn).
     if (outIndices.empty() && !instances.empty()) {
-        outIndices.reserve(instances.size());
         for (size_t i = 0; i < instances.size(); i++) {
-            outIndices.push_back(i);
+            const auto& inst = instances[i];
+            if (queryMax.x >= inst.worldBoundsMin.x && queryMin.x <= inst.worldBoundsMax.x &&
+                queryMax.y >= inst.worldBoundsMin.y && queryMin.y <= inst.worldBoundsMax.y &&
+                queryMax.z >= inst.worldBoundsMin.z && queryMin.z <= inst.worldBoundsMax.z) {
+                outIndices.push_back(i);
+            }
         }
     }
 }
@@ -1040,9 +1044,7 @@ void M2Renderer::debugDumpFloorCandidatesAt(float glX, float glY, float glZ) con
     for (size_t idx : tl_m2_candidateScratch) {
         const auto& instance = instances[idx];
         const char* rejected = nullptr;
-        if (collisionFocus.excludes(instance.worldBoundsMin, instance.worldBoundsMax)) {
-            rejected = "outside the collision focus";
-        } else if (!instance.cachedModel) {
+        if (!instance.cachedModel) {
             rejected = "no model";
         } else if (instance.scale <= 0.001f) {
             rejected = "zero scale";
@@ -1163,8 +1165,9 @@ std::optional<float> M2Renderer::getFloorHeight(float glX, float glY, float glZ,
 
     for (size_t idx : tl_m2_candidateScratch) {
         const auto& instance = instances[idx];
-        if (collisionFocus.excludes(instance.worldBoundsMin,
-                                    instance.worldBoundsMax)) {
+        if (glX < instance.worldBoundsMin.x || glX > instance.worldBoundsMax.x ||
+            glY < instance.worldBoundsMin.y || glY > instance.worldBoundsMax.y ||
+            glZ + 5.0f < instance.worldBoundsMin.z || glZ - 10.0f > instance.worldBoundsMax.z) {
             continue;
         }
 

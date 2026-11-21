@@ -1,4 +1,5 @@
 #include "core/creature_ground_alignment.hpp"
+#include "rendering/entity_floor_arbitration.hpp"
 #include "core/application.hpp"
 #include "game/game_utils.hpp"
 #include "core/frame_pacer.hpp"
@@ -134,38 +135,25 @@ namespace {
 
 std::optional<float> movingEntityFloor(rendering::Renderer* renderer,
                                         const glm::vec3& renderPos,
-                                        const std::optional<glm::vec3>& previousRenderPos) {
+                                        const std::optional<glm::vec3>& previousRenderPos,
+                                        bool isSplineOrMoving = true) {
     if (!renderer) return std::nullopt;
 
-    // Server movement Z is the reference surface.  In WMO overlap regions the
-    // outdoor heightfield may be a roof many units above a tunnel/interior, so
-    // choose the closest reachable floor instead of blindly preferring terrain.
-    constexpr float kMaxStepUp = 1.5f;
-    constexpr float kMaxGroundDrop = 3.0f;
-    const float probeZ = renderPos.z + kMaxStepUp;
+    const float probeZ = renderPos.z + rendering::kEntityFloorMaxStepUp;
+    const float minZ = renderPos.z - rendering::kEntityFloorMaxDrop;
+
     std::optional<float> terrainFloor;
-    std::optional<float> best;
-    bool bestIsTerrain = false;
-
-    auto consider = [&](const std::optional<float>& floor, bool isTerrain = false) {
-        if (!floor || *floor > probeZ || *floor < renderPos.z - kMaxGroundDrop) return;
-        if (isTerrain) terrainFloor = floor;
-        if (!best || std::abs(*floor - renderPos.z) < std::abs(*best - renderPos.z)) {
-            best = floor;
-            bestIsTerrain = isTerrain;
-        }
-    };
-
     if (auto* terrain = renderer->getTerrainManager()) {
-        consider(terrain->getHeightAt(renderPos.x, renderPos.y), true);
+        terrainFloor = terrain->getHeightAt(renderPos.x, renderPos.y);
     }
-    // Outdoor movers almost always match the terrain heightfield. Avoid the
-    // expensive WMO/M2 collision walks in that common case. Tunnel, bridge,
-    // and interior overlaps still use full arbitration because raw terrain is
-    // not close to the server-provided Z there.
-    if (best && std::abs(*best - renderPos.z) <= 0.35f) {
-        return best;
+    // Raw terrain fast-path only when server Z already matches bare terrain within
+    // CMaNGOS's +0.05 yd spawn clearance. Anything higher (such as +0.3..+0.8 yd
+    // authored M2 mounds, steps, curbs, or bridges) must still consult WMO and M2.
+    if (terrainFloor && *terrainFloor <= probeZ && *terrainFloor >= minZ &&
+        std::abs(*terrainFloor - renderPos.z) <= rendering::kEntityFloorTerrainExactTolerance) {
+        return terrainFloor;
     }
+
     std::optional<float> wmoFloor;
     std::optional<float> m2Floor;
     if (auto* wmo = renderer->getWMORenderer()) {
@@ -173,12 +161,13 @@ std::optional<float> movingEntityFloor(rendering::Renderer* renderer,
         // under an overhang is not snapped up to the floor of the level above
         // them - the same flip that pulled the local player between levels.
         wmoFloor = wmo->getFloorHeight(renderPos.x, renderPos.y, probeZ, nullptr, renderPos.z);
-        consider(wmoFloor);
     }
     if (auto* m2 = renderer->getM2Renderer()) {
         m2Floor = m2->getFloorHeight(renderPos.x, renderPos.y, probeZ);
-        consider(m2Floor);
     }
+
+    const std::optional<float> chosen = rendering::arbitrateEntityFloor(
+        renderPos, previousRenderPos, isSplineOrMoving, terrainFloor, wmoFloor, m2Floor);
 
     // A jump between floors, named once a second while it is happening.
     //
@@ -189,58 +178,23 @@ std::optional<float> movingEntityFloor(rendering::Renderer* renderer,
     // player is the thing a report cannot carry and this can. Warning level and
     // rate-limited, because the default log is warnings only and a per-frame
     // line would bury everything else.
-    if (best && previousRenderPos &&
-        std::abs(*best - previousRenderPos->z) > 1.0f) {
+    if (chosen && previousRenderPos && isSplineOrMoving &&
+        std::abs(*chosen - previousRenderPos->z) > 1.0f) {
         static std::chrono::steady_clock::time_point lastFloorJumpLog{};
         static core::LogBudget floorJumpBudget(12, "Floor jump");
         const auto now = std::chrono::steady_clock::now();
         if (now - lastFloorJumpLog > std::chrono::seconds(1) && floorJumpBudget.take()) {
             lastFloorJumpLog = now;
-            std::optional<float> terrainF, wmoF, m2F;
-            if (auto* t = renderer->getTerrainManager())
-                terrainF = t->getHeightAt(renderPos.x, renderPos.y);
-            if (auto* w = renderer->getWMORenderer())
-                wmoF = w->getFloorHeight(renderPos.x, renderPos.y, probeZ);
-            if (auto* mm = renderer->getM2Renderer())
-                m2F = mm->getFloorHeight(renderPos.x, renderPos.y, probeZ);
             LOG_WARNING("Floor jump: player z=", renderPos.z, " prev z=",
-                        previousRenderPos->z, " -> chose ", *best,
-                        " (terrain=", terrainF ? *terrainF : -99999.0f,
-                        " wmo=", wmoF ? *wmoF : -99999.0f,
-                        " m2=", m2F ? *m2F : -99999.0f,
-                        ") - moved ", *best - previousRenderPos->z);
+                        previousRenderPos->z, " -> chose ", *chosen,
+                        " (terrain=", terrainFloor ? *terrainFloor : -99999.0f,
+                        " wmo=", wmoFloor ? *wmoFloor : -99999.0f,
+                        " m2=", m2Floor ? *m2Floor : -99999.0f,
+                        ") - moved ", *chosen - previousRenderPos->z);
         }
     }
 
-    // Terrain is a continuous support surface: server spawn heights can differ
-    // from its triangles even for stationary creatures. Requiring continuity
-    // with an uncorrected spawn height would reject that correction forever.
-    // Structure/prop candidates still need continuity against previousRenderPos:
-    // server splines such as CMaNGOS MoveCharge add +1.0 yd to renderPos.z,
-    // which can put renderPos.z right next to the top of a nearby ~1 yd M2
-    // fence, crate or signpost base even though the mover was running on grass.
-    if (best && !bestIsTerrain) {
-        if (!previousRenderPos) {
-            if (std::abs(*best - renderPos.z) > 0.35f) {
-                return terrainFloor;
-            }
-        } else {
-            const glm::vec2 planarDelta = glm::vec2(renderPos) - glm::vec2(*previousRenderPos);
-            const float planarLen = glm::length(planarDelta);
-            const float maxContinuousStep = 0.45f + planarLen * 1.5f;
-            const auto isContinuous = [&](const std::optional<float>& cand) {
-                return cand && *cand <= probeZ && *cand >= renderPos.z - kMaxGroundDrop &&
-                       std::abs(*cand - previousRenderPos->z) <= maxContinuousStep;
-            };
-            if ((planarLen < 4.0f || std::abs(*best - renderPos.z) > 0.35f) &&
-                !isContinuous(best)) {
-                if (isContinuous(wmoFloor)) return wmoFloor;
-                if (isContinuous(terrainFloor)) return terrainFloor;
-                return terrainFloor;
-            }
-        }
-    }
-    return best;
+    return chosen;
 }
 
 /// A wheel event's travel in clicks of a clicking wheel, which is what the
@@ -3921,8 +3875,11 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                 }
             }
             if (groundCreature && !onTransport) {
+                const bool creatureSplineOrMoving =
+                    entity->isActivelyMoving() || entity->hasServerSplinePosition();
                 if (auto floorZ = movingEntityFloor(renderer.get(), renderPos,
-                                                    previousRenderPos)) {
+                                                    previousRenderPos,
+                                                    creatureSplineOrMoving)) {
                     if (!entity->isActivelyMoving() && std::abs(renderPos.z - *floorZ) > 0.1f) {
                         static std::unordered_set<uint64_t> reported;
                         if (reported.size() < 32 && reported.insert(guid).second) {
@@ -4134,7 +4091,7 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                 groundRotation = creatureGroundRotation(*model,
                     charRenderer->getInstanceScale(instanceId), renderPos, renderYaw,
                     [&](const glm::vec3& sample) {
-                        return movingEntityFloor(renderer.get(), sample, std::nullopt);
+                        return movingEntityFloor(renderer.get(), sample, renderPos, false);
                     }, unit->getHealth() == 0);
             }
             charRenderer->setInstanceRotation(instanceId, groundRotation);
