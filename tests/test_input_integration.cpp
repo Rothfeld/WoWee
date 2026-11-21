@@ -5961,3 +5961,223 @@ TEST_CASE_METHOD(Integration, "TBC mail Inbox/OpenMail APIs and empty hover tool
     handler.setAddonEventCallback({});
     lua.setGameHandler(nullptr);
 }
+
+TEST_CASE("GameTooltip color defaults match native 2.4.3 across AddLine, AddDoubleLine, and SetText",
+          "[tooltip][taxi]") {
+    Integration f;
+    constexpr float kGoldG = 210.0f / 255.0f;
+
+    f.run(R"lua(
+        tip = CreateFrame('GameTooltip', 'ColorParityTip', UIParent)
+        tip:SetOwner(UIParent, 'ANCHOR_NONE')
+        tip:AddLine('1:default')
+        tip:AddLine('2:emptyWhite', '', 1.0, 1.0, 1.0)
+        tip:AddLine('3:emptyGreen', '', 0.5, 1.0, 0.5)
+        tip:AddLine('4:nilG', nil, 0.5, 0.5)
+        tip:AddLine('5:nilB', nil, nil, 0.5)
+        tip:AddLine('6:nilWrap', nil, nil, nil, 1)
+        tip:AddLine('7:str', 'foo', 0.2, 0.4, 0.6)
+        tip:AddLine('8:rOnly', 0.2)
+        tip:AddLine('9:rNilB', 0.2, nil, 0.8)
+        tip:AddLine('10:rg', 0.2, 0.4)
+        tip:AddLine('11:strNum', '0.3', 0.4, 0.5)
+        tip:AddLine('12:zeroR', 0, 1, 0)
+        tip:AddDoubleLine('13:dblDefL', '13:dblDefR')
+        tip:AddDoubleLine('14:dblEmptyL', '14:dblEmptyR', '', 1, 1, '', 0.5, 1)
+        tip:AddDoubleLine('15:dblPartL', '15:dblPartR', 0.2, nil, 0.8, 0.3)
+    )lua");
+
+    const auto* tip = f.lua.widgets().findByName("ColorParityTip");
+    REQUIRE(tip != nullptr);
+    REQUIRE(tip->tooltipLines.size() == 15);
+
+    auto checkLeft = [&](size_t idx, float r, float g, float b) {
+        INFO("line " << (idx + 1) << " (" << tip->tooltipLines[idx].left << ")");
+        CHECK(tip->tooltipLines[idx].lc[0] == Catch::Approx(r).margin(1e-4f));
+        CHECK(tip->tooltipLines[idx].lc[1] == Catch::Approx(g).margin(1e-4f));
+        CHECK(tip->tooltipLines[idx].lc[2] == Catch::Approx(b).margin(1e-4f));
+    };
+    auto checkRight = [&](size_t idx, float r, float g, float b) {
+        INFO("line " << (idx + 1) << " right (" << tip->tooltipLines[idx].right << ")");
+        CHECK(tip->tooltipLines[idx].rc[0] == Catch::Approx(r).margin(1e-4f));
+        CHECK(tip->tooltipLines[idx].rc[1] == Catch::Approx(g).margin(1e-4f));
+        CHECK(tip->tooltipLines[idx].rc[2] == Catch::Approx(b).margin(1e-4f));
+    };
+
+    checkLeft(0,  1.0f, kGoldG, 0.0f); // default
+    checkLeft(1,  1.0f, kGoldG, 0.0f); // AddLine(text, "", 1, 1, 1)
+    checkLeft(2,  1.0f, kGoldG, 0.0f); // AddLine(text, "", 0.5, 1, 0.5)
+    checkLeft(3,  1.0f, kGoldG, 0.0f); // AddLine(text, nil, 0.5, 0.5)
+    checkLeft(4,  1.0f, kGoldG, 0.0f); // AddLine(text, nil, nil, 0.5)
+    checkLeft(5,  1.0f, kGoldG, 0.0f); // AddLine(text, nil, nil, nil, 1)
+    CHECK(tip->tooltipLines[5].wrap);
+    checkLeft(6,  1.0f, kGoldG, 0.0f); // AddLine(text, "foo", 0.2, 0.4, 0.6)
+    checkLeft(7,  0.2f, 0.0f,   0.0f); // AddLine(text, 0.2)
+    checkLeft(8,  0.2f, 0.0f,   0.8f); // AddLine(text, 0.2, nil, 0.8)
+    checkLeft(9,  0.2f, 0.4f,   0.0f); // AddLine(text, 0.2, 0.4)
+    checkLeft(10, 0.3f, 0.4f,   0.5f); // AddLine(text, "0.3", 0.4, 0.5)
+    checkLeft(11, 0.0f, 1.0f,   0.0f); // AddLine(text, 0, 1, 0)
+
+    checkLeft(12,  1.0f, kGoldG, 0.0f);
+    checkRight(12, 1.0f, kGoldG, 0.0f);
+    checkLeft(13,  1.0f, kGoldG, 0.0f);
+    checkRight(13, 1.0f, kGoldG, 0.0f);
+    checkLeft(14,  0.2f, 0.0f,   0.8f);
+    checkRight(14, 0.3f, 0.0f,   0.0f);
+
+    // SetText follows the exact same native 2.4.3 rule (including non-numeric "" without error).
+    f.run("tip:SetText('S1')");
+    REQUIRE(tip->tooltipLines.size() == 1);
+    checkLeft(0, 1.0f, kGoldG, 0.0f);
+
+    f.run("tip:SetText('S2', nil, 0.5, 0.5)");
+    REQUIRE(tip->tooltipLines.size() == 1);
+    checkLeft(0, 1.0f, kGoldG, 0.0f);
+
+    f.run("tip:SetText('S3', 0.2)");
+    REQUIRE(tip->tooltipLines.size() == 1);
+    checkLeft(0, 0.2f, 0.0f, 0.0f);
+
+    f.run("tip:SetText('S4', '', 1, 1, 1)");
+    REQUIRE(tip->tooltipLines.size() == 1);
+    checkLeft(0, 1.0f, kGoldG, 0.0f);
+
+    f.run("tip:SetText('S5', 0.2, 0.4, 0.6, 0.5)");
+    REQUIRE(tip->tooltipLines.size() == 1);
+    checkLeft(0, 0.2f, 0.4f, 0.6f);
+    CHECK(tip->tooltipLines[0].lc[3] == Catch::Approx(0.5f).margin(1e-4f));
+}
+
+TEST_CASE("TBC TaxiNodeOnButtonEnter populates native gold tooltips across CURRENT, REACHABLE, and DISTANT nodes",
+          "[tooltip][taxi][framexml]") {
+    const std::string taxiLuaPath =
+        "/workspace/azerothcore/client/wowee-data/expansions/tbc/interface/framexml/taxiframe.lua";
+    if (!std::filesystem::exists(taxiLuaPath)) {
+        SKIP("Shipped TBC FrameXML taxiframe.lua not present");
+    }
+
+    Integration f;
+    constexpr float kGoldG = 210.0f / 255.0f;
+
+    REQUIRE(f.lua.executeFile(taxiLuaPath));
+    f.run(R"lua(
+        TAXINODEYOUAREHERE = 'You are here'
+        GameTooltip = CreateFrame('GameTooltip', 'GameTooltip', UIParent)
+        TaxiRouteMap = CreateFrame('Frame', 'TaxiRouteMap', UIParent)
+        TaxiRouteMap:SetWidth(316)
+        TaxiRouteMap:SetHeight(352)
+        UIErrorsFrame = { AddMessage = function() end }
+        function HideUIPanel() end
+
+        local nodes = {
+            [1] = { name = 'Ironforge, Dun Morogh', type = 'CURRENT',   cost = 0,   routes = 0 },
+            [2] = { name = 'Stormwind, Elwynn',     type = 'REACHABLE', cost = 500, routes = 1 },
+            [3] = { name = 'Booty Bay, Stranglethorn', type = 'DISTANT', cost = 0,  routes = 0 },
+        }
+        function NumTaxiNodes() return #nodes end
+        function TaxiNodeName(i) return nodes[i].name end
+        function TaxiNodeGetType(i) return nodes[i].type end
+        function TaxiNodeCost(i) return nodes[i].cost end
+        function GetNumRoutes(i) return nodes[i].routes end
+        function TaxiGetSrcX() return 0.5 end
+        function TaxiGetSrcY() return 0.5 end
+        function TaxiGetDestX() return 0.4 end
+        function TaxiGetDestY() return 0.3 end
+        function TaxiNodeSetCurrent() end
+
+        recordedMoney = nil
+        function SetTooltipMoney(frame, money)
+            recordedMoney = money
+            frame:AddLine(' ', 1.0, 1.0, 1.0)
+        end
+
+        btn1 = CreateFrame('Button', 'TaxiBtn1', TaxiRouteMap); btn1:SetID(1)
+        btn2 = CreateFrame('Button', 'TaxiBtn2', TaxiRouteMap); btn2:SetID(2)
+        btn3 = CreateFrame('Button', 'TaxiBtn3', TaxiRouteMap); btn3:SetID(3)
+    )lua");
+
+    const auto* tip = f.lua.widgets().findByName("GameTooltip");
+    REQUIRE(tip != nullptr);
+
+    // 1. CURRENT node: gold title + gold "You are here", no money frame.
+    f.run("recordedMoney = nil; this = btn1; TaxiNodeOnButtonEnter(btn1)");
+    REQUIRE(tip->tooltipLines.size() == 2);
+    CHECK(tip->tooltipLines[0].left == "Ironforge, Dun Morogh");
+    CHECK(tip->tooltipLines[0].lc[0] == Catch::Approx(1.0f).margin(1e-4f));
+    CHECK(tip->tooltipLines[0].lc[1] == Catch::Approx(kGoldG).margin(1e-4f));
+    CHECK(tip->tooltipLines[0].lc[2] == Catch::Approx(0.0f).margin(1e-4f));
+    CHECK(tip->tooltipLines[1].left == "You are here");
+    CHECK(tip->tooltipLines[1].lc[0] == Catch::Approx(1.0f).margin(1e-4f));
+    CHECK(tip->tooltipLines[1].lc[1] == Catch::Approx(kGoldG).margin(1e-4f));
+    CHECK(tip->tooltipLines[1].lc[2] == Catch::Approx(0.0f).margin(1e-4f));
+    CHECK(f.lua.evaluateBoolean("recordedMoney == nil"));
+
+    // 2. REACHABLE node: gold title + SetTooltipMoney(500) spacer line.
+    f.run("recordedMoney = nil; this = btn2; TaxiNodeOnButtonEnter(btn2)");
+    REQUIRE(tip->tooltipLines.size() == 2);
+    CHECK(tip->tooltipLines[0].left == "Stormwind, Elwynn");
+    CHECK(tip->tooltipLines[0].lc[0] == Catch::Approx(1.0f).margin(1e-4f));
+    CHECK(tip->tooltipLines[0].lc[1] == Catch::Approx(kGoldG).margin(1e-4f));
+    CHECK(tip->tooltipLines[0].lc[2] == Catch::Approx(0.0f).margin(1e-4f));
+    CHECK(tip->tooltipLines[1].left == " ");
+    CHECK(f.lua.evaluateBoolean("recordedMoney == 500"));
+
+    // 3. DISTANT node: gold title only, no "You are here", no money frame.
+    f.run("recordedMoney = nil; this = btn3; TaxiNodeOnButtonEnter(btn3)");
+    REQUIRE(tip->tooltipLines.size() == 1);
+    CHECK(tip->tooltipLines[0].left == "Booty Bay, Stranglethorn");
+    CHECK(tip->tooltipLines[0].lc[0] == Catch::Approx(1.0f).margin(1e-4f));
+    CHECK(tip->tooltipLines[0].lc[1] == Catch::Approx(kGoldG).margin(1e-4f));
+    CHECK(tip->tooltipLines[0].lc[2] == Catch::Approx(0.0f).margin(1e-4f));
+    CHECK(f.lua.evaluateBoolean("recordedMoney == nil"));
+}
+
+TEST_CASE("GameTooltip:Hide runs OnHide synchronously so same-frame hover transitions keep SetTooltipMoney visible",
+          "[tooltip][taxi]") {
+    Integration f;
+    f.run(R"lua(
+        tip = CreateFrame('GameTooltip', 'MoneyTransitionTip', UIParent)
+        tip:SetWidth(120); tip:SetHeight(40)
+        mf1 = CreateFrame('Frame', 'MoneyTransitionTipMoneyFrame1', tip)
+        mf1:Hide()
+        onHideCount = 0
+        tip:SetScript('OnHide', function()
+            onHideCount = onHideCount + 1
+            if tip.shownMoneyFrames then
+                mf1:Hide()
+                tip.shownMoneyFrames = nil
+            end
+        end)
+
+        -- Hover node A: shows tooltip + money frame (50c).
+        tip:SetOwner(UIParent, 'ANCHOR_NONE')
+        tip:SetPoint('CENTER', UIParent, 'CENTER', 0, 0)
+        tip:AddLine('Stormwind, Elwynn', '', 1, 1, 1)
+        tip:AddLine(' ', 1, 1, 1)
+        mf1:Show()
+        tip.shownMoneyFrames = 1
+        tip:Show()
+    )lua");
+    f.lua.widgets().layout(1280.0f, 720.0f);
+    f.lua.updateVisibility();
+
+    // Same-frame transition: OnLeave hides tooltip, OnEnter shows tooltip for node B with money frame.
+    f.run(R"lua(
+        tip:Hide()
+        hideRanBeforeEnter = (onHideCount == 1 and tip.shownMoneyFrames == nil and not mf1:IsShown())
+        tip:SetOwner(UIParent, 'ANCHOR_NONE')
+        tip:SetPoint('CENTER', UIParent, 'CENTER', 0, 0)
+        tip:AddLine('Shattered Sun Staging Area', '', 1, 1, 1)
+        tip:AddLine(' ', 1, 1, 1)
+        mf1:Show()
+        tip.shownMoneyFrames = 1
+        tip:Show()
+    )lua");
+    f.lua.widgets().layout(1280.0f, 720.0f);
+    f.lua.updateVisibility();
+
+    CHECK(f.lua.evaluateBoolean("hideRanBeforeEnter == true"));
+    CHECK(f.lua.evaluateBoolean("onHideCount == 1"));
+    CHECK(f.lua.evaluateBoolean("tip.shownMoneyFrames == 1"));
+    CHECK(f.lua.evaluateBoolean("mf1:IsShown() == 1"));
+}

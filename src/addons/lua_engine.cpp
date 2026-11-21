@@ -2092,7 +2092,31 @@ int lua_MessageFrame_GetInsertMode(lua_State* L) {
 // and both sides of AddDoubleLine all answer GetTextColor() 1, 0.82, 0 in
 // 2.4.3, although the GameTooltipText font objects themselves are white.
 constexpr float kTooltipDefaultColour[3] = {1.0f, 210.0f / 255.0f, 0.0f};
+
+// Native 2.4.3 reads tooltip RGB as a group keyed on the red channel:
+//   - If rArg is a number (including numeric strings, as Lua's lua_isnumber
+//     accepts), r is read from rArg and omitted/non-numeric g/b default to 0.
+//   - If rArg is not a number (omitted, nil, or a non-numeric string such as
+//     the "" FrameXML passes in TaxiFrame.lua / MailFrame.lua / PaperDollFrame.lua),
+//     all three channels take kTooltipDefaultColour (1, 0.82, 0) regardless of
+//     whatever sits in g/b.
 //
+// Falling back per-channel mixed kTooltipDefaultColour[0] (1.0) with shifted
+// arguments from `AddLine(TAXINODEYOUAREHERE, "", 0.5, 1.0, 0.5)`, turning
+// "You are here" magenta (1.0, 0.5, 1.0) and flight point titles white
+// (1.0, 1.0, 1.0) instead of native gold (1.0, 0.82, 0.0).
+static void readTooltipColor(lua_State* L, int rArg, float out[3]) {
+    if (lua_isnumber(L, rArg)) {
+        out[0] = static_cast<float>(lua_tonumber(L, rArg));
+        out[1] = lua_isnumber(L, rArg + 1) ? static_cast<float>(lua_tonumber(L, rArg + 1)) : 0.0f;
+        out[2] = lua_isnumber(L, rArg + 2) ? static_cast<float>(lua_tonumber(L, rArg + 2)) : 0.0f;
+    } else {
+        out[0] = kTooltipDefaultColour[0];
+        out[1] = kTooltipDefaultColour[1];
+        out[2] = kTooltipDefaultColour[2];
+    }
+}
+
 // AddLine was a name in the method list and nothing else, so every tooltip in
 // the interface was empty: the frame was shown, positioned and sized, and had
 // nothing in it.
@@ -2101,26 +2125,7 @@ int lua_Tooltip_AddLine(lua_State* L) {
     if (!w) return 0;
     wowee::ui::Widget::TooltipLine line;
     line.left = luaL_optstring(L, 2, "");
-    // A colour that is not a number means "the default one", not an error.
-    //
-    // mailframe.lua does `AddLine(ENCLOSED_MONEY, "", 1, 1, 1)` - an empty
-    // string where the red goes. optnumber accepts a string it can convert and
-    // "" is not one, so it raised: the mail item's tooltip died on every hover,
-    // and after five the OnUpdate driving it was unhooked for the rest of the
-    // session. Nothing said so on screen; a raise inside a handler is
-    // swallowed.
-    //
-    // The default is the same gold SetText uses. 2.4.3 answers
-    // GetTextColor() 1, 0.82, 0 for AddLine("x") and for
-    // AddLine(x, nil, nil, nil, 1), the form PVPFrame's honor and arena
-    // tooltips use; white made their prose read as a title.
-    auto colour = [L](int arg, float fallback) {
-        return lua_isnumber(L, arg) ? static_cast<float>(lua_tonumber(L, arg))
-                                    : fallback;
-    };
-    line.lc[0] = colour(3, kTooltipDefaultColour[0]);
-    line.lc[1] = colour(4, kTooltipDefaultColour[1]);
-    line.lc[2] = colour(5, kTooltipDefaultColour[2]);
+    readTooltipColor(L, 3, line.lc);
     line.lc[3] = 1.0f;
     line.rc[0] = line.rc[1] = line.rc[2] = line.rc[3] = 1.0f;
     // AddLine(text, r, g, b, wrapText). The sixth argument was read off the
@@ -2263,22 +2268,9 @@ int lua_Tooltip_AddDoubleLine(lua_State* L) {
     wowee::ui::Widget::TooltipLine line;
     line.left  = luaL_optstring(L, 2, "");
     line.right = luaL_optstring(L, 3, "");
-    // Six colours, same rule as AddLine: anything that is not a number means
-    // the default. Six arguments is six chances for the interface to pass one
-    // of them as something else, and the whole tooltip is lost to a raise.
-    // Both sides default to the same gold as AddLine (2.4.3 answers
-    // 1, 0.82, 0 for each side of AddDoubleLine("a", "b")).
-    auto colour = [L](int arg, float fallback) {
-        return lua_isnumber(L, arg) ? static_cast<float>(lua_tonumber(L, arg))
-                                    : fallback;
-    };
-    line.lc[0] = colour(4, kTooltipDefaultColour[0]);
-    line.lc[1] = colour(5, kTooltipDefaultColour[1]);
-    line.lc[2] = colour(6, kTooltipDefaultColour[2]);
+    readTooltipColor(L, 4, line.lc);
     line.lc[3] = 1.0f;
-    line.rc[0] = colour(7, kTooltipDefaultColour[0]);
-    line.rc[1] = colour(8, kTooltipDefaultColour[1]);
-    line.rc[2] = colour(9, kTooltipDefaultColour[2]);
+    readTooltipColor(L, 7, line.rc);
     line.rc[3] = 1.0f;
     w->isTooltip = true;
     if (w->width <= 0.0f) w->width = 10.0f;
@@ -2293,6 +2285,8 @@ int lua_Tooltip_AddDoubleLine(lua_State* L) {
 ///
 /// WoW's anchor names say which side of the owner the tooltip sits on; the
 /// pair of points that produces is the whole of the mapping.
+static void fireOnHideNow(lua_State* L, int frameIndex, wowee::ui::Widget* w);
+
 int lua_Tooltip_SetOwner(lua_State* L) {
     auto* tree = wowee::addons::getWidgetTree(L);
     const uint32_t id = widgetIdOf(L, 1);
@@ -2300,6 +2294,18 @@ int lua_Tooltip_SetOwner(lua_State* L) {
     auto* w = tree->get(id);
     if (!w) return 0;
     w->isTooltip = true;
+    // Native 2.4.3 hides an already-shown tooltip synchronously inside
+    // SetOwner so GameTooltip_OnHide -> GameTooltip_ClearMoney() runs before
+    // the new caller adds lines or calls SetTooltipMoney().
+    if (w->shown) {
+        w->shown = false;
+        w->reportedVisible = false;
+        w->shownToggles = 0;
+        w->onShowFired = false;
+        lua_pushboolean(L, 0);
+        lua_setfield(L, 1, "__visible");
+        fireOnHideNow(L, 1, w);
+    }
     // Cleared here, because SetOwner is what precedes a fresh set of lines.
     // Keep w->width / w->height intact so OnUpdate refreshes (which run after
     // sizeTooltipWidget and before collectDrawOrder) do not collapse rectW/rectH
@@ -2419,10 +2425,8 @@ int lua_Tooltip_SetText(lua_State* L) {
         lua_pushboolean(L, 1);
         return 1;
     }
-    line.lc[0] = static_cast<float>(luaL_optnumber(L, 3, kTooltipDefaultColour[0]));
-    line.lc[1] = static_cast<float>(luaL_optnumber(L, 4, kTooltipDefaultColour[1]));
-    line.lc[2] = static_cast<float>(luaL_optnumber(L, 5, kTooltipDefaultColour[2]));
-    line.lc[3] = 1.0f;
+    readTooltipColor(L, 3, line.lc);
+    line.lc[3] = lua_isnumber(L, 6) ? static_cast<float>(lua_tonumber(L, 6)) : 1.0f;
     line.rc[0] = line.rc[1] = line.rc[2] = line.rc[3] = 1.0f;
     // SetText(text, r, g, b, a, textWrap) - the seventh here, since alpha sits
     // between the colour and the flag.
@@ -5002,6 +5006,21 @@ int lua_Region_Show(lua_State* L) {
     }
     return 0;
 }
+static void fireOnHideNow(lua_State* L, int frameIndex, wowee::ui::Widget* w) {
+    const int abs = frameIndex > 0 ? frameIndex : lua_gettop(L) + frameIndex + 1;
+    lua_getfield(L, abs, "__scripts");
+    if (!lua_istable(L, -1)) { lua_pop(L, 1); return; }
+    lua_getfield(L, -1, "OnHide");
+    if (!lua_isfunction(L, -1)) { lua_pop(L, 2); return; }
+    lua_pushvalue(L, abs);                       // self
+    if (pcallScript(L, "OnHide", 1, 0) != 0) {
+        LOG_WARNING("[Lua] OnHide error: ", lua_tostring(L, -1) ? lua_tostring(L, -1) : "?");
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1);                               // __scripts
+    (void)w;
+}
+
 int lua_Region_Hide(lua_State* L) {
     // No OnHide from here, and it is not the asymmetry with Show it looks
     // like. Running it here is what the real client does and it fixes a real
@@ -5020,48 +5039,33 @@ int lua_Region_Hide(lua_State* L) {
     //
     // The vendor and guild bank no longer take the reopen path - see
     // openBagsForTrading - so what is left exposed is the bag keybind.
-    if (auto* w = widgetOf(L, 1)) {
-        // Counted only where a handler is owed. A frame hidden before anything
-        // was hooked to it owes nothing, and the real client runs nothing
-        // there either. Turtle's transmog timer is CreateFrame, Hide, and only
-        // then SetScript for OnShow, OnHide and OnUpdate: counting that Hide
-        // made the Show which follows the second toggle, Show defers OnShow to
-        // updateVisibility on a second toggle, and updateVisibility fires none
-        // for a frame with no anchors. So the timer ran its OnUpdate against
-        // the startTime its OnShow was going to set. Reported in #132.
-        if (w->shown && frameScriptSet(L, 1, "OnHide") && w->shownToggles < 200) {
+    auto* w = widgetOf(L, 1);
+    const bool isTooltip = w && (w->isTooltip || w->objectType == "GameTooltip");
+    const bool wasShown = w && w->shown;
+    if (w) {
+        if (!isTooltip && w->shown && frameScriptSet(L, 1, "OnHide") && w->shownToggles < 200) {
             ++w->shownToggles;
         }
         // A hidden tooltip belongs to nobody.
-        //
-        // The owner is what FrameXML tests to decide whether a tooltip on
-        // screen is its own, and it is *set* on every hover and cleared by
-        // nothing here - so once a button had been hovered it owned the tooltip
-        // for the rest of the session. ActionButton_Update then does
-        //
-        //     if ( GameTooltip:GetOwner() == self ) then ActionButton_SetTooltip(self) end
-        //
-        // and SetTooltip shows it again. Any button that updates often enough
-        // put its tooltip back on screen with the cursor nowhere near it, and
-        // Execute updates on every change to the target's health, which is why
-        // it was the one that stuck.
-        //
-        // The real client answers nil here for the same reason: an owner is a
-        // property of a tooltip that is up.
-        //
-        // The interface's own idea of the owner, and only that one. The
-        // tree keeps a second, which is what takes a tooltip away with the
-        // panel it belonged to - clearing that as well made every hidden
-        // tooltip look orphaned the next time something showed it without
-        // naming an owner again, and the comparison tooltip flashed on and
-        // off at the tooltip update rate as the two fought.
-        if (w->isTooltip) {
+        if (isTooltip) {
             lua_pushnil(L);
             privSetField(L, 1, "__owner");
         }
         w->shown = false;
     }
     lua_pushboolean(L, 0); lua_setfield(L, 1, "__visible");
+    // Tooltips are never managed by ShowUIPanel, and moving the cursor from
+    // one button to another in a single frame runs OnLeave (GameTooltip:Hide)
+    // immediately followed by OnEnter (SetOwner + SetTooltipMoney + Show).
+    // Deferring OnHide to updateVisibility() made GameTooltip_OnHide ->
+    // GameTooltip_ClearMoney() fire AFTER the new button's SetTooltipMoney(),
+    // wiping out its coin frame and leaving an empty line under the title.
+    if (isTooltip && wasShown) {
+        w->reportedVisible = false;
+        w->shownToggles = 0;
+        w->onShowFired = false;
+        fireOnHideNow(L, 1, w);
+    }
     return 0;
 }
 static std::pair<wowee::ui::Widget::TooltipLine*, bool> tooltipLineForFontString(
