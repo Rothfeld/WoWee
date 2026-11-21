@@ -3176,6 +3176,11 @@ public:
         bool valid = false;
     };
     const ContinentBounds& getContinentBounds(uint32_t mapId) const;
+    /// Taxi flight-map bounding box from WorldMapContinent.dbc (TaxiMinX/Y,
+    /// TaxiMaxX/Y), falling back to WorldMapArea continent bounds when absent.
+    const ContinentBounds& getTaxiContinentBounds(uint32_t mapId) const;
+    /// Reputation price multiplier (1.0 .. 0.80) for a flight master NPC.
+    float getTaxiReputationMultiplier(uint64_t npcGuid) const;
 
     const std::string& getAchievementName(uint32_t id) const {
         auto it = achievementNameCache_.find(id);
@@ -5625,6 +5630,7 @@ private:
     mutable std::unordered_map<uint32_t, ExtendedCostEntry> extendedCostCache_;
     mutable bool extendedCostCacheLoaded_ = false;
     mutable std::unordered_map<uint32_t, ContinentBounds> continentBoundsCache_;
+    mutable std::unordered_map<uint32_t, ContinentBounds> taxiContinentBoundsCache_;
     mutable std::vector<ReputationEntry> reputationList_;
     mutable bool reputationListBuilt_ = false;
     /// factionId → the faction it is grouped under, from Faction.dbc field 18.

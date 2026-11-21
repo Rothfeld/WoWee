@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cmath>
+#include <cstdint>
+#include <string>
 #include <glm/glm.hpp>
 
 namespace wowee::ui {
@@ -80,6 +82,33 @@ inline MinimapPoiPlacement placeMinimapPoi(const glm::vec2& renderDelta,
     const glm::vec2 dir = off / dist;
     const float rimRadius = view.mapRadius - kMinimapRimArrowInset * uiScale;
     return {false, {centerX + dir.x * rimRadius, centerY + dir.y * rimRadius}, dir};
+}
+
+/// Whether an AreaPOI town rim arrow should be drawn for the player's current
+/// area/zone. Suppresses the current city/area's own AreaPOI arrow (matching
+/// Native TBC 2.4.3): capital cities in AreaPOI.dbc carry their surrounding
+/// outdoor zone's AreaID (e.g. Stormwind City -> Elwynn Forest 12) so they
+/// show in the outdoor zone and suppress once inside the city (zone 1519),
+/// while same-zone city POIs (e.g. Shattrath City 3703) suppress when the
+/// player is already in that zone.
+inline bool shouldShowAreaPoiRimArrow(uint32_t poiAreaId,
+                                      uint32_t poiZoneId,
+                                      uint32_t currentAreaId,
+                                      uint32_t currentZoneId,
+                                      const std::string& poiName,
+                                      const std::string& currentZoneName) {
+    if (currentAreaId != 0 && poiAreaId == currentAreaId) {
+        if (poiAreaId != currentZoneId || poiName == currentZoneName) {
+            return false;
+        }
+    }
+    if (currentZoneId != 0 && poiZoneId != 0 && poiZoneId != currentZoneId) {
+        return false;
+    }
+    if (currentZoneId != 0 && poiAreaId == currentZoneId && !poiName.empty() && poiName == currentZoneName) {
+        return false;
+    }
+    return true;
 }
 
 }  // namespace wowee::ui

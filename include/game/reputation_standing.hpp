@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cmath>
 #include <cstdint>
 
 // The eight standings a reputation can be at, and where each begins and ends.
@@ -53,6 +54,26 @@ inline constexpr const ReputationStanding& reputationStandingFor(int32_t value) 
         if (value >= kReputationStandings[i].floor) return kReputationStandings[i];
     }
     return kReputationStandings[0];
+}
+
+/// Price multiplier for a unit's reaction rank (1..8, matching UnitReaction:
+/// 4=Neutral, 5=Friendly, 6=Honored, 7=Revered, 8=Exalted). Matches
+/// CMaNGOS-TBC Player::GetRepairPriceMultiplier / GetReputationPriceDiscount
+/// (5% off per standing above Neutral).
+inline constexpr float reputationPriceMultiplier(int reactionRank) {
+    switch (reactionRank) {
+        case 5: return 0.95f;
+        case 6: return 0.90f;
+        case 7: return 0.85f;
+        case 8: return 0.80f;
+        default: return 1.0f;
+    }
+}
+
+/// Apply a reputation discount multiplier to a single taxi leg's copper cost,
+/// rounded to the nearest copper (matching CMaNGOS-TBC Taxi::Tracker::AddRoute).
+inline uint32_t discountedTaxiLegCost(uint32_t baseCost, float multiplier) {
+    return static_cast<uint32_t>(std::lrintf(static_cast<float>(baseCost) * multiplier));
 }
 
 } // namespace wowee::game

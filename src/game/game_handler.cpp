@@ -5507,6 +5507,59 @@ GameHandler::getContinentBounds(uint32_t mapId) const {
     return continentBoundsCache_.emplace(mapId, bounds).first->second;
 }
 
+const GameHandler::ContinentBounds&
+GameHandler::getTaxiContinentBounds(uint32_t mapId) const {
+    auto cached = taxiContinentBoundsCache_.find(mapId);
+    if (cached != taxiContinentBoundsCache_.end()) return cached->second;
+
+    ContinentBounds bounds;
+    auto* am = services_.assetManager;
+    if (am && am->isInitialized()) {
+        if (auto dbc = am->loadDBC("WorldMapContinent.dbc"); dbc && dbc->isLoaded() && dbc->getFieldCount() >= 13) {
+            const auto* layout = pipeline::getActiveDBCLayout()
+                ? pipeline::getActiveDBCLayout()->getLayout("WorldMapContinent") : nullptr;
+            const auto field = [&](const char* name, uint32_t fallback) {
+                if (!layout) return fallback;
+                const uint32_t col = layout->tryField(name);
+                return col != 0xFFFFFFFFu ? col : fallback;
+            };
+            const uint32_t mapCol  = field("MapID", 1);
+            const uint32_t minXCol = field("TaxiMinX", 9);
+            const uint32_t minYCol = field("TaxiMinY", 10);
+            const uint32_t maxXCol = field("TaxiMaxX", 11);
+            const uint32_t maxYCol = field("TaxiMaxY", 12);
+            for (uint32_t i = 0; i < dbc->getRecordCount(); ++i) {
+                if (dbc->getUInt32(i, mapCol) != mapId) continue;
+                // WorldMapContinent stores server-space taxi bounds:
+                // X is south..north (bottom..top), Y is east..west (right..left).
+                bounds.bottom = dbc->getFloat(i, minXCol);
+                bounds.right  = dbc->getFloat(i, minYCol);
+                bounds.top    = dbc->getFloat(i, maxXCol);
+                bounds.left   = dbc->getFloat(i, maxYCol);
+                bounds.valid = std::abs(bounds.left - bounds.right) > 0.001f &&
+                               std::abs(bounds.top - bounds.bottom) > 0.001f;
+                break;
+            }
+        }
+    }
+    if (!bounds.valid) {
+        bounds = getContinentBounds(mapId);
+    }
+    return taxiContinentBoundsCache_.emplace(mapId, bounds).first->second;
+}
+
+float GameHandler::getTaxiReputationMultiplier(uint64_t npcGuid) const {
+    if (npcGuid == 0) return 1.0f;
+    const auto entity = getEntityManager().getEntity(npcGuid);
+    if (!entity || !entity->isUnit()) return 1.0f;
+    const auto& unit = static_cast<const Unit&>(*entity);
+    const uint32_t ft = unit.getFactionTemplate();
+    // Only factions with a reputation track grant discounts (CMaNGOS-TBC
+    // Player::GetRepairPriceMultiplier checks faction->HasReputation()).
+    if (factionTemplateRepList_.find(ft) == factionTemplateRepList_.end()) return 1.0f;
+    return reputationPriceMultiplier(unitReactionToPlayer(unit));
+}
+
 std::unordered_map<uint32_t, GameHandler::ExtendedCostEntry>
 GameHandler::readExtendedCosts(const pipeline::DBCFile& dbc, const pipeline::DBCFieldMap& l) {
     const uint32_t idCol = l["ID"], honorCol = l["HonorPoints"], arenaCol = l["ArenaPoints"];

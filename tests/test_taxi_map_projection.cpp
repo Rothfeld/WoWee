@@ -1,6 +1,7 @@
 #include <catch_amalgamated.hpp>
 
 #include "core/coordinates.hpp"
+#include "game/reputation_standing.hpp"
 #include "rendering/world_map/coordinate_projection.hpp"
 
 using namespace wowee;
@@ -93,4 +94,46 @@ TEST_CASE("A node outside the continent still projects, off the map",
     // would look like a real place.
     const glm::vec2 uv = nodeToMapUV(0.0f, 32000.0f, 0.0f, continent());
     REQUIRE(uv.x < 0.0f);
+}
+
+TEST_CASE("WorldMapContinent TaxiMin/TaxiMax bounds project TBC Eastern Kingdoms nodes",
+          "[taxi][map]") {
+    // WorldMapContinent.dbc map 0: TaxiMin=(-16530, -16530), TaxiMax=(12270, 12270).
+    ZoneBounds wmc0;
+    wmc0.locLeft = 12270.0f;
+    wmc0.locRight = -16530.0f;
+    wmc0.locTop = 12270.0f;
+    wmc0.locBottom = -16530.0f;
+
+    // Stormwind (node 2): server (-8840.6, 489.7)
+    const glm::vec2 sw = nodeToMapUV(-8840.6f, 489.7f, 0.0f, wmc0);
+    CHECK(sw.x == Catch::Approx((12270.0f - 489.7f) / 28800.0f).margin(1e-4f));
+    CHECK(1.0f - sw.y == Catch::Approx((-8840.6f + 16530.0f) / 28800.0f).margin(1e-4f));
+
+    // Sentinel Hill (node 4): server (-10629.3, 1036.9) sits south-west of Stormwind.
+    const glm::vec2 sh = nodeToMapUV(-10629.3f, 1036.9f, 0.0f, wmc0);
+    CHECK(sh.x < sw.x);
+    CHECK((1.0f - sh.y) < (1.0f - sw.y));
+}
+
+TEST_CASE("Taxi reputation price discount matches TBC 2.4.3 standing tiers and rounding",
+          "[taxi][discount]") {
+    using wowee::game::discountedTaxiLegCost;
+    using wowee::game::reputationPriceMultiplier;
+
+    CHECK(reputationPriceMultiplier(1) == Catch::Approx(1.0f));  // Hated
+    CHECK(reputationPriceMultiplier(4) == Catch::Approx(1.0f));  // Neutral
+    CHECK(reputationPriceMultiplier(5) == Catch::Approx(0.95f)); // Friendly (5% off)
+    CHECK(reputationPriceMultiplier(6) == Catch::Approx(0.90f)); // Honored (10% off)
+    CHECK(reputationPriceMultiplier(7) == Catch::Approx(0.85f)); // Revered (15% off)
+    CHECK(reputationPriceMultiplier(8) == Catch::Approx(0.80f)); // Exalted (20% off)
+
+    // Ironforge -> Stormwind (50c base) at Friendly (5% off): 47.5 -> 48c
+    CHECK(discountedTaxiLegCost(50, reputationPriceMultiplier(5)) == 48u);
+    // Ironforge -> Shattered Sun Staging Area (27s 75c = 2775c base) at Friendly: 2636.25 -> 2636c
+    CHECK(discountedTaxiLegCost(2775, reputationPriceMultiplier(5)) == 2636u);
+    // Honored / Revered / Exalted on 50c
+    CHECK(discountedTaxiLegCost(50, reputationPriceMultiplier(6)) == 45u);
+    CHECK(discountedTaxiLegCost(50, reputationPriceMultiplier(7)) == 42u);
+    CHECK(discountedTaxiLegCost(50, reputationPriceMultiplier(8)) == 40u);
 }

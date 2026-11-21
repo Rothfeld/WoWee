@@ -1,4 +1,5 @@
 #include "game/movement_handler.hpp"
+#include "game/reputation_standing.hpp"
 #include "game/remote_jump.hpp"
 #include "game/game_handler.hpp"
 #include "game/social_handler.hpp"
@@ -3930,10 +3931,14 @@ void MovementHandler::buildTaxiCostMap() {
     uint32_t startNode = currentTaxiData_.nearestNode;
     if (startNode == 0) return;
 
+    const float discountMulti = owner_.getTaxiReputationMultiplier(taxiNpcGuid_);
     struct AdjEntry { uint32_t node; uint32_t cost; };
     std::unordered_map<uint32_t, std::vector<AdjEntry>> adj;
     for (const auto& edge : taxiPathEdges_) {
-        adj[edge.fromNode].push_back({.node = edge.toNode, .cost = edge.cost});
+        adj[edge.fromNode].push_back({
+            .node = edge.toNode,
+            .cost = discountedTaxiLegCost(edge.cost, discountMulti)
+        });
     }
 
     std::deque<uint32_t> queue;

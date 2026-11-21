@@ -946,7 +946,7 @@ void GameScreen::renderMinimapPings(const MinimapFrame& frame, game::GameHandler
 // and not at 710 (_experiments/20261117T181649Z.minimap_marker_audit/poi/).
 // The arrow image is FrameXML's minimapArrowModel, Rotating-MinimapArrow.
 void GameScreen::renderMinimapAreaPoiArrows(const MinimapFrame& frame, game::GameHandler& gameHandler) {
-    struct Poi { uint32_t map; float x, y; std::string name; };
+    struct Poi { uint32_t map; uint32_t areaId; float x, y; std::string name; };
     static std::vector<Poi> pois;
     static bool loaded = false;
     if (!loaded) {
@@ -956,16 +956,18 @@ void GameScreen::renderMinimapAreaPoiArrows(const MinimapFrame& frame, game::Gam
         const auto* layout = pipeline::getActiveDBCLayout() ? pipeline::getActiveDBCLayout()->getLayout("AreaPOI") : nullptr;
         if (!layout) throw std::runtime_error("dbc_layouts.json lacks AreaPOI; deploy current expansion metadata");
         const uint32_t flagsField = layout->field("Flags"), mapField = layout->field("MapID"),
+                       areaField = layout->field("AreaID"),
                        xField = layout->field("X"), yField = layout->field("Y"), nameField = layout->field("Name");
-        if (flagsField == 0xFFFFFFFF || mapField == 0xFFFFFFFF || xField == 0xFFFFFFFF ||
-            yField == 0xFFFFFFFF || nameField == 0xFFFFFFFF)
+        if (flagsField == 0xFFFFFFFF || mapField == 0xFFFFFFFF || areaField == 0xFFFFFFFF ||
+            xField == 0xFFFFFFFF || yField == 0xFFFFFFFF || nameField == 0xFFFFFFFF)
             throw std::runtime_error("dbc_layouts.json AreaPOI is incomplete; deploy current expansion metadata");
         for (uint32_t i = 0; i < dbc->getRecordCount(); ++i) {
             if ((dbc->getUInt32(i, flagsField) & 0x1) == 0) continue;
             // DBC positions are server coordinates.
             const glm::vec3 at = core::coords::serverToCanonical(
                 {dbc->getFloat(i, xField), dbc->getFloat(i, yField), 0.0f});
-            pois.push_back({dbc->getUInt32(i, mapField), at.x, at.y, dbc->getString(i, nameField)});
+            pois.push_back({dbc->getUInt32(i, mapField), dbc->getUInt32(i, areaField),
+                            at.x, at.y, dbc->getString(i, nameField)});
         }
         LOG_INFO("Minimap: ", pois.size(), " AreaPOI town arrows (flag 0x1)");
     }
@@ -978,9 +980,15 @@ void GameScreen::renderMinimapAreaPoiArrows(const MinimapFrame& frame, game::Gam
     auto* engine = services_.addonManager ? services_.addonManager->getLuaEngine() : nullptr;
     const float scale = engine ? engine->widgets().uiScale() : 1.0f;
     const auto player = core::coords::renderToCanonical(frame.playerRender);
+    const uint32_t currentAreaId = services_.renderer ? services_.renderer->getCurrentAreaId() : 0u;
+    const uint32_t currentZoneId = services_.renderer ? services_.renderer->getCurrentZoneId() : 0u;
+    const std::string currentZoneName = currentZoneId != 0 ? gameHandler.getAreaName(currentZoneId) : std::string{};
     constexpr float kRange = 700.0f;
     for (const auto& poi : pois) {
         if (poi.map != gameHandler.getCurrentMapId()) continue;
+        const uint32_t poiZoneId = poi.areaId != 0 ? gameHandler.getAreaZoneId(poi.areaId) : 0u;
+        if (!shouldShowAreaPoiRimArrow(poi.areaId, poiZoneId, currentAreaId, currentZoneId,
+                                       poi.name, currentZoneName)) continue;
         if (std::hypot(poi.x - player.x, poi.y - player.y) > kRange) continue;
         float sx = 0, sy = 0;
         if (frame.projectCanonical(poi.x, poi.y, sx, sy)) continue;

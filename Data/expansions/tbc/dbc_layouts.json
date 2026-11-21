@@ -646,6 +646,10 @@
     "MapID": 1,
     "RightBoundary": 3,
     "Scale": 8,
+    "TaxiMaxX": 11,
+    "TaxiMaxY": 12,
+    "TaxiMinX": 9,
+    "TaxiMinY": 10,
     "TopBoundary": 4
   },
   "WorldMapOverlay": {

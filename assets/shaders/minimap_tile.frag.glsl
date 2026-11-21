@@ -7,5 +7,7 @@ layout(location = 0) in vec2 TexCoord;
 layout(location = 0) out vec4 outColor;
 
 void main() {
-    outColor = texture(uTileTexture, vec2(TexCoord.y, TexCoord.x));
+    vec4 c = texture(uTileTexture, vec2(TexCoord.y, TexCoord.x));
+    if (c.a < 0.5) discard;
+    outColor = vec4(c.rgb / c.a, 1.0);
 }

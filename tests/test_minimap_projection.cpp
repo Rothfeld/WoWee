@@ -177,3 +177,24 @@ TEST_CASE("off-minimap guard POI clamps to a directional rim arrow (north-up and
     CHECK(inside.pos.x == Catch::Approx(cx + expectedOff.x).margin(1e-4f));
     CHECK(inside.pos.y == Catch::Approx(cy + expectedOff.y).margin(1e-4f));
 }
+
+TEST_CASE("AreaPOI town rim arrow suppresses own city while showing in surrounding zone",
+          "[minimap][poi]") {
+    using wowee::ui::shouldShowAreaPoiRimArrow;
+
+    // Inside Stormwind City (zone 1519, The Canals): suppress Stormwind City POI (area 12, zone 12)
+    // and Goldshire POI (area 87, zone 12).
+    CHECK_FALSE(shouldShowAreaPoiRimArrow(12, 12, 1519, 1519, "Stormwind City", "Stormwind City"));
+    CHECK_FALSE(shouldShowAreaPoiRimArrow(87, 12, 1519, 1519, "Goldshire", "Stormwind City"));
+
+    // Outside in Elwynn Forest (area 12, zone 12): show both Stormwind City and Goldshire arrows.
+    CHECK(shouldShowAreaPoiRimArrow(12, 12, 12, 12, "Stormwind City", "Elwynn Forest"));
+    CHECK(shouldShowAreaPoiRimArrow(87, 12, 12, 12, "Goldshire", "Elwynn Forest"));
+
+    // Inside Goldshire (area 87, zone 12): suppress Goldshire arrow, still show Stormwind City arrow.
+    CHECK_FALSE(shouldShowAreaPoiRimArrow(87, 12, 87, 12, "Goldshire", "Elwynn Forest"));
+    CHECK(shouldShowAreaPoiRimArrow(12, 12, 87, 12, "Stormwind City", "Elwynn Forest"));
+
+    // Inside Shattrath City (zone 3703, subzone Aldor Rise 3704): suppress Shattrath City POI (area 3703).
+    CHECK_FALSE(shouldShowAreaPoiRimArrow(3703, 3703, 3704, 3703, "Shattrath City", "Shattrath City"));
+}

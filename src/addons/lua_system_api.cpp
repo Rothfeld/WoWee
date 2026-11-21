@@ -1305,6 +1305,7 @@ static void pushCvarDefault(lua_State* L, const std::string& n) {
     else if (n == "outboundchatvolume" || n == "inboundchatvolume") lua_pushstring(L, "1");
     else if (n == "chatsoundvolume" || n == "chatmusicvolume" ||
              n == "chatambiencevolume" || n == "voiceactivationsensitivity") lua_pushstring(L, "0.4");
+    else if (n == "showbattlefieldminimap") lua_pushstring(L, "0");
     else if (n == "wowee_bindingset") lua_pushstring(L, "1");
     else lua_pushstring(L, "0");
 }
@@ -5988,7 +5989,7 @@ static bool taxiNodeMapPos(game::GameHandler* gh, uint32_t nodeId,
     const auto it = nodes.find(nodeId);
     if (it == nodes.end()) return false;
 
-    const auto& bounds = gh->getContinentBounds(it->second.displayMapId);
+    const auto& bounds = gh->getTaxiContinentBounds(it->second.displayMapId);
     if (!bounds.valid) return false;
 
     const glm::vec3 canonical = core::coords::serverToCanonical(
