@@ -4777,6 +4777,121 @@ TEST_CASE_METHOD(Integration, "MessageFrame and ScrollingMessageFrame defaults, 
     CHECK(mf->messages[1].color[3] == Catch::Approx(0.0f));
 }
 
+TEST_CASE_METHOD(Integration, "ScrollingMessageFrame staggered fade, SetTimeVisible(0), and scroll fade parity with TBC 2.4.3", "[input][lua][message-frame][chat-fade]") {
+    // Emit ChatFrameTemplate -> FloatingChatFrameTemplate -> ChatFrame1 XML and run it
+    // to confirm displayDuration="120.0" propagates cleanly with default fadeDuration=3, fading=true.
+    wowee::ui::XmlNode root;
+    std::string err;
+    REQUIRE(wowee::ui::parseXml(
+        "<Ui>"
+        "<ScrollingMessageFrame name='ChatFrameTemplate' displayDuration='120.0' maxLines='128' virtual='true'/>"
+        "<ScrollingMessageFrame name='FloatingChatFrameTemplate' inherits='ChatFrameTemplate' virtual='true'/>"
+        "<ScrollingMessageFrame name='ChatFrame1' inherits='FloatingChatFrameTemplate'/>"
+        "<MessageFrame name='UIErrorsFrame' displayDuration='5' insertMode='TOP'/>"
+        "<ScrollingMessageFrame name='GuildEventMessageFrame' insertMode='TOP' maxLines='200' fade='false'/>"
+        "</Ui>", root, err));
+    const auto emitted = wowee::ui::emitFrameXml(root);
+    run(emitted.lua);
+
+    run(R"lua(
+        assert(ChatFrame1:GetTimeVisible() == 120)
+        assert(ChatFrame1:GetFadeDuration() == 3)
+        assert(ChatFrame1:GetFading() == true)
+        assert(UIErrorsFrame:GetTimeVisible() == 5)
+        assert(UIErrorsFrame:GetFadeDuration() == 3)
+        assert(UIErrorsFrame:GetFading() == true)
+        assert(GuildEventMessageFrame:GetFading() == false)
+    )lua");
+
+    // Staggered multi-line independent fade on ChatFrame1 (default 120 s hold + 3 s linear fade).
+    run(R"lua(ChatFrame1:AddMessage("LINE_A", 1, 1, 0))lua");
+    lua.expireMessages(4.0f);
+    run(R"lua(ChatFrame1:AddMessage("LINE_B", 0, 1, 1))lua");
+
+    const auto* cf = lua.widgets().findByName("ChatFrame1");
+    REQUIRE(cf);
+    REQUIRE(cf->messages.size() == 2);
+
+    // At t = 121.5 s (LINE_A age 121.5 s -> 0.5 alpha, LINE_B age 117.5 s -> 1.0 alpha).
+    lua.expireMessages(117.5f);
+    CHECK(cf->messages[0].color[3] == Catch::Approx(0.5f));
+    CHECK(cf->messages[1].color[3] == Catch::Approx(1.0f));
+
+    // At t = 124.0 s (LINE_A age 124.0 s -> faded out, LINE_B age 120.0 s -> still full).
+    lua.expireMessages(2.5f);
+    CHECK(cf->messages[0].color[3] == Catch::Approx(0.0f));
+    CHECK(cf->messages[1].color[3] == Catch::Approx(1.0f));
+
+    // At t = 125.5 s (LINE_B age 121.5 s -> 0.5 alpha).
+    lua.expireMessages(1.5f);
+    CHECK(cf->messages[0].color[3] == Catch::Approx(0.0f));
+    CHECK(cf->messages[1].color[3] == Catch::Approx(0.5f));
+
+    // At t = 127.5 s (both fully faded).
+    lua.expireMessages(2.0f);
+    CHECK(cf->messages[0].color[3] == Catch::Approx(0.0f));
+    CHECK(cf->messages[1].color[3] == Catch::Approx(0.0f));
+
+    // ScrollUp re-lights faded lines for timeVisible + fadeDuration seconds,
+    // and they fade out again if left scrolled up past that window (measured on Native 2.4.3).
+    run(R"lua(
+        ChatFrame1:SetTimeVisible(3)
+        ChatFrame1:SetFadeDuration(2)
+        ChatFrame1:ScrollUp()
+    )lua");
+    CHECK(cf->messageScroll == 1);
+    CHECK(cf->messages[0].color[3] == Catch::Approx(1.0f));
+    CHECK(cf->messages[1].color[3] == Catch::Approx(1.0f));
+
+    lua.expireMessages(4.0f); // 1 s into 2 s fade while scrolled up -> 0.5 alpha
+    CHECK(cf->messages[0].color[3] == Catch::Approx(0.5f));
+    CHECK(cf->messages[1].color[3] == Catch::Approx(0.5f));
+
+    lua.expireMessages(2.0f); // 6 s after ScrollUp -> fully faded while still scrolled up
+    CHECK(cf->messages[0].color[3] == Catch::Approx(0.0f));
+    CHECK(cf->messages[1].color[3] == Catch::Approx(0.0f));
+
+    // ScrollToBottom re-lights lines for timeVisible + fadeDuration before fading out again.
+    run(R"lua(ChatFrame1:ScrollToBottom())lua");
+    CHECK(cf->messageScroll == 0);
+    CHECK(cf->messages[0].color[3] == Catch::Approx(1.0f));
+    CHECK(cf->messages[1].color[3] == Catch::Approx(1.0f));
+
+    lua.expireMessages(1.0f);
+    CHECK(cf->messages[0].color[3] == Catch::Approx(1.0f));
+    CHECK(cf->messages[1].color[3] == Catch::Approx(1.0f));
+
+    lua.expireMessages(3.0f); // 4 s after ScrollToBottom -> 0.5 alpha
+    CHECK(cf->messages[0].color[3] == Catch::Approx(0.5f));
+    CHECK(cf->messages[1].color[3] == Catch::Approx(0.5f));
+
+    lua.expireMessages(2.0f); // 6 s after ScrollToBottom -> 0.0 alpha
+    CHECK(cf->messages[0].color[3] == Catch::Approx(0.0f));
+    CHECK(cf->messages[1].color[3] == Catch::Approx(0.0f));
+
+    // SetTimeVisible(0) with fading=true holds 0 s and immediately fades over fadeDuration.
+    run(R"lua(
+        ChatFrame1:Clear()
+        ChatFrame1:SetTimeVisible(0)
+        ChatFrame1:SetFadeDuration(2)
+        ChatFrame1:SetFading(true)
+        ChatFrame1:AddMessage("ZERO_HOLD", 1, 0.5, 0)
+    )lua");
+    REQUIRE(cf->messages.size() == 1);
+    lua.expireMessages(1.0f);
+    CHECK(cf->messages[0].color[3] == Catch::Approx(0.5f));
+    lua.expireMessages(1.1f);
+    CHECK(cf->messages[0].color[3] == Catch::Approx(0.0f));
+
+    // GuildEventMessageFrame (fade="false") never fades.
+    run(R"lua(GuildEventMessageFrame:AddMessage("Guild joined"))lua");
+    const auto* gf = lua.widgets().findByName("GuildEventMessageFrame");
+    REQUIRE(gf);
+    REQUIRE(gf->messages.size() == 1);
+    lua.expireMessages(500.0f);
+    CHECK(gf->messages[0].color[3] == Catch::Approx(1.0f));
+}
+
 TEST_CASE_METHOD(Integration, "Spell unit targeting, autoSelfCast default, and SELFCAST modified click follow 2.4.3", "[input][screen][selfcast]") {
     replay::Session session;
     session.spawnPlayer({{wowee::game::UF::UNIT_FIELD_HEALTH, 100}});

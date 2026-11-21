@@ -687,10 +687,6 @@ void AddonManager::giveCoinAmountsClearance() {
     if (!luaEngine_.executeString(kScript)) {
         LOG_WARNING("Coin amount clearance did not apply: ", luaEngine_.lastError());
     }
-    // Chat lines that do not fade out from under the player.
-    if (!luaEngine_.executeString(kChatNoFadeLua)) {
-        LOG_WARNING("Chat fade removal did not apply: ", luaEngine_.lastError());
-    }
     // And a wheel on the row that opens the colour picker.
     if (!luaEngine_.executeString(kChatBackgroundSwatchLua)) {
         LOG_WARNING("Chat background swatch did not apply: ", luaEngine_.lastError());

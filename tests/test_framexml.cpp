@@ -31,6 +31,21 @@ TEST_CASE("Chat font instance preserves indentation", "[framexml]") {
     CHECK(has(result.lua, ":SetIndentedWordWrap(true)"));
 }
 
+TEST_CASE("ChatFrameTemplate displayDuration and UIErrorsFrame/GuildEventMessageFrame fade attributes emit", "[framexml][chat-fade]") {
+    const auto root = parseOrFail(
+        "<Ui>"
+        "<ScrollingMessageFrame name='ChatFrameTemplate' displayDuration='120.0' maxLines='128' virtual='true'/>"
+        "<ScrollingMessageFrame name='FloatingChatFrameTemplate' inherits='ChatFrameTemplate' virtual='true'/>"
+        "<ScrollingMessageFrame name='ChatFrame1' inherits='FloatingChatFrameTemplate'/>"
+        "<MessageFrame name='UIErrorsFrame' displayDuration='5' insertMode='TOP'/>"
+        "<ScrollingMessageFrame name='GuildEventMessageFrame' insertMode='TOP' maxLines='200' fade='false'/>"
+        "</Ui>");
+    const auto result = emitFrameXml(root);
+    CHECK(has(result.lua, ":SetTimeVisible(120.0)"));
+    CHECK(has(result.lua, ":SetTimeVisible(5)"));
+    CHECK(has(result.lua, ":SetFading(false)"));
+}
+
 TEST_CASE("Attributes, nesting and self-closing elements", "[framexml][xml]") {
     XmlNode root = parseOrFail(
         "<Ui><Frame name='A' hidden='true'><Size><AbsDimension x='10' y='20'/></Size></Frame></Ui>");

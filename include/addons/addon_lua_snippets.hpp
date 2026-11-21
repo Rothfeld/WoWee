@@ -2787,38 +2787,6 @@ if type(UIDropDownMenu_AddButton) == "function" and
 end
 )LUA";
 
-/// Chat lines do not fade.
-///
-/// ChatFrameTemplate declares displayDuration="120.0", so lines faded two
-/// minutes after arriving. Zero means never here. UIErrorsFrame, which
-/// declares five seconds, is left alone. Applied to existing windows and to
-/// any opened later.
-inline constexpr const char* kChatNoFadeLua = R"LUA(
-local function hold(frame)
-    if frame and frame.SetTimeVisible then
-        frame:SetTimeVisible(0)
-        -- The real client's own switch for this, in case anything asks it
-        -- rather than the duration.
-        if frame.SetFading then frame:SetFading(false) end
-    end
-end
-
-for i = 1, (NUM_CHAT_WINDOWS or 10) do
-    hold(_G["ChatFrame" .. i])
-end
-
--- A window opened later gets the same treatment. FCF_OpenNewWindow is what
--- makes one, and it answers the frame it made.
-local realOpen = FCF_OpenNewWindow
-if type(realOpen) == "function" then
-    FCF_OpenNewWindow = function(...)
-        local frame = realOpen(...)
-        hold(frame)
-        return frame
-    end
-end
-)LUA";
-
 /// The chat input box wears the chat window's background.
 ///
 /// Blizzard's box is a pill of its own: UI-ChatInputBorder-Left2, -Mid2 and

@@ -2779,7 +2779,7 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                     // errors for five seconds and is supposed to end up empty.
                     // The fault is lines that are lit and still not painted,
                     // or any line at all in a frame that never fades.
-                    const bool fadesAndHasFaded = w->messageDuration > 0.0f && lit == 0;
+                    const bool fadesAndHasFaded = w->messageFading && lit == 0;
                     static std::set<uint32_t> saidBlank;
                     if (!fadesAndHasFaded && saidBlank.insert(w->id).second) {
                         LOG_WARNING("'", w->name.empty() ? "(unnamed)" : w->name,

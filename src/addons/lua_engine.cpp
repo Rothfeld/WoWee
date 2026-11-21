@@ -4663,8 +4663,41 @@ int lua_Tooltip_NumLines(lua_State* L) {
     return 1;
 }
 
+void refreshMessageFadeAlphas(wowee::ui::Widget& w) {
+    if (!w.messageFading) {
+        for (auto& m : w.messages) m.color[3] = 1.0f;
+        return;
+    }
+    const float life = std::max(0.0f, w.messageDuration);
+    const float fade = std::max(0.0f, w.messageFadeDuration);
+    const bool useScrollAge = (w.objectType != "MessageFrame");
+    for (auto& m : w.messages) {
+        // SetTimeVisible is the full-alpha hold interval; the linear fade
+        // runs for fadeDuration seconds after it (measured on TBC 2.4.3:
+        // ChatFrame1 displayDuration="120" / fadeDuration="3", UIErrorsFrame
+        // displayDuration="5" / fadeDuration="3"). Scrolling resets
+        // messageScrollAge to 0 so faded lines re-light for the same window.
+        const float effectiveAge = useScrollAge ? std::min(m.age, w.messageScrollAge) : m.age;
+        const float past = effectiveAge - life;
+        m.color[3] = (past <= 0.0f) ? 1.0f
+                   : (fade > 0.0f && past < fade) ? (1.0f - past / fade)
+                   : 0.0f;
+    }
+}
+
+void onMessageFrameScrolled(wowee::ui::Widget& w) {
+    if (w.objectType != "MessageFrame") {
+        w.messageScrollAge = 0.0f;
+        refreshMessageFadeAlphas(w);
+    }
+}
+
 int lua_MessageFrame_Clear(lua_State* L) {
-    if (auto* w = widgetOf(L, 1)) { w->messages.clear(); w->messageScroll = 0; }
+    if (auto* w = widgetOf(L, 1)) {
+        w->messages.clear();
+        w->messageScroll = 0;
+        w->messageScrollAge = std::numeric_limits<float>::infinity();
+    }
     return 0;
 }
 /// GetNumMessages([accessID]) - how many lines, or how many belonging to one
@@ -4701,17 +4734,22 @@ int lua_MessageFrame_ScrollUp(lua_State* L) {
     if (auto* w = widgetOf(L, 1)) {
         if (static_cast<size_t>(w->messageScroll) + 1 < w->messages.size())
             ++w->messageScroll;
+        onMessageFrameScrolled(*w);
     }
     return 0;
 }
 int lua_MessageFrame_ScrollDown(lua_State* L) {
     if (auto* w = widgetOf(L, 1)) {
         if (w->messageScroll > 0) --w->messageScroll;
+        onMessageFrameScrolled(*w);
     }
     return 0;
 }
 int lua_MessageFrame_ScrollToBottom(lua_State* L) {
-    if (auto* w = widgetOf(L, 1)) w->messageScroll = 0;
+    if (auto* w = widgetOf(L, 1)) {
+        w->messageScroll = 0;
+        onMessageFrameScrolled(*w);
+    }
     return 0;
 }
 int lua_MessageFrame_SetScrollOffset(lua_State* L) {
@@ -4719,6 +4757,7 @@ int lua_MessageFrame_SetScrollOffset(lua_State* L) {
         const int maxOff = w->messages.empty() ? 0 : static_cast<int>(w->messages.size()) - 1;
         const int req = static_cast<int>(luaL_optnumber(L, 2, 0));
         w->messageScroll = std::clamp(req, 0, maxOff);
+        onMessageFrameScrolled(*w);
     }
     return 0;
 }
@@ -4737,8 +4776,10 @@ int lua_MessageFrame_GetMaxLines(lua_State* L) {
     return 1;
 }
 int lua_MessageFrame_ScrollToTop(lua_State* L) {
-    if (auto* w = widgetOf(L, 1))
+    if (auto* w = widgetOf(L, 1)) {
         w->messageScroll = w->messages.empty() ? 0 : static_cast<int>(w->messages.size()) - 1;
+        onMessageFrameScrolled(*w);
+    }
     return 0;
 }
 int lua_Frame_GetMinResize(lua_State* L) {
@@ -14303,25 +14344,14 @@ void LuaEngine::runInterfaceProbe() {
 void LuaEngine::expireMessages(float elapsed) {
     for (size_t id = 1; id < widgets_.size(); ++id) {
         auto* w = widgets_.get(static_cast<uint32_t>(id));
-        if (!w || !w->isMessageFrame || w->messageDuration <= 0.0f) continue;
-        if (!w->messageFading) {
-            for (auto& m : w->messages) m.color[3] = 1.0f;
-            continue;
+        if (!w || !w->isMessageFrame) continue;
+        if (std::isfinite(w->messageScrollAge)) {
+            w->messageScrollAge += elapsed;
         }
-        const bool readingBack = w->objectType != "MessageFrame" && w->messageScroll > 0;
-        const float life = w->messageDuration;
-        const float fade = w->messageFadeDuration > 0.0f ? w->messageFadeDuration : 0.0f;
         for (auto& m : w->messages) {
             m.age += elapsed;
-            if (readingBack) { m.color[3] = 1.0f; continue; }
-            // SetTimeVisible is the full-alpha hold interval; the linear fade
-            // runs for fadeDuration seconds after it (measured on UIErrorsFrame:
-            // displayDuration="5" holds 1.0 until 5 s and reaches 0 at 8 s).
-            const float past = m.age - life;
-            m.color[3] = (past <= 0.0f) ? 1.0f
-                       : (fade > 0.0f && past < fade) ? (1.0f - past / fade)
-                       : 0.0f;
         }
+        refreshMessageFadeAlphas(*w);
     }
 }
 

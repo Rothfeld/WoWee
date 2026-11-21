@@ -20,6 +20,7 @@
 
 #include <cstdint>
 #include <deque>
+#include <limits>
 #include <map>
 #include <string>
 #include <string_view>
@@ -555,10 +556,10 @@ struct Widget {
         std::string extra;
     };
     std::deque<Message> messages;
-    /// How long a message stays before it fades out, in seconds, and how long
-    /// the fade itself takes. Zero means it never goes - which is what a chat
-    /// frame wants and what UIErrorsFrame very much does not: it declares
-    /// displayDuration="5" and every error was staying on screen for good.
+    /// How long a message stays at full opacity before fading out, in seconds,
+    /// and how long the linear fade itself takes. SetFading(false) (or XML
+    /// fade="false") disables fading; SetTimeVisible(0) with fading enabled
+    /// holds for 0 s and immediately fades over messageFadeDuration (TBC 2.4.3).
     float messageDuration = 0.0f;
     float messageFadeDuration = 3.0f;
     /// SetFading / XML fade="false": lines stay lit past messageDuration.
@@ -572,6 +573,11 @@ struct Widget {
     size_t maxMessages = 128;
     /// How far back through the history the frame has been scrolled, in lines.
     int   messageScroll = 0;
+    /// Seconds since the last scroll operation (ScrollUp/ScrollDown/ScrollToBottom/
+    /// ScrollToTop/SetScrollOffset). Starts at +infinity (no scroll yet) and resets
+    /// to 0 on any scroll action; effective fade age per line is
+    /// min(m.age, messageScrollAge), matching TBC 2.4.3 ScrollingMessageFrame.
+    float messageScrollAge = std::numeric_limits<float>::infinity();
     /// EditBox:SetAltArrowKeyMode - arrows move the cursor only with Alt held.
     bool  altArrowKeyMode = false;
     /// Texture:SetTexCoordModifiesRect. Stored for its getter; SetTexCoord
