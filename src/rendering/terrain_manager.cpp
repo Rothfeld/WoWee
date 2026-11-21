@@ -1875,6 +1875,8 @@ void TerrainManager::updateGroundDetail(const Camera& camera) {
             const auto& p = patch->placements[patch->instanceIds.size()];
             const uint32_t id = m2Renderer->createInstance(p.modelId, p.position, p.rotation, p.scale);
             if (!id) throw std::runtime_error("Cannot create authored ground detail instance");
+            m2Renderer->setInstanceGroundNormal(id, p.groundNormal);
+            if (p.shadowed) m2Renderer->setInstanceOutdoorShadowed(id, true);
             patch->instanceIds.push_back(id);
         }
     }
@@ -2010,8 +2012,9 @@ void TerrainManager::generateGroundClutterPlacements(std::shared_ptr<PendingTile
                         return;
                     }
 
+                    glm::vec3 surfaceNormal(0.0f, 0.0f, 1.0f);
                     const glm::vec3 surfacePoint = pipeline::TerrainMeshGenerator::chunkSurfacePoint(
-                        chunk.position, chunk.heightMap, sample.fracX, sample.fracY, unitSize);
+                        chunk.position, chunk.heightMap, sample.fracX, sample.fracY, unitSize, &surfaceNormal);
 
                     GroundDetailPlacement p;
                     p.modelId = modelId;
@@ -2021,6 +2024,8 @@ void TerrainManager::generateGroundClutterPlacements(std::shared_ptr<PendingTile
                     p.scale = sample.scale;
                     // Snap directly to sampled terrain height.
                     p.position = glm::vec3(surfacePoint.x, surfacePoint.y, surfacePoint.z + 0.01f);
+                    p.groundNormal = surfaceNormal;
+                    p.shadowed = chunk.isShadowed(sample.fracX, sample.fracY);
                     pending->groundDetail[cy * 16 + cx].placements.push_back(p);
                     pending->groundDetailModels.insert(modelId);
                     added++;

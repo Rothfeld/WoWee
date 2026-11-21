@@ -277,6 +277,7 @@ struct M2Instance {
     uint32_t indoorLighting = 0; // packed MODD RGB in bits 8..31, bit 1 enables
     bool outdoorShadowed = false;
     bool interiorFog = false;
+    glm::vec3 groundNormal{0.0f, 0.0f, 1.0f};
     std::optional<DirectionalLightRig> customLightRig;
     // Game objects: where and how long ago their interior light was asked.
     glm::vec3 interiorLightQueriedAt{std::numeric_limits<float>::max()};
@@ -689,6 +690,7 @@ public:
     void setInstanceIndoorLighting(uint32_t instanceId, const glm::vec3& color,
                                    const DirectionalLightRig* rig = nullptr);
     void setInstanceOutdoorShadowed(uint32_t instanceId, bool shadowed);
+    void setInstanceGroundNormal(uint32_t instanceId, const glm::vec3& normal);
     /// Record a WMO doodad (MODD entry) placed as this instance, with the
     /// rooms that list it (pipeline::wmoDoodadRooms; empty: drawn with the
     /// building). An instance standing for several entries is drawn while any

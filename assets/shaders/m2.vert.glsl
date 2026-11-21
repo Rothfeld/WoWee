@@ -139,10 +139,15 @@ void main() {
     // blue-grey; 2.4.3 draws the same tufts in the terrain's own light
     // whichever way they face (Dustwallow Marsh, Beezil's Wreck).
     const bool isGroundClutter = (push.drawMode == 2 || push.drawMode == 3);
-    vec3 lightingNormal = isGroundClutter ? vec3(0.0, 0.0, 1.0) : normalizedNormal(Normal);
     uint lightFlags = uint(instanceData[instIdx].flags);
     bool hasCustomRig = (lightFlags & 2u) != 0u;
-    float outdoorDiffScale = (lightDir.w != 0.0 && !isGroundClutter && (lightFlags & 1u) != 0u)
+    // Outdoor ground clutter packs its terrain surface normal into customLightDir.xyz
+    // so tufts on shaded hillsides match the slope's sun angle instead of glowing at
+    // straight-up (0, 0, 1) brightness.
+    vec3 lightingNormal = (isGroundClutter && !hasCustomRig)
+        ? normalizedNormal(instanceData[instIdx].customLightDir.xyz)
+        : (isGroundClutter ? vec3(0.0, 0.0, 1.0) : normalizedNormal(Normal));
+    float outdoorDiffScale = (lightDir.w != 0.0 && (lightFlags & 1u) != 0u)
         ? 0.5 : 1.0;
     vec3 effAmbient = hasCustomRig ? instanceData[instIdx].customAmbient.rgb : ambientColor.rgb;
     vec3 effDiffuse = hasCustomRig ? instanceData[instIdx].customDiffuse.rgb : (lightColor.rgb * outdoorDiffScale);

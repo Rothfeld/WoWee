@@ -1476,7 +1476,9 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                     } else {
                         e.customAmbient = glm::vec4(0.0f, 0.0f, 0.0f, bc.x);
                         e.customDiffuse = glm::vec4(0.0f, 0.0f, 0.0f, bc.y);
-                        e.customLightDir = glm::vec4(0.0f, 0.0f, -1.0f, bc.z);
+                        e.customLightDir = inst.cachedIsGroundDetail
+                            ? glm::vec4(inst.groundNormal, bc.z)
+                            : glm::vec4(0.0f, 0.0f, -1.0f, bc.z);
                     }
                 }
                 instanceDataCount_++;
@@ -1801,7 +1803,9 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                                 } else {
                                     e.customAmbient = glm::vec4(0.0f, 0.0f, 0.0f, bc.x);
                                     e.customDiffuse = glm::vec4(0.0f, 0.0f, 0.0f, bc.y);
-                                    e.customLightDir = glm::vec4(0.0f, 0.0f, -1.0f, bc.z);
+                                    e.customLightDir = inst.cachedIsGroundDetail
+                                        ? glm::vec4(inst.groundNormal, bc.z)
+                                        : glm::vec4(0.0f, 0.0f, -1.0f, bc.z);
                                 }
                             }
                             instanceDataCount_++;
@@ -1865,12 +1869,12 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                     VkPipeline desiredPipeline;
                     if (forceCutout && model.isGroundDetail) {
                         // Two-pass TBC 2.4.3 ground-detail rendering:
-                        // Pass 1A writes solid blade cores (alpha >= 128/255)
-                        // opaque with depth so crossing quads never occlude
-                        // each other via faint fringes and water stays behind
-                        // solid stems. Pass 1B blends the [1/255, 128/255)
-                        // soft fringe without depth writes right after Pass 1A.
-                        desiredPipeline = opaquePipeline_;
+                        // Pass 1A writes blade cores (alpha >= 128/255) with
+                        // depth AND alpha blending so semi-transparent blade
+                        // tips blend smoothly while water stays behind solid
+                        // stems. Pass 1B blends [1/255, 128/255) soft fringes
+                        // without depth writes right after Pass 1A.
+                        desiredPipeline = alphaTestPipeline_;
                     } else if (forceCutout) {
                         desiredPipeline = cutoutPipeline_;
                     } else {
@@ -2212,7 +2216,9 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                 } else {
                     e.customAmbient = glm::vec4(0.0f, 0.0f, 0.0f, bc.x);
                     e.customDiffuse = glm::vec4(0.0f, 0.0f, 0.0f, bc.y);
-                    e.customLightDir = glm::vec4(0.0f, 0.0f, -1.0f, bc.z);
+                    e.customLightDir = instance.cachedIsGroundDetail
+                        ? glm::vec4(instance.groundNormal, bc.z)
+                        : glm::vec4(0.0f, 0.0f, -1.0f, bc.z);
                 }
             }
             if (projectedDraw) {

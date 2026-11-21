@@ -57,6 +57,8 @@ struct GroundDetailPlacement {
     glm::vec3 position;
     glm::vec3 rotation;
     float scale;
+    glm::vec3 groundNormal{0.0f, 0.0f, 1.0f};
+    bool shadowed = false;
 };
 
 struct GroundDetailPatch {

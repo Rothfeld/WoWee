@@ -256,7 +256,6 @@ void main() {
             if (texColor.a < 1.0 / 255.0 || texColor.a >= 128.0 / 255.0) discard;
         } else {
             if (texColor.a < 128.0 / 255.0) discard;
-            texColor.a = 1.0;
         }
     } else if (alphaTest != 0) {
         // M2 alpha-key materials use an 8-bit reference of 224. Keep the

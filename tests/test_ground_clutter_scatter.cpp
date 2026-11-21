@@ -242,3 +242,101 @@ TEST_CASE("real Dun Morogh road ADT doodadMapping aligns with dominant MCAL laye
     REQUIRE(total > 0);
     REQUIRE(static_cast<double>(matched) / static_cast<double>(total) > 0.95);
 }
+
+TEST_CASE("steep terrain slopes suppress ground clutter while flat quads still grow",
+          "[terrain][clutter]") {
+    MapChunk chunk = makeUniformChunk(2811u);
+    // Populate MCNR normals: top half (qy=0..3) steep cliff (nz ~ 0.55),
+    // bottom half (qy=4..7) gentle ground (nz ~ 0.96).
+    for (int qy = 0; qy < 8; ++qy) {
+        for (int qx = 0; qx < 8; ++qx) {
+            const size_t idx = static_cast<size_t>(9 + qy * 17 + qx);
+            chunk.normals[idx * 3 + 0] = (qy < 4) ? 105 : 25;
+            chunk.normals[idx * 3 + 1] = 0;
+            chunk.normals[idx * 3 + 2] = (qy < 4) ? 70 : 122;
+        }
+    }
+
+    const GroundClutterEffectSpec grass = makeEffect(8u);
+    auto lookup = [&](uint32_t id) -> const GroundClutterEffectSpec* {
+        return (id == 2811u) ? &grass : nullptr;
+    };
+
+    size_t emitted = 0;
+    for (int cy = 0; cy < 4; ++cy) {
+        for (int cx = 0; cx < 4; ++cx) {
+            scatterChunkGroundClutter(chunk, 38, 33, cx, cy, 1.5f, lookup,
+                                      [&](const GroundClutterSample& s) {
+                                          ++emitted;
+                                          REQUIRE(s.qy >= 4);
+                                          REQUIRE(wowee::pipeline::chunkQuadNormalZ(chunk, s.qy, s.qx) >=
+                                                  wowee::pipeline::kGroundClutterMinNormalZ);
+                                      });
+        }
+    }
+    REQUIRE(emitted > 0);
+}
+
+TEST_CASE("real TBC Kalimdor Ratchet hill suppresses path and steep-slope clutter while keeping gentle Barrens grass",
+          "[terrain][clutter]") {
+    const std::filesystem::path ratchetAdt =
+        "/workspace/azerothcore/client/wowee-data/expansions/tbc/world/maps/kalimdor/kalimdor_38_33.adt";
+    const std::filesystem::path xroadsAdt =
+        "/workspace/azerothcore/client/wowee-data/expansions/tbc/world/maps/kalimdor/kalimdor_36_32.adt";
+    if (!std::filesystem::exists(ratchetAdt) || !std::filesystem::exists(xroadsAdt)) {
+        SUCCEED("TBC Kalimdor ADT data not present in this environment");
+        return;
+    }
+
+    auto loadAdt = [](const std::filesystem::path& path) {
+        std::ifstream in(path, std::ios::binary);
+        REQUIRE(in.good());
+        std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)),
+                                   std::istreambuf_iterator<char>());
+        ADTTerrain terrain = ADTLoader::load(bytes);
+        REQUIRE(terrain.isLoaded());
+        return terrain;
+    };
+
+    const ADTTerrain ratchet = loadAdt(ratchetAdt);
+    const ADTTerrain xroads = loadAdt(xroadsAdt);
+
+    const GroundClutterEffectSpec barrensDirt = makeEffect(8u);
+    const GroundClutterEffectSpec barrensGrass = makeEffect(8u);
+    auto lookup = [&](uint32_t id) -> const GroundClutterEffectSpec* {
+        if (id == 2808u || id == 2873u) return &barrensDirt;
+        if (id == 2811u || id == 2813u || id == 2872u || id == 2877u) return &barrensGrass;
+        return nullptr;
+    };
+
+    // Ratchet hill chunk (15,15) overlooking Ratchet Bruiser at (-1054.79, -3702.88):
+    // Bruiser's sandy path quads (qy=5,qx=0..2; qy=6,qx=2..5; qy=7,qx=5..6) are masked by
+    // noEffectDoodad, and steep hillside quads (e.g. qy=4,qx=4; qy=7,qx=3) must stay bare.
+    const MapChunk& hillChunk = ratchet.getChunk(15, 15);
+    REQUIRE(hillChunk.isEffectDisabled(5, 0));
+    REQUIRE(hillChunk.isEffectDisabled(5, 1));
+    REQUIRE(hillChunk.isEffectDisabled(5, 2));
+    REQUIRE(wowee::pipeline::chunkQuadNormalZ(hillChunk, 4, 4) < wowee::pipeline::kGroundClutterMinNormalZ);
+    REQUIRE(wowee::pipeline::chunkQuadNormalZ(hillChunk, 7, 3) < wowee::pipeline::kGroundClutterMinNormalZ);
+
+    size_t hillEmitted = 0;
+    scatterChunkGroundClutter(hillChunk, 38, 33, 15, 15, 1.5f, lookup,
+                              [&](const GroundClutterSample& s) {
+                                  ++hillEmitted;
+                                  REQUIRE_FALSE(hillChunk.isEffectDisabled(s.qy, s.qx));
+                                  REQUIRE(wowee::pipeline::chunkQuadNormalZ(hillChunk, s.qy, s.qx) >=
+                                          wowee::pipeline::kGroundClutterMinNormalZ);
+                              });
+    REQUIRE(hillEmitted > 0);
+
+    // Ratchet shoreline chunk (15,12) and Crossroads open grass chunk (14,15) must still grow grass.
+    size_t shoreEmitted = 0;
+    scatterChunkGroundClutter(ratchet.getChunk(15, 12), 38, 33, 15, 12, 0.5625f, lookup,
+                              [&](const GroundClutterSample&) { ++shoreEmitted; });
+    REQUIRE(shoreEmitted > 0);
+
+    size_t xroadsEmitted = 0;
+    scatterChunkGroundClutter(xroads.getChunk(14, 15), 36, 32, 14, 15, 0.5625f, lookup,
+                              [&](const GroundClutterSample&) { ++xroadsEmitted; });
+    REQUIRE(xroadsEmitted > 0);
+}

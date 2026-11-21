@@ -65,7 +65,7 @@ struct MapChunk {
     std::vector<uint8_t> alphaMap;  // Alpha blend maps for layers
 
     // Normals (compressed)
-    std::array<int8_t, 145 * 3> normals;  // X, Y, Z per vertex
+    std::array<int8_t, 145 * 3> normals{};  // X, Y, Z per vertex
 
     // MCSH 64x64 1-bit baked shadow map (512 bytes, present when MCNK flag 0x1 is set)
     bool hasShadowMap = false;

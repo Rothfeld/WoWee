@@ -94,6 +94,13 @@ void M2Renderer::setInstanceOutdoorShadowed(uint32_t instanceId, bool shadowed) 
     instances[index->second].outdoorShadowed = shadowed;
 }
 
+void M2Renderer::setInstanceGroundNormal(uint32_t instanceId, const glm::vec3& normal) {
+    const auto index = instanceIndexById.find(instanceId);
+    if (index == instanceIndexById.end()) return;
+    const float len = glm::length(normal);
+    instances[index->second].groundNormal = (len > 1e-4f) ? (normal / len) : glm::vec3(0.0f, 0.0f, 1.0f);
+}
+
 void M2Renderer::addInstanceWmoDoodad(uint32_t instanceId, uint32_t wmoInstanceId,
                                       const std::vector<uint16_t>& rooms) {
     const auto index = instanceIndexById.find(instanceId);

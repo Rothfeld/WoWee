@@ -28,6 +28,23 @@ struct GroundClutterSample {
     float scale = 1.0f;
 };
 
+/// Minimum terrain normal Z (cos(slope)) that holds ground-effect clutter.
+/// Steep rocky slopes and cliff faces (~>38.7 deg) stay bare in TBC 2.4.3 even
+/// when their dominant paint layer carries a non-zero GroundEffectTexture id.
+inline constexpr float kGroundClutterMinNormalZ = 0.78f;
+
+/// Quad-center terrain normal Z from MCNR ([-127, 127] -> [-1, 1]).
+/// Returns 1.0 when normals are absent/unpopulated (e.g. synthetic flat chunks).
+inline float chunkQuadNormalZ(const MapChunk& chunk, int qy, int qx) {
+    const size_t idx = static_cast<size_t>(9 + qy * 17 + qx);
+    if (idx * 3 + 2 >= chunk.normals.size()) return 1.0f;
+    const int8_t nx = chunk.normals[idx * 3 + 0];
+    const int8_t ny = chunk.normals[idx * 3 + 1];
+    const int8_t nz = chunk.normals[idx * 3 + 2];
+    if (nx == 0 && ny == 0 && nz == 0) return 1.0f;
+    return static_cast<float>(nz) / 127.0f;
+}
+
 /// Convert WoWee's 0..1.5 ground-clutter density scale (0%..150% UI slider)
 /// into TBC 2.4.3's `groundEffectDensity` (0..64 UI slider range, where
 /// 24 is default = 56.25% and 64 is max slider = 150%).
@@ -102,6 +119,7 @@ size_t scatterChunkGroundClutter(const MapChunk& chunk,
         const int qy = cell / 8;
 
         if (chunk.isHole(qy, qx) || chunk.isEffectDisabled(qy, qx)) continue;
+        if (chunkQuadNormalZ(chunk, qy, qx) < kGroundClutterMinNormalZ) continue;
         const size_t layerIdx = chunk.effectLayerFor(qy, qx);
         if (layerIdx >= chunk.layers.size()) continue;
         const auto& layer = chunk.layers[layerIdx];
