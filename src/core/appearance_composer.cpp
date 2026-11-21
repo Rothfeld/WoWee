@@ -39,7 +39,8 @@ AppearanceComposer::AppearanceComposer(rendering::Renderer* renderer,
 PlayerTextureInfo AppearanceComposer::resolvePlayerTextures(pipeline::M2Model& model,
                                                             game::Race race, game::Gender gender,
                                                             uint32_t appearanceBytes,
-                                                            bool useFemaleModel) {
+                                                            bool useFemaleModel,
+                                                            uint8_t facialHair) {
     PlayerTextureInfo result;
 
     uint32_t targetRaceId = static_cast<uint32_t>(race);
@@ -81,6 +82,7 @@ PlayerTextureInfo AppearanceComposer::resolvePlayerTextures(pipeline::M2Model& m
         who.faceId = charFaceId;
         who.hairStyleId = charHairStyleId;
         who.hairColorId = charHairColorId;
+        who.facialHairId = facialHair;
 
         // The underwear rows name art that is not always on disk, and this
         // caller can ask.
@@ -95,6 +97,10 @@ PlayerTextureInfo AppearanceComposer::resolvePlayerTextures(pipeline::M2Model& m
         result.skinExtraPath = sections.skinExtra;
         result.faceLowerPath = sections.faceLower;
         result.faceUpperPath = sections.faceUpper;
+        result.scalpLowerPath = sections.scalpLower;
+        result.scalpUpperPath = sections.scalpUpper;
+        result.facialLowerPath = sections.facialLower;
+        result.facialUpperPath = sections.facialUpper;
         if (!sections.hair.empty()) result.hairTexturePath = sections.hair;
         result.underwearPaths = sections.underwear;
 
@@ -152,20 +158,24 @@ void AppearanceComposer::compositePlayerSkin(uint32_t modelSlotId, const PlayerT
     if (!charRenderer) return;
 
     // Save skin composite state for re-compositing on equipment changes
-    // Include face textures so compositeWithRegions can rebuild the full base
+    // Include face, scalp, and facial hair overlays so compositeWithRegions can rebuild the full base
     bodySkinPath_ = texInfo.bodySkinPath;
     underwearPaths_.clear();
-    if (!texInfo.faceLowerPath.empty()) underwearPaths_.push_back({texInfo.faceLowerPath, pipeline::SkinRegion::FaceLower});
-    if (!texInfo.faceUpperPath.empty()) underwearPaths_.push_back({texInfo.faceUpperPath, pipeline::SkinRegion::FaceUpper});
+    pipeline::CharacterSectionTextures faceSections;
+    faceSections.faceLower = texInfo.faceLowerPath;
+    faceSections.faceUpper = texInfo.faceUpperPath;
+    faceSections.scalpLower = texInfo.scalpLowerPath;
+    faceSections.scalpUpper = texInfo.scalpUpperPath;
+    faceSections.facialLower = texInfo.facialLowerPath;
+    faceSections.facialUpper = texInfo.facialUpperPath;
+    pipeline::appendFaceOverlayLayers(underwearPaths_, faceSections);
     for (const auto& up : texInfo.underwearPaths) underwearPaths_.push_back(up);
 
-    // Composite body skin + face + underwear overlays
+    // Composite body skin + face + scalp + facial hair + underwear overlays
     {
         std::vector<pipeline::SkinLayer> layers{{texInfo.bodySkinPath, pipeline::SkinRegion::FullAtlas}};
-        if (!texInfo.faceLowerPath.empty()) layers.push_back({texInfo.faceLowerPath, pipeline::SkinRegion::FaceLower});
-        if (!texInfo.faceUpperPath.empty()) layers.push_back({texInfo.faceUpperPath, pipeline::SkinRegion::FaceUpper});
-        for (const auto& up : texInfo.underwearPaths) {
-            layers.push_back(up);
+        for (const auto& baseLayer : underwearPaths_) {
+            layers.push_back(baseLayer);
         }
         rendering::VkTexture* skinTex = nullptr;
         if (layers.size() > 1) {

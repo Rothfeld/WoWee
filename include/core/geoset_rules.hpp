@@ -21,7 +21,9 @@
  * It lives here now, with a test, and the call sites ask rather than decide.
  */
 
+#include <algorithm>
 #include <cstdint>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace wowee {
@@ -126,6 +128,27 @@ constexpr uint32_t appearanceKey(uint8_t race, uint8_t sex, uint8_t variation) {
     return (static_cast<uint32_t>(race) << 16) |
            (static_cast<uint32_t>(sex) << 8) |
            static_cast<uint32_t>(variation);
+}
+
+/// Map a CharHairGeosets.dbc row's (geosetId, showScalp) to the group-0 scalp
+/// submesh id. When `showScalp` is set and `geosetId == 0` (bald styles like
+/// Human Male variation 0), selects default scalp 1; when `geosetId > 0`,
+/// preserves the authored hair geoset.
+constexpr uint16_t hairGeosetFromDbcRow(uint32_t geosetId, bool showScalp) {
+    return static_cast<uint16_t>((showScalp && geosetId == 0) ? 1u : geosetId);
+}
+
+/// Resolve the group-0 hair/scalp geoset from a CharHairGeosets lookup map.
+/// Falls back to default scalp 1 when a DBC row maps to 0 (no hair mesh), and
+/// to `max(hairStyleId + 1, 1)` only when the map has no entry for the key.
+inline uint16_t resolveHairScalpGeoset(
+    const std::unordered_map<uint32_t, uint16_t>& hairGeosetMap,
+    uint8_t raceId, uint8_t sexId, uint8_t hairStyleId) {
+    const auto it = hairGeosetMap.find(appearanceKey(raceId, sexId, hairStyleId));
+    if (it != hairGeosetMap.end()) {
+        return it->second > 0 ? it->second : 1u;
+    }
+    return static_cast<uint16_t>(std::max<uint8_t>(hairStyleId + 1, 1));
 }
 
 /// Whether a race's eyes glow.

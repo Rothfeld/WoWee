@@ -1050,7 +1050,7 @@ void EntitySpawner::buildCreatureDisplayLookups() {
             const uint32_t key = appearanceKey(static_cast<uint8_t>(raceId),
                                               static_cast<uint8_t>(sexId),
                                               static_cast<uint8_t>(variation));
-            hairGeosetMap_[key] = static_cast<uint16_t>(useDefaultScalp ? 1 : geosetId);
+            hairGeosetMap_[key] = hairGeosetFromDbcRow(geosetId, useDefaultScalp);
         }
         LOG_INFO("Loaded ", hairGeosetMap_.size(), " hair geoset mappings from CharHairGeosets.dbc");
     }
@@ -2296,7 +2296,6 @@ void EntitySpawner::applyCreatureDisplayTextures(uint32_t displayId, uint32_t mo
                             uint32_t npcSex = static_cast<uint32_t>(extraCopy.sexId);
                             uint32_t npcSkin = static_cast<uint32_t>(extraCopy.skinId);
                             uint32_t npcFace = static_cast<uint32_t>(extraCopy.faceId);
-                            std::string npcFaceLower, npcFaceUpper;
                             std::vector<pipeline::SkinLayer> npcUnderwear;
 
                             // The one reader, in pipeline/char_sections.hpp.
@@ -2313,6 +2312,7 @@ void EntitySpawner::applyCreatureDisplayTextures(uint32_t displayId, uint32_t mo
                             who.faceId = static_cast<uint8_t>(npcFace);
                             who.hairStyleId = extraCopy.hairStyleId;
                             who.hairColorId = extraCopy.hairColorId;
+                            who.facialHairId = extraCopy.facialHairId;
 
                             const auto sections = pipeline::resolveCharacterSections(
                                 csDbc.get(), csF, who,
@@ -2322,14 +2322,16 @@ void EntitySpawner::applyCreatureDisplayTextures(uint32_t displayId, uint32_t mo
                                 am);
 
                             def.basePath = sections.bodySkin;
-                            npcFaceLower = sections.faceLower;
-                            npcFaceUpper = sections.faceUpper;
                             npcUnderwear = sections.underwear;
 
                             if (!def.basePath.empty()) {
                                 allPaths.push_back(def.basePath);
-                                if (!npcFaceLower.empty()) { def.overlayPaths.push_back({npcFaceLower, pipeline::SkinRegion::FaceLower}); allPaths.push_back(npcFaceLower); }
-                                if (!npcFaceUpper.empty()) { def.overlayPaths.push_back({npcFaceUpper, pipeline::SkinRegion::FaceUpper}); allPaths.push_back(npcFaceUpper); }
+                                std::vector<pipeline::SkinLayer> faceLayers;
+                                pipeline::appendFaceOverlayLayers(faceLayers, sections);
+                                for (const auto& fl : faceLayers) {
+                                    def.overlayPaths.push_back(fl);
+                                    allPaths.push_back(fl.path);
+                                }
                                 for (const auto& uw : npcUnderwear) { def.overlayPaths.push_back(uw); allPaths.push_back(uw.path); }
                             }
                         }

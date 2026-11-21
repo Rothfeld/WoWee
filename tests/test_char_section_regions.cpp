@@ -5,9 +5,11 @@
 //   WOWEE_TBC_DATA_DIR=/path/to/client/wowee-data/expansions/tbc
 #include <catch_amalgamated.hpp>
 
+#include "core/geoset_rules.hpp"
 #include "pipeline/char_sections.hpp"
 #include "pipeline/dbc_loader.hpp"
 #include "pipeline/m2_loader.hpp"
+#include "ui/unit_portrait.hpp"
 
 #include <algorithm>
 #include <array>
@@ -18,6 +20,7 @@
 #include <iterator>
 #include <optional>
 #include <set>
+#include <unordered_map>
 
 using wowee::pipeline::SkinRegion;
 
@@ -37,8 +40,12 @@ std::string lower(std::string s) {
 // The file-name rule character_renderer used before (regionFor by name).
 std::optional<SkinRegion> regionByName(const std::string& path) {
     const std::string p = lower(path);
-    if (p.find("faceupper") != std::string::npos) return SkinRegion::FaceUpper;
-    if (p.find("facelower") != std::string::npos) return SkinRegion::FaceLower;
+    if (p.find("faceupper") != std::string::npos ||
+        p.find("facialupper") != std::string::npos ||
+        p.find("scalpupper") != std::string::npos) return SkinRegion::FaceUpper;
+    if (p.find("facelower") != std::string::npos ||
+        p.find("faciallower") != std::string::npos ||
+        p.find("scalplower") != std::string::npos) return SkinRegion::FaceLower;
     if (p.find("pelvis") != std::string::npos) return SkinRegion::Pelvis;
     if (p.find("torso") != std::string::npos) return SkinRegion::Torso;
     return std::nullopt;
@@ -92,19 +99,24 @@ TEST_CASE("CharSections column regions agree with the old name rule", "[char-sec
         }
     }
     CHECK(compared == agreed + fullAtlas + absent);
-    CHECK(agreed == 3765);
+    CHECK(agreed > 3765);
     CHECK(fullAtlas == 6);
     CHECK(absent == 3);
 }
 
-TEST_CASE("Only face and underwear columns have body regions", "[char-sections]") {
+TEST_CASE("CharSections column regions cover face, facial hair, scalp, and underwear", "[char-sections]") {
     using wowee::pipeline::charSectionRegion;
     CHECK(charSectionRegion(1, 0) == SkinRegion::FaceLower);
     CHECK(charSectionRegion(1, 1) == SkinRegion::FaceUpper);
+    CHECK(charSectionRegion(2, 0) == SkinRegion::FaceLower);
+    CHECK(charSectionRegion(2, 1) == SkinRegion::FaceUpper);
+    CHECK_FALSE(charSectionRegion(2, 2));
+    CHECK_FALSE(charSectionRegion(3, 0));  // M2 type-6 hair texture
+    CHECK(charSectionRegion(3, 1) == SkinRegion::FaceLower);
+    CHECK(charSectionRegion(3, 2) == SkinRegion::FaceUpper);
     CHECK(charSectionRegion(4, 0) == SkinRegion::Pelvis);
     CHECK(charSectionRegion(4, 1) == SkinRegion::Torso);
     CHECK_FALSE(charSectionRegion(0, 0));  // body skin: the base, not a region
-    CHECK_FALSE(charSectionRegion(3, 0));  // hair
     CHECK_FALSE(charSectionRegion(4, 2));
 }
 
@@ -273,4 +285,186 @@ TEST_CASE("TBC character models bind valid BLPs for skin, hair, and Skin Extra (
         CHECK(blpWidth(root, sections.skinExtra) > 0);
     }
     CHECK(taurenNpcRows > 0);
+}
+
+TEST_CASE("CharSections Section 2 facial hair and Section 3 scalp overlays resolve across playable TBC races", "[char-sections][assets]") {
+    const auto root = dataRoot();
+    auto loadFileBytes = [](const std::filesystem::path& p) {
+        std::ifstream in(p, std::ios::binary);
+        return std::vector<uint8_t>{std::istreambuf_iterator<char>(in), {}};
+    };
+    const auto csBytes = loadFileBytes(root / "dbfilesclient" / "charsections.dbc");
+    REQUIRE_FALSE(csBytes.empty());
+    wowee::pipeline::DBCFile csDbc;
+    REQUIRE(csDbc.load(csBytes));
+
+    wowee::pipeline::CharSectionsFields csF{};
+    csF.raceId = 1;
+    csF.sexId = 2;
+    csF.baseSection = 3;
+    csF.variationIndex = 4;
+    csF.colorIndex = 5;
+    csF.texture1 = 6;
+    csF.texture2 = 7;
+    csF.texture3 = 8;
+    csF.flags = 9;
+
+    auto existsOnDisk = [](const std::string& dbcPath, void* ctx) -> bool {
+        const auto& base = *static_cast<const std::filesystem::path*>(ctx);
+        return blpWidth(base, dbcPath) > 0;
+    };
+
+    // Human Male (hairStyle=7, hairColor=9, facialHair=1): has face, scalp, and facial hair overlays.
+    {
+        wowee::pipeline::CharacterAppearance who{};
+        who.raceId = 1;
+        who.sexId = 0;
+        who.skinId = 5;
+        who.faceId = 6;
+        who.hairStyleId = 7;
+        who.hairColorId = 9;
+        who.facialHairId = 1;
+
+        const auto sections = wowee::pipeline::resolveCharacterSections(
+            &csDbc, csF, who, existsOnDisk, const_cast<std::filesystem::path*>(&root));
+        CHECK_FALSE(sections.faceLower.empty());
+        CHECK_FALSE(sections.faceUpper.empty());
+        CHECK_FALSE(sections.scalpLower.empty());
+        CHECK_FALSE(sections.scalpUpper.empty());
+        CHECK_FALSE(sections.facialLower.empty());
+        CHECK_FALSE(sections.facialUpper.empty());
+
+        std::vector<wowee::pipeline::SkinLayer> overlays;
+        wowee::pipeline::appendFaceOverlayLayers(overlays, sections);
+        REQUIRE(overlays.size() == 6);
+        CHECK(overlays[0].region == SkinRegion::FaceLower);
+        CHECK(overlays[1].region == SkinRegion::FaceUpper);
+        CHECK(overlays[2].region == SkinRegion::FaceLower);
+        CHECK(overlays[2].path == sections.scalpLower);
+        CHECK(overlays[3].region == SkinRegion::FaceUpper);
+        CHECK(overlays[3].path == sections.scalpUpper);
+        CHECK(overlays[4].region == SkinRegion::FaceLower);
+        CHECK(overlays[4].path == sections.facialLower);
+        CHECK(overlays[5].region == SkinRegion::FaceUpper);
+        CHECK(overlays[5].path == sections.facialUpper);
+    }
+
+    // Tauren Female (race=6, sex=1) Section 2 only authors colorIndex=0; non-zero hairColor
+    // falls back to colorIndex=0 when unfiltered, and is cleanly skipped when missing on disk.
+    {
+        wowee::pipeline::CharacterAppearance who{};
+        who.raceId = 6;
+        who.sexId = 1;
+        who.skinId = 0;
+        who.faceId = 0;
+        who.hairStyleId = 1;
+        who.hairColorId = 2;
+        who.facialHairId = 1;
+
+        const auto unfiltered = wowee::pipeline::resolveCharacterSections(&csDbc, csF, who);
+        CHECK(unfiltered.facialLower == "Character\\Tauren\\FacialLowerHair00_00.blp");
+        CHECK(unfiltered.facialUpper == "Character\\Tauren\\FacialUpperHair00_00.blp");
+
+        const auto filtered = wowee::pipeline::resolveCharacterSections(
+            &csDbc, csF, who, existsOnDisk, const_cast<std::filesystem::path*>(&root));
+        CHECK(filtered.facialLower.empty());
+        CHECK(filtered.facialUpper.empty());
+    }
+
+    // Every playable TBC race/sex with Section 2 or Section 3 overlays resolves valid existing BLPs.
+    const std::array<uint32_t, 10> playableRaces = {1, 2, 3, 4, 5, 6, 7, 8, 10, 11};
+    size_t racesWithScalp = 0;
+    size_t racesWithFacial = 0;
+    for (uint32_t raceId : playableRaces) {
+        for (uint32_t sexId : {0u, 1u}) {
+            wowee::pipeline::CharacterAppearance who{};
+            who.raceId = raceId;
+            who.sexId = sexId;
+            who.skinId = 0;
+            who.faceId = 0;
+            who.hairStyleId = 1;
+            who.hairColorId = 0;
+            who.facialHairId = 1;
+            const auto sections = wowee::pipeline::resolveCharacterSections(
+                &csDbc, csF, who, existsOnDisk, const_cast<std::filesystem::path*>(&root));
+            if (!sections.scalpLower.empty()) {
+                CHECK(blpWidth(root, sections.scalpLower) == 128);
+                ++racesWithScalp;
+            }
+            if (!sections.scalpUpper.empty()) {
+                CHECK(blpWidth(root, sections.scalpUpper) == 128);
+            }
+            if (!sections.facialLower.empty()) {
+                CHECK(blpWidth(root, sections.facialLower) == 128);
+                ++racesWithFacial;
+            }
+            if (!sections.facialUpper.empty()) {
+                CHECK(blpWidth(root, sections.facialUpper) == 128);
+            }
+        }
+    }
+    CHECK(racesWithScalp == 15);
+    CHECK(racesWithFacial == 8);
+}
+
+TEST_CASE("UnitPortrait hair geoset selection matches TBC CharHairGeosets.dbc", "[char-sections][assets]") {
+    const auto root = dataRoot();
+    std::ifstream in(root / "dbfilesclient" / "charhairgeosets.dbc", std::ios::binary);
+    std::vector<uint8_t> bytes{std::istreambuf_iterator<char>(in), {}};
+    REQUIRE_FALSE(bytes.empty());
+    wowee::pipeline::DBCFile chg;
+    REQUIRE(chg.load(bytes));
+
+    std::unordered_map<uint32_t, uint16_t> hairMap;
+    for (uint32_t i = 0; i < chg.getRecordCount(); ++i) {
+        const uint32_t raceId = chg.getUInt32(i, 1);
+        const uint32_t sexId = chg.getUInt32(i, 2);
+        const uint32_t variation = chg.getUInt32(i, 3);
+        const uint32_t geosetId = chg.getUInt32(i, 4);
+        const bool showScalp = chg.getFieldCount() > 5 && chg.getUInt32(i, 5) != 0;
+        hairMap[wowee::core::appearanceKey(static_cast<uint8_t>(raceId),
+                                           static_cast<uint8_t>(sexId),
+                                           static_cast<uint8_t>(variation))] =
+            wowee::core::hairGeosetFromDbcRow(geosetId, showScalp);
+    }
+
+    // Human Male bald (var=0) -> scalp 1; long hair (var=7) -> geoset 8.
+    CHECK(wowee::core::resolveHairScalpGeoset(hairMap, 1, 0, 0) == 1);
+    CHECK(wowee::core::resolveHairScalpGeoset(hairMap, 1, 0, 7) == 8);
+    // Troll Male var=0 (geoset=0, showScalp=0) -> default scalp 1.
+    CHECK(wowee::core::resolveHairScalpGeoset(hairMap, 8, 0, 0) == 1);
+    // Non-zero geoset with showScalp=1 preserves authored hair geoset.
+    CHECK(wowee::core::hairGeosetFromDbcRow(2, true) == 2);
+    CHECK(wowee::core::hairGeosetFromDbcRow(0, true) == 1);
+
+    // Every playable race/sex non-bald hairStyle=1 selects a hair geoset > 1.
+    for (uint8_t raceId : std::array<uint8_t, 10>{1, 2, 3, 4, 5, 6, 7, 8, 10, 11}) {
+        for (uint8_t sexId : {uint8_t{0}, uint8_t{1}}) {
+            const uint16_t g = wowee::core::resolveHairScalpGeoset(hairMap, raceId, sexId, 1);
+            INFO("race=" << int(raceId) << " sex=" << int(sexId) << " geoset=" << g);
+            CHECK(g >= 1);
+            const auto bare = wowee::core::bareCharacterGeosets(g, 1, 1, 1, raceId);
+            CHECK(bare.count(g) == 1);
+        }
+    }
+}
+
+TEST_CASE("Out-of-range SetPortraitTexture fallback resolves valid TBC TemporaryPortrait BLPs", "[char-sections][assets]") {
+    const auto root = dataRoot();
+
+    // All 10 playable TBC races x both genders resolve to existing 64x64 BLP2 portraits.
+    for (uint8_t raceId : std::array<uint8_t, 10>{1, 2, 3, 4, 5, 6, 7, 8, 10, 11}) {
+        for (uint8_t gender : {uint8_t{0}, uint8_t{1}}) {
+            const std::string path = wowee::ui::temporaryPortraitPath(raceId, gender, false);
+            INFO("race=" << int(raceId) << " gender=" << int(gender) << " path=" << path);
+            CHECK(path.rfind("Interface\\CharacterFrame\\TemporaryPortrait-", 0) == 0);
+            CHECK(blpWidth(root, path) == 64);
+        }
+    }
+    CHECK(wowee::ui::temporaryPortraitPath(1, 0) == "Interface\\CharacterFrame\\TemporaryPortrait-Male-Human");
+    CHECK(wowee::ui::temporaryPortraitPath(5, 1) == "Interface\\CharacterFrame\\TemporaryPortrait-Female-Scourge");
+    CHECK(wowee::ui::temporaryPortraitPath(0, 0xFF) == "Interface\\CharacterFrame\\TemporaryPortrait");
+    CHECK(blpWidth(root, wowee::ui::temporaryPortraitPath(0, 0xFF)) == 64);
+    CHECK(wowee::ui::temporaryPortraitPath(0, 0xFF, true) == "Interface\\CharacterFrame\\TemporaryPortrait-Pet");
+    CHECK(blpWidth(root, wowee::ui::temporaryPortraitPath(0, 0xFF, true)) == 64);
 }

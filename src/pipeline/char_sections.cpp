@@ -11,6 +11,7 @@ namespace {
 // CharSections' BaseSection column: which part of a character a row describes.
 constexpr uint32_t kSectionSkin = 0;
 constexpr uint32_t kSectionFace = 1;
+constexpr uint32_t kSectionFacialHair = 2;
 constexpr uint32_t kSectionHair = 3;
 constexpr uint32_t kSectionUnderwear = 4;
 }  // namespace
@@ -25,6 +26,12 @@ CharacterSectionTextures resolveCharacterSections(
     CharacterSectionTextures out;
     if (!charSections) return out;
 
+    auto keepOptionalTexture = [&](const std::string& tex) -> std::string {
+        if (tex.empty()) return {};
+        if (keepUnderwear && !keepUnderwear(tex, keepUnderwearContext)) return {};
+        return tex;
+    };
+
     // The nearest usable face, kept in case the exact pair is absent.
     //
     // Character creation falls back to a synthetic 0..9 range whenever its own
@@ -34,7 +41,12 @@ CharacterSectionTextures resolveCharacterSections(
     std::string altFaceLower, altFaceUpper;
     bool haveAltFace = false;
 
-    bool foundSkin = false, foundUnderwear = false;
+    // Some races (e.g. Tauren female) author Section 2 facial overlays only for
+    // colorIndex == 0 regardless of hairColorId.
+    std::string altFacialLower, altFacialUpper;
+    bool haveAltFacial = false;
+
+    bool foundSkin = false, foundUnderwear = false, foundHairRow = false, foundFacial = false;
 
     for (uint32_t r = 0; r < charSections->getRecordCount(); r++) {
         if (charSections->getUInt32(r, f.raceId) != who.raceId) continue;
@@ -51,10 +63,23 @@ CharacterSectionTextures resolveCharacterSections(
                 foundSkin = true;
             }
             out.skinExtra = charSections->getString(r, f.texture2);
-        } else if (section == kSectionHair && !out.haveHair &&
+        } else if (section == kSectionHair && !foundHairRow &&
                    variation == who.hairStyleId && colour == who.hairColorId) {
             out.hair = charSections->getString(r, f.texture1);
             out.haveHair = !out.hair.empty();
+            out.scalpLower = keepOptionalTexture(charSections->getString(r, f.texture2));
+            out.scalpUpper = keepOptionalTexture(charSections->getString(r, f.texture3));
+            foundHairRow = true;
+        } else if (section == kSectionFacialHair && !foundFacial &&
+                   variation == who.facialHairId && colour == who.hairColorId) {
+            out.facialLower = keepOptionalTexture(charSections->getString(r, f.texture1));
+            out.facialUpper = keepOptionalTexture(charSections->getString(r, f.texture2));
+            foundFacial = true;
+        } else if (section == kSectionFacialHair && !foundFacial && !haveAltFacial &&
+                   variation == who.facialHairId && colour == 0) {
+            altFacialLower = keepOptionalTexture(charSections->getString(r, f.texture1));
+            altFacialUpper = keepOptionalTexture(charSections->getString(r, f.texture2));
+            haveAltFacial = !altFacialLower.empty() || !altFacialUpper.empty();
         } else if (section == kSectionFace && !out.exactFace &&
                    variation == who.faceId && colour == who.skinId) {
             out.faceLower = charSections->getString(r, f.texture1);
@@ -88,7 +113,7 @@ CharacterSectionTextures resolveCharacterSections(
             foundUnderwear = !out.underwear.empty();
         }
 
-        if (foundSkin && out.haveHair && out.exactFace && foundUnderwear) break;
+        if (foundSkin && foundHairRow && out.exactFace && foundFacial && foundUnderwear) break;
     }
 
     if (!out.exactFace && haveAltFace) {
@@ -96,12 +121,30 @@ CharacterSectionTextures resolveCharacterSections(
         out.faceUpper = altFaceUpper;
         out.haveFace = true;
     }
+    if (!foundFacial && haveAltFacial) {
+        out.facialLower = altFacialLower;
+        out.facialUpper = altFacialUpper;
+    }
     return out;
+}
+
+void appendFaceOverlayLayers(std::vector<SkinLayer>& out,
+                             const CharacterSectionTextures& sections) {
+    if (!sections.faceLower.empty()) out.push_back({sections.faceLower, SkinRegion::FaceLower});
+    if (!sections.faceUpper.empty()) out.push_back({sections.faceUpper, SkinRegion::FaceUpper});
+    if (!sections.scalpLower.empty()) out.push_back({sections.scalpLower, SkinRegion::FaceLower});
+    if (!sections.scalpUpper.empty()) out.push_back({sections.scalpUpper, SkinRegion::FaceUpper});
+    if (!sections.facialLower.empty()) out.push_back({sections.facialLower, SkinRegion::FaceLower});
+    if (!sections.facialUpper.empty()) out.push_back({sections.facialUpper, SkinRegion::FaceUpper});
 }
 
 std::optional<SkinRegion> charSectionRegion(uint32_t section, uint32_t column) {
     if (section == kSectionFace && column == 0) return SkinRegion::FaceLower;
     if (section == kSectionFace && column == 1) return SkinRegion::FaceUpper;
+    if (section == kSectionFacialHair && column == 0) return SkinRegion::FaceLower;
+    if (section == kSectionFacialHair && column == 1) return SkinRegion::FaceUpper;
+    if (section == kSectionHair && column == 1) return SkinRegion::FaceLower;
+    if (section == kSectionHair && column == 2) return SkinRegion::FaceUpper;
     if (section == kSectionUnderwear && column == 0) return SkinRegion::Pelvis;
     if (section == kSectionUnderwear && column == 1) return SkinRegion::Torso;
     return std::nullopt;

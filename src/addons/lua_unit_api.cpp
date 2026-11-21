@@ -9,6 +9,7 @@
 #include "game/world_state_ui.hpp"
 #include "pipeline/asset_manager.hpp"
 #include "pipeline/dbc_layout.hpp"
+#include "ui/unit_portrait.hpp"
 #include "addons/lua_api_helpers.hpp"
 
 namespace wowee::addons {
@@ -862,6 +863,11 @@ static int lua_UnitSex(lua_State* L) {
             uint32_t bytes0 = entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_0));
             uint8_t gender = static_cast<uint8_t>((bytes0 >> 16) & 0xFF);
             lua_pushnumber(L, gender == 0 ? 2 : (gender == 1 ? 3 : 1)); // WoW: 2=male, 3=female
+            return 1;
+        }
+        const uint8_t cachedGender = gh->lookupPlayerGender(guid);
+        if (cachedGender == 0 || cachedGender == 1) {
+            lua_pushnumber(L, cachedGender == 0 ? 2 : 3);
             return 1;
         }
     }
@@ -1994,6 +2000,34 @@ static int lua_SetPortraitTexture(lua_State* L) {
          (unit.rfind("party", 0) == 0 && unit.size() == 6 &&
           unit[5] >= '1' && unit[5] <= '4'));
     tree->setPortraitUnit(id, answerable ? unit : std::string());
+
+    // Populate the TBC 2.4.3 fallback 2D portrait (TemporaryPortrait-*)
+    // immediately so out-of-range / never-seen units and non-3D unit tokens
+    // show the stock fallback instead of an empty ring or class icon.
+    if (ui::Widget* w = tree->get(id)) {
+        auto* gh = getGameHandler(L);
+        const uint64_t guid = gh ? resolveUnitGuid(gh, unit) : 0;
+        if (guid != 0 && unit != "player") {
+            uint8_t raceId = 0;
+            uint8_t gender = 0xFF;
+            if (auto entity = gh->getEntityManager().getEntity(guid)) {
+                const uint16_t b0Idx = game::fieldIndex(game::UF::UNIT_FIELD_BYTES_0);
+                if (b0Idx != 0xFFFF) {
+                    const uint32_t b0 = entity->getField(b0Idx);
+                    raceId = static_cast<uint8_t>(b0 & 0xFF);
+                    gender = static_cast<uint8_t>((b0 >> 16) & 0xFF);
+                }
+            }
+            if (raceId == 0) raceId = gh->lookupPlayerRace(guid);
+            if (gender == 0xFF) gender = gh->lookupPlayerGender(guid);
+            w->texturePath = ui::temporaryPortraitPath(raceId, gender, unit == "pet");
+            w->texCoord[0] = 0.0f;
+            w->texCoord[1] = 1.0f;
+            w->texCoord[2] = 0.0f;
+            w->texCoord[3] = 1.0f;
+            w->texCoordRotated = false;
+        }
+    }
     return 0;
 }
 

@@ -457,6 +457,7 @@ void EntitySpawner::processCreatureSpawnQueue(bool unlimited) {
                                 who.faceId = he.faceId;
                                 who.hairStyleId = he.hairStyleId;
                                 who.hairColorId = he.hairColorId;
+                                who.facialHairId = he.facialHairId;
                                 // With the same existence check the spawn uses:
                                 // the underwear rows name art that was never
                                 // shipped - every Broken male torso among it -
@@ -471,6 +472,8 @@ void EntitySpawner::processCreatureSpawnQueue(bool unlimited) {
                                     am);
                                 for (const std::string* path : {&sections.bodySkin, &sections.skinExtra,
                                                                 &sections.faceLower, &sections.faceUpper,
+                                                                &sections.scalpLower, &sections.scalpUpper,
+                                                                &sections.facialLower, &sections.facialUpper,
                                                                 &sections.hair}) {
                                     if (!path->empty()) displaySkinPaths.push_back(*path);
                                 }

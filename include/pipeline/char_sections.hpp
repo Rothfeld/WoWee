@@ -39,6 +39,7 @@ struct CharacterAppearance {
     uint8_t faceId = 0;
     uint8_t hairStyleId = 0;
     uint8_t hairColorId = 0;
+    uint8_t facialHairId = 0;
 };
 
 /// Where a CharSections texture goes on the character body atlas. It follows
@@ -66,6 +67,14 @@ struct CharacterSectionTextures {
     std::string skinExtra;
     std::string faceLower;
     std::string faceUpper;
+    /// CharSections Section 2 (FacialHair) overlays on FaceLower / FaceUpper
+    /// (eyebrows, sideburns, beard, markings).
+    std::string facialLower;
+    std::string facialUpper;
+    /// CharSections Section 3 (Hair) scalp overlays on FaceLower / FaceUpper
+    /// (hairline, forehead/nape scalp tint).
+    std::string scalpLower;
+    std::string scalpUpper;
     std::string hair;
     std::vector<SkinLayer> underwear;  ///< Pelvis, then Torso
 
@@ -75,6 +84,11 @@ struct CharacterSectionTextures {
     bool haveFace = false;
     bool haveHair = false;
 };
+
+/// Append all face-region overlays (Section 1 Face, Section 3 Scalp, Section 2
+/// FacialHair) in TBC compositing order onto `out`.
+void appendFaceOverlayLayers(std::vector<SkinLayer>& out,
+                             const CharacterSectionTextures& sections);
 
 /// Scan CharSections.dbc for one character's textures.
 ///

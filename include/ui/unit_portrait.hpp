@@ -27,6 +27,35 @@ namespace rendering { class CharacterPreview; class Renderer; }
 
 namespace ui {
 
+/// TBC 2.4.3 fallback 2D portrait texture path
+/// (`Interface\CharacterFrame\TemporaryPortrait-*`) for units without a live
+/// 3D portrait model (e.g. a never-seen out-of-range party member).
+/// `gender`: 0 = Male, 1 = Female, 0xFF = unknown.
+inline std::string temporaryPortraitPath(uint8_t raceId, uint8_t gender, bool isPet = false) {
+    if (isPet) {
+        return "Interface\\CharacterFrame\\TemporaryPortrait-Pet";
+    }
+    const char* raceName = nullptr;
+    switch (raceId) {
+        case 1:  raceName = "Human";    break;
+        case 2:  raceName = "Orc";      break;
+        case 3:  raceName = "Dwarf";    break;
+        case 4:  raceName = "NightElf"; break;
+        case 5:  raceName = "Scourge";  break;
+        case 6:  raceName = "Tauren";   break;
+        case 7:  raceName = "Gnome";    break;
+        case 8:  raceName = "Troll";    break;
+        case 10: raceName = "BloodElf"; break;
+        case 11: raceName = "Draenei";  break;
+        default: break;
+    }
+    if (raceName && (gender == 0 || gender == 1)) {
+        return std::string("Interface\\CharacterFrame\\TemporaryPortrait-") +
+               (gender == 1 ? "Female-" : "Male-") + raceName;
+    }
+    return "Interface\\CharacterFrame\\TemporaryPortrait";
+}
+
 class UnitPortrait {
 public:
     /// How much of the character to show. A portrait is the face in a circle;

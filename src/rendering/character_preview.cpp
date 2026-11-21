@@ -113,7 +113,7 @@ void CharacterPreview::ensureAppearanceGeosetsLoaded() {
             const uint32_t key = core::appearanceKey(static_cast<uint8_t>(raceId),
                                                     static_cast<uint8_t>(sexId),
                                                     static_cast<uint8_t>(variation));
-            hairGeosetMap_[key] = static_cast<uint16_t>(useDefaultScalp ? 1 : geosetId);
+            hairGeosetMap_[key] = core::hairGeosetFromDbcRow(geosetId, useDefaultScalp);
         }
         LOG_INFO("CharacterPreview: loaded ", hairGeosetMap_.size(), " hair geoset mappings");
     }
@@ -146,16 +146,7 @@ uint16_t CharacterPreview::selectedHairScalpGeoset() const {
     const uint8_t raceId = static_cast<uint8_t>(race_);
     const uint8_t sexId = (gender_ == game::Gender::FEMALE ||
                            (gender_ == game::Gender::NONBINARY && useFemaleModel_)) ? 1u : 0u;
-    const uint32_t key = core::appearanceKey(raceId, sexId, static_cast<uint8_t>(hairStyle_));
-
-    auto it = hairGeosetMap_.find(key);
-    if (it != hairGeosetMap_.end() && it->second > 0) {
-        return it->second;
-    }
-
-    // Last-resort heuristic for incomplete data sets. The DBC path above is
-    // expected for real clients and is much more reliable than this fallback.
-    return static_cast<uint16_t>(std::max<uint8_t>(hairStyle_ + 1, 1));
+    return core::resolveHairScalpGeoset(hairGeosetMap_, raceId, sexId, hairStyle_);
 }
 
 std::unordered_set<uint16_t> CharacterPreview::buildBaseGeosets() {
@@ -663,8 +654,7 @@ bool CharacterPreview::loadCharacter(game::Race race, game::Gender gender,
     uint32_t targetSexId = (gender == game::Gender::FEMALE ||
                             (gender == game::Gender::NONBINARY && useFemaleModel)) ? 1u : 0u;
 
-    std::string faceLowerPath;
-    std::string faceUpperPath;
+    pipeline::CharacterSectionTextures sections;
     std::string hairScalpPath;
     std::vector<pipeline::SkinLayer> underwearPaths;
     bodySkinPath_.clear();
@@ -689,8 +679,9 @@ bool CharacterPreview::loadCharacter(game::Race race, game::Gender gender,
         who.faceId = static_cast<uint8_t>(face);
         who.hairStyleId = static_cast<uint8_t>(hairStyle);
         who.hairColorId = static_cast<uint8_t>(hairColor);
+        who.facialHairId = static_cast<uint8_t>(facialHair);
 
-        const auto sections = pipeline::resolveCharacterSections(
+        sections = pipeline::resolveCharacterSections(
             charSectionsDbc.get(), csF, who,
             [](const std::string& path, void* ctx) {
                 return static_cast<pipeline::AssetManager*>(ctx)->fileExists(path);
@@ -699,15 +690,13 @@ bool CharacterPreview::loadCharacter(game::Race race, game::Gender gender,
 
         bodySkinPath_   = sections.bodySkin;
         skinExtraPath_  = sections.skinExtra;
-        faceLowerPath   = sections.faceLower;
-        faceUpperPath   = sections.faceUpper;
         hairScalpPath   = sections.hair;
         underwearPaths  = sections.underwear;
 
         LOG_INFO("CharSections lookup: skin=",
                  bodySkinPath_.empty() ? "(not found)" : bodySkinPath_,
                  " face=", sections.haveFace
-                     ? (sections.exactFace ? faceLowerPath : faceLowerPath + " (nearest)")
+                     ? (sections.exactFace ? sections.faceLower : sections.faceLower + " (nearest)")
                      : "(not found)",
                  " hair=", sections.haveHair ? hairScalpPath : "(not found)",
                  " underwear=", underwearPaths.size(), " textures");
@@ -749,20 +738,17 @@ bool CharacterPreview::loadCharacter(game::Race race, game::Gender gender,
         LOG_WARNING("CharacterPreview: failed to load model to GPU");
         return false;
     }
-    // Composite body skin + face + underwear overlays
+    // Composite body skin + face + scalp + facial hair + underwear overlays
     if (!bodySkinPath_.empty()) {
-        std::vector<pipeline::SkinLayer> layers{{bodySkinPath_, pipeline::SkinRegion::FullAtlas}};
-        if (!faceLowerPath.empty()) layers.push_back({faceLowerPath, pipeline::SkinRegion::FaceLower});
-        if (!faceUpperPath.empty()) layers.push_back({faceUpperPath, pipeline::SkinRegion::FaceUpper});
-        for (const auto& up : underwearPaths) {
-            layers.push_back(up);
-        }
-
         // Cache for later equipment compositing.
         // Keep baseLayers_ without the base skin (compositeWithRegions takes basePath separately).
-        if (!faceLowerPath.empty()) baseLayers_.push_back({faceLowerPath, pipeline::SkinRegion::FaceLower});
-        if (!faceUpperPath.empty()) baseLayers_.push_back({faceUpperPath, pipeline::SkinRegion::FaceUpper});
+        pipeline::appendFaceOverlayLayers(baseLayers_, sections);
         for (const auto& up : underwearPaths) baseLayers_.push_back(up);
+
+        std::vector<pipeline::SkinLayer> layers{{bodySkinPath_, pipeline::SkinRegion::FullAtlas}};
+        for (const auto& bl : baseLayers_) {
+            layers.push_back(bl);
+        }
 
         if (layers.size() > 1) {
             VkTexture* compositeTex = charRenderer_->compositeTextures(layers);

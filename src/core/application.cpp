@@ -5781,6 +5781,19 @@ void Application::render() {
                         // rather than stripping it.
                         // A real player composites their own skin; no bake.
                         face.portrait->setBakedSkin("");
+                        bool hideHelm = false;
+                        bool hideCloak = false;
+                        if (face.guid == gameHandler->getPlayerGuid()) {
+                            hideHelm = !gameHandler->isHelmVisible();
+                            hideCloak = !gameHandler->isCloakVisible();
+                        } else if (game::Unit* u = gameHandler->getUnitByGuid(face.guid)) {
+                            const uint16_t pfIdx = game::fieldIndex(game::UF::PLAYER_FLAGS);
+                            if (pfIdx != 0xFFFF) {
+                                const uint32_t pf = u->getField(pfIdx);
+                                hideHelm = (pf & 0x00000400u) != 0;
+                                hideCloak = (pf & 0x00000800u) != 0;
+                            }
+                        }
                         std::vector<game::EquipmentItem> worn;
                         std::array<uint32_t, 19> displayIds{};
                         std::array<uint8_t, 19> invTypes{};
@@ -5788,6 +5801,8 @@ void Application::render() {
                                                                  invTypes)) {
                             for (size_t slot = 0; slot < displayIds.size(); ++slot) {
                                 if (displayIds[slot] == 0) continue;
+                                if (hideHelm && slot == static_cast<size_t>(game::EquipSlot::HEAD)) continue;
+                                if (hideCloak && slot == static_cast<size_t>(game::EquipSlot::BACK)) continue;
                                 worn.push_back({.displayModel = displayIds[slot],
                                                 .inventoryType = invTypes[slot],
                                                 .enchantment = 0u});
@@ -5858,12 +5873,37 @@ void Application::render() {
                         }
                     }
                     const uint64_t drawn = built ? face.portrait->textureId() : 0;
-                    for (uint32_t id : claimed) {
-                        if (ui::Widget* w = widgets.get(id)) w->externalTexture = drawn;
+                    std::string fallbackPortrait;
+                    if (drawn == 0 && face.guid != 0) {
+                        uint8_t fbRace = 0;
+                        uint8_t fbGender = 0xFF;
+                        if (game::Unit* u = gameHandler->getUnitByGuid(face.guid)) {
+                            const uint16_t b0Idx = game::fieldIndex(game::UF::UNIT_FIELD_BYTES_0);
+                            if (b0Idx != 0xFFFF) {
+                                const uint32_t b0 = u->getField(b0Idx);
+                                fbRace = static_cast<uint8_t>(b0 & 0xFF);
+                                fbGender = static_cast<uint8_t>((b0 >> 16) & 0xFF);
+                            }
+                        }
+                        if (fbRace == 0) fbRace = gameHandler->lookupPlayerRace(face.guid);
+                        if (fbGender == 0xFF) fbGender = gameHandler->lookupPlayerGender(face.guid);
+                        fallbackPortrait = ui::temporaryPortraitPath(
+                            fbRace, fbGender, std::string_view(face.unit) == "pet");
                     }
-                    for (uint32_t id : alsoClaimed) {
-                        if (ui::Widget* w = widgets.get(id)) w->externalTexture = drawn;
-                    }
+                    auto applyPortraitWidget = [&](ui::Widget* w) {
+                        if (!w) return;
+                        w->externalTexture = drawn;
+                        if (drawn == 0 && !fallbackPortrait.empty()) {
+                            w->texturePath = fallbackPortrait;
+                            w->texCoord[0] = 0.0f;
+                            w->texCoord[1] = 1.0f;
+                            w->texCoord[2] = 0.0f;
+                            w->texCoord[3] = 1.0f;
+                            w->texCoordRotated = false;
+                        }
+                    };
+                    for (uint32_t id : claimed) applyPortraitWidget(widgets.get(id));
+                    for (uint32_t id : alsoClaimed) applyPortraitWidget(widgets.get(id));
                 }
             });
             }
@@ -6390,14 +6430,17 @@ void Application::spawnPlayerCharacter() {
                 bool useCharSections = true;
                 if (appearanceComposer_) {
                     uint32_t appearanceBytes = 0;
+                    uint8_t facialFeatures = 0;
                     if (gameHandler) {
                         const game::Character* activeChar = gameHandler->getActiveCharacter();
                         if (activeChar) {
                             appearanceBytes = activeChar->appearanceBytes;
+                            facialFeatures = activeChar->facialFeatures;
                         }
                     }
                     texInfo = appearanceComposer_->resolvePlayerTextures(
-                        model, playerRace_, playerGender_, appearanceBytes, useFemaleModel);
+                        model, playerRace_, playerGender_, appearanceBytes, useFemaleModel,
+                        facialFeatures);
                 }
 
                 // Load external .anim files for sequences with external data.

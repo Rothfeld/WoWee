@@ -57,6 +57,8 @@ void UnitPortrait::update(game::GameHandler& gameHandler,
     // gets when this character is the target - the two portraits are of the
     // same person and must not disagree. The login list stands in until the
     // item queries have come back, which is a moment at most.
+    const bool hideHelm = !gameHandler.isHelmVisible();
+    const bool hideCloak = !gameHandler.isCloakVisible();
     std::vector<game::EquipmentItem> worn;
     {
         std::array<uint32_t, 19> displayIds{};
@@ -65,6 +67,8 @@ void UnitPortrait::update(game::GameHandler& gameHandler,
             for (size_t slot = 0; slot < displayIds.size(); ++slot) {
                 if (displayIds[slot] == 0) continue;
                 if (hiddenSlots & (1u << slot)) continue;
+                if (hideHelm && slot == static_cast<size_t>(game::EquipSlot::HEAD)) continue;
+                if (hideCloak && slot == static_cast<size_t>(game::EquipSlot::BACK)) continue;
                 uint8_t invType = invTypes[slot];
                 // A One-Hand (13) weapon in the off-hand slot attaches to the
                 // left hand (CharacterPreview maps 13 to right hand, 22 to left).
@@ -77,7 +81,13 @@ void UnitPortrait::update(game::GameHandler& gameHandler,
                                 .enchantment = 0u});
             }
         }
-        if (worn.empty()) worn = self->equipment;
+        if (worn.empty()) {
+            for (const auto& item : self->equipment) {
+                if (hideHelm && item.inventoryType == game::InvType::HEAD) continue;
+                if (hideCloak && item.inventoryType == game::InvType::BACK) continue;
+                worn.push_back(item);
+            }
+        }
     }
 
     pipeline::GuildTabardEmblem activeTabard;
@@ -104,24 +114,36 @@ void UnitPortrait::update(game::GameHandler& gameHandler,
                         .enchantment = 0u});
     }
 
+    uint32_t appearanceBytes = self->appearanceBytes;
+    uint8_t facialFeatures = self->facialFeatures;
+    {
+        uint8_t liveRace = 0, liveGender = 0, liveFacial = 0;
+        uint32_t liveAppearance = 0;
+        if (gameHandler.getPlayerAppearance(self->guid, liveRace, liveGender,
+                                            liveAppearance, liveFacial)) {
+            appearanceBytes = liveAppearance;
+            facialFeatures = liveFacial;
+        }
+    }
+
     const uint64_t equipHash = game::hashEquipmentAppearance(worn);
     const bool changed = (loadedGuid_ != self->guid) ||
-                         (loadedAppearance_ != self->appearanceBytes) ||
-                         (loadedFacialFeatures_ != self->facialFeatures) ||
+                         (loadedAppearance_ != appearanceBytes) ||
+                         (loadedFacialFeatures_ != facialFeatures) ||
                          (loadedEquipHash_ != equipHash) ||
                          (loadedGuildTabard_ != activeTabard) ||
                          (loadedForceGuildTabard_ != forceGuildTabard_);
     if (changed) {
-        const uint8_t skin      =  self->appearanceBytes        & 0xFF;
-        const uint8_t face      = (self->appearanceBytes >> 8)  & 0xFF;
-        const uint8_t hairStyle = (self->appearanceBytes >> 16) & 0xFF;
-        const uint8_t hairColor = (self->appearanceBytes >> 24) & 0xFF;
+        const uint8_t skin      =  appearanceBytes        & 0xFF;
+        const uint8_t face      = (appearanceBytes >> 8)  & 0xFF;
+        const uint8_t hairStyle = (appearanceBytes >> 16) & 0xFF;
+        const uint8_t hairColor = (appearanceBytes >> 24) & 0xFF;
 
         // Declared before the model loads, so the racial backdrop is never
         // built in the first place.
         preview_->setTransparentBackground(true);
         if (preview_->loadCharacter(self->race, self->gender, skin, face,
-                                    hairStyle, hairColor, self->facialFeatures,
+                                    hairStyle, hairColor, facialFeatures,
                                     self->useFemaleModel)) {
             preview_->applyEquipment(worn, activeTabard.isValid() ? &activeTabard : nullptr);
             // After the model, because its bounds are what the framing is
@@ -131,11 +153,11 @@ void UnitPortrait::update(game::GameHandler& gameHandler,
         // Logged because a portrait that rebuilds every frame looks like one
         // that flickers, and the two are indistinguishable from outside.
         LOG_INFO("UnitPortrait: rebuilt for guid ", self->guid,
-                 " appearance ", self->appearanceBytes);
+                 " appearance ", appearanceBytes);
         loadedCreaturePath_.clear();
         loadedGuid_ = self->guid;
-        loadedAppearance_ = self->appearanceBytes;
-        loadedFacialFeatures_ = self->facialFeatures;
+        loadedAppearance_ = appearanceBytes;
+        loadedFacialFeatures_ = facialFeatures;
         loadedEquipHash_ = equipHash;
         loadedGuildTabard_ = activeTabard;
         loadedForceGuildTabard_ = forceGuildTabard_;
