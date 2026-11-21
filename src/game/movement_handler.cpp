@@ -550,28 +550,15 @@ void MovementHandler::sendDueHeartbeats() {
         static_cast<uint32_t>(MovementFlags::FALLINGFAR) |
         static_cast<uint32_t>(MovementFlags::ASCENDING) |
         static_cast<uint32_t>(MovementFlags::DESCENDING);
-    const bool moving = (movementInfo.flags & kMoving) != 0;
-    if (!moving && !owner_.isOnTransport()) return;
+    // Native TBC 2.4.3 (build 8606) never sends MSG_MOVE_HEARTBEAT while
+    // stationary, including when standing still or LMB-orbiting on a moving
+    // boat/zeppelin (verified across 100.6 s on pair 16 The Bravery and 58 s
+    // on :91 Legless in Booty Bay). Server CheckAreaExploreAndOutdoor fires on
+    // actual movement/facing/teleport/CMSG_MOVE_CHNG_TRANSPORT packets.
+    if ((movementInfo.flags & kMoving) == 0) return;
     const uint32_t intervalMs = static_cast<uint32_t>(std::lround(moveHeartbeatInterval_ * 1000.0f));
     assert(intervalMs > 0);
     const PhysicsSample current = *sample_;
-    if (!moving) {
-        // Stationary passenger on a boat/zeppelin/lift: CMaNGOS GenericTransport
-        // calls Map::PlayerRelocation rather than Player::SetPosition, so
-        // CheckAreaExploreAndOutdoor only runs when a movement packet arrives.
-        // Emit one heartbeat per 500 ms interval (no multi-packet burst after a
-        // map-transfer stall) with the composed world position from sendMovement.
-        if (lastPacketTimeMs_ + intervalMs <= current.timeMs) {
-            packetTimeMs_ = current.timeMs;
-            sendMovement(Opcode::MSG_MOVE_HEARTBEAT);
-            packetTimeMs_.reset();
-            movementInfo.x = current.x;
-            movementInfo.y = current.y;
-            movementInfo.z = current.z;
-            movementInfo.orientation = current.orientation;
-        }
-        return;
-    }
     while (lastPacketTimeMs_ + intervalMs <= current.timeMs) {
         const uint32_t dueMs = lastPacketTimeMs_ + intervalMs;
         PhysicsSample at = current;
@@ -666,6 +653,90 @@ void MovementHandler::setFlightAirborne(bool airborne) {
     sendMovement(Opcode::MSG_MOVE_HEARTBEAT);
 }
 
+bool MovementHandler::shouldSuppressPreWotlkSetFacing(uint32_t movementTime) const {
+    if (!isPreWotlk()) return false;
+    uint64_t activeWireTransportGuid = 0;
+    float currentTransportLocalO = 0.0f;
+    const bool onWireTransport =
+        resolveActiveWireTransportLocalO(activeWireTransportGuid, currentTransportLocalO);
+    float facingDelta = 0.0f;
+    if (onWireTransport &&
+        ((hasSentMovement_ && lastSentTransportGuid_ == activeWireTransportGuid) ||
+         lastFacingSentTransportGuid_ == activeWireTransportGuid)) {
+        const float refLocalO =
+            (hasSentMovement_ && lastSentTransportGuid_ == activeWireTransportGuid)
+                ? lastSentTransportO_
+                : lastFacingSentTransportO_;
+        facingDelta = core::coords::normalizeAngleRad(
+            currentTransportLocalO - refLocalO);
+    } else {
+        const float referenceOrientation =
+            hasSentMovement_ ? lastSentOrientation_ : lastFacingSentOrientation_;
+        facingDelta = core::coords::normalizeAngleRad(
+            movementInfo.orientation - referenceOrientation);
+    }
+    if (hasSentMovement_ && std::abs(facingDelta) < 0.005f) {
+        return true;
+    }
+    const uint32_t sinceLastFacingMs =
+        lastFacingSendTimeMs_ != 0 && movementTime >= lastFacingSendTimeMs_
+            ? (movementTime - lastFacingSendTimeMs_)
+            : std::numeric_limits<uint32_t>::max();
+    return std::abs(facingDelta) < 0.02f && sinceLastFacingMs < 200U;
+}
+
+bool MovementHandler::populateWireTransportInfo() {
+    bool includeTransportInWire = owner_.isOnTransport();
+    if (includeTransportInWire && owner_.getTransportManager()) {
+        if (auto* tr = owner_.getTransportManager()->getTransport(owner_.playerTransportGuidRef()); tr && tr->isM2) {
+            includeTransportInWire = false;
+        }
+    }
+
+    if (includeTransportInWire) {
+        bool transportResolved = false;
+        if (owner_.getTransportManager() &&
+            owner_.getTransportManager()->getTransport(owner_.playerTransportGuidRef()) != nullptr) {
+            transportResolved = true;
+            glm::vec3 composed = owner_.getTransportManager()->getPlayerWorldPosition(
+                owner_.playerTransportGuidRef(), owner_.playerTransportOffsetRef());
+            movementInfo.x = composed.x;
+            movementInfo.y = composed.y;
+            movementInfo.z = composed.z;
+        }
+        if (!transportResolved) {
+            LOG_WARNING("sendMovement: transport 0x", std::hex, owner_.playerTransportGuidRef(),
+                        std::dec, " not found - clearing transport state");
+            includeTransportInWire = false;
+            owner_.clearPlayerTransport();
+        }
+    }
+    if (includeTransportInWire) {
+        movementInfo.flags |= static_cast<uint32_t>(MovementFlags::ONTRANSPORT);
+        movementInfo.transportGuid = owner_.playerTransportGuidRef();
+        movementInfo.transportX = owner_.playerTransportOffsetRef().x;
+        movementInfo.transportY = owner_.playerTransportOffsetRef().y;
+        movementInfo.transportZ = owner_.playerTransportOffsetRef().z;
+        movementInfo.transportTime = movementInfo.time;
+        movementInfo.transportSeat = -1;
+        movementInfo.transportTime2 = movementInfo.time;
+
+        float transportYawCanonical = 0.0f;
+        if (owner_.getTransportManager()) {
+            if (auto* tr = owner_.getTransportManager()->getTransport(owner_.playerTransportGuidRef()); tr) {
+                transportYawCanonical = tr->canonicalYawRad();
+            }
+        }
+        movementInfo.transportO =
+            core::coords::normalizeAngleRad(movementInfo.orientation - transportYawCanonical);
+    } else {
+        movementInfo.flags &= ~static_cast<uint32_t>(MovementFlags::ONTRANSPORT);
+        movementInfo.transportGuid = 0;
+        movementInfo.transportSeat = -1;
+    }
+    return includeTransportInWire;
+}
+
 void MovementHandler::sendMovement(Opcode opcode) {
     if (owner_.getState() != WorldState::IN_WORLD) {
         LOG_WARNING("Cannot send movement in state: ", (int)owner_.getState());
@@ -730,21 +801,8 @@ void MovementHandler::sendMovement(Opcode opcode) {
     movementInfo.time = movementTime;
 
     if (opcode == Opcode::MSG_MOVE_SET_FACING &&
-        isPreWotlk()) {
-        const float referenceOrientation =
-            hasSentMovement_ ? lastSentOrientation_ : lastFacingSentOrientation_;
-        const float facingDelta = core::coords::normalizeAngleRad(
-            movementInfo.orientation - referenceOrientation);
-        if (hasSentMovement_ && std::abs(facingDelta) < 0.005f) {
-            return;
-        }
-        const uint32_t sinceLastFacingMs =
-            lastFacingSendTimeMs_ != 0 && movementTime >= lastFacingSendTimeMs_
-                ? (movementTime - lastFacingSendTimeMs_)
-                : std::numeric_limits<uint32_t>::max();
-        if (std::abs(facingDelta) < 0.02f && sinceLastFacingMs < 200U) {
-            return;
-        }
+        shouldSuppressPreWotlkSetFacing(movementTime)) {
+        return;
     }
 
     // Track movement state transition for PLAYER_STARTED/STOPPED_MOVING events
@@ -975,66 +1033,7 @@ void MovementHandler::sendMovement(Opcode opcode) {
         sanitizeMovementForTaxi();
     }
 
-    bool includeTransportInWire = owner_.isOnTransport();
-    if (includeTransportInWire && owner_.getTransportManager()) {
-        if (auto* tr = owner_.getTransportManager()->getTransport(owner_.playerTransportGuidRef()); tr && tr->isM2) {
-            includeTransportInWire = false;
-        }
-    }
-
-    // Add transport data if player is on a server-recognized transport
-    if (includeTransportInWire) {
-        bool transportResolved = false;
-        if (owner_.getTransportManager()) {
-            auto* tr = owner_.getTransportManager()->getTransport(owner_.playerTransportGuidRef());
-            if (tr) {
-                transportResolved = true;
-                glm::vec3 composed = owner_.getTransportManager()->getPlayerWorldPosition(owner_.playerTransportGuidRef(), owner_.playerTransportOffsetRef());
-                movementInfo.x = composed.x;
-                movementInfo.y = composed.y;
-                movementInfo.z = composed.z;
-            }
-        }
-        if (!transportResolved) {
-            // Transport not tracked - don't send ONTRANSPORT to the server.
-            // Sending stale transport GUID + local offset causes the server to
-            // compute a bad world position and teleport us to map origin.
-            LOG_WARNING("sendMovement: transport 0x", std::hex, owner_.playerTransportGuidRef(),
-                        std::dec, " not found - clearing transport state");
-            includeTransportInWire = false;
-            owner_.clearPlayerTransport();
-        }
-    }
-    if (includeTransportInWire) {
-        movementInfo.flags |= static_cast<uint32_t>(MovementFlags::ONTRANSPORT);
-        movementInfo.transportGuid = owner_.playerTransportGuidRef();
-        movementInfo.transportX = owner_.playerTransportOffsetRef().x;
-        movementInfo.transportY = owner_.playerTransportOffsetRef().y;
-        movementInfo.transportZ = owner_.playerTransportOffsetRef().z;
-        movementInfo.transportTime = movementInfo.time;
-        movementInfo.transportSeat = -1;
-        movementInfo.transportTime2 = movementInfo.time;
-
-        float transportYawCanonical = 0.0f;
-        if (owner_.getTransportManager()) {
-            if (auto* tr = owner_.getTransportManager()->getTransport(owner_.playerTransportGuidRef()); tr) {
-                if (!tr->isM2) {
-                    transportYawCanonical = core::coords::serverToCanonicalYaw(glm::eulerAngles(tr->rotation).z);
-                } else if (tr->hasServerYaw) {
-                    transportYawCanonical = tr->serverYaw;
-                } else {
-                    transportYawCanonical = glm::eulerAngles(tr->rotation).z;
-                }
-            }
-        }
-
-        movementInfo.transportO =
-            core::coords::normalizeAngleRad(movementInfo.orientation - transportYawCanonical);
-    } else {
-        movementInfo.flags &= ~static_cast<uint32_t>(MovementFlags::ONTRANSPORT);
-        movementInfo.transportGuid = 0;
-        movementInfo.transportSeat = -1;
-    }
+    const bool includeTransportInWire = populateWireTransportInfo();
 
     if (opcode == Opcode::MSG_MOVE_HEARTBEAT && isClassicLikeExpansion()) {
         const bool stationaryIdle =
@@ -1130,6 +1129,21 @@ void MovementHandler::sendMovement(Opcode opcode) {
     packetSent = true;
     lastSentPos_ = glm::vec3(movementInfo.x, movementInfo.y, movementInfo.z);
     lastSentOrientation_ = movementInfo.orientation;
+    if (includeTransportInWire) {
+        lastSentTransportGuid_ = wireInfo.transportGuid;
+        lastSentTransportO_ = wireInfo.transportO;
+        if (opcode == Opcode::MSG_MOVE_SET_FACING) {
+            lastFacingSentTransportGuid_ = wireInfo.transportGuid;
+            lastFacingSentTransportO_ = wireInfo.transportO;
+        }
+    } else {
+        lastSentTransportGuid_ = 0;
+        lastSentTransportO_ = 0.0f;
+        if (opcode == Opcode::MSG_MOVE_SET_FACING) {
+            lastFacingSentTransportGuid_ = 0;
+            lastFacingSentTransportO_ = 0.0f;
+        }
+    }
     hasSentMovement_ = true;
     if (movementHeldReason_) {
         LOG_WARNING("Movement: sending again (was held while ", movementHeldReason_, ")");
@@ -1265,6 +1279,67 @@ bool MovementHandler::isPlayerServerSplineActive() const {
     return self && self->isServerSplineActive();
 }
 
+bool MovementHandler::resolveActiveWireTransportLocalO(
+    uint64_t& outGuid, float& outLocalO) const {
+    outGuid = 0;
+    outLocalO = 0.0f;
+    if (!owner_.isOnTransport() || !owner_.getTransportManager()) return false;
+    const uint64_t tGuid = owner_.playerTransportGuidRef();
+    const auto* tr = owner_.getTransportManager()->getTransport(tGuid);
+    if (!tr || tr->isM2) return false;
+    outGuid = tGuid;
+    outLocalO = core::coords::normalizeAngleRad(
+        movementInfo.orientation - tr->canonicalYawRad());
+    return true;
+}
+
+std::optional<float> MovementHandler::unsentFacingDeltaRad() const {
+    if (!hasSentMovement_) return std::nullopt;
+    uint64_t wireTransportGuid = 0;
+    float currentLocalO = 0.0f;
+    if (resolveActiveWireTransportLocalO(wireTransportGuid, currentLocalO)) {
+        if (lastSentTransportGuid_ == wireTransportGuid) {
+            return core::coords::normalizeAngleRad(currentLocalO - lastSentTransportO_);
+        }
+        return 0.0f;
+    }
+    return core::coords::normalizeAngleRad(movementInfo.orientation - lastSentOrientation_);
+}
+
+void MovementHandler::commitTransportArrival(const glm::vec3& canonicalPos,
+                                             float canonicalYaw,
+                                             uint64_t transportGuid,
+                                             float localTransportO) {
+    movementInfo.x = canonicalPos.x;
+    movementInfo.y = canonicalPos.y;
+    movementInfo.z = canonicalPos.z;
+    movementInfo.orientation = canonicalYaw;
+    movementInfo.transportGuid = transportGuid;
+    movementInfo.transportO = localTransportO;
+    lastSentPos_ = canonicalPos;
+    lastSentOrientation_ = canonicalYaw;
+    lastFacingSentOrientation_ = canonicalYaw;
+    lastSentTransportGuid_ = transportGuid;
+    lastSentTransportO_ = localTransportO;
+    lastFacingSentTransportGuid_ = transportGuid;
+    lastFacingSentTransportO_ = localTransportO;
+    hasSentMovement_ = true;
+    lastHeartbeatX_ = canonicalPos.x;
+    lastHeartbeatY_ = canonicalPos.y;
+    lastHeartbeatZ_ = canonicalPos.z;
+    lastHeartbeatFlags_ = movementInfo.flags;
+    lastHeartbeatTransportGuid_ = transportGuid;
+    lastHeartbeatSendTimeMs_ = movementClockNowMs();
+    timeSinceLastMoveHeartbeat_ = 0.0f;
+    if (sample_) {
+        sample_->x = canonicalPos.x;
+        sample_->y = canonicalPos.y;
+        sample_->z = canonicalPos.z;
+        sample_->orientation = canonicalYaw;
+    }
+    previousSample_.reset();
+}
+
 void MovementHandler::commitServerSplineArrival(const glm::vec3& canonicalPos, float canonicalYaw) {
     movementInfo.x = canonicalPos.x;
     movementInfo.y = canonicalPos.y;
@@ -1273,6 +1348,10 @@ void MovementHandler::commitServerSplineArrival(const glm::vec3& canonicalPos, f
     lastSentPos_ = canonicalPos;
     lastSentOrientation_ = canonicalYaw;
     lastFacingSentOrientation_ = canonicalYaw;
+    lastSentTransportGuid_ = 0;
+    lastSentTransportO_ = 0.0f;
+    lastFacingSentTransportGuid_ = 0;
+    lastFacingSentTransportO_ = 0.0f;
     hasSentMovement_ = true;
     lastHeartbeatX_ = canonicalPos.x;
     lastHeartbeatY_ = canonicalPos.y;
@@ -2727,12 +2806,15 @@ void MovementHandler::handleNewWorld(network::Packet& packet) {
         pendingTransportOriginMap_ == owner_.getCurrentMapId() && owner_.isOnTransport();
     if (crossMapTransportTransfer) {
         // While riding a cross-continent transport, SMSG_NEW_WORLD carries the
-        // player's transport-local coordinates. They are not a world position
-        // near map origin. Hold them until the same ship is registered on the
-        // destination map, then compose them through its new transform.
+        // player's transport-local coordinates and transport-local orientation
+        // (CMaNGOS Transports.cpp sends t_pos.x/y/z/o). Hold them until the
+        // same ship is registered on the destination map, then compose them
+        // through its new transform.
         owner_.beginPlayerTransportWorldTransfer(
-            mapId, owner_.getTransportManager()->serverToTransportLocal(
-                owner_.getPlayerTransportGuid(), glm::vec3(serverX, serverY, serverZ)));
+            mapId,
+            owner_.getTransportManager()->serverToTransportLocal(
+                owner_.getPlayerTransportGuid(), glm::vec3(serverX, serverY, serverZ)),
+            orientation);
     } else {
         // A portal, summon or GM teleport off a ship carries world coordinates.
         // Waiting for that ship on the destination map freezes local controls.
@@ -2794,6 +2876,7 @@ void MovementHandler::handleNewWorld(network::Packet& packet) {
 
     glm::vec3 receivedCanonical = core::coords::serverToCanonical(glm::vec3(serverX, serverY, serverZ));
     const bool badEasternKingdomsNearOrigin =
+        !crossMapTransportTransfer &&
         isCorruptOriginPosition(mapId, receivedCanonical.x, receivedCanonical.y,
                                 receivedCanonical.z);
     if (badEasternKingdomsNearOrigin) {

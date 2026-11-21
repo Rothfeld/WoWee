@@ -951,6 +951,12 @@ void WorldLoader::loadOnlineWorldTerrain(uint32_t mapId, float x, float y, float
         // world loads (cross-map teleports, relogging) keep the pitch the
         // camera had: -47.5 and -10 degrees both survived them unchanged.
         auto* cameraController = renderer_->getCameraController();
+        if (gameHandler_ && gameHandler_->hasPendingPlayerTransportWorldTransfer() &&
+            cameraController->hasEnteredWorld()) {
+            const float orbitOffsetDeg = std::remainder(
+                cameraController->getYaw() - cameraController->getFacingYaw(), 360.0f);
+            gameHandler_->setPendingPlayerTransportCameraOrbitDeg(orbitOffsetDeg);
+        }
         const float spawnPitchDeg = cameraController->hasEnteredWorld()
             ? cameraController->getPitch() : rendering::CameraController::kStartPitch;
         cameraController->setDefaultSpawn(spawnRender, spawnYawDeg, spawnPitchDeg);

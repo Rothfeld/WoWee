@@ -684,3 +684,50 @@ TEST_CASE("Vator replays the original client's passenger packets", "[transport_p
         REQUIRE(carZ == Catch::Approx(s.worldZ - s.localZ).margin(0.05f));
     }
 }
+
+TEST_CASE("TaxiRouteSchedule::evaluateForMap clamps cross-map boundary skew to target map arrival/departure",
+          "[taxi-schedule][boatcam]") {
+    game::TaxiRoute route;
+    // Map 1 departure segment (0..1000..), teleport across to Map 0 arrival segment.
+    route.nodes = {
+        {{-10.0f, 0.0f, 0.0f}, 1, 0, 0},
+        {{  0.0f, 0.0f, 0.0f}, 1, 1000, 2},
+        {{ 20.0f, 0.0f, 0.0f}, 1, 0, 0},
+        {{ 40.0f, 0.0f, 0.0f}, 1, 0, 1},   // teleport off map 1
+        {{490.0f, 100.0f, 0.0f}, 0, 0, 0}, // arrival control on map 0
+        {{500.0f, 100.0f, 0.0f}, 0, 0, 0}, // first motion frame on map 0
+        {{500.0f, 120.0f, 0.0f}, 0, 1000, 2},
+        {{500.0f, 140.0f, 0.0f}, 0, 0, 0},
+    };
+    const game::TaxiRouteSchedule schedule(route, 10.0f, 2.0f);
+
+    // Find the last millisecond on map 1 right before crossing to map 0.
+    uint32_t lastMap1Ms = 0;
+    for (uint32_t t = 0; t < schedule.durationMs(); t += 25) {
+        if (schedule.evaluate(t).mapId == 1) {
+            lastMap1Ms = t;
+        }
+    }
+    REQUIRE(schedule.evaluate(lastMap1Ms).mapId == 1);
+
+    // When SMSG_NEW_WORLD lands on map 0 slightly before the local DBC clock
+    // crosses the boundary, evaluateForMap(lastMap1Ms, 0) must clamp to map 0's
+    // arrival waypoint & tangent rather than returning map 1's coordinates.
+    const auto clampedToMap0 = schedule.evaluateForMap(lastMap1Ms, 0);
+    CHECK(clampedToMap0.mapId == 0);
+    CHECK(clampedToMap0.position.x == Catch::Approx(500.0f).margin(0.01f));
+    CHECK(clampedToMap0.position.y == Catch::Approx(100.0f).margin(0.01f));
+    CHECK(clampedToMap0.tangent.y > 0.0f);
+
+    // Conversely, right after crossing onto map 0, an origin-map rider waiting
+    // on SMSG_NEW_WORLD stays anchored at map 1's departure boundary.
+    uint32_t firstMap0Ms = lastMap1Ms;
+    while (firstMap0Ms < schedule.durationMs() && schedule.evaluate(firstMap0Ms).mapId != 0) {
+        ++firstMap0Ms;
+    }
+    REQUIRE(schedule.evaluate(firstMap0Ms).mapId == 0);
+    const auto clampedToMap1 = schedule.evaluateForMap(firstMap0Ms, 1);
+    CHECK(clampedToMap1.mapId == 1);
+    CHECK(clampedToMap1.position.x == Catch::Approx(20.0f).margin(0.01f));
+    CHECK(clampedToMap1.tangent.x > 0.0f);
+}

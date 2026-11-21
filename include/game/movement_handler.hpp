@@ -268,6 +268,16 @@ public:
         if (!hasSentMovement_) return std::nullopt;
         return lastSentOrientation_;
     }
+    /// Signed facing delta (radians) since the last sent movement packet:
+    /// compares transport-local orientation while riding a WMO transport, and
+    /// world canonical orientation otherwise.
+    [[nodiscard]] std::optional<float> unsentFacingDeltaRad() const;
+    /// Seeds movementInfo and last-sent world + transport-local facing from an
+    /// authoritative server transport state without emitting a wire packet.
+    void commitTransportArrival(const glm::vec3& canonicalPos,
+                                float canonicalYaw,
+                                uint64_t transportGuid,
+                                float localTransportO);
     void setFallStartMs(uint32_t ms) { fallStartMs_ = ms; }
 
     // Taxi state references for GameHandler update/processing
@@ -360,6 +370,9 @@ private:
     /// The sample movementInfo currently holds, or null when its position
     /// was written by something other than the physics this frame or last.
     [[nodiscard]] const PhysicsSample* currentPhysicsSample() const;
+    [[nodiscard]] bool resolveActiveWireTransportLocalO(uint64_t& outGuid, float& outLocalO) const;
+    [[nodiscard]] bool shouldSuppressPreWotlkSetFacing(uint32_t movementTime) const;
+    bool populateWireTransportInfo();
     uint32_t reserveMovementTimestampMs(uint32_t atMs);
     /// A landing (or water) ends the fall: directions released in the air stop.
     void applyPendingStops();
@@ -411,12 +424,16 @@ private:
     uint32_t lastNonHeartbeatMoveSendTimeMs_ = 0;
     glm::vec3 lastSentPos_{0.0f};
     float lastSentOrientation_ = 0.0f;
+    uint64_t lastSentTransportGuid_ = 0;
+    float lastSentTransportO_ = 0.0f;
     bool hasSentMovement_ = false;
     /// Why movement is being held back from the server, said once per stretch
     /// of it. See sendMovement.
     const char* movementHeldReason_ = nullptr;
     uint32_t lastFacingSendTimeMs_ = 0;
     float lastFacingSentOrientation_ = 0.0f;
+    uint64_t lastFacingSentTransportGuid_ = 0;
+    float lastFacingSentTransportO_ = 0.0f;
 
     // Speed state
     float serverRunSpeed_ = 7.0f;

@@ -3811,6 +3811,57 @@ void CameraController::applyLookDegrees(float yawDegrees, float pitchDegrees) {
     camera->setRotation(yaw, pitch);
 }
 
+void CameraController::applyTransportYawDelta(float deltaYawDeg) {
+    if (!std::isfinite(deltaYawDeg) || std::abs(deltaYawDeg) <= 1e-7f) return;
+
+    yaw += deltaYawDeg;
+    facingYaw += deltaYawDeg;
+    travelYaw_ += deltaYawDeg;
+    if (introActive) {
+        introStartYaw += deltaYawDeg;
+        introEndYaw += deltaYawDeg;
+    }
+    if (barberView_) {
+        savedBarberYaw_ += deltaYawDeg;
+    }
+    if (preserveAirborneMomentum_) {
+        const float rad = glm::radians(deltaYawDeg);
+        const float c = std::cos(rad);
+        const float s = std::sin(rad);
+        const glm::vec2 hv(airborneHorizontalVelocity_.x, airborneHorizontalVelocity_.y);
+        airborneHorizontalVelocity_.x = hv.x * c - hv.y * s;
+        airborneHorizontalVelocity_.y = hv.x * s + hv.y * c;
+    }
+
+    if (std::abs(facingYaw) > 3600.0f) {
+        const float wrap = std::trunc(facingYaw / 360.0f) * 360.0f;
+        yaw -= wrap;
+        facingYaw -= wrap;
+        travelYaw_ -= wrap;
+        if (introActive) {
+            introStartYaw -= wrap;
+            introEndYaw -= wrap;
+        }
+        if (barberView_) {
+            savedBarberYaw_ -= wrap;
+        }
+    }
+
+    if (camera) {
+        camera->setRotation(yaw, pitch);
+    }
+}
+
+void CameraController::setCameraAndFacingYaw(float cameraYawDeg, float characterFacingYawDeg) {
+    if (!std::isfinite(cameraYawDeg) || !std::isfinite(characterFacingYawDeg)) return;
+    yaw = cameraYawDeg;
+    facingYaw = characterFacingYawDeg;
+    travelYaw_ = characterFacingYawDeg;
+    if (camera) {
+        camera->setRotation(yaw, pitch);
+    }
+}
+
 void CameraController::processMouseWheel(float delta) {
     // A notch is the CAMERAZOOMIN / CAMERAZOOMOUT binding, whose body in
     // Bindings.xml is CameraZoomIn(1.0) / CameraZoomOut(1.0): one yard.

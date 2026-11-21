@@ -1027,19 +1027,34 @@ void EntityController::applyPlayerTransportState(const UpdateBlock& block,
             : core::coords::serverToCanonical(serverOffset);
         owner_.setPlayerOnTransport(block.transportGuid, canonicalOffset);
         if (owner_.getTransportManager() && owner_.getTransportManager()->getTransport(owner_.playerTransportGuidRef())) {
+            auto* tr = owner_.getTransportManager()->getTransport(owner_.playerTransportGuidRef());
             glm::vec3 composed = owner_.getTransportManager()->getPlayerWorldPosition(owner_.playerTransportGuidRef(), owner_.playerTransportOffsetRef());
-            entity->setPosition(composed.x, composed.y, composed.z, oCanonical);
+            const float composedYaw = !tr->isM2
+                ? core::coords::normalizeAngleRad(tr->canonicalYawRad() + block.transportO)
+                : oCanonical;
+            entity->setPosition(composed.x, composed.y, composed.z, composedYaw);
             owner_.movementInfoRef().x = composed.x;
             owner_.movementInfoRef().y = composed.y;
             owner_.movementInfoRef().z = composed.z;
-        } else if (updateMovementInfoPos) {
-            if (positionIsBad(canonicalPos.x, canonicalPos.y, canonicalPos.z)) {
-                LOG_WARNING("REJECTED player UPDATE_OBJECT to near-origin canonical=(",
-                            canonicalPos.x, ", ", canonicalPos.y, ", ", canonicalPos.z, ")");
-            } else {
-                owner_.movementInfoRef().x = canonicalPos.x;
-                owner_.movementInfoRef().y = canonicalPos.y;
-                owner_.movementInfoRef().z = canonicalPos.z;
+            owner_.movementInfoRef().orientation = composedYaw;
+            if (!tr->isM2 && owner_.getMovementHandler()) {
+                owner_.getMovementHandler()->commitTransportArrival(
+                    composed, composedYaw, owner_.playerTransportGuidRef(), block.transportO);
+            }
+        } else {
+            if (!owner_.hasPendingPlayerTransportWorldTransfer() && block.transportGuid != 0) {
+                owner_.armDeferredPlayerTransportAttachment(
+                    owner_.getCurrentMapId(), block.transportGuid, 0, serverOffset, block.transportO);
+            }
+            if (updateMovementInfoPos) {
+                if (positionIsBad(canonicalPos.x, canonicalPos.y, canonicalPos.z)) {
+                    LOG_WARNING("REJECTED player UPDATE_OBJECT to near-origin canonical=(",
+                                canonicalPos.x, ", ", canonicalPos.y, ", ", canonicalPos.z, ")");
+                } else {
+                    owner_.movementInfoRef().x = canonicalPos.x;
+                    owner_.movementInfoRef().y = canonicalPos.y;
+                    owner_.movementInfoRef().z = canonicalPos.z;
+                }
             }
         }
         LOG_INFO("Player on transport: 0x", std::hex, owner_.playerTransportGuidRef(), std::dec,

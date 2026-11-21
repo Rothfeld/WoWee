@@ -192,3 +192,53 @@ TEST_CASE("terrain distance preserves intersecting mountain chunks", "[camera][t
         CHECK(terrainWithinViewDistance(camera, 0, camera, distance));
     }
 }
+
+TEST_CASE("transport-locked camera yaw keeps ship deck stationary in screen space across harbor turns",
+          "[camera][boatcam]") {
+    // Ship deck quad in ship-local coordinates (bow along -X, port/starboard +/-Y).
+    const std::array<glm::vec3, 4> localDeck = {{
+        {-18.0f, -6.0f, 6.1f},
+        {-18.0f,  6.0f, 6.1f},
+        { 12.0f, -6.0f, 6.1f},
+        { 12.0f,  6.0f, 6.1f},
+    }};
+    const glm::vec3 localPlayer(-2.0f, 0.5f, 6.1f);
+    const float pivotOffsetZ = 1.6f;
+    const float zoomDist = 11.5f;
+    const float localCamYawDeg = -81.021f;
+    const float pitchDeg = -12.0f;
+
+    auto projectDeck = [&](const glm::vec3& shipRenderPos, float shipYawDeg) {
+        const glm::mat4 hull = glm::translate(glm::mat4(1.0f), shipRenderPos) *
+            glm::rotate(glm::mat4(1.0f), glm::radians(shipYawDeg), glm::vec3(0.0f, 0.0f, 1.0f));
+        const glm::vec3 playerRender = glm::vec3(hull * glm::vec4(localPlayer, 1.0f));
+        const glm::vec3 pivot = playerRender + glm::vec3(0.0f, 0.0f, pivotOffsetZ);
+
+        Camera cam;
+        cam.setRotation(shipYawDeg + localCamYawDeg, pitchDeg);
+        cam.setPosition(pivot - cam.getForward() * zoomDist);
+        const glm::mat4 vp = cam.getViewProjectionMatrix();
+
+        std::array<glm::vec2, 4> ndc{};
+        for (size_t i = 0; i < localDeck.size(); ++i) {
+            const glm::vec4 worldPt = hull * glm::vec4(localDeck[i], 1.0f);
+            const glm::vec4 clip = vp * worldPt;
+            REQUIRE(clip.w > 0.0f);
+            ndc[i] = glm::vec2(clip) / clip.w;
+        }
+        return ndc;
+    };
+
+    const auto dockScreen = projectDeck({-6406.0f, 823.0f, 0.0f}, -107.092f);
+    for (float turnDeg : {-90.0f, -45.0f, 0.0f, 37.5f, 118.0f, 180.0f, 245.0f}) {
+        const auto turnedScreen = projectDeck(
+            {-6350.0f + turnDeg, 800.0f - 0.5f * turnDeg, 0.0f},
+            -107.092f + turnDeg);
+        for (size_t i = 0; i < dockScreen.size(); ++i) {
+            // At ~6400 world coordinate magnitude, IEEE-754 float32 ULP is ~5e-4
+            // (~2e-3 after grazing perspective divide), vs >1.0 NDC swing if unlocked.
+            CHECK(turnedScreen[i].x == Catch::Approx(dockScreen[i].x).margin(5e-3f));
+            CHECK(turnedScreen[i].y == Catch::Approx(dockScreen[i].y).margin(5e-3f));
+        }
+    }
+}

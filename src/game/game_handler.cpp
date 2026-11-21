@@ -2083,30 +2083,91 @@ glm::vec3 GameHandler::getComposedWorldPosition() {
     return glm::vec3(movementInfo.x, movementInfo.y, movementInfo.z);
 }
 
+void GameHandler::setPlayerOnTransport(uint64_t transportGuid, const glm::vec3& localOffset) {
+    if (transportGuid != 0 && !isTransportGuid(transportGuid)) {
+        static uint64_t saidFor = 0;
+        if (saidFor != transportGuid) {
+            saidFor = transportGuid;
+            LOG_WARNING("Transport attach refused: guid=0x", std::hex,
+                        transportGuid, std::dec,
+                        " is not a registered transport yet - the player "
+                        "will not move with it");
+        }
+        return;
+    }
+    playerTransportGuid_ = transportGuid;
+    playerTransportOffset_ = localOffset;
+    playerTransportStickyGuid_ = transportGuid;
+    playerTransportStickyTimer_ = 8.0f;
+    movementInfo.transportGuid = transportGuid;
+    if (transportManager_) {
+        transportManager_->setRiderTransport(transportGuid);
+    }
+}
+
+void GameHandler::clearPlayerTransport() {
+    if (playerTransportGuid_ != 0) {
+        playerTransportStickyGuid_ = playerTransportGuid_;
+        playerTransportStickyTimer_ = std::max(playerTransportStickyTimer_, 1.5f);
+    }
+    playerTransportGuid_ = 0;
+    playerTransportOffset_ = glm::vec3(0.0f);
+    movementInfo.transportGuid = 0;
+    if (transportManager_) {
+        transportManager_->setRiderTransport(0);
+    }
+}
+
+void GameHandler::armDeferredPlayerTransportAttachment(
+    uint32_t mapId,
+    uint64_t transportGuid,
+    uint32_t transportEntry,
+    const glm::vec3& localOffset,
+    float serverLocalO) {
+    if (transportGuid == 0 && transportEntry == 0) return;
+    pendingPlayerTransportTransfer_ = true;
+    pendingPlayerTransportGuid_ = transportGuid;
+    pendingPlayerTransportEntry_ = transportEntry;
+    pendingPlayerTransportMapId_ = mapId;
+    pendingPlayerTransportOffset_ = localOffset;
+    pendingPlayerTransportLocalO_ = serverLocalO;
+    pendingPlayerTransportOrbitDeg_ = 0.0f;
+}
+
 void GameHandler::beginPlayerTransportWorldTransfer(
-    uint32_t destinationMapId, const glm::vec3& localOffset) {
+    uint32_t destinationMapId, const glm::vec3& localOffset, float serverLocalO) {
     if (playerTransportGuid_ == 0) return;
 
-    pendingPlayerTransportTransfer_ = true;
-    pendingPlayerTransportGuid_ = playerTransportGuid_;
-    pendingPlayerTransportMapId_ = destinationMapId;
-    pendingPlayerTransportOffset_ = localOffset;
-    pendingPlayerTransportEntry_ = 0;
+    uint32_t transportEntry = 0;
     if (transportManager_) {
         if (const auto* transport = transportManager_->getTransport(playerTransportGuid_)) {
-            pendingPlayerTransportEntry_ = transport->entry;
+            transportEntry = transport->entry;
         }
     }
+    armDeferredPlayerTransportAttachment(
+        destinationMapId, playerTransportGuid_, transportEntry, localOffset, serverLocalO);
 
     LOG_WARNING("Transport world transfer armed: guid=0x", std::hex,
                 pendingPlayerTransportGuid_, std::dec,
                 " entry=", pendingPlayerTransportEntry_,
                 " destinationMap=", destinationMapId,
-                " local=(", localOffset.x, ",", localOffset.y, ",", localOffset.z, ")");
+                " local=(", localOffset.x, ",", localOffset.y, ",", localOffset.z,
+                ") localO=", serverLocalO);
 }
 
 bool GameHandler::completePlayerTransportWorldTransfer(
     uint64_t transportGuid, glm::vec3& worldPosition) {
+    float unusedCanonicalYaw = 0.0f;
+    float unusedCameraYawDeg = 0.0f;
+    return completePlayerTransportWorldTransfer(
+        transportGuid, worldPosition, unusedCanonicalYaw, unusedCameraYawDeg);
+}
+
+bool GameHandler::completePlayerTransportWorldTransfer(
+    uint64_t transportGuid,
+    glm::vec3& worldPosition,
+    float& worldCanonicalYaw,
+    float& cameraYawDeg) {
     if (!pendingPlayerTransportTransfer_ || !transportManager_ ||
         currentMapId_ != pendingPlayerTransportMapId_) {
         return false;
@@ -2119,24 +2180,35 @@ bool GameHandler::completePlayerTransportWorldTransfer(
          transport->entry == pendingPlayerTransportEntry_);
     if (!matchingTransport) return false;
 
-    setPlayerOnTransport(transportGuid, pendingPlayerTransportOffset_);
-    worldPosition = transportManager_->getPlayerWorldPosition(
-        transportGuid, pendingPlayerTransportOffset_);
+    const glm::vec3 localOffset = pendingPlayerTransportOffset_;
+    const float localO = pendingPlayerTransportLocalO_;
+    const float orbitOffsetDeg = pendingPlayerTransportOrbitDeg_;
+
+    setPlayerOnTransport(transportGuid, localOffset);
+    worldPosition = transportManager_->getPlayerWorldPosition(transportGuid, localOffset);
+    worldCanonicalYaw = core::coords::normalizeAngleRad(
+        transport->canonicalYawRad() + localO);
+    const float facingYawDeg = core::coords::canonicalToCharacterYawDeg(worldCanonicalYaw);
+    cameraYawDeg = facingYawDeg + orbitOffsetDeg;
+
     setPosition(worldPosition.x, worldPosition.y, worldPosition.z);
+    setOrientation(worldCanonicalYaw);
+    if (movementHandler_ && !transport->isM2) {
+        movementHandler_->commitTransportArrival(
+            worldPosition, worldCanonicalYaw, transportGuid, localO);
+    }
 
     LOG_WARNING("Transport world transfer restored: guid=0x", std::hex,
                 transportGuid, std::dec,
                 " entry=", transport->entry,
                 " map=", currentMapId_,
-                " local=(", pendingPlayerTransportOffset_.x, ",",
-                pendingPlayerTransportOffset_.y, ",",
-                pendingPlayerTransportOffset_.z, ") world=(",
-                worldPosition.x, ",", worldPosition.y, ",", worldPosition.z, ")");
+                " local=(", localOffset.x, ",", localOffset.y, ",", localOffset.z,
+                ") localO=", localO,
+                " world=(", worldPosition.x, ",", worldPosition.y, ",", worldPosition.z,
+                ") facingDeg=", facingYawDeg,
+                " camYawDeg=", cameraYawDeg);
 
-    pendingPlayerTransportTransfer_ = false;
-    pendingPlayerTransportGuid_ = 0;
-    pendingPlayerTransportEntry_ = 0;
-    pendingPlayerTransportMapId_ = 0xFFFFFFFFu;
+    clearPendingPlayerTransportWorldTransfer();
     return true;
 }
 
@@ -2357,6 +2429,17 @@ void GameHandler::updateM2TransportBoarding(const glm::vec3& playerCanonical) {
                     LOG_WARNING("Client ship boarding accepted: guid=0x", std::hex, bestGuid, std::dec,
                                 " entry=", tr->entry,
                                 " local=(", offset.x, ",", offset.y, ",", offset.z, ")");
+                    if (getPlayerTransportGuid() == bestGuid) {
+                        if (getState() == WorldState::IN_WORLD && getSocket() &&
+                            wireOpcode(Opcode::CMSG_MOVE_CHNG_TRANSPORT) != 0xFFFF) {
+                            sendMovement(Opcode::CMSG_MOVE_CHNG_TRANSPORT);
+                        } else if (movementHandler_) {
+                            const float localO = core::coords::normalizeAngleRad(
+                                movementInfo.orientation - tr->canonicalYawRad());
+                            movementHandler_->commitTransportArrival(
+                                playerCanonical, movementInfo.orientation, bestGuid, localO);
+                        }
+                    }
                 } else {
                     LOG_DEBUG("M2 transport boarding: guid=0x", std::hex, bestGuid, std::dec);
                 }
@@ -2448,6 +2531,13 @@ void GameHandler::updateM2TransportBoarding(const glm::vec3& playerCanonical) {
                         " local=(", local.x, ",", local.y, ",", local.z, ")");
             shipNoDeckSupportFrames_ = 0;
             clearPlayerTransport();
+            if (getState() == WorldState::IN_WORLD && getSocket() &&
+                wireOpcode(Opcode::CMSG_MOVE_CHNG_TRANSPORT) != 0xFFFF) {
+                sendMovement(Opcode::CMSG_MOVE_CHNG_TRANSPORT);
+            } else if (movementHandler_) {
+                movementHandler_->commitTransportArrival(
+                    playerCanonical, movementInfo.orientation, 0, 0.0f);
+            }
         }
         return;
     }

@@ -33,9 +33,30 @@ struct ActiveTransport {
     uint32_t displayId = 0;     // GameObject display id, used for model-family-specific behavior
     glm::vec3 basePosition;     // Spawn position (base offset for path)
     glm::vec3 position;         // Current world position
-    glm::quat rotation;         // Current world rotation
-    glm::mat4 transform;        // Cached world transform
-    glm::mat4 invTransform;     // Cached inverse for collision
+    glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f}; // Current world rotation
+    glm::mat4 transform{1.0f};        // Cached world transform
+    glm::mat4 invTransform{1.0f};     // Cached inverse for collision
+    uint32_t poseEpoch = 0;     // Incremented on registration / route assignment
+
+    /// Horizontal server/render yaw (radians) extracted from rotation without
+    /// Euler-angle gimbal flips across +/-90 or +/-180 degrees.
+    [[nodiscard]] float serverYawRad() const {
+        const glm::vec3 fwd = rotation * glm::vec3(1.0f, 0.0f, 0.0f);
+        const float horizSq = fwd.x * fwd.x + fwd.y * fwd.y;
+        if (horizSq <= 1e-12f) return 0.0f;
+        return std::atan2(fwd.y, fwd.x);
+    }
+
+    [[nodiscard]] float renderYawDeg() const {
+        return glm::degrees(serverYawRad());
+    }
+
+    [[nodiscard]] float canonicalYawRad() const {
+        if (isM2) {
+            return hasServerYaw ? serverYaw : serverYawRad();
+        }
+        return core::coords::serverToCanonicalYaw(serverYawRad());
+    }
 
     // Player attachment state
     bool playerOnBoard;
@@ -221,7 +242,14 @@ public:
     // the deck out from under them and leaves them frozen off the world. The
     // manager has no other way to know a rider is there: boarding is decided
     // entirely on the client.
-    void setRiderTransport(uint64_t guid) { riderTransportGuid_ = guid; }
+    void setRiderTransport(uint64_t guid) {
+        riderTransportGuid_ = guid;
+        if (guid != 0) {
+            if (auto it = transports_.find(guid); it != transports_.end()) {
+                it->second.onThisMap = true;
+            }
+        }
+    }
 
     /// Whether a point stands over an M2 transport's actual footprint.
     ///

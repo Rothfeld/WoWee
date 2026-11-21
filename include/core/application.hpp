@@ -417,6 +417,9 @@ private:
     glm::vec3 lastM2RideLockedCanonical_ = glm::vec3(0.0f);
     bool hasM2RideLock_ = false;
     glm::vec3 lastWMORideLockedRender_ = glm::vec3(0.0f);
+    glm::mat4 lastWMORideInvTransform_{1.0f};
+    float lastWMORideTransportYawDeg_ = 0.0f;
+    uint32_t lastWMORidePoseEpoch_ = 0;
     bool hasWMORideLock_ = false;
     uint64_t lastWMORideTransportGuid_ = 0;
     uint32_t lastWMORideMapId_ = 0xFFFFFFFFu;
@@ -425,6 +428,7 @@ private:
     // until this exact transport instance's deck floor exists, instead of letting gravity
     // fold into the attachment and drop the rider through the hull.
     bool deckFloorPending_ = false;
+    void syncWMOTransportRideState();
     /// The possessed unit this client is moving, and where the player's own
     /// body stands meanwhile (render position, character yaw in degrees).
     uint64_t possessedBody_ = 0;

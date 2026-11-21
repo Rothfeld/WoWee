@@ -36,9 +36,11 @@ void TransportAnimator::evaluateAndApply(
     const auto& spline = pathEntry.spline;
 
     if (pathEntry.taxiSchedule) {
-        const auto sample = pathEntry.taxiSchedule->evaluate(pathTimeMs);
-        // The server owns cross-map passenger teleportation. Preserve the last
-        // local hull transform until its transfer arrives.
+        const auto sample = pathEntry.taxiSchedule->evaluateForMap(
+            pathTimeMs, pathEntry.taxiMapId);
+        // If the schedule has no frames on taxiMapId at all, preserve the last
+        // local hull transform; otherwise evaluateForMap clamps off-map clock
+        // samples to the nearest arrival/departure boundary frame on taxiMapId.
         if (sample.mapId != pathEntry.taxiMapId) return;
         transport.position = sample.position;
         const float yaw = std::atan2(sample.tangent.x, sample.tangent.y) +

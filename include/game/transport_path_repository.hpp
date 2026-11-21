@@ -144,6 +144,7 @@ public:
                       uint32_t serverPeriodMs = 0);
     [[nodiscard]] uint32_t durationMs() const { return durationMs_; }
     [[nodiscard]] Sample evaluate(uint32_t timeMs) const;
+    [[nodiscard]] Sample evaluateForMap(uint32_t timeMs, uint32_t targetMapId) const;
 
 private:
     struct Frame {
@@ -193,6 +194,33 @@ inline TaxiRouteSchedule::Sample TaxiRouteSchedule::evaluate(uint32_t timeMs) co
     const float u = std::clamp(travelled / frame.nextDistance, 0.0f, 1.0f);
     return {taxiCurve(frame.p0, frame.p1, frame.p2, frame.p3, u),
             taxiTangent(frame.p0, frame.p1, frame.p2, frame.p3, u), frame.node.mapId};
+}
+
+inline TaxiRouteSchedule::Sample TaxiRouteSchedule::evaluateForMap(
+    uint32_t timeMs, uint32_t targetMapId) const {
+    const Sample sample = evaluate(timeMs);
+    if (sample.mapId == targetMapId) return sample;
+    const uint32_t wrapped = timeMs % durationMs_;
+    const Frame* best = nullptr;
+    uint32_t bestDist = 0xFFFFFFFFu;
+    const auto ringDist = [period = durationMs_](uint32_t a, uint32_t b) {
+        const uint32_t diff = a >= b ? (a - b) : (b - a);
+        return std::min(diff, period - diff);
+    };
+    for (const auto& frame : frames_) {
+        if (frame.node.mapId != targetMapId) continue;
+        uint32_t dist = 0;
+        if (wrapped < frame.arriveMs || wrapped > frame.departMs) {
+            dist = std::min(ringDist(wrapped, frame.arriveMs),
+                            ringDist(wrapped, frame.departMs));
+        }
+        if (!best || dist < bestDist) {
+            best = &frame;
+            bestDist = dist;
+        }
+    }
+    if (!best) return sample;
+    return {best->node.position, best->stopTangent, targetMapId};
 }
 
 /// Owns and manages transport path data.

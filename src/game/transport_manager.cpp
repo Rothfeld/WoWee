@@ -163,6 +163,7 @@ void TransportManager::registerTransport(uint64_t guid,
     transport.isM2 = isM2;
     transport.worldCoords = pathEntry->worldCoords;
     transport.allowBootstrapVelocity = false;
+    transport.poseEpoch = 1;
 
     // A moving path registered under someone else's entry is a borrowed route.
     //
@@ -950,6 +951,7 @@ bool TransportManager::assignTaxiPathToTransport(uint32_t entry, uint32_t taxiPa
         transport.borrowedPath = false;  // This route is its own now.
         transport.basePosition = glm::vec3(0.0f);  // World-coordinate path, no base offset
         transport.useClientAnimation = true;  // Server won't send position updates
+        ++transport.poseEpoch;
 
         // Most legacy routes retain their established deterministic phase. Kraken
         // crosses map boundaries, so anchor each freshly loaded segment to the
@@ -958,9 +960,9 @@ bool TransportManager::assignTaxiPathToTransport(uint32_t entry, uint32_t taxiPa
         if (storedEntry && storedEntry->taxiSchedule) {
             const uint32_t now = currentTransportTime(guid);
             transport.localClockMs = now % storedEntry->taxiSchedule->durationMs();
-            const auto sample = storedEntry->taxiSchedule->evaluate(transport.localClockMs);
-            transport.position = sample.position;
-            transport.onThisMap = sample.mapId == mapId;
+            const auto rawSample = storedEntry->taxiSchedule->evaluate(transport.localClockMs);
+            const bool carryingRider = riderTransportGuid_ != 0 && guid == riderTransportGuid_;
+            transport.onThisMap = (rawSample.mapId == mapId) || carryingRider;
             animator_.evaluateAndApply(transport, *storedEntry, transport.localClockMs);
         } else if (storedEntry && storedEntry->spline.durationMs() > 0) {
             // Where the server says this hull is, not what time it happens to

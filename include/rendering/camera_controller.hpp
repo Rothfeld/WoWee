@@ -390,6 +390,13 @@ public:
     [[nodiscard]] bool isServerControlled() const { return serverControlled_; }
     void setFacingYaw(float yaw) { facingYaw = yaw; }  // For taxi/scripted movement
     void addCameraYaw(float deltaDeg) { yaw += deltaDeg; }
+    /// Rotate both camera orbit yaw and character facing yaw in lockstep with a
+    /// turning transport (build 8606 stores passenger camera & facing yaw in
+    /// transport-local coordinates while MOVEFLAG_ONTRANSPORT is active).
+    void applyTransportYawDelta(float deltaYawDeg);
+    /// Atomically set camera yaw and character facing yaw (e.g. when restoring
+    /// transport-local facing + LMB camera orbit across SMSG_NEW_WORLD).
+    void setCameraAndFacingYaw(float cameraYawDeg, float characterFacingYawDeg);
     void clearMovementInputs();
     void suppressMovementFor(float seconds) { movementSuppressTimer_ = seconds; }
     void suspendGravityFor(float seconds) { gravitySuspendTimer_ = seconds; }

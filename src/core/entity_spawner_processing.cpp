@@ -1055,6 +1055,7 @@ void EntitySpawner::processGameObjectSpawnQueue() {
 
                     auto wmo = std::make_shared<pipeline::WMOModel>(
                         pipeline::WMOLoader::load(wmoData));
+                    wmo->sourcePath = capturePath;
 
                     // Load groups
                     if (wmo->nGroups > 0) {
@@ -1310,12 +1311,19 @@ void EntitySpawner::processPendingTransportRegistrations() {
             }
 
             glm::vec3 restoredWorldPosition(0.0f);
+            float restoredCanonicalYaw = 0.0f;
+            float restoredCameraYawDeg = 0.0f;
             if (gameHandler_->completePlayerTransportWorldTransfer(
-                    pending.guid, restoredWorldPosition)) {
+                    pending.guid, restoredWorldPosition,
+                    restoredCanonicalYaw, restoredCameraYawDeg)) {
                 const glm::vec3 renderPosition =
                     core::coords::canonicalToRender(restoredWorldPosition);
+                const float restoredFacingDeg =
+                    core::coords::canonicalToCharacterYawDeg(restoredCanonicalYaw);
                 renderer_->getCharacterPosition() = renderPosition;
+                renderer_->setCharacterYaw(restoredFacingDeg);
                 if (auto* camera = renderer_->getCameraController()) {
+                    camera->setCameraAndFacingYaw(restoredCameraYawDeg, restoredFacingDeg);
                     camera->teleportTo(renderPosition);
                     camera->clearMovementInputs();
                     camera->suspendGravityFor(2.0f);

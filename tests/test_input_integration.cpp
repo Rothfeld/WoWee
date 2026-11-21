@@ -1614,7 +1614,9 @@ TEST_CASE_METHOD(Integration, "TBC outgoing boat offsets preserve model-local ax
     CHECK(manager->transportLocalToServer(boat, manager->serverToTransportLocal(boat, {4,-6,8})) == glm::vec3(4,-6,8));
 }
 
-TEST_CASE_METHOD(Integration, "Stationary TBC boat passengers send 500 ms heartbeats so server zone discovery fires", "[transport][explore]") {
+TEST_CASE_METHOD(Integration,
+                 "TBC boat passengers stay silent when stationary and trigger zone discovery on real movement or facing input",
+                 "[transport][explore][boatcam]") {
     using namespace wowee::game;
     replay::Session session("tbc");
     auto& handler = session.handler();
@@ -1622,11 +1624,16 @@ TEST_CASE_METHOD(Integration, "Stationary TBC boat passengers send 500 ms heartb
     auto* manager = handler.getTransportManager();
     REQUIRE(movement);
     REQUIRE(manager);
+    GameHandlerTestAccess::setAreaName(handler, 35, "Booty Bay");
 
-    constexpr uint64_t boat = 0x01fc00000002b067ULL;
+    std::vector<std::string> uiInfo;
+    handler.setAddonEventCallback([&](const std::string& e, const std::vector<std::string>& a) {
+        if (e == "UI_INFO_MESSAGE" && !a.empty()) uiInfo.push_back(a.front());
+    });
+
+    constexpr uint64_t boat = 0x01fc000000005148ULL; // The Maiden's Fancy
     announceTbcBoat(session, boat);
     manager->loadPathFromNodes(176231, {{0, 0, 0}});
-    // Canonical x=-14350, y=720 -> server x=-14350, y=720 outside Booty Bay
     manager->registerTransport(boat, 0, 176231,
                                wowee::core::coords::serverToCanonical(glm::vec3(-14350.0f, 720.0f, 0.0f)),
                                176231, 3015, false, 0.0f);
@@ -1645,32 +1652,51 @@ TEST_CASE_METHOD(Integration, "Stationary TBC boat passengers send 500 ms heartb
     handler.sendMovement(Opcode::MSG_MOVE_STOP);
     CHECK(session.sent().of(Opcode::MSG_MOVE_HEARTBEAT).empty());
 
-    // Boat sails into Booty Bay while passenger stands completely still on deck.
+    // 1. Boat sails into Booty Bay and rotates while passenger stands still on deck:
+    // Native TBC 2.4.3 emits ZERO MSG_MOVE_HEARTBEAT packets across stationary travel.
     manager->updateServerTransport(
-        boat, wowee::core::coords::serverToCanonical(glm::vec3(-14270.0f, 580.0f, 0.0f)), 0.0f);
-    step(t0 + 450);
+        boat, wowee::core::coords::serverToCanonical(glm::vec3(-14270.2f, 580.86f, 0.0f)), 0.45f);
+    handler.setOrientation(wowee::core::coords::normalizeAngleRad(
+        manager->getTransport(boat)->canonicalYawRad() + 1.36f));
+    for (uint32_t dt = 100; dt <= 6000; dt += 250) {
+        step(t0 + dt);
+    }
     CHECK(session.sent().of(Opcode::MSG_MOVE_HEARTBEAT).empty());
 
-    step(t0 + 520);
-    auto beats = session.sent().of(Opcode::MSG_MOVE_HEARTBEAT);
+    // 2. Deliberate RMB character turn on deck (as at 23:50:08.358 in Booty Bay and
+    // on pair 16 in Menethil Harbor) sends MSG_MOVE_SET_FACING with composed Booty Bay
+    // world coordinates + ONTRANSPORT, triggering server CheckAreaExploreAndOutdoor ->
+    // SMSG_EXPLORATION_EXPERIENCE(35, 0) -> "Discovered: Booty Bay".
+    handler.setOrientation(wowee::core::coords::normalizeAngleRad(
+        manager->getTransport(boat)->canonicalYawRad() + 1.81f));
+    handler.sendMovement(Opcode::MSG_MOVE_SET_FACING);
+    const auto facings = session.sent().of(Opcode::MSG_MOVE_SET_FACING);
+    REQUIRE(facings.size() == 1);
+    const auto facingMove = readSentMovement(facings[0]);
+    CHECK((facingMove.flags & static_cast<uint32_t>(MovementFlags::ONTRANSPORT)) != 0);
+    CHECK(facingMove.server.x == Catch::Approx(-14270.2f).margin(1e-2));
+    CHECK(facingMove.server.y == Catch::Approx(580.86f).margin(1e-2));
+
+    wowee::network::Packet explore(wireOpcode(Opcode::SMSG_EXPLORATION_EXPERIENCE));
+    explore.writeUInt32(35);
+    explore.writeUInt32(0);
+    session.receive(explore);
+    REQUIRE(uiInfo.size() == 1);
+    CHECK(uiInfo.back() == "Discovered: Booty Bay");
+
+    // 3. Active walking on deck still emits standard 500 ms MSG_MOVE_HEARTBEAT packets,
+    // and stopping returns to silence.
+    step(t0 + 6100);
+    handler.sendMovement(Opcode::MSG_MOVE_START_FORWARD);
+    step(t0 + 6650);
+    const auto beats = session.sent().of(Opcode::MSG_MOVE_HEARTBEAT);
     REQUIRE(beats.size() == 1);
-    const auto beat1 = readSentMovement(beats[0]);
-    CHECK((beat1.flags & static_cast<uint32_t>(MovementFlags::ONTRANSPORT)) != 0);
-    CHECK(beat1.server.x == Catch::Approx(-14270.0f).margin(1e-2));
-    CHECK(beat1.server.y == Catch::Approx(580.0f).margin(1e-2));
-
-    // A multi-second map-transfer stall emits a single catch-up heartbeat rather than a burst.
-    manager->updateServerTransport(
-        boat, wowee::core::coords::serverToCanonical(glm::vec3(-14280.0f, 540.0f, 0.0f)), 0.0f);
-    step(t0 + 4000);
-    beats = session.sent().of(Opcode::MSG_MOVE_HEARTBEAT);
-    REQUIRE(beats.size() == 2);
-    CHECK(readSentMovement(beats[1]).server.y == Catch::Approx(540.0f).margin(1e-2));
-
-    // Disembarking stops stationary heartbeats on land.
-    handler.clearPlayerTransport();
-    for (uint32_t t = t0 + 4100; t <= t0 + 6000; t += 100) step(t);
-    CHECK(session.sent().of(Opcode::MSG_MOVE_HEARTBEAT).size() == 2);
+    CHECK((readSentMovement(beats[0]).flags & static_cast<uint32_t>(MovementFlags::ONTRANSPORT)) != 0);
+    handler.sendMovement(Opcode::MSG_MOVE_STOP);
+    for (uint32_t dt = 6800; dt <= 8000; dt += 200) {
+        step(t0 + dt);
+    }
+    CHECK(session.sent().of(Opcode::MSG_MOVE_HEARTBEAT).size() == 1);
 }
 
 TEST_CASE_METHOD(Integration, "Only announced boat transfers preserve passenger state across maps", "[transport]") {
@@ -5404,4 +5430,238 @@ TEST_CASE_METHOD(Integration,
             controller.setExternalFollow(false);
         }
     }
+}
+
+TEST_CASE_METHOD(Integration,
+                 "TBC boat camera and character yaw stay locked to hull across boarding, harbor turns, LMB/RMB/A/D, and disembark",
+                 "[input][camera][transport][boatcam][tbc]") {
+    auto& input = core::Input::getInstance();
+
+    rendering::Camera camera;
+    rendering::CameraController controller(&camera);
+    glm::vec3 playerPos(-6423.5f, 820.2f, 5.62f);
+    controller.setIdleOrbitEnabled(false);
+    controller.setFollowTarget(&playerPos);
+    controller.setUseWoWSpeed(true);
+    controller.setGravityDisabled(true);
+    controller.setDefaultSpawn(playerPos, 171.887f, -5.0f);
+    controller.setOnlineMode(true);
+    controller.reset();
+    controller.setGrounded(true);
+
+    // 1. Boarding onto The Bravery (hull server yaw = -107.092 deg):
+    // zero sudden camera or character yaw snap on board.
+    float shipYawDeg = -107.092f;
+    const float preBoardCamYaw = controller.getYaw();
+    const float preBoardFacingYaw = controller.getFacingYaw();
+    const float initialBoatLocalCamYaw =
+        std::remainder(preBoardCamYaw - shipYawDeg, 360.0f);
+    const float initialBoatLocalFacingYaw =
+        std::remainder(preBoardFacingYaw - shipYawDeg, 360.0f);
+    CHECK(initialBoatLocalCamYaw == Catch::Approx(-81.021f).margin(0.01f));
+    CHECK(initialBoatLocalFacingYaw == Catch::Approx(-81.021f).margin(0.01f));
+
+    // Anchor frame on board (sameRideFrame = false on frame 0 -> delta = 0).
+    controller.applyTransportYawDelta(0.0f);
+    CHECK(controller.getYaw() == Catch::Approx(preBoardCamYaw).margin(1e-5f));
+    CHECK(controller.getFacingYaw() == Catch::Approx(preBoardFacingYaw).margin(1e-5f));
+
+    // 2. Standing still across a sharp 135-degree harbor turn crossing +/-180 deg:
+    // boat-local camera yaw and character facing yaw stay constant to 0.000 deg.
+    for (int step = 0; step < 90; ++step) {
+        const float nextShipYawDeg = shipYawDeg - 1.5f; // -107.092 -> -242.092 (+117.908)
+        const float deltaYawDeg = std::remainder(nextShipYawDeg - shipYawDeg, 360.0f);
+        shipYawDeg = std::remainder(nextShipYawDeg, 360.0f);
+        controller.applyTransportYawDelta(deltaYawDeg);
+        input.update();
+        controller.update(1.0f / 60.0f);
+
+        const float localCamYaw = std::remainder(controller.getYaw() - shipYawDeg, 360.0f);
+        const float localFacingYaw = std::remainder(controller.getFacingYaw() - shipYawDeg, 360.0f);
+        CHECK(localCamYaw == Catch::Approx(initialBoatLocalCamYaw).margin(1e-3f));
+        CHECK(localFacingYaw == Catch::Approx(initialBoatLocalFacingYaw).margin(1e-3f));
+    }
+
+    // 3. LMB camera orbit (+160 px = -36.0 deg) while the boat continues turning:
+    // camera orbits in boat-local space while character facing stays deck-locked.
+    controller.applyLookDelta(160.0f, 0.0f);
+    for (int step = 0; step < 30; ++step) {
+        const float nextShipYawDeg = shipYawDeg + 1.2f;
+        const float deltaYawDeg = std::remainder(nextShipYawDeg - shipYawDeg, 360.0f);
+        shipYawDeg = std::remainder(nextShipYawDeg, 360.0f);
+        controller.applyTransportYawDelta(deltaYawDeg);
+        input.update();
+        controller.update(1.0f / 60.0f);
+
+        const float localCamYaw = std::remainder(controller.getYaw() - shipYawDeg, 360.0f);
+        const float localFacingYaw = std::remainder(controller.getFacingYaw() - shipYawDeg, 360.0f);
+        CHECK(localCamYaw == Catch::Approx(initialBoatLocalCamYaw - 36.0f).margin(1e-3f));
+        CHECK(localFacingYaw == Catch::Approx(initialBoatLocalFacingYaw).margin(1e-3f));
+    }
+
+    // 4. RMB steer (-160 px = +36.0 deg) while turning: aligns character + camera in boat-local space.
+    controller.setSteering(true);
+    controller.applyLookDelta(-160.0f, 0.0f);
+    input.update();
+    controller.update(1.0f / 60.0f);
+    controller.setSteering(false);
+    for (int step = 0; step < 20; ++step) {
+        const float nextShipYawDeg = shipYawDeg - 1.0f;
+        const float deltaYawDeg = std::remainder(nextShipYawDeg - shipYawDeg, 360.0f);
+        shipYawDeg = std::remainder(nextShipYawDeg, 360.0f);
+        controller.applyTransportYawDelta(deltaYawDeg);
+        input.update();
+        controller.update(1.0f / 60.0f);
+
+        const float localCamYaw = std::remainder(controller.getYaw() - shipYawDeg, 360.0f);
+        const float localFacingYaw = std::remainder(controller.getFacingYaw() - shipYawDeg, 360.0f);
+        CHECK(localCamYaw == Catch::Approx(initialBoatLocalCamYaw).margin(1e-3f));
+        CHECK(localFacingYaw == Catch::Approx(initialBoatLocalFacingYaw).margin(1e-3f));
+    }
+
+    // 5. Keyboard A (turn left, +180 deg/s for 0.5 s = +90 deg) on a turning boat:
+    // boat-local yaw advances by +90 deg on top of hull rotation.
+    event(SDL_SCANCODE_A, true);
+    for (int step = 0; step < 30; ++step) {
+        const float nextShipYawDeg = shipYawDeg + 0.8f;
+        const float deltaYawDeg = std::remainder(nextShipYawDeg - shipYawDeg, 360.0f);
+        shipYawDeg = std::remainder(nextShipYawDeg, 360.0f);
+        controller.applyTransportYawDelta(deltaYawDeg);
+        input.update();
+        controller.update(1.0f / 60.0f);
+    }
+    event(SDL_SCANCODE_A, false);
+    input.update();
+    controller.update(1.0f / 60.0f);
+    {
+        const float localFacingAfterTurn =
+            std::remainder(controller.getFacingYaw() - shipYawDeg, 360.0f);
+        const float expectedAfterTurn =
+            std::remainder(initialBoatLocalFacingYaw + 90.0f, 360.0f);
+        CHECK(std::abs(std::remainder(localFacingAfterTurn - expectedAfterTurn, 360.0f)) < 0.25f);
+    }
+
+    // 6. Disembarking back onto dock: world camera yaw & character facing remain
+    // exactly where they were on the final deck frame (zero snap).
+    const float preDisembarkCamYaw = controller.getYaw();
+    const float preDisembarkFacingYaw = controller.getFacingYaw();
+    input.update();
+    controller.update(1.0f / 60.0f);
+    CHECK(controller.getYaw() == Catch::Approx(preDisembarkCamYaw).margin(1e-4f));
+    CHECK(controller.getFacingYaw() == Catch::Approx(preDisembarkFacingYaw).margin(1e-4f));
+}
+
+TEST_CASE_METHOD(Integration,
+                 "TBC boat rider suppresses MSG_MOVE_SET_FACING while hull rotates, emits on RMB turn, and preserves local facing + LMB orbit across SMSG_NEW_WORLD",
+                 "[transport][boatcam][tbc]") {
+    using namespace wowee::game;
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    auto* tm = handler.getTransportManager();
+    auto* mh = handler.getMovementHandler();
+    REQUIRE(tm != nullptr);
+    REQUIRE(mh != nullptr);
+
+    constexpr uint64_t boatOrigin = 0x01fc00000002b0abULL;
+    announceTbcBoat(session, boatOrigin);
+    tm->loadPathFromNodes(176310, {{0.0f, 0.0f, 0.0f}});
+    const float initialBoatServerYaw = glm::radians(-107.092f);
+    tm->registerTransport(
+        boatOrigin, 0, 176310, {823.0f, -6406.0f, 0.0f},
+        176310, 3015, false, initialBoatServerYaw);
+
+    // Board facing localO = -1.41408 rad (-81.021 deg), matching live Auberdine capture.
+    const float initialLocalO = -1.41408f;
+    auto* trOrigin = tm->getTransport(boatOrigin);
+    REQUIRE(trOrigin != nullptr);
+    handler.setPlayerOnTransport(boatOrigin, {-1.05f, -0.02f, 6.13f});
+    const glm::vec3 startWorld = tm->getPlayerWorldPosition(boatOrigin, {-1.05f, -0.02f, 6.13f});
+    const float startCanonicalYaw = core::coords::normalizeAngleRad(
+        trOrigin->canonicalYawRad() + initialLocalO);
+    handler.setPosition(startWorld.x, startWorld.y, startWorld.z);
+    handler.setOrientation(startCanonicalYaw);
+    mh->commitTransportArrival(startWorld, startCanonicalYaw, boatOrigin, initialLocalO);
+
+    // Rotate the hull through 120 degrees while standing still / LMB-orbiting
+    // (player canonical facing rotates with hull so localO stays constant).
+    for (int step = 1; step <= 24; ++step) {
+        const float newServerYaw = initialBoatServerYaw + glm::radians(5.0f * step);
+        tm->updateServerTransport(boatOrigin, {823.0f + step, -6406.0f, 0.0f}, newServerYaw);
+        const float syncedCanonicalYaw = core::coords::normalizeAngleRad(
+            trOrigin->canonicalYawRad() + initialLocalO);
+        handler.setOrientation(syncedCanonicalYaw);
+
+        const auto delta = mh->unsentFacingDeltaRad();
+        REQUIRE(delta.has_value());
+        CHECK(std::abs(*delta) < 1e-5f);
+
+        // Even if MSG_MOVE_SET_FACING is requested directly, pre-Wotlk dedup drops it.
+        handler.sendMovement(Opcode::MSG_MOVE_SET_FACING);
+    }
+    CHECK(session.sent().of(Opcode::MSG_MOVE_SET_FACING).empty());
+
+    // Deliberate RMB character turn of -36 deg (-0.6283185 rad) in boat-local space:
+    // unsentFacingDeltaRad reports the exact local turn and MSG_MOVE_SET_FACING goes out once.
+    const float turnedLocalO = core::coords::normalizeAngleRad(initialLocalO - glm::radians(36.0f));
+    handler.setOrientation(core::coords::normalizeAngleRad(
+        trOrigin->canonicalYawRad() + turnedLocalO));
+    {
+        const auto delta = mh->unsentFacingDeltaRad();
+        REQUIRE(delta.has_value());
+        CHECK(*delta == Catch::Approx(-glm::radians(36.0f)).margin(1e-4f));
+    }
+    handler.sendMovement(Opcode::MSG_MOVE_SET_FACING);
+    REQUIRE(session.sent().of(Opcode::MSG_MOVE_SET_FACING).size() == 1);
+
+    // Continued hull rotation after RMB release sends zero extra MSG_MOVE_SET_FACING.
+    for (int step = 25; step <= 36; ++step) {
+        const float newServerYaw = initialBoatServerYaw + glm::radians(5.0f * step);
+        tm->updateServerTransport(boatOrigin, {823.0f + step, -6406.0f, 0.0f}, newServerYaw);
+        handler.setOrientation(core::coords::normalizeAngleRad(
+            trOrigin->canonicalYawRad() + turnedLocalO));
+        CHECK(std::abs(mh->unsentFacingDeltaRad().value_or(1.0f)) < 1e-5f);
+    }
+
+    // Cross-continent SMSG_TRANSFER_PENDING + SMSG_NEW_WORLD carrying transport-local t_pos.o
+    // plus a -25 deg LMB camera orbit offset.
+    wowee::network::Packet pending(wireOpcode(Opcode::SMSG_TRANSFER_PENDING));
+    pending.writeUInt32(0);
+    pending.writeUInt32(176310);
+    pending.writeUInt32(handler.getCurrentMapId());
+    session.receive(pending);
+
+    wowee::network::Packet newWorld(wireOpcode(Opcode::SMSG_NEW_WORLD));
+    newWorld.writeUInt32(0);
+    for (float v : {-1.05f, -0.02f, 6.13f, turnedLocalO}) newWorld.writeFloat(v);
+    session.receive(newWorld);
+    REQUIRE(handler.hasPendingPlayerTransportWorldTransfer());
+    handler.setPendingPlayerTransportCameraOrbitDeg(-25.0f);
+
+    // Destination boat spawns on Map 0 with arrival server heading +25.0 deg.
+    tm->clearTransports();
+    constexpr uint64_t boatDest = 0x01fc00000002b0acULL;
+    announceTbcBoat(session, boatDest);
+    tm->loadPathFromNodes(176310, {{0.0f, 0.0f, 0.0f}});
+    const float destBoatServerYaw = glm::radians(25.0f);
+    tm->registerTransport(
+        boatDest, 0, 176310, {-3890.0f, -600.0f, 0.0f},
+        176310, 3015, false, destBoatServerYaw);
+
+    glm::vec3 restoredPos(0.0f);
+    float restoredCanonicalYaw = 0.0f;
+    float restoredCamYawDeg = 0.0f;
+    REQUIRE(handler.completePlayerTransportWorldTransfer(
+        boatDest, restoredPos, restoredCanonicalYaw, restoredCamYawDeg));
+
+    const float expectedWorldServerYaw =
+        core::coords::normalizeAngleRad(destBoatServerYaw + turnedLocalO);
+    const float expectedFacingDeg = glm::degrees(expectedWorldServerYaw);
+    CHECK(std::abs(std::remainder(
+              core::coords::canonicalToCharacterYawDeg(restoredCanonicalYaw) - expectedFacingDeg,
+              360.0f)) < 1e-3f);
+    CHECK(std::abs(std::remainder(
+              (restoredCamYawDeg - expectedFacingDeg) - (-25.0f),
+              360.0f)) < 1e-3f);
+    // And arrival commits the transport baseline so standing on arrival emits 0 packets.
+    CHECK(std::abs(mh->unsentFacingDeltaRad().value_or(1.0f)) < 1e-5f);
 }

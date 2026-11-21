@@ -772,3 +772,28 @@ TEST_CASE("A borrowed route seeds no phase on the path it borrowed",
     CHECK_FALSE(t.useClientAnimation);
     CHECK(t.localClockMs == 1234u);
 }
+
+TEST_CASE("ActiveTransport yaw extraction stays continuous across +/-90 and +/-180 degrees",
+          "[transport][boatcam]") {
+    ActiveTransport t = makeTransport();
+    t.isM2 = false;
+
+    for (int deg = -180; deg <= 180; deg += 5) {
+        const float rad = glm::radians(static_cast<float>(deg));
+        t.rotation = glm::angleAxis(rad, glm::vec3(0.0f, 0.0f, 1.0f));
+        const float extractedServer = t.serverYawRad();
+        const float diff = wowee::core::coords::normalizeAngleRad(extractedServer - rad);
+        INFO("deg=" << deg << " extracted=" << extractedServer);
+        CHECK(std::abs(diff) < 1e-5f);
+
+        const float renderDeg = t.renderYawDeg();
+        const float degDiff = std::remainder(renderDeg - static_cast<float>(deg), 360.0f);
+        CHECK(std::abs(degDiff) < 1e-3f);
+
+        const float charYawFromCanonical =
+            wowee::core::coords::canonicalToCharacterYawDeg(t.canonicalYawRad());
+        const float canonicalRoundTripDiff =
+            std::remainder(charYawFromCanonical - static_cast<float>(deg), 360.0f);
+        CHECK(std::abs(canonicalRoundTripDiff) < 1e-3f);
+    }
+}

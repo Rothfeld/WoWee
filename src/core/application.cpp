@@ -2647,10 +2647,8 @@ void Application::setState(AppState newState) {
                     if ((mi.flags & kTurnFlags) != 0) return;
                     auto* movement = gameHandler->getMovementHandler();
                     if (!movement) return;
-                    const auto sentYaw = movement->lastSentOrientation();
-                    const float yawDiff = sentYaw
-                        ? core::coords::normalizeAngleRad(mi.orientation - *sentYaw)
-                        : core::coords::PI;
+                    const auto unsentDelta = movement->unsentFacingDeltaRad();
+                    const float yawDiff = unsentDelta.value_or(core::coords::PI);
                     const float absDiff = std::abs(yawDiff);
                     const bool fastSweep = absDiff >= glm::radians(8.0f) && facingSendCooldown_ <= 0.065f;
                     const bool settledTurn = absDiff >= glm::radians(2.0f) && facingSendCooldown_ <= 0.0f;
@@ -3170,6 +3168,101 @@ void syncServerSpeedsToCamera(rendering::Renderer* renderer,
 // water walking, and which of them the current mount, taxi or transport
 // overrides. The camera owns the movement, so this is where the server's word
 // about it lands.
+void Application::syncWMOTransportRideState() {
+    auto* tm = gameHandler->getTransportManager();
+    auto* tr = tm ? tm->getTransport(gameHandler->getPlayerTransportGuid()) : nullptr;
+    auto* cameraController = renderer->getCameraController();
+    if (tr) {
+        const uint64_t transportGuid = gameHandler->getPlayerTransportGuid();
+        const uint32_t mapId = gameHandler->getCurrentMapId();
+        const float currentTransYawDeg = tr->renderYawDeg();
+        glm::vec3 localOffset = gameHandler->getPlayerTransportOffset();
+        const glm::vec3 tentativeRender = renderer->getCharacterPosition();
+
+        const bool sameRideFrame = hasWMORideLock_ &&
+            lastWMORideTransportGuid_ == transportGuid &&
+            lastWMORideMapId_ == mapId &&
+            lastWMORidePoseEpoch_ == tr->poseEpoch;
+        if (!sameRideFrame && !tr->isM2) {
+            deckFloorPending_ = true;
+        }
+        if (sameRideFrame && cameraController) {
+            const float deltaYawDeg = std::remainder(
+                currentTransYawDeg - lastWMORideTransportYawDeg_, 360.0f);
+            cameraController->applyTransportYawDelta(deltaYawDeg);
+
+            const glm::vec3 localMotion =
+                tentativeRender - lastWMORideLockedRender_;
+            if (cameraController->isMoving()) {
+                const glm::vec3 localHoriz = glm::mat3(lastWMORideInvTransform_) *
+                    glm::vec3(localMotion.x, localMotion.y, 0.0f);
+                localOffset.x += localHoriz.x;
+                localOffset.y += localHoriz.y;
+            }
+            if (!cameraController->isGrounded()) {
+                const glm::vec3 localVert = glm::mat3(lastWMORideInvTransform_) *
+                    glm::vec3(0.0f, 0.0f, localMotion.z);
+                localOffset += localVert;
+            }
+        }
+
+        const glm::vec3 expectedRender(
+            tr->transform * glm::vec4(localOffset, 1.0f));
+        glm::vec3 intendedRender = expectedRender;
+
+        if (!tr->isM2 && cameraController && !cameraController->isJumping()) {
+            const glm::vec3 intendedCanonical =
+                core::coords::renderToCanonical(intendedRender);
+            const auto deckFloor = tm->getTransportDeckFloorHeight(
+                transportGuid, intendedCanonical);
+            if (deckFloor && intendedRender.z >= *deckFloor - 3.0f &&
+                intendedRender.z <= *deckFloor + 0.35f) {
+                intendedRender.z = *deckFloor + 0.10f;
+                cameraController->suppressVerticalPhysics();
+                deckFloorPending_ = false;
+            } else if (deckFloorPending_ &&
+                       !tm->isTransportCollisionReady(transportGuid)) {
+                intendedRender = expectedRender;
+                cameraController->suppressVerticalPhysics();
+            } else if (deckFloorPending_) {
+                deckFloorPending_ = false;
+            }
+        }
+
+        localOffset = glm::vec3(
+            tr->invTransform * glm::vec4(intendedRender, 1.0f));
+        gameHandler->setPlayerTransportOffset(localOffset);
+        lastWMORideInvTransform_ = tr->invTransform;
+        lastWMORideTransportYawDeg_ = currentTransYawDeg;
+        lastWMORidePoseEpoch_ = tr->poseEpoch;
+    }
+
+    glm::vec3 canonical = gameHandler->getComposedWorldPosition();
+    glm::vec3 renderPos = core::coords::canonicalToRender(canonical);
+    renderer->getCharacterPosition() = renderPos;
+    lastWMORideLockedRender_ = renderPos;
+    hasWMORideLock_ = tr != nullptr;
+    lastWMORideTransportGuid_ = gameHandler->getPlayerTransportGuid();
+    lastWMORideMapId_ = gameHandler->getCurrentMapId();
+    gameHandler->setPosition(canonical.x, canonical.y, canonical.z);
+    if (cameraController) {
+        if (!cameraController->isServerControlled()) {
+            const float characterYaw = cameraController->getFacingYaw();
+            renderer->setCharacterYaw(characterYaw);
+            gameHandler->setOrientation(
+                core::coords::characterYawDegToCanonical(characterYaw));
+        }
+        if (glm::vec3* followTarget = cameraController->getFollowTargetMutable()) {
+            *followTarget = renderPos;
+        }
+    }
+    if (auto* movement = gameHandler->getMovementHandler()) {
+        movement->recordPhysicsSample(movement->previousFrameStartMs());
+        movement->sendDueHeartbeats();
+    }
+    gameHandler->updateM2TransportBoarding(canonical);
+}
+
 void Application::applyServerMovementState(float deltaTime) {
     syncServerSpeedsToCamera(renderer.get(), gameHandler.get(),
                              entitySpawner_.get(), playerCharacterSpawned);
@@ -3443,118 +3536,12 @@ void Application::applyServerMovementState(float deltaTime) {
             }
         }
     } else if (onTransport) {
-        // WMO transport mode (ships): keep the transport-local
-        // attachment, while folding real WASD/jump movement since
-        // last frame into that offset. Treating ships as fully
-        // externally driven cleared movement input and reapplied the
-        // boarding-time offset forever, freezing the player in a
-        // running pose at the point where they stepped aboard.
-        auto* tm = gameHandler->getTransportManager();
-        auto* tr = tm ? tm->getTransport(gameHandler->getPlayerTransportGuid()) : nullptr;
-        if (tr) {
-            const uint64_t transportGuid = gameHandler->getPlayerTransportGuid();
-            const uint32_t mapId = gameHandler->getCurrentMapId();
-            glm::vec3 localOffset = gameHandler->getPlayerTransportOffset();
-            const glm::vec3 tentativeRender = renderer->getCharacterPosition();
-            const glm::vec3 expectedRender(
-                tr->transform * glm::vec4(localOffset, 1.0f));
-            glm::vec3 intendedRender = expectedRender;
-
-            // A cross-map ship transfer can reuse the same synthetic GO
-            // GUID on the destination map. Never interpret the continent-
-            // sized difference from the previous map's ride lock as deck
-            // walking: doing so rewrites a valid server transport offset
-            // into a huge negative Z and drops the rider underwater.
-            const bool sameRideFrame = hasWMORideLock_ &&
-                lastWMORideTransportGuid_ == transportGuid &&
-                lastWMORideMapId_ == mapId;
-            if (!sameRideFrame && !tr->isM2) {
-                deckFloorPending_ = true;
-            }
-            if (sameRideFrame && renderer->getCameraController()) {
-                const glm::vec3 localMotion =
-                    tentativeRender - lastWMORideLockedRender_;
-                if (renderer->getCameraController()->isMoving()) {
-                    intendedRender.x += localMotion.x;
-                    intendedRender.y += localMotion.y;
-                }
-                if (!renderer->getCameraController()->isGrounded()) {
-                    intendedRender.z += localMotion.z;
-                }
-            }
-
-            // The camera controller's ordinary static-world floor query accepts a
-            // moving WMO deck only when it is right under the feet, so every WMO
-            // ship needs its exact transport-instance floor held under the rider -
-            // otherwise gravity folds into the attachment and pulls them through
-            // the hull, and multi-deck ships (stairs, ramps) can't be climbed
-            // because nothing raises the rider onto the upper geometry. This is
-            // the walkable-deck query for ANY ship, keyed on the transport being
-            // a WMO (not M2), not on a specific ship entry. getInstanceFloorHeight
-            // returns the height of whatever deck/stair is under the player, so
-            // walking up onto a higher deck just follows the collision. An upward
-            // jump remains fully controlled by vertical physics (skipped below).
-            auto* cameraController = renderer->getCameraController();
-            if (!tr->isM2 && cameraController &&
-                !cameraController->isJumping()) {
-                const glm::vec3 intendedCanonical =
-                    core::coords::renderToCanonical(intendedRender);
-                const auto deckFloor = tm->getTransportDeckFloorHeight(
-                    transportGuid, intendedCanonical);
-                if (deckFloor && intendedRender.z >= *deckFloor - 3.0f &&
-                    intendedRender.z <= *deckFloor + 0.35f) {
-                    intendedRender.z = *deckFloor + 0.10f;
-                    cameraController->suppressVerticalPhysics();
-                    deckFloorPending_ = false;
-                } else if (deckFloorPending_ &&
-                           !tm->isTransportCollisionReady(transportGuid)) {
-                    // A continent transfer registers the transport GO
-                    // before its WMO collision necessarily finishes loading.
-                    // Preserve the local offset until this exact instance's
-                    // deck exists instead of releasing gravity after a timer.
-                    intendedRender = expectedRender;
-                    cameraController->suppressVerticalPhysics();
-                } else if (deckFloorPending_) {
-                    // Collision is loaded and still found no deck underfoot,
-                    // which is a real answer, not a not-ready one. The hold
-                    // above waits for geometry to arrive; it must not
-                    // outlive its own premise.
-                    //
-                    // It did, and there was no way out of it: the flag is set
-                    // on boarding and cleared only by a successful deck query,
-                    // so boarding somewhere the query never succeeds - a
-                    // gangway that belongs to the pier rather than the hull -
-                    // reapplied the boarding offset every frame forever. That
-                    // is a rider running on the spot, unable to walk far
-                    // enough to trigger disembark and so unable to get off.
-                    deckFloorPending_ = false;
-                }
-            }
-
-            localOffset = glm::vec3(
-                tr->invTransform * glm::vec4(intendedRender, 1.0f));
-            gameHandler->setPlayerTransportOffset(localOffset);
-        }
-
-        glm::vec3 canonical = gameHandler->getComposedWorldPosition();
-        glm::vec3 renderPos = core::coords::canonicalToRender(canonical);
-        renderer->getCharacterPosition() = renderPos;
-        lastWMORideLockedRender_ = renderPos;
-        hasWMORideLock_ = true;
-        lastWMORideTransportGuid_ = gameHandler->getPlayerTransportGuid();
-        lastWMORideMapId_ = gameHandler->getCurrentMapId();
-        gameHandler->setPosition(canonical.x, canonical.y, canonical.z);
-        if (renderer->getCameraController()) {
-            glm::vec3* followTarget = renderer->getCameraController()->getFollowTargetMutable();
-            if (followTarget) {
-                *followTarget = renderPos;
-            }
-        }
-        gameHandler->updateM2TransportBoarding(canonical);
+        syncWMOTransportRideState();
     } else {
         hasWMORideLock_ = false;
         lastWMORideTransportGuid_ = 0;
         lastWMORideMapId_ = 0xFFFFFFFFu;
+        lastWMORidePoseEpoch_ = 0;
         deckFloorPending_ = false;
         glm::vec3 renderPos = renderer->getCharacterPosition();
 
@@ -6929,6 +6916,7 @@ void Application::setupTestTransport() {
 
     // Load WMO model
     pipeline::WMOModel wmoModel = pipeline::WMOLoader::load(wmoData);
+    wmoModel.sourcePath = transportWmoPath;
     LOG_INFO("Transport WMO root loaded: ", transportWmoPath, " nGroups=", wmoModel.nGroups);
 
     // Load WMO groups
