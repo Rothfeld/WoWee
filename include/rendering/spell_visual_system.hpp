@@ -9,6 +9,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <glm/glm.hpp>
+#include "rendering/camera_shake.hpp"
 #include "rendering/chain_effect.hpp"
 #include "rendering/missile_homing.hpp"
 #include "rendering/m2_renderer.hpp"
@@ -391,13 +392,7 @@ private:
     std::unordered_map<uint32_t, uint32_t> kitAnimations_;
     std::unordered_map<uint32_t, uint32_t> kitSounds_;       // SpellVisualKit col 15 -> SoundEntries ID
     std::unordered_map<uint32_t, uint32_t> kitShakes_;       // SpellVisualKit col 16 -> SpellEffectCameraShakes ID
-    struct CameraShakeEntry {
-        float amplitude = 0.0f;
-        float frequency = 0.0f;
-        float duration = 0.0f;
-    };
-    std::unordered_map<uint32_t, std::array<uint32_t, 3>> spellEffectShakes_;  // SpellEffectCameraShakes ID -> CameraShakes IDs
-    std::unordered_map<uint32_t, CameraShakeEntry> cameraShakes_;              // CameraShakes ID -> params
+    CameraShakeTable cameraShakeTable_;
     std::unordered_map<uint32_t, uint32_t> activePrecastSounds_;  // attachInstanceId -> AudioEngine soundId
     std::unordered_map<uint32_t, uint32_t> activeChannelSounds_;  // attachInstanceId -> AudioEngine soundId
     std::unordered_map<uint64_t, uint32_t> activeAreaSounds_;     // persistentArea key -> AudioEngine soundId

@@ -249,6 +249,11 @@ void CameraController::triggerShake(float magnitude, float frequency, float dura
     }
 }
 
+void CameraController::triggerDbcShake(const CameraShakeEntry& entry, float attenuation) {
+    if (shakeScale_ <= 0.0f || attenuation <= 0.0f) return;
+    dbcShakeState_.trigger(entry, attenuation);
+}
+
 glm::vec3 CameraController::sweepAgainstWalls(const glm::vec3& from, const glm::vec3& to,
                                               bool includeDoodads) {
     const glm::vec3 delta = to - from;
@@ -2487,8 +2492,10 @@ void CameraController::updateThirdPersonCamera(float deltaTime, FrameInput& f) {
 
 // The camera that flies itself, used when nothing is being followed.
 void CameraController::updateFreeFlyCamera(float /*deltaTime*/, FrameInput& f) {
-    // Free-fly camera mode (original behavior)
-    glm::vec3 newPos = camera->getPosition();
+    // Free-fly camera mode (original behavior): remove the previous frame's
+    // transient shake offset before integrating free-fly motion so shakes do
+    // not accumulate permanent drift.
+    glm::vec3 newPos = camera->getPosition() - lastShakeOffset_;
     if (wmoRenderer) {
         wmoRenderer->setCollisionFocus(newPos, COLLISION_FOCUS_RADIUS_FREE_FLY);
     }
@@ -3341,21 +3348,29 @@ void CameraController::update(float deltaTime) {
 
     // R key is now handled above with chat safeguard (WantTextInput check)
 
-    // Camera shake (SMSG_CAMERA_SHAKE): apply sinusoidal offset to final camera position.
+    // Camera shake (CameraShakes.dbc + SMSG_CAMERA_SHAKE / weather): apply
+    // transient positional offset to the final camera pose.
+    glm::vec3 totalShakeOffset(0.0f);
+    if (!dbcShakeState_.empty()) {
+        const glm::vec3 axisDisp = dbcShakeState_.step(deltaTime) * shakeScale_;
+        const glm::vec3 camFwd = camera ? camera->getForward() : glm::vec3(1.0f, 0.0f, 0.0f);
+        totalShakeOffset += cameraShakeBasisOffset(axisDisp, camFwd);
+    }
     if (shakeElapsed_ < shakeDuration_) {
         shakeElapsed_ += deltaTime;
         float t = shakeElapsed_ / shakeDuration_;
         // Envelope: fade out over the last 30% of shake duration
         float envelope = (t < 0.7f) ? 1.0f : (1.0f - (t - 0.7f) / 0.3f);
         float theta = shakeElapsed_ * shakeFrequency_ * core::coords::TWO_PI;
-        glm::vec3 offset(
+        totalShakeOffset += glm::vec3(
             shakeMagnitude_ * envelope * std::sin(theta),
             shakeMagnitude_ * envelope * std::cos(theta * 1.3f),
             shakeMagnitude_ * envelope * std::sin(theta * 0.7f) * 0.5f
         );
-        if (camera) {
-            camera->setPosition(camera->getPosition() + offset);
-        }
+    }
+    lastShakeOffset_ = totalShakeOffset;
+    if (camera && (totalShakeOffset.x != 0.0f || totalShakeOffset.y != 0.0f || totalShakeOffset.z != 0.0f)) {
+        camera->setPosition(camera->getPosition() + totalShakeOffset);
     }
 
     // Scaled by the same setting as the shake above, because it is the same
@@ -3524,6 +3539,11 @@ void CameraController::resetAngles() {
 void CameraController::reset() {
     waterJumpAirborne_ = false;
     floorContactPitch_.reset();
+    dbcShakeState_.clear();
+    lastShakeOffset_ = glm::vec3(0.0f);
+    shakeElapsed_ = 0.0f;
+    shakeDuration_ = 0.0f;
+    shakeMagnitude_ = 0.0f;
     if (!camera) {
         return;
     }

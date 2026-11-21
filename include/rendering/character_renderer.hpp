@@ -37,6 +37,8 @@ namespace rendering {
 
 // Forward declarations
 class FootprintRenderer;
+class CameraShakeTable;
+class CameraController;
 class Camera;
 class VkContext;
 class VkTexture;
@@ -184,6 +186,11 @@ public:
     /// Print a footprint for every authored footfall event ($FL0, $RR1, ...)
     /// each unit's current sequence passed since the last call, at that foot.
     void emitFootprints(FootprintRenderer& footprints, const glm::vec3& viewerPosition);
+    /// Trigger CameraShakes.dbc shakes for CreatureModelData FootstepShakeSize
+    /// (on per-foot footfall events), DeathThudShakeSize (on $DTH), and M2 $SHK
+    /// events passed since the last call, attenuated by 3D distance to `cameraPosition`.
+    void emitCameraShakes(const CameraShakeTable& shakes, CameraController& cameraController,
+                          const glm::vec3& cameraPosition);
     /// The unit's CreatureDisplayInfo row and the CreatureModelData id it names.
     void setInstanceCreatureModel(uint32_t instanceId, uint32_t displayId, uint32_t creatureModelDataId);
     /// CreatureDisplayInfo id last given to setInstanceCreatureModel; 0 = none.
@@ -530,6 +537,8 @@ private:
         // Where the footfall event scan stopped: sequence index and time.
         int footfallSequence = -1;
         float footfallTime = 0.0f;
+        int shakeSequence = -1;
+        float shakeTime = 0.0f;
         float locomotionSpeed = -1.0f; // Negative: caller does not supply movement speed.
         float animationTime = 0.0f;
         float globalSequenceTime = 0.0f; // Separate timer for global sequences (accumulates without wrapping at sequence duration)

@@ -347,29 +347,11 @@ void SpellVisualSystem::loadSpellVisualDbc() {
 }
 
 void SpellVisualSystem::loadCameraShakes() {
-    auto effDbc = cachedAssetManager_->loadDBC("SpellEffectCameraShakes.dbc");
-    if (effDbc && effDbc->isLoaded() && effDbc->getFieldCount() >= 4) {
-        for (uint32_t i = 0; i < effDbc->getRecordCount(); ++i) {
-            const uint32_t id = effDbc->getUInt32(i, 0);
-            if (!id) continue;
-            spellEffectShakes_[id] = {effDbc->getUInt32(i, 1), effDbc->getUInt32(i, 2), effDbc->getUInt32(i, 3)};
-        }
+    if (cachedAssetManager_) {
+        cameraShakeTable_.load(*cachedAssetManager_);
     }
-    auto csDbc = cachedAssetManager_->loadDBC("CameraShakes.dbc");
-    if (csDbc && csDbc->isLoaded() && csDbc->getFieldCount() >= 6) {
-        for (uint32_t i = 0; i < csDbc->getRecordCount(); ++i) {
-            const uint32_t id = csDbc->getUInt32(i, 0);
-            if (!id) continue;
-            const float amp = csDbc->getFloat(i, 3);
-            const float freq = csDbc->getFloat(i, 4);
-            const float dur = csDbc->getFloat(i, 5);
-            if (std::isfinite(amp) && std::isfinite(freq) && std::isfinite(dur) && amp > 0.0f && dur > 0.0f) {
-                cameraShakes_[id] = {.amplitude = amp, .frequency = freq, .duration = dur};
-            }
-        }
-    }
-    LOG_INFO("SpellVisual: loaded ", spellEffectShakes_.size(), " effect shakes, ",
-             cameraShakes_.size(), " camera shakes, ", kitShakes_.size(), " kits shake");
+    LOG_INFO("SpellVisual: loaded ", cameraShakeTable_.spellEffectShakeCount(), " effect shakes, ",
+             cameraShakeTable_.shakeCount(), " camera shakes, ", kitShakes_.size(), " kits shake");
 }
 
 void SpellVisualSystem::playKitShake(uint32_t kitId, const glm::vec3& worldPosition) {
@@ -377,38 +359,28 @@ void SpellVisualSystem::playKitShake(uint32_t kitId, const glm::vec3& worldPosit
     auto* camCtrl = renderer_->getCameraController();
     if (!camCtrl) return;
     const auto ksIt = kitShakes_.find(kitId);
-    if (ksIt == kitShakes_.end()) return;
-    const auto esIt = spellEffectShakes_.find(ksIt->second);
-    if (esIt == spellEffectShakes_.end()) return;
+    if (ksIt == kitShakes_.end() || ksIt->second == 0) return;
 
-    float maxAmp = 0.0f;
-    float bestFreq = 0.0f;
-    float maxDur = 0.0f;
-    for (uint32_t csId : esIt->second) {
-        if (!csId) continue;
-        const auto csIt = cameraShakes_.find(csId);
-        if (csIt == cameraShakes_.end()) continue;
-        if (csIt->second.amplitude > maxAmp) {
-            maxAmp = csIt->second.amplitude;
-            bestFreq = csIt->second.frequency;
-        }
-        maxDur = std::max(maxDur, csIt->second.duration);
+    const CameraShakeTable* table = renderer_->getCameraShakeTable();
+    if (!table || !table->isLoaded()) {
+        table = &cameraShakeTable_;
     }
-    if (maxAmp <= 0.0f || maxDur <= 0.0f) return;
+    if (!table->isLoaded()) return;
 
-    // Attenuate spell camera shakes with distance from the effect origin so
-    // distant AoE stomps do not shake the observer's camera at full strength.
-    constexpr float kMaxShakeRange = 50.0f;
     float atten = 1.0f;
     if (const auto* cam = renderer_->getCamera()) {
         const float dist = glm::length(cam->getPosition() - worldPosition);
-        atten = std::clamp(1.0f - dist / kMaxShakeRange, 0.0f, 1.0f);
+        atten = cameraShakeDistanceAttenuation(dist);
     }
     if (atten <= 0.0f) return;
 
-    const float magnitude = std::min(maxAmp * 0.03f, 0.45f) * atten;
-    const float frequency = bestFreq > 0.0f ? bestFreq : 6.0f;
-    camCtrl->triggerShake(magnitude, frequency, maxDur);
+    const auto ids = table->findSpellEffectShakes(ksIt->second);
+    for (const uint32_t csId : ids) {
+        if (!csId) continue;
+        if (const auto* entry = table->findShake(csId)) {
+            camCtrl->triggerDbcShake(*entry, atten);
+        }
+    }
 }
 
 void SpellVisualSystem::loadChainEffects() {

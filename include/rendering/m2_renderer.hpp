@@ -40,6 +40,8 @@ namespace pipeline {
 namespace rendering {
 
 class Camera;
+class CameraController;
+class CameraShakeTable;
 class VkContext;
 class VkTexture;
 class RtScene;
@@ -222,6 +224,7 @@ struct M2ModelGPU {
     // Ribbon emitter data (kept from M2Model)
     std::vector<pipeline::M2RibbonEmitter> ribbonEmitters;
     std::vector<pipeline::M2Light> lights;
+    std::vector<pipeline::M2Model::CameraShakeEvent> cameraShakeEvents;
     std::vector<VkTexture*> ribbonTextures;       // Resolved texture per ribbon emitter
     std::vector<VkDescriptorSet> ribbonTexSets;   // Descriptor sets per ribbon emitter
     // M2 material blend mode and render flags the ribbon's materialIndex names
@@ -332,6 +335,8 @@ struct M2Instance {
     std::vector<float> emitterAccumulators;  // fractional particle counter per emitter
     int emitterPrevSequence = -1;            // sequence at previous emission step (Squirt crossings)
     float emitterPrevAnimTime = 0.0f;        // animTime (ms) at previous emission step
+    int shakePrevSequence = -1;              // sequence at previous $SHK scan
+    float shakePrevAnimTime = 0.0f;          // animTime (ms) at previous $SHK scan
     // Birth transform of each emitter at the previous emission step. A birth
     // inside the frame is placed where the emitter was at that instant.
     std::vector<glm::mat4> emitterPreviousBirth;
@@ -533,6 +538,11 @@ public:
     void updateExternalPoseEffects(float deltaTime);
 
     void update(float deltaTime, const glm::vec3& cameraPos, const glm::mat4& viewProjection);
+
+    /// Trigger authored M2 $SHK camera shakes (SpellEffectCameraShakes.dbc)
+    /// crossed since the previous frame, attenuated by 3D distance to `cameraPosition`.
+    void emitCameraShakes(const CameraShakeTable& shakes, CameraController& cameraController,
+                          const glm::vec3& cameraPosition);
 
     /// Height of the floor a projected texture lands on at (x, y), within
     /// [planeZ - reach, planeZ + reach]. See projected_texture.hpp.

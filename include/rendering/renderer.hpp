@@ -63,6 +63,7 @@ namespace world_map { class WorldMapFacade; }
 using WorldMap = world_map::WorldMapFacade;
 class QuestMarkerRenderer;
 class FootprintRenderer;
+class CameraShakeTable;
 class CharacterPreview;
 class AmdFsr3Runtime;
 class SpellVisualSystem;
@@ -171,6 +172,7 @@ public:
     WorldMap* getWorldMap() const { return worldMap.get(); }
     QuestMarkerRenderer* getQuestMarkerRenderer() const { return questMarkerRenderer.get(); }
     FootprintRenderer* getFootprintRenderer() const { return footprintRenderer.get(); }
+    CameraShakeTable* getCameraShakeTable() const { return cameraShakeTable_.get(); }
     SkySystem* getSkySystem() const { return skySystem.get(); }
     const std::string& getCurrentZoneName() const;
     uint32_t getCurrentZoneId() const;
@@ -369,6 +371,7 @@ private:
     std::unique_ptr<WorldMap> worldMap;
     std::unique_ptr<QuestMarkerRenderer> questMarkerRenderer;
     std::unique_ptr<FootprintRenderer> footprintRenderer;
+    std::unique_ptr<CameraShakeTable> cameraShakeTable_;
     audio::AudioCoordinator* audioCoordinator_ = nullptr;  // Owned by Application
     std::unique_ptr<AnimationController> animationController_;  // §4.2
     std::unique_ptr<game::ZoneManager> zoneManager;

@@ -103,6 +103,8 @@
     "BloodID": 5,
     "ModelPath": 2,
     "ModelScale": 4,
+    "FootstepShakeSize": 11,
+    "DeathThudShakeSize": 12,
     "CollisionHeight": 15,
     "MountHeight": 16,
     "GeoBoxMinX": 17,

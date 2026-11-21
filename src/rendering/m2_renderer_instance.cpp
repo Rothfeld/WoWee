@@ -163,6 +163,8 @@ void M2Renderer::restartInstanceAnimation(uint32_t instanceId) {
     inst.animTime = 0.0f;
     inst.emitterPrevSequence = -1;
     inst.emitterPrevAnimTime = 0.0f;
+    inst.shakePrevSequence = -1;
+    inst.shakePrevAnimTime = 0.0f;
     if (inst.cachedModel) computeBoneMatrices(*inst.cachedModel, inst, &cachedCamPos_);
 }
 
@@ -172,6 +174,8 @@ void M2Renderer::startInstanceStateEffect(uint32_t instanceId) {
     startStateEffect(*instance.cachedModel, instance);
     instance.emitterPrevSequence = -1;
     instance.emitterPrevAnimTime = 0.0f;
+    instance.shakePrevSequence = -1;
+    instance.shakePrevAnimTime = 0.0f;
     computeBoneMatrices(*instance.cachedModel, instance, &cachedCamPos_);
 }
 
@@ -232,6 +236,8 @@ void M2Renderer::playInstanceStand(uint32_t instanceId) {
     inst.animSpeed = 1.0f;
     inst.holdAtEnd = false;
     inst.playingVariation = false;
+    inst.shakePrevSequence = -1;
+    inst.shakePrevAnimTime = 0.0f;
 }
 
 void M2Renderer::setInstanceAnimationHeld(uint32_t instanceId, uint32_t animationId,
@@ -250,9 +256,13 @@ void M2Renderer::setInstanceAnimationHeld(uint32_t instanceId, uint32_t animatio
         if (skipToEnd) {
             inst.animTime = inst.animDuration;
             inst.animSpeed = 0.0f;
+            inst.shakePrevSequence = i;
+            inst.shakePrevAnimTime = inst.animDuration;
         } else {
             inst.animTime = 0.0f;
             inst.animSpeed = 1.0f;
+            inst.shakePrevSequence = -1;
+            inst.shakePrevAnimTime = 0.0f;
         }
         return;
     }
@@ -274,6 +284,8 @@ void M2Renderer::setInstanceAnimation(uint32_t instanceId, uint32_t animationId,
             // Use playingVariation=true for one-shot (returns to idle when done)
             inst.playingVariation = !loop;
             inst.holdAtEnd = false;
+            inst.shakePrevSequence = -1;
+            inst.shakePrevAnimTime = 0.0f;
             return;
         }
     }

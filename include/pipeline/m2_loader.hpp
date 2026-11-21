@@ -319,6 +319,22 @@ struct M2Model {
     // wyverns, dragonhawks, nether drakes).
     std::vector<std::vector<uint32_t>> wingFlapEventTimes;
     std::vector<std::vector<uint32_t>> wingGlideEventTimes;
+    // Death thud ($DTH) animation event times per sequence index, in ms from
+    // sequence start, sorted ascending. Paired with CreatureModelData
+    // DeathThudShakeSize to trigger heavy-corpse impact shakes (Kodos, giants,
+    // dragons, Fel Reaver).
+    std::vector<std::vector<uint32_t>> deathThudEventTimes;
+
+    // Authored camera shake ($SHK) events whose event `data` names a non-zero
+    // SpellEffectCameraShakes.dbc row (e.g. meteor_impact_base.m2 data=2 at
+    // 1000 ms, infernal_impact_base.m2 data=2, g_bombwagon.m2 data=3).
+    struct CameraShakeEvent {
+        uint32_t spellEffectShakeId = 0;
+        uint16_t bone = 0;
+        glm::vec3 position{0.0f};
+        std::vector<std::vector<uint32_t>> times;  // per sequence, ms from its start
+    };
+    std::vector<CameraShakeEvent> cameraShakeEvents;
 
     // Per-foot ground contacts: events named '$' + F/R/B/S + L/R + digit,
     // authored at z = 0 under each foot and timed in Walk (F), Run (R),
@@ -418,7 +434,8 @@ struct M2Model {
     // Peninsula tiles, blacksmith_smoke.m2, AshTreeSmoke01.m2. isValid()
     // stays the test for code that needs triangles (collision, picking).
     [[nodiscard]] bool hasRenderableContent() const {
-        return isValid() || !particleEmitters.empty() || !ribbonEmitters.empty() || !lights.empty();
+        return isValid() || !particleEmitters.empty() || !ribbonEmitters.empty() ||
+               !lights.empty() || !cameraShakeEvents.empty();
     }
 };
 

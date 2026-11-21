@@ -3182,6 +3182,20 @@ wowee_add_test(test_playable_animation
             ${CMAKE_SOURCE_DIR}/src/pipeline/m2_loader.cpp)
 set_tests_properties(playable_animation PROPERTIES SKIP_RETURN_CODE 4)
 
+# ── test_camera_shake_parity ─────────────────────────────────
+# TBC 2.4.3 CameraShakes.dbc waveform evaluation, 3D distance attenuation,
+# CreatureModelData FootstepShakeSize / DeathThudShakeSize, and M2 $DTH / $SHK.
+wowee_add_test(test_camera_shake_parity
+    SOURCES test_camera_shake_parity.cpp
+            ${TEST_COMMON_SOURCES}
+            ${CMAKE_SOURCE_DIR}/src/rendering/camera_shake.cpp
+            ${CMAKE_SOURCE_DIR}/src/pipeline/dbc_layout.cpp
+            ${CMAKE_SOURCE_DIR}/src/pipeline/dbc_loader.cpp
+            ${CMAKE_SOURCE_DIR}/src/pipeline/m2_loader.cpp)
+target_compile_definitions(test_camera_shake_parity PRIVATE
+    WOWEE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+set_tests_properties(camera_shake_parity PROPERTIES SKIP_RETURN_CODE 4)
+
 # ── test_tbc_audio_coverage ──────────────────────────────────
 # End-to-end TBC 2.4.3 audio coverage: headless PCM mix, WAV/MP3 decode,
 # SoundEntries/UISoundLookups/ItemGroupSounds, ZoneMusic day/night & intro

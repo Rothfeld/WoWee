@@ -1,6 +1,7 @@
 #pragma once
 
 #include "rendering/camera.hpp"
+#include "rendering/camera_shake.hpp"
 #include "rendering/animation/ground_direction.hpp"
 #include "core/input.hpp"
 #include <SDL3/SDL.h>
@@ -445,6 +446,9 @@ public:
     // frequency: oscillation frequency in Hz
     // duration: shake duration in seconds
     void triggerShake(float magnitude, float frequency, float duration);
+
+    /// Trigger an authored CameraShakes.dbc impulse with distance attenuation [0..1].
+    void triggerDbcShake(const CameraShakeEntry& entry, float attenuation = 1.0f);
 
     /// How much of a shake to actually apply, 0 to 1.
     ///
@@ -1186,12 +1190,14 @@ private:
     // Horizontal velocity decays via WoW-like drag so the player doesn't slide forever.
     static constexpr float KNOCKBACK_HORIZ_DRAG = 4.5f; // exponential decay rate (1/s)
 
-    // Camera shake state (SMSG_CAMERA_SHAKE)
+    // Camera shake state (SMSG_CAMERA_SHAKE + CameraShakes.dbc)
     float shakeElapsed_   = 0.0f;
     float shakeDuration_  = 0.0f;
     float shakeMagnitude_ = 0.0f;
     float shakeFrequency_ = 0.0f;
     float shakeScale_     = 1.0f;  ///< the player's Camera shake setting
+    CameraShakeState dbcShakeState_;
+    glm::vec3 lastShakeOffset_{0.0f};
 
     // Server-authored drunkenness (0 sober, 1 smashed).
     float intoxication_ = 0.0f;

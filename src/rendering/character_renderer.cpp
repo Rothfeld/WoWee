@@ -31,6 +31,8 @@
 #include "rendering/animation/gesture_weapons.hpp"
 #include "rendering/weapon_trail.hpp"
 #include "rendering/collision_geometry.hpp"
+#include "rendering/camera_controller.hpp"
+#include "rendering/camera_shake.hpp"
 #include "rendering/footprint_renderer.hpp"
 #include "rendering/unit_pick.hpp"
 #include "pipeline/dbc_layout.hpp"
@@ -5371,6 +5373,115 @@ void CharacterRenderer::emitFootprints(FootprintRenderer& footprints, const glm:
                 LOG_DEBUG("Footprint: instance=", id, " model=", instance.creatureModelDataId,
                           " sequence=", sequence, " t=", t, " left=", event.left,
                           " at=", foot.x, ",", foot.y, ",", foot.z);
+            }
+        }
+    }
+}
+
+void CharacterRenderer::emitCameraShakes(const CameraShakeTable& shakes,
+                                         CameraController& cameraController,
+                                         const glm::vec3& cameraPosition) {
+    for (auto& [id, instance] : instances) {
+        const auto reset = [&] { instance.shakeSequence = -1; };
+        if (instance.isEffectModel || instance.hasOverrideModelMatrix ||
+            instance.currentSequenceIndex < 0) {
+            reset();
+            continue;
+        }
+        const auto modelIt = models.find(instance.modelId);
+        if (modelIt == models.end()) {
+            reset();
+            continue;
+        }
+        const auto& model = modelIt->second.data;
+        const int sequence = instance.currentSequenceIndex;
+        if (sequence < 0 || static_cast<size_t>(sequence) >= model.sequences.size()) {
+            reset();
+            continue;
+        }
+
+        const uint32_t footShakeId = (!instance.isDead && instance.creatureModelDataId != 0)
+            ? shakes.footstepShakeId(instance.creatureModelDataId)
+            : 0;
+        const uint32_t deathShakeId = (instance.creatureModelDataId != 0)
+            ? shakes.deathThudShakeId(instance.creatureModelDataId)
+            : 0;
+        if (footShakeId == 0 && deathShakeId == 0 && model.cameraShakeEvents.empty()) {
+            reset();
+            continue;
+        }
+
+        const float seqDur = static_cast<float>(model.sequences[sequence].duration);
+        const float to = instance.animationTime;
+        if (!instance.animationLoop && instance.holdFinalPose && seqDur > 0.0f && to >= seqDur) {
+            instance.shakeSequence = sequence;
+            instance.shakeTime = to;
+            continue;
+        }
+
+        float from = -1.0f;
+        if (instance.shakeSequence == sequence) {
+            from = instance.shakeTime;
+        } else if (to > 250.0f) {
+            // Streamed in mid-sequence: sync cursor without retroactively firing past events.
+            instance.shakeSequence = sequence;
+            instance.shakeTime = to;
+            continue;
+        }
+        instance.shakeSequence = sequence;
+        instance.shakeTime = to;
+        if (from == to) continue;
+
+        const float dist = glm::length(cameraPosition - instance.position);
+        const float atten = cameraShakeDistanceAttenuation(dist);
+        if (atten <= 0.0f) continue;
+
+        const auto mapEventTime = [&](uint32_t eventMs) -> uint32_t {
+            if (!instance.playReversed || seqDur <= 0.0f) return eventMs;
+            const float rev = std::max(0.0f, seqDur - static_cast<float>(eventMs));
+            return static_cast<uint32_t>(std::lround(rev));
+        };
+
+        if (footShakeId != 0) {
+            if (const auto* entry = shakes.findShake(footShakeId)) {
+                bool triggered = false;
+                for (const auto& event : model.footfallEvents) {
+                    if (static_cast<size_t>(sequence) >= event.times.size()) continue;
+                    for (const uint32_t rawT : event.times[sequence]) {
+                        if (footfallPassed(mapEventTime(rawT), from, to)) {
+                            cameraController.triggerDbcShake(*entry, atten);
+                            triggered = true;
+                            break;
+                        }
+                    }
+                    if (triggered) break;
+                }
+            }
+        }
+
+        if (deathShakeId != 0 && static_cast<size_t>(sequence) < model.deathThudEventTimes.size()) {
+            if (const auto* entry = shakes.findShake(deathShakeId)) {
+                for (const uint32_t rawT : model.deathThudEventTimes[sequence]) {
+                    if (footfallPassed(mapEventTime(rawT), from, to)) {
+                        cameraController.triggerDbcShake(*entry, atten);
+                        break;
+                    }
+                }
+            }
+        }
+
+        for (const auto& ev : model.cameraShakeEvents) {
+            if (ev.spellEffectShakeId == 0 || static_cast<size_t>(sequence) >= ev.times.size()) continue;
+            for (const uint32_t rawT : ev.times[sequence]) {
+                if (!footfallPassed(mapEventTime(rawT), from, to)) continue;
+                const auto ids = shakes.findSpellEffectShakes(ev.spellEffectShakeId);
+                for (const uint32_t csId : ids) {
+                    if (csId == 0) continue;
+                    if (const auto* entry = shakes.findShake(csId)) {
+                        cameraController.triggerDbcShake(*entry, atten);
+                    }
+                }
+                break;
             }
         }
     }

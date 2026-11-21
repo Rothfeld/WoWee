@@ -52,6 +52,7 @@
 #include "rendering/world_map.hpp"
 #include "rendering/quest_marker_renderer.hpp"
 #include "rendering/footprint_renderer.hpp"
+#include "rendering/camera_shake.hpp"
 #include "game/game_handler.hpp"
 #include "pipeline/m2_loader.hpp"
 #include <algorithm>
@@ -904,6 +905,7 @@ bool Renderer::initialize(core::Window* win) {
 
     questMarkerRenderer = std::make_unique<QuestMarkerRenderer>();
     footprintRenderer = std::make_unique<FootprintRenderer>();
+    cameraShakeTable_ = std::make_unique<CameraShakeTable>();
     sandStorm = std::make_unique<SandStorm>();
 
     LOG_INFO("Vulkan sub-renderers initialized (Phase 3)");
@@ -911,6 +913,9 @@ bool Renderer::initialize(core::Window* win) {
     // LightingManager doesn't use GL - initialize for data-only use
     lightingManager = std::make_unique<LightingManager>();
     auto* assetManager = core::Application::getInstance().getAssetManager();
+    if (assetManager && cameraShakeTable_) {
+        cameraShakeTable_->load(*assetManager);
+    }
 
     // Create zone manager; enrich music paths from DBC if available
     zoneManager = std::make_unique<game::ZoneManager>();
@@ -2601,6 +2606,15 @@ void Renderer::update(float deltaTime) {
         footprintRenderer->update(deltaTime);
         if (characterRenderer) characterRenderer->emitFootprints(*footprintRenderer, characterPosition);
     }
+    if (cameraShakeTable_ && cameraShakeTable_->isLoaded() && cameraController && camera) {
+        const glm::vec3 shakeCamPos = camera->getPosition();
+        if (characterRenderer) {
+            characterRenderer->emitCameraShakes(*cameraShakeTable_, *cameraController, shakeCamPos);
+        }
+        if (m2Renderer) {
+            m2Renderer->emitCameraShakes(*cameraShakeTable_, *cameraController, shakeCamPos);
+        }
+    }
     if (animationController_) animationController_->updateFootsteps(deltaTime);
 
     // Activity SFX + mount ambient sounds: delegated to AnimationController (§4.2)
@@ -2702,6 +2716,8 @@ void Renderer::runDeferredWorldInitStep(float deltaTime) {
         case 5: {
             if (footprintRenderer && !footprintRenderer->initialize(this, vkCtx, perFrameSetLayout, cachedAssetManager))
                 LOG_WARNING("Footprint renderer re-init failed (non-fatal)");
+            if (cameraShakeTable_ && !cameraShakeTable_->isLoaded() && cachedAssetManager)
+                cameraShakeTable_->load(*cachedAssetManager);
             syncSwimEffectsTargetPass();
             const VkDescriptorSetLayout mistSceneLayout =
                 waterRenderer ? waterRenderer->getSceneSetLayout() : VK_NULL_HANDLE;
@@ -4405,6 +4421,9 @@ bool Renderer::initializeRenderers(pipeline::AssetManager* assetManager, const s
             if (footprintRenderer) {
                 if (!footprintRenderer->initialize(this, vkCtx, perFrameSetLayout, assetManager))
                     LOG_WARNING("Footprint renderer initialization failed (non-fatal)");
+            }
+            if (cameraShakeTable_ && !cameraShakeTable_->isLoaded() && assetManager) {
+                cameraShakeTable_->load(*assetManager);
             }
 
             if (core::envFlagEnabled("WOWEE_PREWARM_ZONE_MUSIC", false)) {

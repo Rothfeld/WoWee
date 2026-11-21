@@ -22,6 +22,9 @@
 #include "rendering/vk_utils.hpp"
 #include "rendering/vk_frame_data.hpp"
 #include "rendering/camera.hpp"
+#include "rendering/camera_controller.hpp"
+#include "rendering/camera_shake.hpp"
+#include "rendering/footfall_window.hpp"
 #include "rendering/frustum.hpp"
 #include "pipeline/asset_manager.hpp"
 #include "pipeline/blp_loader.hpp"
@@ -1492,6 +1495,7 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId, boo
     gpuModel.sequences = model.sequences;
     gpuModel.standSequenceIndex = pipeline::standSequenceIndex(model.sequences, model.playableAnimations);
     gpuModel.globalSequenceDurations = model.globalSequenceDurations;
+    gpuModel.cameraShakeEvents = model.cameraShakeEvents;
     gpuModel.hasAnimation = false;
     for (const auto& bone : model.bones) {
         // Billboard bones depend on the camera even without animation tracks.
@@ -2452,6 +2456,63 @@ void M2Renderer::syncRtScene() {
             rtOwned_.pop_back();
         } else {
             ++i;
+        }
+    }
+}
+
+void M2Renderer::emitCameraShakes(const CameraShakeTable& shakes,
+                                  CameraController& cameraController,
+                                  const glm::vec3& cameraPosition) {
+    for (auto& inst : instances) {
+        if (inst.externalPose || inst.retiring || inst.cachedDisableAnimation || !inst.cachedModel) {
+            inst.shakePrevSequence = -1;
+            continue;
+        }
+        const auto& events = inst.cachedModel->cameraShakeEvents;
+        if (events.empty()) continue;
+
+        const int sequence = inst.currentSequenceIndex;
+        if (sequence < 0 || static_cast<size_t>(sequence) >= inst.cachedModel->sequences.size()) {
+            inst.shakePrevSequence = -1;
+            continue;
+        }
+
+        const float to = inst.animTime;
+        if (inst.holdAtEnd && inst.animDuration > 0.0f && to >= inst.animDuration && inst.animSpeed == 0.0f) {
+            inst.shakePrevSequence = sequence;
+            inst.shakePrevAnimTime = to;
+            continue;
+        }
+
+        float from = -1.0f;
+        if (inst.shakePrevSequence == sequence) {
+            from = inst.shakePrevAnimTime;
+        } else if (to > 250.0f) {
+            inst.shakePrevSequence = sequence;
+            inst.shakePrevAnimTime = to;
+            continue;
+        }
+        inst.shakePrevSequence = sequence;
+        inst.shakePrevAnimTime = to;
+        if (from == to) continue;
+
+        const float dist = glm::length(cameraPosition - inst.position);
+        const float atten = cameraShakeDistanceAttenuation(dist);
+        if (atten <= 0.0f) continue;
+
+        for (const auto& ev : events) {
+            if (ev.spellEffectShakeId == 0 || static_cast<size_t>(sequence) >= ev.times.size()) continue;
+            for (const uint32_t t : ev.times[sequence]) {
+                if (!footfallPassed(t, from, to)) continue;
+                const auto ids = shakes.findSpellEffectShakes(ev.spellEffectShakeId);
+                for (const uint32_t csId : ids) {
+                    if (csId == 0) continue;
+                    if (const auto* entry = shakes.findShake(csId)) {
+                        cameraController.triggerDbcShake(*entry, atten);
+                    }
+                }
+                break;
+            }
         }
     }
 }

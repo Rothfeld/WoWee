@@ -1124,6 +1124,7 @@ M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
         model.footstepEventTimes.resize(model.sequences.size());
         model.wingFlapEventTimes.resize(model.sequences.size());
         model.wingGlideEventTimes.resize(model.sequences.size());
+        model.deathThudEventTimes.resize(model.sequences.size());
         model.spellReleaseEvents.resize(model.sequences.size());
 
         auto rd32 = [&](size_t off) -> uint32_t {
@@ -1205,12 +1206,49 @@ M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
                 }
                 continue;
             }
+            if (std::memcmp(ident, "$SHK", 4) == 0) {
+                const uint32_t shakeData = rd32(base + 4);
+                if (shakeData != 0) {
+                    M2Model::CameraShakeEvent event;
+                    event.spellEffectShakeId = shakeData;
+                    event.bone = static_cast<uint16_t>(rd32(base + 8));
+                    std::memcpy(&event.position, m2Data.data() + base + 12, sizeof(glm::vec3));
+                    event.times.resize(model.sequences.size());
+                    if (wotlkEvents) {
+                        const uint32_t nArrays = rd32(base + trackOfs + 4);
+                        const uint32_t ofsArrays = rd32(base + trackOfs + 8);
+                        for (uint32_t s = 0; s < std::min<uint32_t>(nArrays, model.sequences.size()); s++) {
+                            const uint32_t nTs = rd32(ofsArrays + s * 8);
+                            const uint32_t ofsTs = rd32(ofsArrays + s * 8 + 4);
+                            if (nTs == 0 || nTs > 1024 || ofsTs + nTs * sizeof(uint32_t) > m2Data.size()) continue;
+                            event.times[s] = readArray<uint32_t>(m2Data, ofsTs, nTs);
+                        }
+                    } else {
+                        const uint32_t nTs = rd32(base + trackOfs + 12);
+                        const uint32_t ofsTs = rd32(base + trackOfs + 16);
+                        if (nTs > 0 && nTs <= 100000 && ofsTs + nTs * sizeof(uint32_t) <= m2Data.size()) {
+                            for (uint32_t ts : readArray<uint32_t>(m2Data, ofsTs, nTs)) {
+                                for (size_t s = 0; s < vanillaSeqWindows.size() && s < event.times.size(); s++) {
+                                    const auto [start, end] = vanillaSeqWindows[s];
+                                    if (start < end && ts >= start && ts < end) event.times[s].push_back(ts - start);
+                                }
+                            }
+                        }
+                    }
+                    for (auto& list : event.times) std::sort(list.begin(), list.end());
+                    model.cameraShakeEvents.push_back(std::move(event));
+                }
+                continue;
+            }
             const bool isFootstep = std::memcmp(m2Data.data() + base, "$FSD", 4) == 0;
             const bool isWingFlap = std::memcmp(m2Data.data() + base, "$WNG", 4) == 0;
             const bool isWingGlide = std::memcmp(m2Data.data() + base, "$WGG", 4) == 0;
-            if (!isFootstep && !isWingFlap && !isWingGlide) continue;
-            auto& targetEvents = isFootstep ? model.footstepEventTimes
-                                            : (isWingFlap ? model.wingFlapEventTimes : model.wingGlideEventTimes);
+            const bool isDeathThud = std::memcmp(m2Data.data() + base, "$DTH", 4) == 0;
+            if (!isFootstep && !isWingFlap && !isWingGlide && !isDeathThud) continue;
+            auto& targetEvents = isFootstep
+                ? model.footstepEventTimes
+                : (isWingFlap ? model.wingFlapEventTimes
+                              : (isWingGlide ? model.wingGlideEventTimes : model.deathThudEventTimes));
 
             if (wotlkEvents) {
                 uint32_t nArrays = rd32(base + trackOfs + 4);
@@ -1255,6 +1293,9 @@ M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
             std::sort(list.begin(), list.end());
         }
         for (auto& list : model.wingGlideEventTimes) {
+            std::sort(list.begin(), list.end());
+        }
+        for (auto& list : model.deathThudEventTimes) {
             std::sort(list.begin(), list.end());
         }
         for (auto& list : model.spellReleaseEvents) {
