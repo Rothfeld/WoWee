@@ -19,8 +19,10 @@ namespace wowee {
 namespace game {
 
 class GameHandler;
+struct GameHandlerTestAccess;
 
 class MovementHandler {
+    friend struct GameHandlerTestAccess;
 public:
     using PacketHandler = std::function<void(network::Packet&)>;
     using DispatchTable = std::unordered_map<LogicalOpcode, PacketHandler>;

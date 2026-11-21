@@ -1302,7 +1302,8 @@ void GameHandler::registerCoreOpcodes() {
         }
     };
     dispatchTable_[Opcode::SMSG_NEW_TAXI_PATH] = [this](network::Packet& /*packet*/) {
-        systemGlobal("ERR_NEWTAXIPATH");
+        // Native 2.4.3 shows ERR_NEWTAXIPATH as yellow UI_INFO_MESSAGE in UIErrorsFrame, not chat.
+        infoGlobal("ERR_NEWTAXIPATH");
     };
 
     // (MSG_TALENT_WIPE_CONFIRM → registered by SpellHandler, which owns the

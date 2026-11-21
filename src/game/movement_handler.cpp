@@ -3178,22 +3178,6 @@ void MovementHandler::handleShowTaxiNodes(network::Packet& packet) {
 
     loadTaxiDbc();
 
-    if (taxiMaskInitialized_) {
-        for (uint32_t i = 0; i < TLK_TAXI_MASK_SIZE; ++i) {
-            uint32_t newBits = data.nodeMask[i] & ~knownTaxiMask_[i];
-            if (newBits == 0) continue;
-            for (uint32_t bit = 0; bit < 32; ++bit) {
-                if (newBits & (1u << bit)) {
-                    uint32_t nodeId = i * 32 + bit + 1;
-                    auto it = taxiNodes_.find(nodeId);
-                    if (it != taxiNodes_.end()) {
-                        owner_.addSystemChatMessage("Discovered flight path: " + it->second.name);
-                    }
-                }
-            }
-        }
-    }
-
     for (uint32_t i = 0; i < TLK_TAXI_MASK_SIZE; ++i) {
         knownTaxiMask_[i] = data.nodeMask[i];
     }
@@ -3735,7 +3719,26 @@ void MovementHandler::handleActivateTaxiReply(network::Packet& packet) {
             return;
         }
         LOG_WARNING("Taxi activation failed, result=", data.result);
-        owner_.raiseUiError("Cannot take that flight path.");
+        static constexpr const char* kTaxiErrors[] = {
+            nullptr,                          // 0 = ERR_TAXIOK
+            "ERR_TAXIUNSPECIFIEDSERVERERROR", // 1
+            "ERR_TAXINOSUCHPATH",             // 2
+            "ERR_TAXINOTENOUGHMONEY",         // 3
+            "ERR_TAXITOOFARAWAY",             // 4
+            "ERR_TAXINOVENDORNEARBY",         // 5
+            "ERR_TAXINOTVISITED",             // 6
+            "ERR_TAXIPLAYERBUSY",             // 7
+            "ERR_TAXIPLAYERALREADYMOUNTED",   // 8
+            "ERR_TAXIPLAYERSHAPESHIFTED",     // 9
+            "ERR_TAXIPLAYERMOVING",           // 10
+            "ERR_TAXISAMENODE",               // 11
+            "ERR_TAXINOTSTANDING",            // 12
+        };
+        if (data.result > 0 && data.result < std::size(kTaxiErrors)) {
+            owner_.errorGlobal(kTaxiErrors[data.result]);
+        } else {
+            owner_.errorGlobal("ERR_TAXIUNSPECIFIEDSERVERERROR");
+        }
         taxiActivatePending_ = false;
         taxiActivateTimer_ = 0.0f;
         // Clear the pending path data built speculatively by activateTaxi() -
@@ -3863,10 +3866,8 @@ void MovementHandler::activateTaxi(uint32_t destNodeId) {
         auto destIt = taxiNodes_.find(destNodeId);
         if (destIt != taxiNodes_.end() && !destIt->second.name.empty()) {
             taxiDestName_ = destIt->second.name;
-            owner_.addSystemChatMessage("Requesting flight to " + destIt->second.name + "...");
         } else {
             taxiDestName_.clear();
-            owner_.addSystemChatMessage("Taxi: requesting flight...");
         }
     }
 
@@ -3884,7 +3885,7 @@ void MovementHandler::activateTaxi(uint32_t destNodeId) {
     if (path.size() < 2) {
         LOG_WARNING("No taxi route through discovered nodes from ", startNode,
                     " to ", destNodeId);
-        owner_.addSystemChatMessage("No flight path available to that destination.");
+        owner_.errorGlobal("ERR_TAXINOSUCHPATH");
         return;
     }
 

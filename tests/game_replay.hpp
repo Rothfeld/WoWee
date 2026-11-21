@@ -107,6 +107,14 @@ struct GameHandlerTestAccess {
     static void fireBagUpdates(GameHandler& gh) {
         if (gh.inventoryHandler_) gh.inventoryHandler_->fireBagUpdates();
     }
+    static void setTaxiGraph(GameHandler& gh,
+                             std::unordered_map<uint32_t, MovementHandler::TaxiNode> nodes,
+                             std::vector<MovementHandler::TaxiPathEdge> edges) {
+        REQUIRE(gh.movementHandler_ != nullptr);
+        gh.movementHandler_->taxiNodes_ = std::move(nodes);
+        gh.movementHandler_->taxiPathEdges_ = std::move(edges);
+        gh.movementHandler_->taxiDbcLoaded_ = true;
+    }
 };
 
 }  // namespace game
