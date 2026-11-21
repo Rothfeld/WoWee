@@ -1353,6 +1353,7 @@ void Renderer::beginFrame() {
     }
 
     worldDrawnThisFrame_ = false;
+    minimapOverlayDeferredToUi_ = false;
 
     // Apply deferred MSAA change between frames (before any rendering state is used)
     if (msaaChangePending_) {
@@ -1604,7 +1605,7 @@ void Renderer::endFrame() {
         // Under the interface, over everything else.
         if (sunShafts_) sunShafts_->composite(currentCmd, vkCtx->getCurrentFrame());
 
-        if (worldDrawnThisFrame_) {
+        if (worldDrawnThisFrame_ && !minimapOverlayDeferredToUi_) {
             renderMinimapOverlay(currentCmd, core::Application::getInstance().getGameHandler());
         }
 
@@ -4172,6 +4173,21 @@ void Renderer::renderMinimapOverlay(VkCommandBuffer cmd,
                         window->getWidth(), window->getHeight(),
                         minimapPlayerOrientation, hasMinimapPlayerOrientation);
     }
+}
+
+void Renderer::renderMinimapOverlayInUiCallback(VkCommandBuffer cmd,
+                                                game::GameHandler* gameHandler) {
+    if (!worldDrawnThisFrame_ || !vkCtx) return;
+    VkExtent2D ext = vkCtx->getSwapchainExtent();
+    VkViewport vp{};
+    vp.width = static_cast<float>(ext.width);
+    vp.height = static_cast<float>(ext.height);
+    vp.maxDepth = 1.0f;
+    vkCmdSetViewport(cmd, 0, 1, &vp);
+    VkRect2D sc{};
+    sc.extent = ext;
+    vkCmdSetScissor(cmd, 0, 1, &sc);
+    renderMinimapOverlay(cmd, gameHandler);
 }
 
 bool Renderer::waterDrawsInContinuePass() const {

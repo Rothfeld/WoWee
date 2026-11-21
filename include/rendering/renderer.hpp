@@ -267,6 +267,13 @@ public:
 
     const std::vector<pipeline::CustomZoneInfo>& getCustomZones() const { return customZones_; }
 
+    /// Draw the minimap terrain disc inside an ImGui BackgroundDrawList callback
+    /// (after WORLD-strata nameplates/labels/bubbles and before minimap markers
+    /// and UIParent frames) so world labels/plates never bleed over the minimap.
+    bool wasWorldDrawnThisFrame() const { return worldDrawnThisFrame_; }
+    void deferMinimapOverlayToUi() { minimapOverlayDeferredToUi_ = true; }
+    void renderMinimapOverlayInUiCallback(VkCommandBuffer cmd, game::GameHandler* gameHandler);
+
 private:
     // Lays the M2 projected-texture quads onto the ground for this frame.
     void updateM2ProjectedTextures();
@@ -628,6 +635,7 @@ private:
     /// renderWorld ran this frame. The shafts are built from the world's
     /// picture, and a login screen or a loading screen is not one.
     bool worldDrawnThisFrame_ = false;
+    bool minimapOverlayDeferredToUi_ = false;
     void recordSunShafts();
 
     // GPU-driven grass: compute cull with atomic compaction feeding an

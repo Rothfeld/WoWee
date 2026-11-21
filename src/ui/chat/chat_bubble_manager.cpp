@@ -180,9 +180,30 @@ void ChatBubbleManager::render(game::GameHandler& gameHandler, const UIServices&
         const ImVec4 textColor = bubble.isYell
             ? ImVec4(1.0f, 0.2f, 0.2f, alpha)
             : ImVec4(1.0f, 1.0f, 1.0f, alpha);
-        dl->AddText(font, fontSize, ImVec2(topLeft.x + padding.x, topLeft.y + padding.y),
-                    ImGui::ColorConvertFloat4ToU32(textColor), bubble.message.c_str(), nullptr,
-                    kWrapWidth);
+        const ImU32 textColU32 = ImGui::ColorConvertFloat4ToU32(textColor);
+        // Center-align each wrapped line inside the bubble, matching Native TBC 2.4.3.
+        const char* lineStart = bubble.message.c_str();
+        const char* textEnd = lineStart + bubble.message.size();
+        float lineY = topLeft.y + padding.y;
+        const float boxInnerW = size.x - padding.x * 2.0f;
+        while (lineStart < textEnd) {
+            const char* lineEnd = font->CalcWordWrapPosition(fontSize, lineStart, textEnd, kWrapWidth);
+            if (lineEnd == lineStart) {
+                lineEnd = lineStart + 1;
+            }
+            const char* trimEnd = lineEnd;
+            while (trimEnd > lineStart && (trimEnd[-1] == ' ' || trimEnd[-1] == '\n' || trimEnd[-1] == '\r')) {
+                --trimEnd;
+            }
+            const ImVec2 lineSz = font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, lineStart, trimEnd);
+            const float lineX = topLeft.x + padding.x + std::max(0.0f, (boxInnerW - lineSz.x) * 0.5f);
+            dl->AddText(font, fontSize, ImVec2(lineX, lineY), textColU32, lineStart, trimEnd);
+            lineY += fontSize;
+            lineStart = lineEnd;
+            while (lineStart < textEnd && (*lineStart == ' ' || *lineStart == '\n' || *lineStart == '\r')) {
+                ++lineStart;
+            }
+        }
     }
 }
 

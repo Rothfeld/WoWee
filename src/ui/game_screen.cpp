@@ -22,6 +22,7 @@
 #include "ui/ui_helpers.hpp"
 #include "ui/ui_texture_load.hpp"
 #include "rendering/vk_context.hpp"
+#include <imgui_impl_vulkan.h>
 #include "core/application.hpp"
 #include "core/appearance_composer.hpp"
 #include "addons/addon_manager.hpp"
@@ -713,6 +714,8 @@ void GameScreen::render(game::GameHandler& gameHandler) {
 
     // ---- New UI elements ----
     renderNameplates(gameHandler);  // player names always shown; NPC plates gated by the enemyplates row
+    // World speech bubbles draw in WORLD strata, below UIParent frames and minimap markers.
+    chatPanel_.renderBubbles(gameHandler);
     combatUI_.playSoundsForNewChat(gameHandler);
     offerPendingTradeItem(gameHandler);
     // The numbers over the world: build 8606 draws them whatever
@@ -736,9 +739,29 @@ void GameScreen::render(game::GameHandler& gameHandler) {
     // input, and the mail and battlefield indicators. Both gates are inside
     // it now.
     if (showMinimap_) {
+        // Draw the minimap terrain disc here in the BackgroundDrawList (after
+        // WORLD-strata nameplates, 3D overhead names, and speech bubbles, and
+        // before minimap blips and UIParent frames) so world labels/plates are
+        // cleanly occluded behind the minimap interior just like Native 2.4.3.
+        if (services_.renderer && services_.renderer->wasWorldDrawnThisFrame()) {
+            services_.renderer->deferMinimapOverlayToUi();
+            struct MinimapDrawPayload {
+                rendering::Renderer* renderer;
+                game::GameHandler* gameHandler;
+            };
+            MinimapDrawPayload payload{services_.renderer, &gameHandler};
+            ImDrawList* bg = ImGui::GetBackgroundDrawList();
+            bg->AddCallback([](const ImDrawList*, const ImDrawCmd* command) {
+                const auto* p = static_cast<const MinimapDrawPayload*>(command->UserCallbackData);
+                auto* state = static_cast<ImGui_ImplVulkan_RenderState*>(
+                    ImGui::GetPlatformIO().Renderer_RenderState);
+                assert(state && p && p->renderer);
+                p->renderer->renderMinimapOverlayInUiCallback(state->CommandBuffer, p->gameHandler);
+            }, &payload, sizeof(payload));
+            bg->AddCallback(ImDrawCallback_ResetRenderState, nullptr);
+        }
         renderMinimapMarkers(gameHandler);
     }
-    chatPanel_.renderBubbles(gameHandler);
     // Not gated on GameMenu ownership. FrameXML's own options frames are shells
     // - its menu buttons are routed here through ShowUIPanel - and this window
     // draws nothing unless something opened it, so leaving it out cost every

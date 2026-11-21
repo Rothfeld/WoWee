@@ -12,6 +12,7 @@
 #include "ui/nameplate_stacking.hpp"
 #include "ui/unit_name_cvar.hpp"
 #include <unordered_map>
+#include <unordered_set>
 #include "game/summon_title.hpp"
 #include "game/game_object_lock.hpp"
 #include "game/level_difficulty.hpp"
@@ -1051,7 +1052,9 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
     const bool spreadLegacyPlates = legacyPlates && !allowPlateOverlap;
     static thread_local std::unordered_map<uint64_t, ui::LegacyPlate> spreadPlates;
     static thread_local std::vector<ui::LegacyPlate*> spreadOrder;
+    static thread_local std::unordered_set<uint64_t> drawnGuids;
     spreadPlates.clear();
+    drawnGuids.clear();
     for (int pass = spreadLegacyPlates ? 0 : 1; pass < 2; ++pass) {
     if (pass == 1 && !spreadPlates.empty()) {
         spreadOrder.clear();
@@ -1061,6 +1064,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
     for (const auto& entityPtr : nameplateEntities) {
         if (!entityPtr) continue;
         const uint64_t guid = entityPtr->getGuid();
+        if (pass == 1 && !drawnGuids.insert(guid).second) continue;
         const bool hideOwnName = guid == playerGuid && addons::storedCVarValue("unitNameOwn", "0") == "0";
 
         if (!entityPtr->isUnit()) continue;
@@ -1589,13 +1593,19 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             }
         }
         const std::string& shownName = titledName.empty() ? unitName : titledName;
+        std::string playerWorldName;
+        if (isPlayer && !shownName.empty()) {
+            const uint16_t pfIdx = game::fieldIndex(game::UF::PLAYER_FLAGS);
+            const uint32_t playerFlags = (pfIdx != 0xFFFF) ? entityPtr->getField(pfIdx) : 0u;
+            playerWorldName = ui::formatPlayerWorldName(shownName, playerFlags, showPlate);
+        }
 
         char labelBuf[96];
         if (isPlayer) {
             // Player nameplates: show name only (no level clutter).
             // Fall back to level as placeholder while the name query is pending.
-            if (!shownName.empty())
-                snprintf(labelBuf, sizeof(labelBuf), "%s", shownName.c_str());
+            if (!playerWorldName.empty())
+                snprintf(labelBuf, sizeof(labelBuf), "%s", playerWorldName.c_str());
             else {
                 // Name query may be pending; request it now to ensure it gets resolved
                 gameHandler.queryPlayerName(unit->getGuid());
@@ -1615,9 +1625,8 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             snprintf(labelBuf, sizeof(labelBuf), "%s", unitName.c_str());
         }
         // Plain world names scale with perspective; nameplates remain screen UI.
-        const glm::vec4 textTop = viewProj * glm::vec4(renderPos + glm::vec3(0, 0, 0.20f * nameScale), 1.0f);
         const float nameFontSize = showPlate ? (legacyPlates ? 12.8f * plateArtScale : ImGui::GetFontSize())
-            : std::clamp(std::abs(textTop.y / textTop.w - ndc.y) * screenH * 0.5f, 1.0f, 40.0f);
+            : ui::worldNameFontSize(camera->getProjectionMatrix()[1][1], clipPos.w, screenH, nameScale);
         ImFont* nameFont = ImGui::GetFont();
         ImVec2 textSize = nameFont->CalcTextSizeA(nameFontSize, FLT_MAX, 0.0f, labelBuf);
         float nameX = sx - textSize.x * 0.5f;

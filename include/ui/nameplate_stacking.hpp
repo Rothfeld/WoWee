@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 namespace wowee {
@@ -34,6 +35,32 @@ inline bool unitWorldNameShown(bool own, bool plate, bool target, bool categoryS
 /// (Mountain Giant 8.59 yd: 3.27x). The line under the name grows with it.
 inline float unitNameScale(float attachmentHeight) {
     return attachmentHeight > 4.0f ? 0.3796f * attachmentHeight : 1.0f;
+}
+
+/// PLAYER_FLAGS bit 0x08 (PLAYER_FLAG_GM): GM tag visible on 3D overhead names.
+constexpr uint32_t kPlayerFlagGm = 0x08u;
+
+/// Format a player's 3D world overhead name, prepending "<GM>" when
+/// PLAYER_FLAGS bit 0x08 (PLAYER_FLAG_GM) is set (matching Native TBC 2.4.3).
+inline std::string formatPlayerWorldName(const std::string& name, uint32_t playerFlags, bool isPlate) {
+    if (name.empty()) return name;
+    if (!isPlate && (playerFlags & kPlayerFlagGm) != 0) {
+        return "<GM>" + name;
+    }
+    return name;
+}
+
+/// Perspective-projected 3D world unit overhead name font size in pixels.
+/// Uses the camera's vertical projection scale and clip-space depth (avoiding
+/// near-plane W blowups from projecting an offset point) and caps close-range
+/// growth proportionally to viewport height so melee-range units do not explode
+/// into oversized billboards.
+inline float worldNameFontSize(float projY, float clipW, float screenH, float nameScale) {
+    const float safeW = std::max(clipW, 0.01f);
+    const float scale = std::max(1.0f, nameScale);
+    const float rawPx = std::abs(projY) * (0.20f * scale) * screenH * 0.5f / safeW;
+    const float maxPx = 26.0f * (screenH / 720.0f) * scale;
+    return std::clamp(rawPx, 1.0f, std::max(1.0f, maxPx));
 }
 
 inline float legacyPlateCenterX(float x, float viewportWidth, float artScale) {

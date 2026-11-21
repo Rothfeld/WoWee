@@ -358,3 +358,38 @@ TEST_CASE("TBC 2.4.3 nameplate fill colors and target opacity rules", "[nameplat
     CHECK(legacyPlateAlpha(true, true) == 1.0f);
     CHECK(legacyPlateAlpha(true, false) == 0.5f);
 }
+
+TEST_CASE("TBC 2.4.3 <GM> prefix on 3D overhead player names follows PLAYER_FLAGS 0x08", "[nameplates][gm]") {
+    CHECK(formatPlayerWorldName("Edric", 0x00u, false) == "Edric");
+    CHECK(formatPlayerWorldName("Edric", kPlayerFlagGm, false) == "<GM>Edric");
+    CHECK(formatPlayerWorldName("Edric", 0x01u | kPlayerFlagGm | 0x20u, false) == "<GM>Edric");
+    CHECK(formatPlayerWorldName("High Warlord Edric", kPlayerFlagGm, false) == "<GM>High Warlord Edric");
+    // 2D nameplate bars keep plain unit name without <GM> prefix
+    CHECK(formatPlayerWorldName("Edric", kPlayerFlagGm, true) == "Edric");
+    // Empty name stays empty
+    CHECK(formatPlayerWorldName("", kPlayerFlagGm, false).empty());
+}
+
+TEST_CASE("TBC 2.4.3 3D world unit overhead name perspective size caps close-range blowup", "[nameplates][scale]") {
+    const float projY = 2.41421356f;  // 45 deg vertical FOV
+    const float h720 = 720.0f;
+    // Normal distances shrink smoothly with depth
+    const float px10 = worldNameFontSize(projY, 10.0f, h720, 1.0f);
+    const float px20 = worldNameFontSize(projY, 20.0f, h720, 1.0f);
+    const float px40 = worldNameFontSize(projY, 40.0f, h720, 1.0f);
+    CHECK(px10 == Catch::Approx(17.38f).margin(0.1f));
+    CHECK(px20 == Catch::Approx(8.69f).margin(0.1f));
+    CHECK(px40 == Catch::Approx(4.35f).margin(0.1f));
+    CHECK(px10 > px20);
+    CHECK(px20 > px40);
+    // Close-range melee and near-plane W<=0.01 cap at 26px at 720p (never 40px+ billboard explosion)
+    CHECK(worldNameFontSize(projY, 2.0f, h720, 1.0f) == Catch::Approx(26.0f));
+    CHECK(worldNameFontSize(projY, 0.001f, h720, 1.0f) == Catch::Approx(26.0f));
+    CHECK(worldNameFontSize(projY, -5.0f, h720, 1.0f) == Catch::Approx(26.0f));
+    // Viewport-proportional scaling at 1080p
+    CHECK(worldNameFontSize(projY, 2.0f, 1080.0f, 1.0f) == Catch::Approx(39.0f));
+    // Far distance floors at 1px
+    CHECK(worldNameFontSize(projY, 500.0f, h720, 1.0f) == 1.0f);
+    // Tall unit scale (e.g. Mountain Giant) scales proportionally
+    CHECK(worldNameFontSize(projY, 20.0f, h720, 3.0f) == Catch::Approx(px20 * 3.0f).margin(0.1f));
+}
