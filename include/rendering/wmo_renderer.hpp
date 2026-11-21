@@ -432,7 +432,9 @@ public:
      * Used to dim M2 lighting for doodads placed indoors.
      */
     bool isInsideInteriorWMO(float glX, float glY, float glZ) const;
-    std::optional<WMOFogSample> getFog(const glm::vec3& position, bool underwater) const;
+    std::optional<WMOFogSample> getFog(
+        const glm::vec3& position, bool underwater,
+        std::optional<WMOFogSample> outdoorFallback = std::nullopt) const;
     /// A camera inside an interior group from which no portal path reaches an
     /// exterior group sees nothing outside those groups: native draws no
     /// terrain, water or exterior model there. Kalecgos's Spectral Realm is

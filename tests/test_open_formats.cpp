@@ -61,6 +61,99 @@ TEST_CASE("WMO fog preserves authored colors and group volumes", "[wmo-fog]") {
     CHECK(WMOLoader::load(bytes).fogs.empty());
 }
 
+TEST_CASE("WMO fog resolves local MFOG spheres when record zero is unauthored stub", "[wmo-fog]") {
+    // 37 TBC WMOs (wailingcaverns.wmo, md_mushroomcave*, md_icecave*, mini-hive*,
+    // stormwind.wmo, darnassis.wmo, kl_diremaul.wmo) emit the compiler's
+    // zero-radius white stub in MFOG[0] and store authored cave/room fogs in MFOG[1..N].
+    WMOFog stub{};
+    stub.flags = 0;
+    stub.position = glm::vec3(0.0f);
+    stub.smallRadius = 0.0f;
+    stub.largeRadius = 0.0f;
+    stub.endDist = 444.44446f;
+    stub.startFactor = 0.25f;
+    stub.color1 = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);
+    stub.endDist2 = 222.22223f;
+    stub.startFactor2 = -0.5f;
+    stub.color2 = glm::vec4(0.0f, 0.0f, 1.0f, 1.0f);
+
+    // Modeled on wailingcaverns.wmo MFOG[1] (Cavern of Mists) and MFOG[2].
+    WMOFog cavernMists{};
+    cavernMists.flags = 0;
+    cavernMists.position = glm::vec3(278.0f, -202.6f, -17.5f);
+    cavernMists.smallRadius = 142.1f;
+    cavernMists.largeRadius = 186.4f;
+    cavernMists.endDist = 277.77777f;
+    cavernMists.startFactor = 0.20f;
+    cavernMists.color1 = glm::vec4(0.0f, 119.0f / 255.0f, 101.0f / 255.0f, 1.0f);
+    cavernMists.endDist2 = 361.11111f;
+    cavernMists.startFactor2 = 0.01f;
+    cavernMists.color2 = glm::vec4(0.0f, 75.0f / 255.0f, 12.0f / 255.0f, 1.0f);
+
+    WMOFog upperTunnel{};
+    upperTunnel.flags = 0;
+    upperTunnel.position = glm::vec3(276.8f, 72.7f, -17.5f);
+    upperTunnel.smallRadius = 72.3f;
+    upperTunnel.largeRadius = 160.2f;
+    upperTunnel.endDist = 416.66666f;
+    upperTunnel.startFactor = 0.25f;
+    upperTunnel.color1 = glm::vec4(62.0f / 255.0f, 47.0f / 255.0f, 0.0f, 1.0f);
+    upperTunnel.endDist2 = 361.11111f;
+    upperTunnel.startFactor2 = 0.01f;
+    upperTunnel.color2 = glm::vec4(4.0f / 255.0f, 59.0f / 255.0f, 0.0f, 1.0f);
+
+    const std::vector<WMOFog> fogs{stub, cavernMists, upperTunnel};
+    const wowee::rendering::WMOFogSample barrensNight{
+        glm::vec3(0.0f, 14.0f / 255.0f, 33.0f / 255.0f), 124.3f, 497.2f};
+
+    // Unreferenced groups (fogIdx = {0,0,0,0}) yield nullopt rather than stub white.
+    CHECK_FALSE(wowee::rendering::sampleWMOFog(
+        fogs, {0, 0, 0, 0}, glm::vec3(223.89f, -181.77f, -70.23f), false, barrensNight));
+
+    // Inside Cavern of Mists (dist ~78.4 <= smallRadius 142.1): full MFOG[1] teal fog.
+    const auto inside = wowee::rendering::sampleWMOFog(
+        fogs, {2, 1, 0, 0}, glm::vec3(223.89f, -181.77f, -70.23f), false, barrensNight);
+    REQUIRE(inside);
+    CHECK(inside->color.r == Catch::Approx(0.0f));
+    CHECK(inside->color.g == Catch::Approx(119.0f / 255.0f));
+    CHECK(inside->color.b == Catch::Approx(101.0f / 255.0f));
+    CHECK(inside->start == Catch::Approx(277.77777f * 0.20f));
+    CHECK(inside->end == Catch::Approx(277.77777f));
+    CHECK(inside->weight == Catch::Approx(1.0f));
+
+    // Underwater inside Cavern of Mists uses MFOG[1]'s underwater fields.
+    const auto insideUw = wowee::rendering::sampleWMOFog(
+        fogs, {2, 1, 0, 0}, glm::vec3(223.89f, -181.77f, -70.23f), true, barrensNight);
+    REQUIRE(insideUw);
+    CHECK(insideUw->color.g == Catch::Approx(75.0f / 255.0f));
+    CHECK(insideUw->start == Catch::Approx(361.11111f * 0.01f));
+    CHECK(insideUw->end == Catch::Approx(361.11111f));
+
+    // Midpoint of MFOG[1] falloff band (dist = 164.25, weight = 0.5) blends with
+    // outdoor Light.dbc fallback, never with stub record zero's white (1,1,1).
+    const glm::vec3 midFalloffPos = cavernMists.position + glm::vec3(164.25f, 0.0f, 0.0f);
+    const auto falloff = wowee::rendering::sampleWMOFog(
+        fogs, {1, 0, 0, 0}, midFalloffPos, false, barrensNight);
+    REQUIRE(falloff);
+    CHECK(falloff->color.r == Catch::Approx(0.0f));
+    CHECK(falloff->color.g == Catch::Approx(0.5f * (14.0f + 119.0f) / 255.0f));
+    CHECK(falloff->color.b == Catch::Approx(0.5f * (33.0f + 101.0f) / 255.0f));
+    CHECK(falloff->start == Catch::Approx(0.5f * (124.3f + 277.77777f * 0.20f)));
+    CHECK(falloff->end == Catch::Approx(0.5f * (497.2f + 277.77777f)));
+
+    // Without outdoorFallback, sphere sample exposes its fractional weight.
+    const auto rawFalloff = wowee::rendering::sampleWMOFog(
+        fogs, {1, 0, 0, 0}, midFalloffPos, false);
+    REQUIRE(rawFalloff);
+    CHECK(rawFalloff->weight == Catch::Approx(0.5f));
+    CHECK(rawFalloff->color.g == Catch::Approx(119.0f / 255.0f));
+
+    // Outside all referenced spheres (dist > largeRadius): yields nullopt -> outdoor fog.
+    CHECK_FALSE(wowee::rendering::sampleWMOFog(
+        fogs, {2, 0, 0, 0}, upperTunnel.position + glm::vec3(180.0f, 0.0f, 0.0f),
+        false, barrensNight));
+}
+
 static const std::string TEST_DIR = "test_output_formats";
 
 static void ensureTestDir() {

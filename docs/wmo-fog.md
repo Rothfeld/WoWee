@@ -12,9 +12,20 @@ indoor group selects candidate volumes, using the instance inverse transform.
 A containing group with MOGP 0x40 (exterior lit) takes Light.dbc fog instead:
 Black Temple's open courtyard (blacktemple.wmo group 8, 0x43a41) shows the
 map's dark green Light 592 fog natively, not its teal MFOG record 0.
-Record zero supplies default WMO fog. Referenced local spheres contribute between
-their inner and outer radii; duplicate references do not multiply their weight.
-The infinite-radius flag bypasses the distance test.
+Record zero supplies default WMO fog when authored (`largeRadius > 0` or the
+`0x1` infinite-radius flag, present in 170 of TBC's 1,204 root WMOs). In the
+remaining 1,034 root WMOs where no global WMO fog was placed, the WMO compiler
+writes an identical zero-radius white stub in record zero (`flags = 0`,
+`smallRadius = largeRadius = 0`, `endDist = 444.44`, `color1 = 0xFFFFFFFF`),
+while 37 of those WMOs (`wailingcaverns.wmo`, `md_mushroomcave02`..`10`,
+`md_icecave02`..`04`, `md_junglecave07`, `md_goldmine_variantb`/`c`/`f`,
+`mini-hive_a`..`f`, `kl_diremaul.wmo`, `monestary_cathedral`/`cemetery`,
+`stormwind.wmo`, `darnassis.wmo`) author local fog spheres in records `1..N`.
+Referenced local spheres contribute between their inner and outer radii even
+when record zero is that zero-radius stub, blending from the outdoor `Light.dbc`
+fog across their falloff shell and returning `nullopt` outside their outer
+radii; duplicate references do not multiply their weight. The infinite-radius
+flag bypasses the distance test.
 
 The sampled fog is the fog of interior surfaces only. The frame UBO's
 `fogColor`/`fogParams` carry it while the camera is in such a group, and

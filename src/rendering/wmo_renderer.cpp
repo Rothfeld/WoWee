@@ -4329,7 +4329,9 @@ bool WMORenderer::isInsideInteriorWMO(float glX, float glY, float glZ) const {
     return getInteriorLocation(glm::vec3(glX, glY, glZ)).has_value();
 }
 
-std::optional<WMOFogSample> WMORenderer::getFog(const glm::vec3& position, bool underwater) const {
+std::optional<WMOFogSample> WMORenderer::getFog(
+    const glm::vec3& position, bool underwater,
+    std::optional<WMOFogSample> outdoorFallback) const {
     const auto location = getInteriorLocation(position);
     if (!location) return std::nullopt;
     const auto instance = std::find_if(instances.begin(), instances.end(),
@@ -4344,7 +4346,8 @@ std::optional<WMOFogSample> WMORenderer::getFog(const glm::vec3& position, bool 
     // facades and far walls past its 417-yard end drew as flat teal shapes;
     // the original fogs them into Light 592's dark green (LightParams 604).
     if (!pipeline::wmoUsesLocalLighting(group.groupFlags)) return std::nullopt;
-    return sampleWMOFog(model.fogs, group.fogIndices, location->localPosition, underwater);
+    return sampleWMOFog(
+        model.fogs, group.fogIndices, location->localPosition, underwater, outdoorFallback);
 }
 
 namespace {

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "pipeline/wmo_loader.hpp"
+#include <algorithm>
 #include <array>
 #include <optional>
 #include <span>
@@ -9,25 +10,32 @@ namespace wowee::rendering {
 struct WMOFogSample {
     glm::vec3 color;
     float start, end;
+    float weight = 1.0f;
 };
 
 inline std::optional<WMOFogSample> sampleWMOFog(
     std::span<const pipeline::WMOFog> fogs, const std::array<uint8_t, 4>& indices,
-    const glm::vec3& position, bool underwater) {
-    if (indices[0] >= fogs.size()) return std::nullopt;
+    const glm::vec3& position, bool underwater,
+    std::optional<WMOFogSample> outdoorFallback = std::nullopt) {
+    if (fogs.empty() || indices[0] >= fogs.size()) return std::nullopt;
     const auto sample = [underwater](const pipeline::WMOFog& fog) {
         const float end = underwater ? fog.endDist2 : fog.endDist;
         return WMOFogSample{glm::vec3(underwater ? fog.color2 : fog.color1),
-            end * (underwater ? fog.startFactor2 : fog.startFactor), end};
+            end * (underwater ? fog.startFactor2 : fog.startFactor), end, 1.0f};
     };
     const auto& base = fogs[0];
-    if (base.largeRadius <= 0 && !(base.flags & 1)) return std::nullopt;
-    auto result = sample(base);
-    // Record zero provides the WMO default. Group refs select nearby local
-    // spheres, including refs whose radius does not reach the camera.
+    const bool hasBase = base.largeRadius > 0.0f || (base.flags & 1) != 0;
+    // Record zero provides the WMO default when authored (largeRadius > 0 or
+    // infinite-radius flag 0x1). When no global WMO fog was authored, the WMO
+    // compiler writes a zero-radius white stub in record zero (37 TBC WMOs -
+    // wailingcaverns.wmo, md_mushroomcave*, md_icecave*, mini-hive*,
+    // stormwind.wmo, darnassis.wmo, kl_diremaul.wmo - still carry authored
+    // local spheres in records 1..N). Group refs select nearby local spheres;
+    // without an authored record zero, spheres blend against outdoor Light.dbc
+    // fog across their falloff shell and yield nullopt outside their radii.
     // Repeated indices are padding, not additional weight.
-    float total = 0;
-    WMOFogSample local{glm::vec3(0), 0, 0};
+    float total = 0.0f;
+    WMOFogSample local{glm::vec3(0.0f), 0.0f, 0.0f, 0.0f};
     for (size_t i = 0; i < indices.size(); ++i) {
         if (indices[i] == 0 || indices[i] >= fogs.size()) continue;
         bool duplicate = false;
@@ -35,9 +43,9 @@ inline std::optional<WMOFogSample> sampleWMOFog(
         if (duplicate) continue;
         const auto& fog = fogs[indices[i]];
         const float distance = glm::distance(position, fog.position);
-        float weight = 0;
-        if (fog.flags & 1) weight = 1;
-        else if (distance <= fog.smallRadius) weight = 1;
+        float weight = 0.0f;
+        if (fog.flags & 1) weight = 1.0f;
+        else if (distance <= fog.smallRadius) weight = 1.0f;
         else if (fog.largeRadius > fog.smallRadius)
             weight = glm::clamp((fog.largeRadius - distance) /
                                 (fog.largeRadius - fog.smallRadius), 0.0f, 1.0f);
@@ -47,12 +55,26 @@ inline std::optional<WMOFogSample> sampleWMOFog(
         local.end += value.end * weight;
         total += weight;
     }
-    if (total > 0) {
-        const float blend = std::min(total, 1.0f);
-        result.color = glm::mix(result.color, local.color / total, blend);
-        result.start = glm::mix(result.start, local.start / total, blend);
-        result.end = glm::mix(result.end, local.end / total, blend);
+    if (!hasBase && total <= 0.0f) return std::nullopt;
+    const float blend = std::min(total, 1.0f);
+    if (hasBase) {
+        auto result = sample(base);
+        if (total > 0.0f) {
+            result.color = glm::mix(result.color, local.color / total, blend);
+            result.start = glm::mix(result.start, local.start / total, blend);
+            result.end = glm::mix(result.end, local.end / total, blend);
+        }
+        return result;
     }
-    return result;
+    WMOFogSample sphere{local.color / total, local.start / total, local.end / total, blend};
+    if (outdoorFallback && blend < 1.0f) {
+        return WMOFogSample{
+            glm::mix(outdoorFallback->color, sphere.color, blend),
+            glm::mix(outdoorFallback->start, sphere.start, blend),
+            glm::mix(outdoorFallback->end, sphere.end, blend),
+            1.0f,
+        };
+    }
+    return sphere;
 }
 }
