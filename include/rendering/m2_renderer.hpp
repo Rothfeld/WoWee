@@ -623,6 +623,23 @@ public:
     /// Replaces the beams drawn from the next frame on.
     void setChainStrips(std::vector<ChainStrip> strips) { chainStrips_ = std::move(strips); }
 
+    /// A SpellVisualKit CharProc == 8 weapon swing trail for one frame: an
+    /// untextured alpha-blended ribbon between world-space weapon blade
+    /// [base, tip] positions sampled over the swing.
+    struct WeaponTrailStrip {
+        struct Edge {
+            glm::vec3 base{0.0f};
+            glm::vec3 tip{0.0f};
+            float alpha = 0.0f;
+        };
+        glm::vec3 color{1.0f};
+        std::vector<Edge> edges;  // oldest -> newest
+    };
+    /// Replaces the weapon swing trails drawn from the next frame on.
+    void setWeaponTrailStrips(std::vector<WeaponTrailStrip> strips) {
+        weaponTrailStrips_ = std::move(strips);
+    }
+
     void setInstancePosition(uint32_t instanceId, const glm::vec3& position);
     /// WOWEE_M2_CENSUS: what a model is actually drawn at, said once each.
     void censusInstance(const M2Instance& instance);
@@ -1307,10 +1324,13 @@ private:
     };
     std::vector<RibbonDrawCall> ribbonDraws_;
     std::vector<ChainStrip> chainStrips_;
+    std::vector<WeaponTrailStrip> weaponTrailStrips_;
     /// Ribbon-layout descriptor set per chain texture path, from materialDescPool_
     /// (dropped with the pool's reset in clear()).
     std::unordered_map<std::string, VkDescriptorSet> chainTexSets_;
     VkDescriptorSet chainTextureSet(const std::string& path);
+    VkDescriptorSet whiteRibbonTexSet_ = VK_NULL_HANDLE;
+    VkDescriptorSet whiteRibbonTextureSet();
     void renderParticleMeshes(VkCommandBuffer cmd, VkDescriptorSet perFrameSet);
 
     // Particle group structures (reused each frame)

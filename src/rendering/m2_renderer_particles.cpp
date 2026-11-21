@@ -602,6 +602,7 @@ void M2Renderer::renderM2Ribbons(VkCommandBuffer cmd, VkDescriptorSet perFrameSe
         for (const auto& edges : inst.ribbonEdges) required += edges.size() * 2;
     }
     for (const auto& strip : chainStrips_) required += strip.spine.size() * 2;
+    for (const auto& strip : weaponTrailStrips_) required += strip.edges.size() * 2;
     if (required > ribbonVertexCapacity_[frame]) {
         const size_t capacity = std::max(required, ribbonVertexCapacity_[frame] * 2);
         VkBufferCreateInfo info{.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
@@ -771,6 +772,41 @@ void M2Renderer::renderM2Ribbons(VkCommandBuffer cmd, VkDescriptorSet perFrameSe
         }
     }
 
+    // SpellVisualKit CharProc == 8 weapon swing trails: untextured alpha-blended
+    // triangle strips connecting sampled world-space weapon blade [base, tip] edges.
+    if (!weaponTrailStrips_.empty()) {
+        const VkDescriptorSet whiteSet = whiteRibbonTextureSet();
+        if (whiteSet) {
+            for (const auto& strip : weaponTrailStrips_) {
+                if (strip.edges.size() < 2) continue;
+                const uint32_t firstVert = static_cast<uint32_t>(written);
+                for (const auto& edge : strip.edges) {
+                    assert(written + 2 <= ribbonVertexCapacity_[frame]);
+                    float* out0 = dst + written * 9;
+                    out0[0] = edge.base.x; out0[1] = edge.base.y; out0[2] = edge.base.z;
+                    out0[3] = strip.color.r; out0[4] = strip.color.g; out0[5] = strip.color.b;
+                    out0[6] = edge.alpha;
+                    out0[7] = 0.5f; out0[8] = 0.5f;
+                    ++written;
+
+                    float* out1 = dst + written * 9;
+                    out1[0] = edge.tip.x; out1[1] = edge.tip.y; out1[2] = edge.tip.z;
+                    out1[3] = strip.color.r; out1[4] = strip.color.g; out1[5] = strip.color.b;
+                    out1[6] = edge.alpha;
+                    out1[7] = 0.5f; out1[8] = 0.5f;
+                    ++written;
+                }
+                const uint32_t vertCount = static_cast<uint32_t>(written) - firstVert;
+                if (vertCount >= 4) {
+                    draws.push_back({.texSet = whiteSet, .pipeline = ribbonPipeline_,
+                                     .firstVertex = firstVert, .vertexCount = vertCount});
+                } else {
+                    written = firstVert;
+                }
+            }
+        }
+    }
+
     // Periodic diagnostic: spell ribbon draw count
     {
         static uint32_t ribbonDiagFrame_ = 0;
@@ -852,6 +888,31 @@ VkDescriptorSet M2Renderer::chainTextureSet(const std::string& path) {
     }
     chainTexSets_[path] = set;  // a failure is reported once, not every frame
     return set;
+}
+
+VkDescriptorSet M2Renderer::whiteRibbonTextureSet() {
+    if (whiteRibbonTexSet_ != VK_NULL_HANDLE) return whiteRibbonTexSet_;
+    if (!whiteTexture_ || !whiteTexture_->isValid() || !particleTexLayout_ || !materialDescPool_) {
+        return VK_NULL_HANDLE;
+    }
+    VkDescriptorSetAllocateInfo ai{.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+    ai.descriptorPool = materialDescPool_;
+    ai.descriptorSetCount = 1;
+    ai.pSetLayouts = &particleTexLayout_;
+    if (vkAllocateDescriptorSets(vkCtx_->getDevice(), &ai, &whiteRibbonTexSet_) != VK_SUCCESS) {
+        LOG_ERROR("Weapon trail white descriptor set allocation failed");
+        whiteRibbonTexSet_ = VK_NULL_HANDLE;
+        return VK_NULL_HANDLE;
+    }
+    const VkDescriptorImageInfo image = whiteTexture_->descriptorInfo();
+    VkWriteDescriptorSet write{.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+    write.dstSet = whiteRibbonTexSet_;
+    write.dstBinding = 0;
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    write.pImageInfo = &image;
+    vkUpdateDescriptorSets(vkCtx_->getDevice(), 1, &write, 0, nullptr);
+    return whiteRibbonTexSet_;
 }
 
 void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,

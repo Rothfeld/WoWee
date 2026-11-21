@@ -541,6 +541,7 @@ void M2Renderer::clear() {
         if (materialDescPool_) {
             vkResetDescriptorPool(device, materialDescPool_, 0);
             chainTexSets_.clear();
+            whiteRibbonTexSet_ = VK_NULL_HANDLE;
             // Re-allocate the glow texture descriptor set (pre-allocated during init,
             // invalidated by pool reset).
             // Cleared before the test, not inside it: the pool reset above

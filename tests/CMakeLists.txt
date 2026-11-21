@@ -3231,6 +3231,22 @@ add_test(NAME tbc_audio_coverage COMMAND test_tbc_audio_coverage)
 set_tests_properties(tbc_audio_coverage PROPERTIES SKIP_RETURN_CODE 4)
 register_test_target(test_tbc_audio_coverage)
 
+# SpellVisualKit CharProc == 8 weapon swing trail parsing and ribbon decay tests
+add_executable(test_weapon_trail
+    test_weapon_trail.cpp
+    ${CMAKE_SOURCE_DIR}/src/rendering/weapon_trail.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/dbc_loader.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/dbc_layout.cpp
+    ${CMAKE_SOURCE_DIR}/src/core/logger.cpp
+)
+target_include_directories(test_weapon_trail PRIVATE ${TEST_INCLUDE_DIRS})
+target_include_directories(test_weapon_trail SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
+target_link_libraries(test_weapon_trail PRIVATE catch2_main)
+wowee_test_link_glm(test_weapon_trail)
+add_test(NAME weapon_trail COMMAND test_weapon_trail)
+set_tests_properties(weapon_trail PROPERTIES SKIP_RETURN_CODE 4)
+register_test_target(test_weapon_trail)
+
 get_property(ALL_TEST_TARGETS GLOBAL PROPERTY WOWEE_ALL_TEST_TARGETS)
 list(LENGTH ALL_TEST_TARGETS _wowee_test_target_count)
 message(STATUS "Test targets registered: ${_wowee_test_target_count}")

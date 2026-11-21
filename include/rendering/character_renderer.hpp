@@ -391,6 +391,16 @@ public:
     bool getBonePointTransform(uint32_t instanceId, uint16_t boneIndex,
                                const glm::vec3& localOffset, glm::mat4& outTransform) const;
 
+    /// World-space [base, tip] blade span of one currently drawn melee weapon.
+    struct DrawnWeaponSpan {
+        uint32_t weaponInstanceId = 0;
+        glm::vec3 baseWorld{0.0f};
+        glm::vec3 tipWorld{0.0f};
+    };
+    /// Returns world-space blade spans for all visible, drawn melee weapons
+    /// currently held by charInstanceId (main-hand and/or off-hand).
+    std::vector<DrawnWeaponSpan> getDrawnMeleeWeaponSpans(uint32_t charInstanceId) const;
+
     [[nodiscard]] size_t getInstanceCount() const { return instances.size(); }
 
     // Normal mapping / POM settings

@@ -29,6 +29,7 @@
 #include "rendering/m2_renderer.hpp"
 #include "rendering/visual_mesh_pick.hpp"
 #include "rendering/animation/gesture_weapons.hpp"
+#include "rendering/weapon_trail.hpp"
 #include "rendering/collision_geometry.hpp"
 #include "rendering/footprint_renderer.hpp"
 #include "rendering/unit_pick.hpp"
@@ -3025,6 +3026,34 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos,
             }
         }
     }
+}
+std::vector<CharacterRenderer::DrawnWeaponSpan>
+CharacterRenderer::getDrawnMeleeWeaponSpans(uint32_t charInstanceId) const {
+    std::vector<DrawnWeaponSpan> result;
+    const auto it = instances.find(charInstanceId);
+    if (it == instances.end()) return result;
+    const auto& inst = it->second;
+    if (!inst.visible || inst.replaced || inst.roomHidden) return result;
+    for (const auto& wa : inst.weaponAttachments) {
+        // Only hand-held melee weapons (attachment 1=RightHand, 2=LeftHand;
+        // exclude ranged weapons heldSheathState==2, shields attachment 0,
+        // helms/shoulders).
+        if (wa.attachmentId != 1 && wa.attachmentId != 2) continue;
+        if (wa.heldSheathState == 2) continue;
+        if (weaponSheathed(inst, wa)) continue;
+        const auto weapIt = instances.find(wa.weaponInstanceId);
+        if (weapIt == instances.end()) continue;
+        const auto& weap = weapIt->second;
+        if (!weap.visible || !weap.hasOverrideModelMatrix) continue;
+        const auto modelIt = models.find(weap.modelId);
+        if (modelIt == models.end()) continue;
+        const auto [baseLocal, tipLocal] =
+            weaponBladeLocalSpan(modelIt->second.visualBoundMin, modelIt->second.visualBoundMax);
+        const glm::vec3 baseWorld = glm::vec3(weap.overrideModelMatrix * glm::vec4(baseLocal, 1.0f));
+        const glm::vec3 tipWorld = glm::vec3(weap.overrideModelMatrix * glm::vec4(tipLocal, 1.0f));
+        result.push_back({wa.weaponInstanceId, baseWorld, tipWorld});
+    }
+    return result;
 }
 uint32_t CharacterRenderer::gatherAuthoredM2Lights(const glm::vec3& centerPos,
                                                    glm::vec4* outPosRadius,

@@ -167,12 +167,15 @@ void SpellVisualSystem::loadSpellVisualDbc() {
     // Load SpellVisualKit.dbc - every effect slot, with the attachment the
     // slot names.
     auto kitDbc = cachedAssetManager_->loadDBC("SpellVisualKit.dbc");
-    // CharProc0-3 and the first parameter of each (CharParamZero0-3).
-    uint32_t procFields[4], procParamFields[4], procParamOneFields[4];
+    // CharProc0-3 and their parameters (CharParamZero0-3..CharParamThree0-3).
+    uint32_t procFields[4], procParamFields[4], procParamOneFields[4],
+        procParamTwoFields[4], procParamThreeFields[4];
     for (int k = 0; k < 4; ++k) {
         procFields[k] = kitLayout ? kitLayout->field("CharProc" + std::to_string(k)) : 0xFFFFFFFFu;
         procParamFields[k] = kitLayout ? kitLayout->field("CharParamZero" + std::to_string(k)) : 0xFFFFFFFFu;
         procParamOneFields[k] = kitLayout ? kitLayout->field("CharParamOne" + std::to_string(k)) : 0xFFFFFFFFu;
+        procParamTwoFields[k] = kitLayout ? kitLayout->tryField("CharParamTwo" + std::to_string(k)) : 0xFFFFFFFFu;
+        procParamThreeFields[k] = kitLayout ? kitLayout->tryField("CharParamThree" + std::to_string(k)) : 0xFFFFFFFFu;
     }
     if (kitDbc && kitDbc->isLoaded()) {
         uint32_t fc = kitDbc->getFieldCount();
@@ -264,6 +267,20 @@ void SpellVisualSystem::loadSpellVisualDbc() {
                     assert(std::isfinite(perSecond) && perSecond > 0.0f);
                     kitAreaImpacts_[kitId] = {.path = kAreaImpactModels[static_cast<size_t>(param)],
                                               .perSecond = perSecond};
+                } else if (procedure == kCharProcWeaponTrail) {
+                    if (procParamOneFields[k] >= fc || procParamTwoFields[k] >= fc || procParamThreeFields[k] >= fc) {
+                        static bool said = false;
+                        if (!said) LOG_WARNING("SpellVisual: SpellVisualKit layout lacks CharParamOne/Two/Three", k,
+                                               "; weapon swing trails (CharProc 8) are not drawn");
+                        said = true;
+                        continue;
+                    }
+                    const float p1 = kitDbc->getFloat(i, procParamOneFields[k]);
+                    const float p2 = kitDbc->getFloat(i, procParamTwoFields[k]);
+                    const float p3 = kitDbc->getFloat(i, procParamThreeFields[k]);
+                    if (const auto spec = parseWeaponTrailCharProc(param, p1, p2, p3)) {
+                        kitWeaponTrails_[kitId] = *spec;
+                    }
                 }
             }
         }
@@ -489,6 +506,7 @@ void SpellVisualSystem::playSpellVisualPrecast(uint32_t visualId, const glm::vec
         activePrecastSounds_[attachInstanceId] = snd;
     }
     spawnKitEffects(kit->second, worldPosition, attachInstanceId, duration, KitStage::Precast);
+    startKitWeaponTrail(kit->second, attachInstanceId);
 }
 
 void SpellVisualSystem::delayPrecastVisuals(uint32_t attachInstanceId, uint32_t delayMs) {
@@ -816,6 +834,7 @@ void SpellVisualSystem::playSpellVisual(uint32_t visualId, const glm::vec3& worl
     playKitSound(kit->second, worldPosition, attachInstanceId, /*stoppable=*/false);
     playKitShake(kit->second, worldPosition);
     spawnKitEffects(kit->second, worldPosition, attachInstanceId, -1.0f, KitStage::Cast);
+    startKitWeaponTrail(kit->second, attachInstanceId);
 }
 
 uint32_t SpellVisualSystem::kitAnimation(const std::unordered_map<uint32_t, uint32_t>& kits,
@@ -870,6 +889,7 @@ void SpellVisualSystem::startChannelVisual(uint32_t visualId, const glm::vec3& p
         : durationMs / 1000.0f;
     unitChannelVisuals_[attachInstanceId] = {visualId, remaining};
     startKitLight(kit->second, attachInstanceId);
+    startKitWeaponTrail(kit->second, attachInstanceId);
     applyCharacterProcedures(attachInstanceId);
     if (const uint32_t snd = playKitSound(kit->second, position, attachInstanceId, /*stoppable=*/true);
         snd != 0) {
@@ -951,6 +971,7 @@ void SpellVisualSystem::syncAuraVisuals(uint32_t attachInstanceId,
         if (std::find(previous.begin(), previous.end(), visual) != previous.end()) continue;
         if (const auto kit = stateKits_.find(visual); kit != stateKits_.end() && kit->second) {
             startKitLight(kit->second, attachInstanceId);
+            startKitWeaponTrail(kit->second, attachInstanceId);
             playKitSound(kit->second, position, attachInstanceId, /*stoppable=*/false);
         }
     }
@@ -1419,6 +1440,7 @@ void SpellVisualSystem::playCastKit(uint32_t visualId, const glm::vec3& casterPo
     playKitSound(kit->second, casterPosition, casterInstanceId, /*stoppable=*/false);
     playKitShake(kit->second, casterPosition);
     const float models = spawnKitEffects(kit->second, casterPosition, casterInstanceId, -1.0f, KitStage::Cast);
+    startKitWeaponTrail(kit->second, casterInstanceId);
     const auto chainId = kitChainEffects_.find(kit->second);
     if (chainId == kitChainEffects_.end() || ends.empty()) return;
     const bool hasModels = kitEffects_.count(kit->second) != 0;
@@ -1514,6 +1536,7 @@ void SpellVisualSystem::playSpellVisualKit(uint32_t kitId, const glm::vec3& worl
     }
     LOG_DEBUG("SpellVisualKit: id=", kitId, " animation=", animation->second);
     startKitLight(kitId, attachInstanceId);
+    startKitWeaponTrail(kitId, attachInstanceId);
     playKitSound(kitId, worldPosition, attachInstanceId, /*stoppable=*/false);
     playKitShake(kitId, worldPosition);
     spawnKitEffects(kitId, worldPosition, attachInstanceId, -1.0f, KitStage::Other);
@@ -1528,6 +1551,108 @@ void SpellVisualSystem::startKitLight(uint32_t kitId, uint32_t attachInstanceId)
     characters->startInstanceKitLight(attachInstanceId, light->second.color, light->second.seconds);
     LOG_DEBUG("Kit light: owner=", attachInstanceId, " kit=", kitId, " color=(", light->second.color.r, ",",
               light->second.color.g, ",", light->second.color.b, ") seconds=", light->second.seconds);
+}
+
+void SpellVisualSystem::startKitWeaponTrail(uint32_t kitId, uint32_t attachInstanceId) {
+    if (!attachInstanceId) return;
+    const auto trailIt = kitWeaponTrails_.find(kitId);
+    if (trailIt == kitWeaponTrails_.end()) return;
+    const auto& spec = trailIt->second;
+
+    ActiveUnitWeaponTrail entry;
+    entry.ownerInstanceId = attachInstanceId;
+    entry.spec = spec;
+    entry.elapsed = 0.0f;
+
+    if (auto* characters = renderer_ ? renderer_->getCharacterRenderer() : nullptr) {
+        const auto spans = characters->getDrawnMeleeWeaponSpans(attachInstanceId);
+        for (const auto& span : spans) {
+            WeaponTrailChannel ch;
+            ch.weaponInstanceId = span.weaponInstanceId;
+            ch.edges.push_back({span.baseWorld, span.tipWorld, spec.alpha});
+            entry.channels.push_back(std::move(ch));
+        }
+    }
+
+    auto existing = std::find_if(activeWeaponTrails_.begin(), activeWeaponTrails_.end(),
+                                 [&](const ActiveUnitWeaponTrail& t) { return t.ownerInstanceId == attachInstanceId; });
+    if (existing != activeWeaponTrails_.end()) {
+        *existing = std::move(entry);
+    } else {
+        activeWeaponTrails_.push_back(std::move(entry));
+    }
+    LOG_DEBUG("Weapon trail: owner=", attachInstanceId, " kit=", kitId,
+              " color=(", spec.color.r, ",", spec.color.g, ",", spec.color.b,
+              ") alpha=", spec.alpha, " fadeOutRate=", spec.fadeOutRate,
+              " duration=", spec.durationSec, "s");
+}
+
+void SpellVisualSystem::updateWeaponTrails(float deltaTime) {
+    if (!m2Renderer_) return;
+    if (activeWeaponTrails_.empty()) {
+        m2Renderer_->setWeaponTrailStrips({});
+        return;
+    }
+
+    auto* characters = renderer_ ? renderer_->getCharacterRenderer() : nullptr;
+    std::vector<M2Renderer::WeaponTrailStrip> strips;
+
+    for (auto it = activeWeaponTrails_.begin(); it != activeWeaponTrails_.end();) {
+        it->elapsed += deltaTime;
+        const bool emitting = it->elapsed < it->spec.durationSec;
+
+        std::vector<CharacterRenderer::DrawnWeaponSpan> spans;
+        if (emitting && characters) {
+            spans = characters->getDrawnMeleeWeaponSpans(it->ownerInstanceId);
+            for (const auto& span : spans) {
+                const bool known = std::any_of(it->channels.begin(), it->channels.end(),
+                                               [&](const WeaponTrailChannel& ch) {
+                                                   return ch.weaponInstanceId == span.weaponInstanceId;
+                                               });
+                if (!known) {
+                    WeaponTrailChannel ch;
+                    ch.weaponInstanceId = span.weaponInstanceId;
+                    it->channels.push_back(std::move(ch));
+                }
+            }
+        }
+
+        for (auto chIt = it->channels.begin(); chIt != it->channels.end();) {
+            std::optional<std::pair<glm::vec3, glm::vec3>> bladeWorld;
+            if (emitting) {
+                for (const auto& span : spans) {
+                    if (span.weaponInstanceId == chIt->weaponInstanceId) {
+                        bladeWorld = std::make_pair(span.baseWorld, span.tipWorld);
+                        break;
+                    }
+                }
+            }
+            stepWeaponTrailChannel(*chIt, it->spec, deltaTime, emitting, bladeWorld);
+
+            if (!emitting && isWeaponTrailChannelDead(*chIt)) {
+                chIt = it->channels.erase(chIt);
+                continue;
+            }
+            if (chIt->edges.size() >= 2) {
+                M2Renderer::WeaponTrailStrip strip;
+                strip.color = it->spec.color;
+                strip.edges.reserve(chIt->edges.size());
+                for (const auto& e : chIt->edges) {
+                    strip.edges.push_back({e.base, e.tip, e.alpha});
+                }
+                strips.push_back(std::move(strip));
+            }
+            ++chIt;
+        }
+
+        if (!emitting && it->channels.empty()) {
+            it = activeWeaponTrails_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+    m2Renderer_->setWeaponTrailStrips(std::move(strips));
 }
 
 // Flamestrike 2120: visual 10383, PersistentAreaKit 9357 BaseEffect
@@ -2127,6 +2252,7 @@ void SpellVisualSystem::update(float deltaTime) {
             }
         }
     }
+    updateWeaponTrails(deltaTime);
 }
 
 // Death is not an interrupt: build 8606, Scholomance Dark Summoner killed
@@ -2160,6 +2286,9 @@ void SpellVisualSystem::removeCasterStages(uint32_t attachInstanceId) {
     });
     if (unitChannelVisuals_.erase(attachInstanceId))
         applyCharacterProcedures(attachInstanceId);
+    std::erase_if(activeWeaponTrails_, [&](const ActiveUnitWeaponTrail& trail) {
+        return trail.ownerInstanceId == attachInstanceId;
+    });
 }
 
 void SpellVisualSystem::retireEffect(const SpellVisualInstance& effect) {
@@ -2282,7 +2411,11 @@ void SpellVisualSystem::reset() {
     heldChannelKits_.clear();
     endedChannels_.clear();
     drainingCasterEffects_.clear();
-    if (m2Renderer_) m2Renderer_->setChainStrips({});
+    activeWeaponTrails_.clear();
+    if (m2Renderer_) {
+        m2Renderer_->setChainStrips({});
+        m2Renderer_->setWeaponTrailStrips({});
+    }
     // Clear lingering spell visual instances from the previous map/combat session.
     // Without this, old effects could remain visible after teleport or map change.
     for (auto& sv : activeSpellVisuals_) {
