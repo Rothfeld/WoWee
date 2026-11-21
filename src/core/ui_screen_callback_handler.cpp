@@ -91,6 +91,7 @@ void UIScreenCallbackHandler::setupCallbacks() {
                 if (r.name == realmName && r.address == realmAddress) {
                     realmId = r.id;
                     realmBuild = r.build;
+                    gameHandler_.setRealmType(r.icon);
                     break;
                 }
             }

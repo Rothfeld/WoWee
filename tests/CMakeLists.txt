@@ -751,6 +751,28 @@ target_link_libraries(test_wmo_doodad_rooms PRIVATE catch2_main)
 add_test(NAME wmo_doodad_rooms COMMAND test_wmo_doodad_rooms)
 register_test_target(test_wmo_doodad_rooms)
 
+# ── test_wmo_doodad_sets ────────────────────────────────────
+add_executable(test_wmo_doodad_sets
+    test_wmo_doodad_sets.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/wmo_loader.cpp
+    ${CMAKE_SOURCE_DIR}/src/core/logger.cpp
+)
+target_include_directories(test_wmo_doodad_sets PRIVATE ${TEST_INCLUDE_DIRS})
+target_include_directories(test_wmo_doodad_sets SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
+target_link_libraries(test_wmo_doodad_sets PRIVATE catch2_main)
+add_test(NAME wmo_doodad_sets COMMAND test_wmo_doodad_sets)
+register_test_target(test_wmo_doodad_sets)
+
+# ── test_zone_pvp ───────────────────────────────────────────
+add_executable(test_zone_pvp
+    test_zone_pvp.cpp
+)
+target_include_directories(test_zone_pvp PRIVATE ${TEST_INCLUDE_DIRS})
+target_include_directories(test_zone_pvp SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
+target_link_libraries(test_zone_pvp PRIVATE catch2_main)
+add_test(NAME zone_pvp COMMAND test_zone_pvp)
+register_test_target(test_zone_pvp)
+
 # ── test_wmo_portal_visibility ──────────────────────────────
 add_executable(test_wmo_portal_visibility
     test_wmo_portal_visibility.cpp

@@ -455,12 +455,11 @@ void WorldLoader::loadMapGeometry(uint32_t mapId, const std::string& mapName,
                             LOG_DEBUG("  Player inside MOHD bbox: ", inside ? "YES" : "NO");
                         }
 
-                        // Load doodads from the specified doodad set
+                        // Load doodads from set 0 (Set_$DefaultGlobal) + placement doodad set
                         auto* m2Renderer = renderer_->getM2Renderer();
                         if (m2Renderer && !wmoModel.doodadSets.empty() && !wmoModel.doodads.empty()) {
-                            uint32_t setIdx = std::min(static_cast<uint32_t>(wdtInfo.doodadSet),
-                                                       static_cast<uint32_t>(wmoModel.doodadSets.size() - 1));
-                            const auto& doodadSet = wmoModel.doodadSets[setIdx];
+                            const auto activeIndices = pipeline::selectWmoDoodadIndices(
+                                wmoModel.doodadSets, wmoModel.doodads.size(), wdtInfo.doodadSet);
 
                             showProgress("Loading instance doodads...", 0.75f);
                             glm::mat4 wmoMatrix(1.0f);
@@ -470,9 +469,7 @@ void WorldLoader::loadMapGeometry(uint32_t mapId, const std::string& mapName,
                             wmoMatrix = glm::rotate(wmoMatrix, wmoRot.x, glm::vec3(1, 0, 0));
 
                             uint32_t loadedDoodads = 0;
-                            for (uint32_t di = 0; di < doodadSet.count; di++) {
-                                uint32_t doodadIdx = doodadSet.startIndex + di;
-                                if (doodadIdx >= wmoModel.doodads.size()) break;
+                            for (uint32_t doodadIdx : activeIndices) {
 
                                 const auto& doodad = wmoModel.doodads[doodadIdx];
                                 auto nameIt = wmoModel.doodadNames.find(doodad.nameIndex);

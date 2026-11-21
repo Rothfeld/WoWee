@@ -192,7 +192,8 @@ void buildFactionHostilityMap(pipeline::AssetManager& assetManager, GameHandler&
     gameHandler.setFactionFriendlyMap(std::move(friendlyMap));
     gameHandler.setFactionHostileMap(std::move(factionMap));
     gameHandler.setFactionObjectReactionMap(std::move(objectReaction));
-    gameHandler.setAppliedPlayerFactionTemplate(playerFtId);
+    gameHandler.setAppliedPlayerFactionTemplate(
+        playerFtId, playerTemplate.friendGroup, playerTemplate.enemyGroup);
     LOG_INFO("Faction hostility for race ", static_cast<int>(playerRace), " (FT ", playerFtId, "): ",
         hostileCount, "/", ftDbc->getRecordCount(), " hostile");
 }

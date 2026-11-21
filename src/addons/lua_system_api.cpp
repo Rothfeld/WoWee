@@ -6919,11 +6919,11 @@ void registerSystemLuaAPI(lua_State* L) {
             }
             uint32_t areaId = 0;
             if (auto* svc = getLuaServices(L); svc && svc->getLiveAreaId) areaId = svc->getLiveAreaId();
-            const auto [type, faction] = gh->getZonePvpInfo(zoneId, areaId);
-            if (type.empty()) { lua_pushnil(L); return 1; }
-            lua_pushstring(L, type.c_str());
-            lua_pushnil(L);
-            if (faction.empty()) lua_pushnil(L); else lua_pushstring(L, faction.c_str());
+            const auto info = gh->getZonePvpInfo(zoneId, areaId);
+            if (info.pvpType.empty()) { lua_pushnil(L); return 1; }
+            lua_pushstring(L, info.pvpType.c_str());
+            if (info.isSubZonePvP) lua_pushnumber(L, 1); else lua_pushnil(L);
+            if (info.factionName.empty()) lua_pushnil(L); else lua_pushstring(L, info.factionName.c_str());
             return 3;
         }},
                 // The button of the click handler running now; nil outside

@@ -1523,14 +1523,10 @@ void EntitySpawner::spawnOnlineGameObject(uint64_t guid, uint32_t entry, uint32_
             LOG_DEBUG("Spawned gameobject WMO: guid=0x", std::hex, guid, std::dec,
                      " displayId=", displayId, " at (", x, ", ", y, ", ", z, ")");
 
-            // Spawn transport WMO doodads (chairs, furniture, etc.) as child M2 instances
-            bool isTransport = false;
-            if (gameHandler_) {
-                std::string lowerModelPath = modelPath;
-                std::transform(lowerModelPath.begin(), lowerModelPath.end(), lowerModelPath.begin(),
-                               [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-                isTransport = (lowerModelPath.find("transport") != std::string::npos);
-            }
+            // Spawn transport WMO doodads (chairs, furniture, etc.) as child M2 instances.
+            // Match the async path: transport status comes from the server's
+            // GAMEOBJECT_TYPE_TRANSPORT / MO_TRANSPORT classification, not the path name.
+            const bool isTransport = gameHandler_ && gameHandler_->isTransportGuid(guid);
 
             auto* m2Renderer = renderer_->getM2Renderer();
             if (m2Renderer && isTransport) {

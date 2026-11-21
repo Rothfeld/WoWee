@@ -252,6 +252,39 @@ struct WMOModel {
     }
 };
 
+/// Select the active MODD indices for a WMO placement/object from its MODS
+/// doodad sets. In TBC 2.4.3, set 0 (`Set_$DefaultGlobal`) is always active
+/// when present, plus `activeSetIndex` when `activeSetIndex > 0` and in range.
+/// Inactive sets are excluded; duplicate and out-of-bounds indices are dropped.
+inline std::vector<uint32_t> selectWmoDoodadIndices(
+    const std::vector<WMODoodadSet>& doodadSets,
+    size_t totalDoodads,
+    uint16_t activeSetIndex = 0) {
+    std::vector<uint32_t> indices;
+    if (doodadSets.empty() || totalDoodads == 0) return indices;
+
+    std::vector<uint32_t> setsToLoad;
+    setsToLoad.push_back(0);
+    if (activeSetIndex > 0 && activeSetIndex < doodadSets.size()) {
+        setsToLoad.push_back(activeSetIndex);
+    }
+
+    std::vector<uint8_t> seen(totalDoodads, 0);
+    for (uint32_t setIdx : setsToLoad) {
+        const auto& set = doodadSets[setIdx];
+        for (uint32_t di = 0; di < set.count; ++di) {
+            const uint64_t idx64 = static_cast<uint64_t>(set.startIndex) + di;
+            if (idx64 >= totalDoodads) break;
+            const uint32_t idx = static_cast<uint32_t>(idx64);
+            if (!seen[idx]) {
+                seen[idx] = 1;
+                indices.push_back(idx);
+            }
+        }
+    }
+    return indices;
+}
+
 class WMOLoader {
 public:
     /**

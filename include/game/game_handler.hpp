@@ -24,6 +24,7 @@
 #include "game/entity_controller.hpp"
 #include "game/game_object_lock.hpp"
 #include "game/game_services.hpp"
+#include "game/zone_pvp.hpp"
 #include "network/packet.hpp"
 #include "core/logger.hpp"
 #include <glm/glm.hpp>
@@ -302,6 +303,10 @@ public:
     /// realmName CVar answer with it.
     void setRealmName(std::string name) { realmName_ = std::move(name); }
     const std::string& getRealmName() const { return realmName_; }
+    /// Realm icon from the auth realm list (0=Normal, 1=PvP, 4=Normal, 6=RP, 8=RP-PvP).
+    void setRealmType(uint8_t icon) { realmType_ = icon; }
+    uint8_t getRealmType() const { return realmType_; }
+    bool isPvpRealm() const { return isPvpRealmIcon(realmType_); }
 
     /**
      * Get current player movement info
@@ -1849,8 +1854,13 @@ public:
     /// maps, where an unknown template counts as hostile.
     void registerFactionMapBuilder(PlayerFactionTemplateCallback cb, uint32_t startingTemplate);
     /// The template the faction maps were built for.
-    void setAppliedPlayerFactionTemplate(uint32_t factionTemplateId) {
+    void setAppliedPlayerFactionTemplate(uint32_t factionTemplateId,
+                                         uint32_t friendGroupMask = 0,
+                                         uint32_t hostileGroupMask = 0) {
         appliedPlayerFactionTemplate_ = factionTemplateId;
+        playerFriendGroupMask_ = friendGroupMask;
+        playerHostileGroupMask_ = hostileGroupMask;
+        hasPlayerFactionMasks_ = (factionTemplateId != 0);
     }
     /// The player's UNIT_FIELD_FACTIONTEMPLATE arrived or changed: rebuild the
     /// maps for it and re-judge every unit.
@@ -4643,36 +4653,33 @@ public:
         return it != areaPvpCache_.end() && (it->second.flags & kAreaFlagCapital) != 0;
     }
 
-    std::pair<std::string, std::string> getZonePvpInfo(uint32_t zoneId, uint32_t areaId = 0) const {
+    ZonePvpResult getZonePvpInfo(uint32_t zoneId, uint32_t areaId = 0) const {
         (void)getAreaName(zoneId);
         auto it = areaPvpCache_.find(zoneId);
         if (it == areaPvpCache_.end()) return {};
-        constexpr uint32_t kAreaFlagArena     = 0x00000080;
-        constexpr uint32_t kAreaFlagSanctuary = 0x00000800;
+
+        ZonePvpInput in;
+        in.zoneFlags = it->second.flags;
+        in.zoneTeam = it->second.team;
+        in.isPvpRealm = isPvpRealm();
+
         if (areaId != 0 && areaId != zoneId) {
             (void)getAreaName(areaId);
             if (auto area = areaPvpCache_.find(areaId); area != areaPvpCache_.end()) {
-                if (area->second.flags & kAreaFlagSanctuary) return {"sanctuary", ""};
-                if (area->second.flags & kAreaFlagArena)     return {"arena", ""};
+                in.areaFlags = area->second.flags;
+                in.hasSubZone = true;
             }
         }
-        // AreaTable team: 2 Alliance, 4 Horde, 0 contested. In the TBC data
-        // all 137 team-0 zones are the contested ones (Duskwood, Wetlands,
-        // Swamp of Sorrows, The Temple of Atal'Hakkar), whose title native
-        // draws in the contested orange. The one team-6 zone is Shattrath,
-        // already a sanctuary.
-        constexpr uint32_t kTeamContested = 0, kTeamAlly = 2, kTeamHorde = 4, kTeamAny = 6;
-        if (it->second.flags & kAreaFlagSanctuary) return {"sanctuary", ""};
-        if (it->second.flags & kAreaFlagArena)     return {"arena", ""};
-        const bool alliance = isPlayerAlliance();
-        switch (it->second.team) {
-            case kTeamContested:
-            case kTeamAny:   return {"contested", ""};
-            case kTeamAlly:  return {alliance ? "friendly" : "hostile", "Alliance"};
-            case kTeamHorde: return {alliance ? "hostile" : "friendly", "Horde"};
+
+        if (hasPlayerFactionMasks_) {
+            in.playerFriendMask = playerFriendGroupMask_;
+            in.playerHostileMask = playerHostileGroupMask_;
+        } else {
+            const bool alliance = isPlayerAlliance();
+            in.playerFriendMask = alliance ? kAreaTeamAlliance : kAreaTeamHorde;
+            in.playerHostileMask = alliance ? kAreaTeamHorde : kAreaTeamAlliance;
         }
-        assert(false && "AreaTable team outside 0/2/4/6");
-        return {};
+        return resolveZonePvpInfo(in);
     }
     struct OnlineItemInfo {
         uint32_t entry = 0;
@@ -5407,6 +5414,10 @@ private:
     // Faction hostility lookup (populated from FactionTemplate.dbc)
     PlayerFactionTemplateCallback playerFactionTemplateCallback_;
     uint32_t appliedPlayerFactionTemplate_ = 0;
+    uint32_t playerFriendGroupMask_ = 0;
+    uint32_t playerHostileGroupMask_ = 0;
+    bool     hasPlayerFactionMasks_ = false;
+    uint8_t  realmType_ = 1;  // Default PvP until realm selection sets realmlist.icon
     std::unordered_map<uint32_t, bool> factionHostileMap_;
     std::unordered_map<uint32_t, bool> factionFriendlyMap_;
     std::unordered_map<uint32_t, int> factionObjectReactionMap_;

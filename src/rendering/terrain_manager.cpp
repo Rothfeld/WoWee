@@ -750,18 +750,10 @@ std::shared_ptr<PendingTile> TerrainManager::prepareTile(int x, int y) {
                     wmoMatrix = glm::rotate(wmoMatrix, rot.x, glm::vec3(1, 0, 0));
 
                     // Load doodads from set 0 (global) + placement-specific set
-                    std::vector<uint32_t> setsToLoad = {0};
-                    if (placement.doodadSet > 0 && placement.doodadSet < wmoModel.doodadSets.size()) {
-                        setsToLoad.push_back(placement.doodadSet);
-                    }
-                    std::unordered_set<uint32_t> loadedDoodadIndices;
+                    const auto activeIndices = pipeline::selectWmoDoodadIndices(
+                        wmoModel.doodadSets, wmoModel.doodads.size(), placement.doodadSet);
                     std::unordered_set<uint32_t> wmoPreparedModelIds;  // within-WMO model dedup
-                    for (uint32_t setIdx : setsToLoad) {
-                        const auto& doodadSet = wmoModel.doodadSets[setIdx];
-                    for (uint32_t di = 0; di < doodadSet.count; di++) {
-                        uint32_t doodadIdx = doodadSet.startIndex + di;
-                        if (doodadIdx >= wmoModel.doodads.size()) break;
-                        if (!loadedDoodadIndices.insert(doodadIdx).second) continue;
+                    for (uint32_t doodadIdx : activeIndices) {
 
                         const auto& doodad = wmoModel.doodads[doodadIdx];
                         auto nameIt = wmoModel.doodadNames.find(doodad.nameIndex);
@@ -875,7 +867,6 @@ std::shared_ptr<PendingTile> TerrainManager::prepareTile(int x, int y) {
                         doodadReady.wmoUniqueId = placement.uniqueId;
                         doodadReady.rooms = pipeline::wmoDoodadRooms(wmoModel, doodadIdx);
                         pending->wmoDoodads.push_back(std::move(doodadReady));
-                    }
                     }
                 }
 
