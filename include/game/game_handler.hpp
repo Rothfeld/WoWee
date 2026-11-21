@@ -2052,8 +2052,14 @@ public:
     }
 
     uint8_t getPlayerClass() const {
-        const Character* ch = getActiveCharacter();
-        return ch ? static_cast<uint8_t>(ch->characterClass) : 0;
+        if (const Character* ch = getActiveCharacter()) return static_cast<uint8_t>(ch->characterClass);
+        const uint16_t idx = fieldIndex(UF::UNIT_FIELD_BYTES_0);
+        if (idx != 0xFFFF) {
+            if (auto it = lastPlayerFields_.find(idx); it != lastPlayerFields_.end()) {
+                return static_cast<uint8_t>((it->second >> 8) & 0xFFu);
+            }
+        }
+        return 0;
     }
     uint8_t getPlayerRace() const {
         if (const Character* ch = getActiveCharacter()) return static_cast<uint8_t>(ch->race);

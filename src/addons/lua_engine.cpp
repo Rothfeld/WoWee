@@ -2615,6 +2615,9 @@ bool equippedItemMet(game::GameHandler* gh, int32_t itemClass, uint32_t mask, ui
     const auto matches = [&](game::EquipSlot slot) {
         const auto& equipped = gh->getInventory().getEquipSlot(slot);
         if (equipped.empty()) return false;
+        // Broken equipment (durability 0 of a nonzero max) does not satisfy
+        // weapon/armor spell requirements in TBC 2.4.3.
+        if (equipped.item.maxDurability > 0 && equipped.item.curDurability == 0) return false;
         const auto* info = gh->getItemInfo(equipped.item.itemId);
         return info && static_cast<int32_t>(info->itemClass) == itemClass &&
                (mask == 0 || (mask & (1u << info->subClass)));
@@ -2624,6 +2627,12 @@ bool equippedItemMet(game::GameHandler* gh, int32_t itemClass, uint32_t mask, ui
     if (mainHand || offHand)
         return (!mainHand || matches(game::EquipSlot::MAIN_HAND)) &&
                (!offHand || matches(game::EquipSlot::OFF_HAND));
+    constexpr int32_t kItemClassArmor = 4;
+    if (itemClass == kItemClassArmor) {
+        for (int slot = 0; slot <= static_cast<int>(game::EquipSlot::RANGED); ++slot)
+            if (matches(static_cast<game::EquipSlot>(slot))) return true;
+        return false;
+    }
     return matches(game::EquipSlot::MAIN_HAND) || matches(game::EquipSlot::OFF_HAND) ||
            matches(game::EquipSlot::RANGED);
 }
@@ -2661,6 +2670,7 @@ static void appendSpellCastLines(lua_State* L, wowee::ui::Widget* w, game::GameH
     const auto row = dbc ? dbc->findRecordById(spellId) : -1;
     const uint32_t attributesEx2 = spellColumn(gh, spellId, "AttributesEx2");
     const bool ranged = (entry.attr & 0x2u) != 0;
+    const bool onNextSwing = (entry.attr & 0x4u) != 0;
     float minimumRange = info.minRange;
     const auto* rangeLayout = layouts ? layouts->getLayout("SpellRange") : nullptr;
     const auto rangeFlagsField = rangeLayout ? rangeLayout->tryField("Flags") : UINT32_MAX;
@@ -2703,11 +2713,15 @@ static void appendSpellCastLines(lua_State* L, wowee::ui::Widget* w, game::GameH
     }
     // "Melee Range" is SpellRange.dbc flag 1 (Combat Range); a 5 yard range
     // without it prints as yards (Disarm Trap: "5 yd range").
-    if (info.maxRange > 0.0f && (rangeFlags & 1u)) range = globalText(L, "MELEE_RANGE");
-    else if (info.maxRange > 0.0f) {
-        std::string yards = minimumRange > 0.0f ? seconds(minimumRange) + "-" : "";
-        yards += seconds(info.maxRange);
-        range = formatGlobal(L, "SPELL_RANGE", yards.c_str());
+    // SPELL_ATTR0_ON_NEXT_SWING (Heroic Strike, Cleave, Maul, Raptor Strike)
+    // omits the range text entirely in TBC 2.4.3 even when RangeIndex=2.
+    if (!onNextSwing) {
+        if (info.maxRange > 0.0f && (rangeFlags & 1u)) range = globalText(L, "MELEE_RANGE");
+        else if (info.maxRange > 0.0f) {
+            std::string yards = minimumRange > 0.0f ? seconds(minimumRange) + "-" : "";
+            yards += seconds(info.maxRange);
+            range = formatGlobal(L, "SPELL_RANGE", yards.c_str());
+        }
     }
     // A range without a cost takes the left side: "5-30 yd range" (Throw),
     // "Melee Range" (Pick Pocket).
@@ -2718,6 +2732,7 @@ static void appendSpellCastLines(lua_State* L, wowee::ui::Widget* w, game::GameH
     // prints SPELL_CAST_TIME_INSTANT "Instant cast" and takes no ranged
     // wind-up. Zero prints SPELL_CAST_TIME_INSTANT_NO_MANA "Instant" for
     // spells without a mana cost (every rogue ability, costless or energy).
+    // SPELL_ATTR0_ON_NEXT_SWING always prints SPELL_ON_NEXT_SWING ("Next melee").
     int32_t castBase = 0;
     if (const uint32_t castIndex = spellColumn(gh, spellId, "CastingTimeIndex"); castIndex != 0) {
         const auto casts = assets->loadDBC("SpellCastTimes.dbc");
@@ -2726,9 +2741,11 @@ static void appendSpellCastLines(lua_State* L, wowee::ui::Widget* w, game::GameH
     }
     const auto castTimeMs = castBase < 0 ? 0 : info.castTimeMs + (ranged && !(attributesEx2 & 0x20u) ? 500 : 0);
     constexpr uint8_t kPowerMana = 0;
-    const std::string cast = castTimeMs > 0 ? seconds(castTimeMs / 1000.0f) + " sec cast"
-        : globalText(L, castBase < 0 || (info.powerType == kPowerMana && powerCost > 0)
-                            ? "SPELL_CAST_TIME_INSTANT" : "SPELL_CAST_TIME_INSTANT_NO_MANA");
+    const std::string cast = onNextSwing
+        ? globalText(L, "SPELL_ON_NEXT_SWING")
+        : (castTimeMs > 0 ? seconds(castTimeMs / 1000.0f) + " sec cast"
+           : globalText(L, castBase < 0 || (info.powerType == kPowerMana && powerCost > 0)
+                               ? "SPELL_CAST_TIME_INSTANT" : "SPELL_CAST_TIME_INSTANT_NO_MANA"));
     float recoveryMs = entry.recoveryMs;
     if (ranged && !(attributesEx2 & 0x20000u)) {
         const auto player = gh->getEntityManager().getEntity(gh->getPlayerGuid());
@@ -2780,8 +2797,9 @@ static void appendSpellRequirementLines(lua_State* L, wowee::ui::Widget* w, game
     if (entry.equippedItemClass >= 0) {
         const std::string name = equippedItemName(gh, entry.equippedItemClass, entry.equippedItemSubClassMask);
         if (!name.empty()) {
-            const bool met = equippedItemMet(gh, entry.equippedItemClass, entry.equippedItemSubClassMask,
-                                             spellColumn(gh, spellId, "AttributesEx3"));
+            const uint32_t attrEx3 = entry.attrEx3 != 0
+                ? entry.attrEx3 : spellColumn(gh, spellId, "AttributesEx3");
+            const bool met = equippedItemMet(gh, entry.equippedItemClass, entry.equippedItemSubClassMask, attrEx3);
             pushTooltipLine(w, formatGlobal(L, "SPELL_EQUIPPED_ITEM", name.c_str()), met ? kWhite : kUnmet);
         }
     }

@@ -298,6 +298,9 @@ std::optional<uint8_t> missingEquipment(GameHandler& owner, uint32_t spellId) {
     const auto equipped = [&](EquipSlot slot) -> const ItemQueryResponseData* {
         const auto& s = inventory.getEquipSlot(slot);
         if (s.empty()) return nullptr;
+        // Broken equipment (durability 0 of a nonzero maximum) does not satisfy
+        // weapon/armor spell requirements (CMaNGOS GetWeaponForAttack nonbroken=true).
+        if (s.item.maxDurability > 0 && s.item.curDurability == 0) return nullptr;
         const auto* info = owner.getItemInfo(s.item.itemId);
         if (!info || !info->valid) { unknown = true; return nullptr; }
         return info;

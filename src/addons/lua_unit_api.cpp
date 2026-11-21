@@ -2655,8 +2655,16 @@ static int lua_UnitClassification(lua_State* L) {
 // GetComboPoints("player"|"vehicle", "target") → number
 static int lua_GetComboPoints(lua_State* L) {
     auto* gh = getGameHandler(L);
+    // TBC 2.4.3 only reports combo points for Rogues (4) and Druids (11)
+    // (across all Druid forms: Cat, Caster, Bear). Warriors also receive
+    // SMSG_UPDATE_COMBO_POINTS(target, 1) on target dodge for Overpower
+    // usability, but GetComboPoints() returns 0 so ComboFrame shows no dot.
+    constexpr uint8_t kClassRogue = 4;
+    constexpr uint8_t kClassDruid = 11;
+    const uint8_t cls = gh ? gh->getPlayerClass() : 0;
+    const bool comboClass = (cls == kClassRogue || cls == kClassDruid);
     // TBC's no-argument API reports points on the selected target only.
-    lua_pushnumber(L, gh && gh->getTargetGuid() == gh->getComboTarget()
+    lua_pushnumber(L, gh && comboClass && gh->getTargetGuid() == gh->getComboTarget()
         ? gh->getComboPoints() : 0);
     return 1;
 }
