@@ -1094,16 +1094,6 @@ static int pushAttackPowerParts(lua_State* L, int32_t baseRaw, int32_t posMod, i
     return 3;
 }
 
-static int lua_GetRangedAttackPower(lua_State* L) {
-    auto* gh = getGameHandler(L);
-    if (!gh) return pushAttackPowerParts(L, 0, 0, 0, 0.0f);
-    return pushAttackPowerParts(L,
-                                gh->getRangedAttackPowerBase(),
-                                gh->getRangedAttackPowerPos(),
-                                gh->getRangedAttackPowerNeg(),
-                                gh->getRangedAttackPowerMult());
-}
-
 
 static int lua_IsInGroup(lua_State* L) {
     auto* gh = getGameHandler(L);
@@ -2964,7 +2954,7 @@ void registerUnitLuaAPI(lua_State* L) {
                 {"GetSpellBonusDamage", lua_GetSpellBonusDamage},
                 {"GetSpellBonusHealing", lua_GetSpellBonusHealing},
                 {"GetAttackPowerForStat", lua_GetAttackPowerForStat},
-                {"GetRangedAttackPower",  lua_GetRangedAttackPower},
+                {"GetRangedAttackPower",  lua_UnitRangedAttackPower},
                 {"IsInGroup",     lua_IsInGroup},
                 {"IsInRaid",      lua_IsInRaid},
                 {"GetShapeshiftFormInfo", [](lua_State* L) -> int {

@@ -142,8 +142,20 @@ static int lua_Frame_IsEventRegistered(lua_State* L) {
     luaL_checktype(L, 1, LUA_TTABLE);
     const char* eventName = luaL_optstring(L, 2, nullptr);
     if (!eventName || !*eventName) { lua_pushboolean(L, 0); return 1; }
-    lua_getfield(L, 1, "__allEvents");
-    if (lua_toboolean(L, -1)) { lua_pop(L, 1); lua_pushboolean(L, 1); return 1; }
+    lua_getglobal(L, "__WoweeAllEventFrames");
+    if (lua_istable(L, -1)) {
+        const int len = static_cast<int>(lua_objlen(L, -1));
+        for (int i = 1; i <= len; ++i) {
+            lua_rawgeti(L, -1, i);
+            const bool isSelf = lua_rawequal(L, -1, 1) != 0;
+            lua_pop(L, 1);
+            if (isSelf) {
+                lua_pop(L, 1);
+                lua_pushboolean(L, 1);
+                return 1;
+            }
+        }
+    }
     lua_pop(L, 1);
     lua_getfield(L, 1, "__events");
     if (!lua_istable(L, -1)) { lua_pop(L, 1); lua_pushboolean(L, 0); return 1; }
@@ -156,8 +168,6 @@ static int lua_Frame_IsEventRegistered(lua_State* L) {
 
 static int lua_Frame_RegisterAllEvents(lua_State* L) {
     luaL_checktype(L, 1, LUA_TTABLE);
-    lua_pushboolean(L, 1);
-    lua_setfield(L, 1, "__allEvents");
 
     lua_getglobal(L, "__WoweeAllEventFrames");
     if (!lua_istable(L, -1)) {
@@ -251,8 +261,6 @@ static int lua_Frame_UnregisterEvent(lua_State* L);
 static int lua_Frame_UnregisterAllEvents(lua_State* L) {
     luaL_checktype(L, 1, LUA_TTABLE);
     // Clear RegisterAllEvents() subscription if present.
-    lua_pushnil(L);
-    lua_setfield(L, 1, "__allEvents");
     lua_getglobal(L, "__WoweeAllEventFrames");
     if (lua_istable(L, -1)) {
         const int listeners = static_cast<int>(lua_objlen(L, -1));
