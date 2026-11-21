@@ -328,12 +328,17 @@ bool M2Renderer::getInstancePosition(uint32_t instanceId, glm::vec3& outPosition
     return true;
 }
 
-bool M2Renderer::getInstanceCollisionBoxHeight(uint32_t instanceId, float& outHeight) const {
+bool M2Renderer::getInstanceCollisionBounds(uint32_t instanceId, float& outHeight,
+                                            float& outRadius) const {
     auto idxIt = instanceIndexById.find(instanceId);
     if (idxIt == instanceIndexById.end()) return false;
     const auto& inst = instances[idxIt->second];
     const auto& model = *inst.cachedModel;
-    outHeight = (model.headerBoxMax.z - model.headerBoxMin.z) * glm::length(glm::vec3(inst.modelMatrix[2]));
+    const float sx = glm::length(glm::vec3(inst.modelMatrix[0]));
+    const float sy = glm::length(glm::vec3(inst.modelMatrix[1]));
+    const float sz = glm::length(glm::vec3(inst.modelMatrix[2]));
+    outHeight = std::abs(model.headerBoxMax.z - model.headerBoxMin.z) * sz;
+    outRadius = model.headerBoundRadius * std::max({sx, sy, sz});
     return true;
 }
 

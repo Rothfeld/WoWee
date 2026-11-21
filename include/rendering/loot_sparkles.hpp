@@ -1,6 +1,7 @@
 #pragma once
 
 #include <glm/glm.hpp>
+#include <algorithm>
 #include <cstdint>
 #include <unordered_map>
 #include <vector>
@@ -19,14 +20,16 @@ class M2Renderer;
 /// GAMEOBJECT_DYN_FLAGS carry SPARKLE, and taken off once that ends.
 class LootSparkles {
 public:
-    /// LootFX scale over a game object: the height of its model's collision
-    /// box (M2 header bounding box, times the object's scale), never below 1.
-    /// Fitted to build 8606 captures in Hellfire Peninsula: RuinedSteamTankGear01
-    /// (box 0.55) and Bush_Sansam (no box) at 1, GnomeBigGear 3.78 and
-    /// AllianceVeteranBanner02 5.79 at about their box height
-    /// (_experiments/20261117T2300Z.go_sparkle).
-    static constexpr float objectScale(float collisionBoxHeight) {
-        return collisionBoxHeight > 1.0f ? collisionBoxHeight : 1.0f;
+    /// LootFX scale over a game object: never below 1, covering both the
+    /// header collision box height and wide chests/props (e.g. G_ChestTitan.m2
+    /// at 3.14 x 4.11 x 2.34, boundRadius 2.84) so LootFX particles clear the
+    /// solid mesh walls instead of spawning occluded inside the chest.
+    /// Fitted to build 8606 captures: RuinedSteamTankGear01 (box 0.55, r 0.11)
+    /// and Bush_Sansam (no box) at 1, GnomeBigGear (3.78), AllianceVeteranBanner02
+    /// (5.79), and Gordok Tribute / G_ChestTitan (2.34 h, 2.84 r -> 4.26).
+    static constexpr float objectScale(float collisionBoxHeight,
+                                       float boundingRadius = 0.0f) {
+        return std::max({1.0f, collisionBoxHeight, 1.5f * boundingRadius});
     }
 
     /// Something that sparkles, where in render coordinates and how large.

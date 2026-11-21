@@ -137,6 +137,7 @@ struct M2ModelGPU {
     /// no collision (Bush_Sansam.m2).
     glm::vec3 headerBoxMin{0.0f};
     glm::vec3 headerBoxMax{0.0f};
+    float headerBoundRadius = 0.0f;
     /// What the render cull sphere encloses: the bind-pose vertex bounds,
     /// and for an animated model every sequence's authored bounds as well.
     glm::vec3 cullMin{0.0f};
@@ -738,9 +739,9 @@ public:
     bool getInstanceBounds(uint32_t instanceId, glm::vec3& outCenter, float& outRadius) const;
     /// World position of an instance's model origin.
     bool getInstancePosition(uint32_t instanceId, glm::vec3& outPosition) const;
-    /// Height of the M2 header bounding box of an instance's model, times the
-    /// instance scale.
-    bool getInstanceCollisionBoxHeight(uint32_t instanceId, float& outHeight) const;
+    /// Height and bounding sphere radius of the M2 header collision bounds,
+    /// times the instance scale.
+    bool getInstanceCollisionBounds(uint32_t instanceId, float& outHeight, float& outRadius) const;
 
     /// The world-space box of an instance's collision geometry.
     ///

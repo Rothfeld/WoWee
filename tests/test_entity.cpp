@@ -632,10 +632,13 @@ TEST_CASE("Quest game objects sparkle by their SPARKLE bit, scaled by collision 
     CHECK_FALSE(gameObjectSparkles(0xFFFF0000u));
 
     using wowee::rendering::LootSparkles;
-    CHECK(LootSparkles::objectScale(0.0f) == 1.0f);    // Bush_Sansam.m2, no box
-    CHECK(LootSparkles::objectScale(0.55f) == 1.0f);   // RuinedSteamTankGear01.m2
-    CHECK(LootSparkles::objectScale(3.78f) == 3.78f);  // GnomeBigGear.m2
-    CHECK(LootSparkles::objectScale(5.79f) == 5.79f);  // AllianceVeteranBanner02.m2
+    CHECK(LootSparkles::objectScale(0.0f) == 1.0f);                // Bush_Sansam.m2, no box
+    CHECK(LootSparkles::objectScale(0.55f, 0.11f) == 1.0f);        // RuinedSteamTankGear01.m2
+    CHECK(LootSparkles::objectScale(3.78f) == 3.78f);              // GnomeBigGear.m2
+    CHECK(LootSparkles::objectScale(5.79f, 3.16f) == 5.79f);       // AllianceVeteranBanner02.m2
+    // Wide solid chest: Gordok Tribute (G_ChestTitan.m2, height 2.34, radius 2.84)
+    // must scale past its horizontal walls so LootFX is not occluded inside the lid.
+    CHECK(LootSparkles::objectScale(2.34f, 2.84f) == Catch::Approx(4.26f));
 }
 
 TEST_CASE("GameObject 3D quaternion rotation, WotLK packing, and local reach frame", "[entity][gorotation]") {

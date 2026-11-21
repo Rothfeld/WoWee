@@ -6836,9 +6836,10 @@ void Application::updateLootSparkles() {
             if (it == objects.end() || it->second.isWmo) continue;
             rendering::LootSparkles::Spot spot{.guid = guid, .roomSource = it->second.instanceId};
             float boxHeight = 0.0f;
+            float boundRadius = 0.0f;
             if (!m2->getInstancePosition(it->second.instanceId, spot.position) ||
-                !m2->getInstanceCollisionBoxHeight(it->second.instanceId, boxHeight)) continue;
-            spot.scale = rendering::LootSparkles::objectScale(boxHeight);
+                !m2->getInstanceCollisionBounds(it->second.instanceId, boxHeight, boundRadius)) continue;
+            spot.scale = rendering::LootSparkles::objectScale(boxHeight, boundRadius);
             spots.push_back(spot);
             continue;
         }
