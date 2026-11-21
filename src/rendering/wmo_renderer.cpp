@@ -893,13 +893,13 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
     }
 
     // Store doodad templates (M2 models placed in WMO) for instancing later.
-    // Keep all MODD entries + MODS set table so any doodad set can be resolved,
-    // and pre-populate doodadTemplates with set 0 (Set_$DefaultGlobal) via
+    // Populate doodadTemplates with set 0 (Set_$DefaultGlobal) via
     // selectWmoDoodadIndices so inactive sets are never included by default.
     if (!model.doodadSets.empty() && !model.doodads.empty()) {
-        modelData.doodadSets = model.doodadSets;
-        modelData.allDoodadTemplates.resize(model.doodads.size());
-        for (size_t doodadIdx = 0; doodadIdx < model.doodads.size(); ++doodadIdx) {
+        const auto activeIndices = pipeline::selectWmoDoodadIndices(
+            model.doodadSets, model.doodads.size(), /*activeSetIndex=*/0);
+        modelData.doodadTemplates.reserve(activeIndices.size());
+        for (uint32_t doodadIdx : activeIndices) {
             const auto& doodad = model.doodads[doodadIdx];
             auto nameIt = model.doodadNames.find(doodad.nameIndex);
             if (nameIt == model.doodadNames.end()) continue;
@@ -921,16 +921,7 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
             DoodadTemplate doodadTemplate;
             doodadTemplate.m2Path = std::move(m2Path);
             doodadTemplate.localTransform = localTransform;
-            modelData.allDoodadTemplates[doodadIdx] = std::move(doodadTemplate);
-        }
-
-        const auto activeIndices = pipeline::selectWmoDoodadIndices(
-            model.doodadSets, model.doodads.size(), /*activeSetIndex=*/0);
-        modelData.doodadTemplates.reserve(activeIndices.size());
-        for (uint32_t doodadIdx : activeIndices) {
-            if (modelData.allDoodadTemplates[doodadIdx].has_value()) {
-                modelData.doodadTemplates.push_back(*modelData.allDoodadTemplates[doodadIdx]);
-            }
+            modelData.doodadTemplates.push_back(std::move(doodadTemplate));
         }
 
         if (!modelData.doodadTemplates.empty()) {
@@ -1219,24 +1210,6 @@ const std::vector<WMORenderer::DoodadTemplate>* WMORenderer::getDoodadTemplates(
         return &it->second.doodadTemplates;
     }
     return nullptr;
-}
-
-std::vector<WMORenderer::DoodadTemplate> WMORenderer::getDoodadTemplatesForSet(
-    uint32_t modelId, uint16_t doodadSet) const {
-    auto it = loadedModels.find(modelId);
-    if (it == loadedModels.end() || it->second.doodadSets.empty() || it->second.allDoodadTemplates.empty()) {
-        return {};
-    }
-    const auto indices = pipeline::selectWmoDoodadIndices(
-        it->second.doodadSets, it->second.allDoodadTemplates.size(), doodadSet);
-    std::vector<DoodadTemplate> out;
-    out.reserve(indices.size());
-    for (uint32_t idx : indices) {
-        if (it->second.allDoodadTemplates[idx].has_value()) {
-            out.push_back(*it->second.allDoodadTemplates[idx]);
-        }
-    }
-    return out;
 }
 
 bool WMORenderer::hasInstance(uint32_t instanceId) const {

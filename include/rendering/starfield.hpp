@@ -58,8 +58,6 @@ private:
     void createStarBuffers();
     void destroyStarBuffers();
 
-    [[nodiscard]] float getStarIntensity(float timeOfDay) const;
-
     struct Star {
         glm::vec3 position;
         float brightness;    // 0.14 to 1.0, weighted toward the faint end

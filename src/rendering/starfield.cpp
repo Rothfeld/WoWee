@@ -14,14 +14,6 @@
 namespace wowee {
 namespace rendering {
 
-// Day/night cycle thresholds (hours, 24h clock) for star visibility.
-// Stars fade in over 2 hours at dusk, stay full during night, fade out at dawn.
-static constexpr float kDuskStart = 18.0f;  // stars begin fading in
-static constexpr float kNightStart = 20.0f; // full star visibility
-static constexpr float kDawnStart = 4.0f;   // stars begin fading out
-static constexpr float kDawnEnd = 6.0f;     // stars fully gone
-static constexpr float kFadeDuration = 2.0f;
-
 // One float more than positionPlusTwoFloatsAttrs(), which mount dust, swim
 // effects and the charge effect also use - hence a local list rather than a
 // fourth caller of a changed shared one.
@@ -281,23 +273,6 @@ void StarField::destroyStarBuffers() {
         vertexBuffer = VK_NULL_HANDLE;
         vertexAlloc  = VK_NULL_HANDLE;
     }
-}
-
-float StarField::getStarIntensity(float timeOfDay) const {
-    // Full night
-    if (timeOfDay >= kNightStart || timeOfDay < kDawnStart) {
-        return 1.0f;
-    }
-    // Fade in at dusk
-    if (timeOfDay >= kDuskStart) {
-        return (timeOfDay - kDuskStart) / kFadeDuration;
-    }
-    // Fade out at dawn
-    if (timeOfDay < kDawnEnd) {
-        return 1.0f - (timeOfDay - kDawnStart) / kFadeDuration;
-    }
-    // Daytime: no stars
-    return 0.0f;
 }
 
 } // namespace rendering

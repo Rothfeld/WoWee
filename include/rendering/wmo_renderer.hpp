@@ -196,7 +196,6 @@ public:
     /// sequence is left as it is.
     size_t setInstanceDoodadAnimation(uint32_t instanceId, uint32_t animationId, bool loop);
     const std::vector<DoodadTemplate>* getDoodadTemplates(uint32_t modelId) const;
-    std::vector<DoodadTemplate> getDoodadTemplatesForSet(uint32_t modelId, uint16_t doodadSet) const;
 
     /**
      * Remove WMO instance
@@ -749,12 +748,9 @@ private:
         glm::vec3 wmoAmbientColor{0.5f, 0.5f, 0.5f};  // From MOHD, used for interior lighting
         bool isLowPlatform = false;
 
-        // Doodad templates (M2 models placed in WMO, stored for instancing)
-        // doodadTemplates holds active set 0 (Set_$DefaultGlobal); allDoodadTemplates
-        // + doodadSets allow selecting any MODS set on demand (set 0 + active set).
+        // Doodad templates (M2 models placed in WMO, stored for instancing).
+        // Populated with active set 0 (Set_$DefaultGlobal) via selectWmoDoodadIndices.
         std::vector<DoodadTemplate> doodadTemplates;
-        std::vector<std::optional<DoodadTemplate>> allDoodadTemplates;
-        std::vector<pipeline::WMODoodadSet> doodadSets;
 
         // Texture handles for this model (indexed by texture path order)
         std::vector<VkTexture*> textures;  // non-owning, from cache

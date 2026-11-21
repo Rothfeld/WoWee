@@ -760,6 +760,7 @@ add_executable(test_wmo_doodad_sets
 target_include_directories(test_wmo_doodad_sets PRIVATE ${TEST_INCLUDE_DIRS})
 target_include_directories(test_wmo_doodad_sets SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
 target_link_libraries(test_wmo_doodad_sets PRIVATE catch2_main)
+wowee_test_link_glm(test_wmo_doodad_sets)
 add_test(NAME wmo_doodad_sets COMMAND test_wmo_doodad_sets)
 register_test_target(test_wmo_doodad_sets)
 
