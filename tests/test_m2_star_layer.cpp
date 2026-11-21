@@ -18,6 +18,10 @@ TEST_CASE("the sky models' star layers are recognised", "[m2][sky][stars]") {
     REQUIRE(isStarLayer("environment\\stars\\hellfirestars.blp"));
     REQUIRE(isStarLayer("environment\\stars\\nexusraid_starsa.blp"));
     REQUIRE(isStarLayer("environment\\stars\\rubysanctumstars01.blp"));
+    // TBC 2.4.3 uses plural "environments\\stars\\"
+    REQUIRE(isStarLayer("environments\\stars\\stars.blp"));
+    REQUIRE(isStarLayer("environments\\stars\\stars2.blp"));
+    REQUIRE(isStarLayer("environments\\stars\\hellfirestars.blp"));
 }
 
 TEST_CASE("the other layers of the same dome are left alone", "[m2][sky][stars]") {

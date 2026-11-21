@@ -10,14 +10,10 @@ void main() {
     float r = length(gl_PointCoord - vec2(0.5)) * 2.0;
     if (r > 1.0) discard;
 
-    // A point source is not a disc with a soft rim. The old profile held full
-    // brightness out to 40% of the sprite and faded across all the rest, which
-    // is a defocused blob at every size it is drawn. This is the shape a real
-    // point makes through a lens: a tight core carrying nearly all the flux,
-    // and a faint wide halo around it.
-    float core = exp(-r * r * 26.0);
-    float halo = 0.035 * exp(-r * r * 3.0);
-    float profile = core + halo;
+    // Crisp anti-aliased point-star core + subtle halo matching Native TBC 2.4.3.
+    float core = exp(-r * r * 4.5);
+    float halo = 0.18 * exp(-r * r * 1.8);
+    float profile = clamp(core + halo, 0.0, 1.0);
 
     // Blending is SRC_ALPHA, ONE, so the destination receives rgb * a and
     // brightness must therefore appear in exactly one of the two. It used to be

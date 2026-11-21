@@ -56,6 +56,17 @@ bool LightingManager::initialize(pipeline::AssetManager* assetManager) {
     loadLightSkyboxDbc(assetManager);
     loadLightBandDbcs(assetManager);
 
+    if (const char* overrideHours = std::getenv("WOWEE_TIME_OF_DAY_HOURS")) {
+        char* end = nullptr;
+        const float h = std::strtof(overrideHours, &end);
+        if (end != overrideHours && std::isfinite(h)) {
+            float wrapped = std::fmod(h, 24.0f);
+            if (wrapped < 0.0f) wrapped += 24.0f;
+            setTimeOfDay(wrapped / 24.0f);
+            LOG_INFO("LightingManager: WOWEE_TIME_OF_DAY_HOURS override = ", wrapped, "h");
+        }
+    }
+
     initialized_ = true;
     LOG_INFO("LightingManager initialized: ", lightVolumesByMap_.size(), " maps with lighting");
     return true;
@@ -472,6 +483,7 @@ void LightingManager::updateWithStormWeight(const glm::vec3& playerPos, uint32_t
         newParams.skyBand2Color = glm::vec3(0.0f);
         newParams.skySmogColor = glm::vec3(0.0f);
         newParams.cloudColor = glm::vec3(0.0f);
+        newParams.cloudEmissiveColor = glm::vec3(0.0f);
         newParams.fogStart = newParams.fogEnd = newParams.fogDensity = 0.0f;
         newParams.celestialGlowThrough = 0.0f;
         newParams.cloudDensity = newParams.horizonGlow = 0.0f;
@@ -511,6 +523,7 @@ void LightingManager::updateWithStormWeight(const glm::vec3& playerPos, uint32_t
             newParams.skyBand2Color += params.skyBand2Color * share;
             newParams.skySmogColor += params.skySmogColor * share;
             newParams.cloudColor += params.cloudColor * share;
+            newParams.cloudEmissiveColor += params.cloudEmissiveColor * share;
             newParams.fogStart += params.fogStart * share;
             newParams.fogEnd += params.fogEnd * share;
             newParams.fogDensity += params.fogDensity * share;
@@ -674,6 +687,7 @@ void LightingManager::updateWithStormWeight(const glm::vec3& playerPos, uint32_t
     currentParams_.skyBand2Color = glm::mix(currentParams_.skyBand2Color, newParams.skyBand2Color, blendFactor);
     currentParams_.skySmogColor = glm::mix(currentParams_.skySmogColor, newParams.skySmogColor, blendFactor);
     currentParams_.cloudColor = glm::mix(currentParams_.cloudColor, newParams.cloudColor, blendFactor);
+    currentParams_.cloudEmissiveColor = glm::mix(currentParams_.cloudEmissiveColor, newParams.cloudEmissiveColor, blendFactor);
     currentParams_.fogStart = glm::mix(currentParams_.fogStart, newParams.fogStart, blendFactor);
     currentParams_.fogEnd = glm::mix(currentParams_.fogEnd, newParams.fogEnd, blendFactor);
     currentParams_.fogDensity = glm::mix(currentParams_.fogDensity, newParams.fogDensity, blendFactor);
@@ -822,6 +836,10 @@ LightingParams LightingManager::sampleLightParams(const LightParamsProfile* prof
     params.cloudColor = (cloudBand.numKeyframes > 0)
         ? sampleColorBand(cloudBand, timeHalfMinutes)
         : params.skyBand1Color;
+    const auto& cloudEmissiveBand = profile->colorBands[LightParamsProfile::CLOUD_EMISSIVE_COLOR];
+    params.cloudEmissiveColor = (cloudEmissiveBand.numKeyframes > 0)
+        ? sampleColorBand(cloudEmissiveBand, timeHalfMinutes)
+        : params.skyMiddleColor;
 
     // Sample float bands. The fog distance is stored in the same
     // thirty-sixths of a yard as the light positions, and was being used raw:

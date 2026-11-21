@@ -46,20 +46,17 @@ void main() {
     float twinkle = 0.84
         + 0.10 * sin(push.time * 2.3 + aTwinklePhase)
         + 0.06 * sin(push.time * 5.7 + aTwinklePhase * 1.7);
-    vBrightness = aBrightness * twinkle * push.intensity;
+    // Fade stars gently near the horizon (0-7 deg), keeping full crispness
+    // above distant mountains like Native TBC Environments\Stars\Stars.m2.
+    float horizonFade = smoothstep(0.01, 0.12, normalize(aPos).z);
+    vBrightness = aBrightness * twinkle * push.intensity * horizonFade;
     vColor = starColor(aColorTemp);
 
-    // gl_PointSize is in pixels, so a fixed one is a different angular size at
-    // every resolution - the same star is twice as wide at 1080p as at 4K.
-    // projection[1][1] is 1/tan(fovY/2), so this holds the angle instead, and
-    // the floor keeps the faint end from falling below a pixel and aliasing
-    // into a flicker. Size still tracks brightness, because a brighter point
-    // does spread further, but over a much narrower range than 2px to 4px.
-    const float kAngularRadius = 0.0019;
-    float sizeScale = mix(0.85, 1.30, aBrightness);
+    const float kAngularRadius = 0.0024;
+    float sizeScale = mix(0.85, 1.40, aBrightness);
     gl_PointSize = clamp(
         kAngularRadius * push.viewportHeight * projection[1][1] * sizeScale,
-        1.5, 5.0);
+        2.0, 4.8);
 
     vec4 clip = projection * rotView * vec4(aPos, 1.0);
     // On the far plane, so the world drawn before the sky occludes it.

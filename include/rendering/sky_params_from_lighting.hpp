@@ -39,6 +39,7 @@ inline SkyParams skyParamsFromLighting(float timeOfDay, float gameTime,
         params.skySmogColor = lighting->skySmogColor;
         params.fogColor = lighting->fogColor;
         params.cloudColor = lighting->cloudColor;
+        params.cloudEmissiveColor = lighting->cloudEmissiveColor;
         params.celestialGlowThrough = lighting->celestialGlowThrough;
         params.cloudDensity = lighting->cloudDensity;
         params.fogDensity = lighting->fogDensity;

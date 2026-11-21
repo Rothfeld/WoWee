@@ -22,9 +22,10 @@ layout(set = 0, binding = 0) uniform PerFrame {
 layout(set = 0, binding = 2) uniform sampler3D uFogVolume;
 
 layout(push_constant) uniform Push {
-    vec4 cloudColor;      // xyz = DBC-derived base cloud color, w = unused
-    vec4 sunDirDensity;   // xyz = sun direction, w = density
-    vec4 windAndLight;    // x = windOffset, y = sunIntensity, z = ambient, w = unused
+    vec4 cloudColor;         // xyz = DBC cloud sun/highlight color (IntBand 10), w = unused
+    vec4 cloudEmissiveColor; // xyz = DBC cloud emissive/shade color (IntBand 11), w = unused
+    vec4 sunDirDensity;      // xyz = sun direction, w = density
+    vec4 windAndLight;       // x = windOffset, y = sunIntensity, z = ambient, w = unused
 } push;
 
 layout(location = 0) in vec3 vWorldDir;
@@ -110,29 +111,28 @@ void main() {
 
     float cloud = clamp(cumulus + cirrus * (1.0 - cumulus), 0.0, 1.0);
 
-    // Overall visibility still follows DBC density (0 = clear sky)
-    cloud *= clamp(density * 1.6, 0.0, 1.0);
+    // Overall visibility follows DBC density (0 = clear sky, e.g. Tanaris)
+    cloud *= clamp(density * 1.9, 0.0, 1.0);
 
-    // Horizon fade: keep lower sky clean like TBC 2.4.3's smooth horizon gradient
-    // and bring clouds in smoothly at higher elevations.
-    cloud *= smoothstep(0.22, 0.52, altitude);
+    // Horizon fade: keep the lowest horizon fog ring (0-3.5 deg) clean while
+    // allowing daytime clouds and the night blue star-cloud / Milky Way band
+    // to arch down behind distant hills like Native TBC 2.4.3.
+    cloud *= smoothstep(0.06, 0.22, altitude);
     if (cloud < 0.01) discard;
 
     // --- Lighting ---
     float sunUp = clamp(sunDir.z, 0.0, 1.0);      // day factor
     float sunView = max(dot(dir, sunDir), 0.0);   // view alignment with the sun
 
-    // Gentle self-shadowing: keep daytime clouds luminous and soft rather than
-    // darkening cloud cores into muddy grey blotches.
+    // Blend directly between DBC IntBand[11] (cloud emissive/shade) and
+    // IntBand[10] (cloud sun/highlight), with gentle boost matching Native TBC
+    // 2.4.3 luminous clouds by day and bright blue star-cloud band at night.
     float towardSun = fbm(p + q * 1.4 + sunDir.xy * 0.35, 5);
-    float shadow = clamp(1.0 - (towardSun - shape) * 0.65, 0.82, 1.0);
+    float highlight = clamp(0.40 + (shape - towardSun) * 1.8 + cloud * 0.45, 0.0, 1.0);
+    vec3 litCloud = min(push.cloudColor.rgb * mix(1.38, 1.15, sunUp), vec3(1.0));
+    vec3 cloudRgb = mix(push.cloudEmissiveColor.rgb, litCloud, highlight) * ambient;
 
-    vec3 baseColor = push.cloudColor.rgb;
-    vec3 shadowColor = baseColor * ambient * 0.90;
-    vec3 litColor = baseColor * (ambient + sunIntensity * 0.22 * sunUp);
-    vec3 cloudRgb = mix(shadowColor, litColor, shadow);
-
-    // Forward scattering: thin cloud near the sun glows warm
+    // Forward scattering: thin cloud near the sun glows warm during daytime
     float scatter = pow(sunView, 6.0) * sunIntensity * sunUp;
     cloudRgb += vec3(1.0, 0.94, 0.85) * (1.0 - cumulus) * scatter * 0.55;
 
@@ -141,7 +141,7 @@ void main() {
     cloudRgb += vec3(1.0, 0.96, 0.90) * edge * scatter * 0.35;
 
     // --- Edge softness for alpha ---
-    float alpha = cloud * smoothstep(0.0, 0.30, cloud) * 0.65;
+    float alpha = clamp(cloud * smoothstep(0.0, 0.22, cloud) * 0.88, 0.0, 0.92);
 
     if (alpha < 0.01) discard;
 

@@ -1,5 +1,6 @@
 #include "rendering/sky_system.hpp"
 #include "game/game_utils.hpp"
+#include "rendering/night_sky_math.hpp"
 #include "rendering/sun_direction.hpp"
 #include "rendering/skybox.hpp"
 #include "rendering/celestial.hpp"
@@ -137,9 +138,9 @@ void SkySystem::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
     if (starField_) {
         starField_->setEnabled(renderProceduralStars);
         if (renderProceduralStars) {
-            const float cloudDensity = params.cloudDensity;
-            const float fogDensity   = params.fogDensity;
-            starField_->render(cmd, perFrameSet, params.timeOfDay, cloudDensity, fogDensity);
+            starField_->render(cmd, perFrameSet, params.timeOfDay,
+                               params.weatherIntensity, params.celestialGlowThrough,
+                               params.skyTopColor);
         }
     }
 
@@ -155,20 +156,24 @@ void SkySystem::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
 
     // --- Celestial bodies (sun + White Lady + Blue Child) ---
     if (celestial_) {
-        // Gate moon visibility on how dark the DBC sky actually is. The
-        // hardcoded 19:00 night window can precede sky darkening by hours,
-        // and full-brightness moons on a daylight sky read as extra suns.
-        float skyLum = glm::dot(params.skyTopColor, glm::vec3(0.2126f, 0.7152f, 0.0722f));
-        float nightFactor = (1.0f - glm::smoothstep(0.08f, 0.25f, skyLum)) * celestialVisibility;
+        const float nightFactor = moonNightVisibility(
+            params.timeOfDay, params.skyTopColor,
+            params.weatherIntensity, params.celestialGlowThrough);
         celestial_->render(cmd, perFrameSet, params.timeOfDay,
                            &params.directionalDir, &params.sunColor, params.gameTime,
                            nightFactor, celestialVisibility);
     }
 
-    // --- Clouds (DBC-driven colors + sun lighting; non-TBC only) ---
-    // TBC 2.4.3 LightParams.dbc carries cloudTypeId == 0 on all 582 rows and
-    // ships no procedural cloud dome shader; clouds exist only on skybox M2s.
-    if (clouds_ && !game::isActiveExpansion("tbc")) {
+    // --- Clouds (DBC-driven colors + sun/night lighting) ---
+    // Native TBC 2.4.3 renders DBC-tinted clouds on Azeroth outdoor skies
+    // (LightSkyboxId == 0) using LightIntBand[10] (cloud sun) and [11] (cloud
+    // emissive) weighted by LightFloatBand[3], which yields luminous clouds by
+    // day and the blue star-cloud / Milky Way band at night while staying clear
+    // in desert zones with FloatBand[3] == 0 (e.g. Tanaris). Outland skybox M2s
+    // return early above so custom skyboxes are unaffected.
+    if (clouds_ && shouldRenderSkyClouds(params.useOriginalSkybox,
+                                         params.cloudDensity,
+                                         params.weatherIntensity)) {
         float effectiveDensity = params.cloudDensity;
         if (params.weatherIntensity > 0.05f) {
             float weatherBoost = params.weatherIntensity * 0.4f;

@@ -1,4 +1,5 @@
 #include "rendering/starfield.hpp"
+#include "rendering/night_sky_math.hpp"
 #include "rendering/vk_context.hpp"
 #include "rendering/vk_shader.hpp"
 #include "rendering/vk_pipeline.hpp"
@@ -141,16 +142,17 @@ void StarField::shutdown() {
 }
 
 void StarField::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
-                       float timeOfDay, float cloudDensity, float fogDensity) {
+                       float timeOfDay, float weatherIntensity,
+                       float celestialGlowThrough, const glm::vec3& skyTopColor) {
     if (!renderingEnabled || pipeline == VK_NULL_HANDLE || vertexBuffer == VK_NULL_HANDLE
         || stars.empty()) {
         return;
     }
 
-    // Compute intensity from time of day then attenuate for clouds/fog
-    float intensity = getStarIntensity(timeOfDay);
-    intensity *= (1.0f - glm::clamp(cloudDensity * 0.7f, 0.0f, 1.0f));
-    intensity *= (1.0f - glm::clamp(fogDensity * 0.3f, 0.0f, 1.0f));
+    // Compute intensity from time of day, weather overcast, DBC glow-through,
+    // and zenith sky darkness (without crushing clear Azeroth nights).
+    const float intensity = starFieldEffectiveIntensity(
+        timeOfDay, weatherIntensity, celestialGlowThrough, skyTopColor);
 
     if (intensity <= 0.01f) {
         return;
@@ -202,36 +204,46 @@ void StarField::generateStars() {
     std::uniform_real_distribution<float> twinkleDist(0.0f, 2.0f * M_PI);
 
     const float radius = 900.0f;  // Slightly larger than skybox
+    // Tilted galactic plane normal so ~35% of stars concentrate along a
+    // diagonal band across the night sky, matching TBC Stars2.blp.
+    const glm::vec3 bandNormal = glm::normalize(glm::vec3(0.42f, -0.58f, 0.70f));
+    std::normal_distribution<float> bandLatDist(0.0f, 0.22f);
 
     for (int i = 0; i < starCount; i++) {
         Star star;
 
-        // Sampling the polar angle uniformly does not spread points evenly over
-        // a sphere: the area of a band shrinks with sin(phi), so a uniform phi
-        // piles them up at the pole. It put a visible clump of stars directly
-        // overhead. Uniform in cos(phi) is the distribution that is actually
-        // even, and costs one fewer trig call.
-        float cosPhi = unitDist(gen);            // upper hemisphere, 0-90 deg
-        float sinPhi = std::sqrt(1.0f - cosPhi * cosPhi);
-        float theta  = thetaDist(gen);           // Azimuth angle
+        glm::vec3 dir;
+        if (i < (starCount * 35) / 100) {
+            // Concentrated along the diagonal galactic band
+            float lon = thetaDist(gen);
+            float lat = glm::clamp(bandLatDist(gen), -1.2f, 1.2f);
+            glm::vec3 refUp = std::abs(bandNormal.z) < 0.9f
+                ? glm::vec3(0.0f, 0.0f, 1.0f) : glm::vec3(1.0f, 0.0f, 0.0f);
+            glm::vec3 uAxis = glm::normalize(glm::cross(refUp, bandNormal));
+            glm::vec3 vAxis = glm::cross(bandNormal, uAxis);
+            dir = std::cos(lat) * (std::cos(lon) * uAxis + std::sin(lon) * vAxis)
+                + std::sin(lat) * bandNormal;
+            if (dir.z < 0.0f) dir.z = -dir.z;
+            dir = glm::normalize(dir);
+        } else {
+            // Uniform over the upper hemisphere in cos(phi)
+            float cosPhi = unitDist(gen);
+            float sinPhi = std::sqrt(1.0f - cosPhi * cosPhi);
+            float theta  = thetaDist(gen);
+            dir = glm::vec3(sinPhi * std::cos(theta), sinPhi * std::sin(theta), cosPhi);
+        }
 
-        float x = radius * sinPhi * std::cos(theta);
-        float y = radius * sinPhi * std::sin(theta);
-        float z = radius * cosPhi;
+        star.position = dir * radius;
 
-        star.position = glm::vec3(x, y, z);
-
-        // Real fields are mostly faint with a few bright ones, not an even
-        // spread from 0.3 to 1.0. The exponent is what gives a sky depth
-        // rather than a uniform sprinkle of near-identical dots.
+        // Visible faint stars plus crisp bright beacons matching Native TBC
+        // Environments\Stars\Stars.m2 (Stars.blp / Stars2.blp).
         float u = unitDist(gen);
-        star.brightness = 0.14f + 0.86f * std::pow(u, 2.4f);
+        star.brightness = 0.34f + 0.66f * std::pow(u, 1.8f);
 
         star.twinklePhase = twinkleDist(gen);
 
-        // Colour temperature, biased to white: two draws averaged, so the
-        // extremes of the ramp stay rare the way they are overhead.
-        star.colorTemp = (unitDist(gen) + unitDist(gen)) * 0.5f;
+        // Colour temperature, biased to cool white / blue-white.
+        star.colorTemp = 0.25f + 0.75f * ((unitDist(gen) + unitDist(gen)) * 0.5f);
 
         stars.push_back(star);
     }

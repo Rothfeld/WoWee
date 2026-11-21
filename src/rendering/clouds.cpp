@@ -129,9 +129,10 @@ void Clouds::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const SkyP
         return;
     }
 
-    // Derive cloud base color from DBC cloud channel blended with horizon band
-    glm::vec3 cloudBaseColor = glm::mix(params.skyBand1Color, params.cloudColor, 0.55f);
-    cloudBaseColor = glm::clamp(cloudBaseColor * 1.08f, glm::vec3(0.0f), glm::vec3(1.0f));
+    // DBC IntBand[10] (cloud sun/highlight) and IntBand[11] (cloud emissive/shade)
+    // are already authored per hour (warm/white by day, luminous cyan-blue at night).
+    glm::vec3 cloudLitColor = params.cloudColor;
+    glm::vec3 cloudShadeColor = params.cloudEmissiveColor;
 
     // Sun direction (opposite of light direction).
     glm::vec3 sunDir = -glm::normalize(params.directionalDir);
@@ -140,13 +141,15 @@ void Clouds::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const SkyP
     // Sun intensity based on elevation
     float sunIntensity = sunAboveHorizon;
 
-    // Ambient light - bright during day so clouds stay soft and luminous, dimmer at night
-    float ambient = glm::mix(0.35f, 0.95f, glm::smoothstep(-0.05f, 0.25f, sunDir.z));
+    // Keep full DBC authored luminance both day and night so night clouds
+    // match Native TBC 2.4.3's blue star-cloud band instead of being crushed.
+    float ambient = 1.0f;
 
     CloudPush push{};
-    push.cloudColor    = glm::vec4(cloudBaseColor, 1.0f);
-    push.sunDirDensity = glm::vec4(sunDir, density_);
-    push.windAndLight  = glm::vec4(windOffset_, sunIntensity, ambient, 0.0f);
+    push.cloudColor         = glm::vec4(cloudLitColor, 1.0f);
+    push.cloudEmissiveColor = glm::vec4(cloudShadeColor, 1.0f);
+    push.sunDirDensity      = glm::vec4(sunDir, density_);
+    push.windAndLight       = glm::vec4(windOffset_, sunIntensity, ambient, 0.0f);
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_);
 

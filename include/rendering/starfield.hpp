@@ -34,7 +34,8 @@ public:
      * @param fogDensity   Optional fog density from lighting (reduces star visibility)
      */
     void render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, float timeOfDay,
-                float cloudDensity = 0.0f, float fogDensity = 0.0f);
+                float weatherIntensity = 0.0f, float celestialGlowThrough = 1.0f,
+                const glm::vec3& skyTopColor = glm::vec3(0.0f));
 
     /**
      * Update star twinkle animation
@@ -67,7 +68,7 @@ private:
     };
 
     std::vector<Star> stars;
-    int starCount = 1000;
+    int starCount = 4500;
 
     VkContext* vkCtx = nullptr;
 
