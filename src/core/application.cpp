@@ -817,7 +817,8 @@ bool Application::initialize() {
             if (gh) {
                 for (const auto& poi : gh->getGossipPois()) {
                     if (poi.questObjectiveIndex != -2) continue;
-                    const auto uv = nav->project(gh->getCurrentMapId(), poi.x, poi.y);
+                    const auto serverPos = core::coords::canonicalToServer({poi.x, poi.y, 0.0f});
+                    const auto uv = nav->project(poi.mapId, serverPos.x, serverPos.y);
                     if (!uv) continue;
                     out.push_back({poi.name, std::string(), static_cast<int>(poi.icon), uv->x, uv->y});
                 }

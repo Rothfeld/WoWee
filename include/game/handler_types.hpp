@@ -342,6 +342,9 @@ struct ChatAutoJoin {
 
 struct GossipPoi {
     uint32_t mapId = 0;
+    uint32_t flags = 0;
+    // Canonical WoW world coordinates (+X north, +Y west), matching
+    // SMSG_QUEST_POI and MinimapFrame::projectCanonical.
     float    x     = 0.0f;
     float    y     = 0.0f;
     uint32_t icon  = 0;

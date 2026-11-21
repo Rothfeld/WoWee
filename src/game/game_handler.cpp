@@ -246,6 +246,7 @@ void GameHandler::clearWorld() {
     if (combatHandler_) combatHandler_->clearCombatText();
     entityController_->clearAll();
     clearTaxiNodeStatuses();
+    clearGossipPois();
     shapeshiftFormId_ = 0;
     bonusBarByForm_.clear();
 }
@@ -586,6 +587,7 @@ void GameHandler::updateTimers(float deltaTime) {
     // GameHandler previously ticked its own never-populated copies, so lost
     // or rejected quest accepts were never resynced or unblocked).
     if (questHandler_) {
+        clearArrivedGossipPois();
         auto& acceptTimeouts = questHandler_->pendingQuestAcceptTimeoutsRef();
         auto& acceptNpcGuids = questHandler_->pendingQuestAcceptNpcGuidsRef();
         for (auto it = acceptTimeouts.begin(); it != acceptTimeouts.end();) {
@@ -5618,6 +5620,10 @@ const std::vector<GossipPoi>& GameHandler::getGossipPois() const {
 
 void GameHandler::clearGossipPois() {
     if (questHandler_) questHandler_->clearGossipPois();
+}
+
+bool GameHandler::clearArrivedGossipPois() {
+    return questHandler_ && questHandler_->clearArrivedGossipPois(currentMapId_, movementInfo.x, movementInfo.y);
 }
 const std::unordered_map<uint64_t, QuestGiverStatus>& GameHandler::getNpcQuestStatuses() const {
     if (questHandler_) return questHandler_->getNpcQuestStatuses();

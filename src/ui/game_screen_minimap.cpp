@@ -673,6 +673,7 @@ void GameScreen::refreshOwnedUiTextures() {
         plateGlowTex_ = VK_NULL_HANDLE;
         minimapObjectAtlasTex_ = VK_NULL_HANDLE;
         minimapPoiAtlasTex_ = VK_NULL_HANDLE;
+        minimapGuideArrowTex_ = VK_NULL_HANDLE;
         spellIconCache_.clear();
     }
 }
@@ -706,8 +707,8 @@ namespace {
 // not exact: the arrows are models in the original.
 ImVec2 drawRimArrow(ImDrawList* drawList, VkDescriptorSet texture, float centerX, float centerY,
                     float mapRadius, const glm::vec2& direction, float scale) {
-    const float ax = centerX + direction.x * (mapRadius - 13.5f * scale);
-    const float ay = centerY + direction.y * (mapRadius - 13.5f * scale);
+    const float ax = centerX + direction.x * (mapRadius - kMinimapRimArrowInset * scale);
+    const float ay = centerY + direction.y * (mapRadius - kMinimapRimArrowInset * scale);
     scale *= 36.0f / 32.0f;
     const ImVec2 corners[] = {{-16.5f,-14.5f},{15.5f,-14.5f},{15.5f,17.5f},{-16.5f,17.5f}};
     ImVec2 points[4];
@@ -865,31 +866,49 @@ void GameScreen::renderMinimapQuestKills(const MinimapFrame& frame, const Entity
 
 // The points a gossip window has pointed at - quest and service targets.
 void GameScreen::renderMinimapGossipPois(const MinimapFrame& frame, game::GameHandler& gameHandler) {
-    // Gossip POI markers (quest / NPC navigation targets)
+    // Gossip POI markers (guard directions / quest navigation targets)
+    auto* engine = services_.addonManager ? services_.addonManager->getLuaEngine() : nullptr;
+    const float scale = engine ? engine->widgets().uiScale() : 1.0f;
     for (const auto& poi : gameHandler.getGossipPois()) {
-        if (poi.questObjectiveIndex == -2 && poi.mapId != gameHandler.getCurrentMapId()) continue;
+        const bool isGuardPoi = (poi.questObjectiveIndex == -2);
+        if (isGuardPoi && poi.mapId != gameHandler.getCurrentMapId()) continue;
         // A gossip target always, a quest's points while it is tracked.
-        if (poi.questObjectiveIndex != -2 && !gameHandler.isQuestTracked(poi.data)) {
+        if (!isGuardPoi && !gameHandler.isQuestTracked(poi.data)) {
             continue;
         }
-        // Convert WoW canonical coords to render coords for minimap projection
-        float sx = 0.0f, sy = 0.0f;
-        if (!frame.projectCanonical(poi.x, poi.y, sx, sy)) continue;
+        const glm::vec3 render = core::coords::canonicalToRender(glm::vec3(poi.x, poi.y, 0.0f));
+        const MinimapPoiPlacement placement = placeMinimapPoi(
+            {render.x - frame.playerRender.x, render.y - frame.playerRender.y},
+            frame.centerX, frame.centerY, frame.view, scale);
 
         refreshOwnedUiTextures();
-        if (!minimapPoiAtlasTex_) {
-            minimapPoiAtlasTex_ = uploadUiTextureFromBlp(services_.assetManager,
-                "Interface\\Minimap\\POIIcons.blp", services_.window);
-            if (!minimapPoiAtlasTex_) throw std::runtime_error("Minimap POI icon atlas failed to load");
-        }
-        // TBC POIIcons uses 16px cells in a 128px atlas, shared with WorldMap.
-        const float u = (poi.icon % 8) / 8.0f;
-        const float v = (poi.icon / 8) / 8.0f;
-        frame.drawList->AddImage((ImTextureID)(uintptr_t)minimapPoiAtlasTex_,
-            ImVec2(sx - 8, sy - 8), ImVec2(sx + 8, sy + 8),
-            ImVec2(u, v), ImVec2(u + 1.0f / 8, v + 1.0f / 8));
+        if (placement.onMap) {
+            if (!minimapPoiAtlasTex_) {
+                minimapPoiAtlasTex_ = uploadUiTextureFromBlp(services_.assetManager,
+                    "Interface\\Minimap\\POIIcons.blp", services_.window);
+                if (!minimapPoiAtlasTex_) throw std::runtime_error("Minimap POI icon atlas failed to load");
+            }
+            // TBC POIIcons uses 16px cells in a 128px atlas, shared with WorldMap.
+            const float u = (poi.icon % 8) / 8.0f;
+            const float v = (poi.icon / 8) / 8.0f;
+            const float half = 8.0f * scale;
+            frame.drawList->AddImage((ImTextureID)(uintptr_t)minimapPoiAtlasTex_,
+                ImVec2(placement.pos.x - half, placement.pos.y - half),
+                ImVec2(placement.pos.x + half, placement.pos.y + half),
+                ImVec2(u, v), ImVec2(u + 1.0f / 8, v + 1.0f / 8));
 
-        if (!poi.name.empty()) noteMinimapBlip(sx, sy, poi.name);
+            if (!poi.name.empty()) noteMinimapBlip(placement.pos.x, placement.pos.y, poi.name);
+        } else if (isGuardPoi) {
+            if (!minimapGuideArrowTex_) {
+                minimapGuideArrowTex_ = uploadUiTextureFromBlp(services_.assetManager,
+                    "Interface\\Minimap\\Rotating-MinimapGuideArrow.blp", services_.window);
+                if (!minimapGuideArrowTex_) throw std::runtime_error("Minimap guide arrow failed to load");
+            }
+            const ImVec2 at = drawRimArrow(frame.drawList, minimapGuideArrowTex_,
+                                           frame.centerX, frame.centerY, frame.mapRadius,
+                                           placement.direction, scale);
+            if (!poi.name.empty()) noteMinimapBlip(at.x, at.y, poi.name, true);
+        }
     }
 
 }

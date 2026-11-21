@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cmath>
 #include <glm/glm.hpp>
 
 namespace wowee::ui {
@@ -44,6 +45,41 @@ inline glm::vec2 minimapOffsetToRenderDelta(float px, float py, const MinimapVie
     const float rotX = oldRx * v.cosBearing - ry * v.sinBearing;
     const float rotY = oldRx * v.sinBearing + ry * v.cosBearing;
     return {-rotY, rotX};
+}
+
+/// Distance inside the minimap rim where rotating direction arrows sit
+/// (fitted to native 2.4.3 town/guide arrows at 1280x720).
+inline constexpr float kMinimapRimArrowInset = 13.5f;
+
+/// Result of placing a world POI onto the minimap disc or its rim.
+struct MinimapPoiPlacement {
+    /// True when the POI falls inside the minimap disc (draw icon at `pos`);
+    /// false when outside (draw directional rim arrow at `pos` along `direction`).
+    bool onMap = false;
+    /// Screen-space centre of the icon or rim arrow.
+    glm::vec2 pos{0.0f, 0.0f};
+    /// Unit screen-space direction from minimap centre toward the POI
+    /// (populated when `onMap` is false).
+    glm::vec2 direction{0.0f, 0.0f};
+};
+
+/// Project a POI's render-space delta from the player onto the minimap disc,
+/// or clamp it to a directional rim arrow position when outside the zoom radius.
+inline MinimapPoiPlacement placeMinimapPoi(const glm::vec2& renderDelta,
+                                           float centerX, float centerY,
+                                           const MinimapView& view,
+                                           float uiScale = 1.0f) {
+    const glm::vec2 off = renderDeltaToMinimapOffset(renderDelta.x, renderDelta.y, view);
+    const float dist = std::hypot(off.x, off.y);
+    if (dist <= view.mapRadius - 3.0f) {
+        return {true, {centerX + off.x, centerY + off.y}, {0.0f, 0.0f}};
+    }
+    if (dist <= 0.0f) {
+        return {true, {centerX, centerY}, {0.0f, 0.0f}};
+    }
+    const glm::vec2 dir = off / dist;
+    const float rimRadius = view.mapRadius - kMinimapRimArrowInset * uiScale;
+    return {false, {centerX + dir.x * rimRadius, centerY + dir.y * rimRadius}, dir};
 }
 
 }  // namespace wowee::ui

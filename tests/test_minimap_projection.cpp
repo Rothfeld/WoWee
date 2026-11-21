@@ -135,3 +135,45 @@ TEST_CASE("a map with no rect yet answers zero rather than dividing by it") {
     CHECK(renderDeltaToMinimapOffset(10.0f, 10.0f, zero).x == Catch::Approx(0.0f));
     CHECK(minimapOffsetToRenderDelta(10.0f, 10.0f, zero).x == Catch::Approx(0.0f));
 }
+
+TEST_CASE("off-minimap guard POI clamps to a directional rim arrow (north-up and rotateMinimap)",
+          "[minimap][poi]") {
+    using wowee::ui::kMinimapRimArrowInset;
+    using wowee::ui::placeMinimapPoi;
+
+    MinimapView northUp;
+    northUp.viewRadius = 100.0f;
+    northUp.mapRadius = 70.0f;
+    const float cx = 1200.0f, cy = 92.0f;
+
+    // Stormwind Cathedral Square (-8677.5, 637.5) -> Stormwind Gryphon Master (-8839, 487.546)
+    // in render coords (renderX = serverX north, renderY = serverY west):
+    // dx = -161.5 (south -> +screenY), dy = -149.954 (east -> +screenX) => SE rim arrow.
+    const glm::vec2 swDelta(-161.5f, -149.954f);
+    const auto farNorthUp = placeMinimapPoi(swDelta, cx, cy, northUp, 1.0f);
+    REQUIRE_FALSE(farNorthUp.onMap);
+    CHECK(glm::length(farNorthUp.direction) == Catch::Approx(1.0f).margin(1e-5f));
+    CHECK(farNorthUp.direction.x > 0.0f);  // east (+screenX)
+    CHECK(farNorthUp.direction.y > 0.0f);  // south (+screenY)
+    const float rimDist = std::hypot(farNorthUp.pos.x - cx, farNorthUp.pos.y - cy);
+    CHECK(rimDist == Catch::Approx(northUp.mapRadius - kMinimapRimArrowInset).margin(1e-4f));
+
+    // With rotateMinimap=1 and bearing = +pi/2 (cos=0, sin=1), the minimap
+    // rotates clockwise by 90 deg in screen space: (x, y) -> (-y, x).
+    MinimapView rotated = northUp;
+    rotated.cosBearing = 0.0f;
+    rotated.sinBearing = 1.0f;
+    const auto farRotated = placeMinimapPoi(swDelta, cx, cy, rotated, 1.0f);
+    REQUIRE_FALSE(farRotated.onMap);
+    CHECK(glm::length(farRotated.direction) == Catch::Approx(1.0f).margin(1e-5f));
+    CHECK(farRotated.direction.x == Catch::Approx(-farNorthUp.direction.y).margin(1e-5f));
+    CHECK(farRotated.direction.y == Catch::Approx(farNorthUp.direction.x).margin(1e-5f));
+
+    // Walking inside the minimap zoom radius transitions from rim arrow to in-map icon.
+    const glm::vec2 closeDelta(-30.0f, -20.0f);  // ~36 yd < 100 yd viewRadius
+    const auto inside = placeMinimapPoi(closeDelta, cx, cy, northUp, 1.0f);
+    REQUIRE(inside.onMap);
+    const glm::vec2 expectedOff = renderDeltaToMinimapOffset(closeDelta.x, closeDelta.y, northUp);
+    CHECK(inside.pos.x == Catch::Approx(cx + expectedOff.x).margin(1e-4f));
+    CHECK(inside.pos.y == Catch::Approx(cy + expectedOff.y).margin(1e-4f));
+}

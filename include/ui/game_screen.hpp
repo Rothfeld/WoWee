@@ -318,6 +318,7 @@ private:
     VkDescriptorSet plateGlowTex_ = VK_NULL_HANDLE;
     VkDescriptorSet minimapObjectAtlasTex_ = VK_NULL_HANDLE;
     VkDescriptorSet minimapPoiAtlasTex_ = VK_NULL_HANDLE;
+    VkDescriptorSet minimapGuideArrowTex_ = VK_NULL_HANDLE;
     void refreshOwnedUiTextures();
     VkDescriptorSet ensureMinimapObjectIconAtlas();
     // SpellIconID -> icon path (from SpellIcon.dbc)

@@ -90,8 +90,12 @@ public:
 
     // Gossip / quest map POI markers (aliased from handler_types.hpp)
     using GossipPoi = game::GossipPoi;
+    // Native TBC 2.4.3 clears guard gossip POIs when the player comes within
+    // 10 yards horizontally (present at 10.0 yd, cleared at 9.5 yd in Stormwind).
+    static constexpr float kGossipPoiArrivalRadius = 10.0f;
     [[nodiscard]] const std::vector<GossipPoi>& getGossipPois() const { return gossipPois_; }
     void clearGossipPois() { gossipPois_.clear(); }
+    bool clearArrivedGossipPois(uint32_t mapId, float playerCanX, float playerCanY);
 
     // Quest turn-in
     [[nodiscard]] bool isQuestRequestItemsOpen() const { return questRequestItemsOpen_; }

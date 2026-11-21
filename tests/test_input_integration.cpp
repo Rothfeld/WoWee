@@ -2451,8 +2451,8 @@ TEST_CASE_METHOD(Integration, "Guard directions replace destination and refresh 
     });
     for (const std::string name : {"Ironforge Auction House", "Ironforge Bank"}) {
         wowee::network::Packet poi(wowee::game::wireOpcode(wowee::game::Opcode::SMSG_GOSSIP_POI));
-        poi.writeUInt32(0);
-        poi.writeFloat(-4957);
+        poi.writeUInt32(99);
+        poi.writeFloat(-4957.0f);
         poi.writeFloat(-911.604f);
         poi.writeUInt32(6);
         poi.writeUInt32(0);
@@ -2460,9 +2460,44 @@ TEST_CASE_METHOD(Integration, "Guard directions replace destination and refresh 
         session.receive(poi);
     }
     REQUIRE(handler.getGossipPois().size() == 1);
-    CHECK(handler.getGossipPois().front().name == "Ironforge Bank");
-    CHECK(handler.getGossipPois().front().icon == 6);
+    const auto& stored = handler.getGossipPois().front();
+    CHECK(stored.name == "Ironforge Bank");
+    CHECK(stored.flags == 99);
+    CHECK(stored.icon == 6);
+    CHECK(stored.questObjectiveIndex == -2);
+    // SMSG_GOSSIP_POI wire coords are server (X, Y); stored canonically as (Y, X).
+    CHECK(stored.x == Catch::Approx(-911.604f));
+    CHECK(stored.y == Catch::Approx(-4957.0f));
     CHECK(updates == 2);
+
+    // Arrival auto-clear: stays present at >= 10 yd, clears at < 10 yd and notifies map.
+    auto& move = handler.movementInfoRef();
+    move.x = stored.x + 10.0f;
+    move.y = stored.y;
+    CHECK_FALSE(handler.clearArrivedGossipPois());
+    CHECK(handler.getGossipPois().size() == 1);
+    CHECK(updates == 2);
+
+    move.x = stored.x + 9.5f;
+    move.y = stored.y;
+    CHECK(handler.clearArrivedGossipPois());
+    CHECK(handler.getGossipPois().empty());
+    CHECK(updates == 3);
+
+    // Re-add a guard POI and verify logout/disconnect (clearWorld) clears it.
+    {
+        wowee::network::Packet poi(wowee::game::wireOpcode(wowee::game::Opcode::SMSG_GOSSIP_POI));
+        poi.writeUInt32(99);
+        poi.writeFloat(-8839.0f);
+        poi.writeFloat(487.546f);
+        poi.writeUInt32(6);
+        poi.writeUInt32(0);
+        poi.writeString("Stormwind Gryphon Master");
+        session.receive(poi);
+    }
+    REQUIRE(handler.getGossipPois().size() == 1);
+    handler.disconnect();
+    CHECK(handler.getGossipPois().empty());
 }
 
 TEST_CASE_METHOD(Integration, "GM stationery identifies support mail without a player sender", "[gm-mail]") {

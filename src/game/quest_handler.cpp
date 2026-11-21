@@ -16,6 +16,7 @@
 #include "audio/ui_sound_manager.hpp"
 #include "pipeline/asset_manager.hpp"
 #include "core/application.hpp"
+#include "core/coordinates.hpp"
 #include "core/logger.hpp"
 #include <algorithm>
 #include <cctype>
@@ -32,6 +33,22 @@ namespace game {
 QuestGiverStatus QuestHandler::getQuestGiverStatus(uint64_t guid) const {
     auto it = npcQuestStatus_.find(guid);
     return (it != npcQuestStatus_.end()) ? it->second : QuestGiverStatus::NONE;
+}
+
+bool QuestHandler::clearArrivedGossipPois(uint32_t mapId, float playerCanX, float playerCanY) {
+    if (gossipPois_.empty()) return false;
+    constexpr float kArrivalRadiusSq = kGossipPoiArrivalRadius * kGossipPoiArrivalRadius;
+    const size_t removed = std::erase_if(gossipPois_, [&](const GossipPoi& poi) {
+        if (poi.questObjectiveIndex != -2 || poi.mapId != mapId) return false;
+        const float dx = poi.x - playerCanX;
+        const float dy = poi.y - playerCanY;
+        return dx * dx + dy * dy < kArrivalRadiusSq;
+    });
+    if (removed > 0) {
+        if (owner_.addonEventCallbackRef()) owner_.addonEventCallbackRef()("WORLD_MAP_UPDATE", {});
+        return true;
+    }
+    return false;
 }
 
 void QuestHandler::reconcileItemObjectivesFromInventory(
@@ -541,20 +558,30 @@ void QuestHandler::registerOpcodes(DispatchTable& table) {
     // ---- SMSG_GOSSIP_POI ----
     table[Opcode::SMSG_GOSSIP_POI] = [this](network::Packet& packet) {
         if (!packet.hasRemaining(20)) return;
-        /*uint32_t flags =*/ packet.readUInt32();
-        float poiX = packet.readFloat();
-        float poiY = packet.readFloat();
-        uint32_t icon = packet.readUInt32();
-        uint32_t data = packet.readUInt32();
+        const uint32_t flags = packet.readUInt32();
+        const float serverX = packet.readFloat();
+        const float serverY = packet.readFloat();
+        const uint32_t icon = packet.readUInt32();
+        const uint32_t data = packet.readUInt32();
         std::string name = packet.readString();
-        GossipPoi poi; poi.mapId = owner_.getCurrentMapId(); poi.x = poiX; poi.y = poiY; poi.icon = icon; poi.data = data; poi.name = std::move(name);
+        const glm::vec3 canonical = core::coords::serverToCanonical({serverX, serverY, 0.0f});
+        GossipPoi poi;
+        poi.mapId = owner_.getCurrentMapId();
+        poi.flags = flags;
+        poi.x = canonical.x;
+        poi.y = canonical.y;
+        poi.icon = icon;
+        poi.data = data;
+        poi.name = std::move(name);
         // A guard marks one destination at a time; quest objectives are separate.
         std::erase_if(gossipPois_, [](const GossipPoi& previous) {
             return previous.questObjectiveIndex == -2;
         });
         gossipPois_.push_back(std::move(poi));
         if (owner_.addonEventCallbackRef()) owner_.addonEventCallbackRef()("WORLD_MAP_UPDATE", {});
-        LOG_DEBUG("SMSG_GOSSIP_POI: x=", poiX, " y=", poiY, " icon=", icon);
+        LOG_DEBUG("SMSG_GOSSIP_POI: flags=", flags, " server=(", serverX, ",", serverY,
+                  ") canonical=(", canonical.x, ",", canonical.y, ") icon=", icon,
+                  " name=", gossipPois_.back().name);
     };
 
     // ---- SMSG_QUESTGIVER_QUEST_DETAILS ----

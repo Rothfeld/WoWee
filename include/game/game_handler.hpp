@@ -4273,6 +4273,7 @@ public:
     /// forwards to QuestHandler, so clearing through the reference left
     /// the markers the map draws exactly where they were.
     void clearGossipPois();
+    bool clearArrivedGossipPois();
     auto& playerExploredZonesRef() { return playerExploredZones_; }
     auto& hasPlayerExploredZonesRef() { return hasPlayerExploredZones_; }
     auto& factionStandingsRef() { return factionStandings_; }
