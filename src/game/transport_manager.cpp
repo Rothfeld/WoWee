@@ -436,6 +436,45 @@ glm::vec3 TransportManager::getPlayerWorldPosition(uint64_t transportGuid, const
     return core::coords::renderToCanonical(glm::vec3(worldPos));
 }
 
+bool TransportManager::predictDestinationWorldPosition(
+    uint64_t transportGuid,
+    uint32_t destinationMapId,
+    const glm::vec3& localOffset,
+    glm::vec3& outCanonicalWorldPos) const {
+    const auto it = transports_.find(transportGuid);
+    if (it == transports_.end() || it->second.isM2) {
+        return false;
+    }
+    if (!transportTimestamps_.contains(transportGuid)) {
+        return false;
+    }
+    const auto* pathEntry = pathRepo_.findPath(it->second.pathId);
+    if (!pathEntry || !pathEntry->taxiSchedule || pathEntry->taxiSchedule->durationMs() == 0) {
+        return false;
+    }
+
+    const uint32_t pathTimeMs =
+        currentTransportTime(transportGuid) % pathEntry->taxiSchedule->durationMs();
+    const auto sample = pathEntry->taxiSchedule->evaluateForMap(pathTimeMs, destinationMapId);
+    if (sample.mapId != destinationMapId) {
+        return false;
+    }
+
+    const float yaw = std::atan2(sample.tangent.x, sample.tangent.y) +
+                      transportModelBowOffset(it->second.displayId);
+    const glm::quat canonicalRot = glm::angleAxis(yaw, glm::vec3(0.0f, 0.0f, 1.0f));
+    const glm::vec3 renderPos = core::coords::canonicalToRender(sample.position);
+    const glm::quat basisRotation =
+        glm::angleAxis(glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+    const glm::quat renderRot =
+        basisRotation * canonicalRot * glm::conjugate(basisRotation);
+    const glm::mat4 destTransform =
+        glm::translate(glm::mat4(1.0f), renderPos) * glm::mat4_cast(renderRot);
+    const glm::vec3 worldRenderPos(destTransform * glm::vec4(localOffset, 1.0f));
+    outCanonicalWorldPos = core::coords::renderToCanonical(worldRenderPos);
+    return true;
+}
+
 glm::vec3 TransportManager::serverToTransportLocal(
     uint64_t transportGuid, const glm::vec3& serverOffset) const {
     const auto it = transports_.find(transportGuid);

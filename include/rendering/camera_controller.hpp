@@ -373,6 +373,7 @@ public:
     void setIntoxication(float amount) { intoxication_ = std::clamp(amount, 0.0f, 1.0f); }
     void setMountHeightOffset(float offset) { mountHeightOffset_ = offset; }
     void setExternalFollow(bool enabled) { externalFollow_ = enabled; }
+    [[nodiscard]] bool isExternalFollow() const { return externalFollow_; }
     /// Where the orbit camera looks from instead of the followed character:
     /// the unit named by PLAYER_FARSIGHT (a possessed unit), or nothing.
     void setViewTarget(std::optional<glm::vec3> target) { viewTarget_ = target; }
@@ -400,7 +401,13 @@ public:
     void setCameraAndFacingYaw(float cameraYawDeg, float characterFacingYawDeg);
     void clearMovementInputs();
     void suppressMovementFor(float seconds) { movementSuppressTimer_ = seconds; }
-    void suspendGravityFor(float seconds) { gravitySuspendTimer_ = seconds; }
+    void suspendGravityFor(float seconds) {
+        if (seconds <= 0.0f) {
+            gravitySuspendTimer_ = 0.0f;
+        } else {
+            gravitySuspendTimer_ = std::max(gravitySuspendTimer_, seconds);
+        }
+    }
 
     /// Where the server says the player is, on entering a world.
     ///

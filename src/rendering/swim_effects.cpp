@@ -320,9 +320,10 @@ void SwimEffects::update(const Camera& camera, const CameraController& cc,
         charPos = *followTarget;
     }
 
-    // Check water at character position (for ripples) and camera position (for bubbles)
-    auto charWaterH = water.getWaterHeightAt(charPos.x, charPos.y);
-    auto camWaterH = water.getWaterHeightAt(camPos.x, camPos.y);
+    // Check water at character position (for ripples) and camera position (for bubbles),
+    // honoring roof/hull displacement so dry below-sea-level rooms and ship holds stay dry.
+    auto charWaterH = water.getNearestWaterHeightAt(charPos.x, charPos.y, charPos.z, 400.0f);
+    auto camWaterH = water.getNearestWaterHeightAt(camPos.x, camPos.y, camPos.z, 400.0f);
 
     bool swimming = cc.isSwimming();
     bool moving = cc.isMoving();

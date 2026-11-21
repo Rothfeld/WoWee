@@ -581,8 +581,10 @@ glm::vec3 CameraController::moveFollowedCharacter(float /*deltaTime*/, FrameInpu
                 }
             }
         }
-        // Keep swimming through water-data gaps at chunk boundaries.
-        if (!inWater && swimming && !waterH) {
+        // Keep swimming through water-data gaps at chunk boundaries, never on
+        // loaded dry land, ship decks (>2 yd above water), or displaced holds.
+        if (!inWater && swimming && !waterH &&
+            groundNotStreamedYet(targetPos.x, targetPos.y)) {
             inWater = true;
         }
 

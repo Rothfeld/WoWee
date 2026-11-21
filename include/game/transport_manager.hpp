@@ -294,6 +294,13 @@ public:
         return snapshot;
     }
     glm::vec3 getPlayerWorldPosition(uint64_t transportGuid, const glm::vec3& localOffset);
+    /// Predict the rider's canonical world position on `destinationMapId` across an
+    /// `SMSG_NEW_WORLD` continent transfer using the transport's authored `TaxiRouteSchedule`
+    /// so `WorldLoader` streams destination ocean tiles around the real ship rather than (0,0).
+    [[nodiscard]] bool predictDestinationWorldPosition(uint64_t transportGuid,
+                                                       uint32_t destinationMapId,
+                                                       const glm::vec3& localOffset,
+                                                       glm::vec3& outCanonicalWorldPos) const;
     [[nodiscard]] glm::vec3 serverToTransportLocal(uint64_t transportGuid,
                                      const glm::vec3& serverOffset) const;
     [[nodiscard]] glm::vec3 transportLocalToServer(uint64_t transportGuid,

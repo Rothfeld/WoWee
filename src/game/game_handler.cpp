@@ -2590,6 +2590,38 @@ void GameHandler::updateM2TransportBoarding(const glm::vec3& playerCanonical) {
     }
 }
 
+bool GameHandler::disembarkPlayerTransportIfOffDeck(const glm::vec3& playerCanonical) {
+    if (!isOnTransport() || hasPendingPlayerTransportWorldTransfer()) {
+        return false;
+    }
+    auto* tm = getTransportManager();
+    if (!tm) {
+        return false;
+    }
+    const uint64_t transportGuid = getPlayerTransportGuid();
+    const auto* tr = tm->getTransport(transportGuid);
+    if (!tr || tr->isM2 || !tm->isTransportCollisionReady(transportGuid)) {
+        return false;
+    }
+    if (tm->isPointOnTransportDeck(transportGuid, playerCanonical, 3.0f)) {
+        return false;
+    }
+
+    LOG_WARNING("Client ship water disembark: guid=0x", std::hex, transportGuid, std::dec,
+                " pos=(", playerCanonical.x, ",", playerCanonical.y, ",", playerCanonical.z, ")");
+    shipNoDeckSupportFrames_ = 0;
+    clearPlayerTransport();
+    setPosition(playerCanonical.x, playerCanonical.y, playerCanonical.z);
+    if (getState() == WorldState::IN_WORLD && getSocket() &&
+        wireOpcode(Opcode::CMSG_MOVE_CHNG_TRANSPORT) != 0xFFFF) {
+        sendMovement(Opcode::CMSG_MOVE_CHNG_TRANSPORT);
+    } else if (movementHandler_) {
+        movementHandler_->commitTransportArrival(
+            playerCanonical, movementInfo.orientation, 0, 0.0f);
+    }
+    return true;
+}
+
 // ============================================================
 // Bank System
 // ============================================================

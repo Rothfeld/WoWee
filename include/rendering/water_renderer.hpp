@@ -210,9 +210,20 @@ public:
     /// close to the query Z (within maxAbove units above). Avoids false
     /// underwater detection from elevated WMO water far above the camera.
     std::optional<float> getNearestWaterHeightAt(float glX, float glY, float queryZ, float maxAbove = 15.0f) const;
-    // A surface belongs to this volume only when no solid terrain/roof separates it from the query.
-    void setWaterColumnBlockedQuery(std::function<bool(const glm::vec3&, float)> query) {
+    // A surface belongs to this volume only when no solid terrain/roof or floating hull
+    // separates it from the query (`wmoId == 0` identifies outdoor terrain/ocean water).
+    using WaterColumnBlockedQuery = std::function<bool(const glm::vec3& position, float surface, uint32_t wmoId)>;
+    void setWaterColumnBlockedQuery(WaterColumnBlockedQuery query) {
         waterColumnBlockedQuery_ = std::move(query);
+    }
+    void setWaterColumnBlockedQuery(std::function<bool(const glm::vec3&, float)> query) {
+        if (!query) {
+            waterColumnBlockedQuery_ = nullptr;
+            return;
+        }
+        waterColumnBlockedQuery_ = [q = std::move(query)](const glm::vec3& pos, float surface, uint32_t) {
+            return q(pos, surface);
+        };
     }
     std::optional<uint16_t> getWaterTypeAt(float glX, float glY) const;
     bool isWmoWaterAt(float glX, float glY) const;
@@ -220,7 +231,7 @@ public:
     int getSurfaceCount() const { return static_cast<int>(surfaces.size()); }
 
 private:
-    std::function<bool(const glm::vec3&, float)> waterColumnBlockedQuery_;
+    WaterColumnBlockedQuery waterColumnBlockedQuery_;
     void createWaterMesh(WaterSurface& surface);
     void destroyWaterMesh(WaterSurface& surface);
 

@@ -24,6 +24,10 @@
 #include "rendering/camera_controller.hpp"
 #include "rendering/animation/animation_ids.hpp"
 #include "rendering/animation/locomotion_fsm.hpp"
+#include "rendering/water_renderer.hpp"
+#include "rendering/wmo_renderer.hpp"
+#include "pipeline/adt_loader.hpp"
+#include "pipeline/wmo_loader.hpp"
 #include "ui/gamepad_controls.hpp"
 #include "ui/framexml_emitter.hpp"
 #include "ui/xml_parser.hpp"
@@ -6389,4 +6393,517 @@ TEST_CASE_METHOD(Integration,
     prepare("prep(eb, 'hello', 5)");
     lua.dispatchText("\x7f\x08");
     truth("eb:GetText() == 'hello' and eb:GetCursorPosition() == 5 and #events == 0");
+}
+
+namespace {
+
+// Build a synthetic two-deck + submerged-keel ship WMO matching TBC transportship /
+// transportship_ne hull topology:
+//   - Upper deck floor at z = +6.2 (x in [-20, 20], y in [-8, 8]), upward normal +Z
+//   - Lower hold floor at z = -8.5 (x in [-16, 16], y in [-6, 6]), upward normal +Z,
+//     with an OPEN stairwell hatch directly to the sky (no ceiling over x in [-4, 4])
+//     plus a cabin ceiling at z = +6.2 over x in [4, 16] (above sea level z = 0!)
+//   - Submerged exterior keel skin at z = -12.0 (x in [-18, 18], y in [-7, 7]),
+//     outward normal pointing DOWNWARD (-Z) into the ocean
+wowee::pipeline::WMOModel makeSyntheticShipWmoModel() {
+    using namespace wowee::pipeline;
+    WMOModel model{};
+    model.version = 17;
+    model.nGroups = 2;
+    model.boundingBoxMin = glm::vec3(-20.0f, -8.0f, -12.0f);
+    model.boundingBoxMax = glm::vec3(20.0f, 8.0f, 7.0f);
+    WMOMaterial mat{};
+    model.materials.push_back(mat);
+
+    auto appendQuad = [](WMOGroup& g,
+                         const glm::vec3& a, const glm::vec3& b,
+                         const glm::vec3& c, const glm::vec3& d,
+                         const glm::vec3& normal) {
+        const uint16_t base = static_cast<uint16_t>(g.vertices.size());
+        for (const glm::vec3& p : {a, b, c, d}) {
+            WMOVertex v{};
+            v.position = p;
+            v.normal = normal;
+            g.vertices.push_back(v);
+        }
+        // Winding chosen so cross(v1 - v0, v2 - v0) aligns with `normal`.
+        g.indices.insert(g.indices.end(), {
+            base, static_cast<uint16_t>(base + 1), static_cast<uint16_t>(base + 2),
+            base, static_cast<uint16_t>(base + 2), static_cast<uint16_t>(base + 3)
+        });
+        g.triFlags.push_back(0x08);  // MOPY collision hull flag
+        g.triFlags.push_back(0x08);
+        g.triMaterials.push_back(0);
+        g.triMaterials.push_back(0);
+    };
+
+    // Group 0: Exterior hull (upper deck around hatch + downward-facing submerged keel).
+    WMOGroup hull{};
+    hull.groupId = 0;
+    hull.flags = 0x0008;  // Outdoor group
+    hull.boundingBoxMin = glm::vec3(-20.0f, -8.0f, -12.0f);
+    hull.boundingBoxMax = glm::vec3(20.0f, 8.0f, 7.0f);
+    // Aft upper deck: x in [-20, -4], y in [-8, 8], z = +6.2, normal = +Z
+    appendQuad(hull,
+               {-20.0f, -8.0f, 6.2f}, {-4.0f, -8.0f, 6.2f},
+               {-4.0f,  8.0f, 6.2f}, {-20.0f,  8.0f, 6.2f},
+               {0.0f, 0.0f, 1.0f});
+    // Fore upper deck / hold roof: x in [4, 20], y in [-8, 8], z = +6.2, normal = +Z
+    appendQuad(hull,
+               {4.0f, -8.0f, 6.2f}, {20.0f, -8.0f, 6.2f},
+               {20.0f,  8.0f, 6.2f}, {4.0f,  8.0f, 6.2f},
+               {0.0f, 0.0f, 1.0f});
+    // Submerged exterior keel skin at z = -12.0, outward normal = -Z!
+    // cross((18,-7,0) - (-18,-7,0), (18,7,0) - (-18,-7,0)) = +Z, so reverse winding for -Z:
+    appendQuad(hull,
+               {-18.0f, -7.0f, -12.0f}, {-18.0f,  7.0f, -12.0f},
+               { 18.0f,  7.0f, -12.0f}, { 18.0f, -7.0f, -12.0f},
+               {0.0f, 0.0f, -1.0f});
+    model.groups.push_back(std::move(hull));
+
+    // Group 1: Interior lower hold floor at z = -8.5 (below sea level z = 0.0), normal = +Z.
+    // Note x in [-4, 4] is open to the sky above (stairwell hatch), and x in [4, 16] has
+    // its ceiling at z = +6.2 (above sea level z = 0.0).
+    WMOGroup hold{};
+    hold.groupId = 1;
+    hold.flags = 0x2000;  // Indoor group
+    hold.boundingBoxMin = glm::vec3(-16.0f, -6.0f, -8.6f);
+    hold.boundingBoxMax = glm::vec3(16.0f, 6.0f, 6.2f);
+    appendQuad(hold,
+               {-16.0f, -6.0f, -8.5f}, {16.0f, -6.0f, -8.5f},
+               { 16.0f,  6.0f, -8.5f}, {-16.0f,  6.0f, -8.5f},
+               {0.0f, 0.0f, 1.0f});
+    model.groups.push_back(std::move(hold));
+
+    return model;
+}
+
+void loadOceanWaterTile(wowee::rendering::WaterRenderer& water,
+                        float centerRenderX, float centerRenderY,
+                        float seaLevel = 0.0f) {
+    wowee::pipeline::ADTTerrain adt{};
+    adt.loaded = true;
+    constexpr float kChunkSize = 533.33333f / 16.0f;
+    // Tile NW corner placed ~266 yd positive of center so all 16x16 chunks cover center.
+    const float nwX = centerRenderX + 8.0f * kChunkSize;
+    const float nwY = centerRenderY + 8.0f * kChunkSize;
+    for (int cy = 0; cy < 16; ++cy) {
+        for (int cx = 0; cx < 16; ++cx) {
+            const int idx = cy * 16 + cx;
+            adt.chunks[idx].position[0] = nwX - cy * kChunkSize;
+            adt.chunks[idx].position[1] = nwY - cx * kChunkSize;
+            adt.chunks[idx].position[2] = -30.0f;
+
+            wowee::pipeline::ADTTerrain::WaterLayer layer{};
+            layer.liquidType = 2;  // Ocean ((2 - 1) % 4 == 1)
+            layer.minHeight = seaLevel;
+            layer.maxHeight = seaLevel;
+            layer.x = 0;
+            layer.y = 0;
+            layer.width = 8;
+            layer.height = 8;
+            layer.heights.assign(81, seaLevel);
+            layer.depths.assign(81, 200);
+            layer.mask.assign(8, 0xFF);
+            adt.waterData[idx].layers.push_back(std::move(layer));
+        }
+    }
+    water.loadFromTerrain(adt, false, 32, 32);
+}
+
+void wireShipWaterColumnBlocking(wowee::rendering::WaterRenderer& water,
+                                 const wowee::rendering::WMORenderer& wmo) {
+    water.setWaterColumnBlockedQuery(
+        [&wmo](const glm::vec3& position, float surface, uint32_t wmoId) {
+            if (wmoId == 0 && wmo.isDisplacedByTransportHull(position)) {
+                return true;
+            }
+            const float distance = surface - position.z;
+            if (distance <= 0.2f) return false;
+            const float hit = (wmoId == 0)
+                ? wmo.raycastNonTransportBoundingBoxes(position, glm::vec3(0, 0, 1), distance)
+                : wmo.raycastBoundingBoxes(position, glm::vec3(0, 0, 1), distance);
+            return hit < distance;
+        });
+}
+
+wowee::rendering::AnimCapabilitySet fullSwimGroundCaps() {
+    wowee::rendering::AnimCapabilitySet caps{};
+    caps.hasStand = true;
+    caps.hasWalk = true;
+    caps.hasRun = true;
+    caps.hasWalkBackwards = true;
+    caps.hasJump = true;
+    caps.hasSwim = true;
+    caps.resolvedStand = 0;
+    caps.resolvedWalk = 4;
+    caps.resolvedRun = 5;
+    caps.resolvedWalkBackwards = 13;
+    caps.resolvedJumpStart = 37;
+    caps.resolvedJump = 38;
+    caps.resolvedJumpEnd = 39;
+    caps.resolvedSwimIdle = 41;
+    caps.resolvedSwim = 42;
+    caps.resolvedSwimBackwards = 45;
+    caps.resolvedSwimLeft = 43;
+    caps.resolvedSwimRight = 44;
+    return caps;
+}
+
+}  // namespace
+
+TEST_CASE_METHOD(Integration,
+                 "TBC cross-continent boat transfer keeps Stand/Run on deck & below-sea-level hold and unlatches dry-land swim",
+                 "[transport][boatswim][tbc]") {
+    using namespace wowee::game;
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    auto* tm = handler.getTransportManager();
+    auto* mh = handler.getMovementHandler();
+    REQUIRE(tm != nullptr);
+    REQUIRE(mh != nullptr);
+
+    // Build headless WMORenderer + WaterRenderer wired identically to Renderer::initializeRenderers.
+    rendering::WMORenderer wmo;
+    REQUIRE(wmo.loadModel(makeSyntheticShipWmoModel(), 3015u));
+    tm->setWMORenderer(&wmo);
+
+    rendering::WaterRenderer water;
+    wireShipWaterColumnBlocking(water, wmo);
+
+    // 1. Verify gravity suspension never shrinks when EntitySpawner calls suspendGravityFor(2.0f)
+    //    inside an active 10.0s world-entry window.
+    rendering::Camera camera;
+    rendering::CameraController controller(&camera);
+    controller.setOnlineMode(true);
+    controller.setUseWoWSpeed(true);
+    controller.setWMORenderer(&wmo);
+    controller.setWaterRenderer(&water);
+
+    glm::vec3 followPos(0.0f, 0.0f, 6.2f);
+    controller.setFollowTarget(&followPos);
+
+    // 2. Register origin ship on Map 0 with a real cross-continent TaxiRouteSchedule (Map 0 -> Map 1)
+    //    and board at Booty Bay->Ratchet local offset (-5.58, 0.30, 6.20), localO = 1.95951.
+    constexpr uint64_t boatOrigin = 0x1fc0000000005147ULL;
+    announceTbcBoat(session, boatOrigin);
+    tm->loadPathFromNodes(20808u, {{0.0f, 0.0f, 0.0f}});
+    const uint32_t originInst = wmo.createInstance(3015u, glm::vec3(0.0f), glm::vec3(0.0f), 1.0f);
+    REQUIRE(originInst != 0);
+    tm->registerTransport(boatOrigin, originInst, 20808u, {-14280.0f, 560.0f, 0.0f},
+                          20808u, 3015u, false, 0.0f);
+    tm->applyTransportTimestamp(boatOrigin, 15000u, std::chrono::steady_clock::now());
+
+    // Build a two-continent TaxiRoute via TransportPathRepository or test schedule:
+    // verify handleNewWorld + sendPendingWorldportAck withholds premature world-space STOP/HEARTBEAT!
+    const glm::vec3 riderLocalOffset(-5.57666f, 0.303711f, 6.2f);
+    const float riderLocalO = 1.95951f;
+    handler.setPlayerOnTransport(boatOrigin, riderLocalOffset);
+
+    uint32_t callbackMapId = 0xFFFFFFFFu;
+    glm::vec3 callbackServerPos(0.0f);
+    handler.setWorldEntryCallback([&](uint32_t mapId, float sx, float sy, float sz, bool) {
+        callbackMapId = mapId;
+        callbackServerPos = glm::vec3(sx, sy, sz);
+    });
+
+    wowee::network::Packet pending(wireOpcode(Opcode::SMSG_TRANSFER_PENDING));
+    pending.writeUInt32(1u);
+    pending.writeUInt32(20808u);
+    pending.writeUInt32(handler.getCurrentMapId());
+    session.receive(pending);
+
+    wowee::network::Packet newWorld(wireOpcode(Opcode::SMSG_NEW_WORLD));
+    newWorld.writeUInt32(1u);
+    for (float v : {riderLocalOffset.x, riderLocalOffset.y, riderLocalOffset.z, riderLocalO}) {
+        newWorld.writeFloat(v);
+    }
+    session.receive(newWorld);
+    REQUIRE(handler.hasPendingPlayerTransportWorldTransfer());
+    CHECK(callbackMapId == 1u);
+
+    const size_t stopsBeforeAck = session.sent().of(Opcode::MSG_MOVE_STOP).size();
+    const size_t heartbeatsBeforeAck = session.sent().of(Opcode::MSG_MOVE_HEARTBEAT).size();
+    handler.sendPendingWorldportAck();
+    REQUIRE(session.sent().of(Opcode::MSG_MOVE_WORLDPORT_ACK).size() == 1);
+    // Must NOT emit unattached world-space STOP / HEARTBEAT before destination boat spawns!
+    CHECK(session.sent().of(Opcode::MSG_MOVE_STOP).size() == stopsBeforeAck);
+    CHECK(session.sent().of(Opcode::MSG_MOVE_HEARTBEAT).size() == heartbeatsBeforeAck);
+
+    // 3. Destination ship spawns on Map 1 over deep ocean (sea level z = 0.0) at Ratchet approach
+    //    canonical (-1245.0, -4104.0, 0.0) -> render (4104.0, -1245.0, 0.0).
+    wmo.clearInstances();
+    tm->clearTransports();
+    constexpr uint64_t boatDest = 0x1fc0000000005148ULL;
+    announceTbcBoat(session, boatDest);
+    tm->loadPathFromNodes(20808u, {{0.0f, 0.0f, 0.0f}});
+    const glm::vec3 shipCanonical(-1245.0f, -4104.0f, 0.0f);
+    const glm::vec3 shipRender = core::coords::canonicalToRender(shipCanonical);
+    loadOceanWaterTile(water, shipRender.x, shipRender.y, 0.0f);
+
+    const uint32_t destInst = wmo.createInstance(3015u, shipRender, glm::vec3(0.0f), 1.0f);
+    REQUIRE(destInst != 0);
+    tm->registerTransport(boatDest, destInst, 20808u, shipCanonical,
+                          20808u, 3015u, false, 0.0f);
+    REQUIRE(tm->isTransportCollisionReady(boatDest));
+
+    glm::vec3 restoredCanonical(0.0f);
+    float restoredCanonicalYaw = 0.0f;
+    float restoredCamYawDeg = 0.0f;
+    REQUIRE(handler.completePlayerTransportWorldTransfer(
+        boatDest, restoredCanonical, restoredCanonicalYaw, restoredCamYawDeg));
+
+    const glm::vec3 restoredRender = core::coords::canonicalToRender(restoredCanonical);
+    controller.setCameraAndFacingYaw(
+        restoredCamYawDeg, core::coords::canonicalToCharacterYawDeg(restoredCanonicalYaw));
+    controller.teleportTo(restoredRender);
+    controller.suspendGravityFor(10.0f);
+    controller.suspendGravityFor(2.0f);  // Must NOT clobber 10.0s window down to 2.0s!
+
+    std::vector<uint32_t> emittedOpcodes;
+    controller.setMovementCallback([&](uint32_t op) {
+        emittedOpcodes.push_back(op);
+        handler.sendMovement(static_cast<Opcode>(op));
+    });
+
+    auto& input = core::Input::getInstance();
+    input.clearVirtualKeys();
+    input.update();
+
+    rendering::LocomotionFSM loco;
+    const auto caps = fullSwimGroundCaps();
+    auto stepClientFrame = [&](float dt) {
+        controller.update(dt);
+        rendering::LocomotionFSM::Input in{};
+        in.moving = controller.isMoving();
+        in.movingForward = controller.isMovingForward();
+        in.sprinting = controller.isSprinting();
+        in.grounded = controller.isGrounded();
+        in.jumping = controller.isJumping();
+        in.swimming = controller.isSwimming();
+        in.deltaTime = dt;
+        return loco.resolve(in, caps);
+    };
+
+    // 4. Stand on upper deck (z = 6.2 over ocean z = 0.0, where getNearestWaterHeightAt is nullopt):
+    //    must stay grounded in IDLE (Stand), NEVER SWIM_IDLE, with zero MOVEFLAG_SWIMMING.
+    for (int i = 0; i < 30; ++i) {
+        stepClientFrame(1.0f / 60.0f);
+    }
+    CHECK_FALSE(controller.isSwimming());
+    CHECK(controller.isGrounded());
+    CHECK(loco.getState() == rendering::LocomotionFSM::State::IDLE);
+    CHECK(session.sent().of(Opcode::MSG_MOVE_START_SWIM).empty());
+    CHECK((handler.getMovementInfo().flags &
+           static_cast<uint32_t>(MovementFlags::SWIMMING)) == 0u);
+
+    // Run forward on upper deck: LocomotionFSM enters RUN (not SWIM) and zero SWIMMING flags go out.
+    event(SDL_SCANCODE_W, true);
+    for (int i = 0; i < 15; ++i) {
+        input.update();
+        stepClientFrame(1.0f / 60.0f);
+    }
+    CHECK_FALSE(controller.isSwimming());
+    CHECK(loco.getState() == rendering::LocomotionFSM::State::RUN);
+    CHECK((handler.getMovementInfo().flags &
+           static_cast<uint32_t>(MovementFlags::SWIMMING)) == 0u);
+    event(SDL_SCANCODE_W, false);
+    for (int i = 0; i < 15; ++i) {
+        input.update();
+        stepClientFrame(1.0f / 60.0f);
+    }
+    CHECK(loco.getState() == rendering::LocomotionFSM::State::IDLE);
+
+    // 5. Reproduce exact live bug condition: suppose player dipped into ocean water
+    //    (entering swimming = true, SWIM_IDLE) and was then placed back onto the ship deck
+    //    (z = 6.2) or walked onto dry land (z = 11.9) where getNearestWaterHeightAt == nullopt!
+    const glm::vec3 oceanBesideShip = shipRender + glm::vec3(0.0f, 25.0f, -1.6f);
+    followPos = oceanBesideShip;
+    input.update();
+    stepClientFrame(1.0f / 60.0f);
+    REQUIRE(controller.isSwimming());
+    REQUIRE(loco.getState() == rendering::LocomotionFSM::State::SWIM_IDLE);
+
+    // Snap rider back onto dry upper deck (z = 6.2, waterH == nullopt, ground loaded):
+    // on the VERY FIRST frame, CameraController must unlatch swimming -> false, emit
+    // MSG_MOVE_STOP_SWIM, clear MOVEFLAG_SWIMMING, and return LocomotionFSM to IDLE/RUN!
+    followPos = shipRender + glm::vec3(-8.0f, 0.0f, 6.2f);
+    input.update();
+    stepClientFrame(1.0f / 60.0f);
+    CHECK_FALSE(controller.isSwimming());
+    CHECK(loco.getState() == rendering::LocomotionFSM::State::IDLE);
+    CHECK(session.sent().of(Opcode::MSG_MOVE_STOP_SWIM).size() == 1);
+    CHECK((handler.getMovementInfo().flags &
+           static_cast<uint32_t>(MovementFlags::SWIMMING)) == 0u);
+
+    // 6. Below-sea-level ship hold (z = -8.5 < ocean 0.0), tested BOTH under the cabin ceiling
+    //    (x = +10, ceiling at z = +6.2 above sea level) AND directly under the open stairwell
+    //    hatch (x = 0, no ceiling overhead at all!):
+    for (float holdLocalX : {10.0f, 0.0f}) {
+        const glm::vec3 holdFeetPos = shipRender + glm::vec3(holdLocalX, 0.0f, -8.5f);
+        const glm::vec3 holdCamPos = shipRender + glm::vec3(holdLocalX, 0.0f, -5.5f);
+        CHECK(wmo.isDisplacedByTransportHull(holdFeetPos));
+        CHECK(wmo.isDisplacedByTransportHull(holdCamPos));
+        CHECK_FALSE(water.getNearestWaterHeightAt(holdFeetPos.x, holdFeetPos.y, holdFeetPos.z, 400.0f).has_value());
+        CHECK_FALSE(water.getNearestWaterHeightAt(holdCamPos.x, holdCamPos.y, holdCamPos.z, 400.0f).has_value());
+
+        controller.teleportTo(holdFeetPos);
+        for (int i = 0; i < 10; ++i) {
+            input.update();
+            stepClientFrame(1.0f / 60.0f);
+        }
+        CHECK_FALSE(controller.isSwimming());
+        CHECK(controller.isGrounded());
+        CHECK(loco.getState() == rendering::LocomotionFSM::State::IDLE);
+    }
+    CHECK((handler.getMovementInfo().flags &
+           static_cast<uint32_t>(MovementFlags::SWIMMING)) == 0u);
+}
+
+TEST_CASE_METHOD(Integration,
+                 "Jumping overboard from TBC ship into ocean detaches transport before MSG_MOVE_START_SWIM, swims under keel, and exits onto land",
+                 "[transport][boatswim][tbc]") {
+    using namespace wowee::game;
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    auto* tm = handler.getTransportManager();
+    auto* mh = handler.getMovementHandler();
+    REQUIRE(tm != nullptr);
+    REQUIRE(mh != nullptr);
+
+    rendering::WMORenderer wmo;
+    REQUIRE(wmo.loadModel(makeSyntheticShipWmoModel(), 3015u));
+    tm->setWMORenderer(&wmo);
+
+    rendering::WaterRenderer water;
+    wireShipWaterColumnBlocking(water, wmo);
+
+    constexpr uint64_t boatGuid = 0x1fc0000000005149ULL;
+    announceTbcBoat(session, boatGuid);
+    tm->loadPathFromNodes(176310u, {{0.0f, 0.0f, 0.0f}});
+    const glm::vec3 shipCanonical(-3890.0f, -600.0f, 0.0f);
+    const glm::vec3 shipRender = core::coords::canonicalToRender(shipCanonical);
+    loadOceanWaterTile(water, shipRender.x, shipRender.y, 0.0f);
+
+    const uint32_t inst = wmo.createInstance(3015u, shipRender, glm::vec3(0.0f), 1.0f);
+    REQUIRE(inst != 0);
+    tm->registerTransport(boatGuid, inst, 176310u, shipCanonical, 176310u, 3015u, false, 0.0f);
+
+    handler.setPlayerOnTransport(boatGuid, {-8.0f, 0.0f, 6.2f});
+    const glm::vec3 deckWorldCanonical = tm->getPlayerWorldPosition(boatGuid, {-8.0f, 0.0f, 6.2f});
+    const glm::vec3 deckRender = core::coords::canonicalToRender(deckWorldCanonical);
+    handler.setPosition(deckWorldCanonical.x, deckWorldCanonical.y, deckWorldCanonical.z);
+    mh->commitTransportArrival(deckWorldCanonical, 0.0f, boatGuid, 0.0f);
+
+    rendering::Camera camera;
+    rendering::CameraController controller(&camera);
+    controller.setOnlineMode(true);
+    controller.setUseWoWSpeed(true);
+    controller.setWMORenderer(&wmo);
+    controller.setWaterRenderer(&water);
+
+    glm::vec3 followPos = deckRender;
+    controller.setFollowTarget(&followPos);
+    controller.teleportTo(deckRender);
+
+    // Wire callback matching Application::setState(IN_GAME): detach off-deck transport
+    // before sending MSG_MOVE_START_SWIM.
+    std::vector<Opcode> wireSequence;
+    controller.setMovementCallback([&](uint32_t rawOp) {
+        const auto op = static_cast<Opcode>(rawOp);
+        const glm::vec3 canonical = core::coords::renderToCanonical(followPos);
+        handler.setPosition(canonical.x, canonical.y, canonical.z);
+        if (op == Opcode::MSG_MOVE_START_SWIM) {
+            if (handler.disembarkPlayerTransportIfOffDeck(canonical)) {
+                wireSequence.push_back(Opcode::CMSG_MOVE_CHNG_TRANSPORT);
+            }
+        }
+        wireSequence.push_back(op);
+        handler.sendMovement(op);
+    });
+
+    auto& input = core::Input::getInstance();
+    input.clearVirtualKeys();
+    rendering::LocomotionFSM loco;
+    const auto caps = fullSwimGroundCaps();
+
+    // 1. Player jumps overboard into ocean beside hull (y = +20 outside [-8, 8] hull width, z = -1.6).
+    followPos = shipRender + glm::vec3(0.0f, 20.0f, -1.6f);
+    CHECK_FALSE(wmo.isDisplacedByTransportHull(followPos));
+    REQUIRE(water.getNearestWaterHeightAt(followPos.x, followPos.y, followPos.z, 400.0f).has_value());
+
+    input.update();
+    controller.update(1.0f / 60.0f);
+    {
+        rendering::LocomotionFSM::Input in{};
+        in.swimming = controller.isSwimming();
+        in.grounded = controller.isGrounded();
+        in.deltaTime = 1.0f / 60.0f;
+        loco.resolve(in, caps);
+    }
+
+    CHECK(controller.isSwimming());
+    CHECK_FALSE(handler.isOnTransport());
+    CHECK(loco.getState() == rendering::LocomotionFSM::State::SWIM_IDLE);
+    REQUIRE(wireSequence.size() >= 2);
+    CHECK(wireSequence[0] == Opcode::CMSG_MOVE_CHNG_TRANSPORT);
+    CHECK(wireSequence[1] == Opcode::MSG_MOVE_START_SWIM);
+    CHECK((handler.getMovementInfo().flags &
+           static_cast<uint32_t>(MovementFlags::SWIMMING)) != 0u);
+    CHECK((handler.getMovementInfo().flags &
+           static_cast<uint32_t>(MovementFlags::ONTRANSPORT)) == 0u);
+
+    // Swimming forward in ocean transitions LocomotionFSM to SWIM.
+    event(SDL_SCANCODE_W, true);
+    for (int i = 0; i < 6; ++i) {
+        input.update();
+        controller.update(1.0f / 60.0f);
+        rendering::LocomotionFSM::Input in{};
+        in.moving = controller.isMoving();
+        in.movingForward = controller.isMovingForward();
+        in.swimming = controller.isSwimming();
+        in.grounded = controller.isGrounded();
+        in.deltaTime = 1.0f / 60.0f;
+        loco.resolve(in, caps);
+    }
+    CHECK(loco.getState() == rendering::LocomotionFSM::State::SWIM);
+    event(SDL_SCANCODE_W, false);
+
+    // 2. Diving deep underneath the ship's submerged keel (z = -14.5 below -12.0 downward keel):
+    //    neither isDisplacedByTransportHull nor raycastNonTransportBoundingBoxes blocks ocean water!
+    const glm::vec3 underKeelPos = shipRender + glm::vec3(0.0f, 0.0f, -14.5f);
+    CHECK_FALSE(wmo.isDisplacedByTransportHull(underKeelPos));
+    const auto underKeelWater =
+        water.getNearestWaterHeightAt(underKeelPos.x, underKeelPos.y, underKeelPos.z, 400.0f);
+    REQUIRE(underKeelWater.has_value());
+    CHECK(*underKeelWater == Catch::Approx(0.0f));
+
+    followPos = underKeelPos;
+    input.update();
+    controller.update(1.0f / 60.0f);
+    CHECK(controller.isSwimming());
+
+    // 3. Climbing out of water onto dry deck/dock floor (z = +6.2 where waterH == nullopt
+    //    and WMO floor supports feet): exits swimming cleanly on the first frame with
+    //    MSG_MOVE_STOP_SWIM (no SWIM_IDLE/SWIM) and settles to grounded IDLE!
+    followPos = shipRender + glm::vec3(-8.0f, 0.0f, 6.2f);
+    input.update();
+    controller.update(1.0f / 60.0f);
+    CHECK_FALSE(controller.isSwimming());
+    CHECK(session.sent().of(Opcode::MSG_MOVE_STOP_SWIM).size() == 1);
+    CHECK((handler.getMovementInfo().flags &
+           static_cast<uint32_t>(MovementFlags::SWIMMING)) == 0u);
+    for (int i = 0; i < 20; ++i) {
+        input.update();
+        controller.update(1.0f / 60.0f);
+        rendering::LocomotionFSM::Input in{};
+        in.moving = controller.isMoving();
+        in.swimming = controller.isSwimming();
+        in.grounded = controller.isGrounded();
+        in.deltaTime = 1.0f / 60.0f;
+        loco.resolve(in, caps);
+    }
+    CHECK(controller.isGrounded());
+    CHECK_FALSE(controller.isSwimming());
+    CHECK(loco.getState() == rendering::LocomotionFSM::State::IDLE);
 }

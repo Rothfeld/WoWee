@@ -1983,6 +1983,9 @@ public:
     // Client-side transport board/disembark check by proximity to the live deck.
     // Covers M2 trams/lifts and client-animated TaxiPathNode WMO ships.
     void updateM2TransportBoarding(const glm::vec3& playerCanonical);
+    /// Immediately detach from a WMO transport when entering real ocean water off
+    /// the hull's deck, sending CMSG_MOVE_CHNG_TRANSPORT before MSG_MOVE_START_SWIM.
+    bool disembarkPlayerTransportIfOffDeck(const glm::vec3& playerCanonical);
     void setPlayerOnTransport(uint64_t transportGuid, const glm::vec3& localOffset);
     void setPlayerTransportOffset(const glm::vec3& offset) {
         playerTransportOffset_ = offset;

@@ -514,7 +514,7 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
 
     // Batch all GPU uploads (textures, VBs, IBs) into a single command buffer
     // submission with one fence wait, instead of one per upload.
-    vkCtx_->beginUploadBatch();
+    if (vkCtx_) vkCtx_->beginUploadBatch();
 
     // Textures and materials are model-level and done once; a resumed call has
     // them already and goes straight to the remaining groups.
@@ -530,7 +530,7 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
                     std::chrono::steady_clock::now() - texStart).count();
                 if (spent >= budgetMs) {
                     modelData.nextTextureIndex = i;
-                    vkCtx_->endUploadBatch();
+                    if (vkCtx_) vkCtx_->endUploadBatch();
                     return ModelLoadResult::InProgress;  // resume at this texture
                 }
             }
@@ -623,7 +623,7 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
                 // the building - the interior floors past a doorway in
                 // Stormwind, on a model big enough to break several times.
                 modelData.nextGroupIndex = gi;
-                vkCtx_->endUploadBatch();
+                if (vkCtx_) vkCtx_->endUploadBatch();
                 return ModelLoadResult::InProgress;
             }
         }
@@ -646,7 +646,7 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
 
     if (modelData.loadedGroups == 0) {
         core::Logger::getInstance().warning("No valid groups loaded for WMO ", id);
-        vkCtx_->endUploadBatch();
+        if (vkCtx_) vkCtx_->endUploadBatch();
         loadingModels_.erase(id);
         return ModelLoadResult::Failed;
     }
@@ -767,6 +767,10 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
         bool isInterior = pipeline::wmoUsesLocalLighting(groupRes.groupFlags);
         for (auto& [key, mb] : batchMap) {
             if (mb.hasTexture) anyTextured = true;
+            if (!vkCtx_) {
+                groupRes.mergedBatches.push_back(std::move(mb));
+                continue;
+            }
 
             // Create material UBO
             VmaAllocator allocator = vkCtx_->getAllocator();
@@ -862,7 +866,7 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
         groupRes.allUntextured = !anyTextured && !groupRes.mergedBatches.empty();
     }
 
-    vkCtx_->endUploadBatch();
+    if (vkCtx_) vkCtx_->endUploadBatch();
 
     // Copy portal data for visibility culling
     modelData.portalVertices = model.portalVertices;
@@ -1980,19 +1984,21 @@ bool WMORenderer::createGroupResources(const pipeline::WMOGroup& group, GroupRes
         }
     }
 
-    // Upload vertex buffer to GPU
-    AllocatedBuffer vertBuf = uploadBuffer(*vkCtx_, vertices.data(),
-        vertices.size() * sizeof(WMOVertex),
-        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-    resources.vertexBuffer = vertBuf.buffer;
-    resources.vertexAlloc = vertBuf.allocation;
+    if (vkCtx_) {
+        // Upload vertex buffer to GPU
+        AllocatedBuffer vertBuf = uploadBuffer(*vkCtx_, vertices.data(),
+            vertices.size() * sizeof(WMOVertex),
+            VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+        resources.vertexBuffer = vertBuf.buffer;
+        resources.vertexAlloc = vertBuf.allocation;
 
-    // Upload index buffer to GPU
-    AllocatedBuffer idxBuf = uploadBuffer(*vkCtx_, group.indices.data(),
-        group.indices.size() * sizeof(uint16_t),
-        VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
-    resources.indexBuffer = idxBuf.buffer;
-    resources.indexAlloc = idxBuf.allocation;
+        // Upload index buffer to GPU
+        AllocatedBuffer idxBuf = uploadBuffer(*vkCtx_, group.indices.data(),
+            group.indices.size() * sizeof(uint16_t),
+            VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+        resources.indexBuffer = idxBuf.buffer;
+        resources.indexAlloc = idxBuf.allocation;
+    }
 
     // Store collision geometry for floor raycasting.
     // Use MOPY per-triangle flags to exclude detail/decorative geometry (flag 0x04)
@@ -4723,15 +4729,97 @@ std::vector<WMORenderer::InteriorMapGroup> WMORenderer::getInteriorMapGroups(con
 }
 
 float WMORenderer::raycastBoundingBoxes(const glm::vec3& origin, const glm::vec3& direction, float maxDistance) const {
-    return raycastTriangles(origin, direction, maxDistance, false);
+    return raycastTriangles(origin, direction, maxDistance, false, false);
+}
+
+float WMORenderer::raycastNonTransportBoundingBoxes(const glm::vec3& origin, const glm::vec3& direction, float maxDistance) const {
+    return raycastTriangles(origin, direction, maxDistance, false, true);
+}
+
+bool WMORenderer::isDisplacedByTransportHull(const glm::vec3& position) const {
+    for (const auto& instance : instances) {
+        if (!instance.isTransport || instance.hidden) continue;
+        if (position.x < instance.worldBoundsMin.x - 0.5f || position.x > instance.worldBoundsMax.x + 0.5f ||
+            position.y < instance.worldBoundsMin.y - 0.5f || position.y > instance.worldBoundsMax.y + 0.5f ||
+            position.z < instance.worldBoundsMin.z - 0.5f || position.z > instance.worldBoundsMax.z + 0.5f) {
+            continue;
+        }
+
+        const auto modelIt = loadedModels.find(instance.modelId);
+        if (modelIt == loadedModels.end()) continue;
+        const ModelData& model = modelIt->second;
+
+        const glm::vec3 worldOrigin(position.x, position.y, instance.worldBoundsMax.z + 1.0f);
+        const glm::vec3 worldDir(0.0f, 0.0f, -1.0f);
+        const glm::vec3 localOrigin(instance.invModelMatrix * glm::vec4(worldOrigin, 1.0f));
+        const glm::vec3 localDir = glm::normalize(
+            glm::vec3(instance.invModelMatrix * glm::vec4(worldDir, 0.0f)));
+
+        bool hasHit = false;
+        float bestHitZ = -std::numeric_limits<float>::infinity();
+        float bestSignedWorldNormalZ = -1.0f;
+
+        for (size_t gi = 0; gi < model.groups.size(); ++gi) {
+            if (gi < instance.worldGroupBounds.size()) {
+                const auto& [gMin, gMax] = instance.worldGroupBounds[gi];
+                if (position.x < gMin.x - 0.1f || position.x > gMax.x + 0.1f ||
+                    position.y < gMin.y - 0.1f || position.y > gMax.y + 0.1f ||
+                    position.z + 0.5f < gMin.z) {
+                    continue;
+                }
+            }
+
+            const auto& group = model.groups[gi];
+            if (!rayIntersectsAABB(localOrigin, localDir,
+                                   group.boundingBoxMin, group.boundingBoxMax)) {
+                continue;
+            }
+            if (!trianglesAlongRay(group, localOrigin, localDir, tl_triScratch)) continue;
+
+            const auto& verts = group.collisionVertices;
+            const auto& indices = group.collisionIndices;
+            for (uint32_t triStart : tl_triScratch) {
+                const uint32_t triIdx = triStart / 3;
+                if (triIdx >= group.triNormals.size()) continue;
+                const glm::vec3 localNormal = group.triNormals[triIdx];
+                if (glm::dot(localNormal, localNormal) < 0.5f) continue;
+
+                const glm::vec3& v0 = verts[indices[triStart]];
+                const glm::vec3& v1 = verts[indices[triStart + 1]];
+                const glm::vec3& v2 = verts[indices[triStart + 2]];
+
+                float t = rayTriangleIntersect(localOrigin, localDir, v0, v1, v2);
+                if (t <= 0.0f) {
+                    t = rayTriangleIntersect(localOrigin, localDir, v0, v2, v1);
+                }
+                if (t <= 0.0f) continue;
+
+                const glm::vec3 hitLocal = localOrigin + localDir * t;
+                const glm::vec3 hitWorld(instance.modelMatrix * glm::vec4(hitLocal, 1.0f));
+                if (hitWorld.z > position.z + 0.5f) continue;
+                if (!hasHit || hitWorld.z > bestHitZ) {
+                    hasHit = true;
+                    bestHitZ = hitWorld.z;
+                    const glm::vec3 worldNormal = glm::normalize(
+                        glm::vec3(instance.modelMatrix * glm::vec4(localNormal, 0.0f)));
+                    bestSignedWorldNormalZ = worldNormal.z;
+                }
+            }
+        }
+
+        if (hasHit && bestSignedWorldNormalZ >= 0.5f) {
+            return true;
+        }
+    }
+    return false;
 }
 
 float WMORenderer::raycastCamera(const glm::vec3& origin, const glm::vec3& direction, float maxDistance) const {
-    return raycastTriangles(origin, direction, maxDistance, true);
+    return raycastTriangles(origin, direction, maxDistance, true, false);
 }
 
 float WMORenderer::raycastTriangles(const glm::vec3& origin, const glm::vec3& direction, float maxDistance,
-                                    bool camera) const {
+                                    bool camera, bool skipTransports) const {
     QueryTimer timer(&queryTimeMs, &queryCallCount);
     float closestHit = maxDistance;
     // The camera is a solid sphere and every solid surface stops it: floors and
@@ -4763,6 +4851,7 @@ float WMORenderer::raycastTriangles(const glm::vec3& origin, const glm::vec3& di
 
     for (size_t idx : tl_candidateScratch) {
         const auto& instance = instances[idx];
+        if (skipTransports && instance.isTransport) continue;
         if (outsideCollisionFocus(instance)) continue;
 
         glm::vec3 center = (instance.worldBoundsMin + instance.worldBoundsMax) * 0.5f;

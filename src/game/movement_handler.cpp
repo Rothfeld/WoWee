@@ -2762,9 +2762,13 @@ void MovementHandler::sendPendingWorldportAck() {
     owner_.getSocket()->send(ack);
     LOG_INFO("Sent MSG_MOVE_WORLDPORT_ACK");
 
-    // Sync position immediately so the server doesn't keep stale coordinates.
-    sendMovement(Opcode::MSG_MOVE_STOP);
-    sendMovement(Opcode::MSG_MOVE_HEARTBEAT);
+    // Sync position immediately so the server doesn't keep stale coordinates,
+    // except while awaiting a cross-map transport's CREATE_OBJECT2 (sending
+    // world-space flags=0 before the destination ship registers strips ONTRANSPORT).
+    if (!owner_.hasPendingPlayerTransportWorldTransfer()) {
+        sendMovement(Opcode::MSG_MOVE_STOP);
+        sendMovement(Opcode::MSG_MOVE_HEARTBEAT);
+    }
 
     owner_.timeSinceLastPingRef() = 0.0f;
     LOG_WARNING("World transfer keepalive: sending immediate ping after MSG_MOVE_WORLDPORT_ACK");
@@ -2810,11 +2814,23 @@ void MovementHandler::handleNewWorld(network::Packet& packet) {
         // (CMaNGOS Transports.cpp sends t_pos.x/y/z/o). Hold them until the
         // same ship is registered on the destination map, then compose them
         // through its new transform.
-        owner_.beginPlayerTransportWorldTransfer(
-            mapId,
+        const uint64_t transportGuid = owner_.getPlayerTransportGuid();
+        const glm::vec3 localOffset =
             owner_.getTransportManager()->serverToTransportLocal(
-                owner_.getPlayerTransportGuid(), glm::vec3(serverX, serverY, serverZ)),
-            orientation);
+                transportGuid, glm::vec3(serverX, serverY, serverZ));
+        owner_.beginPlayerTransportWorldTransfer(mapId, localOffset, orientation);
+
+        // Predict the ship's arrival coordinates on the destination map so
+        // WorldLoader streams the actual ocean tiles rather than world (0,0).
+        glm::vec3 predictedCanonical(0.0f);
+        if (owner_.getTransportManager()->predictDestinationWorldPosition(
+                transportGuid, mapId, localOffset, predictedCanonical)) {
+            const glm::vec3 predictedServer =
+                core::coords::canonicalToServer(predictedCanonical);
+            serverX = predictedServer.x;
+            serverY = predictedServer.y;
+            serverZ = predictedServer.z;
+        }
     } else {
         // A portal, summon or GM teleport off a ship carries world coordinates.
         // Waiting for that ship on the destination map freezes local controls.

@@ -87,7 +87,8 @@ void FootstepDriver::playWaterStepExtras(Renderer* renderer) const {
     auto* waterRenderer = renderer->getWaterRenderer();
     if (swimEffects && waterRenderer) {
         const glm::vec3& characterPosition = renderer->getCharacterPosition();
-        auto wh = waterRenderer->getWaterHeightAt(characterPosition.x, characterPosition.y);
+        auto wh = waterRenderer->getNearestWaterHeightAt(
+            characterPosition.x, characterPosition.y, characterPosition.z, 400.0f);
         if (wh) {
             swimEffects->spawnFootSplash(characterPosition, *wh);
         }
@@ -219,7 +220,7 @@ bool FootstepDriver::isWading(Renderer* renderer) const {
     auto* waterRenderer = renderer->getWaterRenderer();
     if (!waterRenderer) return false;
     const glm::vec3& p = renderer->getCharacterPosition();
-    const auto waterHeight = waterRenderer->getWaterHeightAt(p.x, p.y);
+    const auto waterHeight = waterRenderer->getNearestWaterHeightAt(p.x, p.y, p.z, 400.0f);
     return waterHeight && p.z < *waterHeight + 0.25f;
 }
 

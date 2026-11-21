@@ -516,6 +516,13 @@ public:
      * @return Distance to first intersection, or maxDistance if no hit
      */
     float raycastBoundingBoxes(const glm::vec3& origin, const glm::vec3& direction, float maxDistance) const;
+    /// Same raycast excluding moving transport instances, so diving in open ocean
+    /// beneath a floating ship's keel does not treat the hull above as a sealed cave roof.
+    [[nodiscard]] float raycastNonTransportBoundingBoxes(const glm::vec3& origin, const glm::vec3& direction, float maxDistance) const;
+    /// True when `position` lies inside the dry displaced volume of a visible
+    /// transport WMO (an interior deck/hold/stair floor of the hull lies below
+    /// `position + (0,0,0.5)` rather than open ocean or downward exterior V-hull skin).
+    [[nodiscard]] bool isDisplacedByTransportHull(const glm::vec3& position) const;
 
     /// Distance to the first drawn WMO surface along the ray, or maxDistance.
     /// What hides an object from the mouse: collision-only triangles
@@ -571,7 +578,7 @@ public:
 
 private:
     float raycastTriangles(const glm::vec3& origin, const glm::vec3& direction, float maxDistance,
-                           bool camera) const;
+                           bool camera, bool skipTransports = false) const;
 
     // WMO material UBO - matches WMOMaterial in wmo.frag.glsl
     struct WMOMaterialUBO {

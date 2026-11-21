@@ -1643,7 +1643,7 @@ std::optional<float> WaterRenderer::getNearestWaterHeightAt(float glX, float glY
         if (h < queryZ - 2.0f) continue;  // water below camera, skip
         if (h > queryZ + maxAbove) continue;  // water way above camera, skip
         if (h > queryZ && waterColumnBlockedQuery_ &&
-            waterColumnBlockedQuery_(glm::vec3(glX, glY, queryZ), h)) continue;
+            waterColumnBlockedQuery_(glm::vec3(glX, glY, queryZ), h, surface.wmoId)) continue;
 
         float dist = std::abs(h - queryZ);
         if (!best || dist < bestDist) {

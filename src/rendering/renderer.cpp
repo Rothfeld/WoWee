@@ -2412,7 +2412,7 @@ void Renderer::update(float deltaTime) {
         bool wading = false;
 
         if (cameraController->isMoving()) {
-            if (auto waterH = waterRenderer->getWaterHeightAt(charPos.x, charPos.y)) {
+            if (auto waterH = waterRenderer->getNearestWaterHeightAt(charPos.x, charPos.y, charPos.z, 400.0f)) {
                 if (swimming) {
                     // A wake only exists where the swimmer meets the surface -
                     // diving deep leaves the surface undisturbed.
@@ -4220,14 +4220,20 @@ bool Renderer::initializeRenderers(pipeline::AssetManager* assetManager, const s
     // Create water renderer if not already created
     if (!waterRenderer) {
         waterRenderer = std::make_unique<WaterRenderer>();
-        waterRenderer->setWaterColumnBlockedQuery([this](const glm::vec3& position, float surface) {
+        waterRenderer->setWaterColumnBlockedQuery([this](const glm::vec3& position, float surface, uint32_t wmoId) {
             if (terrainManager) {
                 const auto terrain = terrainManager->getHeightAt(position.x, position.y);
                 if (terrain && *terrain > position.z + 0.2f && *terrain < surface) return true;
             }
+            if (wmoId == 0 && wmoRenderer && wmoRenderer->isDisplacedByTransportHull(position)) {
+                return true;
+            }
             const float distance = surface - position.z;
-            return wmoRenderer && distance > 0.2f &&
-                wmoRenderer->raycastBoundingBoxes(position, glm::vec3(0, 0, 1), distance) < distance;
+            if (!wmoRenderer || distance <= 0.2f) return false;
+            const float hit = (wmoId == 0)
+                ? wmoRenderer->raycastNonTransportBoundingBoxes(position, glm::vec3(0, 0, 1), distance)
+                : wmoRenderer->raycastBoundingBoxes(position, glm::vec3(0, 0, 1), distance);
+            return hit < distance;
         });
         if (!waterRenderer->initialize(vkCtx, perFrameSetLayout, assetManager)) {
             LOG_ERROR("Failed to initialize water renderer");

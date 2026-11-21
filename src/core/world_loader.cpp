@@ -752,6 +752,87 @@ bool pumpLoadingWindowEvents(core::Window* window, rendering::Renderer* renderer
     return true;
 }
 
+// Freeze local character physics and swim/fall transitions while the loading
+// screen owns the frame loop; otherwise warmup renderer updates drop an
+// unattached cross-map ship rider into the ocean behind the loading screen.
+struct ScopedLoadingFollowFreeze {
+    rendering::Renderer* renderer = nullptr;
+    bool savedExternalFollow = false;
+    explicit ScopedLoadingFollowFreeze(rendering::Renderer* r) : renderer(r) {
+        if (auto* cc = renderer ? renderer->getCameraController() : nullptr) {
+            savedExternalFollow = cc->isExternalFollow();
+            cc->setExternalFollow(true);
+            cc->setExternalMoving(false);
+        }
+    }
+    void release() {
+        if (auto* cc = renderer ? renderer->getCameraController() : nullptr) {
+            cc->setExternalFollow(savedExternalFollow);
+        }
+        renderer = nullptr;
+    }
+    ~ScopedLoadingFollowFreeze() { release(); }
+};
+
+bool evaluateWarmupGroundReady(rendering::Renderer* renderer,
+                               game::GameHandler* gameHandler,
+                               const glm::vec3& spawnRender,
+                               float elapsed,
+                               float& lastGroundNotReadyLogTime) {
+    if (!renderer) return false;
+
+    bool groundReady = false;
+    const bool awaitingTransportTransfer =
+        gameHandler && gameHandler->hasPendingPlayerTransportWorldTransfer();
+    if (gameHandler && gameHandler->isOnTransport()) {
+        if (auto* tm = gameHandler->getTransportManager()) {
+            const uint64_t trGuid = gameHandler->getPlayerTransportGuid();
+            if (const auto* tr = tm->getTransport(trGuid)) {
+                groundReady = tr->isM2 ? (tr->wmoInstanceId != 0)
+                                       : tm->isTransportCollisionReady(trGuid);
+            }
+        }
+    }
+
+    const glm::vec3 livePos = renderer->getCharacterPosition();
+    const bool useLiveTransportPos = gameHandler && gameHandler->isOnTransport();
+    const float rx = useLiveTransportPos ? livePos.x : spawnRender.x;
+    const float ry = useLiveTransportPos ? livePos.y : spawnRender.y;
+    const float rz = useLiveTransportPos ? livePos.z : spawnRender.z;
+
+    if (!groundReady && !awaitingTransportTransfer) {
+        if (auto* wmo = renderer->getWMORenderer()) {
+            auto wmoH = wmo->getFloorHeight(rx, ry, rz + 5.0f);
+            if (wmoH.has_value() && std::abs(*wmoH - rz) < 15.0f) {
+                groundReady = true;
+            }
+        }
+    }
+    if (!groundReady && !awaitingTransportTransfer) {
+        if (auto* tm = renderer->getTerrainManager()) {
+            auto tH = tm->getHeightAt(rx, ry);
+            if (tH.has_value() && std::abs(*tH - rz) < 15.0f) {
+                groundReady = true;
+            }
+        }
+    }
+    if (!groundReady && elapsed >= 5.0f) {
+        if (auto* tm = renderer->getTerrainManager()) {
+            if (tm->getLoadedTileCount() >= 4) {
+                groundReady = true;
+                LOG_DEBUG("Warmup: using tile-count fallback (", tm->getLoadedTileCount(),
+                          " tiles) after ", elapsed, "s");
+            }
+        }
+    }
+    if (!groundReady && elapsed > 5.0f && elapsed - lastGroundNotReadyLogTime >= 1.5f) {
+        lastGroundNotReadyLogTime = elapsed;
+        LOG_DEBUG("Warmup: ground not ready at spawn (", rx, ",", ry, ",", rz,
+                  ") after ", elapsed, "s");
+    }
+    return groundReady;
+}
+
 } // namespace
 
 void WorldLoader::loadOnlineWorldTerrain(uint32_t mapId, float x, float y, float z) {
@@ -771,6 +852,8 @@ void WorldLoader::loadOnlineWorldTerrain(uint32_t mapId, float x, float y, float
         camera->releaseMouseCapture();
     if (addonManager_ && addonManager_->getLuaEngine())
         addonManager_->getLuaEngine()->releaseInput();
+
+    ScopedLoadingFollowFreeze loadingFollowFreeze(renderer_);
 
     // --- Loading screen for online mode ---
     rendering::LoadingScreen loadingScreen;
@@ -1133,6 +1216,11 @@ void WorldLoader::loadOnlineWorldTerrain(uint32_t mapId, float x, float y, float
 
             // Process all spawn/equipment/transport queues during warmup
             entitySpawner_->update();
+            // Keep player & camera locked to a moving ship during warmup once
+            // completePlayerTransportWorldTransfer attaches to the hull.
+            if (gameHandler_ && gameHandler_->isOnTransport()) {
+                app_.syncWMOTransportRideState();
+            }
             if (auto* cr = renderer_ ? renderer_->getCharacterRenderer() : nullptr) {
                 cr->processPendingNormalMaps(4);
             }
@@ -1156,61 +1244,8 @@ void WorldLoader::loadOnlineWorldTerrain(uint32_t mapId, float x, float y, float
             }
 
             // Don't exit warmup until the ground under the player exists.
-            // In cities like Stormwind, players stand on WMO floors, not terrain.
-            // Check BOTH terrain AND WMO floor - require at least one to be valid.
-            bool groundReady = false;
-            if (renderer_) {
-                // spawnRender already went server -> canonical -> render above.
-                // Applying canonicalToRender directly to the server tuple here
-                // swapped X/Y a second time, so WMO-only instances checked for a
-                // floor at the wrong location and eventually released at hard cap.
-                float rx = spawnRender.x, ry = spawnRender.y, rz = spawnRender.z;
-
-                // Check WMO floor FIRST (cities like Stormwind stand on WMO floors).
-                // Terrain exists below WMOs but at the wrong height.
-                if (auto* wmo = renderer_->getWMORenderer()) {
-                    auto wmoH = wmo->getFloorHeight(rx, ry, rz + 5.0f);
-                    if (wmoH.has_value() && std::abs(*wmoH - rz) < 15.0f) {
-                        groundReady = true;
-                    }
-                }
-                // Check terrain - but only if it's close to spawn Z (within 15 units).
-                // Terrain far below a WMO city doesn't count as ground.
-                if (!groundReady) {
-                    if (auto* tm = renderer_->getTerrainManager()) {
-                        auto tH = tm->getHeightAt(rx, ry);
-                        if (tH.has_value() && std::abs(*tH - rz) < 15.0f) {
-                            groundReady = true;
-                        }
-                    }
-                }
-                // After 5s with enough tiles loaded, accept terrain as ready even if
-                // the height sample doesn't match spawn Z exactly. This handles cases
-                // where getHeightAt returns a slightly different value than the server's
-                // spawn Z (e.g. terrain LOD, MCNK chunk boundaries, or spawn inside a
-                // building where floor height differs from terrain below).
-                if (!groundReady && elapsed >= 5.0f) {
-                    if (auto* tm = renderer_->getTerrainManager()) {
-                        if (tm->getLoadedTileCount() >= 4) {
-                            groundReady = true;
-                            LOG_DEBUG("Warmup: using tile-count fallback (", tm->getLoadedTileCount(), " tiles) after ", elapsed, "s");
-                        }
-                    }
-                }
-
-                // Routine during a normal load window, not exceptional by itself - only
-                // the hard-cap-with-ground-still-not-ready case below is worth WARNING.
-                // The old throttle condition (elapsed*2 % 3 == 0) looked like "once every
-                // ~1.5s" but int-truncation actually held it true for a continuous 0.5s
-                // window every 1.5s, so it fired on nearly every frame in that window -
-                // explains the burst-then-gap pattern seen live. Use a real elapsed-time
-                // gate instead.
-                if (!groundReady && elapsed > 5.0f && elapsed - lastGroundNotReadyLogTime >= 1.5f) {
-                    lastGroundNotReadyLogTime = elapsed;
-                    LOG_DEBUG("Warmup: ground not ready at spawn (", rx, ",", ry, ",", rz,
-                                ") after ", elapsed, "s");
-                }
-            }
+            const bool groundReady = evaluateWarmupGroundReady(
+                renderer_, gameHandler_, spawnRender, elapsed, lastGroundNotReadyLogTime);
 
             // Exit when: (min time passed AND queues drained AND ground ready) OR hard cap
             bool readyToExit = (elapsed >= kMinWarmupSeconds && idleIterations >= kIdleThreshold && groundReady);
@@ -1262,6 +1297,7 @@ void WorldLoader::loadOnlineWorldTerrain(uint32_t mapId, float x, float y, float
             app_.worldEntryCallbacks_->setTaxiLandingClampTimer(0.0f);
             app_.worldEntryCallbacks_->setLastTaxiFlight(false);
         }
+        loadingFollowFreeze.release();
         // Recursive call - sets loadedMapId_ and IN_GAME state for the final map.
         loadOnlineWorldTerrain(entry.mapId, entry.x, entry.y, entry.z);
         return;  // The recursive call handles setState(IN_GAME).

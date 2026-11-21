@@ -2579,6 +2579,9 @@ void Application::setState(AppState newState) {
                                 ? movement->previousFrameStartMs() +
                                       static_cast<uint32_t>(std::lround(*touchdown * 1000.0f))
                                 : movement->frameStartMs());
+                            if (opcode == static_cast<uint32_t>(game::Opcode::MSG_MOVE_START_SWIM)) {
+                                gameHandler->disembarkPlayerTransportIfOffDeck(position);
+                            }
                         }
                         gameHandler->sendMovement(static_cast<game::Opcode>(opcode));
                     }
