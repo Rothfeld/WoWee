@@ -3823,7 +3823,7 @@ TEST_CASE_METHOD(Integration, "Server-started 5-yard ritual channel does not tri
     spell.attrEx = 0x10000004u;
 
     std::vector<uint32_t> meleeSwings;
-    handler.setMeleeSwingCallback([&](uint32_t spellId) { meleeSwings.push_back(spellId); });
+    handler.setMeleeSwingCallback([&](uint32_t spellId, bool /*offHand*/) { meleeSwings.push_back(spellId); });
     std::vector<std::pair<SpellAnimPhase, uint32_t>> animPhases;
     handler.setSpellCastAnimCallback([&](uint64_t guid, SpellAnimPhase phase, uint32_t spellId) {
         if (guid == replay::Session::kPlayerGuid) animPhases.emplace_back(phase, spellId);

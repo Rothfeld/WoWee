@@ -2186,6 +2186,7 @@ void CharacterRenderer::playAnimation(uint32_t instanceId, uint32_t animationId,
         instance.upperBodySequenceIndex = -1;
         instance.upperBodyOneShotMaxDurationMs = 0.0f;
         instance.upperBodyReturnAnim = 0;
+        instance.pendingMeleeSwing.clear();
     } else if (instance.riding) {
         const auto riderSequence = [&](uint32_t wanted) -> uint32_t {
             for (int hop = 0; hop < 16; ++hop) {
@@ -2325,7 +2326,13 @@ void CharacterRenderer::playAnimation(uint32_t instanceId, uint32_t animationId,
             instance.upperBodyOneShotMaxDurationMs = 0.0f;
             instance.upperBodyReturnAnim = 0;
             instance.upperBodyBlendSequence = -1;
+            instance.pendingMeleeSwing.clear();
         }
+    }
+
+    if (!isMeleeSwingAnimation(animationId) &&
+        !(instance.upperBodySequenceIndex >= 0 && !instance.upperBodyAnimationLoop)) {
+        instance.pendingMeleeSwing.clear();
     }
 
     instance.oneShotReturnAnim = loop ? 0 : oneShotReturnAnim;
@@ -2499,6 +2506,63 @@ void CharacterRenderer::playAnimation(uint32_t instanceId, uint32_t animationId,
 
 }
 
+void CharacterRenderer::playMeleeSwing(uint32_t instanceId, uint32_t animationId,
+                                       uint32_t oneShotReturnAnim, float maxDurationMs) {
+    auto it = instances.find(instanceId);
+    if (it == instances.end()) return;
+    auto& instance = it->second;
+    if (instance.isDead || !frozenAnimationAllowsPlay(instance.kitAnimationFrozen, instance.currentSequenceIndex)) {
+        return;
+    }
+    const auto modelIt = models.find(instance.modelId);
+    if (modelIt == models.end()) return;
+    const auto& sequences = modelIt->second.data.sequences;
+
+    // Check if an upper-body or full-body melee swing one-shot is already in progress.
+    if (instance.upperBodySequenceIndex >= 0 &&
+        static_cast<size_t>(instance.upperBodySequenceIndex) < sequences.size() &&
+        !instance.upperBodyAnimationLoop) {
+        const auto& upperSeq = sequences[instance.upperBodySequenceIndex];
+        if (shouldQueueIncomingMeleeSwing(true, upperSeq.id, instance.upperBodyAnimationTime,
+                                          static_cast<float>(upperSeq.duration))) {
+            const float effectiveMaxMs = dualWieldEffectiveSwingMaxMs(upperSeq.id, animationId, maxDurationMs);
+            instance.pendingMeleeSwing = {animationId, oneShotReturnAnim, effectiveMaxMs};
+            if (effectiveMaxMs > 0.0f &&
+                (instance.upperBodyOneShotMaxDurationMs <= 0.0f ||
+                 instance.upperBodyOneShotMaxDurationMs > effectiveMaxMs)) {
+                instance.upperBodyOneShotMaxDurationMs = effectiveMaxMs;
+            }
+            LOG_DEBUG("Queued upper-body melee swing instance=", instanceId, " anim=", animationId,
+                      " behind active=", upperSeq.id, " maxMs=", effectiveMaxMs);
+            return;
+        }
+    } else if (!instance.animationLoop && !instance.holdFinalPose &&
+               instance.currentSequenceIndex >= 0 &&
+               static_cast<size_t>(instance.currentSequenceIndex) < sequences.size()) {
+        const auto& curSeq = sequences[instance.currentSequenceIndex];
+        if (shouldQueueIncomingMeleeSwing(true, instance.currentAnimationId, instance.animationTime,
+                                          static_cast<float>(curSeq.duration))) {
+            const float effectiveMaxMs = dualWieldEffectiveSwingMaxMs(
+                instance.currentAnimationId, animationId, maxDurationMs);
+            instance.pendingMeleeSwing = {animationId, oneShotReturnAnim, effectiveMaxMs};
+            if (effectiveMaxMs > 0.0f &&
+                (instance.oneShotMaxDurationMs <= 0.0f ||
+                 instance.oneShotMaxDurationMs > effectiveMaxMs)) {
+                instance.oneShotMaxDurationMs = effectiveMaxMs;
+            }
+            LOG_DEBUG("Queued melee swing instance=", instanceId, " anim=", animationId,
+                      " behind active=", instance.currentAnimationId, " maxMs=", effectiveMaxMs);
+            return;
+        }
+    }
+
+    instance.pendingMeleeSwing.clear();
+    playAnimation(instanceId, animationId, false, oneShotReturnAnim);
+    if (maxDurationMs > 0.0f) {
+        fitOneShotDuration(instanceId, maxDurationMs);
+    }
+}
+
 void CharacterRenderer::fitOneShotDuration(uint32_t instanceId, float maxMs) {
     assert(maxMs > 0.0f);
     auto& instance = instances.at(instanceId);
@@ -2510,25 +2574,11 @@ void CharacterRenderer::fitOneShotDuration(uint32_t instanceId, float maxMs) {
     }
 }
 
-void CharacterRenderer::pickWeightedVariation(uint32_t instanceId) {
-    auto& instance = instances.at(instanceId);
-    const bool useUpper = instance.animationLoop &&
-        instance.upperBodySequenceIndex >= 0 && !instance.upperBodyAnimationLoop;
-    int& targetSeq = useUpper ? instance.upperBodySequenceIndex : instance.currentSequenceIndex;
-    if (targetSeq < 0) return;
-    const auto& sequences = models.at(instance.modelId).data.sequences;
-    const uint16_t id = sequences[targetSeq].id;
-    std::vector<double> weights(sequences.size(), 0.0);
-    for (size_t i = 0; i < sequences.size(); ++i)
-        if (sequences[i].id == id && sequences[i].duration > 0)
-            weights[i] = std::max<int>(0, sequences[i].frequency);
-    if (std::accumulate(weights.begin(), weights.end(), 0.0) <= 0.0) return;
-    static std::mt19937 variationRandom(std::random_device{}());
-    targetSeq = std::discrete_distribution<int>(weights.begin(), weights.end())(variationRandom);
-}
-
 void CharacterRenderer::retargetOneShotReturn(uint32_t instanceId, uint32_t from, uint32_t to) {
     auto& instance = instances.at(instanceId);
+    if (instance.pendingMeleeSwing.valid() && instance.pendingMeleeSwing.returnAnim == from) {
+        instance.pendingMeleeSwing.returnAnim = to;
+    }
     if (!instance.animationLoop && !instance.holdFinalPose) {
         const uint32_t resumes = instance.oneShotReturnAnim != 0 ? instance.oneShotReturnAnim : anim::STAND;
         if (resumes == from) instance.oneShotReturnAnim = to;
@@ -2753,22 +2803,35 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos,
             else if (inst.upperBodyAnimationTime >= upper.duration ||
                      !upperBodyAllowsBase(inst.currentAnimationId,
                                           animationBodyFlags(inst.currentAnimationId), inst.riding)) {
-                // Fade from the finished pose into the base animation at its
-                // authored blend time instead of cutting to it.
-                inst.upperBodyBlendSequence = inst.upperBodySequenceIndex;
-                inst.upperBodyBlendTime = std::min(inst.upperBodyAnimationTime, static_cast<float>(upper.duration));
-                inst.upperBodyBlendElapsed = 0.0f;
-                inst.upperBodyBlendDuration = inst.currentSequenceIndex >= 0
-                    ? static_cast<float>(inst.cachedModel->data.sequences[inst.currentSequenceIndex].blendTime) : 0.0f;
-                if (inst.upperBodyBlendDuration <= 0.0f) inst.upperBodyBlendSequence = -1;
-                inst.upperBodySequenceIndex = -1;
-                inst.upperBodyOneShotMaxDurationMs = 0.0f;
-                // A rider's swing or cast ends in the hold it interrupted
-                // (a channel, a precast); otherwise only the seat remains.
-                if (inst.riding && inst.currentAnimationId == anim::MOUNT && inst.upperBodyReturnAnim != 0) {
-                    const uint32_t held = inst.upperBodyReturnAnim;
-                    inst.upperBodyReturnAnim = 0;
-                    setUpperBodyAnimation(pair.first, held, true);
+                const bool baseAllowsUpper = upperBodyAllowsBase(
+                    inst.currentAnimationId, animationBodyFlags(inst.currentAnimationId), inst.riding);
+                if (baseAllowsUpper && inst.pendingMeleeSwing.valid()) {
+                    const auto next = inst.pendingMeleeSwing;
+                    inst.pendingMeleeSwing.clear();
+                    inst.upperBodyAnimationTime = static_cast<float>(upper.duration);
+                    playAnimation(pair.first, next.animId, false, next.returnAnim);
+                    if (next.maxDurationMs > 0.0f) {
+                        fitOneShotDuration(pair.first, next.maxDurationMs);
+                    }
+                } else {
+                    if (!baseAllowsUpper) inst.pendingMeleeSwing.clear();
+                    // Fade from the finished pose into the base animation at its
+                    // authored blend time instead of cutting to it.
+                    inst.upperBodyBlendSequence = inst.upperBodySequenceIndex;
+                    inst.upperBodyBlendTime = std::min(inst.upperBodyAnimationTime, static_cast<float>(upper.duration));
+                    inst.upperBodyBlendElapsed = 0.0f;
+                    inst.upperBodyBlendDuration = inst.currentSequenceIndex >= 0
+                        ? static_cast<float>(inst.cachedModel->data.sequences[inst.currentSequenceIndex].blendTime) : 0.0f;
+                    if (inst.upperBodyBlendDuration <= 0.0f) inst.upperBodyBlendSequence = -1;
+                    inst.upperBodySequenceIndex = -1;
+                    inst.upperBodyOneShotMaxDurationMs = 0.0f;
+                    // A rider's swing or cast ends in the hold it interrupted
+                    // (a channel, a precast); otherwise only the seat remains.
+                    if (inst.riding && inst.currentAnimationId == anim::MOUNT && inst.upperBodyReturnAnim != 0) {
+                        const uint32_t held = inst.upperBodyReturnAnim;
+                        inst.upperBodyReturnAnim = 0;
+                        setUpperBodyAnimation(pair.first, held, true);
+                    }
                 }
             }
         }
@@ -2844,9 +2907,19 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos,
                     if (!inst.holdFinalPose && inst.currentAnimationId != anim::DEATH &&
                         inst.currentAnimationId != anim::JUMP_START &&
                         inst.currentAnimationId != anim::JUMP_END) {
-                        const uint32_t resumeAnim =
-                            inst.oneShotReturnAnim != 0 ? inst.oneShotReturnAnim : anim::STAND;
-                        playAnimation(pair.first, resumeAnim, true);
+                        if (inst.pendingMeleeSwing.valid()) {
+                            const auto next = inst.pendingMeleeSwing;
+                            inst.pendingMeleeSwing.clear();
+                            inst.animationTime = static_cast<float>(seq.duration);
+                            playAnimation(pair.first, next.animId, false, next.returnAnim);
+                            if (next.maxDurationMs > 0.0f) {
+                                fitOneShotDuration(pair.first, next.maxDurationMs);
+                            }
+                        } else {
+                            const uint32_t resumeAnim =
+                                inst.oneShotReturnAnim != 0 ? inst.oneShotReturnAnim : anim::STAND;
+                            playAnimation(pair.first, resumeAnim, true);
+                        }
                     } else {
                         // Hold until the owning state machine consumes completion.
                         // An automatic Stand here flashes between chained poses.

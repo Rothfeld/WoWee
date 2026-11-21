@@ -1574,7 +1574,8 @@ public:
 
     // Melee swing callback (for driving animation/SFX)
     // spellId: 0 = regular auto-attack swing, non-zero = melee ability (special attack)
-    using MeleeSwingCallback = std::function<void(uint32_t spellId)>;
+    // offHand: true when HITINFO_LEFTSWING (0x4) marks an off-hand auto-attack
+    using MeleeSwingCallback = std::function<void(uint32_t spellId, bool offHand)>;
     void setMeleeSwingCallback(MeleeSwingCallback cb) { meleeSwingCallback_ = std::move(cb); }
 
     // Snap the character to face the camera's current look direction and return the

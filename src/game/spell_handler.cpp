@@ -3840,7 +3840,7 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
         // ranged shot animation explicitly here.
         uint32_t sid = data.spellId;
         if (spellclass::isRangedWeaponAutoAttack(sid)) {
-            if (owner_.meleeSwingCallbackRef()) owner_.meleeSwingCallbackRef()(sid);
+            if (owner_.meleeSwingCallbackRef()) owner_.meleeSwingCallbackRef()(sid, false);
             owner_.suppressNextMeleeSwingAnim();
             if (auto* ac = owner_.services().audioCoordinator) {
                 if (auto* csm = ac->getCombatSoundManager()) {

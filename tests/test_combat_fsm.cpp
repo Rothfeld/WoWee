@@ -3,6 +3,7 @@
 #include "rendering/animation/combat_fsm.hpp"
 #include "rendering/animation/animation_ids.hpp"
 #include "rendering/animation/hit_reaction.hpp"
+#include "rendering/animation/melee_swing_queue.hpp"
 #include "game/inventory.hpp"
 
 using namespace wowee::rendering;
@@ -466,4 +467,101 @@ TEST_CASE("Stunned units suppress hit reaction animations while holding Stun pos
     REQUIRE(out.valid);
     CHECK(out.animId == anim::STUN);
     CHECK(out.loop);
+}
+
+TEST_CASE("Melee swing queue: classifies melee swing animations and queues overlapping dual-wield swings",
+          "[combat][dualwield]") {
+    CHECK(isMeleeSwingAnimation(anim::ATTACK_1H));
+    CHECK(isMeleeSwingAnimation(anim::ATTACK_1H_PIERCE));
+    CHECK(isMeleeSwingAnimation(anim::ATTACK_OFF));
+    CHECK(isMeleeSwingAnimation(anim::ATTACK_OFF_PIERCE));
+    CHECK(isMeleeSwingAnimation(anim::ATTACK_UNARMED));
+    CHECK(isMeleeSwingAnimation(anim::ATTACK_UNARMED_OFF));
+    CHECK(isMeleeSwingAnimation(anim::ATTACK_2H));
+    CHECK(isMeleeSwingAnimation(anim::FLY_ATTACK_OFF));
+
+    CHECK_FALSE(isMeleeSwingAnimation(anim::READY_1H));
+    CHECK_FALSE(isMeleeSwingAnimation(anim::STAND));
+    CHECK_FALSE(isMeleeSwingAnimation(anim::RUN));
+    CHECK_FALSE(isMeleeSwingAnimation(anim::COMBAT_WOUND));
+    CHECK_FALSE(isMeleeSwingAnimation(anim::DEATH));
+
+    // Mid-swing MH -> incoming OH queues instead of interrupting.
+    CHECK(shouldQueueIncomingMeleeSwing(true, anim::ATTACK_1H, 200.0f, 800.0f));
+    // Mid-swing OH -> incoming MH (or Thrash) queues instead of interrupting.
+    CHECK(shouldQueueIncomingMeleeSwing(true, anim::ATTACK_OFF, 185.0f, 750.0f));
+    // Completed swing starts immediately.
+    CHECK_FALSE(shouldQueueIncomingMeleeSwing(true, anim::ATTACK_OFF, 750.0f, 750.0f));
+    // Ready stance, looping locomotion, or hit reaction starts immediately.
+    CHECK_FALSE(shouldQueueIncomingMeleeSwing(false, anim::READY_1H, 100.0f, 1000.0f));
+    CHECK_FALSE(shouldQueueIncomingMeleeSwing(true, anim::COMBAT_WOUND, 100.0f, 500.0f));
+
+    // Effective duration cap fits opposite-hand pairs inside one attack cycle
+    // while leaving same-hand Thrash / single-weapon swings at full attack time.
+    CHECK(dualWieldEffectiveSwingMaxMs(anim::ATTACK_1H, anim::ATTACK_OFF, 1500.0f) == Catch::Approx(750.0f));
+    CHECK(dualWieldEffectiveSwingMaxMs(anim::ATTACK_OFF, anim::ATTACK_1H, 1500.0f) == Catch::Approx(750.0f));
+    CHECK(dualWieldEffectiveSwingMaxMs(anim::ATTACK_1H, anim::ATTACK_OFF, 1000.0f) == Catch::Approx(500.0f));
+    CHECK(dualWieldEffectiveSwingMaxMs(anim::ATTACK_1H, anim::ATTACK_OFF, 300.0f) == Catch::Approx(250.0f));
+    CHECK(dualWieldEffectiveSwingMaxMs(anim::ATTACK_1H, anim::ATTACK_1H, 1500.0f) == Catch::Approx(1500.0f));
+    CHECK(dualWieldEffectiveSwingMaxMs(anim::ATTACK_1H, anim::ATTACK_OFF, 0.0f) == Catch::Approx(0.0f));
+}
+
+TEST_CASE("CombatFSM: dual-wield MH+OH, OH+MH, and Thrash sequences honor HITINFO_LEFTSWING and serial transitions",
+          "[combat][dualwield]") {
+    CombatFSM fsm;
+    auto caps = makeCombatCaps();
+    caps.resolvedReady1H = anim::READY_1H;
+    caps.resolvedMelee1H = anim::ATTACK_1H;
+    caps.resolvedMeleeOffHand = anim::ATTACK_OFF;
+    caps.resolvedMeleeOffHandPierce = anim::ATTACK_OFF_PIERCE;
+
+    WeaponLoadout wl;
+    wl.inventoryType = wowee::game::InvType::ONE_HAND;
+    wl.hasOffHand = true;
+
+    auto in = combatInput();
+    // 1. Main-hand swing starts (serial 1).
+    in.meleeSwingTimer = 0.7f;
+    in.meleeSwingOffHand = false;
+    in.meleeSwingSerial = 1;
+    auto mh = fsm.resolve(in, caps, wl);
+    REQUIRE(mh.valid);
+    CHECK(fsm.getState() == CombatFSM::State::MELEE_SWING);
+    CHECK(mh.animId == anim::ATTACK_1H);
+    CHECK_FALSE(mh.loop);
+
+    // 2. Queued off-hand swing pops immediately on completion without dipping to COMBAT_IDLE (serial 2).
+    in.meleeSwingTimer = 0.65f;
+    in.meleeSwingOffHand = true;
+    in.meleeSwingSerial = 2;
+    auto oh = fsm.resolve(in, caps, wl);
+    REQUIRE(oh.valid);
+    CHECK(fsm.getState() == CombatFSM::State::MELEE_SWING);
+    CHECK(oh.animId == anim::ATTACK_OFF);
+    CHECK_FALSE(oh.loop);
+
+    // 3. Fast OH weapon swings twice in a row (OH -> OH, serial 3) — must stay AttackOff.
+    in.meleeSwingTimer = 0.65f;
+    in.meleeSwingOffHand = true;
+    in.meleeSwingSerial = 3;
+    auto oh2 = fsm.resolve(in, caps, wl);
+    REQUIRE(oh2.valid);
+    CHECK(oh2.animId == anim::ATTACK_OFF);
+
+    // 4. OH -> MH transition (e.g. Thrash proc after off-hand, serial 4) — switches cleanly to Attack1H.
+    in.meleeSwingTimer = 0.7f;
+    in.meleeSwingOffHand = false;
+    in.meleeSwingSerial = 4;
+    auto mh2 = fsm.resolve(in, caps, wl);
+    REQUIRE(mh2.valid);
+    CHECK(mh2.animId == anim::ATTACK_1H);
+
+    // 5. Off-hand dagger uses AttackOffPierce when offHand=true.
+    wl.offHandIsDagger = true;
+    in.meleeSwingTimer = 0.6f;
+    in.meleeSwingOffHand = true;
+    in.meleeSwingSerial = 5;
+    auto daggerOh = fsm.resolve(in, caps, wl);
+    REQUIRE(daggerOh.valid);
+    CHECK(daggerOh.animId == anim::ATTACK_OFF_PIERCE);
 }

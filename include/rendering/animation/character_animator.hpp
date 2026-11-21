@@ -119,6 +119,8 @@ public:
         int turnDirection = 0;
         // Melee/ranged timers
         float meleeSwingTimer = 0.0f;
+        std::optional<bool> meleeSwingOffHand;
+        uint32_t meleeSwingSerial = 0;
         float rangedShootTimer = 0.0f;
         uint32_t specialAttackAnimId = 0;
         uint32_t rangedAnimId = 0;

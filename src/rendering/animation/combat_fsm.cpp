@@ -232,14 +232,21 @@ void CombatFSM::updateTransitions(const Input& in) {
 
     // Force melee/ranged overrides
     if (in.meleeSwingTimer > 0.0f && !stunned_ && in.grounded && !in.swimming) {
-        if (state_ != State::MELEE_SWING) {
+        const bool newSwing = (state_ != State::MELEE_SWING) ||
+                              (in.meleeSwingSerial != 0 && in.meleeSwingSerial != lastMeleeSwingSerial_);
+        if (newSwing) {
             clearSpellState();
             hitReactionAnimId_ = 0;
-            // The hand is chosen here, once, because this is where a swing
-            // begins. Choosing it where the animation is resolved chose it
-            // again on every frame the swing lasted.
-            offHandThisSwing_ = offHandTurn_;
-            offHandTurn_ = !offHandTurn_;
+            lastMeleeSwingSerial_ = in.meleeSwingSerial;
+            // Authoritative hand from HITINFO_LEFTSWING when supplied;
+            // otherwise alternate once per swing start.
+            if (in.meleeSwingOffHand.has_value()) {
+                offHandThisSwing_ = *in.meleeSwingOffHand;
+                offHandTurn_ = !offHandThisSwing_;
+            } else {
+                offHandThisSwing_ = offHandTurn_;
+                offHandTurn_ = !offHandTurn_;
+            }
         }
         state_ = State::MELEE_SWING;
         return;
@@ -586,6 +593,7 @@ void CombatFSM::reset() {
     weaponsDrawn_ = false;
     offHandTurn_ = false;
     offHandThisSwing_ = false;
+    lastMeleeSwingSerial_ = 0;
 }
 
 } // namespace rendering

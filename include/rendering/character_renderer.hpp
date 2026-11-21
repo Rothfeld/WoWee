@@ -10,6 +10,7 @@
 #include "rendering/hand_grip.hpp"
 #include "rendering/legacy_light_direction.hpp"
 
+#include "rendering/animation/melee_swing_queue.hpp"
 #include "pipeline/m2_loader.hpp"
 #include "pipeline/blp_loader.hpp"
 #include <vulkan/vulkan.h>
@@ -125,13 +126,15 @@ public:
     // own completion and select the next animation without an intermediate pose.
     void playAnimation(uint32_t instanceId, uint32_t animationId, bool loop = true,
                        uint32_t oneShotReturnAnim = 0, bool holdFinalPose = false);
+    /// Play a melee swing one-shot, or queue it in the one-slot pending buffer
+    /// when another melee swing is still in progress so closely spaced dual-wield
+    /// or extra-attack swings transition smoothly without mid-swing cutoffs.
+    void playMeleeSwing(uint32_t instanceId, uint32_t animationId,
+                        uint32_t oneShotReturnAnim = 0, float maxDurationMs = 0.0f);
     /// The one-shot just started plays within `maxMs`: an authored sequence
     /// longer than that runs faster to end in time, a shorter one keeps its
     /// own speed. Lasts until the next playAnimation.
     void fitOneShotDuration(uint32_t instanceId, float maxMs);
-    /// Replace the sequence just started by one of the model's variations of
-    /// the same animation, drawn by their M2 frequency weights.
-    void pickWeightedVariation(uint32_t instanceId);
     /// A running one-shot that would resume `from` resumes `to` instead.
     void retargetOneShotReturn(uint32_t instanceId, uint32_t from, uint32_t to);
     /// True when the instance is currently playing a non-looping one-shot
@@ -538,6 +541,7 @@ private:
         float blendDuration = 0.0f;
         float playbackRate = 1.0f;
         float oneShotMaxDurationMs = 0.0f; // fitOneShotDuration; 0 = authored speed
+        QueuedMeleeSwing pendingMeleeSwing; // 1-slot follow-up swing queued behind an active swing
         // CreatureModelData row this instance is drawn from; it names the
         // footprint mask and size. 0 = not a unit model, no prints.
         uint32_t creatureModelDataId = 0;

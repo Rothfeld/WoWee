@@ -190,6 +190,7 @@ void AnimationController::startSpellCast(uint32_t precastAnimId, uint32_t castAn
     // otherwise CombatFSM::updateTransitions's melee/ranged override clears
     // the spell state on the very next frame.
     meleeSwingTimer_ = 0.0f;
+    hasPendingMeleeSwing_ = false;
     specialAttackAnimId_ = 0;
     rangedShootTimer_ = 0.0f;
     // Allow consecutive identical one-shot casts (e.g. Mortal Strike followed
@@ -280,6 +281,9 @@ void AnimationController::resetCombatVisualState() {
     targetPosition_ = nullptr;
     meleeSwingTimer_ = 0.0f;
     meleeSwingCooldown_ = 0.0f;
+    hasPendingMeleeSwing_ = false;
+    pendingMeleeSwingOffHand_ = false;
+    meleeSwingOffHand_ = false;
     specialAttackAnimId_ = 0;
     rangedShootTimer_ = 0.0f;
     rangedAnimId_ = 0;
@@ -306,15 +310,20 @@ bool AnimationController::isMoving() const {
 
 // ── Melee combat ─────────────────────────────────────────────────────────────
 
-void AnimationController::triggerMeleeSwing() {
+void AnimationController::startLocalMeleeSwing(bool offHand) {
     auto* characterRenderer = renderer_->getCharacterRenderer();
     uint32_t characterInstanceId = renderer_->getCharacterInstanceId();
     if (!characterRenderer || characterInstanceId == 0) return;
-    if (meleeSwingCooldown_ > 0.0f) return;
     if (characterAnimator_.getActivity().isEmoteActive()) {
         characterAnimator_.cancelEmote();
     }
     specialAttackAnimId_ = 0;  // Clear any special attack override
+    meleeSwingOffHand_ = offHand;
+    ++meleeSwingSerial_;
+    // Ensure consecutive swings (including same-hand Thrash/Windfury procs)
+    // cross-fade cleanly into a fresh sequence instead of being deduplicated.
+    lastPlayerAnimRequest_ = UINT32_MAX;
+
     resolveMeleeAnimId();
     meleeSwingCooldown_ = 0.1f;
     float durationSec = meleeAnimDurationMs_ > 0.0f ? meleeAnimDurationMs_ / 1000.0f : 0.6f;
@@ -325,6 +334,22 @@ void AnimationController::triggerMeleeSwing() {
     if (renderer_->getAudioCoordinator()->getActivitySoundManager()) {
         renderer_->getAudioCoordinator()->getActivitySoundManager()->playMeleeSwing();
     }
+}
+
+void AnimationController::triggerMeleeSwing(bool offHand) {
+    auto* characterRenderer = renderer_->getCharacterRenderer();
+    uint32_t characterInstanceId = renderer_->getCharacterInstanceId();
+    if (!characterRenderer || characterInstanceId == 0) return;
+    // If a melee swing is already in flight, queue the incoming swing in the
+    // 1-slot pending buffer rather than dropping it or cutting the active swing
+    // short mid-animation.
+    if (meleeSwingTimer_ > 0.0f) {
+        hasPendingMeleeSwing_ = true;
+        pendingMeleeSwingOffHand_ = offHand;
+        return;
+    }
+    if (meleeSwingCooldown_ > 0.0f) return;
+    startLocalMeleeSwing(offHand);
 }
 
 void AnimationController::setEquippedWeaponType(uint32_t inventoryType, bool is2HLoose,
@@ -372,6 +397,7 @@ void AnimationController::triggerSpecialAttack(uint32_t /*spellId*/) {
     }
 
     specialAttackAnimId_ = specAnim;
+    hasPendingMeleeSwing_ = false;
     meleeSwingCooldown_ = 0.1f;
     // Query the special attack animation duration
     std::vector<pipeline::M2Sequence> sequences;
@@ -506,9 +532,8 @@ uint32_t AnimationController::resolveMeleeAnimId() {
     // matched these.
     using anim::MeleeChain;
 
-    // Dual-wield: alternate main-hand and off-hand swings
-    bool useOffHand = weaponLoadout_.hasOffHand && meleeOffHandTurn_;
-    meleeOffHandTurn_ = weaponLoadout_.hasOffHand ? !meleeOffHandTurn_ : false;
+    // Dual-wield: use authoritative hand from the incoming swing (HITINFO_LEFTSWING).
+    bool useOffHand = weaponLoadout_.hasOffHand && meleeSwingOffHand_;
 
     if (useOffHand) {
         // The off-hand weapon's kind, not the main hand's.
@@ -891,7 +916,14 @@ void AnimationController::updateMeleeTimers(float deltaTime) {
     }
     if (meleeSwingTimer_ > 0.0f) {
         meleeSwingTimer_ = std::max(0.0f, meleeSwingTimer_ - deltaTime);
-        if (meleeSwingTimer_ <= 0.0f) specialAttackAnimId_ = 0;
+        if (meleeSwingTimer_ <= 0.0f) {
+            specialAttackAnimId_ = 0;
+            if (hasPendingMeleeSwing_) {
+                const bool nextOffHand = pendingMeleeSwingOffHand_;
+                hasPendingMeleeSwing_ = false;
+                startLocalMeleeSwing(nextOffHand);
+            }
+        }
     }
     // Ranged shot timer (same pattern as melee)
     if (rangedShootTimer_ > 0.0f) {
@@ -1181,6 +1213,8 @@ void AnimationController::updateCharacterAnimation() {
     fi.turnDirection = turnDirection;
     // Melee/ranged timers
     fi.meleeSwingTimer = meleeSwingTimer_;
+    fi.meleeSwingOffHand = meleeSwingOffHand_;
+    fi.meleeSwingSerial = meleeSwingSerial_;
     fi.rangedShootTimer = rangedShootTimer_;
     fi.specialAttackAnimId = specialAttackAnimId_;
     fi.rangedAnimId = rangedAnimId_;

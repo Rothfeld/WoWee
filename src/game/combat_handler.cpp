@@ -762,6 +762,9 @@ void CombatHandler::handleAttackerStateUpdate(network::Packet& packet) {
     bool isPlayerAttacker = (data.attackerGuid == owner_.getPlayerGuid());
     bool isPlayerTarget = (data.targetGuid == owner_.getPlayerGuid());
 
+    constexpr uint32_t HITINFO_LEFTSWING = 0x4;  // CMaNGOS Unit.h HitInfo
+    const bool isOffHandSwing = (data.hitInfo & HITINFO_LEFTSWING) != 0;
+
     if (isPlayerAttacker) {
         autoAttackOutOfRange_ = false;
         lastMeleeSwingMs_ = static_cast<uint64_t>(
@@ -774,7 +777,7 @@ void CombatHandler::handleAttackerStateUpdate(network::Packet& packet) {
         if (owner_.consumeSuppressMeleeSwingAnim()) {
             LOG_DEBUG("Suppressed melee swing anim - ranged shot already triggered");
         } else if (!data.isNoAction()) {
-            if (owner_.meleeSwingCallbackRef()) owner_.meleeSwingCallbackRef()(0);
+            if (owner_.meleeSwingCallbackRef()) owner_.meleeSwingCallbackRef()(0, isOffHandSwing);
         }
     }
     // A swing puts its attacker in melee, as SMSG_ATTACKSTART does. The
@@ -786,9 +789,8 @@ void CombatHandler::handleAttackerStateUpdate(network::Packet& packet) {
         attacker && attacker->isUnit() && data.targetGuid != 0) {
         std::static_pointer_cast<Unit>(attacker)->setMeleeVictimGuid(data.targetGuid);
     }
-    constexpr uint32_t HITINFO_LEFTSWING = 0x4;  // CMaNGOS Unit.h HitInfo
     if (!isPlayerAttacker && !data.isNoAction() && owner_.npcSwingCallbackRef()) {
-        owner_.npcSwingCallbackRef()(data.attackerGuid, (data.hitInfo & HITINFO_LEFTSWING) != 0);
+        owner_.npcSwingCallbackRef()(data.attackerGuid, isOffHandSwing);
     }
     // Observers must see the same victim reaction as the combatants. Miss,
     // evade and immunity do not wound; dodge/parry/block are explicit outcomes.

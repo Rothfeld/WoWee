@@ -4,6 +4,7 @@
 #include "rendering/animation/anim_event.hpp"
 #include "rendering/animation/weapon_type.hpp"
 #include <cstdint>
+#include <optional>
 
 namespace wowee {
 namespace rendering {
@@ -55,6 +56,8 @@ public:
         bool lowHealth = false;
         bool rangedWeaponActive = false;
         float meleeSwingTimer = 0.0f;   // >0 = melee active
+        std::optional<bool> meleeSwingOffHand; // Explicit hand from HITINFO_LEFTSWING when present
+        uint32_t meleeSwingSerial = 0;  // Increments on each newly started swing (including queued follow-ups)
         float rangedShootTimer = 0.0f;  // >0 = ranged active
         uint32_t specialAttackAnimId = 0;
         uint32_t rangedAnimId = 0;
@@ -153,6 +156,7 @@ private:
     /// only ever showed with two.
     bool offHandTurn_ = false;
     bool offHandThisSwing_ = false;
+    uint32_t lastMeleeSwingSerial_ = 0;
 
     /// Internal: update state transitions based on input.
     void updateTransitions(const Input& in);
