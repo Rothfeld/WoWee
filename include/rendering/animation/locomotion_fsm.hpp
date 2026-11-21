@@ -11,10 +11,11 @@ namespace rendering {
 // ============================================================================
 // LocomotionFSM
 //
-// Pure logic state machine for movement animation. No renderer dependency.
+// Pure logic state machine for local movement animation. No renderer dependency.
 // States: IDLE · TURN · WALK · RUN · JUMP_START · JUMP_MID · JUMP_END · SWIM_IDLE · SWIM
 //
-// Grace timer is internal - no external locomotionStopGraceTimer_ needed.
+// Transitions to IDLE / SWIM_IDLE immediately when movement stops, matching
+// Native TBC 2.4.3 (smooth visual deceleration comes from M2 sequence crossfade).
 // ============================================================================
 class LocomotionFSM {
 public:
@@ -65,22 +66,12 @@ public:
 private:
     State state_ = State::IDLE;
 
-    // Grace timer: short delay before switching from WALK/RUN to IDLE
-    // to avoid flickering on network jitter
-    float graceTimer_ = 0.0f;
-    bool wasSprinting_ = false;
-    bool wasMovingBackward_ = false;
-    bool wasStrafeLeft_ = false;
-    bool wasStrafeRight_ = false;
-
     // One-shot tracking for jump start/end animations
     bool jumpStartSeen_ = false;
     bool jumpEndSeen_ = false;
 
     // Turning in place (TURN state).
     TurnShuffle shuffle_;
-
-    static constexpr float kGraceSec = 0.12f;
 
     /// Internal: update state transitions based on input.
     void updateTransitions(const Input& in, const AnimCapabilitySet& caps);

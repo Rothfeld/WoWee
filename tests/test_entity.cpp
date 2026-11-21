@@ -535,6 +535,22 @@ TEST_CASE("Strafe and diagonal leg yaw slews smoothly through front", "[movement
     REQUIRE(stepLegYawOffset(3.0f, -3.0f, 1.0f) == Catch::Approx(-halfPi));
 }
 
+TEST_CASE("Remote ground stop clears active motion immediately while heartbeats stay continuous", "[entity][movement]") {
+    Player p;
+    p.setPosition(10.0f, 20.0f, 0.0f, 0.0f);
+    // Remote starts moving forward at 7 yd/s
+    p.updateRemoteGroundMotion({10.0f, 20.0f, 0.0f}, 0.0f, {7.0f, 0.0f});
+    for (int i = 0; i < 30; ++i) {
+        p.updateMovement(1.0f / 60.0f);
+        REQUIRE(p.isActivelyMoving());
+    }
+    // Explicit MSG_MOVE_STOP (zero velocity) stops active motion on the exact frame
+    p.updateRemoteGroundMotion({p.getX(), p.getY(), p.getZ()}, 0.0f, {0.0f, 0.0f});
+    REQUIRE_FALSE(p.isActivelyMoving());
+    p.updateMovement(1.0f / 60.0f);
+    REQUIRE_FALSE(p.isActivelyMoving());
+}
+
 TEST_CASE("Remote jump follows an arc across heartbeats and lands", "[entity][movement]") {
     Player p;
     constexpr float launch = 7.955547f;

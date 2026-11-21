@@ -22,6 +22,8 @@
 #include "core/input.hpp"
 #include "rendering/camera.hpp"
 #include "rendering/camera_controller.hpp"
+#include "rendering/animation/animation_ids.hpp"
+#include "rendering/animation/locomotion_fsm.hpp"
 #include "ui/gamepad_controls.hpp"
 #include "ui/framexml_emitter.hpp"
 #include "ui/xml_parser.hpp"
@@ -726,6 +728,65 @@ TEST_CASE_METHOD(Integration, "Real camera applies temporary Ctrl walking and a 
     CHECK(speed() == Catch::Approx(150.0f).margin(0.01));
     input.setVirtualKey(SDL_SCANCODE_LCTRL, true);
     CHECK(speed() == Catch::Approx(45.0f).margin(0.01));
+}
+
+TEST_CASE_METHOD(Integration, "Local stop transitions to Stand on release frame and direction switches stay continuous", "[input][camera][locomotion]") {
+    rendering::Camera camera;
+    rendering::CameraController controller(&camera);
+    controller.setIdleOrbitEnabled(false);
+    controller.setFollowTarget(nullptr);
+    controller.setUseWoWSpeed(true);
+    camera.setPosition({0, 0, 0});
+
+    rendering::LocomotionFSM fsm;
+    rendering::AnimCapabilitySet caps;
+    caps.resolvedStand = rendering::anim::STAND;
+    caps.resolvedWalk = rendering::anim::WALK;
+    caps.resolvedRun = rendering::anim::RUN;
+    caps.resolvedWalkBackwards = rendering::anim::WALK_BACKWARDS;
+
+    auto& input = core::Input::getInstance();
+    constexpr float dt60 = 1.0f / 60.0f;
+    const auto step = [&]() -> rendering::AnimOutput {
+        input.update();
+        controller.update(dt60);
+        rendering::LocomotionFSM::Input in;
+        in.moving = controller.isMoving();
+        in.sprinting = controller.isSprinting();
+        in.movingForward = controller.isMovingForward();
+        in.movingBackward = controller.isMovingBackward();
+        in.strafeLeft = controller.isStrafingLeft();
+        in.strafeRight = controller.isStrafingRight();
+        in.grounded = true;
+        in.deltaTime = dt60;
+        return fsm.resolve(in, caps);
+    };
+
+    // W -> Stop transitions Run -> Stand on the exact release frame
+    event(SDL_SCANCODE_W, true);
+    CHECK(step().animId == rendering::anim::RUN);
+    event(SDL_SCANCODE_W, false);
+    CHECK(step().animId == rendering::anim::STAND);
+    CHECK(fsm.getState() == rendering::LocomotionFSM::State::IDLE);
+
+    // W -> S reversal transitions Run -> WalkBackwards without any Stand flash
+    event(SDL_SCANCODE_W, true);
+    CHECK(step().animId == rendering::anim::RUN);
+    event(SDL_SCANCODE_W, false);
+    event(SDL_SCANCODE_S, true);
+    CHECK(step().animId == rendering::anim::WALK_BACKWARDS);
+    CHECK(fsm.getState() == rendering::LocomotionFSM::State::WALK);
+    event(SDL_SCANCODE_S, false);
+    CHECK(step().animId == rendering::anim::STAND);
+
+    // Q -> E strafe switch stays Run, then E release transitions to Stand immediately
+    event(SDL_SCANCODE_Q, true);
+    CHECK(step().animId == rendering::anim::RUN);
+    event(SDL_SCANCODE_Q, false);
+    event(SDL_SCANCODE_E, true);
+    CHECK(step().animId == rendering::anim::RUN);
+    event(SDL_SCANCODE_E, false);
+    CHECK(step().animId == rendering::anim::STAND);
 }
 
 TEST_CASE_METHOD(Integration, "Real camera sitting preserves queued taps and wheel command edges", "[input][camera][sit]") {

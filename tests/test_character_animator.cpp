@@ -131,3 +131,71 @@ TEST_CASE("An aura's held animation replaces running and jumping but not a stun"
     animator.update(0.016f);
     REQUIRE(animator.getLastOutput().animId == anim::RUN);
 }
+
+TEST_CASE("CharacterAnimator transitions immediately to Stand, Ready1H, or StealthStand on stop", "[animation][locomotion]") {
+    constexpr float dt60 = 1.0f / 60.0f;
+    AnimCapabilitySet caps;
+    caps.resolvedStand = anim::STAND;
+    caps.resolvedWalk = anim::WALK;
+    caps.resolvedRun = anim::RUN;
+    caps.resolvedWalkBackwards = anim::WALK_BACKWARDS;
+    caps.resolvedReady1H = anim::READY_1H;
+    caps.resolvedStealthIdle = anim::STEALTH_STAND;
+    caps.resolvedStealthWalk = anim::STEALTH_WALK;
+    caps.resolvedStealthRun = anim::STEALTH_WALK;
+
+    // Out of combat: Run -> Stand on exact release frame
+    {
+        CharacterAnimator animator;
+        animator.setCapabilities(caps);
+        CharacterAnimator::FrameInput frame;
+        frame.moving = frame.movingForward = frame.sprinting = true;
+        animator.setFrameInput(frame);
+        animator.update(dt60);
+        REQUIRE(animator.getLastOutput().animId == anim::RUN);
+
+        frame.moving = frame.movingForward = frame.sprinting = false;
+        animator.setFrameInput(frame);
+        animator.update(dt60);
+        REQUIRE(animator.getLastOutput().animId == anim::STAND);
+    }
+
+    // In combat: Run -> Ready1H on exact release frame
+    {
+        CharacterAnimator animator;
+        animator.setCapabilities(caps);
+        WeaponLoadout weapon;
+        weapon.inventoryType = wowee::game::InvType::ONE_HAND;
+        animator.setWeaponLoadout(weapon);
+        animator.setInCombat(true);
+
+        CharacterAnimator::FrameInput frame;
+        frame.moving = frame.movingForward = frame.sprinting = true;
+        animator.setFrameInput(frame);
+        animator.update(dt60);
+        REQUIRE(animator.getLastOutput().animId == anim::RUN);
+
+        frame.moving = frame.movingForward = frame.sprinting = false;
+        animator.setFrameInput(frame);
+        animator.update(dt60);
+        REQUIRE(animator.getLastOutput().animId == anim::READY_1H);
+    }
+
+    // Stealthed: StealthWalk -> StealthStand on exact release frame
+    {
+        CharacterAnimator animator;
+        animator.setCapabilities(caps);
+        animator.setStealthed(true);
+
+        CharacterAnimator::FrameInput frame;
+        frame.moving = frame.movingForward = frame.sprinting = true;
+        animator.setFrameInput(frame);
+        animator.update(dt60);
+        REQUIRE(animator.getLastOutput().animId == anim::STEALTH_WALK);
+
+        frame.moving = frame.movingForward = frame.sprinting = false;
+        animator.setFrameInput(frame);
+        animator.update(dt60);
+        REQUIRE(animator.getLastOutput().animId == anim::STEALTH_STAND);
+    }
+}

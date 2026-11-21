@@ -64,22 +64,101 @@ TEST_CASE("LocomotionFSM: IDLE → RUN on move start (sprinting)", "[locomotion]
     CHECK(fsm.getState() == LocomotionFSM::State::RUN);
 }
 
-TEST_CASE("LocomotionFSM: WALK → IDLE on move stop (after grace)", "[locomotion]") {
+TEST_CASE("LocomotionFSM: WALK and RUN transition to IDLE immediately on move stop", "[locomotion]") {
+    auto caps = makeLocoCaps();
+    constexpr float dt60 = 1.0f / 60.0f;
+
+    // WALK -> IDLE on exact release frame
+    {
+        LocomotionFSM fsm;
+        auto in = idle();
+        in.deltaTime = dt60;
+        in.moving = true;
+        in.movingForward = true;
+        REQUIRE(fsm.resolve(in, caps).animId == anim::WALK);
+        CHECK(fsm.getState() == LocomotionFSM::State::WALK);
+
+        in.moving = false;
+        in.movingForward = false;
+        auto out = fsm.resolve(in, caps);
+        CHECK(fsm.getState() == LocomotionFSM::State::IDLE);
+        CHECK(out.animId == anim::STAND);
+    }
+
+    // RUN -> IDLE on exact release frame (W -> Stop and Q/E -> Stop)
+    for (bool strafe : {false, true}) {
+        LocomotionFSM fsm;
+        auto in = idle();
+        in.deltaTime = dt60;
+        in.moving = true;
+        in.sprinting = true;
+        in.movingForward = !strafe;
+        in.strafeLeft = strafe;
+        REQUIRE(fsm.resolve(in, caps).animId == anim::RUN);
+        CHECK(fsm.getState() == LocomotionFSM::State::RUN);
+
+        in.moving = false;
+        in.sprinting = false;
+        in.movingForward = false;
+        in.strafeLeft = false;
+        auto out = fsm.resolve(in, caps);
+        CHECK(fsm.getState() == LocomotionFSM::State::IDLE);
+        CHECK(out.animId == anim::STAND);
+    }
+
+    // WALK_BACKWARDS -> IDLE on exact release frame (S -> Stop)
+    {
+        LocomotionFSM fsm;
+        auto in = idle();
+        in.deltaTime = dt60;
+        in.moving = true;
+        in.movingBackward = true;
+        REQUIRE(fsm.resolve(in, caps).animId == anim::WALK_BACKWARDS);
+
+        in.moving = false;
+        in.movingBackward = false;
+        auto out = fsm.resolve(in, caps);
+        CHECK(fsm.getState() == LocomotionFSM::State::IDLE);
+        CHECK(out.animId == anim::STAND);
+    }
+}
+
+TEST_CASE("LocomotionFSM: direction reversals transition directly without IDLE flash", "[locomotion]") {
     LocomotionFSM fsm;
     auto caps = makeLocoCaps();
+    constexpr float dt60 = 1.0f / 60.0f;
 
-    // Start walking
+    // W (RUN) -> S (WALK_BACKWARDS) -> W (RUN)
     auto in = idle();
+    in.deltaTime = dt60;
     in.moving = true;
-    fsm.resolve(in, caps);
+    in.sprinting = true;
+    in.movingForward = true;
+    REQUIRE(fsm.resolve(in, caps).animId == anim::RUN);
+    CHECK(fsm.getState() == LocomotionFSM::State::RUN);
+
+    in.movingForward = false;
+    in.movingBackward = true;
+    in.sprinting = false;
+    auto rev = fsm.resolve(in, caps);
     CHECK(fsm.getState() == LocomotionFSM::State::WALK);
+    CHECK(rev.animId == anim::WALK_BACKWARDS);
 
-    // Stop moving - grace timer keeps walk for a bit
-    in.moving = false;
-    in.deltaTime = 0.2f; // > grace period (0.12s)
-    auto out = fsm.resolve(in, caps);
+    in.movingBackward = false;
+    in.movingForward = true;
+    in.sprinting = true;
+    auto fwd = fsm.resolve(in, caps);
+    CHECK(fsm.getState() == LocomotionFSM::State::RUN);
+    CHECK(fwd.animId == anim::RUN);
 
-    CHECK(fsm.getState() == LocomotionFSM::State::IDLE);
+    // Q -> E strafe reversal stays RUN
+    in.movingForward = false;
+    in.strafeLeft = true;
+    CHECK(fsm.resolve(in, caps).animId == anim::RUN);
+    in.strafeLeft = false;
+    in.strafeRight = true;
+    CHECK(fsm.resolve(in, caps).animId == anim::RUN);
+    CHECK(fsm.getState() == LocomotionFSM::State::RUN);
 }
 
 TEST_CASE("LocomotionFSM: WALK → JUMP_START on jump", "[locomotion]") {
@@ -184,7 +263,32 @@ TEST_CASE("Moving landings resolve directly to stride without a transient landin
     }
 }
 
-TEST_CASE("LocomotionFSM: swim stop grace preserves direction until idle", "[locomotion][swim]") {
+TEST_CASE("LocomotionFSM: running jump with mid-air stop lands in JUMP_END", "[locomotion]") {
+    LocomotionFSM fsm;
+    auto caps = makeLocoCaps();
+
+    // Run, jump, release W right before landing: must land in JUMP_END, not RUN.
+    auto in = idle();
+    in.moving = true;
+    in.sprinting = true;
+    in.movingForward = true;
+    REQUIRE(fsm.resolve(in, caps).animId == anim::RUN);
+
+    in.grounded = false;
+    in.jumping = true;
+    REQUIRE(fsm.resolve(in, caps).animId == anim::JUMP_START);
+
+    in.moving = false;
+    in.sprinting = false;
+    in.movingForward = false;
+    in.jumping = false;
+    in.grounded = true;
+    auto land = fsm.resolve(in, caps);
+    CHECK(fsm.getState() == LocomotionFSM::State::JUMP_END);
+    CHECK(land.animId == anim::JUMP_END);
+}
+
+TEST_CASE("LocomotionFSM: swim stop transitions immediately to SWIM_IDLE without forward flash", "[locomotion][swim]") {
     auto caps = makeLocoCaps();
     caps.resolvedSwimBackwards = anim::SWIM_BACKWARDS;
     caps.resolvedSwimLeft = anim::SWIM_LEFT;
@@ -199,10 +303,8 @@ TEST_CASE("LocomotionFSM: swim stop grace preserves direction until idle", "[loc
         in.strafeRight = direction == anim::SWIM_RIGHT;
         REQUIRE(fsm.resolve(in, caps).animId == direction);
         in.moving = in.movingBackward = in.strafeLeft = in.strafeRight = false;
-        for (int frame = 0; frame < 7; ++frame) {
-            CHECK(fsm.resolve(in, caps).animId == direction);
-        }
         CHECK(fsm.resolve(in, caps).animId == anim::SWIM_IDLE);
+        CHECK(fsm.getState() == LocomotionFSM::State::SWIM_IDLE);
         in.moving = true;
         CHECK(fsm.resolve(in, caps).animId == anim::SWIM);
     }
