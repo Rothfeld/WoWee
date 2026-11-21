@@ -14,7 +14,14 @@ namespace rendering {
 /// In TBC 2.4.3 SpellVisualKit.dbc (66 melee/ability kits):
 /// - CharParamZero  : 0xRRGGBB base trail color (stored as float)
 /// - CharParamOne   : fadeOutRate (alpha units in 0..255 decayed per 50ms tick)
-/// - CharParamTwo   : duration in milliseconds
+/// - CharParamTwo   : duration in milliseconds; native 2.4.3 truncates via
+///                    integer division by 1000 to whole seconds, so kits with
+///                    CharParamTwo < 1000 (e.g. Mortal Strike/Heroic Strike
+///                    kit 324 at 600ms, Cleave kit 366 at 600ms, Sinister
+///                    Strike kit 399 at 400ms) produce 0s (no trail), while
+///                    kits >= 1000ms (Whirlwind kit 369 at 2000ms -> 2s,
+///                    Charge/Surge kit 44 and Tackle Hit kit 8456 at 1000ms -> 1s)
+///                    emit weapon trails for that whole-second duration.
 /// - CharParamThree : initial alpha in 0..255 (e.g. 100 -> 100/255 = 0.392)
 struct WeaponTrailSpec {
     glm::vec3 color{1.0f};
@@ -23,8 +30,9 @@ struct WeaponTrailSpec {
     float alpha = 0.0f;
 };
 
-/// Parse a SpellVisualKit CharProc == 8 entry. Returns nullopt when the trail
-/// has zero duration or zero alpha (invisible).
+/// Parse a SpellVisualKit CharProc == 8 entry. Returns nullopt when the
+/// truncated whole-second duration (`uint32_t(paramTwo) / 1000`) is zero or
+/// alpha is zero (invisible).
 std::optional<WeaponTrailSpec> parseWeaponTrailCharProc(float paramZero, float paramOne,
                                                         float paramTwo, float paramThree);
 

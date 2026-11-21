@@ -14,7 +14,15 @@ std::optional<WeaponTrailSpec> parseWeaponTrailCharProc(float paramZero, float p
     assert(std::isfinite(paramTwo) && paramTwo >= 0.0f);
     assert(std::isfinite(paramThree) && paramThree >= 0.0f && paramThree <= 255.0f);
 
-    if (paramTwo <= 0.0f || paramThree <= 0.0f) {
+    // Native TBC 2.4.3 converts CharParamTwo (milliseconds) to whole seconds
+    // via integer division by 1000. Sub-second melee kits (300..700 ms, e.g.
+    // Mortal Strike/Heroic Strike/Overpower kit 324 at 600 ms, Cleave kit 366
+    // at 600 ms, Sinister Strike kit 399 at 400 ms, Feint kit 823 at 700 ms)
+    // truncate to 0 s and emit no weapon trail; kits >= 1000 ms (Whirlwind
+    // kit 369 at 2000 ms -> 2 s, Charge/Surge kit 44 and Tackle Hit kit 8456
+    // at 1000 ms -> 1 s) emit for that whole-second duration.
+    const uint32_t wholeSeconds = static_cast<uint32_t>(paramTwo) / 1000u;
+    if (wholeSeconds == 0u || paramThree <= 0.0f) {
         return std::nullopt;
     }
 
@@ -25,7 +33,7 @@ std::optional<WeaponTrailSpec> parseWeaponTrailCharProc(float paramZero, float p
         static_cast<float>((rgb >> 8) & 0xFFu) / 255.0f,
         static_cast<float>(rgb & 0xFFu) / 255.0f);
     spec.fadeOutRate = paramOne;
-    spec.durationSec = paramTwo * 0.001f;
+    spec.durationSec = static_cast<float>(wholeSeconds);
     spec.alpha = std::clamp(paramThree / 255.0f, 0.0f, 1.0f);
     return spec;
 }
