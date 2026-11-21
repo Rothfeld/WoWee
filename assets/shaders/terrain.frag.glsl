@@ -42,6 +42,7 @@ layout(set = 1, binding = 7) uniform TerrainParams {
     int hasLayer3;
     int bigAlpha;
 };
+layout(set = 1, binding = 8) uniform sampler2D uMcshShadowMap;
 
 layout(set = 0, binding = 1) uniform sampler2DShadow uShadowMap;
 layout(set = 0, binding = 2) uniform sampler3D uFogVolume;
@@ -219,6 +220,18 @@ void main() {
     ambient = rtAmbient(rt, ambientColor.rgb) * finalColor.rgb;
 
     vec3 result = ambient + shadow * diffuse;
+    // ADT MCSH 64x64 baked terrain shadow map (1.0 = shadowed, 0.0 = lit).
+    // Native TBC 2.4.3 darkens terrain under baked MCSH shadows (~50%) even
+    // when dynamic shadows are off. When dynamic shadows are active, avoid
+    // double-darkening fragments already in dynamic shadow.
+    float mcsh = texture(uMcshShadowMap, LayerUV).r;
+    float mcshFactor = mix(1.0, 0.5, mcsh);
+    if (shadowParams.x > 0.5) {
+        float dynDarken = mix(0.5, 1.0, shadow);
+        result *= min(1.0, mcshFactor / max(dynDarken, 0.5));
+    } else {
+        result *= mcshFactor;
+    }
     result += localLightContribution(FragPos, norm, finalColor.rgb);
 
     result = applyFog(result, FragPos, fragDist);

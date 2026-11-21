@@ -59,6 +59,10 @@ struct ChunkMesh {
     };
     std::vector<LayerInfo> layers;
 
+    // Baked ADT MCSH 64x64 1-bit terrain shadow map (512 bytes when present)
+    bool hasShadowMap = false;
+    std::array<uint8_t, 512> shadowMap{};
+
     [[nodiscard]] bool isValid() const { return !vertices.empty() && !indices.empty(); }
     [[nodiscard]] size_t getVertexCount() const { return vertices.size(); }
     [[nodiscard]] size_t getTriangleCount() const { return indices.size() / 3; }

@@ -124,15 +124,24 @@ TEST_CASE("TBC 2.4.3 DBC skybox and cloud bands match Azeroth night sky expectat
     bool hasStars = false;
     bool hasHellfire = false;
     bool hasNetherstorm = false;
+    bool hasShadowmoon = false;
+    bool hasNagrand = false;
+    bool hasBladesEdge = false;
     for (uint32_t i = 0; i < skyboxDbc.getRecordCount(); ++i) {
         const std::string path = skyboxDbc.getString(i, 1);
         if (path == "Environments\\Stars\\Stars.mdx") hasStars = true;
         if (path == "Environments\\Stars\\HellfireSkyBox.mdx") hasHellfire = true;
         if (path == "Environments\\Stars\\NetherstormSkyBox.mdx") hasNetherstorm = true;
+        if (path == "Environments\\Stars\\ShadowMoonSkyBox.mdx") hasShadowmoon = true;
+        if (path == "Environments\\Stars\\NagrandSkyBox.mdx") hasNagrand = true;
+        if (path == "Environments\\Stars\\BladesEdgeSkyBox.mdx") hasBladesEdge = true;
     }
     CHECK(hasStars);
     CHECK(hasHellfire);
     CHECK(hasNetherstorm);
+    CHECK(hasShadowmoon);
+    CHECK(hasNagrand);
+    CHECK(hasBladesEdge);
 
     // Check Kalimdor default LightParams 192 cloud channels (IntBand 10 & 11) at midnight (t=0)
     const auto intBandBytes = wowee::test::readTbcData("dbfilesclient/lightintband.dbc");

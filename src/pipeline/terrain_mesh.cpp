@@ -52,6 +52,10 @@ ChunkMesh TerrainMeshGenerator::generateChunkMesh(const MapChunk& chunk, int chu
     ChunkMesh mesh;
 
     mesh.bigAlpha = chunk.bigAlpha;
+    mesh.hasShadowMap = chunk.hasShadowMap;
+    if (chunk.hasShadowMap) {
+        mesh.shadowMap = chunk.shadowMap;
+    }
     mesh.chunkX = chunkX;
     mesh.chunkY = chunkY;
 

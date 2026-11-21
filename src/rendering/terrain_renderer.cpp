@@ -12,6 +12,7 @@
 #include "rendering/vk_frame_data.hpp"
 #include "rendering/frustum.hpp"
 #include "pipeline/asset_manager.hpp"
+#include "pipeline/adt_mcsh.hpp"
 #include "pipeline/blp_loader.hpp"
 #include "core/logger.hpp"
 #include <glm/glm.hpp>
@@ -132,7 +133,8 @@ bool TerrainRenderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameL
     // --- Create material descriptor set layout (set 1) ---
     // bindings 0-6: combined image samplers (base + 3 layer + 3 alpha)
     // binding 7: uniform buffer (TerrainParams)
-    std::vector<VkDescriptorSetLayoutBinding> materialBindings(8);
+    // binding 8: combined image sampler (MCSH 64x64 baked shadow map)
+    std::vector<VkDescriptorSetLayoutBinding> materialBindings(9);
     for (uint32_t i = 0; i < 7; i++) {
         materialBindings[i] = {};
         materialBindings[i].binding = i;
@@ -145,6 +147,11 @@ bool TerrainRenderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameL
     materialBindings[7].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     materialBindings[7].descriptorCount = 1;
     materialBindings[7].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    materialBindings[8] = {};
+    materialBindings[8].binding = 8;
+    materialBindings[8].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    materialBindings[8].descriptorCount = 1;
+    materialBindings[8].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
     materialSetLayout = createDescriptorSetLayout(device, materialBindings);
     if (!materialSetLayout) {
@@ -154,7 +161,7 @@ bool TerrainRenderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameL
 
     // --- Create descriptor pool ---
     VkDescriptorPoolSize poolSizes[] = {
-        { .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = MAX_MATERIAL_SETS * 7 },
+        { .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = MAX_MATERIAL_SETS * 8 },
         { .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, .descriptorCount = MAX_MATERIAL_SETS },
     };
 
@@ -216,6 +223,12 @@ bool TerrainRenderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameL
     opaqueAlphaTexture->upload(*vkCtx, &opaqueAlpha, 1, 1, VK_FORMAT_R8_UNORM, false);
     opaqueAlphaTexture->createSampler(device, VK_FILTER_LINEAR, VK_FILTER_LINEAR,
                                        VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE);
+
+    unshadowedTexture = std::make_unique<VkTexture>();
+    uint8_t unshadowedVal = 0;
+    unshadowedTexture->upload(*vkCtx, &unshadowedVal, 1, 1, VK_FORMAT_R8_UNORM, false);
+    unshadowedTexture->createSampler(device, VK_FILTER_LINEAR, VK_FILTER_LINEAR,
+                                      VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE);
     textureCacheBudgetBytes_ =
         envSizeMBOrDefault("WOWEE_TERRAIN_TEX_CACHE_MB", 4096) * 1024ull * 1024ull;
     LOG_INFO("Terrain texture cache budget: ", textureCacheBudgetBytes_ / (1024 * 1024), " MB");
@@ -334,6 +347,7 @@ void TerrainRenderer::shutdown() {
 
     if (whiteTexture) { whiteTexture->destroy(device, allocator); whiteTexture.reset(); }
     if (opaqueAlphaTexture) { opaqueAlphaTexture->destroy(device, allocator); opaqueAlphaTexture.reset(); }
+    if (unshadowedTexture) { unshadowedTexture->destroy(device, allocator); unshadowedTexture.reset(); }
 
     destroy(device, pipeline);
     destroy(device, wireframePipeline);
@@ -493,6 +507,10 @@ void TerrainRenderer::bindChunkTextures(TerrainChunkGPU& gpuChunk,
                                         const pipeline::ChunkMesh& chunk,
                                         const std::vector<std::string>& texturePaths,
                                         int tileX, int tileY, int chunkX, int chunkY) {
+    gpuChunk.shadowTexture = chunk.hasShadowMap
+        ? createShadowTexture(chunk.shadowMap)
+        : unshadowedTexture.get();
+
     if (chunk.layers.empty()) {
         gpuChunk.baseTexture = whiteTexture.get();
         return;
@@ -622,6 +640,7 @@ bool TerrainRenderer::evictTexturesFor(size_t needBytes) {
         if (c.baseTexture) inUse.insert(c.baseTexture);
         for (VkTexture* t : c.layerTextures) if (t) inUse.insert(t);
         for (VkTexture* t : c.alphaTextures) if (t) inUse.insert(t);
+        if (c.shadowTexture) inUse.insert(c.shadowTexture);
     }
 
     std::vector<std::pair<uint64_t, std::string>> candidates;
@@ -815,6 +834,30 @@ VkTexture* TerrainRenderer::createAlphaTexture(const std::vector<uint8_t>& alpha
     return raw;
 }
 
+VkTexture* TerrainRenderer::createShadowTexture(const std::array<uint8_t, 512>& shadowMap) {
+    const auto unpacked = pipeline::unpackMcshShadowMap(shadowMap);
+
+    auto tex = std::make_unique<VkTexture>();
+    if (!tex->upload(*vkCtx, unpacked.data(), 64, 64, VK_FORMAT_R8_UNORM, false)) {
+        return unshadowedTexture.get();
+    }
+    tex->createSampler(vkCtx->getDevice(), VK_FILTER_LINEAR, VK_FILTER_LINEAR,
+                        VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE);
+
+    VkTexture* raw = tex.get();
+    evictTexturesFor(64 * 64);
+    static uint64_t mcshCounter = 0;
+    std::string key = "__mcsh_" + std::to_string(++mcshCounter);
+    TextureCacheEntry e;
+    e.texture = std::move(tex);
+    e.approxBytes = 64 * 64;
+    e.lastUse = ++textureCacheCounter_;
+    textureCacheBytes_ += e.approxBytes;
+    textureCache[key] = std::move(e);
+
+    return raw;
+}
+
 VkDescriptorSet TerrainRenderer::allocateMaterialSet() {
     VkDescriptorSetAllocateInfo allocInfo{};
     allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
@@ -837,6 +880,7 @@ VkDescriptorSet TerrainRenderer::allocateMaterialSet() {
 bool TerrainRenderer::writeMaterialDescriptors(VkDescriptorSet set, const TerrainChunkGPU& chunk) {
     VkTexture* white = whiteTexture.get();
     VkTexture* opaque = opaqueAlphaTexture.get();
+    VkTexture* unshadowed = unshadowedTexture.get();
 
     // Valid, not merely non-null. descriptorInfo() returns the texture's
     // handles as they are, so one whose upload or view creation failed writes
@@ -851,7 +895,7 @@ bool TerrainRenderer::writeMaterialDescriptors(VkDescriptorSet set, const Terrai
     const auto pick = [&](VkTexture* wanted, VkTexture* fallback) {
         return sampleable(wanted) ? wanted : fallback;
     };
-    if (!sampleable(white) || !sampleable(opaque)) {
+    if (!sampleable(white) || !sampleable(opaque) || !sampleable(unshadowed)) {
         // The fallbacks themselves are gone, so there is nothing safe to write.
         // The caller drops the chunk: a hole in the ground costs a view of one
         // tile, and a null image view costs the device.
@@ -864,19 +908,20 @@ bool TerrainRenderer::writeMaterialDescriptors(VkDescriptorSet set, const Terrai
         return false;
     }
 
-    VkDescriptorImageInfo imageInfos[7];
+    VkDescriptorImageInfo imageInfos[8];
     imageInfos[0] = pick(chunk.baseTexture, white)->descriptorInfo();
     for (int i = 0; i < 3; i++) {
         imageInfos[1 + i] = pick(chunk.layerTextures[i], white)->descriptorInfo();
         imageInfos[4 + i] = pick(chunk.alphaTextures[i], opaque)->descriptorInfo();
     }
+    imageInfos[7] = pick(chunk.shadowTexture, unshadowed)->descriptorInfo();
 
     VkDescriptorBufferInfo bufInfo{};
     bufInfo.buffer = chunk.paramsUBO;
     bufInfo.offset = 0;
     bufInfo.range = sizeof(TerrainParamsUBO);
 
-    VkWriteDescriptorSet writes[8] = {};
+    VkWriteDescriptorSet writes[9] = {};
     for (int i = 0; i < 7; i++) {
         writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[i].dstSet = set;
@@ -892,7 +937,14 @@ bool TerrainRenderer::writeMaterialDescriptors(VkDescriptorSet set, const Terrai
     writes[7].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     writes[7].pBufferInfo = &bufInfo;
 
-    vkUpdateDescriptorSets(vkCtx->getDevice(), 8, writes, 0, nullptr);
+    writes[8].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[8].dstSet = set;
+    writes[8].dstBinding = 8;
+    writes[8].descriptorCount = 1;
+    writes[8].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    writes[8].pImageInfo = &imageInfos[7];
+
+    vkUpdateDescriptorSets(vkCtx->getDevice(), 9, writes, 0, nullptr);
     return true;
 }
 

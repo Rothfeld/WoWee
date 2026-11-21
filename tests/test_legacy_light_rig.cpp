@@ -3,6 +3,7 @@
 #include <catch_amalgamated.hpp>
 
 #include "pipeline/adt_loader.hpp"
+#include "pipeline/adt_mcsh.hpp"
 #include "rendering/legacy_light_direction.hpp"
 
 #include <glm/glm.hpp>
@@ -91,4 +92,30 @@ TEST_CASE("MapChunk::isShadowed reads 64x64 1-bit MCSH bit order", "[adt][lighti
     CHECK(chunk.isShadowed(10.2f / 8.0f, 3.2f / 8.0f));
     CHECK_FALSE(chunk.isShadowed(9.2f / 8.0f, 3.2f / 8.0f));
     CHECK_FALSE(chunk.isShadowed(10.2f / 8.0f, 4.2f / 8.0f));
+}
+
+TEST_CASE("unpackMcshShadowMap expands 512-byte 64x64 1-bit MCSH matching MapChunk::isShadowed", "[adt][lighting][mcsh]") {
+    MapChunk chunk{};
+    chunk.hasShadowMap = true;
+    // Set corners and interior bits: (row=0,col=0), (row=0,col=63), (row=63,col=0), (row=63,col=63), (row=3,col=10)
+    chunk.shadowMap[0] |= static_cast<uint8_t>(1u << 0);
+    chunk.shadowMap[7] |= static_cast<uint8_t>(1u << 7);
+    chunk.shadowMap[63 * 8 + 0] |= static_cast<uint8_t>(1u << 0);
+    chunk.shadowMap[63 * 8 + 7] |= static_cast<uint8_t>(1u << 7);
+    chunk.shadowMap[3 * 8 + 1] |= static_cast<uint8_t>(1u << 2);
+
+    const auto unpacked = wowee::pipeline::unpackMcshShadowMap(chunk.shadowMap);
+    REQUIRE(unpacked.size() == 64u * 64u);
+
+    int shadowedCount = 0;
+    for (int row = 0; row < 64; ++row) {
+        for (int col = 0; col < 64; ++col) {
+            const uint8_t texel = unpacked[static_cast<size_t>(row * 64 + col)];
+            const bool expected = chunk.isShadowed((static_cast<float>(col) + 0.5f) / 8.0f,
+                                                   (static_cast<float>(row) + 0.5f) / 8.0f);
+            REQUIRE(texel == (expected ? 255u : 0u));
+            if (expected) ++shadowedCount;
+        }
+    }
+    CHECK(shadowedCount == 5);
 }

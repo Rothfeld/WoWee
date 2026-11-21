@@ -50,6 +50,7 @@ struct TerrainChunkGPU {
     VkTexture* baseTexture = nullptr;
     VkTexture* layerTextures[3] = {nullptr, nullptr, nullptr};
     VkTexture* alphaTextures[3] = {nullptr, nullptr, nullptr};
+    VkTexture* shadowTexture = nullptr;
     int layerCount = 0;
     bool bigAlpha = false;
 
@@ -172,6 +173,7 @@ private:
     TerrainChunkGPU uploadChunk(const pipeline::ChunkMesh& chunk);
     VkTexture* loadTexture(const std::string& path);
     VkTexture* createAlphaTexture(const std::vector<uint8_t>& alphaData);
+    VkTexture* createShadowTexture(const std::array<uint8_t, 512>& shadowMap);
     bool isChunkVisible(const TerrainChunkGPU& chunk, const Frustum& frustum);
     void calculateBoundingSphere(TerrainChunkGPU& chunk, const pipeline::ChunkMesh& meshChunk);
     VkDescriptorSet allocateMaterialSet();
@@ -259,6 +261,7 @@ private:
     // Fallback textures
     std::unique_ptr<VkTexture> whiteTexture;
     std::unique_ptr<VkTexture> opaqueAlphaTexture;
+    std::unique_ptr<VkTexture> unshadowedTexture;
 
     // Rendering state
     bool wireframe = false;
