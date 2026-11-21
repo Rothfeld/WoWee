@@ -934,8 +934,8 @@ static void pushCvarDefault(lua_State* L, const std::string& n) {
     // The three kinds this client draws. All on, which is what it did before
     // any of them were read; unset they fell to zero, which would have shown
     // every one of these boxes unticked while the numbers were on screen.
-    else if (n == "fctdamage" || n == "fcthealing" ||
-             n == "fctdodgeparrymiss") lua_pushstring(L, "1");
+    else if (n == "fctdamage" || n == "fcthealing") lua_pushstring(L, "1");
+    else if (n == "fctdodgeparrymiss") lua_pushstring(L, "0");
     // The four kinds of unit this client can tell apart on a nameplate. On,
     // which is what it drew before any of them were read.
     else if (n == "unitnameenemyplayername" || n == "unitnamefriendlyplayername" ||
@@ -1000,6 +1000,7 @@ static void pushCvarDefault(lua_State* L, const std::string& n) {
     else if (n == "combathealing") lua_pushstring(L, "1");
     else if (n == "combatlogperiodicspells") lua_pushstring(L, "1");
     else if (n == "petmeleedamage") lua_pushstring(L, "1");
+    else if (n == "petspelldamage") lua_pushstring(L, "1");
     else if (n == "fctspellmechanics") lua_pushstring(L, "1");
     else if (n == "fctspellmechanicsother") lua_pushstring(L, "0");
     // The camera does not keep lerping through a turn unless asked, which is
@@ -1068,7 +1069,7 @@ static void pushCvarDefault(lua_State* L, const std::string& n) {
     else if (n == "fctenergygains") lua_pushstring(L, "0");
     else if (n == "fctfriendlyhealers") lua_pushstring(L, "0");
     else if (n == "fcthonorgains") lua_pushstring(L, "0");
-    else if (n == "fctlowmanahealth") lua_pushstring(L, "1");
+    else if (n == "fctlowmanahealth") lua_pushstring(L, "0");
     else if (n == "fctperiodicenergygains") lua_pushstring(L, "0");
     else if (n == "fctreactives") lua_pushstring(L, "0");
     else if (n == "fctrepchanges") lua_pushstring(L, "0");

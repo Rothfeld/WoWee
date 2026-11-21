@@ -4009,8 +4009,10 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
                 continue;
             }
             CombatTextEntry::Type ct = combatTextTypeFromSpellMissInfo(m.missType);
+            const uint32_t schoolMask = owner_.getSpellSchoolMask(data.spellId);
+            const bool emitUnitCombat = (ct != CombatTextEntry::IMMUNE);
             owner_.addCombatText(ct, 0, data.spellId, playerIsCaster, 0, spellCasterGuid, m.targetGuid,
-                                 0, false, false);  // spell misses fire no UNIT_COMBAT (original: Shadow Bolt on Divine Shield)
+                                 schoolMask, false, emitUnitCombat);
         }
     }
 
@@ -6549,16 +6551,18 @@ void SpellHandler::handleSpellLogMiss(network::Packet& packet) {
         }
     }
 
+    const uint32_t schoolMask = owner_.getSpellSchoolMask(spellId);
     for (const auto& miss : parsedMisses) {
         const uint64_t victimGuid = miss.victimGuid;
         const CombatTextEntry::Type ct = combatTextTypeFromSpellMissInfo(miss.missInfo);
+        const bool emitUnitCombat = (ct != CombatTextEntry::IMMUNE);
         const bool petCaster = owner_.getPetGuid() != 0 && casterGuid == owner_.getPetGuid();
         if (casterGuid == owner_.getPlayerGuid() || petCaster) {
             // We (or our pet) cast a spell and it missed the target
-            owner_.addCombatText(ct, 0, spellId, !petCaster, 0, casterGuid, victimGuid, 0, false, false);
+            owner_.addCombatText(ct, 0, spellId, !petCaster, 0, casterGuid, victimGuid, schoolMask, false, emitUnitCombat);
         } else if (victimGuid == owner_.getPlayerGuid()) {
             // Enemy spell missed us (we dodged/parried/blocked/resisted/etc.)
-            owner_.addCombatText(ct, 0, spellId, false, 0, casterGuid, victimGuid, 0, false, false);
+            owner_.addCombatText(ct, 0, spellId, false, 0, casterGuid, victimGuid, schoolMask, false, emitUnitCombat);
         }
     }
 }
@@ -6780,18 +6784,17 @@ void SpellHandler::handlePeriodicAuraLog(network::Packet& packet) {
             uint32_t res      = packet.readUInt32();
             bool dotCrit = false;
             if (periodicWotlk) dotCrit = (packet.readUInt8() != 0);
-            // A tick that did damage shows its damage only; one that did none
-            // is named by what stopped it.
+            // Periodic ticks never fire UNIT_COMBAT in build 8606 (verified on Pair 3 & Pair 13).
             if (dmg > 0)
                 owner_.addCombatText(dotCrit ? CombatTextEntry::CRIT_DAMAGE : CombatTextEntry::PERIODIC_DAMAGE,
                               static_cast<int32_t>(dmg),
-                              spellId, isPlayerCaster, 0, casterGuid, victimGuid, school);
+                              spellId, isPlayerCaster, 0, casterGuid, victimGuid, school, false, false);
             if (abs > 0)
                 owner_.addCombatText(CombatTextEntry::ABSORB, static_cast<int32_t>(abs),
-                              spellId, isPlayerCaster, 0, casterGuid, victimGuid, school, dmg > 0);
+                              spellId, isPlayerCaster, 0, casterGuid, victimGuid, school, dmg > 0, false);
             if (res > 0 && (dmg > 0 || abs == 0))
                 owner_.addCombatText(CombatTextEntry::RESIST, static_cast<int32_t>(res),
-                              spellId, isPlayerCaster, 0, casterGuid, victimGuid, school, dmg > 0);
+                              spellId, isPlayerCaster, 0, casterGuid, victimGuid, school, dmg > 0, false);
         } else if (auraType == 8 || auraType == 20) {
             // Classic/TBC: heal(4)
             // WotLK: heal(4)+overheal(4)+absorbed(4)+isCrit(1)
@@ -6808,10 +6811,10 @@ void SpellHandler::handlePeriodicAuraLog(network::Packet& packet) {
             }
             owner_.addCombatText(hotCrit ? CombatTextEntry::CRIT_HEAL : CombatTextEntry::PERIODIC_HEAL,
                           static_cast<int32_t>(heal),
-                          spellId, isPlayerCaster, 0, casterGuid, victimGuid);
+                          spellId, isPlayerCaster, 0, casterGuid, victimGuid, 0, false, false);
             if (hotAbs > 0)
                 owner_.addCombatText(CombatTextEntry::ABSORB, static_cast<int32_t>(hotAbs),
-                              spellId, isPlayerCaster, 0, casterGuid, victimGuid);
+                              spellId, isPlayerCaster, 0, casterGuid, victimGuid, 0, heal > 0, false);
         } else if (auraType == 21 || auraType == 24) {
             // OBS_MOD_POWER / PERIODIC_ENERGIZE: miscValue(powerType) + amount
             // Common in WotLK: Replenishment, Mana Spring Totem, Divine Plea, etc.

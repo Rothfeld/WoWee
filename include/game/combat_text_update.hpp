@@ -64,15 +64,15 @@ inline std::optional<CombatTextUpdate> combatTextUpdateFor(CombatTextEntry::Type
         case T::REFLECT: return CombatTextUpdate{"SPELL_REFLECT", {}, {}};
         case T::BLOCK:
             if (precedingDamage > 0)
-                return CombatTextUpdate{"BLOCK", std::to_string(precedingDamage), value};
+                return CombatTextUpdate{"BLOCK", "-" + std::to_string(precedingDamage), value};
             return CombatTextUpdate{fromSpell ? "SPELL_BLOCK" : "BLOCK", {}, {}};
         case T::ABSORB:
             if (precedingDamage > 0)
-                return CombatTextUpdate{"ABSORB", std::to_string(precedingDamage), value};
+                return CombatTextUpdate{"ABSORB", "-" + std::to_string(precedingDamage), value};
             return CombatTextUpdate{fromSpell ? "SPELL_ABSORB" : "ABSORB", {}, {}};
         case T::RESIST:
             if (precedingDamage > 0)
-                return CombatTextUpdate{"RESIST", std::to_string(precedingDamage), value};
+                return CombatTextUpdate{"RESIST", "-" + std::to_string(precedingDamage), value};
             return CombatTextUpdate{fromSpell ? "SPELL_RESIST" : "RESIST", {}, {}};
         case T::HEAL: return CombatTextUpdate{"HEAL", std::string(casterName), value};
         case T::CRIT_HEAL: return CombatTextUpdate{"HEAL_CRIT", std::string(casterName), value};

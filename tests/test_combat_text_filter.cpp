@@ -50,13 +50,13 @@ TEST_CASE("damage arriving at the player is not filtered here", "[combattext]") 
     CHECK(ruleFor(T::HEAL, false, kOther, kPlayer).cvar == nullptr);
 }
 
-TEST_CASE("periodic and healing have their own rows", "[combattext]") {
+TEST_CASE("periodic damage and healing have their own TBC rows", "[combattext]") {
     CHECK(std::string(ruleFor(T::PERIODIC_DAMAGE, true, kPlayer, kTarget).cvar)
           == "CombatLogPeriodicSpells");
-    CHECK(std::string(ruleFor(T::PERIODIC_HEAL, true, kPlayer, kPlayer).cvar)
-          == "CombatLogPeriodicSpells");
-    CHECK(std::string(ruleFor(T::HEAL, true, kPlayer, kPlayer).cvar) == "CombatHealing");
-    CHECK(std::string(ruleFor(T::CRIT_HEAL, true, kPlayer, kPlayer).cvar) == "CombatHealing");
+    CHECK(std::string(ruleFor(T::PERIODIC_HEAL, true, kPlayer, kTarget).cvar)
+          == "CombatHealing");
+    CHECK(std::string(ruleFor(T::HEAL, true, kPlayer, kTarget).cvar) == "CombatHealing");
+    CHECK(std::string(ruleFor(T::CRIT_HEAL, true, kPlayer, kTarget).cvar) == "CombatHealing");
 }
 
 TEST_CASE("effects are read against the unit they landed on", "[combattext]") {
@@ -109,16 +109,16 @@ TEST_CASE("COMBAT_TEXT_UPDATE carries build 8606's message types and data", "[co
     CHECK(absorbed->type == "ABSORB");
     CHECK(absorbed->arg2.empty());
     CHECK(combatTextUpdateFor(CombatTextEntry::RESIST, 0, true, 0, "", -1)->type == "SPELL_RESIST");
-    // A hit that did damage: Blizzard_CombatText's partial form.
+    // A hit that did damage: Blizzard_CombatText's partial form carries signed "-damage" in arg2.
     auto partial = combatTextUpdateFor(CombatTextEntry::ABSORB, 20, false, 0, "", 30);
     CHECK(partial->type == "ABSORB");
-    CHECK(partial->arg2 == "30");
+    CHECK(partial->arg2 == "-30");
     CHECK(partial->arg3 == "20");
     // Partial spell resist uses RESIST (present in COMBAT_TEXT_TYPE_INFO).
     auto partialSpellResist = combatTextUpdateFor(CombatTextEntry::RESIST, 50, true, 0, "", 200);
     REQUIRE(partialSpellResist);
     CHECK(partialSpellResist->type == "RESIST");
-    CHECK(partialSpellResist->arg2 == "200");
+    CHECK(partialSpellResist->arg2 == "-200");
     CHECK(partialSpellResist->arg3 == "50");
     // Environmental damage reports as DAMAGE.
     auto env = combatTextUpdateFor(CombatTextEntry::ENVIRONMENTAL, 125, false, 2, "", -1);

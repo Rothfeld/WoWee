@@ -925,7 +925,7 @@ bool SpellDamageLogParser::parse(network::Packet& packet, SpellDamageLogData& da
 
     (void)packet.readUInt8(); // periodicLog (not displayed)
     packet.readUInt8(); // unused
-    packet.readUInt32(); // blocked
+    data.blocked = packet.readUInt32();
     uint32_t flags = packet.readUInt32();  // flags IS used - bit 0x02 = crit
     data.isCrit = (flags & 0x02) != 0;
 

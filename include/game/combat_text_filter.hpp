@@ -58,10 +58,10 @@ inline CombatTextFilterRule combatTextFilterFor(CombatTextEntry::Type type,
         case T::GLANCING: case T::CRUSHING:
             if (!isPlayerSource) return {};
             return {.cvar = "CombatDamage", .fallback = "1"};
-        case T::PERIODIC_DAMAGE: case T::PERIODIC_HEAL:
+        case T::PERIODIC_DAMAGE:
             if (!isPlayerSource) return {};
             return {.cvar = "CombatLogPeriodicSpells", .fallback = "1"};
-        case T::HEAL: case T::CRIT_HEAL:
+        case T::HEAL: case T::CRIT_HEAL: case T::PERIODIC_HEAL:
             if (!isPlayerSource) return {};
             return {.cvar = "CombatHealing", .fallback = "1"};
         default:

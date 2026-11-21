@@ -651,7 +651,7 @@ constexpr SettingDesc kSchema[] = {
     // Blizzard_CombatText's own switches over your character, plus the six
     // world-space target combat text filters read by combat_text_filter.hpp.
     {"combattext", "Floating combat text", SettingKind::Bool, 0, 0, 0, "Combat Text", "Over your character",
-     "Float the notices below over your character as they happen.", "", 1,
+     "Float the notices below over your character as they happen.", "", 0,
      "", "cvar:enableCombatText", "",
      "SHOW_COMBAT_TEXT = v "
      "if v == '1' and IsAddOnLoaded and not IsAddOnLoaded('Blizzard_CombatText') "
@@ -663,7 +663,7 @@ constexpr SettingDesc kSchema[] = {
      "COMBAT_TEXT_FLOAT_MODE = v "
      "if CombatText_UpdateDisplayedMessages then CombatText_UpdateDisplayedMessages() end"},
     {"fctdodgeparrymiss", "Dodges, parries and misses", SettingKind::Bool, 0, 0, 0, "Combat Text", "",
-     "Say when a swing at you missed, and why.", "", 1, "combattext",
+     "Say when a swing at you missed, and why.", "", 0, "combattext",
      "cvar:fctDodgeParryMiss", "",
      "COMBAT_TEXT_SHOW_DODGE_PARRY_MISS = v "
      "if CombatText_UpdateDisplayedMessages then CombatText_UpdateDisplayedMessages() end"},
@@ -698,7 +698,7 @@ constexpr SettingDesc kSchema[] = {
      "COMBAT_TEXT_SHOW_COMBO_POINTS = v "
      "if CombatText_UpdateDisplayedMessages then CombatText_UpdateDisplayedMessages() end"},
     {"fctlowmanahealth", "Low health and mana", SettingKind::Bool, 0, 0, 0, "Combat Text", "",
-     "A warning as either runs low.", "", 1, "combattext",
+     "A warning as either runs low.", "", 0, "combattext",
      "cvar:fctLowManaHealth", "",
      "COMBAT_TEXT_SHOW_LOW_HEALTH_MANA = v "
      "if CombatText_UpdateDisplayedMessages then CombatText_UpdateDisplayedMessages() end"},

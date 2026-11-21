@@ -7,6 +7,7 @@
 #include "addons/lua_engine.hpp"
 #include "game_replay.hpp"
 #include "game/game_services.hpp"
+#include "ui/floating_combat_text.hpp"
 #include "ui/framexml_emitter.hpp"
 #include "ui/widget_tree.hpp"
 #include "ui/xml_parser.hpp"
@@ -244,22 +245,23 @@ Packet buildPowerUpdateTbc(uint64_t guid, uint8_t powerType, uint32_t val) {
 
 }  // namespace
 
-TEST_CASE("Blizzard_CombatText receives Rage/Mana/Energy gains and deduplicates energize", "[fct][framexml]") {
+TEST_CASE("Blizzard_CombatText receives spell power gains without melee swing or natural regen spam", "[fct][framexml]") {
     FctHarness h(/*warrior*/ 1, /*rage*/ 1);
     const uint16_t rageField = static_cast<uint16_t>(wowee::game::fieldIndex(UF::UNIT_FIELD_POWER1) + 1);
 
-    // 1. Melee rage gain via UNIT_FIELD_POWER2 (0 -> 50 raw = +5 Rage)
+    // 1. Melee rage gain via UNIT_FIELD_POWER2 and SMSG_POWER_UPDATE must NOT spam +Rage FCT
+    // (verified on Native TBC 2.4.3 Pair 3 & AQ20 captures), while still firing UNIT_RAGE.
     h.session.receive(UpdateObject().tbc().valuesAt(
         Session::kPlayerGuid, {{rageField, 50}}));
-    auto msgs = h.recorded();
-    REQUIRE(msgs.size() == 1);
-    CHECK(msgs[0].text == "+5 Rage");
-    CHECK(msgs[0].r == Catch::Approx(0.1));
-    CHECK(msgs[0].g == Catch::Approx(0.1));
-    CHECK(msgs[0].b == Catch::Approx(1.0));
+    h.session.receive(buildPowerUpdateTbc(Session::kPlayerGuid, 1, 120));
+    CHECK(h.recorded().empty());
+    bool sawUnitRage = false;
+    for (const auto& [ev, _] : h.rawEvents) {
+        if (ev == "UNIT_RAGE") sawUnitRage = true;
+    }
+    CHECK(sawUnitRage);
 
-    // 2. SMSG_SPELLENERGIZELOG (+10 Rage) immediately followed by UNIT_FIELD_POWER2 (+100 raw = +10 Rage):
-    // must fire ONCE, not twice.
+    // 2. SMSG_SPELLENERGIZELOG (+10 Rage Bloodrage) followed by UNIT_FIELD_POWER2 fires ONCE.
     h.clearRecorded();
     Packet energize(wireOpcode(Opcode::SMSG_SPELLENERGIZELOG));
     energize.writePackedGuid(Session::kPlayerGuid);
@@ -269,18 +271,35 @@ TEST_CASE("Blizzard_CombatText receives Rage/Mana/Energy gains and deduplicates 
     energize.writeUInt32(100);  // 10 Rage
     h.session.receive(energize);
     h.session.receive(UpdateObject().tbc().valuesAt(
-        Session::kPlayerGuid, {{rageField, 150}}));
-    msgs = h.recorded();
+        Session::kPlayerGuid, {{rageField, 220}}));
+    auto msgs = h.recorded();
     REQUIRE(msgs.size() == 1);
     CHECK(msgs[0].text == "+10 Rage");
+    CHECK(msgs[0].r == Catch::Approx(0.1));
+    CHECK(msgs[0].g == Catch::Approx(0.1));
+    CHECK(msgs[0].b == Catch::Approx(1.0));
 
-    // 3. UNIT_FIELD_POWER1 update fires UNIT_MANA (not UNIT_POWER) and reports +80 Mana gain
+    // 3. SMSG_PERIODICAURALOG (PERIODIC_ENERGIZE = 24, Bloodrage tick +1 Rage) fires +1 Rage.
+    h.clearRecorded();
+    Packet periodicEnergize(wireOpcode(Opcode::SMSG_PERIODICAURALOG));
+    periodicEnergize.writePackedGuid(Session::kPlayerGuid);
+    periodicEnergize.writePackedGuid(Session::kPlayerGuid);
+    periodicEnergize.writeUInt32(29131); // Bloodrage periodic aura
+    periodicEnergize.writeUInt32(1);     // count
+    periodicEnergize.writeUInt32(24);    // SPELL_AURA_PERIODIC_ENERGIZE
+    periodicEnergize.writeUInt32(1);     // POWER_RAGE
+    periodicEnergize.writeUInt32(10);    // 1 Rage in tenths
+    h.session.receive(periodicEnergize);
+    msgs = h.recorded();
+    REQUIRE(msgs.size() == 1);
+    CHECK(msgs[0].text == "+1 Rage");
+
+    // 4. Natural UNIT_FIELD_POWER1 mana regeneration tick fires UNIT_MANA (not UNIT_POWER)
+    // and does NOT emit +Mana FCT.
     h.clearRecorded();
     h.session.receive(UpdateObject().tbc().values(
         Session::kPlayerGuid, {{UF::UNIT_FIELD_POWER1, 1080}}));
-    msgs = h.recorded();
-    REQUIRE(msgs.size() == 1);
-    CHECK(msgs[0].text == "+80 Mana");
+    CHECK(h.recorded().empty());
     bool sawUnitMana = false;
     bool sawUnitPower = false;
     for (const auto& [ev, _] : h.rawEvents) {
@@ -490,7 +509,7 @@ TEST_CASE("Blizzard_CombatText receives combat state, low HP/mana, combo points,
     CHECK(msgs[4].text == "+420 []");
     CHECK(msgs[5].text == "-125");
     CHECK(msgs[6].text == "-200");
-    CHECK(msgs[7].text == "200  (50 resisted)");
+    CHECK(msgs[7].text == "-200  (50 resisted)");
     CHECK(msgs[8].text == "+25 Honor");
 
     // Verify Reputation change (COMBAT_TEXT_UPDATE "FACTION")
@@ -520,4 +539,212 @@ TEST_CASE("Blizzard_CombatText receives combat state, low HP/mana, combo points,
         else
             CHECK(y1 > y0);  // Scroll Up & Arc
     }
+}
+
+TEST_CASE("Healing & HoT combat text routes self-heals to 2D Blizzard_CombatText only and target heals to 3D world only", "[fct][framexml]") {
+    FctHarness h(/*warrior*/ 1, /*rage*/ 1);
+    // Spawn friendly ally for target heals
+    h.session.receive(UpdateObject().tbc().create(
+        kHealerGuid, ObjectType::PLAYER,
+        {{UF::UNIT_FIELD_HEALTH, 3000},
+         {UF::UNIT_FIELD_MAXHEALTH, 5000},
+         {UF::UNIT_FIELD_LEVEL, 70}}));
+
+    auto countUnitCombat = [&](const std::string& unit, const std::string& action) {
+        int count = 0;
+        for (const auto& [ev, args] : h.rawEvents) {
+            if (ev == "UNIT_COMBAT" && args.size() >= 2 && args[0] == unit && args[1] == action)
+                ++count;
+        }
+        return count;
+    };
+
+    // 1. Self direct heal (SMSG_SPELLHEALLOG caster == player, target == player):
+    //    - 2D Blizzard_CombatText shows "+1500" ONCE
+    //    - 3D world CombatUI::renderCombatText skips it (showsForUnit == false, NO duplicate!)
+    //    - Portrait UNIT_COMBAT("player", "HEAL") fires ONCE
+    Packet selfHeal(wireOpcode(Opcode::SMSG_SPELLHEALLOG));
+    selfHeal.writePackedGuid(Session::kPlayerGuid);
+    selfHeal.writePackedGuid(Session::kPlayerGuid);
+    selfHeal.writeUInt32(23881); // Bloodthirst heal
+    selfHeal.writeUInt32(1500);
+    selfHeal.writeUInt8(0);      // normal
+    selfHeal.writeUInt8(0);
+    h.session.receive(selfHeal);
+
+    auto msgs = h.recorded();
+    REQUIRE(msgs.size() == 1);
+    CHECK(msgs[0].text == "+1500");
+    CHECK(msgs[0].r == Catch::Approx(0.1));
+    CHECK(msgs[0].g == Catch::Approx(1.0));
+    CHECK(msgs[0].b == Catch::Approx(0.1));
+    CHECK(countUnitCombat("player", "HEAL") == 1);
+    REQUIRE(h.session.handler().getCombatText().size() == 1);
+    CHECK_FALSE(wowee::ui::fct::showsForUnit(
+        h.session.handler().getCombatText().back(), Session::kPlayerGuid, 0));
+
+    // 2. Self HoT tick (SMSG_PERIODICAURALOG SPELL_AURA_OBS_MOD_HEALTH = 20, e.g. Warrior Blood Craze +100000):
+    //    - 2D Blizzard_CombatText shows "+100000" ONCE
+    //    - 3D world CombatUI::renderCombatText skips it (showsForUnit == false, fixing duplicate +100000!)
+    //    - Portrait UNIT_COMBAT does NOT fire on HoT ticks!
+    h.clearRecorded();
+    h.session.handler().clearCombatText();
+    Packet selfHot(wireOpcode(Opcode::SMSG_PERIODICAURALOG));
+    selfHot.writePackedGuid(Session::kPlayerGuid);
+    selfHot.writePackedGuid(Session::kPlayerGuid);
+    selfHot.writeUInt32(16491);  // Blood Craze
+    selfHot.writeUInt32(1);      // count
+    selfHot.writeUInt32(20);     // SPELL_AURA_OBS_MOD_HEALTH
+    selfHot.writeUInt32(100000); // +100000 tick
+    h.session.receive(selfHot);
+
+    msgs = h.recorded();
+    REQUIRE(msgs.size() == 1);
+    CHECK(msgs[0].text == "+100000");
+    CHECK(msgs[0].r == Catch::Approx(0.1));
+    CHECK(msgs[0].g == Catch::Approx(1.0));
+    CHECK(msgs[0].b == Catch::Approx(0.1));
+    CHECK(countUnitCombat("player", "HEAL") == 0);
+    REQUIRE(h.session.handler().getCombatText().size() == 1);
+    CHECK_FALSE(wowee::ui::fct::showsForUnit(
+        h.session.handler().getCombatText().back(), Session::kPlayerGuid, 0));
+
+    // 3. Outgoing direct crit heal & HoT on friendly target (caster == player, target == kHealerGuid):
+    //    - 2D Blizzard_CombatText shows NOTHING
+    //    - 3D world CombatUI::renderCombatText shows "+2400" (crit) and "+450" (HoT) in (0.1, 1.0, 0.1) green
+    //    - Direct heal fires UNIT_COMBAT("target", "HEAL", "CRITICAL"), HoT fires ZERO UNIT_COMBAT
+    h.clearRecorded();
+    h.session.handler().clearCombatText();
+    h.session.handler().setTargetGuidRaw(kHealerGuid);
+
+    Packet allyCritHeal(wireOpcode(Opcode::SMSG_SPELLHEALLOG));
+    allyCritHeal.writePackedGuid(kHealerGuid);
+    allyCritHeal.writePackedGuid(Session::kPlayerGuid);
+    allyCritHeal.writeUInt32(2060); // Greater Heal
+    allyCritHeal.writeUInt32(2400);
+    allyCritHeal.writeUInt8(1);     // crit
+    allyCritHeal.writeUInt8(0);
+    h.session.receive(allyCritHeal);
+
+    Packet allyHot(wireOpcode(Opcode::SMSG_PERIODICAURALOG));
+    allyHot.writePackedGuid(kHealerGuid);
+    allyHot.writePackedGuid(Session::kPlayerGuid);
+    allyHot.writeUInt32(139);   // Renew
+    allyHot.writeUInt32(1);
+    allyHot.writeUInt32(8);     // SPELL_AURA_PERIODIC_HEAL
+    allyHot.writeUInt32(450);
+    h.session.receive(allyHot);
+
+    CHECK(h.recorded().empty());
+    CHECK(countUnitCombat("target", "HEAL") == 1);
+    const auto& worldEntries = h.session.handler().getCombatText();
+    REQUIRE(worldEntries.size() == 2);
+    CHECK(wowee::ui::fct::showsForUnit(worldEntries[0], Session::kPlayerGuid, 0));
+    CHECK(wowee::ui::fct::showsForUnit(worldEntries[1], Session::kPlayerGuid, 0));
+    CHECK(wowee::ui::fct::presentationFor(worldEntries[0]).critical);
+    CHECK(wowee::ui::fct::presentationFor(worldEntries[0]).heal);
+    CHECK_FALSE(wowee::ui::fct::presentationFor(worldEntries[1]).critical);
+    CHECK(wowee::ui::fct::presentationFor(worldEntries[1]).heal);
+}
+
+TEST_CASE("Melee vs spell Dodge/Resist/Block colors, portrait UNIT_COMBAT, and TBC CVar defaults match 2.4.3", "[fct][framexml]") {
+    FctHarness h(/*warrior*/ 1, /*rage*/ 1);
+    h.session.handler().spellNameCacheRef()[133].name = "Fireball";
+    h.session.handler().spellNameCacheRef()[133].schoolMask = 0x04; // Fire
+    h.session.handler().spellNameCacheRef()[686].name = "Shadow Bolt";
+    h.session.handler().spellNameCacheRef()[686].schoolMask = 0x20; // Shadow
+
+    // 1. Incoming melee dodge:
+    //    Blizzard_CombatText "DODGE" -> red (1.0, 0.1, 0.1) + UNIT_COMBAT("player", "DODGE")
+    h.clearRecorded();
+    h.session.handler().addCombatText(
+        CombatTextEntry::DODGE, 0, 0, false, 0, kMobGuid, Session::kPlayerGuid, 1, false, true);
+
+    // 2. Incoming spell dodge & full spell resist via SMSG_SPELLLOGMISS:
+    //    SPELL_DODGE -> white (1.0, 1.0, 1.0) + UNIT_COMBAT("player", "DODGE")
+    //    SPELL_RESIST -> UNIT_COMBAT("player", "RESIST", "", "0", "4") (portrait "Resist" as seen on Legless!)
+    Packet spellMiss(wireOpcode(Opcode::SMSG_SPELLLOGMISS));
+    spellMiss.writeUInt32(133); // Fireball
+    spellMiss.writeUInt64(kMobGuid);
+    spellMiss.writeUInt8(0);
+    spellMiss.writeUInt32(2);   // 2 miss entries
+    spellMiss.writeUInt64(Session::kPlayerGuid);
+    spellMiss.writeUInt8(wowee::game::SpellMissInfo::DODGE);  // 3 = SPELL_MISS_DODGE
+    spellMiss.writeUInt64(Session::kPlayerGuid);
+    spellMiss.writeUInt8(wowee::game::SpellMissInfo::RESIST); // 2 = SPELL_MISS_RESIST
+    h.session.receive(spellMiss);
+
+    // 3. Spell IMMUNE (SMSG_SPELLLOGMISS SPELL_MISS_IMMUNE = 7):
+    //    SPELL_IMMUNE -> white "Immune" in Blizzard_CombatText, ZERO UNIT_COMBAT!
+    Packet spellImmune(wireOpcode(Opcode::SMSG_SPELLLOGMISS));
+    spellImmune.writeUInt32(686); // Shadow Bolt
+    spellImmune.writeUInt64(Session::kPlayerGuid);
+    spellImmune.writeUInt8(0);
+    spellImmune.writeUInt32(1);
+    spellImmune.writeUInt64(kMobGuid);
+    spellImmune.writeUInt8(7);    // SPELL_MISS_IMMUNE
+    h.session.receive(spellImmune);
+
+    // 4. Partial spell block via TBC SMSG_SPELLNONMELEEDAMAGELOG (data.blocked = 40 on 110 hit):
+    Packet spellBlock(wireOpcode(Opcode::SMSG_SPELLNONMELEEDAMAGELOG));
+    spellBlock.writePackedGuid(Session::kPlayerGuid);
+    spellBlock.writePackedGuid(kMobGuid);
+    spellBlock.writeUInt32(78);   // Heroic Strike
+    spellBlock.writeUInt32(110);  // damage
+    spellBlock.writeUInt8(0x01);  // physical schoolMask
+    spellBlock.writeUInt32(0);    // absorbed
+    spellBlock.writeUInt32(0);    // resisted
+    spellBlock.writeUInt8(0);     // periodicLog
+    spellBlock.writeUInt8(0);     // unused
+    spellBlock.writeUInt32(40);   // blocked!
+    spellBlock.writeUInt32(0);    // flags
+    h.session.receive(spellBlock);
+
+    auto msgs = h.recorded();
+    REQUIRE(msgs.size() == 4);
+    CHECK(msgs[0].text == "Dodge");
+    CHECK(msgs[0].r == Catch::Approx(1.0));
+    CHECK(msgs[0].g == Catch::Approx(0.1));
+    CHECK(msgs[0].b == Catch::Approx(0.1));
+    CHECK(msgs[1].text == "Dodge");
+    CHECK(msgs[1].r == Catch::Approx(1.0));
+    CHECK(msgs[1].g == Catch::Approx(1.0));
+    CHECK(msgs[1].b == Catch::Approx(1.0));
+    CHECK(msgs[2].text == "-110");
+    CHECK(msgs[3].text == "-110  (40 blocked)");
+
+    bool sawPlayerSpellResistPortrait = false;
+    bool sawTargetSpellImmunePortrait = false;
+    for (const auto& [ev, args] : h.rawEvents) {
+        if (ev == "UNIT_COMBAT" && args.size() >= 5) {
+            if (args[0] == "player" && args[1] == "RESIST" && args[3] == "0" && args[4] == "4")
+                sawPlayerSpellResistPortrait = true;
+            if (args[0] == "target" && args[1] == "IMMUNE")
+                sawTargetSpellImmunePortrait = true;
+        }
+    }
+    CHECK(sawPlayerSpellResistPortrait);
+    CHECK_FALSE(sawTargetSpellImmunePortrait);
+
+    // 5. TBC 2.4.3 CVar defaults match GetCVarDefault on build 8606:
+    REQUIRE(h.lua.executeString(R"lua(
+        __cv_ect = tostring(GetCVar("enableCombatText"))
+        __cv_dpm = tostring(GetCVar("fctDodgeParryMiss"))
+        __cv_lmh = tostring(GetCVar("fctLowManaHealth"))
+        __cv_aur = tostring(GetCVar("fctAuras"))
+        __cv_cd  = tostring(GetCVar("CombatDamage"))
+        __cv_ch  = tostring(GetCVar("CombatHealing"))
+        __cv_clp = tostring(GetCVar("CombatLogPeriodicSpells"))
+        __cv_pmd = tostring(GetCVar("PetMeleeDamage"))
+        __cv_psd = tostring(GetCVar("PetSpellDamage"))
+    )lua"));
+    CHECK(h.lua.globalString("__cv_ect") == "0");
+    CHECK(h.lua.globalString("__cv_dpm") == "0");
+    CHECK(h.lua.globalString("__cv_lmh") == "0");
+    CHECK(h.lua.globalString("__cv_aur") == "0");
+    CHECK(h.lua.globalString("__cv_cd")  == "1");
+    CHECK(h.lua.globalString("__cv_ch")  == "1");
+    CHECK(h.lua.globalString("__cv_clp") == "1");
+    CHECK(h.lua.globalString("__cv_pmd") == "1");
+    CHECK(h.lua.globalString("__cv_psd") == "1");
 }

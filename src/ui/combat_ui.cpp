@@ -125,25 +125,19 @@ void CombatUI::renderCombatText(game::GameHandler& gameHandler) {
     };
 
     for (const auto& entry : entries) {
-        // The player's lines and the pet's ("Pet Damage") are written over
-        // the unit they landed on.
+        // Lines that land on the player are Blizzard_CombatText's, which
+        // hears them as COMBAT_TEXT_UPDATE (CombatHandler::addCombatText);
+        // build 8606 draws nothing of its own in 3D world space for them
+        // (self-heals, self-HoTs, self-damage), nor for power gains, power
+        // drains, honor gains, or procs.
+        if (!fct::showsForUnit(entry, gameHandler.getPlayerGuid(), gameHandler.getPetGuid())) continue;
         const bool isPetSource = !entry.isPlayerSource &&
             entry.srcGuid != 0 && entry.srcGuid == gameHandler.getPetGuid();
         const bool outgoing = entry.isPlayerSource || isPetSource;
-        const bool experience = entry.type == game::CombatTextEntry::XP_GAIN;
-        const bool reward = experience;
-        // Lines that land on the player are Blizzard_CombatText's, which
-        // hears them as COMBAT_TEXT_UPDATE (CombatHandler::addCombatText);
-        // build 8606 draws nothing of its own for them, nor for power gains,
-        // power drains, or procs.
-        if (!outgoing && !reward) continue;
-        if (!fct::showsInWorld(entry.type)) continue;
-        // The absorbed/resisted/blocked part of a hit that did damage.
-        if (entry.reduction) continue;
+        const bool reward = entry.type == game::CombatTextEntry::XP_GAIN;
         const fct::Presentation shown = fct::presentationFor(entry);
         const bool measured = shown.kind != fct::Presentation::NotWorldText;
-        const bool isCrit = measured ? shown.critical
-                                     : entry.type == game::CombatTextEntry::CRIT_HEAL;
+        const bool isCrit = measured && shown.critical;
         // Native fade thresholds: ordinary hits 150/760/1500 ms;
         // XP 500/2000/4500 ms. Keep full opacity between fade intervals.
         const float fadeIn = reward ? 0.5f : 0.15f;
@@ -157,7 +151,7 @@ void CombatUI::renderCombatText(game::GameHandler& gameHandler) {
         char text[128];
         if (measured) {
             if (shown.kind == fct::Presentation::Number) {
-                snprintf(text, sizeof(text), "%d", shown.number);
+                snprintf(text, sizeof(text), shown.heal ? "+%d" : "%d", shown.number);
             } else {
                 const std::string word = gameHandler.globalString(shown.word);
                 if (word.empty()) {
@@ -169,18 +163,6 @@ void CombatUI::renderCombatText(game::GameHandler& gameHandler) {
             const fct::ColorRgb rgb = fct::colorFor(shown, isPetSource);
             color = ImVec4(rgb.r, rgb.g, rgb.b, alpha);
         } else switch (entry.type) {
-            case game::CombatTextEntry::HEAL:
-                snprintf(text, sizeof(text), "+%d", entry.amount);
-                color = ImVec4(0.3f, 1.0f, 0.3f, alpha);
-                break;
-            case game::CombatTextEntry::CRIT_HEAL:
-                snprintf(text, sizeof(text), "+%d!", entry.amount);
-                color = ImVec4(0.3f, 1.0f, 0.3f, alpha);
-                break;
-            case game::CombatTextEntry::PERIODIC_HEAL:
-                snprintf(text, sizeof(text), "+%d", entry.amount);
-                color = ImVec4(0.4f, 1.0f, 0.5f, alpha);
-                break;
             case game::CombatTextEntry::ENVIRONMENTAL: {
                 const char* envLabel = "";
                 switch (entry.powerType) {
@@ -236,10 +218,6 @@ void CombatUI::renderCombatText(game::GameHandler& gameHandler) {
             case game::CombatTextEntry::INSTAKILL:
                 snprintf(text, sizeof(text), "Kill!");
                 color = ImVec4(1.0f, 0.25f, 0.25f, alpha);
-                break;
-            case game::CombatTextEntry::HONOR_GAIN:
-                snprintf(text, sizeof(text), "+%d Honor", entry.amount);
-                color = ImVec4(1.0f, 0.85f, 0.0f, alpha);
                 break;
             default:
                 snprintf(text, sizeof(text), "%d", entry.amount);

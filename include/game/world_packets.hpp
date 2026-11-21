@@ -2228,6 +2228,7 @@ struct SpellDamageLogData {
     uint8_t schoolMask = 0;
     uint32_t absorbed = 0;
     uint32_t resisted = 0;
+    uint32_t blocked = 0;
     bool isCrit = false;
 
     [[nodiscard]] bool isValid() const { return spellId != 0; }

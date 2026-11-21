@@ -1615,17 +1615,9 @@ EntityController::UnitFieldUpdateResult EntityController::applyUnitFieldsOnUpdat
         // Power/maxpower range checks AFTER all specific fields
         else if (key >= ufi.powerBase && key < ufi.powerBase + ufi.powerCount()) {
             const auto powerType = static_cast<uint8_t>(key - ufi.powerBase);
-            const uint32_t oldRaw = unit->getPowerByType(powerType);
             unit->setPowerByType(powerType, val);
             result.powerChanged = true;
             if (powerType < 7) emitForUnit(kPowerEvents[powerType]);
-            if (block.guid == owner_.getPlayerGuid() && powerType < 4 && owner_.getCombatHandler()) {
-                const int32_t delta = owner_.getCombatHandler()->consumePlayerPowerGain(powerType, oldRaw, val);
-                if (delta > 0) {
-                    static constexpr const char* kPowerNames[] = {"MANA", "RAGE", "FOCUS", "ENERGY"};
-                    pendingEvents_.emit("COMBAT_TEXT_UPDATE", {kPowerNames[powerType], std::to_string(delta)});
-                }
-            }
         } else if (key >= ufi.maxPowerBase && key < ufi.maxPowerBase + ufi.powerCount()) {
             const auto powerType = static_cast<uint8_t>(key - ufi.maxPowerBase);
             unit->setMaxPowerByType(powerType, val);

@@ -89,12 +89,6 @@ public:
     void fireUnitCombat(uint64_t victim, const char* action, const char* flags, int32_t amount,
                         uint32_t schoolMask);
 
-    /// Compute the unannounced display-unit power gain for a player power
-    /// field update (`oldRaw -> newRaw`), subtracting any gain already
-    /// announced by SMSG_SPELLENERGIZELOG / SMSG_PERIODICAURALOG so a single
-    /// spell energize is never reported twice to Blizzard_CombatText.
-    int32_t consumePlayerPowerGain(uint8_t powerType, uint32_t oldRaw, uint32_t newRaw);
-
     // Spellsteal dedup (used by aura update handler)
     bool shouldLogSpellstealAura(uint64_t casterGuid, uint64_t victimGuid, uint32_t spellId);
 
@@ -245,11 +239,6 @@ private:
     /// Damage of the last hit announced on the player, for the partial
     /// absorb/resist/block line that follows it (-1 after anything else).
     int32_t incomingHitDamage_ = -1;
-    struct RecentPowerEnergize {
-        int32_t amount = 0;
-        std::chrono::steady_clock::time_point at{};
-    };
-    RecentPowerEnergize recentPowerEnergize_[4]{};
     static constexpr size_t MAX_COMBAT_LOG = 500;
     /// How often the original repeats "You are too far away!" while an
     /// attack stays out of melee reach.

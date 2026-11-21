@@ -175,9 +175,9 @@ void CombatHandler::registerOpcodes(DispatchTable& table) {
             if (dmg > 0)
                 addCombatText(CombatTextEntry::ENVIRONMENTAL, static_cast<int32_t>(dmg), 0, false, envType, 0, victimGuid);
             if (envAbs > 0)
-                addCombatText(CombatTextEntry::ABSORB, static_cast<int32_t>(envAbs), 0, false, 0, 0, victimGuid);
-            if (envRes > 0)
-                addCombatText(CombatTextEntry::RESIST, static_cast<int32_t>(envRes), 0, false, 0, 0, victimGuid);
+                addCombatText(CombatTextEntry::ABSORB, static_cast<int32_t>(envAbs), 0, false, 0, 0, victimGuid, 0, dmg > 0);
+            if (envRes > 0 && (dmg > 0 || envAbs == 0))
+                addCombatText(CombatTextEntry::RESIST, static_cast<int32_t>(envRes), 0, false, 0, 0, victimGuid, 0, dmg > 0);
             // Drowning damage → play DROWN one-shot on player
             if (envType == 1 && dmg > 0 && owner_.emoteAnimCallbackRef())
                 owner_.emoteAnimCallbackRef()(victimGuid, 131, /*isState=*/false, 0); // anim::DROWN
@@ -447,7 +447,16 @@ void CombatHandler::addCombatText(CombatTextEntry::Type type, int32_t amount, ui
         const bool hitsPlayer = dstGuid != 0 && dstGuid == owner_.getPlayerGuid();
         if (hitsPlayer || type == T::HONOR_GAIN) {
             // The partial forms take the damage of the hit this line is part of.
-            const std::string caster = srcGuid ? owner_.lookupName(srcGuid) : std::string{};
+            // Match lua_UnitName("player") fallback (character list -> "Unknown") when
+            // srcGuid is the local player so Blizzard_CombatText's `UnitName("player") ~= data`
+            // never prints "+1500 []" on self-heals with fctFriendlyHealers enabled.
+            std::string caster = srcGuid ? owner_.lookupName(srcGuid) : std::string{};
+            if (caster.empty() && srcGuid != 0 && srcGuid == owner_.getPlayerGuid()) {
+                for (const auto& c : owner_.getCharacters()) {
+                    if (c.guid == srcGuid) { caster = c.name; break; }
+                }
+                if (caster.empty()) caster = "Unknown";
+            }
             const auto update = combatTextUpdateFor(type, amount, spellId != 0, powerType, caster,
                                                     reduction ? incomingHitDamage_ : -1);
             if (!reduction) {
@@ -456,15 +465,6 @@ void CombatHandler::addCombatText(CombatTextEntry::Type type, int32_t amount, ui
                 incomingHitDamage_ = damage && hitsPlayer ? amount : -1;
             }
             if (update && owner_.addonEventCallbackRef()) {
-                if (type == T::ENERGIZE && hitsPlayer && powerType < 4 && amount > 0) {
-                    const auto now = std::chrono::steady_clock::now();
-                    auto& slot = recentPowerEnergize_[powerType];
-                    if (slot.amount > 0 && now - slot.at < std::chrono::milliseconds(500))
-                        slot.amount += amount;
-                    else
-                        slot.amount = amount;
-                    slot.at = now;
-                }
                 // Absent data reaches Lua as nil: the addon tests arg3 for a partial block.
                 // Preserve positional arg2 when arg3 is present (e.g. HEAL with unknown caster).
                 std::vector<std::string> args{update->type};
@@ -479,47 +479,64 @@ void CombatHandler::addCombatText(CombatTextEntry::Type type, int32_t amount, ui
         }
     }
 
-    // The panel's filters, before anything is built or announced. The mapping
-    // lives in combat_text_filter.hpp so it can be tested without a settings
-    // store; only the lookup is here.
+    // The panel's world-text filters govern 3D floating combat text only;
+    // UNIT_COMBAT portrait feedback and COMBAT_LOG_EVENT still fire.
     const auto rule = combatTextFilterFor(type, isPlayerSource, srcGuid, dstGuid,
                                           owner_.getPetGuid(), owner_.getTargetGuid(),
                                           spellId != 0);
-    if (rule.cvar && addons::storedCVarValue(rule.cvar, rule.fallback) == "0") return;
-
-    CombatTextEntry entry;
-    entry.type = type;
-    entry.amount = amount;
-    entry.spellId = spellId;
-    entry.age = 0.0f;
-    entry.isPlayerSource = isPlayerSource;
-    entry.powerType = powerType;
-    entry.srcGuid = srcGuid;
-    entry.dstGuid = dstGuid;
-    entry.reduction = reduction;
-    combatText_.push_back(entry);
+    const bool suppressWorldText =
+        rule.cvar && addons::storedCVarValue(rule.cvar, rule.fallback) == "0";
+    if (!suppressWorldText) {
+        CombatTextEntry entry;
+        entry.type = type;
+        entry.amount = amount;
+        entry.spellId = spellId;
+        entry.age = 0.0f;
+        entry.isPlayerSource = isPlayerSource;
+        entry.powerType = powerType;
+        entry.srcGuid = srcGuid;
+        entry.dstGuid = dstGuid;
+        entry.reduction = reduction;
+        combatText_.push_back(entry);
+    }
 
     // UNIT_COMBAT - the same hit, for the frames that draw their own feedback
     // over a portrait (CombatFeedback.lua). Swings and spell damage logs
     // announce themselves (fireUnitCombat, for every unit with a token, as the
-    // original does); this covers the other lines that land on a unit. The
-    // part of a hit that was absorbed or resisted is not a hit of its own.
+    // original does); this covers direct heals, environmental damage, and spell
+    // misses/resists/dodges/parries/blocks. Periodic ticks (SMSG_PERIODICAURALOG)
+    // and partial reductions never fire UNIT_COMBAT in build 8606.
     if (unitCombat && !reduction) {
         const char* action = nullptr;
         const char* flags  = "";
+        int32_t ucAmount = amount;
         switch (type) {
             case CombatTextEntry::MELEE_DAMAGE:
             case CombatTextEntry::SPELL_DAMAGE:
-            case CombatTextEntry::PERIODIC_DAMAGE: action = "WOUND"; break;
+            case CombatTextEntry::ENVIRONMENTAL: action = "WOUND"; break;
             case CombatTextEntry::CRIT_DAMAGE: action = "WOUND"; flags = "CRITICAL"; break;
-            case CombatTextEntry::ABSORB: action = "WOUND"; flags = "ABSORB"; amount = 0; break;
-            case CombatTextEntry::RESIST: action = "WOUND"; flags = "RESIST"; amount = 0; break;
-            case CombatTextEntry::HEAL:
-            case CombatTextEntry::PERIODIC_HEAL: action = "HEAL"; break;
+            case CombatTextEntry::MISS: action = "MISS"; ucAmount = 0; break;
+            case CombatTextEntry::DODGE: action = "DODGE"; ucAmount = 0; break;
+            case CombatTextEntry::PARRY: action = "PARRY"; ucAmount = 0; break;
+            case CombatTextEntry::EVADE: action = "EVADE"; ucAmount = 0; break;
+            case CombatTextEntry::DEFLECT: action = "DEFLECT"; ucAmount = 0; break;
+            case CombatTextEntry::REFLECT: action = "REFLECT"; ucAmount = 0; break;
+            case CombatTextEntry::BLOCK: action = "BLOCK"; flags = "BLOCK"; ucAmount = 0; break;
+            case CombatTextEntry::ABSORB: action = "WOUND"; flags = "ABSORB"; ucAmount = 0; break;
+            case CombatTextEntry::RESIST:
+                if (spellId != 0 && amount == 0) {
+                    action = "RESIST";
+                } else {
+                    action = "WOUND";
+                    flags = "RESIST";
+                }
+                ucAmount = 0;
+                break;
+            case CombatTextEntry::HEAL: action = "HEAL"; break;
             case CombatTextEntry::CRIT_HEAL: action = "HEAL"; flags = "CRITICAL"; break;
-            default: break;  // energize, xp, honour - not combat feedback
+            default: break;  // periodic ticks, spell immune, energize, xp, honour - not combat feedback
         }
-        if (action) fireUnitCombat(dstGuid, action, flags, amount, schoolMask);
+        if (action) fireUnitCombat(dstGuid, action, flags, ucAmount, schoolMask);
     }
 
     // Persistent combat log - use explicit GUIDs if provided, else fall back to
@@ -963,7 +980,9 @@ void CombatHandler::handleSpellDamageLog(network::Packet& packet) {
     // (`.damage 50 2 133` on the original: target|WOUND|CRITICAL|75|4).
     fireUnitCombat(data.targetGuid, "WOUND",
                    data.damage > 0 ? (data.isCrit ? "CRITICAL" : "")
-                                   : data.absorbed > 0 ? "ABSORB" : data.resisted > 0 ? "RESIST" : "",
+                                   : data.absorbed > 0 ? "ABSORB"
+                                   : data.blocked > 0 ? "BLOCK"
+                                   : data.resisted > 0 ? "RESIST" : "",
                    static_cast<int32_t>(data.damage), data.schoolMask);
 
     const bool isPetSource = owner_.getPetGuid() != 0 && data.attackerGuid == owner_.getPetGuid();
@@ -982,8 +1001,11 @@ void CombatHandler::handleSpellDamageLog(network::Packet& packet) {
         line(data.isCrit ? CombatTextEntry::CRIT_DAMAGE : CombatTextEntry::SPELL_DAMAGE, data.damage);
         if (data.absorbed > 0) line(CombatTextEntry::ABSORB, data.absorbed, true);
         if (data.resisted > 0) line(CombatTextEntry::RESIST, data.resisted, true);
+        if (data.blocked > 0) line(CombatTextEntry::BLOCK, data.blocked, true);
     } else if (data.absorbed > 0) {
         line(CombatTextEntry::ABSORB, data.absorbed);
+    } else if (data.blocked > 0) {
+        line(CombatTextEntry::BLOCK, data.blocked);
     } else if (data.resisted > 0) {
         line(CombatTextEntry::RESIST, data.resisted);
     }
@@ -1072,7 +1094,6 @@ void CombatHandler::resetAllCombatState() {
     autoAttackRangeRepeat_ = 0.0f;
     lastMeleeSwingMs_ = 0;
     incomingHitDamage_ = -1;
-    for (auto& slot : recentPowerEnergize_) slot = {};
 }
 
 void CombatHandler::removeHostileAttacker(uint64_t guid) {
@@ -1109,26 +1130,6 @@ void CombatHandler::handleHealthUpdate(network::Packet& packet) {
     }
 }
 
-int32_t CombatHandler::consumePlayerPowerGain(uint8_t powerType, uint32_t oldRaw, uint32_t newRaw) {
-    if (powerType >= 4) return 0;
-    const int32_t oldDisp = displayPowerAmount(powerType, static_cast<int32_t>(oldRaw));
-    const int32_t newDisp = displayPowerAmount(powerType, static_cast<int32_t>(newRaw));
-    int32_t delta = newDisp - oldDisp;
-    if (delta <= 0) return 0;
-    auto& slot = recentPowerEnergize_[powerType];
-    if (slot.amount > 0) {
-        const auto now = std::chrono::steady_clock::now();
-        if (now - slot.at < std::chrono::milliseconds(500)) {
-            const int32_t used = std::min(delta, slot.amount);
-            delta -= used;
-            slot.amount -= used;
-        } else {
-            slot.amount = 0;
-        }
-    }
-    return delta;
-}
-
 void CombatHandler::handlePowerUpdate(network::Packet& packet) {
     const bool puTbc = isActiveExpansion("tbc");
     if (!packet.hasRemaining(puTbc ? 8u : 2u) ) return;
@@ -1136,11 +1137,7 @@ void CombatHandler::handlePowerUpdate(network::Packet& packet) {
     if (!packet.hasRemaining(5)) return;
     uint8_t  powerType = packet.readUInt8();
     uint32_t value     = packet.readUInt32();
-    uint32_t oldRaw = 0;
-    bool hadUnit = false;
     if (auto* unit = owner_.getUnitByGuid(guid)) {
-        oldRaw = unit->getPowerByType(powerType);
-        hadUnit = true;
         unit->setPowerByType(powerType, value);
     }
     if (guid != 0) {
@@ -1152,16 +1149,11 @@ void CombatHandler::handlePowerUpdate(network::Packet& packet) {
             if (powerType < std::size(kPowerEvents))
                 owner_.fireAddonEvent(kPowerEvents[powerType], {unitId});
             // ACTIONBAR_UPDATE_USABLE comes from SpellHandler::updateTimers,
-            // only when a button's answer changed.
+            // only when a button's answer changed. Power FCT (MANA/RAGE/FOCUS/ENERGY)
+            // comes strictly from SMSG_SPELLENERGIZELOG / SMSG_PERIODICAURALOG,
+            // never from melee rage swings or natural regeneration ticks.
             if (guid == owner_.getPlayerGuid()) {
                 owner_.fireAddonEvent("SPELL_UPDATE_USABLE", {});
-                if (hadUnit && powerType < 4) {
-                    const int32_t delta = consumePlayerPowerGain(powerType, oldRaw, value);
-                    if (delta > 0) {
-                        static constexpr const char* kPowerNames[] = {"MANA", "RAGE", "FOCUS", "ENERGY"};
-                        owner_.fireAddonEvent("COMBAT_TEXT_UPDATE", {kPowerNames[powerType], std::to_string(delta)});
-                    }
-                }
             }
         }
     }
@@ -1260,14 +1252,14 @@ void CombatHandler::handleSpellDamageShield(network::Packet& packet) {
     uint32_t damage        = packet.readUInt32();
     if (shieldWotlkLike)
         /*uint32_t absorbed =*/ packet.readUInt32();
-    /*uint32_t school =*/  packet.readUInt32();
+    const uint32_t school = packet.readUInt32();
     // Show combat text: damage shield reflect
     if (casterGuid == owner_.getPlayerGuid()) {
         // We have a damage shield that reflected damage
-        addCombatText(CombatTextEntry::SPELL_DAMAGE, static_cast<int32_t>(damage), shieldSpellId, true, 0, casterGuid, victimGuid);
+        addCombatText(CombatTextEntry::SPELL_DAMAGE, static_cast<int32_t>(damage), shieldSpellId, true, 0, casterGuid, victimGuid, school);
     } else if (victimGuid == owner_.getPlayerGuid()) {
         // A damage shield hit us (e.g. target's Thorns)
-        addCombatText(CombatTextEntry::SPELL_DAMAGE, static_cast<int32_t>(damage), shieldSpellId, false, 0, casterGuid, victimGuid);
+        addCombatText(CombatTextEntry::SPELL_DAMAGE, static_cast<int32_t>(damage), shieldSpellId, false, 0, casterGuid, victimGuid, school);
     }
 }
 

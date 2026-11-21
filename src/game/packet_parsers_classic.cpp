@@ -818,7 +818,7 @@ bool parseSpellDamageLogPreWotlk(network::Packet& packet, SpellDamageLogData& da
     data.resisted   = packet.readUInt32();
     packet.readUInt8();    // periodicLog
     packet.readUInt8();    // unused
-    packet.readUInt32();   // blocked
+    data.blocked    = packet.readUInt32();
     const uint32_t flags = packet.readUInt32();
     data.isCrit     = (flags & 0x02) != 0;
 

@@ -91,6 +91,8 @@ struct Presentation {
     bool critical = false;
     /// Ability yellow rather than swing white.
     bool spell = false;
+    /// Outgoing heal on another unit (+N in TBC heal green).
+    bool heal = false;
 };
 
 struct ColorRgb {
@@ -99,15 +101,18 @@ struct ColorRgb {
     float b = 1.0f;
 };
 
-/// Measured RGB colors in TBC build 8606 (WOWEE_PAIR=8 live captures):
+/// Measured RGB colors in TBC build 8606 (WOWEE_PAIR=8 & WOWEE_PAIR=3 live captures):
 /// - Player melee swing / miss / dodge: white (255, 255, 255)
 /// - Player or pet spell (Imp Firebolt): yellow (255, 222, 0)
 /// - Pet melee swing (normal & crit): orange (255, 132, 0)
+/// - Outgoing heal on another unit: green (26, 255, 26) = (0.1, 1.0, 0.1)
 constexpr ColorRgb kPlayerMeleeColor{1.0f, 1.0f, 1.0f};
 constexpr ColorRgb kSpellColor{1.0f, 222.0f / 255.0f, 0.0f};
 constexpr ColorRgb kPetMeleeColor{1.0f, 132.0f / 255.0f, 0.0f};
+constexpr ColorRgb kHealColor{0.1f, 1.0f, 0.1f};
 
 inline ColorRgb colorFor(const Presentation& p, bool isPetSource) {
+    if (p.heal) return kHealColor;
     if (p.spell) return kSpellColor;
     if (isPetSource) return kPetMeleeColor;
     return kPlayerMeleeColor;
@@ -127,6 +132,13 @@ inline Presentation presentationFor(const game::CombatTextEntry& e) {
             p.number = e.amount;
             p.critical = e.type == T::CRIT_DAMAGE;
             return p;
+        case T::HEAL: case T::CRIT_HEAL: case T::PERIODIC_HEAL:
+            if (e.amount <= 0) return p;
+            p.kind = Presentation::Number;
+            p.number = e.amount;
+            p.critical = e.type == T::CRIT_HEAL;
+            p.heal = true;
+            return p;
         case T::MISS: return word("MISS");
         case T::DODGE: return word("DODGE");
         case T::PARRY: return word("PARRY");
@@ -141,13 +153,27 @@ inline Presentation presentationFor(const game::CombatTextEntry& e) {
     }
 }
 
-/// Whether build 8606 draws this entry as world-space floating text over a
-/// unit. Power gains and drains (Furor, Enrage, Bloodrage, Innervate, Drain
-/// Mana, ...) and proc triggers are never drawn as world text; power gains on
-/// the player are reported via COMBAT_TEXT_UPDATE to Blizzard_CombatText.
+/// Whether build 8606 draws this entry type as world-space floating text over
+/// a unit. Power gains and drains (Furor, Enrage, Bloodrage, Innervate, Drain
+/// Mana, ...), honor gains, and proc triggers are never drawn as world text;
+/// lines on the player are reported via COMBAT_TEXT_UPDATE to Blizzard_CombatText.
 inline bool showsInWorld(game::CombatTextEntry::Type type) {
     using T = game::CombatTextEntry;
-    return type != T::ENERGIZE && type != T::POWER_DRAIN && type != T::PROC_TRIGGER;
+    return type != T::ENERGIZE && type != T::POWER_DRAIN &&
+           type != T::PROC_TRIGGER && type != T::HONOR_GAIN;
+}
+
+/// Whether build 8606 draws this specific entry in 3D world space.
+/// Lines landing on the local player (self-heals, self-HoTs, self-absorbs,
+/// self-damage) belong exclusively to 2D Blizzard_CombatText and unit-frame
+/// CombatFeedback; only XP_GAIN is drawn in world space for the player.
+inline bool showsForUnit(const game::CombatTextEntry& e, uint64_t playerGuid, uint64_t petGuid) {
+    using T = game::CombatTextEntry;
+    if (!showsInWorld(e.type) || e.reduction) return false;
+    if (e.type == T::XP_GAIN) return true;
+    if (playerGuid != 0 && e.dstGuid == playerGuid) return false;
+    const bool isPetSource = !e.isPlayerSource && e.srcGuid != 0 && e.srcGuid == petGuid;
+    return e.isPlayerSource || isPetSource;
 }
 
 /// Critical size multiplier on top of kCritScale: grows from 0.1 to 2 over
