@@ -71,6 +71,31 @@ struct PortalRefInfo {
     return (groupFlags & kExteriorMask) != 0 || (groupFlags & kWmoGroupFlagIndoor) == 0;
 }
 
+/// Whether a downward ray hit in `groupFlags` may classify a point as belonging
+/// to that group.
+///
+/// Strictly enclosed indoor groups (`!wmoGroupSeesExterior`) must not claim a
+/// viewer standing outside every enclosed indoor group's geometry bounds. For
+/// example, in `ogrimmar.wmo`, the open-air Valley of Strength (`bazzaar02`,
+/// group 134, 0x0a841 = indoor | mount | exterior-lit) encloses the Wind Rider
+/// Tower top above the open stairwell of `IntHouseGBottom01` (group 108,
+/// 0x02805, vertex zMax = 30.811 at Portal 98). A downward ray from a camera
+/// above the open stairwell passes through the hole in group 134 and hits the
+/// spiral ramp floor of group 108 below; without this check, the camera is
+/// misclassified into group 108 on the exterior (+Z) side of Portal 98, which
+/// culls Portal 98 as back-facing and hides the entire outdoor world.
+///
+/// When the point IS inside an enclosed indoor group's geometry bounds (e.g.
+/// high inside Ironforge's Great Forge 0x0a000 over a lower room), downward
+/// hits into enclosed rooms below remain valid.
+[[nodiscard]] inline bool canDownwardHitClassifyWmoGroup(
+    uint32_t groupFlags, bool pointInGroupGeometry, bool pointInAnyEnclosedIndoorGeometry) {
+    if (wmoGroupSeesExterior(groupFlags)) {
+        return true;
+    }
+    return pointInGroupGeometry || pointInAnyEnclosedIndoorGeometry;
+}
+
 /// Walk in-frustum, front-facing, screen-rect-clipped portals from `startGroup`
 /// to determine whether any exterior-seeing WMO group is visible from the camera.
 ///

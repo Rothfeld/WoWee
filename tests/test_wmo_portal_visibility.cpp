@@ -11,6 +11,7 @@ using wowee::rendering::Frustum;
 using wowee::rendering::PortalGroupInfo;
 using wowee::rendering::PortalPlaneInfo;
 using wowee::rendering::PortalRefInfo;
+using wowee::rendering::canDownwardHitClassifyWmoGroup;
 using wowee::rendering::isDownwardHitInteriorCeilingBackface;
 using wowee::rendering::isExteriorVisibleThroughPortals;
 using wowee::rendering::kWmoGroupFlagExteriorLit;
@@ -288,5 +289,107 @@ TEST_CASE("Shadow Grave horizontal stairwell portal visibility matches crypt geo
         const glm::mat4 vp = makeViewProj(cam, glm::vec3(18.0f, -10.0f, -14.0f));
         CHECK_FALSE(isExteriorVisibleThroughPortals(
             groups, portals, verts, refs, 1, cam, makeFrustum(vp), vp, glm::mat4(1.0f)));
+    }
+}
+
+TEST_CASE("Downward group classification rejects enclosed indoor rooms from exterior-lit airspace", "[wmo][portal]") {
+    constexpr uint32_t kOrgrimmarValleyFlags =
+        kWmoGroupFlagIndoor | kWmoGroupFlagExteriorLit | 0x8801u;  // ogrimmar_134.wmo (bazzaar02, 0x0a841)
+    constexpr uint32_t kOrgrimmarTowerInteriorFlags =
+        kWmoGroupFlagIndoor | 0x0805u;  // ogrimmar_108.wmo (IntHouseGBottom01, 0x02805)
+    constexpr uint32_t kIronforgeGreatForgeFlags =
+        kWmoGroupFlagIndoor | 0x8000u;  // ironforge_064.wmo (The Great Forge, 0x0a000)
+
+    // Exterior-seeing groups (outdoor, exterior-lit city districts, skylight) can always be hit from above.
+    CHECK(canDownwardHitClassifyWmoGroup(kWmoGroupFlagOutdoor, false, false));
+    CHECK(canDownwardHitClassifyWmoGroup(kOrgrimmarValleyFlags, true, false));
+    CHECK(canDownwardHitClassifyWmoGroup(kOrgrimmarValleyFlags, false, false));
+
+    // Strictly enclosed indoor room below an exterior-lit open stairwell (Orgrimmar Wind Rider Tower top):
+    // viewer is in bazzaar02 (exterior-lit), outside every enclosed indoor box -> tower interior must NOT claim viewer.
+    CHECK_FALSE(canDownwardHitClassifyWmoGroup(kOrgrimmarTowerInteriorFlags, false, false));
+
+    // Inside the tower's own geometry box -> valid indoor classification.
+    CHECK(canDownwardHitClassifyWmoGroup(kOrgrimmarTowerInteriorFlags, true, true));
+
+    // High inside an enclosed cavern (Ironforge Great Forge 0x0a000) above a smaller enclosed room:
+    // viewer IS inside an enclosed indoor box -> downward hit into lower enclosed room remains valid.
+    CHECK(canDownwardHitClassifyWmoGroup(kIronforgeGreatForgeFlags, true, true));
+    CHECK(canDownwardHitClassifyWmoGroup(kOrgrimmarTowerInteriorFlags, false, true));
+}
+
+TEST_CASE("Orgrimmar Wind Rider Tower portal visibility matches shipped TBC ogrimmar.wmo", "[wmo][portal]") {
+    // Exact portals of TBC ogrimmar.wmo connecting group 108 (IntHouseGBottom01,
+    // 0x02805, vertex z in [0.915, 30.811]) to group 134 (bazzaar02, 0x0a841):
+    //   - Portal 58 (bottom doorway): n=(-0.985, -0.174, 0), d=-168.588, side=+1 from grp 108
+    //   - Portal 98 (top horizontal stairwell opening): n=(0, 0, +1), d=-30.811, side=-1 from grp 108
+    const std::vector<glm::vec3> verts = {
+        // Portal 58 (bottom doorway, 4 verts)
+        {-177.38f, 35.12f, 1.97f},
+        {-176.33f, 29.18f, 1.97f},
+        {-176.33f, 29.18f, 6.79f},
+        {-177.38f, 35.12f, 6.79f},
+        // Portal 98 (top horizontal stairwell pentagon at local z = 30.811, 5 verts)
+        {-182.82f, 25.63f, 30.811f},
+        {-184.44f, 34.04f, 30.811f},
+        {-195.56f, 36.22f, 30.811f},
+        {-198.88f, 26.66f, 30.811f},
+        {-192.72f, 19.82f, 30.811f},
+    };
+    const std::vector<PortalPlaneInfo> portals = {
+        {0, 4, glm::vec3(-0.985f, -0.174f, 0.0f), -168.588f},
+        {4, 5, glm::vec3(0.0f, 0.0f, 1.0f), -30.811f},
+    };
+    const std::vector<PortalRefInfo> refs = {
+        {0, 1,  1},  // grp 108 -> grp 134 via Portal 58
+        {1, 1, -1},  // grp 108 -> grp 134 via Portal 98
+    };
+    const std::vector<PortalGroupInfo> groups = {
+        {kWmoGroupFlagIndoor | 0x0805u, 0, 2},                              // local idx 0: grp 108 (tower interior)
+        {kWmoGroupFlagIndoor | kWmoGroupFlagExteriorLit | 0x8801u, 0, 0},   // local idx 1: grp 134 (bazzaar02)
+    };
+
+    // 1. Standing on top of the Wind Rider Tower over the open stairwell (local z = 34.5 > 30.811):
+    //    grp 108 must not claim the camera (canDownwardHitClassifyWmoGroup == false),
+    //    and grp 134 itself sees exterior unconditionally.
+    const glm::vec3 towerTopCam(-196.0f, 24.0f, 34.5f);
+    CHECK_FALSE(canDownwardHitClassifyWmoGroup(groups[0].groupFlags, false, false));
+    CHECK(wmoGroupSeesExterior(groups[1].groupFlags));
+    {
+        const glm::mat4 vp = makeViewProj(towerTopCam, glm::vec3(-204.0f, 13.0f, 31.0f));
+        CHECK(isExteriorVisibleThroughPortals(
+            groups, portals, verts, refs, 1, towerTopCam, makeFrustum(vp), vp, glm::mat4(1.0f)));
+    }
+
+    // 2. Walking up near the top of the spiral ramp inside grp 108 looking out through Portal 98 -> exterior visible.
+    {
+        const glm::vec3 cam(-195.0f, 25.0f, 29.0f);
+        const glm::mat4 vp = makeViewProj(cam, glm::vec3(-190.0f, 28.0f, 32.0f));
+        CHECK(isExteriorVisibleThroughPortals(
+            groups, portals, verts, refs, 0, cam, makeFrustum(vp), vp, glm::mat4(1.0f)));
+    }
+
+    // 3. Straddling Portal 98 at the top lip of the stairwell looking horizontally -> exterior stays visible.
+    {
+        const glm::vec3 cam(-195.0f, 25.0f, 30.6f);
+        const glm::mat4 vp = makeViewProj(cam, glm::vec3(-205.0f, 25.0f, 30.6f));
+        CHECK(isExteriorVisibleThroughPortals(
+            groups, portals, verts, refs, 0, cam, makeFrustum(vp), vp, glm::mat4(1.0f)));
+    }
+
+    // 4. Mid-ramp inside the enclosed tower looking down/into the spiral wall (neither portal in view) -> exterior hidden.
+    {
+        const glm::vec3 cam(-194.0f, 24.0f, 16.0f);
+        const glm::mat4 vp = makeViewProj(cam, glm::vec3(-198.0f, 20.0f, 12.0f));
+        CHECK_FALSE(isExteriorVisibleThroughPortals(
+            groups, portals, verts, refs, 0, cam, makeFrustum(vp), vp, glm::mat4(1.0f)));
+    }
+
+    // 5. Bottom of the tower inside grp 108 looking out through Portal 58 -> exterior visible.
+    {
+        const glm::vec3 cam(-184.0f, 30.0f, 4.0f);
+        const glm::mat4 vp = makeViewProj(cam, glm::vec3(-175.0f, 32.0f, 4.0f));
+        CHECK(isExteriorVisibleThroughPortals(
+            groups, portals, verts, refs, 0, cam, makeFrustum(vp), vp, glm::mat4(1.0f)));
     }
 }

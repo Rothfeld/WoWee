@@ -4652,18 +4652,39 @@ std::optional<WMORenderer::InteriorLocation> WMORenderer::getInteriorLocation(co
         // outdoor camera above an open stairwell (e.g. md_cryptonerm group 0
         // over group 1) or above an underground crypt (md_cryptonerm group 4,
         // MOGP zMax +7.37 vs vertex zMax -7.33) misclassify as indoor.
-        if (indoorOnly &&
-            std::none_of(model.groups.begin(), model.groups.end(), [&](const auto& group) {
-                return !group.unreachable &&
-                       (group.groupFlags & kWMOGroupIndoor) != 0 &&
-                       glm::all(glm::greaterThanEqual(local, group.geometryMin)) &&
-                       glm::all(glm::lessThanEqual(local, group.geometryMax));
-            })) {
+        //
+        // Furthermore, open-air city districts such as Orgrimmar's Valley of
+        // Strength (ogrimmar.wmo group 134, 0x0a841) and Stormwind's streets
+        // (0x0a040) carry MOGP 0x2000 alongside exterior-lit 0x40 / show-sky
+        // 0x100. Track whether `local` is inside any strictly enclosed indoor
+        // group (`!wmoGroupSeesExterior`) so an outdoor camera over an open
+        // stairwell (e.g. Wind Rider Tower group 108, zMax 30.811) cannot be
+        // claimed by the enclosed room below it.
+        bool inAnyIndoorBox = false;
+        bool inAnyEnclosedIndoorBox = false;
+        for (const auto& group : model.groups) {
+            if (group.unreachable) continue;
+            if ((group.groupFlags & kWMOGroupIndoor) == 0) continue;
+            if (glm::all(glm::greaterThanEqual(local, group.geometryMin)) &&
+                glm::all(glm::lessThanEqual(local, group.geometryMax))) {
+                inAnyIndoorBox = true;
+                if (!wmoGroupSeesExterior(group.groupFlags)) {
+                    inAnyEnclosedIndoorBox = true;
+                }
+            }
+        }
+        if (indoorOnly && !inAnyIndoorBox) {
             continue;
         }
         const glm::vec3 down(instance.invModelMatrix * glm::vec4(0, 0, -1, 0));
         for (size_t groupIndex = 0; groupIndex < model.groups.size(); ++groupIndex) {
             const auto& group = model.groups[groupIndex];
+            const bool inGroupBox =
+                glm::all(glm::greaterThanEqual(local, group.geometryMin)) &&
+                glm::all(glm::lessThanEqual(local, group.geometryMax));
+            if (!canDownwardHitClassifyWmoGroup(group.groupFlags, inGroupBox, inAnyEnclosedIndoorBox)) {
+                continue;
+            }
             if (!rayIntersectsAABB(local, down, group.geometryMin, group.geometryMax)) continue;
             if (!trianglesAlongRay(group, local, down, tl_triScratch)) continue;
             float distance = std::numeric_limits<float>::max();
