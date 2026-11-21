@@ -296,12 +296,16 @@ inline glm::vec3 planeParticleOffset(float length, float width, float randX, flo
     return {randX * width * 0.5f, randY * length * 0.5f, 0.0f};
 }
 
-// Outdoor lighting for emitters without kParticleOwnColor (0x1): upward-normal
-// ambient + diffuse, matching water and terrain clutter lighting so outdoor
-// waterfall mist and smoke take the zone's lighting instead of glowing white.
+// Outdoor lighting for emitters without kParticleOwnColor (0x1): TBC 2.4.3
+// billboard particles have no surface normal facing the directional sun, so
+// they take the zone's ambient plus an isotropic spherical-average sun diffuse
+// term (0.35 * max(-lightDir.z, 0) ~ 0.25 at mid-morning). Full upward-normal
+// diffuse over-lit Ammen Vale waterfalls (elwynntallwaterfall01.m2, Light 454
+// ambient 0.25/0.40/0.53 vs warm diffuse 0.78/0.62/0.44) by 1.53x in red,
+// while pure ambient under-lit the mist by ~25%.
 inline glm::vec3 outdoorParticleLight(const glm::vec3& ambient, const glm::vec3& diffuse,
                                       const glm::vec3& lightDir) {
-    return glm::clamp(ambient + diffuse * std::max(-lightDir.z, 0.0f),
+    return glm::clamp(ambient + diffuse * (0.35f * std::max(-lightDir.z, 0.0f)),
                       glm::vec3(0.0f), glm::vec3(1.0f));
 }
 

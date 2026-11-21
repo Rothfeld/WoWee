@@ -3390,6 +3390,13 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
     // scene pass (waterDrawsInContinuePass) still comes after them.
     const bool waterWithWorldModels = waterRenderer && camera && m2Renderer && !skipM2 &&
                                       !waterDrawsInContinuePass();
+    // When water draws in the non-MSAA continuation pass (for refraction),
+    // hold blended world models, particles, ribbons, and post-world effects
+    // until after water so waterfalls, fountains, and mist composite over
+    // water surfaces instead of being covered by them.
+    const bool deferBlendedAfterWater =
+        parallelRecordingEnabled_ && waterDrawsInContinuePass() && camera &&
+        vkCtx && vkCtx->getMsaaSamples() == VK_SAMPLE_COUNT_1_BIT;
     // One ordered blended stream for scenery and creatures. Independent
     // character/M2 secondaries cannot composite overlapping transparent meshes.
     const auto recordWorldModels = [&](VkCommandBuffer solid, VkCommandBuffer blended) {
@@ -3739,9 +3746,11 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
         if (m2Renderer && camera && !skipM2)
             queue(secondaryCmds_[SEC_M2_OPAQUE][frameIdx]);
         queue(secondaryCmds_[SEC_CHARS][frameIdx]);
-        if (m2Renderer && camera && !skipM2)
-            queue(secondaryCmds_[SEC_M2][frameIdx]);
-        queue(secondaryCmds_[SEC_POST][frameIdx]);
+        if (!deferBlendedAfterWater) {
+            if (m2Renderer && camera && !skipM2)
+                queue(secondaryCmds_[SEC_M2][frameIdx]);
+            queue(secondaryCmds_[SEC_POST][frameIdx]);
+        }
 
         // No marks in here. This pass was begun for secondary buffers, and a
         // primary may record nothing but vkCmdExecuteCommands inside it: the
@@ -3956,6 +3965,20 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
             if (sandStorm) sandStorm->renderMist(currentCmd, perFrameSet, mistDepth);
         }
 
+        // Execute deferred blended world models (waterfalls, translucent M2s,
+        // blended characters, M2 particles/ribbons) and post-world effects on
+        // top of the rendered water surface.
+        if (deferBlendedAfterWater) {
+            vkCmdEndRenderPass(currentCmd);
+            vkCmdBeginRenderPass(currentCmd, &contRp, VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS);
+            VkCommandBuffer postWaterCmds[2];
+            uint32_t postWaterCount = 0;
+            if (m2Renderer && !skipM2)
+                postWaterCmds[postWaterCount++] = secondaryCmds_[SEC_M2][frameIdx];
+            postWaterCmds[postWaterCount++] = secondaryCmds_[SEC_POST][frameIdx];
+            vkCmdExecuteCommands(currentCmd, postWaterCount, postWaterCmds);
+        }
+
     }
 
     auto renderEnd = std::chrono::steady_clock::now();
@@ -4153,6 +4176,12 @@ void Renderer::renderMinimapOverlay(VkCommandBuffer cmd,
 
 bool Renderer::waterDrawsInContinuePass() const {
     if (!waterRenderer || !vkCtx) return false;
+    // Pre-WotLK (Classic/TBC) legacy water never samples SceneColor/SceneDepth
+    // refraction (water.frag.glsl returns early in legacyWmoMode > 0.5). Drawing
+    // it in the scene pass between opaque and blended world models composites
+    // waterfalls, fountains, translucent M2s, and particles cleanly over water
+    // at full MSAA instead of painting water on top of them in the 1x pass.
+    if (game::isPreWotlk()) return false;
     const bool msaaEnabled = vkCtx->getMsaaSamples() > VK_SAMPLE_COUNT_1_BIT;
     const bool offscreenScene =
         postProcessPipeline_ && postProcessPipeline_->getSceneFramebuffer() != VK_NULL_HANDLE;

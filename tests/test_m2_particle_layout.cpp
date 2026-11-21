@@ -902,16 +902,17 @@ TEST_CASE("Plane emitter spans areaLength along Y and areaWidth along X", "[m2][
     CHECK(std::abs(rotated.z) < 0.7f);
 }
 
-TEST_CASE("Outdoor lit particles take upward ambient and diffuse lighting", "[m2][particle]") {
+TEST_CASE("Outdoor lit particles take zone ambient plus spherical-average sun diffuse", "[m2][particle]") {
     using wowee::rendering::outdoorParticleLight;
-    // Ammen Vale 10:12: dim cool ambient + sun diffuse from above (-lightDir.z > 0).
+    // Ammen Vale 9:36 (Light 454): cool ambient (0.25, 0.40, 0.53) + 0.35 * sun
+    // diffuse (0.78, 0.62, 0.44) * max(-lightDir.z, 0), matching TBC 2.4.3.
     const glm::vec3 lit = outdoorParticleLight(
         glm::vec3(0.25f, 0.40f, 0.53f),
-        glm::vec3(0.79f, 0.63f, 0.44f),
+        glm::vec3(0.78f, 0.62f, 0.44f),
         glm::normalize(glm::vec3(0.0f, 0.6f, -0.8f)));
-    CHECK(lit.r == Catch::Approx(0.25f + 0.79f * 0.8f));
-    CHECK(lit.g == Catch::Approx(0.40f + 0.63f * 0.8f));
-    CHECK(lit.b == Catch::Approx(0.53f + 0.44f * 0.8f));
+    CHECK(lit.r == Catch::Approx(0.25f + 0.78f * 0.35f * 0.8f));
+    CHECK(lit.g == Catch::Approx(0.40f + 0.62f * 0.35f * 0.8f));
+    CHECK(lit.b == Catch::Approx(0.53f + 0.44f * 0.35f * 0.8f));
     // Sun below horizon contributes zero diffuse.
     const glm::vec3 night = outdoorParticleLight(
         glm::vec3(0.10f, 0.15f, 0.25f),
@@ -920,6 +921,62 @@ TEST_CASE("Outdoor lit particles take upward ambient and diffuse lighting", "[m2
     CHECK(night.r == Catch::Approx(0.10f));
     CHECK(night.g == Catch::Approx(0.15f));
     CHECK(night.b == Catch::Approx(0.25f));
+    // Values above 1 clamp to [0, 1].
+    const glm::vec3 clamped = outdoorParticleLight(
+        glm::vec3(1.5f, -0.2f, 0.5f), glm::vec3(0.0f), glm::vec3(0.0f, 0.0f, -1.0f));
+    CHECK(clamped.r == Catch::Approx(1.0f));
+    CHECK(clamped.g == Catch::Approx(0.0f));
+    CHECK(clamped.b == Catch::Approx(0.5f));
+}
+
+TEST_CASE("Shipped TBC waterfall M2 assets load UV scroll, blend, and ambient-lit plane emitter", "[m2][particle][waterfall]") {
+    const std::filesystem::path dataRoot = "/workspace/azerothcore/client/wowee-data/expansions/tbc";
+    const auto elwynnPath = dataRoot / "world/azeroth/elwynn/passivedoodads/waterfall/elwynntallwaterfall01.m2";
+    const auto newWfPath = dataRoot / "world/generic/passivedoodads/waterfall/newwaterfall.m2";
+    if (!std::filesystem::exists(elwynnPath) || !std::filesystem::exists(newWfPath)) {
+        SKIP("Shipped TBC waterfall M2 assets not present");
+    }
+
+    auto loadM2 = [](const std::filesystem::path& p) {
+        std::ifstream f(p, std::ios::binary | std::ios::ate);
+        REQUIRE(f.is_open());
+        std::vector<uint8_t> buf(static_cast<size_t>(f.tellg()));
+        f.seekg(0);
+        f.read(reinterpret_cast<char*>(buf.data()), static_cast<std::streamsize>(buf.size()));
+        return wowee::pipeline::M2Loader::load(buf);
+    };
+
+    const auto tall = loadM2(elwynnPath);
+    REQUIRE(tall.batches.size() == 2);
+    REQUIRE(tall.materials.size() >= 2);
+    REQUIRE(tall.textureTransforms.size() == 2);
+    REQUIRE(tall.particleEmitters.size() == 1);
+    // Both waterfall curtains are two-sided, no-depth-write alpha-blended sheets.
+    for (const auto& b : tall.batches) {
+        REQUIRE(b.materialIndex < tall.materials.size());
+        CHECK(tall.materials[b.materialIndex].blendMode == 2);
+        CHECK((tall.materials[b.materialIndex].flags & 0x14u) == 0x14u);
+    }
+    // TexAnim 0 scrolls V from 0 to -1, TexAnim 1 scrolls V from 0 to -2 over Stand.
+    const glm::vec3 t0Mid = wowee::rendering::m2_track::sampleVec3(
+        tall.textureTransforms[0].translation, 0, 4900.0f, 0.0f, tall.globalSequenceDurations, glm::vec3(0.0f));
+    const glm::vec3 t1Mid = wowee::rendering::m2_track::sampleVec3(
+        tall.textureTransforms[1].translation, 0, 4900.0f, 0.0f, tall.globalSequenceDurations, glm::vec3(0.0f));
+    CHECK(t0Mid.y == Catch::Approx(-0.5f).margin(0.02f));
+    CHECK(t1Mid.y == Catch::Approx(-1.0f).margin(0.02f));
+    // Plane emitter flags=0x2 (lit, no kParticleOwnColor 0x1) takes outdoor ambient.
+    const auto& em = tall.particleEmitters[0];
+    CHECK(em.emitterType == 1);
+    CHECK(em.blendingType == 2);
+    CHECK((em.flags & wowee::rendering::kParticleOwnColor) == 0u);
+    CHECK(em.particleAlpha.floatValues.size() == 3);
+    CHECK(em.particleAlpha.floatValues[1] == Catch::Approx(200.0f / 255.0f).margin(0.01f));
+
+    const auto wf = loadM2(newWfPath);
+    REQUIRE(wf.batches.size() == 2);
+    REQUIRE(wf.particleEmitters.size() == 1);
+    CHECK(wf.particleEmitters[0].emitterType == 1);
+    CHECK((wf.particleEmitters[0].flags & wowee::rendering::kParticleOwnColor) == 0u);
 }
 
 TEST_CASE("Continuous emitter stochastic accumulator averages half the authored rate", "[m2][particle]") {

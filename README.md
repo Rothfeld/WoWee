@@ -825,10 +825,15 @@ as its mesh does, unless the emitter has flag 0x1: `BFD_WaterFalls01.m2` splash
 (0x420, authored 190,218,220) is blue under placement (84,125,223) and
 `BFD_WaterFalls10.m2` teal under (43,91,100), while `Torch.m2` (0x21) and
 `Candle01.m2` (0x39) flames keep their authored yellow-white. Outdoor emitters
-without flag 0x1 take the outdoor ambient plus upward-normal sun diffuse
-(`outdoorParticleLight`), so waterfall mist (`elwynntallwaterfall01.m2`,
-`newwaterfall.m2`, flags 0x2) matches the zone's lighting rather than glowing
-white. Plane emitters (type 1) span `emissionAreaLength` along Y and
+without flag 0x1 take the zone's outdoor ambient plus spherical-average sun
+diffuse (`outdoorParticleLight`: `ambient + 0.35 * diffuse * max(-lightDir.z, 0)`),
+so waterfall mist (`elwynntallwaterfall01.m2`, `newwaterfall.m2`, flags 0x2)
+matches TBC 2.4.3 twilight/outdoor shading rather than over-brightening in warm
+sunlight. Pre-WotLK legacy water draws in the scene pass between opaque and
+blended world models (`waterDrawsInContinuePass() == false`) so waterfalls,
+fountains, translucent M2s, and particles composite over water surfaces at full
+MSAA; when WotLK water uses the non-MSAA refraction continuation pass, `SEC_M2`
+and `SEC_POST` execute in a follow-up continuation pass after water. Plane emitters (type 1) span `emissionAreaLength` along Y and
 `emissionAreaWidth` along X (`planeParticleOffset`): `elwynntallwaterfall01.m2`
 (18.0 x 1.37 on bone 1, rotated 66.5 degrees about Y) lays its mist along the
 horizontal waterfall lip rather than standing vertically into the sky (54 of 72
