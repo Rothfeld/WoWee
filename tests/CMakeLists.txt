@@ -3086,6 +3086,7 @@ if(NOT ANDROID)
     target_sources(test_game_replay PRIVATE test_game_replay_overpower.cpp)
     target_sources(test_game_replay PRIVATE test_game_replay_mirror_timer.cpp)
     target_sources(test_game_replay PRIVATE test_game_replay_go_facing.cpp)
+    target_sources(test_game_replay PRIVATE test_game_replay_npc_talk.cpp)
 
     # Same complete client objects as game_replay: never replace client classes
     # with test implementations or copy an input-routing branch into a seam.

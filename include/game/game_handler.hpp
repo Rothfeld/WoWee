@@ -1625,6 +1625,18 @@ public:
         const std::vector<std::pair<uint32_t, uint32_t>>& delayEmotes)>;
     void setNpcPanelEmotesCallback(NpcPanelEmotesCallback cb) { npcPanelEmotesCallback_ = std::move(cb); }
 
+    // Local player talk gesture on initiating interaction with an in-range,
+    // interactable NPC unit (QuestGiver, Gossip, Vendor, Trainer, Banker,
+    // FlightMaster, Innkeeper, Auctioneer, GuildMaster, Battlemaster).
+    // Native 2.4.3 plays EMOTE_TALK client-side on the local player (no
+    // SMSG_EMOTE broadcast to remote observers) and does not play it for
+    // GameObject questgivers (Wanted Posters), out-of-range NPCs, or
+    // non-interactable creatures.
+    using LocalNpcInteractTalkCallback = std::function<void(uint64_t npcGuid)>;
+    void setLocalNpcInteractTalkCallback(LocalNpcInteractTalkCallback cb) {
+        localNpcInteractTalkCallback_ = std::move(cb);
+    }
+
     using NpcFarewellCallback = std::function<void(uint64_t guid, const glm::vec3& position)>;
     void setNpcFarewellCallback(NpcFarewellCallback cb) { npcFarewellCallback_ = std::move(cb); }
 
@@ -5743,6 +5755,7 @@ private:
     PlayerHealthCallback playerHealthCallback_;
     NpcGreetingCallback npcGreetingCallback_;
     NpcPanelEmotesCallback npcPanelEmotesCallback_;
+    LocalNpcInteractTalkCallback localNpcInteractTalkCallback_;
     NpcFarewellCallback npcFarewellCallback_;
     NpcVendorCallback npcVendorCallback_;
     LevelUpCallback levelUpCallback_;

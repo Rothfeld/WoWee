@@ -3187,8 +3187,10 @@ void GameHandler::interactWithNpc(uint64_t guid) {
     // only the fields that are set, so a creature with no NPC flags and one
     // whose flags have not arrived are the same case and both mean there is
     // nothing here to talk to.
+    Unit* interactUnit = nullptr;
     if (auto entity = getEntityManager().getEntity(guid)) {
         if (auto* unit = dynamic_cast<Unit*>(entity.get())) {
+            interactUnit = unit;
             if (!unit->isInteractable()) {
                 LOG_DEBUG("interactWithNpc: 0x", std::hex, guid, std::dec,
                           " has no NPC flags; no gossip hello sent");
@@ -3208,6 +3210,9 @@ void GameHandler::interactWithNpc(uint64_t guid) {
                 network::Packet packet(wireOpcode(Opcode::CMSG_BATTLEMASTER_HELLO));
                 packet.writeUInt64(guid);
                 socket->send(packet);
+                if (localNpcInteractTalkCallback_ && (!isPlayerDead() || isPlayerGhost())) {
+                    localNpcInteractTalkCallback_(guid);
+                }
                 return;
             }
             // Sent anyway - the server is the judge - but said, because the
@@ -3227,6 +3232,10 @@ void GameHandler::interactWithNpc(uint64_t guid) {
 
     auto packet = GossipHelloPacket::build(guid);
     socket->send(packet);
+
+    if (interactUnit && localNpcInteractTalkCallback_ && (!isPlayerDead() || isPlayerGhost())) {
+        localNpcInteractTalkCallback_(guid);
+    }
 
     pendingNpcHello_ = PendingNpcHello{};
     pendingNpcHello_.guid = guid;

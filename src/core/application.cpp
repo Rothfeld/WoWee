@@ -6309,6 +6309,17 @@ void Application::setupUICallbacks() {
         [this](uint64_t guid, const std::vector<std::pair<uint32_t, uint32_t>>& delayEmotes) {
             npcPanelEmotes_.start(guid, delayEmotes);
         });
+    gameHandler->setLocalNpcInteractTalkCallback(
+        [this](uint64_t /*npcGuid*/) {
+            if (!renderer) return;
+            auto* ac = renderer->getAnimationController();
+            if (!ac) return;
+            if (ac->isMoving() || ac->isInCombat() || ac->isMounted()) return;
+            if (auto* cc = renderer->getCameraController()) {
+                if (cc->isSwimming() || cc->isJumping() || !cc->isGrounded()) return;
+            }
+            ac->playEmote("talk");
+        });
 
     // ── Audio: music, sound effects, level-up, achievement, LFG ──
     audioCallbacks_ = std::make_unique<AudioCallbackHandler>(
