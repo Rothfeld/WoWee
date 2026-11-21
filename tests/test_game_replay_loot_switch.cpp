@@ -208,3 +208,72 @@ TEST_CASE("using an object releases the open corpse loot", "[replay][loot]") {
     CHECK(out[1] == sent(Opcode::CMSG_SET_SELECTION, 0));
     CHECK_FALSE(s.handler().isLootWindowOpen());
 }
+
+TEST_CASE("kneel-loot animation callback fires for corpse loot and UNIT_FLAG_LOOTING, not pickpocket or fishing",
+          "[replay][loot][pickpocket]") {
+    Session s("tbc");
+    spawnCorpses(s);
+
+    std::vector<bool> lootAnimEvents;
+    s.handler().setLootWindowCallback([&](bool open) { lootAnimEvents.push_back(open); });
+
+    // Pick Pocket (lootType = 2): opens loot window, does NOT trigger kneel animation.
+    {
+        wowee::network::Packet pp(wowee::game::wireOpcode(Opcode::SMSG_LOOT_RESPONSE));
+        pp.writeUInt64(kCorpseA);
+        pp.writeUInt8(static_cast<uint8_t>(wowee::game::ClientLootType::PICKPOCKETING));
+        pp.writeUInt32(290); // copper
+        pp.writeUInt8(0);    // 0 items
+        s.receive(pp);
+        REQUIRE(s.handler().isLootWindowOpen());
+        CHECK(lootAnimEvents.empty());
+        s.handler().closeLoot();
+        CHECK(lootAnimEvents == std::vector<bool>{false});
+        lootAnimEvents.clear();
+    }
+
+    // Fishing (lootType = 3): opens loot window, does NOT trigger kneel animation.
+    {
+        wowee::network::Packet fish(wowee::game::wireOpcode(Opcode::SMSG_LOOT_RESPONSE));
+        fish.writeUInt64(kCorpseA);
+        fish.writeUInt8(static_cast<uint8_t>(wowee::game::ClientLootType::FISHING));
+        fish.writeUInt32(0);
+        fish.writeUInt8(1);
+        fish.writeUInt8(0);
+        fish.writeUInt32(6291); // Raw Brilliant Smallfish
+        fish.writeUInt32(1);
+        fish.writeUInt32(1);
+        fish.writeUInt32(0);
+        fish.writeUInt32(0);
+        fish.writeUInt8(0);
+        s.receive(fish);
+        REQUIRE(s.handler().isLootWindowOpen());
+        CHECK(lootAnimEvents.empty());
+        s.handler().closeLoot();
+        lootAnimEvents.clear();
+    }
+
+    // Corpse loot (lootType = 1): triggers kneel animation on open and release on close.
+    {
+        s.receive(lootResponse(kCorpseB, 42));
+        REQUIRE(s.handler().isLootWindowOpen());
+        CHECK(lootAnimEvents == std::vector<bool>{true});
+        s.handler().closeLoot();
+        CHECK(lootAnimEvents == std::vector<bool>{true, false});
+        lootAnimEvents.clear();
+    }
+
+    // Chest / gather GO (UNIT_FLAG_LOOTING set on local player via UNIT_FIELD_FLAGS):
+    // triggers kneel animation on set and release on clear.
+    {
+        s.receive(UpdateObject().tbc().create(
+            Session::kPlayerGuid, wowee::game::ObjectType::PLAYER,
+            {{UF::UNIT_FIELD_FLAGS, 0u}}, /*self=*/true));
+        s.receive(UpdateObject().tbc().values(
+            Session::kPlayerGuid, {{UF::UNIT_FIELD_FLAGS, wowee::game::UNIT_FLAG_LOOTING}}));
+        CHECK(lootAnimEvents == std::vector<bool>{true});
+        s.receive(UpdateObject().tbc().values(
+            Session::kPlayerGuid, {{UF::UNIT_FIELD_FLAGS, 0u}}));
+        CHECK(lootAnimEvents == std::vector<bool>{true, false});
+    }
+}

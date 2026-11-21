@@ -1430,6 +1430,16 @@ EntityController::UnitFieldUpdateResult EntityController::applyUnitFieldsOnUpdat
                     owner_.stunStateCallbackRef()(nowStunned);
                 }
             }
+            // Server-authoritative kneel-loot flag (corpse / chest looting).
+            // Pick Pocket, Fishing, Skinning, Disenchanting, Prospecting, and
+            // item containers do not set UNIT_FLAG_LOOTING.
+            if (block.guid == owner_.getPlayerGuid() && owner_.lootWindowCallbackRef()) {
+                const bool wasLooting = (oldFlags & UNIT_FLAG_LOOTING) != 0;
+                const bool nowLooting = (val & UNIT_FLAG_LOOTING) != 0;
+                if (wasLooting != nowLooting) {
+                    owner_.lootWindowCallbackRef()(nowLooting);
+                }
+            }
         }
         else if (ufi.auraState != 0xFFFF && key == ufi.auraState) {
             const uint32_t oldAuraState = unit->getAuraState();

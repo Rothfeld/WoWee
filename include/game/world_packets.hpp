@@ -2566,6 +2566,15 @@ struct LootItem {
     bool looted = false;
 };
 
+/** Wire lootType values sent in SMSG_LOOT_RESPONSE (CMaNGOS ClientLootType). */
+enum class ClientLootType : uint8_t {
+    NONE          = 0,
+    CORPSE        = 1,
+    PICKPOCKETING = 2,
+    FISHING       = 3,
+    DISENCHANTING = 4,
+};
+
 /** SMSG_LOOT_RESPONSE data */
 struct LootResponseData {
     uint64_t lootGuid = 0;

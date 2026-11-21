@@ -155,3 +155,24 @@ TEST_CASE("ActivityFSM: loot holds and rises using the loot clip family", "[acti
     CHECK_FALSE(fsm.resolve(in, caps).valid);
     CHECK_FALSE(fsm.isActive());
 }
+
+TEST_CASE("ActivityFSM: startLooting is idempotent while already looting or kneeling", "[activity]") {
+    ActivityFSM fsm;
+    auto caps = makeActivityCaps();
+    auto in = idleInput();
+    in.haveAnimState = true;
+
+    fsm.startLooting();
+    CHECK(fsm.resolve(in, caps).animId == anim::LOOT);
+    in.currentAnimId = anim::LOOT;
+    in.currentAnimTime = 500;
+    in.currentAnimDuration = 500;
+    CHECK(fsm.resolve(in, caps).animId == anim::LOOT_HOLD);
+    CHECK(fsm.getState() == ActivityFSM::State::LOOT_KNEELING);
+
+    // Late UNIT_FLAG_LOOTING arrival does not reset LOOT_KNEELING back to LOOT.
+    fsm.startLooting();
+    CHECK(fsm.getState() == ActivityFSM::State::LOOT_KNEELING);
+    in.currentAnimId = anim::LOOT_HOLD;
+    CHECK(fsm.resolve(in, caps).animId == anim::LOOT_HOLD);
+}

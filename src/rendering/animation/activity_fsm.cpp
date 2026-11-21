@@ -134,6 +134,7 @@ void ActivityFSM::setSeatedLoopAnimation(uint32_t animationId) {
 // ── Loot management ──────────────────────────────────────────────────────────
 
 void ActivityFSM::startLooting() {
+    if (state_ == State::LOOTING || state_ == State::LOOT_KNEELING) return;
     state_ = State::LOOTING;
     lootAnimSeen_ = false;
     lootFrames_ = 0;

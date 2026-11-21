@@ -288,3 +288,54 @@ TEST_CASE("Ground sit, sleep, and kneel play enter, loop, and exit animations", 
         REQUIRE(animator.getLastOutput().animId == anim::STAND);
     }
 }
+
+TEST_CASE("Stealthed spell cast plays cast animation instead of StealthStand", "[animation][stealth][pickpocket]") {
+    AnimCapabilitySet caps;
+    caps.resolvedStand = anim::STAND;
+    caps.resolvedWalk = anim::WALK;
+    caps.resolvedRun = anim::RUN;
+    caps.resolvedStealthIdle = anim::STEALTH_STAND;
+    caps.resolvedStealthWalk = anim::STEALTH_WALK;
+    caps.resolvedStealthRun = anim::STEALTH_RUN;
+
+    CharacterAnimator animator;
+    animator.setCapabilities(caps);
+    animator.setStealthed(true);
+
+    CharacterAnimator::FrameInput frame;
+    frame.grounded = true;
+    frame.haveAnimState = true;
+    frame.currentAnimId = anim::STEALTH_STAND;
+    frame.currentAnimDuration = 1333.0f;
+    frame.currentAnimTime = 200.0f;
+
+    animator.setFrameInput(frame);
+    animator.update(0.016f);
+    REQUIRE(animator.getLastOutput().animId == anim::STEALTH_STAND);
+    REQUIRE(animator.getLastOutput().loop);
+
+    // Pick Pocket (spell 921, SpellVisual 251 -> castKit 396 -> UseStandingStart 128).
+    animator.startSpellCast(0, anim::USE_STANDING_START, false, anim::USE_STANDING_START);
+    animator.stopSpellCast();
+
+    animator.setFrameInput(frame);
+    animator.update(0.016f);
+    REQUIRE(animator.getLastOutput().animId == anim::USE_STANDING_START);
+    REQUIRE_FALSE(animator.getLastOutput().loop);
+
+    // Mid-cast frame keeps playing UseStandingStart.
+    frame.currentAnimId = anim::USE_STANDING_START;
+    frame.currentAnimDuration = 600.0f;
+    frame.currentAnimTime = 250.0f;
+    animator.setFrameInput(frame);
+    animator.update(0.016f);
+    REQUIRE(animator.getLastOutput().animId == anim::USE_STANDING_START);
+    REQUIRE_FALSE(animator.getLastOutput().loop);
+
+    // Once UseStandingStart finishes, returns to StealthStand (not kneel/loot).
+    frame.currentAnimTime = 600.0f;
+    animator.setFrameInput(frame);
+    animator.update(0.016f);
+    REQUIRE(animator.getLastOutput().animId == anim::STEALTH_STAND);
+    REQUIRE(animator.getLastOutput().loop);
+}

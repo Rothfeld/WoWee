@@ -21,6 +21,10 @@ constexpr uint32_t COPPER_PER_SILVER = 100;
 constexpr uint32_t UNIT_FLAG_TAXI_FLIGHT = 0x00100000;
 constexpr uint32_t UNIT_FLAG_IN_COMBAT   = 0x00080000;
 constexpr uint32_t UNIT_FLAG_STUNNED     = 0x00040000;
+/// Set by the server on UNIT_FIELD_FLAGS while the unit is kneeling to loot a
+/// corpse or chest gameobject (CMaNGOS Loot::SetPlayerIsLooting). Not set for
+/// Pick Pocket, Skinning, Fishing, Disenchanting, Prospecting, or bag items.
+constexpr uint32_t UNIT_FLAG_LOOTING     = 0x00000400;
 /// The server's own mark for a unit the player is not meant to interact with:
 /// the triggers and bunnies that scripts hang their effects on. They are
 /// ordinary units on the wire, with health and a name, and this flag is the

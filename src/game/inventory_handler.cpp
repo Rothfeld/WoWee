@@ -1180,6 +1180,7 @@ void InventoryHandler::handleLootResponse(network::Packet& packet) {
     currentLoot_ = std::move(receivedLoot);
     const bool hasLoot = !currentLoot_.items.empty() || currentLoot_.gold > 0;
     LOG_INFO("SMSG_LOOT_RESPONSE: guid=0x", std::hex, currentLoot_.lootGuid, std::dec,
+             " lootType=", static_cast<int>(currentLoot_.lootType),
              " items=", currentLoot_.items.size(), " gold=", currentLoot_.gold);
     auto& lastInteractedGoGuid = owner_.lastInteractedGoGuidRef();
     const bool isLastInteractedGoLoot =
@@ -1193,7 +1194,14 @@ void InventoryHandler::handleLootResponse(network::Packet& packet) {
     const bool autoLoot = currentLoot_.lootGuid == lootRequestGuid_ ? lootRequestAuto_ : autoLoot_;
     lootRequestGuid_ = 0;
     lootWindowOpen_ = true;
-    if (owner_.lootWindowCallbackRef()) owner_.lootWindowCallbackRef()(true);
+    // Only corpse loot (ClientLootType::CORPSE) immediately starts the kneel-loot
+    // animation from SMSG_LOOT_RESPONSE. Chest/gather gameobjects set
+    // UNIT_FLAG_LOOTING via UNIT_FIELD_FLAGS; Pick Pocket, Skinning, Fishing,
+    // Disenchanting, Prospecting, and bag items do not kneel.
+    if (currentLoot_.lootType == static_cast<uint8_t>(ClientLootType::CORPSE) &&
+        owner_.lootWindowCallbackRef()) {
+        owner_.lootWindowCallbackRef()(true);
+    }
     if (owner_.addonEventCallbackRef()) {
         // Carries whether this loot is being taken automatically. The loot
         // frame reads it on the path where it could not show itself, and

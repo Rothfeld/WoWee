@@ -181,8 +181,9 @@ AnimOutput CharacterAnimator::resolveAnimation() {
     const bool drawingWeapons = activity_.isEmoteActive() &&
         (activity_.getEmoteAnimId() == anim::SHEATHE ||
          activity_.getEmoteAnimId() == anim::HIP_SHEATHE);
-    if (combatOut.valid && !(drawingWeapons && combat_.getState() == CombatFSM::State::COMBAT_IDLE))
-        return applyOverlays(combatOut);
+    const bool combatIdle = combatOut.loop && combat_.getState() == CombatFSM::State::COMBAT_IDLE;
+    if (combatOut.valid && !(drawingWeapons && combatIdle))
+        return combatIdle ? applyOverlays(combatOut) : combatOut;
 
     // ── Activity FSM (emote, loot, sit) ─────────────────────────────────
     ActivityFSM::Input actIn;
@@ -199,7 +200,7 @@ AnimOutput CharacterAnimator::resolveAnimation() {
 
     auto actOut = activity_.resolve(actIn, caps_);
     if (actOut.valid) return actOut;
-    if (combatOut.valid) return applyOverlays(combatOut);
+    if (combatOut.valid) return combatIdle ? applyOverlays(combatOut) : combatOut;
 
     // ── Locomotion FSM (lowest priority) ────────────────────────────────
     auto locoOut = locomotion_.resolve(locomotionInput(), caps_);
