@@ -739,5 +739,12 @@ void CharacterCreateScreen::render(game::GameHandler& /*gameHandler*/) {
     ui_.end();
 }
 
+void CharacterCreateScreen::shutdownPreview() {
+    if (preview_) {
+        preview_->shutdown();
+        preview_.reset();
+    }
+}
+
 } // namespace ui
 } // namespace wowee

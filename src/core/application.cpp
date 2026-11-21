@@ -2422,6 +2422,10 @@ void Application::shutdown() {
     companionModel_.shutdown(renderer.get());
     for (auto& p : partyPortraits_) p.shutdown(renderer.get());
     paperdollModel_.shutdown(renderer.get());
+    for (auto& [id, view] : unitModels_) {
+        if (view) view->shutdown(renderer.get());
+    }
+    unitModels_.clear();
 
     // For the same reason, and it was never being done: ImGui's Vulkan backend
     // holds a pipeline, its layout and descriptor set layout, two shader
@@ -2943,6 +2947,10 @@ void Application::unloadInterface() {
     // Reset C++ action bar page alongside Lua's __WoweeActionBarPage so /reload,
     // logout, and character switches never leave keyboard hotkeys on a stale page.
     if (uiManager) uiManager->getGameScreen().actionBarPanel().setMainActionBarPage(1);
+    for (auto& [id, view] : unitModels_) {
+        if (view) view->shutdown(renderer.get());
+    }
+    unitModels_.clear();
     addonsLoaded_ = false;
 }
 

@@ -269,6 +269,7 @@ void CharacterPreview::shutdown() {
     charRenderer_.reset();
     camera_.reset();
     destroyFBO();
+    vkCtx_ = nullptr;
     modelLoaded_ = false;
     compositeRendered_ = false;
 }
@@ -519,6 +520,10 @@ void CharacterPreview::destroyFBO() {
     if (!vkCtx_) return;
     VkDevice device = vkCtx_->getDevice();
     VmaAllocator allocator = vkCtx_->getAllocator();
+    if (device == VK_NULL_HANDLE) {
+        vkCtx_ = nullptr;
+        return;
+    }
 
     // Frames still in flight may sample this target and use these buffers and
     // descriptors. Freeing them under the GPU lost the device (13:13:52, a

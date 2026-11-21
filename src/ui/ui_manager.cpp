@@ -439,6 +439,8 @@ void UIManager::loadInterfaceFont(const std::string& dataRoot,
 }
 
 void UIManager::shutdown() {
+    if (characterScreen) characterScreen->shutdownPreview();
+    if (characterCreateScreen) characterCreateScreen->shutdownPreview();
     if (imguiInitialized) {
         auto* vkCtx = window ? window->getVkContext() : nullptr;
         if (vkCtx) {

@@ -1733,6 +1733,18 @@ target_link_libraries(test_text_markup PRIVATE catch2_main)
 add_test(NAME text_markup COMMAND test_text_markup)
 register_test_target(test_text_markup)
 
+# ── test_screen_vignette ─────────────────────────────────────
+add_executable(test_screen_vignette
+    test_screen_vignette.cpp
+)
+target_include_directories(test_screen_vignette PRIVATE ${TEST_INCLUDE_DIRS})
+target_include_directories(test_screen_vignette SYSTEM PRIVATE
+    ${TEST_SYSTEM_INCLUDE_DIRS}
+)
+target_link_libraries(test_screen_vignette PRIVATE catch2_main)
+add_test(NAME screen_vignette COMMAND test_screen_vignette)
+register_test_target(test_screen_vignette)
+
 # ── test_simple_html ─────────────────────────────────────────
 add_executable(test_simple_html
     test_simple_html.cpp

@@ -18,6 +18,7 @@
 #include "ui/world_cursor.hpp"
 #include "ui/corpse_harvesting.hpp"
 #include "ui/ui_colors.hpp"
+#include "ui/screen_vignette.hpp"
 #include "ui/ui_helpers.hpp"
 #include "ui/ui_texture_load.hpp"
 #include "rendering/vk_context.hpp"
@@ -986,21 +987,24 @@ void GameScreen::render(game::GameHandler& gameHandler) {
         }
     }
 
-    // Screen edge damage flash - red vignette that fires on HP decrease
+    // Screen edge damage flash & persistent low-health vignette.
+    // Native TBC 2.4.3 shows zero red screen-edge vignette at full/normal HP;
+    // LowHealthFrame only activates at critically low health (<= 20% HP).
     {
         const bool deadOrGhost = gameHandler.isPlayerDead() || gameHandler.isPlayerGhost();
         auto playerEntity = gameHandler.getEntityManager().getEntity(gameHandler.getPlayerGuid());
         uint32_t currentHp = 0;
+        uint32_t maxHp = 0;
         if (playerEntity && (playerEntity->getType() == game::ObjectType::PLAYER ||
                              playerEntity->getType() == game::ObjectType::UNIT)) {
             auto unit = std::static_pointer_cast<game::Unit>(playerEntity);
-            if (unit->getMaxHealth() > 0)
+            maxHp = unit->getMaxHealth();
+            if (maxHp > 0)
                 currentHp = unit->getHealth();
         }
 
-        // Detect HP drop (ignore transitions from 0 - entity just spawned or uninitialized)
-        if (!deadOrGhost && settingsPanel_.damageFlashEnabled_ &&
-            lastPlayerHp_ > 0 && currentHp < lastPlayerHp_ && currentHp > 0) {
+        if (shouldTriggerDamageFlash(settingsPanel_.damageFlashEnabled_, deadOrGhost,
+                                     lastPlayerHp_, currentHp, maxHp)) {
             damageFlashAlpha_ = 1.0f;
         }
         lastPlayerHp_ = currentHp;
@@ -1018,29 +1022,12 @@ void GameScreen::render(game::GameHandler& gameHandler) {
             drawScreenEdgeVignette(200, 0, 0,
                                    static_cast<int>(damageFlashAlpha_ * 100.0f), 0.12f);
         }
-    }
 
-    // Persistent low-health vignette - pulsing red edges when HP < 20%
-    {
-        auto playerEntity = gameHandler.getEntityManager().getEntity(gameHandler.getPlayerGuid());
-        const bool deadOrGhost = gameHandler.isPlayerDead() || gameHandler.isPlayerGhost();
-        float hpPct = 1.0f;
-        if (!deadOrGhost && playerEntity &&
-            (playerEntity->getType() == game::ObjectType::PLAYER ||
-             playerEntity->getType() == game::ObjectType::UNIT)) {
-            auto unit = std::static_pointer_cast<game::Unit>(playerEntity);
-            if (unit->getMaxHealth() > 0)
-                hpPct = static_cast<float>(unit->getHealth()) / static_cast<float>(unit->getMaxHealth());
-        }
-
-        // Only show when alive and below 20% HP; intensity increases as HP drops
-        if (settingsPanel_.lowHealthVignetteEnabled_ && !deadOrGhost &&
-            hpPct < 0.20f && hpPct > 0.0f) {
-            // Base intensity from HP deficit (0 at 20%, 1 at 0%); pulse at ~1.5 Hz
-            float danger = (0.20f - hpPct) / 0.20f;
-            float pulse  = 0.55f + 0.45f * std::sin(static_cast<float>(ImGui::GetTime()) * 9.4f);
-            int   alpha  = static_cast<int>(danger * pulse * 90.0f);  // max ~90 alpha, subtle
-            drawScreenEdgeVignette(200, 0, 0, alpha, 0.15f);
+        const int lowHpAlpha = computeLowHealthVignetteAlpha(
+            settingsPanel_.lowHealthVignetteEnabled_, deadOrGhost,
+            currentHp, maxHp, ImGui::GetTime());
+        if (lowHpAlpha > 0) {
+            drawScreenEdgeVignette(200, 0, 0, lowHpAlpha, 0.15f);
         }
     }
 

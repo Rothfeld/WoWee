@@ -579,7 +579,7 @@ float WidgetRenderer::drawMarkupText(ImDrawList* dl, ImFont* font, float size, f
                                      bool forceColor, WidgetTree* linkSink,
                                      uint32_t linkOwner, float gradientStart, float gradientLength,
                                      float continuationIndent, float lineHeightPx, float shadowPx,
-                                     float boxWidth, int outlinePixels) {
+                                     float boxWidth, int outlinePixels, bool allowPipeNewline) {
     // Laid out by the original's rules (ui/native_text_metrics.hpp): the face
     // rasterized at a whole pixel height, glyphs on whole-pixel pens, lines
     // broken where 2.4.3 breaks them and one pixel height apart. ImGui's own
@@ -592,7 +592,7 @@ float WidgetRenderer::drawMarkupText(ImDrawList* dl, ImFont* font, float size, f
     const auto textureWidth = [&](const WrapRun& run) {
         return nativeTextureWidth(run, pixelHeight, pixelScale);
     };
-    const auto lines = wrapTextNative(parseMarkup(text), wrapWidth > 0.0f ? wrapWidth - shadowPx : 0.0f,
+    const auto lines = wrapTextNative(parseMarkup(text, allowPipeNewline), wrapWidth > 0.0f ? wrapWidth - shadowPx : 0.0f,
                                       nonSpaceWrap, m, textureWidth, continuationIndent);
     const float lineH = lineHeightPx > 0.0f ? lineHeightPx : px;
     // Glyphs are drawn from the row's top; the face's loader puts the
@@ -2608,7 +2608,7 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                 auto lineCount = [&](size_t idx) {
                     if (wrapW <= 0.0f) return size_t{1};
                     const auto lines = wrapTextNative(
-                        parseMarkup(w->messages[idx].text), wrapW - shadowPx, false, measure,
+                        parseMarkup(w->messages[idx].text, /*allowPipeNewline=*/false), wrapW - shadowPx, false, measure,
                         [&](const WrapRun& run) { return nativeTextureWidth(run, pixelHeight, ws); },
                         indent);
                     return lines.empty() ? size_t{1} : lines.size();
@@ -2637,7 +2637,7 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                                 drawMarkupText(dl, font, size, ws, ImVec2(x0 + o.x, pm.top + o.y),
                                                outlineCol, msgAlpha, m.text, wrapW, false,
                                                w->justifyH.c_str(), true, nullptr, 0, -1.0f, 0.0f,
-                                               indent, pm.rowHeight, shadowPx, boxW, outlinePx);
+                                               indent, pm.rowHeight, shadowPx, boxW, outlinePx, false);
                             }
                         }
                     }
@@ -2649,12 +2649,12 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                                               pm.top + std::round(-w->shadowY * ws)),
                                        packColor(sc, msgAlpha), msgAlpha, m.text, wrapW, false,
                                        w->justifyH.c_str(), true, nullptr, 0, -1.0f, 0.0f,
-                                       indent, pm.rowHeight, shadowPx, boxW, outlinePx);
+                                       indent, pm.rowHeight, shadowPx, boxW, outlinePx, false);
                     }
                     drawMarkupText(dl, font, size, ws, ImVec2(x0, pm.top),
                                    packColor(rgb, msgAlpha), msgAlpha, m.text, wrapW, false,
                                    w->justifyH.c_str(), false, &tree, w->id, -1.0f, 0.0f,
-                                   indent, pm.rowHeight, shadowPx, boxW, outlinePx);
+                                   indent, pm.rowHeight, shadowPx, boxW, outlinePx, false);
                 }
                 const int painted = static_cast<int>(placed.size());
                 const float lineH = static_cast<float>(pixelHeight + spacePx) + w->messagePadding * ws;

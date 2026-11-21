@@ -281,7 +281,7 @@ public:
     bool showCooldownTracker_ = false;
     bool showRareTracker_ = false;  // Mark nearby spawned rares/rare-elites on the world map
     bool showMapWindow_ = false;    // The world map on a window of its own (Application::updateMapWindow)
-    bool damageFlashEnabled_ = true;
+    bool damageFlashEnabled_ = false;
     bool lowHealthVignetteEnabled_ = true; // Persistent pulsing red vignette below 20% HP
 
     // ---- Public methods ----

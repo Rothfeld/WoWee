@@ -94,6 +94,9 @@ public:
      */
     void selectCharacterByName(const std::string& name);
 
+    /// Release the 3D preview's Vulkan resources before ImGui/VkContext shutdown.
+    void shutdownPreview();
+
 private:
     UIServices services_;  // Injected service references
 

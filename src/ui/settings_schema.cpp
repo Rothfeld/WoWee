@@ -481,7 +481,7 @@ constexpr SettingDesc kSchema[] = {
      "Mark rare creatures near you on the world map.", "", 0},
 
     {"damageflash", "Damage flash", SettingKind::Bool, 0, 0, 0, "HUD", "Screen effects",
-     "Flash a red edge around the screen when you take a hit.", "", 1},
+     "Flash a red edge around the screen when you take a hit at low health.", "", 0},
     {"lowhealthvignette", "Low health warning", SettingKind::Bool, 0, 0, 0,
      "HUD", "", "Pulse a red edge around the screen while your health is\n"
      "below a fifth.", "", 1},

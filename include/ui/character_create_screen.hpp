@@ -31,6 +31,9 @@ public:
     void reset();
     void initializePreview(pipeline::AssetManager* am);
 
+    /// Release the 3D preview's Vulkan resources before ImGui/VkContext shutdown.
+    void shutdownPreview();
+
     /** Set allowed races/classes from expansion profile. Empty = allow all (WotLK default). */
     void setExpansionConstraints(const std::vector<uint32_t>& races, const std::vector<uint32_t>& classes);
 

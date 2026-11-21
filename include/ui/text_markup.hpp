@@ -28,7 +28,7 @@
 namespace wowee {
 namespace ui {
 
-inline std::vector<WrapRun> parseMarkup(const std::string& in) {
+inline std::vector<WrapRun> parseMarkup(const std::string& in, bool allowPipeNewline = true) {
     std::vector<WrapRun> runs;
     WrapRun cur;
     auto flush = [&] {
@@ -78,10 +78,10 @@ inline std::vector<WrapRun> parseMarkup(const std::string& in) {
             i += 2;
             continue;
         }
-        // |n is WoW's line break, and it was not handled at all - so every one
-        // of them drew as a literal bar and an n. globalstrings.lua alone has a
-        // hundred and thirty-eight.
-        if (tag == 'n' || tag == 'N') { cur.text += '\n'; i += 2; continue; }
+        // |n is WoW's line break on FontString/EditBox/tooltips, but TBC 2.4.3
+        // ScrollingMessageFrame and MessageFrame print |n/|N literally (only
+        // real '\n' breaks lines there).
+        if (allowPipeNewline && (tag == 'n' || tag == 'N')) { cur.text += '\n'; i += 2; continue; }
         // |4singular:plural; - the word chosen by the number written before it.
         // SecondsToTime and every duration in the interface is built on it
         // ("%d |4Sec:Sec;"), and it drew raw: "Time in queue: 13 |4Sec:Sec;".

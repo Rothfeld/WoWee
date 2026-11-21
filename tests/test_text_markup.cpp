@@ -579,3 +579,34 @@ TEST_CASE("TBC 2.4.3 EditBox word boundaries follow whitespace vs non-whitespace
         CHECK(caretWordRight(ml, 9) == 11);
     }
 }
+
+TEST_CASE("ScrollingMessageFrame and MessageFrame print |n and |N literally", "[markup]") {
+    auto drawnNoPipeNl = [](const std::string& in) {
+        std::string out;
+        for (const WrapRun& r : parseMarkup(in, /*allowPipeNewline=*/false)) out += r.text;
+        return out;
+    };
+
+    SECTION("|nil prints literally in chat/message frames") {
+        CHECK(drawnNoPipeNl("CTU:SPELL_AURA_END|Prayer of Fortitude|nil")
+              == "CTU:SPELL_AURA_END|Prayer of Fortitude|nil");
+        CHECK(drawnNoPipeNl("1:A|nil") == "1:A|nil");
+        CHECK(drawnNoPipeNl("2:A|nB") == "2:A|nB");
+        CHECK(drawnNoPipeNl("3:A|NB") == "3:A|NB");
+        CHECK(drawnNoPipeNl("4:A|n B") == "4:A|n B");
+    }
+
+    SECTION("|| still unescapes to a single bar and real newline still breaks") {
+        CHECK(drawnNoPipeNl("5:A||nB") == "5:A|nB");
+        CHECK(drawnNoPipeNl("6:A\nB") == "6:A\nB");
+    }
+
+    SECTION("colour and link escapes remain active when allowPipeNewline is false") {
+        CHECK(drawnNoPipeNl("|cffff0000A|nil|r") == "A|nil");
+        CHECK(drawnNoPipeNl("|Hitem:6948|h[Hearthstone]|h|nil") == "[Hearthstone]|nil");
+    }
+
+    SECTION("FontString default still turns |n and |N into newlines") {
+        CHECK(drawn("FS:A|nil B|nC D|NE E||nF") == "FS:A\nil B\nC D\nE E|nF");
+    }
+}

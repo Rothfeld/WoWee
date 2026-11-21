@@ -797,4 +797,12 @@ uint64_t CharacterScreen::loadLastCharacter() {
     return guid;
 }
 
+void CharacterScreen::shutdownPreview() {
+    if (preview_) {
+        preview_->shutdown();
+        preview_.reset();
+    }
+    previewInitialized_ = false;
+}
+
 }} // namespace wowee::ui
