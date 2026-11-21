@@ -146,6 +146,7 @@ public:
      * @param position New world position
      */
     void setInstancePosition(uint32_t instanceId, const glm::vec3& position);
+    bool getInstanceWorldBounds(uint32_t instanceId, glm::vec3& outMin, glm::vec3& outMax) const;
 
     /**
      * Update the full transform of an existing instance (for moving transports)

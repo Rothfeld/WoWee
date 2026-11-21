@@ -770,6 +770,8 @@ void GameScreen::renderMinimapQuestGivers(const MinimapFrame& frame, const Quest
 
         if (entity->getType() == game::ObjectType::UNIT)
             noteMinimapBlip(sx, sy, std::static_pointer_cast<game::Unit>(entity)->getName());
+        else if (entity->getType() == game::ObjectType::GAMEOBJECT)
+            noteMinimapBlip(sx, sy, std::static_pointer_cast<game::GameObject>(entity)->getName());
     }
 
     // Undiscovered flight masters: the green ! (kObjectIconGreenExclamation).
@@ -789,6 +791,8 @@ void GameScreen::renderMinimapQuestGivers(const MinimapFrame& frame, const Quest
                            kObjectIconGreenExclamation, sx, sy);
         if (entity->getType() == game::ObjectType::UNIT)
             noteMinimapBlip(sx, sy, std::static_pointer_cast<game::Unit>(entity)->getName());
+        else if (entity->getType() == game::ObjectType::GAMEOBJECT)
+            noteMinimapBlip(sx, sy, std::static_pointer_cast<game::GameObject>(entity)->getName());
     }
 }
 

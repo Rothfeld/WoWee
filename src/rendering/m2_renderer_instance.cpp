@@ -1109,6 +1109,20 @@ bool M2Renderer::getInstanceWorldBounds(uint32_t instanceId, glm::vec3& outMin,
     return true;
 }
 
+bool M2Renderer::getInstanceVisualWorldBounds(uint32_t instanceId, glm::vec3& outMin,
+                                              glm::vec3& outMax) const {
+    auto idxIt = instanceIndexById.find(instanceId);
+    if (idxIt == instanceIndexById.end() || idxIt->second >= instances.size()) return false;
+    const auto& inst = instances[idxIt->second];
+    if (!inst.cachedModel) return false;
+    const auto& model = *inst.cachedModel;
+    const bool useTight = model.boundMax.z > model.boundMin.z + 1e-4f;
+    const glm::vec3 localMin = useTight ? model.boundMin : model.headerBoxMin;
+    const glm::vec3 localMax = useTight ? model.boundMax : model.headerBoxMax;
+    transformAABB(inst.modelMatrix, localMin, localMax, outMin, outMax);
+    return true;
+}
+
 namespace {
 
 // Grid categories use model-local normals. Pitch and roll can turn local walls

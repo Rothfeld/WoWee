@@ -749,6 +749,10 @@ public:
     /// that origin, which is why standing beside an Undercity lift shaft
     /// attaches you to the car.
     bool getInstanceWorldBounds(uint32_t instanceId, glm::vec3& outMin, glm::vec3& outMax) const;
+    /// World-space AABB of an instance's tight visual mesh bounds (falling back
+    /// to M2 header bounds when the mesh box is degenerate), transformed by the
+    /// instance model matrix. Used for GameObject overhead markers.
+    bool getInstanceVisualWorldBounds(uint32_t instanceId, glm::vec3& outMin, glm::vec3& outMax) const;
 
     /// The floor one named instance offers under a point, ignoring every other.
     ///

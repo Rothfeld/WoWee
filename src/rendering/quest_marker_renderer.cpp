@@ -73,6 +73,10 @@ void QuestMarkerRenderer::syncModels(M2Renderer& renderer, pipeline::AssetManage
             const uint32_t instance = renderer.createInstance(modelId, position, glm::vec3(0), 1.0f, false);
             if (!instance) throw std::runtime_error("Quest marker instance failed to create");
             renderer.setSkipCollision(instance, true);
+            // Server-driven world marker: must not be exterior-culled inside
+            // WMO interiors/dungeons or dropped at ambient doodad distance, and
+            // inherits WMO room visibility from its world position.
+            renderer.setInstanceIsGameObject(instance, true);
             placements_[guid] = {instance, modelId};
         } else {
             renderer.setInstancePosition(it->second.instanceId, position);

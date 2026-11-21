@@ -1119,6 +1119,16 @@ void WMORenderer::setInstancePosition(uint32_t instanceId, const glm::vec3& posi
     rebuildSpatialIndex();
 }
 
+bool WMORenderer::getInstanceWorldBounds(uint32_t instanceId, glm::vec3& outMin,
+                                         glm::vec3& outMax) const {
+    auto idxIt = instanceIndexById.find(instanceId);
+    if (idxIt == instanceIndexById.end() || idxIt->second >= instances.size()) return false;
+    const auto& inst = instances[idxIt->second];
+    outMin = inst.worldBoundsMin;
+    outMax = inst.worldBoundsMax;
+    return true;
+}
+
 void WMORenderer::setInstanceIsTransport(uint32_t instanceId, bool isTransport) {
     auto idxIt = instanceIndexById.find(instanceId);
     if (idxIt == instanceIndexById.end()) return;

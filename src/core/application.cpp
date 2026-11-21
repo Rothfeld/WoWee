@@ -6846,31 +6846,13 @@ void Application::updateQuestMarkers() {
     static bool firstRun = true;
     int markersAdded = 0;
 
-    // Add markers for NPCs with quest status
+    // Add markers for NPCs and GameObjects with quest status
     for (const auto& [guid, status] : questStatuses) {
-        // Determine marker type
-        int markerType = -1;  // -1 = no marker
+        // One mapping for all places that draw this - see quest_giver_status.hpp.
+        const auto visual = game::questMarkerVisual(status);
+        int markerType = visual.markerType;
+        const float markerGrayscale = visual.grayscale;
 
-        // One mapping for all five places that draw this - see
-        // quest_giver_status.hpp. Five of the eleven statuses the server can
-        // send had no name here, so an NPC whose quests you have out-levelled
-        // got no marker at all.
-        const auto marker = game::questGiverMarker(status);
-        float markerGrayscale = marker.dim ? 1.0f : 0.0f;
-        if (marker.symbol) {
-            const bool bang = marker.symbol[0] == '!';
-            // 0 is the exclamation texture, 1 the gold question mark and 2 the
-            // grey one; the shader desaturates from markerGrayscale.
-            // 4 the blue repeatable !, 5 the light-blue repeatable ?.
-            markerType = bang ? (marker.repeatable ? 4 : 0)
-                              : (marker.dim ? 2 : (marker.repeatable ? 5 : 1));
-        }
-        if (game::taxiDiscoveryMarkerVisible(gameHandler->getTaxiNodeStatus(guid), markerType >= 0))
-            markerType = 3;
-
-        if (markerType < 0) continue;
-
-        // Get NPC entity position
         auto entity = gameHandler->getEntityManager().getEntity(guid);
         if (!entity) {
             static std::unordered_set<uint64_t> said;
@@ -6880,6 +6862,47 @@ void Application::updateQuestMarkers() {
             }
             continue;
         }
+        if (entity->getType() == game::ObjectType::UNIT &&
+            game::taxiDiscoveryMarkerVisible(gameHandler->getTaxiNodeStatus(guid), markerType >= 0)) {
+            markerType = 3;
+        }
+
+        if (markerType < 0) continue;
+
+        if (!entitySpawner_) continue;
+
+        glm::vec3 renderPos(0.0f);
+        float boundingHeight = 0.0f;
+
+        if (entity->getType() == game::ObjectType::GAMEOBJECT) {
+            const auto& objects = entitySpawner_->getGameObjectInstances();
+            const auto goIt = objects.find(guid);
+            if (goIt == objects.end()) continue;
+            glm::vec3 worldMin(0.0f);
+            glm::vec3 worldMax(0.0f);
+            bool haveBounds = false;
+            if (goIt->second.isWmo) {
+                auto* wmo = renderer->getWMORenderer();
+                haveBounds = wmo && wmo->getInstanceWorldBounds(goIt->second.instanceId, worldMin, worldMax);
+            } else {
+                auto* m2 = renderer->getM2Renderer();
+                haveBounds = m2 && m2->getInstanceVisualWorldBounds(goIt->second.instanceId, worldMin, worldMax);
+            }
+            if (!haveBounds) continue;
+            rendering::gameObjectQuestMarkerAnchor(worldMin, worldMax, renderPos, boundingHeight);
+            questMarkerRenderer->setMarker(guid, renderPos, markerType, boundingHeight, markerGrayscale);
+            {
+                static std::unordered_set<uint64_t> said;
+                if (said.insert(guid).second) {
+                    LOG_INFO("Quest marker (GO): 0x", std::hex, guid, std::dec, " type ", markerType,
+                             " at ", renderPos.x, ",", renderPos.y, ",", renderPos.z,
+                             " height ", boundingHeight, " topZ ", worldMax.z);
+                }
+            }
+            markersAdded++;
+            continue;
+        }
+
         if (entity->getType() == game::ObjectType::UNIT) {
             auto unit = std::static_pointer_cast<game::Unit>(entity);
             const std::string& name = unit->getName();
@@ -6903,17 +6926,15 @@ void Application::updateQuestMarkers() {
             if (containsCI("spirit healer", 13) || containsCI("spirit guide", 12)) {
                 continue;
             }
+        } else {
+            continue;
         }
-
-        glm::vec3 canonical(entity->getX(), entity->getY(), entity->getZ());
-        glm::vec3 renderPos = coords::canonicalToRender(canonical);
 
         // Use the rendered head height, not the enclosing sphere diameter.
         // A wide weapon must not push its owner's quest marker higher.
         auto* characters = renderer->getCharacterRenderer();
-        if (!entitySpawner_ || !characters) continue;
+        if (!characters) continue;
         const uint32_t instanceId = entitySpawner_->characterInstanceIdForGuid(guid);
-        float boundingHeight = 0.0f;
         if (!instanceId || !characters->getInstanceHeight(instanceId, boundingHeight)) continue;
         if (!characters->getInstancePosition(instanceId, renderPos)) continue;
         const glm::vec3 unitPosition = renderPos;

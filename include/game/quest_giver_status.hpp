@@ -71,13 +71,16 @@ inline QuestGiverMarker questGiverMarker(QuestGiverStatus status) {
         case QuestGiverStatus::REWARD:
             return {.symbol = "?", .dim = false, .tooltip = "Quest ready to turn in", .onMinimap = true};
         case QuestGiverStatus::REWARD_REP:
-            return {.symbol = "?", .dim = false, .tooltip = "Quest ready to turn in", .onMinimap = true,
+            // Native TBC 2.4.3 (build 8606): repeatable turn-in draws the 3D
+            // light-blue ? in world (Broken Trap 179485, Arygos 15380) without
+            // a minimap icon.
+            return {.symbol = "?", .dim = false, .tooltip = "Quest ready to turn in", .onMinimap = false,
                     .repeatable = true};
         // The same mark, and deliberately not on the minimap.
         case QuestGiverStatus::REWARD2:
             return {.symbol = "?", .dim = false, .tooltip = "Quest ready to turn in", .onMinimap = false};
         case QuestGiverStatus::LOW_LEVEL_REWARD_REP:
-            return {.symbol = "?", .dim = true, .tooltip = "Quest ready to turn in", .onMinimap = true};
+            return {.symbol = "?", .dim = true, .tooltip = "Quest ready to turn in", .onMinimap = false};
         case QuestGiverStatus::INCOMPLETE:
             return {.symbol = "?", .dim = true, .tooltip = "Quest in progress", .onMinimap = false};
         case QuestGiverStatus::UNAVAILABLE:
@@ -87,6 +90,24 @@ inline QuestGiverMarker questGiverMarker(QuestGiverStatus status) {
             break;
     }
     return {};
+}
+
+/// 3D world marker variant for QuestMarkerRenderer::setMarker().
+/// markerType: -1 none, 0 ! (gold/grey via grayscale), 1 gold ?, 2 grey ?,
+/// 4 blue repeatable !, 5 light-blue repeatable ?.
+struct QuestMarkerVisual {
+    int markerType = -1;
+    float grayscale = 0.0f;
+};
+
+inline QuestMarkerVisual questMarkerVisual(QuestGiverStatus status) {
+    const auto marker = questGiverMarker(status);
+    const float grayscale = marker.dim ? 1.0f : 0.0f;
+    if (!marker.symbol) return {.markerType = -1, .grayscale = grayscale};
+    const bool bang = marker.symbol[0] == '!';
+    const int markerType = bang ? (marker.repeatable ? 4 : 0)
+                                : (marker.dim ? 2 : (marker.repeatable ? 5 : 1));
+    return {.markerType = markerType, .grayscale = grayscale};
 }
 
 /// The Interface\Cursor name a quest giver's status puts over it, or null

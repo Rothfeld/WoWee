@@ -16,6 +16,7 @@
 #include "game/quest_giver_status.hpp"
 #include "game/gossip_quest_status.hpp"
 #include "game/level_difficulty.hpp"
+#include "rendering/quest_marker_renderer.hpp"
 #include <utility>
 #include <array>
 
@@ -193,4 +194,85 @@ TEST_CASE("TBC quest green range and trivial quests", "[questgiver][tbc]") {
     CHECK(questIsTrivial(true, 64, 58));
     CHECK(questIsTrivial(true, 55, 44));        // Yeh'kinya
     CHECK_FALSE(questIsTrivial(true, 55, 0));
+}
+
+TEST_CASE("repeatable turn-in draws 3D blue question mark without minimap icon",
+          "[questgiver][minimap][gameobject]") {
+    const auto rep = questGiverMarker(QuestGiverStatus::REWARD_REP);
+    REQUIRE(rep.symbol != nullptr);
+    CHECK(std::string(rep.symbol) == "?");
+    CHECK(rep.repeatable);
+    CHECK_FALSE(rep.dim);
+    CHECK_FALSE(rep.onMinimap);
+
+    const auto lowRep = questGiverMarker(QuestGiverStatus::LOW_LEVEL_REWARD_REP);
+    REQUIRE(lowRep.symbol != nullptr);
+    CHECK(std::string(lowRep.symbol) == "?");
+    CHECK(lowRep.dim);
+    CHECK_FALSE(lowRep.onMinimap);
+
+    // Daily / repeatable available (!) and normal turn-in (?) stay on minimap.
+    CHECK(questGiverMarker(QuestGiverStatus::AVAILABLE).onMinimap);
+    CHECK(questGiverMarker(QuestGiverStatus::AVAILABLE_REP).onMinimap);
+    CHECK(questGiverMarker(QuestGiverStatus::REWARD).onMinimap);
+}
+
+TEST_CASE("3D world quest marker visual maps all GameObject and NPC statuses",
+          "[questgiver][gameobject]") {
+    using wowee::game::questMarkerVisual;
+
+    const auto avail = questMarkerVisual(QuestGiverStatus::AVAILABLE);
+    CHECK(avail.markerType == 0);
+    CHECK(avail.grayscale == 0.0f);
+
+    const auto availRep = questMarkerVisual(QuestGiverStatus::AVAILABLE_REP);
+    CHECK(availRep.markerType == 4);
+    CHECK(availRep.grayscale == 0.0f);
+
+    const auto reward = questMarkerVisual(QuestGiverStatus::REWARD);
+    CHECK(reward.markerType == 1);
+    CHECK(reward.grayscale == 0.0f);
+
+    const auto rewardRep = questMarkerVisual(QuestGiverStatus::REWARD_REP);
+    CHECK(rewardRep.markerType == 5);
+    CHECK(rewardRep.grayscale == 0.0f);
+
+    const auto incomplete = questMarkerVisual(QuestGiverStatus::INCOMPLETE);
+    CHECK(incomplete.markerType == 2);
+    CHECK(incomplete.grayscale == 1.0f);
+
+    const auto unavail = questMarkerVisual(QuestGiverStatus::UNAVAILABLE);
+    CHECK(unavail.markerType == 0);
+    CHECK(unavail.grayscale == 1.0f);
+
+    CHECK(questMarkerVisual(QuestGiverStatus::NONE).markerType == -1);
+    CHECK(questMarkerVisual(QuestGiverStatus::CHAT).markerType == -1);
+}
+
+TEST_CASE("GameObject quest marker anchor places marker above visual bounding box",
+          "[questgiver][gameobject]") {
+    glm::vec3 pos(0.0f);
+    float height = 0.0f;
+
+    // Floor-resting trap (e.g. Broken Trap scaled 3x)
+    wowee::rendering::gameObjectQuestMarkerAnchor(
+        glm::vec3(10.0f, 20.0f, -25.4f), glm::vec3(12.0f, 22.0f, -24.5f), pos, height);
+    CHECK(pos.x == Catch::Approx(11.0f));
+    CHECK(pos.y == Catch::Approx(21.0f));
+    CHECK(pos.z == Catch::Approx(-25.4f));
+    CHECK(height == Catch::Approx(0.9f));
+    CHECK(pos.z + height == Catch::Approx(-24.5f));
+
+    // Wall-mounted / center-origin poster where min.z < origin < max.z
+    wowee::rendering::gameObjectQuestMarkerAnchor(
+        glm::vec3(-5.0f, 3.0f, 40.0f), glm::vec3(-4.6f, 4.2f, 42.3f), pos, height);
+    CHECK(pos.x == Catch::Approx(-4.8f));
+    CHECK(pos.y == Catch::Approx(3.6f));
+    CHECK(pos.z + height == Catch::Approx(42.3f));
+
+    // Degenerate / inverted Z box clamps height to 0
+    wowee::rendering::gameObjectQuestMarkerAnchor(
+        glm::vec3(1.0f, 2.0f, 5.0f), glm::vec3(1.0f, 2.0f, 4.0f), pos, height);
+    CHECK(height == 0.0f);
+    CHECK(pos.z == Catch::Approx(5.0f));
 }
