@@ -2341,13 +2341,18 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid, std::optiona
         LOG_INFO("Casting spell: ", spellId, " on 0x", std::hex, target, std::dec);
     pendingCastSpellId_ = spellId;
 
-    // Spell.dbc explicitly marks abilities that enable melee autoattack.
-    // Harmful spells without this attribute must not start weapon swings.
+    // Spell.dbc marks abilities that enable melee auto-attack immediately on cast
+    // (SPELL_ATTR_EX_INITIATES_COMBAT_ENABLES_AUTO_ATTACK or ON_NEXT_SWING).
+    // Spells with SPELL_ATTR_EX2_INITIATE_COMBAT_POST_CAST (Cheap Shot, Shiv,
+    // Judgement, Ambush, Garrote, Backstab, Mutilate, Pounce, Ravage, Shred)
+    // defer auto-attack start to handleSpellGo so a failed cast does not swing
+    // or break Stealth. Harmful spells without these flags (or with
+    // SPELL_ATTR_CANCELS_AUTO_ATTACK_COMBAT) must not start weapon swings.
     owner_.loadSpellNameCache();
     const auto attackSpell = owner_.spellNameCacheRef().find(spellId);
-    constexpr uint32_t kInitiatesCombatEnablesAutoAttack = 0x00000200u;
     if (attackSpell != owner_.spellNameCacheRef().end() &&
-        (attackSpell->second.attrEx & kInitiatesCombatEnablesAutoAttack) != 0 &&
+        spellclass::initiatesMeleeAutoAttackOnCast(
+            attackSpell->second.attr, attackSpell->second.attrEx, attackSpell->second.attrEx2) &&
         target != 0 && target != owner_.getPlayerGuid() &&
         (!owner_.hasAutoAttackIntent() ||
          owner_.getCombatHandler()->getAutoAttackTargetGuid() != target)) {
@@ -3928,6 +3933,24 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
             owner_.addonEventCallbackRef()("UNIT_SPELLCAST_SUCCEEDED", spellcastArgs("player", data.spellId));
         if (owner_.addonEventCallbackRef() && !rangedWeaponAttack)
             owner_.addonEventCallbackRef()("UNIT_SPELLCAST_STOP", spellcastArgs("player", data.spellId));
+
+        // Spells with SPELL_ATTR_EX2_INITIATE_COMBAT_POST_CAST (Cheap Shot, Shiv,
+        // Judgement, Ambush, Garrote, Backstab, Mutilate, Pounce, Ravage, Shred)
+        // start melee auto-attack only after the server confirms SMSG_SPELL_GO.
+        if (cast != owner_.spellNameCacheRef().end() &&
+            spellclass::initiatesMeleeAutoAttackPostCast(
+                cast->second.attr, cast->second.attrEx, cast->second.attrEx2)) {
+            uint64_t attackTarget = data.targetGuid;
+            if (attackTarget == 0 && !data.hitTargets.empty())
+                attackTarget = data.hitTargets.front();
+            if (attackTarget == 0 && !data.missTargets.empty())
+                attackTarget = data.missTargets.front().targetGuid;
+            if (attackTarget != 0 && attackTarget != owner_.getPlayerGuid() &&
+                (!owner_.hasAutoAttackIntent() ||
+                 owner_.getCombatHandler()->getAutoAttackTargetGuid() != attackTarget)) {
+                owner_.startAutoAttack(attackTarget);
+            }
+        }
 
         // Craft queue: re-cast if more crafts remaining
         if (craftQueueRemaining_ > 0 && craftQueueSpellId_ == data.spellId) {

@@ -150,26 +150,72 @@ inline bool requiresHostileTarget(uint32_t implicitTargetA) {
 
 /// Whether using this spell with no target (or a friendly target) auto-acquires
 /// the nearest attackable enemy in front of the player, matching native TBC 2.4.3
-/// (measured on pair 5, _experiments/20261120T091749Z.attack_autotarget):
+/// (measured on pair 5, _experiments/20261120T091749Z.attack_autotarget, and
+/// pair 12, _experiments/20261121T214600Z.cheap_shot_autoattack_parity):
 /// - Attack (6603)
 /// - AttributesEx & 0x200 (SPELL_ATTR_EX_INITIATES_COMBAT_ENABLES_AUTO_ATTACK):
 ///   Sinister Strike, Backstab, Kick, Riposte, Cleave, Slam, Maul, ...
-/// - Attributes & 0x04 (SPELL_ATTR_ON_NEXT_SWING):
+/// - AttributesEx2 & 0x100000 (SPELL_ATTR_EX2_INITIATE_COMBAT_POST_CAST):
+///   Cheap Shot (1833), Shiv (5938), Judgement (20271), Ambush, Garrote, ...
+/// - Attributes & 0x404 (SPELL_ATTR_ON_NEXT_SWING_NO_DAMAGE | SPELL_ATTR_ON_NEXT_SWING):
 ///   Heroic Strike, Raptor Strike, Cleave, Maul
-/// - AttributesEx2 & 0x20 (SPELL_ATTR_EX2_AUTOREPEAT_FLAG):
+/// - AttributesEx2 & 0x20 (SPELL_ATTR_EX2_AUTO_REPEAT):
 ///   Auto Shot (75), Shoot (5019)
-/// Hostile spells without these flags (Gouge, Sap, Blind, Throw, Fireball,
-/// Frostbolt, Smite, Shadow Word: Pain) do not auto-acquire a target.
-inline bool autoAcquiresHostileTarget(uint32_t spellId, uint32_t attr,
-                                      uint32_t attrEx, uint32_t attrEx2) {
-    constexpr uint32_t kAttrOnNextSwing         = 0x00000004u;
-    constexpr uint32_t kAttrExEnablesAutoAttack = 0x00000200u;
-    constexpr uint32_t kAttrEx2AutoRepeat       = 0x00000020u;
-    constexpr uint32_t kSpellIdAttack           = 6603u;
+/// Hostile spells without these flags or with SPELL_ATTR_CANCELS_AUTO_ATTACK_COMBAT
+/// (Gouge, Sap, Blind, Pick Pocket, Throw, Fireball, Frostbolt, Smite, SW:P) do not.
+inline constexpr bool autoAcquiresHostileTarget(uint32_t spellId, uint32_t attr,
+                                                uint32_t attrEx, uint32_t attrEx2) {
+    constexpr uint32_t kAttrOnNextSwingMask           = 0x00000404u;
+    constexpr uint32_t kAttrCancelsAutoAttack         = 0x00100000u;
+    constexpr uint32_t kAttrExEnablesAutoAttack       = 0x00000200u;
+    constexpr uint32_t kAttrEx2AutoRepeat             = 0x00000020u;
+    constexpr uint32_t kAttrEx2InitiateCombatPostCast = 0x00100000u;
+    constexpr uint32_t kSpellIdAttack                 = 6603u;
+    if ((attr & kAttrCancelsAutoAttack) != 0) return false;
     return spellId == kSpellIdAttack ||
            (attrEx & kAttrExEnablesAutoAttack) != 0 ||
-           (attr & kAttrOnNextSwing) != 0 ||
+           (attrEx2 & kAttrEx2InitiateCombatPostCast) != 0 ||
+           (attr & kAttrOnNextSwingMask) != 0 ||
            (attrEx2 & kAttrEx2AutoRepeat) != 0;
+}
+
+/// Whether casting this spell starts melee auto-attack immediately when CMSG_CAST_SPELL
+/// is sent, rather than waiting for SMSG_SPELL_GO.
+/// - SPELL_ATTR_CANCELS_AUTO_ATTACK_COMBAT (attr 0x00100000): never starts (Sap, Gouge, Blind, ...).
+/// - SPELL_ATTR_EX2_INITIATE_COMBAT_POST_CAST (attrEx2 0x00100000): deferred until
+///   SMSG_SPELL_GO so a failed stealth/behind/seal cast (Cheap Shot, Ambush, Garrote,
+///   Backstab, Mutilate, Shiv, Pounce, Ravage, Shred, Judgement) does not break stealth
+///   or begin swinging.
+/// - SPELL_ATTR_EX_INITIATES_COMBAT_ENABLES_AUTO_ATTACK (attrEx 0x00000200): starts at cast send
+///   (Sinister Strike, Kidney Shot, Hemorrhage, Riposte, Eviscerate, Mortal Strike, ...).
+/// - SPELL_ATTR_ON_NEXT_SWING_NO_DAMAGE | SPELL_ATTR_ON_NEXT_SWING (attr 0x00000404):
+///   starts at cast send so the queued next-melee strike swings (Heroic Strike, Raptor Strike,
+///   Cleave, Maul).
+inline constexpr bool initiatesMeleeAutoAttackOnCast(uint32_t attr,
+                                                     uint32_t attrEx,
+                                                     uint32_t attrEx2) {
+    constexpr uint32_t kAttrOnNextSwingMask           = 0x00000404u;
+    constexpr uint32_t kAttrCancelsAutoAttack         = 0x00100000u;
+    constexpr uint32_t kAttrExInitiatesCombat         = 0x00000200u;
+    constexpr uint32_t kAttrEx2InitiateCombatPostCast = 0x00100000u;
+    if ((attr & kAttrCancelsAutoAttack) != 0) return false;
+    if ((attrEx2 & kAttrEx2InitiateCombatPostCast) != 0) return false;
+    return (attrEx & kAttrExInitiatesCombat) != 0 ||
+           (attr & kAttrOnNextSwingMask) != 0;
+}
+
+/// Whether this spell starts melee auto-attack after the cast succeeds (SMSG_SPELL_GO):
+/// SPELL_ATTR_EX2_INITIATE_COMBAT_POST_CAST (attrEx2 0x00100000) without
+/// SPELL_ATTR_CANCELS_AUTO_ATTACK_COMBAT (attr 0x00100000).
+/// Covers Cheap Shot (1833), Shiv (5938), Judgement (20271), and stealth/behind openers
+/// (Ambush, Garrote, Backstab, Mutilate, Pounce, Ravage, Shred).
+inline constexpr bool initiatesMeleeAutoAttackPostCast(uint32_t attr,
+                                                       uint32_t /*attrEx*/,
+                                                       uint32_t attrEx2) {
+    constexpr uint32_t kAttrCancelsAutoAttack         = 0x00100000u;
+    constexpr uint32_t kAttrEx2InitiateCombatPostCast = 0x00100000u;
+    if ((attr & kAttrCancelsAutoAttack) != 0) return false;
+    return (attrEx2 & kAttrEx2InitiateCombatPostCast) != 0;
 }
 
 /// Spell.dbc AttributesEx combo-point / reactive-proc flags (CMaNGOS SpellDefines.h):

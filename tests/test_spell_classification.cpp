@@ -692,3 +692,80 @@ TEST_CASE("Overpower reactive combo-point flag is distinguished from Rogue/Druid
         CHECK_FALSE(requiresComboPointsPrerequisite(reactiveAttrEx));
     }
 }
+
+TEST_CASE("TBC 2.4.3 Spell.dbc matrix for melee auto-attack initiation and auto-target",
+          "[spell][classification][autoattack][cheapshot][tbc]") {
+    using namespace wowee::game::spellclass;
+
+    struct Row {
+        uint32_t id;
+        const char* name;
+        uint32_t attr0;
+        uint32_t attrEx;
+        uint32_t attrEx2;
+        bool expectOnCast;
+        bool expectPostCast;
+        bool expectAutoTarget;
+    };
+
+    // Exact Attribute columns from TBC 2.4.3 Spell.dbc.
+    const Row matrix[] = {
+        // Post-cast combat initiators (SPELL_ATTR_EX2_INITIATE_COMBAT_POST_CAST = 0x00100000)
+        {1833u,  "Cheap Shot",         0x00270010u, 0x08040000u, 0x00100000u, false, true,  true},
+        {5938u,  "Shiv",               0x00250010u, 0x08000000u, 0x00100000u, false, true,  true},
+        {20271u, "Judgement",          0x00050000u, 0x00000000u, 0x00100000u, false, true,  true},
+        {8676u,  "Ambush",             0x00270010u, 0x08000200u, 0x00100000u, false, true,  true},
+        {703u,   "Garrote",            0x00270010u, 0x08000200u, 0x00100000u, false, true,  true},
+        {53u,    "Backstab",           0x00050010u, 0x08000200u, 0x00100000u, false, true,  true},
+        {1329u,  "Mutilate",           0x00050010u, 0x08000200u, 0x00100000u, false, true,  true},
+        {9005u,  "Pounce",             0x00260010u, 0x08000200u, 0x00100000u, false, true,  true},
+        {6785u,  "Ravage",             0x00260010u, 0x08000200u, 0x00100000u, false, true,  true},
+        {5221u,  "Shred",              0x00040010u, 0x08000200u, 0x00100000u, false, true,  true},
+        // Immediate on-cast combat initiators (SPELL_ATTR_EX_INITIATES_COMBAT_ENABLES_AUTO_ATTACK)
+        {1752u,  "Sinister Strike",    0x00050010u, 0x08000200u, 0x00000000u, true,  false, true},
+        {408u,   "Kidney Shot",        0x00050010u, 0x00440200u, 0x00000000u, true,  false, true},
+        {16511u, "Hemorrhage",         0x04050010u, 0x08000200u, 0x00000000u, true,  false, true},
+        {14251u, "Riposte",            0x00050010u, 0x00020200u, 0x00000000u, true,  false, true},
+        {14278u, "Ghostly Strike",     0x00050010u, 0x08000200u, 0x00000000u, true,  false, true},
+        {2098u,  "Eviscerate",         0x00050010u, 0x00100200u, 0x00000000u, true,  false, true},
+        {12294u, "Mortal Strike",      0x00050010u, 0x08000200u, 0x00000000u, true,  false, true},
+        {7386u,  "Sunder Armor",       0x00050010u, 0x08000200u, 0x00000000u, true,  false, true},
+        {772u,   "Rend",               0x00050010u, 0x08000200u, 0x00000000u, true,  false, true},
+        {1715u,  "Hamstring",          0x00050010u, 0x08000200u, 0x00000000u, true,  false, true},
+        {7384u,  "Overpower",          0x00250010u, 0x48100200u, 0x00000000u, true,  false, true},
+        {35395u, "Crusader Strike",    0x00050000u, 0x00000200u, 0x00000000u, true,  false, true},
+        {17364u, "Stormstrike",        0x00050000u, 0x00000200u, 0x00000000u, true,  false, true},
+        // On-next-swing strikes (SPELL_ATTR_ON_NEXT_SWING_NO_DAMAGE / SPELL_ATTR_ON_NEXT_SWING)
+        {78u,    "Heroic Strike",      0x00050014u, 0x08000000u, 0x00000000u, true,  false, true},
+        {2973u,  "Raptor Strike",      0x00050404u, 0x00000000u, 0x00000000u, true,  false, true},
+        {845u,   "Cleave",             0x00050014u, 0x00000200u, 0x00001000u, true,  false, true},
+        {6807u,  "Maul",               0x00000414u, 0x08000200u, 0x00000000u, true,  false, true},
+        // CC / utility abilities that MUST NOT start auto-attack (CANCELS_AUTO_ATTACK or unflagged)
+        {6770u,  "Sap",                0x00370010u, 0x08040520u, 0x00000000u, false, false, false},
+        {1776u,  "Gouge",              0x00150010u, 0x08040000u, 0x00000000u, false, false, false},
+        {2094u,  "Blind",              0x40110010u, 0x00000000u, 0x00000000u, false, false, false},
+        {921u,   "Pick Pocket",        0x00030010u, 0x00221020u, 0x00000000u, false, false, false},
+        {1725u,  "Distract",           0x40040010u, 0x00020520u, 0x00000000u, false, false, false},
+        {118u,   "Polymorph",          0x40110000u, 0x00040000u, 0x00000040u, false, false, false},
+        {2637u,  "Hibernate",          0x40110000u, 0x00040000u, 0x00080000u, false, false, false},
+        {1499u,  "Freezing Trap",      0x00010000u, 0x00000000u, 0x00000000u, false, false, false},
+        {22570u, "Maim",               0x00140010u, 0x00540000u, 0x00000000u, false, false, false},
+        {20066u, "Repentance",         0x00110000u, 0x00040000u, 0x00000000u, false, false, false},
+        {19503u, "Scatter Shot",       0x00110002u, 0x00000000u, 0x00020000u, false, false, false},
+        // Harmful ranged spells and helpful spells: never start melee auto-attack
+        {133u,   "Fireball",           0x00010000u, 0x00000000u, 0x00000000u, false, false, false},
+        {585u,   "Smite",              0x00010000u, 0x00000000u, 0x00000000u, false, false, false},
+        {589u,   "Shadow Word: Pain",  0x00050000u, 0x00000000u, 0x00080000u, false, false, false},
+        {2764u,  "Throw",              0x00410012u, 0x00000000u, 0x00000000u, false, false, false},
+        {2061u,  "Flash Heal",         0x00010000u, 0x00000000u, 0x00000000u, false, false, false},
+        // Ranged auto-repeat: auto-acquires hostile target, does not start melee swing
+        {75u,    "Auto Shot",          0x00010002u, 0x00000000u, 0x00000020u, false, false, true},
+    };
+
+    for (const auto& r : matrix) {
+        CAPTURE(r.id, r.name);
+        CHECK(initiatesMeleeAutoAttackOnCast(r.attr0, r.attrEx, r.attrEx2) == r.expectOnCast);
+        CHECK(initiatesMeleeAutoAttackPostCast(r.attr0, r.attrEx, r.attrEx2) == r.expectPostCast);
+        CHECK(autoAcquiresHostileTarget(r.id, r.attr0, r.attrEx, r.attrEx2) == r.expectAutoTarget);
+    }
+}

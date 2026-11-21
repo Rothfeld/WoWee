@@ -932,6 +932,91 @@ TEST_CASE("spell attack attribute starts melee autoattack", "[replay][strike-aut
     }
 }
 
+TEST_CASE("Cheap Shot and other INITIATE_COMBAT_POST_CAST spells start melee autoattack on SMSG_SPELL_GO",
+          "[replay][strike-autoattack][cheapshot]") {
+    using wowee::game::Opcode;
+
+    auto makeTbcSpellGo = [](uint64_t caster, uint32_t spellId, uint64_t target) {
+        wowee::network::Packet p(wowee::game::wireOpcode(Opcode::SMSG_SPELL_GO));
+        p.writePackedGuid(caster);
+        p.writePackedGuid(caster);
+        p.writeUInt32(spellId);
+        p.writeUInt16(0);      // castFlags
+        p.writeUInt32(0);      // timestamp
+        p.writeUInt8(1);       // hitCount
+        p.writeUInt64(target); // hitTarget[0]
+        p.writeUInt8(0);       // missCount
+        p.writeUInt32(0x02u);  // TARGET_FLAG_UNIT
+        p.writePackedGuid(target);
+        return p;
+    };
+
+    SECTION("Cheap Shot (attrEx2=0x00100000) defers auto-attack until SMSG_SPELL_GO") {
+        Session s("tbc");
+        huntMob(s);
+        constexpr uint32_t cheapShot = 1833;
+        auto& entry = s.handler().spellNameCacheRef()[cheapShot];
+        entry.name = "Cheap Shot";
+        entry.attr = 0x00270010u;
+        entry.attrEx = 0x08040000u;
+        entry.attrEx2 = 0x00100000u;
+        s.handler().spellNameCacheLoadedRef() = true;
+
+        s.handler().castSpell(cheapShot, kMob);
+        REQUIRE(s.sent().of(Opcode::CMSG_CAST_SPELL).size() == 1);
+        // Not started before server confirmation (so failed out-of-stealth cast never swings).
+        CHECK_FALSE(s.handler().hasAutoAttackIntent());
+        CHECK(s.sent().of(Opcode::CMSG_ATTACKSWING).empty());
+
+        s.receive(makeTbcSpellGo(Session::kPlayerGuid, cheapShot, kMob));
+        CHECK(s.handler().hasAutoAttackIntent());
+        CHECK(s.sent().of(Opcode::CMSG_ATTACKSWING).size() == 1);
+    }
+
+    SECTION("Heroic Strike (ON_NEXT_SWING_NO_DAMAGE) starts auto-attack on cast send") {
+        Session s("tbc");
+        huntMob(s);
+        constexpr uint32_t heroicStrike = 78;
+        auto& entry = s.handler().spellNameCacheRef()[heroicStrike];
+        entry.name = "Heroic Strike";
+        entry.attr = 0x00050014u;
+        entry.attrEx = 0x08000000u;
+        entry.attrEx2 = 0x00000000u;
+        s.handler().spellNameCacheLoadedRef() = true;
+
+        s.handler().castSpell(heroicStrike, kMob);
+        REQUIRE(s.sent().of(Opcode::CMSG_CAST_SPELL).size() == 1);
+        CHECK(s.handler().hasAutoAttackIntent());
+        CHECK(s.sent().of(Opcode::CMSG_ATTACKSWING).size() == 1);
+    }
+
+    SECTION("Sap, Gouge, Blind, and Pick Pocket never start auto-attack even on SMSG_SPELL_GO") {
+        struct CcCase { uint32_t id; const char* name; uint32_t attr0; uint32_t attrEx; };
+        const CcCase cases[] = {
+            {6770u, "Sap",         0x00370010u, 0x08040520u},
+            {1776u, "Gouge",       0x00150010u, 0x08040000u},
+            {2094u, "Blind",       0x40110010u, 0x00000000u},
+            {921u,  "Pick Pocket", 0x00030010u, 0x00221020u},
+        };
+        for (const auto& cc : cases) {
+            CAPTURE(cc.id, cc.name);
+            Session s("tbc");
+            huntMob(s);
+            auto& entry = s.handler().spellNameCacheRef()[cc.id];
+            entry.name = cc.name;
+            entry.attr = cc.attr0;
+            entry.attrEx = cc.attrEx;
+            entry.attrEx2 = 0u;
+            s.handler().spellNameCacheLoadedRef() = true;
+
+            s.handler().castSpell(cc.id, kMob);
+            s.receive(makeTbcSpellGo(Session::kPlayerGuid, cc.id, kMob));
+            CHECK_FALSE(s.handler().hasAutoAttackIntent());
+            CHECK(s.sent().of(Opcode::CMSG_ATTACKSWING).empty());
+        }
+    }
+}
+
 TEST_CASE("removed target notifies FrameXML after clearing selection", "[replay][target-removal]") {
     for (const bool destroy : {false, true}) {
         Session s;
