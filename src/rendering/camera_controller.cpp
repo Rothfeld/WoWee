@@ -3535,6 +3535,7 @@ void CameraController::reset() {
     grounded = true;
     swimming = false;
     sitting = false;
+    seatedInChair_ = false;
     autoRunning = false;
     noGroundTimer_ = 0.0f;
     autoUnstuckFired_ = false;
@@ -3764,6 +3765,7 @@ void CameraController::teleportTo(const glm::vec3& pos) {
     grounded = true;
     swimming = false;
     sitting = false;
+    seatedInChair_ = false;
     lastGroundZ = pos.z;
     noGroundTimer_ = 0.0f;  // Reset grace period so terrain has time to stream
     autoUnstuckFired_ = false;

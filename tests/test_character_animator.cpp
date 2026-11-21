@@ -1,6 +1,7 @@
 #include <catch_amalgamated.hpp>
 #include "rendering/animation/character_animator.hpp"
 #include "rendering/animation/animation_ids.hpp"
+#include "rendering/animation/stand_pose.hpp"
 #include "game/inventory.hpp"
 
 using namespace wowee::rendering;
@@ -197,5 +198,93 @@ TEST_CASE("CharacterAnimator transitions immediately to Stand, Ready1H, or Steal
         animator.setFrameInput(frame);
         animator.update(dt60);
         REQUIRE(animator.getLastOutput().animId == anim::STEALTH_STAND);
+    }
+}
+
+TEST_CASE("Chair stand states play low, medium, and high chair loops and stand back up cleanly", "[animation][chair][stand-state]") {
+    struct ChairCase { uint8_t standState; uint32_t expectedAnim; };
+    for (const ChairCase c : {
+             ChairCase{ActivityFSM::STAND_STATE_SIT_CHAIR, anim::SIT_CHAIR_MED},
+             ChairCase{ActivityFSM::STAND_STATE_SIT_LOW,   anim::SIT_CHAIR_LOW},
+             ChairCase{ActivityFSM::STAND_STATE_SIT_MED,   anim::SIT_CHAIR_MED},
+             ChairCase{ActivityFSM::STAND_STATE_SIT_HIGH,  anim::SIT_CHAIR_HIGH},
+         }) {
+        INFO("standState=" << static_cast<int>(c.standState));
+        // Remote player standPose() mapping matches local ActivityFSM.
+        const auto pose = standPose(c.standState);
+        CHECK(pose.enter == 0);
+        CHECK(pose.idle == c.expectedAnim);
+        CHECK(pose.leave == 0);
+        CHECK(isSeatedStandState(c.standState));
+        CHECK(isSeatedBaseAnimation(c.expectedAnim));
+
+        CharacterAnimator animator;
+        AnimCapabilitySet caps;
+        caps.resolvedStand = anim::STAND;
+        animator.setCapabilities(caps);
+
+        animator.setStandState(c.standState);
+        CharacterAnimator::FrameInput frame;
+        frame.grounded = true;
+        frame.sitting = true;
+        animator.setFrameInput(frame);
+        animator.update(0.016f);
+        REQUIRE(animator.getLastOutput().animId == c.expectedAnim);
+        REQUIRE(animator.getLastOutput().loop);
+
+        // Standing back up exits chair loop immediately (no sit-up transition).
+        animator.setStandState(ActivityFSM::STAND_STATE_STAND);
+        frame.sitting = false;
+        animator.setFrameInput(frame);
+        animator.update(0.016f);
+        REQUIRE(animator.getLastOutput().animId == anim::STAND);
+    }
+}
+
+TEST_CASE("Ground sit, sleep, and kneel play enter, loop, and exit animations", "[animation][stand-state]") {
+    struct PoseCase { uint8_t state; uint32_t enter; uint32_t loop; uint32_t leave; };
+    for (const PoseCase c : {
+             PoseCase{ActivityFSM::STAND_STATE_SIT,   anim::SIT_GROUND_DOWN, anim::SITTING,    anim::SIT_GROUND_UP},
+             PoseCase{ActivityFSM::STAND_STATE_SLEEP, anim::SLEEP_DOWN,      anim::SLEEP,      anim::SLEEP_UP},
+             PoseCase{ActivityFSM::STAND_STATE_KNEEL, anim::KNEEL_START,     anim::KNEEL_LOOP, anim::KNEEL_END},
+         }) {
+        INFO("standState=" << static_cast<int>(c.state));
+        CharacterAnimator animator;
+        AnimCapabilitySet caps;
+        caps.resolvedStand = anim::STAND;
+        animator.setCapabilities(caps);
+
+        animator.setStandState(c.state);
+        CharacterAnimator::FrameInput frame;
+        frame.grounded = true;
+        frame.sitting = true;
+        frame.haveAnimState = true;
+        frame.currentAnimId = c.enter;
+        frame.currentAnimDuration = 1.0f;
+        frame.currentAnimTime = 0.2f;
+        animator.setFrameInput(frame);
+        animator.update(0.016f);
+        REQUIRE(animator.getLastOutput().animId == c.enter);
+        REQUIRE_FALSE(animator.getLastOutput().loop);
+
+        frame.currentAnimTime = 1.0f;
+        animator.setFrameInput(frame);
+        animator.update(0.016f);
+        REQUIRE(animator.getLastOutput().animId == c.loop);
+        REQUIRE(animator.getLastOutput().loop);
+
+        animator.setStandState(ActivityFSM::STAND_STATE_STAND);
+        frame.sitting = false;
+        frame.currentAnimId = c.leave;
+        frame.currentAnimTime = 0.2f;
+        animator.setFrameInput(frame);
+        animator.update(0.016f);
+        REQUIRE(animator.getLastOutput().animId == c.leave);
+        REQUIRE_FALSE(animator.getLastOutput().loop);
+
+        frame.currentAnimTime = 1.0f;
+        animator.setFrameInput(frame);
+        animator.update(0.016f);
+        REQUIRE(animator.getLastOutput().animId == anim::STAND);
     }
 }

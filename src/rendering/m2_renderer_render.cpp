@@ -1751,6 +1751,7 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                                 }
                             }
                         }
+                        bool anyVisible = false;
                         for (size_t j = lodIdx; j < lodEnd; j++) {
                             const auto& p = pending[j];
                             auto& inst = instances[p.instanceIdx];
@@ -1779,6 +1780,7 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                             e.uvScale = glm::vec4(uvScale, 1.0f, 1.0f);
                             e.tintPacked = m2_internal::packAnimatedBatchTint(model, batch, inst);
                             e.fadeAlpha = p.fadeAlpha * m2_internal::animatedBatchOpacity(model, batch, inst);
+                            if (e.fadeAlpha >= 1.0f / 255.0f) anyVisible = true;
                             e.useBones = (p.useBones && !kM2NoSkinning) ? 1 : 0;
                             e.boneBase = p.useBones ? static_cast<int32_t>(inst.megaBoneOffset) : 0;
                             e.boneCount = static_cast<int32_t>(inst.boneMatrices.size());
@@ -1801,6 +1803,10 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                                 }
                             }
                             instanceDataCount_++;
+                        }
+                        if (!anyVisible) {
+                            instanceDataCount_ = drawOffset;
+                            continue;
                         }
                     }
 

@@ -264,6 +264,10 @@ void WorldEntryCallbackHandler::setupCallbacks() {
                 cameraController->teleportTo(renderPos);
                 cameraController->arriveAirborneIfFlying();
                 cameraController->setFacingYaw(facing);
+                // Chair sits arrive as SMSG_STANDSTATE_UPDATE + MSG_MOVE_TELEPORT_ACK
+                // in the same tick; teleportTo() resets sitting/seatedInChair_, so
+                // re-apply the server-confirmed stand state immediately afterward.
+                cameraController->applyServerStandState(gameHandler_.getStandState());
             }
             if (renderer_.getCameraController()) {
                 auto* ft = renderer_.getCameraController()->getFollowTargetMutable();

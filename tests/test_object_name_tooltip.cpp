@@ -19,8 +19,9 @@ TEST_CASE("generic objects label themselves from floatingTooltip and highlight",
     CHECK(objectNameTooltip(5, 1, 1) == ObjectNameTooltip::Floating);
     // Unlabelled decorative scenery (953 rows with neither).
     CHECK(objectNameTooltip(5, 0, 0) == ObjectNameTooltip::None);
-    // Chairs keep their cursor only; other types always name themselves.
-    CHECK(objectNameTooltip(7, 1, 1) == ObjectNameTooltip::None);
+    // Chairs show their name in the bottom-right tooltip (Bench 133469 on
+    // native 2.4.3), as do chests and other usable types.
+    CHECK(objectNameTooltip(7, 1, 1) == ObjectNameTooltip::Default);
     CHECK(objectNameTooltip(3, 0, 0) == ObjectNameTooltip::Default);
 }
 
@@ -57,8 +58,8 @@ TEST_CASE("types the server never uses offer neither cursor nor name", "[gameobj
 TEST_CASE("types the server uses offer a cursor and a click", "[gameobject][type-rule]") {
     struct Row { uint32_t type; const char* cursor; };
     for (const Row r : {Row{0, "Interact"}, Row{1, "Interact"}, Row{2, "Interact"}, Row{3, "Interact"},
-                        Row{7, "Interact"}, Row{9, "Inspect"}, Row{10, "Interact"}, Row{13, "Interact"},
-                        Row{17, "Fishing"}, Row{18, "Interact"}, Row{19, "Mail"}, Row{22, "Interact"},
+                        Row{9, "Inspect"}, Row{10, "Interact"}, Row{13, "Interact"},
+                        Row{17, "Interact"}, Row{18, "Interact"}, Row{19, "Mail"}, Row{22, "Interact"},
                         Row{23, "Interact"}, Row{24, "Interact"}, Row{26, "Interact"}}) {
         INFO("type " << r.type);
         const auto a = gameObjectAffordance(r.type, 0, 0, true);
@@ -66,6 +67,26 @@ TEST_CASE("types the server uses offer a cursor and a click", "[gameobject][type
         CHECK(std::string(a.cursor) == r.cursor);
         CHECK(gameObjectTypeRule(r.type).source == GameObjectRuleSource::Server);
     }
+}
+
+TEST_CASE("every usable GameObject type 0..34 maps to a valid TBC 2.4.3 cursor asset", "[gameobject][type-rule][cursor]") {
+    for (uint32_t t = 0; t < 35; ++t) {
+        const auto& r = gameObjectTypeRule(t);
+        if (!r.use) {
+            CHECK(r.cursor == nullptr);
+            continue;
+        }
+        REQUIRE(r.cursor != nullptr);
+        const std::string c(r.cursor);
+        // Verified against TBC 2.4.3 Interface\Cursor\*.blp (Fishing.blp does not exist).
+        CHECK((c == "Interact" || c == "Inspect" || c == "Mail" || c == "Buy"));
+    }
+    // Native 2.4.3 chair (Bench 133469, Chair 180046): gear cursor + default tooltip.
+    const auto chair = gameObjectAffordance(7, 3, 2, true);
+    CHECK(chair.use);
+    CHECK(std::string(chair.cursor) == "Interact");
+    CHECK(chair.tooltip == ObjectNameTooltip::Default);
+    CHECK(gameObjectTypeRule(7).source == GameObjectRuleSource::Native);
 }
 
 TEST_CASE("generic objects are named from their data and never used", "[gameobject][type-rule]") {

@@ -443,6 +443,10 @@ TEST_CASE("the .m2 a model reference means", "[m2]") {
     // WMO doodads, ADT doodads and GameObjectDisplayInfo all name models with
     // the extension the art was authored with; what ships is .m2.
     CHECK(pipeline::modelPathToM2("World\\Tree.mdx") == "World\\Tree.m2");
+    CHECK(pipeline::modelPathToM2("World\\Goober\\G_BarrelExplode.mdx") == "World\\Goober\\G_BarrelExplode.m2");
+    CHECK(pipeline::modelPathToM2("World\\Goober\\G_EggAlien.mdx") == "World\\Goober\\G_EggAlien.m2");
+    CHECK(pipeline::modelPathToM2("WORLD\\GENERIC\\HUMAN\\PASSIVE DOODADS\\BENCHES\\INNBENCH.MDX") ==
+          "WORLD\\GENERIC\\HUMAN\\PASSIVE DOODADS\\BENCHES\\INNBENCH.m2");
 
     SECTION(".mdl too, which is the half three of the nine copies missed") {
         // Those three left the reference as ".mdl", the asset manager found

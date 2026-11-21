@@ -244,6 +244,7 @@ void main() {
     // mountains behind them stay (docs/wmo-fog.md).
     const float fogDepth = max(-(view * vec4(FragPos, 1.0)).z, 0.0);
     if (!isInteriorFog && fogDepth > outdoorFogParams.y) discard;
+    if (vFadeAlpha < 1.0 / 255.0) discard;
     if (alphaTest == 3) {
         // Ground clutter blends by its texture alpha. 2.4.3 draws detail
         // doodads with soft, see-through blade edges where its alpha-key
