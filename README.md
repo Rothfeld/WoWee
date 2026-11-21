@@ -228,16 +228,20 @@ fire ring together by the caster's `Base` (19) attachment scale (`0.5x` Gnome, `
 Human, `2.0x` at scale 2). Evidence:
 `_experiments/20261120T130700Z.hellfire_ground_decal/` in the workspace.
 Shapeshift and transform auras (`SPELL_AURA_MOD_SHAPESHIFT` 36, `SPELL_AURA_TRANSFORM` 56)
-replay their `SpellVisual.ImpactKit` when the aura ends and the unit leaves form
-(Ghost Wolf 2645 `Purge_Impact_Chest.m2`, Bear/Cat Form 5487/768
-`DruidMorph_Impact_Base.m2`, Polymorph 118 `Polymorph_Impact_Base.m2`; `.demorph`
-without an aura plays nothing). `EntitySpawner::syncPlayerMorphs` transfers active
-spell, aura, and channel visuals across player morph instance swaps (`transferUnitVisuals`).
+play their `SpellVisual.ImpactKit` when applied without a preceding `SMSG_SPELL_GO`
+(e.g. server `AddAura` / `.aura 8041`) and replay it when the aura ends as the unit leaves form
+alive or on death (Ghost Wolf 2645 `Purge_Impact_Chest.m2`, Bear/Cat Form 5487/768 and
+Druid of the Fang `Serpent Form` 8041 `DruidMorph_Impact_Base.m2`, Polymorph 118
+`Polymorph_Impact_Base.m2`; `.demorph` / `.npc setmodel` without an aura plays nothing).
+`EntitySpawner::removeCreatureForNewDisplay` preserves `unitTransformAuraVisuals_`, skips spawn
+fade-in (`creatureSpawnFadeDuration`), and holds the old instance (`setInstanceReplaced`) until
+`spawnOnlineCreature` transfers active spell, aura, and channel visuals (`transferUnitVisuals`),
+matching `EntitySpawner::syncPlayerMorphs`.
 Newborn M2 particles apply `drag` over their initial age, and `particleTailVector`
 clamps tail span to `min(tailLength, age)` so high-drag tail emitters such as
 `Purge_Impact_Chest.m2` #1 (`drag=30`, `tailLength=4.75`) do not draw multi-yard
 spikes on birth frames. Evidence: `_experiments/20261120T115300Z.ghost_wolf_visuals/`
-in the workspace.
+and `_experiments/20261120T233700Z.druid_death_revert_fx_parity/` in the workspace.
 Footprint decals (`FootprintRenderer`, `footprint.vert.glsl`, `footprint.frag.glsl`)
 render on `TerrainType.dbc` surfaces with bit 0 set (`Snow`, `Sand`) using the
 shipped `FootprintTextures.dbc` BLP RGB (pure black, neutral darkening rather

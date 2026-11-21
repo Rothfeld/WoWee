@@ -262,8 +262,15 @@ public:
     void cancelPrecastVisuals(uint32_t attachInstanceId);
 
     /// Re-bind active spell visuals, aura visuals, channel visuals, and beams
-    /// when a unit swaps render instance (e.g. player morph/shapeshift IN/OUT).
+    /// when a unit swaps render instance (e.g. player/creature morph IN/OUT).
     void transferUnitVisuals(uint32_t fromInstanceId, uint32_t toInstanceId);
+
+    /// True if `playSpellVisual(..., useImpactKit=true, attachInstanceId)` has
+    /// already fired `visualId` on this unit within `kRecentImpactDedupSeconds`,
+    /// avoiding duplicate ImpactKit playback when `SMSG_SPELL_GO` precedes the
+    /// `SMSG_UPDATE_OBJECT` aura field update.
+    static constexpr float kRecentImpactDedupSeconds = 1.0f;
+    bool hasRecentImpactVisual(uint32_t attachInstanceId, uint32_t visualId) const;
 
     // Remove all active spell visual instances and reset caches.
     // Called on map change / combat reset.
@@ -582,6 +589,7 @@ private:
     uint32_t nextSpellVisualModelId_ = 999000; // Reserved range 999000-999799
     uint32_t nextProjectileModelId_ = 998000;  // Reserved range 998000-998999
     std::unordered_map<std::string, uint32_t> projectileModelIds_;
+    std::unordered_map<uint32_t, std::unordered_map<uint32_t, float>> recentUnitImpacts_;
     bool spellVisualDbcLoaded_ = false;
 };
 

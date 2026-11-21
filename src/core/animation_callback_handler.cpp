@@ -121,7 +121,11 @@ void AnimationCallbackHandler::setupCallbacks() {
             renderer_.getCharacterRenderer()->playAnimation(instanceId,
                 alreadyDead ? rendering::anim::DEAD : rendering::anim::DEATH, alreadyDead);
             // Its casting effects die with it (SpellVisualSystem::removeCasterStages).
-            if (auto* visuals = renderer_.getSpellVisualSystem()) visuals->removeCasterStages(instanceId);
+            if (auto* visuals = renderer_.getSpellVisualSystem()) {
+                visuals->removeCasterStages(instanceId);
+                const uint32_t drawn = entitySpawner_.drawnInstanceIdForGuid(guid);
+                if (drawn != 0 && drawn != instanceId) visuals->removeCasterStages(drawn);
+            }
         }
         if (!alreadyDead && renderer_.getAudioCoordinator()) {
             auto* ac = renderer_.getAudioCoordinator();

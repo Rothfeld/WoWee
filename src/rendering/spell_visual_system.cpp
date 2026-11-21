@@ -794,6 +794,8 @@ void SpellVisualSystem::playSpellVisual(uint32_t visualId, const glm::vec3& worl
 
     // Cast and impact stages are independent, including deliberately empty kits.
     if (useImpactKit) {
+        if (attachInstanceId != 0)
+            recentUnitImpacts_[attachInstanceId][visualId] = beamClock_;
         // A spell landing on a unit plays its ImpactKit and its TargetImpactKit
         // there. Burn 43217 (Zul'jin's Column of Fire) has only the latter:
         // kit 213, Fire ImpactDD Low Chest on each player it burns.
@@ -1860,6 +1862,18 @@ void SpellVisualSystem::update(float deltaTime) {
             glm::vec3 position;
             return !characters->getInstancePosition(entry.first, position);
         });
+        for (auto it = recentUnitImpacts_.begin(); it != recentUnitImpacts_.end(); ) {
+            glm::vec3 position;
+            if (!characters->getInstancePosition(it->first, position)) {
+                it = recentUnitImpacts_.erase(it);
+                continue;
+            }
+            std::erase_if(it->second, [&](const auto& stamp) {
+                return (beamClock_ - stamp.second) > kRecentImpactDedupSeconds;
+            });
+            if (it->second.empty()) it = recentUnitImpacts_.erase(it);
+            else ++it;
+        }
         for (auto it = unitChannelVisuals_.begin(); it != unitChannelVisuals_.end();) {
             glm::vec3 position;
             if (!characters->getInstancePosition(it->first, position)) {
@@ -2174,6 +2188,15 @@ void SpellVisualSystem::cancelPrecastVisuals(uint32_t attachInstanceId) {
     }
 }
 
+bool SpellVisualSystem::hasRecentImpactVisual(uint32_t attachInstanceId, uint32_t visualId) const {
+    if (!attachInstanceId || !visualId) return false;
+    const auto unitIt = recentUnitImpacts_.find(attachInstanceId);
+    if (unitIt == recentUnitImpacts_.end()) return false;
+    const auto visIt = unitIt->second.find(visualId);
+    if (visIt == unitIt->second.end()) return false;
+    return (beamClock_ - visIt->second) <= kRecentImpactDedupSeconds;
+}
+
 void SpellVisualSystem::transferUnitVisuals(uint32_t fromInstanceId, uint32_t toInstanceId) {
     if (!fromInstanceId || !toInstanceId || fromInstanceId == toInstanceId) return;
     auto* characters = renderer_ ? renderer_->getCharacterRenderer() : nullptr;
@@ -2225,6 +2248,13 @@ void SpellVisualSystem::transferUnitVisuals(uint32_t fromInstanceId, uint32_t to
         fieldChannels_.insert(std::move(node));
     }
     if (heldChannelKits_.erase(fromInstanceId)) heldChannelKits_.insert(toInstanceId);
+    if (auto node = recentUnitImpacts_.extract(fromInstanceId)) {
+        auto& dst = recentUnitImpacts_[toInstanceId];
+        for (const auto& [vis, stamp] : node.mapped()) {
+            auto [it, inserted] = dst.emplace(vis, stamp);
+            if (!inserted) it->second = std::max(it->second, stamp);
+        }
+    }
     for (auto& draining : drainingCasterEffects_)
         if (draining.attachInstanceId == fromInstanceId) draining.attachInstanceId = toInstanceId;
     for (auto& beam : castBeams_) {
@@ -2243,6 +2273,7 @@ void SpellVisualSystem::reset() {
     activeAreaSounds_.clear();
     unitAuraVisuals_.clear();
     unitChannelVisuals_.clear();
+    recentUnitImpacts_.clear();
     beams_.clear();
     hopBeams_.clear();
     channelTargets_.clear();

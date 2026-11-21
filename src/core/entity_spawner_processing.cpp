@@ -92,6 +92,7 @@ void EntitySpawner::processAsyncCreatureResults(bool unlimited) {
         // point, blocking ALL ready futures (including zero-cost ones) after a
         // single upload, which throttled creature spawn throughput during world load.
         if (result.permanent_failure) {
+            removeReplacedCreatureInstance(result.guid);
             nonRenderableCreatureDisplayIds_.insert(result.displayId);
             creaturePermanentFailureGuids_.insert(result.guid);
             pendingCreatureSpawnGuids_.erase(result.guid);
@@ -99,6 +100,7 @@ void EntitySpawner::processAsyncCreatureResults(bool unlimited) {
             continue;
         }
         if (!result.valid || !result.model) {
+            removeReplacedCreatureInstance(result.guid);
             pendingCreatureSpawnGuids_.erase(result.guid);
             creatureSpawnRetryDeadlines_.erase(result.guid);
             continue;
@@ -159,6 +161,7 @@ void EntitySpawner::processAsyncCreatureResults(bool unlimited) {
         charRenderer->setPredecodedBLPCache(&result.predecodedTextures);
         if (!charRenderer->loadModel(*result.model, result.modelId)) {
             charRenderer->setPredecodedBLPCache(nullptr);
+            removeReplacedCreatureInstance(result.guid);
             nonRenderableCreatureDisplayIds_.insert(result.displayId);
             creaturePermanentFailureGuids_.insert(result.guid);
             pendingCreatureSpawnGuids_.erase(result.guid);
@@ -345,6 +348,7 @@ void EntitySpawner::processCreatureSpawnQueue(bool unlimited) {
         }
 
         if (nonRenderableCreatureDisplayIds_.count(s.displayId)) {
+            removeReplacedCreatureInstance(s.guid);
             pendingCreatureSpawnGuids_.erase(s.guid);
             creatureSpawnRetryDeadlines_.erase(s.guid);
             processed++;
@@ -374,6 +378,7 @@ void EntitySpawner::processCreatureSpawnQueue(bool unlimited) {
 
             std::string m2Path = getModelPathForDisplayId(s.displayId);
             if (m2Path.empty()) {
+                removeReplacedCreatureInstance(s.guid);
                 nonRenderableCreatureDisplayIds_.insert(s.displayId);
                 creaturePermanentFailureGuids_.insert(s.guid);
                 pendingCreatureSpawnGuids_.erase(s.guid);
@@ -1844,12 +1849,19 @@ void EntitySpawner::despawnCreatureFromServer(uint64_t guid) {
 }
 
 void EntitySpawner::despawnCreature(uint64_t guid) {
+    despawnCreatureInternal(guid, /*holdInstanceForDisplaySwap=*/false);
+}
+
+void EntitySpawner::despawnCreatureInternal(uint64_t guid, bool holdInstanceForDisplaySwap) {
     // If this guid is a PLAYER, it will be tracked in playerInstances_.
     // Route to the correct despawn path so we don't leak instances.
     if (playerInstances_.count(guid)) {
         despawnPlayer(guid);
         return;
     }
+
+    if (!holdInstanceForDisplaySwap)
+        removeReplacedCreatureInstance(guid);
 
     pendingRemotePlayerMounts_.erase(guid);
     removeRemotePlayerMount(guid);
@@ -1874,7 +1886,14 @@ void EntitySpawner::despawnCreature(uint64_t guid) {
     if (it == creatureInstances_.end()) return;
 
     if (renderer_ && renderer_->getCharacterRenderer()) {
-        renderer_->getCharacterRenderer()->removeInstance(it->second);
+        auto* charRenderer = renderer_->getCharacterRenderer();
+        if (holdInstanceForDisplaySwap && it->second != 0 && charRenderer->hasInstance(it->second)) {
+            removeReplacedCreatureInstance(guid);
+            charRenderer->setInstanceReplaced(it->second, true);
+            replacedCreatureInstances_[guid] = it->second;
+        } else {
+            charRenderer->removeInstance(it->second);
+        }
     }
 
     creatureInstances_.erase(it);

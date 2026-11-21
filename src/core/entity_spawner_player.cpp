@@ -1173,11 +1173,18 @@ void EntitySpawner::syncUnitAuraVisuals(const game::Entity& entity, uint32_t ins
     const uint64_t guid = entity.getGuid();
     const auto prevIt = unitTransformAuraVisuals_.find(guid);
     if (prevIt != unitTransformAuraVisuals_.end()) {
+        const auto added = rendering::addedTransformAuraVisuals(prevIt->second, transformAuraVisuals);
         const auto ended = rendering::removedTransformAuraVisuals(prevIt->second, transformAuraVisuals);
-        if (!ended.empty()) {
+        if (!added.empty() || !ended.empty()) {
             glm::vec3 pos(0.0f);
             auto* cr = renderer_->getCharacterRenderer();
             if (cr && cr->getInstancePosition(instanceId, pos)) {
+                for (uint32_t visualId : added) {
+                    if (visuals->hasRecentImpactVisual(instanceId, visualId)) continue;
+                    LOG_INFO("Transform aura applied without SpellGo: guid=0x", std::hex, guid, std::dec,
+                             " playing ImpactKit visual=", visualId, " instance=", instanceId);
+                    visuals->playSpellVisual(visualId, pos, /*useImpactKit=*/true, instanceId);
+                }
                 for (uint32_t visualId : ended) {
                     LOG_INFO("Transform aura ended: guid=0x", std::hex, guid, std::dec,
                              " replaying ImpactKit visual=", visualId, " instance=", instanceId);

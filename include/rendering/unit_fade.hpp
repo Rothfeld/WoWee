@@ -31,6 +31,16 @@ inline constexpr float kUnitDespawnFadeOutSeconds = 1.5f;
 /// when the server destroys it. WoWee removed it in one frame.
 inline constexpr float kGameObjectFadeSeconds = 1.5f;
 
+/// Spawn fade-in duration for a creature instance. In-place display changes
+/// (shapeshift/transform IN or OUT, death revert to native display, `.npc setmodel`)
+/// swap models immediately at full display alpha (0 s) on TBC 2.4.3 build 8606;
+/// newly summoned/created units fade in over 2.0 s, and existing units entering
+/// view fade in over 0.5 s.
+inline constexpr float creatureSpawnFadeDuration(bool displayChanged, bool newlySpawned) {
+    if (displayChanged) return 0.0f;
+    return newlySpawned ? kUnitSpawnFadeInSeconds : kUnitFadeSeconds;
+}
+
 /// Opacity `elapsed` seconds into a spawn fade-in toward `targetOpacity`.
 inline float fadeInOpacity(float targetOpacity, float elapsed, float duration) {
     const float clampedTarget = std::clamp(targetOpacity, 0.0f, 1.0f);

@@ -294,6 +294,11 @@ void EntitySpawner::syncCreatureVisualState() {
 void EntitySpawner::shutdown() {
     clearAllQueues();
     // Clear all instances
+    for (const auto& [guid, instId] : replacedCreatureInstances_) {
+        if (renderer_ && renderer_->getCharacterRenderer() && instId != 0)
+            renderer_->getCharacterRenderer()->removeInstance(instId);
+    }
+    replacedCreatureInstances_.clear();
     creatureInstances_.clear();
     creatureModelIds_.clear();
     creatureDisplayIds_.clear();
@@ -553,6 +558,11 @@ void EntitySpawner::clearAllQueues() {
     deadCreatureGuids_.clear();
     dyingCreatureGuids_.clear();
     displayChangedCreatureGuids_.clear();
+    for (const auto& [guid, instId] : replacedCreatureInstances_) {
+        if (renderer_ && renderer_->getCharacterRenderer() && instId != 0)
+            renderer_->getCharacterRenderer()->removeInstance(instId);
+    }
+    replacedCreatureInstances_.clear();
     pendingPlayerSpawns_.clear();
     pendingPlayerSpawnGuids_.clear();
     pendingOnlinePlayerEquipment_.clear();
@@ -1257,7 +1267,11 @@ uint32_t EntitySpawner::characterInstanceIdForGuid(uint64_t guid) const {
 uint32_t EntitySpawner::drawnInstanceIdForGuid(uint64_t guid) const {
     if (const auto morph = playerMorphs_.find(guid); morph != playerMorphs_.end() && morph->second.instanceId)
         return morph->second.instanceId;
-    return characterInstanceIdForGuid(guid);
+    if (const uint32_t inst = characterInstanceIdForGuid(guid); inst != 0)
+        return inst;
+    if (const auto replaced = replacedCreatureInstances_.find(guid); replaced != replacedCreatureInstances_.end())
+        return replaced->second;
+    return 0;
 }
 
 uint32_t EntitySpawner::groundInstanceIdForGuid(uint64_t guid) const {
@@ -1611,10 +1625,21 @@ EntitySpawner::getCreatureSkinPaths(uint32_t displayId,
 // later (.npc setmodel 21631) shows the new model lying at once
 // (_experiments/20261118T1620Z.corpse_display_change, n1 and n2). WoWee
 // rebuilt both standing. Nalorakk (23576) dying in bear form is the first.
+void EntitySpawner::removeReplacedCreatureInstance(uint64_t guid) {
+    const auto it = replacedCreatureInstances_.find(guid);
+    if (it == replacedCreatureInstances_.end()) return;
+    if (renderer_ && renderer_->getCharacterRenderer() && it->second != 0)
+        renderer_->getCharacterRenderer()->removeInstance(it->second);
+    replacedCreatureInstances_.erase(it);
+}
+
 void EntitySpawner::removeCreatureForNewDisplay(uint64_t guid) {
     uint32_t retainedEmote = 0;
     if (const auto emote = creatureActiveEmotes_.find(guid); emote != creatureActiveEmotes_.end())
         retainedEmote = emote->second;
+    std::optional<std::vector<uint32_t>> retainedTransformVisuals;
+    if (const auto tv = unitTransformAuraVisuals_.find(guid); tv != unitTransformAuraVisuals_.end())
+        retainedTransformVisuals = std::move(tv->second);
     const bool corpse = deadCreatureGuids_.count(guid) != 0;
     bool dying = false;
     if (const auto instance = creatureInstances_.find(guid); corpse && instance != creatureInstances_.end()) {
@@ -1623,8 +1648,10 @@ void EntitySpawner::removeCreatureForNewDisplay(uint64_t guid) {
         dying = renderer_->getCharacterRenderer()->getAnimationState(instance->second, animation, time, duration) &&
                 animation == rendering::anim::DEATH && time < duration;
     }
-    despawnCreature(guid);
+    despawnCreatureInternal(guid, /*holdInstanceForDisplaySwap=*/true);
     if (retainedEmote != 0) creatureActiveEmotes_[guid] = retainedEmote;
+    if (retainedTransformVisuals)
+        unitTransformAuraVisuals_.emplace(guid, std::move(*retainedTransformVisuals));
     if (corpse) markCreatureDead(guid);
     if (dying) dyingCreatureGuids_.insert(guid);
     displayChangedCreatureGuids_.insert(guid);
@@ -1638,14 +1665,15 @@ void EntitySpawner::playCreatureSpawnPose(uint64_t guid, uint32_t instanceId) {
 // queued spawn was processed is a corpse on arrival: Dead (6), not a replay
 // of Death - unless its previous model was still falling
 // (removeCreatureForNewDisplay), which goes on as Death on the new one.
-bool displayChanged = false;
+// Consume displayChangedCreatureGuids_ unconditionally (dead or alive) so
+// display swaps on dying/dead units neither leak the marker nor fade from 0.
+const bool displayChanged = displayChangedCreatureGuids_.erase(guid) != 0;
 if (deadCreatureGuids_.count(guid)) {
     if (dyingCreatureGuids_.erase(guid))
         charRenderer->playAnimation(instanceId, rendering::anim::DEATH, false);
     else
         charRenderer->playAnimation(instanceId, rendering::anim::DEAD, true);
 } else {
-    displayChanged = displayChangedCreatureGuids_.erase(guid) != 0;
     // Check if this NPC has a persistent emote state (e.g. working, eating, dancing)
     uint32_t npcEmote = 0;
     if (gameHandler_) {
@@ -1697,9 +1725,7 @@ if (gameHandler_) {
 // Seed applied display opacity before the periodic sync in EntitySpawner::update()
 // runs; otherwise its first tick calls setInstanceOpacity() and cancels fade-in.
 creatureAppliedOpacity_[guid] = targetOpacity;
-const float fadeDuration = newlySpawned
-    ? rendering::kUnitSpawnFadeInSeconds
-    : rendering::kUnitFadeSeconds;
+const float fadeDuration = rendering::creatureSpawnFadeDuration(displayChanged, newlySpawned);
 charRenderer->startFadeIn(instanceId, fadeDuration, targetOpacity);
 }
 
@@ -2661,6 +2687,7 @@ void EntitySpawner::spawnOnlineCreature(uint64_t guid, uint32_t displayId, float
     // Skip if already spawned
     if (creatureInstances_.count(guid)) return;
     if (nonRenderableCreatureDisplayIds_.count(displayId)) {
+        removeReplacedCreatureInstance(guid);
         creaturePermanentFailureGuids_.insert(guid);
         return;
     }
@@ -2668,6 +2695,7 @@ void EntitySpawner::spawnOnlineCreature(uint64_t guid, uint32_t displayId, float
     // Get model path from displayId
     std::string m2Path = getModelPathForDisplayId(displayId);
     if (m2Path.empty()) {
+        removeReplacedCreatureInstance(guid);
         nonRenderableCreatureDisplayIds_.insert(displayId);
         creaturePermanentFailureGuids_.insert(guid);
         return;
@@ -2781,6 +2809,14 @@ void EntitySpawner::spawnOnlineCreature(uint64_t guid, uint32_t displayId, float
     // Start the creature in the pose the server says it is already in: dead,
     // mid-emote, or newly arrived.
     playCreatureSpawnPose(guid, instanceId);
+
+    if (const auto replaced = replacedCreatureInstances_.find(guid); replaced != replacedCreatureInstances_.end()) {
+        if (auto* visuals = renderer_->getSpellVisualSystem())
+            visuals->transferUnitVisuals(replaced->second, instanceId);
+        if (replaced->second != 0)
+            charRenderer->removeInstance(replaced->second);
+        replacedCreatureInstances_.erase(replaced);
+    }
 
     // Track instance
     creatureInstances_[guid] = instanceId;

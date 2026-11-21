@@ -411,32 +411,49 @@ TEST_CASE("SpellVisualKit CharProc 11 freezes animation in place once a sequence
     CHECK_FALSE(frozenAnimationAllowsPlay(true, 42));
 }
 
-TEST_CASE("Shapeshift and transform aura removal replays ImpactKit only when leaving form", "[aura][shapeshift]") {
+TEST_CASE("Shapeshift and transform aura transitions play ImpactKit on server apply, alive exit, and death revert", "[aura][shapeshift]") {
     using namespace wowee::rendering;
     // Ghost Wolf (2645): SPELL_AURA_MOD_SHAPESHIFT (36), SPELL_AURA_MOD_INCREASE_SPEED (31)
     const uint32_t ghostWolfAuras[3] = {36, 31, 0};
     // Polymorph (118): SPELL_AURA_MOD_CONFUSE (5), SPELL_AURA_TRANSFORM (56)
     const uint32_t polymorphAuras[3] = {5, 56, 0};
+    // Druid of the Fang Serpent Form (8041): SPELL_AURA_TRANSFORM (56), SPELL_AURA_PERIODIC_DAMAGE (27), SPELL_AURA_MOD_DAMAGE_DONE (13)
+    const uint32_t serpentFormAuras[3] = {56, 27, 13};
     // Regular buff: SPELL_AURA_MOD_STAT (29)
     const uint32_t normalBuffAuras[3] = {29, 0, 0};
 
     CHECK(auraIsTransformOrShapeshift(ghostWolfAuras));
     CHECK(auraIsTransformOrShapeshift(polymorphAuras));
+    CHECK(auraIsTransformOrShapeshift(serpentFormAuras));
     CHECK_FALSE(auraIsTransformOrShapeshift(normalBuffAuras));
 
-    // Entering Ghost Wolf (311): nothing removed.
     const std::vector<uint32_t> empty{};
     const std::vector<uint32_t> ghostWolf{311};
-    const std::vector<uint32_t> bearForm{653};
+    const std::vector<uint32_t> bearOrSerpentForm{653};  // Bear Form 5487 and Serpent Form 8041 share SpellVisual 653
     const std::vector<uint32_t> catForm{4228};
 
+    // Entering form: detected as added (caller skips replay if SMSG_SPELL_GO already fired ImpactKit,
+    // and plays ImpactKit when applied directly by server update / .aura without SMSG_SPELL_GO),
+    // while nothing is treated as removed.
+    CHECK(addedTransformAuraVisuals(empty, ghostWolf) == std::vector<uint32_t>{311});
+    CHECK(addedTransformAuraVisuals(empty, bearOrSerpentForm) == std::vector<uint32_t>{653});
     CHECK(removedTransformAuraVisuals(empty, ghostWolf).empty());
-    // Leaving Ghost Wolf -> humanoid: replays visual 311 ImpactKit.
+    CHECK(removedTransformAuraVisuals(empty, bearOrSerpentForm).empty());
+
+    // Leaving Ghost Wolf -> humanoid (alive cancel/expiry or death): replays visual 311 ImpactKit.
+    CHECK(addedTransformAuraVisuals(ghostWolf, empty).empty());
     CHECK(removedTransformAuraVisuals(ghostWolf, empty) == std::vector<uint32_t>{311});
-    // Leaving Bear Form -> humanoid: replays visual 653 ImpactKit.
-    CHECK(removedTransformAuraVisuals(bearForm, empty) == std::vector<uint32_t>{653});
-    // Direct Bear -> Cat swap in one update: new form's SMSG_SPELL_GO already plays ImpactKit.
-    CHECK(removedTransformAuraVisuals(bearForm, catForm).empty());
-    // Steady state: no replay.
+
+    // Leaving Bear Form (5487) or Druid of the Fang Serpent Form (8041) -> native humanoid
+    // on alive expiry/dispel OR death (RemoveAllAurasOnDeath + display revert): replays visual 653 ImpactKit.
+    CHECK(addedTransformAuraVisuals(bearOrSerpentForm, empty).empty());
+    CHECK(removedTransformAuraVisuals(bearOrSerpentForm, empty) == std::vector<uint32_t>{653});
+
+    // Direct Bear -> Cat swap in one update: old form does not replay on exit; new form is reported in added.
+    CHECK(removedTransformAuraVisuals(bearOrSerpentForm, catForm).empty());
+    CHECK(addedTransformAuraVisuals(bearOrSerpentForm, catForm) == std::vector<uint32_t>{4228});
+
+    // Steady state: neither added nor removed.
+    CHECK(addedTransformAuraVisuals(ghostWolf, ghostWolf).empty());
     CHECK(removedTransformAuraVisuals(ghostWolf, ghostWolf).empty());
 }

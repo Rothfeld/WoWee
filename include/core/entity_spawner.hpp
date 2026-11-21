@@ -690,8 +690,14 @@ private:
     // model plays Death from its start (removeCreatureForNewDisplay).
     std::unordered_set<uint64_t> dyingCreatureGuids_;
     // Creatures respawned for a display change (removeCreatureForNewDisplay):
-    // their new model does not play Birth.
+    // their new model does not play Birth or fade in from zero.
     std::unordered_set<uint64_t> displayChangedCreatureGuids_;
+    // Old CharacterRenderer instance hidden via setInstanceReplaced while a
+    // display-changed creature's replacement instance is queued/loading;
+    // transferred and removed in spawnOnlineCreature (or removed on despawn).
+    std::unordered_map<uint64_t, uint32_t> replacedCreatureInstances_;
+    void removeReplacedCreatureInstance(uint64_t guid);
+    void despawnCreatureInternal(uint64_t guid, bool holdInstanceForDisplaySwap);
 
     // --- NPC equipment attachment models (helm, shoulders) ---
     // Equipment is shared across NPCs, so a crowd wearing the same gear would
