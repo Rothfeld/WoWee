@@ -2574,10 +2574,33 @@ static game::Unit* unitAskedAbout(lua_State* L) {
     return resolveUnit(L, b);
 }
 
+static uint64_t resolveUnitGuidAskedAbout(lua_State* L, game::GameHandler* gh) {
+    if (!gh) return 0;
+    const char* a = luaL_optstring(L, 1, "player");
+    const char* b = luaL_optstring(L, 2, nullptr);
+    std::string ua(a);
+    toLowerInPlace(ua);
+    if (!b) return resolveUnitGuid(gh, ua);
+    std::string ub(b);
+    toLowerInPlace(ub);
+    const uint64_t player = gh->getPlayerGuid();
+    const uint64_t ga = resolveUnitGuid(gh, ua);
+    const uint64_t gb = resolveUnitGuid(gh, ub);
+    if (ga == player) return gb;
+    if (gb == player) return ga;
+    return gb;
+}
+
 static int lua_UnitIsFriend(lua_State* L) {
     auto* gh = getGameHandler(L);
     auto* unit = unitAskedAbout(L);
-    lua_pushboolean(L, gh && unit && gh->playerIsFriendOf(*unit));
+    if (gh && unit) {
+        lua_pushboolean(L, gh->playerIsFriendOf(*unit));
+        return 1;
+    }
+    const uint64_t guid = resolveUnitGuidAskedAbout(L, gh);
+    lua_pushboolean(L, gh && guid != 0 &&
+                       (guid == gh->getPlayerGuid() || findPartyMember(gh, guid) != nullptr));
     return 1;
 }
 
@@ -2722,10 +2745,20 @@ static int lua_UnitReaction(lua_State* L) {
     toLowerInPlace(u1);
     std::string u2(luaL_checkstring(L, 2));
     toLowerInPlace(u2);
-    if (!resolveUnit(L, u2.c_str())) { return luaReturnNil(L); }
-    if (resolveUnitGuid(gh, u1) == resolveUnitGuid(gh, u2)) {
+    const uint64_t g1 = resolveUnitGuid(gh, u1);
+    const uint64_t g2 = resolveUnitGuid(gh, u2);
+    if (g1 != 0 && g1 == g2) {
         lua_pushnumber(L, 5); // same unit = friendly
         return 1;
+    }
+    if (!resolveUnit(L, u2.c_str())) {
+        const bool g1Group = (g1 == gh->getPlayerGuid() || findPartyMember(gh, g1) != nullptr);
+        const bool g2Group = (g2 == gh->getPlayerGuid() || findPartyMember(gh, g2) != nullptr);
+        if (g1 != 0 && g2 != 0 && g1Group && g2Group) {
+            lua_pushnumber(L, 5);
+            return 1;
+        }
+        return luaReturnNil(L);
     }
     // How the unit regards the player, which is the question the tooltip and
     // the name colours ask - UnitReaction(unit, "player"), in either order and

@@ -925,8 +925,11 @@ void GameHandler::update(float deltaTime) {
         if (charDeleteCallback_) charDeleteCallback_(deleted, msg);
     }
 
-    // Validate target still exists
-    if (targetGuid != 0 && !entityController_->getEntityManager().hasEntity(targetGuid)) {
+    // Validate target still exists. Party/raid members remain valid targets
+    // even when outside visibility range (not present in EntityManager).
+    if (targetGuid != 0 &&
+        !entityController_->getEntityManager().hasEntity(targetGuid) &&
+        !isGroupMember(targetGuid)) {
         clearTarget();
     }
 
@@ -4706,6 +4709,15 @@ const std::vector<GameHandler::WhoEntry>& GameHandler::getWhoResults() const {
 
 bool GameHandler::isInGroup() const {
     return socialHandler_ ? socialHandler_->isInGroup() : !partyData.isEmpty();
+}
+
+bool GameHandler::isGroupMember(uint64_t guid) const {
+    if (guid == 0) return false;
+    const auto& pd = getPartyData();
+    for (const auto& m : pd.members) {
+        if (m.guid == guid) return true;
+    }
+    return false;
 }
 
 const GroupListData& GameHandler::getPartyData() const {

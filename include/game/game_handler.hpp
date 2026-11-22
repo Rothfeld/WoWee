@@ -2219,6 +2219,7 @@ public:
     void convertToRaid();
     void sendSetLootMethod(uint32_t method, uint32_t threshold, uint64_t masterLooterGuid);
     bool isInGroup() const;
+    bool isGroupMember(uint64_t guid) const;
     const GroupListData& getPartyData() const;
     const std::vector<ContactEntry>& getContacts() const override { return contacts_; }
     bool hasPendingGroupInvite() const;

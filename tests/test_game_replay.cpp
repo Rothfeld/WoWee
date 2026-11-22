@@ -1828,5 +1828,95 @@ TEST_CASE("Tab and TargetNearest* stay silent with no candidates and preserve ex
     CHECK(uiErrors == 0);
 }
 
+TEST_CASE("targeting an out-of-range party member persists across ticks and despawns until leaving group",
+          "[party][target][tbc]") {
+    using wowee::game::Opcode;
+    using wowee::game::wireOpcode;
+
+    class ConnectedSentPackets : public replay::SentPackets {
+    public:
+        [[nodiscard]] bool isConnected() const override { return true; }
+        void update() override {}
+    };
+
+    Session s("tbc");
+    wowee::game::GameHandlerTestAccess::setSocket(
+        s.handler(), std::make_unique<ConnectedSentPackets>());
+    s.spawnPlayer({{UF::UNIT_FIELD_HEALTH, 100}, {UF::UNIT_FIELD_LEVEL, 70}});
+    constexpr uint64_t memberGuid = 0x66;
+    joinGroup(s, memberGuid, false);
+
+    // 1. Party member is out of visibility range (not in EntityManager):
+    //    clicking PartyMemberFrame1 -> setTarget(memberGuid) must survive GameHandler::update().
+    REQUIRE_FALSE(s.handler().getEntityManager().hasEntity(memberGuid));
+    REQUIRE(s.handler().isGroupMember(memberGuid));
+    s.handler().setTarget(memberGuid);
+    REQUIRE(s.handler().getTargetGuid() == memberGuid);
+    s.handler().update(0.05f);
+    CHECK(s.handler().getTargetGuid() == memberGuid);
+
+    // 2. Party member comes into range and then leaves via OUT_OF_RANGE_OBJECTS or SMSG_DESTROY_OBJECT:
+    //    selection must remain on the party member in both cases.
+    for (const bool destroy : {false, true}) {
+        INFO((destroy ? "SMSG_DESTROY_OBJECT" : "OUT_OF_RANGE_OBJECTS"));
+        s.receive(UpdateObject().tbc().create(memberGuid, wowee::game::ObjectType::PLAYER, {
+            {UF::UNIT_FIELD_HEALTH, 0},
+            {UF::UNIT_FIELD_MAXHEALTH, 5200},
+            {UF::UNIT_FIELD_LEVEL, 70},
+        }));
+        REQUIRE(s.handler().getEntityManager().hasEntity(memberGuid));
+        s.handler().setTarget(memberGuid);
+        REQUIRE(s.handler().getTargetGuid() == memberGuid);
+
+        wowee::network::Packet despawn(wireOpcode(destroy ? Opcode::SMSG_DESTROY_OBJECT
+                                                          : Opcode::SMSG_UPDATE_OBJECT));
+        if (destroy) {
+            despawn.writeUInt64(memberGuid);
+            despawn.writeUInt8(0);
+        } else {
+            despawn.writeUInt32(1);
+            despawn.writeUInt8(static_cast<uint8_t>(wowee::game::UpdateType::OUT_OF_RANGE_OBJECTS));
+            despawn.writeUInt32(1);
+            despawn.writePackedGuid(memberGuid);
+        }
+        s.receive(despawn);
+        REQUIRE_FALSE(s.handler().getEntityManager().hasEntity(memberGuid));
+        CHECK(s.handler().getTargetGuid() == memberGuid);
+        s.handler().update(0.05f);
+        CHECK(s.handler().getTargetGuid() == memberGuid);
+    }
+
+    // 3. Non-group entity going out of range still clears target.
+    constexpr uint64_t strangerGuid = 0xF130000010000099ULL;
+    s.receive(UpdateObject().tbc().create(strangerGuid, wowee::game::ObjectType::UNIT, {
+        {UF::UNIT_FIELD_HEALTH, 100},
+        {UF::UNIT_FIELD_MAXHEALTH, 100},
+        {UF::UNIT_FIELD_LEVEL, 70},
+    }));
+    s.handler().setTarget(strangerGuid);
+    REQUIRE(s.handler().getTargetGuid() == strangerGuid);
+    {
+        wowee::network::Packet oor(wireOpcode(Opcode::SMSG_UPDATE_OBJECT));
+        oor.writeUInt32(1);
+        oor.writeUInt8(static_cast<uint8_t>(wowee::game::UpdateType::OUT_OF_RANGE_OBJECTS));
+        oor.writeUInt32(1);
+        oor.writePackedGuid(strangerGuid);
+        s.receive(oor);
+    }
+    CHECK(s.handler().getTargetGuid() == 0);
+
+    // 4. Re-target out-of-range party member, then disband group (SMSG_GROUP_DESTROYED):
+    //    once no longer in group and not in EntityManager, update() clears target.
+    s.handler().setTarget(memberGuid);
+    REQUIRE(s.handler().getTargetGuid() == memberGuid);
+    {
+        wowee::network::Packet disband(wireOpcode(Opcode::SMSG_GROUP_DESTROYED));
+        s.receive(disband);
+    }
+    REQUIRE_FALSE(s.handler().isGroupMember(memberGuid));
+    s.handler().update(0.05f);
+    CHECK(s.handler().getTargetGuid() == 0);
+}
+
 
 

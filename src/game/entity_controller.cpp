@@ -362,7 +362,7 @@ void EntityController::processOutOfRangeObjects(const std::vector<uint64_t>& gui
             owner_.clearPlayerTransport();
         }
         entityManager.removeEntity(guid);
-        if (guid == owner_.getTargetGuid()) owner_.clearTarget();
+        if (guid == owner_.getTargetGuid() && !owner_.isGroupMember(guid)) owner_.clearTarget();
         if (owner_.getCombatHandler()) {
             if (guid == owner_.getCombatHandler()->getAutoAttackTargetGuid())
                 owner_.stopAutoAttack();
@@ -3577,7 +3577,7 @@ void EntityController::handleDestroyObject(network::Packet& packet) {
     if (owner_.getCombatHandler() && data.guid == owner_.getCombatHandler()->getAutoAttackTargetGuid()) {
         owner_.stopAutoAttack();
     }
-    if (data.guid == owner_.getTargetGuid()) {
+    if (data.guid == owner_.getTargetGuid() && !owner_.isGroupMember(data.guid)) {
         owner_.clearTarget();
     }
     if (owner_.getCombatHandler()) owner_.getCombatHandler()->removeHostileAttacker(data.guid);
