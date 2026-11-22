@@ -70,7 +70,7 @@ AnimCapabilitySet AnimCapabilityProbe::probe(Renderer* renderer, uint32_t instan
     {
         static const uint32_t sprintCands[] = {anim::SPRINT, anim::RUN, anim::WALK};
         caps.resolvedSprint = pick(sprintCands, 3);
-        caps.hasSprint = (caps.resolvedSprint != 0);
+        caps.hasSprint = has(anim::SPRINT);
     }
     {
         static const uint32_t walkBackCands[] = {anim::WALK_BACKWARDS, anim::WALK};

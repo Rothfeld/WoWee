@@ -1,5 +1,6 @@
 #include "rendering/animation/locomotion_fsm.hpp"
 #include "rendering/animation/animation_ids.hpp"
+#include "rendering/animation/creature_locomotion.hpp"
 #include <algorithm>
 
 namespace wowee {
@@ -24,7 +25,8 @@ void LocomotionFSM::onEvent(AnimEvent event) {
             state_ = State::IDLE;
             break;
         case AnimEvent::JUMP:
-            if (state_ != State::SWIM_IDLE && state_ != State::SWIM) {
+            if (state_ != State::SWIM_IDLE && state_ != State::SWIM &&
+                state_ != State::FLY_IDLE && state_ != State::FLY) {
                 jumpStartSeen_ = false;
                 state_ = State::JUMP_START;
             }
@@ -48,6 +50,11 @@ void LocomotionFSM::onEvent(AnimEvent event) {
 void LocomotionFSM::updateTransitions(const Input& in, const AnimCapabilitySet& caps) {
     const bool effectiveMoving = in.moving;
     const bool effectiveSprinting = in.sprinting;
+
+    if (!in.swimming && in.flying && state_ != State::FLY_IDLE && state_ != State::FLY) {
+        state_ = effectiveMoving ? State::FLY : State::FLY_IDLE;
+        return;
+    }
 
     switch (state_) {
         case State::IDLE:
@@ -172,7 +179,8 @@ void LocomotionFSM::updateTransitions(const Input& in, const AnimCapabilitySet& 
 
         case State::SWIM_IDLE:
             if (!in.swimming) {
-                state_ = effectiveMoving ? State::WALK : State::IDLE;
+                if (in.flying) state_ = effectiveMoving ? State::FLY : State::FLY_IDLE;
+                else state_ = effectiveMoving ? (effectiveSprinting ? State::RUN : State::WALK) : State::IDLE;
             } else if (effectiveMoving) {
                 state_ = State::SWIM;
             }
@@ -180,9 +188,44 @@ void LocomotionFSM::updateTransitions(const Input& in, const AnimCapabilitySet& 
 
         case State::SWIM:
             if (!in.swimming) {
-                state_ = effectiveMoving ? State::WALK : State::IDLE;
+                if (in.flying) state_ = effectiveMoving ? State::FLY : State::FLY_IDLE;
+                else state_ = effectiveMoving ? (effectiveSprinting ? State::RUN : State::WALK) : State::IDLE;
             } else if (!effectiveMoving) {
                 state_ = State::SWIM_IDLE;
+            }
+            break;
+
+        case State::FLY_IDLE:
+            if (in.swimming) {
+                state_ = effectiveMoving ? State::SWIM : State::SWIM_IDLE;
+            } else if (!in.flying) {
+                if (!in.grounded) {
+                    if (in.jumping) jumpStartSeen_ = false;
+                    state_ = in.jumping ? State::JUMP_START : State::JUMP_MID;
+                } else if (effectiveMoving) {
+                    state_ = effectiveSprinting ? State::RUN : State::WALK;
+                } else {
+                    state_ = State::IDLE;
+                }
+            } else if (effectiveMoving) {
+                state_ = State::FLY;
+            }
+            break;
+
+        case State::FLY:
+            if (in.swimming) {
+                state_ = effectiveMoving ? State::SWIM : State::SWIM_IDLE;
+            } else if (!in.flying) {
+                if (!in.grounded) {
+                    if (in.jumping) jumpStartSeen_ = false;
+                    state_ = in.jumping ? State::JUMP_START : State::JUMP_MID;
+                } else if (effectiveMoving) {
+                    state_ = effectiveSprinting ? State::RUN : State::WALK;
+                } else {
+                    state_ = State::IDLE;
+                }
+            } else if (!effectiveMoving) {
+                state_ = State::FLY_IDLE;
             }
             break;
     }
@@ -198,6 +241,7 @@ AnimOutput LocomotionFSM::resolve(const Input& in, const AnimCapabilitySet& caps
     const bool strafeRight = in.strafeRight;
     const bool anyStrafeLeft = strafeLeft && !strafeRight && !movingBackward;
     const bool anyStrafeRight = strafeRight && !strafeLeft && !movingBackward;
+    const bool hasStealthLoco = caps.resolvedStealthWalk != 0 || caps.resolvedStealthRun != 0;
 
     uint32_t animId = anim::STAND;
     bool animSelected = true;
@@ -214,24 +258,35 @@ AnimOutput LocomotionFSM::resolve(const Input& in, const AnimCapabilitySet& caps
             break;
 
         case State::WALK:
-            if (movingBackward) {
-                animId = caps.resolvedWalkBackwards ? caps.resolvedWalkBackwards
-                       : caps.resolvedWalk           ? caps.resolvedWalk
-                       :                               anim::WALK_BACKWARDS;
-            } else {
-                animId = caps.resolvedWalk ? caps.resolvedWalk : anim::WALK;
-            }
-            break;
-
         case State::RUN:
             if (movingBackward) {
                 animId = caps.resolvedWalkBackwards ? caps.resolvedWalkBackwards
                        : caps.resolvedWalk           ? caps.resolvedWalk
                        :                               anim::WALK_BACKWARDS;
-            } else if (in.sprintAura) {
-                animId = caps.resolvedSprint ? caps.resolvedSprint : anim::RUN;
+            } else if (in.stealthed && hasStealthLoco) {
+                if (state_ == State::WALK) {
+                    animId = caps.resolvedWalk ? caps.resolvedWalk : anim::WALK;
+                } else {
+                    animId = caps.resolvedRun ? caps.resolvedRun : anim::RUN;
+                }
             } else {
-                animId = caps.resolvedRun ? caps.resolvedRun : anim::RUN;
+                const std::optional<float> walkStride =
+                    in.walkStride > 0.0f ? std::optional<float>(in.walkStride) : std::nullopt;
+                const std::optional<float> runStride =
+                    in.runStride > 0.0f ? std::optional<float>(in.runStride) : std::nullopt;
+                const uint32_t gait = selectGroundForwardGaitAnimation(
+                    state_ == State::WALK, in.locomotionSpeed,
+                    walkStride, runStride, caps.hasSprint,
+                    state_ == State::RUN && in.sprintAura);
+                if (gait == anim::SPRINT) {
+                    animId = caps.resolvedSprint ? caps.resolvedSprint
+                           : caps.resolvedRun    ? caps.resolvedRun
+                           :                       anim::RUN;
+                } else if (gait == anim::WALK) {
+                    animId = caps.resolvedWalk ? caps.resolvedWalk : anim::WALK;
+                } else {
+                    animId = caps.resolvedRun ? caps.resolvedRun : anim::RUN;
+                }
             }
             break;
 
@@ -268,6 +323,14 @@ AnimOutput LocomotionFSM::resolve(const Input& in, const AnimCapabilitySet& caps
             } else {
                 animId = caps.resolvedSwim ? caps.resolvedSwim : anim::SWIM;
             }
+            break;
+
+        case State::FLY_IDLE:
+            animId = anim::FLY_IDLE;
+            break;
+
+        case State::FLY:
+            animId = anim::FLY_FORWARD;
             break;
     }
 

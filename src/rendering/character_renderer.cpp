@@ -2093,6 +2093,11 @@ void CharacterRenderer::setLocomotionSpeed(uint32_t instanceId, float speed) {
     instances.at(instanceId).locomotionSpeed = speed;
 }
 
+float CharacterRenderer::getLocomotionSpeed(uint32_t instanceId) const {
+    const auto it = instances.find(instanceId);
+    return it != instances.end() ? it->second.locomotionSpeed : -1.0f;
+}
+
 void CharacterRenderer::loadAnimationData() {
     if (animationFallbackLoaded_) return;
     animationFallbackLoaded_ = true;
@@ -2858,7 +2863,7 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos,
             }
             const auto& seq = inst.cachedModel->data.sequences[inst.currentSequenceIndex];
             float playbackRate = computeLocomotionPlaybackRate(
-                seq.id, inst.locomotionSpeed, seq.movingSpeed, inst.scale);
+                inst.currentAnimationId, inst.locomotionSpeed, seq.movingSpeed, inst.scale);
             if (!inst.animationLoop && inst.oneShotMaxDurationMs > 0.0f &&
                 static_cast<float>(seq.duration) > inst.oneShotMaxDurationMs)
                 playbackRate = static_cast<float>(seq.duration) / inst.oneShotMaxDurationMs;
@@ -5714,6 +5719,16 @@ std::optional<float> CharacterRenderer::locomotionStride(uint32_t instanceId, ui
     }
     if (!primary || primary->movingSpeed == 0.0f) return std::nullopt;
     return std::abs(primary->movingSpeed) * inst.scale;
+}
+
+std::optional<float> CharacterRenderer::effectiveLocomotionStride(
+    uint32_t instanceId, uint32_t animationId, float defaultMoveSpeed) const {
+    if (!hasInstance(instanceId)) return std::nullopt;
+    if (auto stride = locomotionStride(instanceId, animationId)) return stride;
+    if (defaultMoveSpeed > 0.0f && hasAnimation(instanceId, animationId)) {
+        return defaultMoveSpeed * getInstanceScale(instanceId);
+    }
+    return std::nullopt;
 }
 
 bool CharacterRenderer::hasAnimation(uint32_t instanceId, uint32_t animationId) const {

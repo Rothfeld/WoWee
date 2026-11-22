@@ -148,7 +148,7 @@ AnimOutput CharacterAnimator::resolveAnimation() {
     // ── Build combat input ──────────────────────────────────────────────
     CombatFSM::Input combatIn;
     combatIn.inCombat = inCombat_;
-    combatIn.grounded = fi.grounded;
+    combatIn.grounded = fi.grounded && !fi.flying;
     combatIn.jumping = fi.jumping;
     combatIn.swimming = fi.swimming;
     combatIn.moving = fi.moving;
@@ -192,7 +192,7 @@ AnimOutput CharacterAnimator::resolveAnimation() {
     actIn.moving = fi.moving;
     actIn.sprinting = fi.sprinting;
     actIn.jumping = fi.jumping;
-    actIn.grounded = fi.grounded;
+    actIn.grounded = fi.grounded && !fi.flying;
     actIn.swimming = fi.swimming;
     actIn.sitting = fi.sitting;
     actIn.currentAnimId = fi.currentAnimId;
@@ -224,8 +224,13 @@ LocomotionFSM::Input CharacterAnimator::locomotionInput() const {
     locoIn.grounded = fi.grounded;
     locoIn.jumping = fi.jumping;
     locoIn.swimming = fi.swimming;
+    locoIn.flying = fi.flying;
     locoIn.sitting = fi.sitting;
+    locoIn.stealthed = stealthed_;
     locoIn.sprintAura = sprintAura_;
+    locoIn.locomotionSpeed = fi.locomotionSpeed;
+    locoIn.walkStride = fi.walkStride;
+    locoIn.runStride = fi.runStride;
     locoIn.turnDirection = fi.turnDirection;
     locoIn.deltaTime = lastDt_;
     // Animation state for one-shot completion detection (jump start/end)

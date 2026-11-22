@@ -343,6 +343,9 @@ void EntitySpawner::syncPlayerMorphs() {
         cr->setInstanceRotation(morph.instanceId, rotation);
         // A seated character's creature sits in the same seat.
         cr->setInstanceSeat(morph.instanceId, cr->instanceSeat(playerInstance));
+        if (const float locoSpeed = cr->getLocomotionSpeed(playerInstance); locoSpeed >= 0.0f) {
+            cr->setLocomotionSpeed(morph.instanceId, locoSpeed);
+        }
         uint32_t animation = 0;
         float timeMs = 0.0f, durationMs = 0.0f;
         if (cr->getAnimationState(playerInstance, animation, timeMs, durationMs) && animation != morph.animation) {
@@ -355,9 +358,7 @@ void EntitySpawner::syncPlayerMorphs() {
                 if (timeMs >= durationMs) play = rendering::anim::DEAD;
                 else loop = false;
             }
-            cr->playAnimation(morph.instanceId,
-                              cr->hasAnimation(morph.instanceId, play) || rendering::anim::isCorpsePose(play) ? play : 0u,
-                              loop);
+            cr->playAnimation(morph.instanceId, play, loop);
         }
     }
 }

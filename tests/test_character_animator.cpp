@@ -512,3 +512,208 @@ TEST_CASE("Stealth locomotion playback rate scaling, remote moving selection, up
     unit.clearCreepVisibility();
     CHECK_FALSE(unit.hasCreepVisibility());
 }
+
+TEST_CASE("TBC 2.4.3 speed scaling & sequence parity across 0.5x..10x speeds, model scales, shapeshifts, mounts, swim, and flight", "[animation][speed]") {
+    constexpr float dt60 = 1.0f / 60.0f;
+    constexpr float kWalkMove = 2.5f;
+    constexpr float kRunMove = 250.0f / 36.0f;   // 6.944444 yd/s
+    constexpr float kSprintMove = 35.0f / 3.0f;  // 11.666667 yd/s
+
+    // 1) Exact AnimationData.dbc BodyFlags & 0x40 scaling membership:
+    // Ground (4, 5, 13, 119, 223, 143) + Swim (42, 43, 44, 45) scale; Flight (135, 193) does NOT.
+    for (uint32_t scaledId : {anim::WALK, anim::RUN, anim::WALK_BACKWARDS,
+                              anim::STEALTH_WALK, anim::STEALTH_RUN, anim::SPRINT,
+                              anim::SWIM, anim::SWIM_LEFT, anim::SWIM_RIGHT, anim::SWIM_BACKWARDS}) {
+        CHECK(isLocomotionSpeedScaledAnimation(scaledId));
+    }
+    for (uint32_t unscaledId : {anim::STAND, anim::JUMP_START, anim::JUMP, anim::JUMP_END,
+                                anim::SWIM_IDLE, anim::FLY_FORWARD, anim::FLY_IDLE, anim::MOUNT}) {
+        CHECK_FALSE(isLocomotionSpeedScaledAnimation(unscaledId));
+    }
+
+    // Swim scales linearly across 1x..5x; FlyForward stays 1.0x even when seqMovingSpeed > 0
+    // (gryphon.m2 Fly movingSpeed = 30.0, or HumanMale Fly 135 -> Swim 42 stand-in).
+    constexpr float kSwimMove = 170.0f / 36.0f; // 4.722222 yd/s
+    CHECK(computeLocomotionPlaybackRate(anim::SWIM, kSwimMove, kSwimMove, 1.0f) == Catch::Approx(1.0f).epsilon(0.001));
+    CHECK(computeLocomotionPlaybackRate(anim::SWIM, kSwimMove * 2.0f, kSwimMove, 1.0f) == Catch::Approx(2.0f).epsilon(0.001));
+    CHECK(computeLocomotionPlaybackRate(anim::SWIM, kSwimMove * 5.0f, kSwimMove, 1.0f) == Catch::Approx(5.0f).epsilon(0.001));
+    CHECK(computeLocomotionPlaybackRate(anim::SWIM_BACKWARDS, 2.5f * 5.0f, 2.5f, 1.0f) == Catch::Approx(5.0f).epsilon(0.001));
+    CHECK(computeLocomotionPlaybackRate(anim::FLY_FORWARD, 35.0f, 30.0f, 1.0f) == Catch::Approx(1.0f));
+    CHECK(computeLocomotionPlaybackRate(anim::FLY_FORWARD, 35.0f, kSwimMove, 1.0f) == Catch::Approx(1.0f));
+
+    // 2) Tauren Male (scale = 1.35, Walk/Run/Sprint dur = 1067/667/667 ms):
+    // Reproduces user report: .modify speed 5 (35.0 yd/s) selects SPRINT (143)
+    // at 300.15 ms cycle instead of staying in RUN (5) at 178.66 ms cycle!
+    {
+        constexpr float kTaurenScale = 1.35f;
+        AnimCapabilitySet taurenCaps;
+        taurenCaps.resolvedStand = anim::STAND;
+        taurenCaps.resolvedWalk = anim::WALK;
+        taurenCaps.resolvedRun = anim::RUN;
+        taurenCaps.resolvedSprint = anim::SPRINT;
+        taurenCaps.hasStand = taurenCaps.hasWalk = taurenCaps.hasRun = taurenCaps.hasSprint = true;
+
+        auto evalTauren = [&](float mult, bool runMode = true) {
+            CharacterAnimator anim;
+            anim.setCapabilities(taurenCaps);
+            CharacterAnimator::FrameInput fi;
+            fi.moving = fi.movingForward = true;
+            fi.sprinting = runMode;
+            fi.locomotionSpeed = (runMode ? 7.0f : 2.5f) * mult;
+            fi.walkStride = kWalkMove * kTaurenScale;
+            fi.runStride = kRunMove * kTaurenScale;
+            anim.setFrameInput(fi);
+            anim.update(dt60);
+            return std::make_pair(anim.getLastOutput().animId, fi.locomotionSpeed);
+        };
+
+        // 0.5x (3.5 yd/s < 6.75 yd/s) -> WALK (4)
+        auto [id05, spd05] = evalTauren(0.5f);
+        CHECK(id05 == anim::WALK);
+        CHECK(1067.0f / computeLocomotionPlaybackRate(id05, spd05, kWalkMove, kTaurenScale) ==
+              Catch::Approx(1028.89f).epsilon(0.002));
+
+        // 1.0x (7.0 yd/s) -> RUN (5), 893.3 ms cycle
+        auto [id10, spd10] = evalTauren(1.0f);
+        CHECK(id10 == anim::RUN);
+        CHECK(667.0f / computeLocomotionPlaybackRate(id10, spd10, kRunMove, kTaurenScale) ==
+              Catch::Approx(893.30f).epsilon(0.002));
+
+        // 2.0x (14.0 yd/s < 14.8125 yd/s) -> stays RUN (5) on Tauren 1.35x, 446.65 ms cycle
+        auto [id20, spd20] = evalTauren(2.0f);
+        CHECK(id20 == anim::RUN);
+        CHECK(667.0f / computeLocomotionPlaybackRate(id20, spd20, kRunMove, kTaurenScale) ==
+              Catch::Approx(446.65f).epsilon(0.002));
+
+        // 5.0x (35.0 yd/s >= 14.8125 yd/s) -> promotes to SPRINT (143), 300.15 ms cycle
+        auto [id50, spd50] = evalTauren(5.0f);
+        CHECK(id50 == anim::SPRINT);
+        CHECK(667.0f / computeLocomotionPlaybackRate(id50, spd50, kSprintMove, kTaurenScale) ==
+              Catch::Approx(300.15f).epsilon(0.002));
+
+        // 10.0x (70.0 yd/s) -> SPRINT (143), 150.08 ms cycle (linear, unclamped)
+        auto [id100, spd100] = evalTauren(10.0f);
+        CHECK(id100 == anim::SPRINT);
+        CHECK(667.0f / computeLocomotionPlaybackRate(id100, spd100, kSprintMove, kTaurenScale) ==
+              Catch::Approx(150.08f).epsilon(0.002));
+    }
+
+    // 3) Scale interactions: HumanMale scale 0.5x & 2.0x, RidingKodo scale 0.60x
+    {
+        const auto gaitAtScale = [&](float scale, float speed, bool hasSprint = true) {
+            return selectGroundForwardGaitAnimation(
+                false, speed, kWalkMove * scale, kRunMove * scale, hasSprint, false);
+        };
+        // Scale 2.0: walk->run at 10.0 yd/s, run->sprint at ~21.94 yd/s
+        CHECK(gaitAtScale(2.0f, 7.0f)  == anim::WALK);
+        CHECK(gaitAtScale(2.0f, 14.0f) == anim::RUN);
+        CHECK(gaitAtScale(2.0f, 35.0f) == anim::SPRINT);
+        // Scale 0.5: run->sprint at ~5.49 yd/s -> 1.0x (7.0 yd/s) promotes to SPRINT
+        CHECK(gaitAtScale(0.5f, 7.0f)  == anim::SPRINT);
+        // RidingKodo (scale 0.60): 1.0x (7.0 yd/s) and 2.0x (14.0 yd/s) select SPRINT
+        CHECK(gaitAtScale(0.60f, 7.0f)  == anim::SPRINT);
+        CHECK(gaitAtScale(0.60f, 14.0f) == anim::SPRINT);
+    }
+
+    // 4) Models without SPRINT (DruidCatTauren, DruidBearTauren, RidingHorse):
+    // hasSprint=false keeps RUN (5) at 2x..10x; Prowl Cat (no StealthWalk/Run) stalks in WALK at 4.9 yd/s.
+    {
+        AnimCapabilitySet catCaps;
+        catCaps.resolvedStand = anim::STAND;
+        catCaps.resolvedWalk = anim::WALK;
+        catCaps.resolvedRun = anim::RUN;
+        catCaps.resolvedSprint = anim::RUN; // fallback only; model has no sequence 143
+        catCaps.hasStand = catCaps.hasWalk = catCaps.hasRun = true;
+        catCaps.hasSprint = false;
+
+        CharacterAnimator cat;
+        cat.setCapabilities(catCaps);
+        CharacterAnimator::FrameInput fi;
+        fi.moving = fi.movingForward = fi.sprinting = true;
+        fi.walkStride = 10.0f / 3.0f; // DruidCat Walk = 3.3333 yd/s
+        fi.runStride = 10.0f;         // DruidCat Run = 10.0 yd/s
+
+        for (float spd : {7.0f, 14.0f, 35.0f, 70.0f}) {
+            fi.locomotionSpeed = spd;
+            cat.setFrameInput(fi);
+            cat.update(dt60);
+            CHECK(cat.getLastOutput().animId == anim::RUN);
+        }
+        CHECK(computeLocomotionPlaybackRate(anim::RUN, 35.0f, 10.0f, 1.0f) == Catch::Approx(3.5f).epsilon(0.001));
+
+        // Cat Form Prowl (4.9 yd/s < 2 * 3.3333 = 6.67 yd/s) stalks in WALK (4), Dash (11.9 yd/s) runs in RUN (5)
+        cat.setStealthed(true);
+        fi.locomotionSpeed = 4.9f;
+        cat.setFrameInput(fi);
+        cat.update(dt60);
+        CHECK(cat.getLastOutput().animId == anim::WALK);
+        fi.locomotionSpeed = 11.9f;
+        cat.setFrameInput(fi);
+        cat.update(dt60);
+        CHECK(cat.getLastOutput().animId == anim::RUN);
+    }
+
+    // 5) Humanoid Stealth across 0.5x..5.0x keeps STEALTH_RUN in Run mode and STEALTH_WALK in Walk mode
+    {
+        AnimCapabilitySet rogueCaps;
+        rogueCaps.resolvedStand = anim::STAND;
+        rogueCaps.resolvedWalk = anim::WALK;
+        rogueCaps.resolvedRun = anim::RUN;
+        rogueCaps.resolvedSprint = anim::SPRINT;
+        rogueCaps.resolvedStealthIdle = anim::STEALTH_STAND;
+        rogueCaps.resolvedStealthWalk = anim::STEALTH_WALK;
+        rogueCaps.resolvedStealthRun = anim::STEALTH_RUN;
+        rogueCaps.hasStand = rogueCaps.hasWalk = rogueCaps.hasRun = rogueCaps.hasSprint = rogueCaps.hasStealth = true;
+
+        CharacterAnimator rogue;
+        rogue.setCapabilities(rogueCaps);
+        rogue.setStealthed(true);
+        CharacterAnimator::FrameInput fi;
+        fi.moving = fi.movingForward = true;
+        fi.walkStride = kWalkMove;
+        fi.runStride = kRunMove;
+
+        for (float spd : {2.45f, 4.90f, 9.80f, 24.50f}) {
+            fi.sprinting = true;
+            fi.locomotionSpeed = spd;
+            rogue.setFrameInput(fi);
+            rogue.update(dt60);
+            CHECK(rogue.getLastOutput().animId == anim::STEALTH_RUN);
+        }
+        for (float spd : {1.75f, 3.50f, 12.50f}) {
+            fi.sprinting = false;
+            fi.locomotionSpeed = spd;
+            rogue.setFrameInput(fi);
+            rogue.update(dt60);
+            CHECK(rogue.getLastOutput().animId == anim::STEALTH_WALK);
+        }
+    }
+
+    // 6) Unmounted flight in combat: flying suppresses ground COMBAT_IDLE so Hover/Fly play cleanly
+    {
+        AnimCapabilitySet caps;
+        caps.resolvedStand = anim::STAND;
+        caps.resolvedRun = anim::RUN;
+        caps.resolvedCombatIdle = anim::READY_1H;
+        caps.resolvedReady1H = anim::READY_1H;
+        CharacterAnimator flyer;
+        flyer.setCapabilities(caps);
+        WeaponLoadout weapon;
+        weapon.inventoryType = wowee::game::InvType::ONE_HAND;
+        flyer.setWeaponLoadout(weapon);
+        flyer.setInCombat(true);
+
+        CharacterAnimator::FrameInput fi;
+        fi.grounded = true; // CameraController sets grounded=true while flightAirborne_
+        fi.flying = true;
+        flyer.setFrameInput(fi);
+        flyer.update(dt60);
+        CHECK(flyer.getLastOutput().animId == anim::FLY_IDLE);
+
+        fi.moving = fi.movingForward = fi.sprinting = true;
+        fi.locomotionSpeed = 35.0f;
+        flyer.setFrameInput(fi);
+        flyer.update(dt60);
+        CHECK(flyer.getLastOutput().animId == anim::FLY_FORWARD);
+    }
+}

@@ -419,3 +419,80 @@ TEST_CASE("LocomotionFSM: no shuffle while swimming or airborne", "[locomotion][
         CHECK(fsm.resolve(in, caps).animId == anim::JUMP);
     }
 }
+
+TEST_CASE("LocomotionFSM: speed-driven ground gait selection across 0.5x..10x and Walk/Run modes", "[locomotion][speed]") {
+    auto caps = makeLocoCaps();
+    constexpr float kWalkStride = 2.5f;
+    constexpr float kRunStride = 250.0f / 36.0f;
+
+    auto evalGround = [&](bool runMode, float speed, bool sprintAura = false, bool backward = false) {
+        LocomotionFSM fsm;
+        auto in = idle();
+        in.moving = true;
+        in.movingForward = !backward;
+        in.movingBackward = backward;
+        in.sprinting = runMode && !backward;
+        in.sprintAura = sprintAura;
+        in.locomotionSpeed = speed;
+        in.walkStride = kWalkStride;
+        in.runStride = kRunStride;
+        return fsm.resolve(in, caps).animId;
+    };
+
+    // Run mode across 0.5x..10.0x (base run = 7.0 yd/s)
+    CHECK(evalGround(true, 3.50f)  == anim::WALK);   // 0.50x slowed (< 5.00 yd/s)
+    CHECK(evalGround(true, 4.90f)  == anim::WALK);   // 0.70x slowed (< 5.00 yd/s)
+    CHECK(evalGround(true, 5.04f)  == anim::RUN);    // 0.72x (>= 5.00 yd/s)
+    CHECK(evalGround(true, 7.00f)  == anim::RUN);    // 1.00x normal run
+    CHECK(evalGround(true, 9.80f)  == anim::RUN);    // 1.40x Aspect/Travel speed
+    CHECK(evalGround(true, 10.85f) == anim::RUN);    // 1.55x below Sprint threshold (~10.97 yd/s)
+    CHECK(evalGround(true, 11.20f) == anim::SPRINT); // 1.60x above Sprint threshold
+    CHECK(evalGround(true, 11.90f) == anim::SPRINT); // 1.70x Rogue Sprint / .modify speed 1.7
+    CHECK(evalGround(true, 10.50f, true) == anim::SPRINT); // 1.50x Sprint Rank 1 with sprintAura
+    CHECK(evalGround(true, 14.00f) == anim::SPRINT); // 2.00x
+    CHECK(evalGround(true, 21.00f) == anim::SPRINT); // 3.00x
+    CHECK(evalGround(true, 35.00f) == anim::SPRINT); // 5.00x (.modify speed 5)
+    CHECK(evalGround(true, 70.00f) == anim::SPRINT); // 10.0x (.modify speed 10)
+
+    // Walk mode (KP_Divide toggle, base walk = 2.5 yd/s): stays WALK until Sprint threshold
+    CHECK(evalGround(false, 1.25f)  == anim::WALK);   // 0.5x walk
+    CHECK(evalGround(false, 2.50f)  == anim::WALK);   // 1.0x walk
+    CHECK(evalGround(false, 5.00f)  == anim::WALK);   // 2.0x walk
+    CHECK(evalGround(false, 7.50f)  == anim::WALK);   // 3.0x walk
+    CHECK(evalGround(false, 10.50f) == anim::WALK);   // 4.2x walk (< 10.97 yd/s)
+    CHECK(evalGround(false, 11.00f) == anim::SPRINT); // 4.4x walk promotes to Sprint (Native 2.4.3)
+    CHECK(evalGround(false, 12.50f) == anim::SPRINT); // 5.0x walk promotes to Sprint
+
+    // Backpedal never promotes to SPRINT even at 5x speed
+    CHECK(evalGround(false, 22.50f, false, true) == anim::WALK_BACKWARDS);
+}
+
+TEST_CASE("LocomotionFSM: unmounted flight resolves FLY_IDLE and FLY_FORWARD and lands cleanly", "[locomotion][flight]") {
+    LocomotionFSM fsm;
+    auto caps = makeLocoCaps();
+
+    auto in = idle();
+    in.flying = true;
+    in.grounded = true; // CameraController suppresses fall damage with grounded=true while flying
+    auto hoverOut = fsm.resolve(in, caps);
+    REQUIRE(hoverOut.valid);
+    CHECK(fsm.getState() == LocomotionFSM::State::FLY_IDLE);
+    CHECK(hoverOut.animId == anim::FLY_IDLE);
+    CHECK(hoverOut.loop);
+
+    in.moving = true;
+    in.movingForward = true;
+    in.sprinting = true;
+    auto flyOut = fsm.resolve(in, caps);
+    REQUIRE(flyOut.valid);
+    CHECK(fsm.getState() == LocomotionFSM::State::FLY);
+    CHECK(flyOut.animId == anim::FLY_FORWARD);
+    CHECK(flyOut.loop);
+
+    // Touching down while moving resumes ground stride directly
+    in.flying = false;
+    auto landOut = fsm.resolve(in, caps);
+    REQUIRE(landOut.valid);
+    CHECK(fsm.getState() == LocomotionFSM::State::RUN);
+    CHECK(landOut.animId == anim::RUN);
+}

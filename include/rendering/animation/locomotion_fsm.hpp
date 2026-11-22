@@ -23,6 +23,7 @@ public:
         IDLE, WALK, RUN,
         JUMP_START, JUMP_MID, JUMP_END,
         SWIM_IDLE, SWIM,
+        FLY_IDLE, FLY,
         // Standing and turning in place: ShuffleLeft/ShuffleRight.
         TURN,
     };
@@ -37,8 +38,13 @@ public:
         bool grounded = true;
         bool jumping = false;
         bool swimming = false;
+        bool flying = false;
         bool sitting = false;
+        bool stealthed = false;
         bool sprintAura = false;      // Sprint/Dash aura - use SPRINT anim
+        float locomotionSpeed = 0.0f; // Current world speed (yd/s) for gait thresholds
+        float walkStride = 0.0f;      // Scaled Walk (4) stride (yd/s)
+        float runStride = 0.0f;       // Scaled Run (5) stride (yd/s)
         // Facing turned this frame by the player while standing:
         // +1 left (counter-clockwise from above), -1 right, 0 not turning.
         int turnDirection = 0;

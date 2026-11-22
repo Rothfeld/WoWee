@@ -4423,6 +4423,10 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                 // shows another player's horse (RidingHorse.m2 Walkbackwards,
                 // JumpStart/Jump/JumpEnd). The rider stays in Mount.
                 const uint32_t moverInstance = remoteMount ? remoteMount->instanceId : instanceId;
+                const uint32_t drawnInstance = entitySpawner_->drawnInstanceIdForGuid(guid);
+                const uint32_t gaitInstance = remoteMount
+                    ? remoteMount->instanceId
+                    : (drawnInstance != 0 ? drawnInstance : instanceId);
                 uint32_t curAnimId = 0; float curT = 0.0f, curDur = 0.0f;
                 const bool gotState = charRenderer->getAnimationState(moverInstance, curAnimId, curT, curDur);
                 const bool jumpFinished = gotState && curDur > 0.0f && curT >= curDur &&
@@ -4431,13 +4435,43 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                 // (native Whirlwind spins a running and a jumping player).
                 const uint32_t auraLocomotion = remoteMount ? 0 : entitySpawner_->remoteAuraLocomotion(guid);
                 uint32_t& prevAuraLocomotion = entitySpawner_->getRemoteWasAuraLocomotion()[guid];
+                uint32_t groundForwardGait = 0;
+                if (isMovingNow && !airborne && !isSwimmingNow && !isFlyingNow &&
+                    !movingBackward && !auraLocomotion) {
+                    const bool hasStealthLoco = !remoteMount &&
+                        (charRenderer->hasAnimation(gaitInstance, rendering::anim::STEALTH_WALK) ||
+                         charRenderer->hasAnimation(gaitInstance, rendering::anim::STEALTH_RUN));
+                    if (isStealthedNow && hasStealthLoco) {
+                        groundForwardGait = isWalkingNow ? rendering::anim::STEALTH_WALK
+                                                         : rendering::anim::STEALTH_RUN;
+                    } else {
+                        const auto walkStride = charRenderer->effectiveLocomotionStride(
+                            gaitInstance, rendering::anim::WALK, rendering::kDefaultWalkMoveSpeed);
+                        const auto runStride = charRenderer->effectiveLocomotionStride(
+                            gaitInstance, rendering::anim::RUN, rendering::kDefaultRunMoveSpeed);
+                        const bool hasSprint =
+                            charRenderer->hasAnimation(gaitInstance, rendering::anim::SPRINT);
+                        groundForwardGait = rendering::selectGroundForwardGaitAnimation(
+                            isWalkingNow, entity->getLocomotionSpeed(),
+                            walkStride, runStride, hasSprint);
+                    }
+                }
+                const bool isGroundForwardLocoAnim =
+                    curAnimId == rendering::anim::WALK ||
+                    curAnimId == rendering::anim::RUN ||
+                    curAnimId == rendering::anim::SPRINT ||
+                    curAnimId == rendering::anim::STEALTH_WALK ||
+                    curAnimId == rendering::anim::STEALTH_RUN;
+                const bool gaitChanged = groundForwardGait != 0 && gotState &&
+                    isGroundForwardLocoAnim && curAnimId != groundForwardGait;
                 const bool stateChanged = (isMovingNow  != prevMoving)   ||
                                           (isSwimmingNow != prevSwimming) ||
                                           (isFlyingNow   != prevFlying)   ||
                                           (isWalkingNow  != prevWalking && isMovingNow) ||
                                           (isStealthedNow != prevStealthed && isMovingNow) ||
                                           (movingBackward != prevBackward) || (airborne != wasAirborne) || jumpFinished ||
-                                          (auraLocomotion != prevAuraLocomotion && (isMovingNow || airborne));
+                                          (auraLocomotion != prevAuraLocomotion && (isMovingNow || airborne)) ||
+                                          gaitChanged;
                 if (stateChanged) {
                     prevAuraLocomotion = auraLocomotion;
                     _pCreatureWasMoving[guid]   = isMovingNow;
@@ -4468,8 +4502,8 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                                     if (isFlyingNow) mountAnim = rendering::anim::FLY_FORWARD;
                                     else if (isSwimmingNow) mountAnim = rendering::anim::SWIM;
                                     else if (movingBackward) mountAnim = rendering::anim::WALK_BACKWARDS;
-                                    else if (isWalkingNow) mountAnim = rendering::anim::WALK;
-                                    else mountAnim = rendering::anim::RUN;
+                                    else mountAnim = groundForwardGait ? groundForwardGait
+                                                   : (isWalkingNow ? rendering::anim::WALK : rendering::anim::RUN);
                                 } else if (isFlyingNow) {
                                     mountAnim = rendering::anim::FLY_IDLE;
                                 } else if (isSwimmingNow) {
@@ -4485,10 +4519,8 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                                 if (isFlyingNow)        targetAnim = rendering::anim::FLY_FORWARD;
                                 else if (isSwimmingNow) targetAnim = rendering::anim::SWIM;
                                 else if (movingBackward) targetAnim = rendering::anim::WALK_BACKWARDS;
-                                else if (isStealthedNow) targetAnim = isWalkingNow ? rendering::anim::STEALTH_WALK
-                                                                                   : rendering::anim::STEALTH_RUN;
-                                else if (isWalkingNow)  targetAnim = rendering::anim::WALK;
-                                else                    targetAnim = rendering::anim::RUN;
+                                else targetAnim = groundForwardGait ? groundForwardGait
+                                                : (isWalkingNow ? rendering::anim::WALK : rendering::anim::RUN);
                             } else {
                                 if (isFlyingNow)        targetAnim = rendering::anim::FLY_IDLE;
                                 else if (isSwimmingNow) targetAnim = rendering::anim::SWIM_IDLE;

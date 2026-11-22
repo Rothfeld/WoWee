@@ -215,6 +215,7 @@ private:
     // ── CharacterAnimator: owns the complete character animation FSM ─────
     CharacterAnimator characterAnimator_;
     bool capabilitiesProbed_ = false;
+    uint32_t probedInstanceId_ = 0;
 
     // ── Animation change detection ───────────────────────────────────────
     uint32_t lastPlayerAnimRequest_ = UINT32_MAX;

@@ -6,6 +6,7 @@
 #include "rendering/animation/emote_registry.hpp"
 #include "rendering/animation/stand_pose.hpp"
 #include "rendering/animation/anim_capability_probe.hpp"
+#include "rendering/animation/creature_locomotion.hpp"
 #include "rendering/animation/mount_fsm.hpp"
 #include "rendering/animation/animation_ids.hpp"
 #include "rendering/renderer.hpp"
@@ -23,6 +24,7 @@
 #include "game/inventory.hpp"
 #include "game/game_handler.hpp"
 #include "core/application.hpp"
+#include "core/entity_spawner.hpp"
 #include "core/logger.hpp"
 #include "audio/audio_coordinator.hpp"
 #include "audio/audio_engine.hpp"
@@ -55,16 +57,31 @@ void AnimationController::initialize(Renderer* renderer) {
 
 void AnimationController::probeCapabilities() {
     if (!renderer_) return;
+    auto* cr = renderer_->getCharacterRenderer();
+    if (!cr) return;
     uint32_t instanceId = renderer_->getCharacterInstanceId();
-    if (instanceId == 0) return;
+    if (const auto* handler = core::Application::getInstance().getGameHandler()) {
+        if (auto* spawner = core::Application::getInstance().getEntitySpawner();
+            spawner && handler->getPlayerGuid() != 0) {
+            if (const uint32_t drawn = spawner->drawnInstanceIdForGuid(handler->getPlayerGuid());
+                drawn != 0 && cr->hasInstance(drawn)) {
+                instanceId = drawn;
+            }
+        }
+    }
+    if (instanceId == 0 || !cr->hasInstance(instanceId)) return;
+    std::vector<pipeline::M2Sequence> sequences;
+    if (!cr->getAnimationSequences(instanceId, sequences) || sequences.empty()) return;
     auto caps = AnimCapabilityProbe::probe(renderer_, instanceId);
     characterAnimator_.setCapabilities(caps);
+    probedInstanceId_ = instanceId;
     capabilitiesProbed_ = true;
 }
 
 void AnimationController::onCharacterFollow(uint32_t /*instanceId*/) {
     // Reset animation state when follow target changes
     capabilitiesProbed_ = false;
+    probedInstanceId_ = 0;
 }
 
 // ── Emote support ────────────────────────────────────────────────────────────
@@ -1044,6 +1061,8 @@ void AnimationController::updateMountedGroundAnimation(float deltaTime, int turn
         mountCaps_ = AnimCapabilityProbe::probe(renderer_, mountInstanceId_);
         mountCapsProbed_ = true;
     }
+    const float locoSpeed = cc->getGroundLocomotionSpeed();
+    cr->setLocomotionSpeed(mountInstanceId_, locoSpeed);
     LocomotionFSM::Input in;
     in.moving = cc->isMoving();
     in.sprinting = cc->isSprinting();
@@ -1054,6 +1073,11 @@ void AnimationController::updateMountedGroundAnimation(float deltaTime, int turn
     in.grounded = cc->isGrounded();
     in.jumping = cc->isJumping();
     in.swimming = cc->isSwimming();
+    in.locomotionSpeed = locoSpeed;
+    in.walkStride = cr->effectiveLocomotionStride(
+        mountInstanceId_, anim::WALK, kDefaultWalkMoveSpeed).value_or(0.0f);
+    in.runStride = cr->effectiveLocomotionStride(
+        mountInstanceId_, anim::RUN, kDefaultRunMoveSpeed).value_or(0.0f);
     in.turnDirection = turnDirection;
     in.deltaTime = deltaTime;
     in.haveAnimState = cr->getAnimationState(mountInstanceId_, in.currentAnimId,
@@ -1105,6 +1129,9 @@ void AnimationController::updateMountedAnimation(float deltaTime, int turnDirect
         return;
     }
     // In the air (flying mount) or on a taxi: MountFSM's flight animations.
+    if (mountInstanceId_ > 0 && characterRenderer && characterRenderer->hasInstance(mountInstanceId_)) {
+        characterRenderer->setLocomotionSpeed(mountInstanceId_, cameraController->getGroundLocomotionSpeed());
+    }
     mountLocomotion_.reset();
     lastMountAnimRequest_ = UINT32_MAX;
     mountSpecialActive_ = false;
@@ -1173,11 +1200,21 @@ void AnimationController::updateCharacterAnimation() {
     const auto* handler = core::Application::getInstance().getGameHandler();
     const bool dead = handler && handler->isPlayerDead() && !handler->isPlayerGhost();
 
-    // Lazy probe: populate capability set once per model.
-    // Re-probe if melee capabilities are missing (model may not have been fully
-    // loaded on the first probe attempt).
-    if (characterRenderer && characterInstanceId != 0) {
-        if (!capabilitiesProbed_) {
+    uint32_t drawnInstanceId = characterInstanceId;
+    if (handler && handler->getPlayerGuid() != 0) {
+        if (auto* spawner = core::Application::getInstance().getEntitySpawner()) {
+            if (const uint32_t drawn = spawner->drawnInstanceIdForGuid(handler->getPlayerGuid());
+                drawn != 0 && characterRenderer && characterRenderer->hasInstance(drawn)) {
+                drawnInstanceId = drawn;
+            }
+        }
+    }
+
+    // Lazy probe: populate capability set once per drawn model (re-probing
+    // automatically across shapeshift / morph display changes).
+    if (characterRenderer && drawnInstanceId != 0) {
+        if (!capabilitiesProbed_ || probedInstanceId_ != drawnInstanceId) {
+            capabilitiesProbed_ = false;
             probeCapabilities();
         } else if (meleeSwingTimer_ > 0.0f && !characterAnimator_.getCapabilities().hasMelee) {
             capabilitiesProbed_ = false;
@@ -1234,10 +1271,18 @@ void AnimationController::updateCharacterAnimation() {
     fi.grounded = m2TransportRiding_ ? true : cameraController->isGrounded();
     fi.jumping = cameraController->isJumping();
     fi.swimming = cameraController->isSwimming();
+    fi.flying = cameraController->isFlightAirborne();
     fi.sitting = cameraController->isSitting();
     fi.ascending = cameraController->isAscending();
     fi.descending = cameraController->isDescending();
     fi.jumpKeyPressed = cameraController->isJumpKeyPressed();
+    fi.locomotionSpeed = cameraController->getGroundLocomotionSpeed();
+    if (characterRenderer && drawnInstanceId != 0) {
+        fi.walkStride = characterRenderer->effectiveLocomotionStride(
+            drawnInstanceId, anim::WALK, kDefaultWalkMoveSpeed).value_or(0.0f);
+        fi.runStride = characterRenderer->effectiveLocomotionStride(
+            drawnInstanceId, anim::RUN, kDefaultRunMoveSpeed).value_or(0.0f);
+    }
     fi.characterYaw = yaw;
     fi.turnDirection = turnDirection;
     // Melee/ranged timers
@@ -1295,8 +1340,11 @@ void AnimationController::updateCharacterAnimation() {
         dbgLastAnim = animId;
     }
 
-    characterRenderer->setLocomotionSpeed(characterInstanceId,
-        cameraController->getGroundLocomotionSpeed());
+    const float locoSpeed = cameraController->getGroundLocomotionSpeed();
+    characterRenderer->setLocomotionSpeed(characterInstanceId, locoSpeed);
+    if (drawnInstanceId != characterInstanceId && characterRenderer->hasInstance(drawnInstanceId)) {
+        characterRenderer->setLocomotionSpeed(drawnInstanceId, locoSpeed);
+    }
 
     if (shouldPlay) {
         characterRenderer->playAnimation(characterInstanceId, animId, loop, 0, true);

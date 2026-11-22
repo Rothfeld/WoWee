@@ -636,7 +636,7 @@ glm::vec3 CameraController::moveFollowedCharacter(float /*deltaTime*/, FrameInpu
         swimming = true;
         // Swim movement follows look pitch (f.forward/back), while strafe stays
         // lateral for stable control.
-        float swimSpeed = (swimSpeedOverride_ > 0.0f && swimSpeedOverride_ < 100.0f && !std::isnan(swimSpeedOverride_))
+        float swimSpeed = (swimSpeedOverride_ > 0.0f && swimSpeedOverride_ < 500.0f && !std::isnan(swimSpeedOverride_))
                               ? swimSpeedOverride_ : f.speed * SWIM_SPEED_FACTOR;
         float waterSurfaceZ = waterH ? (*waterH - swimSurfaceOffset_) : targetPos.z;
         // Where the swimmer stood before this step; the surface clamp below can
@@ -647,7 +647,7 @@ glm::vec3 CameraController::moveFollowedCharacter(float /*deltaTime*/, FrameInpu
         // Use character's facing direction for strafe, not camera's right vector
         glm::vec3 swimRight = f.right;  // Character's right (horizontal facing), not camera's
 
-        float swimBackSpeed = (swimBackSpeedOverride_ > 0.0f && swimBackSpeedOverride_ < 100.0f
+        float swimBackSpeed = (swimBackSpeedOverride_ > 0.0f && swimBackSpeedOverride_ < 500.0f
                                 && !std::isnan(swimBackSpeedOverride_))
                                    ? swimBackSpeedOverride_ : swimSpeed * 0.5f;
 
@@ -663,6 +663,9 @@ glm::vec3 CameraController::moveFollowedCharacter(float /*deltaTime*/, FrameInpu
             // Use backward swim speed when moving backwards only (not when combining with strafe)
             float applySpeed = (f.nowBackward && !f.nowForward) ? swimBackSpeed : swimSpeed;
             targetPos += swimMove * applySpeed * f.physicsDeltaTime;
+            if (!serverDrivenMoving_) groundLocomotionSpeed_ = applySpeed;
+        } else if (!serverDrivenMoving_) {
+            groundLocomotionSpeed_ = 0.0f;
         }
 
         // Space's upward impulse is handled above. X swims down continuously
@@ -868,14 +871,17 @@ glm::vec3 CameraController::moveFollowedCharacter(float /*deltaTime*/, FrameInpu
             float flyMoveLenSq = glm::dot(flyMove, flyMove);
             if (flyMoveLenSq > 1e-6f) {
                 flyMove *= glm::inversesqrt(flyMoveLenSq);
-                float flyFwdSpeed = (flightSpeedOverride_ > 0.0f && flightSpeedOverride_ < 200.0f
+                float flyFwdSpeed = (flightSpeedOverride_ > 0.0f && flightSpeedOverride_ < 500.0f
                                      && !std::isnan(flightSpeedOverride_))
                                         ? flightSpeedOverride_ : f.speed;
-                float flyBackSpeed = (flightBackSpeedOverride_ > 0.0f && flightBackSpeedOverride_ < 200.0f
+                float flyBackSpeed = (flightBackSpeedOverride_ > 0.0f && flightBackSpeedOverride_ < 500.0f
                                       && !std::isnan(flightBackSpeedOverride_))
                                          ? flightBackSpeedOverride_ : flyFwdSpeed * 0.5f;
                 float flySpeed = (f.nowBackward && !f.nowForward) ? flyBackSpeed : flyFwdSpeed;
                 targetPos += flyMove * flySpeed * f.physicsDeltaTime;
+                if (!serverDrivenMoving_) groundLocomotionSpeed_ = flySpeed;
+            } else if (!serverDrivenMoving_) {
+                groundLocomotionSpeed_ = 0.0f;
             }
             targetPos.z += verticalVelocity * f.physicsDeltaTime;
 
@@ -2679,7 +2685,7 @@ void CameraController::updateFreeFlyCamera(float /*deltaTime*/, FrameInput& f) {
 
     if (inWater) {
         swimming = true;
-        float swimSpeed = (swimSpeedOverride_ > 0.0f && swimSpeedOverride_ < 100.0f && !std::isnan(swimSpeedOverride_))
+        float swimSpeed = (swimSpeedOverride_ > 0.0f && swimSpeedOverride_ < 500.0f && !std::isnan(swimSpeedOverride_))
                               ? swimSpeedOverride_ : f.speed * SWIM_SPEED_FACTOR;
         float waterSurfaceCamZ = waterH ? (*waterH - swimSurfaceOffset_ + eyeHeight) : newPos.z;
         bool diveIntent = f.nowForward && (f.forward3D.z < -0.28f);
@@ -3121,13 +3127,13 @@ void CameraController::update(float deltaTime) {
     if (useWoWSpeed) {
         // Movement speeds (WoW-like: Ctrl walk, default run, backpedal slower)
         if (nowBackward && !nowForward) {
-            speed = (runBackSpeedOverride_ > 0.0f && runBackSpeedOverride_ < 100.0f
+            speed = (runBackSpeedOverride_ > 0.0f && runBackSpeedOverride_ < 500.0f
                      && !std::isnan(runBackSpeedOverride_))
                         ? runBackSpeedOverride_ : WOW_BACK_SPEED;
         } else if (effectiveWalking) {
-            speed = (walkSpeedOverride_ > 0.0f && walkSpeedOverride_ < 100.0f && !std::isnan(walkSpeedOverride_))
+            speed = (walkSpeedOverride_ > 0.0f && walkSpeedOverride_ < 500.0f && !std::isnan(walkSpeedOverride_))
                         ? walkSpeedOverride_ : WOW_WALK_SPEED;
-        } else if (runSpeedOverride_ > 0.0f && runSpeedOverride_ < 100.0f && !std::isnan(runSpeedOverride_)) {
+        } else if (runSpeedOverride_ > 0.0f && runSpeedOverride_ < 500.0f && !std::isnan(runSpeedOverride_)) {
             speed = runSpeedOverride_;
         } else {
             speed = WOW_RUN_SPEED;

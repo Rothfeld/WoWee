@@ -191,6 +191,7 @@ public:
     /// current opacity, then remove it. The caller forgets the instance now.
     void fadeOutAndRemove(uint32_t instanceId, float durationSeconds);
     void setLocomotionSpeed(uint32_t instanceId, float speed);
+    [[nodiscard]] float getLocomotionSpeed(uint32_t instanceId) const;
     /// Print a footprint for every authored footfall event ($FL0, $RR1, ...)
     /// each unit's current sequence passed since the last call, at that foot.
     void emitFootprints(FootprintRenderer& footprints, const glm::vec3& viewerPosition);
@@ -310,6 +311,10 @@ public:
     /// animation's primary sequence times the instance scale. nullopt when the
     /// model has no such sequence or it authors no movement.
     [[nodiscard]] std::optional<float> locomotionStride(uint32_t instanceId, uint32_t animationId) const;
+    /// Authored locomotionStride when non-zero, else defaultMoveSpeed * scale
+    /// when the model carries `animationId` with movingSpeed == 0.
+    [[nodiscard]] std::optional<float> effectiveLocomotionStride(
+        uint32_t instanceId, uint32_t animationId, float defaultMoveSpeed) const;
     /// Whether the instance's model authors M2 attachment `attachmentId`.
     [[nodiscard]] bool hasAttachmentPoint(uint32_t instanceId, uint32_t attachmentId) const;
     bool getAnimationSequences(uint32_t instanceId, std::vector<pipeline::M2Sequence>& out) const;
