@@ -922,6 +922,9 @@ static void pushCvarDefault(lua_State* L, const std::string& n) {
     else if (n == "deselectonclick") lua_pushstring(L, "1");
     // Build 8606: GetCVar("autoSelfCast") "0" on an account that never set it.
     else if (n == "autoselfcast") lua_pushstring(L, "0");
+    // Build 8606: GetCVar("autoUnshift") defaults to "1" (automatically leaves
+    // Shadowform / Druid forms / Ghost Wolf when casting an incompatible spell).
+    else if (n == "autounshift") lua_pushstring(L, "1");
     // Off: build 8606 with no enableCombatText line in Config.wtf answers
     // "0" (pair 7, _experiments/20261118T074350Z.plates_fct), as
     // UIOptionsFrame's SHOW_COMBAT_TEXT default says. It governs

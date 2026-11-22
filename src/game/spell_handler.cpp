@@ -1,6 +1,7 @@
 #include "game/spell_handler.hpp"
 #include "game/cast_result_text.hpp"
 #include "game/spell_prerequisites.hpp"
+#include "game/shapeshift_auto_unshift.hpp"
 #include "game/shapeshift_forms.hpp"
 #include "addons/lua_api_registrations.hpp"
 #include "game/protocol_constants.hpp"
@@ -1370,6 +1371,72 @@ bool SpellHandler::isTargetCastInterruptible() const {
     return s ? s->interruptible : true;
 }
 
+namespace {
+// SpellShapeshiftForm.dbc Flags of a form, read once per form. Bit 0: the form
+// counts as no form for spell requirements - Stealth (30) has it, which is why
+// Vanish (not while shapeshifted) stays usable in stealth; Cat Form (1) not.
+uint32_t shapeshiftFormFlags(GameHandler& owner, uint8_t form) {
+    auto& cache = owner.shapeshiftFormFlagsRef();
+    if (const auto it = cache.find(form); it != cache.end()) return it->second;
+    auto* am = owner.services().assetManager;
+    assert(am && am->isInitialized());
+    const auto* layout = pipeline::getActiveDBCLayout()
+        ? pipeline::getActiveDBCLayout()->getLayout("SpellShapeshiftForm") : nullptr;
+    assert(layout && "dbc_layouts.json lacks SpellShapeshiftForm; deploy current expansion metadata");
+    const uint32_t flagsField = layout->field("Flags");
+    assert(flagsField != 0xFFFFFFFF && "dbc_layouts.json lacks SpellShapeshiftForm.Flags; deploy current expansion metadata");
+    auto dbc = am->loadDBC("SpellShapeshiftForm.dbc");
+    assert(dbc && dbc->isLoaded());
+    const int32_t row = dbc->findRecordById(form);
+    if (row < 0) LOG_ERROR("SpellShapeshiftForm.dbc has no form ", static_cast<int>(form));
+    const uint32_t flags = row < 0 ? 0u : dbc->getUInt32(static_cast<uint32_t>(row), flagsField);
+    cache[form] = flags;
+    return flags;
+}
+
+bool formAuraIsCancellable(GameHandler& owner, uint8_t form) {
+    if (form == 0) return false;
+    bool foundMatchingAura = false;
+    for (const auto& aura : owner.getPlayerAuras()) {
+        if (aura.isEmpty()) continue;
+        const auto* entry = owner.getSpellNameEntry(aura.spellId);
+        if (!entry || entry->shapeshiftForm != form) continue;
+        foundMatchingAura = true;
+        // Debuff (0x80) or no-aura-icon (kAttrExNoAuraIcon, e.g. Warrior stances) cannot be cancelled.
+        if ((aura.flags & 0x80u) == 0 && (entry->attrEx & kAttrExNoAuraIcon) == 0)
+            return true;
+    }
+    // If playerAuras has no record for this form (e.g. lightweight tests setting
+    // shapeshiftFormIdRef directly), rely on SpellShapeshiftForm.dbc flags.
+    return !foundMatchingAura;
+}
+
+ShapeshiftCastResult shapeshiftCastResult(GameHandler& owner, const GameHandler::SpellNameEntry& entry) {
+    const uint8_t form = owner.getShapeshiftFormId();
+    const uint32_t flags = form != 0 ? shapeshiftFormFlags(owner, form) : 0u;
+    const bool autoUnshift = addons::storedCVarValue("autoUnshift", "1") != "0";
+    return evaluateShapeshiftCast({
+        .form = form,
+        .formFlags = flags,
+        .formAuraCancellable = formAuraIsCancellable(owner, form),
+        .autoUnshiftEnabled = autoUnshift,
+        .spellAttr = entry.attr,
+        .spellAttrEx2 = entry.attrEx2,
+        .spellStances = entry.stances,
+        .spellStancesNot = entry.stancesNot,
+    });
+}
+
+bool autoUnshiftFor(GameHandler& owner, const GameHandler::SpellNameEntry& entry) {
+    return shapeshiftCastResult(owner, entry) == ShapeshiftCastResult::AutoUnshiftAndCast;
+}
+
+bool formAllows(GameHandler& owner, const GameHandler::SpellNameEntry& entry) {
+    const auto r = shapeshiftCastResult(owner, entry);
+    return r == ShapeshiftCastResult::AllowedInForm || r == ShapeshiftCastResult::AutoUnshiftAndCast;
+}
+} // namespace
+
 SpellPrerequisite spellPrerequisite(GameHandler& owner, uint32_t spellId, uint64_t target) {
     owner.getSpellName(spellId);
     const auto found = owner.spellNameCacheRef().find(spellId);
@@ -1378,7 +1445,7 @@ SpellPrerequisite spellPrerequisite(GameHandler& owner, uint32_t spellId, uint64
     if (entry.attr & 0x40u) return SpellPrerequisite::Passive;
     if (owner.isPlayerDead() && !(entry.attr & 0x800000u)) return SpellPrerequisite::Dead;
     if ((entry.attr & 0x10000000u) && owner.isInCombat()) return SpellPrerequisite::Combat;
-    if (const uint8_t form = owner.getShapeshiftFormId(); form != 0 && (entry.stancesNot & (1u << (form - 1))))
+    if (shapeshiftCastResult(owner, entry) == ShapeshiftCastResult::RefusedNotShapeshift)
         return SpellPrerequisite::FormRefused;
     if (entry.attr & 0x20000u) {
         bool stealthed = false;
@@ -1409,59 +1476,6 @@ SpellPrerequisite spellPrerequisite(GameHandler& owner, uint32_t spellId, uint64
 }
 
 namespace {
-// SpellShapeshiftForm.dbc Flags of a form, read once per form. Bit 0: the form
-// counts as no form for spell requirements - Stealth (30) has it, which is why
-// Vanish (not while shapeshifted) stays usable in stealth; Cat Form (1) not.
-uint32_t shapeshiftFormFlags(GameHandler& owner, uint8_t form) {
-    auto& cache = owner.shapeshiftFormFlagsRef();
-    if (const auto it = cache.find(form); it != cache.end()) return it->second;
-    auto* am = owner.services().assetManager;
-    assert(am && am->isInitialized());
-    const auto* layout = pipeline::getActiveDBCLayout()
-        ? pipeline::getActiveDBCLayout()->getLayout("SpellShapeshiftForm") : nullptr;
-    assert(layout && "dbc_layouts.json lacks SpellShapeshiftForm; deploy current expansion metadata");
-    const uint32_t flagsField = layout->field("Flags");
-    assert(flagsField != 0xFFFFFFFF && "dbc_layouts.json lacks SpellShapeshiftForm.Flags; deploy current expansion metadata");
-    auto dbc = am->loadDBC("SpellShapeshiftForm.dbc");
-    assert(dbc && dbc->isLoaded());
-    const int32_t row = dbc->findRecordById(form);
-    if (row < 0) LOG_ERROR("SpellShapeshiftForm.dbc has no form ", static_cast<int>(form));
-    const uint32_t flags = row < 0 ? 0u : dbc->getUInt32(static_cast<uint32_t>(row), flagsField);
-    cache[form] = flags;
-    return flags;
-}
-
-// CMaNGOS GetErrorAtShapeshiftedCast, the client's rule as well: native
-// 2.4.3 greys Premeditation (Stances = Stealth, no stealth attribute) outside
-// stealth, and leaves Vanish (not while shapeshifted) usable inside it.
-// A form the client leaves by itself to cast a spell that cannot be cast in
-// it: a real shapeshift (no flag 1) without SpellShapeshiftForm flag 0x100
-// (Spirit of Redemption has it). Native 2.4.3 in Cat Form answers
-// IsUsableSpell 1 for Healing Touch, Wrath and Dire Bear Form, and /cast Dire
-// Bear Form there leaves Cat Form and becomes a bear.
-bool autoUnshiftFor(GameHandler& owner, const GameHandler::SpellNameEntry& entry) {
-    constexpr uint32_t kAttrNotShapeshift = 0x00010000;
-    constexpr uint32_t kFormFlagActsAsNoForm = 0x1;
-    constexpr uint32_t kFormFlagNoAutoUnshift = 0x100;
-    const uint8_t form = owner.getShapeshiftFormId();
-    if (form == 0 || !(entry.attr & kAttrNotShapeshift) || entry.stances != 0) return false;
-    if ((1u << (form - 1)) & entry.stancesNot) return false;
-    const uint32_t flags = shapeshiftFormFlags(owner, form);
-    return !(flags & kFormFlagActsAsNoForm) && !(flags & kFormFlagNoAutoUnshift);
-}
-
-bool formAllows(GameHandler& owner, const GameHandler::SpellNameEntry& entry) {
-    const uint8_t form = owner.getShapeshiftFormId();
-    const uint32_t formBit = form ? (1u << (form - 1)) : 0u;
-    if (formBit & entry.stancesNot) return false;
-    if (formBit & entry.stances) return true;
-    constexpr uint32_t kAttrNotShapeshift = 0x00010000;
-    constexpr uint32_t kAttrEx2AllowWhileNotShapeshifted = 0x00080000;
-    constexpr uint32_t kFormFlagActsAsNoForm = 0x1;
-    const bool shifted = form != 0 && !(shapeshiftFormFlags(owner, form) & kFormFlagActsAsNoForm);
-    if (shifted) return autoUnshiftFor(owner, entry) || (!(entry.attr & kAttrNotShapeshift) && entry.stances == 0);
-    return entry.stances == 0 || (entry.attrEx2 & kAttrEx2AllowWhileNotShapeshifted);
-}
 
 // UNIT_FIELD_AURASTATE keeps state n in bit n-1. Riposte needs state 1 (the
 // parry window); Stealth and Vanish refuse state 12 (Faerie Fire).
@@ -1706,6 +1720,7 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid, std::optiona
             LOG_DEBUG("Ignoring cast request for passive spell ", spellId);
             return;
         case SpellPrerequisite::FormRefused:
+            raiseGlobalStringError(owner_, "SPELL_FAILED_NOT_SHAPESHIFT");
             owner_.fireAddonEvent("UNIT_SPELLCAST_FAILED", spellcastArgs("player", spellId));
             return;
         case SpellPrerequisite::Stealth:
@@ -1810,13 +1825,6 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid, std::optiona
         if (!text.empty()) owner_.raiseUiError(text);
         owner_.fireAddonEvent("UNIT_SPELLCAST_FAILED", spellcastArgs("player", spellId));
         return;
-    }
-    // Leaving the form first: the server refuses a NOT_SHAPESHIFT spell in it
-    // (SPELL_FAILED_NOT_SHAPESHIFT), so the client cancels the form's aura and
-    // casts after it, as native 2.4.3 does from Cat Form.
-    if (const auto* entry = owner_.getSpellNameEntry(spellId); entry && autoUnshiftFor(owner_, *entry)) {
-        LOG_INFO("Spell ", spellId, " leaves form ", static_cast<int>(owner_.getShapeshiftFormId()), " first");
-        cancelShapeshiftForm();
     }
     // SPELL_ATTR_HELD_ITEM_ONLY (0x200): cast at the main-hand item, which the
     // client picks itself (the shaman weapon imbues). Native 2.4.3 with the
@@ -2313,6 +2321,16 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid, std::optiona
         raiseGlobalStringError(owner_, "ERR_SPELL_OUT_OF_RANGE");
         owner_.fireAddonEvent("UNIT_SPELLCAST_FAILED", spellcastArgs("player", spellId));
         return;
+    }
+
+    // Auto-unshift (CVar "autoUnshift", default "1" in TBC 2.4.3): if the spell
+    // cannot be cast in the current form (StancesNot or NOT_SHAPESHIFT) but can
+    // be cast unshifted and the form is cancellable, cancel the form's aura
+    // immediately before sending CMSG_CAST_SPELL (after target/range/moving checks
+    // pass so arming a targeting cursor or failing range never drops form early).
+    if (const auto* entry = owner_.getSpellNameEntry(spellId); entry && autoUnshiftFor(owner_, *entry)) {
+        LOG_INFO("Spell ", spellId, " auto-unshifts form ", static_cast<int>(owner_.getShapeshiftFormId()), " before cast");
+        cancelShapeshiftForm();
     }
 
     // Never 0: the server's own casts, such as each Auto Shot after the

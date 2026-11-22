@@ -872,6 +872,10 @@ wowee_add_test(test_shapeshift_forms
             ${TEST_COMMON_SOURCES}
             ${CMAKE_SOURCE_DIR}/src/game/shapeshift_forms.cpp)
 
+# ── test_shapeshift_auto_unshift ─────────────────────────────
+wowee_add_test(test_shapeshift_auto_unshift
+    SOURCES test_shapeshift_auto_unshift.cpp)
+
 # ── test_tile_size_agreement ─────────────────────────────────
 # The ADT tile size, which three headers each declared and two files spelled
 # with two fewer decimals. Pins the value against its own arithmetic.
