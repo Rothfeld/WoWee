@@ -509,8 +509,10 @@
     "ImpactAreaKit": 23,
     "PersistentAreaKit": 24,
     "MissileModel": 7,
+    "MissilePathType": 8,
     "MissileDestinationAttachment": 9,
     "MissileAttachment": 15,
+    "MissileMotion": 20,
     "PrecastKit": 1
   },
   "SpellVisualEffectName": {

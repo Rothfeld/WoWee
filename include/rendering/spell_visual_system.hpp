@@ -12,6 +12,7 @@
 #include "rendering/camera_shake.hpp"
 #include "rendering/chain_effect.hpp"
 #include "rendering/missile_homing.hpp"
+#include "rendering/spell_missile_motion.hpp"
 #include "rendering/m2_renderer.hpp"
 #include "rendering/spell_launch_origin.hpp"
 #include "rendering/weapon_trail.hpp"
@@ -366,6 +367,17 @@ private:
         uint32_t targetInstanceId = 0;
         uint32_t destinationAttachment = kAttachChestBloodFrontId;
         MissileTargetResolver targetResolver;
+        uint32_t motionId = 0;       // SpellVisual.MissileMotion -> SpellMissileMotion.dbc
+        uint32_t pathType = 0;       // SpellVisual.MissilePathType (2 = parabola fallback)
+        int missileIndex = 0;
+        int missileCount = 1;
+        float rand1 = 0.5f;
+        float rand2 = 0.5f;
+        float rand3 = 0.5f;
+        float startDistance = 0.0f;
+        float progress = 0.0f;
+        glm::vec3 prevWorldPos{0.0f};
+        bool hasPrevWorldPos = false;
     };
 
     void loadSpellVisualDbc();
@@ -570,7 +582,10 @@ private:
     uint32_t loadSpellModel(const std::string& modelPath);
     void placeSpellMissile(const SpellMissile& missile, float t);
     void placeSpellMissileAt(const SpellMissile& missile, const glm::vec3& pos,
-                             const glm::vec3& rotation, float animProgress);
+                             const glm::vec3& rotation, float animProgress,
+                             float scaleMult = 1.0f);
+    bool evaluateMissileMotion(const SpellMissile& missile, float progress, float flightTime,
+                               float totalDistance, MissileMotionOutput& out) const;
 
     M2Renderer* m2Renderer_ = nullptr;
     Renderer* renderer_ = nullptr;
@@ -589,6 +604,9 @@ private:
     std::vector<PendingAreaImpact> pendingAreaImpacts_;
     std::unordered_map<uint32_t, std::string> spellVisualMissilePath_; // visualId → missile M2 path
     std::unordered_map<uint32_t, float> spellVisualMissileScale_;
+    std::unordered_map<uint32_t, uint32_t> spellVisualMissilePathType_;
+    std::unordered_map<uint32_t, uint32_t> spellVisualMissileMotion_;
+    SpellMissileMotionTable missileMotionTable_;
     std::unordered_map<uint32_t, MissileAttachments> missileAttachments_;
     std::unordered_map<uint32_t, int32_t> launchAttachments_;  // SpellVisual MissileAttachment, every visual
     std::unordered_map<std::string, uint32_t> spellVisualModelIds_;   // M2 path → M2Renderer modelId

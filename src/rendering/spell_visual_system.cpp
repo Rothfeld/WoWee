@@ -120,6 +120,8 @@ void SpellVisualSystem::loadSpellVisualDbc() {
     const uint32_t svMissileAttachmentField = svLayout ? svLayout->field("MissileAttachment") : 0xFFFFFFFFu;
     const uint32_t svMissileDestinationField =
         svLayout ? svLayout->field("MissileDestinationAttachment") : 0xFFFFFFFFu;
+    uint32_t svMissilePathTypeField = svLayout ? svLayout->field("MissilePathType") : 0xFFFFFFFFu;
+    uint32_t svMissileMotionField = svLayout ? svLayout->field("MissileMotion") : 0xFFFFFFFFu;
     uint32_t fxFilePathField  = fxLayout  ? (*fxLayout)["FilePath"]       : 2;
     const uint32_t fxScaleField = fxLayout ? fxLayout->field("Scale") : 0xFFFFFFFFu;
     if (fxScaleField == 0xFFFFFFFFu)
@@ -300,6 +302,11 @@ void SpellVisualSystem::loadSpellVisualDbc() {
     }
     uint32_t svFc = svDbc->getFieldCount();
     assert(svLayout && "SpellVisual layout required for channel kits");
+    // TBC 2.4.3 SpellVisual.dbc (25 columns) stores MissilePathType at col 8
+    // and MissileMotion at col 20; preserve fallback when runtime dbc_layouts.json
+    // has not been re-synced yet.
+    if (svMissilePathTypeField == 0xFFFFFFFFu && svFc == 25) svMissilePathTypeField = 8;
+    if (svMissileMotionField == 0xFFFFFFFFu && svFc == 25) svMissileMotionField = 20;
     uint32_t loadedMissile = 0;
     for (uint32_t i = 0; i < svDbc->getRecordCount(); ++i) {
         uint32_t vid = svDbc->getUInt32(i, 0);
@@ -331,6 +338,14 @@ void SpellVisualSystem::loadSpellVisualDbc() {
             if (!path.empty()) {
                 spellVisualMissilePath_[vid] = path;
                 spellVisualMissileScale_[vid] = effectScale(svDbc->getUInt32(i, svMissileField));
+                if (svMissilePathTypeField < svFc) {
+                    const uint32_t pt = svDbc->getUInt32(i, svMissilePathTypeField);
+                    if (pt != 0) spellVisualMissilePathType_[vid] = pt;
+                }
+                if (svMissileMotionField < svFc) {
+                    const uint32_t mid = svDbc->getUInt32(i, svMissileMotionField);
+                    if (mid != 0) spellVisualMissileMotion_[vid] = mid;
+                }
                 ++loadedMissile;
             }
             if (!path.empty() && svMissileAttachmentField < svFc && svMissileDestinationField < svFc) {
@@ -342,6 +357,9 @@ void SpellVisualSystem::loadSpellVisualDbc() {
     }
     LOG_INFO("SpellVisual: loaded ", kitEffects_.size(), " kits with effects, missile=", loadedMissile,
              " (of ", svDbc->getRecordCount(), " visual records)");
+    if (auto smmDbc = cachedAssetManager_->loadDBC("SpellMissileMotion.dbc"); smmDbc && smmDbc->isLoaded()) {
+        missileMotionTable_.loadFromDbc(*smmDbc);
+    }
     loadChainEffects();
     loadCameraShakes();
 }
@@ -1796,26 +1814,72 @@ bool SpellVisualSystem::playSpellMissile(uint32_t visualId, const glm::vec3& sta
     const float duration = distance / speed;
     const glm::vec3 initDir = (distance > 1e-4f) ? (delta / distance) : glm::vec3(1.0f, 0.0f, 0.0f);
     const float flightSpeed = missileFlightSpeed(distance, speed, launchDelay);
-    spellMissiles_.push_back({.instanceId = 0, .modelId = modelId, .visualId = visualId, .start = start,
-                              .end = resolvedEnd, .pos = start, .dir = initDir, .elapsed = 0.0f,
-                              .launchAt = launchDelay, .duration = duration, .flightSpeed = flightSpeed,
-                              .distanceTraveled = 0.0f, .targetAttachInstanceId = targetAttachInstanceId,
-                              .impactAtEnd = impactAtEnd, .scale = spellVisualMissileScale_.at(visualId),
-                              .areaImpactAtEnd = areaImpactAtEnd, .resistEffectAtEnd = resistEffectAtEnd,
-                              .onArrive = std::move(onArrive), .casterInstanceId = casterInstanceId,
-                              .launchOrigin = launchOrigin, .targetInstanceId = targetInstanceId,
-                              .destinationAttachment = destinationAttachment,
-                              .targetResolver = std::move(targetResolver)});
+
+    const auto ptIt = spellVisualMissilePathType_.find(visualId);
+    const uint32_t pathType = (ptIt != spellVisualMissilePathType_.end()) ? ptIt->second : 0u;
+    const auto motIt = spellVisualMissileMotion_.find(visualId);
+    const uint32_t motionId = (motIt != spellVisualMissileMotion_.end()) ? motIt->second : 0u;
+    const int count = static_cast<int>(std::max(1u, missileMotionTable_.missileCount(motionId)));
+    static thread_local std::mt19937 motionRng{std::random_device{}()};
+    std::uniform_real_distribution<float> unitDist(0.0f, 1.0f);
+    const float baseScale = spellVisualMissileScale_.at(visualId);
+
+    for (int idx = 0; idx < count; ++idx) {
+        const bool isPrimary = (idx == 0);
+        spellMissiles_.push_back({.instanceId = 0, .modelId = modelId, .visualId = visualId, .start = start,
+                                  .end = resolvedEnd, .pos = start, .dir = initDir, .elapsed = 0.0f,
+                                  .launchAt = launchDelay, .duration = duration, .flightSpeed = flightSpeed,
+                                  .distanceTraveled = 0.0f, .targetAttachInstanceId = targetAttachInstanceId,
+                                  .impactAtEnd = isPrimary && impactAtEnd, .scale = baseScale,
+                                  .areaImpactAtEnd = isPrimary && areaImpactAtEnd,
+                                  .resistEffectAtEnd = isPrimary && resistEffectAtEnd,
+                                  .onArrive = isPrimary ? std::move(onArrive) : std::function<void()>{},
+                                  .casterInstanceId = casterInstanceId,
+                                  .launchOrigin = launchOrigin, .targetInstanceId = targetInstanceId,
+                                  .destinationAttachment = destinationAttachment,
+                                  .targetResolver = targetResolver,
+                                  .motionId = motionId, .pathType = pathType,
+                                  .missileIndex = idx, .missileCount = count,
+                                  .rand1 = unitDist(motionRng), .rand2 = unitDist(motionRng),
+                                  .rand3 = unitDist(motionRng), .startDistance = distance});
+    }
     LOG_INFO("SpellVisual: missile visualId=", visualId, " model=", modelPath,
-             " distance=", distance, " speed=", speed, " lands=", duration, "s leaves=", launchDelay, "s");
+             " distance=", distance, " speed=", speed, " lands=", duration, "s leaves=", launchDelay,
+             "s motion=", motionId, " pathType=", pathType, " count=", count);
     return true;
+}
+
+bool SpellVisualSystem::evaluateMissileMotion(const SpellMissile& missile, float progress,
+                                              float flightTime, float totalDistance,
+                                              MissileMotionOutput& out) const {
+    if (missile.motionId != 0 && missileMotionTable_.hasMotion(missile.motionId)) {
+        const MissileMotionInput in{
+            .progress = progress,
+            .time = flightTime,
+            .startDistance = missile.startDistance,
+            .totalDistance = totalDistance,
+            .missileIndex = missile.missileIndex,
+            .missileCount = missile.missileCount,
+            .rand1 = missile.rand1,
+            .rand2 = missile.rand2,
+            .rand3 = missile.rand3,
+        };
+        return missileMotionTable_.evaluate(missile.motionId, in, out);
+    }
+    if (missile.pathType == 2u) {
+        out = defaultParabolicMotion(missile.startDistance, progress);
+        return true;
+    }
+    return false;
 }
 
 // The missile models point down +X. Turn it to face along its path, with the
 // nose pitched up or down to follow a target above or below the caster.
 void SpellVisualSystem::placeSpellMissileAt(const SpellMissile& missile, const glm::vec3& pos,
-                                            const glm::vec3& rotation, float animProgress) {
-    m2Renderer_->setInstanceTransform(missile.instanceId, placementModelMatrix(pos, rotation, missile.scale));
+                                            const glm::vec3& rotation, float animProgress,
+                                            float scaleMult) {
+    const float effectiveScale = missile.scale * std::max(0.01f, scaleMult);
+    m2Renderer_->setInstanceTransform(missile.instanceId, placementModelMatrix(pos, rotation, effectiveScale));
     // The model's sequence plays once over the flight, whatever its length.
     // Arcane_Missile_Lvl3.m2 (Darkmaster Gandling's Arcane Missiles 15791,
     // speed 20) spreads its three missiles to a third of its 1 s Stand and
@@ -1828,6 +1892,31 @@ void SpellVisualSystem::placeSpellMissileAt(const SpellMissile& missile, const g
 }
 
 void SpellVisualSystem::placeSpellMissile(const SpellMissile& missile, float t) {
+    const float totalDist = glm::length(missile.end - missile.start);
+    const float flightTime = std::max(0.0f, missile.elapsed - missile.launchAt);
+    MissileMotionOutput out;
+    if (evaluateMissileMotion(missile, t, flightTime, totalDist, out)) {
+        const glm::vec3 pos = applyMissileMotion(missile.start, missile.end, t, out);
+        glm::vec3 tangent = missile.end - missile.start;
+        if (missile.hasPrevWorldPos && glm::length(pos - missile.prevWorldPos) > 1e-4f) {
+            tangent = pos - missile.prevWorldPos;
+        } else {
+            const float dtProbe = 0.01f;
+            const float tNext = std::min(1.0f, t + dtProbe);
+            MissileMotionOutput outNext;
+            if (evaluateMissileMotion(missile, tNext, flightTime + 0.01f, totalDist, outNext)) {
+                const glm::vec3 posNext = applyMissileMotion(missile.start, missile.end, tNext, outNext);
+                if (glm::length(posNext - pos) > 1e-4f) tangent = posNext - pos;
+            }
+        }
+        glm::vec3 rot = missileDirectionToEuler(tangent);
+        constexpr float kDegToRad = glm::pi<float>() / 180.0f;
+        rot.y += out.modelPitch * kDegToRad;
+        rot.z += out.modelYaw * kDegToRad;
+        rot.x += out.modelRoll * kDegToRad;
+        placeSpellMissileAt(missile, pos, rot, t, out.scale);
+        return;
+    }
     const glm::vec3 pos = glm::mix(missile.start, missile.end, t);
     placeSpellMissileAt(missile, pos, missileDirectionToEuler(missile.end - missile.start), t);
 }
@@ -2096,26 +2185,61 @@ void SpellVisualSystem::update(float deltaTime) {
             }
             m2Renderer_->setInstanceIsSpellVisual(it->instanceId);
             it->pos = it->start;
+            it->startDistance = glm::length(it->end - it->start);
             const glm::vec3 toEnd = it->end - it->start;
             if (const float len = glm::length(toEnd); len > 1e-4f) it->dir = toEnd / len;
-            placeSpellMissileAt(*it, it->pos, missileDirectionToEuler(it->dir), 0.0f);
+            placeSpellMissile(*it, 0.0f);
+            it->prevWorldPos = it->start;
+            it->hasPrevWorldPos = true;
             ++it;
             continue;
         }
         if (it->targetResolver) {
-            const float stepSpeed = (it->elapsed >= missileMaxFlightDuration(it->duration)) ? 0.0f : it->flightSpeed;
+            const float totalDist = glm::length(it->end - it->start);
+            const float flightTime = std::max(0.0f, it->elapsed - it->launchAt);
+            MissileMotionOutput out;
+            const bool hasMotion = evaluateMissileMotion(*it, it->progress, flightTime, totalDist, out);
+            const float stepSpeed = (it->elapsed >= missileMaxFlightDuration(it->duration))
+                ? 0.0f : (it->flightSpeed * (hasMotion ? out.speedScalar : 1.0f));
             const HomingStepResult step = stepHomingMissile(
                 it->pos, it->end, it->dir, stepSpeed, deltaTime, it->distanceTraveled);
             it->pos = step.position;
             it->dir = step.direction;
-            placeSpellMissileAt(*it, it->pos, step.rotation, step.animProgress);
+            it->progress = step.animProgress;
+            if (hasMotion && evaluateMissileMotion(*it, step.animProgress, flightTime, totalDist, out)) {
+                const glm::vec3 offset =
+                    applyMissileMotion(it->start, it->end, step.animProgress, out) -
+                    glm::mix(it->start, it->end, step.animProgress);
+                const glm::vec3 worldPos = step.position + offset;
+                const glm::vec3 tangent = (it->hasPrevWorldPos && glm::length(worldPos - it->prevWorldPos) > 1e-4f)
+                    ? (worldPos - it->prevWorldPos) : step.direction;
+                glm::vec3 rot = missileDirectionToEuler(tangent);
+                constexpr float kDegToRad = glm::pi<float>() / 180.0f;
+                rot.y += out.modelPitch * kDegToRad;
+                rot.z += out.modelYaw * kDegToRad;
+                rot.x += out.modelRoll * kDegToRad;
+                placeSpellMissileAt(*it, worldPos, rot, step.animProgress, out.scale);
+                it->prevWorldPos = worldPos;
+                it->hasPrevWorldPos = true;
+            } else {
+                placeSpellMissileAt(*it, step.position, step.rotation, step.animProgress);
+            }
             it->landed = step.arrived;
         } else {
             const float dist = glm::length(it->end - it->start);
             const float flight = (it->flightSpeed > 0.0f) ? (dist / it->flightSpeed) : 0.0f;
-            const float t = flight > 0.0f ? std::min(1.0f, (it->elapsed - it->launchAt) / flight) : 1.0f;
-            placeSpellMissile(*it, t);
-            it->landed = t >= 1.0f;
+            const float flightTime = std::max(0.0f, it->elapsed - it->launchAt);
+            MissileMotionOutput out;
+            const bool hasMotion = evaluateMissileMotion(*it, it->progress, flightTime, dist, out);
+            const float dProgress = (flight > 0.0f)
+                ? (deltaTime / flight) * (hasMotion ? out.speedScalar : 1.0f) : 1.0f;
+            it->progress = std::min(1.0f, it->progress + dProgress);
+            placeSpellMissile(*it, it->progress);
+            if (hasMotion && evaluateMissileMotion(*it, it->progress, flightTime, dist, out)) {
+                it->prevWorldPos = applyMissileMotion(it->start, it->end, it->progress, out);
+                it->hasPrevWorldPos = true;
+            }
+            it->landed = it->progress >= 1.0f;
         }
         ++it;
     }

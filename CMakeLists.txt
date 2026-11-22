@@ -853,6 +853,7 @@ set(WOWEE_SOURCES
     src/rendering/levelup_effect.cpp
     src/rendering/charge_effect.cpp
     src/rendering/spell_visual_system.cpp
+    src/rendering/spell_missile_motion.cpp
     src/rendering/weapon_trail.cpp
     src/rendering/post_process_pipeline.cpp
     src/rendering/overlay_system.cpp

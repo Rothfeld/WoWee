@@ -3427,6 +3427,25 @@ add_test(NAME channel_visual_parity COMMAND test_channel_visual_parity)
 set_tests_properties(channel_visual_parity PROPERTIES SKIP_RETURN_CODE 4)
 register_test_target(test_channel_visual_parity)
 
+# TBC 2.4.3 SpellMissileMotion.dbc Lua trajectory & parabolic arc parity tests
+add_executable(test_spell_missile_motion
+    test_spell_missile_motion.cpp
+    ${TEST_COMMON_SOURCES}
+    ${CMAKE_SOURCE_DIR}/src/rendering/spell_missile_motion.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/dbc_loader.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/dbc_layout.cpp
+)
+target_include_directories(test_spell_missile_motion PRIVATE ${TEST_INCLUDE_DIRS})
+target_include_directories(test_spell_missile_motion SYSTEM PRIVATE
+    ${TEST_SYSTEM_INCLUDE_DIRS} ${CMAKE_SOURCE_DIR}/extern/lua-5.1.5/src)
+target_compile_definitions(test_spell_missile_motion PRIVATE
+    WOWEE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+target_link_libraries(test_spell_missile_motion PRIVATE catch2_main lua51)
+wowee_test_link_glm(test_spell_missile_motion)
+add_test(NAME spell_missile_motion COMMAND test_spell_missile_motion)
+set_tests_properties(spell_missile_motion PROPERTIES SKIP_RETURN_CODE 4)
+register_test_target(test_spell_missile_motion)
+
 # Unit portrait background mode & ghost/Wisp desaturation parity tests
 add_executable(test_unit_portrait test_unit_portrait.cpp)
 target_include_directories(test_unit_portrait PRIVATE ${TEST_INCLUDE_DIRS})
