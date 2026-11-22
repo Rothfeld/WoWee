@@ -847,6 +847,69 @@ TEST_CASE("Right button turns the character only once the mouse turns the view",
     CHECK_FALSE(CameraController::cameraDrivesFacing(true, true, true, true, true));
 }
 
+TEST_CASE_METHOD(Integration, "Server-controlled/corpse lock blocks turning and facing packets while allowing camera orbit",
+                 "[input][camera][facing][corpse]") {
+    rendering::Camera camera;
+    rendering::CameraController controller(&camera);
+    controller.setIdleOrbitEnabled(false);
+    glm::vec3 target(10.0f, 20.0f, 0.0f);
+    controller.setFollowTarget(&target);
+    controller.setCameraAndFacingYaw(45.0f, 45.0f);
+
+    std::vector<uint32_t> sentOpcodes;
+    controller.setMovementCallback([&](uint32_t op) { sentOpcodes.push_back(op); });
+
+    // 1. Rooted while alive (e.g. Frost Nova / Spirit of Redemption): turning A/D still rotates facing.
+    controller.setMovementRooted(true);
+    controller.setServerControlled(false, false, false, 0.0f);
+    manager.beginInputFrame();
+    event(SDL_SCANCODE_A, true);
+    controller.update(0.2f);
+    CHECK(controller.getFacingYaw() > 45.0f);
+    event(SDL_SCANCODE_A, false);
+    manager.beginInputFrame();
+    controller.update(0.05f);
+
+    // 2. Unreleased corpse (serverControlled=true, rooted=true):
+    //    A/D and resetAngles must NOT rotate facingYaw or emit turn opcodes,
+    //    while camera orbit (applyLookDelta) still moves camera yaw.
+    const float deathFacing = controller.getFacingYaw();
+    sentOpcodes.clear();
+    controller.setServerControlled(true, false, false, 0.0f);
+    manager.beginInputFrame();
+    event(SDL_SCANCODE_A, true);
+    controller.update(0.25f);
+    CHECK(controller.getFacingYaw() == Catch::Approx(deathFacing));
+    CHECK(sentOpcodes.empty());
+    event(SDL_SCANCODE_A, false);
+
+    manager.beginInputFrame();
+    event(SDL_SCANCODE_D, true);
+    controller.update(0.25f);
+    CHECK(controller.getFacingYaw() == Catch::Approx(deathFacing));
+    CHECK(sentOpcodes.empty());
+    event(SDL_SCANCODE_D, false);
+
+    const float yawBeforeOrbit = controller.getYaw();
+    controller.applyLookDelta(40.0f, 0.0f);
+    manager.beginInputFrame();
+    controller.update(0.05f);
+    CHECK(controller.getYaw() != Catch::Approx(yawBeforeOrbit));
+    CHECK(controller.getFacingYaw() == Catch::Approx(deathFacing));
+
+    controller.resetAngles();
+    CHECK(controller.getFacingYaw() == Catch::Approx(deathFacing));
+
+    // 3. Releasing spirit unlocks turning again.
+    controller.setMovementRooted(false);
+    controller.setServerControlled(false, false, false, 0.0f);
+    manager.beginInputFrame();
+    event(SDL_SCANCODE_D, true);
+    controller.update(0.2f);
+    CHECK(controller.getFacingYaw() < deathFacing);
+    event(SDL_SCANCODE_D, false);
+}
+
 TEST_CASE_METHOD(Integration, "R resets only real camera angles and respects capture and rebindings", "[input][camera][O6]") {
     rendering::Camera camera;
     rendering::CameraController controller(&camera);

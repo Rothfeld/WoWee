@@ -3111,9 +3111,14 @@ void syncServerSpeedsToCamera(rendering::Renderer* renderer,
     {
         const bool held = !gameHandler->isServerMovementAllowed();
         const bool splineActive = gameHandler->isPlayerServerSplineActive();
-        const bool serverControlled = held || splineActive;
+        // An unreleased corpse receives SMSG_FORCE_MOVE_ROOT (not CLIENT_CONTROL_UPDATE),
+        // which only blocks translation while leaving turning unlocked (e.g. Frost Nova,
+        // Spirit of Redemption). Once dead (HP == 0, not yet released as a ghost), lock
+        // both movement and facing so camera orbit cannot spin the corpse.
+        const bool deadCorpse = gameHandler->isPlayerDead() && !gameHandler->isPlayerGhost();
+        const bool serverControlled = held || splineActive || deadCorpse;
         auto self = gameHandler->getEntityManager().getEntity(gameHandler->getPlayerGuid());
-        const bool splineMoving = serverControlled && self && self->isActivelyMoving();
+        const bool splineMoving = (held || splineActive) && self && self->isActivelyMoving();
         const float splineSpeed = splineMoving ? self->getLocomotionSpeed() : 0.0f;
         const float walkSpeed = gameHandler->getServerWalkSpeed();
         const float runSpeed = gameHandler->getServerRunSpeed();

@@ -3664,7 +3664,7 @@ void CameraController::resetAngles() {
     floorContactPitch_.reset();
     if (!camera) return;
     yaw = defaultYaw;
-    facingYaw = defaultYaw;
+    if (!serverControlled_) facingYaw = defaultYaw;
     pitch = defaultPitch;
     camera->setRotation(yaw, pitch);
 }
