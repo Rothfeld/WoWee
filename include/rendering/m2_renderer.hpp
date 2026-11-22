@@ -10,6 +10,7 @@
 #include "pipeline/blp_loader.hpp"
 #include "pipeline/grass_clearing.hpp"
 #include "rendering/m2_model_classifier.hpp"
+#include "rendering/m2_transparent_sort.hpp"
 #include "rendering/m2_view_distance.hpp"
 #include "rendering/projected_texture.hpp"
 #include <vulkan/vulkan.h>
@@ -100,8 +101,9 @@ struct M2ModelGPU {
         pipeline::M2AnimationTrack animatedColorAlpha;
         pipeline::M2AnimationTrack animatedTextureWeight;
         glm::vec3 center = glm::vec3(0.0f); // Center of batch geometry (model space)
-        // Submesh sort point and its bone; pass 2 draws a model's blended
-        // batches far to near by it.
+        // Submesh sort point, priority plane, and center bone; pass 2 draws
+        // blended batches globally by (priorityPlane, view z).
+        int8_t priorityPlane = 0;
         uint16_t sortBone = 0;
         glm::vec3 sortCenter{0.0f};
         float glowSize = 1.0f;              // Approx radius of batch geometry
@@ -1317,7 +1319,16 @@ private:
     RoomAtQuery roomAtQuery_;
     std::vector<VisibleEntry> sortedVisible_;  // Reused each frame
     std::vector<VisibleEntry> transparentVisible_; // Only models needing pass 2
-    std::vector<std::pair<float, uint32_t>> transparentBatchOrder_; // pass 2: view z, batch index
+    struct TransparentBatchDraw {
+        M2TransparentBatchKey sortKey;
+        uint32_t instanceIndex = 0;
+        uint32_t modelId = 0;
+        uint32_t batchIndex = 0;
+        float instanceFadeAlpha = 1.0f;
+        bool instanceFaded = false;
+        bool needsBones = false;
+    };
+    std::vector<TransparentBatchDraw> transparentBatchDraws_; // pass 2: globally sorted batches
     struct GroundDetailFringeDraw {
         ::VkBuffer vertexBuffer = VK_NULL_HANDLE;
         ::VkBuffer indexBuffer = VK_NULL_HANDLE;

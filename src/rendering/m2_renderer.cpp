@@ -1893,6 +1893,7 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId, boo
                 gpuModel.hasTextureAnimation = true;
             }
 
+            bgpu.priorityPlane = batch.priorityPlane;
             bgpu.sortBone = batch.centerBoneIndex;
             bgpu.sortCenter = batch.sortCenter;
 

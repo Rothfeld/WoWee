@@ -1988,11 +1988,15 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
     }
 
     // =====================================================================
-    // Pass 2: Transparent/additive batches - back-to-front per instance
+    // Pass 2: Transparent/additive batches - global (priorityPlane, view z)
     // =====================================================================
-    // Transparent geometry must be drawn individually per instance in back-to-
-    // front order for correct alpha compositing.  Each draw writes one
-    // M2InstanceGPU entry and issues a single-instance indexed draw.
+    // Transparent geometry must be sorted per batch across instances by
+    // (priorityPlane, transformed sortCenter view z) rather than per instance
+    // origin. Overlapping effects whose origins differ slightly (e.g.
+    // SPELLS\SUNWELL_GROUNDFX.m2 at z=28.26 with submesh sortCenter z=-0.28
+    // vs spells\Sunwell_BeamFX.m2 at z=27.69 with submesh sortCenters
+    // z=+0.43..+136.93 and priorityPlane 0..3) otherwise draw the alpha-blended
+    // pool on top of the additive light column.
     if (afterOpaque) afterOpaque();
     if (transparentCmd) cmd = transparentCmd;
     // The boundary may switch buffers or record another renderer. Restore all
@@ -2013,42 +2017,27 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
     currentMaterialSet = VK_NULL_HANDLE;
     };
     restoreTransparentBindings();
-    const auto viewDepth = [&](const VisibleEntry& entry) {
-        return (camera.getViewMatrix() * glm::vec4(instances[entry.index].position, 1.0f)).z;
-    };
-    std::sort(transparentVisible_.begin(), transparentVisible_.end(),
-              [&](const VisibleEntry& a, const VisibleEntry& b) { return viewDepth(a) < viewDepth(b); });
 
-    currentModelId = UINT32_MAX;
-    currentModel = nullptr;
-    currentModelValid = false;
-    currentPipeline = opaquePipeline_;
-    currentMaterialSet = VK_NULL_HANDLE;
+    const int skySkipBlend = [&]() -> int {
+        if (!skyMode_) return -1;
+        static const int skipBlend = [] {
+            const char* set = std::getenv("WOWEE_SKY_M2_SKIP_BLEND");
+            return set ? std::atoi(set) : -1;
+        }();
+        return skipBlend;
+    }();
+    const bool isTbcExpansion = game::isActiveExpansion("tbc");
+    const auto& frameProjectedDraws = projectedDraws_[vkCtx_->getCurrentFrame()];
 
+    transparentBatchDraws_.clear();
     for (const auto& entry : transparentVisible_) {
         if (entry.index >= instances.size()) continue;
-        if (beforeTransparentDepth && beforeTransparentDepth(viewDepth(entry)))
-            restoreTransparentBindings();
-        auto& instance = instances[entry.index];
-
-        // Model boundary: read cachedModel off the instance - was doing a
-        // per-boundary models.find() even though every instance already has
-        // the pointer cached at addInstance time.
-        if (entry.modelId != currentModelId) {
-            currentModelId = entry.modelId;
-            currentModelValid = false;
-            currentModel = instance.cachedModel;
-            if (!currentModel) continue;
-            if (!currentModel->hasTransparentBatches && !currentModel->isSpellEffect && !currentModel->hasProjectedBatches) continue;
-            if (!currentModel->vertexBuffer || !currentModel->indexBuffer) continue;
-            currentModelValid = true;
-            VkDeviceSize vbOff = 0;
-            vkCmdBindVertexBuffers(cmd, 0, 1, &currentModel->vertexBuffer, &vbOff);
-            vkCmdBindIndexBuffer(cmd, currentModel->indexBuffer, 0, VK_INDEX_TYPE_UINT16);
-        }
-        if (!currentModelValid) continue;
-
-        const M2ModelGPU& model = *currentModel;
+        const auto& instance = instances[entry.index];
+        const M2ModelGPU* modelPtr = instance.cachedModel;
+        if (!modelPtr) continue;
+        if (!modelPtr->hasTransparentBatches && !modelPtr->isSpellEffect && !modelPtr->hasProjectedBatches) continue;
+        if (!modelPtr->vertexBuffer || !modelPtr->indexBuffer) continue;
+        const M2ModelGPU& model = *modelPtr;
 
         // Fade alpha
         float fadeAlpha = 1.0f;
@@ -2058,12 +2047,12 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
             fadeAlpha = std::clamp((entry.effectiveMaxDistSq - entry.distSq) /
                                   (entry.effectiveMaxDistSq - fadeStartDistSq), 0.0f, 1.0f);
         }
-        float instanceFadeAlpha = fadeAlpha * instance.fade;
+        const float instanceFadeAlpha = fadeAlpha * instance.fade;
         const bool instanceFaded = instance.fade < 0.999f;
 
-        bool modelNeedsAnimation = model.hasAnimation && !model.disableAnimation;
+        const bool modelNeedsAnimation = model.hasAnimation && !model.disableAnimation;
         if (modelNeedsAnimation && instance.boneMatrices.empty()) continue;
-        bool needsBones = modelNeedsAnimation && !instance.boneMatrices.empty();
+        const bool needsBones = modelNeedsAnimation && !instance.boneMatrices.empty();
         // External-pose companions only carry CPU-skinned projected batches,
         // which draw from projectedVB_ with e.useBones = 0 and need no megaBoneOffset.
         if (needsBones && instance.megaBoneOffset == 0 &&
@@ -2073,69 +2062,27 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
         if (entry.distSq > 150.0f * 150.0f) desiredLOD = 3;
         else if (entry.distSq > 80.0f * 80.0f) desiredLOD = 2;
         else if (entry.distSq > 40.0f * 40.0f) desiredLOD = 1;
-        // The nearest level the model has; see the note in the batched path.
         uint16_t targetLOD = desiredLOD;
         while (targetLOD > 0 && !(model.availableLODs & (1u << targetLOD))) --targetLOD;
 
-
-        // A model's blended batches, far to near by each submesh's sort
-        // point, carried by its center bone (a billboard turns it toward the
-        // camera). Batches of one submesh keep their skin order. Magisters'
-        // Terrace's scrying orb (BE_ScryingOrb.m2) draws its additive
-        // SHOCKWAVE10 halo (sort point at the billboard's origin) behind its
-        // Mod2x dome (0.112 toward the camera): native multiplies the halo
-        // into the red ball, and in skin order it lay on top as a white ring.
-        transparentBatchOrder_.clear();
         const glm::mat4 modelView = camera.getViewMatrix() * instance.modelMatrix;
         for (uint32_t bi = 0; bi < model.batches.size(); ++bi) {
-            const auto& b = model.batches[bi];
-            glm::vec4 point(b.sortCenter, 1.0f);
-            if (b.sortBone < instance.boneMatrices.size()) point = instance.boneMatrices[b.sortBone] * point;
-            transparentBatchOrder_.push_back({(modelView * point).z, bi});
-        }
-        std::stable_sort(transparentBatchOrder_.begin(), transparentBatchOrder_.end(),
-                         [](const auto& a, const auto& b) { return a.first < b.first; });
-        for (const auto& [sortDepth, batchIndex] : transparentBatchOrder_) {
-            const auto& batch = model.batches[batchIndex];
+            const auto& batch = model.batches[bi];
             if (batch.indexCount == 0) continue;
             if (!model.isGroundDetail && batch.submeshLevel != targetLOD) continue;
             if (batch.batchOpacity < 0.01f) continue;
-            if (!skyBatchAllowed(skyMode_, static_cast<std::size_t>(&batch - model.batches.data()))) continue;
+            if (!skyBatchAllowed(skyMode_, static_cast<std::size_t>(bi))) continue;
 
-            // Pass 2 gate: only transparent/additive batches - or, for a faded
-            // instance, every batch, since the opaque pass left it out.
-            // Projected textures all draw here, over the opaque ground.
-            {
-                const bool rawTransparent = m2BatchIsTransparent(
-                    batch.blendMode, model.isSpellEffect, batch.hasAuthoredMaterial) || instanceFaded;
-                if (!rawTransparent && !batch.projected) continue;
-            }
-            const ProjectedDraw* projectedDraw = nullptr;
+            const bool rawTransparent = m2BatchIsTransparent(
+                batch.blendMode, model.isSpellEffect, batch.hasAuthoredMaterial) || instanceFaded;
+            if (!rawTransparent && !batch.projected) continue;
             if (batch.projected) {
                 const uint64_t key = (static_cast<uint64_t>(instance.id) << 16) |
-                    static_cast<uint64_t>(&batch - model.batches.data());
-                const auto& draws = projectedDraws_[vkCtx_->getCurrentFrame()];
-                const auto it = draws.find(key);
-                if (it == draws.end()) continue;
-                projectedDraw = &it->second;
+                    static_cast<uint64_t>(bi);
+                if (frameProjectedDraws.find(key) == frameProjectedDraws.end()) continue;
             }
+            if (skySkipBlend >= 0 && batch.blendMode == skySkipBlend) continue;
 
-            // WOWEE_SKY_M2_SKIP_BLEND=<n> drops the sky's layers of one blend
-            // mode. Its thirty-four batches are six opaque, ten alpha-blended
-            // (2) and eighteen additive (4), and the two behave differently in
-            // a way that matters: additive is order-independent and alpha
-            // blending is not. Dropping ten or dropping eighteen says which
-            // half the flicker lives in, the same way NO_SKY_M2 and
-            // OPAQUE_ONLY narrowed it to the blended layers at all.
-            if (skyMode_) {
-                static const int skipBlend = [] {
-                    const char* set = std::getenv("WOWEE_SKY_M2_SKIP_BLEND");
-                    return set ? std::atoi(set) : -1;
-                }();
-                if (skipBlend >= 0 && batch.blendMode == skipBlend) continue;
-            }
-
-            // Skip glow sprites (handled in opaque pass)
             const bool batchUnlit = (batch.materialFlags & 0x01) != 0;
             M2GlowCardBatch glowCard;
             glowCard.glowSize = batch.glowSize;
@@ -2150,143 +2097,199 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
             glowCard.modelIsBrazierOrFire = model.isBrazierOrFire;
             glowCard.modelIsSpellEffect = model.isSpellEffect;
             glowCard.modelIsKoboldFlame = model.isKoboldFlame;
-            if (!game::isActiveExpansion("tbc") && m2WantsGlowSprite(glowCard) && m2GlowSpriteReplacesMesh(glowCard)) {
+            if (!isTbcExpansion && m2WantsGlowSprite(glowCard) && m2GlowSpriteReplacesMesh(glowCard)) {
                 continue;
             }
-
-
-            // Compute UV offset for this instance + batch
-            //
-            // WOWEE_SKY_M2_NO_TEXANIM=1 freezes the sky's scrolling. Nine of
-            // its eighteen additive layers carry a texture animation, and
-            // those offsets are the one thing about those layers that changes
-            // between frames at all - so if the flicker survives freezing them
-            // it is not in what the layers sample, it is in the geometry they
-            // are drawn on.
-            static const bool skyNoTexAnim =
-                std::getenv("WOWEE_SKY_M2_NO_TEXANIM") != nullptr;
-            glm::vec2 uvOffset(0.0f);
-            glm::vec2 uvScale(1.0f);
-            if (batch.textureAnimIndex != 0xFFFF && model.hasTextureAnimation &&
-                !(skyMode_ && skyNoTexAnim)) {
-                uint16_t lookupIdx = batch.textureAnimIndex;
-                if (lookupIdx < model.textureTransformLookup.size()) {
-                    uint16_t transformIdx = model.textureTransformLookup[lookupIdx];
-                    if (transformIdx < model.textureTransforms.size()) {
-                        const auto& tt = model.textureTransforms[transformIdx];
-                        glm::vec3 trans = m2_track::sampleVec3(
-                            tt.translation, instance.currentSequenceIndex,
-                            instance.animTime, instance.globalSequenceTime,
-                            model.globalSequenceDurations, glm::vec3(0.0f));
-                        uvOffset = glm::vec2(trans.x, trans.y);
-                        glm::vec3 sc = m2_track::sampleVec3(
-                            tt.scale, instance.currentSequenceIndex,
-                            instance.animTime, instance.globalSequenceTime,
-                            model.globalSequenceDurations, glm::vec3(1.0f));
-                        uvScale = glm::vec2(sc.x, sc.y);
-                    }
-                }
-            }
-
-            // Write single instance entry to SSBO
-            if (instanceDataCount_ >= MAX_INSTANCE_DATA) continue;
-            uint32_t drawOffset = instanceDataCount_;
-            auto& e = instSSBO[instanceDataCount_];
-            e.model = instance.modelMatrix;
-            e.uvOffset = uvOffset;
-            e.uvOffset2 = secondTextureOffset(model, batch, instance);
-            e.uvScale = glm::vec4(uvScale, 1.0f, 1.0f);
-            e.tintPacked = m2_internal::packAnimatedBatchTint(model, batch, instance);
-            e.fadeAlpha = instanceFadeAlpha * m2_internal::animatedBatchOpacity(model, batch, instance);
-            e.useBones = (needsBones && !kM2NoSkinning) ? 1 : 0;
-            e.boneBase = needsBones ? static_cast<int32_t>(instance.megaBoneOffset) : 0;
-            e.boneCount = static_cast<int32_t>(instance.boneMatrices.size());
-            e.highlight = instance.highlight;
-            {
-                int32_t lf = (instance.outdoorShadowed ? 1 : 0) |
-                             (instance.customLightRig ? 2 : 0) |
-                             (instance.interiorFog ? 4 : 0);
-                e.flags = lf;
-                const glm::vec3 bc = 0.5f * (instance.worldBoundsMin + instance.worldBoundsMax);
-                e.boundsRadius = std::max(0.5f * glm::length(instance.worldBoundsMax - instance.worldBoundsMin), 0.5f);
-                if (instance.customLightRig) {
-                    e.customAmbient = glm::vec4(instance.customLightRig->ambient, bc.x);
-                    e.customDiffuse = glm::vec4(instance.customLightRig->diffuse, bc.y);
-                    e.customLightDir = glm::vec4(instance.customLightRig->dir, bc.z);
-                } else {
-                    e.customAmbient = glm::vec4(0.0f, 0.0f, 0.0f, bc.x);
-                    e.customDiffuse = glm::vec4(0.0f, 0.0f, 0.0f, bc.y);
-                    e.customLightDir = instance.cachedIsGroundDetail
-                        ? glm::vec4(instance.groundNormal, bc.z)
-                        : glm::vec4(0.0f, 0.0f, -1.0f, bc.z);
-                }
-            }
-            if (projectedDraw) {
-                // The grid is already in place in the world, relative to
-                // the instance origin.
-                e.model = glm::translate(glm::mat4(1.0f), projectedDraw->origin);
-                e.useBones = 0;
-                e.boneBase = 0;
-            }
-            instanceDataCount_++;
-
-            // Pipeline selection
-            uint8_t effectiveBlendMode = batch.blendMode;
-            if (model.isSpellEffect && !batch.hasAuthoredMaterial) {
-                if (effectiveBlendMode <= 1) effectiveBlendMode = 3;
-                else if (effectiveBlendMode == 4 || effectiveBlendMode == 5) effectiveBlendMode = 3;
-            }
-
-            VkPipeline desiredPipeline;
-            switch (effectiveBlendMode) {
-                case 2: desiredPipeline = alphaPipeline_; break;
-                case M2_BLEND_MODULATE: desiredPipeline = modPipeline_; break;
-                case M2_BLEND_MODULATE2X: desiredPipeline = mod2xPipeline_; break;
-                default: desiredPipeline = additivePipeline_; break;
-            }
-            // An opaque layer of a faded instance: blended by its fade.
-            if (instanceFaded && effectiveBlendMode <= 1) desiredPipeline = alphaPipeline_;
-            if (m2UseAuthoredCull(cullAlphaPipeline_ || cullAdditivePipeline_, skyMode_,
-                                  batch.hasAuthoredMaterial,
-                                  m2FoliageTransformPreservesWinding(e.model), batch.materialFlags)) {
-                desiredPipeline = culledPipeline(desiredPipeline);
-            }
-            if (desiredPipeline != currentPipeline) {
-                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, desiredPipeline);
-                currentPipeline = desiredPipeline;
-            }
-
-            if (batch.materialUBOMapped) {
-                auto* mat = static_cast<M2MaterialUBO*>(batch.materialUBOMapped);
-                mat->interiorDarken = 0.0f;
-            }
-
             if (!batch.materialSet) continue;
-            if (batch.materialSet != currentMaterialSet) {
-                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                        pipelineLayout_, 1, 1, &batch.materialSet, 0, nullptr);
-                currentMaterialSet = batch.materialSet;
-            }
 
-            // Push constants + single-instance draw
-            M2PushConstants pc;
-            pc.texCoordSet = static_cast<int32_t>(batch.textureUnit);
-            pc.texCoordSet2 = batch.textureUnit2;
-            fillDrawMode(pc, model, skyMode_);
-            pc.instanceDataOffset = static_cast<int32_t>(drawOffset);
-            vkCmdPushConstants(cmd, pipelineLayout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(pc), &pc);
-            if (projectedDraw) {
-                const VkDeviceSize projectedOffset = 0;
-                vkCmdBindVertexBuffers(cmd, 0, 1, &projectedVB_[vkCtx_->getCurrentFrame()], &projectedOffset);
-                vkCmdDraw(cmd, projectedDraw->vertexCount, 1, projectedDraw->firstVertex, 0);
-                const VkDeviceSize modelOffset = 0;
-                vkCmdBindVertexBuffers(cmd, 0, 1, &model.vertexBuffer, &modelOffset);
-            } else {
-                vkCmdDrawIndexed(cmd, batch.indexCount, 1, batch.indexStart, 0, 0);
+            glm::vec4 point(batch.sortCenter, 1.0f);
+            if (batch.sortBone < instance.boneMatrices.size()) {
+                point = instance.boneMatrices[batch.sortBone] * point;
             }
-            if (skyMode_) ++skyDiagDrawsTransparent_;
-            lastDrawCallCount++;
+            TransparentBatchDraw draw;
+            draw.sortKey.priorityPlane = batch.priorityPlane;
+            draw.sortKey.viewDepth = (modelView * point).z;
+            draw.instanceIndex = entry.index;
+            draw.modelId = entry.modelId;
+            draw.batchIndex = bi;
+            draw.instanceFadeAlpha = instanceFadeAlpha;
+            draw.instanceFaded = instanceFaded;
+            draw.needsBones = needsBones;
+            transparentBatchDraws_.push_back(draw);
         }
+    }
+
+    std::stable_sort(transparentBatchDraws_.begin(), transparentBatchDraws_.end(),
+                     [](const TransparentBatchDraw& a, const TransparentBatchDraw& b) {
+                         return m2TransparentBatchBefore(a.sortKey, b.sortKey);
+                     });
+
+    currentModelId = UINT32_MAX;
+    currentModel = nullptr;
+    currentModelValid = false;
+    currentPipeline = opaquePipeline_;
+    currentMaterialSet = VK_NULL_HANDLE;
+
+    static const bool skyNoTexAnim =
+        std::getenv("WOWEE_SKY_M2_NO_TEXANIM") != nullptr;
+
+    for (const auto& draw : transparentBatchDraws_) {
+        float flushDepth = 0.0f;
+        if (beforeTransparentDepth &&
+            m2CharacterFlushBeforeBatch(draw.sortKey, flushDepth) &&
+            beforeTransparentDepth(flushDepth)) {
+            restoreTransparentBindings();
+        }
+        auto& instance = instances[draw.instanceIndex];
+
+        if (draw.modelId != currentModelId) {
+            currentModelId = draw.modelId;
+            currentModelValid = false;
+            currentModel = instance.cachedModel;
+            if (!currentModel || !currentModel->vertexBuffer || !currentModel->indexBuffer) continue;
+            currentModelValid = true;
+            VkDeviceSize vbOff = 0;
+            vkCmdBindVertexBuffers(cmd, 0, 1, &currentModel->vertexBuffer, &vbOff);
+            vkCmdBindIndexBuffer(cmd, currentModel->indexBuffer, 0, VK_INDEX_TYPE_UINT16);
+        }
+        if (!currentModelValid) continue;
+
+        const M2ModelGPU& model = *currentModel;
+        const auto& batch = model.batches[draw.batchIndex];
+        const float instanceFadeAlpha = draw.instanceFadeAlpha;
+        const bool instanceFaded = draw.instanceFaded;
+        const bool needsBones = draw.needsBones;
+
+        const ProjectedDraw* projectedDraw = nullptr;
+        if (batch.projected) {
+            const uint64_t key = (static_cast<uint64_t>(instance.id) << 16) |
+                static_cast<uint64_t>(draw.batchIndex);
+            const auto it = frameProjectedDraws.find(key);
+            if (it == frameProjectedDraws.end()) continue;
+            projectedDraw = &it->second;
+        }
+
+        // Compute UV offset for this instance + batch
+        glm::vec2 uvOffset(0.0f);
+        glm::vec2 uvScale(1.0f);
+        if (batch.textureAnimIndex != 0xFFFF && model.hasTextureAnimation &&
+            !(skyMode_ && skyNoTexAnim)) {
+            uint16_t lookupIdx = batch.textureAnimIndex;
+            if (lookupIdx < model.textureTransformLookup.size()) {
+                uint16_t transformIdx = model.textureTransformLookup[lookupIdx];
+                if (transformIdx < model.textureTransforms.size()) {
+                    const auto& tt = model.textureTransforms[transformIdx];
+                    glm::vec3 trans = m2_track::sampleVec3(
+                        tt.translation, instance.currentSequenceIndex,
+                        instance.animTime, instance.globalSequenceTime,
+                        model.globalSequenceDurations, glm::vec3(0.0f));
+                    uvOffset = glm::vec2(trans.x, trans.y);
+                    glm::vec3 sc = m2_track::sampleVec3(
+                        tt.scale, instance.currentSequenceIndex,
+                        instance.animTime, instance.globalSequenceTime,
+                        model.globalSequenceDurations, glm::vec3(1.0f));
+                    uvScale = glm::vec2(sc.x, sc.y);
+                }
+            }
+        }
+
+        // Write single instance entry to SSBO
+        if (instanceDataCount_ >= MAX_INSTANCE_DATA) continue;
+        uint32_t drawOffset = instanceDataCount_;
+        auto& e = instSSBO[instanceDataCount_];
+        e.model = instance.modelMatrix;
+        e.uvOffset = uvOffset;
+        e.uvOffset2 = secondTextureOffset(model, batch, instance);
+        e.uvScale = glm::vec4(uvScale, 1.0f, 1.0f);
+        e.tintPacked = m2_internal::packAnimatedBatchTint(model, batch, instance);
+        e.fadeAlpha = instanceFadeAlpha * m2_internal::animatedBatchOpacity(model, batch, instance);
+        e.useBones = (needsBones && !kM2NoSkinning) ? 1 : 0;
+        e.boneBase = needsBones ? static_cast<int32_t>(instance.megaBoneOffset) : 0;
+        e.boneCount = static_cast<int32_t>(instance.boneMatrices.size());
+        e.highlight = instance.highlight;
+        {
+            int32_t lf = (instance.outdoorShadowed ? 1 : 0) |
+                         (instance.customLightRig ? 2 : 0) |
+                         (instance.interiorFog ? 4 : 0);
+            e.flags = lf;
+            const glm::vec3 bc = 0.5f * (instance.worldBoundsMin + instance.worldBoundsMax);
+            e.boundsRadius = std::max(0.5f * glm::length(instance.worldBoundsMax - instance.worldBoundsMin), 0.5f);
+            if (instance.customLightRig) {
+                e.customAmbient = glm::vec4(instance.customLightRig->ambient, bc.x);
+                e.customDiffuse = glm::vec4(instance.customLightRig->diffuse, bc.y);
+                e.customLightDir = glm::vec4(instance.customLightRig->dir, bc.z);
+            } else {
+                e.customAmbient = glm::vec4(0.0f, 0.0f, 0.0f, bc.x);
+                e.customDiffuse = glm::vec4(0.0f, 0.0f, 0.0f, bc.y);
+                e.customLightDir = instance.cachedIsGroundDetail
+                    ? glm::vec4(instance.groundNormal, bc.z)
+                    : glm::vec4(0.0f, 0.0f, -1.0f, bc.z);
+            }
+        }
+        if (projectedDraw) {
+            // The grid is already in place in the world, relative to
+            // the instance origin.
+            e.model = glm::translate(glm::mat4(1.0f), projectedDraw->origin);
+            e.useBones = 0;
+            e.boneBase = 0;
+        }
+        instanceDataCount_++;
+
+        // Pipeline selection
+        uint8_t effectiveBlendMode = batch.blendMode;
+        if (model.isSpellEffect && !batch.hasAuthoredMaterial) {
+            if (effectiveBlendMode <= 1) effectiveBlendMode = 3;
+            else if (effectiveBlendMode == 4 || effectiveBlendMode == 5) effectiveBlendMode = 3;
+        }
+
+        VkPipeline desiredPipeline;
+        switch (effectiveBlendMode) {
+            case 2: desiredPipeline = alphaPipeline_; break;
+            case M2_BLEND_MODULATE: desiredPipeline = modPipeline_; break;
+            case M2_BLEND_MODULATE2X: desiredPipeline = mod2xPipeline_; break;
+            default: desiredPipeline = additivePipeline_; break;
+        }
+        // An opaque layer of a faded instance: blended by its fade.
+        if (instanceFaded && effectiveBlendMode <= 1) desiredPipeline = alphaPipeline_;
+        if (m2UseAuthoredCull(cullAlphaPipeline_ || cullAdditivePipeline_, skyMode_,
+                              batch.hasAuthoredMaterial,
+                              m2FoliageTransformPreservesWinding(e.model), batch.materialFlags)) {
+            desiredPipeline = culledPipeline(desiredPipeline);
+        }
+        if (desiredPipeline != currentPipeline) {
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, desiredPipeline);
+            currentPipeline = desiredPipeline;
+        }
+
+        if (batch.materialUBOMapped) {
+            auto* mat = static_cast<M2MaterialUBO*>(batch.materialUBOMapped);
+            mat->interiorDarken = 0.0f;
+        }
+
+        if (batch.materialSet != currentMaterialSet) {
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    pipelineLayout_, 1, 1, &batch.materialSet, 0, nullptr);
+            currentMaterialSet = batch.materialSet;
+        }
+
+        // Push constants + single-instance draw
+        M2PushConstants pc;
+        pc.texCoordSet = static_cast<int32_t>(batch.textureUnit);
+        pc.texCoordSet2 = batch.textureUnit2;
+        fillDrawMode(pc, model, skyMode_);
+        pc.instanceDataOffset = static_cast<int32_t>(drawOffset);
+        vkCmdPushConstants(cmd, pipelineLayout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(pc), &pc);
+        if (projectedDraw) {
+            const VkDeviceSize projectedOffset = 0;
+            vkCmdBindVertexBuffers(cmd, 0, 1, &projectedVB_[vkCtx_->getCurrentFrame()], &projectedOffset);
+            vkCmdDraw(cmd, projectedDraw->vertexCount, 1, projectedDraw->firstVertex, 0);
+            const VkDeviceSize modelOffset = 0;
+            vkCmdBindVertexBuffers(cmd, 0, 1, &model.vertexBuffer, &modelOffset);
+        } else {
+            vkCmdDrawIndexed(cmd, batch.indexCount, 1, batch.indexStart, 0, 0);
+        }
+        if (skyMode_) ++skyDiagDrawsTransparent_;
+        lastDrawCallCount++;
     }
 
     if (beforeTransparentDepth) beforeTransparentDepth(std::numeric_limits<float>::infinity());

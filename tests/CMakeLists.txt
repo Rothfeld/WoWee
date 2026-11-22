@@ -2643,6 +2643,18 @@ target_link_libraries(test_m2_blend_mode PRIVATE catch2_main)
 add_test(NAME m2_blend_mode COMMAND test_m2_blend_mode)
 register_test_target(test_m2_blend_mode)
 
+# ── test_m2_transparent_sort ─────────────────────────────────
+add_executable(test_m2_transparent_sort
+    test_m2_transparent_sort.cpp
+)
+target_include_directories(test_m2_transparent_sort PRIVATE ${TEST_INCLUDE_DIRS})
+target_include_directories(test_m2_transparent_sort SYSTEM PRIVATE
+    ${CMAKE_SOURCE_DIR}/extern
+)
+target_link_libraries(test_m2_transparent_sort PRIVATE catch2_main)
+add_test(NAME m2_transparent_sort COMMAND test_m2_transparent_sort)
+register_test_target(test_m2_transparent_sort)
+
 # ── test_m2_ground_detail_material ───────────────────────────
 # TBC 2.4.3 ground-effect detail doodad UV clamping, mip-0 sampling, and
 # disjoint two-pass core cutout + soft fringe alpha partitioning.
