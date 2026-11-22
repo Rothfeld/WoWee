@@ -596,17 +596,21 @@ void AnimationCallbackHandler::setupCallbacks() {
         const uint32_t visual = spell->second.spellVisualId;
         constexpr uint32_t none = rendering::SpellVisualSystem::kNoAnimation;
 
-        // A creature's spell that needs a bow, gun or crossbow (Spell.dbc
-        // EquippedItemClass 2 with one of those subclasses: Shoot 29575,
-        // Multi-Shot 29576) is shot with the creature's ranged weapon, drawn
-        // in hand from the cast's start until its next melee swing. Build
-        // 8606 Spectral Sentry: sword in hand until the first Shoot, then
-        // the crossbow between and through every shot.
-        constexpr uint32_t kBowGunCrossbow = (1u << game::WEAPON_SUBCLASS_BOW) |
-            (1u << game::WEAPON_SUBCLASS_GUN) | (1u << game::WEAPON_SUBCLASS_CROSSBOW);
+        // A creature's ranged weapon spell — either explicitly requiring a bow,
+        // gun, or crossbow (Shoot 22907/29575, Arcane Shot 36609, Multi-Shot
+        // 29576) or flagged SPELL_ATTR_RANGED (0x00000002) with no weapon
+        // restriction and no authored SpellVisual precast/cast animation
+        // (Charged Arcane Shot 38808, Shoot Arcane Explosion Arrow 36327) — is
+        // shot with the creature's ranged weapon, drawn in hand from the cast's
+        // start until its next melee swing.
         if (!isLocalPlayer && entitySpawner_.getCreatureInstanceId(guid) == instanceId &&
-            spell->second.equippedItemClass == static_cast<int32_t>(game::ITEM_CLASS_WEAPON) &&
-            (spell->second.equippedItemSubClassMask & kBowGunCrossbow) != 0) {
+            rendering::isCreatureRangedWeaponSpell(
+                spell->second.attr,
+                spell->second.equippedItemClass,
+                spell->second.equippedItemSubClassMask,
+                visuals->precastAnimation(visual),
+                visuals->castAnimation(visual),
+                none)) {
             const auto unit = std::dynamic_pointer_cast<game::Unit>(gameHandler_.getEntityManager().getEntity(guid));
             const auto ranged = unit ? entitySpawner_.rangedWeaponAnimations(*unit) : std::nullopt;
             if (ranged && (phase == game::SpellAnimPhase::PRECAST || phase == game::SpellAnimPhase::CAST)) {

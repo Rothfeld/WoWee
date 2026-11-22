@@ -53,6 +53,38 @@ struct SpellCastAnimAction {
     uint32_t returnAnimation = 0;
 };
 
+/// True when a creature's spell should animate with the creature's equipped
+/// ranged weapon (bow/gun/crossbow: HOLD_BOW/ATTACK_BOW or HOLD_RIFLE/ATTACK_RIFLE).
+///
+/// Matches two TBC 2.4.3 Spell.dbc patterns:
+/// 1. Spells requiring a bow, gun, or crossbow (EquippedItemClass == 2,
+///    EquippedItemSubClassMask includes BOW/GUN/CROSSBOW: Shoot 22907/29575,
+///    Arcane Shot 36609, Multi-Shot 29576).
+/// 2. Spells flagged SPELL_ATTR_RANGED (Attributes & 0x00000002) with no
+///    equipped-item restriction (EquippedItemClass < 0) and no authored
+///    SpellVisual precast/cast animation (Charged Arcane Shot 38808, Shoot
+///    Arcane Explosion Arrow 36327, Multi-Shot 34974/36979, Piercing Shot
+///    6685, Viper Sting 31407, Rapid Shot 41172).
+inline constexpr bool isCreatureRangedWeaponSpell(
+    uint32_t spellAttr,
+    int32_t equippedItemClass,
+    uint32_t equippedItemSubClassMask,
+    uint32_t precastAnim,
+    uint32_t castAnim,
+    uint32_t noAnimationSentinel) {
+    constexpr uint32_t kSpellAttrRanged = 0x00000002u;
+    constexpr int32_t kItemClassWeapon = 2;
+    constexpr uint32_t kBowGunCrossbow = (1u << 2) | (1u << 3) | (1u << 18);
+    if (equippedItemClass == kItemClassWeapon &&
+        (equippedItemSubClassMask & kBowGunCrossbow) != 0) {
+        return true;
+    }
+    return (spellAttr & kSpellAttrRanged) != 0 &&
+           equippedItemClass < 0 &&
+           precastAnim == noAnimationSentinel &&
+           castAnim == noAnimationSentinel;
+}
+
 /// True when a creature MonsterMove spline actually translates the unit
 /// (excluding stationary facing-only turns such as dur=1ms, speed=0).
 inline constexpr bool shouldStartCreatureLocomotion(uint32_t durationMs, float locomotionSpeed) {

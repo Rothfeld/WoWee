@@ -287,3 +287,33 @@ TEST_CASE("Non-looping PRECAST animation finishes its authored clip when CAST ha
     CHECK(go.returnAnimation == kHover);
     CHECK_FALSE(state.hold.has_value());
 }
+
+TEST_CASE("Creature ranged weapon spell detection covers SPELL_ATTR_RANGED without EquippedItemClass",
+          "[spell_cast_anim][ranged]") {
+    constexpr uint32_t kSpellAttrRanged = 0x00000002u;
+    constexpr uint32_t kBowGunCrossbow = (1u << 2) | (1u << 3) | (1u << 18);
+    constexpr uint32_t kThrown = (1u << 16);
+    constexpr uint32_t kWand = (1u << 19);
+
+    // Explicit bow/gun/crossbow requirement (Shoot 22907, Arcane Shot 36609).
+    CHECK(isCreatureRangedWeaponSpell(0x480012u, 2, kBowGunCrossbow, kNoAnim, kNoAnim, kNoAnim));
+    CHECK(isCreatureRangedWeaponSpell(0x10012u, 2, kBowGunCrossbow, kNoAnim, kNoAnim, kNoAnim));
+
+    // SPELL_ATTR_RANGED with EquippedItemClass == -1 and no authored precast/cast anim
+    // (Charged Arcane Shot 38808, Shoot Arcane Explosion Arrow 36327).
+    CHECK(isCreatureRangedWeaponSpell(0x10012u, -1, 0u, kNoAnim, kNoAnim, kNoAnim));
+    CHECK(isCreatureRangedWeaponSpell(kSpellAttrRanged, -1, 0u, kNoAnim, kNoAnim, kNoAnim));
+
+    // Thrown (Throw 2764) and Wand (Shoot 5019) require other weapon subclasses: must not match.
+    CHECK_FALSE(isCreatureRangedWeaponSpell(0x410012u, 2, kThrown, kNoAnim, kNoAnim, kNoAnim));
+    CHECK_FALSE(isCreatureRangedWeaponSpell(kSpellAttrRanged, 2, kWand, kNoAnim, kNoAnim, kNoAnim));
+
+    // SPELL_ATTR_RANGED with an authored SpellVisual animation (Spit 27919, Multi-Toss 38366):
+    // must keep the authored animation rather than overriding it with bow/gun animations.
+    CHECK_FALSE(isCreatureRangedWeaponSpell(kSpellAttrRanged, -1, 0u, 51u, 53u, kNoAnim));
+    CHECK_FALSE(isCreatureRangedWeaponSpell(kSpellAttrRanged, -1, 0u, 108u, 107u, kNoAnim));
+    CHECK_FALSE(isCreatureRangedWeaponSpell(kSpellAttrRanged, -1, 0u, kNoAnim, 59u, kNoAnim));
+
+    // Non-ranged spell without weapon requirement: must not match.
+    CHECK_FALSE(isCreatureRangedWeaponSpell(0x0u, -1, 0u, kNoAnim, kNoAnim, kNoAnim));
+}
