@@ -50,10 +50,11 @@ ScenePick pickScene(game::GameHandler& gameHandler,
                     const ScenePickHit& onHit) {
     ScenePick pick;
     const uint64_t myGuid = gameHandler.getPlayerGuid();
-    uint64_t fallbackCorpseGuid = 0;
-    float fallbackCorpseT = 1e30f;
-    float fallbackCorpseCenterT = 0.0f;
-    std::shared_ptr<game::Entity> fallbackCorpseEntity;
+    uint64_t fallbackUnitGuid = 0;
+    int fallbackUnitPriority = 0;
+    float fallbackUnitT = 1e30f;
+    float fallbackUnitCenterT = 0.0f;
+    std::shared_ptr<game::Entity> fallbackUnitEntity;
 
     for (const auto& [guid, entity] : gameHandler.getEntityManager().getEntities()) {
         if (!entity) continue;
@@ -154,22 +155,40 @@ ScenePick pickScene(game::GameHandler& gameHandler,
                         return charRenderer->intersectInstance(instId, ray.origin, ray.direction, dist);
                     },
                     hitT)) {
-                // Pass-2 fallback for lootable/skinnable corpses whose death
-                // animation fades out their body meshes (e.g. Entropius /
-                // VoidGod.m2 leaving only a small floating orb). Used only when
-                // Pass 1 finds no drawn surface under the cursor.
-                if (type == game::ObjectType::UNIT && interactiveCorpse(entity)) {
-                    glm::vec3 corpseOrigin = core::coords::canonicalToRender(
+                // Pass-2 fallback when Pass 1 misses all drawn triangles:
+                // Native 2.4.3's second pass tests unit bounding volumes with
+                // living units (priority 3) outranking lootable/skinnable
+                // corpses (priority 2). Deferred non-lootable corpses have no
+                // Pass-2 fallback.
+                if (!deferredCorpse(entity)) {
+                    const bool isCorpse = (type == game::ObjectType::UNIT && interactiveCorpse(entity));
+                    const int priority = isCorpse ? kPass2PriorityLootableCorpse
+                                                  : kPass2PriorityLivingUnit;
+                    glm::vec3 unitOrigin = core::coords::canonicalToRender(
                         glm::vec3(entity->getX(), entity->getY(), entity->getZ()));
-                    app.getRenderPositionForGuid(guid, corpseOrigin);
-                    float selRadius = 0.0f;
-                    app.getSelectionRadiusForGuid(guid, selRadius);
-                    float boundRadius = 0.0f;
-                    renderer->getCharacterRenderer()->getInstanceCollisionRadius(drawnInst, boundRadius);
-                    const auto sphere = corpseFallbackPickSphere(corpseOrigin, selRadius, boundRadius);
+                    app.getRenderPositionForGuid(guid, unitOrigin);
+                    CorpseFallbackSphere sphere;
+                    if (isCorpse) {
+                        float selRadius = 0.0f;
+                        app.getSelectionRadiusForGuid(guid, selRadius);
+                        float boundRadius = 0.0f;
+                        charRenderer->getInstanceCollisionRadius(drawnInst, boundRadius);
+                        sphere = corpseFallbackPickSphere(unitOrigin, selRadius, boundRadius);
+                    } else {
+                        core::ModelGeoBox geoBox;
+                        float geoScale = 1.0f;
+                        if (spawner->getUnitGeoBoxForGuid(guid, geoBox, geoScale)) {
+                            glm::vec3 rot(0.0f);
+                            const uint32_t yawInst = mountInst != 0 ? mountInst : drawnInst;
+                            (void)charRenderer->getInstanceRotation(yawInst, rot);
+                            sphere = unitGeoBoxPickSphere(unitOrigin, geoBox.min, geoBox.max,
+                                                          geoScale, rot.z);
+                        }
+                    }
                     float fbT = 0.0f;
-                    if (raySphereIntersect(ray, sphere.center, sphere.radius, fbT) &&
-                        fbT < fallbackCorpseT) {
+                    if (sphere.radius > 0.001f &&
+                        raySphereIntersect(ray, sphere.center, sphere.radius, fbT) &&
+                        isBetterPass2Hit(priority, fbT, fallbackUnitPriority, fallbackUnitT)) {
                         bool blocked = false;
                         if (auto* wmo = renderer->getWMORenderer(); wmo &&
                             wmo->raycastVisibleGeometry(ray.origin, ray.direction, fbT) < fbT) {
@@ -182,10 +201,20 @@ ScenePick pickScene(game::GameHandler& gameHandler,
                             }
                         }
                         if (!blocked) {
-                            fallbackCorpseGuid = guid;
-                            fallbackCorpseT = fbT;
-                            fallbackCorpseCenterT = glm::dot(sphere.center - ray.origin, ray.direction);
-                            fallbackCorpseEntity = entity;
+                            if (auto* terrain = renderer->getTerrainManager(); terrain &&
+                                terrainOccludesSceneRay(ray, fbT, [terrain](float x, float y) {
+                                    return terrain->isHoleAt(x, y) ? std::optional<float>{}
+                                                                   : terrain->getHeightAt(x, y);
+                                })) {
+                                blocked = true;
+                            }
+                        }
+                        if (!blocked) {
+                            fallbackUnitGuid = guid;
+                            fallbackUnitPriority = priority;
+                            fallbackUnitT = fbT;
+                            fallbackUnitCenterT = glm::dot(sphere.center - ray.origin, ray.direction);
+                            fallbackUnitEntity = entity;
                         }
                     }
                 }
@@ -278,11 +307,11 @@ ScenePick pickScene(game::GameHandler& gameHandler,
         if (onHit) onHit(guid, entity, hitT, centerT);
     }
 
-    if (pick.closestGuid == 0 && fallbackCorpseGuid != 0) {
-        pick.closestGuid = fallbackCorpseGuid;
-        pick.closestT = fallbackCorpseT;
+    if (pick.closestGuid == 0 && fallbackUnitGuid != 0) {
+        pick.closestGuid = fallbackUnitGuid;
+        pick.closestT = fallbackUnitT;
         pick.closestInteractive = true;
-        if (onHit) onHit(fallbackCorpseGuid, fallbackCorpseEntity, fallbackCorpseT, fallbackCorpseCenterT);
+        if (onHit) onHit(fallbackUnitGuid, fallbackUnitEntity, fallbackUnitT, fallbackUnitCenterT);
     }
 
     return pick;

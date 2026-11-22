@@ -776,3 +776,46 @@ TEST_CASE("Mounted unit picking intersects both rider and mount instances", "[sc
     CHECK(calls == 1);
     CHECK(dist == Catch::Approx(9.0f));
 }
+
+TEST_CASE("Pass-2 living unit GeoBox pick sphere matches Mother Shahraz and humanoid extents", "[scene-pick][pass2]") {
+    using wowee::ui::unitGeoBoxPickSphere;
+    using wowee::ui::isBetterPass2Hit;
+    using wowee::ui::kPass2PriorityLivingUnit;
+    using wowee::ui::kPass2PriorityLootableCorpse;
+    using wowee::ui::raySphereIntersect;
+    using wowee::rendering::Ray;
+
+    // Mother Shahraz (entry 22947, display 21252, HaremMatron.m2 scale 2.5):
+    // CreatureModelData GeoBox = (-0.79, -2.59, -0.02)..(1.75, 2.70, 5.06).
+    const auto shahraz = unitGeoBoxPickSphere(
+        glm::vec3(0.0f),
+        glm::vec3(-0.79f, -2.59f, -0.02f),
+        glm::vec3(1.75f, 2.70f, 5.06f),
+        2.5f, 0.0f);
+    CHECK(shahraz.radius == Catch::Approx(9.70f).margin(0.05f));
+    CHECK(shahraz.center.z == Catch::Approx(6.30f).margin(0.05f));
+
+    // Ray from 26 yd away aimed at empty air beside her robe (y=5.8, z=6.3) hits;
+    // ray far outside (y=11.6, z=8.0) misses.
+    const glm::vec3 cam(-26.0f, 0.0f, 3.5f);
+    float t = 0.0f;
+    CHECK(raySphereIntersect(Ray{cam, glm::normalize(glm::vec3(0.0f, 5.8f, 6.3f) - cam)},
+                             shahraz.center, shahraz.radius, t));
+    CHECK_FALSE(raySphereIntersect(Ray{cam, glm::normalize(glm::vec3(0.0f, 11.6f, 8.0f) - cam)},
+                                   shahraz.center, shahraz.radius, t));
+
+    // HumanMale / Stormwind Guard (scale 1.0): tight ~1.22 yd radius.
+    const auto guard = unitGeoBoxPickSphere(
+        glm::vec3(0.0f),
+        glm::vec3(-0.36f, -0.55f, 0.0f),
+        glm::vec3(0.41f, 0.55f, 2.03f),
+        1.0f, 0.0f);
+    CHECK(guard.radius == Catch::Approx(1.217f).margin(0.01f));
+    CHECK(guard.center.z == Catch::Approx(1.015f).margin(0.02f));
+
+    // Pass-2 priority: living unit (3) outranks lootable corpse (2), even if corpse is nearer.
+    CHECK(isBetterPass2Hit(kPass2PriorityLivingUnit, 20.0f, kPass2PriorityLootableCorpse, 5.0f));
+    CHECK_FALSE(isBetterPass2Hit(kPass2PriorityLootableCorpse, 5.0f, kPass2PriorityLivingUnit, 20.0f));
+    CHECK(isBetterPass2Hit(kPass2PriorityLivingUnit, 10.0f, kPass2PriorityLivingUnit, 15.0f));
+    CHECK_FALSE(isBetterPass2Hit(kPass2PriorityLivingUnit, 15.0f, kPass2PriorityLivingUnit, 10.0f));
+}

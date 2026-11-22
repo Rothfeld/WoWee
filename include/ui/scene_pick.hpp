@@ -105,6 +105,39 @@ struct CorpseFallbackSphere {
     return {origin + glm::vec3(0.0f, 0.0f, radius * 0.3f), radius};
 }
 
+/// World-space Pass-2 bounding sphere for a living unit derived from its
+/// CreatureModelData GeoBox (scaled by unit object/display/mount scale and
+/// rotated by the instance's render yaw). Used only when Pass 1 (drawn skinned
+/// triangles across all candidate units/objects) finds no surface under the
+/// cursor, matching Native 2.4.3's second-pass unit picking fallback.
+[[nodiscard]] inline CorpseFallbackSphere unitGeoBoxPickSphere(
+    const glm::vec3& origin, const glm::vec3& boxMin, const glm::vec3& boxMax,
+    float scale, float yawRad = 0.0f) {
+    const float s = std::max(scale, 0.0f);
+    const glm::vec3 extent = boxMax - boxMin;
+    const float radius = 0.5f * glm::length(extent) * s;
+    const glm::vec3 localCenter = 0.5f * (boxMin + boxMax) * s;
+    const float c = std::cos(yawRad);
+    const float sn = std::sin(yawRad);
+    const glm::vec3 rotatedCenter(
+        localCenter.x * c - localCenter.y * sn,
+        localCenter.x * sn + localCenter.y * c,
+        localCenter.z);
+    return {origin + rotatedCenter, radius};
+}
+
+/// Pass-2 fallback priority (build 8606 CM2Scene second pass): living units
+/// (3) outrank lootable/skinnable corpses (2); within the same priority, the
+/// nearer ray entry distance wins.
+inline constexpr int kPass2PriorityLivingUnit = 3;
+inline constexpr int kPass2PriorityLootableCorpse = 2;
+
+[[nodiscard]] constexpr bool isBetterPass2Hit(int candidatePriority, float candidateT,
+                                              int bestPriority, float bestT) {
+    if (candidatePriority != bestPriority) return candidatePriority > bestPriority;
+    return candidateT < bestT;
+}
+
 /// Intersect a ray against a unit's drawn character/morph instance and, when
 /// mounted, its mount instance, returning the nearest hit distance.
 /// Native 2.4.3 attaches the rider to the mount under the same unit GUID so
