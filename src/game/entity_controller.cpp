@@ -2499,25 +2499,32 @@ void EntityController::flushPendingEvents() {
 // Type-specific CREATE handlers
 // ============================================================
 
-// A unit with UNIT_FIELD_PET_NAME_TIMESTAMP set carries a name of its own -
-// a warlock's demon, a renamed hunter pet - which only CMSG_PET_NAME_QUERY
-// returns; the creature template names only the kind ("Imp"). The server
-// stamps the field when the name is set (CMaNGOS Pet.cpp), so a new stamp is
-// a new name and asks again.
+// A unit with UNIT_FIELD_PETNUMBER set carries a server-assigned pet name
+// (a freshly tamed hunter pet's family name like "Cat" with timestamp 0, a
+// renamed hunter pet, or a warlock's demon) which only CMSG_PET_NAME_QUERY
+// returns; the creature template names only the wild creature ("Springpaw Lynx").
+// Query on initial non-zero pet number and again whenever the server stamps a
+// new non-zero UNIT_FIELD_PET_NAME_TIMESTAMP.
 void EntityController::queryPetNameIfNamed(const UpdateBlock& block, Unit& unit) {
     const uint16_t stampField = fieldIndex(UF::UNIT_FIELD_PET_NAME_TIMESTAMP);
     const uint16_t numberField = fieldIndex(UF::UNIT_FIELD_PETNUMBER);
     if (stampField == 0xFFFF || numberField == 0xFFFF) return;
-    const auto stamp = block.fields.find(stampField);
-    if (stamp == block.fields.end() || stamp->second == 0 ||
-        stamp->second == unit.queriedPetNameTimestamp) return;
-    const uint32_t number = unit.getField(numberField);
-    if (number == 0) {
-        LOG_WARNING("Unit 0x", std::hex, block.guid, std::dec,
-                    " has a pet name timestamp but no pet number; name not queried");
+    if (block.fields.find(stampField) == block.fields.end() &&
+        block.fields.find(numberField) == block.fields.end()) {
         return;
     }
-    unit.queriedPetNameTimestamp = stamp->second;
+    const uint32_t number = unit.getField(numberField);
+    const uint32_t stamp = unit.getField(stampField);
+    if (number == 0) {
+        if (stamp != 0 && stamp != unit.queriedPetNameTimestamp) {
+            LOG_WARNING("Unit 0x", std::hex, block.guid, std::dec,
+                        " has a pet name timestamp but no pet number; name not queried");
+        }
+        return;
+    }
+    if (!unit.needsPetNameQuery(number, stamp)) return;
+    unit.queriedPetNumber = number;
+    unit.queriedPetNameTimestamp = stamp;
     owner_.getSpellHandler()->requestPetName(block.guid, number);
 }
 

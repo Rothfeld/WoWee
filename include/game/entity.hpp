@@ -745,8 +745,19 @@ public:
     // "Gragup": the creature template's "Imp" must not replace it.
     [[nodiscard]] bool hasPetName() const { return petNamed_; }
     void setPetName(const std::string& n) { name = n; petNamed_ = true; }
-    // UNIT_FIELD_PET_NAME_TIMESTAMP last queried; a new value means a new name.
+    // UNIT_FIELD_PETNUMBER and UNIT_FIELD_PET_NAME_TIMESTAMP last queried.
+    // A freshly tamed hunter pet has UNIT_FIELD_PETNUMBER != 0 with
+    // UNIT_FIELD_PET_NAME_TIMESTAMP == 0 until renamed or reloaded from DB,
+    // so any non-zero pet number requires an initial CMSG_PET_NAME_QUERY, and
+    // any subsequent change to a non-zero timestamp requires a re-query.
+    uint32_t queriedPetNumber = 0;
     uint32_t queriedPetNameTimestamp = 0;
+
+    [[nodiscard]] bool needsPetNameQuery(uint32_t petNumber, uint32_t petNameTimestamp) const {
+        if (petNumber == 0) return false;
+        if (petNumber != queriedPetNumber) return true;
+        return petNameTimestamp != 0 && petNameTimestamp != queriedPetNameTimestamp;
+    }
 
     // Health
     [[nodiscard]] uint32_t getHealth() const { return health; }

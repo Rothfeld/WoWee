@@ -1255,6 +1255,12 @@ void SpellHandler::registerOpcodes(DispatchTable& table) {
             owner_.fireAddonEvent("UNIT_NAME_UPDATE", {"pet"});
             owner_.fireAddonEvent("PET_UI_UPDATE", {});
         }
+        if (guid == owner_.getTargetGuid()) {
+            owner_.fireAddonEvent("UNIT_NAME_UPDATE", {"target"});
+        }
+        if (guid == owner_.getFocusGuid()) {
+            owner_.fireAddonEvent("UNIT_NAME_UPDATE", {"focus"});
+        }
     };
 
     table[Opcode::SMSG_INITIAL_SPELLS] = [this](network::Packet& packet) { handleInitialSpells(packet); };

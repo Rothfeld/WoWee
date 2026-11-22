@@ -703,3 +703,38 @@ TEST_CASE("GameObject 3D quaternion rotation, WotLK packing, and local reach fra
     const glm::quat unpacked = unpackGameObjectRotation(packQuat(leverQuat));
     CHECK(std::abs(glm::dot(unpacked, glm::normalize(leverQuat))) == Catch::Approx(1.0f).margin(1e-5));
 }
+
+TEST_CASE("Unit pet name query triggers on freshly tamed pets with timestamp 0 and on renames",
+          "[entity][pet]") {
+    Unit u(0xf140002ddf000043ULL);
+
+    // Wild creature / non-pet summon (petNumber == 0): never queries.
+    CHECK_FALSE(u.needsPetNameQuery(/*petNumber=*/0u, /*petNameTimestamp=*/0u));
+    CHECK_FALSE(u.needsPetNameQuery(/*petNumber=*/0u, /*petNameTimestamp=*/1700000000u));
+
+    // Freshly tamed hunter pet (CMaNGOS Pet::CreateBaseAtCreature):
+    // UNIT_FIELD_PETNUMBER != 0 and UNIT_FIELD_PET_NAME_TIMESTAMP == 0 -> must query ("Cat").
+    CHECK(u.needsPetNameQuery(11743u, 0u));
+    u.queriedPetNumber = 11743u;
+    u.queriedPetNameTimestamp = 0u;
+
+    // Repeated VALUES update with same petNumber and timestamp 0 must not re-query.
+    CHECK_FALSE(u.needsPetNameQuery(11743u, 0u));
+
+    // Renaming the pet stamps a non-zero UNIT_FIELD_PET_NAME_TIMESTAMP -> must re-query.
+    CHECK(u.needsPetNameQuery(11743u, 1795384655u));
+    u.queriedPetNameTimestamp = 1795384655u;
+    CHECK_FALSE(u.needsPetNameQuery(11743u, 1795384655u));
+
+    // A second rename stamps a newer timestamp -> must re-query again.
+    CHECK(u.needsPetNameQuery(11743u, 1795384700u));
+    u.queriedPetNameTimestamp = 1795384700u;
+    CHECK_FALSE(u.needsPetNameQuery(11743u, 1795384700u));
+
+    // Warlock demon / saved pet loaded from DB arrives with both petNumber and timestamp non-zero.
+    Unit demon(0xf140001234000001ULL);
+    CHECK(demon.needsPetNameQuery(42u, 1795384600u));
+    demon.queriedPetNumber = 42u;
+    demon.queriedPetNameTimestamp = 1795384600u;
+    CHECK_FALSE(demon.needsPetNameQuery(42u, 1795384600u));
+}
