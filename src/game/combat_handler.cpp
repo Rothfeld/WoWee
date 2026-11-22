@@ -1678,7 +1678,6 @@ void CombatHandler::setMouseoverGuid(uint64_t guid) {
 
 void CombatHandler::targetLastTarget() {
     if (owner_.lastTargetGuidRef() == 0) {
-        owner_.addSystemChatMessage("No previous target.");
         return;
     }
 
@@ -1688,12 +1687,13 @@ void CombatHandler::targetLastTarget() {
     owner_.lastTargetGuidRef() = temp;
 }
 
-void CombatHandler::cycleTarget(bool reverse, const char* noneMessage,
+void CombatHandler::cycleTarget(bool reverse,
                                 const std::function<bool(uint64_t, Entity&)>& wanted) {
     // The rule is in tab_target.hpp with the measurements it came from.
-    auto* renderer = core::Application::getInstance().getRenderer();
-    assert(renderer && renderer->getCamera() && "target cycling needs the camera");
-    const glm::mat4 viewProjection = renderer->getCamera()->getViewProjectionMatrix();
+    auto* renderer = owner_.services().renderer;
+    const bool checkScreen = renderer && renderer->getCamera();
+    const glm::mat4 viewProjection = checkScreen ? renderer->getCamera()->getViewProjectionMatrix()
+                                                 : glm::mat4(1.0f);
 
     const auto& movement = owner_.getMovementInfo();
     const glm::vec3 player(movement.x, movement.y, movement.z);
@@ -1703,7 +1703,7 @@ void CombatHandler::cycleTarget(bool reverse, const char* noneMessage,
         if (!entity || guid == owner_.getPlayerGuid()) continue;
         const glm::vec3 pos(entity->getX(), entity->getY(), entity->getZ());
         if (!isInTabRange(player, pos) || !isInTabCone(player, movement.orientation, pos)) continue;
-        if (!isOnScreen(viewProjection, core::coords::canonicalToRender(pos))) continue;
+        if (checkScreen && !isOnScreen(viewProjection, core::coords::canonicalToRender(pos))) continue;
         if (!wanted(guid, *entity)) continue;
         candidates.push_back({.guid = guid, .distance = glm::distance(player, pos)});
     }
@@ -1716,7 +1716,6 @@ void CombatHandler::cycleTarget(bool reverse, const char* noneMessage,
 
     const uint64_t next = pickTabTarget(std::move(candidates), owner_.getTargetGuid(), restart, reverse);
     if (next == 0) {
-        owner_.addSystemChatMessage(noneMessage);
         return;
     }
     setTarget(next);
@@ -1732,7 +1731,7 @@ bool CombatHandler::isGroupMemberGuid(uint64_t guid) const {
 void CombatHandler::targetEnemy(bool reverse) {
     // Corpses are never candidates: native skipped a creature the player had
     // just killed.
-    cycleTarget(reverse, "No enemies in range.", [this](uint64_t guid, Entity& e) {
+    cycleTarget(reverse, [this](uint64_t guid, Entity& e) {
         const auto t = e.getType();
         if (t != ObjectType::UNIT && t != ObjectType::PLAYER) return false;
         auto* unit = dynamic_cast<Unit*>(&e);
@@ -1848,7 +1847,7 @@ bool CombatHandler::isEnemyTarget(uint64_t guid, const Unit& unit) const {
 void CombatHandler::targetFriend(bool reverse) {
     // Dead friends stay targetable - you need to select them to resurrect them.
     // Native /targetfriend picked Stormwind City Guards, so creatures count too.
-    cycleTarget(reverse, "No friendly targets in range.", [this](uint64_t, Entity& e) {
+    cycleTarget(reverse, [this](uint64_t, Entity& e) {
         const auto t = e.getType();
         return (t == ObjectType::PLAYER || t == ObjectType::UNIT) &&
             owner_.unitReactionToPlayer(static_cast<const Unit&>(e)) >= 5;
@@ -1856,7 +1855,7 @@ void CombatHandler::targetFriend(bool reverse) {
 }
 
 void CombatHandler::targetNearestEnemyPlayer(bool reverse) {
-    cycleTarget(reverse, "No enemy players in range.", [this](uint64_t guid, Entity& e) {
+    cycleTarget(reverse, [this](uint64_t guid, Entity& e) {
         if (e.getType() != ObjectType::PLAYER) return false;
         auto* unit = dynamic_cast<Unit*>(&e);
         if (!unit || unit->getHealth() == 0) return false;
@@ -1865,7 +1864,7 @@ void CombatHandler::targetNearestEnemyPlayer(bool reverse) {
 }
 
 void CombatHandler::targetNearestFriendPlayer(bool reverse) {
-    cycleTarget(reverse, "No friendly players in range.", [](uint64_t, Entity& e) {
+    cycleTarget(reverse, [](uint64_t, Entity& e) {
         if (e.getType() != ObjectType::PLAYER) return false;
         auto* unit = dynamic_cast<Unit*>(&e);
         return unit && !unit->isHostile();
@@ -1873,7 +1872,7 @@ void CombatHandler::targetNearestFriendPlayer(bool reverse) {
 }
 
 void CombatHandler::targetNearestPartyMember(bool reverse) {
-    cycleTarget(reverse, "No party members in range.", [this](uint64_t guid, Entity&) {
+    cycleTarget(reverse, [this](uint64_t guid, Entity&) {
         return isGroupMemberGuid(guid);
     });
 }
@@ -1881,14 +1880,13 @@ void CombatHandler::targetNearestPartyMember(bool reverse) {
 void CombatHandler::targetNearestRaidMember(bool reverse) {
     // The same roster: a raid is what the group list calls itself when it has
     // grown past five, and the members arrive in the same list either way.
-    cycleTarget(reverse, "No raid members in range.", [this](uint64_t guid, Entity&) {
+    cycleTarget(reverse, [this](uint64_t guid, Entity&) {
         return isGroupMemberGuid(guid);
     });
 }
 
 void CombatHandler::targetLastEnemy() {
     if (lastEnemyTargetGuid_ == 0) {
-        owner_.addSystemChatMessage("No previous enemy target.");
         return;
     }
     setTarget(lastEnemyTargetGuid_);
@@ -1896,7 +1894,6 @@ void CombatHandler::targetLastEnemy() {
 
 void CombatHandler::targetLastFriend() {
     if (lastFriendTargetGuid_ == 0) {
-        owner_.addSystemChatMessage("No previous friendly target.");
         return;
     }
     setTarget(lastFriendTargetGuid_);

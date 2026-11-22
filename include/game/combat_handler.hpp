@@ -182,7 +182,7 @@ private:
     /// in front of the character, on screen and within range (tab_target.hpp),
     /// nearest first, then step past the current target. One predicate per
     /// cycle; the enemy cycle skips the dead and the friendly one does not.
-    void cycleTarget(bool reverse, const char* noneMessage,
+    void cycleTarget(bool reverse,
                      const std::function<bool(uint64_t, Entity&)>& wanted);
 
     /// Whether a guid is in the player's group.

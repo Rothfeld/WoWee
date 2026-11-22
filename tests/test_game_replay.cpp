@@ -1772,4 +1772,61 @@ TEST_CASE("out-of-range and destroy of in-view party member mirror stats and re-
     }
 }
 
+TEST_CASE("Tab and TargetNearest* stay silent with no candidates and preserve existing target",
+          "[target][tab][tbc]") {
+    Session s("tbc");
+    s.spawnPlayer({{UF::UNIT_FIELD_HEALTH, 100}, {UF::UNIT_FIELD_LEVEL, 70}});
+
+    int uiErrors = 0;
+    s.handler().setAddonEventCallback(
+        [&](const std::string& e, const std::vector<std::string>&) {
+            if (e == "UI_ERROR_MESSAGE") ++uiErrors;
+        });
+
+    const size_t chatBefore = s.handler().getChatHistory().size();
+
+    // No candidates anywhere: every nearest/last target helper stays silent.
+    s.handler().tabTarget();
+    s.handler().targetEnemy(false);
+    s.handler().targetEnemy(true);
+    s.handler().targetFriend(false);
+    s.handler().targetNearestEnemyPlayer(false);
+    s.handler().targetNearestFriendPlayer(false);
+    s.handler().targetNearestPartyMember(false);
+    s.handler().targetNearestRaidMember(false);
+    s.handler().targetLastTarget();
+    s.handler().targetLastEnemy();
+    s.handler().targetLastFriend();
+
+    CHECK(s.handler().getTargetGuid() == 0);
+    CHECK(s.handler().getChatHistory().size() == chatBefore);
+    CHECK(uiErrors == 0);
+
+    // Existing target is preserved when Tab finds no enemies in range.
+    s.handler().setTarget(Session::kPlayerGuid);
+    REQUIRE(s.handler().getTargetGuid() == Session::kPlayerGuid);
+    s.handler().tabTarget();
+    s.handler().targetEnemy(true);
+    CHECK(s.handler().getTargetGuid() == Session::kPlayerGuid);
+    CHECK(s.handler().getChatHistory().size() == chatBefore);
+    CHECK(uiErrors == 0);
+
+    // When a living hostile creature IS in front and in range, Tab selects it cleanly.
+    constexpr uint64_t kEnemyGuid = 0xF130000010000001ULL;
+    s.receive(UpdateObject().tbc().create(kEnemyGuid, wowee::game::ObjectType::UNIT, {
+        {UF::UNIT_FIELD_HEALTH, 100},
+        {UF::UNIT_FIELD_MAXHEALTH, 100},
+        {UF::UNIT_FIELD_LEVEL, 70},
+        {UF::UNIT_FIELD_FACTIONTEMPLATE, 14},  // Monster (hostile)
+    }));
+    auto enemy = s.handler().getEntityManager().getEntity(kEnemyGuid);
+    REQUIRE(enemy);
+    enemy->setPosition(10.0f, 0.0f, 0.0f, 0.0f);
+    s.handler().tabTarget();
+    CHECK(s.handler().getTargetGuid() == kEnemyGuid);
+    CHECK(s.handler().getChatHistory().size() == chatBefore);
+    CHECK(uiErrors == 0);
+}
+
+
 
