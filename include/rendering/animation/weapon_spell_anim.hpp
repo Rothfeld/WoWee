@@ -85,4 +85,35 @@ inline bool isMeleeWeaponSpellAnimation(uint32_t animId) {
     }
 }
 
+/// Attached ranged weapon M2 animation driven by the wielder's ranged aim/fire
+/// animation in TBC 2.4.3:
+/// - Firearm_2H_Rifle_*.m2 (37 of 39 models) carry sequence 161 (BowRelease,
+///   2000 ms) driving muzzle flash, spark, and barrel smoke particle emitters.
+/// - Bow_1H_*.m2 (61 of 65 models) carry sequences 160 (BowPull) and 161
+///   (BowRelease) for bowstring draw and release.
+/// Returning animId == 0 releases any weapon held in BowPull back to Stand,
+/// while leaving a one-shot BowRelease running so gun barrel smoke finishes
+/// curling after the wielder's shorter AttackRifle animation completes.
+struct RangedWeaponAnimAction {
+    uint32_t animId = 0;
+    bool holdFinalPose = false;
+};
+
+inline RangedWeaponAnimAction rangedWeaponAnimForWielder(uint32_t wielderAnimId) {
+    switch (wielderAnimId) {
+        case anim::ATTACK_RIFLE:
+        case anim::FLY_ATTACK_RIFLE:
+        case anim::ATTACK_BOW:
+        case anim::FLY_ATTACK_BOW:
+            return {anim::BOW_RELEASE, false};
+        case anim::LOAD_BOW:
+        case anim::HOLD_BOW:
+        case anim::FLY_LOAD_BOW:
+        case anim::FLY_HOLD_BOW:
+            return {anim::BOW_PULL, true};
+        default:
+            return {0, false};
+    }
+}
+
 }  // namespace wowee::rendering

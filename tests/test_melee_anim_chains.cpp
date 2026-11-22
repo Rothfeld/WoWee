@@ -213,3 +213,31 @@ TEST_CASE("isMeleeWeaponSpellAnimation identifies melee weapon swings for unshea
     CHECK_FALSE(isMeleeWeaponSpellAnimation(BATTLE_ROAR));
     CHECK_FALSE(isMeleeWeaponSpellAnimation(STAND));
 }
+
+TEST_CASE("rangedWeaponAnimForWielder drives firearm BowRelease smoke/flash and bow BowPull/BowRelease",
+          "[anim][weapon-spell]") {
+    using wowee::rendering::rangedWeaponAnimForWielder;
+
+    // Firing rifle or bow triggers BowRelease (161) one-shot (drives Firearm_2H_Rifle_*.m2
+    // muzzle flash, sparks, and barrel smoke emitters for 2000 ms).
+    for (uint32_t fireAnim : {ATTACK_RIFLE, FLY_ATTACK_RIFLE, ATTACK_BOW, FLY_ATTACK_BOW}) {
+        const auto act = rangedWeaponAnimForWielder(fireAnim);
+        CHECK(act.animId == BOW_RELEASE);
+        CHECK_FALSE(act.holdFinalPose);
+    }
+
+    // Aiming/holding a bow triggers BowPull (160) held at final pose.
+    for (uint32_t aimAnim : {LOAD_BOW, HOLD_BOW, FLY_LOAD_BOW, FLY_HOLD_BOW}) {
+        const auto act = rangedWeaponAnimForWielder(aimAnim);
+        CHECK(act.animId == BOW_PULL);
+        CHECK(act.holdFinalPose);
+    }
+
+    // Non-ranged or rifle-aim animations return 0 (leave gun BowRelease smoke running,
+    // release any held bow BowPull back to Stand).
+    for (uint32_t otherAnim : {STAND, RUN, READY_RIFLE, HOLD_RIFLE, LOAD_RIFLE, ATTACK_1H}) {
+        const auto act = rangedWeaponAnimForWielder(otherAnim);
+        CHECK(act.animId == 0u);
+        CHECK_FALSE(act.holdFinalPose);
+    }
+}

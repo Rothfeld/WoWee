@@ -147,6 +147,14 @@ public:
     void setArmAnimations(uint32_t instanceId, uint32_t leftArmAnim, uint32_t rightArmAnim);
     // Loop an animation on SpineLow and its descendants; zero removes the layer.
     void setUpperBodyAnimation(uint32_t instanceId, uint32_t animationId, bool loop = true);
+
+private:
+    /// Trigger attached ranged weapon M2 animations (BowPull 160 / BowRelease 161)
+    /// when the wielder aims or fires a bow or firearm, driving bowstring motion
+    /// and firearm muzzle flash / barrel smoke particle emitters.
+    void syncAttachedWeaponAnimations(uint32_t charInstanceId, uint32_t wielderAnimId);
+
+public:
     /// The instance rides a mount. While it does, playAnimation shows the
     /// seat poses (rider_pose.hpp riderKeepsSeat) as Mount (91) and plays
     /// every other animation above the spine over it; Death and Dead still

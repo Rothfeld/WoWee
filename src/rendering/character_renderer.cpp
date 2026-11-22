@@ -31,6 +31,7 @@
 #include "rendering/m2_renderer.hpp"
 #include "rendering/visual_mesh_pick.hpp"
 #include "rendering/animation/gesture_weapons.hpp"
+#include "rendering/animation/weapon_spell_anim.hpp"
 #include "rendering/weapon_trail.hpp"
 #include "rendering/collision_geometry.hpp"
 #include "rendering/camera_controller.hpp"
@@ -2182,6 +2183,7 @@ void CharacterRenderer::playAnimation(uint32_t instanceId, uint32_t animationId,
     if (!frozenAnimationAllowsPlay(instance.kitAnimationFrozen, instance.currentSequenceIndex)) {
         return;
     }
+    syncAttachedWeaponAnimations(instanceId, animationId);
     auto& model = models[instance.modelId].data;
 
     int clearedShuffleUpperSeq = -1;
@@ -3395,7 +3397,8 @@ void CharacterRenderer::syncEmitters(M2Renderer& m2Renderer) {
         }
 
         // The sequence and time the skeleton was posed with this frame, so the
-        // emitters' rate, lifespan and speed tracks follow the same animation.
+        // emitters' rate, lifespan and speed tracks follow the same animation
+        // (including firearm BowRelease 161 muzzle flash / barrel smoke).
         // Attached items that have not run update() yet resolve their Stand sequence.
         const int sequence = instance.currentSequenceIndex >= 0 &&
             instance.currentSequenceIndex < static_cast<int>(model.sequences.size())
@@ -3574,6 +3577,28 @@ void CharacterRenderer::setUpperBodyAnimation(uint32_t instanceId, uint32_t anim
             (bone.parentBone >= 0 && instance.upperBodyBones[bone.parentBone]);
     }
     assert(haveSpine);
+    syncAttachedWeaponAnimations(instanceId, animationId);
+}
+
+void CharacterRenderer::syncAttachedWeaponAnimations(uint32_t charInstanceId, uint32_t wielderAnimId) {
+    const auto charIt = instances.find(charInstanceId);
+    if (charIt == instances.end() || charIt->second.weaponAttachments.empty()) return;
+    const auto action = rangedWeaponAnimForWielder(wielderAnimId);
+    for (const auto& wa : charIt->second.weaponAttachments) {
+        const auto weapIt = instances.find(wa.weaponInstanceId);
+        if (weapIt == instances.end() || !weapIt->second.cachedModel) continue;
+        const auto& weapModel = weapIt->second.cachedModel->data;
+        if (action.animId != 0) {
+            const bool hasSeq = std::any_of(weapModel.sequences.begin(), weapModel.sequences.end(),
+                [id = action.animId](const auto& seq) { return seq.id == id && seq.duration > 0; });
+            if (!hasSeq) continue;
+            if (action.holdFinalPose && weapIt->second.currentAnimationId == action.animId) continue;
+            playAnimation(wa.weaponInstanceId, action.animId, /*loop=*/false,
+                          /*oneShotReturnAnim=*/anim::STAND, /*holdFinalPose=*/action.holdFinalPose);
+        } else if (weapIt->second.currentAnimationId == anim::BOW_PULL) {
+            playAnimation(wa.weaponInstanceId, anim::STAND, /*loop=*/true);
+        }
+    }
 }
 
 void CharacterRenderer::calculateBoneMatrices(CharacterInstance& instance) {
