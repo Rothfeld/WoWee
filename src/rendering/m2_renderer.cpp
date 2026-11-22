@@ -1511,7 +1511,7 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId, boo
         // Silvermyst crystal glow cards have only this flag; identity bones
         // leave their authored offset beside the crystal and turn them edge-on.
         if (bone.translation.hasData() || bone.rotation.hasData() || bone.scale.hasData() ||
-            (bone.flags & (m2_internal::kM2BoneSphericalBillboard | m2_internal::kM2BoneCylindricalBillboardZ))) {
+            isBillboardBone(bone.flags)) {
             gpuModel.hasAnimation = true;
             break;
         }

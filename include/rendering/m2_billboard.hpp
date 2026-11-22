@@ -9,13 +9,18 @@ namespace wowee::rendering {
 
 /// A bone marked spherical billboard carries geometry that must always face
 /// the camera: glow cards, flame sprites, the halo on a lamp. Orgrimmar's
-/// bonfire keeps its glow on bone 0, flagged 0x8. Cylindrical billboards
-/// (0x40) turn about the up axis only: quest question marks.
+/// bonfire keeps its glow on bone 0, flagged 0x8. Cylindrical billboards turn
+/// about one locked axis only: X (0x10, e.g. humanwatchtower.m2 /
+/// tk_arcane_door_horiz.m2), Y (0x20, e.g. stasistotem.m2 /
+/// tk_factory_door.m2), or Z (0x40, e.g. quest question marks).
 inline constexpr uint32_t kM2BoneSphericalBillboard = 0x8;
+inline constexpr uint32_t kM2BoneCylindricalBillboardX = 0x10;
+inline constexpr uint32_t kM2BoneCylindricalBillboardY = 0x20;
 inline constexpr uint32_t kM2BoneCylindricalBillboardZ = 0x40;
 
 inline bool isBillboardBone(uint32_t flags) {
-    return (flags & (kM2BoneSphericalBillboard | kM2BoneCylindricalBillboardZ)) != 0;
+    return (flags & (kM2BoneSphericalBillboard | kM2BoneCylindricalBillboardX |
+                     kM2BoneCylindricalBillboardY | kM2BoneCylindricalBillboardZ)) != 0;
 }
 
 /// Model-space matrix of a billboard bone: its +X turned toward the camera,
@@ -45,24 +50,57 @@ inline glm::mat4 billboardBoneMatrix(uint32_t flags, const glm::vec3& pivot, con
                                      const glm::vec3& cameraModel, const glm::vec3& worldUpModel) {
     const glm::vec3 turnedPivot(parent * glm::vec4(pivot + translation, 1.0f));
     const glm::mat3 inherited(parent);
-    const glm::vec3 inheritedNormal = glm::cross(inherited[1], inherited[2]);
-    glm::vec3 up = worldUpModel;
     glm::vec3 toCamera = cameraModel - turnedPivot;
-    if (flags & kM2BoneCylindricalBillboardZ) toCamera -= up * glm::dot(toCamera, up);
-    const float len2 = glm::dot(toCamera, toCamera);
     glm::mat3 orient(1.0f);
-    if (len2 > 1e-8f && glm::dot(inheritedNormal, inheritedNormal) > 0.0f) {
-        toCamera *= 1.0f / std::sqrt(len2);
-        // Up is the world's up seen from the model, unless the view is nearly
-        // along it, where the cross product collapses and the card would spin.
-        if (std::abs(glm::dot(toCamera, up)) > 0.999f)
-            up = glm::normalize(glm::cross(toCamera, glm::vec3(1.0f, 0.0f, 0.0f)));
-        const glm::vec3 right = glm::normalize(glm::cross(up, toCamera));
-        const glm::vec3 trueUp = glm::cross(toCamera, right);
-        const glm::vec3 oldForward = glm::normalize(inheritedNormal);
-        const glm::vec3 oldRight = glm::normalize(inherited[1]);
-        const glm::vec3 oldUp = glm::cross(oldForward, oldRight);
-        orient = glm::mat3(toCamera, right, trueUp) * glm::transpose(glm::mat3(oldForward, oldRight, oldUp));
+
+    if (flags & kM2BoneCylindricalBillboardX) {
+        const float axisLen2 = glm::dot(inherited[0], inherited[0]);
+        const glm::vec3 oldYRaw = glm::cross(inherited[2], inherited[0]);
+        if (axisLen2 > 1e-12f && glm::dot(oldYRaw, oldYRaw) > 0.0f) {
+            const glm::vec3 axisX = inherited[0] * (1.0f / std::sqrt(axisLen2));
+            toCamera -= axisX * glm::dot(toCamera, axisX);
+            const float len2 = glm::dot(toCamera, toCamera);
+            if (len2 > 1e-8f) {
+                const glm::vec3 newY = toCamera * (1.0f / std::sqrt(len2));
+                const glm::vec3 newZ = glm::cross(axisX, newY);
+                const glm::vec3 oldY = glm::normalize(oldYRaw);
+                const glm::vec3 oldZ = glm::cross(axisX, oldY);
+                orient = glm::mat3(axisX, newY, newZ) * glm::transpose(glm::mat3(axisX, oldY, oldZ));
+            }
+        }
+    } else if (flags & kM2BoneCylindricalBillboardY) {
+        const float axisLen2 = glm::dot(inherited[1], inherited[1]);
+        const glm::vec3 oldXRaw = glm::cross(inherited[1], inherited[2]);
+        if (axisLen2 > 1e-12f && glm::dot(oldXRaw, oldXRaw) > 0.0f) {
+            const glm::vec3 axisY = inherited[1] * (1.0f / std::sqrt(axisLen2));
+            toCamera -= axisY * glm::dot(toCamera, axisY);
+            const float len2 = glm::dot(toCamera, toCamera);
+            if (len2 > 1e-8f) {
+                const glm::vec3 newX = toCamera * (1.0f / std::sqrt(len2));
+                const glm::vec3 newZ = glm::cross(newX, axisY);
+                const glm::vec3 oldX = glm::normalize(oldXRaw);
+                const glm::vec3 oldZ = glm::cross(oldX, axisY);
+                orient = glm::mat3(newX, axisY, newZ) * glm::transpose(glm::mat3(oldX, axisY, oldZ));
+            }
+        }
+    } else {
+        const glm::vec3 inheritedNormal = glm::cross(inherited[1], inherited[2]);
+        glm::vec3 up = worldUpModel;
+        if (flags & kM2BoneCylindricalBillboardZ) toCamera -= up * glm::dot(toCamera, up);
+        const float len2 = glm::dot(toCamera, toCamera);
+        if (len2 > 1e-8f && glm::dot(inheritedNormal, inheritedNormal) > 0.0f) {
+            toCamera *= 1.0f / std::sqrt(len2);
+            // Up is the world's up seen from the model, unless the view is nearly
+            // along it, where the cross product collapses and the card would spin.
+            if (std::abs(glm::dot(toCamera, up)) > 0.999f)
+                up = glm::normalize(glm::cross(toCamera, glm::vec3(1.0f, 0.0f, 0.0f)));
+            const glm::vec3 right = glm::normalize(glm::cross(up, toCamera));
+            const glm::vec3 trueUp = glm::cross(toCamera, right);
+            const glm::vec3 oldForward = glm::normalize(inheritedNormal);
+            const glm::vec3 oldRight = glm::normalize(inherited[1]);
+            const glm::vec3 oldUp = glm::cross(oldForward, oldRight);
+            orient = glm::mat3(toCamera, right, trueUp) * glm::transpose(glm::mat3(oldForward, oldRight, oldUp));
+        }
     }
     return glm::translate(glm::mat4(1.0f), turnedPivot) * glm::mat4(orient * inherited) *
            glm::scale(glm::mat4(1.0f), scale) * glm::translate(glm::mat4(1.0f), -pivot);

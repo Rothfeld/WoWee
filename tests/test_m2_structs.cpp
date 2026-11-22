@@ -310,6 +310,99 @@ TEST_CASE("Z billboard faces the viewer while staying upright", "[m2][billboard]
     }
 }
 
+TEST_CASE("X cylindrical billboard locks X axis and faces viewer along +Y", "[m2][billboard]") {
+    using namespace wowee::rendering;
+    CHECK(isBillboardBone(kM2BoneCylindricalBillboardX));
+    M2ModelGPU model;
+    model.bones.resize(1);
+    model.bones[0].flags = 0x210;
+    model.bones[0].parentBone = -1;
+    model.bones[0].pivot = glm::vec3(0.5f, -0.2f, 1.0f);
+    M2Instance instance;
+    instance.invModelMatrix = glm::mat4(1);
+    for (const auto& camera : {glm::vec3(2, 5, 0), glm::vec3(-3, 0, 5),
+                               glm::vec3(4, -5, 3), glm::vec3(0, -4, -4)}) {
+        m2_internal::computeBoneMatrices(model, instance, &camera);
+        const auto& pose = instance.boneMatrices[0];
+        const glm::vec3 delta = camera - model.bones[0].pivot;
+        const glm::vec3 toward = glm::normalize(glm::vec3(0.0f, delta.y, delta.z));
+        CHECK(glm::dot(glm::vec3(pose[0]), glm::vec3(1, 0, 0)) == Catch::Approx(1).margin(1e-4));
+        CHECK(glm::dot(glm::vec3(pose[1]), toward) == Catch::Approx(1).margin(1e-4));
+        CHECK(glm::dot(glm::cross(glm::vec3(pose[0]), glm::vec3(pose[1])), glm::vec3(pose[2])) ==
+              Catch::Approx(1).margin(1e-4));
+        CHECK(glm::length(glm::vec3(pose * glm::vec4(model.bones[0].pivot, 1)) - model.bones[0].pivot) < 1e-4f);
+    }
+    // Degenerate view along the locked X axis stays finite and preserves orientation.
+    const glm::vec3 alongX = model.bones[0].pivot + glm::vec3(5, 0, 0);
+    m2_internal::computeBoneMatrices(model, instance, &alongX);
+    for (int col = 0; col < 4; ++col)
+        for (int row = 0; row < 4; ++row) CHECK(std::isfinite(instance.boneMatrices[0][col][row]));
+    CHECK(glm::dot(glm::vec3(instance.boneMatrices[0][0]), glm::vec3(1, 0, 0)) == Catch::Approx(1).margin(1e-4));
+}
+
+TEST_CASE("Y cylindrical billboard locks Y axis and faces viewer along +X", "[m2][billboard]") {
+    using namespace wowee::rendering;
+    CHECK(isBillboardBone(kM2BoneCylindricalBillboardY));
+    M2ModelGPU model;
+    model.bones.resize(1);
+    model.bones[0].flags = 0x220;
+    model.bones[0].parentBone = -1;
+    model.bones[0].pivot = glm::vec3(-0.26f, 0.1f, 1.78f);
+    M2Instance instance;
+    instance.invModelMatrix = glm::mat4(1);
+    for (const auto& camera : {glm::vec3(5, 2, 0), glm::vec3(0, -3, 5),
+                               glm::vec3(-5, 4, 3), glm::vec3(-4, 0, -4)}) {
+        m2_internal::computeBoneMatrices(model, instance, &camera);
+        const auto& pose = instance.boneMatrices[0];
+        const glm::vec3 delta = camera - model.bones[0].pivot;
+        const glm::vec3 toward = glm::normalize(glm::vec3(delta.x, 0.0f, delta.z));
+        CHECK(glm::dot(glm::vec3(pose[1]), glm::vec3(0, 1, 0)) == Catch::Approx(1).margin(1e-4));
+        CHECK(glm::dot(glm::vec3(pose[0]), toward) == Catch::Approx(1).margin(1e-4));
+        CHECK(glm::dot(glm::cross(glm::vec3(pose[0]), glm::vec3(pose[1])), glm::vec3(pose[2])) ==
+              Catch::Approx(1).margin(1e-4));
+        CHECK(glm::length(glm::vec3(pose * glm::vec4(model.bones[0].pivot, 1)) - model.bones[0].pivot) < 1e-4f);
+    }
+    // Degenerate view along the locked Y axis stays finite and preserves orientation.
+    const glm::vec3 alongY = model.bones[0].pivot + glm::vec3(0, 5, 0);
+    m2_internal::computeBoneMatrices(model, instance, &alongY);
+    for (int col = 0; col < 4; ++col)
+        for (int row = 0; row < 4; ++row) CHECK(std::isfinite(instance.boneMatrices[0][col][row]));
+    CHECK(glm::dot(glm::vec3(instance.boneMatrices[0][1]), glm::vec3(0, 1, 0)) == Catch::Approx(1).margin(1e-4));
+}
+
+TEST_CASE("cylindrical X and Y billboards preserve parent rotation and scale", "[m2][billboard-parent]") {
+    using namespace wowee::rendering;
+    const glm::mat4 parent = glm::scale(
+        glm::rotate(glm::translate(glm::mat4(1), glm::vec3(1, 2, 3)), 0.9f, glm::normalize(glm::vec3(1, -2, 3))),
+        glm::vec3(2, 3, 4));
+    const glm::vec3 pivot(0.2f, -0.3f, 0.4f);
+    const glm::vec3 turnedPivot(parent * glm::vec4(pivot, 1));
+    const glm::vec3 camera(8, -5, 6);
+    const glm::vec3 up(0, 0, 1);
+
+    // Cylindrical X: inherited X direction stays locked, +Y normal faces camera perpendicular to X.
+    const glm::mat4 poseX = billboardBoneMatrix(kM2BoneCylindricalBillboardX, pivot, glm::vec3(0), glm::vec3(1),
+                                                parent, camera, up);
+    const glm::vec3 parentX = glm::normalize(glm::vec3(parent[0]));
+    CHECK(glm::dot(glm::normalize(glm::vec3(poseX[0])), parentX) == Catch::Approx(1).margin(1e-4));
+    const glm::vec3 toCamX = glm::normalize((camera - turnedPivot) - parentX * glm::dot(camera - turnedPivot, parentX));
+    const glm::vec3 normXZ = glm::normalize(glm::cross(glm::vec3(poseX[2]), glm::vec3(poseX[0])));
+    CHECK(glm::dot(normXZ, toCamX) == Catch::Approx(1).margin(1e-4));
+    for (int c = 0; c < 3; ++c)
+        CHECK(glm::length(glm::vec3(poseX[c])) == Catch::Approx(glm::length(glm::vec3(parent[c]))).margin(1e-4));
+
+    // Cylindrical Y: inherited Y direction stays locked, +X normal faces camera perpendicular to Y.
+    const glm::mat4 poseY = billboardBoneMatrix(kM2BoneCylindricalBillboardY, pivot, glm::vec3(0), glm::vec3(1),
+                                                parent, camera, up);
+    const glm::vec3 parentY = glm::normalize(glm::vec3(parent[1]));
+    CHECK(glm::dot(glm::normalize(glm::vec3(poseY[1])), parentY) == Catch::Approx(1).margin(1e-4));
+    const glm::vec3 toCamY = glm::normalize((camera - turnedPivot) - parentY * glm::dot(camera - turnedPivot, parentY));
+    const glm::vec3 normYZ = glm::normalize(glm::cross(glm::vec3(poseY[1]), glm::vec3(poseY[2])));
+    CHECK(glm::dot(normYZ, toCamY) == Catch::Approx(1).margin(1e-4));
+    for (int c = 0; c < 3; ++c)
+        CHECK(glm::length(glm::vec3(poseY[c])) == Catch::Approx(glm::length(glm::vec3(parent[c]))).margin(1e-4));
+}
+
 TEST_CASE("child of a billboard bone stays on the far side from the camera", "[m2][billboard-child]") {
     // Helm_Robe_RaidWarlock_D_01_BEF.m2: smoke emitter bone 4 sits 0.43 yd
     // along -X of spherical billboard bone 1. Under an attached model's

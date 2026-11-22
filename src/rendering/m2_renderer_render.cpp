@@ -79,7 +79,7 @@ void M2Renderer::seedInstanceAnimation(const M2ModelGPU& model, uint32_t modelId
 
     auto seedIt = boneSeedInstanceByModel_.find(modelId);
     const bool cameraDependent = std::any_of(model.bones.begin(), model.bones.end(), [](const auto& bone) {
-        return (bone.flags & (kM2BoneSphericalBillboard | kM2BoneCylindricalBillboardZ)) != 0;
+        return isBillboardBone(bone.flags);
     });
     if (!cameraDependent && seedIt != boneSeedInstanceByModel_.end()) {
         auto idxIt = instanceIndexById.find(seedIt->second);

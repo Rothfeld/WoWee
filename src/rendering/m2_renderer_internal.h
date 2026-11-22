@@ -288,6 +288,8 @@ inline void startStateEffect(const M2ModelGPU& model, M2Instance& instance) {
 }
 
 using rendering::kM2BoneSphericalBillboard;
+using rendering::kM2BoneCylindricalBillboardX;
+using rendering::kM2BoneCylindricalBillboardY;
 using rendering::kM2BoneCylindricalBillboardZ;
 
 /// Bone transforms for one instance.
