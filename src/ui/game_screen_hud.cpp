@@ -1078,8 +1078,6 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         bool isTarget = (guid == targetGuid);
         const bool isHostile = unit->isHostile();
 
-        const uint32_t creatureType = isPlayer ? 0 : gameHandler.getCreatureType(unit->getEntry());
-
         // Legacy corpses retain plain names, governed by the usual name
         // settings and target/hover overrides, but never a health plate.
         const bool isCorpse = (unit->getHealth() == 0);
@@ -1680,23 +1678,13 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
                 const std::string& gn = gameHandler.lookupGuildName(guildId);
                 if (!gn.empty()) subLabel = "<" + gn + ">";
             }
-        } else if (const auto title = game::summonTitle(creatureType, game::unitCreatedByGuid(*unit),
-                                                        game::unitSummonedByGuid(*unit),
-                                                        game::unitCharmedByGuid(*unit));
-                   title != game::SummonTitle::None) {
-            // "<Owner's Companion>" / "<Owner's Pet>" / "<Owner's Minion>" from GlobalStrings.
-            const uint64_t ownerGuid = game::summonOwnerGuid(
-                game::unitCreatedByGuid(*unit), game::unitSummonedByGuid(*unit), game::unitCharmedByGuid(*unit));
-            std::string owner = gameHandler.lookupName(ownerGuid);
-            if (owner.empty())
-                if (const auto c = gameHandler.getEntityManager().getEntity(ownerGuid))
-                    owner = game::entityDisplayName(c);
-            if (owner.empty() && game::isPlayerGuid(ownerGuid))
-                gameHandler.queryPlayerName(ownerGuid);
+        } else if (const auto resolved = gameHandler.resolveUnitSummonTitle(*unit);
+                   resolved.title != game::SummonTitle::None) {
+            // "<Owner's Companion>" / "<Owner's Pet>" / "<Owner's Minion>" / "<Owner's Guardian>" / "<Owner's Totem>".
             auto* lua = services_.addonManager ? services_.addonManager->getLuaEngine() : nullptr;
-            const std::string pattern = lua ? lua->globalString(game::summonTitleGlobal(title)) : std::string{};
-            if (!owner.empty() && !pattern.empty())
-                subLabel = "<" + game::formatSummonTitle(pattern, owner) + ">";
+            const std::string pattern = lua ? lua->globalString(game::summonTitleGlobal(resolved.title)) : std::string{};
+            if (!resolved.owner.empty() && !pattern.empty())
+                subLabel = "<" + game::formatSummonTitle(pattern, resolved.owner) + ">";
         } else {
             // NPC subtitle (e.g. "<Reagent Vendor>", "<Innkeeper>")
             std::string sub = gameHandler.getCachedCreatureSubName(unit->getEntry());

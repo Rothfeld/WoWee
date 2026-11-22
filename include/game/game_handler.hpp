@@ -1,6 +1,7 @@
 #pragma once
 
 #include "game/quest_giver_status.hpp"
+#include "game/summon_title.hpp"
 #include "game/taxi_node_status.hpp"
 #include "game/calendar_data.hpp"
 #include "game/game_interfaces.hpp"
@@ -4550,6 +4551,17 @@ public:
     void loadSkillLineAbilityDbc();
     std::string getFactionName(uint32_t factionId) const;
     std::string getLfgDungeonName(uint32_t dungeonId) const;
+    /// SummonProperties.dbc Title (1=Pet, 2=Guardian, 3=Minion, 4=Totem, 5=Companion)
+    /// for a spell with SPELL_EFFECT_SUMMON (28), or 0 when none.
+    uint32_t getSpellSummonTitle(uint32_t spellId) const;
+    /// Single canonical summon/charm subtitle resolution for overhead labels,
+    /// nameplates, and tooltips.
+    struct ResolvedSummonTitle {
+        SummonTitle title = SummonTitle::None;
+        std::string owner;
+    };
+    ResolvedSummonTitle resolveUnitSummonTitle(const Unit& unit);
+
     /// The mounts and critters the player knows, as the pet tab lists them.
     ///
     /// Both are spells in the spellbook; what tells them apart is what the
@@ -5753,6 +5765,8 @@ private:
     mutable std::vector<Companion> mountSpells_;
     mutable std::vector<Companion> critterSpells_;
     mutable size_t companionsBuiltFromSpellCount_ = static_cast<size_t>(-1);
+    mutable std::unordered_map<uint32_t, uint32_t> spellSummonTitleCache_;
+    mutable bool spellSummonTitleLoaded_ = false;
     uint32_t activeMountSpell_ = 0;
     uint32_t activeCritterSpell_ = 0;
     void rebuildCompanions() const;

@@ -3712,27 +3712,15 @@ int lua_Tooltip_SetUnit(lua_State* L) {
             // world and raid-frame tooltips alike (pair 11, a guildmate).
             if (!guildName.empty()) addLine(guildName, 1.0f, 1.0f, 1.0f);
         }
-    } else if (const auto title = unit ? game::summonTitle(gh->getCreatureType(unit->getEntry()),
-                                                           game::unitCreatedByGuid(*entity),
-                                                           game::unitSummonedByGuid(*entity),
-                                                           game::unitCharmedByGuid(*entity))
-                                       : game::SummonTitle::None;
-               title != game::SummonTitle::None) {
-        // Companion, pet, minion, totem, guardian, or charmed unit (game/summon_title.hpp).
-        const uint64_t ownerGuid = game::summonOwnerGuid(
-            game::unitCreatedByGuid(*entity), game::unitSummonedByGuid(*entity), game::unitCharmedByGuid(*entity));
-        std::string owner = gh->lookupName(ownerGuid);
-        if (owner.empty())
-            if (const auto c = gh->getEntityManager().getEntity(ownerGuid))
-                owner = game::entityDisplayName(c);
-        if (owner.empty() && game::isPlayerGuid(ownerGuid))
-            gh->queryPlayerName(ownerGuid);
-        if (!owner.empty()) {
-            lua_getglobal(L, game::summonTitleGlobal(title));
+    } else if (const auto resolved = unit ? gh->resolveUnitSummonTitle(*unit) : game::GameHandler::ResolvedSummonTitle{};
+               resolved.title != game::SummonTitle::None) {
+        // Companion, pet, minion, totem, guardian, or charmed unit (canonical GameHandler::resolveUnitSummonTitle).
+        if (!resolved.owner.empty()) {
+            lua_getglobal(L, game::summonTitleGlobal(resolved.title));
             assert(lua_isstring(L, -1));
             const std::string pattern = lua_tostring(L, -1);
             lua_pop(L, 1);
-            const std::string line = game::formatSummonTitle(pattern, owner);
+            const std::string line = game::formatSummonTitle(pattern, resolved.owner);
             assert(!line.empty());
             addLine(line, 1.0f, 1.0f, 1.0f);
         }

@@ -4314,6 +4314,89 @@ void GameHandler::loadLfgDungeonDbc() const {
 // Mechanical Squirrel, Cockroach and Worg Pup. EffectMiscValue beside it is the
 // creature, which is what GetCompanionInfo reports first.
 // ---------------------------------------------------------------------------
+uint32_t GameHandler::getSpellSummonTitle(uint32_t spellId) const {
+    if (spellId == 0) return 0;
+    if (!spellSummonTitleLoaded_) {
+        spellSummonTitleLoaded_ = true;
+        auto* am = services_.assetManager;
+        if (am && am->isInitialized()) {
+            auto spDbc = am->loadDBC("SummonProperties.dbc");
+            auto spellDbc = am->loadDBC("Spell.dbc");
+            const auto* layout = pipeline::getActiveDBCLayout()
+                ? pipeline::getActiveDBCLayout()->getLayout("Spell") : nullptr;
+            if (spDbc && spDbc->isLoaded() && spDbc->getFieldCount() >= 4 &&
+                spellDbc && spellDbc->isLoaded() && layout) {
+                std::unordered_map<uint32_t, uint32_t> titleByPropId;
+                titleByPropId.reserve(spDbc->getRecordCount());
+                for (uint32_t r = 0; r < spDbc->getRecordCount(); ++r) {
+                    const uint32_t propId = spDbc->getUInt32(r, 0);
+                    const uint32_t title = spDbc->getUInt32(r, 3);
+                    if (title != 0) titleByPropId[propId] = title;
+                }
+                const uint32_t idField = (*layout)["ID"];
+                uint32_t effFields[3]{};
+                uint32_t miscBFields[3]{};
+                bool fieldsOk = true;
+                for (int i = 0; i < 3; ++i) {
+                    const std::string idx = std::to_string(i);
+                    effFields[i] = layout->tryField("Effect" + idx);
+                    miscBFields[i] = layout->tryField("EffectMiscValueB" + idx);
+                    if (miscBFields[i] == 0xFFFFFFFFu) {
+                        const uint32_t miscA = layout->tryField("EffectMiscValue" + idx);
+                        if (miscA != 0xFFFFFFFFu) miscBFields[i] = miscA + 3;
+                    }
+                    if (effFields[i] >= spellDbc->getFieldCount() ||
+                        miscBFields[i] >= spellDbc->getFieldCount()) {
+                        fieldsOk = false;
+                        break;
+                    }
+                }
+                constexpr uint32_t kEffectSummon = 28;
+                if (fieldsOk) {
+                    for (uint32_t r = 0; r < spellDbc->getRecordCount(); ++r) {
+                        for (int i = 0; i < 3; ++i) {
+                            if (spellDbc->getUInt32(r, effFields[i]) != kEffectSummon) continue;
+                            const uint32_t propId = spellDbc->getUInt32(r, miscBFields[i]);
+                            if (auto it = titleByPropId.find(propId); it != titleByPropId.end()) {
+                                spellSummonTitleCache_[spellDbc->getUInt32(r, idField)] = it->second;
+                                break;
+                            }
+                        }
+                    }
+                }
+                LOG_INFO("Loaded ", spellSummonTitleCache_.size(),
+                         " spell summon titles from SummonProperties.dbc + Spell.dbc");
+            }
+        }
+    }
+    const auto it = spellSummonTitleCache_.find(spellId);
+    return it != spellSummonTitleCache_.end() ? it->second : 0;
+}
+
+GameHandler::ResolvedSummonTitle GameHandler::resolveUnitSummonTitle(const Unit& unit) {
+    ResolvedSummonTitle result;
+    const uint64_t creatorGuid = unitCreatedByGuid(unit);
+    const uint64_t summonedByGuid = unitSummonedByGuid(unit);
+    const uint64_t charmedByGuid = unitCharmedByGuid(unit);
+    const uint32_t createdBySpell = unitCreatedBySpell(unit);
+    const uint32_t spTitle = getSpellSummonTitle(createdBySpell);
+    result.title = summonTitle(getCreatureType(unit.getEntry()), creatorGuid, summonedByGuid,
+                               charmedByGuid, spTitle);
+    if (result.title == SummonTitle::None) return result;
+
+    const uint64_t ownerGuid = summonOwnerGuid(creatorGuid, summonedByGuid, charmedByGuid);
+    result.owner = lookupName(ownerGuid);
+    if (result.owner.empty()) {
+        if (const auto c = getEntityManager().getEntity(ownerGuid)) {
+            result.owner = entityDisplayName(c);
+        }
+    }
+    if (result.owner.empty() && isPlayerGuid(ownerGuid)) {
+        queryPlayerName(ownerGuid);
+    }
+    return result;
+}
+
 void GameHandler::rebuildCompanions() const {
     const auto& known = getKnownSpells();
     // Only the spellbook changing can change the answer, and it changes rarely.

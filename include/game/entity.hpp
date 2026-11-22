@@ -1107,5 +1107,17 @@ inline uint64_t unitCharmedByGuid(const Entity& entity) {
            (static_cast<uint64_t>(entity.getField(static_cast<uint16_t>(loIdx + 1))) << 32);
 }
 
+inline uint32_t unitCreatedBySpell(const Entity& entity) {
+    uint16_t idx = fieldIndex(UF::UNIT_CREATED_BY_SPELL);
+    if (idx == 0xFFFF) {
+        // Structural invariant across Classic (146/147), TBC (167/168), and WotLK (81/82):
+        // UNIT_CREATED_BY_SPELL immediately precedes UNIT_NPC_FLAGS.
+        const uint16_t npcFlags = fieldIndex(UF::UNIT_NPC_FLAGS);
+        if (npcFlags == 0xFFFF || npcFlags == 0) return 0;
+        idx = static_cast<uint16_t>(npcFlags - 1);
+    }
+    return entity.getField(idx);
+}
+
 } // namespace game
 } // namespace wowee

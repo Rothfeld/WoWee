@@ -44,13 +44,29 @@ inline uint64_t summonOwnerGuid(uint64_t creatorGuid, uint64_t summonedByGuid, u
 }
 
 inline SummonTitle summonTitle(uint32_t creatureType, uint64_t creatorGuid, uint64_t summonedByGuid,
-                               uint64_t charmedByGuid = 0) {
+                               uint64_t charmedByGuid = 0, uint32_t summonPropertiesTitle = 0) {
     constexpr uint32_t kCreatureTypeBeast = 1;
     constexpr uint32_t kCreatureTypeTotem = 11;
     constexpr uint32_t kCreatureTypeNonCombatPet = 12;
     const uint64_t owner = creatorGuid != 0 ? creatorGuid : summonedByGuid;
     if (owner == 0) {
         return charmedByGuid != 0 ? SummonTitle::Charm : SummonTitle::None;
+    }
+    // Authoritative TBC 2.4.3 rule: when the summoning spell carries a
+    // SummonProperties.dbc row with Title 1..5 (via UNIT_CREATED_BY_SPELL ->
+    // Spell.dbc EffectMiscValueB -> SummonProperties.dbc col 3), use it directly.
+    // This gives Shadowfiend (34433, sp=67) and Water Elemental (31687, sp=67)
+    // Title 1 -> "<Owner's Pet>", Force of Nature / Target Dummy / Arcanite
+    // Dragonling (sp=61) Title 2 -> "<Owner's Guardian>", Totems (sp=63/81..83)
+    // Title 4 -> "<Owner's Totem>", and Companions (sp=41/307) Title 5 ->
+    // "<Owner's Companion>".
+    switch (summonPropertiesTitle) {
+        case 1: return SummonTitle::Pet;
+        case 2: return SummonTitle::Guardian;
+        case 3: return SummonTitle::Minion;
+        case 4: return SummonTitle::Totem;
+        case 5: return SummonTitle::Companion;
+        default: break;
     }
     if (creatureType == kCreatureTypeNonCombatPet) return SummonTitle::Companion;
     const bool beast = creatureType == kCreatureTypeBeast;

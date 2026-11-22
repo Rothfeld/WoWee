@@ -56,6 +56,7 @@ enum class UF : uint16_t {
     UNIT_NPC_EMOTESTATE,       // Persistent NPC emote animation ID (uint32)
     UNIT_DYNAMIC_FLAGS,
     UNIT_FIELD_PETNUMBER,      // Persistent pet identity used by model scaling
+    UNIT_CREATED_BY_SPELL,     // Spell ID that summoned/created this unit (SummonProperties title)
     UNIT_FIELD_PET_NAME_TIMESTAMP, // Set when a pet carries its own name (CMSG_PET_NAME_QUERY)
     UNIT_FIELD_PETEXPERIENCE,   // A hunter pet's experience toward its next level
     UNIT_FIELD_PETNEXTLEVELEXP, // ...and what that level costs
