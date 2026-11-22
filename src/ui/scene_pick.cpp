@@ -146,8 +146,14 @@ ScenePick pickScene(game::GameHandler& gameHandler,
             // A unit not drawn because its room is not seen cannot be pointed at.
             if (renderer->getCharacterRenderer()->isInstanceRoomHidden(spawner->characterInstanceIdForGuid(guid))) continue;
             const uint32_t drawnInst = spawner->drawnInstanceIdForGuid(guid);
-            if (!renderer->getCharacterRenderer()->intersectInstance(
-                    drawnInst, ray.origin, ray.direction, hitT)) {
+            const uint32_t mountInst = spawner->mountInstanceIdForGuid(guid);
+            auto* charRenderer = renderer->getCharacterRenderer();
+            if (!intersectUnitInstances(
+                    drawnInst, mountInst,
+                    [&](uint32_t instId, float& dist) {
+                        return charRenderer->intersectInstance(instId, ray.origin, ray.direction, dist);
+                    },
+                    hitT)) {
                 // Pass-2 fallback for lootable/skinnable corpses whose death
                 // animation fades out their body meshes (e.g. Entropius /
                 // VoidGod.m2 leaving only a small floating orb). Used only when

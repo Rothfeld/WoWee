@@ -728,3 +728,51 @@ TEST_CASE("Lootable corpse Pass-2 fallback sphere covers faded VoidGod/Entropius
     CHECK(testRay(glm::vec3(0.0f, 0.0f, 6.5f)));   // above floating orb
     CHECK_FALSE(testRay(glm::vec3(0.0f, 8.0f, 0.9f))); // outside corpse extent
 }
+
+TEST_CASE("Mounted unit picking intersects both rider and mount instances", "[scene-pick][mount]") {
+    using wowee::ui::intersectUnitInstances;
+    constexpr uint32_t kRider = 101u;
+    constexpr uint32_t kMount = 202u;
+
+    // Hovering a mounted creature's wing (e.g. Dragonmaw Wind Reaver on NetherDrakeElite.m2):
+    // misses the rider, hits the mount -> unit is picked at the mount's hit distance.
+    float dist = 0.0f;
+    CHECK(intersectUnitInstances(kRider, kMount, [&](uint32_t id, float& t) {
+        if (id == kMount) { t = 14.5f; return true; }
+        return false;
+    }, dist));
+    CHECK(dist == Catch::Approx(14.5f));
+
+    // Hovering the rider directly: hits rider only -> picked at rider's distance.
+    CHECK(intersectUnitInstances(kRider, kMount, [&](uint32_t id, float& t) {
+        if (id == kRider) { t = 12.0f; return true; }
+        return false;
+    }, dist));
+    CHECK(dist == Catch::Approx(12.0f));
+
+    // Ray passing through both mount and rider picks the closer surface.
+    CHECK(intersectUnitInstances(kRider, kMount, [&](uint32_t id, float& t) {
+        if (id == kRider) { t = 18.0f; return true; }
+        if (id == kMount) { t = 11.25f; return true; }
+        return false;
+    }, dist));
+    CHECK(dist == Catch::Approx(11.25f));
+
+    // Unmounted unit (mountInst == 0) only tests rider once.
+    int calls = 0;
+    CHECK_FALSE(intersectUnitInstances(kRider, 0u, [&](uint32_t, float&) {
+        ++calls;
+        return false;
+    }, dist));
+    CHECK(calls == 1);
+
+    // Deduplicated when mountInst == drawnInst.
+    calls = 0;
+    CHECK(intersectUnitInstances(kRider, kRider, [&](uint32_t, float& t) {
+        ++calls;
+        t = 9.0f;
+        return true;
+    }, dist));
+    CHECK(calls == 1);
+    CHECK(dist == Catch::Approx(9.0f));
+}

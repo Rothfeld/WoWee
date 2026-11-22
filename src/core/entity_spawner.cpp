@@ -1474,10 +1474,15 @@ uint32_t EntitySpawner::drawnInstanceIdForGuid(uint64_t guid) const {
     return 0;
 }
 
-uint32_t EntitySpawner::groundInstanceIdForGuid(uint64_t guid) const {
-    if (gameHandler_ && guid == gameHandler_->getPlayerGuid() && mountInstanceId_ != 0) return mountInstanceId_;
+uint32_t EntitySpawner::mountInstanceIdForGuid(uint64_t guid) const {
+    if (gameHandler_ && guid == gameHandler_->getPlayerGuid()) return mountInstanceId_;
     if (const auto mount = remotePlayerMounts_.find(guid); mount != remotePlayerMounts_.end())
         return mount->second.instanceId;
+    return 0;
+}
+
+uint32_t EntitySpawner::groundInstanceIdForGuid(uint64_t guid) const {
+    if (const uint32_t mount = mountInstanceIdForGuid(guid); mount != 0) return mount;
     return characterInstanceIdForGuid(guid);
 }
 

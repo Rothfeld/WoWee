@@ -16,6 +16,7 @@
 
 #include <cmath>
 #include <algorithm>
+#include <limits>
 
 #include <glm/glm.hpp>
 
@@ -102,6 +103,31 @@ struct CorpseFallbackSphere {
     const glm::vec3& origin, float selectionRadius, float scaledBoundRadius) {
     const float radius = std::max({1.0f, selectionRadius, scaledBoundRadius});
     return {origin + glm::vec3(0.0f, 0.0f, radius * 0.3f), radius};
+}
+
+/// Intersect a ray against a unit's drawn character/morph instance and, when
+/// mounted, its mount instance, returning the nearest hit distance.
+/// Native 2.4.3 attaches the rider to the mount under the same unit GUID so
+/// hovering or clicking anywhere on a mounted creature or player's mount
+/// (e.g. Dragonmaw Wind Reaver on NetherDrakeElite.m2) selects the unit.
+template<class IntersectFn>
+bool intersectUnitInstances(uint32_t drawnInstanceId, uint32_t mountInstanceId,
+                            IntersectFn&& intersect, float& outDistance) {
+    bool hit = false;
+    float nearest = std::numeric_limits<float>::infinity();
+    float t = 0.0f;
+    if (drawnInstanceId != 0 && intersect(drawnInstanceId, t)) {
+        nearest = t;
+        hit = true;
+    }
+    if (mountInstanceId != 0 && mountInstanceId != drawnInstanceId &&
+        intersect(mountInstanceId, t)) {
+        if (t < nearest) nearest = t;
+        hit = true;
+    }
+    if (!hit) return false;
+    outDistance = nearest;
+    return true;
 }
 
 /// The parts of picking the two callers disagree about.
