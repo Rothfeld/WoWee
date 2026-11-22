@@ -645,16 +645,93 @@ TEST_CASE("Detached particles without flag 0x8 move at placement scale", "[m2][p
 
 TEST_CASE("Map doodad and spell visual particles move at placement scale with flag 0x8", "[m2][particle]") {
     using namespace wowee::rendering;
-    // Owner predicate: map doodads and spell visuals scale with placement;
-    // GameObjects with flag 0x20 (Windblossom01/02 0x429) also scale with
-    // placement, while non-0x20 GameObjects (Sunwell gate 0x409) and units
-    // (externalPose, Void Zone 0x229) keep yards for flag 0x8.
+    // Owner predicate: map doodads and spell visuals scale both velocity and
+    // gravity with placement; GameObjects and units (externalPose) with flag
+    // 0x20 (Windblossom01/02 0x429, Shivan/HaremMatron fire crown #2 0x29 &
+    // #3 0x229) scale detached velocity with their placement/particle scale
+    // while keeping 0x8 gravity in world yards/s^2 (Void Zone 0x229, -1.39);
+    // non-0x20 GameObjects (Sunwell gate 0x409) and units (totems 0x9/0x409)
+    // keep yards for both velocity and gravity.
     CHECK(particleScalesWithPlacement(/*isGameObject=*/false, /*externalPose=*/false));
+    CHECK(particleGravityScalesWithPlacement(/*isGameObject=*/false, /*externalPose=*/false));
     CHECK_FALSE(particleScalesWithPlacement(/*isGameObject=*/true, /*externalPose=*/false));
     CHECK_FALSE(particleScalesWithPlacement(/*isGameObject=*/true, /*externalPose=*/false, 0x409u));
     CHECK(particleScalesWithPlacement(/*isGameObject=*/true, /*externalPose=*/false, 0x429u));
+    CHECK_FALSE(particleGravityScalesWithPlacement(/*isGameObject=*/true, /*externalPose=*/false));
     CHECK_FALSE(particleScalesWithPlacement(/*isGameObject=*/false, /*externalPose=*/true));
-    CHECK_FALSE(particleScalesWithPlacement(/*isGameObject=*/false, /*externalPose=*/true, 0x229u));
+    CHECK_FALSE(particleScalesWithPlacement(/*isGameObject=*/false, /*externalPose=*/true, 0x409u));
+    CHECK(particleScalesWithPlacement(/*isGameObject=*/false, /*externalPose=*/true, 0x29u));
+    CHECK(particleScalesWithPlacement(/*isGameObject=*/false, /*externalPose=*/true, 0x229u));
+    CHECK_FALSE(particleGravityScalesWithPlacement(/*isGameObject=*/false, /*externalPose=*/true));
+
+    // Priestess of Delight/Dementia (Shivan.m2, display scale 2.5): crown fire
+    // emitters #2 (0x29, speed 5.5556, life 0.35 s, grav 0) and #3 (0x229,
+    // speed 1.5556, life 1.0 s, grav 0) scale upward velocity by 2.5x to form
+    // the ~4.86 yd tapering flame jet above the 1.74-2.08 yd birth sprites.
+    {
+        const auto shivanModel = glm::scale(glm::mat4(1.0f), glm::vec3(2.5f));
+        const auto shivanBirth2 = particleBirthTransform(0x29u, shivanModel, glm::mat4(1.0f));
+        const bool shivanVelScales2 = particleScalesWithPlacement(false, true, 0x29u);
+        const bool shivanGravScales = particleGravityScalesWithPlacement(false, true);
+        CHECK(glm::length(particleWorldVelocityBasis(0x29u, shivanBirth2, shivanVelScales2, 2.5f) *
+                          glm::vec3(0.0f, 0.0f, 5.5556f)) * 0.35f
+              == Catch::Approx(4.861f).margin(0.005f));
+        CHECK(glm::length(particleGravityDirection(0x29u, shivanModel, shivanGravScales))
+              == Catch::Approx(1.0f));
+
+        // Weapon enchant item visuals (isEffectModel: externalParticleScale = 1.0
+        // despite 4.68x weapon attachment matrix on Bonechewer Blade Fury) keep
+        // 1.0x velocity via placementScaleOverride.
+        const auto scaledWeapon = glm::scale(glm::mat4(1.0f), glm::vec3(4.68f));
+        const auto enchantBirth = particleBirthTransform(0x229u, scaledWeapon, glm::mat4(1.0f));
+        CHECK(glm::length(particleWorldVelocityBasis(0x229u, enchantBirth, true, 1.0f) *
+                          glm::vec3(0.0f, 0.0f, 0.28f))
+              == Catch::Approx(0.28f).margin(0.001f));
+
+        // Shipped TBC Shivan.m2 & PortalofKathune.m2 verification when data is present.
+        const std::filesystem::path dataRoot = "/workspace/azerothcore/client/wowee-data/expansions/tbc";
+        const auto shivanPath = dataRoot / "creature/shivan/shivan.m2";
+        const auto kathunePath = dataRoot / "creature/portalofkathune/portalofkathune.m2";
+        if (std::filesystem::exists(shivanPath) && std::filesystem::exists(kathunePath)) {
+            const auto shivanBytes = wowee::test::readTbcData("creature/shivan/shivan.m2");
+            const auto shivan = wowee::pipeline::M2Loader::load(shivanBytes);
+            REQUIRE(shivan.particleEmitters.size() == 8);
+            CHECK(shivan.particleEmitters[2].flags == 0x29u);
+            CHECK(shivan.particleEmitters[3].flags == 0x229u);
+            CHECK(shivan.particleEmitters[2].particleColorIndex == 11u);
+            CHECK(shivan.particleEmitters[3].particleColorIndex == 11u);
+            const float spd2 = wowee::rendering::m2_track::sampleFloat(
+                shivan.particleEmitters[2].emissionSpeed, 2, 0.0f, 0.0f, shivan.globalSequenceDurations, 0.0f);
+            const float life2 = wowee::rendering::m2_track::sampleFloat(
+                shivan.particleEmitters[2].lifespan, 2, 0.0f, 0.0f, shivan.globalSequenceDurations, 0.0f);
+            CHECK(spd2 * life2 * 2.5f == Catch::Approx(4.861f).margin(0.01f));
+            CHECK(particleSpriteHalfWidth(shivan.particleEmitters[2].flags,
+                                          shivan.particleEmitters[2].particleScale.floatValues[0], 2.5f)
+                  == Catch::Approx(1.736f).margin(0.01f));
+
+            // Netherspite Void Zone (PortalofKathune.m2, display scale 0.1, 0x229):
+            // vRange == 0 (purely horizontal birth velocity) and gravity == -1.3889
+            // still lifts smoke 1.56 yd in 1.5 s under unscaled unit gravity.
+            const auto kathuneBytes = wowee::test::readTbcData("creature/portalofkathune/portalofkathune.m2");
+            const auto kathune = wowee::pipeline::M2Loader::load(kathuneBytes);
+            REQUIRE(kathune.particleEmitters.size() == 1);
+            const auto& kem = kathune.particleEmitters[0];
+            CHECK(kem.flags == 0x229u);
+            CHECK(kem.emitterType == 2u);
+            const float kvRange = wowee::rendering::m2_track::sampleFloat(
+                kem.verticalRange, 0, 0.0f, 0.0f, kathune.globalSequenceDurations, 0.0f);
+            const float kGrav = wowee::rendering::m2_track::sampleFloat(
+                kem.gravity, 0, 0.0f, 0.0f, kathune.globalSequenceDurations, 0.0f);
+            const float kLife = wowee::rendering::m2_track::sampleFloat(
+                kem.lifespan, 0, 0.0f, 0.0f, kathune.globalSequenceDurations, 0.0f);
+            CHECK(kvRange == Catch::Approx(0.0f));
+            const glm::vec3 kGravDir = particleGravityDirection(
+                kem.flags, glm::scale(glm::mat4(1.0f), glm::vec3(0.1f)),
+                particleGravityScalesWithPlacement(false, true));
+            const float smokeLift = (kGravDir * (0.5f * kGrav * kLife * kLife)).z;
+            CHECK(smokeLift == Catch::Approx(1.5625f).margin(0.01f));
+        }
+    }
 
     // Corrupted Windblossom (GO 164887, Windblossom02.m2, scale 2.0, flags 0x429):
     // 4.4444 yd/s scales to 8.8888 yd/s so the pinned light pillar reaches full height.
@@ -750,6 +827,33 @@ TEST_CASE("Pre-WotLK playable animation lookup decides what Stand shows", "[m2][
     CHECK(wowee::pipeline::standSequenceIndex(brazier, {{0, 0}}) == 1);
     // Neither Stand nor a lookup (Wrath layout): the first sequence.
     CHECK(wowee::pipeline::standSequenceIndex(cage, {}) == 0);
+
+    // Attached TBC helm models whose sequences[0] is not Stand (e.g.
+    // helm_cloth_a_02_trf.m2 lists Close id=85 at index 0 and Stand id=0 at 107;
+    // helm_cloth_sunfest_a_01_trf.m2 lists Run id=5 at index 0 and Stand id=0 at 2)
+    // resolve Stand via standSequenceIndex rather than looping sequences[0].
+    const std::filesystem::path trollHelmPath =
+        "/workspace/azerothcore/client/wowee-data/expansions/tbc/item/objectcomponents/head/helm_cloth_a_02_trf.m2";
+    if (std::filesystem::exists(trollHelmPath)) {
+        const auto helmBytes = wowee::test::readTbcData("item/objectcomponents/head/helm_cloth_a_02_trf.m2");
+        const auto helm = wowee::pipeline::M2Loader::load(helmBytes);
+        REQUIRE(!helm.sequences.empty());
+        CHECK(helm.sequences[0].id != 0u);
+        const int standIdx = wowee::pipeline::standSequenceIndex(helm.sequences, helm.playableAnimations);
+        REQUIRE(standIdx == 107);
+        CHECK(helm.sequences[static_cast<size_t>(standIdx)].id == 0u);
+
+        const auto fireHelmBytes = wowee::test::readTbcData("item/objectcomponents/head/helm_cloth_sunfest_a_01_trf.m2");
+        const auto fireHelm = wowee::pipeline::M2Loader::load(fireHelmBytes);
+        REQUIRE(fireHelm.sequences.size() == 137);
+        CHECK(fireHelm.sequences[0].id == 5u);
+        const int fireHelmStand = wowee::pipeline::standSequenceIndex(
+            fireHelm.sequences, fireHelm.playableAnimations);
+        REQUIRE(fireHelmStand == 2);
+        CHECK(fireHelm.sequences[static_cast<size_t>(fireHelmStand)].id == 0u);
+        REQUIRE(fireHelm.particleEmitters.size() == 5);
+        CHECK((fireHelm.particleEmitters[2].flags & wowee::rendering::kParticleScaledSprite) != 0u);
+    }
 }
 
 TEST_CASE("Plane emitters measure azimuth from +Y so Hurricane's cloud lies horizontal", "[m2][particle]") {

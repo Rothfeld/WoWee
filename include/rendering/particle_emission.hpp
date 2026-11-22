@@ -187,16 +187,32 @@ inline glm::vec3 particleBirthPosition(const glm::mat4& previous, const glm::mat
 
 inline bool particleScalesWithPlacement(bool isGameObject, bool externalPose,
                                         uint32_t flags = 0) {
-    if (externalPose) return false;
-    if (!isGameObject) return true;
-    // GameObject emitters with flag 0x20 (kParticleScaledSprite) scale their
-    // detached particle velocity and gravity by the GO's placement scale as
-    // well as their sprite size: Corrupted/Cleansed Windblossom (GO 164887 /
-    // 164884, Windblossom02.m2 / Windblossom01.m2, scale 2.0, flags 0x429)
-    // send their pinned light pillars twice as high in native 2.4.3 as
-    // unscaled yards. GameObjects without 0x20 (Sunwell gate barrier GO 188118,
-    // SUNWELLRAID_GATE_04.m2, scale 8.69, flags 0x409) keep moving in yards.
+    if (!isGameObject && !externalPose) return true;
+    // GameObject and CharacterRenderer (unit / attached-item) emitters with
+    // flag 0x20 (kParticleScaledSprite) scale detached particle velocity by
+    // their placement/particle scale to match their scaled sprite size:
+    // - Priestess of Delight/Dementia & Mother Shahraz (Shivan.m2 /
+    //   HaremMatron.m2, display scale 2.5, crown flames #2 0x29 at 5.56 yd/s
+    //   for 0.35 s and #3 0x229 at 1.56 yd/s for 1.0 s, grav 0) shoot a ~4.9 yd
+    //   tapering flame jet above the crown in native 2.4.3; unscaled yards left
+    //   1.56-1.94 yd travel inside the 1.74-2.08 yd birth sprite radius as a
+    //   round ball.
+    // - Corrupted/Cleansed Windblossom (GO 164887 / 164884, Windblossom02.m2 /
+    //   Windblossom01.m2, scale 2.0, flags 0x429) send their pinned light
+    //   pillars twice as high as unscaled yards.
+    // Emitters without 0x20 (Sunwell gate barrier GO 188118, scale 8.69, 0x409;
+    // Shaman totems 0x9/0x409/0x40b) keep moving in yards.
     return (flags & kParticleScaledSprite) != 0;
+}
+
+inline bool particleGravityScalesWithPlacement(bool isGameObject, bool externalPose) {
+    // Only map doodads and spell visuals scale 0x8 gravitational acceleration
+    // by placement. Units and GameObjects keep 0x8 gravity in world yards/s^2
+    // even when 0x20 scales sprite size and initial velocity: Netherspite's
+    // Void Zone (PortalofKathune.m2, display scale 0.1, flags 0x229, vRange 0
+    // horizontal velocity, gravity -1.39) still lifts its smoke 1.56 yd over
+    // 1.5 s rather than 0.156 yd.
+    return !isGameObject && !externalPose;
 }
 
 inline bool particleMovesInYards(uint32_t flags, bool scalesWithPlacement);
@@ -252,10 +268,23 @@ inline bool particleMovesInYards(uint32_t flags, bool scalesWithPlacement) {
 }
 
 inline glm::mat3 particleWorldVelocityBasis(uint32_t flags, const glm::mat4& birthTransform,
-                                            bool scalesWithPlacement) {
+                                            bool scalesWithPlacement,
+                                            float placementScaleOverride = -1.0f) {
     glm::mat3 basis(birthTransform);
-    if (!particleMovesInYards(flags, scalesWithPlacement)) return basis;
-    for (int c = 0; c < 3; ++c) basis[c] = glm::normalize(basis[c]);
+    if (flags & (kParticleNoTrail | kParticleModelFrame)) return basis;
+    if (particleMovesInYards(flags, scalesWithPlacement)) {
+        for (int c = 0; c < 3; ++c) {
+            const float len = glm::length(basis[c]);
+            basis[c] = len > 1e-6f ? (basis[c] / len) : glm::vec3(0.0f);
+        }
+        return basis;
+    }
+    if (placementScaleOverride >= 0.0f) {
+        for (int c = 0; c < 3; ++c) {
+            const float len = glm::length(basis[c]);
+            basis[c] = len > 1e-6f ? (basis[c] * (placementScaleOverride / len)) : glm::vec3(0.0f);
+        }
+    }
     return basis;
 }
 

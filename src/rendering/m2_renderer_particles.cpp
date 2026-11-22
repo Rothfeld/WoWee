@@ -102,11 +102,14 @@ void M2Renderer::emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt
 
     for (size_t ei = 0; ei < gpu.particleEmitters.size(); ei++) {
         const auto& em = gpu.particleEmitters[ei];
-        // ADT/WMO doodads, spell visuals, and 0x20 GameObject emitters move
-        // particles at their placement scale whatever flag 0x8 says
-        // (particleMovesInYards). Units and non-0x20 GameObjects keep yards.
-        const bool scalesWithPlacement = particleScalesWithPlacement(
+        // ADT/WMO doodads, spell visuals, and 0x20 GameObject/unit emitters
+        // scale detached velocity by their placement/particle scale; 0x8
+        // gravity stays in world yards/s^2 on units and GameObjects.
+        const bool velocityScalesWithPlacement = particleScalesWithPlacement(
             inst.isGameObject, inst.externalPose, em.flags);
+        const bool gravityScalesWithPlacement = particleGravityScalesWithPlacement(
+            inst.isGameObject, inst.externalPose);
+        const float velocityScaleOverride = inst.externalPose ? inst.externalParticleScale : -1.0f;
         // Emitter pose now and at the previous step, recorded every frame so
         // an emitter that resumes does not reach back to a stale pose.
         const glm::mat4 boneXform = em.bone < inst.boneMatrices.size()
@@ -177,7 +180,7 @@ void M2Renderer::emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt
             p.position = glm::vec3(particleBirthPosition(previousBirth, birthTransform,
                                                          localPos, p.life, dt));
             p.birthPosition = p.position;
-            p.gravityDirection = particleGravityDirection(em.flags, inst.modelMatrix, scalesWithPlacement);
+            p.gravityDirection = particleGravityDirection(em.flags, inst.modelMatrix, gravityScalesWithPlacement);
             p.birthBasis = glm::mat3(birthTransform);
             p.twinkleSeed = static_cast<uint32_t>(particleRng_());
             if (!em.geometryModel.empty()) {
@@ -199,7 +202,8 @@ void M2Renderer::emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt
             const float variation = interpFloat(em.speedVariation, sampleAnimTime,
                 inst.globalSequenceTime, inst.currentSequenceIndex, gpu.globalSequenceDurations);
             speed *= 1.0f + distN(particleRng_) * variation;
-            const glm::mat3 rotMat = particleWorldVelocityBasis(em.flags, birthTransform, scalesWithPlacement);
+            const glm::mat3 rotMat = particleWorldVelocityBasis(
+                em.flags, birthTransform, velocityScalesWithPlacement, velocityScaleOverride);
             p.velocity = rotMat * (em.emitterType == 2 ? sphereDirection : dir) * speed;
 
             const float gravity = interpFloat(em.gravity, sampleAnimTime,

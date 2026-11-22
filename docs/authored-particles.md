@@ -39,12 +39,10 @@ and gravity in yards, rotated only; without it their motion takes the
 placement scale too. The quest-object sparkle's flare (LootFX.m2 #0, 0x101)
 rises 0.4-0.5 yd over a sign (sparkle scale 1) and 3-4 yd over GnomeBigGear
 (3.5) in the original, and Light of Elune (feralaslightblue.m2, 0x1) falls in
-longer columns at GO size 5 than at 0.5. With `0x8`: the Sunwell gate barrier (GO 188118, scale 8.69, 0x409)
+longer columns at GO size 5 than at 0.5. With `0x8` and without `0x20`: the Sunwell gate barrier (GO 188118, scale 8.69, 0x409)
 otherwise threw its sparks 8.7x too fast as radial streaks past the doorway
-(native: an even fire wall; mean-image correlation 0.82 -> 0.89), and
-Netherspite's Void Zone (PortalofKathune.m2, display scale 0.1, 0x229) lifted
-its smoke a tenth as high. Map doodads (ADT MDDF and WMO MODD placements) are the
-exception: their particles move at the placement scale with `0x8` too.
+(native: an even fire wall; mean-image correlation 0.82 -> 0.89). With `0x8` and `0x20` (`kParticleScaledSprite`), initial velocity scales with placement/particle scale on units and GameObjects as well (Priestess of Delight/Dementia and Mother Shahraz, `Shivan.m2` / `HaremMatron.m2` at display scale 2.5, crown flames #2 `0x29` and #3 `0x229` rise ~4.9 yd as a tapering flame jet instead of collapsing inside their 1.7-2.1 yd birth sprites; Corrupted Windblossom `Windblossom02.m2` at scale 2.0 `0x429`), while `0x8` gravitational acceleration on units and GameObjects stays in world yards/s^2 so Netherspite's Void Zone (`PortalofKathune.m2`, display scale 0.1, `0x229`, horizontal birth velocity `vRange = 0`, `gravity = -1.39`) still lifts its smoke 1.56 yd in 1.5 s rather than a tenth as high. Map doodads (ADT MDDF and WMO MODD placements) and spell visuals
+move and accelerate at the placement scale with `0x8` regardless of `0x20`.
 Magisters' Terrace's throne orb (`BloodElf_PowerOrb_Green.m2`, MODD 964,
 scale 0.358, smoke #5/#6 0x629 at 2.2-2.8 yd/s) lifts its green wisps about
 1 yd over the orb in the original, 4-5 yd up the throne in yards; a Wild

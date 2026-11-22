@@ -2803,8 +2803,9 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos,
         }
 
         if (inst.cachedModel && !inst.cachedModel->data.sequences.empty() && inst.currentSequenceIndex < 0) {
-            inst.currentSequenceIndex = 0;
-            inst.currentAnimationId = inst.cachedModel->data.sequences[0].id;
+            inst.currentSequenceIndex = pipeline::standSequenceIndex(
+                inst.cachedModel->data.sequences, inst.cachedModel->data.playableAnimations);
+            inst.currentAnimationId = inst.cachedModel->data.sequences[inst.currentSequenceIndex].id;
         }
 
         if (inst.kitAnimationFrozen) {
@@ -2868,8 +2869,9 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos,
         // Always advance animation time (cheap)
         if (inst.cachedModel && !inst.cachedModel->data.sequences.empty()) {
             if (inst.currentSequenceIndex < 0) {
-                inst.currentSequenceIndex = 0;
-                inst.currentAnimationId = inst.cachedModel->data.sequences[0].id;
+                inst.currentSequenceIndex = pipeline::standSequenceIndex(
+                    inst.cachedModel->data.sequences, inst.cachedModel->data.playableAnimations);
+                inst.currentAnimationId = inst.cachedModel->data.sequences[inst.currentSequenceIndex].id;
             }
             const auto& seq = inst.cachedModel->data.sequences[inst.currentSequenceIndex];
             float playbackRate = computeLocomotionPlaybackRate(
@@ -3324,10 +3326,13 @@ void CharacterRenderer::syncEmitters(M2Renderer& m2Renderer) {
 
         // The sequence and time the skeleton was posed with this frame, so the
         // emitters' rate, lifespan and speed tracks follow the same animation.
-        // Attached weapons keep no sequence of their own: their first one.
+        // Attached items that have not run update() yet resolve their Stand sequence.
         const int sequence = instance.currentSequenceIndex >= 0 &&
             instance.currentSequenceIndex < static_cast<int>(model.sequences.size())
-            ? instance.currentSequenceIndex : 0;
+            ? instance.currentSequenceIndex
+            : (model.sequences.empty()
+                   ? 0
+                   : pipeline::standSequenceIndex(model.sequences, model.playableAnimations));
         const float time = model.sequences.empty() ? instance.animationTime
             : animationSampleTime(instance.currentAnimationId, model.sequences[sequence],
                                   instance.animationTime, instance.playReversed);
