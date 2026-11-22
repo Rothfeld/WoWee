@@ -2111,10 +2111,20 @@ void EntitySpawner::applyGameObjectState(uint64_t guid, uint8_t goState) {
     // a type still unknown here is revisited in onGameObjectInfoReceived.
     if (goState <= 1) {
         uint32_t stateLoop = goState == 0 ? 149u : 147u;
+        const bool reverseClose = (goState == 1) &&
+            gameObjectCloseReversesOpen(m2->hasAnimation(instanceId, 146u),
+                                          m2->hasAnimation(instanceId, 148u));
+        const uint32_t transitionAnim = reverseClose ? 148u : anim;
         if (m2->hasAnimation(instanceId, stateLoop)) {
             if (goState == 1 && goType != 0xFFFFFFFFu && gameObjectReadyShowsStand(goType))
                 stateLoop = m2->standSequenceId(instanceId).value();
-            m2->setInstanceStateAnimation(instanceId, anim, stateLoop, !skipToEnd);
+            m2->setInstanceStateAnimation(instanceId, transitionAnim, stateLoop,
+                                          !skipToEnd, reverseClose);
+            return;
+        }
+        if (reverseClose) {
+            const uint32_t readyLoop = m2->standSequenceId(instanceId).value_or(148u);
+            m2->setInstanceStateAnimation(instanceId, 148u, readyLoop, !skipToEnd, true);
             return;
         }
     }

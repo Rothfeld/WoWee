@@ -209,7 +209,8 @@ std::optional<uint32_t> M2Renderer::standSequenceId(uint32_t instanceId) const {
 }
 
 void M2Renderer::setInstanceStateAnimation(uint32_t instanceId, uint32_t transitionId,
-                                           uint32_t stateId, bool playTransition) {
+                                           uint32_t stateId, bool playTransition,
+                                           bool reverseTransition) {
     auto idxIt = instanceIndexById.find(instanceId);
     if (idxIt == instanceIndexById.end()) return;
     auto& inst = instances[idxIt->second];
@@ -223,13 +224,28 @@ void M2Renderer::setInstanceStateAnimation(uint32_t instanceId, uint32_t transit
     assert(state >= 0);
     // The loop is the instance's idle: playingVariation returns to it.
     inst.idleSequenceIndex = state;
-    inst.holdAtEnd = false;
-    inst.animSpeed = 1.0f;
-    inst.animTime = 0.0f;
-    const int first = playTransition && transition >= 0 ? transition : state;
+    const bool playTrans = playTransition && transition >= 0;
+    const int first = playTrans ? transition : state;
     inst.currentSequenceIndex = first;
     inst.animDuration = static_cast<float>(seqs[first].duration);
-    inst.playingVariation = first != state;
+    inst.shakePrevSequence = -1;
+    inst.shakePrevAnimTime = 0.0f;
+    if (playTrans && reverseTransition) {
+        inst.animTime = inst.animDuration;
+        inst.animSpeed = -1.0f;
+        inst.playingVariation = (first != state);
+        inst.holdAtEnd = (first == state);
+    } else if (!playTrans && reverseTransition && first == transition) {
+        inst.animTime = 0.0f;
+        inst.animSpeed = 0.0f;
+        inst.playingVariation = false;
+        inst.holdAtEnd = true;
+    } else {
+        inst.holdAtEnd = false;
+        inst.animSpeed = 1.0f;
+        inst.animTime = 0.0f;
+        inst.playingVariation = (first != state);
+    }
 }
 
 void M2Renderer::playInstanceStand(uint32_t instanceId) {

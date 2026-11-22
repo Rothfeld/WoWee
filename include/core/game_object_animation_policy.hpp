@@ -70,4 +70,13 @@ constexpr bool gameObjectReadyShowsStand(uint32_t type) {
            || type == 13u; // CAMERA
 }
 
+// Whether entering READY (goState == 1) reverses Open (148) because the model
+// lacks Close (146). Measured on Native 2.4.3 (Arcatraz Stasis Pods
+// TK_PRISON_CELL.m2 [0,147,148,149] and TK_BOSS_POD.m2 [0,148,149]; 114 TBC
+// GameObject M2 models): Native plays Open (148) in reverse over its full
+// duration (8333 ms / 7666 ms) instead of snapping to Closed/Stand.
+constexpr bool gameObjectCloseReversesOpen(bool hasClose146, bool hasOpen148) {
+    return !hasClose146 && hasOpen148;
+}
+
 } // namespace wowee::core

@@ -697,9 +697,12 @@ public:
     void setInstanceAnimProgress(uint32_t instanceId, float normalizedProgress);
     /// Loop stateId, after one play of transitionId when the model has it.
     /// A game object's Closed (147) after Close (146), Opened (149) after
-    /// Open (148).
+    /// Open (148). When reverseTransition is true, transitionId plays backward
+    /// from its duration to 0 before entering stateId (e.g. closing a model
+    /// that authors Open (148) without Close (146)).
     void setInstanceStateAnimation(uint32_t instanceId, uint32_t transitionId,
-                                   uint32_t stateId, bool playTransition);
+                                   uint32_t stateId, bool playTransition,
+                                   bool reverseTransition = false);
     /// Loop the model's Stand (M2ModelGPU::standSequenceIndex) from its start.
     void playInstanceStand(uint32_t instanceId);
 

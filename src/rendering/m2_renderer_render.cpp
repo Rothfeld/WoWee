@@ -508,7 +508,27 @@ void M2Renderer::update(float deltaTime, const glm::vec3& cameraPos, const glm::
         instance.animTime += dtMs * instance.animSpeed;
         instance.globalSequenceTime += dtMs;
         const bool steppedBelow = instance.cachedHasAnimation && !instance.cachedDisableAnimation;
-        if (!steppedBelow && instance.animDuration > 0.0f &&
+        if (!steppedBelow && instance.animSpeed < 0.0f && instance.animTime <= 0.0f) {
+            if (instance.holdAtEnd) {
+                instance.animTime = 0.0f;
+                instance.animSpeed = 0.0f;
+            } else if (instance.playingVariation && instance.cachedModel &&
+                       instance.idleSequenceIndex >= 0 &&
+                       instance.idleSequenceIndex < static_cast<int>(instance.cachedModel->sequences.size())) {
+                const float overflow = -instance.animTime;
+                instance.playingVariation = false;
+                instance.animSpeed = 1.0f;
+                const auto& seqs = instance.cachedModel->sequences;
+                const int nextSeq = instance.idleSequenceIndex;
+                instance.currentSequenceIndex = nextSeq;
+                instance.animDuration = static_cast<float>(seqs[nextSeq].duration);
+                instance.animTime = instance.animDuration > 0.0f
+                    ? std::fmod(overflow, instance.animDuration) : 0.0f;
+            } else {
+                instance.animTime = 0.0f;
+                instance.animSpeed = 0.0f;
+            }
+        } else if (!steppedBelow && instance.animDuration > 0.0f &&
             instance.animTime >= instance.animDuration) {
             if (instance.holdAtEnd) {
                 instance.animTime = instance.animDuration;
@@ -638,7 +658,26 @@ void M2Renderer::update(float deltaTime, const glm::vec3& cameraPos, const glm::
         if (instance.animDuration <= 0.0f && instance.cachedHasParticleEmitters) {
             instance.animDuration = rendering::M2_DEFAULT_PARTICLE_ANIM_MS;
         }
-        if (instance.animDuration > 0.0f && instance.animTime >= instance.animDuration) {
+        if (instance.animSpeed < 0.0f && instance.animTime <= 0.0f) {
+            if (instance.holdAtEnd) {
+                instance.animTime = 0.0f;
+                instance.animSpeed = 0.0f;
+            } else if (instance.playingVariation &&
+                       instance.idleSequenceIndex >= 0 &&
+                       instance.idleSequenceIndex < static_cast<int>(model.sequences.size())) {
+                const float overflow = -instance.animTime;
+                instance.playingVariation = false;
+                instance.animSpeed = 1.0f;
+                const int nextSeq = instance.idleSequenceIndex;
+                instance.currentSequenceIndex = nextSeq;
+                instance.animDuration = static_cast<float>(model.sequences[nextSeq].duration);
+                instance.animTime = instance.animDuration > 0.0f
+                    ? std::fmod(overflow, instance.animDuration) : 0.0f;
+            } else {
+                instance.animTime = 0.0f;
+                instance.animSpeed = 0.0f;
+            }
+        } else if (instance.animDuration > 0.0f && instance.animTime >= instance.animDuration) {
             if (instance.holdAtEnd) {
                 // Stay on the last frame. A door's open sequence ends with the
                 // door open, and that is the pose the server is describing.

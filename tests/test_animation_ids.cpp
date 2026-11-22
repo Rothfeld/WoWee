@@ -216,6 +216,17 @@ TEST_CASE("READY loops Stand for GENERIC and CAMERA, Closed for the others", "[g
     }
 }
 
+TEST_CASE("GameObject READY reverses Open (148) when Close (146) is absent", "[game-object-pose]") {
+    using wowee::core::gameObjectCloseReversesOpen;
+    // Arcatraz Stasis Pods (TK_PRISON_CELL.m2 [0,147,148,149], TK_BOSS_POD.m2 [0,148,149]).
+    CHECK(gameObjectCloseReversesOpen(/*hasClose146=*/false, /*hasOpen148=*/true));
+    // Models with explicit Close (146) (e.g. ET_Cage.m2) play Close forward.
+    CHECK_FALSE(gameObjectCloseReversesOpen(/*hasClose146=*/true, /*hasOpen148=*/true));
+    // Models without Open (148) do not reverse Open.
+    CHECK_FALSE(gameObjectCloseReversesOpen(/*hasClose146=*/false, /*hasOpen148=*/false));
+    CHECK_FALSE(gameObjectCloseReversesOpen(/*hasClose146=*/true, /*hasOpen148=*/false));
+}
+
 TEST_CASE("Creature spline movement retains aquatic and aerial poses", "[creature-locomotion]") {
     using wowee::rendering::creatureMovingAnimation;
     CHECK(creatureMovingAnimation(false, false, false) == anim::RUN);

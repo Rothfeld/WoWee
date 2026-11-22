@@ -89,7 +89,7 @@ void M2Renderer::emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt
         }
     }
 
-    const float stepMs = dt * 1000.0f * (inst.externalPose ? 1.0f : inst.animSpeed);
+    const float stepMs = dt * 1000.0f * (inst.externalPose ? 1.0f : std::abs(inst.animSpeed));
     const bool freshSequence = inst.emitterPrevSequence != inst.currentSequenceIndex;
     const float prevAnimTime = freshSequence
         ? std::max(0.0f, inst.animTime - stepMs)
