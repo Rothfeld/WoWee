@@ -1,10 +1,55 @@
 #pragma once
 
 #include "rendering/animation/animation_ids.hpp"
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 
 namespace wowee {
 namespace rendering {
+
+// Native TBC 2.4.3 standing turn-in-place body lag: when turning with the
+// keyboard (or mouse-look while stationary), the camera and logical facing
+// rotate immediately (~180 deg/s) while the rendered body trails behind (up to
+// ~55-60 deg at steady state) and smoothly catches up over ~0.5-0.6s after
+// release while ShuffleLeft/ShuffleRight keeps stepping.
+constexpr float kMaxTurnBodyLagDeg = 60.0f;
+constexpr float kStandingTurnBodyFollowRate = 3.2f;   // 180 / 3.2 = 56.25 deg steady-state lag
+constexpr float kMovingTurnBodyFollowRate = 18.0f;    // rapid catch-up once movement starts
+constexpr float kTurnBodyLagSnapDeg = 0.25f;
+constexpr float kTurnBodyCatchupShuffleThresholdDeg = 2.0f;
+
+// Advances the rendered body yaw offset (visualYaw - logicalYaw, in degrees)
+// for a standing character turning in place.
+//   logicalDeltaDeg: wrapped change in logical characterYaw this frame (+CCW/left, -CW/right).
+//   accumulateLag:   true while standing still and eligible for turn-in-place lag.
+inline float stepTurnBodyLagDeg(float currentLagDeg, float logicalDeltaDeg,
+                                float dt, bool accumulateLag) {
+    if (!std::isfinite(currentLagDeg)) currentLagDeg = 0.0f;
+    if (!std::isfinite(logicalDeltaDeg)) logicalDeltaDeg = 0.0f;
+    if (!std::isfinite(dt) || dt <= 0.0f) {
+        return std::clamp(currentLagDeg, -kMaxTurnBodyLagDeg, kMaxTurnBodyLagDeg);
+    }
+    float lag = currentLagDeg;
+    if (accumulateLag) {
+        // Logical facing rotated by +logicalDeltaDeg while the body has not
+        // yet moved, so visualYaw - logicalYaw shifts by -logicalDeltaDeg.
+        lag = std::clamp(lag - logicalDeltaDeg, -kMaxTurnBodyLagDeg, kMaxTurnBodyLagDeg);
+    }
+    const float rate = accumulateLag ? kStandingTurnBodyFollowRate : kMovingTurnBodyFollowRate;
+    lag *= std::exp(-rate * dt);
+    if (std::abs(lag) < kTurnBodyLagSnapDeg) return 0.0f;
+    return std::clamp(lag, -kMaxTurnBodyLagDeg, kMaxTurnBodyLagDeg);
+}
+
+// Direction the visual body is turning to catch up to logical facing:
+//   +1 = turning left (CCW, ShuffleLeft), -1 = turning right (CW, ShuffleRight), 0 = aligned.
+inline int turnBodyCatchupDirection(float lagDeg) {
+    if (!std::isfinite(lagDeg)) return 0;
+    if (lagDeg < -kTurnBodyCatchupShuffleThresholdDeg) return 1;
+    if (lagDeg > kTurnBodyCatchupShuffleThresholdDeg) return -1;
+    return 0;
+}
 
 // Feet of a standing unit turning in place: ShuffleLeft (11) toward a left
 // turn, ShuffleRight (12) toward a right one. A shuffle cycle in which the

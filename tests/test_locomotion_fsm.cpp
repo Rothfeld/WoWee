@@ -421,6 +421,67 @@ TEST_CASE("LocomotionFSM: no shuffle while swimming or airborne", "[locomotion][
     }
 }
 
+TEST_CASE("TurnBodyLag: standing keyboard turn leads with camera and catches up smoothly", "[locomotion][turn]") {
+    using namespace wowee::rendering;
+    constexpr float dt = 1.0f / 60.0f;
+    constexpr float turnSpeedDegPerSec = 180.0f;
+
+    // Starting a left turn (+180 deg/s): camera/logical facing rotates first,
+    // visual body lags behind (negative offset) and settles near ~55 deg.
+    float lag = 0.0f;
+    for (int i = 0; i < 4; ++i) { // ~67ms
+        lag = stepTurnBodyLagDeg(lag, turnSpeedDegPerSec * dt, dt, true);
+    }
+    CHECK(lag < -8.0f);
+    CHECK(lag > -14.0f);
+    CHECK(turnBodyCatchupDirection(lag) == 1);
+
+    for (int i = 0; i < 90; ++i) { // 1.5s steady hold
+        lag = stepTurnBodyLagDeg(lag, turnSpeedDegPerSec * dt, dt, true);
+    }
+    CHECK(lag < -50.0f);
+    CHECK(lag >= -kMaxTurnBodyLagDeg);
+    CHECK(turnBodyCatchupDirection(lag) == 1);
+
+    // Releasing the turn key: body smoothly catches up toward 0 over ~0.6s
+    // while continuing to request ShuffleLeft (+1) until nearly aligned.
+    for (int i = 0; i < 6; ++i) { // 100ms after release
+        lag = stepTurnBodyLagDeg(lag, 0.0f, dt, true);
+    }
+    CHECK(lag < -35.0f);
+    CHECK(turnBodyCatchupDirection(lag) == 1);
+
+    for (int i = 0; i < 36; ++i) { // 700ms total after release
+        lag = stepTurnBodyLagDeg(lag, 0.0f, dt, true);
+    }
+    CHECK(std::abs(lag) < 8.0f);
+
+    for (int i = 0; i < 60; ++i) {
+        lag = stepTurnBodyLagDeg(lag, 0.0f, dt, true);
+    }
+    CHECK(lag == 0.0f);
+    CHECK(turnBodyCatchupDirection(lag) == 0);
+
+    // Right turn (-180 deg/s) produces symmetric positive lag and catchup -1.
+    float rightLag = 0.0f;
+    for (int i = 0; i < 30; ++i) {
+        rightLag = stepTurnBodyLagDeg(rightLag, -turnSpeedDegPerSec * dt, dt, true);
+    }
+    CHECK(rightLag > 35.0f);
+    CHECK(turnBodyCatchupDirection(rightLag) == -1);
+
+    // Moving decays any residual lag rapidly without accumulating more.
+    float moveLag = rightLag;
+    for (int i = 0; i < 12; ++i) { // 200ms
+        moveLag = stepTurnBodyLagDeg(moveLag, -turnSpeedDegPerSec * dt, dt, false);
+    }
+    CHECK(std::abs(moveLag) < 2.0f);
+
+    // Non-positive or non-finite dt preserves clamped lag safely.
+    CHECK(stepTurnBodyLagDeg(25.0f, 10.0f, 0.0f, true) == Catch::Approx(25.0f));
+    CHECK(stepTurnBodyLagDeg(90.0f, 10.0f, -0.1f, true) == Catch::Approx(kMaxTurnBodyLagDeg));
+}
+
 TEST_CASE("LocomotionFSM: speed-driven ground gait selection across 0.5x..10x and Walk/Run modes", "[locomotion][speed]") {
     auto caps = makeLocoCaps();
     constexpr float kWalkStride = 2.5f;

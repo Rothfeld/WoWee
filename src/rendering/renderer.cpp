@@ -12,6 +12,7 @@
 #include "rendering/camera.hpp"
 #include "rendering/camera_controller.hpp"
 #include "rendering/animation/ground_direction.hpp"
+#include "rendering/animation/turn_shuffle.hpp"
 #include "rendering/terrain_renderer.hpp"
 #include "rendering/terrain_manager.hpp"
 #include "pipeline/custom_zone_discovery.hpp"
@@ -2343,7 +2344,27 @@ void Renderer::update(float deltaTime) {
             characterLegYawOffsetRad_ = stepLegYawOffset(
                 characterLegYawOffsetRad_, targetLegYawRad, deltaTime);
         }
-        const float modelYawRad = glm::radians(characterYaw) + characterLegYawOffsetRad_;
+        const float logicalDeltaDeg = hasLastLogicalCharacterYaw_
+            ? std::remainder(characterYaw - lastLogicalCharacterYaw_, 360.0f) : 0.0f;
+        lastLogicalCharacterYaw_ = characterYaw;
+        hasLastLogicalCharacterYaw_ = true;
+
+        const bool resetBodyLag = taxiFlight || cameraController->isServerControlled() ||
+                                  playerBodyHeld_.has_value() || mounted ||
+                                  cameraController->isSwimming() || cameraController->isFlightAirborne() ||
+                                  characterRenderer->isInstanceDead(characterInstanceId) ||
+                                  std::abs(logicalDeltaDeg) > 120.0f;
+        if (resetBodyLag) {
+            characterTurnBodyLagDeg_ = 0.0f;
+        } else {
+            const bool accumulateTurnLag = !cameraController->isMoving() &&
+                                           cameraController->isGrounded() &&
+                                           !cameraController->isSitting();
+            characterTurnBodyLagDeg_ = stepTurnBodyLagDeg(
+                characterTurnBodyLagDeg_, logicalDeltaDeg, deltaTime, accumulateTurnLag);
+        }
+
+        const float modelYawRad = glm::radians(characterYaw + characterTurnBodyLagDeg_) + characterLegYawOffsetRad_;
         characterRenderer->setInstanceRotation(characterInstanceId, glm::vec3(0.0f, 0.0f, modelYawRad));
         characterRenderer->setInstanceTorsoYaw(characterInstanceId,
             mounted ? 0.0f : -characterLegYawOffsetRad_);

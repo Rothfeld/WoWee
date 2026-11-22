@@ -1224,8 +1224,9 @@ void AnimationController::updateCharacterAnimation() {
     }
 
     // Turning in place: the player turned the character's facing since the
-    // last update, with the turn keys or by mouse-look. Build 8606 shuffles
-    // its standing character's feet for both, toward the turn.
+    // last update, with the turn keys or by mouse-look, OR the visual body is
+    // still catching up after a standing turn ended. Build 8606 shuffles its
+    // standing character's feet until the body finishes aligning.
     const float yaw = renderer_->getCharacterYaw();
     int turnDirection = 0;
     if (lastAnimatedYaw_ && (cameraController->isTurningLeft() ||
@@ -1235,6 +1236,9 @@ void AnimationController::updateCharacterAnimation() {
         while (delta > 180.0f) delta -= 360.0f;
         while (delta < -180.0f) delta += 360.0f;
         if (delta != 0.0f) turnDirection = delta > 0.0f ? 1 : -1;
+    }
+    if (turnDirection == 0 && !dead && !isMounted()) {
+        turnDirection = turnBodyCatchupDirection(renderer_->getCharacterTurnBodyLagDeg());
     }
     lastAnimatedYaw_ = yaw;
 
