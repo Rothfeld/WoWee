@@ -263,4 +263,21 @@ inline bool feetInsideGround(float terrainZ, float feetZ, float stepUpBudget,
            !terrainOutOfReach(terrainZ, feetZ, stepUpBudget);
 }
 
+/// True when a player who has CAN_FLY (`flyingActive`) and is not yet flying
+/// (`!flightAirborne`) should engage flight (`MOVEMENTFLAG_FLYING`).
+///
+/// Matches Native TBC 2.4.3:
+/// 1. Holding Space while CAN_FLY is active takes off from the ground.
+/// 2. Being airborne (`!grounded`) and no longer rising (`verticalVelocity <= 0`)
+///    while CAN_FLY is active automatically engages flight at the apex/fall
+///    (Kael'thas Gravity Lapse 34480+39432 / 44226+44227, Swift Flight Form or
+///    .gm fly on while falling, or walking off a ledge on a flying mount).
+inline constexpr bool shouldEngageFlightAirborne(
+    bool flyingActive, bool flightAirborne, bool spaceHeld,
+    bool grounded, float verticalVelocity) {
+    if (!flyingActive || flightAirborne) return false;
+    if (spaceHeld) return true;
+    return !grounded && verticalVelocity <= 0.0f;
+}
+
 } // namespace wowee::rendering::movement

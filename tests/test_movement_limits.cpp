@@ -344,3 +344,27 @@ TEST_CASE("Overhead log rims cannot hide descending terrain contact", "[movement
     CHECK_FALSE(descendingContactFloor(380.f, 385.f, 390.f, std::nullopt, 381.f));
     CHECK(descendingContactFloor(386.117f, 386.117f, 384.67f, std::nullopt, 386.117f) == 386.117f);
 }
+
+TEST_CASE("CAN_FLY engages flight on Space from ground or at airborne apex/fall (Gravity Lapse)",
+          "[movement][flight]") {
+    using wowee::rendering::movement::shouldEngageFlightAirborne;
+
+    // Without CAN_FLY or when already flying, never re-trigger.
+    CHECK_FALSE(shouldEngageFlightAirborne(false, false, true, true, 0.0f));
+    CHECK_FALSE(shouldEngageFlightAirborne(false, false, false, false, -5.0f));
+    CHECK_FALSE(shouldEngageFlightAirborne(true, true, true, false, -5.0f));
+
+    // Standing on ground with CAN_FLY: only Space takes off.
+    CHECK_FALSE(shouldEngageFlightAirborne(true, false, false, true, 0.0f));
+    CHECK(shouldEngageFlightAirborne(true, false, true, true, 0.0f));
+
+    // Gravity Lapse knockback: while rising (verticalVelocity > 0), keep rising to apex
+    // instead of engaging flight immediately near the ground (< 4 yd).
+    CHECK_FALSE(shouldEngageFlightAirborne(true, false, false, false, 45.0f));
+    CHECK_FALSE(shouldEngageFlightAirborne(true, false, false, false, 0.5f));
+
+    // At the apex (verticalVelocity == 0) or while falling (verticalVelocity < 0),
+    // automatically engage flight so the character floats in mid-air without holding Space.
+    CHECK(shouldEngageFlightAirborne(true, false, false, false, 0.0f));
+    CHECK(shouldEngageFlightAirborne(true, false, false, false, -12.0f));
+}

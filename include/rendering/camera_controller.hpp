@@ -1122,6 +1122,7 @@ private:
     // Player-controlled flight (CAN_FLY + FLYING): 3D movement, no gravity.
     bool flyingActive_ = false;
     bool flightAirborne_ = false;
+    bool midAirFlightEngaged_ = false;
     float flightPitchDeg_ = 0.0f;
     float swimPitchDeg_ = 0.0f;
     // Server-driven hover (HOVER flag): float at fixed height above ground.

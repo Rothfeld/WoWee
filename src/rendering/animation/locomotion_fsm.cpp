@@ -328,11 +328,29 @@ AnimOutput LocomotionFSM::resolve(const Input& in, const AnimCapabilitySet& caps
             break;
 
         case State::FLY_IDLE:
-            animId = anim::FLY_IDLE;
+            animId = caps.hasFly
+                ? anim::FLY_IDLE
+                : (caps.resolvedSwimIdle ? caps.resolvedSwimIdle : anim::SWIM_IDLE);
             break;
 
         case State::FLY:
-            animId = anim::FLY_FORWARD;
+            if (caps.hasFly) {
+                animId = anim::FLY_FORWARD;
+            } else if (movingBackward) {
+                animId = caps.resolvedSwimBackwards ? caps.resolvedSwimBackwards
+                       : caps.resolvedSwim           ? caps.resolvedSwim
+                       :                               anim::SWIM;
+            } else if (anyStrafeLeft) {
+                animId = caps.resolvedSwimLeft ? caps.resolvedSwimLeft
+                       : caps.resolvedSwim    ? caps.resolvedSwim
+                       :                        anim::SWIM;
+            } else if (anyStrafeRight) {
+                animId = caps.resolvedSwimRight ? caps.resolvedSwimRight
+                       : caps.resolvedSwim     ? caps.resolvedSwim
+                       :                         anim::SWIM;
+            } else {
+                animId = caps.resolvedSwim ? caps.resolvedSwim : anim::SWIM;
+            }
             break;
     }
 

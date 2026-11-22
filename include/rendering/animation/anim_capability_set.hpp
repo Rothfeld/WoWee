@@ -59,6 +59,7 @@ struct AnimCapabilitySet {
     uint32_t resolvedSwimBackwards = 0;
     uint32_t resolvedSwimLeft = 0;
     uint32_t resolvedSwimRight = 0;
+    bool hasFly = false;             // Model authors Fly (135) (Druid Flight Form, flying creatures)
 
     // ── Combat resolved IDs ─────────────────────────────────────────────
     uint32_t resolvedCombatIdle = 0;

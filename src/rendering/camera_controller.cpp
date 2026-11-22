@@ -448,7 +448,10 @@ void CameraController::setFlyingActive(bool active) {
                                        : "flying is no longer allowed");
     }
     flyingActive_ = active;
-    if (!active) flightAirborne_ = false;
+    if (!active) {
+        flightAirborne_ = false;
+        midAirFlightEngaged_ = false;
+    }
 }
 
 glm::vec3 CameraController::moveFollowedCharacter(float /*deltaTime*/, FrameInput& f,
@@ -837,12 +840,19 @@ glm::vec3 CameraController::moveFollowedCharacter(float /*deltaTime*/, FrameInpu
         }
         swimming = false;
 
-        // Taking off: space, on something allowed to fly. It climbs from the
-        // first frame rather than jumping first, which is what the key means
-        // once a flying mount is under the player.
-        if (flyingActive_ && !flightAirborne_ && f.spaceHeld) {
+        // Taking off: space on the ground, or catching an airborne arc/fall at
+        // its apex (e.g. Kael'thas Gravity Lapse 34480+39432, Swift Flight Form
+        // in mid-air, or walking off a ledge on a flying mount).
+        if (movement::shouldEngageFlightAirborne(
+                flyingActive_, flightAirborne_, f.spaceHeld, grounded, verticalVelocity)) {
+            const bool caughtMidAir = !grounded;
             flightAirborne_ = true;
-            LOG_WARNING("Flight: took off");
+            if (caughtMidAir) {
+                midAirFlightEngaged_ = true;
+                knockbackActive_ = false;
+                knockbackHorizVel_ = glm::vec2(0.0f);
+            }
+            LOG_WARNING("Flight: ", caughtMidAir ? "engaged mid-air" : "took off");
         }
 
         // Player-controlled flight (flying mount / druid Flight Form):
@@ -3406,11 +3416,14 @@ void CameraController::update(float deltaTime) {
             movementCallback(static_cast<uint32_t>(game::Opcode::MSG_MOVE_JUMP));
         }
 
-        // Fall landing, for a fall that actually happened.
+        // Fall landing, for a fall that actually happened — or catching a
+        // knockback/fall mid-air into flight (Native 2.4.3 emits MSG_MOVE_FALL_LAND
+        // with CAN_FLY|FLYING so the server records the floating Z height).
         constexpr float kFallReportSeconds = 0.15f;
-        if (grounded && (jumpReported_ ||
-                (wasFalling && airborneSeconds_ >= kFallReportSeconds))) {
+        if (midAirFlightEngaged_ || (grounded && (jumpReported_ ||
+                (wasFalling && airborneSeconds_ >= kFallReportSeconds)))) {
             movementCallback(static_cast<uint32_t>(game::Opcode::MSG_MOVE_FALL_LAND));
+            midAirFlightEngaged_ = false;
             jumpReported_ = false;
         }
     }
@@ -4126,6 +4139,8 @@ void CameraController::applyKnockBack(float vcos, float vsin, float hspeed, floa
     // it here to obtain the correct upward initial velocity.
     verticalVelocity = -vspeed;
     grounded = false;
+    flightAirborne_ = false;
+    midAirFlightEngaged_ = false;
     coyoteTimer = 0.0f;
     jumpBufferTimer = 0.0f;
 

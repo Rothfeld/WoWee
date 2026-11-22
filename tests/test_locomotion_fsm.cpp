@@ -468,9 +468,10 @@ TEST_CASE("LocomotionFSM: speed-driven ground gait selection across 0.5x..10x an
     CHECK(evalGround(false, 22.50f, false, true) == anim::WALK_BACKWARDS);
 }
 
-TEST_CASE("LocomotionFSM: unmounted flight resolves FLY_IDLE and FLY_FORWARD and lands cleanly", "[locomotion][flight]") {
+TEST_CASE("LocomotionFSM: unmounted flight resolves FLY_IDLE and FLY_FORWARD on flying models and SWIM_IDLE/SWIM on humanoids", "[locomotion][flight]") {
     LocomotionFSM fsm;
     auto caps = makeLocoCaps();
+    caps.hasFly = true;
 
     auto in = idle();
     in.flying = true;
@@ -496,6 +497,22 @@ TEST_CASE("LocomotionFSM: unmounted flight resolves FLY_IDLE and FLY_FORWARD and
     REQUIRE(landOut.valid);
     CHECK(fsm.getState() == LocomotionFSM::State::RUN);
     CHECK(landOut.animId == anim::RUN);
+
+    // Humanoid model without Fly (135) (Gravity Lapse / .gm fly) treads air with SWIM_IDLE/SWIM
+    LocomotionFSM humFsm;
+    auto humCaps = makeLocoCaps();
+    humCaps.hasFly = false;
+    auto humIn = idle();
+    humIn.flying = true;
+    humIn.grounded = true;
+    auto humIdle = humFsm.resolve(humIn, humCaps);
+    REQUIRE(humIdle.valid);
+    CHECK(humIdle.animId == anim::SWIM_IDLE);
+    humIn.moving = true;
+    humIn.movingForward = true;
+    auto humMove = humFsm.resolve(humIn, humCaps);
+    REQUIRE(humMove.valid);
+    CHECK(humMove.animId == anim::SWIM);
 }
 
 TEST_CASE("LocomotionFSM: Wisp-like model lacking jump clips skips 1-frame JUMP_START and JUMP_END flashes", "[locomotion][wisp]") {

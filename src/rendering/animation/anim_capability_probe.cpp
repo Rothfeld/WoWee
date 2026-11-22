@@ -56,6 +56,7 @@ AnimCapabilitySet AnimCapabilityProbe::probe(Renderer* renderer, uint32_t instan
     // Cannot use ternary `has(0) ? 0 : 0` - both branches are 0.
     caps.resolvedStand = anim::STAND;
     caps.hasStand = has(anim::STAND);
+    caps.hasFly = has(anim::FLY_FORWARD);
 
     {
         static const uint32_t walkCands[] = {anim::WALK, anim::RUN};
