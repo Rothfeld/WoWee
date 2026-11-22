@@ -1,6 +1,7 @@
 #pragma once
 
 #include "game/handler_types.hpp"
+#include "rendering/animation/melee_swing_queue.hpp"
 
 #include <cstdint>
 #include <optional>
@@ -74,6 +75,11 @@ inline SpellCastAnimAction stepRemoteSpellCastAnim(
     uint32_t playingOneShotAnim) {
     const bool activeCastOneShot =
         state.oneShot.has_value() && playingOneShot && playingOneShotAnim == state.oneShot->animation;
+    // Active melee swings (e.g. Brutallus AttackUnarmed/AttackOff when Meteor Slash
+    // 45150 PRECAST 57 arrives) also finish their swing before entering a looping
+    // precast/channel or returning to idle on STOP / no-anim CAST release.
+    const bool activeProtectedOneShot =
+        activeCastOneShot || (playingOneShot && isMeleeSwingAnimation(playingOneShotAnim));
 
     if (!activeCastOneShot) {
         state.oneShot.reset();
@@ -86,7 +92,7 @@ inline SpellCastAnimAction stepRemoteSpellCastAnim(
             return {};
         }
         state.hold.reset();
-        if (activeCastOneShot) {
+        if (activeProtectedOneShot) {
             return {SpellCastAnimAction::Kind::RETARGET_ONESHOT_RETURN, 0, idleAnimation};
         }
         state.oneShot.reset();
@@ -98,7 +104,7 @@ inline SpellCastAnimAction stepRemoteSpellCastAnim(
             return {};
         }
         state.hold = SpellCastHold{spellId, kitAnimation, false};
-        if (activeCastOneShot) {
+        if (activeProtectedOneShot) {
             return {SpellCastAnimAction::Kind::RETARGET_ONESHOT_RETURN, 0, kitAnimation};
         }
         state.oneShot.reset();
@@ -111,7 +117,7 @@ inline SpellCastAnimAction stepRemoteSpellCastAnim(
             // Only this spell's own precast ends here.
             if (state.hold.has_value() && !state.hold->channel && state.hold->spellId == spellId) {
                 state.hold.reset();
-                if (activeCastOneShot) {
+                if (activeProtectedOneShot) {
                     return {SpellCastAnimAction::Kind::RETARGET_ONESHOT_RETURN, 0, idleAnimation};
                 }
                 return {SpellCastAnimAction::Kind::PLAY_LOOP, idleAnimation, 0};
@@ -140,7 +146,7 @@ inline SpellCastAnimAction stepRemoteSpellCastAnim(
             return {};
         }
         state.hold = SpellCastHold{spellId, kitAnimation, true};
-        if (activeCastOneShot) {
+        if (activeProtectedOneShot) {
             return {SpellCastAnimAction::Kind::RETARGET_ONESHOT_RETURN, 0, kitAnimation};
         }
         state.oneShot.reset();

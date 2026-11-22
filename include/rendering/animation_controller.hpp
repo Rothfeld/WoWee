@@ -89,7 +89,7 @@ public:
     [[nodiscard]] bool isMoving() const;
 
     // ── Melee combat ───────────────────────────────────────────────────────
-    void triggerMeleeSwing(bool offHand = false);
+    void triggerMeleeSwing(bool offHand = false, float attackTimeMs = 0.0f);
     /// inventoryType: WoW inventory type (0=unarmed, 13=1H, 17=2H, 21=main-hand, …)
     /// is2HLoose: true for polearms/staves (use ATTACK_2H_LOOSE instead of ATTACK_2H)
     /// isFist/isDagger describe the main hand; offHandIsFist/offHandIsDagger
@@ -249,9 +249,11 @@ private:
     WeaponLoadout weaponLoadout_;
     bool meleeSwingOffHand_ = false;
     uint32_t meleeSwingSerial_ = 0;
+    float meleeSwingMaxDurationMs_ = 0.0f;
     bool hasPendingMeleeSwing_ = false;
     bool pendingMeleeSwingOffHand_ = false;
-    void startLocalMeleeSwing(bool offHand);
+    float pendingMeleeSwingMaxDurationMs_ = 0.0f;
+    void startLocalMeleeSwing(bool offHand, float maxDurationMs);
 
     // ── Ranged weapon state ──────────────────────────────────────────────
     float rangedShootTimer_ = 0.0f;

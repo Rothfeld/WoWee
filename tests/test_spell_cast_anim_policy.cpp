@@ -170,3 +170,28 @@ TEST_CASE("Stationary facing-only MonsterMove does not trigger creature locomoti
     CHECK(shouldStartCreatureLocomotion(1000, 2.5f));
     CHECK(shouldStartCreatureLocomotion(500, 7.0f));
 }
+
+TEST_CASE("Brutallus Meteor Slash PRECAST lets in-flight melee swing finish before looping",
+          "[spell_cast_anim][brutallus]") {
+    constexpr uint32_t kMeteorSlash = 45150;
+    SpellCastAnimState state{};
+
+    // Meteor Slash (45150, Precast 57) arrives 86ms into Brutallus's AttackUnarmed (16):
+    // must retarget the one-shot return to 57 instead of snapping mid-slash.
+    auto pre = stepRemoteSpellCastAnim(state, SpellAnimPhase::PRECAST, kMeteorSlash,
+                                       anim::SPECIAL_UNARMED, kNoAnim, anim::READY_UNARMED,
+                                       /*playingOneShot=*/true, anim::ATTACK_UNARMED);
+    CHECK(pre.kind == SpellCastAnimAction::Kind::RETARGET_ONESHOT_RETURN);
+    CHECK(pre.returnAnimation == anim::SPECIAL_UNARMED);
+    REQUIRE(state.hold.has_value());
+    CHECK(state.hold->spellId == kMeteorSlash);
+
+    // When Meteor Slash finishes (no cast release animation) after 57 was looping,
+    // returns cleanly to ReadyUnarmed (25).
+    auto go = stepRemoteSpellCastAnim(state, SpellAnimPhase::CAST, kMeteorSlash,
+                                      kNoAnim, kNoAnim, anim::READY_UNARMED,
+                                      /*playingOneShot=*/false, 0);
+    CHECK(go.kind == SpellCastAnimAction::Kind::PLAY_LOOP);
+    CHECK(go.animation == anim::READY_UNARMED);
+    CHECK_FALSE(state.hold.has_value());
+}

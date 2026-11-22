@@ -7,11 +7,14 @@
 #include "pipeline/dbc_loader.hpp"
 #include "pipeline/m2_loader.hpp"
 #include "rendering/animation/animation_ids.hpp"
+#include "rendering/animation/melee_swing_queue.hpp"
 #include "rendering/animation/playable_animation.hpp"
+#include "rendering/animation/sequence_variation.hpp"
 #include "tbc_data_test_util.hpp"
 
 #include <algorithm>
 #include <map>
+#include <set>
 
 using namespace wowee;
 namespace A = rendering::anim;
@@ -165,4 +168,35 @@ TEST_CASE("DragonAzurgoz (Madrigosa) lacks DEAD (6) and holds the final frame of
     const auto stun = standIn(dragon, A::STUN, data);
     REQUIRE(stun);
     CHECK(stun->animationId == A::STAND);
+}
+
+TEST_CASE("Brutallus.m2 AttackUnarmedOff (117) stands in as AttackOff (87) and draws both M2 variations",
+          "[animation][assets][brutallus]") {
+    const auto data = loadAnimationData();
+    const auto brutallus = pipeline::M2Loader::load(test::readTbcData("creature/brutallus/brutallus.m2"));
+    const auto offStandIn = standIn(brutallus, A::ATTACK_UNARMED_OFF, data);
+    REQUIRE(offStandIn);
+    CHECK(offStandIn->animationId == A::ATTACK_OFF);
+    CHECK_FALSE(offStandIn->reversed);
+    CHECK_FALSE(offStandIn->frozenAtEnd);
+    CHECK(rendering::standInAllowsVariationDraw(*offStandIn));
+
+    std::mt19937 rng(42);
+    std::set<int> drawnIndices;
+    for (int i = 0; i < 64; ++i) {
+        const auto v = rendering::drawSequenceVariation(brutallus.sequences, offStandIn->animationId, rng);
+        REQUIRE(v);
+        drawnIndices.insert(v->index);
+    }
+    // Brutallus.m2 authors two AttackOff (87) sequences (indices 12 and 15, frequency 16383 each).
+    CHECK(drawnIndices == std::set<int>{12, 15});
+
+    // Meanwhile Wendigo.m2 ReadyUnarmed -> Stand, reversed Walk, and frozen Death do not roll variations.
+    const auto yeti = pipeline::M2Loader::load(test::readTbcData("creature/wendigo/wendigo.m2"));
+    const auto yetiReady = standIn(yeti, A::READY_UNARMED, data);
+    REQUIRE(yetiReady);
+    CHECK(yetiReady->animationId == A::STAND);
+    CHECK_FALSE(rendering::standInAllowsVariationDraw(*yetiReady));
+    CHECK_FALSE(rendering::standInAllowsVariationDraw({A::WALK, true, false}));
+    CHECK_FALSE(rendering::standInAllowsVariationDraw({A::DEATH, false, true}));
 }

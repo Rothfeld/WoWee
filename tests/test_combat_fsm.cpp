@@ -496,14 +496,148 @@ TEST_CASE("Melee swing queue: classifies melee swing animations and queues overl
     CHECK_FALSE(shouldQueueIncomingMeleeSwing(false, anim::READY_1H, 100.0f, 1000.0f));
     CHECK_FALSE(shouldQueueIncomingMeleeSwing(true, anim::COMBAT_WOUND, 100.0f, 500.0f));
 
-    // Effective duration cap fits opposite-hand pairs inside one attack cycle
-    // while leaving same-hand Thrash / single-weapon swings at full attack time.
-    CHECK(dualWieldEffectiveSwingMaxMs(anim::ATTACK_1H, anim::ATTACK_OFF, 1500.0f) == Catch::Approx(750.0f));
-    CHECK(dualWieldEffectiveSwingMaxMs(anim::ATTACK_OFF, anim::ATTACK_1H, 1500.0f) == Catch::Approx(750.0f));
-    CHECK(dualWieldEffectiveSwingMaxMs(anim::ATTACK_1H, anim::ATTACK_OFF, 1000.0f) == Catch::Approx(500.0f));
-    CHECK(dualWieldEffectiveSwingMaxMs(anim::ATTACK_1H, anim::ATTACK_OFF, 300.0f) == Catch::Approx(250.0f));
-    CHECK(dualWieldEffectiveSwingMaxMs(anim::ATTACK_1H, anim::ATTACK_1H, 1500.0f) == Catch::Approx(1500.0f));
-    CHECK(dualWieldEffectiveSwingMaxMs(anim::ATTACK_1H, anim::ATTACK_OFF, 0.0f) == Catch::Approx(0.0f));
+    // Effective duration cap fits overlapping dual-wield MH+OH pairs + 150ms
+    // Ready blend inside one attack cycle without cumulative phase drift, while
+    // un-overlapped swings keep full authored / attackTimeMs speed.
+    CHECK(dualWieldSwingMaxMs(1500.0f) == Catch::Approx(570.0f));
+    CHECK(dualWieldSwingMaxMs(1000.0f) == Catch::Approx(380.0f));
+    CHECK(dualWieldSwingMaxMs(500.0f) == Catch::Approx(190.0f));
+    CHECK(dualWieldSwingMaxMs(300.0f) == Catch::Approx(135.0f));
+    CHECK(dualWieldSwingMaxMs(0.0f) == Catch::Approx(0.0f));
+
+    // Brutallus: OFF arriving 200ms into 1800ms AttackUnarmed (running at 1000ms cap,
+    // currentTimeMs = 360ms, p = 0.20) accelerates remaining 80% into 180ms wall time
+    // (225ms equivalent full cap) so MAIN finishes at 380ms total wall time.
+    CHECK(activeSwingMaxMsOnQueue(360.0f, 1800.0f, 1000.0f, 380.0f) == Catch::Approx(225.0f));
+    // VanCleef parry-hasted: OFF arriving 950ms into 1000ms Attack1H (50ms remaining)
+    // does not slow down the final 50ms tail.
+    CHECK(activeSwingMaxMsOnQueue(950.0f, 1000.0f, 1500.0f, 570.0f) == Catch::Approx(1500.0f));
+}
+
+TEST_CASE("Brutallus (24882) 1000ms and VanCleef (639) 1500ms dual-wield cadences complete every pair without drift",
+          "[combat][dualwield][brutallus]") {
+    constexpr float kDtMs = 1000.0f / 30.0f;
+
+    auto runSimulation = [&](float attackTimeMs, float mhAuthoredMs, float ohAuthoredMs, float ohOffsetMs) {
+        bool playingOneShot = false;
+        uint32_t currentAnim = anim::READY_UNARMED;
+        float currentTimeMs = 0.0f;
+        float currentDurationMs = 2000.0f;
+        float oneShotMaxMs = 0.0f;
+        QueuedMeleeSwing pending{};
+
+        int startedMain = 0;
+        int startedOff = 0;
+        int readyTransitions = 0;
+        uint32_t lastStartedSwing = 0;
+        int consecutiveOffSwings = 0;
+
+        auto startSwing = [&](uint32_t id, float maxMs) {
+            if (id == anim::ATTACK_UNARMED) {
+                ++startedMain;
+            } else {
+                if (lastStartedSwing == anim::ATTACK_UNARMED_OFF) ++consecutiveOffSwings;
+                ++startedOff;
+            }
+            lastStartedSwing = id;
+            playingOneShot = true;
+            currentAnim = id;
+            currentTimeMs = 0.0f;
+            currentDurationMs = (id == anim::ATTACK_UNARMED) ? mhAuthoredMs : ohAuthoredMs;
+            oneShotMaxMs = maxMs;
+        };
+
+        auto onPacket = [&](uint32_t id) {
+            if (shouldQueueIncomingMeleeSwing(playingOneShot, currentAnim, currentTimeMs, currentDurationMs)) {
+                const float cap = dualWieldSwingMaxMs(attackTimeMs);
+                pending = {id, anim::READY_UNARMED, cap};
+                oneShotMaxMs = activeSwingMaxMsOnQueue(currentTimeMs, currentDurationMs, oneShotMaxMs, cap);
+                return;
+            }
+            pending.clear();
+            startSwing(id, attackTimeMs);
+        };
+
+        int nextMainCycle = 0;
+        int nextOffCycle = 0;
+        const float totalSimMs = 25.0f * attackTimeMs + 1000.0f;
+        for (float wallMs = 0.0f; wallMs < totalSimMs; wallMs += kDtMs) {
+            if (nextMainCycle < 25 && wallMs >= static_cast<float>(nextMainCycle) * attackTimeMs) {
+                onPacket(anim::ATTACK_UNARMED);
+                ++nextMainCycle;
+            }
+            if (nextOffCycle < 25 && wallMs >= static_cast<float>(nextOffCycle) * attackTimeMs + ohOffsetMs) {
+                onPacket(anim::ATTACK_UNARMED_OFF);
+                ++nextOffCycle;
+            }
+
+            if (playingOneShot) {
+                const float rate = (oneShotMaxMs > 0.0f && currentDurationMs > oneShotMaxMs)
+                    ? (currentDurationMs / oneShotMaxMs)
+                    : 1.0f;
+                currentTimeMs += kDtMs * rate;
+                if (currentTimeMs >= currentDurationMs) {
+                    if (pending.valid()) {
+                        const auto next = pending;
+                        pending.clear();
+                        startSwing(next.animId, next.maxDurationMs);
+                    } else {
+                        playingOneShot = false;
+                        currentAnim = anim::READY_UNARMED;
+                        currentTimeMs = 0.0f;
+                        currentDurationMs = 2000.0f;
+                        oneShotMaxMs = 0.0f;
+                        ++readyTransitions;
+                    }
+                }
+            }
+        }
+
+        CHECK(startedMain == 25);
+        CHECK(startedOff == 25);
+        CHECK(consecutiveOffSwings == 0);
+        CHECK(readyTransitions == 25);
+    };
+
+    // 1. Brutallus (1000ms MH/OH, 1800ms/1834ms authored, 200ms offset)
+    runSimulation(1000.0f, 1800.0f, 1834.0f, 200.0f);
+    // 2. Edwin VanCleef normal dual-wield (1500ms MH/OH, 1000ms authored, 200ms offset)
+    runSimulation(1500.0f, 1000.0f, 1000.0f, 200.0f);
+    // 3. Edwin VanCleef parry-hasted alternating hands (1500ms MH/OH, 1000ms authored, 880ms offset)
+    runSimulation(1500.0f, 1000.0f, 1000.0f, 880.0f);
+}
+
+TEST_CASE("Hit-reaction flinch is suppressed during active melee swings on both remote units and local CombatFSM",
+          "[combat][dualwield][hit_reaction]") {
+    CHECK(unitSuppressesHitReactionDuringSwing(true, anim::ATTACK_1H));
+    CHECK(unitSuppressesHitReactionDuringSwing(true, anim::ATTACK_OFF));
+    CHECK(unitSuppressesHitReactionDuringSwing(true, anim::ATTACK_UNARMED));
+    CHECK(unitSuppressesHitReactionDuringSwing(true, anim::ATTACK_UNARMED_OFF));
+    CHECK_FALSE(unitSuppressesHitReactionDuringSwing(false, anim::ATTACK_1H));
+    CHECK_FALSE(unitSuppressesHitReactionDuringSwing(true, anim::COMBAT_WOUND));
+    CHECK_FALSE(unitSuppressesHitReactionDuringSwing(false, anim::READY_1H));
+
+    // Local CombatFSM keeps MELEE_SWING undisturbed when hit mid-swing.
+    CombatFSM fsm;
+    auto caps = makeCombatCaps();
+    caps.resolvedReady1H = anim::READY_1H;
+    caps.resolvedMelee1H = anim::ATTACK_1H;
+    caps.resolvedMeleeOffHand = anim::ATTACK_OFF;
+
+    WeaponLoadout wl;
+    wl.inventoryType = wowee::game::InvType::ONE_HAND;
+    wl.hasOffHand = true;
+
+    auto in = combatInput();
+    in.meleeSwingTimer = 0.4f;
+    in.meleeSwingOffHand = true;
+    in.meleeSwingSerial = 1;
+    REQUIRE(fsm.resolve(in, caps, wl).animId == anim::ATTACK_OFF);
+    REQUIRE(fsm.getState() == CombatFSM::State::MELEE_SWING);
+
+    fsm.triggerHitReaction(anim::COMBAT_WOUND);
+    CHECK(fsm.getState() == CombatFSM::State::MELEE_SWING);
+    CHECK(fsm.resolve(in, caps, wl).animId == anim::ATTACK_OFF);
 }
 
 TEST_CASE("CombatFSM: dual-wield MH+OH, OH+MH, and Thrash sequences honor HITINFO_LEFTSWING and serial transitions",

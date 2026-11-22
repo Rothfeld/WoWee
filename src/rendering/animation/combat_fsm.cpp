@@ -174,6 +174,10 @@ void CombatFSM::triggerHitReaction(uint32_t animId) {
         if (state_ == State::HIT_REACTION) state_ = State::INACTIVE;
         return;
     }
+    // Active melee/ranged swings and charge hold priority over hit reactions.
+    if (state_ == State::MELEE_SWING || state_ == State::RANGED_SHOOT || state_ == State::CHARGE) {
+        return;
+    }
     // A hit does not end a cast or a channel: the reaction plays once and
     // the held animation returns (Tame Beast's ChannelCastDirected while the
     // beast fights back every two seconds). Remote units already return to

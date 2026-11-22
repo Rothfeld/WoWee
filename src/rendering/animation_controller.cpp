@@ -281,8 +281,10 @@ void AnimationController::resetCombatVisualState() {
     targetPosition_ = nullptr;
     meleeSwingTimer_ = 0.0f;
     meleeSwingCooldown_ = 0.0f;
+    meleeSwingMaxDurationMs_ = 0.0f;
     hasPendingMeleeSwing_ = false;
     pendingMeleeSwingOffHand_ = false;
+    pendingMeleeSwingMaxDurationMs_ = 0.0f;
     meleeSwingOffHand_ = false;
     specialAttackAnimId_ = 0;
     rangedShootTimer_ = 0.0f;
@@ -310,7 +312,7 @@ bool AnimationController::isMoving() const {
 
 // ── Melee combat ─────────────────────────────────────────────────────────────
 
-void AnimationController::startLocalMeleeSwing(bool offHand) {
+void AnimationController::startLocalMeleeSwing(bool offHand, float maxDurationMs) {
     auto* characterRenderer = renderer_->getCharacterRenderer();
     uint32_t characterInstanceId = renderer_->getCharacterInstanceId();
     if (!characterRenderer || characterInstanceId == 0) return;
@@ -326,8 +328,12 @@ void AnimationController::startLocalMeleeSwing(bool offHand) {
 
     resolveMeleeAnimId();
     meleeSwingCooldown_ = 0.1f;
+    meleeSwingMaxDurationMs_ = maxDurationMs;
     float durationSec = meleeAnimDurationMs_ > 0.0f ? meleeAnimDurationMs_ / 1000.0f : 0.6f;
-    if (durationSec < 0.25f) durationSec = 0.25f;
+    if (meleeSwingMaxDurationMs_ > 0.0f) {
+        durationSec = std::min(durationSec, meleeSwingMaxDurationMs_ / 1000.0f);
+    }
+    if (durationSec < 0.18f) durationSec = 0.18f;
     if (durationSec > 1.0f) durationSec = 1.0f;
     meleeSwingTimer_ = durationSec;
 
@@ -336,20 +342,41 @@ void AnimationController::startLocalMeleeSwing(bool offHand) {
     }
 }
 
-void AnimationController::triggerMeleeSwing(bool offHand) {
+void AnimationController::triggerMeleeSwing(bool offHand, float attackTimeMs) {
     auto* characterRenderer = renderer_->getCharacterRenderer();
     uint32_t characterInstanceId = renderer_->getCharacterInstanceId();
     if (!characterRenderer || characterInstanceId == 0) return;
     // If a melee swing is already in flight, queue the incoming swing in the
     // 1-slot pending buffer rather than dropping it or cutting the active swing
-    // short mid-animation.
+    // short mid-animation, and accelerate the remaining tail of the active swing
+    // so both swings complete inside one attack cycle.
     if (meleeSwingTimer_ > 0.0f) {
+        const float pairMaxMs = dualWieldSwingMaxMs(attackTimeMs);
         hasPendingMeleeSwing_ = true;
         pendingMeleeSwingOffHand_ = offHand;
+        pendingMeleeSwingMaxDurationMs_ = pairMaxMs;
+        if (pairMaxMs > 0.0f) {
+            uint32_t curAnim = 0;
+            float curTimeMs = 0.0f;
+            float curDurMs = 0.0f;
+            if (characterRenderer->getAnimationState(characterInstanceId, curAnim, curTimeMs, curDurMs) &&
+                isMeleeSwingAnimation(curAnim) && curDurMs > 0.0f && curTimeMs < curDurMs) {
+                const float updatedMaxMs = activeSwingMaxMsOnQueue(
+                    curTimeMs, curDurMs, meleeSwingMaxDurationMs_, pairMaxMs);
+                meleeSwingMaxDurationMs_ = updatedMaxMs;
+                if (updatedMaxMs > 0.0f) {
+                    characterRenderer->fitOneShotDuration(characterInstanceId, updatedMaxMs);
+                    const float remainSec = (1.0f - curTimeMs / curDurMs) * (updatedMaxMs / 1000.0f);
+                    meleeSwingTimer_ = std::min(meleeSwingTimer_, std::max(0.08f, remainSec));
+                }
+            } else {
+                meleeSwingTimer_ = std::min(meleeSwingTimer_, pairMaxMs / 1000.0f);
+            }
+        }
         return;
     }
     if (meleeSwingCooldown_ > 0.0f) return;
-    startLocalMeleeSwing(offHand);
+    startLocalMeleeSwing(offHand, attackTimeMs);
 }
 
 void AnimationController::setEquippedWeaponType(uint32_t inventoryType, bool is2HLoose,
@@ -920,8 +947,10 @@ void AnimationController::updateMeleeTimers(float deltaTime) {
             specialAttackAnimId_ = 0;
             if (hasPendingMeleeSwing_) {
                 const bool nextOffHand = pendingMeleeSwingOffHand_;
+                const float nextMaxMs = pendingMeleeSwingMaxDurationMs_;
                 hasPendingMeleeSwing_ = false;
-                startLocalMeleeSwing(nextOffHand);
+                pendingMeleeSwingMaxDurationMs_ = 0.0f;
+                startLocalMeleeSwing(nextOffHand, nextMaxMs);
             }
         }
     }
@@ -1271,6 +1300,9 @@ void AnimationController::updateCharacterAnimation() {
 
     if (shouldPlay) {
         characterRenderer->playAnimation(characterInstanceId, animId, loop, 0, true);
+        if (!loop && isMeleeSwingAnimation(animId) && meleeSwingMaxDurationMs_ > 0.0f) {
+            characterRenderer->fitOneShotDuration(characterInstanceId, meleeSwingMaxDurationMs_);
+        }
         lastPlayerAnimRequest_ = animId;
         lastPlayerAnimLoopRequest_ = loop;
     }

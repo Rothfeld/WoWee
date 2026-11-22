@@ -2694,7 +2694,17 @@ void Application::setState(AppState newState) {
                         } else {
                             if (appearanceComposer_ && appearanceComposer_->isShowingRanged())
                                 appearanceComposer_->showRangedWeapon(false);
-                            if (auto* ac = renderer->getAnimationController()) ac->triggerMeleeSwing(offHand);
+                            uint32_t attackTimeMs = 0;
+                            if (const auto player = std::dynamic_pointer_cast<game::Unit>(
+                                    gameHandler->getEntityManager().getEntity(gameHandler->getPlayerGuid()))) {
+                                const uint16_t attackTimeField = game::fieldIndex(game::UF::UNIT_FIELD_BASEATTACKTIME);
+                                if (attackTimeField != 0xFFFF) {
+                                    attackTimeMs = player->getField(attackTimeField + (offHand ? 1 : 0));
+                                }
+                            }
+                            if (auto* ac = renderer->getAnimationController()) {
+                                ac->triggerMeleeSwing(offHand, static_cast<float>(attackTimeMs));
+                            }
                         }
                     }
                 });

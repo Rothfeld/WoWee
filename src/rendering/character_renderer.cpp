@@ -2263,11 +2263,18 @@ void CharacterRenderer::playAnimation(uint32_t instanceId, uint32_t animationId,
             if (seqIdx < 0) {
                 if (const auto standIn = playableStandIn(model, animationId);
                     standIn && !standIn->frozenAtEnd && !standIn->reversed) {
-                    for (size_t i = 0; i < model.sequences.size(); ++i) {
-                        if (model.sequences[i].id != standIn->animationId || model.sequences[i].duration == 0)
-                            continue;
-                        seqIdx = static_cast<int>(i);
-                        if (model.sequences[i].variationIndex == 0) break;
+                    if (standInAllowsVariationDraw(*standIn)) {
+                        if (const auto drawn = drawSequenceVariation(model.sequences, standIn->animationId, upperVariationRandom)) {
+                            if (model.sequences[drawn->index].duration > 0) seqIdx = drawn->index;
+                        }
+                    }
+                    if (seqIdx < 0) {
+                        for (size_t i = 0; i < model.sequences.size(); ++i) {
+                            if (model.sequences[i].id != standIn->animationId || model.sequences[i].duration == 0)
+                                continue;
+                            seqIdx = static_cast<int>(i);
+                            if (model.sequences[i].variationIndex == 0) break;
+                        }
                     }
                 }
             }
@@ -2429,10 +2436,19 @@ void CharacterRenderer::playAnimation(uint32_t instanceId, uint32_t animationId,
     instance.playReversed = false;
     if (instance.currentSequenceIndex < 0) {
         if (const auto standIn = playableStandIn(model, animationId)) {
-            for (size_t i = 0; i < model.sequences.size(); i++) {
-                if (model.sequences[i].id != standIn->animationId) continue;
-                instance.currentSequenceIndex = static_cast<int>(i);
-                if (model.sequences[i].variationIndex == 0) break;
+            if (standInAllowsVariationDraw(*standIn)) {
+                static std::mt19937 standInVariationRandom(std::random_device{}());
+                if (const auto drawn = drawSequenceVariation(model.sequences, standIn->animationId, standInVariationRandom)) {
+                    instance.currentSequenceIndex = drawn->index;
+                    instance.sequenceRepeatsRemaining = loop ? drawn->repeats : 0;
+                }
+            }
+            if (instance.currentSequenceIndex < 0) {
+                for (size_t i = 0; i < model.sequences.size(); i++) {
+                    if (model.sequences[i].id != standIn->animationId) continue;
+                    instance.currentSequenceIndex = static_cast<int>(i);
+                    if (model.sequences[i].variationIndex == 0) break;
+                }
             }
             assert(instance.currentSequenceIndex >= 0);
             LOG_DEBUG("Animation ", animationId, " shows ", standIn->animationId, " in model ", instance.modelId,
@@ -2523,35 +2539,30 @@ void CharacterRenderer::playMeleeSwing(uint32_t instanceId, uint32_t animationId
         static_cast<size_t>(instance.upperBodySequenceIndex) < sequences.size() &&
         !instance.upperBodyAnimationLoop) {
         const auto& upperSeq = sequences[instance.upperBodySequenceIndex];
-        if (shouldQueueIncomingMeleeSwing(true, upperSeq.id, instance.upperBodyAnimationTime,
-                                          static_cast<float>(upperSeq.duration))) {
-            const float effectiveMaxMs = dualWieldEffectiveSwingMaxMs(upperSeq.id, animationId, maxDurationMs);
-            instance.pendingMeleeSwing = {animationId, oneShotReturnAnim, effectiveMaxMs};
-            if (effectiveMaxMs > 0.0f &&
-                (instance.upperBodyOneShotMaxDurationMs <= 0.0f ||
-                 instance.upperBodyOneShotMaxDurationMs > effectiveMaxMs)) {
-                instance.upperBodyOneShotMaxDurationMs = effectiveMaxMs;
-            }
+        const float upperDur = static_cast<float>(upperSeq.duration);
+        if (shouldQueueIncomingMeleeSwing(true, upperSeq.id, instance.upperBodyAnimationTime, upperDur)) {
+            const float queuedMaxMs = dualWieldSwingMaxMs(maxDurationMs);
+            instance.pendingMeleeSwing = {animationId, oneShotReturnAnim, queuedMaxMs};
+            instance.upperBodyOneShotMaxDurationMs = activeSwingMaxMsOnQueue(
+                instance.upperBodyAnimationTime, upperDur,
+                instance.upperBodyOneShotMaxDurationMs, queuedMaxMs);
             LOG_DEBUG("Queued upper-body melee swing instance=", instanceId, " anim=", animationId,
-                      " behind active=", upperSeq.id, " maxMs=", effectiveMaxMs);
+                      " behind active=", upperSeq.id, " maxMs=", queuedMaxMs);
             return;
         }
     } else if (!instance.animationLoop && !instance.holdFinalPose &&
                instance.currentSequenceIndex >= 0 &&
                static_cast<size_t>(instance.currentSequenceIndex) < sequences.size()) {
         const auto& curSeq = sequences[instance.currentSequenceIndex];
-        if (shouldQueueIncomingMeleeSwing(true, instance.currentAnimationId, instance.animationTime,
-                                          static_cast<float>(curSeq.duration))) {
-            const float effectiveMaxMs = dualWieldEffectiveSwingMaxMs(
-                instance.currentAnimationId, animationId, maxDurationMs);
-            instance.pendingMeleeSwing = {animationId, oneShotReturnAnim, effectiveMaxMs};
-            if (effectiveMaxMs > 0.0f &&
-                (instance.oneShotMaxDurationMs <= 0.0f ||
-                 instance.oneShotMaxDurationMs > effectiveMaxMs)) {
-                instance.oneShotMaxDurationMs = effectiveMaxMs;
-            }
+        const float curDur = static_cast<float>(curSeq.duration);
+        if (shouldQueueIncomingMeleeSwing(true, instance.currentAnimationId, instance.animationTime, curDur)) {
+            const float queuedMaxMs = dualWieldSwingMaxMs(maxDurationMs);
+            instance.pendingMeleeSwing = {animationId, oneShotReturnAnim, queuedMaxMs};
+            instance.oneShotMaxDurationMs = activeSwingMaxMsOnQueue(
+                instance.animationTime, curDur,
+                instance.oneShotMaxDurationMs, queuedMaxMs);
             LOG_DEBUG("Queued melee swing instance=", instanceId, " anim=", animationId,
-                      " behind active=", instance.currentAnimationId, " maxMs=", effectiveMaxMs);
+                      " behind active=", instance.currentAnimationId, " maxMs=", queuedMaxMs);
             return;
         }
     }
@@ -2612,6 +2623,9 @@ void CharacterRenderer::setOneShotReturn(uint32_t instanceId, uint32_t returnAni
     auto it = instances.find(instanceId);
     if (it == instances.end()) return;
     auto& instance = it->second;
+    if (instance.pendingMeleeSwing.valid()) {
+        instance.pendingMeleeSwing.returnAnim = returnAnim;
+    }
     if (!instance.animationLoop && !instance.holdFinalPose) {
         instance.oneShotReturnAnim = returnAnim;
         return;

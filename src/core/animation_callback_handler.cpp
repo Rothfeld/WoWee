@@ -299,6 +299,13 @@ void AnimationCallbackHandler::setupCallbacks() {
                 }
             }
         }
+        uint32_t activeOneShot = 0;
+        if (rendering::unitSuppressesHitReactionDuringSwing(
+                cr->isPlayingOneShot(instanceId, &activeOneShot), activeOneShot)) {
+            LOG_DEBUG("Hit reaction ", animId, " suppressed during active melee swing ",
+                      activeOneShot, " on 0x", std::hex, victimGuid, std::dec);
+            return;
+        }
         cr->playAnimation(instanceId, animId, false, entitySpawner_.remoteResumeAnimation(victimGuid));
     });
 
