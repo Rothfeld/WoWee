@@ -3,6 +3,7 @@
 #include "core/window.hpp"
 #include "core/npc_interaction_facing.hpp"
 #include "core/npc_panel_emotes.hpp"
+#include "rendering/animation/possessed_locomotion.hpp"
 #include <chrono>
 #include "core/gamepad.hpp"
 #include "ui/unit_portrait.hpp"
@@ -434,6 +435,7 @@ private:
     uint64_t possessedBody_ = 0;
     uint64_t viewedUnit_ = 0;
     glm::vec4 heldPlayerBody_{0.0f};
+    rendering::PossessedLocomotionDriver possessedLocomotion_;
     /// Keeps the camera on the possessed unit through Mind Control and Control
     /// Piece; see updatePossession.
     void updatePossession();

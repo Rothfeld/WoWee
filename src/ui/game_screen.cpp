@@ -1619,28 +1619,16 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
                             slot = ActionBarPanel::actionSlotForPage(ActionBarPanel::kFrameXmlActionBarPages + static_cast<int>(bonus), i);
                     }
                     // Possessed unit bonus bar 5 (0-based slots 120..129, 1-based 121..130):
-                    // route through sendPetAction just like lua_UseAction.
+                    // route through executePossessAction just like lua_UseAction
+                    // (CMSG_PET_CAST_SPELL for spells, CMSG_PET_ACTION for commands/stances).
                     if (slot >= 120 && slot < 120 + game::GameHandler::PET_ACTION_BAR_SLOTS &&
                         gameHandler.getPossessedGuid() != 0) {
                         const uint32_t packed = gameHandler.getPetActionSlot(slot - 120);
                         if (packed != 0) {
-                            const auto type = game::pet::petActionType(packed);
-                            const uint32_t spell = (type == game::pet::ActionType::Command ||
-                                                    type == game::pet::ActionType::Reaction)
-                                ? 0 : game::pet::petActionId(packed);
-                            if (spell != 0) {
-                                gameHandler.getSpellName(spell);
-                                const auto it = gameHandler.spellNameCacheRef().find(spell);
-                                if (it != gameHandler.spellNameCacheRef().end() &&
-                                    (it->second.targetFlags & 0x40u)) {
-                                    gameHandler.beginPetGroundTarget(spell);
-                                    continue;
-                                }
-                            }
                             const uint64_t target = namedTarget != 0
                                 ? namedTarget
                                 : (gameHandler.hasTarget() ? gameHandler.getTargetGuid() : 0);
-                            gameHandler.sendPetAction(packed, target);
+                            gameHandler.executePossessAction(packed, target);
                         }
                         continue;
                     }

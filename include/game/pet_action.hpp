@@ -61,6 +61,23 @@ constexpr bool isPetSpellAction(uint32_t packed) {
     return t != ActionType::Command && t != ActionType::Reaction;
 }
 
+/// How a possessed unit's bonus bar 5 slot must be dispatched to the server.
+/// CMaNGOS-TBC HandlePetAction rejects non-ACT_COMMAND packets for possessed
+/// units (UNIT_STAT_POSSESSED), so spells must go via CMSG_PET_CAST_SPELL.
+enum class PossessActionRoute : uint8_t {
+    None,
+    PetAction,     ///< CMSG_PET_ACTION (commands / reactions)
+    PetCastSpell,  ///< CMSG_PET_CAST_SPELL (direct / self / AoE spells)
+    GroundTarget,  ///< Arm ground-target cursor, then CMSG_PET_CAST_SPELL at dest
+};
+
+constexpr PossessActionRoute possessActionRoute(uint32_t packed, bool groundTargeted) {
+    if (packed == 0) return PossessActionRoute::None;
+    if (!isPetSpellAction(packed)) return PossessActionRoute::PetAction;
+    if (petActionId(packed) == 0) return PossessActionRoute::None;
+    return groundTargeted ? PossessActionRoute::GroundTarget : PossessActionRoute::PetCastSpell;
+}
+
 } // namespace pet
 } // namespace game
 } // namespace wowee

@@ -1249,6 +1249,12 @@ public:
     }
     // Send CMSG_PET_ACTION to issue a pet command
     void sendPetAction(uint32_t action, uint64_t targetGuid = 0);
+    // Cast a spell from the pet or possessed unit via CMSG_PET_CAST_SPELL
+    void castPetSpell(uint32_t spellId, uint64_t targetGuid = 0);
+    // Execute a packed action slot from a possessed unit's bonus bar 5:
+    // commands/reactions go through CMSG_PET_ACTION, while spells go through
+    // CMSG_PET_CAST_SPELL (or ground-target cursor for DEST_LOCATION spells).
+    void executePossessAction(uint32_t packed, uint64_t targetGuid = 0);
     // Stop pet attacking via CMSG_PET_STOP_ATTACK
     void petStopAttack();
     // Cancel an aura on the active pet via CMSG_PET_CANCEL_AURA

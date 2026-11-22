@@ -21,6 +21,7 @@
 #include "core/ui_screen_callback_handler.hpp"
 #include "game/spell_classification.hpp"
 #include "rendering/animation/animation_ids.hpp"
+#include "rendering/animation/anim_capability_probe.hpp"
 #include "rendering/animation/creature_locomotion.hpp"
 #include "rendering/animation/ground_direction.hpp"
 #include "rendering/animation_controller.hpp"
@@ -3910,6 +3911,77 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                 creatureUnitPtr->getHealth(), creatureUnitPtr->getMaxHealth(),
                 creatureUnitPtr->getDynamicFlags(), creatureStandState,
                 creatureUnitPtr->getNpcEmoteState());
+
+            // Locally possessed/charmed unit (Power of the Blue Flight, Mind Control, etc.):
+            // driven directly by CameraController physics (including parabolic jump height)
+            // and LocomotionFSM, rather than remote-entity floor clamping and position deltas.
+            if (guid == possessedBody_) {
+                auto* cc = renderer->getCameraController();
+                renderPos = renderer->getCharacterPosition();
+                charRenderer->setLocomotionSpeed(instanceId,
+                    cc ? cc->getGroundLocomotionSpeed() : 0.0f);
+                charRenderer->setInstancePosition(instanceId, renderPos);
+                _creatureRenderPosCache[guid] = renderPos;
+
+                if (possessedLocomotion_.trackedGuid() != guid ||
+                    possessedLocomotion_.trackedInstanceId() != instanceId ||
+                    !possessedLocomotion_.capsProbed()) {
+                    possessedLocomotion_.bind(guid, instanceId,
+                        rendering::AnimCapabilityProbe::probe(renderer.get(), instanceId));
+                }
+
+                rendering::PossessedLocomotionDriver::Input locoIn;
+                locoIn.dead = creatureDeadOrCorpse;
+                if (cc) {
+                    locoIn.moving = cc->isMoving();
+                    locoIn.sprinting = cc->isSprinting();
+                    locoIn.movingForward = cc->isMovingForward();
+                    locoIn.movingBackward = cc->isMovingBackward();
+                    locoIn.strafeLeft = cc->isStrafingLeft();
+                    locoIn.strafeRight = cc->isStrafingRight();
+                    locoIn.grounded = cc->isGrounded();
+                    locoIn.jumping = cc->isJumping();
+                    locoIn.swimming = cc->isSwimming();
+                    locoIn.flying = cc->isFlyingActive();
+                    if (locoIn.flying) {
+                        locoIn.hasFlyForward = charRenderer->hasAnimation(instanceId, rendering::anim::FLY_FORWARD);
+                        locoIn.hasFlyIdle = charRenderer->hasAnimation(instanceId, rendering::anim::FLY_IDLE);
+                    }
+                    locoIn.turnDirection = possessedLocomotion_.computeTurnDirection(
+                        renderer->getCharacterYaw(),
+                        cc->isTurningLeft() || cc->isTurningRight() || cc->isRightMouseHeld());
+                }
+                locoIn.haveAnimState = charRenderer->getAnimationState(
+                    instanceId, locoIn.currentAnimId, locoIn.currentAnimTime, locoIn.currentAnimDuration);
+
+                const auto decision = possessedLocomotion_.step(locoIn);
+                if (decision.shouldPlay) {
+                    charRenderer->playAnimation(instanceId, decision.animId, decision.loop, 0, true);
+                }
+
+                if (auto* wmo = renderer->getWMORenderer()) {
+                    glm::vec3 center; float radius = 0.0f;
+                    const bool hidden = charRenderer->getInstanceBounds(instanceId, center, radius) &&
+                                        wmo->roomHides(center);
+                    charRenderer->setInstanceRoomHidden(instanceId, hidden);
+                }
+                entitySpawner_->updateRemoteUnitState(guid, instanceId, locoIn.moving, false);
+
+                const float facing = core::coords::characterYawDegToCanonical(renderer->getCharacterYaw());
+                const float renderYaw = facing + glm::radians(90.0f);
+                glm::vec3 groundRotation(0.0f, 0.0f, renderYaw);
+                if (locoIn.grounded && !locoIn.swimming && !locoIn.flying && !onTransport) {
+                    const auto* model = charRenderer->getInstanceModelData(instanceId);
+                    assert(model);
+                    groundRotation = creatureGroundRotation(*model,
+                        charRenderer->getInstanceScale(instanceId), renderPos, renderYaw,
+                        [&](const glm::vec3& sample) {
+                            return movingEntityFloor(renderer.get(), sample, renderPos, false);
+                        }, creatureDeadOrCorpse);
+                }
+                charRenderer->setInstanceRotation(instanceId, groundRotation);
+                continue;
+            }
             if (groundCreature && !onTransport) {
                 const bool creatureSplineOrMoving =
                     !creatureDeadOrCorpse &&
@@ -7241,6 +7313,7 @@ void Application::updatePossession() {
     auto* cc = renderer->getCameraController();
     const uint64_t controlled = gameHandler->getClientControlledUnit();
     if (controlled != possessedBody_) {
+        possessedLocomotion_.reset();
         if (possessedBody_ != 0) {
             // Release: back into the player's body, camera yaw unchanged.
             const glm::vec3 body(heldPlayerBody_);

@@ -4984,6 +4984,47 @@ void SpellHandler::sendPetAction(uint32_t action, uint64_t targetGuid) {
     }
 }
 
+void SpellHandler::castPetSpell(uint32_t spellId, uint64_t targetGuid) {
+    const uint64_t casterGuid = owner_.getPossessedGuid() != 0
+        ? owner_.getPossessedGuid()
+        : owner_.getPetGuid();
+    if (casterGuid == 0 || spellId == 0 ||
+        owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) {
+        return;
+    }
+
+    if (isSelfCastSpell(spellId)) {
+        targetGuid = 0;
+    }
+
+    network::Packet pkt(wireOpcode(Opcode::CMSG_PET_CAST_SPELL));
+    pkt.writeUInt64(casterGuid);
+    if (!isPreWotlk()) {
+        pkt.writeUInt8(++castCount_);
+    }
+    pkt.writeUInt32(spellId);
+    if (!isPreWotlk()) {
+        pkt.writeUInt8(0); // castFlags
+    }
+    if (targetGuid != 0) {
+        if (isClassicLikeExpansion()) {
+            pkt.writeUInt16(0x02u); // TARGET_FLAG_UNIT
+        } else {
+            pkt.writeUInt32(0x02u); // TARGET_FLAG_UNIT
+        }
+        pkt.writePackedGuid(targetGuid);
+    } else {
+        if (isClassicLikeExpansion()) {
+            pkt.writeUInt16(0x00u); // TARGET_FLAG_SELF
+        } else {
+            pkt.writeUInt32(0x00u); // TARGET_FLAG_SELF
+        }
+    }
+    owner_.getSocket()->send(pkt);
+    LOG_DEBUG("castPetSpell: caster=0x", std::hex, casterGuid, std::dec,
+              " spell=", spellId, " target=0x", std::hex, targetGuid, std::dec);
+}
+
 void SpellHandler::petStopAttack() {
     if (!owner_.hasPet() || owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
     network::Packet pkt(wireOpcode(Opcode::CMSG_PET_STOP_ATTACK));

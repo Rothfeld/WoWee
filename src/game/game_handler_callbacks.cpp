@@ -16,6 +16,7 @@
 #include "game/movement_handler.hpp"
 #include "game/combat_handler.hpp"
 #include "game/spell_handler.hpp"
+#include "game/pet_action.hpp"
 #include "game/inventory_handler.hpp"
 #include "game/social_handler.hpp"
 #include "game/quest_handler.hpp"
@@ -2797,6 +2798,33 @@ void GameHandler::sendPetAction(uint32_t action, uint64_t targetGuid) {
     if (spellHandler_) spellHandler_->sendPetAction(action, targetGuid);
 }
 
+void GameHandler::castPetSpell(uint32_t spellId, uint64_t targetGuid) {
+    if (spellHandler_) spellHandler_->castPetSpell(spellId, targetGuid);
+}
+
+void GameHandler::executePossessAction(uint32_t packed, uint64_t targetGuid) {
+    const uint32_t spell = pet::isPetSpellAction(packed) ? pet::petActionId(packed) : 0u;
+    bool groundTargeted = false;
+    if (spell != 0) {
+        getSpellName(spell);
+        const auto it = spellNameCache_.find(spell);
+        groundTargeted = (it != spellNameCache_.end() && (it->second.targetFlags & 0x40u));
+    }
+    switch (pet::possessActionRoute(packed, groundTargeted)) {
+        case pet::PossessActionRoute::None:
+            return;
+        case pet::PossessActionRoute::PetAction:
+            sendPetAction(packed, targetGuid);
+            return;
+        case pet::PossessActionRoute::GroundTarget:
+            beginPetGroundTarget(spell);
+            return;
+        case pet::PossessActionRoute::PetCastSpell:
+            castPetSpell(spell, targetGuid);
+            return;
+    }
+}
+
 void GameHandler::petStopAttack() {
     if (spellHandler_) spellHandler_->petStopAttack();
 }
@@ -4870,9 +4898,10 @@ void GameHandler::castGroundTarget(const glm::vec3& canonical) {
 }
 
 void GameHandler::castPetSpellAtGround(uint32_t spellId, float x, float y, float z) {
-    if (!socket || spellId == 0 || getPetGuid() == 0) return;
+    const uint64_t casterGuid = getPossessedGuid() != 0 ? getPossessedGuid() : getPetGuid();
+    if (!socket || spellId == 0 || casterGuid == 0) return;
     network::Packet packet(wireOpcode(Opcode::CMSG_PET_CAST_SPELL));
-    packet.writeUInt64(getPetGuid());
+    packet.writeUInt64(casterGuid);
     packet.writeUInt32(spellId);
     const glm::vec3 server = core::coords::canonicalToServer(glm::vec3(x, y, z));
     packet.writeUInt32(0x40u);  // TARGET_FLAG_DEST_LOCATION
@@ -4880,7 +4909,7 @@ void GameHandler::castPetSpellAtGround(uint32_t spellId, float x, float y, float
     packet.writeFloat(server.y);
     packet.writeFloat(server.z);
     socket->send(packet);
-    LOG_INFO("Sent CMSG_PET_CAST_SPELL pet=0x", std::hex, getPetGuid(), std::dec,
+    LOG_INFO("Sent CMSG_PET_CAST_SPELL pet=0x", std::hex, casterGuid, std::dec,
              " spell=", spellId, " at server ", server.x, ",", server.y, ",", server.z);
 }
 void GameHandler::sendSetActiveMover(uint64_t guid) {

@@ -1490,6 +1490,18 @@ target_link_libraries(test_locomotion_fsm PRIVATE catch2_main)
 add_test(NAME locomotion_fsm COMMAND test_locomotion_fsm)
 register_test_target(test_locomotion_fsm)
 
+# ── test_possess_locomotion ──────────────────────────────────
+add_executable(test_possess_locomotion
+    test_possess_locomotion.cpp
+    ${TEST_COMMON_SOURCES}
+    ${CMAKE_SOURCE_DIR}/src/rendering/animation/locomotion_fsm.cpp
+)
+target_include_directories(test_possess_locomotion PRIVATE ${TEST_INCLUDE_DIRS})
+target_include_directories(test_possess_locomotion SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
+target_link_libraries(test_possess_locomotion PRIVATE catch2_main)
+add_test(NAME possess_locomotion COMMAND test_possess_locomotion)
+register_test_target(test_possess_locomotion)
+
 # ── test_chat_filters ────────────────────────────────────────
 add_executable(test_chat_filters
     test_chat_filters.cpp

@@ -76,3 +76,33 @@ TEST_CASE("stay and passive have zero low bits but non-zero packed values", "[pe
     REQUIRE_FALSE(isPetSpellAction(stay));
     REQUIRE_FALSE(isPetSpellAction(passive));
 }
+
+TEST_CASE("possessed unit action routing sends spells via CMSG_PET_CAST_SPELL", "[pet][possess]") {
+    // Power of the Blue Flight (entry 25653) abilities arrive packed with ACT_PASSIVE (0x01):
+    // 45848 Shield of the Blue, 45856 Breath: Revitalize, 45860 Breath: Haste, 45862 Blink.
+    for (uint32_t spellId : {45848u, 45856u, 45860u, 45862u}) {
+        const uint32_t packed = packPetAction(ActionType::Passive, spellId);
+        REQUIRE(possessActionRoute(packed, false) == PossessActionRoute::PetCastSpell);
+    }
+
+    // Enabled/Disabled pet spells also route via CMSG_PET_CAST_SPELL.
+    REQUIRE(possessActionRoute(packPetAction(ActionType::Enabled, 45848u), false) ==
+            PossessActionRoute::PetCastSpell);
+    REQUIRE(possessActionRoute(packPetAction(ActionType::Disabled, 45848u), false) ==
+            PossessActionRoute::PetCastSpell);
+
+    // Ground-targeted possessed spells (e.g. Karazhan Chess Move) arm the ground-target cursor.
+    REQUIRE(possessActionRoute(packPetAction(ActionType::Passive, 37146u), true) ==
+            PossessActionRoute::GroundTarget);
+
+    // Built-in commands and stances stay on CMSG_PET_ACTION.
+    REQUIRE(possessActionRoute(packPetAction(ActionType::Command, kAttack), false) ==
+            PossessActionRoute::PetAction);
+    REQUIRE(possessActionRoute(packPetAction(ActionType::Command, kStay), false) ==
+            PossessActionRoute::PetAction);
+    REQUIRE(possessActionRoute(packPetAction(ActionType::Reaction, kPassive), false) ==
+            PossessActionRoute::PetAction);
+
+    // Empty slot does nothing.
+    REQUIRE(possessActionRoute(0u, false) == PossessActionRoute::None);
+}

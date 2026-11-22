@@ -1,6 +1,7 @@
 #include "addons/lua_engine.hpp"
 #include "game/spell_prerequisites.hpp"
 #include "game/shapeshift_forms.hpp"
+#include "game/pet_action.hpp"
 #include "addons/macro_target.hpp"
 #include "game/summon_title.hpp"
 #include "pipeline/asset_manager.hpp"
@@ -2914,6 +2915,49 @@ int lua_Tooltip_SetAction(lua_State* L) {
     auto* gh = wowee::addons::getGameHandler(L);
     const int slot = static_cast<int>(luaL_optnumber(L, 2, 0)) - 1;
     if (!w || !gh || slot < 0) { lua_pushboolean(L, 0); return 1; }
+    if (slot >= 120 && slot < 120 + game::GameHandler::PET_ACTION_BAR_SLOTS &&
+        gh->getPossessedGuid() != 0) {
+        const uint32_t packed = gh->getPetActionSlot(slot - 120);
+        if (packed == 0) { lua_pushboolean(L, 0); return 1; }
+        const auto type = game::pet::petActionType(packed);
+        if (type != game::pet::ActionType::Command && type != game::pet::ActionType::Reaction) {
+            const uint32_t spell = game::pet::petActionId(packed);
+            lua_pushboolean(L, spell && fillSpellTooltip(L, w, gh, spell, /*rankOnTitle=*/true) ? 1 : 0);
+            return 1;
+        }
+        const uint32_t id = game::pet::petActionId(packed);
+        const char* globalName = nullptr;
+        if (type == game::pet::ActionType::Command) {
+            switch (id) {
+                case game::pet::kStay:    globalName = "PET_ACTION_WAIT"; break;
+                case game::pet::kFollow:  globalName = "PET_ACTION_FOLLOW"; break;
+                case game::pet::kAttack:  globalName = "PET_ACTION_ATTACK"; break;
+                case game::pet::kAbandon: globalName = "PET_ACTION_DISMISS"; break;
+                default: break;
+            }
+        } else {
+            switch (id) {
+                case game::pet::kPassive:    globalName = "PET_MODE_PASSIVE"; break;
+                case game::pet::kDefensive:  globalName = "PET_MODE_DEFENSIVE"; break;
+                case game::pet::kAggressive: globalName = "PET_MODE_AGGRESSIVE"; break;
+                default: break;
+            }
+        }
+        std::string label;
+        if (globalName) {
+            lua_getglobal(L, globalName);
+            if (const char* s = lua_tostring(L, -1)) label = s;
+            lua_pop(L, 1);
+        }
+        if (label.empty()) { lua_pushboolean(L, 0); return 1; }
+        w->isTooltip = true;
+        w->tooltipUnit.clear();
+        w->tooltipLines.clear();
+        pushTooltipLine(w, label, kWhite, {}, kWhite, false);
+        w->shown = true;
+        lua_pushboolean(L, 1);
+        return 1;
+    }
     const auto* shown = wowee::game::shownAction(*gh, slot);
     if (!shown) {
         lua_pushboolean(L, 0);

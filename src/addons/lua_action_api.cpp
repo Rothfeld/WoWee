@@ -738,7 +738,41 @@ static int lua_GetActionCount(lua_State* L) {
 static int lua_GetActionCooldown(lua_State* L) {
     auto* gh = getGameHandler(L);
     if (!gh) { lua_pushnumber(L, 0); lua_pushnumber(L, 0); lua_pushnumber(L, 1); return 3; }
-    int slot = static_cast<int>(luaL_checknumber(L, 1)) - 1;
+    const int slot1 = static_cast<int>(luaL_checknumber(L, 1));
+    if (uint32_t packed; possessSlot(gh, slot1, packed)) {
+        const uint32_t spell = possessSpell(packed);
+        float cdRemaining = 0.0f;
+        float cdTotal = 0.0f;
+        if (spell != 0) {
+            cdRemaining = gh->getPetSpellCooldown(spell);
+            cdTotal = gh->getPetSpellCooldownTotal(spell);
+            if (cdRemaining <= 0.0f) {
+                cdRemaining = gh->getSpellCooldown(spell);
+                cdTotal = gh->getSpellCooldownTotal(spell);
+            }
+        }
+        if (cdRemaining > 0.0f) {
+            if (cdTotal < cdRemaining) cdTotal = cdRemaining;
+            double now = 0.0;
+            lua_getglobal(L, "GetTime");
+            if (lua_isfunction(L, -1)) {
+                lua_call(L, 0, 1);
+                now = lua_tonumber(L, -1);
+                lua_pop(L, 1);
+            } else {
+                lua_pop(L, 1);
+            }
+            lua_pushnumber(L, now - (cdTotal - cdRemaining));
+            lua_pushnumber(L, cdTotal);
+            lua_pushnumber(L, 1);
+        } else {
+            lua_pushnumber(L, 0);
+            lua_pushnumber(L, 0);
+            lua_pushnumber(L, 1);
+        }
+        return 3;
+    }
+    int slot = slot1 - 1;
     const auto* shown = game::shownAction(*gh, slot);
     if (!shown) {
         lua_pushnumber(L, 0);
@@ -856,23 +890,13 @@ static int lua_UseAction(lua_State* L) {
     }
     if (uint32_t packed; possessSlot(gh, static_cast<int>(luaL_checknumber(L, 1)), packed)) {
         if (packed == 0) return 0;
-        if (const uint32_t spell = possessSpell(packed)) {
-            gh->getSpellName(spell);
-            const auto it = gh->spellNameCacheRef().find(spell);
-            if (it != gh->spellNameCacheRef().end() && (it->second.targetFlags & 0x40u)) {
-                // A chess piece's Move: build 8606 puts a circle under the
-                // cursor and the next world click casts it there.
-                gh->beginPetGroundTarget(spell);
-                return 0;
-            }
-        }
         uint64_t target = gh->hasTarget() ? gh->getTargetGuid() : 0;
         if (const char* unit = lua_tostring(L, 2); unit && *unit) {
             std::string uid(unit);
             toLowerInPlace(uid);
             if (const uint64_t named = resolveUnitGuid(gh, uid)) target = named;
         }
-        gh->sendPetAction(packed, target);
+        gh->executePossessAction(packed, target);
         return 0;
     }
     int slot = static_cast<int>(luaL_checknumber(L, 1)) - 1;
