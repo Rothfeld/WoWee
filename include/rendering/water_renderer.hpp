@@ -258,6 +258,7 @@ private:
 
     // Pipeline
     VkPipeline waterPipeline = VK_NULL_HANDLE;
+    VkPipeline waterOpaquePipeline = VK_NULL_HANDLE;  // Depth-writing opaque magma/slime (basicType >= 2)
     VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
     VkDescriptorSetLayout materialSetLayout = VK_NULL_HANDLE;
     VkDescriptorPool materialDescPool = VK_NULL_HANDLE;
@@ -339,6 +340,7 @@ private:
     // Separate 1x water pass (used when MSAA is active)
     VkRenderPass water1xRenderPass = VK_NULL_HANDLE;
     VkPipeline water1xPipeline = VK_NULL_HANDLE;
+    VkPipeline water1xOpaquePipeline = VK_NULL_HANDLE;
     std::vector<VkFramebuffer> water1xFramebuffers;
 
     std::vector<WaterSurface> surfaces;

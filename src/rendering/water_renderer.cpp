@@ -290,8 +290,22 @@ bool WaterRenderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLay
         .setVertexInput({ vertBinding }, vertAttribs)
         .setTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
         .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE)
-        .setDepthTest(true, false, VK_COMPARE_OP_LESS_OR_EQUAL)  // depth test yes, write no
+        .setDepthTest(true, true, VK_COMPARE_OP_LESS_OR_EQUAL)   // depth test + write so submerged blended M2s clip at waterline
         .setColorBlendAttachment(PipelineBuilder::blendAlpha())
+        .setMultisample(vkCtx->getMsaaSamples())
+        .setLayout(pipelineLayout)
+        .setRenderPass(mainPass)
+        .setDynamicStates(viewportAndScissorDynamic())
+        .build(device, vkCtx->getPipelineCache());
+
+    waterOpaquePipeline = PipelineBuilder()
+        .setShaders(vertShader.stageInfo(VK_SHADER_STAGE_VERTEX_BIT),
+                    fragShader.stageInfo(VK_SHADER_STAGE_FRAGMENT_BIT))
+        .setVertexInput({ vertBinding }, vertAttribs)
+        .setTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
+        .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE)
+        .setDepthTest(true, true, VK_COMPARE_OP_LESS_OR_EQUAL)   // opaque magma/slime writes depth
+        .setColorBlendAttachment(PipelineBuilder::blendDisabled())
         .setMultisample(vkCtx->getMsaaSamples())
         .setLayout(pipelineLayout)
         .setRenderPass(mainPass)
@@ -301,7 +315,7 @@ bool WaterRenderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLay
     vertShader.destroy();
     fragShader.destroy();
 
-    if (!waterPipeline) {
+    if (!waterPipeline || !waterOpaquePipeline) {
         LOG_ERROR("WaterRenderer: failed to create pipeline");
         return false;
     }
@@ -320,8 +334,9 @@ void WaterRenderer::recreatePipelines() {
                                 vkCtx->getSwapchainFormat(),
                                 vkCtx->getDepthFormat());
 
-    // Destroy old pipeline (keep layout)
+    // Destroy old pipelines (keep layout)
     destroy(device, waterPipeline);
+    destroy(device, waterOpaquePipeline);
 
     // Load shaders
     VkShaderModule vertShader, fragShader;
@@ -355,8 +370,22 @@ void WaterRenderer::recreatePipelines() {
         .setVertexInput({ vertBinding }, vertAttribs)
         .setTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
         .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE)
-        .setDepthTest(true, false, VK_COMPARE_OP_LESS_OR_EQUAL)
+        .setDepthTest(true, true, VK_COMPARE_OP_LESS_OR_EQUAL)
         .setColorBlendAttachment(PipelineBuilder::blendAlpha())
+        .setMultisample(vkCtx->getMsaaSamples())
+        .setLayout(pipelineLayout)
+        .setRenderPass(mainPass)
+        .setDynamicStates(viewportAndScissorDynamic())
+        .build(device, vkCtx->getPipelineCache());
+
+    waterOpaquePipeline = PipelineBuilder()
+        .setShaders(vertShader.stageInfo(VK_SHADER_STAGE_VERTEX_BIT),
+                    fragShader.stageInfo(VK_SHADER_STAGE_FRAGMENT_BIT))
+        .setVertexInput({ vertBinding }, vertAttribs)
+        .setTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
+        .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE)
+        .setDepthTest(true, true, VK_COMPARE_OP_LESS_OR_EQUAL)
+        .setColorBlendAttachment(PipelineBuilder::blendDisabled())
         .setMultisample(vkCtx->getMsaaSamples())
         .setLayout(pipelineLayout)
         .setRenderPass(mainPass)
@@ -366,7 +395,7 @@ void WaterRenderer::recreatePipelines() {
     vertShader.destroy();
     fragShader.destroy();
 
-    if (!waterPipeline) {
+    if (!waterPipeline || !waterOpaquePipeline) {
         LOG_ERROR("WaterRenderer::recreatePipelines: failed to create pipeline");
     }
 }
@@ -436,6 +465,7 @@ void WaterRenderer::shutdown() {
     destroyReflectionResources();
     destroySceneHistoryResources();
     destroy(device, waterPipeline);
+    destroy(device, waterOpaquePipeline);
     destroy(device, pipelineLayout);
     destroy(device, sceneDescPool);
     destroy(device, sceneSetLayout);
@@ -1175,6 +1205,7 @@ void WaterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
     // waited for the GPU to finish with it.
     uploadFrameUBO();
     VkPipeline pipeline = (use1x && water1xPipeline) ? water1xPipeline : waterPipeline;
+    VkPipeline opaquePipeline = (use1x && water1xOpaquePipeline) ? water1xOpaquePipeline : waterOpaquePipeline;
     if (!renderingEnabled || surfaces.empty() || !pipeline) {
         if (renderDiagCounter_++ % 300 == 0 && !surfaces.empty()) {
             LOG_WARNING("Water: render skipped - enabled=", renderingEnabled,
@@ -1197,7 +1228,8 @@ void WaterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
     Frustum frustum;
     frustum.extractFromMatrix(camera.getViewProjectionMatrix());
 
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+    VkPipeline currentPipeline = pipeline;
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, currentPipeline);
 
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout,
                              0, 1, &perFrameSet, 0, nullptr);
@@ -1239,6 +1271,11 @@ void WaterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
         bool isWmoWater = (surface.wmoId != 0);
         bool canalProfile = isWmoWater || (surface.liquidType == 5);
         uint8_t basicType = (surface.liquidType == 0) ? 0 : ((surface.liquidType - 1) % 4);
+        VkPipeline desiredPipeline = (liquidIsOpaque(basicType) && opaquePipeline) ? opaquePipeline : pipeline;
+        if (desiredPipeline != currentPipeline) {
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, desiredPipeline);
+            currentPipeline = desiredPipeline;
+        }
         // Magma and slime draw their own sequences for terrain and WMO alike;
         // WMO ocean keeps the freshwater one.
         const bool authoredMagma = legacyWater && basicType >= 2;
@@ -2330,8 +2367,22 @@ bool WaterRenderer::createWater1xPass(VkFormat colorFormat, VkFormat depthFormat
         .setVertexInput({ vertBinding }, vertAttribs)
         .setTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
         .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE)
-        .setDepthTest(true, false, VK_COMPARE_OP_LESS_OR_EQUAL)
+        .setDepthTest(true, true, VK_COMPARE_OP_LESS_OR_EQUAL)
         .setColorBlendAttachment(PipelineBuilder::blendAlpha())
+        .setMultisample(VK_SAMPLE_COUNT_1_BIT)
+        .setLayout(pipelineLayout)
+        .setRenderPass(water1xRenderPass)
+        .setDynamicStates(viewportAndScissorDynamic())
+        .build(device, vkCtx->getPipelineCache());
+
+    water1xOpaquePipeline = PipelineBuilder()
+        .setShaders(vertShader.stageInfo(VK_SHADER_STAGE_VERTEX_BIT),
+                    fragShader.stageInfo(VK_SHADER_STAGE_FRAGMENT_BIT))
+        .setVertexInput({ vertBinding }, vertAttribs)
+        .setTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
+        .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE)
+        .setDepthTest(true, true, VK_COMPARE_OP_LESS_OR_EQUAL)
+        .setColorBlendAttachment(PipelineBuilder::blendDisabled())
         .setMultisample(VK_SAMPLE_COUNT_1_BIT)
         .setLayout(pipelineLayout)
         .setRenderPass(water1xRenderPass)
@@ -2341,7 +2392,7 @@ bool WaterRenderer::createWater1xPass(VkFormat colorFormat, VkFormat depthFormat
     vertShader.destroy();
     fragShader.destroy();
 
-    if (!water1xPipeline) {
+    if (!water1xPipeline || !water1xOpaquePipeline) {
         LOG_ERROR("WaterRenderer: failed to create 1x water pipeline");
         return false;
     }
@@ -2386,6 +2437,7 @@ void WaterRenderer::destroyWater1xResources() {
     }
     water1xFramebuffers.clear();
     destroy(device, water1xPipeline);
+    destroy(device, water1xOpaquePipeline);
     if (water1xRenderPass) { vkDestroyRenderPass(device, water1xRenderPass, nullptr); water1xRenderPass = VK_NULL_HANDLE; }
 }
 } // namespace rendering

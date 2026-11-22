@@ -176,4 +176,18 @@ TEST_CASE("a cell past the end of the mask is water") {
     REQUIRE(waterCellRendered(m, 0, 8, 7, 7, 7, 7));
 }
 
+TEST_CASE("Liquid surfaces write depth and magma/slime render opaque", "[water]") {
+    using wowee::rendering::liquidIsOpaque;
+    using wowee::rendering::liquidWritesDepth;
+    // 0=river, 1=ocean, 2=magma, 3=slime: all write depth so submerged waterfall
+    // tails clip cleanly at the waterline while above-water sheets composite over.
+    for (uint8_t basicType = 0; basicType < 4; ++basicType) {
+        CHECK(liquidWritesDepth(basicType));
+    }
+    CHECK_FALSE(liquidIsOpaque(0));  // river
+    CHECK_FALSE(liquidIsOpaque(1));  // ocean
+    CHECK(liquidIsOpaque(2));        // magma
+    CHECK(liquidIsOpaque(3));        // slime
+}
+
 }  // namespace

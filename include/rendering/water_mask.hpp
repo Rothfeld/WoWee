@@ -99,4 +99,19 @@ inline bool waterCellRendered(const std::vector<uint8_t>& mask, uint32_t wmoId,
     return (mask[static_cast<size_t>(byteIdx)] & (1u << (tile % 8))) != 0;
 }
 
+/// All liquid surfaces (0=river, 1=ocean, 2=magma, 3=slime) write to the depth
+/// buffer after opaque geometry and before blended M2s so submerged waterfall
+/// tails (e.g. Bloodvenom Falls felwoodtallwaterfall01.m2 extending 8.4 yd
+/// below the river surface) clip cleanly at the waterline while above-water
+/// waterfalls and mist still composite over water.
+inline constexpr bool liquidWritesDepth(uint8_t /*basicType*/) {
+    return true;
+}
+
+/// Magma (2) and slime (3) render opaque (blend disabled); river (0) and
+/// ocean (1) alpha-blend over the already-drawn underwater terrain.
+inline constexpr bool liquidIsOpaque(uint8_t basicType) {
+    return basicType >= 2;
+}
+
 }  // namespace wowee::rendering
