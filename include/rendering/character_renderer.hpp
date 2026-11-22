@@ -314,6 +314,9 @@ public:
     [[nodiscard]] bool hasAttachmentPoint(uint32_t instanceId, uint32_t attachmentId) const;
     bool getAnimationSequences(uint32_t instanceId, std::vector<pipeline::M2Sequence>& out) const;
     bool getInstanceBounds(uint32_t instanceId, glm::vec3& outCenter, float& outRadius) const;
+    /// Scaled M2 header boundingRadius for the instance (used by Pass-2
+    /// fallback picking on lootable corpses whose body batches fade out).
+    bool getInstanceCollisionRadius(uint32_t instanceId, float& outRadius) const;
     /// Ray hit against the unit's drawn triangles at the current pose, as
     /// build 8606 picks units (docs/unit-size-rules.md).
     bool intersectInstance(uint32_t instanceId, const glm::vec3& origin,

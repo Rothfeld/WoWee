@@ -695,3 +695,36 @@ TEST_CASE("TBC 2.4.3 GameObject selectability matrix covers GO_FLAG and GAMEOBJE
         CHECK(a.use);
     }
 }
+
+TEST_CASE("Lootable corpse Pass-2 fallback sphere covers faded VoidGod/Entropius corpse extent", "[scene-pick][corpse]") {
+    using wowee::ui::corpseFallbackPickSphere;
+    using wowee::ui::raySphereIntersect;
+    using wowee::rendering::Ray;
+
+    // Small/normal corpse (e.g. HumanMale, selection radius 0.84, boundRadius 0.9) floors at 1.0 yd.
+    const auto smallCorpse = corpseFallbackPickSphere(glm::vec3(0.0f), 0.84f, 0.9f);
+    CHECK(smallCorpse.radius == Catch::Approx(1.0f));
+    CHECK(smallCorpse.center.z == Catch::Approx(0.3f));
+
+    // Entropius (entry 25840, display 23428, Creature\VoidGod\VoidGod.m2 at scale 6.0):
+    // Body batches 0..8 fade to alpha 0 in Death, leaving only submesh 9 (0.9 yd orb at z=3.97).
+    // Selection radius = 5.03 yd, scaled M2 header boundingRadius = 1.1037 * 6 = 6.6222 yd.
+    const auto entropius = corpseFallbackPickSphere(glm::vec3(0.0f), 5.03f, 6.6222f);
+    CHECK(entropius.radius == Catch::Approx(6.6222f));
+    CHECK(entropius.center.z == Catch::Approx(6.6222f * 0.3f));
+
+    // Rays from 22.8 yd away matching Native 2.4.3 hover points on Mirage Raceway:
+    // center smoke (z=1.5), ground smoke (z=0.5), left smoke (y=4.5, z=0.6), above orb (z=6.5) hit;
+    // outside left edge (y=7.6, z=0.9) misses.
+    const glm::vec3 camOrigin(-22.8f, 0.0f, 4.5f);
+    auto testRay = [&](const glm::vec3& target) {
+        float t = 0.0f;
+        const Ray ray{camOrigin, glm::normalize(target - camOrigin)};
+        return raySphereIntersect(ray, entropius.center, entropius.radius, t);
+    };
+    CHECK(testRay(glm::vec3(0.0f, 0.0f, 1.5f)));   // mid-smoke below floating orb
+    CHECK(testRay(glm::vec3(0.0f, 0.0f, 0.5f)));   // ground smoke
+    CHECK(testRay(glm::vec3(0.0f, 4.5f, 0.6f)));   // left edge of smoke
+    CHECK(testRay(glm::vec3(0.0f, 0.0f, 6.5f)));   // above floating orb
+    CHECK_FALSE(testRay(glm::vec3(0.0f, 8.0f, 0.9f))); // outside corpse extent
+}

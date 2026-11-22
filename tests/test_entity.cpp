@@ -653,6 +653,12 @@ TEST_CASE("Quest game objects sparkle by their SPARKLE bit, scaled by collision 
     // Wide solid chest: Gordok Tribute (G_ChestTitan.m2, height 2.34, radius 2.84)
     // must scale past its horizontal walls so LootFX is not occluded inside the lid.
     CHECK(LootSparkles::objectScale(2.34f, 2.84f) == Catch::Approx(4.26f));
+
+    // Unit corpse sparkles: normal mobs stay at 1.0, large boss corpses (e.g.
+    // Entropius at scale 6, selection radius 5.03 yd) scale up with the corpse.
+    CHECK(LootSparkles::corpseScale(0.0f) == 1.0f);
+    CHECK(LootSparkles::corpseScale(0.84f) == 1.0f);
+    CHECK(LootSparkles::corpseScale(5.03f) == Catch::Approx(5.03f));
 }
 
 TEST_CASE("GameObject 3D quaternion rotation, WotLK packing, and local reach frame", "[entity][gorotation]") {

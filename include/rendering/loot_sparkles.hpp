@@ -32,6 +32,14 @@ public:
         return std::max({1.0f, collisionBoxHeight, 1.5f * boundingRadius});
     }
 
+    /// LootFX scale over a lootable unit corpse: never below 1, growing with
+    /// the corpse's selection radius so large boss corpses (e.g. Entropius at
+    /// scale 6, selection radius 5.03 yd) sparkle across their full extent
+    /// instead of burying a 1x sparkle inside the body or smoke.
+    static constexpr float corpseScale(float selectionRadius) {
+        return selectionRadius > 1.0f ? selectionRadius : 1.0f;
+    }
+
     /// Something that sparkles, where in render coordinates and how large.
     struct Spot {
         uint64_t guid = 0;

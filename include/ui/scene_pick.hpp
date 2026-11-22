@@ -90,6 +90,20 @@ bool terrainOccludesSceneRay(const rendering::Ray& ray, float hitDistance,
     return guid != 0 && (guid != playerGuid || includeLocalPlayer);
 }
 
+/// Pass-2 fallback pick sphere for a lootable or skinnable corpse whose drawn
+/// triangles were missed in Pass 1 (e.g. VoidGod/Entropius whose body batches
+/// fade to alpha 0 in Death, leaving only a 0.9 yd floating orb).
+struct CorpseFallbackSphere {
+    glm::vec3 center{0.0f};
+    float radius = 0.0f;
+};
+
+[[nodiscard]] inline CorpseFallbackSphere corpseFallbackPickSphere(
+    const glm::vec3& origin, float selectionRadius, float scaledBoundRadius) {
+    const float radius = std::max({1.0f, selectionRadius, scaledBoundRadius});
+    return {origin + glm::vec3(0.0f, 0.0f, radius * 0.3f), radius};
+}
+
 /// The parts of picking the two callers disagree about.
 struct ScenePickParams {
     /// Fallback hit sphere for a unit with no render bounds. The right-click

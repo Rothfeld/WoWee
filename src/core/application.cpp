@@ -6866,6 +6866,9 @@ void Application::updateLootSparkles() {
         if (unit->getHealth() != 0) continue;
         if ((unit->getDynamicFlags() & game::UNIT_DYNFLAG_LOOTABLE) == 0) continue;
         rendering::LootSparkles::Spot spot{.guid = guid};
+        float selectionRadius = 0.0f;
+        if (getSelectionRadiusForGuid(guid, selectionRadius))
+            spot.scale = rendering::LootSparkles::corpseScale(selectionRadius);
         if (getRenderPositionForGuid(guid, spot.position)) spots.push_back(spot);
     }
     sparkles->update(m2, assetManager.get(), spots);

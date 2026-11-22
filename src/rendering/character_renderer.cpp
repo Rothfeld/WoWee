@@ -6052,6 +6052,21 @@ bool CharacterRenderer::getInstanceBounds(uint32_t instanceId, glm::vec3& outCen
     return true;
 }
 
+bool CharacterRenderer::getInstanceCollisionRadius(uint32_t instanceId, float& outRadius) const {
+    auto it = instances.find(instanceId);
+    if (it == instances.end()) return false;
+    auto mIt = models.find(it->second.modelId);
+    if (mIt == models.end()) return false;
+    const auto& model = mIt->second.data;
+    float radius = model.boundRadius;
+    if (radius <= 0.001f) {
+        radius = glm::length(model.boundMax - model.boundMin) * 0.5f;
+    }
+    if (radius <= 0.001f) return false;
+    outRadius = radius * std::max(0.001f, it->second.scale);
+    return true;
+}
+
 bool CharacterRenderer::getInstanceKeyBonePivotZ(uint32_t instanceId, int32_t keyBoneId,
                                                  float& outZ) const {
     auto it = instances.find(instanceId);
