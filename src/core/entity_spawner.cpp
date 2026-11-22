@@ -10,6 +10,7 @@
 #include "core/geoset_rules.hpp"
 #include "core/npc_equipment_geosets.hpp"
 #include "pipeline/item_textures.hpp"
+#include "pipeline/guild_tabard.hpp"
 #include "core/helm_visual.hpp"
 
 #include "core/coordinates.hpp"
@@ -554,6 +555,7 @@ void EntitySpawner::rebuildLookups() {
     creatureLookupsBuilt_ = false;
     displayDataMap_.clear();
     humanoidExtraMap_.clear();
+    bareRacialDisplayMap_.clear();
     raceAppearanceLimits_.clear();
     creatureModelIds_.clear();
     creatureRenderPosCache_.clear();
@@ -1038,10 +1040,17 @@ void EntitySpawner::buildCreatureDisplayLookups() {
         assert(races->getFieldCount() > 5);
         std::unordered_map<uint32_t, float> raceSexScale;  // race << 8 | sex
         for (uint32_t i = 0; i < races->getRecordCount(); ++i) {
+            const uint8_t raceId = static_cast<uint8_t>(races->getUInt32(i, 0));
             for (uint32_t sex = 0; sex < 2; ++sex) {
-                const auto display = displayDataMap_.find(races->getUInt32(i, 4 + sex));
-                if (display != displayDataMap_.end())
-                    raceSexScale[races->getUInt32(i, 0) << 8 | sex] = display->second.displayScale;
+                const uint32_t raceDisplayId = races->getUInt32(i, 4 + sex);
+                const auto display = displayDataMap_.find(raceDisplayId);
+                if (display != displayDataMap_.end()) {
+                    raceSexScale[uint32_t(raceId) << 8 | sex] = display->second.displayScale;
+                    if (display->second.extraDisplayId == 0 &&
+                        game::hasPlayerModel(static_cast<game::Race>(raceId))) {
+                        bareRacialDisplayMap_[raceDisplayId] = {raceId, static_cast<uint8_t>(sex)};
+                    }
+                }
             }
         }
         uint32_t scaled = 0;
@@ -1109,6 +1118,22 @@ void EntitySpawner::buildCreatureDisplayLookups() {
             LOG_ERROR("dbc_layouts.json names no CreatureModelData.Flags: hit reactions ignore the model's "
                       "no-wound flag (deploy current expansion metadata)");
     }
+
+    // Also register any CreatureDisplayInfo row with ExtraDisplayInfoID == 0,
+    // empty Skin1-3, and a playable Character\<Race>\<Sex>\*.m2 model path
+    // so bare racial displays never render untextured.
+    for (const auto& [displayId, data] : displayDataMap_) {
+        if (data.extraDisplayId != 0) continue;
+        if (!data.skin1.empty() || !data.skin2.empty() || !data.skin3.empty()) continue;
+        if (bareRacialDisplayMap_.count(displayId)) continue;
+        auto pathIt = modelIdToPath_.find(data.modelId);
+        if (pathIt == modelIdToPath_.end()) continue;
+        uint8_t raceId = 0, sexId = 0;
+        if (game::inferRaceSexFromCharacterModelPath(pathIt->second, raceId, sexId)) {
+            bareRacialDisplayMap_[displayId] = {raceId, sexId};
+        }
+    }
+    LOG_DEBUG("Registered ", bareRacialDisplayMap_.size(), " bare racial Character\\* creature displays");
 
     // Resolve gryphon/wyvern display IDs by exact model path so taxi mounts have textures.
     auto toLower = [](std::string s) {
@@ -1661,24 +1686,33 @@ bool EntitySpawner::getHumanoidAppearance(uint32_t displayId, uint8_t& race,
                                           uint8_t& sex, uint32_t& appearanceBytes,
                                           uint8_t& facialHair) const {
     auto disp = displayDataMap_.find(displayId);
-    if (disp == displayDataMap_.end() || disp->second.extraDisplayId == 0) return false;
-    auto extra = humanoidExtraMap_.find(disp->second.extraDisplayId);
-    if (extra == humanoidExtraMap_.end()) return false;
+    if (disp != displayDataMap_.end() && disp->second.extraDisplayId != 0) {
+        auto extra = humanoidExtraMap_.find(disp->second.extraDisplayId);
+        if (extra == humanoidExtraMap_.end()) return false;
 
-    race = extra->second.raceId;
-    sex = extra->second.sexId;
-    facialHair = extra->second.facialHairId;
-    appearanceBytes = static_cast<uint32_t>(extra->second.skinId)
-                    | (static_cast<uint32_t>(extra->second.faceId) << 8)
-                    | (static_cast<uint32_t>(extra->second.hairStyleId) << 16)
-                    | (static_cast<uint32_t>(extra->second.hairColorId) << 24);
-    // Only where there is a character model to load. This table gives naga,
-    // broken, skeletons and a dozen other NPC-only races the same skin-and-face
-    // columns a character has - about one row in fourteen - and the character
-    // path answers HumanMale for every one of them. A human standing in the
-    // target frame where a naga is standing is worse than the naga's own model
-    // with no texture on it, which is what the creature path will give.
-    return race != 0 && game::hasPlayerModel(static_cast<game::Race>(race));
+        race = extra->second.raceId;
+        sex = extra->second.sexId;
+        facialHair = extra->second.facialHairId;
+        appearanceBytes = static_cast<uint32_t>(extra->second.skinId)
+                        | (static_cast<uint32_t>(extra->second.faceId) << 8)
+                        | (static_cast<uint32_t>(extra->second.hairStyleId) << 16)
+                        | (static_cast<uint32_t>(extra->second.hairColorId) << 24);
+        // Only where there is a character model to load. This table gives naga,
+        // broken, skeletons and a dozen other NPC-only races the same skin-and-face
+        // columns a character has - about one row in fourteen - and the character
+        // path answers HumanMale for every one of them. A human standing in the
+        // target frame where a naga is standing is worse than the naga's own model
+        // with no texture on it, which is what the creature path will give.
+        return race != 0 && game::hasPlayerModel(static_cast<game::Race>(race));
+    }
+    if (auto bareIt = bareRacialDisplayMap_.find(displayId); bareIt != bareRacialDisplayMap_.end()) {
+        race = bareIt->second.first;
+        sex = bareIt->second.second;
+        appearanceBytes = 0;
+        facialHair = 0;
+        return race != 0 && game::hasPlayerModel(static_cast<game::Race>(race));
+    }
+    return false;
 }
 
 bool EntitySpawner::resolvePlayerIllusion(uint32_t displayId,
@@ -2807,6 +2841,17 @@ void EntitySpawner::applyCreatureInstanceAppearance(uint32_t instanceId, uint32_
     const bool humanoidAppearance = itDisplayData != displayDataMap_.end() &&
         itDisplayData->second.extraDisplayId != 0 &&
         humanoidExtraMap_.find(itDisplayData->second.extraDisplayId) != humanoidExtraMap_.end();
+    if (!humanoidAppearance) {
+        if (auto bareIt = bareRacialDisplayMap_.find(displayId); bareIt != bareRacialDisplayMap_.end()) {
+            const std::array<uint32_t, 19> noEquip{};
+            const std::array<uint8_t, 19> noInv{};
+            applyCharacterAppearanceToCreatureInstance(
+                instanceId, modelId,
+                bareIt->second.first, bareIt->second.second,
+                0u, 0u, 0u, noEquip, noInv);
+            return;
+        }
+    }
     charRenderer->setInstanceCreatureMaterialRules(instanceId, !humanoidAppearance);
 
     // Per-instance hair, skin and head-detail overrides. These run for every
@@ -3014,7 +3059,13 @@ void EntitySpawner::spawnOnlineCreature(uint64_t guid, uint32_t displayId, float
     }
     LOG_DEBUG("Creature instance ", instanceId, " for guid 0x", std::hex, guid, std::dec, " display ", displayId);
 
-    applyCreatureInstanceAppearance(instanceId, modelId, displayId);
+    if (const auto* mirror = gameHandler_ ? gameHandler_->getMirrorImageData(guid) : nullptr;
+        mirror && mirror->hasPlayerAppearance() &&
+        game::hasPlayerModel(static_cast<game::Race>(mirror->raceId))) {
+        applyCreatureMirrorImageOnInstance(instanceId, modelId, *mirror);
+    } else {
+        applyCreatureInstanceAppearance(instanceId, modelId, displayId);
+    }
 
     // Try attaching NPC held weapons; if update fields are not ready yet,
     // IN_GAME retry loop will attempt again shortly.

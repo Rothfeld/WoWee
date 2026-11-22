@@ -2037,6 +2037,73 @@ network::Packet ResurrectResponsePacket::build(uint64_t casterGuid, bool accept)
 }
 
 // ============================================================
+// Mirror Image (CMSG_GET_MIRRORIMAGE_DATA / SMSG_MIRRORIMAGE_DATA)
+// ============================================================
+
+void mirrorImageEquipmentToPlayerSlots(const std::array<uint32_t, 11>& mirrorEquip,
+                                       std::array<uint32_t, 19>& outDisplayIds,
+                                       std::array<uint8_t, 19>& outInvTypes) {
+    outDisplayIds.fill(0);
+    outInvTypes.fill(0);
+    // SMSG_MIRRORIMAGE_DATA sends 11 equipment display IDs in fixed order:
+    // HEAD(0), SHOULDERS(2), BODY(3), CHEST(4), WAIST(5), LEGS(6),
+    // FEET(7), WRISTS(8), HANDS(9), BACK(14), TABARD(18).
+    // Note: BACK is index 9 and TABARD is index 10 (opposite of CreatureDisplayInfoExtra.dbc).
+    static constexpr struct {
+        size_t playerSlot;
+        uint8_t invType;
+    } kMirrorSlotMap[11] = {
+        {0,  1},   // 0: HEAD      -> INVTYPE_HEAD
+        {2,  3},   // 1: SHOULDERS -> INVTYPE_SHOULDER
+        {3,  4},   // 2: BODY      -> INVTYPE_BODY (shirt)
+        {4,  5},   // 3: CHEST     -> INVTYPE_CHEST
+        {5,  6},   // 4: WAIST     -> INVTYPE_WAIST
+        {6,  7},   // 5: LEGS      -> INVTYPE_LEGS
+        {7,  8},   // 6: FEET      -> INVTYPE_FEET
+        {8,  9},   // 7: WRISTS    -> INVTYPE_WRIST
+        {9,  10},  // 8: HANDS     -> INVTYPE_HAND
+        {14, 16},  // 9: BACK      -> INVTYPE_CLOAK
+        {18, 19},  // 10: TABARD   -> INVTYPE_TABARD
+    };
+    for (size_t i = 0; i < 11; ++i) {
+        if (mirrorEquip[i] == 0) continue;
+        outDisplayIds[kMirrorSlotMap[i].playerSlot] = mirrorEquip[i];
+        outInvTypes[kMirrorSlotMap[i].playerSlot] = kMirrorSlotMap[i].invType;
+    }
+}
+
+network::Packet GetMirrorImageDataPacket::build(uint64_t guid) {
+    network::Packet packet(wireOpcode(Opcode::CMSG_GET_MIRRORIMAGE_DATA));
+    packet.writeUInt64(guid);
+    return packet;
+}
+
+bool MirrorImageDataParser::parse(network::Packet& packet, MirrorImageData& data, bool isWotlkFormat) {
+    const size_t minSize = isWotlkFormat ? 68u : 67u;
+    if (!packet.hasRemaining(minSize)) {
+        return false;
+    }
+    data = MirrorImageData{};
+    data.guid = packet.readUInt64();
+    data.displayId = packet.readUInt32();
+    data.raceId = packet.readUInt8();
+    data.gender = packet.readUInt8();
+    if (isWotlkFormat) {
+        data.classId = packet.readUInt8();
+    }
+    data.skin = packet.readUInt8();
+    data.face = packet.readUInt8();
+    data.hairStyle = packet.readUInt8();
+    data.hairColor = packet.readUInt8();
+    data.facialHair = packet.readUInt8();
+    data.guildId = packet.readUInt32();
+    for (size_t i = 0; i < data.equipDisplayIds.size(); ++i) {
+        data.equipDisplayIds[i] = packet.readUInt32();
+    }
+    return true;
+}
+
+// ============================================================
 // Taxi / Flight Paths
 // ============================================================
 

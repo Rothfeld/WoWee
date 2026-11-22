@@ -1813,6 +1813,14 @@ public:
     using CreatureDespawnCallback = std::function<void(uint64_t guid)>;
     void setCreatureDespawnCallback(CreatureDespawnCallback cb) { creatureDespawnCallback_ = std::move(cb); }
 
+    // Mirror image data callback (SMSG_MIRRORIMAGE_DATA for cloned creatures)
+    using MirrorImageDataCallback = std::function<void(uint64_t guid, const MirrorImageData& data)>;
+    void setMirrorImageDataCallback(MirrorImageDataCallback cb) { mirrorImageDataCallback_ = std::move(cb); }
+    [[nodiscard]] const MirrorImageData* getMirrorImageData(uint64_t guid) const {
+        auto it = mirrorImageData_.find(guid);
+        return it != mirrorImageData_.end() ? &it->second : nullptr;
+    }
+
     // Player spawn callback (online mode - triggered when a player enters view).
     // Players need appearance data so the renderer can build the right body/hair textures.
     using PlayerSpawnCallback = std::function<void(uint64_t guid,
@@ -4427,6 +4435,8 @@ public:
     auto& autoFollowCallbackRef() { return autoFollowCallback_; }
     auto& chatBubbleCallbackRef() { return chatBubbleCallback_; }
     auto& creatureDespawnCallbackRef() { return creatureDespawnCallback_; }
+    auto& mirrorImageDataCallbackRef() { return mirrorImageDataCallback_; }
+    auto& mirrorImageDataRef() { return mirrorImageData_; }
     auto& creatureMoveCallbackRef() { return creatureMoveCallback_; }
     auto& creatureSpawnCallbackRef() { return creatureSpawnCallback_; }
     auto& emoteAnimCallbackRef() { return emoteAnimCallback_; }
@@ -5185,6 +5195,8 @@ private:
     HearthstonePreloadCallback hearthstonePreloadCallback_;
     CreatureSpawnCallback creatureSpawnCallback_;
     CreatureDespawnCallback creatureDespawnCallback_;
+    MirrorImageDataCallback mirrorImageDataCallback_;
+    std::unordered_map<uint64_t, MirrorImageData> mirrorImageData_;
     PlayerSpawnCallback playerSpawnCallback_;
     PlayerDespawnCallback playerDespawnCallback_;
     PlayerEquipmentCallback playerEquipmentCallback_;

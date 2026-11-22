@@ -33,7 +33,7 @@ namespace wowee {
 namespace rendering { class Renderer; }
 namespace pipeline { class AssetManager; struct M2Model; struct WMOModel; }
 namespace audio { enum class VoiceType; }
-namespace game { class GameHandler; class Unit; class Entity; }
+namespace game { class GameHandler; class Unit; class Entity; struct MirrorImageData; }
 
 namespace core {
 
@@ -246,6 +246,9 @@ public:
     // only when this call consumed the caller's per-frame attachment budget.
     bool retryCreatureVirtualWeapons(uint64_t guid, uint32_t instanceId,
                                      uint8_t maxAttempts);
+
+    /// Apply cloned character appearance (SMSG_MIRRORIMAGE_DATA) to a spawned creature.
+    void applyCreatureMirrorImage(uint64_t guid, const game::MirrorImageData& data);
 
     // Mount
     void setMountDisplayId(uint32_t displayId) { pendingMountDisplayId_ = displayId; }
@@ -557,6 +560,15 @@ private:
     void applyCreatureDisplayTextures(uint32_t displayId, uint32_t modelId,
                                       const CreatureDisplayData& dispData);
 
+    void applyCharacterAppearanceToCreatureInstance(uint32_t instanceId, uint32_t modelId,
+                                                    uint8_t raceId, uint8_t sexId,
+                                                    uint32_t appearanceBytes, uint8_t facialHair,
+                                                    uint32_t guildId,
+                                                    const std::array<uint32_t, 19>& displayInfoIds,
+                                                    const std::array<uint8_t, 19>& inventoryTypes);
+    void applyCreatureMirrorImageOnInstance(uint32_t instanceId, uint32_t modelId,
+                                            const game::MirrorImageData& data);
+
     struct HumanoidDisplayExtra {
         uint8_t raceId = 0;
         uint8_t sexId = 0;
@@ -580,6 +592,7 @@ private:
     };
     std::optional<BloodTables> bloodTables_;
     std::unordered_map<uint32_t, HumanoidDisplayExtra> humanoidExtraMap_;  // extraDisplayId → humanoid data
+    std::unordered_map<uint32_t, std::pair<uint8_t, uint8_t>> bareRacialDisplayMap_; // displayId → {raceId, sexId} for ExtraDisplayInfoID==0 Character\* displays
     std::unordered_map<uint32_t, std::string> modelIdToPath_;   // modelId → M2 path (from CreatureModelData.dbc)
     std::unordered_map<uint32_t, float> modelIdToScale_;        // modelId → CreatureModelData.ModelScale
     std::unordered_map<uint32_t, float> modelIdToCollisionHeight_;

@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace wowee {
@@ -166,6 +167,14 @@ std::string getPlayerModelPath(const Character& character);
 /// is standing. Those have a creature model of their own, and it is better to
 /// go and load it.
 bool hasPlayerModel(Race race);
+
+/**
+ * Infer playable (raceId, sexId) from a Character\<Race>\<Male|Female>\*.m2 path.
+ * Returns true if the path names a playable race/gender character model.
+ */
+bool inferRaceSexFromCharacterModelPath(std::string_view m2Path,
+                                        uint8_t& outRaceId,
+                                        uint8_t& outSexId);
 
 } // namespace game
 } // namespace wowee

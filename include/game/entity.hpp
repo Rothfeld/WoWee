@@ -811,6 +811,11 @@ public:
     [[nodiscard]] bool isNewlySpawned() const { return newlySpawned_; }
     void setNewlySpawned(bool v) { newlySpawned_ = v; }
 
+    // True when UNIT_FIELD_FLAGS_2 has UNIT_FLAG2_MIRROR_IMAGE (0x10).
+    static constexpr uint32_t kUnitFlag2MirrorImage = 0x00000010u;
+    [[nodiscard]] bool isMirrorImage() const { return mirrorImage_; }
+    void setMirrorImage(bool v) { mirrorImage_ = v; }
+
 protected:
     std::string name;
     bool petNamed_ = false;
@@ -838,6 +843,7 @@ protected:
     uint32_t factionTemplate = 0;
     bool hostile = false;
     bool newlySpawned_ = false;
+    bool mirrorImage_ = false;
 };
 
 /**

@@ -3799,5 +3799,57 @@ public:
                                  uint32_t facialHairEntry, uint32_t skinColorEntry);
 };
 
+/**
+ * SMSG_MIRRORIMAGE_DATA payload (SPELL_AURA_MIRROR_IMAGE / UNIT_FLAG2_MIRROR_IMAGE).
+ *
+ * TBC 2.4.3 (67 bytes): guid(8) displayId(4) race(1) gender(1)
+ *   skin(1) face(1) hairStyle(1) hairColor(1) facialHair(1) guildId(4)
+ *   equipDisplayIds[11](44).
+ * WotLK 3.3.5a (68 bytes): inserts classId(1) after gender.
+ */
+struct MirrorImageData {
+    uint64_t guid = 0;
+    uint32_t displayId = 0;
+    uint8_t raceId = 0;
+    uint8_t gender = 0;
+    uint8_t classId = 0;
+    uint8_t skin = 0;
+    uint8_t face = 0;
+    uint8_t hairStyle = 0;
+    uint8_t hairColor = 0;
+    uint8_t facialHair = 0;
+    uint32_t guildId = 0;
+    // Wire order from CMaNGOS-TBC / AzerothCore:
+    // 0=HEAD, 1=SHOULDERS, 2=BODY(shirt), 3=CHEST, 4=WAIST, 5=LEGS,
+    // 6=FEET, 7=WRISTS, 8=HANDS, 9=BACK(cloak), 10=TABARD
+    std::array<uint32_t, 11> equipDisplayIds{};
+
+    [[nodiscard]] uint32_t packedAppearanceBytes() const {
+        return static_cast<uint32_t>(skin) |
+               (static_cast<uint32_t>(face) << 8) |
+               (static_cast<uint32_t>(hairStyle) << 16) |
+               (static_cast<uint32_t>(hairColor) << 24);
+    }
+
+    [[nodiscard]] bool hasPlayerAppearance() const { return raceId != 0; }
+};
+
+/** Translate the 11 SMSG_MIRRORIMAGE_DATA display IDs into 19-slot player arrays. */
+void mirrorImageEquipmentToPlayerSlots(const std::array<uint32_t, 11>& mirrorEquip,
+                                       std::array<uint32_t, 19>& outDisplayIds,
+                                       std::array<uint8_t, 19>& outInvTypes);
+
+/** CMSG_GET_MIRRORIMAGE_DATA: request appearance for a cloned creature. */
+class GetMirrorImageDataPacket {
+public:
+    static network::Packet build(uint64_t guid);
+};
+
+/** SMSG_MIRRORIMAGE_DATA parser (TBC 2.4.3 and WotLK 3.3.5a). */
+class MirrorImageDataParser {
+public:
+    static bool parse(network::Packet& packet, MirrorImageData& data, bool isWotlkFormat = false);
+};
+
 } // namespace game
 } // namespace wowee

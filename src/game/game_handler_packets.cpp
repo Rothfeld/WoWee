@@ -2815,36 +2815,52 @@ void GameHandler::registerRemainingOpcodes() {
     //   Followed by equipped item display IDs (11 × uint32) if casterGuid != 0
     // Purpose: tells client how to render the image (same appearance as caster).
     // We parse the GUIDs so units render correctly via their existing display IDs.
+    // SMSG_MIRRORIMAGE_DATA: full cloned character appearance for creatures with
+    // UNIT_FLAG2_MIRROR_IMAGE (e.g. Kil'jaeden's Sinister Reflections).
     dispatchTable_[Opcode::SMSG_MIRRORIMAGE_DATA] = [this](network::Packet& packet) {
-        // WotLK 3.3.5a format:
-        //   uint64 mirrorGuid - GUID of the mirror image unit
-        //   uint32 displayId  - display ID to render the image with
-        //   uint8  raceId     - race of caster
-        //   uint8  genderFlag - gender of caster
-        //   uint8  classId    - class of caster
-        //   uint64 casterGuid - GUID of the player who cast the spell
-        //   Followed by equipped item display IDs (11 × uint32) if casterGuid != 0
-        // Purpose: tells client how to render the image (same appearance as caster).
-        // We parse the GUIDs so units render correctly via their existing display IDs.
-        if (!packet.hasRemaining(8)) return;
-        uint64_t mirrorGuid = packet.readUInt64();
-        if (!packet.hasRemaining(4)) return;
-        uint32_t displayId  = packet.readUInt32();
-        if (!packet.hasRemaining(3)) return;
-        /*uint8_t raceId   =*/ packet.readUInt8();
-        /*uint8_t gender   =*/ packet.readUInt8();
-        /*uint8_t classId  =*/ packet.readUInt8();
-        // Apply display ID to the mirror image unit so it renders correctly
-        if (mirrorGuid != 0 && displayId != 0) {
-            auto entity = entityController_->getEntityManager().getEntity(mirrorGuid);
-            if (entity) {
-                auto unit = std::dynamic_pointer_cast<game::Unit>(entity);
-                if (unit && unit->getDisplayId() == 0)
-                    unit->setDisplayId(displayId);
+        const bool isWotlk = isActiveExpansion("wotlk");
+        MirrorImageData data;
+        if (!MirrorImageDataParser::parse(packet, data, isWotlk)) {
+            LOG_WARNING("SMSG_MIRRORIMAGE_DATA: truncated packet (remaining=",
+                        packet.getRemainingSize(), " isWotlk=", isWotlk, ")");
+            packet.skipAll();
+            return;
+        }
+        if (data.guid != 0) {
+            mirrorImageData_[data.guid] = data;
+            if (data.guildId != 0) {
+                (void)lookupGuildName(data.guildId);
+            }
+            if (data.displayId != 0) {
+                if (auto entity = entityController_->getEntityManager().getEntity(data.guid)) {
+                    if (auto unit = std::dynamic_pointer_cast<game::Unit>(entity)) {
+                        if (unit->getDisplayId() == 0) {
+                            unit->setDisplayId(data.displayId);
+                        }
+                    }
+                }
+            }
+            if (mirrorImageDataCallback_) {
+                mirrorImageDataCallback_(data.guid, data);
+            }
+            if (addonEventCallback_) {
+                auto uid = guidToUnitId(data.guid);
+                if (!uid.empty()) {
+                    fireAddonEvent("UNIT_MODEL_CHANGED", {uid});
+                    fireAddonEvent("UNIT_PORTRAIT_UPDATE", {uid});
+                }
             }
         }
-        LOG_DEBUG("SMSG_MIRRORIMAGE_DATA: mirrorGuid=0x", std::hex, mirrorGuid,
-                  " displayId=", std::dec, displayId);
+        LOG_DEBUG("SMSG_MIRRORIMAGE_DATA: guid=0x", std::hex, data.guid, std::dec,
+                  " displayId=", data.displayId,
+                  " race=", static_cast<int>(data.raceId),
+                  " gender=", static_cast<int>(data.gender),
+                  " skin=", static_cast<int>(data.skin),
+                  " face=", static_cast<int>(data.face),
+                  " hair=", static_cast<int>(data.hairStyle),
+                  "/", static_cast<int>(data.hairColor),
+                  " facial=", static_cast<int>(data.facialHair),
+                  " guild=", data.guildId);
         packet.skipAll();
     };
     // uint64 battlefieldGuid + uint32 zoneId + uint64 expireUnixTime (seconds)

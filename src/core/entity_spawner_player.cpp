@@ -1856,5 +1856,318 @@ void EntitySpawner::spawnOnlineGameObject(uint64_t guid, uint32_t entry, uint32_
              " displayId=", displayId, " at (", x, ", ", y, ", ", z, ")");
 }
 
+void EntitySpawner::applyCharacterAppearanceToCreatureInstance(
+        uint32_t instanceId, uint32_t modelId,
+        uint8_t raceId, uint8_t sexId,
+        uint32_t appearanceBytes, uint8_t facialHair,
+        uint32_t guildId,
+        const std::array<uint32_t, 19>& displayInfoIds,
+        const std::array<uint8_t, 19>& inventoryTypes) {
+    if (!renderer_ || !renderer_->getCharacterRenderer() || !assetManager_) return;
+    auto* charRenderer = renderer_->getCharacterRenderer();
+    const auto* modelData = charRenderer->getModelData(modelId);
+    if (!modelData) return;
+
+    charRenderer->setInstanceCreatureMaterialRules(instanceId, false);
+
+    const uint8_t skinId      = static_cast<uint8_t>(appearanceBytes & 0xFFu);
+    const uint8_t faceId      = static_cast<uint8_t>((appearanceBytes >> 8) & 0xFFu);
+    const uint8_t hairStyleId = static_cast<uint8_t>((appearanceBytes >> 16) & 0xFFu);
+    const uint8_t hairColorId = static_cast<uint8_t>((appearanceBytes >> 24) & 0xFFu);
+
+    std::string bodySkinPath;
+    std::string skinExtraPath;
+    std::string hairTexturePath;
+    std::vector<pipeline::SkinLayer> baseLayers;
+    std::vector<pipeline::SkinLayer> underwearPaths;
+
+    if (auto csDbc = assetManager_->loadDBC("CharSections.dbc"); csDbc && csDbc->isLoaded()) {
+        const auto* csL = pipeline::getActiveDBCLayout()
+            ? pipeline::getActiveDBCLayout()->getLayout("CharSections") : nullptr;
+        const auto csF = pipeline::detectCharSectionsFields(csDbc.get(), csL);
+        pipeline::CharacterAppearance who;
+        who.raceId = raceId;
+        who.sexId = sexId;
+        who.skinId = skinId;
+        who.faceId = faceId;
+        who.hairStyleId = hairStyleId;
+        who.hairColorId = hairColorId;
+        who.facialHairId = facialHair;
+
+        const auto sections = pipeline::resolveCharacterSections(
+            csDbc.get(), csF, who,
+            [](const std::string& path, void* ctx) {
+                return static_cast<pipeline::AssetManager*>(ctx)->fileExists(path);
+            },
+            assetManager_);
+        bodySkinPath = sections.bodySkin;
+        skinExtraPath = sections.skinExtra;
+        hairTexturePath = sections.hair;
+        underwearPaths = sections.underwear;
+        pipeline::appendFaceOverlayLayers(baseLayers, sections);
+        for (const auto& uw : underwearPaths) baseLayers.push_back(uw);
+    }
+
+    // --- Geosets ---
+    const uint16_t selectedHairScalp = selectHairScalpGeoset(hairGeosetMap_, raceId, sexId, hairStyleId);
+    auto itFacial = facialHairGeosetMap_.find(appearanceKey(raceId, sexId, facialHair));
+    std::unordered_set<uint16_t> geosets = bareGeosetsFor(
+        selectedHairScalp,
+        itFacial != facialHairGeosetMap_.end() ? &itFacial->second : nullptr,
+        raceId);
+
+    auto displayInfoDbc = assetManager_->loadDBC("ItemDisplayInfo.dbc");
+    const auto* idiL = pipeline::getActiveDBCLayout()
+        ? pipeline::getActiveDBCLayout()->getLayout("ItemDisplayInfo") : nullptr;
+
+    auto findDisplayIdByInvType = [&](std::initializer_list<uint8_t> types) -> uint32_t {
+        for (size_t s = 0; s < 19; ++s) {
+            if (displayInfoIds[s] == 0) continue;
+            for (uint8_t t : types) {
+                if (inventoryTypes[s] == t) return displayInfoIds[s];
+            }
+        }
+        return 0;
+    };
+    auto hasInvType = [&](std::initializer_list<uint8_t> types) -> bool {
+        return findDisplayIdByInvType(types) != 0;
+    };
+
+    std::vector<std::pair<int, std::string>> regionLayers;
+    if (displayInfoDbc && displayInfoDbc->isLoaded()) {
+        auto getGeosetGroup = [&](uint32_t did, uint32_t fieldIdx) -> uint32_t {
+            if (did == 0) return 0;
+            const int32_t recIdx = displayInfoDbc->findRecordById(did);
+            if (recIdx < 0) return 0;
+            return displayInfoDbc->getUInt32(static_cast<uint32_t>(recIdx), fieldIdx);
+        };
+
+        std::unordered_set<uint16_t> modelGeosets;
+        for (const auto& batch : modelData->batches) {
+            modelGeosets.insert(batch.submeshId);
+        }
+
+        const uint32_t gg1 = idiL ? (*idiL)["GeosetGroup1"] : 7u;
+        const uint32_t gg2 = gg1 + 1u;
+        const uint32_t gg3 = idiL ? (*idiL)["GeosetGroup3"] : 9u;
+
+        PlayerEquipmentGeosetInput equipInput;
+        {
+            uint32_t did = findDisplayIdByInvType({5, 20});
+            if (did == 0) did = findDisplayIdByInvType({4});
+            equipInput.chestGG1 = getGeosetGroup(did, gg1);
+            equipInput.chestGG2 = getGeosetGroup(did, gg2);
+            equipInput.chestGG3 = getGeosetGroup(did, gg3);
+        }
+        equipInput.wristsGG1 = getGeosetGroup(findDisplayIdByInvType({9}), gg1);
+        {
+            const uint32_t did = findDisplayIdByInvType({7});
+            equipInput.legsGG1 = getGeosetGroup(did, gg1);
+            equipInput.legsGG2 = getGeosetGroup(did, gg2);
+            equipInput.legsGG3 = getGeosetGroup(did, gg3);
+        }
+        equipInput.bootsGG1  = getGeosetGroup(findDisplayIdByInvType({8}), gg1);
+        equipInput.glovesGG1 = getGeosetGroup(findDisplayIdByInvType({10}), gg1);
+        equipInput.beltGG1   = getGeosetGroup(findDisplayIdByInvType({6}), gg1);
+        equipInput.hasCape   = hasInvType({16});
+        equipInput.capeGG1   = getGeosetGroup(findDisplayIdByInvType({16}), gg1);
+        equipInput.hasTabard = hasInvType({19});
+        equipInput.tabardGG1 = getGeosetGroup(findDisplayIdByInvType({19}), gg1);
+
+        applyPlayerEquipmentGeosets(geosets, modelGeosets, equipInput);
+        core::hideGeosetGroups(geosets, core::helmHiddenGeosetGroups(
+            *assetManager_, displayInfoIds[0], raceId, sexId));
+
+        // --- Cape texture (type 2) ---
+        if (equipInput.hasCape && displayInfoIds[14] != 0) {
+            const int32_t capeRecIdx = displayInfoDbc->findRecordById(displayInfoIds[14]);
+            if (capeRecIdx >= 0) {
+                const uint32_t leftTexField = idiL ? (*idiL)["LeftModelTexture"] : 3u;
+                const uint32_t rightTexField = leftTexField + 1u;
+                const std::string leftName = displayInfoDbc->getString(static_cast<uint32_t>(capeRecIdx), leftTexField);
+                const std::string rightName = displayInfoDbc->getString(static_cast<uint32_t>(capeRecIdx), rightTexField);
+                std::vector<std::string> capeNames;
+                auto addCapeName = [&](const std::string& n) {
+                    if (!n.empty() && std::find(capeNames.begin(), capeNames.end(), n) == capeNames.end())
+                        capeNames.push_back(n);
+                };
+                if (sexId == 1) { addCapeName(rightName); addCapeName(leftName); }
+                else            { addCapeName(leftName);  addCapeName(rightName); }
+                const rendering::VkTexture* whiteTex = charRenderer->loadTexture("");
+                rendering::VkTexture* capeTexture = nullptr;
+                for (const auto& capeName : capeNames) {
+                    for (const auto& candidate : pipeline::capeTextureCandidates(capeName, sexId == 1)) {
+                        rendering::VkTexture* tex = charRenderer->loadTexture(candidate);
+                        if (tex && tex != whiteTex) { capeTexture = tex; break; }
+                    }
+                    if (capeTexture) break;
+                }
+                if (capeTexture) {
+                    for (size_t ti = 0; ti < modelData->textures.size(); ++ti) {
+                        if (modelData->textures[ti].type == 2) {
+                            charRenderer->setTextureSlotOverride(instanceId, static_cast<uint16_t>(ti), capeTexture);
+                        }
+                    }
+                }
+            }
+        }
+
+        // --- Equipment region layers ---
+        uint32_t texRegionFields[8];
+        pipeline::getItemDisplayInfoTextureFields(*displayInfoDbc, idiL, texRegionFields);
+        const bool isFemale = (sexId == 1);
+        pipeline::GuildTabardEmblem guildTabard;
+        if (guildId != 0 && gameHandler_) {
+            (void)gameHandler_->lookupGuildName(guildId);
+            if (const auto* qd = gameHandler_->getGuildQueryData(guildId)) {
+                guildTabard.emblemStyle = qd->emblemStyle;
+                guildTabard.emblemColor = qd->emblemColor;
+                guildTabard.borderStyle = qd->borderStyle;
+                guildTabard.borderColor = qd->borderColor;
+                guildTabard.backgroundColor = qd->backgroundColor;
+            }
+        }
+        const bool legsHasSkirt = equipInput.legsGG3 > 0;
+        const std::array<int, 19> slotOrder = legsHasSkirt
+            ? std::array<int, 19>{0, 1, 2, 3, 7, 6, 4, 8, 9, 5, 10, 11, 12, 13, 14, 15, 16, 17, 18}
+            : std::array<int, 19>{0, 1, 2, 3, 6, 7, 4, 8, 9, 5, 10, 11, 12, 13, 14, 15, 16, 17, 18};
+        for (int s : slotOrder) {
+            const uint32_t did = displayInfoIds[s];
+            if (did == 0) continue;
+            const int32_t recIdx = displayInfoDbc->findRecordById(did);
+            if (recIdx < 0) continue;
+            bool appendedCustomTabard = false;
+            for (int region = 0; region < 8; ++region) {
+                const std::string texName = displayInfoDbc->getString(
+                    static_cast<uint32_t>(recIdx), texRegionFields[region]);
+                if (texName.empty()) continue;
+                if (s == 18 && guildTabard.isValid() && pipeline::isGuildTabardTextureName(texName)) {
+                    if (!appendedCustomTabard) {
+                        pipeline::appendGuildTabardRegionLayers(regionLayers, guildTabard);
+                        appendedCustomTabard = true;
+                    }
+                    continue;
+                }
+                const std::string fullPath = pipeline::resolveItemRegionTexture(
+                    *assetManager_, region, texName, isFemale);
+                if (!fullPath.empty()) regionLayers.emplace_back(region, fullPath);
+            }
+        }
+    } else {
+        geosets.insert(kGeosetNoCape);
+    }
+
+    charRenderer->setActiveGeosets(instanceId, geosets);
+
+    // --- Skin / Hair / SkinExtra texture overrides ---
+    const rendering::VkTexture* whiteTex = charRenderer->loadTexture("");
+    rendering::VkTexture* skinTex = nullptr;
+    if (!bodySkinPath.empty()) {
+        if (!regionLayers.empty()) {
+            skinTex = charRenderer->compositeWithRegions(bodySkinPath, baseLayers, regionLayers);
+        } else if (!baseLayers.empty()) {
+            std::vector<pipeline::SkinLayer> layers{{bodySkinPath, pipeline::SkinRegion::FullAtlas}};
+            for (const auto& bl : baseLayers) layers.push_back(bl);
+            skinTex = charRenderer->compositeTextures(layers);
+        } else {
+            skinTex = charRenderer->loadTexture(bodySkinPath);
+        }
+    }
+    rendering::VkTexture* hairTex = (!hairTexturePath.empty())
+        ? charRenderer->loadTexture(hairTexturePath) : nullptr;
+    rendering::VkTexture* skinExtraTex = nullptr;
+    {
+        pipeline::CharacterSectionTextures resolved;
+        resolved.bodySkin = bodySkinPath;
+        resolved.skinExtra = skinExtraPath;
+        resolved.underwear = underwearPaths;
+        const std::string extraPath = pipeline::resolveSkinExtraTexture(resolved);
+        if (!extraPath.empty()) skinExtraTex = charRenderer->loadTexture(extraPath);
+    }
+
+    for (size_t ti = 0; ti < modelData->textures.size(); ++ti) {
+        const uint32_t tt = modelData->textures[ti].type;
+        if (tt == 1 && skinTex && skinTex != whiteTex) {
+            charRenderer->setTextureSlotOverride(instanceId, static_cast<uint16_t>(ti), skinTex);
+        } else if (tt == 6 && hairTex && hairTex != whiteTex) {
+            charRenderer->setTextureSlotOverride(instanceId, static_cast<uint16_t>(ti), hairTex);
+        } else if (tt == 8 && skinExtraTex && skinExtraTex != whiteTex) {
+            charRenderer->setTextureSlotOverride(instanceId, static_cast<uint16_t>(ti), skinExtraTex);
+        }
+    }
+
+    // --- Helmet & Shoulder M2 attachments (leave weapon slots untouched) ---
+    charRenderer->detachWeapon(instanceId, kAttachHelm);
+    if (displayInfoIds[0] != 0) {
+        const core::HelmVisual helm = core::resolveHelmVisual(*assetManager_, displayInfoIds[0], raceId, sexId);
+        if (helm.valid()) {
+            pipeline::M2Model helmModel;
+            std::string helmPath;
+            if (!helm.racialModelPath.empty()) {
+                helmPath = helm.racialModelPath;
+                if (!loadWeaponM2(helmPath, helmModel)) helmModel = {};
+            }
+            if (!helmModel.isValid()) {
+                helmPath = helm.baseModelPath;
+                loadWeaponM2(helmPath, helmModel);
+            }
+            if (helmModel.isValid()) {
+                charRenderer->attachWeapon(instanceId, kAttachHelm, helmModel, nextWeaponModelId_++, helm.texturePath);
+            }
+        }
+    }
+
+    charRenderer->detachWeapon(instanceId, core::kAttachRightShoulder);
+    charRenderer->detachWeapon(instanceId, core::kAttachLeftShoulder);
+    if (displayInfoIds[2] != 0) {
+        const core::ShoulderVisual shoulders = core::resolveShoulderVisual(*assetManager_, displayInfoIds[2], raceId, sexId);
+        const auto attachSide = [&](const core::HelmVisual& side, uint32_t attachPoint) {
+            if (!side.valid()) return;
+            pipeline::M2Model model;
+            std::string path;
+            if (!side.racialModelPath.empty()) {
+                path = side.racialModelPath;
+                if (!loadWeaponM2(path, model)) model = {};
+            }
+            if (!model.isValid()) {
+                path = side.baseModelPath;
+                loadWeaponM2(path, model);
+            }
+            if (model.isValid()) {
+                charRenderer->attachWeapon(instanceId, attachPoint, model, nextWeaponModelId_++, side.texturePath);
+            }
+        };
+        attachSide(shoulders.left, core::kAttachLeftShoulder);
+        attachSide(shoulders.right, core::kAttachRightShoulder);
+    }
+}
+
+void EntitySpawner::applyCreatureMirrorImageOnInstance(uint32_t instanceId, uint32_t modelId,
+                                                       const game::MirrorImageData& data) {
+    if (!data.hasPlayerAppearance() ||
+        !game::hasPlayerModel(static_cast<game::Race>(data.raceId))) {
+        return;
+    }
+    std::array<uint32_t, 19> displayInfoIds{};
+    std::array<uint8_t, 19> inventoryTypes{};
+    game::mirrorImageEquipmentToPlayerSlots(data.equipDisplayIds, displayInfoIds, inventoryTypes);
+    applyCharacterAppearanceToCreatureInstance(
+        instanceId, modelId,
+        data.raceId, data.gender,
+        data.packedAppearanceBytes(), data.facialHair,
+        data.guildId,
+        displayInfoIds, inventoryTypes);
+}
+
+void EntitySpawner::applyCreatureMirrorImage(uint64_t guid, const game::MirrorImageData& data) {
+    auto instIt = creatureInstances_.find(guid);
+    auto modelIt = creatureModelIds_.find(guid);
+    if (instIt == creatureInstances_.end() || modelIt == creatureModelIds_.end()) {
+        // Creature not spawned yet; spawnOnlineCreature will apply cached data on spawn.
+        return;
+    }
+    applyCreatureMirrorImageOnInstance(instIt->second, modelIt->second, data);
+}
+
 } // namespace core
 } // namespace wowee

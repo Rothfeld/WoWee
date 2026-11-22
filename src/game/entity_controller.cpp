@@ -329,8 +329,11 @@ void EntityController::processOutOfRangeObjects(const std::vector<uint64_t>& gui
         // SMSG_UPDATE_OBJECT), not with SMSG_DESTROY_OBJECT.
         owner_.releaseTotem(guid);
         // Trigger despawn callbacks before removing entity
-        if (entity->getType() == ObjectType::UNIT && owner_.creatureDespawnCallbackRef()) {
-            owner_.creatureDespawnCallbackRef()(guid);
+        if (entity->getType() == ObjectType::UNIT) {
+            owner_.mirrorImageDataRef().erase(guid);
+            if (owner_.creatureDespawnCallbackRef()) {
+                owner_.creatureDespawnCallbackRef()(guid);
+            }
         } else if (entity->getType() == ObjectType::PLAYER) {
             mirrorGroupMemberState(*entity);
             if (owner_.playerDespawnCallbackRef()) owner_.playerDespawnCallbackRef()(guid);
@@ -929,6 +932,7 @@ EntityController::UnitFieldIndices EntityController::UnitFieldIndices::resolve()
         .level = fieldIndex(UF::UNIT_FIELD_LEVEL),
         .faction = fieldIndex(UF::UNIT_FIELD_FACTIONTEMPLATE),
         .flags = fieldIndex(UF::UNIT_FIELD_FLAGS),
+        .flags2 = fieldIndex(UF::UNIT_FIELD_FLAGS_2),
         .dynFlags = fieldIndex(UF::UNIT_DYNAMIC_FLAGS),
         .auraState = fieldIndex(UF::UNIT_FIELD_AURASTATE),
         .displayId = fieldIndex(UF::UNIT_FIELD_DISPLAYID),
@@ -1196,6 +1200,9 @@ bool EntityController::applyUnitFieldsOnCreate(const UpdateBlock& block,
             emitForUnit("UNIT_FLAGS");
             // Blizzard player/party PvP icons listen to UNIT_FACTION.
             emitForUnit("UNIT_FACTION");
+        }
+        else if (ufi.flags2 != 0xFFFF && key == ufi.flags2) {
+            unit->setMirrorImage((val & Unit::kUnitFlag2MirrorImage) != 0);
         }
         else if (ufi.auraState != 0xFFFF && key == ufi.auraState) {
             unit->setAuraState(val);
@@ -1561,6 +1568,12 @@ EntityController::UnitFieldUpdateResult EntityController::applyUnitFieldsOnUpdat
                     }
                 }
             }
+        } else if (ufi.flags2 != 0xFFFF && key == ufi.flags2) {
+            const bool wasMirror = unit->isMirrorImage();
+            const bool nowMirror = (val & Unit::kUnitFlag2MirrorImage) != 0;
+            if (!wasMirror && nowMirror) result.mirrorImageGained = true;
+            else if (wasMirror && !nowMirror) result.mirrorImageLost = true;
+            unit->setMirrorImage(nowMirror);
         } else if (key == ufi.level) {
             uint32_t oldLvl = unit->getLevel();
             unit->setLevel(val);
@@ -2544,6 +2557,9 @@ void EntityController::onCreateUnit(const UpdateBlock& block, std::shared_ptr<En
             owner_.unitMoveFlagsCallbackRef()(block.guid, moveFlags, ~0u);
         }
     }
+    if (unit->isMirrorImage()) {
+        requestMirrorImageData(block.guid);
+    }
 }
 
 void EntityController::onCreatePlayer(const UpdateBlock& block, std::shared_ptr<Entity>& entity) {
@@ -2914,12 +2930,25 @@ void EntityController::handleDisplayIdChange(const UpdateBlock& block,
     }
 }
 
+void EntityController::requestMirrorImageData(uint64_t guid) {
+    if (guid == 0 || !owner_.getSocket()) return;
+    auto pkt = GetMirrorImageDataPacket::build(guid);
+    owner_.getSocket()->send(pkt);
+    LOG_DEBUG("Sent CMSG_GET_MIRRORIMAGE_DATA for guid=0x", std::hex, guid, std::dec);
+}
+
 void EntityController::onValuesUpdateUnit(const UpdateBlock& block, std::shared_ptr<Entity>& entity) {
     auto unit = std::static_pointer_cast<Unit>(entity);
     UnitFieldIndices ufi = UnitFieldIndices::resolve();
     UnitFieldUpdateResult result = applyUnitFieldsOnUpdate(block, entity, unit, ufi);
     syncPreWotlkAurasFromFields(entity, &block);
+    if (result.mirrorImageLost) {
+        owner_.mirrorImageDataRef().erase(block.guid);
+    }
     handleDisplayIdChange(block, entity, unit, result);
+    if (result.mirrorImageGained || (unit->isMirrorImage() && result.displayIdChanged)) {
+        requestMirrorImageData(block.guid);
+    }
     queryPetNameIfNamed(block, *unit);
 
     // Lootability changes only interaction state. The server owns corpse
@@ -3503,8 +3532,11 @@ void EntityController::handleDestroyObject(network::Packet& packet) {
         // Mirror out-of-range handling: invoke render-layer despawn callbacks before entity removal.
         auto entity = entityManager.getEntity(data.guid);
         if (entity) {
-            if (entity->getType() == ObjectType::UNIT && owner_.creatureDespawnCallbackRef()) {
-                owner_.creatureDespawnCallbackRef()(data.guid);
+            if (entity->getType() == ObjectType::UNIT) {
+                owner_.mirrorImageDataRef().erase(data.guid);
+                if (owner_.creatureDespawnCallbackRef()) {
+                    owner_.creatureDespawnCallbackRef()(data.guid);
+                }
             } else if (entity->getType() == ObjectType::PLAYER) {
                 mirrorGroupMemberState(*entity);
                 // Player entities also need renderer cleanup on DESTROY_OBJECT, not just out-of-range.

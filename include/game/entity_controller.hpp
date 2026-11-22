@@ -237,7 +237,7 @@ private:
         /// which sits right after MAXHEALTH, read as a seventh current power,
         /// so every mana user's maximum mana stayed 0.
         [[nodiscard]] uint16_t powerCount() const { return static_cast<uint16_t>(maxHealth - powerBase); }
-        uint16_t level, faction, flags, dynFlags, auraState;
+        uint16_t level, faction, flags, flags2, dynFlags, auraState;
         uint16_t displayId, mountDisplayId, npcFlags, npcEmoteState;
         /// How wide a unit is and how far it reaches, for edge-to-edge range.
         uint16_t boundingRadius, combatReach;
@@ -281,6 +281,8 @@ private:
         bool maxHealthChanged = false;
         bool powerChanged = false;
         bool displayIdChanged = false;
+        bool mirrorImageGained = false;
+        bool mirrorImageLost = false;
         bool npcDeathNotified = false;
         bool npcRespawnNotified = false;
         uint32_t oldDisplayId = 0;
@@ -349,6 +351,7 @@ private:
                                const std::shared_ptr<Entity>& entity,
                                const std::shared_ptr<Unit>& unit,
                                const UnitFieldUpdateResult& result);
+    void requestMirrorImageData(uint64_t guid);
     void onValuesUpdateUnit(const UpdateBlock& block, std::shared_ptr<Entity>& entity);
     void onValuesUpdatePlayer(const UpdateBlock& block, std::shared_ptr<Entity>& entity);
     void onValuesUpdateItem(const UpdateBlock& block, std::shared_ptr<Entity>& entity);

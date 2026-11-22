@@ -93,6 +93,11 @@ void EntitySpawnCallbackHandler::setupCallbacks() {
         entitySpawner_.despawnCreatureFromServer(guid);
     });
 
+    // Mirror image appearance data (SMSG_MIRRORIMAGE_DATA)
+    gameHandler_.setMirrorImageDataCallback([this](uint64_t guid, const game::MirrorImageData& data) {
+        entitySpawner_.applyCreatureMirrorImage(guid, data);
+    });
+
     gameHandler_.setPlayerDespawnCallback([this](uint64_t guid) {
         entitySpawner_.despawnPlayer(guid);
     });

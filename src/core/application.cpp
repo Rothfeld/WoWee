@@ -5969,6 +5969,46 @@ void Application::render() {
                                 displayId = u->getDisplayId();
                             }
                         }
+                        // Mirror image creatures (UNIT_FLAG2_MIRROR_IMAGE + SMSG_MIRRORIMAGE_DATA,
+                        // e.g. Kil'jaeden's Sinister Reflections) carry the cloned player's
+                        // skin, face, hair, and equipment separately from CreatureDisplayInfo.
+                        if (face.guid != 0) {
+                            if (const auto* mirror = gameHandler->getMirrorImageData(face.guid);
+                                mirror && mirror->hasPlayerAppearance() &&
+                                game::hasPlayerModel(static_cast<game::Race>(mirror->raceId))) {
+                                std::array<uint32_t, 19> mDisplayIds{};
+                                std::array<uint8_t, 19> mInvTypes{};
+                                game::mirrorImageEquipmentToPlayerSlots(
+                                    mirror->equipDisplayIds, mDisplayIds, mInvTypes);
+                                std::vector<game::EquipmentItem> mirrorWorn;
+                                for (size_t slot = 0; slot < mDisplayIds.size(); ++slot) {
+                                    if (mDisplayIds[slot] == 0) continue;
+                                    mirrorWorn.push_back({.displayModel = mDisplayIds[slot],
+                                                          .inventoryType = mInvTypes[slot],
+                                                          .enchantment = 0u});
+                                }
+                                face.portrait->setBakedSkin("");
+                                if (mirror->guildId != 0) {
+                                    if (const auto* qd = gameHandler->getGuildQueryData(mirror->guildId)) {
+                                        pipeline::GuildTabardEmblem emblem;
+                                        emblem.emblemStyle = qd->emblemStyle;
+                                        emblem.emblemColor = qd->emblemColor;
+                                        emblem.borderStyle = qd->borderStyle;
+                                        emblem.borderColor = qd->borderColor;
+                                        emblem.backgroundColor = qd->backgroundColor;
+                                        face.portrait->setGuildTabard(emblem);
+                                    } else {
+                                        face.portrait->clearGuildTabard();
+                                    }
+                                } else {
+                                    face.portrait->clearGuildTabard();
+                                }
+                                built = face.portrait->updatePlayer(
+                                    mirror->raceId, mirror->gender,
+                                    mirror->packedAppearanceBytes(), mirror->facialHair,
+                                    mirrorWorn, assetManager.get(), renderer.get(), io.DeltaTime);
+                            }
+                        }
                         // A humanoid NPC - a guard, a questgiver, an innkeeper -
                         // is drawn the way a character is, from a race and the
                         // same skin, face and hair choices a player has.
@@ -5977,7 +6017,7 @@ void Application::render() {
                         // nothing on it. Tried first for that reason.
                         uint8_t nRace = 0, nSex = 0, nFacial = 0;
                         uint32_t nBytes = 0;
-                        if (displayId != 0 && entitySpawner_ &&
+                        if (!built && displayId != 0 && entitySpawner_ &&
                             entitySpawner_->getHumanoidAppearance(displayId, nRace, nSex,
                                                                   nBytes, nFacial)) {
                             // Dressed, from the same row. A questgiver's helm

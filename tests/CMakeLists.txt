@@ -3346,6 +3346,10 @@ add_test(NAME corpse_aura_kit COMMAND test_corpse_aura_kit)
 set_tests_properties(corpse_aura_kit PROPERTIES SKIP_RETURN_CODE 4)
 register_test_target(test_corpse_aura_kit)
 
+# Mirror image wire protocol & bare racial Character\* fallback tests
+wowee_add_packet_test(test_mirror_image
+    SOURCES ${CMAKE_SOURCE_DIR}/src/game/character.cpp)
+
 get_property(ALL_TEST_TARGETS GLOBAL PROPERTY WOWEE_ALL_TEST_TARGETS)
 list(LENGTH ALL_TEST_TARGETS _wowee_test_target_count)
 message(STATUS "Test targets registered: ${_wowee_test_target_count}")

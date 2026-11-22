@@ -160,6 +160,53 @@ bool hasPlayerModel(Race race) {
     }
 }
 
+bool inferRaceSexFromCharacterModelPath(std::string_view m2Path,
+                                        uint8_t& outRaceId,
+                                        uint8_t& outSexId) {
+    // Normalize slashes and lowercase for matching "character\\<race>\\<male|female>\\..."
+    std::string lower;
+    lower.reserve(m2Path.size());
+    for (char c : m2Path) {
+        if (c == '/') lower.push_back('\\');
+        else if (c >= 'A' && c <= 'Z') lower.push_back(static_cast<char>(c - 'A' + 'a'));
+        else lower.push_back(c);
+    }
+    constexpr std::string_view kPrefix = "character\\";
+    if (lower.rfind(kPrefix, 0) != 0) return false;
+
+    const size_t raceStart = kPrefix.size();
+    const size_t raceEnd = lower.find('\\', raceStart);
+    if (raceEnd == std::string::npos) return false;
+    const std::string_view raceToken(lower.data() + raceStart, raceEnd - raceStart);
+
+    const size_t sexStart = raceEnd + 1;
+    const size_t sexEnd = lower.find('\\', sexStart);
+    if (sexEnd == std::string::npos) return false;
+    const std::string_view sexToken(lower.data() + sexStart, sexEnd - sexStart);
+
+    uint8_t sexId = 0;
+    if (sexToken == "male") sexId = 0;
+    else if (sexToken == "female") sexId = 1;
+    else return false;
+
+    Race race = Race::HUMAN;
+    if (raceToken == "human") race = Race::HUMAN;
+    else if (raceToken == "orc") race = Race::ORC;
+    else if (raceToken == "dwarf") race = Race::DWARF;
+    else if (raceToken == "nightelf") race = Race::NIGHT_ELF;
+    else if (raceToken == "scourge") race = Race::UNDEAD;
+    else if (raceToken == "tauren") race = Race::TAUREN;
+    else if (raceToken == "gnome") race = Race::GNOME;
+    else if (raceToken == "troll") race = Race::TROLL;
+    else if (raceToken == "bloodelf") race = Race::BLOOD_ELF;
+    else if (raceToken == "draenei") race = Race::DRAENEI;
+    else return false;
+
+    outRaceId = static_cast<uint8_t>(race);
+    outSexId = sexId;
+    return true;
+}
+
 std::string getPlayerModelPath(const Character& character) {
     return getPlayerModelPath(character.race, character.gender, character.useFemaleModel);
 }

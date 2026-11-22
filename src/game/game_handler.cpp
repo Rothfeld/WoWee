@@ -238,6 +238,7 @@ void GameHandler::clearWorld() {
             gameObjectDespawnCallback_(guid);
     }
     otherPlayerVisibleItemEntries_.clear();
+    mirrorImageData_.clear();
     otherPlayerVisibleEnchants_.clear();
     otherPlayerVisibleDirty_.clear();
     otherPlayerMoveTimeMs_.clear();
