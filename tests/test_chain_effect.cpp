@@ -17,6 +17,7 @@ using wowee::rendering::chainComboStrands;
 using wowee::rendering::chainEndTaper;
 using wowee::rendering::chainEndTexV;
 using wowee::rendering::chainNoiseRadius;
+using wowee::rendering::chainNoiseRedrawsPerFrame;
 using wowee::rendering::chainNoiseStep;
 using wowee::rendering::chainPulse;
 using wowee::rendering::chainSegmentCount;
@@ -159,6 +160,16 @@ TEST_CASE("Noise keeps JointSmoothness of its offset each frame", "[chain]") {
 TEST_CASE("Noise strays by NoiseScale of the beam length", "[chain]") {
     CHECK(chainNoiseRadius(0.01f, 28.0f) == Catch::Approx(0.28f));
     CHECK(chainNoiseRadius(0.0f, 28.0f) == 0.0f);
+}
+
+TEST_CASE("Per-frame noise smoothing requires Flags 0x4; Flags 0x8 Shahraz black strands hold full jagged noise", "[chain]") {
+    // Chain Lightning (1, Flags 0x4), Blue Beam (4, Flags 0x4), Drain Life (8, Flags 0x44): redraw per frame.
+    CHECK(chainNoiseRedrawsPerFrame(0x4u));
+    CHECK(chainNoiseRedrawsPerFrame(0x44u));
+    CHECK(chainNoiseRedrawsPerFrame(0x6cu));
+    // Mother Shahraz black strands (173/176/177/179, Flags 0x8): hold full-amplitude jagged noise.
+    CHECK_FALSE(chainNoiseRedrawsPerFrame(0x8u));
+    CHECK_FALSE(chainNoiseRedrawsPerFrame(0x0u));
 }
 
 TEST_CASE("Every third joint is minor, every twelfth major (Akil'zon's Electrical Storm 279)", "[chain]") {

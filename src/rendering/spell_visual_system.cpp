@@ -1214,25 +1214,34 @@ void SpellVisualSystem::appendBeamStrip(std::vector<M2Renderer::ChainStrip>& str
         };
         const bool hasJointInterval = effect.minDurBetweenJoints > 0.0f || effect.maxDurBetweenJoints > 0.0f;
         const bool redraw = hasJointInterval && beamClock_ >= strand.nextJoints;
+        const bool animateNoise = hasJointInterval || chainNoiseRedrawsPerFrame(effect.flags);
         // Noise (chainNoiseStep): a new beam starts at a full random draw;
-        // then every frame each vertex keeps JointSmoothness of its offset
-        // and moves the rest toward a random offset drawn anew every frame,
-        // or every [Min,Max]DurationBetweenJointJumps when that is set.
+        // rows with Flags 0x4 (or a joint-jump interval) ease each vertex
+        // toward fresh random offsets by JointSmoothness. Rows without Flags 0x4
+        // and without a jump interval (e.g. Mother Shahraz's black beam strands
+        // 173/176/177/179, Flags 0x8, NoiseScale 0.045) hold their full jagged
+        // initial noise offsets instead of collapsing toward zero.
         if (strand.noise.empty()) {
             drawNoise(strand.noise);
-            drawNoise(strand.noiseTarget);
+            if (animateNoise) {
+                drawNoise(strand.noiseTarget);
+            } else {
+                strand.noiseTarget = strand.noise;
+            }
             strand.nextJoints = beamClock_ + nextJointInterval();
         } else {
             if (strand.noise.size() != static_cast<size_t>(segments + 1)) {
                 strand.noise = chainResample(strand.noise, segments + 1);
                 strand.noiseTarget = chainResample(strand.noiseTarget, segments + 1);
             }
-            if (!hasJointInterval || redraw) {
-                drawNoise(strand.noiseTarget);
-                strand.nextJoints = beamClock_ + nextJointInterval();
+            if (animateNoise) {
+                if (!hasJointInterval || redraw) {
+                    drawNoise(strand.noiseTarget);
+                    strand.nextJoints = beamClock_ + nextJointInterval();
+                }
+                for (size_t i = 0; i < strand.noise.size(); ++i)
+                    strand.noise[i] = chainNoiseStep(strand.noise[i], strand.noiseTarget[i], effect.jointSmoothness);
             }
-            for (size_t i = 0; i < strand.noise.size(); ++i)
-                strand.noise[i] = chainNoiseStep(strand.noise[i], strand.noiseTarget[i], effect.jointSmoothness);
         }
         // Joints: JointCount points evenly between the ends, each straying
         // up to chainJointRadius yards; the beam runs straight from joint to

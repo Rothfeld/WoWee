@@ -148,6 +148,20 @@ T chainNoiseStep(const T& offset, const T& drawn, float smoothness) {
     return offset * smoothness + drawn * (1.0f - smoothness);
 }
 
+/// Whether a chain effect without a joint-jump interval redraws vertex noise
+/// toward fresh zero-mean targets every frame (damping steady-state RMS to
+/// sqrt((1-s)/(1+s)) = 0.38x at smoothness 0.75).
+/// Build 8606:
+/// - Rows with Flags 0x4 (Chain Lightning 1, Blue Beam 4, Drain Life 8) redraw
+///   and smooth per frame, settling from initial jaggedness toward the line.
+/// - Rows without Flags 0x4 and without a jump interval (Mother Shahraz's
+///   Sinful/Sinister/Vile/Wicked Beam black strands 173/176/177/179, Flags 0x8,
+///   NoiseScale 0.045, JointSmoothness 0.7524) hold their full-amplitude jagged
+///   noise offsets across the beam lifetime instead of collapsing to 0.38x.
+inline bool chainNoiseRedrawsPerFrame(uint32_t flags) {
+    return (flags & 0x4u) != 0;
+}
+
 /// How far the beam's interior vertices stray from the straight line:
 /// NoiseScale of the beam's length. Native ManaBeam (0.01) at 28 yd kinks by
 /// about 0.15 yd on screen; Sunshatter's bolt (0.019) at 24 yd by about 0.5 yd.
