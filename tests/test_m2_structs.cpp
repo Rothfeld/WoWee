@@ -490,3 +490,47 @@ TEST_CASE("inherited billboard rotation preserves orbit and faces camera", "[m2]
         }
     }
 }
+
+TEST_CASE("indoor exterior-hiding keeps externally posed character emitters and server visuals",
+          "[m2][culling][emitters]") {
+    using wowee::rendering::M2Instance;
+    using wowee::rendering::M2ModelGPU;
+    using wowee::rendering::M2Renderer;
+
+    M2ModelGPU creatureEmitters;
+    creatureEmitters.isSpellEffect = false;
+
+    // Al'ar / Phoenix.m2 companion: externally posed character emitter inside an
+    // indoor WMO (The Phoenix Hall) has wmoRoomInstance == 0 and isSpellEffect == false.
+    M2Instance characterCompanion;
+    characterCompanion.externalPose = true;
+    characterCompanion.cachedModel = &creatureEmitters;
+    CHECK_FALSE(M2Renderer::isExteriorCulled(false, characterCompanion));
+    CHECK_FALSE(M2Renderer::isExteriorCulled(true, characterCompanion));
+
+    // Server spell visuals and game objects also survive indoor exterior culling.
+    M2Instance spellVisual;
+    spellVisual.isSpellVisual = true;
+    spellVisual.cachedModel = &creatureEmitters;
+    CHECK_FALSE(M2Renderer::isExteriorCulled(true, spellVisual));
+
+    M2Instance gameObject;
+    gameObject.isGameObject = true;
+    gameObject.cachedModel = &creatureEmitters;
+    CHECK_FALSE(M2Renderer::isExteriorCulled(true, gameObject));
+
+    // Interior WMO doodads stay visible; exterior ADT doodads and ground detail stay culled.
+    M2Instance interiorDoodad;
+    interiorDoodad.wmoRoomInstance = 42;
+    interiorDoodad.cachedModel = &creatureEmitters;
+    CHECK_FALSE(M2Renderer::isExteriorCulled(true, interiorDoodad));
+
+    M2Instance exteriorDoodad;
+    exteriorDoodad.cachedModel = &creatureEmitters;
+    CHECK_FALSE(M2Renderer::isExteriorCulled(false, exteriorDoodad));
+    CHECK(M2Renderer::isExteriorCulled(true, exteriorDoodad));
+
+    M2Instance groundDetail;
+    groundDetail.cachedIsGroundDetail = true;
+    CHECK(M2Renderer::isExteriorCulled(true, groundDetail));
+}

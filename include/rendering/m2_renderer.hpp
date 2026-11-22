@@ -918,14 +918,17 @@ public:
     /// When the camera is inside an indoor WMO room with no visible portal path
     /// to an exterior group, hide ADT terrain doodads, ground clutter, and
     /// exterior WMO doodads while keeping interior WMO doodads, game objects,
-    /// and spell effects.
+    /// spell effects, and externally posed character/creature/weapon emitters.
     void setExteriorHidden(bool hidden) { exteriorHidden_ = hidden; }
-    [[nodiscard]] bool exteriorCulled(const M2Instance& instance) const {
-        if (!exteriorHidden_) return false;
+    [[nodiscard]] static bool isExteriorCulled(bool exteriorHidden, const M2Instance& instance) noexcept {
+        if (!exteriorHidden) return false;
         if (instance.cachedIsGroundDetail) return true;
         if (instance.cachedModel && instance.cachedModel->isSpellEffect) return false;
         if (instance.wmoRoomInstance != 0) return false;
-        return !instance.isGameObject;
+        return !instance.serverVisibility();
+    }
+    [[nodiscard]] bool exteriorCulled(const M2Instance& instance) const {
+        return isExteriorCulled(exteriorHidden_, instance);
     }
     /// A WMO room doodad whose room is not drawn this frame: not its mesh,
     /// particles or ribbons (Karazhan's upper-floor braziers showed their
