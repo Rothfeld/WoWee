@@ -689,6 +689,9 @@ public:
     /// the moment it opens, not to the moment it is first seen.
     void setInstanceAnimationHeld(uint32_t instanceId, uint32_t animationId,
                                   bool skipToEnd);
+    /// Seek the instance's active animation to a normalized progress [0.0, 1.0]
+    /// (driven by server GAMEOBJECT_ANIMPROGRESS 0..255).
+    void setInstanceAnimProgress(uint32_t instanceId, float normalizedProgress);
     /// Loop stateId, after one play of transitionId when the model has it.
     /// A game object's Closed (147) after Close (146), Opened (149) after
     /// Open (148).

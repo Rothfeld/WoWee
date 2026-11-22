@@ -185,6 +185,9 @@ void EntitySpawnCallbackHandler::setupCallbacks() {
     gameHandler_.setGameObjectStateCallback([this](uint64_t guid, uint8_t goState) {
         entitySpawner_.applyGameObjectState(guid, goState);
     });
+    gameHandler_.setGameObjectAnimProgressCallback([this](uint64_t guid, uint8_t animProgress) {
+        entitySpawner_.applyGameObjectAnimProgress(guid, animProgress);
+    });
 
     // Creature move callback (online mode) - update creature positions
     gameHandler_.setCreatureMoveCallback([this](uint64_t guid, float, float, float, uint32_t durationMs) {

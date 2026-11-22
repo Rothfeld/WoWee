@@ -1882,6 +1882,9 @@ public:
     using GameObjectStateCallback = std::function<void(uint64_t guid, uint8_t goState)>;
     void setGameObjectStateCallback(GameObjectStateCallback cb) { gameObjectStateCallback_ = std::move(cb); }
 
+    using GameObjectAnimProgressCallback = std::function<void(uint64_t guid, uint8_t animProgress)>;
+    void setGameObjectAnimProgressCallback(GameObjectAnimProgressCallback cb) { gameObjectAnimProgressCallback_ = std::move(cb); }
+
     // Sprint aura callback - fired when sprint-type aura active state changes on player
     using SprintAuraCallback = std::function<void(bool active)>;
     void setSprintAuraCallback(SprintAuraCallback cb) { sprintAuraCallback_ = std::move(cb); }
@@ -3102,6 +3105,10 @@ public:
     // Title system - earned title bits and the currently displayed title
     const std::unordered_set<uint32_t>& getKnownTitleBits() const { return knownTitleBits_; }
     int32_t getChosenTitleBit() const { return chosenTitleBit_; }
+    uint16_t getPlayerDrunkValue() const { return playerDrunkValue_; }
+    uint8_t getPlayerDrunkState() const { return playerDrunkState_; }
+    uint8_t getPlayerArenaFaction() const { return playerArenaFaction_; }
+    void applyIntoxication(float amount);
     /// One past the highest title bit CharTitles.dbc names: the range
     /// GetNumTitles reports (41 in 2.4.3, whose last bit is Vengeful
     /// Gladiator's 40).
@@ -4187,6 +4194,10 @@ public:
 
     // ── Character & Appearance ───────────────────────────────────────
     auto& chosenTitleBitRef() { return chosenTitleBit_; }
+    auto& knownTitleBitsRef() { return knownTitleBits_; }
+    auto& playerDrunkValueRef() { return playerDrunkValue_; }
+    auto& playerDrunkStateRef() { return playerDrunkState_; }
+    auto& playerArenaFactionRef() { return playerArenaFaction_; }
     auto& cloakVisibleRef() { return cloakVisible_; }
     auto& helmVisibleRef() { return helmVisible_; }
     auto& currentMountDisplayIdRef() { return currentMountDisplayId_; }
@@ -4456,6 +4467,7 @@ public:
     auto& gameObjectMoveCallbackRef() { return gameObjectMoveCallback_; }
     auto& gameObjectSpawnCallbackRef() { return gameObjectSpawnCallback_; }
     auto& gameObjectStateCallbackRef() { return gameObjectStateCallback_; }
+    auto& gameObjectAnimProgressCallbackRef() { return gameObjectAnimProgressCallback_; }
     auto& hearthstonePreloadCallbackRef() { return hearthstonePreloadCallback_; }
     auto& hitReactionCallbackRef() { return hitReactionCallback_; }
     auto& knockBackCallbackRef() { return knockBackCallback_; }
@@ -5232,6 +5244,7 @@ private:
     GameObjectCustomAnimCallback gameObjectCustomAnimCallback_;
     GameObjectSpawnAnimCallback gameObjectSpawnAnimCallback_;
     GameObjectStateCallback gameObjectStateCallback_;
+    GameObjectAnimProgressCallback gameObjectAnimProgressCallback_;
     SprintAuraCallback sprintAuraCallback_;
     VehicleStateCallback vehicleStateCallback_;
 
@@ -5659,6 +5672,9 @@ private:
     /// PLAYER_CHOSEN_TITLE: 0 is no title, and an object that wears none
     /// never sends the field at all.
     int32_t chosenTitleBit_ = 0;
+    uint16_t playerDrunkValue_ = 0;
+    uint8_t playerDrunkState_ = 0;
+    uint8_t playerArenaFaction_ = 0;
 
     // Achievement caches (lazy-loaded from Achievement.dbc on first earned event)
     std::unordered_map<uint32_t, std::string> achievementNameCache_;

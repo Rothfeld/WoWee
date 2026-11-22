@@ -231,6 +231,18 @@ enum class UF : uint16_t {
 
     // TBC carries GO state in a standalone word, unlike Wrath's BYTES_1.
     GAMEOBJECT_STATE,
+    /// Server-authoritative GameObject animation progress (0..255).
+    GAMEOBJECT_ANIMPROGRESS,
+    /// Spell cast-speed multiplier float (< 1.0 faster, > 1.0 slower).
+    UNIT_MOD_CAST_SPEED,
+    /// Per-school flat power cost modifiers (7 int32 slots, Physical..Arcane).
+    UNIT_FIELD_POWER_COST_MODIFIER,
+    /// Per-school fractional power cost multipliers (7 float slots, additive to 1.0f).
+    UNIT_FIELD_POWER_COST_MULTIPLIER,
+    /// Packed player gender (bit 0), drunk level (bits 1..15), and arena faction (byte 3).
+    PLAYER_BYTES_3,
+    /// 64-bit bitmask of known title bits (2 uint32 slots).
+    PLAYER__FIELD_KNOWN_TITLES,
 
     // DynamicObject fields: the spell whose persistent area this is
     // (Flamestrike, Blizzard, Consecration), its type/radius, and where it lies.

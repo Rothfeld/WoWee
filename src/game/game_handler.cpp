@@ -3,6 +3,7 @@
 #include "game/reputation_standing.hpp"
 #include "game/spell_classification.hpp"
 
+#include <bit>
 #include <cassert>
 #include <set>
 
@@ -24,6 +25,7 @@
 #include "game/transport_manager.hpp"
 #include "game/opcodes.hpp"
 #include "game/update_field_table.hpp"
+#include "game/update_field_helpers.hpp"
 #include "game/game_object_interaction.hpp"
 #include "game/expansion_profile.hpp"
 #include "rendering/renderer.hpp"
@@ -3633,8 +3635,8 @@ std::pair<int32_t, int32_t> GameHandler::spellModifiersFor(uint32_t spellId, Spe
 
 GameHandler::SpellDataInfo GameHandler::getSpellData(uint32_t spellId) const {
     SpellDataInfo info = spellDataResolver_ ? spellDataResolver_(spellId) : SpellDataInfo{};
+    auto player = std::dynamic_pointer_cast<Unit>(getEntityManager().getEntity(playerGuid));
     if (info.manaCostPct != 0) {
-        auto player = std::dynamic_pointer_cast<Unit>(getEntityManager().getEntity(playerGuid));
         if (!player) return info;
         constexpr uint8_t kPowerMana = 0;
         uint32_t pool = 0;
@@ -3647,14 +3649,33 @@ GameHandler::SpellDataInfo GameHandler::getSpellData(uint32_t spellId) const {
         }
         info.manaCost += spellclass::percentPowerCost(pool, info.manaCostPct);
     }
-    // The player's cost modifiers (talents, set bonuses: Assassination
-    // Armor's 4-piece makes Eviscerate 35 -> 25 Energy on the original's
-    // tooltip).
+    // The player's cost modifiers (per-school unit fields + SpellModOp::Cost:
+    // talents, set bonuses, Clearcasting/Inner Focus).
     if (info.manaCost > 0) {
+        int32_t flatSchoolMod = 0;
+        float schoolMult = 0.0f;
+        if (player) {
+            const uint32_t schoolIdx = firstSchoolIndexFromMask(getSpellSchoolMask(spellId));
+            const uint16_t costModBase = fieldIndex(UF::UNIT_FIELD_POWER_COST_MODIFIER);
+            if (costModBase != 0xFFFF) {
+                flatSchoolMod = static_cast<int32_t>(player->getField(static_cast<uint16_t>(costModBase + schoolIdx)));
+            }
+            const uint16_t costMultBase = fieldIndex(UF::UNIT_FIELD_POWER_COST_MULTIPLIER);
+            if (costMultBase != 0xFFFF) {
+                schoolMult = std::bit_cast<float>(player->getField(static_cast<uint16_t>(costMultBase + schoolIdx)));
+            }
+        }
         const auto [flat, pct] = spellModifiersFor(spellId, SpellModOp::Cost);
-        if (flat != 0 || pct != 0)
-            info.manaCost = static_cast<uint32_t>(
-                applySpellMod(static_cast<int32_t>(info.manaCost), flat, pct));
+        info.manaCost = applyUnitPowerCostModifiers(info.manaCost, flatSchoolMod, flat, pct, schoolMult);
+    }
+    // Server-authoritative cast speed multiplier (Bloodlust, haste ratings,
+    // Curse of Tongues, etc.).
+    if (info.castTimeMs > 0 && player) {
+        const uint16_t castSpeedIdx = fieldIndex(UF::UNIT_MOD_CAST_SPEED);
+        if (castSpeedIdx != 0xFFFF) {
+            const float modCastSpeed = std::bit_cast<float>(player->getField(castSpeedIdx));
+            info.castTimeMs = applyUnitModCastSpeed(info.castTimeMs, modCastSpeed);
+        }
     }
     return info;
 }

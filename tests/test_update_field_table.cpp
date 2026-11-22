@@ -1,6 +1,7 @@
 #include <catch_amalgamated.hpp>
 
 #include "game/update_field_table.hpp"
+#include "game/update_field_helpers.hpp"
 
 #include <filesystem>
 #include <string>
@@ -82,7 +83,89 @@ TEST_CASE("TBC 8606 character fields match the server wire layout", "[updatefiel
     // GameObject rotation & facing fields (CMaNGOS TBC UpdateFields.h: OBJECT_END = 6).
     REQUIRE(table.index(UF::GAMEOBJECT_ROTATION) == 10);
     REQUIRE(table.index(UF::GAMEOBJECT_FACING) == 18);
+    REQUIRE(table.index(UF::GAMEOBJECT_ANIMPROGRESS) == 24);
     REQUIRE_FALSE(table.hasField(UF::GAMEOBJECT_PARENTROTATION));
+
+    // H10 TBC update fields (CMaNGOS TBC UpdateFields.h: OBJECT_END = 6, UNIT_END = 234).
+    REQUIRE(table.index(UF::UNIT_MOD_CAST_SPEED) == 6 + 0xA0);
+    REQUIRE(table.index(UF::UNIT_FIELD_POWER_COST_MODIFIER) == 6 + 0xD4);
+    REQUIRE(table.index(UF::UNIT_FIELD_POWER_COST_MULTIPLIER) == 6 + 0xDB);
+    REQUIRE(table.index(UF::PLAYER_BYTES_3) == 234 + 0x07);
+    REQUIRE(table.index(UF::PLAYER__FIELD_KNOWN_TITLES) == 234 + 0x2B2);
+}
+
+TEST_CASE("H10 update field helpers match TBC server semantics", "[updatefields][h10]") {
+    using namespace wowee::game;
+
+    // 1. UNIT_MOD_CAST_SPEED
+    CHECK(applyUnitModCastSpeed(2000, 1.0f) == 2000u);
+    CHECK(applyUnitModCastSpeed(2000, 0.76923077f) == 1538u);  // Bloodlust (+30% haste)
+    CHECK(applyUnitModCastSpeed(2500, 1.6f) == 4000u);         // Curse of Tongues (+60% cast time)
+    CHECK(applyUnitModCastSpeed(0, 1.6f) == 0u);               // Instant stays instant
+    CHECK(applyUnitModCastSpeed(1500, 0.0f) == 1500u);         // Unset/zero field ignored
+    CHECK(applyUnitModCastSpeed(1500, -1.0f) == 1500u);        // Invalid negative ignored
+
+    // 2. UNIT_FIELD_POWER_COST_MODIFIER & UNIT_FIELD_POWER_COST_MULTIPLIER
+    CHECK(firstSchoolIndexFromMask(0x00u) == 0u);
+    CHECK(firstSchoolIndexFromMask(0x01u) == 0u);  // Physical
+    CHECK(firstSchoolIndexFromMask(0x02u) == 1u);  // Holy
+    CHECK(firstSchoolIndexFromMask(0x04u) == 2u);  // Fire
+    CHECK(firstSchoolIndexFromMask(0x08u) == 3u);  // Nature
+    CHECK(firstSchoolIndexFromMask(0x10u) == 4u);  // Frost
+    CHECK(firstSchoolIndexFromMask(0x20u) == 5u);  // Shadow
+    CHECK(firstSchoolIndexFromMask(0x40u) == 6u);  // Arcane
+    CHECK(firstSchoolIndexFromMask(0x14u) == 2u);  // Frostfire -> lowest bit Fire (2)
+
+    CHECK(applyUnitPowerCostModifiers(500, 0, 0, 0, 0.0f) == 500u);
+    CHECK(applyUnitPowerCostModifiers(500, -50, 0, 0, 0.0f) == 450u);
+    CHECK(applyUnitPowerCostModifiers(500, 0, 0, 0, -1.0f) == 0u);        // Clearcasting / Inner Focus
+    CHECK(applyUnitPowerCostModifiers(500, -100, 0, -10, -0.25f) == 270u); // (500-100)*0.9=360, *0.75=270
+    CHECK(applyUnitPowerCostModifiers(0, 50, 0, 0, 0.5f) == 0u);          // Free spells stay free
+    CHECK(applyUnitPowerCostModifiers(100, -200, 0, 0, 0.0f) == 0u);      // Clamped at 0
+
+    // 3. PLAYER_BYTES_3
+    const auto sober = decodePlayerBytes3(0x01000001u);  // female, sober, arenaFaction=1
+    CHECK(sober.gender == 1u);
+    CHECK(sober.drunkValue == 0u);
+    CHECK(sober.drunkState == 0u);
+    CHECK(sober.intoxication == Catch::Approx(0.0f));
+    CHECK(sober.arenaFaction == 1u);
+
+    const auto tipsy = decodePlayerBytes3(0x00000100u);
+    CHECK(tipsy.gender == 0u);
+    CHECK(tipsy.drunkValue == 256u);
+    CHECK(tipsy.drunkState == 1u);
+    CHECK(tipsy.intoxication == Catch::Approx(1.0f / 3.0f));
+
+    const auto drunk = decodePlayerBytes3(12800u | 1u);
+    CHECK(drunk.gender == 1u);
+    CHECK(drunk.drunkValue == 12800u);
+    CHECK(drunk.drunkState == 2u);
+    CHECK(drunk.intoxication == Catch::Approx(2.0f / 3.0f));
+
+    const auto smashed = decodePlayerBytes3(25600u);
+    CHECK(smashed.drunkValue == 25600u);
+    CHECK(smashed.drunkState == 3u);
+    CHECK(smashed.intoxication == Catch::Approx(1.0f));
+
+    // 4. PLAYER__FIELD_KNOWN_TITLES
+    std::unordered_set<uint32_t> titles;
+    CHECK(syncKnownTitleBitsWord(titles, 0, (1u << 1u) | (1u << 5u)));
+    CHECK(titles.count(1u) == 1u);
+    CHECK(titles.count(5u) == 1u);
+    CHECK_FALSE(syncKnownTitleBitsWord(titles, 0, (1u << 1u) | (1u << 5u)));  // idempotent
+    CHECK(syncKnownTitleBitsWord(titles, 1, (1u << 8u)));                     // bit 40 (Vengeful Gladiator)
+    CHECK(titles.count(40u) == 1u);
+    CHECK(syncKnownTitleBitsWord(titles, 0, (1u << 1u)));                     // bit 5 removed, bit 40 kept
+    CHECK(titles.count(1u) == 1u);
+    CHECK(titles.count(5u) == 0u);
+    CHECK(titles.count(40u) == 1u);
+
+    // 5. GAMEOBJECT_ANIMPROGRESS
+    CHECK(normalizeGameObjectAnimProgress(0u) == Catch::Approx(0.0f));
+    CHECK(normalizeGameObjectAnimProgress(128u) == Catch::Approx(128.0f / 255.0f));
+    CHECK(normalizeGameObjectAnimProgress(255u) == Catch::Approx(1.0f));
+    CHECK(normalizeGameObjectAnimProgress(300u) == Catch::Approx(1.0f));
 }
 
 TEST_CASE("GameObject rotation update fields resolve per expansion", "[updatefields]") {

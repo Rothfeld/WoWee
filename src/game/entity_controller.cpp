@@ -10,6 +10,7 @@
 #include "game/packet_parsers.hpp"
 #include "game/entity.hpp"
 #include "game/update_field_table.hpp"
+#include "game/update_field_helpers.hpp"
 #include "game/opcode_table.hpp"
 #include "game/chat_handler.hpp"
 #include "game/transport_manager.hpp"
@@ -994,7 +995,9 @@ EntityController::PlayerFieldIndices EntityController::PlayerFieldIndices::resol
         .armor = fieldIndex(UF::UNIT_FIELD_RESISTANCES),
         .pBytes = fieldIndex(UF::PLAYER_BYTES),
         .pBytes2 = fieldIndex(UF::PLAYER_BYTES_2),
+        .pBytes3 = fieldIndex(UF::PLAYER_BYTES_3),
         .chosenTitle = fieldIndex(UF::PLAYER_CHOSEN_TITLE),
+        .knownTitles = fieldIndex(UF::PLAYER__FIELD_KNOWN_TITLES),
         .stats = {fieldIndex(UF::UNIT_FIELD_STAT0), fieldIndex(UF::UNIT_FIELD_STAT1),
          fieldIndex(UF::UNIT_FIELD_STAT2), fieldIndex(UF::UNIT_FIELD_STAT3),
          fieldIndex(UF::UNIT_FIELD_STAT4)},
@@ -1840,10 +1843,33 @@ bool EntityController::applyPlayerStatFields(const FlatFieldMap& fields,
                     owner_.playerModelRebuildCallbackRef()();
             }
         }
+        else if (pfi.pBytes3 != 0xFFFF && key == pfi.pBytes3) {
+            const auto pb3 = decodePlayerBytes3(val);
+            owner_.playerDrunkValueRef() = pb3.drunkValue;
+            owner_.playerDrunkStateRef() = pb3.drunkState;
+            owner_.playerArenaFactionRef() = pb3.arenaFaction;
+            owner_.applyIntoxication(pb3.intoxication);
+            LOG_DEBUG("PLAYER_BYTES_3 ", isCreate ? "(CREATE): " : "(VALUES): ",
+                      "raw=0x", std::hex, val, std::dec,
+                      " gender=", static_cast<int>(pb3.gender),
+                      " drunk=", pb3.drunkValue,
+                      " state=", static_cast<int>(pb3.drunkState),
+                      " arenaFaction=", static_cast<int>(pb3.arenaFaction));
+        }
         else if (pfi.chosenTitle != 0xFFFF && key == pfi.chosenTitle) {
             owner_.chosenTitleBitRef() = static_cast<int32_t>(val);
             LOG_DEBUG("PLAYER_CHOSEN_TITLE ", isCreate ? "from update fields: " : "updated: ",
                       owner_.chosenTitleBitRef());
+        }
+        else if (pfi.knownTitles != 0xFFFF && (key == pfi.knownTitles || key == pfi.knownTitles + 1)) {
+            const uint32_t wordIdx = static_cast<uint32_t>(key - pfi.knownTitles);
+            if (syncKnownTitleBitsWord(owner_.knownTitleBitsRef(), wordIdx, val)) {
+                pendingEvents_.emit("KNOWN_TITLES_UPDATE", {});
+            }
+            LOG_DEBUG("PLAYER__FIELD_KNOWN_TITLES[", wordIdx, "] ",
+                      isCreate ? "(CREATE): " : "(VALUES): ",
+                      "mask=0x", std::hex, val, std::dec,
+                      " knownCount=", owner_.knownTitleBitsRef().size());
         }
         // VALUES-only fields: PLAYER_BYTES (appearance) and PLAYER_FLAGS (ghost state)
         else if (!isCreate && pfi.pBytes != 0xFFFF && key == pfi.pBytes) {
@@ -2747,6 +2773,18 @@ void EntityController::onCreateGameObject(const UpdateBlock& block, std::shared_
                     itBytes == block.fields.end() ? 0 : itBytes->second & 0xFF));
         }
     }
+    const uint16_t ufAnimProg = fieldIndex(UF::GAMEOBJECT_ANIMPROGRESS);
+    if (ufAnimProg != 0xFFFF) {
+        auto itProg = block.fields.find(ufAnimProg);
+        if (itProg != block.fields.end()) {
+            const uint8_t prog = static_cast<uint8_t>(std::min(itProg->second, 255u));
+            // Standard CMaNGOS spawns default to 100 (or 0); only forward explicit
+            // non-default progress on create so normal state poses are preserved.
+            if (prog != 100u && prog != 0u && owner_.gameObjectAnimProgressCallbackRef()) {
+                owner_.gameObjectAnimProgressCallbackRef()(block.guid, prog);
+            }
+        }
+    }
 
     // Detect transport GameObjects via UPDATEFLAG_TRANSPORT (0x0002)
     LOG_DEBUG("GameObject CREATE: guid=0x", std::hex, block.guid, std::dec,
@@ -3141,13 +3179,24 @@ void EntityController::onValuesUpdateGameObject(const UpdateBlock& block, std::s
     }
 
     // TBC publishes a standalone state word; Wrath packs state in byte zero.
+    bool stateUpdated = false;
     const uint16_t ufGoBytes1 = gameObjectStateField();
     if (ufGoBytes1 != 0xFFFF) {
         auto itB = block.fields.find(ufGoBytes1);
         if (itB != block.fields.end()) {
+            stateUpdated = true;
             uint8_t goState = static_cast<uint8_t>(itB->second & 0xFF);
             if (owner_.gameObjectStateCallbackRef())
                 owner_.gameObjectStateCallbackRef()(block.guid, goState);
+        }
+    }
+    const uint16_t ufGoAnimProg = fieldIndex(UF::GAMEOBJECT_ANIMPROGRESS);
+    if (ufGoAnimProg != 0xFFFF) {
+        auto itProg = block.fields.find(ufGoAnimProg);
+        if (itProg != block.fields.end() && !stateUpdated &&
+            owner_.gameObjectAnimProgressCallbackRef()) {
+            const uint8_t prog = static_cast<uint8_t>(std::min(itProg->second, 255u));
+            owner_.gameObjectAnimProgressCallbackRef()(block.guid, prog);
         }
     }
 

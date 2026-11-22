@@ -275,6 +275,20 @@ void M2Renderer::setInstanceAnimationHeld(uint32_t instanceId, uint32_t animatio
     }
 }
 
+void M2Renderer::setInstanceAnimProgress(uint32_t instanceId, float normalizedProgress) {
+    auto idxIt = instanceIndexById.find(instanceId);
+    if (idxIt == instanceIndexById.end()) return;
+    auto& inst = instances[idxIt->second];
+    if (!inst.cachedModel || inst.animDuration <= 0.0f) return;
+    const float clamped = std::clamp(normalizedProgress, 0.0f, 1.0f);
+    inst.animTime = clamped * inst.animDuration;
+    if (inst.holdAtEnd && clamped >= 1.0f) {
+        inst.animSpeed = 0.0f;
+    }
+    inst.shakePrevSequence = inst.currentSequenceIndex;
+    inst.shakePrevAnimTime = inst.animTime;
+}
+
 void M2Renderer::setInstanceAnimation(uint32_t instanceId, uint32_t animationId, bool loop) {
     auto idxIt = instanceIndexById.find(instanceId);
     if (idxIt == instanceIndexById.end()) return;

@@ -599,10 +599,10 @@ void GameHandler::selectCharacter(uint64_t characterGuid) {
     std::fill(std::begin(playerSpellCritPct_), std::end(playerSpellCritPct_), -1.0f);
     std::fill(std::begin(playerCombatRatings_), std::end(playerCombatRatings_), -1);
     if (spellHandler_) spellHandler_->resetAllState();
-    if (auto* renderer = services_.renderer) {
-        if (auto* camera = renderer->getCameraController()) camera->setIntoxication(0.0f);
-        if (auto* post = renderer->getPostProcessPipeline()) post->setIntoxication(0.0f);
-    }
+    playerDrunkValue_ = 0;
+    playerDrunkState_ = 0;
+    playerArenaFaction_ = 0;
+    applyIntoxication(0.0f);
     spellFlatMods_.clear();
     spellPctMods_.clear();
     actionBar = {};
@@ -4919,5 +4919,15 @@ void GameHandler::sendSetActiveMover(uint64_t guid) {
     auto packet = SetActiveMoverPacket::build(guid);
     socket->send(packet);
     LOG_INFO("Sent CMSG_SET_ACTIVE_MOVER 0x", std::hex, guid, std::dec);
+}
+void GameHandler::applyIntoxication(float amount) {
+    if (auto* renderer = services_.renderer) {
+        if (auto* camera = renderer->getCameraController()) {
+            camera->setIntoxication(amount);
+        }
+        if (auto* post = renderer->getPostProcessPipeline()) {
+            post->setIntoxication(amount);
+        }
+    }
 }
 } }

@@ -1854,6 +1854,12 @@ void EntitySpawner::spawnOnlineGameObject(uint64_t guid, uint32_t entry, uint32_
             pending != gameObjectPendingState_.end()) {
             applyGameObjectState(guid, pending->second);
         }
+        if (auto pendingProg = gameObjectPendingAnimProgress_.find(guid);
+            pendingProg != gameObjectPendingAnimProgress_.end()) {
+            const uint8_t prog = pendingProg->second;
+            gameObjectPendingAnimProgress_.erase(pendingProg);
+            applyGameObjectAnimProgress(guid, prog);
+        }
 
         // Notify transport system for M2 transports (e.g. Deeprun Tram cars)
         if (gameHandler_ && gameHandler_->isTransportGuid(guid)) {

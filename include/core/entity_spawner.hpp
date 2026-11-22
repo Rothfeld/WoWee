@@ -133,6 +133,7 @@ public:
     /// model existed and was dropped, so every door in the world was drawn in
     /// its closed pose however the server had it.
     void applyGameObjectState(uint64_t guid, uint8_t goState);
+    void applyGameObjectAnimProgress(uint64_t guid, uint8_t animProgress);
     void playGameObjectStateSound(uint64_t guid, uint8_t goState);
     void playGameObjectCustomSound(uint64_t guid, uint32_t customIndex);
     /// gameObjectActiveShowsDestroy's pose for a state-driven object without
@@ -913,6 +914,8 @@ private:
     std::unordered_map<uint32_t, std::unordered_map<uint32_t, glm::vec3>> helperAttachments_;
     /// States that arrived before their model did, applied when it spawns.
     std::unordered_map<uint64_t, uint8_t> gameObjectPendingState_;
+    /// Non-default GAMEOBJECT_ANIMPROGRESS (0..255) that arrived before spawn.
+    std::unordered_map<uint64_t, uint8_t> gameObjectPendingAnimProgress_;
     /// Last GOState applied per spawned game object, for rules that need its type later.
     std::unordered_map<uint64_t, uint8_t> gameObjectAppliedState_;
     /// Removed objects' M2 instances still fading out, with their start time.

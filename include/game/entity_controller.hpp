@@ -259,7 +259,7 @@ private:
         uint16_t xp, nextXp, restedXp, level;
         uint16_t coinage, honor, arena;
         uint16_t playerFlags, armor;
-        uint16_t pBytes, pBytes2, chosenTitle;
+        uint16_t pBytes, pBytes2, pBytes3, chosenTitle, knownTitles;
         uint16_t stats[5];
         uint16_t meleeAP, meleeAPMods, meleeAPMult;
         uint16_t rangedAP, rangedAPMods, rangedAPMult;

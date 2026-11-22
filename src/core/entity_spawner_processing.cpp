@@ -5,6 +5,7 @@
 #include <set>
 #include "rendering/m2_model_classifier.hpp"
 #include "game/transport_path_repository.hpp"
+#include "game/update_field_helpers.hpp"
 #include "core/coordinates.hpp"
 #include "core/logger.hpp"
 #include "rendering/renderer.hpp"
@@ -2020,6 +2021,18 @@ void EntitySpawner::playGameObjectCustomSound(uint64_t guid, uint32_t customInde
     audio::SoundEntryTable::instance().play3D(assetManager_, soundId, renderPos, ac->getSfxVolumeScale());
 }
 
+void EntitySpawner::applyGameObjectAnimProgress(uint64_t guid, uint8_t animProgress) {
+    auto it = gameObjectInstances_.find(guid);
+    if (it == gameObjectInstances_.end()) {
+        gameObjectPendingAnimProgress_[guid] = animProgress;
+        return;
+    }
+    if (it->second.isWmo) return;
+    auto* m2 = renderer_ ? renderer_->getM2Renderer() : nullptr;
+    if (!m2) return;
+    m2->setInstanceAnimProgress(it->second.instanceId, game::normalizeGameObjectAnimProgress(animProgress));
+}
+
 void EntitySpawner::applyGameObjectState(uint64_t guid, uint8_t goState) {
     auto it = gameObjectInstances_.find(guid);
     if (it == gameObjectInstances_.end()) {
@@ -2272,6 +2285,7 @@ void EntitySpawner::removeFadingGameObjects() {
 
 void EntitySpawner::despawnGameObject(uint64_t guid) {
     gameObjectAppliedState_.erase(guid);
+    gameObjectPendingAnimProgress_.erase(guid);
     pendingTransportDoodadBatches_.erase(
         std::remove_if(pendingTransportDoodadBatches_.begin(), pendingTransportDoodadBatches_.end(),
                        [guid](const PendingTransportDoodadBatch& b) { return b.guid == guid; }),

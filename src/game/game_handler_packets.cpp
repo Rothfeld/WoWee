@@ -528,14 +528,8 @@ void GameHandler::registerCoreOpcodes() {
                     systemGlobal(("DRUNK_MESSAGE_ITEM_SELF" + n).c_str(), {itemName});
                 else
                     systemGlobal(("DRUNK_MESSAGE_SELF" + n).c_str());
-                if (auto* renderer = services_.renderer) {
-                    if (auto* camera = renderer->getCameraController()) {
-                        camera->setIntoxication(amount);
-                    }
-                    if (auto* post = renderer->getPostProcessPipeline()) {
-                        post->setIntoxication(amount);
-                    }
-                }
+                playerDrunkState_ = static_cast<uint8_t>(std::min(threshold, 3u));
+                applyIntoxication(amount);
             }
             LOG_DEBUG("SMSG_CROSSED_INEBRIATION_THRESHOLD: guid=0x", std::hex, guid,
                       std::dec, " threshold=", threshold, " itemId=", itemId);
