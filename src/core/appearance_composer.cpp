@@ -484,8 +484,8 @@ void AppearanceComposer::loadEquippedWeapons() {
         LOG_WARNING("loadEquippedWeapons: failed to load ItemDisplayInfo.dbc");
         return;
     }
-    // Main and off hand: held point by slot, sheath point by Item SheatheType.
-    for (const uint32_t point : {kAttachShield, kAttachRightHand, kAttachLeftHand})
+    // Main, off hand, and back quiver: held point by slot, sheath point by Item SheatheType.
+    for (const uint32_t point : {kAttachShield, kAttachRightHand, kAttachLeftHand, kAttachSheathMainHand})
         charRenderer->detachWeapon(charInstanceId, point);
     charRenderer->setSheathState(charInstanceId, sheathState_);
 
@@ -605,6 +605,40 @@ void AppearanceComposer::loadEquippedWeapons() {
                                  ", sheathed at ", sheath);
                     }
                 }
+            }
+        }
+
+        // --- Quiver on the back (visible while a bow/crossbow is drawn, sheath state 2) ---
+        if (rangedWeaponUsesQuiver(rangedInfo->itemClass, rangedInfo->subClass, rangedSlot.item.inventoryType) &&
+            charRenderer->hasAttachmentPoint(charInstanceId, kAttachSheathMainHand)) {
+            for (const auto bagSlot : {game::EquipSlot::BAG1, game::EquipSlot::BAG2,
+                                       game::EquipSlot::BAG3, game::EquipSlot::BAG4}) {
+                const auto& bag = inventory.getEquipSlot(bagSlot);
+                if (bag.empty() || bag.item.displayInfoId == 0) continue;
+                const auto* bagInfo = gameHandler_->getItemInfo(bag.item.itemId);
+                if (!bagInfo || !isEquippedQuiverItem(bagInfo->itemClass, bagInfo->subClass)) continue;
+                const int32_t qIdx = displayInfoDbc->findRecordById(bag.item.displayInfoId);
+                if (qIdx < 0) continue;
+                const auto qArt = pipeline::readItemDisplayArt(*displayInfoDbc, static_cast<uint32_t>(qIdx));
+                if (qArt.modelFile.empty()) continue;
+
+                std::string qM2Path = "Item\\ObjectComponents\\Quiver\\" + qArt.modelFile;
+                pipeline::M2Model quiverModel;
+                if (!loadWeaponM2(qM2Path, quiverModel) || quiverModel.vertices.empty()) continue;
+
+                std::string qTexPath;
+                if (!qArt.textureName.empty()) {
+                    qTexPath = "Item\\ObjectComponents\\Quiver\\" + qArt.textureName + ".blp";
+                    if (!assetManager_->fileExists(qTexPath)) qTexPath.clear();
+                }
+                const uint32_t quiverModelId = entitySpawner_->allocateWeaponModelId();
+                if (charRenderer->attachWeapon(charInstanceId, kAttachSheathMainHand,
+                                               quiverModel, quiverModelId, qTexPath,
+                                               glm::mat4(1.0f), kSheathStateRanged, UINT32_MAX)) {
+                    LOG_INFO("Equipped quiver: ", qM2Path, " at ", kAttachSheathMainHand,
+                             " (texture ", qTexPath, ")");
+                }
+                break;
             }
         }
     }

@@ -8,6 +8,7 @@
 #include "rendering/animation/stand_pose.hpp"
 #include "rendering/animation/gesture_weapons.hpp"
 #include "core/weapon_attachment.hpp"
+#include "core/weapon_attachment.hpp"
 #include "game/equipment_hash.hpp"
 #include "rendering/animation/hit_reaction.hpp"
 #include "rendering/animation/freeze_anim_policy.hpp"
@@ -117,6 +118,23 @@ TEST_CASE("Thrown and non-shot 0x10 poses sheathe a drawn ranged weapon", "[anim
     CHECK(poseAnimationSheathesUnit(107, 0x10, 2));
     CHECK(poseAnimationSheathesUnit(52, 0x04, 2));
     CHECK(poseAnimationSheathesUnit(67, 0x10, 2));
+}
+
+TEST_CASE("Quiver attachment policy matches bows/crossbows and quiver bags only", "[animation][weapons][quiver]") {
+    using wowee::core::isEquippedQuiverItem;
+    using wowee::core::rangedWeaponUsesQuiver;
+
+    // Bows and crossbows pair with a quiver; guns, wands, and thrown weapons do not.
+    CHECK(rangedWeaponUsesQuiver(2u, 2u, wowee::game::InvType::RANGED_BOW));
+    CHECK(rangedWeaponUsesQuiver(2u, 18u, wowee::game::InvType::RANGED_GUN));
+    CHECK_FALSE(rangedWeaponUsesQuiver(2u, 3u, wowee::game::InvType::RANGED_GUN));   // Gun
+    CHECK_FALSE(rangedWeaponUsesQuiver(2u, 19u, wowee::game::InvType::RANGED_GUN));  // Wand
+    CHECK_FALSE(rangedWeaponUsesQuiver(2u, 16u, wowee::game::InvType::THROWN));      // Thrown
+
+    // Only ItemClass 11, SubClass 2 (Quiver) renders a back quiver; ammo pouches (SubClass 3) and bags do not.
+    CHECK(isEquippedQuiverItem(11u, 2u));
+    CHECK_FALSE(isEquippedQuiverItem(11u, 3u));
+    CHECK_FALSE(isEquippedQuiverItem(1u, 0u));
 }
 
 TEST_CASE("Emote procedures retain stand states and seated gesture eligibility", "[emote-stance]") {

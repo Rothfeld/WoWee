@@ -36,6 +36,24 @@ inline uint8_t heldSheathState(game::EquipSlot slot) {
     return slot == game::EquipSlot::RANGED ? kSheathStateRanged : kSheathStateMelee;
 }
 
+// Whether the equipped ranged weapon pairs with a back quiver when drawn
+// (bows and crossbows; guns and thrown weapons do not draw a quiver).
+inline constexpr bool rangedWeaponUsesQuiver(uint32_t itemClass,
+                                             uint32_t subClass,
+                                             uint8_t inventoryType) {
+    if (inventoryType == game::InvType::RANGED_BOW) return true;
+    return game::isWeaponSubclass(itemClass, subClass, game::WEAPON_SUBCLASS_BOW) ||
+           game::isWeaponSubclass(itemClass, subClass, game::WEAPON_SUBCLASS_CROSSBOW);
+}
+
+// Whether an equipped bag-slot item (BAG1..BAG4) is an arrow quiver
+// (ItemClass 11, SubClass 2) rather than a regular bag or bullet pouch.
+inline constexpr bool isEquippedQuiverItem(uint32_t itemClass, uint32_t subClass) {
+    constexpr uint32_t kItemClassQuiver = 11;
+    constexpr uint32_t kSubClassQuiver = 2;
+    return itemClass == kItemClassQuiver && subClass == kSubClassQuiver;
+}
+
 // Where a weapon hangs while its slot is sheathed, by the item's SheatheType
 // (Item.dbc / item query / UNIT_VIRTUAL_ITEM_INFO byte 5). Build 8606, gnome
 // and human models, every type on main and off hand:
