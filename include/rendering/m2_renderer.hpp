@@ -1070,7 +1070,8 @@ private:
     // Ribbon pipelines (additive + alpha-blend)
     VkPipeline ribbonPipeline_ = VK_NULL_HANDLE;          // Alpha-blend ribbons
     VkPipeline ribbonAdditivePipeline_ = VK_NULL_HANDLE;  // Additive ribbons
-    VkPipeline ribbonModPipeline_ = VK_NULL_HANDLE;       // Mod (multiply) ribbons (e.g. SpellChainEffects blendMode 4)
+    VkPipeline ribbonModPipeline_ = VK_NULL_HANDLE;       // Mod (multiply) ribbons (SpellChainEffects blendMode 4)
+    VkPipeline ribbonModAddPipeline_ = VK_NULL_HANDLE;    // ModAdd (dst*src + dst) ribbons (SpellChainEffects blendMode 6)
     // Geometry-model particles: ribbon vertex layout and shaders, triangle lists.
     VkPipeline particleMeshPipeline_ = VK_NULL_HANDLE;
     VkPipeline particleMeshAdditivePipeline_ = VK_NULL_HANDLE;

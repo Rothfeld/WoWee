@@ -328,6 +328,12 @@ TEST_CASE("All 320 shipped TBC SpellChainEffects.dbc rows have valid layout, tex
                 INFO("Combo target " << targetId << " from row " << id);
                 CHECK(allIds.count(targetId) == 1);
             }
+            if (id == 189) {
+                // Prophet Velen's Call Entropius (46818, visual 10476, kit 9601):
+                // 3x 191 (BlendMode 6 ModAdd Beam_Purple), 4x 192 (cyan), 4x 193 (deep blue).
+                CHECK(blendMode == 3);
+                CHECK(strands == std::vector<uint32_t>{191, 191, 191, 192, 193, 193, 193, 192, 192, 192, 193});
+            }
             if (id == 342) {
                 // Felmyst Demonic Vapor (spell 45389): 7x 343 (pulsing purple/magenta arcing web strands).
                 CHECK(strands == std::vector<uint32_t>{343, 343, 343, 343, 343, 343, 343});
@@ -341,6 +347,11 @@ TEST_CASE("All 320 shipped TBC SpellChainEffects.dbc rows have valid layout, tex
                 CHECK(blendMode == 4);
                 CHECK(strands == std::vector<uint32_t>{387, 387, 387});
             }
+        }
+        if (id == 191) {
+            // Prophet Velen's Call Entropius inner strand: BlendMode 6 (EGxBlend_ModAdd).
+            CHECK(blendMode == 6);
+            CHECK(wowee::rendering::chainBlendPipeline(blendMode) == wowee::rendering::ChainBlendPipeline::ModAdd);
         }
         if (id == 297) {
             // Fel Lightning (Sunblade Protector 46480): green ShockLightning, non-flickering (Flags 0x46).
@@ -403,4 +414,13 @@ TEST_CASE("SpellVisual.dbc MissileAttachment 0..8 maps to SpellVisualKit M2 atta
     CHECK(missileAttachmentToM2Id(7) == 24);  // Special2 (Beholder left eye: Arcane Glare, Dark Glare)
     CHECK(missileAttachmentToM2Id(8) == 25);  // Special3 (Beholder right eye: Shadow Glare)
     CHECK(missileAttachmentToM2Id(-1) == 34); // Fallback when passed directly
+}
+
+TEST_CASE("chainBlendPipeline maps TBC SpellChainEffects EGxBlend modes to distinct pipelines", "[chain]") {
+    using wowee::rendering::ChainBlendPipeline;
+    using wowee::rendering::chainBlendPipeline;
+    CHECK(chainBlendPipeline(2) == ChainBlendPipeline::Alpha);
+    CHECK(chainBlendPipeline(3) == ChainBlendPipeline::Add);
+    CHECK(chainBlendPipeline(4) == ChainBlendPipeline::Mod);
+    CHECK(chainBlendPipeline(6) == ChainBlendPipeline::ModAdd);
 }

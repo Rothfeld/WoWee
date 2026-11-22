@@ -552,9 +552,13 @@ bool M2Renderer::buildMainPassPipelines(VkDescriptorSetLayout perFrameLayout) {
                     .build(device, vkCtx_->getPipelineCache());
             };
 
+            VkPipelineColorBlendAttachmentState modAddBlend = modBlend;
+            modAddBlend.dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
+
             ribbonPipeline_         = buildRibbonPipeline(PipelineBuilder::blendAlpha());
             ribbonAdditivePipeline_ = buildRibbonPipeline(PipelineBuilder::blendAdditive());
             ribbonModPipeline_      = buildRibbonPipeline(modBlend);
+            ribbonModAddPipeline_   = buildRibbonPipeline(modAddBlend);
             particleMeshPipeline_ = buildRibbonPipeline(PipelineBuilder::blendAlpha(),
                                                         VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
             particleMeshAdditivePipeline_ = buildRibbonPipeline(PipelineBuilder::blendAdditive(),
@@ -1050,6 +1054,7 @@ void M2Renderer::shutdown() {
     destroyPipeline(ribbonPipeline_);
     destroyPipeline(ribbonAdditivePipeline_);
     destroyPipeline(ribbonModPipeline_);
+    destroyPipeline(ribbonModAddPipeline_);
     destroyPipeline(particleMeshPipeline_);
     destroyPipeline(particleMeshAdditivePipeline_);
 

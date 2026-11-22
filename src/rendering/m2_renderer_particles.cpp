@@ -743,6 +743,7 @@ void M2Renderer::renderM2Ribbons(VkCommandBuffer cmd, VkDescriptorSet perFrameSe
         if (strip.spine.size() < 2) continue;
         const VkDescriptorSet texSet = chainTextureSet(strip.texturePath);
         if (!texSet) continue;
+        const ChainBlendPipeline blendKind = chainBlendPipeline(strip.blendMode);
         const uint32_t firstVert = static_cast<uint32_t>(written);
         for (size_t i = 0; i < strip.spine.size(); ++i) {
             assert(written + 2 <= ribbonVertexCapacity_[frame]);
@@ -752,12 +753,17 @@ void M2Renderer::renderM2Ribbons(VkCommandBuffer cmd, VkDescriptorSet perFrameSe
             const glm::vec3 cross = glm::cross(dir, camPos - p);
             if (glm::length(cross) > 1e-6f) side = glm::normalize(cross);
             const float halfWidth = strip.halfWidth * chainEndTaper(i, strip.spine.size());
+            const float vertAlpha = strip.alpha * (strip.fade.empty() ? 1.0f : strip.fade[i]);
+            // EGxBlend_ModAdd (DST_COLOR, ONE) ignores srcAlpha in hardware blend;
+            // scale RGB by alpha/pulse fade so fading strands attenuate cleanly to dst.
+            const glm::vec3 vertColor = (blendKind == ChainBlendPipeline::ModAdd)
+                ? strip.color * vertAlpha : strip.color;
             for (int edge = 0; edge < 2; ++edge) {
                 const glm::vec3 v = p + side * (edge == 0 ? halfWidth : -halfWidth);
                 float* out = dst + written * 9;
                 out[0] = v.x; out[1] = v.y; out[2] = v.z;
-                out[3] = strip.color.r; out[4] = strip.color.g; out[5] = strip.color.b;
-                out[6] = strip.alpha * (strip.fade.empty() ? 1.0f : strip.fade[i]);
+                out[3] = vertColor.r; out[4] = vertColor.g; out[5] = vertColor.b;
+                out[6] = vertAlpha;
                 out[7] = strip.u[i];
                 out[8] = chainEndTexV(i, strip.spine.size(), edge);
                 ++written;
@@ -766,10 +772,11 @@ void M2Renderer::renderM2Ribbons(VkCommandBuffer cmd, VkDescriptorSet perFrameSe
         const uint32_t vertCount = static_cast<uint32_t>(written) - firstVert;
         if (vertCount >= 4) {
             VkPipeline pipe = ribbonAdditivePipeline_;
-            if (strip.blendMode == 2) {
-                pipe = ribbonPipeline_;
-            } else if (strip.blendMode == 4 && ribbonModPipeline_) {
-                pipe = ribbonModPipeline_;
+            switch (blendKind) {
+                case ChainBlendPipeline::Alpha: pipe = ribbonPipeline_; break;
+                case ChainBlendPipeline::Mod:   if (ribbonModPipeline_) pipe = ribbonModPipeline_; break;
+                case ChainBlendPipeline::ModAdd: if (ribbonModAddPipeline_) pipe = ribbonModAddPipeline_; break;
+                case ChainBlendPipeline::Add:   break;
             }
             draws.push_back({.texSet = texSet, .pipeline = pipe,
                              .firstVertex = firstVert, .vertexCount = vertCount});

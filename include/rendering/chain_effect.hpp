@@ -61,9 +61,27 @@ inline std::vector<uint32_t> chainComboStrands(std::string_view combo, uint32_t 
 
 /// Supported SpellChainEffects.dbc BlendMode values (EGxBlend):
 /// 2 = Alpha, 3 = Add, 4 = Mod (multiply, used by *_Inverted.blp / Beam_WebBlack),
-/// 6 = ModAdd / AddAlpha. All 320 TBC 2.4.3 rows use one of these four.
+/// 6 = ModAdd (dst * src + dst, used by Prophet Velen's Call Entropius strand 191,
+/// 304, 310). All 320 TBC 2.4.3 rows use one of these four.
 inline constexpr bool chainBlendSupported(uint8_t blendMode) {
     return blendMode == 2 || blendMode == 3 || blendMode == 4 || blendMode == 6;
+}
+
+enum class ChainBlendPipeline : uint8_t {
+    Alpha,
+    Add,
+    Mod,
+    ModAdd,
+};
+
+/// Map SpellChainEffects.dbc BlendMode (EGxBlend) to the ribbon blend pipeline.
+inline constexpr ChainBlendPipeline chainBlendPipeline(uint8_t blendMode) {
+    switch (blendMode) {
+        case 2: return ChainBlendPipeline::Alpha;
+        case 4: return ChainBlendPipeline::Mod;
+        case 6: return ChainBlendPipeline::ModAdd;
+        default: return ChainBlendPipeline::Add;
+    }
 }
 
 /// SpellChainEffects Flags bit 0x20 enables travelling pulse windows.
