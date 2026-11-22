@@ -4702,6 +4702,10 @@ void Application::syncChannelVisuals() {
                        characters->getAttachmentTransform(channel.casterInstanceId, origin.attachmentId, hand)) {
                 channel.start = glm::vec3(hand[3]);
             } else if (origin.source == rendering::SpellLaunchOrigin::Source::Attachment &&
+                       origin.attachmentId == rendering::kAttachHeadId &&
+                       characters->getAttachmentTransform(channel.casterInstanceId, rendering::kAttachHeadTopId, hand)) {
+                channel.start = glm::vec3(hand[3]);
+            } else if (origin.source == rendering::SpellLaunchOrigin::Source::Attachment &&
                        origin.attachmentId != rendering::kAttachChestId &&
                        characters->getAttachmentTransform(channel.casterInstanceId, rendering::kAttachChestId, hand)) {
                 channel.start = glm::vec3(hand[3]);

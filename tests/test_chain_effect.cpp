@@ -415,7 +415,7 @@ TEST_CASE("Chain beam endpoints taper to a point over the first and last segment
 
 TEST_CASE("SpellVisual.dbc MissileAttachment 0..8 maps to SpellVisualKit M2 attachment IDs", "[chain]") {
     using wowee::rendering::missileAttachmentToM2Id;
-    CHECK(missileAttachmentToM2Id(0) == 18);  // Head (Spotlight)
+    CHECK(missileAttachmentToM2Id(0) == 20);  // Head (Illidan Eye Blast 39908, Spotlight)
     CHECK(missileAttachmentToM2Id(1) == 34);  // Chest (Blood Siphon, Containment Beam)
     CHECK(missileAttachmentToM2Id(2) == 19);  // Base (Netherbeam)
     CHECK(missileAttachmentToM2Id(3) == 21);  // SpellLeftHand (Blue Beam, Ribbon Pole)

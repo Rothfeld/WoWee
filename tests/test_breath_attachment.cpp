@@ -96,9 +96,40 @@ TEST_CASE("SpellVisualSystem::slotFollowsBone covers Breath, SpellLeftHand/Right
 
     // Upright / world-aligned slots keep unit yaw only.
     CHECK_FALSE(SpellVisualSystem::slotFollowsBone(0));  // World
-    CHECK_FALSE(SpellVisualSystem::slotFollowsBone(18)); // Head (overhead anchor / Dragon's Breath)
+    CHECK_FALSE(SpellVisualSystem::slotFollowsBone(18)); // HeadTop / Nameplate anchor
     CHECK_FALSE(SpellVisualSystem::slotFollowsBone(19)); // Base
+    CHECK_FALSE(SpellVisualSystem::slotFollowsBone(20)); // Head (eyes/head anchor)
     CHECK_FALSE(SpellVisualSystem::slotFollowsBone(34)); // Chest
+}
+
+// Illidan.m2 authors M2 attachment 20 (Head, parent = Head keyBone 6) right at
+// his eyes (~z=4.99), whereas attachment 18 (Name/HeadTop, parent = -1) floats
+// ~1.36 yd above his head (~z=6.35) as the nameplate anchor. Eye Blast (39908,
+// SpellVisual 9051, MissileAttachment=0) must resolve to attachment 20, not 18.
+TEST_CASE("Illidan M2 Head attachment 20 sits at eyes below overhead Name anchor 18",
+          "[spell-visual][assets]") {
+    const char* root = std::getenv("WOWEE_TBC_DATA_DIR");
+    if (!root || !*root) SKIP("Set WOWEE_TBC_DATA_DIR to client/wowee-data/expansions/tbc");
+    const auto bytes = readBytes(std::filesystem::path(root) / "creature/illidan/illidan.m2");
+    REQUIRE_FALSE(bytes.empty());
+    const auto model = wowee::pipeline::M2Loader::load(bytes);
+    REQUIRE(model.attachmentLookup.size() > 20);
+    const uint16_t headIdx = model.attachmentLookup[20];
+    const uint16_t topIdx = model.attachmentLookup[18];
+    REQUIRE(headIdx < model.attachments.size());
+    REQUIRE(topIdx < model.attachments.size());
+    const auto& headAtt = model.attachments[headIdx];
+    const auto& topAtt = model.attachments[topIdx];
+    CHECK(headAtt.id == 20);
+    CHECK(topAtt.id == 18);
+    CHECK(topAtt.position.z - headAtt.position.z > 1.0f);
+    REQUIRE(headAtt.bone < model.bones.size());
+    const int16_t headParent = model.bones[headAtt.bone].parentBone;
+    REQUIRE(headParent >= 0);
+    REQUIRE(static_cast<size_t>(headParent) < model.bones.size());
+    CHECK(model.bones[headParent].keyBoneId == 6); // Head keyBone
+    REQUIRE(topAtt.bone < model.bones.size());
+    CHECK(model.bones[topAtt.bone].parentBone == -1); // Overhead nameplate anchor
 }
 
 TEST_CASE("SpellVisualSystem::precastDurationSeconds includes grace window for all positive cast times",

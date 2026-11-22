@@ -216,7 +216,7 @@ void SpellVisualSystem::loadSpellVisualDbc() {
             // GnomeMale 0.5, HumanMale 1, Infernal 1.8, Dragon 5.5. Ice
             // Block's cube (BaseEffect icebarrier_state) measured about 4 yd
             // times that scale times the unit's own scale on each of them.
-            static constexpr uint32_t attachments[] = {23, 19, 21, 22, 34, 18, kAttachBreath, 24, 25, 0};
+            static constexpr uint32_t attachments[] = {23, 19, 21, 22, 34, kAttachHeadId, kAttachBreath, 24, 25, 0};
             for (size_t k = 0; k < numKitFields; ++k) {
                 if (kitFields[k] >= fc) continue;
                 const uint32_t effectId = kitDbc->getUInt32(i, kitFields[k]);
@@ -593,10 +593,15 @@ float SpellVisualSystem::spawnKitEffects(uint32_t kitId, const glm::vec3& worldP
         }
         if (attachment != 0 &&
             (!characters || !characters->getAttachmentTransform(attachInstanceId, attachment, attachMat))) {
-            LOG_WARNING("SpellVisual: kit=", kitId, " attachment ", attachment,
-                        " unavailable on instance ", attachInstanceId, "; placed at unit position, model=",
-                        effect.path);
-            attachment = 0;
+            if (attachment == kAttachHeadId && characters &&
+                characters->getAttachmentTransform(attachInstanceId, kAttachHeadTopId, attachMat)) {
+                attachment = kAttachHeadTopId;
+            } else {
+                LOG_WARNING("SpellVisual: kit=", kitId, " attachment ", attachment,
+                            " unavailable on instance ", attachInstanceId, "; placed at unit position, model=",
+                            effect.path);
+                attachment = 0;
+            }
         }
         const bool breath = slotFollowsBone(attachment);
         const glm::vec3 spawn = attachment ? glm::vec3(attachMat[3]) : worldPosition;
@@ -903,10 +908,15 @@ void SpellVisualSystem::startChannelVisual(uint32_t visualId, const glm::vec3& p
         }
         if (attachment != 0 &&
             (!characters || !characters->getAttachmentTransform(attachInstanceId, attachment, transform))) {
-            LOG_WARNING("Channel visual: kit=", kit->second, " attachment ", attachment,
-                        " unavailable on instance ", attachInstanceId,
-                        "; placed at unit position, model=", effect.path);
-            attachment = 0;
+            if (attachment == kAttachHeadId && characters &&
+                characters->getAttachmentTransform(attachInstanceId, kAttachHeadTopId, transform)) {
+                attachment = kAttachHeadTopId;
+            } else {
+                LOG_WARNING("Channel visual: kit=", kit->second, " attachment ", attachment,
+                            " unavailable on instance ", attachInstanceId,
+                            "; placed at unit position, model=", effect.path);
+                attachment = 0;
+            }
         }
         const glm::vec3 spawn = attachment ? glm::vec3(transform[3]) : position;
         const bool breath = slotFollowsBone(attachment);

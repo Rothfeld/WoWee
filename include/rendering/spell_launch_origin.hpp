@@ -28,8 +28,9 @@ struct SpellLaunchOrigin {
 inline constexpr uint32_t kAttachLaunchHandFallback = 2;   // M2 HandLeft
 inline constexpr uint32_t kAttachChestBloodFrontId = 15;   // M2 ChestBloodFront (impact/reflect)
 inline constexpr uint32_t kAttachBreathId = 17;            // M2 Breath / Mouth
-inline constexpr uint32_t kAttachHeadId = 18;              // M2 Head
+inline constexpr uint32_t kAttachHeadTopId = 18;           // M2 Name / Overhead (nameplate anchor)
 inline constexpr uint32_t kAttachBaseId = 19;              // M2 Base
+inline constexpr uint32_t kAttachHeadId = 20;              // M2 Head (eyes/head; parent=Head on Illidan.m2)
 inline constexpr uint32_t kAttachSpellLeftHandId = 21;     // M2 SpellLeftHand
 inline constexpr uint32_t kAttachSpellRightHandId = 22;    // M2 SpellRightHand
 inline constexpr uint32_t kAttachSpecial1Id = 23;          // M2 Special1 (e.g. Beholder center eye)
@@ -40,7 +41,7 @@ inline constexpr uint32_t kNoSpellAnimationId = 0xffffffffu;
 
 // Map SpellVisual.dbc MissileAttachment (TBC col 15, values 0..8) to M2 attachment ID.
 // Follows the exact SpellVisualKit attachment slot order:
-//   0=Head(18), 1=Chest(34), 2=Base(19), 3=LeftHand(21), 4=RightHand(22),
+//   0=Head(20), 1=Chest(34), 2=Base(19), 3=LeftHand(21), 4=RightHand(22),
 //   5=Breath(17), 6=Special1(23), 7=Special2(24), 8=Special3(25).
 // Unknown/negative values fall back to Chest (34).
 inline constexpr uint32_t missileAttachmentToM2Id(int32_t missileAttachment) {
