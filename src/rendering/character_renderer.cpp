@@ -5723,7 +5723,7 @@ const std::vector<uint32_t>* CharacterRenderer::getWingGlideEventTimes(uint32_t 
     return pickSequenceEventTimes(modelIt->second.data.wingGlideEventTimes, it->second.currentSequenceIndex);
 }
 
-std::optional<float> CharacterRenderer::locomotionStride(uint32_t instanceId, uint32_t animationId) const {
+std::optional<float> CharacterRenderer::locomotionMoveSpeed(uint32_t instanceId, uint32_t animationId) const {
     const auto& inst = instances.at(instanceId);
     const auto modelIt = models.find(inst.modelId);
     if (modelIt == models.end()) return std::nullopt;
@@ -5734,7 +5734,13 @@ std::optional<float> CharacterRenderer::locomotionStride(uint32_t instanceId, ui
         if (seq.variationIndex == 0) break;
     }
     if (!primary || primary->movingSpeed == 0.0f) return std::nullopt;
-    return std::abs(primary->movingSpeed) * inst.scale;
+    return std::abs(primary->movingSpeed);
+}
+
+std::optional<float> CharacterRenderer::locomotionStride(uint32_t instanceId, uint32_t animationId) const {
+    const auto moveSpeed = locomotionMoveSpeed(instanceId, animationId);
+    if (!moveSpeed) return std::nullopt;
+    return *moveSpeed * instances.at(instanceId).scale;
 }
 
 std::optional<float> CharacterRenderer::effectiveLocomotionStride(

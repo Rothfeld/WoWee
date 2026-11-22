@@ -314,6 +314,7 @@ public:
     /// Ground covered per second at authored rate: |moveSpeed| of the
     /// animation's primary sequence times the instance scale. nullopt when the
     /// model has no such sequence or it authors no movement.
+    [[nodiscard]] std::optional<float> locomotionMoveSpeed(uint32_t instanceId, uint32_t animationId) const;
     [[nodiscard]] std::optional<float> locomotionStride(uint32_t instanceId, uint32_t animationId) const;
     /// Authored locomotionStride when non-zero, else defaultMoveSpeed * scale
     /// when the model carries `animationId` with movingSpeed == 0.

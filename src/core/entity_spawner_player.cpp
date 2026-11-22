@@ -949,18 +949,14 @@ bool EntitySpawner::remoteGaitWalks(uint64_t guid, uint32_t locomotionInstanceId
     if (!entity || entity->getType() != game::ObjectType::UNIT)
         return creatureWalkingState_.count(guid) > 0;
     auto* characters = renderer_->getCharacterRenderer();
-    std::optional<float> stride = characters->locomotionStride(locomotionInstanceId, rendering::anim::WALK);
-    // The authored stride is taken at the display's own size; the server's
-    // OBJECT_FIELD_SCALE_X enlarges the model but not the stride. Native
-    // Akama (21700, display 20681 x1.3, Walk 2.5) ran at 6.94 yd/s at object
-    // scale 1, 2 and 3 alike, and Akama 22990 (the same display created at
-    // object scale 2) ran at 8.0; El Pollo Grande (display 589 x10) walked at
-    // 8.0 (_experiments/20261118T1350Z.akama_gait).
-    if (stride && locomotionInstanceId == getCreatureInstanceId(guid)) {
-        const auto unit = std::static_pointer_cast<game::Unit>(entity);
-        *stride *= creatureRenderScale(*unit, unit->getDisplayId(), 1.0f) /
-                   characters->getInstanceScale(locomotionInstanceId);
-    }
+    // Native TBC 2.4.3 compares creature spline ground speed against 2.0x the
+    // model's unscaled authored Walk movingSpeed (neither OBJECT_FIELD_SCALE_X
+    // nor CreatureDisplayInfo.scale raises the Walk->Run threshold). Measured
+    // natively on Akama 23089 (display 21112 x2.6, Walk 2.5): 3.0/4.2/4.8 yd/s
+    // walked and 5.4/6.0/10.0/10.2 yd/s ran; TrollDire (x1.2, Walk 1.667):
+    // 3.2 walked, 4.0 ran; ElementalEarth (x1.0, Walk 3.889): 7.2 walked, 8.0
+    // ran (_experiments/20261122T201500Z.akama_walk_gait_parity).
+    std::optional<float> stride = characters->locomotionMoveSpeed(locomotionInstanceId, rendering::anim::WALK);
     // HumanFemale.m2 authors every sequence with moveSpeed 0, Walk included.
     // Native still walks such a unit (Phantom Guardsman display 16457,
     // Karazhan) and keeps the stride rule at the model's scale: display 16457

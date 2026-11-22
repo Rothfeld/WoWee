@@ -67,15 +67,17 @@ inline constexpr float kDefaultWalkMoveSpeed = 2.5f;
 inline constexpr float kDefaultRunMoveSpeed = 250.0f / 36.0f;
 
 // Walk or Run for a server-driven (SMSG_MONSTER_MOVE spline) ground unit.
-// Build 8606 decides from the spline's speed against the model's own Walk
-// stride (Walk sequence moveSpeed x model scale), not from the retained
-// WALK_MODE flag, the spline's Runmode flag (CMaNGOS sets it on every move)
-// or the unit's walk/run speeds: it walks until Walk would play at
-// kSplineRunWalkRate times its authored rate. Measured natively, see
-// _experiments/20261117T215856Z.berserker_gait: TrollDire x1.2 (stride 2.0)
-// walks at 3.2 and runs at 4.0 yd/s; ElementalEarth (3.89) walks at 7.2 and
-// runs at 8.0; Chicken x10 (25.0) walks at 8.0. Walk rates up to 1.85
-// walked, 2.00 and above ran.
+// Build 8606 decides from the spline's speed against the model's unscaled
+// authored Walk movingSpeed (not scaled by OBJECT_FIELD_SCALE_X or
+// CreatureDisplayInfo.scale), not from the retained WALK_MODE flag, the
+// spline's Runmode flag (CMaNGOS sets it on every move) or the unit's
+// walk/run speeds: it walks while speed < kSplineRunWalkRate * walkMoveSpeed.
+// Measured natively:
+// - Akama 23089 (display 21112 x2.6, Walk 2.5 -> threshold 5.0): 3.0, 4.2,
+//   4.8 yd/s walk; 5.4, 6.0, 10.0, 10.2 yd/s run
+//   (_experiments/20261122T201500Z.akama_walk_gait_parity).
+// - TrollDire (x1.2, Walk 1.667 -> threshold 3.33): 2.4, 3.2 walk; 4.0+ run.
+// - ElementalEarth (x1.0, Walk 3.889 -> threshold 7.78): 7.2 walk; 8.0 run.
 inline constexpr float kSplineRunWalkRate = 2.0f;
 
 // Run -> Sprint (143) promotion rate for ground forward/strafe locomotion.

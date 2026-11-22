@@ -213,25 +213,39 @@ TEST_CASE("Creature spline movement retains aquatic and aerial poses", "[creatur
     CHECK(creatureMovingAnimation(true, true, true) == anim::FLY_FORWARD);
 }
 
-TEST_CASE("Spline gait follows speed against the model's Walk stride", "[creature-locomotion]") {
-    // Native 8606 observations (_experiments/20261117T215856Z.berserker_gait):
-    // strides are Walk moveSpeed x model scale; speeds are server spline speeds.
+TEST_CASE("Spline gait follows speed against the model's unscaled Walk movingSpeed", "[creature-locomotion]") {
+    // Native 8606 observations (_experiments/20261117T215856Z.berserker_gait and
+    // _experiments/20261122T201500Z.akama_walk_gait_parity):
+    // threshold is 2.0 * abs(M2 Walk.movingSpeed) without display/object scale.
     using wowee::rendering::splineGroundGaitWalks;
-    const float trollDire = 1.6666666f * 1.2f;   // Smolderthorn Berserker
+    const float trollDireWalk = 1.6666666f;      // Smolderthorn Berserker (cdi_scale=1.2)
     const float berserkerRun = 1.14286f * 7.0f;  // SpeedRun x 7 yd/s
-    CHECK(splineGroundGaitWalks(berserkerRun * 0.3f, trollDire));
-    CHECK(splineGroundGaitWalks(berserkerRun * 0.4f, trollDire));
-    CHECK_FALSE(splineGroundGaitWalks(berserkerRun * 0.5f, trollDire));
-    CHECK_FALSE(splineGroundGaitWalks(berserkerRun * 0.7f, trollDire));
-    CHECK_FALSE(splineGroundGaitWalks(berserkerRun, trollDire));
-    const float elementalEarth = 3.8888888f;      // Rock Elemental
-    CHECK(splineGroundGaitWalks(5.6f, elementalEarth));
-    CHECK(splineGroundGaitWalks(6.4f, elementalEarth));
-    CHECK(splineGroundGaitWalks(7.2f, elementalEarth));
-    CHECK_FALSE(splineGroundGaitWalks(8.0f, elementalEarth));
-    const float chicken = 2.5f * 10.0f;       // El Pollo Grande
-    CHECK(splineGroundGaitWalks(2.4f, chicken));
-    CHECK(splineGroundGaitWalks(8.0f, chicken));
+    CHECK(splineGroundGaitWalks(berserkerRun * 0.3f, trollDireWalk));
+    CHECK(splineGroundGaitWalks(berserkerRun * 0.4f, trollDireWalk));
+    CHECK_FALSE(splineGroundGaitWalks(berserkerRun * 0.5f, trollDireWalk));
+    CHECK_FALSE(splineGroundGaitWalks(berserkerRun * 0.7f, trollDireWalk));
+    CHECK_FALSE(splineGroundGaitWalks(berserkerRun, trollDireWalk));
+
+    const float elementalEarthWalk = 3.8888888f; // Rock Elemental (cdi_scale=1.0)
+    CHECK(splineGroundGaitWalks(5.6f, elementalEarthWalk));
+    CHECK(splineGroundGaitWalks(6.4f, elementalEarthWalk));
+    CHECK(splineGroundGaitWalks(7.2f, elementalEarthWalk));
+    CHECK_FALSE(splineGroundGaitWalks(8.0f, elementalEarthWalk));
+
+    // Akama 23089 (display 21112, cdi_scale=2.6, Walk=2.5 -> threshold 5.0 yd/s)
+    const float akamaWalk = 2.5f;
+    CHECK(splineGroundGaitWalks(3.0f, akamaWalk));
+    CHECK(splineGroundGaitWalks(4.2f, akamaWalk));
+    CHECK(splineGroundGaitWalks(4.8f, akamaWalk));
+    CHECK_FALSE(splineGroundGaitWalks(5.4f, akamaWalk));
+    CHECK_FALSE(splineGroundGaitWalks(6.0f, akamaWalk));
+    CHECK_FALSE(splineGroundGaitWalks(10.0f, akamaWalk));
+
+    // Lord Sanguinar 20060 (display 20178, cdi_scale=3.0, BloodElfMale Walk=2.2222)
+    const float bloodElfWalk = 2.2222222f;
+    CHECK(splineGroundGaitWalks(4.0f, bloodElfWalk));
+    CHECK_FALSE(splineGroundGaitWalks(4.5f, bloodElfWalk));
+    CHECK_FALSE(splineGroundGaitWalks(12.0f, bloodElfWalk));
 }
 
 TEST_CASE("Aquatic creature surface limit preserves submerged server coordinates", "[creature-locomotion]") {
