@@ -23,6 +23,7 @@ namespace wowee {
 namespace game {
 
 class GameHandler;
+struct TextSubject;
 
 class ChatHandler {
 public:
@@ -221,6 +222,9 @@ private:
     /// A player's name from whatever already holds it - the name cache, the
     /// player nearby, the party, the guild roster. Empty when none does.
     [[nodiscard]] std::string knownPlayerName(uint64_t guid) const;
+    /// Subject metadata ($n/$N/$c/$C/$r/$R/$g) for a monster or raid-boss line
+    /// addressed to a non-zero receiverGuid.
+    [[nodiscard]] TextSubject monsterLineSubject(const MessageChatData& data) const;
 
     void handleTextEmote(network::Packet& packet);
     void handleChannelNotify(network::Packet& packet);

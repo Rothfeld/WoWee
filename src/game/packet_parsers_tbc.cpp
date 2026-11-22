@@ -1332,13 +1332,89 @@ bool TbcPacketParsers::parseSpellHealLog(network::Packet& packet, SpellHealLogDa
 
 // ============================================================================
 // TBC 2.4.3 SMSG_MESSAGECHAT
-// CMaNGOS TBC uses the same senderGuid + unknown + type-specific body shape
-// as WotLK here. In particular, system and whisper packets carry an extra
-// receiverGuid before messageLen.
+// Matches CMaNGOS-TBC ChatHandler::BuildChatPacket (Chat.cpp:3682-3748):
+//   uint8 type, uint32 language, uint64 senderGuid, uint32 0 (2.1.0)
+//   - MONSTER_* / RAID_BOSS_* / WHISPER_FOREIGN:
+//       uint32 senderNameLen, char[] senderName, uint64 targetGuid
+//       if (targetGuid != 0 && !isPlayer(targetGuid) && type != WHISPER_FOREIGN):
+//           uint32 targetNameLen, char[] targetName   (pets write len=1, "\0"!)
+//   - BG_SYSTEM_*: uint64 targetGuid
+//   - CHANNEL: cstring channelName, uint64 targetGuid
+//   - default: uint64 targetGuid
+//   uint32 messageLen, char[] message, uint8 chatTag
 // ============================================================================
 
 bool TbcPacketParsers::parseMessageChat(network::Packet& packet, MessageChatData& data) {
-    return MessageChatParser::parse(packet, data);
+    if (packet.getSize() < 17) {
+        LOG_ERROR("[TBC] SMSG_MESSAGECHAT packet too small: ", packet.getSize(), " bytes");
+        return false;
+    }
+
+    data.type = static_cast<ChatType>(packet.readUInt8());
+    data.language = static_cast<ChatLanguage>(packet.readUInt32());
+    data.senderGuid = packet.readUInt64();
+    packet.readUInt32(); // 2.1.0 unknown (always 0)
+
+    switch (data.type) {
+        case ChatType::MONSTER_SAY:
+        case ChatType::MONSTER_PARTY:
+        case ChatType::MONSTER_YELL:
+        case ChatType::MONSTER_WHISPER:
+        case ChatType::MONSTER_EMOTE:
+        case ChatType::RAID_BOSS_EMOTE:
+        case ChatType::RAID_BOSS_WHISPER:
+        case ChatType::WHISPER_FOREIGN: {
+            if (!packet.readSizedString(data.senderName)) return false;
+            if (!packet.hasRemaining(8)) return false;
+            data.receiverGuid = packet.readUInt64();
+            const bool isPlayer = (data.receiverGuid != 0) && ((data.receiverGuid >> 48) == 0x0000);
+            if (data.receiverGuid != 0 && !isPlayer && data.type != ChatType::WHISPER_FOREIGN) {
+                // CMaNGOS-TBC writes targetNameLen + targetName for every non-player target,
+                // including pets (len=1, "\0"), verified live on Native 2.4.3.
+                if (!packet.readSizedString(data.receiverName)) return false;
+            }
+            break;
+        }
+
+        case ChatType::CHANNEL: {
+            data.channelName = packet.readString();
+            if (!packet.hasRemaining(8)) return false;
+            data.receiverGuid = packet.readUInt64();
+            break;
+        }
+
+        case ChatType::BG_SYSTEM_NEUTRAL:
+        case ChatType::BG_SYSTEM_ALLIANCE:
+        case ChatType::BG_SYSTEM_HORDE:
+        default: {
+            if (!packet.hasRemaining(8)) return false;
+            data.receiverGuid = packet.readUInt64();
+            break;
+        }
+    }
+
+    if (!packet.hasRemaining(4)) return false;
+    const uint32_t messageLen = packet.readUInt32();
+    if (messageLen > packet.getRemainingSize() || messageLen >= 8192) return false;
+
+    if (messageLen > 0) {
+        data.message.resize(messageLen);
+        for (uint32_t i = 0; i < messageLen; ++i) {
+            data.message[i] = static_cast<char>(packet.readUInt8());
+        }
+        if (!data.message.empty() && data.message.back() == '\0') {
+            data.message.pop_back();
+        }
+    }
+
+    if (packet.hasData()) {
+        data.chatTag = packet.readUInt8();
+    }
+
+    LOG_DEBUG("[TBC] Parsed SMSG_MESSAGECHAT: type=", getChatTypeString(data.type),
+              " sender=0x", std::hex, data.senderGuid, " receiver=0x", data.receiverGuid, std::dec,
+              " senderName='", data.senderName, "' receiverName='", data.receiverName, "'");
+    return true;
 }
 
 // ============================================================================

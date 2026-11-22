@@ -697,15 +697,138 @@ wowee::network::Packet chatPacket(wowee::game::ChatType type, uint64_t sender, u
 
 // TBC SMSG_NAME_QUERY_RESPONSE: full guid, name, realm, race, gender, class, no
 // declined names.
-wowee::network::Packet nameResponse(uint64_t guid, const std::string& name) {
+wowee::network::Packet nameResponse(uint64_t guid, const std::string& name,
+                                    uint32_t race = 3, uint32_t gender = 0, uint32_t cls = 1) {
     wowee::network::Packet p(
         wowee::game::wireOpcode(wowee::game::Opcode::SMSG_NAME_QUERY_RESPONSE));
     p.writeUInt64(guid); p.writeString(name); p.writeString("");
-    p.writeUInt32(3); p.writeUInt32(0); p.writeUInt32(1); p.writeUInt8(0);
+    p.writeUInt32(race); p.writeUInt32(gender); p.writeUInt32(cls); p.writeUInt8(0);
+    return p;
+}
+
+wowee::network::Packet tbcMonsterChatPacket(wowee::game::ChatType type,
+                                            uint64_t senderGuid,
+                                            const std::string& senderName,
+                                            uint64_t targetGuid,
+                                            const std::string& targetName,
+                                            const std::string& message) {
+    wowee::network::Packet p(wowee::game::wireOpcode(wowee::game::Opcode::SMSG_MESSAGECHAT));
+    p.writeUInt8(static_cast<uint8_t>(type));
+    p.writeUInt32(0); // LANG_UNIVERSAL
+    p.writeUInt64(senderGuid);
+    p.writeUInt32(0);
+    p.writeUInt32(static_cast<uint32_t>(senderName.size() + 1));
+    p.writeString(senderName);
+    p.writeUInt64(targetGuid);
+    const bool isPlayer = (targetGuid != 0) && ((targetGuid >> 48) == 0x0000);
+    if (targetGuid != 0 && !isPlayer && type != wowee::game::ChatType::WHISPER_FOREIGN) {
+        p.writeUInt32(static_cast<uint32_t>(targetName.size() + 1));
+        p.writeString(targetName);
+    }
+    p.writeUInt32(static_cast<uint32_t>(message.size() + 1));
+    p.writeString(message);
+    p.writeUInt8(0);
     return p;
 }
 
 }  // namespace
+
+TEST_CASE("TBC monster and raid-boss chat expands $-tokens and delivers arg1..arg5", "[chat][tbc][bossemote]") {
+    using wowee::game::ChatType;
+    constexpr uint64_t kBossGuid = 0xF13000624E596E69ULL;
+    constexpr uint64_t kRemotePlayerGuid = 0x0000000000000055ULL;
+    constexpr uint64_t kNpcTargetGuid = 0xF130000064000001ULL;
+    constexpr uint64_t kPetTargetGuid = 0xF140000064000001ULL;
+
+    Session s("tbc");
+    // Local player: Human(1) Rogue(4) Male(0)
+    const uint32_t localBytes0 = (1u) | (4u << 8) | (0u << 16);
+    s.spawnPlayer({{UF::UNIT_FIELD_HEALTH, 100}, {UF::UNIT_FIELD_LEVEL, 70}, {UF::UNIT_FIELD_BYTES_0, localBytes0}});
+    s.receive(nameResponse(Session::kPlayerGuid, "Horserichard", /*race=*/1, /*gender=*/0, /*cls=*/4));
+
+    struct FiredEvent {
+        std::string name;
+        std::vector<std::string> args;
+    };
+    std::vector<FiredEvent> events;
+    s.handler().setAddonEventCallback([&](const std::string& name, const std::vector<std::string>& args) {
+        if (name.rfind("CHAT_MSG_", 0) == 0) {
+            events.push_back({name, args});
+        }
+    });
+
+    SECTION("RAID_BOSS_EMOTE targeting local player expands all $-tokens and %s without double-sub") {
+        s.receive(tbcMonsterChatPacket(
+            ChatType::RAID_BOSS_EMOTE, kBossGuid, "Grand Warlock Alythess",
+            Session::kPlayerGuid, "",
+            "%s directs Conflagration at $n. ($N/$c/$C/$r/$R/$gboy:girl;)$bRun!"));
+        REQUIRE(events.size() == 1);
+        CHECK(events[0].name == "CHAT_MSG_RAID_BOSS_EMOTE");
+        REQUIRE(events[0].args.size() >= 8);
+        CHECK(events[0].args[0] ==
+              "Grand Warlock Alythess directs Conflagration at Horserichard. (Horserichard/rogue/Rogue/human/Human/boy)\nRun!");
+        CHECK(events[0].args[1] == "Grand Warlock Alythess");
+        CHECK(events[0].args[4] == "Horserichard");
+    }
+
+    SECTION("RAID_BOSS_EMOTE targeting uncached remote player waits for NAME_QUERY_RESPONSE") {
+        s.receive(tbcMonsterChatPacket(
+            ChatType::RAID_BOSS_EMOTE, kBossGuid, "Grand Warlock Alythess",
+            kRemotePlayerGuid, "",
+            "Alythess directs Conflagration at $n ($c $r $gman:woman;)."));
+        // Deferred until name query resolves.
+        CHECK(events.empty());
+        CHECK(s.sent().of(wowee::game::Opcode::CMSG_NAME_QUERY).size() == 1);
+
+        // Blood Elf(10) Female(1) Paladin(2)
+        s.receive(nameResponse(kRemotePlayerGuid, "Horserichy", /*race=*/10, /*gender=*/1, /*cls=*/2));
+        REQUIRE(events.size() == 1);
+        CHECK(events[0].name == "CHAT_MSG_RAID_BOSS_EMOTE");
+        CHECK(events[0].args[0] == "Alythess directs Conflagration at Horserichy (paladin blood elf woman).");
+        CHECK(events[0].args[1] == "Grand Warlock Alythess");
+        CHECK(events[0].args[4] == "Horserichy");
+    }
+
+    SECTION("MONSTER_SAY/YELL/EMOTE/WHISPER/PARTY and RAID_BOSS_WHISPER expand $-tokens") {
+        const std::pair<ChatType, std::string> cases[] = {
+            {ChatType::MONSTER_SAY, "CHAT_MSG_MONSTER_SAY"},
+            {ChatType::MONSTER_PARTY, "CHAT_MSG_MONSTER_PARTY"},
+            {ChatType::MONSTER_YELL, "CHAT_MSG_MONSTER_YELL"},
+            {ChatType::MONSTER_WHISPER, "CHAT_MSG_MONSTER_WHISPER"},
+            {ChatType::MONSTER_EMOTE, "CHAT_MSG_MONSTER_EMOTE"},
+            {ChatType::RAID_BOSS_WHISPER, "CHAT_MSG_RAID_BOSS_WHISPER"},
+        };
+        for (const auto& [ctype, evName] : cases) {
+            events.clear();
+            s.receive(tbcMonsterChatPacket(
+                ctype, kBossGuid, "Alythess", Session::kPlayerGuid, "", "Hello $n ($c)"));
+            REQUIRE(events.size() == 1);
+            CHECK(events[0].name == evName);
+            CHECK(events[0].args[0] == "Hello Horserichard (rogue)");
+            CHECK(events[0].args[4] == "Horserichard");
+        }
+    }
+
+    SECTION("Creature target uses wire targetName; pet target parses cleanly; zero target leaves $-tokens raw") {
+        s.receive(tbcMonsterChatPacket(
+            ChatType::RAID_BOSS_EMOTE, kBossGuid, "Alythess",
+            kNpcTargetGuid, "TargetNPC", "Boss targets $n!"));
+        s.receive(tbcMonsterChatPacket(
+            ChatType::RAID_BOSS_EMOTE, kBossGuid, "Alythess",
+            kPetTargetGuid, "", "Pet target $n!"));
+        s.receive(tbcMonsterChatPacket(
+            ChatType::RAID_BOSS_EMOTE, kBossGuid, "Alythess",
+            0, "", "Zero target $n and $N!"));
+
+        REQUIRE(events.size() == 3);
+        CHECK(events[0].args[0] == "Boss targets TargetNPC!");
+        CHECK(events[0].args[4] == "TargetNPC");
+        CHECK(events[1].args[0] == "Pet target !");
+        CHECK(events[1].args[4].empty());
+        CHECK(events[2].args[0] == "Zero target $n and $N!");
+        CHECK(events[2].args[4].empty());
+    }
+}
 
 TEST_CASE("TBC sent chat shows only what the server echoes", "[chat][tbc]") {
     using wowee::game::ChatType;

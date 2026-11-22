@@ -1153,6 +1153,10 @@ wowee_add_packet_test(test_loot_response_packet)
 # SMSG_BATTLEFIELD_STATUS, whose header was read two bytes short.
 wowee_add_packet_test(test_battlefield_status_packet)
 
+# ── test_tbc_monster_chat ──────────────────────────────────────────────
+# TBC 2.4.3 SMSG_MESSAGECHAT wire layout for monster/raid-boss chat types.
+wowee_add_packet_test(test_tbc_monster_chat)
+
 # ── test_lfg_join_packet ─────────────────────────────────────
 # Every field of CMSG_LFG_JOIN, which was wrong in every field and silent.
 wowee_add_packet_test(test_lfg_join_packet)

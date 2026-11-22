@@ -9,6 +9,8 @@
 #include <set>
 #include "addons/lua_api_registrations.hpp"
 #include "game/chat_filters.hpp"
+#include "game/text_tokens.hpp"
+#include "game/summon_title.hpp"
 #include "game/game_handler.hpp"
 #include "game/game_utils.hpp"
 #include "game/packet_parsers.hpp"
@@ -96,6 +98,21 @@ std::string chatParticipant(const std::string& name, uint64_t guid, const char* 
     if (!name.empty()) return name;
     if (guid != 0) return formatChatLogGuid(guid);
     return fallback ? fallback : "";
+}
+
+bool isMonsterChatType(ChatType type) {
+    switch (type) {
+        case ChatType::MONSTER_SAY:
+        case ChatType::MONSTER_PARTY:
+        case ChatType::MONSTER_YELL:
+        case ChatType::MONSTER_WHISPER:
+        case ChatType::MONSTER_EMOTE:
+        case ChatType::RAID_BOSS_EMOTE:
+        case ChatType::RAID_BOSS_WHISPER:
+            return true;
+        default:
+            return false;
+    }
 }
 
 bool chatPacketDiagEnabled() {
@@ -494,6 +511,21 @@ void ChatHandler::deliverChatMessage(MessageChatData data, bool alreadyWaited) {
         }
     }
 
+    // Monster/raid-boss lines targeting another player carry only receiverGuid
+    // on the wire. Wait for CMSG_NAME_QUERY when the target player is not yet
+    // cached so $n/$N/$c/$r/$g and arg5 resolve to the target player's details.
+    if (isMonsterChatType(data.type) && isPlayerGuid(data.receiverGuid) &&
+        data.receiverGuid != owner_.getPlayerGuid() &&
+        knownPlayerName(data.receiverGuid).empty()) {
+        owner_.queryPlayerName(data.receiverGuid);
+        if (!alreadyWaited) {
+            const uint64_t waitingOn = data.receiverGuid;
+            chatAwaitingName_.push_back({std::move(data), waitingOn,
+                                         core::appTimeSeconds() + kNameWaitSeconds});
+            return;
+        }
+    }
+
     if (data.message.empty()) {
         return;
     }
@@ -666,11 +698,20 @@ void ChatHandler::deliverChatMessage(MessageChatData data, bool alreadyWaited) {
     // starts with: a prefix list here dropped any player whisper that began
     // "oRA", "AVR", "GS_", "DVNE" or "BWVQ", or with a non-ASCII letter.
 
-    // An NPC's line keeps its $-tokens. Build 8606 prints ".npc say" text with
-    // "$N", "$c" and "$gm:f;" in it exactly as sent - in the chat frame and in
-    // CHAT_MSG_MONSTER_SAY/YELL/EMOTE/WHISPER's arg1 - whoever the receiver is
-    // (_experiments/20261118T203000Z.text_tokens). Its chat frame fills the
-    // "%s" with the speaker; that is FrameXML's.
+    // Monster and raid-boss lines (CHAT_MSG_MONSTER_*, CHAT_MSG_RAID_BOSS_*)
+    // expand $-tokens ($n/$N/$c/$C/$r/$R/$g/$b) against the target unit when
+    // receiverGuid != 0, and leave them raw when receiverGuid == 0 (verified
+    // live on Native 2.4.3 in _experiments/20261122T001200Z.raid_boss_emote_token_parity).
+    // Also populate receiverName for player targets so Lua arg5 carries targetName.
+    if (isMonsterChatType(data.type) && data.receiverGuid != 0) {
+        const TextSubject subject = monsterLineSubject(data);
+        if (data.receiverName.empty() && !subject.name.empty()) {
+            data.receiverName = subject.name;
+        }
+        if (data.message.find('$') != std::string::npos) {
+            data.message = resolveTextTokens(data.message, subject);
+        }
+    }
 
     // Add to chat history
     data.uid = ++chatUidCounter_;
@@ -886,6 +927,60 @@ std::string ChatHandler::knownPlayerName(uint64_t guid) const {
         if (member.guid == guid && !member.name.empty()) return member.name;
     }
     return {};
+}
+
+TextSubject ChatHandler::monsterLineSubject(const MessageChatData& data) const {
+    if (data.receiverGuid == owner_.getPlayerGuid()) {
+        TextSubject subject = textSubjectFor(owner_);
+        if (subject.name.empty()) {
+            subject.name = knownPlayerName(data.receiverGuid);
+        }
+        if (subject.className.empty()) {
+            if (const uint8_t cls = owner_.lookupPlayerClass(data.receiverGuid)) {
+                subject.className = getClassName(static_cast<Class>(cls));
+            }
+        }
+        if (subject.raceName.empty()) {
+            if (const uint8_t race = owner_.lookupPlayerRace(data.receiverGuid)) {
+                subject.raceName = getRaceName(static_cast<Race>(race));
+            }
+        }
+        return subject;
+    }
+
+    TextSubject subject;
+    subject.worldState = [this](uint32_t id) {
+        return owner_.getWorldState(id).value_or(0u);
+    };
+
+    if (isPlayerGuid(data.receiverGuid)) {
+        subject.name = knownPlayerName(data.receiverGuid);
+        uint8_t cls = owner_.lookupPlayerClass(data.receiverGuid);
+        uint8_t race = owner_.lookupPlayerRace(data.receiverGuid);
+        uint8_t gender = owner_.lookupPlayerGender(data.receiverGuid);
+        if (cls == 0 || race == 0 || gender == 0xFF) {
+            if (auto entity = owner_.getEntityManager().getEntity(data.receiverGuid)) {
+                const uint32_t bytes0 = entity->getField(fieldIndex(UF::UNIT_FIELD_BYTES_0));
+                if (race == 0) race = static_cast<uint8_t>(bytes0 & 0xFFu);
+                if (cls == 0) cls = static_cast<uint8_t>((bytes0 >> 8) & 0xFFu);
+                if (gender == 0xFF) gender = static_cast<uint8_t>((bytes0 >> 16) & 0xFFu);
+            }
+        }
+        if (cls != 0) subject.className = getClassName(static_cast<Class>(cls));
+        if (race != 0) subject.raceName = getRaceName(static_cast<Race>(race));
+        subject.female = (gender == 1);
+    } else {
+        if (!data.receiverName.empty()) {
+            subject.name = data.receiverName;
+        } else if (const std::string& name = owner_.lookupName(data.receiverGuid); !name.empty()) {
+            subject.name = name;
+        }
+        if (auto entity = owner_.getEntityManager().getEntity(data.receiverGuid)) {
+            const uint32_t bytes0 = entity->getField(fieldIndex(UF::UNIT_FIELD_BYTES_0));
+            subject.female = ((bytes0 >> 16) & 0xFFu) == 1;
+        }
+    }
+    return subject;
 }
 
 void ChatHandler::flushChatAwaitingName(uint64_t guid) {
