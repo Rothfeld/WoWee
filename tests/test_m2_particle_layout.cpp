@@ -796,8 +796,99 @@ TEST_CASE("Twinkle size stays within the authored range", "[m2][particle]") {
     CHECK(hi > 0.95f);
     // Same particle, same twinkle period: same size.
     CHECK(particleTwinkleScale(7, 0.01f, 10.0f, 0.1f, 1.0f) == particleTwinkleScale(7, 0.09f, 10.0f, 0.1f, 1.0f));
-    // A fixed range (most emitters author 1 / 1) leaves the size alone.
+    // A fixed range (most emitters author 1 / 1) leaves the size alone when twinklePercent == 1.
     CHECK(particleTwinkleScale(7, 0.3f, 10.0f, 1.0f, 1.0f) == 1.0f);
+    // Archimonde_Fire #1: speed 11, percent 0.9, scale 1.0 - 1.0 still blinks off ~10% of periods.
+    int visibleFixed = 0;
+    for (uint32_t seed = 0; seed < 2000; ++seed) {
+        const float s = particleTwinkleScale(seed * 2654435761u, 0.15f, 11.0f, 1.0f, 1.0f, 0.9f);
+        CHECK((s == 0.0f || s == 1.0f));
+        if (s > 0.0f) ++visibleFixed;
+    }
+    CHECK(visibleFixed > 1700);
+    CHECK(visibleFixed < 1900);
+    // DetectInvis_Impact_Base #0/#1: percent 0.5, scale 0.5 - 2.0 blinks off ~50% of periods.
+    int visibleHalf = 0;
+    for (uint32_t seed = 0; seed < 2000; ++seed) {
+        const float s = particleTwinkleScale(seed * 2654435761u, 0.25f, 5.0f, 0.5f, 2.0f, 0.5f);
+        CHECK((s == 0.0f || (s >= 0.5f && s <= 2.0f)));
+        if (s > 0.0f) ++visibleHalf;
+    }
+    CHECK(visibleHalf > 900);
+    CHECK(visibleHalf < 1100);
+    // Zero twinklePercent always hides the particle.
+    CHECK(particleTwinkleScale(7, 0.3f, 10.0f, 1.0f, 1.0f, 0.0f) == 0.0f);
+}
+
+TEST_CASE("Particle inherited velocity applies burstMultiplier only with flag 0x40", "[m2][particle]") {
+    using wowee::rendering::kParticleInheritVelocity;
+    using wowee::rendering::kParticleNoTrail;
+    using wowee::rendering::particleInheritedVelocity;
+
+    const glm::mat4 prev(1.0f);
+    const glm::mat4 curr = glm::translate(glm::mat4(1.0f), glm::vec3(1.0f, 0.0f, 0.0f));
+    const glm::vec3 localPos(0.0f);
+
+    // Without flag 0x40 (e.g. Fireball_Missile_Low): no velocity inherited.
+    CHECK(particleInheritedVelocity(0x29u, prev, curr, localPos, 0.1f, 2.0f) == glm::vec3(0.0f));
+    // With NoTrail (0x10): particles stay in bone space, no velocity inherited.
+    CHECK(particleInheritedVelocity(kParticleInheritVelocity | kParticleNoTrail, prev, curr, localPos, 0.1f, 2.0f)
+          == glm::vec3(0.0f));
+    // WaterElemental #2 (0xc49, burstMultiplier 2.0): 1 yd in 0.1 s -> 10 yd/s * 2 = 20 yd/s.
+    const glm::vec3 vWater = particleInheritedVelocity(0xc49u, prev, curr, localPos, 0.1f, 2.0f);
+    CHECK(vWater.x == Catch::Approx(20.0f));
+    CHECK(vWater.y == Catch::Approx(0.0f));
+    CHECK(vWater.z == Catch::Approx(0.0f));
+    // WellOfSoulsPain #0 (0x249, burstMultiplier 0.8): 10 * 0.8 = 8 yd/s.
+    CHECK(particleInheritedVelocity(0x249u, prev, curr, localPos, 0.1f, 0.8f).x == Catch::Approx(8.0f));
+    // Firework_RomanCandle_Missle_01 #2 (0x269, burstMultiplier 5.0): 10 * 5 = 50 yd/s.
+    CHECK(particleInheritedVelocity(0x269u, prev, curr, localPos, 0.1f, 5.0f).x == Catch::Approx(50.0f));
+    // Teleport guard (> 10 yd in one step) returns zero.
+    const glm::mat4 teleported = glm::translate(glm::mat4(1.0f), glm::vec3(50.0f, 0.0f, 0.0f));
+    CHECK(particleInheritedVelocity(0xc49u, prev, teleported, localPos, 0.1f, 2.0f) == glm::vec3(0.0f));
+}
+
+TEST_CASE("Particle static wind accelerates over windTime and stops afterward", "[m2][particle]") {
+    using wowee::rendering::particleWindStep;
+
+    // Waterfall-long #0: wind=(0, 2.449, -3.371), windTime=1.0 s.
+    // Over 1.0 s in one step: dv = wind, dp = 0.5 * wind * 1.0.
+    const glm::vec3 wfWind(0.0f, 2.449f, -3.371f);
+    const auto [dpFull, dvFull] = particleWindStep(wfWind, 1.0f, 0.0f, 1.0f);
+    CHECK(dvFull.y == Catch::Approx(2.449f));
+    CHECK(dvFull.z == Catch::Approx(-3.371f));
+    CHECK(dpFull.y == Catch::Approx(0.5f * 2.449f));
+    CHECK(dpFull.z == Catch::Approx(0.5f * -3.371f));
+
+    // After windTime expires, no further wind acceleration is added.
+    const auto [dpAfter, dvAfter] = particleWindStep(wfWind, 1.0f, 1.0f, 0.5f);
+    CHECK(dpAfter == glm::vec3(0.0f));
+    CHECK(dvAfter == glm::vec3(0.0f));
+
+    // Step crossing windTime boundary (0.75 -> 1.25 s): accelerates for 0.25 s, coasts 0.25 s.
+    const auto [dpCross, dvCross] = particleWindStep(wfWind, 1.0f, 0.75f, 0.5f);
+    CHECK(dvCross.y == Catch::Approx(2.449f * 0.25f));
+    CHECK(dpCross.y == Catch::Approx(2.449f * (0.5f * 0.25f * 0.25f + 0.25f * 0.25f)));
+
+    // Blacksmith_Smoke #0: wind=(0, 2.361, 0), windTime=6.3886 s.
+    // Two 0.5 s steps match one 1.0 s step in velocity and total displacement.
+    const glm::vec3 smokeWind(0.0f, 2.361f, 0.0f);
+    glm::vec3 pos(0.0f), vel(0.0f);
+    for (int step = 0; step < 2; ++step) {
+        const float dt = 0.5f;
+        pos += vel * dt;
+        const auto [dp, dv] = particleWindStep(smokeWind, 6.3886f, step * dt, dt);
+        pos += dp;
+        vel += dv;
+    }
+    const auto [dp1, dv1] = particleWindStep(smokeWind, 6.3886f, 0.0f, 1.0f);
+    CHECK(vel.y == Catch::Approx(dv1.y));
+    CHECK(pos.y == Catch::Approx(dp1.y));
+
+    // Zero windTime or zero windVector is a no-op.
+    const auto [dpZero, dvZero] = particleWindStep(wfWind, 0.0f, 0.0f, 0.1f);
+    CHECK(dpZero == glm::vec3(0.0f));
+    CHECK(dvZero == glm::vec3(0.0f));
 }
 
 TEST_CASE("Pre-WotLK playable animation lookup decides what Stand shows", "[m2][animation]") {

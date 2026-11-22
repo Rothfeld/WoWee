@@ -162,14 +162,37 @@ model's own green on both. Rows 355/356 carry real alpha, so alpha is
 replaced too.
 
 Geometry particles: a pre-264 emitter naming a model at `+0x18` (28 TBC
-emitters: WhirlwindGeoWhite, ConeofCold_Geo, CycloneGeo, Skull) draws that
-model's bind-pose triangles at each particle instead of a sprite: birth-pose
-orientation, lifecycle scale, colour and opacity, emitter texture and blend,
-turning at an angular velocity drawn from the tumble range (`+0x19C` min xyz,
-`+0x1A8` max xyz; Whirlwind 0..8 rad/s about Z). Whirlwind (13736) shows flat
-red swirls rising round the unit in the original; as sprites they were a wall
-of red squares. Unverified: texture source (emitter vs. geometry model's own),
-multi-axis tumble order, and overall brightness (WoWee swirls look denser).
+emitters: WhirlwindGeoWhite, ConeofCold_Geo, CycloneGeo, Skull,
+BoneArmor_Recursive, DarkIronNodeParticleRock) draws that model's bind-pose
+triangles at each particle instead of a sprite: birth-pose orientation,
+lifecycle scale (including twinkle), colour and opacity, the geometry model's
+own texture and M2Blend mode (falling back to the emitter's when the geometry
+model has no material, supporting all 7 M2Blend modes 0..6 via
+`m2_particle_mesh.frag.glsl` and `particleBlendPipeline`), turning at an
+angular velocity drawn from the tumble range (`+0x19C` min xyz, `+0x1A8` max
+xyz; Whirlwind 0..8 rad/s about Z). SandVortex (`em_blend=1` AlphaKey with
+`SMOKETOON01.BLP` -> `CycloneGeo.mdx` with `Clouds4.blp`, `blend=2` Alpha)
+renders translucent feathered sand streaks matching native 2.4.3 once the
+geometry model's own texture and blend mode are used (applying `em_blend=1`
+AlphaKey `224/255` against soft `SMOKETOON01.BLP` discarded the entire funnel).
+
+Twinkle percent (`+0x184`, 72 TBC emitters `< 1.0`): each twinkle period
+(`floor(age * twinkleSpeed)`) is visible with probability `twinklePercent` and
+blinks off (`0.0`) otherwise, even when `twinkleScaleMin == twinkleScaleMax`
+(`Archimonde_Fire #1` authors `speed 11, percent 0.9, scale 1.0-1.0`).
+
+Inherited emitter velocity (`0x40` + `burstMultiplier` at `+0x190`, 240 TBC
+`0x40` emitters: `Gyrocopter`, `RocketMount`, `PhoenixPet`, `WaterElemental
+#2/#3` `2.0`, `WellOfSoulsPain` `0.8`, `Firework_RomanCandle` `5.0`): detached
+particles inherit `((currPos - prevPos) / dt) * burstMultiplier` on birth
+(guarded against > 10 yd teleport steps).
+
+Static wind (`windVector` at `+0x1B4` in yards/s, `windTime` at `+0x1C0` in
+seconds; 14 TBC emitters: `Blacksmith_Smoke` / `Smokestack` `6.3886 s`,
+`ShadowFangFog01` / `Creature_EtherealStorm` `20 s`, `WaterElemental #10` /
+`Waterfall-long` `1.0 s`): accelerates particles by `windVector / windTime`
+during `age in [0, windTime]` (total impulse `windVector` over `windTime`),
+oriented by the particle's velocity basis.
 
 Sphere emitters (type 2): radius uniform between the area length and width
 tracks, elevation `U(-v, v)` above the model's horizontal plane, azimuth

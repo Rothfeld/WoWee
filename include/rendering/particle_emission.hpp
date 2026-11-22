@@ -77,20 +77,81 @@ inline float particleRotation(float spin, float ageSeconds) {
 // crystals. Water, smoke and steam vents mostly do not.
 inline constexpr uint32_t kParticleOwnColor = 0x1;
 
-// Twinkle size of a pre-264 emitter's particle (+0x180 speed, +0x188/+0x18C
-// scale min/max): a random factor between min and max, drawn again every
-// 1/speed seconds of the particle's age (once, for speed 0). Glowy (Red)
-// 22518 (focusedcasting_state_chest, scale range 0.1-1.0): the light the aura
-// adds around the unit fell from 6.2x native to 3.6x with it; Arcane Power
-// 12042 (0.9-1.2) stays within 6% of native. The twinkle percent (+0x184) is
-// not applied: Arcane Power's 0.6 changed nothing measurable.
+// Flag 0x40 (`InheritVelocity` / `UseBurstMultiplier`, 240 TBC emitters:
+// Gyrocopter, RocketMount, PhoenixPet, WaterElemental #2/#3, WellOfSoulsPain,
+// Firework_RomanCandle): newly spawned detached particles inherit the emitter's
+// frame velocity scaled by `burstMultiplier` (`+0x190`).
+inline constexpr uint32_t kParticleInheritVelocity = 0x40;
+
+// Twinkle size of a pre-264 emitter's particle (+0x180 speed, +0x184 percent,
+// +0x188/+0x18C scale min/max): a random factor between min and max, drawn
+// again every 1/speed seconds of the particle's age (once, for speed 0).
+// When `twinklePercent < 1.0` (72 TBC emitters, e.g. Archimonde_Fire #1 with
+// speed 11, percent 0.9, scale 1.0-1.0; DetectInvis_Impact_Base #0/#1 with
+// percent 0.5; ArcanePower_State_Chest #0 with percent 0.6), each twinkle
+// period is visible with probability `twinklePercent` and blinks off (`0.0f`)
+// otherwise, using an independent hash mix so visibility and scale stay
+// uncorrelated.
 inline float particleTwinkleScale(uint32_t seed, float age, float speed,
-                                  float scaleMin, float scaleMax) {
-    if (scaleMin == scaleMax) return scaleMin;
+                                  float scaleMin, float scaleMax,
+                                  float twinklePercent = 1.0f) {
+    const bool canBlinkOff = twinklePercent < 1.0f;
+    if (!canBlinkOff && scaleMin == scaleMax) return scaleMin;
+    if (twinklePercent <= 0.0f) return 0.0f;
     const uint32_t period = speed > 0.0f ? static_cast<uint32_t>(age * speed) : 0u;
     uint32_t h = seed ^ (period * 0x9E3779B9u);
     h ^= h >> 16; h *= 0x7FEB352Du; h ^= h >> 15; h *= 0x846CA68Bu; h ^= h >> 16;
+    if (canBlinkOff) {
+        uint32_t hv = h ^ 0xA5A5A5A5u;
+        hv ^= hv >> 16; hv *= 0x7FEB352Du; hv ^= hv >> 15; hv *= 0x846CA68Bu; hv ^= hv >> 16;
+        const float uVis = static_cast<float>(hv >> 8) / 16777216.0f;
+        if (uVis >= twinklePercent) return 0.0f;
+    }
+    if (scaleMin == scaleMax) return scaleMin;
     return scaleMin + (scaleMax - scaleMin) * (static_cast<float>(h >> 8) / 16777215.0f);
+}
+
+/// Inherited emitter velocity for emitters with flag 0x40 (`burstMultiplier`
+/// at pre-264 +0x190). Detached particles inherit
+/// `((currPos - prevPos) / dt) * burstMultiplier`. NoTrail emitters and
+/// teleport steps (> 10 yd in one step) return zero.
+inline glm::vec3 particleInheritedVelocity(uint32_t flags,
+                                           const glm::mat4& previous,
+                                           const glm::mat4& current,
+                                           const glm::vec3& localPos,
+                                           float dt,
+                                           float burstMultiplier) {
+    if (!(flags & kParticleInheritVelocity) || (flags & kParticleNoTrail)) return glm::vec3(0.0f);
+    if (dt <= 1e-5f || burstMultiplier == 0.0f) return glm::vec3(0.0f);
+    const glm::vec3 prevPos = glm::vec3(previous * glm::vec4(localPos, 1.0f));
+    const glm::vec3 currPos = glm::vec3(current * glm::vec4(localPos, 1.0f));
+    const glm::vec3 delta = currPos - prevPos;
+    constexpr float kMaxStepDisplacementSq = 100.0f;  // 10 yd teleport guard
+    if (glm::dot(delta, delta) > kMaxStepDisplacementSq) return glm::vec3(0.0f);
+    return (delta / dt) * burstMultiplier;
+}
+
+/// Static wind integration for pre-264 `windVector` (+0x1B4, yards/s) over
+/// `windTime` (+0x1C0, seconds). Applies uniform acceleration
+/// `windVector / windTime` during `age in [0, windTime]` (integrating to a
+/// total velocity impulse of `windVector` over `windTime`) and returns
+/// `{deltaPos, deltaVel}` for a step `[prevAge, prevAge + dt]`.
+/// All 14 TBC wind emitters author `windTime > 0` (Blacksmith_Smoke &
+/// Smokestack 6.3886 s, ShadowFangFog01 & EtherealStorm 20 s, WaterElemental
+/// #10 & Waterfall-long 1.0 s).
+inline std::pair<glm::vec3, glm::vec3> particleWindStep(const glm::vec3& windDir,
+                                                        float windTime,
+                                                        float prevAge,
+                                                        float dt) {
+    if (windTime <= 0.0f || dt <= 0.0f) return {glm::vec3(0.0f), glm::vec3(0.0f)};
+    if (glm::dot(windDir, windDir) <= 1e-12f) return {glm::vec3(0.0f), glm::vec3(0.0f)};
+    const float activeDt = std::clamp(windTime - prevAge, 0.0f, dt);
+    if (activeDt <= 0.0f) return {glm::vec3(0.0f), glm::vec3(0.0f)};
+    const glm::vec3 accel = windDir / windTime;
+    const glm::vec3 dv = accel * activeDt;
+    const float coastDt = dt - activeDt;
+    const glm::vec3 dp = accel * (0.5f * activeDt * activeDt) + dv * coastDt;
+    return {dp, dv};
 }
 
 // Drag (emitter +0x194, pre-264 layout) scales speed by exp(-drag * t).

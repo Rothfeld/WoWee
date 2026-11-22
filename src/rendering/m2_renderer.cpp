@@ -559,10 +559,52 @@ bool M2Renderer::buildMainPassPipelines(VkDescriptorSetLayout perFrameLayout) {
             ribbonAdditivePipeline_ = buildRibbonPipeline(PipelineBuilder::blendAdditive());
             ribbonModPipeline_      = buildRibbonPipeline(modBlend);
             ribbonModAddPipeline_   = buildRibbonPipeline(modAddBlend);
-            particleMeshPipeline_ = buildRibbonPipeline(PipelineBuilder::blendAlpha(),
-                                                        VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
-            particleMeshAdditivePipeline_ = buildRibbonPipeline(PipelineBuilder::blendAdditive(),
-                                                                VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+
+            rendering::VkShaderModule meshFrag;
+            (void)meshFrag.loadFromFile(device, "assets/shaders/m2_particle_mesh.frag.spv");
+            if (meshFrag.isValid()) {
+                if (particleMeshPipelineLayout_ == VK_NULL_HANDLE) {
+                    VkDescriptorSetLayout meshLayouts[] = {perFrameLayout, particleTexLayout_};
+                    VkPushConstantRange pcRange{};
+                    pcRange.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+                    pcRange.offset = 0;
+                    pcRange.size = sizeof(int);
+                    VkPipelineLayoutCreateInfo lci{.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+                    lci.setLayoutCount = 2;
+                    lci.pSetLayouts = meshLayouts;
+                    lci.pushConstantRangeCount = 1;
+                    lci.pPushConstantRanges = &pcRange;
+                    vkCreatePipelineLayout(device, &lci, nullptr, &particleMeshPipelineLayout_);
+                }
+                auto buildParticleMeshPipeline = [&](VkPipelineColorBlendAttachmentState blend) -> VkPipeline {
+                    return PipelineBuilder()
+                        .setShaders(ribVert.stageInfo(VK_SHADER_STAGE_VERTEX_BIT),
+                                    meshFrag.stageInfo(VK_SHADER_STAGE_FRAGMENT_BIT))
+                        .setVertexInput({rBind}, rAttrs)
+                        .setTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
+                        .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE)
+                        .setDepthTest(true, false, VK_COMPARE_OP_LESS_OR_EQUAL)
+                        .setColorBlendAttachment(blend)
+                        .setMultisample(vkCtx_->getMsaaSamples())
+                        .setLayout(particleMeshPipelineLayout_)
+                        .setRenderPass(mainPass)
+                        .setDynamicStates(viewportAndScissorDynamic())
+                        .build(device, vkCtx_->getPipelineCache());
+                };
+                VkPipelineColorBlendAttachmentState meshMod = PipelineBuilder::blendAlpha();
+                meshMod.srcColorBlendFactor = VK_BLEND_FACTOR_DST_COLOR;
+                meshMod.dstColorBlendFactor = VK_BLEND_FACTOR_ZERO;
+                meshMod.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+                meshMod.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+                VkPipelineColorBlendAttachmentState meshMod2x = meshMod;
+                meshMod2x.dstColorBlendFactor = VK_BLEND_FACTOR_SRC_COLOR;
+
+                particleMeshPipeline_         = buildParticleMeshPipeline(PipelineBuilder::blendAlpha());
+                particleMeshAdditivePipeline_ = buildParticleMeshPipeline(PipelineBuilder::blendAdditive());
+                particleMeshModPipeline_      = buildParticleMeshPipeline(meshMod);
+                particleMeshMod2xPipeline_    = buildParticleMeshPipeline(meshMod2x);
+                meshFrag.destroy();
+            }
         }
         ribVert.destroy(); ribFrag.destroy();
     }
@@ -1057,9 +1099,12 @@ void M2Renderer::shutdown() {
     destroyPipeline(ribbonModAddPipeline_);
     destroyPipeline(particleMeshPipeline_);
     destroyPipeline(particleMeshAdditivePipeline_);
+    destroyPipeline(particleMeshModPipeline_);
+    destroyPipeline(particleMeshMod2xPipeline_);
 
     destroy(device, pipelineLayout_);
     destroy(device, particlePipelineLayout_);
+    destroy(device, particleMeshPipelineLayout_);
     destroy(device, ribbonPipelineLayout_);
 
     // Destroy descriptor pools and layouts
@@ -1756,8 +1801,19 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId, boo
             mesh.uvs.push_back(vertex.texCoords[0]);
         }
         mesh.indices = geometry.indices;
+        mesh.blendMode = !geometry.materials.empty()
+            ? static_cast<uint8_t>(geometry.materials[0].blendMode)
+            : model.particleEmitters[ei].blendingType;
+        if (!geometry.textures.empty() && !geometry.textures[0].filename.empty() &&
+            ei < gpuModel.particleTextures.size()) {
+            VkTexture* geoTex = loadTexture(geometry.textures[0].filename, geometry.textures[0].flags);
+            if (geoTex && geoTex->isValid()) {
+                gpuModel.particleTextures[ei] = geoTex;
+            }
+        }
         LOG_INFO("M2 '", model.name, "' emitter ", ei, " draws geometry model ", path, " (",
-                 mesh.positions.size(), " vertices, ", mesh.indices.size() / 3, " triangles)");
+                 mesh.positions.size(), " vertices, ", mesh.indices.size() / 3, " triangles, blend=",
+                 int(mesh.blendMode), ")");
     }
 
     // Pre-allocate one stable descriptor set per particle emitter to avoid per-frame allocation.

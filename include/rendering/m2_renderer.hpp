@@ -222,6 +222,7 @@ struct M2ModelGPU {
         std::vector<glm::vec3> positions;
         std::vector<glm::vec2> uvs;
         std::vector<uint16_t> indices;
+        uint8_t blendMode = 2;
     };
     std::vector<ParticleGeometry> particleGeometry;
 
@@ -261,6 +262,8 @@ struct M2Particle {
     glm::mat3 birthBasis{1.0f};
     /// Geometry particles: angular velocity (rad/s) from the emitter's tumble range.
     glm::vec3 tumbleRate{0.0f};
+    /// Static wind velocity vector (+0x1B4) transformed into this particle's simulation space.
+    glm::vec3 windVector{0.0f};
     /// Per-particle seed for the emitter's twinkle (particleTwinkle).
     uint32_t twinkleSeed = 0;
 };
@@ -1089,9 +1092,12 @@ private:
     VkPipeline ribbonAdditivePipeline_ = VK_NULL_HANDLE;  // Additive ribbons
     VkPipeline ribbonModPipeline_ = VK_NULL_HANDLE;       // Mod (multiply) ribbons (SpellChainEffects blendMode 4)
     VkPipeline ribbonModAddPipeline_ = VK_NULL_HANDLE;    // ModAdd (dst*src + dst) ribbons (SpellChainEffects blendMode 6)
-    // Geometry-model particles: ribbon vertex layout and shaders, triangle lists.
+    // Geometry-model particles: ribbon vertex layout, triangle lists, M2Blend push constant.
     VkPipeline particleMeshPipeline_ = VK_NULL_HANDLE;
     VkPipeline particleMeshAdditivePipeline_ = VK_NULL_HANDLE;
+    VkPipeline particleMeshModPipeline_ = VK_NULL_HANDLE;
+    VkPipeline particleMeshMod2xPipeline_ = VK_NULL_HANDLE;
+    VkPipelineLayout particleMeshPipelineLayout_ = VK_NULL_HANDLE;
     VkPipelineLayout ribbonPipelineLayout_ = VK_NULL_HANDLE;
     /// The per-frame set layout initialize() was given. recreatePipelines()
     /// runs long after that call and needs the same one.
@@ -1374,12 +1380,13 @@ private:
     /// Kept as a member so a frame's worth of casters costs no allocation.
     std::vector<std::pair<uint32_t, uint32_t>> shadowCasters_;
 
-    // Ribbon draw-call list (reused each frame)
+    // Ribbon / geometry-particle draw-call list (reused each frame)
     struct RibbonDrawCall {
         VkDescriptorSet texSet;
         VkPipeline      pipeline;
         uint32_t        firstVertex;
         uint32_t        vertexCount;
+        uint8_t         blendMode = 2;
     };
     std::vector<RibbonDrawCall> ribbonDraws_;
     std::vector<ChainStrip> chainStrips_;

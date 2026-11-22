@@ -205,6 +205,9 @@ void M2Renderer::emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt
             const glm::mat3 rotMat = particleWorldVelocityBasis(
                 em.flags, birthTransform, velocityScalesWithPlacement, velocityScaleOverride);
             p.velocity = rotMat * (em.emitterType == 2 ? sphereDirection : dir) * speed;
+            p.velocity += particleInheritedVelocity(
+                em.flags, previousBirth, birthTransform, localPos, dt, em.burstMultiplier);
+            p.windVector = rotMat * em.windVector;
 
             const float gravity = interpFloat(em.gravity, sampleAnimTime,
                 inst.globalSequenceTime, inst.currentSequenceIndex, gpu.globalSequenceDurations);
@@ -212,6 +215,11 @@ void M2Renderer::emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt
             p.velocity *= std::exp(-em.drag * p.life);
             p.position += p.gravityDirection * (0.5f * gravity * p.life * p.life);
             p.velocity += p.gravityDirection * (gravity * p.life);
+            if (em.windTime > 0.0f) {
+                const auto [windDp, windDv] = particleWindStep(p.windVector, em.windTime, 0.0f, p.life);
+                p.position += windDp;
+                p.velocity += windDv;
+            }
             inst.particles.push_back(p);
 
             if (gpu.isSpellEffect && inst.particles.size() == 1) {
@@ -324,6 +332,7 @@ void M2Renderer::updateParticles(M2Instance& inst, float dt) {
 
     for (size_t i = 0; i < inst.particles.size(); ) {
         auto& p = inst.particles[i];
+        const float prevLife = p.life;
         p.life += dt;
         if (p.life >= p.maxLife) {
             // Swap-and-pop removal
@@ -339,6 +348,12 @@ void M2Renderer::updateParticles(M2Instance& inst, float dt) {
             const float gravity = emitterGrav[p.emitterIndex];
             p.position += p.gravityDirection * (0.5f * gravity * dt * dt);
             p.velocity += p.gravityDirection * (gravity * dt);
+            const float windTime = gpu.particleEmitters[p.emitterIndex].windTime;
+            if (windTime > 0.0f) {
+                const auto [windDp, windDv] = particleWindStep(p.windVector, windTime, prevLife, dt);
+                p.position += windDp;
+                p.velocity += windDv;
+            }
         }
         i++;
     }
@@ -466,7 +481,9 @@ void M2Renderer::renderParticleMeshes(VkCommandBuffer cmd, VkDescriptorSet perFr
     // flat red swirls rising and widening around a whirlwinding unit;
     // billboarding CLOUDS.BLP instead drew a wall of red squares.
     const uint32_t frame = vkCtx_->getCurrentFrame();
-    if (!particleMeshPipeline_ || !particleMeshAdditivePipeline_) return;
+    if (!particleMeshPipeline_ || !particleMeshAdditivePipeline_ ||
+        !particleMeshModPipeline_ || !particleMeshMod2xPipeline_ ||
+        !particleMeshPipelineLayout_) return;
     size_t required = 0;
     for (size_t idx : particleInstanceIndices_) {
         if (idx >= instances.size()) continue;
@@ -531,10 +548,21 @@ void M2Renderer::renderParticleMeshes(VkCommandBuffer cmd, VkDescriptorSet perFr
             if ((em.flags & kParticleNoTrail) && !gpu.bones.empty()) bone = inst.boneMatrices.at(em.bone);
             const glm::mat4 render = particleRenderTransform(em.flags, inst.modelMatrix, bone);
             const float lifeRatio = p.life / std::max(p.maxLife, 0.001f);
+            const float twinkle = particleTwinkleScale(p.twinkleSeed, p.life, em.twinkleSpeed,
+                                                       em.twinkleScaleMin, em.twinkleScaleMax,
+                                                       em.twinklePercent);
+            if (twinkle <= 0.0f) continue;
             const glm::vec3 color = interpFBlockVec3(em.particleColor, lifeRatio);
             const float alpha = std::min(interpFBlockFloat(em.particleAlpha, lifeRatio), 1.0f) * inst.fade;
-            const float scale = interpFBlockFloat(em.particleScale, lifeRatio);
-            const VkPipeline pipeline = em.blendingType >= 3 ? particleMeshAdditivePipeline_ : particleMeshPipeline_;
+            const float scale = interpFBlockFloat(em.particleScale, lifeRatio) * twinkle;
+            const uint8_t blendMode = mesh.blendMode;
+            VkPipeline pipeline = particleMeshPipeline_;
+            switch (particleBlendPipeline(blendMode)) {
+                case ParticleBlendPipeline::Alpha:    pipeline = particleMeshPipeline_; break;
+                case ParticleBlendPipeline::Additive: pipeline = particleMeshAdditivePipeline_; break;
+                case ParticleBlendPipeline::Mod:      pipeline = particleMeshModPipeline_; break;
+                case ParticleBlendPipeline::Mod2x:    pipeline = particleMeshMod2xPipeline_; break;
+            }
             // Tumbling: a constant angular velocity in the birth frame.
             glm::mat3 basis = p.birthBasis;
             const float rate = glm::length(p.tumbleRate);
@@ -554,11 +582,13 @@ void M2Renderer::renderParticleMeshes(VkCommandBuffer cmd, VkDescriptorSet perFr
             }
             if (!ribbonDraws_.empty() && ribbonDraws_.back().texSet == texSet &&
                 ribbonDraws_.back().pipeline == pipeline &&
+                ribbonDraws_.back().blendMode == blendMode &&
                 ribbonDraws_.back().firstVertex + ribbonDraws_.back().vertexCount == first) {
                 ribbonDraws_.back().vertexCount += static_cast<uint32_t>(written) - first;
             } else {
                 ribbonDraws_.push_back({.texSet = texSet, .pipeline = pipeline, .firstVertex = first,
-                                        .vertexCount = static_cast<uint32_t>(written) - first});
+                                        .vertexCount = static_cast<uint32_t>(written) - first,
+                                        .blendMode = blendMode});
             }
         }
     }
@@ -575,11 +605,14 @@ void M2Renderer::renderParticleMeshes(VkCommandBuffer cmd, VkDescriptorSet perFr
         if (dc.pipeline != lastPipe) {
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, dc.pipeline);
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                    ribbonPipelineLayout_, 0, 1, &perFrameSet, 0, nullptr);
+                                    particleMeshPipelineLayout_, 0, 1, &perFrameSet, 0, nullptr);
             lastPipe = dc.pipeline;
         }
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                ribbonPipelineLayout_, 1, 1, &dc.texSet, 0, nullptr);
+                                particleMeshPipelineLayout_, 1, 1, &dc.texSet, 0, nullptr);
+        const int blendMode = static_cast<int>(dc.blendMode);
+        vkCmdPushConstants(cmd, particleMeshPipelineLayout_, VK_SHADER_STAGE_FRAGMENT_BIT,
+                           0, sizeof(blendMode), &blendMode);
         VkDeviceSize offset = 0;
         vkCmdBindVertexBuffers(cmd, 0, 1, &particleMeshVB_[frame], &offset);
         vkCmdDraw(cmd, dc.vertexCount, 1, dc.firstVertex, 0);
@@ -1111,7 +1144,9 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
                 // grows 2.78 -> 4.44 -> 8.33; a former 1.5 cap on models not named
                 // like spell effects shrank it to thin puffs.
                 const float twinkle = particleTwinkleScale(p.twinkleSeed, p.life, em.twinkleSpeed,
-                                                           em.twinkleScaleMin, em.twinkleScaleMax);
+                                                           em.twinkleScaleMin, em.twinkleScaleMax,
+                                                           em.twinklePercent);
+                if (twinkle <= 0.0f) continue;
                 const float scale = interpFBlockFloat(em.particleScale, lifeRatio) * twinkle;
 
                 assert(vbWritten < particleVertexCapacity_[frame]);
