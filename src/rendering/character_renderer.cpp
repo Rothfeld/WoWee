@@ -6022,13 +6022,9 @@ void CharacterRenderer::setStandState(uint32_t instanceId, uint8_t standState) {
 
 bool CharacterRenderer::weaponSheathed(const CharacterInstance& instance, const WeaponAttachment& weapon) {
     if (weapon.heldSheathState < 0) return false;
-    // A drawn ranged weapon stays in hand through the 0x10 shots: build 8606
-    // Spectral Sentry keeps its crossbow at the shoulder through AttackRifle
-    // (49, WeaponFlags 16) (_experiments/20261118T091949Z.creature_swing_anim).
-    constexpr int8_t kSheathStateRanged = 2;
-    const bool poseSheathes = instance.poseSheathAnimation != 0 &&
-        !(weapon.heldSheathState == kSheathStateRanged && instance.sheathState == kSheathStateRanged &&
-          (instance.poseSheathFlags & 0x04u) == 0);
+    const bool poseSheathes = poseAnimationSheathesWeapon(
+        instance.poseSheathAnimation, instance.poseSheathFlags,
+        weapon.heldSheathState, instance.sheathState);
     const uint8_t sheathState = instance.weaponsDrawnByAnimation ? animationSheathState(0x20u, instance.sheathState)
                                                                  : instance.sheathState;
     return instance.gestureSheathAnimation != 0 || poseSheathes ||

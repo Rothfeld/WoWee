@@ -31,4 +31,29 @@ inline constexpr bool gestureWeaponPoseActive(uint32_t gestureAnimation,
 inline constexpr uint8_t animationSheathState(uint32_t animationWeaponFlags, uint8_t sheathState) {
     return (animationWeaponFlags & 0x20u) && sheathState == 0 ? 1 : sheathState;
 }
+/// Whether a pose animation flagged in AnimationData.WeaponFlags (0x04 or 0x10)
+/// sheathes a weapon whose held sheath state is `weaponHeldSheathState` while
+/// the unit is in `unitSheathState`.
+///
+/// Only bow/gun/crossbow shot animations (AttackBow 46, AttackRifle 49, both
+/// WeaponFlags 0x10) keep a drawn ranged weapon (sheath state 2) in hand.
+/// Every other 0x10/0x04 pose — including ReadyThrown (108), AttackThrown
+/// (107), AttackUnarmed (16), emotes, SitGround, Kneel, and spell casts —
+/// sheathes/hides both melee and ranged weapons.
+inline constexpr bool poseAnimationSheathesWeapon(uint32_t poseAnimation,
+                                                  uint32_t poseWeaponFlags,
+                                                  int8_t weaponHeldSheathState,
+                                                  uint8_t unitSheathState) {
+    if (poseAnimation == 0) return false;
+    constexpr int8_t kSheathStateRanged = 2;
+    constexpr uint32_t kAttackBow = 46;
+    constexpr uint32_t kAttackRifle = 49;
+    if (weaponHeldSheathState == kSheathStateRanged &&
+        unitSheathState == kSheathStateRanged &&
+        (poseWeaponFlags & 0x04u) == 0 &&
+        (poseAnimation == kAttackBow || poseAnimation == kAttackRifle)) {
+        return false;
+    }
+    return true;
+}
 } // namespace wowee::rendering

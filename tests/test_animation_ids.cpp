@@ -76,6 +76,36 @@ TEST_CASE("Weapon swings and ready stances draw melee weapons at any sheath stat
     CHECK(animationSheathState(0x04, 1) == 1);
 }
 
+TEST_CASE("Thrown and non-shot 0x10 poses sheathe a drawn ranged weapon", "[animation][weapons]") {
+    using wowee::rendering::poseAnimationSheathesWeapon;
+    constexpr int8_t kMelee = 1;
+    constexpr int8_t kRanged = 2;
+
+    // No active sheathing pose -> nothing sheathed.
+    CHECK_FALSE(poseAnimationSheathesWeapon(0, 0, kRanged, 2));
+    CHECK_FALSE(poseAnimationSheathesWeapon(0, 0, kMelee, 1));
+
+    // Bow/gun/crossbow shot animations (AttackBow 46, AttackRifle 49, WeaponFlags 0x10)
+    // keep a drawn ranged weapon in hand, while still sheathing melee weapons.
+    CHECK_FALSE(poseAnimationSheathesWeapon(46, 0x10, kRanged, 2));
+    CHECK_FALSE(poseAnimationSheathesWeapon(49, 0x10, kRanged, 2));
+    CHECK(poseAnimationSheathesWeapon(46, 0x10, kMelee, 1));
+    CHECK(poseAnimationSheathesWeapon(49, 0x10, kMelee, 1));
+
+    // Thrown animations (ReadyThrown 108, AttackThrown 107, WeaponFlags 0x10 — e.g.
+    // Master Engineer Telonicus casting Bomb 37036) must sheathe/hide a drawn gun/bow.
+    CHECK(poseAnimationSheathesWeapon(108, 0x10, kRanged, 2));
+    CHECK(poseAnimationSheathesWeapon(107, 0x10, kRanged, 2));
+
+    // Other 0x10 poses (AttackUnarmed 16, SitGround 97, EmoteWave 67) and 0x04 spell
+    // casts (ReadySpellDirected 51, SpellCastDirected 53) also sheathe a drawn ranged weapon.
+    CHECK(poseAnimationSheathesWeapon(16, 0x10, kRanged, 2));
+    CHECK(poseAnimationSheathesWeapon(97, 0x10, kRanged, 2));
+    CHECK(poseAnimationSheathesWeapon(67, 0x10, kRanged, 2));
+    CHECK(poseAnimationSheathesWeapon(51, 0x04, kRanged, 2));
+    CHECK(poseAnimationSheathesWeapon(53, 0x04, kRanged, 2));
+}
+
 TEST_CASE("Emote procedures retain stand states and seated gesture eligibility", "[emote-stance]") {
     using namespace wowee::rendering;
     CHECK(emoteStandState(1, 3) == 3); // SLEEP and LIE share the authored sleep state.
