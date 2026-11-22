@@ -145,6 +145,40 @@ void EntitySpawnCallbackHandler::setupCallbacks() {
         m2r->setInstanceAnimation(info.instanceId, *sequence, false);
     });
 
+    // SMSG_GAMEOBJECT_SPAWN_ANIM_OBSOLETE (0x214): sent by CMaNGOS Totem::Summon
+    // (Totem.cpp:104) and GO spawn triggers with the 8-byte GUID to play the
+    // model's Birth (127) or Spawn (148) one-shot animation.
+    gameHandler_.setGameObjectSpawnAnimCallback([this](uint64_t guid) {
+        auto& goInstances = entitySpawner_.getGameObjectInstances();
+        if (auto it = goInstances.find(guid); it != goInstances.end()) {
+            const auto& info = it->second;
+            if (info.isWmo) return;
+            auto* m2r = renderer_.getM2Renderer();
+            if (!m2r) return;
+            if (m2r->hasAnimation(info.instanceId, rendering::anim::BIRTH)) {
+                m2r->setInstanceAnimation(info.instanceId, rendering::anim::BIRTH, false);
+            } else if (m2r->hasAnimation(info.instanceId, rendering::anim::SPAWN)) {
+                m2r->setInstanceAnimation(info.instanceId, rendering::anim::SPAWN, false);
+            }
+            return;
+        }
+        const uint32_t instanceId = entitySpawner_.getCreatureInstanceId(guid);
+        auto* cr = renderer_.getCharacterRenderer();
+        if (!instanceId || !cr || cr->isInstanceDead(instanceId)) return;
+        uint32_t curAnim = 0; float curT = 0.0f, curDur = 0.0f;
+        if (cr->getAnimationState(instanceId, curAnim, curT, curDur) &&
+            (curAnim == rendering::anim::BIRTH || curAnim == rendering::anim::SPAWN)) {
+            return;
+        }
+        if (cr->hasAnimation(instanceId, rendering::anim::BIRTH)) {
+            cr->playAnimation(instanceId, rendering::anim::BIRTH, false,
+                              entitySpawner_.remoteIdleAnimation(guid));
+        } else if (cr->hasAnimation(instanceId, rendering::anim::SPAWN)) {
+            cr->playAnimation(instanceId, rendering::anim::SPAWN, false,
+                              entitySpawner_.remoteIdleAnimation(guid));
+        }
+    });
+
     // GameObject state change callback: a door, a chest, a destructible is a
     // pose the server describes, and the spawner holds it - including the one
     // that arrives before the model does.

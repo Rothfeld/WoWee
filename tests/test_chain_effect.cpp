@@ -1,6 +1,7 @@
 // SpellChainEffects beam rules measured against build 8606
 // (_experiments/20261118T1328Z.hydross_beam_scroll in the workspace root).
 #include <catch_amalgamated.hpp>
+#include "game/spell_chain_targets.hpp"
 
 #include "rendering/chain_effect.hpp"
 #include "rendering/spell_launch_origin.hpp"
@@ -442,4 +443,29 @@ TEST_CASE("StateKit channel beam fallback requires non-zero CharParamOne", "[cha
     CHECK(stateKitDrawsChannelBeam(1.0f));
     // Illidan Cage Trap Caged 40704..40713 (SpellVisual 9227, StateKit 7847): CharParamOne = 0.0 -> no beam.
     CHECK_FALSE(stateKitDrawsChannelBeam(0.0f));
+}
+
+TEST_CASE("SMSG_SPELL_UPDATE_CHAIN_TARGETS decodes caster, spell, and target list", "[chain][opcode]") {
+    using wowee::game::parseSpellUpdateChainTargetsBytes;
+    std::vector<uint8_t> buf(16 + 3 * 8);
+    const uint64_t caster = 0xF130005985000001ULL;
+    const uint32_t spellId = 23953u;
+    const uint32_t count = 3u;
+    const uint64_t tgts[3] = {0x10ULL, 0x20ULL, 0x30ULL};
+    std::memcpy(buf.data() + 0, &caster, 8);
+    std::memcpy(buf.data() + 8, &spellId, 4);
+    std::memcpy(buf.data() + 12, &count, 4);
+    std::memcpy(buf.data() + 16, tgts, sizeof(tgts));
+
+    const auto parsed = parseSpellUpdateChainTargetsBytes(buf.data(), buf.size());
+    REQUIRE(parsed.has_value());
+    CHECK(parsed->casterGuid == caster);
+    CHECK(parsed->spellId == spellId);
+    REQUIRE(parsed->targets.size() == 3u);
+    CHECK(parsed->targets[0] == 0x10ULL);
+    CHECK(parsed->targets[1] == 0x20ULL);
+    CHECK(parsed->targets[2] == 0x30ULL);
+
+    // Truncated target array is rejected safely.
+    CHECK_FALSE(parseSpellUpdateChainTargetsBytes(buf.data(), 16 + 8).has_value());
 }

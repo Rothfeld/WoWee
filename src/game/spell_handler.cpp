@@ -1,4 +1,5 @@
 #include "game/spell_handler.hpp"
+#include "game/spell_chain_targets.hpp"
 #include "game/cast_result_text.hpp"
 #include "game/spell_prerequisites.hpp"
 #include "game/shapeshift_auto_unshift.hpp"
@@ -1260,6 +1261,9 @@ void SpellHandler::registerOpcodes(DispatchTable& table) {
     table[Opcode::SMSG_CAST_FAILED] = [this](network::Packet& packet) { handleCastFailed(packet); };
     table[Opcode::SMSG_SPELL_START] = [this](network::Packet& packet) { handleSpellStart(packet); };
     table[Opcode::SMSG_SPELL_GO] = [this](network::Packet& packet) { handleSpellGo(packet); };
+    table[Opcode::SMSG_SPELL_UPDATE_CHAIN_TARGETS] = [this](network::Packet& packet) {
+        handleSpellUpdateChainTargets(packet);
+    };
     table[Opcode::SMSG_SPELL_COOLDOWN] = [this](network::Packet& packet) { handleSpellCooldown(packet); };
     table[Opcode::SMSG_COOLDOWN_EVENT] = [this](network::Packet& packet) { handleCooldownEvent(packet); };
     table[Opcode::SMSG_AURA_UPDATE] = [this](network::Packet& packet) {
@@ -7774,6 +7778,22 @@ void SpellHandler::stableSwapPet(uint32_t petNumber) {
     auto pkt = StableSwapPetPacket::build(owner_.stableMasterGuidRef(), petNumber);
     owner_.getSocket()->send(pkt);
     LOG_INFO("Sent CMSG_STABLE_SWAP_PET: petNumber=", petNumber);
+}
+
+void SpellHandler::handleSpellUpdateChainTargets(network::Packet& packet) {
+    auto parsed = parseSpellUpdateChainTargets(packet);
+    if (!parsed) {
+        LOG_WARNING("SMSG_SPELL_UPDATE_CHAIN_TARGETS: malformed or truncated packet (size=",
+                    packet.getSize(), ")");
+        return;
+    }
+    LOG_DEBUG("SMSG_SPELL_UPDATE_CHAIN_TARGETS: caster=0x", std::hex, parsed->casterGuid,
+              std::dec, " spell=", parsed->spellId, " targets=", parsed->targets.size());
+    if (auto* renderer = owner_.services().renderer) {
+        if (auto* svs = renderer->getSpellVisualSystem()) {
+            svs->setChannelTargets(parsed->casterGuid, parsed->spellId, std::move(parsed->targets));
+        }
+    }
 }
 
 } // namespace game

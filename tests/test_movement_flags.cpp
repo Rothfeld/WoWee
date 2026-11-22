@@ -32,6 +32,32 @@ TEST_CASE("Stationary native water jump ignores inactive horizontal speed", "[mo
     CHECK(wowee::game::remoteJumpHorizontalSpeed(info, true) == 4.72222f);
 }
 
+TEST_CASE("MSG_MOVE_KNOCK_BACK preserves horizontal speed for stationary victims and decodes trailing vector",
+          "[movement][knockback]") {
+    MovementInfo info;
+    info.flags = static_cast<uint32_t>(MovementFlags::FALLING);
+    info.jumpXYSpeed = 14.5f;
+    info.jumpVelocity = -12.0f;
+    // Standing victim has no directional movement flags and no prior airborne momentum,
+    // yet knockback must still impart horizontal velocity.
+    CHECK(wowee::game::remoteJumpHorizontalSpeed(info, false, false) == 0.0f);
+    CHECK(wowee::game::remoteJumpHorizontalSpeed(info, false, true) == Catch::Approx(14.5f));
+
+    // CMaNGOS MovementHandler.cpp:583-586 trailing order: cosAngle, sinAngle, xyspeed, zspeed.
+    const float vec[4] = {0.6f, -0.8f, 14.5f, -12.0f};
+    const auto parsed = wowee::game::parseKnockBackTrailingBytes(
+        reinterpret_cast<const uint8_t*>(vec), sizeof(vec));
+    REQUIRE(parsed.has_value());
+    CHECK(parsed->cosAngle == Catch::Approx(0.6f));
+    CHECK(parsed->sinAngle == Catch::Approx(-0.8f));
+    CHECK(parsed->xySpeed == Catch::Approx(14.5f));
+    CHECK(parsed->zSpeed == Catch::Approx(-12.0f));
+
+    // Truncated trailing payload returns nullopt.
+    CHECK_FALSE(wowee::game::parseKnockBackTrailingBytes(
+        reinterpret_cast<const uint8_t*>(vec), 8).has_value());
+}
+
 namespace {
 
 MovementInfo withFlags(uint32_t flags) {

@@ -568,6 +568,14 @@ void GameHandler::registerCoreOpcodes() {
     // GAMEOBJECT_STATE. Treating it as state 0 - which is ACTIVE, open -
     // reopened Dire Maul's Door 177198 0.17 s after the server closed it,
     // while the original client showed it shut (shared log 18:52:49).
+    // CMaNGOS-TBC Totem::Summon (Totem.cpp:104) sends SMSG_GAMEOBJECT_SPAWN_ANIM_OBSOLETE
+    // with the spawned totem/GO's 8-byte GUID to trigger its Birth/Spawn animation.
+    dispatchTable_[Opcode::SMSG_GAMEOBJECT_SPAWN_ANIM_OBSOLETE] = [this](network::Packet& packet) {
+        if (!packet.hasRemaining(8)) return;
+        const uint64_t guid = packet.readUInt64();
+        LOG_DEBUG("SMSG_GAMEOBJECT_SPAWN_ANIM_OBSOLETE guid=0x", std::hex, guid, std::dec);
+        if (gameObjectSpawnAnimCallback_) gameObjectSpawnAnimCallback_(guid);
+    };
     dispatchTable_[Opcode::SMSG_GAMEOBJECT_DESPAWN_ANIM] = [](network::Packet& packet) {
         if (!packet.hasRemaining(8)) return;
         const uint64_t guid = packet.readUInt64();
@@ -3557,7 +3565,6 @@ void GameHandler::registerRemainingOpcodes() {
         Opcode::SMSG_SET_PLAYER_DECLINED_NAMES_RESULT,
         Opcode::SMSG_SET_PROJECTILE_POSITION,
         Opcode::SMSG_SPELL_CHANCE_RESIST_PUSHBACK,
-        Opcode::SMSG_SPELL_UPDATE_CHAIN_TARGETS,
         Opcode::SMSG_STOP_DANCE,
         Opcode::SMSG_TEST_DROP_RATE_RESULT,
         Opcode::SMSG_UPDATE_ACCOUNT_DATA,

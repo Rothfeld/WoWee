@@ -273,7 +273,8 @@ void MovementHandler::registerOpcodes(DispatchTable& table) {
                      // were last seen until their next heartbeat.
                      Opcode::MSG_MOVE_HOVER, Opcode::MSG_MOVE_FEATHER_FALL,
                      Opcode::MSG_MOVE_WATER_WALK,
-                     Opcode::MSG_MOVE_ROOT, Opcode::MSG_MOVE_UNROOT }) {
+                     Opcode::MSG_MOVE_ROOT, Opcode::MSG_MOVE_UNROOT,
+                     Opcode::MSG_MOVE_KNOCK_BACK }) {
         table[op] = [this](network::Packet& packet) {
             if (owner_.getState() == WorldState::IN_WORLD) handleOtherPlayerMovement(packet);
         };
@@ -1873,7 +1874,7 @@ void MovementHandler::handleOtherPlayerMovement(network::Packet& packet) {
     // FALLING=0x1000 and z-speed, cosine, sine, horizontal-speed order (CMaNGOS
     // MovementInfo::Read/Write), not the order suggested by old parser comments.
     const uint32_t wireFallingFlag = flags2Size == 0 ? 0x00002000u : 0x00001000u;
-    const bool airborne = (info.flags & wireFallingFlag) != 0;
+    bool airborne = (info.flags & wireFallingFlag) != 0;
     if ((info.flags & (static_cast<uint32_t>(MovementFlags::SWIMMING) |
                        static_cast<uint32_t>(MovementFlags::FLYING))) || (info.flags2 & 0x20)) {
         info.pitch = packet.readFloat();
@@ -1887,6 +1888,19 @@ void MovementHandler::handleOtherPlayerMovement(network::Packet& packet) {
         LOG_DEBUG("Remote fall: guid=", moverGuid, " elapsed=", info.fallTime,
                   " launchSpeed=", info.jumpVelocity, " cos=", info.jumpCosAngle,
                   " sin=", info.jumpSinAngle, " horizontalSpeed=", info.jumpXYSpeed);
+    }
+    const uint16_t wireOp = packet.getOpcode();
+    const bool isKnockBackOpcode = (wireOp == wireOpcode(Opcode::MSG_MOVE_KNOCK_BACK));
+    if (isKnockBackOpcode) {
+        if (const auto kb = parseKnockBackTrailing(packet)) {
+            info.jumpCosAngle = kb->cosAngle;
+            info.jumpSinAngle = kb->sinAngle;
+            info.jumpXYSpeed = kb->xySpeed;
+            info.jumpVelocity = kb->zSpeed;
+            airborne = true;
+            LOG_DEBUG("Remote knockback: guid=", moverGuid, " cos=", kb->cosAngle,
+                      " sin=", kb->sinAngle, " xySpeed=", kb->xySpeed, " zSpeed=", kb->zSpeed);
+        }
     }
 
     auto entity = owner_.getEntityManager().getEntity(moverGuid);
@@ -1923,7 +1937,6 @@ void MovementHandler::handleOtherPlayerMovement(network::Packet& packet) {
     }
     otherPlayerMoveTimeMs_[moverGuid] = info.time;
 
-    const uint16_t wireOp = packet.getOpcode();
     const bool isTeleportOpcode = wireOp == wireOpcode(Opcode::MSG_MOVE_TELEPORT);
     const bool isStopOpcode =
         isTeleportOpcode ||
@@ -1954,7 +1967,7 @@ void MovementHandler::handleOtherPlayerMovement(network::Packet& packet) {
         // Wire zspeed is downward-positive; native takeoff sends -7.95555.
         const bool retainedMomentum = !isJumpOpcode && entity->isRemoteAirborne() &&
             entity->getLocomotionSpeed() > 0.0001f;
-        const float horizontalSpeed = remoteJumpHorizontalSpeed(info, retainedMomentum);
+        const float horizontalSpeed = remoteJumpHorizontalSpeed(info, retainedMomentum, isKnockBackOpcode);
         const glm::vec3 velocity = core::coords::serverToCanonical(glm::vec3(
             info.jumpCosAngle * horizontalSpeed, info.jumpSinAngle * horizontalSpeed,
             -info.jumpVelocity - Entity::remoteGravity * (info.fallTime / 1000.0f)));
@@ -2043,7 +2056,7 @@ void MovementHandler::handleOtherPlayerMovement(network::Packet& packet) {
         owner_.creatureMoveCallbackRef()(moverGuid, canonical.x, canonical.y, canonical.z, notifyDuration);
     }
 
-    if (owner_.unitAnimHintCallbackRef() && isJumpOpcode) {
+    if (owner_.unitAnimHintCallbackRef() && (isJumpOpcode || isKnockBackOpcode)) {
         owner_.unitAnimHintCallbackRef()(moverGuid, 37u);
     }
 
@@ -2091,7 +2104,7 @@ void MovementHandler::handleCompressedMoves(network::Packet& packet) {
     uint16_t monsterMoveWire          = wireOpcode(Opcode::SMSG_MONSTER_MOVE);
     uint16_t monsterMoveTransportWire = wireOpcode(Opcode::SMSG_MONSTER_MOVE_TRANSPORT);
 
-    const std::array<uint16_t, 29> kMoveOpcodes = {
+    const std::array<uint16_t, 30> kMoveOpcodes = {
         wireOpcode(Opcode::MSG_MOVE_START_FORWARD),
         wireOpcode(Opcode::MSG_MOVE_START_BACKWARD),
         wireOpcode(Opcode::MSG_MOVE_STOP),
@@ -2121,6 +2134,7 @@ void MovementHandler::handleCompressedMoves(network::Packet& packet) {
         wireOpcode(Opcode::MSG_MOVE_UPDATE_CAN_TRANSITION_BETWEEN_SWIM_AND_FLY),
         wireOpcode(Opcode::MSG_MOVE_ROOT),
         wireOpcode(Opcode::MSG_MOVE_UNROOT),
+        wireOpcode(Opcode::MSG_MOVE_KNOCK_BACK),
     };
 
     struct CompressedMoveSubPacket {

@@ -484,6 +484,7 @@ private:
     [[nodiscard]] bool answersPress(const CastFailedData& data, uint8_t castCount) const;
     void handleSpellStart(network::Packet& packet);
     void handleSpellGo(network::Packet& packet);
+    void handleSpellUpdateChainTargets(network::Packet& packet);
     void handleSpellCooldown(network::Packet& packet);
     void handleCooldownEvent(network::Packet& packet);
     void handleAuraUpdate(network::Packet& packet, bool isAll);
