@@ -240,6 +240,10 @@ public:
     /// too (_experiments/20261118T1330Z.leotheras_glaives).
     /// The latest kit replaces an earlier one. Carried to weapons and effects.
     void startInstanceKitLight(uint32_t instanceId, const glm::vec3& color, float seconds);
+    /// Clear any active SpellVisualKit CharProc 13 light tint on the unit,
+    /// its weapons, and weapon effects (used on unit death so long-duration
+    /// shadow/darkness kits like 7441 do not remain stuck on corpses).
+    void clearInstanceKitLight(uint32_t instanceId);
     /// Light of a model standing at a world position in a WMO interior, or
     /// nothing outdoors (WMORenderer::interiorObjectLight).
     using InteriorLightQuery = std::function<std::optional<glm::vec3>(const glm::vec3&)>;

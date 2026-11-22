@@ -252,11 +252,13 @@ public:
     void update(float deltaTime);
 
     /// The unit drawn by attachInstanceId died: its own precast, cast and
-    /// channel kits and its cast kit beams go at once, the particles already
-    /// out with them, also those of such kits that ended just before (the
-    /// interrupt's SMSG_SPELL_FAILURE comes ahead of the death). Kits that
-    /// landed on it (impact, aura) are not touched.
+    /// channel kits, cast kit beams, and CharProc 13 kit light go at once, the
+    /// particles already out with them, also those of such kits that ended just
+    /// before (the interrupt's SMSG_SPELL_FAILURE comes ahead of the death).
     void removeCasterStages(uint32_t attachInstanceId);
+
+    /// Clear any active SpellVisualKit CharProc 13 light tint on attachInstanceId.
+    void clearUnitKitLight(uint32_t attachInstanceId);
 
     /// The precast kit of the unit drawn by attachInstanceId ends: its cast
     /// was interrupted or failed (SMSG_SPELL_FAILURE), its caster died

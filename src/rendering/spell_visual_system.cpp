@@ -2258,9 +2258,17 @@ void SpellVisualSystem::removeCasterStages(uint32_t attachInstanceId) {
     });
     if (unitChannelVisuals_.erase(attachInstanceId))
         applyCharacterProcedures(attachInstanceId);
+    clearUnitKitLight(attachInstanceId);
     std::erase_if(activeWeaponTrails_, [&](const ActiveUnitWeaponTrail& trail) {
         return trail.ownerInstanceId == attachInstanceId;
     });
+}
+
+void SpellVisualSystem::clearUnitKitLight(uint32_t attachInstanceId) {
+    if (!attachInstanceId) return;
+    if (auto* characters = renderer_ ? renderer_->getCharacterRenderer() : nullptr) {
+        characters->clearInstanceKitLight(attachInstanceId);
+    }
 }
 
 void SpellVisualSystem::retireEffect(const SpellVisualInstance& effect) {

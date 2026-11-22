@@ -1520,6 +1520,10 @@ EntityController::UnitFieldUpdateResult EntityController::applyUnitFieldsOnUpdat
                     // second PLAYER_DEAD from the health path is harmless.
                     owner_.stopAutoAttack();
                     pendingEvents_.emit("PLAYER_DEAD", {});
+                    if (!result.npcDeathNotified && owner_.npcDeathCallbackRef()) {
+                        owner_.npcDeathCallbackRef()(block.guid, false);
+                        result.npcDeathNotified = true;
+                    }
                 } else if (wasDead && !nowDead) {
                     owner_.playerDeadRef() = false;
                     owner_.releasedSpiritRef() = false;

@@ -5295,6 +5295,24 @@ void CharacterRenderer::startInstanceKitLight(uint32_t instanceId, const glm::ve
     }
 }
 
+void CharacterRenderer::clearInstanceKitLight(uint32_t instanceId) {
+    auto it = instances.find(instanceId);
+    if (it == instances.end()) return;
+    const auto clear = [](CharacterInstance& target) {
+        target.kitLight = glm::vec3(1.0f);
+        target.kitLightRemaining = 0.0f;
+    };
+    clear(it->second);
+    for (const auto& attachment : it->second.weaponAttachments) {
+        if (auto w = instances.find(attachment.weaponInstanceId); w != instances.end())
+            clear(w->second);
+        for (const auto& effect : attachment.effects) {
+            if (auto e = instances.find(effect.effectInstanceId); e != instances.end())
+                clear(e->second);
+        }
+    }
+}
+
 void CharacterRenderer::setInstanceKitAppearance(uint32_t instanceId, const glm::vec3& color, float opacity,
                                                  bool freezeAnimation) {
     assert(opacity >= 0.0f && opacity <= 1.0f);

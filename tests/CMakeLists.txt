@@ -3324,6 +3324,23 @@ add_test(NAME player_illusion COMMAND test_player_illusion)
 set_tests_properties(player_illusion PROPERTIES SKIP_RETURN_CODE 4)
 register_test_target(test_player_illusion)
 
+# Corpse aura & SpellVisualKit CharProc 13 death cleanup tests
+add_executable(test_corpse_aura_kit
+    test_corpse_aura_kit.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/dbc_loader.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/dbc_layout.cpp
+    ${CMAKE_SOURCE_DIR}/src/core/logger.cpp
+)
+target_include_directories(test_corpse_aura_kit PRIVATE ${TEST_INCLUDE_DIRS})
+target_include_directories(test_corpse_aura_kit SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
+target_compile_definitions(test_corpse_aura_kit PRIVATE
+    WOWEE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+target_link_libraries(test_corpse_aura_kit PRIVATE catch2_main)
+wowee_test_link_glm(test_corpse_aura_kit)
+add_test(NAME corpse_aura_kit COMMAND test_corpse_aura_kit)
+set_tests_properties(corpse_aura_kit PROPERTIES SKIP_RETURN_CODE 4)
+register_test_target(test_corpse_aura_kit)
+
 get_property(ALL_TEST_TARGETS GLOBAL PROPERTY WOWEE_ALL_TEST_TARGETS)
 list(LENGTH ALL_TEST_TARGETS _wowee_test_target_count)
 message(STATUS "Test targets registered: ${_wowee_test_target_count}")

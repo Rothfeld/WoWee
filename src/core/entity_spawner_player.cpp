@@ -19,6 +19,7 @@
 #include "rendering/animation_controller.hpp"
 #include "rendering/vk_context.hpp"
 #include "rendering/character_renderer.hpp"
+#include "rendering/corpse_aura_policy.hpp"
 #include "rendering/wmo_renderer.hpp"
 #include "rendering/m2_renderer.hpp"
 #include "rendering/spell_visual_system.hpp"
@@ -1266,9 +1267,19 @@ void EntitySpawner::syncUnitAuraVisuals(const game::Entity& entity, uint32_t ins
             break;
         }
     }
+    bool unitDead = deadCreatureGuids_.count(entity.getGuid()) != 0;
+    if (!unitDead) {
+        if (const auto* unit = dynamic_cast<const game::Unit*>(&entity)) {
+            unitDead = rendering::isCorpseAuraSuppressed(
+                false, unit->getHealth(), unit->getMaxHealth(), unit->getDynamicFlags(),
+                game::UNIT_DYNFLAG_DEAD, game::UNIT_DYNFLAG_LOOTABLE);
+        }
+    }
     auto addAura = [&](uint32_t spellId) {
         const auto spell = spells.find(spellId);
         if (spell != spells.end() && spell->second.spellVisualId) {
+            if (unitDead && !rendering::auraVisualPersistsOnCorpse(spell->second.attrEx3))
+                return;
             auraVisuals.push_back(spell->second.spellVisualId);
             if (rendering::auraIsTransformOrShapeshift(spell->second.effectAuraIds))
                 transformAuraVisuals.push_back(spell->second.spellVisualId);
@@ -1287,6 +1298,9 @@ void EntitySpawner::syncUnitAuraVisuals(const game::Entity& entity, uint32_t ins
     transformAuraVisuals.erase(std::unique(transformAuraVisuals.begin(), transformAuraVisuals.end()),
                                transformAuraVisuals.end());
     visuals->syncAuraVisuals(instanceId, auraVisuals, observerConcealed);
+    if (unitDead && auraVisuals.empty()) {
+        visuals->clearUnitKitLight(instanceId);
+    }
 
     const uint64_t guid = entity.getGuid();
     const auto prevIt = unitTransformAuraVisuals_.find(guid);
