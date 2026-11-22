@@ -2461,15 +2461,48 @@ std::vector<uint16_t> WMORenderer::interiorRoomsOf(const ModelData& model, const
     // ADT ground inside the boxes of its interior groups; the Valley of
     // Wisdom bonfire (177025, in group 134's box only) and the Godan's
     // Runeworks sign (173022, group 12's box only) are not drawn by 2.4.3 from
-    // above the city, where none of those groups is. Such a point belongs to
-    // every interior-only group whose box holds it; one exterior group's box
-    // holding it leaves it outdoors.
-    std::vector<uint16_t> rooms;
+    // above the city, where none of those groups is. However, an underground
+    // cave's AABB can also overlap outdoor ADT terrain above its ceiling or in
+    // an empty corner beside the tunnel (e.g. Felwood's Bloodvenom River over
+    // barrowdens_c.wmo group 16), so each candidate indoor-only group must
+    // actually enclose the point with inward-facing geometry.
+    std::vector<uint16_t> candidates;
     for (size_t gi = 0; gi < model.groups.size(); ++gi) {
         const auto& group = model.groups[gi];
         if (!holds(group, local)) continue;
         if (!interiorOnly(group)) return {};
-        rooms.push_back(static_cast<uint16_t>(gi));
+        candidates.push_back(static_cast<uint16_t>(gi));
+    }
+    if (candidates.empty()) return {};
+
+    static constexpr glm::vec3 kCardinalDirs[4] = {
+        { 1.0f,  0.0f, 0.0f},
+        {-1.0f,  0.0f, 0.0f},
+        { 0.0f,  1.0f, 0.0f},
+        { 0.0f, -1.0f, 0.0f},
+    };
+    const glm::vec3 localUp = -localDown;
+    std::vector<uint16_t> rooms;
+    for (uint16_t gi : candidates) {
+        const auto& group = model.groups[gi];
+        const RaySurfaceHit downHit = nearestGroupRayHit(group, local, localDown);
+        if (downHit == RaySurfaceHit::BackFace) continue;
+        const RaySurfaceHit upHit = nearestGroupRayHit(group, local, localUp);
+        if (upHit == RaySurfaceHit::FrontFace) {
+            rooms.push_back(gi);
+            continue;
+        }
+        if (upHit == RaySurfaceHit::BackFace) continue;
+        int horizFrontHits = 0;
+        int horizBackHits = 0;
+        for (const glm::vec3& dir : kCardinalDirs) {
+            const RaySurfaceHit h = nearestGroupRayHit(group, local, dir);
+            if (h == RaySurfaceHit::FrontFace) ++horizFrontHits;
+            else if (h == RaySurfaceHit::BackFace) ++horizBackHits;
+        }
+        if (isTerrainPointEnclosedByIndoorGroup(downHit, upHit, horizFrontHits, horizBackHits)) {
+            rooms.push_back(gi);
+        }
     }
     return rooms;
 }
@@ -3110,6 +3143,32 @@ int WMORenderer::groupBeneath(const ModelData& model, const glm::vec3& localPos,
         return -1;
     }
     return best;
+}
+
+RaySurfaceHit WMORenderer::nearestGroupRayHit(const GroupResources& group, const glm::vec3& localPos,
+                                              const glm::vec3& localDir) const {
+    if (!trianglesAlongRay(group, localPos, localDir, tl_triScratch)) {
+        return RaySurfaceHit::None;
+    }
+    float bestDistance = std::numeric_limits<float>::max();
+    bool bestBackface = true;
+    const auto& indices = group.collisionIndices;
+    const auto& vertices = group.collisionVertices;
+    for (uint32_t triangle : tl_triScratch) {
+        const glm::vec3& v0 = vertices[indices[triangle]];
+        const glm::vec3& v1 = vertices[indices[triangle + 1]];
+        const glm::vec3& v2 = vertices[indices[triangle + 2]];
+        const float distance = rayTriangleIntersect(localPos, localDir, v0, v1, v2);
+        if (distance <= 0.0f) continue;
+        const bool backface = isRayHitBackface(v0, v1, v2, localDir);
+        if (!preferDownwardSurfaceHit(distance, backface, bestDistance, bestBackface)) continue;
+        bestDistance = distance;
+        bestBackface = backface;
+    }
+    if (bestDistance == std::numeric_limits<float>::max()) {
+        return RaySurfaceHit::None;
+    }
+    return bestBackface ? RaySurfaceHit::BackFace : RaySurfaceHit::FrontFace;
 }
 
 static bool rayIntersectsAABB(const glm::vec3& origin, const glm::vec3& dir,

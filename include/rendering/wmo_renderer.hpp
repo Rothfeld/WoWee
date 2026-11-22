@@ -39,6 +39,7 @@ class M2Renderer;
 class RtScene;
 class VkContext;
 class VkTexture;
+enum class RaySurfaceHit : uint8_t;
 
 /**
  * WMO (World Model Object) Renderer (Vulkan)
@@ -926,14 +927,17 @@ private:
 
     /// The interior-only groups a point stands in: the group whose box holds
     /// it and whose surface is first below it, or, over no WMO surface (on
-    /// the terrain), every interior-only group whose box holds it unless an
-    /// exterior group's box does. Empty: outdoors.
+    /// the terrain), every interior-only group whose geometry encloses it
+    /// (unless an exterior group's box holds it). Empty: outdoors.
     std::vector<uint16_t> interiorRoomsOf(const ModelData& model, const glm::mat4& invModelMatrix,
                                           const glm::vec3& point) const;
     /// The group owning the first surface straight below `localPos` (the room
     /// a point stands in), or -1 when nothing of the model lies below it.
     int groupBeneath(const ModelData& model, const glm::vec3& localPos,
                      const glm::vec3& localDown) const;
+    /// Orientation of the nearest triangle hit by a ray in one WMO group.
+    RaySurfaceHit nearestGroupRayHit(const GroupResources& group, const glm::vec3& localPos,
+                                     const glm::vec3& localDir) const;
 
     /// Camera outside every room: exterior groups, the room the camera or
     /// character stands in, and rooms reached through in-view portals whose

@@ -393,3 +393,59 @@ TEST_CASE("Orgrimmar Wind Rider Tower portal visibility matches shipped TBC ogri
             groups, portals, verts, refs, 0, cam, makeFrustum(vp), vp, glm::mat4(1.0f)));
     }
 }
+
+TEST_CASE("Terrain-floored indoor WMO group enclosure excludes outdoor terrain over underground caves", "[wmo][portal]") {
+    using wowee::rendering::isRayHitBackface;
+    using wowee::rendering::isTerrainPointEnclosedByIndoorGroup;
+    using wowee::rendering::RaySurfaceHit;
+
+    // Inward-facing +X wall at x=10 (normal points -X toward room interior):
+    const glm::vec3 w0(10.0f, 0.0f, 0.0f);
+    const glm::vec3 w1(10.0f, 0.0f, 4.0f);
+    const glm::vec3 w2(10.0f, 4.0f, 0.0f);
+    // cross(w1-w0, w2-w0) = cross((0,0,4), (0,4,0)) = (-16, 0, 0) -> points -X.
+    // Ray from inside room (+X) hits front-face; ray from outside (-X) hits back-face.
+    CHECK_FALSE(isRayHitBackface(w0, w1, w2, glm::vec3(1.0f, 0.0f, 0.0f)));
+    CHECK(isRayHitBackface(w0, w1, w2, glm::vec3(-1.0f, 0.0f, 0.0f)));
+
+    // Outdoor terrain in empty corner of underground cave AABB
+    // (e.g. Bloodvenom River Tainted Ooze inside barrowdens_c.wmo Group 16 AABB):
+    // no floor below, no ceiling above, no inward-facing walls around -> outdoors.
+    CHECK_FALSE(isTerrainPointEnclosedByIndoorGroup(
+        RaySurfaceHit::None, RaySurfaceHit::None, 0, 0));
+
+    // Outdoor terrain directly above an underground cave ceiling (downward ray hits ceiling backface):
+    CHECK_FALSE(isTerrainPointEnclosedByIndoorGroup(
+        RaySurfaceHit::BackFace, RaySurfaceHit::None, 0, 0));
+    CHECK_FALSE(isTerrainPointEnclosedByIndoorGroup(
+        RaySurfaceHit::BackFace, RaySurfaceHit::FrontFace, 4, 0));
+
+    // Outdoor terrain beside curved underground cave hitting exterior wall backfaces -> outdoors.
+    CHECK_FALSE(isTerrainPointEnclosedByIndoorGroup(
+        RaySurfaceHit::None, RaySurfaceHit::None, 0, 2));
+    CHECK_FALSE(isTerrainPointEnclosedByIndoorGroup(
+        RaySurfaceHit::None, RaySurfaceHit::None, 1, 1));
+
+    // Point beneath an indoor floor (upward ray hits floor backface) -> outdoors.
+    CHECK_FALSE(isTerrainPointEnclosedByIndoorGroup(
+        RaySurfaceHit::None, RaySurfaceHit::BackFace, 4, 0));
+
+    // Terrain directly beneath an indoor room ceiling (upward ray hits ceiling front-face) -> indoors.
+    CHECK(isTerrainPointEnclosedByIndoorGroup(
+        RaySurfaceHit::None, RaySurfaceHit::FrontFace, 0, 0));
+
+    // Open-sky ADT-floored city valley (e.g. Orgrimmar Valley of Wisdom group 134):
+    // surrounded by inward-facing canyon walls -> indoors.
+    CHECK(isTerrainPointEnclosedByIndoorGroup(
+        RaySurfaceHit::None, RaySurfaceHit::None, 4, 0));
+    CHECK(isTerrainPointEnclosedByIndoorGroup(
+        RaySurfaceHit::None, RaySurfaceHit::None, 3, 0));
+    CHECK(isTerrainPointEnclosedByIndoorGroup(
+        RaySurfaceHit::None, RaySurfaceHit::None, 2, 0));
+    // Central pillar backface in 1 direction, 3 inward canyon walls -> still indoors.
+    CHECK(isTerrainPointEnclosedByIndoorGroup(
+        RaySurfaceHit::None, RaySurfaceHit::None, 3, 1));
+    // Single glancing wall hit without enclosure -> outdoors.
+    CHECK_FALSE(isTerrainPointEnclosedByIndoorGroup(
+        RaySurfaceHit::None, RaySurfaceHit::None, 1, 0));
+}

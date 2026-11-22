@@ -42,6 +42,17 @@ struct PortalRefInfo {
            (groupFlags & kWmoGroupFlagOutdoor) == 0;
 }
 
+/// Whether a ray hitting triangle (v0, v1, v2) along `rayDir` struck its
+/// back-face (normal pointing along `rayDir`, away from the ray origin).
+/// Indoor WMO group geometry has inward-facing normals, so rays cast from
+/// inside a room hit front-faces while rays from outside hit back-faces.
+[[nodiscard]] inline bool isRayHitBackface(
+    const glm::vec3& v0, const glm::vec3& v1, const glm::vec3& v2,
+    const glm::vec3& rayDir) {
+    const glm::vec3 triNormal = glm::cross(v1 - v0, v2 - v0);
+    return glm::dot(triNormal, rayDir) > 0.0f;
+}
+
 /// Whether a downward ray hitting triangle (v0, v1, v2) struck its back-face
 /// (normal pointing along localDown, away from the ray origin). An indoor-only
 /// room's ceiling has its front-face pointing down into the room, so a downward
@@ -49,8 +60,40 @@ struct PortalRefInfo {
 [[nodiscard]] inline bool isDownwardHitInteriorCeilingBackface(
     const glm::vec3& v0, const glm::vec3& v1, const glm::vec3& v2,
     const glm::vec3& localDown) {
-    const glm::vec3 triNormal = glm::cross(v1 - v0, v2 - v0);
-    return glm::dot(triNormal, localDown) > 0.0f;
+    return isRayHitBackface(v0, v1, v2, localDown);
+}
+
+enum class RaySurfaceHit : uint8_t {
+    None,
+    FrontFace,
+    BackFace,
+};
+
+/// Whether a point with no WMO floor below it (standing on ADT terrain inside
+/// an indoor-only WMO group's vertex AABB) is actually enclosed by that group's
+/// geometry rather than standing outdoors above its ceiling or in an empty
+/// corner of its AABB (e.g. Bloodvenom River terrain above/beside Felwood's
+/// underground `barrowdens_c.wmo` Group 16).
+///
+/// - `downHit`: nearest downward ray hit in this group; BackFace means the
+///   point is above the group's ceiling (outside).
+/// - `upHit`: nearest upward ray hit in this group; FrontFace means directly
+///   beneath the group's ceiling (inside), BackFace means beneath its floor (outside).
+/// - `horizFrontHits`, `horizBackHits`: counts of cardinal horizontal rays
+///   (+X, -X, +Y, -Y) whose nearest hit in this group is front-facing vs
+///   back-facing. Open-sky ADT-floored city valleys (e.g. Orgrimmar's Valley of
+///   Wisdom group 134, Godan's Runeworks group 12) surround the point with
+///   inward-facing walls, whereas outdoor terrain outside an underground cave
+///   hits zero front-facing walls.
+[[nodiscard]] inline bool isTerrainPointEnclosedByIndoorGroup(
+    RaySurfaceHit downHit,
+    RaySurfaceHit upHit,
+    int horizFrontHits,
+    int horizBackHits) {
+    if (downHit == RaySurfaceHit::BackFace) return false;
+    if (upHit == RaySurfaceHit::FrontFace) return true;
+    if (upHit == RaySurfaceHit::BackFace) return false;
+    return horizFrontHits >= 2 && horizFrontHits > horizBackHits;
 }
 
 /// Prefer the nearer downward surface hit; on coplanar ties (within 1mm),
