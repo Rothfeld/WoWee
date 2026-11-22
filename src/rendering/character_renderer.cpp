@@ -6149,7 +6149,12 @@ void CharacterRenderer::setGestureWeaponPose(uint32_t instanceId, uint32_t anima
 }
 
 uint32_t CharacterRenderer::weaponSheathingAnimation(uint32_t instanceId) const {
-    return instances.at(instanceId).poseSheathAnimation;
+    const auto& instance = instances.at(instanceId);
+    return poseAnimationSheathesUnit(instance.poseSheathAnimation,
+                                     instance.poseSheathFlags,
+                                     instance.sheathState)
+        ? instance.poseSheathAnimation
+        : 0u;
 }
 
 void CharacterRenderer::setSheathState(uint32_t instanceId, uint8_t sheathState) {

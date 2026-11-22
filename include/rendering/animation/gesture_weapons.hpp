@@ -56,4 +56,18 @@ inline constexpr bool poseAnimationSheathesWeapon(uint32_t poseAnimation,
     }
     return true;
 }
+
+/// Whether `poseAnimation` (with `AnimationData.WeaponFlags` `poseWeaponFlags`)
+/// sheathes the unit's currently active weapon set in `unitSheathState`.
+/// Used to decide whether a local character's pose animation should transition
+/// sheath state to unarmed (CMSG_SETSHEATHED 0): AttackBow (46) and AttackRifle
+/// (49) carry WeaponFlags 0x10 but keep a drawn ranged weapon (state 2) in hand.
+inline constexpr bool poseAnimationSheathesUnit(uint32_t poseAnimation,
+                                                uint32_t poseWeaponFlags,
+                                                uint8_t unitSheathState) {
+    if (poseAnimation == 0) return false;
+    return poseAnimationSheathesWeapon(
+        poseAnimation, poseWeaponFlags,
+        static_cast<int8_t>(unitSheathState), unitSheathState);
+}
 } // namespace wowee::rendering

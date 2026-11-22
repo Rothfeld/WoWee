@@ -104,6 +104,19 @@ TEST_CASE("Thrown and non-shot 0x10 poses sheathe a drawn ranged weapon", "[anim
     CHECK(poseAnimationSheathesWeapon(67, 0x10, kRanged, 2));
     CHECK(poseAnimationSheathesWeapon(51, 0x04, kRanged, 2));
     CHECK(poseAnimationSheathesWeapon(53, 0x04, kRanged, 2));
+
+    // Unit-level sheath check used by CharacterRenderer::weaponSheathingAnimation:
+    // AttackBow (46) and AttackRifle (49) at sheathState 2 must NOT trigger local
+    // CMSG_SETSHEATHED 0, while spell casts / emotes / thrown poses still do.
+    using wowee::rendering::poseAnimationSheathesUnit;
+    CHECK_FALSE(poseAnimationSheathesUnit(0, 0, 2));
+    CHECK_FALSE(poseAnimationSheathesUnit(46, 0x10, 2));
+    CHECK_FALSE(poseAnimationSheathesUnit(49, 0x10, 2));
+    CHECK(poseAnimationSheathesUnit(46, 0x10, 1));
+    CHECK(poseAnimationSheathesUnit(49, 0x10, 1));
+    CHECK(poseAnimationSheathesUnit(107, 0x10, 2));
+    CHECK(poseAnimationSheathesUnit(52, 0x04, 2));
+    CHECK(poseAnimationSheathesUnit(67, 0x10, 2));
 }
 
 TEST_CASE("Emote procedures retain stand states and seated gesture eligibility", "[emote-stance]") {

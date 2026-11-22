@@ -3696,6 +3696,16 @@ void SpellHandler::handleSpellStart(network::Packet& packet) {
     if (data.casterUnit == owner_.getPlayerGuid() && data.spellId == pendingCastSpellId_)
         pendingCastSpellId_ = 0;
 
+    if (data.casterUnit == owner_.getPlayerGuid() && owner_.rangedWeaponSwapCallbackRef()) {
+        owner_.loadSpellNameCache();
+        const auto it = owner_.spellNameCacheRef().find(data.spellId);
+        const int32_t itemClass = (it != owner_.spellNameCacheRef().end()) ? it->second.equippedItemClass : -1;
+        const uint32_t subClassMask = (it != owner_.spellNameCacheRef().end()) ? it->second.equippedItemSubClassMask : 0u;
+        if (spellclass::drawsRangedWeaponOnCast(data.spellId, itemClass, subClassMask)) {
+            owner_.rangedWeaponSwapCallbackRef()(true);
+        }
+    }
+
     // Track cast bar for any non-player caster
     if (data.casterUnit != owner_.getPlayerGuid() && data.castTime > 0 && !rangedWeaponAttack) {
         auto& s = unitCastStates_[data.casterUnit];
@@ -3868,8 +3878,17 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
 
         // Ranged auto-attack spells (Auto Shot, Shoot, Throw) complete as timed
         // casts and are NOT classified as instant melee abilities, so trigger the
-        // ranged shot animation explicitly here.
+        // ranged shot animation explicitly here. Instant ranged weapon shots
+        // (Arcane Shot, Serpent Sting, Concussive Shot, etc.) skip SMSG_SPELL_START
+        // so draw the ranged weapon here as well.
         uint32_t sid = data.spellId;
+        if (owner_.rangedWeaponSwapCallbackRef()) {
+            const int32_t itemClass = (cast != owner_.spellNameCacheRef().end()) ? cast->second.equippedItemClass : -1;
+            const uint32_t subClassMask = (cast != owner_.spellNameCacheRef().end()) ? cast->second.equippedItemSubClassMask : 0u;
+            if (spellclass::drawsRangedWeaponOnCast(sid, itemClass, subClassMask)) {
+                owner_.rangedWeaponSwapCallbackRef()(true);
+            }
+        }
         if (spellclass::isRangedWeaponAutoAttack(sid)) {
             if (owner_.meleeSwingCallbackRef()) owner_.meleeSwingCallbackRef()(sid, false);
             owner_.suppressNextMeleeSwingAnim();

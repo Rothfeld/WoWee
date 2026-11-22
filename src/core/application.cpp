@@ -4894,8 +4894,10 @@ void Application::updateInGame(float deltaTime, const char*& updateCheckpoint) {
             appearanceComposer_->setWeaponsSheathed(false);
             appearanceComposer_->loadEquippedWeapons();
         }
-        // Swap back to melee weapon when auto-attack stops
-        if (!autoAttacking && wasAutoAttacking_ && appearanceComposer_ && appearanceComposer_->isShowingRanged()) {
+        // Swap back to melee weapon when melee auto-attack stops (unless a
+        // repeating ranged attack such as Auto Shot is active).
+        if (!autoAttacking && wasAutoAttacking_ && gameHandler->getAutoRepeatSpellId() == 0 &&
+            appearanceComposer_ && appearanceComposer_->isShowingRanged()) {
             appearanceComposer_->showRangedWeapon(false);
         }
         wasAutoAttacking_ = autoAttacking;

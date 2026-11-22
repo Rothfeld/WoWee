@@ -769,3 +769,28 @@ TEST_CASE("TBC 2.4.3 Spell.dbc matrix for melee auto-attack initiation and auto-
         CHECK(autoAcquiresHostileTarget(r.id, r.attr0, r.attrEx, r.attrEx2) == r.expectAutoTarget);
     }
 }
+
+TEST_CASE("drawsRangedWeaponOnCast identifies ranged auto-attacks and bow/gun/crossbow spells",
+          "[spell][ranged]") {
+    using wowee::game::spellclass::drawsRangedWeaponOnCast;
+    constexpr uint32_t kBowGunCrossbow = (1u << 2) | (1u << 3) | (1u << 18);
+
+    // Repeating ranged auto-attacks
+    CHECK(drawsRangedWeaponOnCast(75u, -1, 0u));    // Auto Shot
+    CHECK(drawsRangedWeaponOnCast(5019u, -1, 0u));  // Shoot (wand)
+    CHECK(drawsRangedWeaponOnCast(2764u, -1, 0u));  // Throw
+
+    // Bow / Gun / Crossbow spells (Shoot 3018, Arcane Shot 3044, Aimed Shot 19434, etc.)
+    CHECK(drawsRangedWeaponOnCast(3018u, 2, kBowGunCrossbow));
+    CHECK(drawsRangedWeaponOnCast(3044u, 2, kBowGunCrossbow));
+    CHECK(drawsRangedWeaponOnCast(19434u, 2, kBowGunCrossbow));
+    CHECK(drawsRangedWeaponOnCast(34120u, 2, 1u << 2));   // Bow only
+    CHECK(drawsRangedWeaponOnCast(34120u, 2, 1u << 3));   // Gun only
+    CHECK(drawsRangedWeaponOnCast(34120u, 2, 1u << 18));  // Crossbow only
+
+    // Non-ranged spells must not draw the ranged weapon
+    CHECK_FALSE(drawsRangedWeaponOnCast(133u, -1, 0u));              // Fireball
+    CHECK_FALSE(drawsRangedWeaponOnCast(2973u, 2, 1u << 0));         // Raptor Strike (1H axe/melee)
+    CHECK_FALSE(drawsRangedWeaponOnCast(1752u, 2, (1u << 7) | (1u << 15))); // Sinister Strike
+    CHECK_FALSE(drawsRangedWeaponOnCast(3044u, 4, kBowGunCrossbow)); // Non-weapon item class
+}

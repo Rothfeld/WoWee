@@ -289,6 +289,21 @@ inline bool isRangedWeaponAutoAttack(uint32_t spellId) {
            spellId == 2764;    // Throw
 }
 
+/// Whether starting or firing a spell draws the caster's ranged weapon
+/// (sheath state 2 / CMSG_SETSHEATHED 2): repeating ranged auto-attacks
+/// (Auto Shot 75, Shoot 5019, Throw 2764) and any weapon spell requiring a
+/// Bow (subclass 2), Gun (subclass 3), or Crossbow (subclass 18) such as
+/// Shoot (3018), Arcane Shot, Aimed Shot, Steady Shot, Multi-Shot, or Stings.
+inline constexpr bool drawsRangedWeaponOnCast(uint32_t spellId,
+                                              int32_t equippedItemClass,
+                                              uint32_t equippedItemSubClassMask) {
+    if (spellId == 75u || spellId == 5019u || spellId == 2764u) return true;
+    constexpr int32_t kItemClassWeapon = 2;
+    constexpr uint32_t kBowGunCrossbowMask = (1u << 2) | (1u << 3) | (1u << 18);
+    return equippedItemClass == kItemClassWeapon &&
+           (equippedItemSubClassMask & kBowGunCrossbowMask) != 0u;
+}
+
 /// The learnable Fishing casts across Classic, TBC, and WotLK.
 ///
 /// Fishing is unusual: it has no explicit unit target. The server chooses a point in
