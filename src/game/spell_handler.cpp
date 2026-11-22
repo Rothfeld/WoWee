@@ -808,11 +808,8 @@ bool SpellHandler::launchSpellMissile(uint32_t spellId, uint32_t visualId, uint6
     auto* renderer = owner_.services().renderer;
     auto* svs = renderer ? renderer->getSpellVisualSystem() : nullptr;
     if (!svs || !svs->hasSpellMissile(visualId)) return false;
-    // A speed outside this is not a missile speed: Fireball flies at 24, the
-    // fastest bolts at about 60. Anything else is a field read from the wrong
-    // column, and a missile crawling for seconds is worse than none.
     const float speed = resolveSpellMissileSpeed(spellId);
-    if (!std::isfinite(speed) || speed < 1.0f || speed > 200.0f) return false;
+    if (!rendering::isValidSpellMissileSpeed(speed)) return false;
 
     glm::vec3 start, end;
     if (!resolveUnitPosition(casterGuid, start) || !resolveUnitPosition(targetGuid, end))
@@ -4163,7 +4160,7 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
                         const float speed = resolveSpellMissileSpeed(data.spellId);
                         glm::vec3 start;
                         const bool missile = svs->hasSpellMissile(visualId) &&
-                            std::isfinite(speed) && speed >= 1.0f && speed <= 200.0f &&
+                            rendering::isValidSpellMissileSpeed(speed) &&
                             resolveUnitPosition(data.casterUnit, start);
                         if (!missile) {
                             svs->playImpactAreaKit(visualId, destination);

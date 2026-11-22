@@ -3,6 +3,7 @@
 #include "rendering/missile_homing.hpp"
 
 #include <cmath>
+#include <limits>
 #include <optional>
 #include <vector>
 
@@ -261,4 +262,29 @@ TEST_CASE("Stationary target preserves straight-line path and launchDelay-compen
 
     REQUIRE(arrived);
     CHECK(launchDelay + flightElapsed == Catch::Approx(1.20f).margin(0.015f));
+}
+
+TEST_CASE("isValidSpellMissileSpeed and isStationaryFlashMissile handle Kael Pure Nether Beam (speed 0.01)",
+          "[missile][homing]") {
+    using wowee::rendering::isValidSpellMissileSpeed;
+    using wowee::rendering::isStationaryFlashMissile;
+
+    CHECK(isValidSpellMissileSpeed(0.01f));
+    CHECK(isValidSpellMissileSpeed(0.5f));
+    CHECK(isValidSpellMissileSpeed(24.0f));
+    CHECK(isValidSpellMissileSpeed(200.0f));
+
+    CHECK_FALSE(isValidSpellMissileSpeed(0.0f));
+    CHECK_FALSE(isValidSpellMissileSpeed(-1.0f));
+    CHECK_FALSE(isValidSpellMissileSpeed(201.0f));
+    CHECK_FALSE(isValidSpellMissileSpeed(std::numeric_limits<float>::quiet_NaN()));
+    CHECK_FALSE(isValidSpellMissileSpeed(std::numeric_limits<float>::infinity()));
+
+    CHECK(isStationaryFlashMissile(/*nominalSpeed=*/0.01f, /*flightDuration=*/3500.0f, /*animDurationSec=*/1.0f));
+    CHECK_FALSE(isStationaryFlashMissile(/*nominalSpeed=*/0.01f, /*flightDuration=*/0.5f, /*animDurationSec=*/1.0f));
+    CHECK_FALSE(isStationaryFlashMissile(/*nominalSpeed=*/0.01f, /*flightDuration=*/3500.0f, /*animDurationSec=*/0.0f));
+
+    CHECK_FALSE(isStationaryFlashMissile(/*nominalSpeed=*/0.5f, /*flightDuration=*/10.0f, /*animDurationSec=*/1.0f));
+    CHECK_FALSE(isStationaryFlashMissile(/*nominalSpeed=*/20.0f, /*flightDuration=*/1.5f, /*animDurationSec=*/1.0f));
+    CHECK_FALSE(isStationaryFlashMissile(/*nominalSpeed=*/24.0f, /*flightDuration=*/2.0f, /*animDurationSec=*/0.667f));
 }

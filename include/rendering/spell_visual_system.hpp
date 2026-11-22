@@ -353,6 +353,8 @@ private:
         float elapsed = 0.0f;
         float launchAt = 0.0f;       // seconds after scheduling
         float duration = 0.0f;       // landing, seconds after scheduling
+        float nominalSpeed = 0.0f;   // Spell.dbc Speed (yards/s)
+        float animDurationSec = 0.0f;// M2 primary animation length in seconds
         float flightSpeed = 0.0f;    // pursuit speed after launchAt (0 = close-range 1-frame cross)
         float distanceTraveled = 0.0f;
         uint32_t targetAttachInstanceId = 0;

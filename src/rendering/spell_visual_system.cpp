@@ -1854,7 +1854,8 @@ bool SpellVisualSystem::playSpellMissile(uint32_t visualId, const glm::vec3& sta
         const bool isPrimary = (idx == 0);
         spellMissiles_.push_back({.instanceId = 0, .modelId = modelId, .visualId = visualId, .start = start,
                                   .end = resolvedEnd, .pos = start, .dir = initDir, .elapsed = 0.0f,
-                                  .launchAt = launchDelay, .duration = duration, .flightSpeed = flightSpeed,
+                                  .launchAt = launchDelay, .duration = duration, .nominalSpeed = speed,
+                                  .flightSpeed = flightSpeed,
                                   .distanceTraveled = 0.0f, .targetAttachInstanceId = targetAttachInstanceId,
                                   .impactAtEnd = isPrimary && impactAtEnd, .scale = baseScale,
                                   .areaImpactAtEnd = isPrimary && areaImpactAtEnd,
@@ -2210,6 +2211,8 @@ void SpellVisualSystem::update(float deltaTime) {
                 continue;
             }
             m2Renderer_->setInstanceIsSpellVisual(it->instanceId);
+            const float animDurMs = m2Renderer_->getInstanceAnimDuration(it->instanceId);
+            it->animDurationSec = (animDurMs > 0.0f) ? (animDurMs / 1000.0f) : 0.0f;
             it->pos = it->start;
             it->startDistance = glm::length(it->end - it->start);
             const glm::vec3 toEnd = it->end - it->start;
@@ -2217,6 +2220,18 @@ void SpellVisualSystem::update(float deltaTime) {
             placeSpellMissile(*it, 0.0f);
             it->prevWorldPos = it->start;
             it->hasPrevWorldPos = true;
+            ++it;
+            continue;
+        }
+        if (isStationaryFlashMissile(it->nominalSpeed, it->duration, it->animDurationSec)) {
+            const float flightTime = std::max(0.0f, it->elapsed - it->launchAt);
+            const float flashProgress = std::clamp(flightTime / it->animDurationSec, 0.0f, 1.0f);
+            const glm::vec3 toTarget = it->end - it->start;
+            const glm::vec3 dir = (glm::length(toTarget) > 1e-4f) ? glm::normalize(toTarget) : it->dir;
+            it->dir = dir;
+            it->progress = flashProgress;
+            placeSpellMissileAt(*it, it->start, missileDirectionToEuler(dir), flashProgress);
+            it->landed = (flightTime >= it->animDurationSec);
             ++it;
             continue;
         }

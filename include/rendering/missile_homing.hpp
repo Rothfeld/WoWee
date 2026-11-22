@@ -36,6 +36,29 @@ inline glm::vec3 missileDirectionToEuler(const glm::vec3& dir) {
     return rotation;
 }
 
+/// Valid Spell.dbc Speed range (yards/s) for launching a spell missile visual.
+/// Includes near-stationary directional flash bolts such as Kael'thas's Pure Nether
+/// Beam (36196/36197/36198, Speed=0.01, arcanelightning*.m2) and slow arcs (Juggle
+/// Torch 45638, Speed=0.5), while rejecting zero/negative/unbounded garbage values.
+inline constexpr float kMaxSpellMissileSpeed = 200.0f;
+inline constexpr float kStationaryFlashMissileSpeedThreshold = 0.1f;
+
+inline bool isValidSpellMissileSpeed(float speed) {
+    return std::isfinite(speed) && speed > 0.0f && speed <= kMaxSpellMissileSpeed;
+}
+
+/// True when a missile has a sub-crawling speed (< 0.1 yd/s, e.g. 0.01 yd/s on
+/// Pure Nether Beam 36196-36198) whose nominal flight time (distance / speed)
+/// exceeds its M2 animation length. Such models are directional lightning/beam
+/// flashes whose animation plays in real time and retires at animDurationSec
+/// rather than freezing at progress ~0 for thousands of seconds.
+inline bool isStationaryFlashMissile(float nominalSpeed, float flightDuration, float animDurationSec) {
+    return std::isfinite(nominalSpeed) && nominalSpeed > 0.0f &&
+           nominalSpeed < kStationaryFlashMissileSpeedThreshold &&
+           std::isfinite(animDurationSec) && animDurationSec > 0.0f &&
+           flightDuration > animDurationSec;
+}
+
 /// Maximum catch-up speed multiplier applied when a caster's release event
 /// ($CSL/$CSR/$CST) eats most or all of the nominal flight time.
 /// Measured at 30 Hz on Native TBC 2.4.3:
