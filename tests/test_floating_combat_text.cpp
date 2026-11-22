@@ -219,3 +219,54 @@ TEST_CASE("pet melee damage is orange (255,132,0) and pet spells are yellow (255
     CHECK(petSpellCol.g == Catch::Approx(222.0f / 255.0f));
     CHECK(petSpellCol.b == Catch::Approx(0.0f));
 }
+
+TEST_CASE("normal ranged attacks (Auto Shot, Shoot, Throw) use white combat text while special shots stay yellow",
+          "[fct][ranged]") {
+    using wowee::game::CombatTextEntry;
+    using wowee::game::isNormalRangedAttackSpell;
+    using wowee::game::kSpellAttrEx3NormalRangedAttack;
+
+    // Spell.dbc AttributesEx3 bit 15 (SPELL_ATTR_EX3_NORMAL_RANGED_ATTACK = 0x8000):
+    // Auto Shot (75), Throw (2764), Shoot (3018), Wand Shoot (5019).
+    CHECK(isNormalRangedAttackSpell(kSpellAttrEx3NormalRangedAttack));
+    CHECK(isNormalRangedAttackSpell(0x00408000u));  // Wand Shoot 5019
+    CHECK_FALSE(isNormalRangedAttackSpell(0x00000000u));  // Arcane Shot 3044, Aimed Shot 19434, Steady Shot 34120
+    CHECK_FALSE(isNormalRangedAttackSpell(0x00000400u));  // Sinister Strike 1752
+
+    // Normal Auto Shot hit -> white (255, 255, 255), not spell yellow.
+    CombatTextEntry autoShot{};
+    autoShot.type = CombatTextEntry::SPELL_DAMAGE;
+    autoShot.spellId = 75;
+    autoShot.amount = 187;
+    autoShot.normalRangedAttack = true;
+    const auto autoShotPres = presentationFor(autoShot);
+    CHECK_FALSE(autoShotPres.spell);
+    const auto autoShotCol = colorFor(autoShotPres, false);
+    CHECK(autoShotCol.r == Catch::Approx(1.0f));
+    CHECK(autoShotCol.g == Catch::Approx(1.0f));
+    CHECK(autoShotCol.b == Catch::Approx(1.0f));
+
+    // Critical Auto Shot hit -> white (255, 255, 255) and critical.
+    CombatTextEntry autoShotCrit = autoShot;
+    autoShotCrit.type = CombatTextEntry::CRIT_DAMAGE;
+    const auto critPres = presentationFor(autoShotCrit);
+    CHECK(critPres.critical);
+    CHECK_FALSE(critPres.spell);
+    const auto critCol = colorFor(critPres, false);
+    CHECK(critCol.r == Catch::Approx(1.0f));
+    CHECK(critCol.g == Catch::Approx(1.0f));
+    CHECK(critCol.b == Catch::Approx(1.0f));
+
+    // Special bow ability (Arcane Shot 3044) -> yellow (255, 222, 0).
+    CombatTextEntry arcaneShot{};
+    arcaneShot.type = CombatTextEntry::SPELL_DAMAGE;
+    arcaneShot.spellId = 3044;
+    arcaneShot.amount = 240;
+    arcaneShot.normalRangedAttack = false;
+    const auto arcanePres = presentationFor(arcaneShot);
+    CHECK(arcanePres.spell);
+    const auto arcaneCol = colorFor(arcanePres, false);
+    CHECK(arcaneCol.r == Catch::Approx(1.0f));
+    CHECK(arcaneCol.g == Catch::Approx(222.0f / 255.0f));
+    CHECK(arcaneCol.b == Catch::Approx(0.0f));
+}

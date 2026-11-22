@@ -122,7 +122,7 @@ inline Presentation presentationFor(const game::CombatTextEntry& e) {
     using T = game::CombatTextEntry;
     Presentation p;
     if (e.reduction) return p;
-    p.spell = e.spellId != 0;
+    p.spell = e.spellId != 0 && !e.normalRangedAttack;
     const auto word = [&](const char* name) { p.kind = Presentation::Word; p.word = name; return p; };
     switch (e.type) {
         case T::MELEE_DAMAGE: case T::GLANCING: case T::CRUSHING:

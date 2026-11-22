@@ -445,6 +445,16 @@ void CombatHandler::fireUnitCombat(uint64_t victim, const char* action, const ch
 void CombatHandler::addCombatText(CombatTextEntry::Type type, int32_t amount, uint32_t spellId, bool isPlayerSource, uint8_t powerType,
                                   uint64_t srcGuid, uint64_t dstGuid, uint32_t schoolMask, bool reduction,
                                   bool unitCombat) {
+    bool normalRanged = false;
+    if (spellId != 0) {
+        owner_.loadSpellNameCache();
+        if (const auto it = owner_.spellNameCacheRef().find(spellId);
+            it != owner_.spellNameCacheRef().end()) {
+            normalRanged = isNormalRangedAttackSpell(it->second.attrEx3);
+        }
+    }
+    const bool isSpellAbility = spellId != 0 && !normalRanged;
+
     // COMBAT_TEXT_UPDATE: what Blizzard_CombatText draws for the player.
     // Build 8606 fires it whatever enableCombatText says, so it is sent
     // before the panel's filters below, which govern the world numbers.
@@ -463,7 +473,7 @@ void CombatHandler::addCombatText(CombatTextEntry::Type type, int32_t amount, ui
                 }
                 if (caster.empty()) caster = "Unknown";
             }
-            const auto update = combatTextUpdateFor(type, amount, spellId != 0, powerType, caster,
+            const auto update = combatTextUpdateFor(type, amount, isSpellAbility, powerType, caster,
                                                     reduction ? incomingHitDamage_ : -1);
             if (!reduction) {
                 const bool damage = type == T::MELEE_DAMAGE || type == T::GLANCING || type == T::CRUSHING ||
@@ -489,7 +499,7 @@ void CombatHandler::addCombatText(CombatTextEntry::Type type, int32_t amount, ui
     // UNIT_COMBAT portrait feedback and COMBAT_LOG_EVENT still fire.
     const auto rule = combatTextFilterFor(type, isPlayerSource, srcGuid, dstGuid,
                                           owner_.getPetGuid(), owner_.getTargetGuid(),
-                                          spellId != 0);
+                                          isSpellAbility);
     const bool suppressWorldText =
         rule.cvar && addons::storedCVarValue(rule.cvar, rule.fallback) == "0";
     if (!suppressWorldText) {
@@ -503,6 +513,7 @@ void CombatHandler::addCombatText(CombatTextEntry::Type type, int32_t amount, ui
         entry.srcGuid = srcGuid;
         entry.dstGuid = dstGuid;
         entry.reduction = reduction;
+        entry.normalRangedAttack = normalRanged;
         combatText_.push_back(entry);
     }
 

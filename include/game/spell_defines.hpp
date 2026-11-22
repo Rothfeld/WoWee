@@ -72,6 +72,10 @@ struct CombatTextEntry {
     /// blocked, when that hit still did damage. The combat log and
     /// COMBAT_TEXT_UPDATE report it; nothing is drawn for it over the unit.
     bool reduction = false;
+    /// True when spellId has Spell.dbc AttributesEx3 & 0x00008000
+    /// (SPELL_ATTR_EX3_NORMAL_RANGED_ATTACK: Auto Shot 75, Shoot 3018/5019, Throw 2764).
+    /// Drawn as white weapon damage rather than yellow spell/ability damage.
+    bool normalRangedAttack = false;
 
     static constexpr float LIFETIME = 1.5f;
     [[nodiscard]] float lifetime() const {
@@ -79,6 +83,14 @@ struct CombatTextEntry {
     }
     [[nodiscard]] bool isExpired() const { return age >= lifetime(); }
 };
+
+/// Spell.dbc AttributesEx3 bit 15 (SPELL_ATTR_EX3_NORMAL_RANGED_ATTACK):
+/// Auto Shot (75), Throw (2764), Shoot (3018), Wand Shoot (5019), etc.
+inline constexpr uint32_t kSpellAttrEx3NormalRangedAttack = 0x00008000u;
+
+[[nodiscard]] inline constexpr bool isNormalRangedAttackSpell(uint32_t attrEx3) {
+    return (attrEx3 & kSpellAttrEx3NormalRangedAttack) != 0u;
+}
 
 /// Rage (1) and Runic Power (6) are transmitted in tenths on the wire
 /// (e.g. 100 raw wire units = 10 Rage in SMSG_SPELLENERGIZELOG and
