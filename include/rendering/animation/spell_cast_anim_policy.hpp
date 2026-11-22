@@ -59,6 +59,21 @@ inline constexpr bool shouldStartCreatureLocomotion(uint32_t durationMs, float l
     return durationMs > 0 && locomotionSpeed > 0.0001f;
 }
 
+/// Choose between an active cast/channel hold and UNIT_FLAG_STUNNED for a living
+/// standing remote unit. Returns 0 when neither applies.
+///
+/// Channeled spells that self-apply SPELL_AURA_MOD_STUN (e.g. Akama Soul Channel
+/// 40447, Evocation 30254, Channel Water/Fire/Earth/Air Shield 36817..38106) set
+/// UNIT_FLAG_STUNNED while actively channeling; the cast/channel hold takes
+/// priority over STUN (14). External stun spells interrupt the cast/channel on
+/// the server (clearing the hold via STOP / UNIT_CHANNEL_SPELL = 0), after which
+/// STUN (14) applies immediately.
+inline constexpr uint32_t remoteCastOrStunIdle(uint32_t castHoldAnim, bool stunned) {
+    if (castHoldAnim != 0) return castHoldAnim;
+    if (stunned) return anim::STUN;
+    return 0;
+}
+
 /// Compute the next animation action for a remote unit (creature or remote player)
 /// receiving a spell cast animation phase event.
 ///

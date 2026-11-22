@@ -195,3 +195,36 @@ TEST_CASE("Brutallus Meteor Slash PRECAST lets in-flight melee swing finish befo
     CHECK(go.animation == anim::READY_UNARMED);
     CHECK_FALSE(state.hold.has_value());
 }
+
+TEST_CASE("Active cast/channel hold takes priority over UNIT_FLAG_STUNNED for self-stunning channels",
+          "[spell_cast_anim][stun]") {
+    // Akama Soul Channel (40447) self-applies SPELL_AURA_MOD_STUN (UNIT_FLAG_STUNNED)
+    // while channeling CHANNEL_CAST_DIRECTED (124): the channel pose must win over STUN (14).
+    CHECK(remoteCastOrStunIdle(anim::CHANNEL_CAST_DIRECTED, /*stunned=*/true) == anim::CHANNEL_CAST_DIRECTED);
+    CHECK(remoteCastOrStunIdle(anim::CHANNEL_CAST_OMNI, /*stunned=*/true) == anim::CHANNEL_CAST_OMNI);
+    CHECK(remoteCastOrStunIdle(anim::READY_SPELL_DIRECTED, /*stunned=*/true) == anim::READY_SPELL_DIRECTED);
+
+    // When no cast/channel hold is active (including after an external stun interrupts
+    // a cast/channel via STOP), UNIT_FLAG_STUNNED resolves to STUN (14).
+    CHECK(remoteCastOrStunIdle(0, /*stunned=*/true) == anim::STUN);
+    CHECK(remoteCastOrStunIdle(0, /*stunned=*/false) == 0);
+
+    // Full sequence: unit channels 40447, then external stun interrupts via STOP while
+    // UNIT_FLAG_STUNNED is set -> transitions cleanly to STUN (14).
+    SpellCastAnimState state{};
+    const auto start = stepRemoteSpellCastAnim(
+        state, SpellAnimPhase::CHANNEL, 40447, anim::CHANNEL_CAST_DIRECTED,
+        kNoAnim, anim::STAND, false, 0);
+    CHECK(start.kind == SpellCastAnimAction::Kind::PLAY_LOOP);
+    CHECK(start.animation == anim::CHANNEL_CAST_DIRECTED);
+    REQUIRE(state.hold.has_value());
+    CHECK(remoteCastOrStunIdle(state.hold->animation, /*stunned=*/true) == anim::CHANNEL_CAST_DIRECTED);
+
+    // On STOP, nonCastIdle() evaluates with hold cleared -> returns STUN (14).
+    const uint32_t postStopIdle = remoteCastOrStunIdle(0, /*stunned=*/true);
+    const auto stop = stepRemoteSpellCastAnim(
+        state, SpellAnimPhase::STOP, 40447, kNoAnim, kNoAnim, postStopIdle, false, 0);
+    CHECK(stop.kind == SpellCastAnimAction::Kind::PLAY_LOOP);
+    CHECK(stop.animation == anim::STUN);
+    CHECK_FALSE(state.hold.has_value());
+}

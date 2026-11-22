@@ -1,5 +1,6 @@
 #include "rendering/animation/stand_pose.hpp"
 #include "rendering/animation/creature_locomotion.hpp"
+#include "rendering/animation/spell_cast_anim_policy.hpp"
 #include "rendering/aura_marker_visibility.hpp"
 #include "rendering/m2_model_classifier.hpp"
 #include "core/entity_spawner.hpp"
@@ -885,9 +886,10 @@ uint32_t EntitySpawner::remoteIdleAnimation(uint64_t guid) const {
                                       unit->getDynamicFlags(), state, unit->getNpcEmoteState()))) {
         return rendering::anim::DEAD;
     }
-    if (unit && (unit->getUnitFlags() & game::UNIT_FLAG_STUNNED) != 0 && unit->getHealth() > 0)
-        return rendering::anim::STUN;
-    if (const auto hold = remoteCastHolds_.find(guid); hold != remoteCastHolds_.end()) return hold->second;
+    const uint32_t castHold = remoteCastHold(guid);
+    const bool stunned = unit && (unit->getUnitFlags() & game::UNIT_FLAG_STUNNED) != 0 && unit->getHealth() > 0;
+    if (const uint32_t overlay = rendering::remoteCastOrStunIdle(castHold, stunned); overlay != 0)
+        return overlay;
     // An aura's state animation, e.g. Whirlwind (126) under Rend's Whirlwind.
     if (const uint32_t aura = remoteAuraStateAnimation(guid); aura != rendering::SpellVisualSystem::kNoAnimation)
         return aura;
