@@ -67,18 +67,41 @@ inline constexpr float kDefaultWalkMoveSpeed = 2.5f;
 inline constexpr float kDefaultRunMoveSpeed = 250.0f / 36.0f;
 
 // Walk or Run for a server-driven (SMSG_MONSTER_MOVE spline) ground unit.
-// Build 8606 decides from the spline's speed against the model's unscaled
-// authored Walk movingSpeed (not scaled by OBJECT_FIELD_SCALE_X or
-// CreatureDisplayInfo.scale), not from the retained WALK_MODE flag, the
-// spline's Runmode flag (CMaNGOS sets it on every move) or the unit's
-// walk/run speeds: it walks while speed < kSplineRunWalkRate * walkMoveSpeed.
+// Build 8606 decides from the spline's speed against the model's authored Walk
+// movingSpeed (or the unit's groundWalkSpeed when the M2 authors Walk
+// movingSpeed == 0, e.g. DoomGuard.m2, HumanFemale.m2) multiplied by
+// OBJECT_FIELD_SCALE_X (not CreatureDisplayInfo.CreatureModelScale), not from
+// the retained WALK_MODE flag or the spline's Runmode flag (CMaNGOS sets it on
+// every move): it walks while speed < kSplineRunWalkRate * walkStride.
 // Measured natively:
+// - Unchained Doombringer 20900 (display 19945, DoomGuard.m2, Walk 0 ->
+//   groundWalkSpeed 2.5, cdi_scale 2.5): at serverScale 1.0 (threshold 5.0),
+//   2.5/3.6 walk and 6.0/10.0 run; at serverScale 2.0 (threshold 10.0), 6.0
+//   walks (_experiments/20261122T223300Z.doombringer_gait_parity).
+// - Phantom Guardsman (display 16457, HumanFemale.m2, Walk 0 -> 2.5, cdi 1.15):
+//   at serverScale 1.0 (threshold 5.0), 2.5/4.0 walk and 5.6/8.0 run; at
+//   serverScale 2.0 (threshold 10.0), 5.6 walks
+//   (_experiments/20261118T104000Z.guardsman_gait).
 // - Akama 23089 (display 21112 x2.6, Walk 2.5 -> threshold 5.0): 3.0, 4.2,
 //   4.8 yd/s walk; 5.4, 6.0, 10.0, 10.2 yd/s run
 //   (_experiments/20261122T201500Z.akama_walk_gait_parity).
 // - TrollDire (x1.2, Walk 1.667 -> threshold 3.33): 2.4, 3.2 walk; 4.0+ run.
 // - ElementalEarth (x1.0, Walk 3.889 -> threshold 7.78): 7.2 walk; 8.0 run.
 inline constexpr float kSplineRunWalkRate = 2.0f;
+
+inline std::optional<float> splineWalkStride(std::optional<float> modelWalkMoveSpeed,
+                                             bool hasWalkAnimation,
+                                             float unitGroundWalkSpeed,
+                                             float serverScale) {
+    const float scale = serverScale > 0.0f ? serverScale : 1.0f;
+    if (modelWalkMoveSpeed && *modelWalkMoveSpeed > 0.0f) {
+        return *modelWalkMoveSpeed * scale;
+    }
+    if (hasWalkAnimation && unitGroundWalkSpeed > 0.0f) {
+        return unitGroundWalkSpeed * scale;
+    }
+    return std::nullopt;
+}
 
 // Run -> Sprint (143) promotion rate for ground forward/strafe locomotion.
 // Measured empirically on Native TBC 2.4.3 (_experiments/20261121T234730Z.movement_speed_anim_scaling_parity):

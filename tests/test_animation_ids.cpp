@@ -259,6 +259,34 @@ TEST_CASE("Spline gait follows speed against the model's unscaled Walk movingSpe
     CHECK(splineGroundGaitWalks(4.0f, bloodElfWalk));
     CHECK_FALSE(splineGroundGaitWalks(4.5f, bloodElfWalk));
     CHECK_FALSE(splineGroundGaitWalks(12.0f, bloodElfWalk));
+
+    // Zero-moveSpeed M2 models (DoomGuard.m2, HumanFemale.m2) fall back to
+    // groundWalkSpeed * OBJECT_FIELD_SCALE_X, NOT CreatureDisplayInfo.scale:
+    // - Unchained Doombringer 20900 (display 19945, cdi_scale=2.5, Walk=0):
+    //   at serverScale=1.0 -> threshold 5.0 (2.5/3.6 walk, 6.0/10.0 run);
+    //   at serverScale=2.0 -> threshold 10.0 (6.0 walks).
+    // - Phantom Guardsman (display 16457, cdi_scale=1.15, Walk=0):
+    //   at serverScale=1.0 -> threshold 5.0 (4.0 walks, 5.6 runs);
+    //   at serverScale=2.0 -> threshold 10.0 (5.6 walks).
+    using wowee::rendering::splineWalkStride;
+    const auto doomS1 = splineWalkStride(std::nullopt, true, 2.5f, 1.0f);
+    REQUIRE(doomS1.has_value());
+    CHECK(*doomS1 == Catch::Approx(2.5f));
+    CHECK(splineGroundGaitWalks(2.5f, *doomS1));
+    CHECK(splineGroundGaitWalks(3.6f, *doomS1));
+    CHECK_FALSE(splineGroundGaitWalks(5.6f, *doomS1));
+    CHECK_FALSE(splineGroundGaitWalks(6.0f, *doomS1));
+    CHECK_FALSE(splineGroundGaitWalks(10.0f, *doomS1));
+
+    const auto doomS2 = splineWalkStride(std::nullopt, true, 2.5f, 2.0f);
+    REQUIRE(doomS2.has_value());
+    CHECK(*doomS2 == Catch::Approx(5.0f));
+    CHECK(splineGroundGaitWalks(5.6f, *doomS2));
+    CHECK(splineGroundGaitWalks(6.0f, *doomS2));
+    CHECK_FALSE(splineGroundGaitWalks(10.2f, *doomS2));
+
+    // Models lacking Walk animation return nullopt (always run).
+    CHECK_FALSE(splineWalkStride(std::nullopt, false, 2.5f, 1.0f).has_value());
 }
 
 TEST_CASE("Aquatic creature surface limit preserves submerged server coordinates", "[creature-locomotion]") {

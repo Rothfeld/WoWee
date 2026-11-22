@@ -950,22 +950,23 @@ bool EntitySpawner::remoteGaitWalks(uint64_t guid, uint32_t locomotionInstanceId
         return creatureWalkingState_.count(guid) > 0;
     auto* characters = renderer_->getCharacterRenderer();
     // Native TBC 2.4.3 compares creature spline ground speed against 2.0x the
-    // model's unscaled authored Walk movingSpeed (neither OBJECT_FIELD_SCALE_X
-    // nor CreatureDisplayInfo.scale raises the Walk->Run threshold). Measured
-    // natively on Akama 23089 (display 21112 x2.6, Walk 2.5): 3.0/4.2/4.8 yd/s
-    // walked and 5.4/6.0/10.0/10.2 yd/s ran; TrollDire (x1.2, Walk 1.667):
-    // 3.2 walked, 4.0 ran; ElementalEarth (x1.0, Walk 3.889): 7.2 walked, 8.0
-    // ran (_experiments/20261122T201500Z.akama_walk_gait_parity).
-    std::optional<float> stride = characters->locomotionMoveSpeed(locomotionInstanceId, rendering::anim::WALK);
-    // HumanFemale.m2 authors every sequence with moveSpeed 0, Walk included.
-    // Native still walks such a unit (Phantom Guardsman display 16457,
-    // Karazhan) and keeps the stride rule at the model's scale: display 16457
-    // (x1.15) walked at 4.0 and ran at 5.6 yd/s; at creature scale 2 it
-    // walked at 5.6. The unit's own walk speed from its movement block stands
-    // in for the stride (_experiments/20261118T104000Z.guardsman_gait).
-    if (!stride && entity->groundWalkSpeed > 0.0f &&
-        characters->hasAnimation(locomotionInstanceId, rendering::anim::WALK))
-        stride = entity->groundWalkSpeed * characters->getInstanceScale(locomotionInstanceId);
+    // model's authored Walk movingSpeed (or entity->groundWalkSpeed when the M2
+    // authors Walk movingSpeed == 0, e.g. DoomGuard.m2, HumanFemale.m2) scaled
+    // by OBJECT_FIELD_SCALE_X (not CreatureDisplayInfo.CreatureModelScale).
+    float serverScale = 1.0f;
+    const uint16_t scaleIdx = game::fieldIndex(game::UF::OBJECT_FIELD_SCALE_X);
+    if (scaleIdx != 0xFFFF) {
+        const auto field = entity->getFields().find(scaleIdx);
+        if (field != entity->getFields().end()) {
+            const float raw = std::bit_cast<float>(field->second);
+            if (raw > 0.0f) serverScale = raw;
+        }
+    }
+    const std::optional<float> stride = rendering::splineWalkStride(
+        characters->locomotionMoveSpeed(locomotionInstanceId, rendering::anim::WALK),
+        characters->hasAnimation(locomotionInstanceId, rendering::anim::WALK),
+        entity->groundWalkSpeed,
+        serverScale);
     // A model without a Walk sequence has nothing to walk with.
     if (!stride) return false;
     return rendering::splineGroundGaitWalks(entity->getLocomotionSpeed(), *stride);
