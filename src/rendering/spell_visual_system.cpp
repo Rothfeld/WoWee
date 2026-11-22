@@ -229,7 +229,11 @@ void SpellVisualSystem::loadSpellVisualDbc() {
                 const float param = kitDbc->getFloat(i, procParamFields[k]);
                 if ((procedure == kCharProcChain || procedure == kCharProcCastChain) && param != 0.0f) {
                     assert(std::isfinite(param) && param > 0.0f && param < 65536.0f);
-                    const bool first = kitChainEffects_.emplace(kitId, static_cast<uint32_t>(param)).second;
+                    const float paramOne = procParamOneFields[k] < fc
+                                               ? kitDbc->getFloat(i, procParamOneFields[k])
+                                               : 0.0f;
+                    const bool first = kitChainEffects_.emplace(
+                        kitId, KitChainEffect{static_cast<uint32_t>(param), paramOne}).second;
                     assert(first && "one beam per kit");
                     (void)first;
                 } else if (procedure == kCharProcColor) {
@@ -1384,21 +1388,23 @@ void SpellVisualSystem::syncChannels(const std::vector<UnitChannel>& fieldChanne
     std::unordered_set<uint64_t> live;
     for (const auto& channel : channels) {
         if (!channel.hasTarget) continue;
-        // The ChannelKit's beam, else the StateKit's: Shared Bonds 41363
-        // (visual 8244, no ChannelKit, StateKit 7030 -> chain 2 HealBeam),
-        // channelled by Black Temple's Sister of Pain and Sister of Pleasure
-        // at each other, is a beam between the two natively (build 8606,
-        // pair 15); the channel's target holds the aura.
-        auto kitChain = [&](const std::unordered_map<uint32_t, uint32_t>& kits)
+        // The ChannelKit's beam, else the StateKit's when CharParamOne != 0:
+        // Shared Bonds 41363 (visual 8244, no ChannelKit, StateKit 7030 ->
+        // chain 2 HealBeam, CharParamOne 1.0) draws a beam natively (build
+        // 8606, pair 15), whereas Illidan Cage Trap Caged 40704/40707..40713
+        // (visual 9227, no ChannelKit, StateKit 7847 -> chain 162,
+        // CharParamOne 0.0) draws only its BaseEffect orbs natively.
+        auto kitChain = [&](const std::unordered_map<uint32_t, uint32_t>& kits, bool stateFallback)
             -> std::pair<uint32_t, uint32_t> {
             const auto kit = kits.find(channel.visualId);
             if (kit == kits.end() || !kit->second) return {0, 0};
             const auto chain = kitChainEffects_.find(kit->second);
-            return chain == kitChainEffects_.end() ? std::pair<uint32_t, uint32_t>{0, 0}
-                                                   : std::pair{kit->second, chain->second};
+            if (chain == kitChainEffects_.end()) return {0, 0};
+            if (stateFallback && !stateKitDrawsChannelBeam(chain->second.paramOne)) return {0, 0};
+            return {kit->second, chain->second.chainId};
         };
-        auto [kitId, chain] = kitChain(channelKits_);
-        if (!chain) std::tie(kitId, chain) = kitChain(stateKits_);
+        auto [kitId, chain] = kitChain(channelKits_, false);
+        if (!chain) std::tie(kitId, chain) = kitChain(stateKits_, true);
         if (!chain) continue;
         live.insert(channel.casterGuid);
         auto [state, created] = beams_.try_emplace(channel.casterGuid);
@@ -1463,16 +1469,17 @@ void SpellVisualSystem::playCastKit(uint32_t visualId, const glm::vec3& casterPo
     startKitWeaponTrail(kit->second, casterInstanceId);
     const auto chainId = kitChainEffects_.find(kit->second);
     if (chainId == kitChainEffects_.end() || ends.empty()) return;
+    const uint32_t chainEffectId = chainId->second.chainId;
     const bool hasModels = kitEffects_.count(kit->second) != 0;
     const float fallback = hasModels ? models : spellSeconds;
-    const auto chainIt = chainEffects_.find(chainId->second);
+    const auto chainIt = chainEffects_.find(chainEffectId);
     if (chainIt == chainEffects_.end()) return;
     const auto firstTiming = castBeamTiming(chainIt->second.segDurationMs, chainIt->second.segDelayMs,
                                             fallback, 0, chained);
     if (firstTiming.duration <= 0.0f) {
         static std::unordered_set<uint32_t> said;
         if (said.insert(kit->second).second)
-            LOG_WARNING("SpellVisual: cast kit ", kit->second, " draws chain ", chainId->second,
+            LOG_WARNING("SpellVisual: cast kit ", kit->second, " draws chain ", chainEffectId,
                         " but neither SegDuration, an effect model, nor a spell duration times it; beam not drawn");
         return;
     }
@@ -1481,12 +1488,12 @@ void SpellVisualSystem::playCastKit(uint32_t visualId, const glm::vec3& casterPo
         const auto& end = ends[hop];
         const auto timing = castBeamTiming(chainIt->second.segDurationMs, chainIt->second.segDelayMs,
                                            fallback, hop, chained);
-        castBeams_.push_back({.chainId = chainId->second, .start = from, .end = end,
+        castBeams_.push_back({.chainId = chainEffectId, .start = from, .end = end,
                               .startAt = beamClock_ + timing.delay, .lifetime = timing.duration,
-                              .state = newBeamState(chainId->second)});
+                              .state = newBeamState(chainEffectId)});
         if (chained) from = end;
     }
-    LOG_INFO("SpellVisual: cast kit ", kit->second, " beam chain ", chainId->second, " to ", ends.size(),
+    LOG_INFO("SpellVisual: cast kit ", kit->second, " beam chain ", chainEffectId, " to ", ends.size(),
              " end(s) for ", firstTiming.duration, " s (delay ", firstTiming.delay, " s)",
              chained ? ", hopping" : "");
 }

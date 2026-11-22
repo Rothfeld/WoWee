@@ -435,3 +435,11 @@ TEST_CASE("chainBlendPipeline maps TBC SpellChainEffects EGxBlend modes to disti
     CHECK(chainBlendPipeline(4) == ChainBlendPipeline::Mod);
     CHECK(chainBlendPipeline(6) == ChainBlendPipeline::ModAdd);
 }
+
+TEST_CASE("StateKit channel beam fallback requires non-zero CharParamOne", "[chain]") {
+    using wowee::rendering::stateKitDrawsChannelBeam;
+    // Shared Bonds 41363 (SpellVisual 8244, StateKit 7030): CharParamOne = 1.0 -> draws beam.
+    CHECK(stateKitDrawsChannelBeam(1.0f));
+    // Illidan Cage Trap Caged 40704..40713 (SpellVisual 9227, StateKit 7847): CharParamOne = 0.0 -> no beam.
+    CHECK_FALSE(stateKitDrawsChannelBeam(0.0f));
+}

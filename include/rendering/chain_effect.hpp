@@ -272,4 +272,18 @@ inline float chainEndTexV(size_t index, size_t vertexCount, int edge) {
     return chainEndTaper(index, vertexCount) == 0.0f ? 0.5f : static_cast<float>(edge);
 }
 
+/// Whether a SpellVisual with no ChannelKit beam draws its StateKit's
+/// CharProc 0 (SpellChainEffects) beam during a field channel.
+///
+/// Measured against build 8606:
+/// - Shared Bonds 41363 (visual 8244, no ChannelKit, StateKit 7030,
+///   CharParamZero 2 HealBeam, CharParamOne 1.0): native draws the yellow
+///   beam between Sister of Pain and Sister of Pleasure.
+/// - Illidan Cage Trap Caged 40704/40707..40713 (visual 9227, no ChannelKit,
+///   StateKit 7847, CharParamZero 162 -> combo 163, CharParamOne 0.0):
+///   native draws only BaseEffect 272 (Magic_PreCast_Hand orbs) and no beam.
+inline constexpr bool stateKitDrawsChannelBeam(float charParamOne) {
+    return charParamOne != 0.0f;
+}
+
 }  // namespace wowee::rendering

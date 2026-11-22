@@ -530,8 +530,12 @@ private:
         float alpha = 1.0f;
         uint8_t blendMode = 0;
     };
+    struct KitChainEffect {
+        uint32_t chainId = 0;
+        float paramOne = 0.0f;  // SpellVisualKit CharParamOne for CharProc 0/12
+    };
     std::unordered_map<uint32_t, ChainEffect> chainEffects_;
-    std::unordered_map<uint32_t, uint32_t> kitChainEffects_;  // kit -> chain effect id
+    std::unordered_map<uint32_t, KitChainEffect> kitChainEffects_;  // kit -> chain effect & CharParamOne
     void loadChainEffects();
     // One strand (the beam's row or one its Combo adds): wave and arc
     // planes, and interior vertex offsets in noise radii across the beam
