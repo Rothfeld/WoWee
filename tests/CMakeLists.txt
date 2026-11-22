@@ -2647,6 +2647,19 @@ target_link_libraries(test_m2_blend_mode PRIVATE catch2_main)
 add_test(NAME m2_blend_mode COMMAND test_m2_blend_mode)
 register_test_target(test_m2_blend_mode)
 
+# ── test_slime_corpse_ground ─────────────────────────────────
+add_executable(test_slime_corpse_ground
+    test_slime_corpse_ground.cpp
+)
+target_include_directories(test_slime_corpse_ground PRIVATE ${TEST_INCLUDE_DIRS})
+target_include_directories(test_slime_corpse_ground SYSTEM PRIVATE
+    ${CMAKE_SOURCE_DIR}/extern
+)
+target_link_libraries(test_slime_corpse_ground PRIVATE catch2_main)
+wowee_test_link_glm(test_slime_corpse_ground)
+add_test(NAME slime_corpse_ground COMMAND test_slime_corpse_ground)
+register_test_target(test_slime_corpse_ground)
+
 # ── test_m2_transparent_sort ─────────────────────────────────
 add_executable(test_m2_transparent_sort
     test_m2_transparent_sort.cpp

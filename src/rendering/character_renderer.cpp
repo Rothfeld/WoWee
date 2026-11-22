@@ -21,6 +21,7 @@
  */
 #include <atomic>
 #include "rendering/character_renderer.hpp"
+#include "rendering/character_depth_bias.hpp"
 #include "rendering/m2_foliage_culling.hpp"
 #include "rendering/m2_billboard.hpp"
 #include <glm/gtx/string_cast.hpp>
@@ -4556,12 +4557,13 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
                 vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                         pipelineLayout_, 1, 1, &materialSet, 1, &dynamicOffset);
 
-                // Per-batch depth bias from materialLayer to separate coplanar
-                // armor pieces (chest/legs/gloves) that share identical depth.
-                // A fading instance's layers sit at its base's depth instead,
-                // to pass the LESS_OR_EQUAL test against its own prepass.
-                vkCmdSetDepthBias(cmd, surfaceFade ? 0.0f : static_cast<float>(batch.materialLayer) * 0.5f,
-                                  0.0f, 0.0f);
+                // Per-batch depth bias: pull higher materialLayer shells and
+                // non-depth-writing blended layers (e.g. ground-hugging slime
+                // corpse puddles) slightly toward the camera to prevent
+                // coplanar Z-fighting against the floor or base mesh.
+                const CharacterDepthBias depthBias = computeCharacterDepthBias(
+                    surfaceFade, batch.materialLayer, blendMode, materialFlags);
+                vkCmdSetDepthBias(cmd, depthBias.constantFactor, 0.0f, depthBias.slopeFactor);
 
                 vkCmdDrawIndexed(cmd, batch.indexCount, 1, batch.indexStart, 0, 0);
             }

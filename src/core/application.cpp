@@ -4202,11 +4202,17 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
             if (groundCreature && !onTransport && !creatureMount) {
                 const auto* model = charRenderer->getInstanceModelData(instanceId);
                 assert(model);
-                groundRotation = creatureGroundRotation(*model,
+                const auto alignment = creatureGroundAlignment(*model,
                     charRenderer->getInstanceScale(instanceId), renderPos, renderYaw,
                     [&](const glm::vec3& sample) {
                         return movingEntityFloor(renderer.get(), sample, renderPos, false);
                     }, creatureDeadOrCorpse);
+                groundRotation = alignment.rotation;
+                if (alignment.zLift > 0.0f) {
+                    renderPos.z += alignment.zLift;
+                    charRenderer->setInstancePosition(instanceId, renderPos);
+                    _creatureRenderPosCache[guid] = renderPos;
+                }
             }
             charRenderer->setInstanceRotation(instanceId, groundRotation);
             if (creatureMount) {
