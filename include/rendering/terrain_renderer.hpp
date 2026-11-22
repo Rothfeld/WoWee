@@ -53,6 +53,7 @@ struct TerrainChunkGPU {
     VkTexture* shadowTexture = nullptr;
     int layerCount = 0;
     bool bigAlpha = false;
+    uint32_t layerFlags[4] = {0, 0, 0, 0};
 
     // World position for culling
     float worldX = 0.0f;

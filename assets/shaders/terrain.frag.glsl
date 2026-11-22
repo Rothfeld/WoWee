@@ -41,6 +41,12 @@ layout(set = 1, binding = 7) uniform TerrainParams {
     int hasLayer2;
     int hasLayer3;
     int bigAlpha;
+    int _pad0;
+    int _pad1;
+    int _pad2;
+    vec4 layerUvVel01;
+    vec4 layerUvVel23;
+    vec4 layerOverbright;
 };
 layout(set = 1, binding = 8) uniform sampler2D uMcshShadowMap;
 
@@ -154,7 +160,14 @@ void main() {
     // LOD inside those branches can select incorrect mips along layer edges.
     vec2 textureDx = dFdx(TexCoord);
     vec2 textureDy = dFdy(TexCoord);
-    vec4 baseColor = textureGrad(uBaseTexture, TexCoord, textureDx, textureDy);
+    // ADT MCLY 0x40 animated layers: linear UV scroll wrapped per-tile with
+    // fract() so precision holds across long sessions (fogParams.z = time).
+    float animTime = fogParams.z;
+    vec2 uv0 = TexCoord + fract(layerUvVel01.xy * animTime);
+    vec2 uv1 = TexCoord + fract(layerUvVel01.zw * animTime);
+    vec2 uv2 = TexCoord + fract(layerUvVel23.xy * animTime);
+    vec2 uv3 = TexCoord + fract(layerUvVel23.zw * animTime);
+    vec4 baseColor = textureGrad(uBaseTexture, uv0, textureDx, textureDy);
 
     // Legacy alpha maps paint each layer over the preceding one. We use the
     // WDT big-alpha flag to select independent coverage weights, as in
@@ -167,22 +180,28 @@ void main() {
     vec4 color3 = vec4(0.0);
     if (hasLayer1 != 0) {
         a1 = sampleAlpha(uLayer1Alpha, LayerUV);
-        if (a1 > 0.0) color1 = textureGrad(uLayer1Texture, TexCoord, textureDx, textureDy);
+        if (a1 > 0.0) color1 = textureGrad(uLayer1Texture, uv1, textureDx, textureDy);
     }
     if (hasLayer2 != 0) {
         a2 = sampleAlpha(uLayer2Alpha, LayerUV);
-        if (a2 > 0.0) color2 = textureGrad(uLayer2Texture, TexCoord, textureDx, textureDy);
+        if (a2 > 0.0) color2 = textureGrad(uLayer2Texture, uv2, textureDx, textureDy);
     }
     if (hasLayer3 != 0) {
         a3 = sampleAlpha(uLayer3Alpha, LayerUV);
-        if (a3 > 0.0) color3 = textureGrad(uLayer3Texture, TexCoord, textureDx, textureDy);
+        if (a3 > 0.0) color3 = textureGrad(uLayer3Texture, uv3, textureDx, textureDy);
     }
     vec4 finalColor;
+    float overbright;
     if (bigAlpha != 0) {
-        finalColor = baseColor * max(1.0 - a1 - a2 - a3, 0.0)
-                   + color1 * a1 + color2 * a2 + color3 * a3;
+        float w0 = max(1.0 - a1 - a2 - a3, 0.0);
+        finalColor = baseColor * w0 + color1 * a1 + color2 * a2 + color3 * a3;
+        overbright = layerOverbright.x * w0
+                   + layerOverbright.y * a1
+                   + layerOverbright.z * a2
+                   + layerOverbright.w * a3;
     } else {
         finalColor = mix(mix(mix(baseColor, color1, a1), color2, a2), color3, a3);
+        overbright = mix(mix(mix(layerOverbright.x, layerOverbright.y, a1), layerOverbright.z, a2), layerOverbright.w, a3);
     }
 
     vec3 norm = normalize(Normal);
@@ -234,6 +253,9 @@ void main() {
         result *= mcshFactor;
     }
     result += localLightContribution(FragPos, norm, finalColor.rgb);
+    // ADT MCLY 0x80 overbright layers (glowing lava/magma/energy terrain)
+    // bypass diffuse/ambient/MCSH darkening and glow emissively before fog.
+    result = mix(result, finalColor.rgb, clamp(overbright, 0.0, 1.0));
 
     result = applyFog(result, FragPos, fragDist);
 

@@ -1,4 +1,5 @@
 #include "rendering/terrain_vertex.hpp"
+#include "rendering/terrain_mcly.hpp"
 #include "rendering/terrain_view_distance.hpp"
 #include "rendering/shadow_params.hpp"
 #include "rendering/terrain_renderer.hpp"
@@ -33,8 +34,14 @@ struct alignas(16) TerrainParamsUBO {
     int32_t hasLayer2;
     int32_t hasLayer3;
     int32_t bigAlpha;
+    int32_t _pad0 = 0;
+    int32_t _pad1 = 0;
+    int32_t _pad2 = 0;
+    glm::vec4 layerUvVel01{0.0f};    // xy = layer 0 UV vel, zw = layer 1 UV vel
+    glm::vec4 layerUvVel23{0.0f};    // xy = layer 2 UV vel, zw = layer 3 UV vel
+    glm::vec4 layerOverbright{0.0f}; // x..w = 1.0 if layer 0..3 has MCLY 0x80
 };
-static_assert(sizeof(TerrainParamsUBO) == 32);
+static_assert(sizeof(TerrainParamsUBO) == 80);
 
 TerrainRenderer::TerrainRenderer() = default;
 
@@ -516,6 +523,7 @@ void TerrainRenderer::bindChunkTextures(TerrainChunkGPU& gpuChunk,
         return;
     }
 
+    gpuChunk.layerFlags[0] = chunk.layers[0].flags;
     uint32_t baseTexId = chunk.layers[0].textureId;
     if (baseTexId < texturePaths.size()) {
         gpuChunk.baseTexture = loadTexture(texturePaths[baseTexId]);
@@ -530,6 +538,7 @@ void TerrainRenderer::bindChunkTextures(TerrainChunkGPU& gpuChunk,
     for (size_t i = 1; i < chunk.layers.size() && i < 4; i++) {
         const auto& layer = chunk.layers[i];
         int li = static_cast<int>(i) - 1;
+        gpuChunk.layerFlags[i] = layer.flags;
 
         VkTexture* layerTex = whiteTexture.get();
         if (layer.textureId < texturePaths.size()) {
@@ -559,6 +568,17 @@ bool TerrainRenderer::createChunkParamsUBO(TerrainChunkGPU& gpuChunk) {
     params.hasLayer2 = gpuChunk.layerCount >= 2 ? 1 : 0;
     params.hasLayer3 = gpuChunk.layerCount >= 3 ? 1 : 0;
     params.bigAlpha = gpuChunk.bigAlpha ? 1 : 0;
+    const TerrainLayerMclyParams l0 = decodeMclyLayer(gpuChunk.layerFlags[0]);
+    const TerrainLayerMclyParams l1 = decodeMclyLayer(gpuChunk.layerFlags[1]);
+    const TerrainLayerMclyParams l2 = decodeMclyLayer(gpuChunk.layerFlags[2]);
+    const TerrainLayerMclyParams l3 = decodeMclyLayer(gpuChunk.layerFlags[3]);
+    params.layerUvVel01 = glm::vec4(l0.uvVelocity, l1.uvVelocity);
+    params.layerUvVel23 = glm::vec4(l2.uvVelocity, l3.uvVelocity);
+    params.layerOverbright = glm::vec4(
+        l0.overbright ? 1.0f : 0.0f,
+        l1.overbright ? 1.0f : 0.0f,
+        l2.overbright ? 1.0f : 0.0f,
+        l3.overbright ? 1.0f : 0.0f);
 
     VkBufferCreateInfo bufCI{};
     bufCI.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;

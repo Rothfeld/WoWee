@@ -20,6 +20,7 @@
 #include "pipeline/adt_alpha.hpp"
 #include "pipeline/adt_loader.hpp"
 #include "pipeline/wdt_loader.hpp"
+#include "rendering/terrain_mcly.hpp"
 
 using wowee::pipeline::ALPHA_MAP_DIM;
 using wowee::pipeline::ALPHA_MAP_PACKED;
@@ -215,4 +216,54 @@ TEST_CASE("Icecrown's compressed terrain preserves the authored alpha map", "[ad
     CHECK(at(alpha, 0, 0) == 255);
     CHECK(at(alpha, 63, 0) == 0);
     CHECK(at(alpha, 63, 63) == 7);
+}
+
+TEST_CASE("ADT MCLY animation and overbright flags decode velocity and emission", "[adt][mcly]") {
+    using wowee::rendering::blendTerrainOverbright;
+    using wowee::rendering::decodeMclyLayer;
+    using wowee::rendering::kMclyAnimSpeedStep;
+
+    // Plain static layer (use_alpha only): zero velocity, not overbright.
+    const auto plain = decodeMclyLayer(0x100u);
+    CHECK(plain.uvVelocity.x == Catch::Approx(0.0f));
+    CHECK(plain.uvVelocity.y == Catch::Approx(0.0f));
+    CHECK_FALSE(plain.overbright);
+
+    // Rotation/speed bits without 0x40 animation_enabled must not scroll.
+    const auto disabled = decodeMclyLayer(0x13Fu);
+    CHECK(disabled.uvVelocity.x == Catch::Approx(0.0f));
+    CHECK(disabled.uvVelocity.y == Catch::Approx(0.0f));
+    CHECK_FALSE(disabled.overbright);
+
+    // AQ40 base layer (ahnqiraj_28_49.adt, 0x80) and Burning Steppes static lava (0x180).
+    const auto obBase = decodeMclyLayer(0x80u);
+    CHECK(obBase.overbright);
+    CHECK(obBase.uvVelocity.x == Catch::Approx(0.0f));
+    CHECK(obBase.uvVelocity.y == Catch::Approx(0.0f));
+    CHECK(decodeMclyLayer(0x180u).overbright);
+
+    // Burning Steppes azeroth_34_44.adt: 0x1e0 (rot=0 South, spd=4, anim+overbright).
+    const auto rot0 = decodeMclyLayer(0x1e0u);
+    CHECK(rot0.overbright);
+    CHECK(rot0.uvVelocity.x == Catch::Approx(-4.0f * kMclyAnimSpeedStep).margin(1e-5f));
+    CHECK(rot0.uvVelocity.y == Catch::Approx(0.0f).margin(1e-5f));
+
+    // Burning Steppes azeroth_34_44.adt: 0x1ee (rot=6 West, spd=5, anim+overbright).
+    const auto rot6 = decodeMclyLayer(0x1eeu);
+    CHECK(rot6.overbright);
+    CHECK(rot6.uvVelocity.x == Catch::Approx(0.0f).margin(1e-5f));
+    CHECK(rot6.uvVelocity.y == Catch::Approx(5.0f * kMclyAnimSpeedStep).margin(1e-5f));
+
+    // Diagonal rot=1 (45 deg SE, spd=4) has equal negative u and v components.
+    const auto rot1 = decodeMclyLayer(0x40u | (4u << 3u) | 1u);
+    CHECK_FALSE(rot1.overbright);
+    const float diag = -4.0f * kMclyAnimSpeedStep * 0.70710678f;
+    CHECK(rot1.uvVelocity.x == Catch::Approx(diag).margin(1e-5f));
+    CHECK(rot1.uvVelocity.y == Catch::Approx(diag).margin(1e-5f));
+
+    // Overbright blending matches legacy mix() and WDT bigAlpha coverage.
+    CHECK(blendTerrainOverbright(false, 0.5f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f) == Catch::Approx(0.5f));
+    CHECK(blendTerrainOverbright(false, 0.4f, 0.5f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f) == Catch::Approx(0.2f));
+    CHECK(blendTerrainOverbright(true, 0.4f, 0.3f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f) == Catch::Approx(0.4f));
+    CHECK(blendTerrainOverbright(true, 0.4f, 0.3f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f) == Catch::Approx(0.3f));
 }
