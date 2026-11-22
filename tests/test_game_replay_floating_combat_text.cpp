@@ -748,3 +748,50 @@ TEST_CASE("Melee vs spell Dodge/Resist/Block colors, portrait UNIT_COMBAT, and T
     CHECK(h.lua.globalString("__cv_pmd") == "1");
     CHECK(h.lua.globalString("__cv_psd") == "1");
 }
+
+TEST_CASE("SMSG_ENVIRONMENTALDAMAGELOG fires UNIT_COMBAT with physical schoolMask=1 for Fall/Drowning/Exhausted (white portrait) and elemental masks for Lava/Slime/Fire (yellow portrait)", "[fct][framexml][env]") {
+    using namespace wowee::game;
+    CHECK(environmentalDamageSchoolMask(0) == 0x01u); // Exhausted -> Physical
+    CHECK(environmentalDamageSchoolMask(1) == 0x01u); // Drowning  -> Physical
+    CHECK(environmentalDamageSchoolMask(2) == 0x01u); // Fall      -> Physical
+    CHECK(environmentalDamageSchoolMask(3) == 0x04u); // Lava      -> Fire
+    CHECK(environmentalDamageSchoolMask(4) == 0x08u); // Slime     -> Nature
+    CHECK(environmentalDamageSchoolMask(5) == 0x04u); // Fire      -> Fire
+
+    FctHarness h(/*warrior*/ 1, /*rage*/ 1);
+
+    auto sendEnv = [&](uint64_t victim, uint8_t envType, uint32_t dmg, uint32_t abs = 0, uint32_t res = 0) {
+        Packet pkt(wireOpcode(Opcode::SMSG_ENVIRONMENTAL_DAMAGE_LOG));
+        pkt.writeUInt64(victim);
+        pkt.writeUInt8(envType);
+        pkt.writeUInt32(dmg);
+        pkt.writeUInt32(abs);
+        pkt.writeUInt32(res);
+        h.session.receive(pkt);
+    };
+
+    const uint64_t self = Session::kPlayerGuid;
+    h.rawEvents.clear();
+    sendEnv(self, 2, 234); // Fall
+    sendEnv(self, 1, 150); // Drowning
+    sendEnv(self, 0, 120); // Exhausted
+    sendEnv(self, 3, 300); // Lava
+    sendEnv(self, 4, 200); // Slime
+    sendEnv(self, 5, 180); // Fire
+    sendEnv(self, 2, 0, 250, 0); // Fully absorbed Fall
+
+    std::vector<std::tuple<std::string, std::string, std::string, std::string, std::string>> uc;
+    for (const auto& [ev, args] : h.rawEvents) {
+        if (ev == "UNIT_COMBAT" && args.size() >= 5) {
+            uc.emplace_back(args[0], args[1], args[2], args[3], args[4]);
+        }
+    }
+    REQUIRE(uc.size() == 7);
+    CHECK(uc[0] == std::make_tuple("player", "WOUND", "", "234", "1"));
+    CHECK(uc[1] == std::make_tuple("player", "WOUND", "", "150", "1"));
+    CHECK(uc[2] == std::make_tuple("player", "WOUND", "", "120", "1"));
+    CHECK(uc[3] == std::make_tuple("player", "WOUND", "", "300", "4"));
+    CHECK(uc[4] == std::make_tuple("player", "WOUND", "", "200", "8"));
+    CHECK(uc[5] == std::make_tuple("player", "WOUND", "", "180", "4"));
+    CHECK(uc[6] == std::make_tuple("player", "WOUND", "ABSORB", "0", "1"));
+}

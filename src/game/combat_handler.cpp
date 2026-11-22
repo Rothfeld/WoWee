@@ -170,15 +170,21 @@ void CombatHandler::registerOpcodes(DispatchTable& table) {
         uint32_t dmg         = packet.readUInt32();
         uint32_t envAbs      = packet.readUInt32();
         uint32_t envRes      = packet.readUInt32();
+        const uint32_t schoolMask = environmentalDamageSchoolMask(envType);
+        if (dmg > 0 || envAbs > 0 || envRes > 0) {
+            fireUnitCombat(victimGuid, "WOUND",
+                           dmg > 0 ? "" : (envAbs > 0 ? "ABSORB" : "RESIST"),
+                           static_cast<int32_t>(dmg), schoolMask);
+        }
         if (victimGuid == owner_.getPlayerGuid()) {
             // Environmental damage: pass envType via powerType field for display differentiation
             if (dmg > 0)
-                addCombatText(CombatTextEntry::ENVIRONMENTAL, static_cast<int32_t>(dmg), 0, false, envType, 0, victimGuid);
+                addCombatText(CombatTextEntry::ENVIRONMENTAL, static_cast<int32_t>(dmg), 0, false, envType, 0, victimGuid, schoolMask, false, false);
             if (envAbs > 0)
-                addCombatText(CombatTextEntry::ABSORB, static_cast<int32_t>(envAbs), 0, false, 0, 0, victimGuid, 0, dmg > 0);
+                addCombatText(CombatTextEntry::ABSORB, static_cast<int32_t>(envAbs), 0, false, 0, 0, victimGuid, schoolMask, dmg > 0, false);
             if (envRes > 0 && (dmg > 0 || envAbs == 0))
-                addCombatText(CombatTextEntry::RESIST, static_cast<int32_t>(envRes), 0, false, 0, 0, victimGuid, 0, dmg > 0);
-            // Drowning damage → play DROWN one-shot on player
+                addCombatText(CombatTextEntry::RESIST, static_cast<int32_t>(envRes), 0, false, 0, 0, victimGuid, schoolMask, dmg > 0, false);
+            // Drowning damage -> play DROWN one-shot on player
             if (envType == 1 && dmg > 0 && owner_.emoteAnimCallbackRef())
                 owner_.emoteAnimCallbackRef()(victimGuid, 131, /*isState=*/false, 0); // anim::DROWN
         }

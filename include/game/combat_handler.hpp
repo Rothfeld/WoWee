@@ -19,6 +19,18 @@ namespace game {
 class GameHandler;
 class Entity;
 
+/// School mask passed in UNIT_COMBAT arg5 for SMSG_ENVIRONMENTALDAMAGELOG types
+/// (CombatFeedback.lua renders SCHOOL_MASK_PHYSICAL == 0x01 as white (1,1,1)
+/// and any other school mask as yellow (1,1,0)).
+constexpr uint32_t environmentalDamageSchoolMask(uint8_t envType) {
+    switch (envType) {
+        case 3:  return 0x04u; // DAMAGE_LAVA  -> SCHOOL_MASK_FIRE
+        case 4:  return 0x08u; // DAMAGE_SLIME -> SCHOOL_MASK_NATURE
+        case 5:  return 0x04u; // DAMAGE_FIRE  -> SCHOOL_MASK_FIRE
+        default: return 0x01u; // DAMAGE_EXHAUSTED (0), DAMAGE_DROWNING (1), DAMAGE_FALL (2) -> SCHOOL_MASK_PHYSICAL
+    }
+}
+
 class CombatHandler {
 public:
     using PacketHandler = std::function<void(network::Packet&)>;
