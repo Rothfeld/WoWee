@@ -546,6 +546,7 @@ private:
         int upperBodySequenceIndex = -1;
         float upperBodyAnimationTime = 0.0f;
         bool upperBodyAnimationLoop = true;
+        bool upperBodyFromTurnShuffle = false;
         float upperBodyOneShotMaxDurationMs = 0.0f;
         std::vector<bool> upperBodyBones;
         // The upper body's outgoing pose, faded out over the incoming

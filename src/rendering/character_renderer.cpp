@@ -2184,12 +2184,16 @@ void CharacterRenderer::playAnimation(uint32_t instanceId, uint32_t animationId,
     }
     auto& model = models[instance.modelId].data;
 
+    int clearedShuffleUpperSeq = -1;
+    float clearedShuffleUpperTime = 0.0f;
+
     // A rider keeps its seat (rider_pose.hpp): seat poses are Mount, the
     // rest plays from SpineLow up. A model without the requested animation
     // shows its AnimationData fallback there; one that falls back to a seat
     // pose leaves the rider seated.
     if (instance.riding && (animationId == anim::DEATH || animationId == anim::DEAD)) {
         instance.upperBodySequenceIndex = -1;
+        instance.upperBodyFromTurnShuffle = false;
         instance.upperBodyOneShotMaxDurationMs = 0.0f;
         instance.upperBodyReturnAnim = 0;
         instance.pendingMeleeSwing.clear();
@@ -2214,6 +2218,7 @@ void CharacterRenderer::playAnimation(uint32_t instanceId, uint32_t animationId,
                 // locomotion changes; it leaves a cast or swing running.
                 if (animationId != anim::MOUNT) {
                     instance.upperBodySequenceIndex = -1;
+                    instance.upperBodyFromTurnShuffle = false;
                     instance.upperBodyOneShotMaxDurationMs = 0.0f;
                     instance.upperBodyReturnAnim = 0;
                 }
@@ -2285,7 +2290,12 @@ void CharacterRenderer::playAnimation(uint32_t instanceId, uint32_t animationId,
                 }
             }
             if (seqIdx >= 0) {
+                uint32_t returnStance = 0;
                 if (instance.upperBodySequenceIndex >= 0) {
+                    if (instance.upperBodyFromTurnShuffle &&
+                        static_cast<size_t>(instance.upperBodySequenceIndex) < model.sequences.size()) {
+                        returnStance = model.sequences[instance.upperBodySequenceIndex].id;
+                    }
                     instance.upperBodyBlendSequence = instance.upperBodySequenceIndex;
                     instance.upperBodyBlendTime = instance.upperBodyAnimationTime;
                 } else if (instance.currentSequenceIndex >= 0) {
@@ -2298,8 +2308,9 @@ void CharacterRenderer::playAnimation(uint32_t instanceId, uint32_t animationId,
                 instance.upperBodySequenceIndex = seqIdx;
                 instance.upperBodyAnimationTime = 0.0f;
                 instance.upperBodyAnimationLoop = false;
+                instance.upperBodyFromTurnShuffle = false;
                 instance.upperBodyOneShotMaxDurationMs = 0.0f;
-                instance.upperBodyReturnAnim = 0;
+                instance.upperBodyReturnAnim = returnStance;
                 buildUpperBodyMask();
                 return;
             }
@@ -2328,14 +2339,48 @@ void CharacterRenderer::playAnimation(uint32_t instanceId, uint32_t animationId,
             instance.upperBodySequenceIndex = instance.currentSequenceIndex;
             instance.upperBodyAnimationTime = instance.animationTime;
             instance.upperBodyAnimationLoop = false;
+            instance.upperBodyFromTurnShuffle = false;
             instance.upperBodyOneShotMaxDurationMs = instance.oneShotMaxDurationMs;
             instance.upperBodyReturnAnim = 0;
             instance.upperBodyBlendSequence = -1;
             buildUpperBodyMask();
+        } else if (shouldPreserveUpperBodyStanceOnShuffle({
+                .hasSpineLow = hasSpine,
+                .riding = false,
+                .previousSequenceValid = prevValid,
+                .previousLoop = instance.animationLoop,
+                .previousAnimId = instance.currentAnimationId,
+                .upperBodyActive = instance.upperBodySequenceIndex >= 0,
+                .incomingAnimId = animationId,
+                .incomingLoop = loop,
+            })) {
+            // ShuffleLeft/ShuffleRight only author lower-body footwork on TBC
+            // playable models; keep the stationary stance looping above SpineLow.
+            instance.upperBodySequenceIndex = instance.currentSequenceIndex;
+            instance.upperBodyAnimationTime = instance.animationTime;
+            instance.upperBodyAnimationLoop = true;
+            instance.upperBodyFromTurnShuffle = true;
+            instance.upperBodyOneShotMaxDurationMs = 0.0f;
+            instance.upperBodyReturnAnim = 0;
+            instance.upperBodyBlendSequence = -1;
+            buildUpperBodyMask();
+        } else if (instance.upperBodyFromTurnShuffle && !isTurnShuffleAnimation(animationId)) {
+            if (instance.upperBodySequenceIndex >= 0 &&
+                static_cast<size_t>(instance.upperBodySequenceIndex) < model.sequences.size()) {
+                clearedShuffleUpperSeq = instance.upperBodySequenceIndex;
+                clearedShuffleUpperTime = instance.upperBodyAnimationTime;
+            }
+            instance.upperBodySequenceIndex = -1;
+            instance.upperBodyAnimationTime = 0.0f;
+            instance.upperBodyFromTurnShuffle = false;
+            instance.upperBodyOneShotMaxDurationMs = 0.0f;
+            instance.upperBodyReturnAnim = 0;
+            instance.upperBodyBlendSequence = -1;
         } else if (instance.upperBodySequenceIndex >= 0 &&
                    !upperBodyAllowsBase(animationId, incBodyFlags, false)) {
             instance.upperBodySequenceIndex = -1;
             instance.upperBodyAnimationTime = 0.0f;
+            instance.upperBodyFromTurnShuffle = false;
             instance.upperBodyOneShotMaxDurationMs = 0.0f;
             instance.upperBodyReturnAnim = 0;
             instance.upperBodyBlendSequence = -1;
@@ -2517,6 +2562,23 @@ void CharacterRenderer::playAnimation(uint32_t instanceId, uint32_t animationId,
                 instance.blendPlaybackRate = instance.playbackRate;
                 instance.blendAnimationLoop = previousLoop;
                 instance.blendElapsed = 0.0f;
+            }
+        }
+        // When exiting a turn shuffle back to a full-body animation, keep the
+        // upper body blending from its preserved stance (not the unposed
+        // shuffle upper body). If returning to the same stance (e.g. Stand),
+        // resume that exact sequence and timestamp for zero discontinuity.
+        if (clearedShuffleUpperSeq >= 0 && instance.currentSequenceIndex >= 0 && !frozenStandIn) {
+            if (loop && model.sequences[clearedShuffleUpperSeq].id == instance.currentAnimationId) {
+                instance.currentSequenceIndex = clearedShuffleUpperSeq;
+                instance.animationTime = clearedShuffleUpperTime;
+            }
+            const float upperBlendDur = static_cast<float>(model.sequences[instance.currentSequenceIndex].blendTime);
+            if (upperBlendDur > 0.0f) {
+                instance.upperBodyBlendSequence = clearedShuffleUpperSeq;
+                instance.upperBodyBlendTime = clearedShuffleUpperTime;
+                instance.upperBodyBlendElapsed = 0.0f;
+                instance.upperBodyBlendDuration = upperBlendDur;
             }
         }
     }
@@ -2857,11 +2919,18 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos,
                     inst.upperBodySequenceIndex = -1;
                     inst.upperBodyOneShotMaxDurationMs = 0.0f;
                     // A rider's swing or cast ends in the hold it interrupted
-                    // (a channel, a precast); otherwise only the seat remains.
+                    // (a channel, a precast); a turn-shuffle one-shot returns
+                    // to the preserved stationary stance above SpineLow.
                     if (inst.riding && inst.currentAnimationId == anim::MOUNT && inst.upperBodyReturnAnim != 0) {
                         const uint32_t held = inst.upperBodyReturnAnim;
                         inst.upperBodyReturnAnim = 0;
                         setUpperBodyAnimation(pair.first, held, true);
+                    } else if (!inst.riding && isTurnShuffleAnimation(inst.currentAnimationId) &&
+                               inst.upperBodyReturnAnim != 0) {
+                        const uint32_t held = inst.upperBodyReturnAnim;
+                        inst.upperBodyReturnAnim = 0;
+                        setUpperBodyAnimation(pair.first, held, true);
+                        inst.upperBodyFromTurnShuffle = true;
                     }
                 }
             }
@@ -3431,6 +3500,7 @@ void CharacterRenderer::setInstanceRiding(uint32_t instanceId, bool riding) {
     if (!riding) {
         instance.upperBodyBlendSequence = -1;
         instance.upperBodySequenceIndex = -1;
+        instance.upperBodyFromTurnShuffle = false;
         instance.upperBodyAnimationTime = 0.0f;
         instance.upperBodyReturnAnim = 0;
     }
@@ -3464,6 +3534,7 @@ void CharacterRenderer::setUpperBodyAnimation(uint32_t instanceId, uint32_t anim
             if (instance.upperBodyBlendDuration <= 0.0f) instance.upperBodyBlendSequence = -1;
         }
         instance.upperBodySequenceIndex = -1;
+        instance.upperBodyFromTurnShuffle = false;
         instance.upperBodyAnimationTime = 0.0f;
         return;
     }
@@ -3489,6 +3560,7 @@ void CharacterRenderer::setUpperBodyAnimation(uint32_t instanceId, uint32_t anim
     instance.upperBodyBlendDuration = static_cast<float>(sequence->blendTime);
     if (instance.upperBodyBlendDuration <= 0.0f) instance.upperBodyBlendSequence = -1;
     instance.upperBodyAnimationLoop = loop;
+    instance.upperBodyFromTurnShuffle = false;
     instance.upperBodySequenceIndex = static_cast<int>(sequence - model.sequences.begin());
     instance.upperBodyAnimationTime = 0.0f;
     instance.upperBodyBones.assign(model.bones.size(), false);

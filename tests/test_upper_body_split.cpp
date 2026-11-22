@@ -147,4 +147,70 @@ TEST_CASE("Upper-body one-shot survives Run->Stand arrival but clears on Death/S
     CHECK_FALSE(upperBodyAllowsBase(anim::STUN, 0x0100u, false));
     CHECK_FALSE(upperBodyAllowsBase(anim::WHIRLWIND, kBfSpecial, false));
     CHECK_FALSE(upperBodyAllowsBase(anim::ATTACK_1H, kBfAttack, false));
+    CHECK(upperBodyAllowsBase(anim::SHUFFLE_LEFT, kBfStand, false));
+    CHECK(upperBodyAllowsBase(anim::SHUFFLE_RIGHT, kBfStand, false));
+}
+
+TEST_CASE("Turn shuffle preserves stationary upper-body stance above SpineLow", "[anim][upper_body]") {
+    CHECK(isTurnShuffleAnimation(anim::SHUFFLE_LEFT));
+    CHECK(isTurnShuffleAnimation(anim::SHUFFLE_RIGHT));
+    CHECK_FALSE(isTurnShuffleAnimation(anim::STAND));
+    CHECK_FALSE(isTurnShuffleAnimation(anim::RUN));
+
+    CHECK(isLocomotionBaseAnimation(anim::SHUFFLE_LEFT, kBfStand));
+    CHECK(isLocomotionBaseAnimation(anim::SHUFFLE_RIGHT, kBfStand));
+
+    ShuffleUpperBodyInput in;
+    in.hasSpineLow = true;
+    in.riding = false;
+    in.previousSequenceValid = true;
+    in.previousLoop = true;
+    in.previousAnimId = anim::STAND;
+    in.upperBodyActive = false;
+    in.incomingAnimId = anim::SHUFFLE_LEFT;
+    in.incomingLoop = true;
+
+    CHECK(shouldPreserveUpperBodyStanceOnShuffle(in));
+
+    in.incomingAnimId = anim::SHUFFLE_RIGHT;
+    CHECK(shouldPreserveUpperBodyStanceOnShuffle(in));
+
+    for (uint32_t stance : {anim::READY_UNARMED, anim::READY_1H, anim::READY_2H,
+                            anim::READY_2H_LOOSE, anim::READY_BOW, anim::READY_RIFLE,
+                            anim::STEALTH_STAND}) {
+        in.previousAnimId = stance;
+        CHECK(shouldPreserveUpperBodyStanceOnShuffle(in));
+    }
+
+    // Models without SpineLow (quadrupeds) play full-body shuffle.
+    in.previousAnimId = anim::STAND;
+    in.hasSpineLow = false;
+    CHECK_FALSE(shouldPreserveUpperBodyStanceOnShuffle(in));
+    in.hasSpineLow = true;
+
+    // Already have an active upper-body layer (e.g. Stand kept from ShuffleLeft
+    // when switching to ShuffleRight, or an active one-shot): do not overwrite.
+    in.upperBodyActive = true;
+    CHECK_FALSE(shouldPreserveUpperBodyStanceOnShuffle(in));
+    in.upperBodyActive = false;
+
+    // Non-stationary base (Run, Death) does not promote as a shuffle stance.
+    in.previousAnimId = anim::RUN;
+    CHECK_FALSE(shouldPreserveUpperBodyStanceOnShuffle(in));
+    in.previousAnimId = anim::DEATH;
+    CHECK_FALSE(shouldPreserveUpperBodyStanceOnShuffle(in));
+
+    // One-shot upper-body action arriving while shuffling plays on upper body.
+    UpperBodyPlayInput playIn;
+    playIn.hasSpineLow = true;
+    playIn.riding = false;
+    playIn.currentSequenceValid = true;
+    playIn.currentLoop = true;
+    playIn.currentAnimId = anim::SHUFFLE_LEFT;
+    playIn.currentBodyFlags = kBfStand;
+    playIn.incomingAnimId = anim::ATTACK_1H;
+    playIn.incomingBodyFlags = kBfAttack;
+    playIn.incomingLoop = false;
+    playIn.incomingHoldFinalPose = false;
+    CHECK(shouldPlayOnUpperBodyOverLocomotion(playIn));
 }

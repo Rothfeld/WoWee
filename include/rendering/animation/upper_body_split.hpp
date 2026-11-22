@@ -27,11 +27,35 @@ inline constexpr bool isUpperBodySplitAnimation(uint32_t animationId, uint32_t b
     return (bodyFlags & kAnimationBodyFlagUpperBody) != 0u;
 }
 
+inline constexpr bool isTurnShuffleAnimation(uint32_t animationId) {
+    return animationId == anim::SHUFFLE_LEFT || animationId == anim::SHUFFLE_RIGHT;
+}
+
+// Stationary stances whose upper-body pose persists above SpineLow while the
+// lower body plays ShuffleLeft / ShuffleRight in place.
+inline constexpr bool isStationaryUpperBodyStance(uint32_t animationId) {
+    switch (animationId) {
+        case anim::STAND:
+        case anim::READY_UNARMED:
+        case anim::READY_1H:
+        case anim::READY_2H:
+        case anim::READY_2H_LOOSE:
+        case anim::READY_BOW:
+        case anim::READY_RIFLE:
+        case anim::STEALTH_STAND:
+            return true;
+        default:
+            return false;
+    }
+}
+
 inline constexpr bool isLocomotionBaseAnimation(uint32_t animationId, uint32_t bodyFlags) {
     if ((bodyFlags & kAnimationBodyFlagLocomotion) != 0u) return true;
     switch (animationId) {
         case anim::WALK:
         case anim::RUN:
+        case anim::SHUFFLE_LEFT:
+        case anim::SHUFFLE_RIGHT:
         case anim::WALK_BACKWARDS:
         case anim::RUN_LEFT:
         case anim::RUN_RIGHT:
@@ -121,6 +145,31 @@ inline constexpr bool shouldPlayOnUpperBodyOverLocomotion(const UpperBodyPlayInp
     if (in.incomingLoop || in.incomingHoldFinalPose) return false;
     if (!isLocomotionBaseAnimation(in.currentAnimId, in.currentBodyFlags)) return false;
     return isUpperBodySplitAnimation(in.incomingAnimId, in.incomingBodyFlags);
+}
+
+struct ShuffleUpperBodyInput {
+    bool hasSpineLow = false;
+    bool riding = false;
+    bool previousSequenceValid = false;
+    bool previousLoop = false;
+    uint32_t previousAnimId = 0;
+    bool upperBodyActive = false;
+    uint32_t incomingAnimId = 0;
+    bool incomingLoop = true;
+};
+
+// In TBC 2.4.3, ShuffleLeft (11) and ShuffleRight (12) author lower-body
+// footwork while upper-body bones above SpineLow (keyBoneId 4) are unposed
+// static placeholders on playable races (e.g. BloodElfMale, DraeneiMale).
+// Turning in place keeps the active stationary stance (Stand, Ready*,
+// StealthStand) looping on the upper-body layer while the legs shuffle below
+// SpineLow.
+inline constexpr bool shouldPreserveUpperBodyStanceOnShuffle(const ShuffleUpperBodyInput& in) {
+    if (!in.hasSpineLow || in.riding) return false;
+    if (in.upperBodyActive) return false;
+    if (!in.previousSequenceValid || !in.previousLoop) return false;
+    if (!in.incomingLoop || !isTurnShuffleAnimation(in.incomingAnimId)) return false;
+    return isStationaryUpperBodyStance(in.previousAnimId);
 }
 
 } // namespace wowee::rendering
