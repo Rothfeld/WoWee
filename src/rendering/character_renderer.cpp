@@ -2362,6 +2362,8 @@ void CharacterRenderer::playAnimation(uint32_t instanceId, uint32_t animationId,
     const uint32_t previousId = instance.currentAnimationId;
     const float previousTime = instance.animationTime;
     const bool previousLoop = instance.animationLoop;
+    const bool previousReversed = instance.playReversed;
+    const uint32_t previousRepeats = instance.sequenceRepeatsRemaining;
     const int previousSequence = instance.currentSequenceIndex;
     instance.currentAnimationId = animationId;
     instance.currentSequenceIndex = -1;
@@ -2499,16 +2501,23 @@ void CharacterRenderer::playAnimation(uint32_t instanceId, uint32_t animationId,
     // at once.
     const bool frozenStandIn = instance.holdFinalPose && instance.currentSequenceIndex >= 0 &&
         instance.animationTime >= static_cast<float>(model.sequences[instance.currentSequenceIndex].duration);
-    instance.blendSequenceIndex = -1;
-    if (previousSequence >= 0 && instance.currentSequenceIndex >= 0 && !frozenStandIn &&
-        (previousId != instance.currentAnimationId || !loop)) {
-        instance.blendDuration = model.sequences[instance.currentSequenceIndex].blendTime;
-        if (instance.blendDuration > 0.0f) {
-            instance.blendSequenceIndex = previousSequence;
-            instance.blendAnimationTime = previousTime;
-            instance.blendPlaybackRate = instance.playbackRate;
-            instance.blendAnimationLoop = previousLoop;
-            instance.blendElapsed = 0.0f;
+    if (preservesPlayingSequenceOnStandIn(previousId, animationId, previousSequence,
+                                          instance.currentSequenceIndex, previousReversed,
+                                          instance.playReversed, loop, frozenStandIn)) {
+        instance.animationTime = previousTime;
+        instance.sequenceRepeatsRemaining = previousRepeats;
+    } else {
+        instance.blendSequenceIndex = -1;
+        if (previousSequence >= 0 && instance.currentSequenceIndex >= 0 && !frozenStandIn &&
+            (previousId != instance.currentAnimationId || !loop)) {
+            instance.blendDuration = model.sequences[instance.currentSequenceIndex].blendTime;
+            if (instance.blendDuration > 0.0f) {
+                instance.blendSequenceIndex = previousSequence;
+                instance.blendAnimationTime = previousTime;
+                instance.blendPlaybackRate = instance.playbackRate;
+                instance.blendAnimationLoop = previousLoop;
+                instance.blendElapsed = 0.0f;
+            }
         }
     }
     static const bool kUnitAnimationTrace = core::envFlagEnabled("WOWEE_UNIT_ANIMATION_TRACE");

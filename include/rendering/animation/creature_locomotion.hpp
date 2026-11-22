@@ -125,4 +125,42 @@ inline float creatureSwimmingZ(float serverZ, bool flying, bool swimming,
     return std::min(serverZ, *surface - authoredDepth);
 }
 
+// Minimum non-jump airborne duration (seconds) before local locomotion switches
+// from ground gait to FALL, matching Application's walk-off FALLING threshold.
+// Prevents brief bumpy-slope micro-ungrounding from flickering RUN -> FALL -> RUN
+// (which resets Wisp.m2's Run orbit back to t=0 via Stand).
+inline constexpr float kSlopeFallGraceSeconds = 0.15f;
+
+inline constexpr bool effectiveAnimationGrounded(
+    bool grounded,
+    bool jumping,
+    float airborneSeconds,
+    bool transportRiding = false) {
+    if (transportRiding || grounded) return true;
+    return !jumping && airborneSeconds < kSlopeFallGraceSeconds;
+}
+
+// True when a new looping playAnimation() request resolves to the exact same
+// M2 sequence index and playback direction as the sequence already playing
+// under a different requested animation ID (for example, Wisp.m2 mapping
+// Stand 0, ShuffleLeft 11, ShuffleRight 12, JumpStart 37, Fall 38, and
+// JumpEnd 39 all onto sequence 0, or Sprint 143 onto Run 5). Preserving the
+// running animation clock and skipping a self-crossfade avoids visible snaps
+// and skips across locomotion/turn/jump state transitions.
+inline constexpr bool preservesPlayingSequenceOnStandIn(
+    uint32_t previousAnimId,
+    uint32_t requestedAnimId,
+    int previousSequenceIndex,
+    int resolvedSequenceIndex,
+    bool previousReversed,
+    bool resolvedReversed,
+    bool requestedLoop,
+    bool frozenStandIn) {
+    return requestedLoop && !frozenStandIn &&
+           previousAnimId != requestedAnimId &&
+           previousSequenceIndex >= 0 &&
+           resolvedSequenceIndex == previousSequenceIndex &&
+           previousReversed == resolvedReversed;
+}
+
 } // namespace wowee::rendering

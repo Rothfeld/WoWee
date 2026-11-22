@@ -1070,7 +1070,8 @@ void AnimationController::updateMountedGroundAnimation(float deltaTime, int turn
     in.movingBackward = cc->isMovingBackward();
     in.strafeLeft = cc->isStrafingLeft();
     in.strafeRight = cc->isStrafingRight();
-    in.grounded = cc->isGrounded();
+    in.grounded = effectiveAnimationGrounded(
+        cc->isGrounded(), cc->isJumping(), cc->getAirborneSeconds(), false);
     in.jumping = cc->isJumping();
     in.swimming = cc->isSwimming();
     in.locomotionSpeed = locoSpeed;
@@ -1266,9 +1267,11 @@ void AnimationController::updateCharacterAnimation() {
     fi.strafeLeft = cameraController->isStrafingLeft();
     fi.strafeRight = cameraController->isStrafingRight();
     // See setM2TransportRiding() comment: real physics correctly reports "not grounded"
-    // over open track under a moving platform, but the animation FSM needs "grounded"
-    // to avoid playing a falling animation for the whole ride.
-    fi.grounded = m2TransportRiding_ ? true : cameraController->isGrounded();
+    // over open track under a moving platform, and brief non-jump slope drops (< 150 ms)
+    // should not flicker RUN -> FALL -> RUN on models like Wisp.m2.
+    fi.grounded = effectiveAnimationGrounded(
+        cameraController->isGrounded(), cameraController->isJumping(),
+        cameraController->getAirborneSeconds(), m2TransportRiding_);
     fi.jumping = cameraController->isJumping();
     fi.swimming = cameraController->isSwimming();
     fi.flying = cameraController->isFlightAirborne();

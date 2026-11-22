@@ -3,6 +3,7 @@
 #include <cmath>
 #include "rendering/animation/locomotion_fsm.hpp"
 #include "rendering/animation/animation_ids.hpp"
+#include "rendering/animation/creature_locomotion.hpp"
 
 using namespace wowee::rendering;
 namespace anim = wowee::rendering::anim;
@@ -495,4 +496,84 @@ TEST_CASE("LocomotionFSM: unmounted flight resolves FLY_IDLE and FLY_FORWARD and
     REQUIRE(landOut.valid);
     CHECK(fsm.getState() == LocomotionFSM::State::RUN);
     CHECK(landOut.animId == anim::RUN);
+}
+
+TEST_CASE("LocomotionFSM: Wisp-like model lacking jump clips skips 1-frame JUMP_START and JUMP_END flashes", "[locomotion][wisp]") {
+    LocomotionFSM fsm;
+    AnimCapabilitySet wispCaps;
+    wispCaps.resolvedWalk = anim::WALK;
+    wispCaps.resolvedRun = anim::RUN;
+    wispCaps.resolvedWalkBackwards = anim::WALK_BACKWARDS;
+    wispCaps.resolvedSwimIdle = anim::SWIM_IDLE;
+    wispCaps.resolvedSwim = anim::SWIM;
+    wispCaps.resolvedSwimBackwards = anim::SWIM_BACKWARDS;
+    // Wisp.m2 lacks JUMP_START (37), JUMP (38), JUMP_END (39), and SPRINT (143).
+    wispCaps.resolvedJumpStart = 0;
+    wispCaps.resolvedJump = 0;
+    wispCaps.resolvedJumpEnd = 0;
+    wispCaps.hasSprint = false;
+
+    auto in = idle();
+    in.moving = true;
+    in.movingForward = true;
+    in.sprinting = true;
+    in.locomotionSpeed = 10.5f; // Night Elf Wisp Spirit (+50% run speed)
+    in.walkStride = 2.5f;
+    in.runStride = 6.9444f;
+    auto runOut = fsm.resolve(in, wispCaps);
+    REQUIRE(runOut.valid);
+    CHECK(runOut.animId == anim::RUN);
+
+    // Jumping on a model without JUMP_START goes straight to JUMP_MID on frame 0
+    in.grounded = false;
+    in.jumping = true;
+    auto jumpOut = fsm.resolve(in, wispCaps);
+    REQUIRE(jumpOut.valid);
+    CHECK(fsm.getState() == LocomotionFSM::State::JUMP_MID);
+    CHECK(jumpOut.animId == anim::JUMP);
+    CHECK(jumpOut.loop);
+
+    // Stationary landing on a model without JUMP_END goes straight to IDLE on frame 0
+    in.grounded = true;
+    in.jumping = false;
+    in.moving = false;
+    in.movingForward = false;
+    in.sprinting = false;
+    auto landOut = fsm.resolve(in, wispCaps);
+    REQUIRE(landOut.valid);
+    CHECK(fsm.getState() == LocomotionFSM::State::IDLE);
+    CHECK(landOut.animId == anim::STAND);
+    CHECK(landOut.loop);
+}
+
+TEST_CASE("Wisp stand-in continuity and slope-drop airborne grace prevent animation resets", "[locomotion][wisp]") {
+    // Switching between IDs that resolve to the same looping stand-in sequence
+    // (e.g. Wisp.m2 Stand 0 <-> ShuffleLeft 11 <-> ShuffleRight 12 <-> Fall 38)
+    // must preserve the running sequence clock instead of snapping back to t=0.
+    CHECK(preservesPlayingSequenceOnStandIn(
+        anim::STAND, anim::SHUFFLE_LEFT, 0, 0, false, false, true, false));
+    CHECK(preservesPlayingSequenceOnStandIn(
+        anim::SHUFFLE_LEFT, anim::SHUFFLE_RIGHT, 0, 0, false, false, true, false));
+    CHECK(preservesPlayingSequenceOnStandIn(
+        anim::JUMP, anim::STAND, 0, 0, false, false, true, false));
+    CHECK(preservesPlayingSequenceOnStandIn(
+        anim::RUN, anim::SPRINT, 4, 4, false, false, true, false));
+
+    // Real sequence changes, reversed playback changes, one-shots, and frozen poses must not preserve.
+    CHECK_FALSE(preservesPlayingSequenceOnStandIn(
+        anim::STAND, anim::RUN, 0, 4, false, false, true, false));
+    CHECK_FALSE(preservesPlayingSequenceOnStandIn(
+        anim::WALK, anim::WALK_BACKWARDS, 2, 2, false, true, true, false));
+    CHECK_FALSE(preservesPlayingSequenceOnStandIn(
+        anim::STAND, anim::JUMP_START, 0, 0, false, false, false, false));
+    CHECK_FALSE(preservesPlayingSequenceOnStandIn(
+        anim::DEATH, anim::DEAD, 1, 1, false, false, true, true));
+
+    // Brief non-jump slope drops (< 150 ms) stay grounded; explicit jumps and real falls do not.
+    CHECK(effectiveAnimationGrounded(true, false, 0.0f));
+    CHECK(effectiveAnimationGrounded(false, false, 0.05f));
+    CHECK(effectiveAnimationGrounded(false, false, 0.14f));
+    CHECK_FALSE(effectiveAnimationGrounded(false, false, 0.15f));
+    CHECK_FALSE(effectiveAnimationGrounded(false, true, 0.0f));
+    CHECK(effectiveAnimationGrounded(false, true, 0.50f, true));
 }

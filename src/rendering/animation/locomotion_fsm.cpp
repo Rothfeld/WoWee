@@ -62,7 +62,7 @@ void LocomotionFSM::updateTransitions(const Input& in, const AnimCapabilitySet& 
                 state_ = effectiveMoving ? State::SWIM : State::SWIM_IDLE;
             } else if (!in.grounded && in.jumping) {
                 jumpStartSeen_ = false;
-                state_ = State::JUMP_START;
+                state_ = caps.resolvedJumpStart != 0 ? State::JUMP_START : State::JUMP_MID;
             } else if (!in.grounded) {
                 state_ = State::JUMP_MID;
             } else if (effectiveMoving && effectiveSprinting) {
@@ -80,7 +80,7 @@ void LocomotionFSM::updateTransitions(const Input& in, const AnimCapabilitySet& 
                 state_ = effectiveMoving ? State::SWIM : State::SWIM_IDLE;
             } else if (!in.grounded && in.jumping) {
                 jumpStartSeen_ = false;
-                state_ = State::JUMP_START;
+                state_ = caps.resolvedJumpStart != 0 ? State::JUMP_START : State::JUMP_MID;
             } else if (!in.grounded) {
                 state_ = State::JUMP_MID;
             } else if (effectiveMoving) {
@@ -96,7 +96,7 @@ void LocomotionFSM::updateTransitions(const Input& in, const AnimCapabilitySet& 
                 state_ = effectiveMoving ? State::SWIM : State::SWIM_IDLE;
             } else if (!in.grounded && in.jumping) {
                 jumpStartSeen_ = false;
-                state_ = State::JUMP_START;
+                state_ = caps.resolvedJumpStart != 0 ? State::JUMP_START : State::JUMP_MID;
             } else if (!in.grounded) {
                 state_ = State::JUMP_MID;
             } else if (!effectiveMoving) {
@@ -111,7 +111,7 @@ void LocomotionFSM::updateTransitions(const Input& in, const AnimCapabilitySet& 
                 state_ = effectiveMoving ? State::SWIM : State::SWIM_IDLE;
             } else if (!in.grounded && in.jumping) {
                 jumpStartSeen_ = false;
-                state_ = State::JUMP_START;
+                state_ = caps.resolvedJumpStart != 0 ? State::JUMP_START : State::JUMP_MID;
             } else if (!in.grounded) {
                 state_ = State::JUMP_MID;
             } else if (!effectiveMoving) {
@@ -126,7 +126,8 @@ void LocomotionFSM::updateTransitions(const Input& in, const AnimCapabilitySet& 
                 state_ = State::SWIM_IDLE;
             } else if (in.grounded) {
                 state_ = effectiveMoving
-                    ? (effectiveSprinting ? State::RUN : State::WALK) : State::JUMP_END;
+                    ? (effectiveSprinting ? State::RUN : State::WALK)
+                    : (caps.resolvedJumpEnd != 0 ? State::JUMP_END : State::IDLE);
                 jumpEndSeen_ = false;
             } else if (caps.resolvedJumpStart == 0) {
                 // Model doesn't have JUMP_START animation - skip to mid-air
@@ -151,7 +152,8 @@ void LocomotionFSM::updateTransitions(const Input& in, const AnimCapabilitySet& 
                 state_ = State::SWIM_IDLE;
             } else if (in.grounded) {
                 state_ = effectiveMoving
-                    ? (effectiveSprinting ? State::RUN : State::WALK) : State::JUMP_END;
+                    ? (effectiveSprinting ? State::RUN : State::WALK)
+                    : (caps.resolvedJumpEnd != 0 ? State::JUMP_END : State::IDLE);
                 jumpEndSeen_ = false;
             }
             break;
@@ -201,7 +203,7 @@ void LocomotionFSM::updateTransitions(const Input& in, const AnimCapabilitySet& 
             } else if (!in.flying) {
                 if (!in.grounded) {
                     if (in.jumping) jumpStartSeen_ = false;
-                    state_ = in.jumping ? State::JUMP_START : State::JUMP_MID;
+                    state_ = (in.jumping && caps.resolvedJumpStart != 0) ? State::JUMP_START : State::JUMP_MID;
                 } else if (effectiveMoving) {
                     state_ = effectiveSprinting ? State::RUN : State::WALK;
                 } else {
@@ -218,7 +220,7 @@ void LocomotionFSM::updateTransitions(const Input& in, const AnimCapabilitySet& 
             } else if (!in.flying) {
                 if (!in.grounded) {
                     if (in.jumping) jumpStartSeen_ = false;
-                    state_ = in.jumping ? State::JUMP_START : State::JUMP_MID;
+                    state_ = (in.jumping && caps.resolvedJumpStart != 0) ? State::JUMP_START : State::JUMP_MID;
                 } else if (effectiveMoving) {
                     state_ = effectiveSprinting ? State::RUN : State::WALK;
                 } else {
