@@ -3421,48 +3421,50 @@ std::optional<GameObjectProfessionLock> GameHandler::gameObjectProfessionLock(
     assert(row >= 0);
     const LockRecord lock = readLockRecord(*locks, static_cast<uint32_t>(row));
     constexpr uint32_t kEffectOpenLock = 33, kEffectSkill = 118;
-    for (const uint32_t slot : lockSkillSlots(lock, lockActionOf(object))) {
-        const uint32_t lockType = lock.index[slot];
-        // The spells that open this LockType as a profession: OPEN_LOCK for it
-        // plus SKILL naming the profession's skill line. Lockpicking, Opening
-        // and the rest carry no SKILL effect and are not professions here.
-        const auto professionSkill = [&](uint32_t spellRow) -> uint32_t {
-            bool opens = false;
-            uint32_t skill = 0;
-            for (uint32_t e = 0; e < 3; ++e) {
-                const uint32_t effect = spells->getUInt32(spellRow, effect0 + e);
-                const uint32_t misc = spells->getUInt32(spellRow, misc0 + e);
-                if (effect == kEffectOpenLock && misc == lockType) opens = true;
-                if (effect == kEffectSkill) skill = misc;
-            }
-            return opens ? skill : 0;
-        };
-        GameObjectProfessionLock result;
-        for (const uint32_t spellId : spellHandler_->getKnownSpells()) {
-            const int32_t spellRow = spells->findRecordById(spellId);
-            if (spellRow < 0) continue;
-            if (const uint32_t skill = professionSkill(static_cast<uint32_t>(spellRow))) {
-                result.spellId = spellId;
-                result.skillLine = skill;
-                break;
-            }
+    // The spells that open a LockType as a profession: OPEN_LOCK for it plus
+    // SKILL naming the profession's skill line. Lockpicking, Opening, Quick
+    // Open, Open Kneeling and the rest carry no SKILL effect and are not
+    // professions here.
+    const auto professionSkill = [&](uint32_t spellRow, uint32_t lockType) -> uint32_t {
+        bool opens = false;
+        uint32_t skill = 0;
+        for (uint32_t e = 0; e < 3; ++e) {
+            const uint32_t effect = spells->getUInt32(spellRow, effect0 + e);
+            const uint32_t misc = spells->getUInt32(spellRow, misc0 + e);
+            if (effect == kEffectOpenLock && misc == lockType) opens = true;
+            if (effect == kEffectSkill) skill = misc;
         }
-        if (result.spellId == 0) {
-            bool profession = false;
-            for (uint32_t r = 0; r < spells->getRecordCount() && !profession; ++r)
-                profession = professionSkill(r) != 0;
-            if (!profession) continue;
-        } else {
-            const auto skill = playerSkills_.find(result.skillLine);
-            result.playerRank = skill != playerSkills_.end() ? skill->second.effectiveValue() : 0;
+        return opens ? skill : 0;
+    };
+    const auto isProfessionLockType = [&](uint32_t lockType) -> bool {
+        for (uint32_t r = 0; r < spells->getRecordCount(); ++r) {
+            if (professionSkill(r, lockType) != 0) return true;
         }
-        const int32_t typeRow = types->findRecordById(lockType);
-        assert(typeRow >= 0);
-        result.name = types->getString(static_cast<uint32_t>(typeRow), 1);
-        result.requiredRank = lock.skill[slot];
-        return result;
+        return false;
+    };
+    const auto slot = lockProfessionSlot(lock, lockActionOf(object), isProfessionLockType);
+    if (!slot) return std::nullopt;
+
+    const uint32_t lockType = lock.index[*slot];
+    GameObjectProfessionLock result;
+    for (const uint32_t spellId : spellHandler_->getKnownSpells()) {
+        const int32_t spellRow = spells->findRecordById(spellId);
+        if (spellRow < 0) continue;
+        if (const uint32_t skill = professionSkill(static_cast<uint32_t>(spellRow), lockType)) {
+            result.spellId = spellId;
+            result.skillLine = skill;
+            break;
+        }
     }
-    return std::nullopt;
+    if (result.spellId != 0) {
+        const auto skill = playerSkills_.find(result.skillLine);
+        result.playerRank = skill != playerSkills_.end() ? skill->second.effectiveValue() : 0;
+    }
+    const int32_t typeRow = types->findRecordById(lockType);
+    assert(typeRow >= 0);
+    result.name = types->getString(static_cast<uint32_t>(typeRow), 1);
+    result.requiredRank = lock.skill[*slot];
+    return result;
 }
 
 std::optional<GameObjectLockStatus> GameHandler::gameObjectLockStatus(

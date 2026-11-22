@@ -95,6 +95,26 @@ inline std::vector<uint32_t> lockSkillSlots(const LockRecord& lock, uint32_t act
     return slots;
 }
 
+/// The Lock.dbc skill slot that makes an object require a gathering profession
+/// at `action`, or nullopt when no profession is required (including when
+/// another active zero-skill non-profession slot opens the object, e.g. Lock
+/// 1714 Corrupted Songflower and Lock 259 Cleansed Songflower / Cactus Apple,
+/// which pair Quick Open / Open Kneeling in slot 1 with Herbalism in slot 2
+/// for Find Herbs minimap tracking).
+template <typename IsProfessionLockType>
+inline std::optional<uint32_t> lockProfessionSlot(const LockRecord& lock, uint32_t action,
+                                                  IsProfessionLockType&& isProfession) {
+    std::optional<uint32_t> profSlot;
+    for (const uint32_t slot : lockSkillSlots(lock, action)) {
+        if (isProfession(lock.index[slot])) {
+            if (!profSlot) profSlot = slot;
+        } else if (lock.skill[slot] == 0) {
+            return std::nullopt;
+        }
+    }
+    return profSlot;
+}
+
 /// How hard a lock requirement is for the player, by their rank against the
 /// lock's: impossible below it, then orange, yellow, green and trivial (grey)
 /// as the rank passes it by 25, 50 and 100. Ordered easiest last.

@@ -393,3 +393,51 @@ TEST_CASE("lock line colours follow the rank over the lock's Skill", "[go-lock]"
     // Quick Close at an open gate: Closing's 100 points against Skill 0.
     CHECK(lockDifficulty(100, 0) == LockDifficulty::Trivial);
 }
+
+TEST_CASE("lockProfessionSlot ignores Herbalism/Mining when a zero-skill open slot applies", "[go-lock]") {
+    using namespace wowee::game;
+    const auto isProfession = [](uint32_t lockType) { return lockType == 2 || lockType == 3; };
+
+    // Peacebloom (Lock 29): slot 0 Herbalism only -> requires Herbalism.
+    LockRecord peacebloom;
+    peacebloom.type = {kLockKeySkill, 0, 0, 0, 0, 0, 0, 0};
+    peacebloom.index = {2, 0, 0, 0, 0, 0, 0, 0};
+    peacebloom.skill = {0, 0, 0, 0, 0, 0, 0, 0};
+    peacebloom.action = {0, 0, 0, 0, 0, 0, 0, 0};
+    CHECK(lockProfessionSlot(peacebloom, 0, isProfession) == std::optional<uint32_t>{0});
+    CHECK_FALSE(lockProfessionSlot(peacebloom, 2, isProfession).has_value());
+
+    // Dark Iron Deposit: slot 0 Mining rank 230 only -> requires Mining.
+    LockRecord darkIron;
+    darkIron.type = {kLockKeySkill, 0, 0, 0, 0, 0, 0, 0};
+    darkIron.index = {3, 0, 0, 0, 0, 0, 0, 0};
+    darkIron.skill = {230, 0, 0, 0, 0, 0, 0, 0};
+    darkIron.action = {0, 0, 0, 0, 0, 0, 0, 0};
+    CHECK(lockProfessionSlot(darkIron, 0, isProfession) == std::optional<uint32_t>{0});
+
+    // Corrupted Songflower / Windblossom / Whipper Root / Night Dragon (Lock 1714):
+    // slot 1 Quick Open (10, skill 0), slot 2 Herbalism (2, skill 0) -> no profession required.
+    LockRecord corruptedSongflower;
+    corruptedSongflower.type = {0, kLockKeySkill, kLockKeySkill, 0, 0, 0, 0, 0};
+    corruptedSongflower.index = {0, 10, 2, 0, 0, 0, 0, 0};
+    corruptedSongflower.skill = {0, 0, 0, 0, 0, 0, 0, 0};
+    corruptedSongflower.action = {0, 0, 0, 0, 0, 0, 0, 0};
+    CHECK_FALSE(lockProfessionSlot(corruptedSongflower, 0, isProfession).has_value());
+
+    // Cleansed Songflower / Cactus Apple / Bloodpetal Sprout (Lock 259):
+    // slot 1 Open Kneeling (13, skill 0), slot 2 Herbalism (2, skill 0) -> no profession required.
+    LockRecord cleansedSongflower;
+    cleansedSongflower.type = {0, kLockKeySkill, kLockKeySkill, 0, 0, 0, 0, 0};
+    cleansedSongflower.index = {0, 13, 2, 0, 0, 0, 0, 0};
+    cleansedSongflower.skill = {0, 0, 0, 0, 0, 0, 0, 0};
+    cleansedSongflower.action = {0, 0, 0, 0, 0, 0, 0, 0};
+    CHECK_FALSE(lockProfessionSlot(cleansedSongflower, 0, isProfession).has_value());
+
+    // Lock 1713: slot 1 Open Tinkering (12, skill 0), slot 2 Mining (3, skill 0) -> no profession required.
+    LockRecord questOre;
+    questOre.type = {0, kLockKeySkill, kLockKeySkill, 0, 0, 0, 0, 0};
+    questOre.index = {0, 12, 3, 0, 0, 0, 0, 0};
+    questOre.skill = {0, 0, 0, 0, 0, 0, 0, 0};
+    questOre.action = {0, 0, 0, 0, 0, 0, 0, 0};
+    CHECK_FALSE(lockProfessionSlot(questOre, 0, isProfession).has_value());
+}
