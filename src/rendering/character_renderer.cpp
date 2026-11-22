@@ -5764,6 +5764,25 @@ bool CharacterRenderer::hasAnimation(uint32_t instanceId, uint32_t animationId) 
     return false;
 }
 
+bool CharacterRenderer::isAnimationNonLooping(uint32_t instanceId, uint32_t animationId) const {
+    auto it = instances.find(instanceId);
+    if (it == instances.end()) return false;
+    auto modelIt = models.find(it->second.modelId);
+    if (modelIt == models.end()) return false;
+    const auto& sequences = modelIt->second.data.sequences;
+    for (const auto& seq : sequences) {
+        if (seq.id == animationId && seq.variationIndex == 0) {
+            return (seq.flags & 0x01u) != 0;
+        }
+    }
+    for (const auto& seq : sequences) {
+        if (seq.id == animationId) {
+            return (seq.flags & 0x01u) != 0;
+        }
+    }
+    return false;
+}
+
 bool CharacterRenderer::getAnimationSequences(uint32_t instanceId, std::vector<pipeline::M2Sequence>& out) const {
     out.clear();
     auto it = instances.find(instanceId);

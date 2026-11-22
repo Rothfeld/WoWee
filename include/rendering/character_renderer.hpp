@@ -300,6 +300,10 @@ public:
     [[nodiscard]] const std::vector<uint32_t>* getWingFlapEventTimes(uint32_t instanceId) const;
     [[nodiscard]] const std::vector<uint32_t>* getWingGlideEventTimes(uint32_t instanceId) const;
     [[nodiscard]] bool hasAnimation(uint32_t instanceId, uint32_t animationId) const;
+    /// True when the model's authored M2 sequence for `animationId` carries the
+    /// non-looping flag (M2Sequence::flags & 0x01), e.g. CustomSpell02/04/06
+    /// (214/216/218) and DragonSpitHover (183).
+    [[nodiscard]] bool isAnimationNonLooping(uint32_t instanceId, uint32_t animationId) const;
     // In the corpse pose: Death or Dead was played and no revival (Stand) since.
     // Native 2.4.3 keeps a corpse lying through emotes and spell cast/kit
     // animations aimed at it (_experiments/20261118T1320Z.death_over_emote).

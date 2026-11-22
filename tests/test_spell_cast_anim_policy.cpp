@@ -228,3 +228,62 @@ TEST_CASE("Active cast/channel hold takes priority over UNIT_FLAG_STUNNED for se
     CHECK(stop.animation == anim::STUN);
     CHECK_FALSE(state.hold.has_value());
 }
+
+TEST_CASE("Aura StateKit animation takes priority over UNIT_FLAG_STUNNED for boss phase/defeat spells",
+          "[spell_cast_anim][stun][illidan]") {
+    constexpr uint32_t kCustomSpell02 = 214; // Illidan Demon Transform 1 (40511)
+    constexpr uint32_t kCustomSpell03 = 215; // Illidan Demon Transform 2 (40398) & Caged (40695)
+    constexpr uint32_t kCustomSpell04 = 216; // Illidan Demon Transform 3 (40510)
+    constexpr uint32_t kCustomSpell06 = 218; // Illidan Death collapse (41218)
+    constexpr uint32_t kCustomSpell07 = 219; // Illidan Death kneel loop (41220)
+
+    for (uint32_t auraAnim : {kCustomSpell02, kCustomSpell03, kCustomSpell04, kCustomSpell06, kCustomSpell07}) {
+        const auto chosen = remoteOverlayIdle(0, auraAnim, kNoAnim, /*stunned=*/true);
+        REQUIRE(chosen.has_value());
+        CHECK(*chosen == auraAnim);
+    }
+
+    // Active cast/channel hold still outranks aura StateKit animation.
+    const auto castWins = remoteOverlayIdle(anim::CHANNEL_CAST_DIRECTED, kCustomSpell03, kNoAnim, /*stunned=*/true);
+    REQUIRE(castWins.has_value());
+    CHECK(*castWins == anim::CHANNEL_CAST_DIRECTED);
+
+    // Explicit AnimID = 0 (Stand) on an aura StateKit also outranks generic STUN.
+    const auto explicitStand = remoteOverlayIdle(0, anim::STAND, kNoAnim, /*stunned=*/true);
+    REQUIRE(explicitStand.has_value());
+    CHECK(*explicitStand == anim::STAND);
+
+    // Without cast hold or aura StateKit animation, UNIT_FLAG_STUNNED resolves to STUN (14).
+    const auto plainStun = remoteOverlayIdle(0, kNoAnim, kNoAnim, /*stunned=*/true);
+    REQUIRE(plainStun.has_value());
+    CHECK(*plainStun == anim::STUN);
+    CHECK_FALSE(remoteOverlayIdle(0, kNoAnim, kNoAnim, /*stunned=*/false).has_value());
+}
+
+TEST_CASE("Non-looping PRECAST animation finishes its authored clip when CAST has no animation",
+          "[spell_cast_anim][illidan]") {
+    // Illidan Phase 2 Throw Glaive Visual (39849): 500 ms cast time, PrecastKit 7713 ->
+    // DragonSpitHover (183, 2100 ms, M2Sequence::flags=0x1 non-looping), CastKit = 0.
+    constexpr uint32_t kThrowGlaiveVisual = 39849;
+    constexpr uint32_t kDragonSpitHover = 183;
+    constexpr uint32_t kHover = 193;
+
+    SpellCastAnimState state{};
+    const auto pre = stepRemoteSpellCastAnim(
+        state, SpellAnimPhase::PRECAST, kThrowGlaiveVisual, kDragonSpitHover, kNoAnim,
+        kHover, /*playingOneShot=*/false, 0, /*kitAnimNonLooping=*/true);
+    CHECK(pre.kind == SpellCastAnimAction::Kind::PLAY_ONESHOT);
+    CHECK(pre.animation == kDragonSpitHover);
+    CHECK(pre.returnAnimation == kHover);
+    REQUIRE(state.oneShot.has_value());
+    CHECK(state.oneShot->animation == kDragonSpitHover);
+
+    // At t=500 ms, SMSG_SPELL_GO arrives with CastKit=0 (kNoAnim) while 183 is still playing:
+    // must NOT snap back to Hover (193); retargets return to Hover so the 2100 ms throw finishes.
+    const auto go = stepRemoteSpellCastAnim(
+        state, SpellAnimPhase::CAST, kThrowGlaiveVisual, kNoAnim, kNoAnim,
+        kHover, /*playingOneShot=*/true, kDragonSpitHover);
+    CHECK(go.kind == SpellCastAnimAction::Kind::RETARGET_ONESHOT_RETURN);
+    CHECK(go.returnAnimation == kHover);
+    CHECK_FALSE(state.hold.has_value());
+}

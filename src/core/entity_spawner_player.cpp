@@ -887,12 +887,11 @@ uint32_t EntitySpawner::remoteIdleAnimation(uint64_t guid) const {
         return rendering::anim::DEAD;
     }
     const uint32_t castHold = remoteCastHold(guid);
+    const uint32_t aura = remoteAuraStateAnimation(guid);
     const bool stunned = unit && (unit->getUnitFlags() & game::UNIT_FLAG_STUNNED) != 0 && unit->getHealth() > 0;
-    if (const uint32_t overlay = rendering::remoteCastOrStunIdle(castHold, stunned); overlay != 0)
-        return overlay;
-    // An aura's state animation, e.g. Whirlwind (126) under Rend's Whirlwind.
-    if (const uint32_t aura = remoteAuraStateAnimation(guid); aura != rendering::SpellVisualSystem::kNoAnimation)
-        return aura;
+    if (const auto overlay = rendering::remoteOverlayIdle(
+            castHold, aura, rendering::SpellVisualSystem::kNoAnimation, stunned))
+        return *overlay;
     if (remoteIdlesInHover(guid)) return rendering::anim::FLY_IDLE;
     // A unit meleeing holds its ready stance between swings; the original
     // never rolls Stand fidgets then (Ice Claw Bear, combat_observations).
@@ -1363,6 +1362,8 @@ void EntitySpawner::updateRemoteUnitState(uint64_t guid, uint32_t instanceId, bo
         // Never override a dead/corpse/feign-death unit (e.g. Permanent Feign
         // Death 29266 sets UNIT_DYNFLAG_DEAD and UNIT_FLAG_STUNNED with health > 0).
         const uint32_t idle = remoteIdleAnimation(guid);
+        const uint32_t auraStateAnim = remoteAuraStateAnimation(guid);
+        const bool stunned = (unit->getUnitFlags() & game::UNIT_FLAG_STUNNED) != 0 && unit->getHealth() > 0;
         const auto [idleIt, firstIdle] = remoteIdleAnims_.try_emplace(guid, idle);
         const uint32_t previousIdle = idleIt->second;
         idleIt->second = idle;
@@ -1370,6 +1371,17 @@ void EntitySpawner::updateRemoteUnitState(uint64_t guid, uint32_t instanceId, bo
             auto* cr = renderer_->getCharacterRenderer();
             uint32_t current = 0; float time = 0.0f, duration = 0.0f;
             const bool haveAnim = cr->getAnimationState(instanceId, current, time, duration);
+            const auto playIdlePose = [&](uint32_t animId) {
+                const bool holdAuraOneShot =
+                    auraStateAnim != rendering::SpellVisualSystem::kNoAnimation &&
+                    animId == auraStateAnim &&
+                    cr->isAnimationNonLooping(instanceId, animId);
+                if (holdAuraOneShot) {
+                    cr->playAnimation(instanceId, animId, /*loop=*/false, 0, /*holdFinalPose=*/true);
+                } else {
+                    cr->playAnimation(instanceId, animId, true);
+                }
+            };
             if (idle == rendering::anim::STUN) {
                 if (!haveAnim || (current != rendering::anim::STUN && current != rendering::anim::KNOCKDOWN)) {
                     cr->playAnimation(instanceId, rendering::anim::STUN, true);
@@ -1378,8 +1390,10 @@ void EntitySpawner::updateRemoteUnitState(uint64_t guid, uint32_t instanceId, bo
                     cr->setOneShotReturn(instanceId, rendering::anim::STUN);
                 }
             } else if (!firstIdle && previousIdle != idle) {
-                if (haveAnim && current == previousIdle)
-                    cr->playAnimation(instanceId, idle, true);
+                const bool stunnedAuraOverride =
+                    stunned && auraStateAnim != rendering::SpellVisualSystem::kNoAnimation && idle == auraStateAnim;
+                if (stunnedAuraOverride || (haveAnim && current == previousIdle))
+                    playIdlePose(idle);
                 else
                     cr->retargetOneShotReturn(instanceId, previousIdle, idle);
                 LOG_DEBUG("Remote idle: guid=", guid, " ", previousIdle, " -> ", idle, " current=", current);

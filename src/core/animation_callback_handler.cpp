@@ -639,9 +639,10 @@ void AnimationCallbackHandler::setupCallbacks() {
             } else {
                 uint32_t playingAnim = 0;
                 const bool playingOneShot = cr->isPlayingOneShot(instanceId, &playingAnim);
+                const bool nonLooping = cr->isAnimationNonLooping(instanceId, animation);
                 const auto action = rendering::stepRemoteSpellCastAnim(
                     castState, phase, spellId, animation, none, nonCastIdle(),
-                    playingOneShot, playingAnim);
+                    playingOneShot, playingAnim, nonLooping);
                 applyRemoteAction(action);
             }
             return;
@@ -665,9 +666,10 @@ void AnimationCallbackHandler::setupCallbacks() {
             if (!isLocalPlayer) {
                 uint32_t playingAnim = 0;
                 const bool playingOneShot = cr->isPlayingOneShot(instanceId, &playingAnim);
+                const bool nonLooping = cr->isAnimationNonLooping(instanceId, animation);
                 const auto action = rendering::stepRemoteSpellCastAnim(
                     castState, phase, spellId, animation, none, nonCastIdle(),
-                    playingOneShot, playingAnim);
+                    playingOneShot, playingAnim, nonLooping);
                 applyRemoteAction(action);
                 return;
             }
@@ -725,9 +727,10 @@ void AnimationCallbackHandler::setupCallbacks() {
             } else {
                 uint32_t playingAnim = 0;
                 const bool playingOneShot = cr->isPlayingOneShot(instanceId, &playingAnim);
+                const bool nonLooping = cr->isAnimationNonLooping(instanceId, animation);
                 const auto action = rendering::stepRemoteSpellCastAnim(
                     castState, phase, spellId, animation, none, nonCastIdle(),
-                    playingOneShot, playingAnim);
+                    playingOneShot, playingAnim, nonLooping);
                 applyRemoteAction(action);
             }
             return;

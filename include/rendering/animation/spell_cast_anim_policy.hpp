@@ -74,11 +74,33 @@ inline constexpr uint32_t remoteCastOrStunIdle(uint32_t castHoldAnim, bool stunn
     return 0;
 }
 
+/// Choose between an active cast/channel hold, an aura StateKit animation, and
+/// generic UNIT_FLAG_STUNNED for a living standing remote unit.
+///
+/// Boss phase/cinematic spells (e.g. Illidan Demon Transform 40511/40398/40510 ->
+/// CustomSpell02/03/04 214/215/216, Illidan Death 41218/41220 -> CustomSpell06/07
+/// 218/219, Caged 40695 -> CustomSpell03 215) self-apply SPELL_AURA_MOD_STUN
+/// (UNIT_FLAG_STUNNED) while authoring a StateKit AnimID; the StateKit animation
+/// takes priority over generic STUN (14).
+inline constexpr std::optional<uint32_t> remoteOverlayIdle(
+    uint32_t castHoldAnim,
+    uint32_t auraStateAnim,
+    uint32_t noAnimationSentinel,
+    bool stunned) {
+    if (castHoldAnim != 0) return castHoldAnim;
+    if (auraStateAnim != noAnimationSentinel) return auraStateAnim;
+    if (stunned) return anim::STUN;
+    return std::nullopt;
+}
+
 /// Compute the next animation action for a remote unit (creature or remote player)
 /// receiving a spell cast animation phase event.
 ///
 /// `idleAnimation` is the unit's non-cast idle/ready animation (what the unit should
 /// return to when no cast hold is active).
+/// `kitAnimNonLooping` is true when the model's M2 sequence for `kitAnimation` has
+/// the non-looping flag (M2Sequence::flags & 0x01), e.g. Illidan's 2100 ms
+/// DragonSpitHover (183) on Throw Glaive Visual (39849, 500 ms precast, no CastKit).
 inline SpellCastAnimAction stepRemoteSpellCastAnim(
     SpellCastAnimState& state,
     game::SpellAnimPhase phase,
@@ -87,7 +109,8 @@ inline SpellCastAnimAction stepRemoteSpellCastAnim(
     uint32_t noAnimationSentinel,
     uint32_t idleAnimation,
     bool playingOneShot,
-    uint32_t playingOneShotAnim) {
+    uint32_t playingOneShotAnim,
+    bool kitAnimNonLooping = false) {
     const bool activeCastOneShot =
         state.oneShot.has_value() && playingOneShot && playingOneShotAnim == state.oneShot->animation;
     // Active melee swings (e.g. Brutallus AttackUnarmed/AttackOff when Meteor Slash
@@ -121,6 +144,10 @@ inline SpellCastAnimAction stepRemoteSpellCastAnim(
         state.hold = SpellCastHold{spellId, kitAnimation, false};
         if (activeProtectedOneShot) {
             return {SpellCastAnimAction::Kind::RETARGET_ONESHOT_RETURN, 0, kitAnimation};
+        }
+        if (kitAnimNonLooping) {
+            state.oneShot = SpellCastOneShot{spellId, kitAnimation};
+            return {SpellCastAnimAction::Kind::PLAY_ONESHOT, kitAnimation, idleAnimation};
         }
         state.oneShot.reset();
         return {SpellCastAnimAction::Kind::PLAY_LOOP, kitAnimation, 0};

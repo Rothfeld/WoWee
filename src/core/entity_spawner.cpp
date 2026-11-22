@@ -1953,7 +1953,16 @@ if (deadCreatureGuids_.count(guid)) {
         // creature: native 2.4.3 shows Tree Disguise (16977,
         // AshenvaleTreeFalling01.m2, Birth grows bone 1 from 0.09 over
         // 16.7 s) at full height right after .npc setmodel.
-        charRenderer->playAnimation(instanceId, remoteIdleAnimation(guid), true);
+        const uint32_t idle = remoteIdleAnimation(guid);
+        const uint32_t auraStateAnim = remoteAuraStateAnimation(guid);
+        const bool holdAuraOneShot =
+            auraStateAnim != rendering::SpellVisualSystem::kNoAnimation &&
+            idle == auraStateAnim &&
+            charRenderer->isAnimationNonLooping(instanceId, idle);
+        if (holdAuraOneShot)
+            charRenderer->playAnimation(instanceId, idle, /*loop=*/false, 0, /*holdFinalPose=*/true);
+        else
+            charRenderer->playAnimation(instanceId, idle, true);
     } else if (charRenderer->hasAnimation(instanceId, rendering::anim::BIRTH)) {
         // Play birth animation (one-shot) - will return to idle after
         charRenderer->playAnimation(instanceId, rendering::anim::BIRTH, false, remoteIdleAnimation(guid));
@@ -3077,9 +3086,12 @@ void EntitySpawner::spawnOnlineCreature(uint64_t guid, uint32_t displayId, float
     // IN_GAME retry loop will attempt again shortly.
     bool weaponsAttachedNow = tryAttachCreatureVirtualWeapons(guid, instanceId);
 
-    // Start the creature in the pose the server says it is already in: dead,
-    // mid-emote, or newly arrived.
-    playCreatureSpawnPose(guid, instanceId);
+    // Track instance and transfer any active aura StateKit visuals from a replaced
+    // display BEFORE choosing the spawn pose so display swaps (e.g. Illidan Demon
+    // Form 40506 during Demon Transform 2 40398) start immediately in the aura's
+    // StateKit animation instead of snapping to Stand.
+    creatureInstances_[guid] = instanceId;
+    creatureModelIds_[guid] = modelId;
 
     if (const auto replaced = replacedCreatureInstances_.find(guid); replaced != replacedCreatureInstances_.end()) {
         if (auto* visuals = renderer_->getSpellVisualSystem())
@@ -3089,9 +3101,9 @@ void EntitySpawner::spawnOnlineCreature(uint64_t guid, uint32_t displayId, float
         replacedCreatureInstances_.erase(replaced);
     }
 
-    // Track instance
-    creatureInstances_[guid] = instanceId;
-    creatureModelIds_[guid] = modelId;
+    // Start the creature in the pose the server says it is already in: dead,
+    // mid-emote, active aura StateKit, or newly arrived.
+    playCreatureSpawnPose(guid, instanceId);
     creatureDisplayIds_[guid] = displayId;
     creatureRenderPosCache_[guid] = renderPos;
     // A display change rebuilds the rider and drops its mount with the old
