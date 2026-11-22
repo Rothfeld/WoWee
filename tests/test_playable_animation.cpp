@@ -142,3 +142,27 @@ TEST_CASE("A lookup naming nothing the model has gives no stand-in", "[animation
     const AnimationData none;
     CHECK_FALSE(standIn(model, A::READY_UNARMED, none));
 }
+
+TEST_CASE("DragonAzurgoz (Madrigosa) lacks DEAD (6) and holds the final frame of DEATH (1)", "[animation][assets]") {
+    const auto data = loadAnimationData();
+    const auto dragon = pipeline::M2Loader::load(test::readTbcData("creature/dragon/dragonazurgoz.m2"));
+    const auto hasSeq = [&](uint32_t id) {
+        return std::any_of(dragon.sequences.begin(), dragon.sequences.end(),
+                           [id](const auto& s) { return s.id == id; });
+    };
+    REQUIRE(hasSeq(A::DEATH));
+    REQUIRE_FALSE(hasSeq(A::DEAD));
+    REQUIRE_FALSE(hasSeq(A::STUN));
+
+    const auto dead = standIn(dragon, A::DEAD, data);
+    REQUIRE(dead);
+    CHECK(dead->animationId == A::DEATH);
+    CHECK(dead->frozenAtEnd);
+    CHECK_FALSE(dead->reversed);
+
+    // Regression: STUN (14) on DragonAzurgoz falls back to STAND (0), so a
+    // feign-dead dragon carrying UNIT_FLAG_STUNNED must never enter STUN.
+    const auto stun = standIn(dragon, A::STUN, data);
+    REQUIRE(stun);
+    CHECK(stun->animationId == A::STAND);
+}

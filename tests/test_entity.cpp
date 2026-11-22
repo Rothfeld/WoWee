@@ -222,6 +222,20 @@ TEST_CASE("Corpse state uses the real dynamic dead bit", "[entity][corpse]") {
     REQUIRE(UNIT_DYNFLAG_DEAD == 0x00000020);
 }
 
+TEST_CASE("Dead pose state covers corpse, feign death, stand-state dead, and emote state dead", "[entity][corpse]") {
+    // Normal dead unit (health == 0).
+    REQUIRE(isUnitDeadPose(0, 100, 0, 0, 0));
+    // Permanent Feign Death (29266, e.g. Madrigosa) sets UNIT_DYNFLAG_DEAD with health > 0.
+    REQUIRE(isUnitDeadPose(100, 100, UNIT_DYNFLAG_DEAD, 0, 0));
+    // UNIT_STAND_STATE_DEAD (7) with health > 0 and no dynamic flags.
+    REQUIRE(isUnitDeadPose(100, 100, 0, UNIT_STAND_STATE_DEAD, 0));
+    // UNIT_NPC_EMOTESTATE == EMOTE_STATE_DEAD (65) with health > 0 and no dynamic flags.
+    REQUIRE(isUnitDeadPose(100, 100, 0, 0, EMOTE_STATE_DEAD));
+    // Living standing unit.
+    REQUIRE_FALSE(isUnitDeadPose(100, 100, 0, 0, 0));
+    REQUIRE_FALSE(isUnitDeadPose(100, 100, UNIT_DYNFLAG_TAPPED, 1, 0));
+}
+
 TEST_CASE("Tap flags follow each expansion's dynamic flag layout", "[entity][tap]") {
     // CMaNGOS-TBC: 0x04 TAPPED only for viewers without the tap, 0x08 ROOTED.
     REQUIRE(unitTappedByOther(UNIT_DYNFLAG_TAPPED, true));

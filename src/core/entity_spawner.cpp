@@ -1901,7 +1901,11 @@ if (deadCreatureGuids_.count(guid)) {
             npcEmoteAnim = activeIt->second;
         }
     }
-    if (npcEmoteAnim != 0 && charRenderer->hasAnimation(instanceId, npcEmoteAnim)) {
+    const bool hasNpcEmoteAnim = npcEmoteAnim != 0 &&
+        (charRenderer->hasAnimation(instanceId, npcEmoteAnim) ||
+         (npcEmoteAnim == rendering::anim::DEAD &&
+          charRenderer->hasAnimation(instanceId, rendering::anim::DEATH)));
+    if (hasNpcEmoteAnim) {
         creatureActiveEmotes_[guid] = npcEmoteAnim;
         charRenderer->playAnimation(instanceId, npcEmoteAnim, true);
     } else if (displayChanged) {

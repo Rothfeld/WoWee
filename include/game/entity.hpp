@@ -100,11 +100,25 @@ inline constexpr bool unitTappedByOther(uint32_t dynamicFlags, bool preWotlk) {
            !unitIsTappedByAllThreatList(dynamicFlags, preWotlk);
 }
 
+inline constexpr uint8_t  UNIT_STAND_STATE_DEAD = 7;
+inline constexpr uint32_t EMOTE_STATE_DEAD      = 65;
+
 /// CREATE updates may omit zero-valued health. In that case the dynamic corpse
 /// flags are the authoritative indication that the unit must spawn dead.
 inline bool isUnitCorpseState(uint32_t health, uint32_t maxHealth, uint32_t dynamicFlags) {
     return (maxHealth > 0 && health == 0) ||
            (dynamicFlags & (UNIT_DYNFLAG_DEAD | UNIT_DYNFLAG_LOOTABLE)) != 0;
+}
+
+/// True when the unit's server fields place it in a dead/corpse pose, including
+/// Feign Death / Permanent Feign Death (29266) where health stays > 0 while
+/// UNIT_DYNFLAG_DEAD is set, UNIT_STAND_STATE_DEAD (bytes1 & 0xFF == 7), and
+/// EMOTE_STATE_DEAD (65).
+inline bool isUnitDeadPose(uint32_t health, uint32_t maxHealth, uint32_t dynamicFlags,
+                           uint8_t standState, uint32_t npcEmoteState = 0) {
+    return isUnitCorpseState(health, maxHealth, dynamicFlags) ||
+           standState == UNIT_STAND_STATE_DEAD ||
+           npcEmoteState == EMOTE_STATE_DEAD;
 }
 
 /**

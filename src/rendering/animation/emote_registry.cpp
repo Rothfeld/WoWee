@@ -196,6 +196,12 @@ void EmoteRegistry::loadFromDbc() {
             if (animId != 0) {
                 emoteIdToAnim[emoteId] = animId;
                 animByEmotesId_[emoteId] = animId;
+            } else if (const auto stance = emoteStandState(procedure, emotesDbc->getUInt32(r, 5));
+                       stance && *stance != 0) {
+                // Stand-state emotes (EmoteSpecProc == 1: STATE_SLEEP, STATE_SIT,
+                // STATE_DEAD, STATE_KNEEL) have AnimID == 0 and specify the stand
+                // state in column 5; resolve them to that state's idle pose.
+                animByEmotesId_[emoteId] = standPose(*stance).idle;
             }
         }
         LOG_DEBUG("Emotes: loaded ", emoteIdToAnim.size(), " anim mappings from Emotes.dbc");

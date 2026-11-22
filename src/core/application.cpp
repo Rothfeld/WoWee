@@ -3893,8 +3893,13 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                         entitySpawner_->getUnitSwimmingDepth(guid, instanceId));
                 }
             }
-            const bool creatureDeadOrCorpse =
-                std::static_pointer_cast<game::Unit>(entity)->getHealth() == 0;
+            const auto creatureUnitPtr = std::static_pointer_cast<game::Unit>(entity);
+            const auto creatureStandState = static_cast<uint8_t>(
+                entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_1)));
+            const bool creatureDeadOrCorpse = game::isUnitDeadPose(
+                creatureUnitPtr->getHealth(), creatureUnitPtr->getMaxHealth(),
+                creatureUnitPtr->getDynamicFlags(), creatureStandState,
+                creatureUnitPtr->getNpcEmoteState());
             if (groundCreature && !onTransport) {
                 const bool creatureSplineOrMoving =
                     !creatureDeadOrCorpse &&
@@ -3940,8 +3945,8 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                 float planarDistSq = ddx2 * ddx2 + ddy2 * ddy2;
                 float dz = std::abs(renderPos.z - prevPos.z);
 
-                auto unitPtr = std::static_pointer_cast<game::Unit>(entity);
-                const bool deadOrCorpse = unitPtr->getHealth() == 0;
+                auto unitPtr = creatureUnitPtr;
+                const bool deadOrCorpse = creatureDeadOrCorpse;
                 const bool largeCorrection = (planarDistSq > 36.0f) || (dz > 3.0f);
                 // Use isActivelyMoving() so Run/Walk animation stops when the
                 // creature reaches its destination. Don't use position-change
@@ -4069,10 +4074,9 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
             // This is presentation only: other clients and patrol splines retain
             // the authoritative heading. Closing the panel turns it back.
             std::optional<float> interactionYaw;
-            const auto* unit = static_cast<const game::Unit*>(entity.get());
-            const auto standState = static_cast<uint8_t>(
-                entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_1)));
-            if (guid == interactionGuid && havePlayerPos && unit->getHealth() > 0 &&
+            const auto* unit = creatureUnitPtr.get();
+            const auto standState = creatureStandState;
+            if (guid == interactionGuid && havePlayerPos && !creatureDeadOrCorpse &&
                 !entity->isActivelyMoving() &&
                 npcTurnsToConversationPartner(standState, unit->getUnitFlags())) {
                 const glm::vec2 delta(playerPos.x - canonical.x, playerPos.y - canonical.y);
@@ -4088,7 +4092,7 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                 // Start it once for a real turn, never for another gossip reply.
                 // Server emotes, combat, and locomotion retain their animation.
                 if (it->second.turnDirection != 0 && groundCreature &&
-                    unit->getHealth() > 0 && !entity->isActivelyMoving()) {
+                    !creatureDeadOrCorpse && !entity->isActivelyMoving()) {
                     const uint32_t shuffle = it->second.turnDirection > 0
                         ? rendering::anim::SHUFFLE_LEFT : rendering::anim::SHUFFLE_RIGHT;
                     uint32_t current = 0; float time = 0.0f, duration = 0.0f;
@@ -4107,7 +4111,7 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
             if (!npcInteractionFacing_.contains(guid)) {
                 const uint32_t idleAnim = entitySpawner_->remoteIdleAnimation(guid);
                 driveTurnShuffle(*charRenderer, guid, instanceId, entitySpawner_->getRemoteTurns()[guid], facing,
-                    groundCreature && !creatureMount && unit->getHealth() > 0 && !entity->isActivelyMoving() &&
+                    groundCreature && !creatureMount && !creatureDeadOrCorpse && !entity->isActivelyMoving() &&
                     (idleAnim == rendering::anim::STAND || idleAnim == rendering::anim::STEALTH_STAND),
                     idleAnim);
             }
@@ -4120,7 +4124,7 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                     charRenderer->getInstanceScale(instanceId), renderPos, renderYaw,
                     [&](const glm::vec3& sample) {
                         return movingEntityFloor(renderer.get(), sample, renderPos, false);
-                    }, unit->getHealth() == 0);
+                    }, creatureDeadOrCorpse);
             }
             charRenderer->setInstanceRotation(instanceId, groundRotation);
             if (creatureMount) {
@@ -4284,7 +4288,12 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                 float dz = std::abs(renderPos.z - prevPos.z);
 
                 auto unitPtr = std::static_pointer_cast<game::Unit>(entity);
-                const bool deadOrCorpse = unitPtr->getHealth() == 0;
+                const auto remoteStandState = static_cast<uint8_t>(
+                    entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_1)));
+                const bool deadOrCorpse = game::isUnitDeadPose(
+                    unitPtr->getHealth(), unitPtr->getMaxHealth(),
+                    unitPtr->getDynamicFlags(), remoteStandState,
+                    unitPtr->getNpcEmoteState());
                 const bool largeCorrection = (planarDistSq > 36.0f) || (dz > 3.0f);
                 const bool entityIsMoving = entity->isActivelyMoving();
                 constexpr float kMoveThreshSq2 = 0.03f * 0.03f;

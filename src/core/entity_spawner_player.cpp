@@ -879,6 +879,11 @@ uint32_t EntitySpawner::remoteIdleAnimation(uint64_t guid) const {
     const auto state = static_cast<uint8_t>(entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_1)));
     if (state != 0) return rendering::standPose(state).idle;
     const auto unit = std::dynamic_pointer_cast<game::Unit>(entity);
+    if (deadCreatureGuids_.contains(guid) ||
+        (unit && game::isUnitDeadPose(unit->getHealth(), unit->getMaxHealth(),
+                                      unit->getDynamicFlags(), state, unit->getNpcEmoteState()))) {
+        return rendering::anim::DEAD;
+    }
     if (unit && (unit->getUnitFlags() & game::UNIT_FLAG_STUNNED) != 0 && unit->getHealth() > 0)
         return rendering::anim::STUN;
     if (const auto hold = remoteCastHolds_.find(guid); hold != remoteCastHolds_.end()) return hold->second;
@@ -1327,18 +1332,25 @@ void EntitySpawner::updateRemoteUnitState(uint64_t guid, uint32_t instanceId, bo
     const auto [it, initial] = remoteStandStates_.try_emplace(guid, state);
     const uint8_t previous = it->second;
     it->second = state;
+    const auto unit = std::static_pointer_cast<game::Unit>(entity);
+    const bool corpseState = deadCreatureGuids_.contains(guid) ||
+        game::isUnitCorpseState(unit->getHealth(), unit->getMaxHealth(), unit->getDynamicFlags());
+    const bool deadPose = corpseState ||
+        state == game::UNIT_STAND_STATE_DEAD ||
+        unit->getNpcEmoteState() == game::EMOTE_STATE_DEAD;
     {
         // ATTACKSTART/STOP and UNIT_FLAG_STUNNED change the idle; a standing
         // unit switches now, a swing in flight resumes the new idle when it
         // ends. Entering STUN immediately overrides swings/wounds/emotes
         // (except Knockdown 121, which chains into STUN on completion), and a
         // unit entering view already stunned immediately plays STUN.
+        // Never override a dead/corpse/feign-death unit (e.g. Permanent Feign
+        // Death 29266 sets UNIT_DYNFLAG_DEAD and UNIT_FLAG_STUNNED with health > 0).
         const uint32_t idle = remoteIdleAnimation(guid);
         const auto [idleIt, firstIdle] = remoteIdleAnims_.try_emplace(guid, idle);
         const uint32_t previousIdle = idleIt->second;
         idleIt->second = idle;
-        const auto unit = std::static_pointer_cast<game::Unit>(entity);
-        if (previous == state && !moving && !mounted && unit->getHealth() > 0) {
+        if (previous == state && !moving && !mounted && !deadPose) {
             auto* cr = renderer_->getCharacterRenderer();
             uint32_t current = 0; float time = 0.0f, duration = 0.0f;
             const bool haveAnim = cr->getAnimationState(instanceId, current, time, duration);
@@ -1361,8 +1373,7 @@ void EntitySpawner::updateRemoteUnitState(uint64_t guid, uint32_t instanceId, bo
     // A newly visible standing unit keeps its spawn/emote animation. Nonzero
     // stand states must override that spawn pose immediately.
     if ((initial && state == 0) || (!initial && previous == state) || moving || mounted) return;
-    auto unit = std::static_pointer_cast<game::Unit>(entity);
-    if (unit->getHealth() == 0) return;
+    if (corpseState) return;
     auto* cr = renderer_->getCharacterRenderer();
     const auto pose = rendering::standPose(state);
     const uint32_t transition = initial ? 0 : (state == 0 ? rendering::standPose(previous).leave : pose.enter);
