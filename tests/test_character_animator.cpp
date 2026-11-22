@@ -696,6 +696,7 @@ TEST_CASE("TBC 2.4.3 speed scaling & sequence parity across 0.5x..10x speeds, mo
         caps.resolvedRun = anim::RUN;
         caps.resolvedCombatIdle = anim::READY_1H;
         caps.resolvedReady1H = anim::READY_1H;
+        caps.hasFly = true;
         CharacterAnimator flyer;
         flyer.setCapabilities(caps);
         WeaponLoadout weapon;
@@ -715,5 +716,21 @@ TEST_CASE("TBC 2.4.3 speed scaling & sequence parity across 0.5x..10x speeds, mo
         flyer.setFrameInput(fi);
         flyer.update(dt60);
         CHECK(flyer.getLastOutput().animId == anim::FLY_FORWARD);
+
+        // Non-flying humanoid in combat (e.g. Kael'thas Gravity Lapse): suppresses READY_1H
+        // and plays SWIM_IDLE / SWIM when caps.hasFly is false.
+        caps.hasFly = false;
+        flyer.setCapabilities(caps);
+        fi.moving = fi.movingForward = fi.sprinting = false;
+        fi.locomotionSpeed = 0.0f;
+        flyer.setFrameInput(fi);
+        flyer.update(dt60);
+        CHECK(flyer.getLastOutput().animId == anim::SWIM_IDLE);
+
+        fi.moving = fi.movingForward = true;
+        fi.locomotionSpeed = 7.0f;
+        flyer.setFrameInput(fi);
+        flyer.update(dt60);
+        CHECK(flyer.getLastOutput().animId == anim::SWIM);
     }
 }
