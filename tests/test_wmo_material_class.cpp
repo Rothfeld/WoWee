@@ -56,3 +56,47 @@ TEST_CASE("night glow follows MOMT F_SIDN, not texture names", "[wmo-material]")
     CHECK_FALSE(wmoMaterialIsNightGlow(0xc0));
     CHECK(wmoMaterialIsNightGlow(WMO_MAT_SIDN));
 }
+
+TEST_CASE("WMO MOMT environment-mapped and metal shaders are classified accurately", "[wmo-material]") {
+    using wowee::rendering::wmoShaderUsesEnvMap;
+    using wowee::rendering::wmoShaderIsMetal;
+    using wowee::rendering::wmoShaderSpecularAlphaMask;
+
+    // Shader 3 (Env: Karazhan ballroom floor, Stratholme ice) and 5 (EnvMetal: Coilfang, Sunwell floor)
+    CHECK(wmoShaderUsesEnvMap(3));
+    CHECK(wmoShaderUsesEnvMap(5));
+    for (uint32_t s : {0u, 1u, 2u, 4u, 6u, 7u}) {
+        CHECK_FALSE(wmoShaderUsesEnvMap(s));
+    }
+
+    // Shader 2 (Metal: Sunwell bronze roofs/trims) and 5 (EnvMetal)
+    CHECK(wmoShaderIsMetal(2));
+    CHECK(wmoShaderIsMetal(5));
+    for (uint32_t s : {0u, 1u, 3u, 4u, 6u}) {
+        CHECK_FALSE(wmoShaderIsMetal(s));
+    }
+
+    // Specular alpha mask: Specular (1), Metal (2), EnvMetal (5)
+    CHECK(wmoShaderSpecularAlphaMask(1));
+    CHECK(wmoShaderSpecularAlphaMask(2));
+    CHECK(wmoShaderSpecularAlphaMask(5));
+    CHECK_FALSE(wmoShaderSpecularAlphaMask(0));
+    CHECK_FALSE(wmoShaderSpecularAlphaMask(3));
+}
+
+TEST_CASE("WMO MOMT clamp flags 0x40 and 0x80 control S and T wrap modes independently", "[wmo-material]") {
+    using wowee::rendering::wmoMaterialClampS;
+    using wowee::rendering::wmoMaterialClampT;
+    using wowee::rendering::WMO_MAT_CLAMP_S;
+    using wowee::rendering::WMO_MAT_CLAMP_T;
+
+    CHECK_FALSE(wmoMaterialClampS(0x00));
+    CHECK_FALSE(wmoMaterialClampT(0x00));
+    CHECK(wmoMaterialClampS(WMO_MAT_CLAMP_S));
+    CHECK_FALSE(wmoMaterialClampT(WMO_MAT_CLAMP_S));
+    CHECK_FALSE(wmoMaterialClampS(WMO_MAT_CLAMP_T));
+    CHECK(wmoMaterialClampT(WMO_MAT_CLAMP_T));
+    // duskwood_townhall.wmo MM_CLOCKFACE_01 carries 0xd0 (F_SIDN | F_CLAMP_S | F_CLAMP_T)
+    CHECK(wmoMaterialClampS(0xd0));
+    CHECK(wmoMaterialClampT(0xd0));
+}

@@ -605,14 +605,14 @@ private:
         int32_t unlit;             // 8
         int32_t isInterior;        // 12
         float specularIntensity;   // 16
-        int32_t padding0;          // 20
+        int32_t hasEnvMap;         // 20: MOMT shader 3 (Env) or 5 (EnvMetal) with texture2
         int32_t enableNormalMap;   // 24
         int32_t enablePOM;         // 28
         float pomScale;            // 32 (height scale)
         int32_t pomMaxSamples;     // 36 (max ray-march steps)
         float heightMapVariance;   // 40 (low variance = skip POM)
         float normalMapStrength;   // 44 (0=flat, 1=full, 2=exaggerated)
-        int32_t padding1;          // 48
+        int32_t isMetal;           // 48: MOMT shader 2 (Metal) or 5 (EnvMetal)
         float wmoAmbientR;         // 52 (interior ambient color R)
         float wmoAmbientG;         // 56 (interior ambient color G)
         float wmoAmbientB;         // 60 (interior ambient color B)
@@ -658,6 +658,7 @@ private:
         // Pre-merged batches for efficient rendering (computed at load time)
         struct MergedBatch {
             VkTexture* texture = nullptr;   // from cache, NOT owned
+            VkTexture* envTexture = nullptr; // MOMT texture2 for Env/EnvMetal shaders, NOT owned
             VkTexture* normalHeightMap = nullptr;  // generated from diffuse, NOT owned
             float heightMapVariance = 0.0f; // variance of height map (low = flat texture)
             VkDescriptorSet materialSet = VK_NULL_HANDLE;  // set 1
@@ -668,6 +669,9 @@ private:
             bool unlit = false;
             bool isTransparent = false;     // blendMode >= 2
             bool twoSided = false;          // MOMT flag 0x04 (F_UNCULLED)
+            bool clampS = false;            // MOMT flag 0x40 (F_CLAMP_S)
+            bool clampT = false;            // MOMT flag 0x80 (F_CLAMP_T)
+            bool isMetal = false;           // MOMT shader 2 (Metal) or 5 (EnvMetal)
             // 0 = not luminous, 1 = MOMT F_SIDN sidnColor emission (non-TBC profiles).
             uint8_t emissiveLevel = 0;
             uint32_t sidnColor = 0;     // MOMT sidnColor (BGRA)
@@ -780,6 +784,8 @@ private:
 
         // Material texture indices (materialId -> texture index)
         std::vector<uint32_t> materialTextureIndices;
+        // Environment map texture indices (materialId -> texture2 index, UINT32_MAX if none)
+        std::vector<uint32_t> materialEnvTextureIndices;
 
         // Material blend modes (materialId -> blendMode; 1 = alpha-test cutout)
         std::vector<uint32_t> materialBlendModes;
@@ -1040,6 +1046,12 @@ private:
     // Descriptor pool for material sets
     VkDescriptorPool materialDescPool_ = VK_NULL_HANDLE;
     static constexpr uint32_t MAX_MATERIAL_SETS = 32768;
+
+    // Wrap-mode samplers indexed by [clampS ? 1 : 0][clampT ? 1 : 0] for MOMT 0x40/0x80
+    VkSampler wrapSamplers_[2][2] = {
+        {VK_NULL_HANDLE, VK_NULL_HANDLE},
+        {VK_NULL_HANDLE, VK_NULL_HANDLE},
+    };
 
     // Texture cache (path -> VkTexture)
     struct TextureCacheEntry {

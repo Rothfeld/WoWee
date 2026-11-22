@@ -35,14 +35,14 @@ layout(set = 1, binding = 1) uniform WMOMaterial {
     int unlit;
     int isInterior;
     float specularIntensity;
-    int padding0;
+    int hasEnvMap;
     int enableNormalMap;
     int enablePOM;
     float pomScale;
     int pomMaxSamples;
     float heightMapVariance;
     float normalMapStrength;
-    int padding1;
+    int isMetal;
     float wmoAmbientR;
     float wmoAmbientG;
     float wmoAmbientB;
@@ -53,6 +53,7 @@ layout(set = 1, binding = 1) uniform WMOMaterial {
 };
 
 layout(set = 1, binding = 2) uniform sampler2D uNormalHeightMap;
+layout(set = 1, binding = 3) uniform sampler2D uEnvMap;
 
 layout(set = 0, binding = 1) uniform sampler2DShadow uShadowMap;
 layout(set = 0, binding = 2) uniform sampler3D uFogVolume;
@@ -290,6 +291,9 @@ void main() {
 
         vec3 highlight = lightDir.w != 0.0 && specularAlphaMask != 0
             ? VertexSpecular * texColor.a : spec * lightColor.rgb;
+        if (isMetal != 0) {
+            highlight *= mix(vec3(1.0), texColor.rgb, 0.5) * 1.5;
+        }
         result = rtAmbient(rt, ambientColor.rgb) * texColor.rgb
                + shadow * (diff * lightColor.rgb * texColor.rgb + highlight);
         if (lightDir.w != 0.0) {
@@ -313,6 +317,25 @@ void main() {
     }
 
     result += localLightContribution(FragPos, norm, texColor.rgb);
+
+    if (hasEnvMap != 0) {
+        // Camera-space reflection vector mapped onto a 2D spherical environment
+        // map (MOMT shader 3 Env and shader 5 EnvMetal, texture2).
+        vec3 viewPosEye = (view * vec4(FragPos, 1.0)).xyz;
+        vec3 viewDirEye = normalize(viewPosEye);
+        vec3 viewNorm = normalize(mat3(view) * norm);
+        vec3 refl = reflect(viewDirEye, viewNorm);
+        float reflM = 2.0 * sqrt(refl.x * refl.x + refl.y * refl.y + (refl.z + 1.0) * (refl.z + 1.0));
+        vec2 envUV = (reflM > 1e-4) ? (refl.xy / reflM + 0.5) : (viewNorm.xy * 0.5 + 0.5);
+        vec3 envColor = texture(uEnvMap, envUV).rgb;
+        if (isMetal != 0) {
+            // MOMT shader 5 (EnvMetal): metallic reflection tinted by diffuse and masked by alpha
+            result += envColor * texColor.rgb * texColor.a * 2.0;
+        } else {
+            // MOMT shader 3 (Env): glossy reflection added on top, masked by alpha
+            result += envColor * texColor.a;
+        }
+    }
 
     if (emissive == 1) {
         // MOMT F_SIDN: the material's authored sidnColor is emitted on top of

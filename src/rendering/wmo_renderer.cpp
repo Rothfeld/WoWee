@@ -245,7 +245,8 @@ bool WMORenderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayou
     // binding 0: sampler2D (diffuse texture)
     // binding 1: uniform buffer (WMOMaterial)
     // binding 2: sampler2D (normal+height map)
-    std::vector<VkDescriptorSetLayoutBinding> materialBindings(3);
+    // binding 3: sampler2D (environment reflection map, MOMT texture2 for Env/EnvMetal)
+    std::vector<VkDescriptorSetLayoutBinding> materialBindings(4);
     materialBindings[0] = {};
     materialBindings[0].binding = 0;
     materialBindings[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
@@ -261,6 +262,11 @@ bool WMORenderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayou
     materialBindings[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     materialBindings[2].descriptorCount = 1;
     materialBindings[2].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    materialBindings[3] = {};
+    materialBindings[3].binding = 3;
+    materialBindings[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    materialBindings[3].descriptorCount = 1;
+    materialBindings[3].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
     materialSetLayout_ = createDescriptorSetLayout(device, materialBindings);
     if (!materialSetLayout_) {
@@ -268,9 +274,35 @@ bool WMORenderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayou
         return false;
     }
 
+    // --- Create wrap-mode samplers for MOMT 0x40 (ClampS) / 0x80 (ClampT) ---
+    VkPhysicalDeviceProperties physProps{};
+    vkGetPhysicalDeviceProperties(vkCtx_->getPhysicalDevice(), &physProps);
+    const float maxAniso = std::min(16.0f, physProps.limits.maxSamplerAnisotropy);
+    for (int cs = 0; cs < 2; ++cs) {
+        for (int ct = 0; ct < 2; ++ct) {
+            VkSamplerCreateInfo si{};
+            si.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+            si.magFilter = VK_FILTER_LINEAR;
+            si.minFilter = VK_FILTER_LINEAR;
+            si.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+            si.addressModeU = cs ? VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE : VK_SAMPLER_ADDRESS_MODE_REPEAT;
+            si.addressModeV = ct ? VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE : VK_SAMPLER_ADDRESS_MODE_REPEAT;
+            si.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+            si.anisotropyEnable = (maxAniso > 1.0f) ? VK_TRUE : VK_FALSE;
+            si.maxAnisotropy = maxAniso;
+            si.minLod = 0.0f;
+            si.maxLod = VK_LOD_CLAMP_NONE;
+            si.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+            if (vkCreateSampler(device, &si, nullptr, &wrapSamplers_[cs][ct]) != VK_SUCCESS) {
+                core::Logger::getInstance().error("WMORenderer: failed to create wrap sampler [", cs, "][", ct, "]");
+                return false;
+            }
+        }
+    }
+
     // --- Create descriptor pool ---
     VkDescriptorPoolSize poolSizes[] = {
-        { .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = MAX_MATERIAL_SETS * 2 },  // diffuse + normal/height
+        { .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = MAX_MATERIAL_SETS * 3 },  // diffuse + normal/height + envmap
         { .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, .descriptorCount = MAX_MATERIAL_SETS },
     };
 
@@ -411,6 +443,14 @@ void WMORenderer::shutdown() {
     destroy(device, pipelineLayout_);
     destroy(device, materialDescPool_);
     destroy(device, materialSetLayout_);
+    for (int cs = 0; cs < 2; ++cs) {
+        for (int ct = 0; ct < 2; ++ct) {
+            if (wrapSamplers_[cs][ct] != VK_NULL_HANDLE) {
+                vkDestroySampler(device, wrapSamplers_[cs][ct], nullptr);
+                wrapSamplers_[cs][ct] = VK_NULL_HANDLE;
+            }
+        }
+    }
 
     // Destroy shadow resources
     destroy(device, shadowPipeline_);
@@ -594,7 +634,16 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
             matLogCount++;
         }
 
+        uint32_t envTexIndex = std::numeric_limits<uint32_t>::max();
+        if (wmoShaderUsesEnvMap(mat.shader) &&
+            t2 != std::numeric_limits<uint32_t>::max() &&
+            t2 < model.textures.size() &&
+            !model.textures[t2].empty()) {
+            envTexIndex = t2;
+        }
+
         modelData.materialTextureIndices.push_back(texIndex);
+        modelData.materialEnvTextureIndices.push_back(envTexIndex);
         modelData.materialBlendModes.push_back(mat.blendMode);
         modelData.materialShaders.push_back(mat.shader);
         modelData.materialFlags.push_back(mat.flags);
@@ -656,31 +705,42 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
         // Use pointer value as key for batching
         struct BatchKey {
             uintptr_t texPtr;
+            uintptr_t envTexPtr;
             bool alphaTest;
             bool unlit;
             bool specular;
             bool specularAlphaMask;
+            bool isMetal;
             uint8_t emissiveLevel;
             uint32_t sidnColor;
             bool twoSided;
+            bool clampS;
+            bool clampT;
             bool operator==(const BatchKey& o) const {
-                return texPtr == o.texPtr && alphaTest == o.alphaTest && twoSided == o.twoSided &&
+                return texPtr == o.texPtr && envTexPtr == o.envTexPtr &&
+                       alphaTest == o.alphaTest && twoSided == o.twoSided &&
+                       clampS == o.clampS && clampT == o.clampT &&
                        unlit == o.unlit && sidnColor == o.sidnColor &&
                        specular == o.specular &&
                        specularAlphaMask == o.specularAlphaMask &&
+                       isMetal == o.isMetal &&
                        emissiveLevel == o.emissiveLevel;
             }
         };
         struct BatchKeyHash {
             size_t operator()(const BatchKey& k) const {
                 return std::hash<uintptr_t>()(k.texPtr) ^
-                       (std::hash<bool>()(k.alphaTest) << 1) ^
-                       (std::hash<bool>()(k.unlit) << 2) ^
-                       (std::hash<uint32_t>()(k.sidnColor) << 3) ^
-                       (std::hash<uint8_t>()(k.emissiveLevel) << 4) ^
-                       (std::hash<bool>()(k.specular) << 5) ^
-                       (std::hash<bool>()(k.specularAlphaMask) << 6) ^
-                       (std::hash<bool>()(k.twoSided) << 7);
+                       (std::hash<uintptr_t>()(k.envTexPtr) << 1) ^
+                       (std::hash<bool>()(k.alphaTest) << 2) ^
+                       (std::hash<bool>()(k.unlit) << 3) ^
+                       (std::hash<uint32_t>()(k.sidnColor) << 4) ^
+                       (std::hash<uint8_t>()(k.emissiveLevel) << 5) ^
+                       (std::hash<bool>()(k.specular) << 6) ^
+                       (std::hash<bool>()(k.specularAlphaMask) << 7) ^
+                       (std::hash<bool>()(k.isMetal) << 8) ^
+                       (std::hash<bool>()(k.twoSided) << 9) ^
+                       (std::hash<bool>()(k.clampS) << 10) ^
+                       (std::hash<bool>()(k.clampT) << 11);
             }
         };
         std::unordered_map<BatchKey, GroupResources::MergedBatch, BatchKeyHash> batchMap;
@@ -706,6 +766,17 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
                             modelData.materialTextureIndices.size(), " - white fallback");
             }
 
+            VkTexture* envTex = nullptr;
+            if (batch.materialId < modelData.materialEnvTextureIndices.size()) {
+                uint32_t envIdx = modelData.materialEnvTextureIndices[batch.materialId];
+                if (envIdx < modelData.textures.size()) {
+                    VkTexture* candidate = modelData.textures[envIdx];
+                    if (candidate && candidate != whiteTexture_.get()) {
+                        envTex = candidate;
+                    }
+                }
+            }
+
             bool alphaTest = false;
             uint32_t blendMode = 0;
             if (batch.materialId < modelData.materialBlendModes.size()) {
@@ -719,6 +790,9 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
                 matFlags = modelData.materialFlags[batch.materialId];
                 unlit = (matFlags & 0x01) != 0;
             }
+            const uint32_t matShader = batch.materialId < modelData.materialShaders.size()
+                ? modelData.materialShaders[batch.materialId]
+                : 0u;
 
             // TBC uses the authored MOMT blend mode. Non-TBC profiles add the
             // sidnColor emission of F_SIDN materials to their lighting.
@@ -726,22 +800,33 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
             const uint8_t emissiveLevel = nightGlow ? 1 : 0;
             const uint32_t sidnColor = nightGlow ? modelData.materialSidnColors.at(batch.materialId) : 0u;
 
+            const bool clampS = wmoMaterialClampS(matFlags);
+            const bool clampT = wmoMaterialClampT(matFlags);
+            const bool isMetal = wmoShaderIsMetal(matShader);
 
-            BatchKey key{ .texPtr = reinterpret_cast<uintptr_t>(tex), .alphaTest = alphaTest, .unlit = unlit,
+            BatchKey key{ .texPtr = reinterpret_cast<uintptr_t>(tex),
+                          .envTexPtr = reinterpret_cast<uintptr_t>(envTex),
+                          .alphaTest = alphaTest, .unlit = unlit,
                           .specular = !game::isActiveExpansion("tbc") ||
-                              wmoShaderUsesSpecular(modelData.materialShaders.at(batch.materialId)),
+                              wmoShaderUsesSpecular(matShader),
                           .specularAlphaMask = game::isActiveExpansion("tbc") &&
-                              modelData.materialShaders.at(batch.materialId) == 1,
+                              wmoShaderSpecularAlphaMask(matShader),
+                          .isMetal = isMetal,
                           .emissiveLevel = emissiveLevel, .sidnColor = sidnColor,
-                          .twoSided = (matFlags & 0x04) != 0 };
+                          .twoSided = (matFlags & 0x04) != 0,
+                          .clampS = clampS, .clampT = clampT };
             auto& mb = batchMap[key];
             if (mb.draws.empty()) {
                 mb.texture = tex;
+                mb.envTexture = envTex;
                 mb.hasTexture = hasTexture;
                 mb.alphaTest = alphaTest;
                 mb.unlit = unlit;
                 mb.isTransparent = (blendMode >= 2);
                 mb.twoSided = key.twoSided;
+                mb.clampS = clampS;
+                mb.clampT = clampT;
+                mb.isMetal = isMetal;
                 mb.emissiveLevel = emissiveLevel;
                 mb.sidnColor = sidnColor;
                 // Look up normal/height map from texture cache
@@ -787,8 +872,10 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
             matData.unlit = mb.unlit ? 1 : 0;
             matData.isInterior = isInterior ? 1 : 0;
             matData.hasVertexColors = (groupRes.groupFlags & 0x4) != 0 ? 1 : 0;
-            matData.specularIntensity = key.specular ? 0.5f : 0.0f;
+            matData.specularIntensity = key.isMetal ? 0.85f : (key.specular ? 0.5f : 0.0f);
+            matData.hasEnvMap = (mb.envTexture != nullptr && mb.envTexture->isValid()) ? 1 : 0;
             matData.specularAlphaMask = key.specularAlphaMask ? 1 : 0;
+            matData.isMetal = mb.isMetal ? 1 : 0;
             matData.enableNormalMap = normalMappingEnabled_ ? 1 : 0;
             matData.enablePOM = pomEnabled_ ? 1 : 0;
             matData.pomScale = 0.012f;
@@ -821,13 +908,18 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
             };
             VkTexture* texToUse = pick(mb.texture, whiteTexture_.get());
             VkTexture* nhMap = pick(mb.normalHeightMap, flatNormalTexture_.get());
-            if ((!texToUse || !nhMap) && mb.materialSet) {
+            VkTexture* envTexToUse = pick(mb.envTexture, whiteTexture_.get());
+            if ((!texToUse || !nhMap || !envTexToUse) && mb.materialSet) {
                 vkFreeDescriptorSets(vkCtx_->getDevice(), materialDescPool_, 1,
                                      &mb.materialSet);
                 mb.materialSet = VK_NULL_HANDLE;
             }
             if (mb.materialSet) {
                 VkDescriptorImageInfo imgInfo = texToUse->descriptorInfo();
+                if (VkSampler wrapSampler = wrapSamplers_[mb.clampS ? 1 : 0][mb.clampT ? 1 : 0];
+                    wrapSampler != VK_NULL_HANDLE) {
+                    imgInfo.sampler = wrapSampler;
+                }
 
                 VkDescriptorBufferInfo bufInfo{};
                 bufInfo.buffer = mb.materialUBO;
@@ -835,8 +927,9 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
                 bufInfo.range = sizeof(WMOMaterialUBO);
 
                 VkDescriptorImageInfo nhImgInfo = nhMap->descriptorInfo();
+                VkDescriptorImageInfo envImgInfo = envTexToUse->descriptorInfo();
 
-                VkWriteDescriptorSet writes[3] = {};
+                VkWriteDescriptorSet writes[4] = {};
                 writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
                 writes[0].dstSet = mb.materialSet;
                 writes[0].dstBinding = 0;
@@ -858,7 +951,14 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
                 writes[2].descriptorCount = 1;
                 writes[2].pImageInfo = &nhImgInfo;
 
-                vkUpdateDescriptorSets(vkCtx_->getDevice(), 3, writes, 0, nullptr);
+                writes[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                writes[3].dstSet = mb.materialSet;
+                writes[3].dstBinding = 3;
+                writes[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                writes[3].descriptorCount = 1;
+                writes[3].pImageInfo = &envImgInfo;
+
+                vkUpdateDescriptorSets(vkCtx_->getDevice(), 4, writes, 0, nullptr);
             }
 
             groupRes.mergedBatches.push_back(std::move(mb));
