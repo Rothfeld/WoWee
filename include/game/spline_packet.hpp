@@ -50,6 +50,7 @@ struct SplineBlockData {
 
 // ── Spline flag constants ───────────────────────────────────────
 namespace SplineFlag {
+    constexpr uint32_t FLYING_TBC     = 0x00000200; // TBC: Flying == Mask_CatmullRom (uncompressed Catmull-Rom)
     constexpr uint32_t FINAL_POINT    = 0x00010000;
     constexpr uint32_t FINAL_TARGET   = 0x00020000;
     constexpr uint32_t FINAL_ANGLE    = 0x00040000;
@@ -62,8 +63,10 @@ namespace SplineFlag {
 
     // Mask: if any of these are set, waypoints are uncompressed
     constexpr uint32_t UNCOMPRESSED_MASK = CATMULLROM | CYCLIC | ENTER_CYCLE;
-    // TBC-era alternative for uncompressed check
-    constexpr uint32_t UNCOMPRESSED_MASK_TBC = CATMULLROM | 0x00002000;
+    // TBC-era uncompressed check: CMaNGOS-TBC WriteMonsterMove uses
+    // MoveSplineFlag::Mask_CatmullRom (Flying = 0x00000200) for uncompressed
+    // Catmull-Rom (including cyclic flying paths).
+    constexpr uint32_t UNCOMPRESSED_MASK_TBC = FLYING_TBC | CATMULLROM | 0x00002000;
 } // namespace SplineFlag
 
 // WotLK moved every one of these down a bit.

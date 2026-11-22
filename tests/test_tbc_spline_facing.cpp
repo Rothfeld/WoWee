@@ -308,3 +308,158 @@ TEST_CASE("TBC MOVEMENTBLOCK create-block spline parses FINAL_ANGLE, FINAL_POINT
         CHECK_FALSE(pkt.hasData());
     }
 }
+
+TEST_CASE("TBC SMSG_MONSTER_MOVE Flying+Cyclic+Enter_Cycle (0x300300) parses uncompressed waypoints", "[tbc][spline][cyclic]") {
+    // Mirrors Felmyst (entry 25038) circular flight in Sunwell Plateau:
+    // CMaNGOS-TBC MoveSplineFlag = Runmode(0x100) | Flying(0x200) | Cyclic(0x100000) | Enter_Cycle(0x200000).
+    constexpr uint64_t kFelmystGuid = 0xf1300061ce596e03ull;
+    constexpr uint32_t kFelmystFlags = 0x00300300u;
+    const glm::vec3 startServer(1489.44f, 651.615f, 44.651f);
+    const std::vector<glm::vec3> ringServer = {
+        {1469.84f, 617.638f, 43.109f},
+        {1440.00f, 630.000f, 44.000f},
+        {1450.00f, 670.000f, 45.000f},
+        {1490.00f, 665.000f, 44.500f},
+    };
+
+    Packet p(0xDD);
+    writePackedGuid(p, kFelmystGuid);
+    p.writeFloat(startServer.x);
+    p.writeFloat(startServer.y);
+    p.writeFloat(startServer.z);
+    p.writeUInt32(77);              // splineId
+    p.writeUInt8(0);                // MonsterMoveNormal
+    p.writeUInt32(kFelmystFlags);
+    p.writeUInt32(31172);           // durationMs
+    p.writeUInt32(static_cast<uint32_t>(ringServer.size()));
+    for (const auto& wp : ringServer) {
+        p.writeFloat(wp.x);
+        p.writeFloat(wp.y);
+        p.writeFloat(wp.z);
+    }
+
+    TbcPacketParsers parsers;
+    MonsterMoveData data;
+    REQUIRE(parsers.parseMonsterMove(p, data));
+    CHECK_FALSE(p.hasData());
+    CHECK(data.splineFlags == kFelmystFlags);
+    CHECK(data.duration == 31172u);
+    REQUIRE(data.hasDest);
+    REQUIRE(data.waypoints.size() == ringServer.size() - 1);
+    for (size_t i = 0; i + 1 < ringServer.size(); ++i) {
+        CHECK(data.waypoints[i].x == Catch::Approx(ringServer[i].x));
+        CHECK(data.waypoints[i].y == Catch::Approx(ringServer[i].y));
+        CHECK(data.waypoints[i].z == Catch::Approx(ringServer[i].z));
+    }
+    CHECK(data.destX == Catch::Approx(ringServer.back().x));
+    CHECK(data.destY == Catch::Approx(ringServer.back().y));
+    CHECK(data.destZ == Catch::Approx(ringServer.back().z));
+}
+
+TEST_CASE("TBC SMSG_MONSTER_MOVE linear non-flying path still decodes packed deltas", "[tbc][spline][cyclic]") {
+    constexpr uint64_t kNpcGuid = 0xf130001234000010ull;
+    const glm::vec3 startServer(100.0f, 100.0f, 10.0f);
+    const glm::vec3 destServer(120.0f, 100.0f, 10.0f);
+    // Midpoint is (110, 100, 10). Packed delta 0 decodes to midpoint itself.
+    Packet p(0xDD);
+    writePackedGuid(p, kNpcGuid);
+    p.writeFloat(startServer.x);
+    p.writeFloat(startServer.y);
+    p.writeFloat(startServer.z);
+    p.writeUInt32(88);
+    p.writeUInt8(0);
+    p.writeUInt32(0x00000100u);     // Runmode only (no Flying -> compressed)
+    p.writeUInt32(4000);
+    p.writeUInt32(2);               // dest + 1 packed delta
+    p.writeFloat(destServer.x);
+    p.writeFloat(destServer.y);
+    p.writeFloat(destServer.z);
+    p.writeUInt32(0u);              // delta (0,0,0) -> midpoint (110,100,10)
+
+    TbcPacketParsers parsers;
+    MonsterMoveData data;
+    REQUIRE(parsers.parseMonsterMove(p, data));
+    CHECK_FALSE(p.hasData());
+    REQUIRE(data.hasDest);
+    REQUIRE(data.waypoints.size() == 1);
+    CHECK(data.waypoints[0].x == Catch::Approx(110.0f));
+    CHECK(data.waypoints[0].y == Catch::Approx(100.0f));
+    CHECK(data.waypoints[0].z == Catch::Approx(10.0f));
+    CHECK(data.destX == Catch::Approx(120.0f));
+}
+
+TEST_CASE("Cyclic Enter_Cycle server spline drops entry point and loops indefinitely", "[tbc][spline][cyclic]") {
+    // Entry point P0=(0, -50, 44) far outside the circular patrol ring:
+    // P1=(20, 0, 44), P2=(0, 20, 44), P3=(-20, 0, 44), P4=(0, -20, 44), closing to P1.
+    const std::vector<std::array<float, 3>> path = {
+        {  0.0f, -50.0f, 44.0f},  // P0 (pre-cycle liftoff position)
+        { 20.0f,   0.0f, 44.0f},  // P1 (cycle start)
+        {  0.0f,  20.0f, 44.0f},  // P2
+        {-20.0f,   0.0f, 44.0f},  // P3
+        {  0.0f, -20.0f, 44.0f},  // P4
+        { 20.0f,   0.0f, 44.0f},  // closing vertex = P1
+    };
+
+    Unit felmyst(0xf1300061ce596e03ull);
+    felmyst.startServerSpline(path, 0.0f, /*totalDuration=*/10.0f,
+                              /*smooth=*/true, /*followPathFacing=*/true,
+                              /*splineFlags=*/0x00300300u, /*facingTargetGuid=*/0,
+                              std::nullopt, /*cyclic=*/true, /*enterCycle=*/true);
+
+    // Mid lap 1: actively moving at airborne height.
+    felmyst.updateMovement(2.5f);
+    CHECK(felmyst.isServerSplineActive());
+    CHECK(felmyst.isActivelyMoving());
+    CHECK(felmyst.getZ() == Catch::Approx(44.0f).margin(0.5f));
+
+    // Finish lap 1 (10s total) -> enters lap 2 at P1, drops P0.
+    felmyst.updateMovement(7.5f);
+    CHECK(felmyst.isServerSplineActive());
+    CHECK(felmyst.isActivelyMoving());
+    CHECK(felmyst.getX() == Catch::Approx(20.0f).margin(0.5f));
+    CHECK(felmyst.getY() == Catch::Approx(0.0f).margin(0.5f));
+
+    // Advance through 3 full subsequent laps in 0.5s steps:
+    // must keep moving, stay near the ring (never revisit P0 y=-50), and cover all quadrants.
+    bool sawPosX = false, sawNegX = false, sawPosY = false, sawNegY = false;
+    for (int step = 0; step < 60; ++step) {
+        felmyst.updateMovement(0.5f);
+        REQUIRE(felmyst.isServerSplineActive());
+        REQUIRE(felmyst.isActivelyMoving());
+        CHECK(felmyst.getZ() == Catch::Approx(44.0f).margin(0.5f));
+        CHECK(felmyst.getY() > -30.0f);  // Never revisits pre-cycle entry P0 (y=-50)
+        if (felmyst.getX() > 10.0f) sawPosX = true;
+        if (felmyst.getX() < -10.0f) sawNegX = true;
+        if (felmyst.getY() > 10.0f) sawPosY = true;
+        if (felmyst.getY() < -10.0f) sawNegY = true;
+    }
+    CHECK(sawPosX);
+    CHECK(sawNegX);
+    CHECK(sawPosY);
+    CHECK(sawNegY);
+}
+
+TEST_CASE("TBC MOVEMENTBLOCK cyclic spline with Flying+Cyclic+Enter_Cycle parses cleanly", "[tbc][spline][cyclic]") {
+    TbcPacketParsers parsers;
+    // CMaNGOS WriteCreate for cyclic spline: [virtual_start, P0, P1, P2, P3, P1, virtual_end]
+    const std::vector<glm::vec3> nodes = {
+        {1500.0f, 670.0f, 44.0f},  // virtual start
+        {1489.44f, 651.615f, 44.651f},  // P0
+        {1469.84f, 617.638f, 43.109f},  // P1
+        {1440.0f, 630.0f, 44.0f},       // P2
+        {1450.0f, 670.0f, 45.0f},       // P3
+        {1469.84f, 617.638f, 43.109f},  // closing P1
+        {1440.0f, 630.0f, 44.0f},       // virtual end
+    };
+    Packet pkt = buildTbcMovementBlockWithSpline(
+        nodes[1], 0.0f, 0x00300300u, 5000, 31172, nodes);
+    UpdateBlock block;
+    REQUIRE(parsers.parseMovementBlock(pkt, block));
+    CHECK_FALSE(pkt.hasData());
+    CHECK(block.splineFlags == 0x00300300u);
+    CHECK(block.splineElapsedMs == 5000u);
+    CHECK(block.splineDurationMs == 31172u);
+    REQUIRE(block.splinePath.size() == 5);
+    CHECK(block.splinePath.front()[0] == Catch::Approx(nodes[1].x));
+    CHECK(block.splinePath.back()[0] == Catch::Approx(nodes[5].x));
+}

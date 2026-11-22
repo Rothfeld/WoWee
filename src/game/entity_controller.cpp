@@ -2,6 +2,7 @@
 #include "game/social_handler.hpp"
 #include "game/corpse_fields.hpp"
 #include "game/spline_flight.hpp"
+#include "game/spline_packet.hpp"
 #include "core/env_flag.hpp"
 #include "game/game_handler.hpp"
 #include "game/protocol_constants.hpp"
@@ -92,10 +93,18 @@ void restoreMovementSpline(const UpdateBlock& block, Entity& entity, const Entit
             }
         }
     }
-    const bool cyclic = (block.splineFlags & 0x00100000u) != 0;
+    const bool wotlkFlags = isActiveExpansion("wotlk");
+    const uint32_t cyclicBit = wotlkFlags ? SplineFlagWotlk::CYCLIC : SplineFlag::CYCLIC;
+    const uint32_t enterCycleBit = wotlkFlags ? SplineFlagWotlk::ENTER_CYCLE : SplineFlag::ENTER_CYCLE;
+    const bool cyclic = (block.splineFlags & cyclicBit) != 0;
+    const bool enterCycle = cyclic && (block.splineFlags & enterCycleBit) != 0;
+    const bool smooth = wotlkFlags
+        ? (block.splineFlags & SplineFlagWotlk::CATMULLROM) != 0
+        : (block.splineFlags & SplineFlag::FLYING_TBC) != 0;
     entity.startMoveAlongPath(path, entity.getOrientation(), block.splineDurationMs / 1000.0f,
-                              (block.splineFlags & 0x200u) != 0,
-                              facingTargetGuid == 0, cyclic, finalOrientation, facingTargetGuid);
+                              smooth,
+                              facingTargetGuid == 0, cyclic, finalOrientation, facingTargetGuid,
+                              enterCycle);
     entity.updateMovement(std::min(block.splineElapsedMs, block.splineDurationMs) / 1000.0f);
     LOG_DEBUG("Restored movement spline: guid=0x", std::hex, block.guid, std::dec,
               " elapsed=", block.splineElapsedMs, " duration=", block.splineDurationMs,

@@ -199,7 +199,7 @@ public:
     void startMoveAlongPath(const std::vector<std::array<float, 3>>& path, float destO, float totalDuration,
                             bool smooth = true, bool followPathFacing = false, bool cyclic = false,
                             std::optional<float> finalOrientation = std::nullopt,
-                            uint64_t facingTargetGuid = 0) {
+                            uint64_t facingTargetGuid = 0, bool enterCycle = false) {
         remotePredictedMotion_ = false;
         remoteAirborne_ = false;
         serverSpline_ = false;
@@ -208,6 +208,7 @@ public:
         splineFacingTargetGuid_ = 0;
         splineFinalOrientation_.reset();
         splineArrivalTargetPending_ = false;
+        enterCycle_ = false;
         if (path.empty()) return;
         if (path.size() == 1 || totalDuration <= 0.0f) {
             setPosition(path.back()[0], path.back()[1], path.back()[2],
@@ -216,42 +217,19 @@ public:
             splineArrivalTargetPending_ = facingTargetGuid != 0;
             return;
         }
-        // Build cumulative distances for proportional time assignment.
-        // (Stored in a tiny stack/heap vector - typical N is <=15 waypoints,
-        // and keeping float precision matters for the timeMs rescale below.)
-        std::vector<float> cumDist(path.size(), 0.0f);
-        float totalDist = 0.0f;
-        for (size_t i = 1; i < path.size(); i++) {
-            float dx = path[i][0] - path[i - 1][0];
-            float dy = path[i][1] - path[i - 1][1];
-            float dz = path[i][2] - path[i - 1][2];
-            totalDist += std::sqrt(dx * dx + dy * dy + dz * dz);
-            cumDist[i] = totalDist;
-        }
-        if (totalDist < 0.001f) {
+        if (!buildPathSpline(path, totalDuration)) {
             setPosition(path.back()[0], path.back()[1], path.back()[2],
                         finalOrientation.value_or(destO));
             splineFacingTargetGuid_ = facingTargetGuid;
             splineArrivalTargetPending_ = facingTargetGuid != 0;
             return;
         }
-        // Build SplineKeys with distance-proportional time
-        uint32_t durationMs = std::max<uint32_t>(1u, static_cast<uint32_t>(std::lround(totalDuration * 1000.0f)));
-        const float invTotalDist = static_cast<float>(durationMs) / totalDist;
-        std::vector<math::SplineKey> keys(path.size());
-        for (size_t i = 0; i < path.size(); i++) {
-            keys[i].timeMs = static_cast<uint32_t>(cumDist[i] * invTotalDist);
-            keys[i].position = {path[i][0], path[i][1], path[i][2]};
-        }
-        keys.back().timeMs = durationMs;
-        activeSpline_.emplace(std::move(keys), /*timeClosed=*/false);
-        splineDurationMs_ = durationMs;
         cyclicPath_ = cyclic;
+        enterCycle_ = cyclic && enterCycle && path.size() >= 4;
         smoothPath_ = smooth;
         followPathFacing_ = followPathFacing;
         splineFinalOrientation_ = finalOrientation;
         splineFacingTargetGuid_ = facingTargetGuid;
-        locomotionSpeed_ = totalDist / totalDuration;
 
         x = path.front()[0];
         y = path.front()[1];
@@ -272,12 +250,15 @@ public:
     // Stops exactly at path.back() with zero dead-reckoning overrun and retains
     // hasServerSplinePosition_ so stationary ground floor projection persists
     // (e.g. CMaNGOS MoveCharge adds +1.0 yd to spline Z).
+    // Cyclic splines loop continuously; Enter_Cycle drops the pre-loop entry
+    // vertex after the first full lap (matching CMaNGOS MoveSpline::_updateState).
     void startServerSpline(const std::vector<std::array<float, 3>>& path, float destO,
                            float totalDuration, bool smooth, bool followPathFacing,
                            uint32_t splineFlags, uint64_t facingTargetGuid = 0,
-                           std::optional<float> finalOrientation = std::nullopt) {
+                           std::optional<float> finalOrientation = std::nullopt,
+                           bool cyclic = false, bool enterCycle = false) {
         startMoveAlongPath(path, destO, totalDuration, smooth, followPathFacing,
-                           /*cyclic=*/false, finalOrientation, facingTargetGuid);
+                           cyclic, finalOrientation, facingTargetGuid, enterCycle);
         serverSpline_ = isMoving_;
         hasServerSplinePosition_ = true;
         serverSplineFlags_ = splineFlags;
@@ -457,8 +438,28 @@ public:
             return;
         }
         moveElapsed_ += deltaTime;
-        if (usePathMode_ && cyclicPath_ && moveDuration_ > 0.0f)
-            moveElapsed_ = std::fmod(moveElapsed_, moveDuration_);
+        if (usePathMode_ && cyclicPath_ && moveDuration_ > 0.0f) {
+            if (moveElapsed_ >= moveDuration_) {
+                moveElapsed_ = std::fmod(moveElapsed_, moveDuration_);
+                if (enterCycle_ && activeSpline_ && activeSpline_->keyCount() >= 4) {
+                    // Drop the pre-cycle entry vertex (keys[0]) after the first full
+                    // lap, preserving total duration (CMaNGOS MoveSpline::_updateState).
+                    const auto& oldKeys = activeSpline_->keys();
+                    std::vector<std::array<float, 3>> loopPath;
+                    loopPath.reserve(oldKeys.size() - 1);
+                    for (size_t i = 1; i < oldKeys.size(); ++i) {
+                        const auto& p = oldKeys[i].position;
+                        loopPath.push_back({p.x, p.y, p.z});
+                    }
+                    enterCycle_ = false;
+                    if (buildPathSpline(loopPath, moveDuration_)) {
+                        moveEndX_ = loopPath.back()[0];
+                        moveEndY_ = loopPath.back()[1];
+                        moveEndZ_ = loopPath.back()[2];
+                    }
+                }
+            }
+        }
         if (moveElapsed_ < moveDuration_) {
             if (usePathMode_ && activeSpline_) {
                 // Catmull-Rom spline interpolation
@@ -660,10 +661,37 @@ protected:
         return turned;
     }
 
+    bool buildPathSpline(const std::vector<std::array<float, 3>>& path, float totalDuration) {
+        if (path.size() < 2 || totalDuration <= 0.0f) return false;
+        std::vector<float> cumDist(path.size(), 0.0f);
+        float totalDist = 0.0f;
+        for (size_t i = 1; i < path.size(); i++) {
+            float dx = path[i][0] - path[i - 1][0];
+            float dy = path[i][1] - path[i - 1][1];
+            float dz = path[i][2] - path[i - 1][2];
+            totalDist += std::sqrt(dx * dx + dy * dy + dz * dz);
+            cumDist[i] = totalDist;
+        }
+        if (totalDist < 0.001f) return false;
+        uint32_t durationMs = std::max<uint32_t>(1u, static_cast<uint32_t>(std::lround(totalDuration * 1000.0f)));
+        const float invTotalDist = static_cast<float>(durationMs) / totalDist;
+        std::vector<math::SplineKey> keys(path.size());
+        for (size_t i = 0; i < path.size(); i++) {
+            keys[i].timeMs = static_cast<uint32_t>(cumDist[i] * invTotalDist);
+            keys[i].position = {path[i][0], path[i][1], path[i][2]};
+        }
+        keys.back().timeMs = durationMs;
+        activeSpline_.emplace(std::move(keys), /*timeClosed=*/false);
+        splineDurationMs_ = durationMs;
+        locomotionSpeed_ = totalDist / totalDuration;
+        return true;
+    }
+
     // CatmullRom spline for multi-segment path movement (replaces linear pathPoints_/pathSegDists_)
     std::optional<math::CatmullRomSpline> activeSpline_;
     uint32_t splineDurationMs_ = 0;
     bool cyclicPath_ = false;
+    bool enterCycle_ = false;
     bool smoothPath_ = true;
     bool followPathFacing_ = false;
     bool serverSpline_ = false;

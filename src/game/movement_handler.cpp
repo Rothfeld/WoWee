@@ -2450,11 +2450,25 @@ void MovementHandler::handleMonsterMove(network::Packet& packet) {
         path.push_back({destCanonical.x, destCanonical.y, destCanonical.z});
         // TBC ground splines are piecewise linear; only Flying (0x200)
         // selects Catmull-Rom in CMaNGOS MoveSplineFlag.
-        const bool smooth = !isActiveExpansion("tbc") || (data.splineFlags & 0x200u) != 0;
+        const bool smooth = !isActiveExpansion("tbc") || (data.splineFlags & SplineFlag::FLYING_TBC) != 0;
+        const bool wotlkFlags = isActiveExpansion("wotlk");
+        const uint32_t cyclicBit = wotlkFlags ? SplineFlagWotlk::CYCLIC : SplineFlag::CYCLIC;
+        const uint32_t enterCycleBit = wotlkFlags ? SplineFlagWotlk::ENTER_CYCLE : SplineFlag::ENTER_CYCLE;
+        const bool cyclic = (data.splineFlags & cyclicBit) != 0;
+        const bool enterCycle = cyclic && (data.splineFlags & enterCycleBit) != 0;
+        if (cyclic) {
+            // CMaNGOS WriteCatmullRomCyclicPath omits the closing vertex on the wire:
+            // the loop returns to path[1] when Enter_Cycle is set, or path[0] otherwise.
+            const size_t closeIdx = (enterCycle && path.size() >= 3) ? 1u : 0u;
+            if (path.size() > closeIdx) {
+                path.push_back(path[closeIdx]);
+            }
+        }
         const uint64_t facingTargetGuid = (data.moveType == 3) ? data.facingTarget : 0;
         entity->startServerSpline(path, orientation, data.duration / 1000.0f,
                                   smooth, data.moveType != 3,
-                                  data.splineFlags, facingTargetGuid, finalOrientation);
+                                  data.splineFlags, facingTargetGuid, finalOrientation,
+                                  cyclic, enterCycle);
 
         if (isLocalPlayer) {
             movementInfo.flags &= ~kClearPlayerSplineWireFlags;
@@ -2659,7 +2673,7 @@ void MovementHandler::handleMonsterMoveTransport(network::Packet& packet) {
     SplineBlockData spline;
     if (!parseMonsterMoveSplineBody(packet, spline, splineFlags,
                                     glm::vec3(localX, localY, localZ),
-                                    /*useTbcUncompressedMask=*/false,
+                                    /*useTbcUncompressedMask=*/isActiveExpansion("tbc"),
                                     isPreWotlk() ? SplineFlagSet::PreWotlk
                                                  : SplineFlagSet::Wotlk)) {
         return;
