@@ -99,13 +99,14 @@ void M2Renderer::emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt
     inst.emitterPrevAnimTime = inst.animTime;
 
     std::uniform_real_distribution<float> distN(-1.0f, 1.0f);
-    // ADT/WMO doodads and spell visuals move particles at their placement scale
-    // whatever flag 0x8 says (particleMovesInYards). Game objects and units keep
-    // the yards rule.
-    const bool scalesWithPlacement = particleScalesWithPlacement(inst.isGameObject, inst.externalPose);
 
     for (size_t ei = 0; ei < gpu.particleEmitters.size(); ei++) {
         const auto& em = gpu.particleEmitters[ei];
+        // ADT/WMO doodads, spell visuals, and 0x20 GameObject emitters move
+        // particles at their placement scale whatever flag 0x8 says
+        // (particleMovesInYards). Units and non-0x20 GameObjects keep yards.
+        const bool scalesWithPlacement = particleScalesWithPlacement(
+            inst.isGameObject, inst.externalPose, em.flags);
         // Emitter pose now and at the previous step, recorded every frame so
         // an emitter that resumes does not reach back to a stale pose.
         const glm::mat4 boneXform = em.bone < inst.boneMatrices.size()

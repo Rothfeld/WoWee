@@ -646,10 +646,34 @@ TEST_CASE("Detached particles without flag 0x8 move at placement scale", "[m2][p
 TEST_CASE("Map doodad and spell visual particles move at placement scale with flag 0x8", "[m2][particle]") {
     using namespace wowee::rendering;
     // Owner predicate: map doodads and spell visuals scale with placement;
-    // game objects and units (externalPose) keep yards for flag 0x8.
+    // GameObjects with flag 0x20 (Windblossom01/02 0x429) also scale with
+    // placement, while non-0x20 GameObjects (Sunwell gate 0x409) and units
+    // (externalPose, Void Zone 0x229) keep yards for flag 0x8.
     CHECK(particleScalesWithPlacement(/*isGameObject=*/false, /*externalPose=*/false));
     CHECK_FALSE(particleScalesWithPlacement(/*isGameObject=*/true, /*externalPose=*/false));
+    CHECK_FALSE(particleScalesWithPlacement(/*isGameObject=*/true, /*externalPose=*/false, 0x409u));
+    CHECK(particleScalesWithPlacement(/*isGameObject=*/true, /*externalPose=*/false, 0x429u));
     CHECK_FALSE(particleScalesWithPlacement(/*isGameObject=*/false, /*externalPose=*/true));
+    CHECK_FALSE(particleScalesWithPlacement(/*isGameObject=*/false, /*externalPose=*/true, 0x229u));
+
+    // Corrupted Windblossom (GO 164887, Windblossom02.m2, scale 2.0, flags 0x429):
+    // 4.4444 yd/s scales to 8.8888 yd/s so the pinned light pillar reaches full height.
+    const auto windblossomModel = glm::scale(glm::mat4(1.0f), glm::vec3(2.0f));
+    const auto windblossomBirth = particleBirthTransform(0x429u, windblossomModel, glm::mat4(1.0f));
+    const bool windblossomScales = particleScalesWithPlacement(
+        /*isGameObject=*/true, /*externalPose=*/false, 0x429u);
+    CHECK(glm::length(particleWorldVelocityBasis(0x429u, windblossomBirth, windblossomScales) *
+                      glm::vec3(0.0f, 0.0f, 4.4444f))
+          == Catch::Approx(8.8888f).margin(0.001f));
+    // Sunwell gate barrier (GO 188118, SUNWELLRAID_GATE_04.m2, scale 8.69, flags 0x409):
+    // without 0x20, velocity stays in yards.
+    const auto gateModel = glm::scale(glm::mat4(1.0f), glm::vec3(8.69f));
+    const auto gateBirth = particleBirthTransform(0x409u, gateModel, glm::mat4(1.0f));
+    const bool gateScales = particleScalesWithPlacement(
+        /*isGameObject=*/true, /*externalPose=*/false, 0x409u);
+    CHECK(glm::length(particleWorldVelocityBasis(0x409u, gateBirth, gateScales) *
+                      glm::vec3(0.0f, 0.0f, 0.83f))
+          == Catch::Approx(0.83f).margin(0.001f));
 
     // Magisters' Terrace throne orb: BloodElf_PowerOrb_Green.m2, MODD scale
     // 0.358, smoke #5 0x629 at 2.222 yd/s: 0.8 yd/s in the original.

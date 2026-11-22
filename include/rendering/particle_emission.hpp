@@ -185,8 +185,18 @@ inline glm::vec3 particleBirthPosition(const glm::mat4& previous, const glm::mat
                     glm::vec3(previous * glm::vec4(local, 1.0f)), back);
 }
 
-inline bool particleScalesWithPlacement(bool isGameObject, bool externalPose) {
-    return !isGameObject && !externalPose;
+inline bool particleScalesWithPlacement(bool isGameObject, bool externalPose,
+                                        uint32_t flags = 0) {
+    if (externalPose) return false;
+    if (!isGameObject) return true;
+    // GameObject emitters with flag 0x20 (kParticleScaledSprite) scale their
+    // detached particle velocity and gravity by the GO's placement scale as
+    // well as their sprite size: Corrupted/Cleansed Windblossom (GO 164887 /
+    // 164884, Windblossom02.m2 / Windblossom01.m2, scale 2.0, flags 0x429)
+    // send their pinned light pillars twice as high in native 2.4.3 as
+    // unscaled yards. GameObjects without 0x20 (Sunwell gate barrier GO 188118,
+    // SUNWELLRAID_GATE_04.m2, scale 8.69, flags 0x409) keep moving in yards.
+    return (flags & kParticleScaledSprite) != 0;
 }
 
 inline bool particleMovesInYards(uint32_t flags, bool scalesWithPlacement);
