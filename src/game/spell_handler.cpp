@@ -3717,6 +3717,10 @@ void SpellHandler::handleSpellStart(network::Packet& packet) {
         s.interruptible  = owner_.isSpellInterruptible(data.spellId);
         if (owner_.spellCastAnimCallbackRef())
             owner_.spellCastAnimCallbackRef()(data.casterUnit, SpellAnimPhase::PRECAST, data.spellId);
+    } else if (rangedWeaponAttack && owner_.spellCastAnimCallbackRef()) {
+        // Auto Shot (75) sends SMSG_SPELL_START with castTime=0 ~500 ms before
+        // SMSG_SPELL_GO while the caster draws and aims their ranged weapon.
+        owner_.spellCastAnimCallbackRef()(data.casterUnit, SpellAnimPhase::PRECAST, data.spellId);
     }
 
     // Player's on-next-swing ability (Raptor Strike, Heroic Strike): a zero cast
@@ -4042,8 +4046,8 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
                 seedCooldownFromSpellInfo(data.spellId, /*isPet=*/true);
             }
         }
-        // Other casters, timed or instant: the cast kit's animation, once.
-        if (!rangedWeaponAttack && owner_.spellCastAnimCallbackRef())
+        // Other casters, timed or instant (including Auto Shot): the cast animation, once.
+        if (owner_.spellCastAnimCallbackRef())
             owner_.spellCastAnimCallbackRef()(data.casterUnit, SpellAnimPhase::CAST, data.spellId);
         bool targetsPlayer = false;
         for (const auto& tgt : data.hitTargets) {

@@ -158,8 +158,13 @@ private:
     bool offHandThisSwing_ = false;
     uint32_t lastMeleeSwingSerial_ = 0;
 
+    // Ranged reload (LoadBow/LoadRifle) one-shot tracking
+    bool rangedLoadAnimSeen_ = false;
+    uint8_t rangedLoadFrames_ = 0;
+
     /// Internal: update state transitions based on input.
-    void updateTransitions(const Input& in);
+    void updateTransitions(const Input& in, const AnimCapabilitySet& caps,
+                           const WeaponLoadout& loadout);
 
     /// Detect if a one-shot animation has completed.
     [[nodiscard]] bool oneShotComplete(const Input& in, uint32_t expectedAnimId) const;

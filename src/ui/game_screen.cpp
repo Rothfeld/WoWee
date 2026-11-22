@@ -890,7 +890,11 @@ void GameScreen::render(game::GameHandler& gameHandler) {
     auto* renderer = services_.renderer;
     if (renderer) {
         // Receiving damage enters combat without enabling melee attack stance.
-        if (auto* ac = renderer->getAnimationController()) ac->setInCombat(gameHandler.hasAutoAttackIntent() &&
+        // Auto-repeat ranged spells (Auto Shot 75, wand Shoot 5019) hold the
+        // combat ready stance between shots just as melee auto-attack does.
+        const bool combatStanceActive =
+            gameHandler.hasAutoAttackIntent() || gameHandler.getAutoRepeatSpellId() != 0;
+        if (auto* ac = renderer->getAnimationController()) ac->setInCombat(combatStanceActive &&
                               !gameHandler.isPlayerDead() &&
                               !gameHandler.isPlayerGhost());
         static glm::vec3 targetGLPos;

@@ -1060,21 +1060,30 @@ EntitySpawner::MeleeWeaponAnimations EntitySpawner::meleeWeaponAnimations(const 
 
 std::optional<EntitySpawner::RangedWeaponAnimations>
 EntitySpawner::rangedWeaponAnimations(const game::Unit& unit) const {
-    const uint16_t slots = game::fieldIndex(game::UF::UNIT_VIRTUAL_ITEM_SLOT_ID);
-    const uint16_t info = game::fieldIndex(game::UF::UNIT_VIRTUAL_ITEM_INFO);
-    assert(slots != 0xFFFF);
-    constexpr uint16_t kRangedSlot = 2;
-    if (unit.getField(slots + kRangedSlot) == 0) return std::nullopt;
     uint32_t itemClass = 0, subClass = 0;
-    if (info != 0xFFFF) {
-        // Pre-Wrath: first word byte 0 class, byte 1 subclass (Creature::SetVirtualItem).
-        itemClass = unit.getField(info + kRangedSlot * 2) & 0xFF;
-        subClass = (unit.getField(info + kRangedSlot * 2) >> 8) & 0xFF;
-    } else if (auto itemDbc = assetManager_->loadDBC("Item.dbc")) {
-        const int32_t record = itemDbc->findRecordById(unit.getField(slots + kRangedSlot));
-        if (record < 0) return std::nullopt;
-        itemClass = itemDbc->getUInt32(record, 1);
-        subClass = itemDbc->getUInt32(record, 2);
+    if (unit.getType() == game::ObjectType::PLAYER) {
+        const auto* equipment = gameHandler_->getOtherPlayerVisibleEquipment(unit.getGuid());
+        if (!equipment || (*equipment)[17] == 0) return std::nullopt;
+        const auto* item = gameHandler_->getItemInfo((*equipment)[17]);
+        if (!item) return std::nullopt;
+        itemClass = item->itemClass;
+        subClass = item->subClass;
+    } else {
+        const uint16_t slots = game::fieldIndex(game::UF::UNIT_VIRTUAL_ITEM_SLOT_ID);
+        const uint16_t info = game::fieldIndex(game::UF::UNIT_VIRTUAL_ITEM_INFO);
+        assert(slots != 0xFFFF);
+        constexpr uint16_t kRangedSlot = 2;
+        if (unit.getField(slots + kRangedSlot) == 0) return std::nullopt;
+        if (info != 0xFFFF) {
+            // Pre-Wrath: first word byte 0 class, byte 1 subclass (Creature::SetVirtualItem).
+            itemClass = unit.getField(info + kRangedSlot * 2) & 0xFF;
+            subClass = (unit.getField(info + kRangedSlot * 2) >> 8) & 0xFF;
+        } else if (auto itemDbc = assetManager_->loadDBC("Item.dbc")) {
+            const int32_t record = itemDbc->findRecordById(unit.getField(slots + kRangedSlot));
+            if (record < 0) return std::nullopt;
+            itemClass = itemDbc->getUInt32(record, 1);
+            subClass = itemDbc->getUInt32(record, 2);
+        }
     }
     if (itemClass != game::ITEM_CLASS_WEAPON) return std::nullopt;
     namespace A = rendering::anim;

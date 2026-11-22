@@ -699,3 +699,79 @@ TEST_CASE("CombatFSM: dual-wield MH+OH, OH+MH, and Thrash sequences honor HITINF
     REQUIRE(daggerOh.valid);
     CHECK(daggerOh.animId == anim::ATTACK_OFF_PIERCE);
 }
+
+TEST_CASE("CombatFSM: RANGED_LOAD completes LoadBow before returning to ReadyBow combat stance",
+          "[combat][ranged]") {
+    CombatFSM fsm;
+    auto caps = makeCombatCaps();
+    caps.resolvedReadyBow = anim::READY_BOW;
+    caps.resolvedLoadBow = anim::LOAD_BOW;
+    WeaponLoadout wl;
+    wl.rangedType = RangedWeaponType::BOW;
+
+    auto in = combatInput();
+    in.inCombat = true;
+    in.rangedWeaponActive = true;
+    in.rangedShootTimer = 0.6f;
+    in.rangedAnimId = anim::ATTACK_BOW;
+    in.haveAnimState = true;
+    in.currentAnimId = anim::ATTACK_BOW;
+    in.currentAnimTime = 0.2f;
+    in.currentAnimDuration = 0.666f;
+
+    // 1. Firing shot plays AttackBow (46).
+    auto shot = fsm.resolve(in, caps, wl);
+    REQUIRE(shot.valid);
+    CHECK(fsm.getState() == CombatFSM::State::RANGED_SHOOT);
+    CHECK(shot.animId == anim::ATTACK_BOW);
+    CHECK_FALSE(shot.loop);
+
+    // 2. When shot timer expires while in combat, enters RANGED_LOAD and plays LoadBow (105).
+    in.rangedShootTimer = 0.0f;
+    auto loadStart = fsm.resolve(in, caps, wl);
+    REQUIRE(loadStart.valid);
+    CHECK(fsm.getState() == CombatFSM::State::RANGED_LOAD);
+    CHECK(loadStart.animId == anim::LOAD_BOW);
+    CHECK_FALSE(loadStart.loop);
+
+    // 3. Stays in RANGED_LOAD while LoadBow is mid-clip (does NOT exit on frame 1).
+    in.currentAnimId = anim::LOAD_BOW;
+    in.currentAnimTime = 0.45f;
+    in.currentAnimDuration = 1.0f;
+    auto loadMid = fsm.resolve(in, caps, wl);
+    REQUIRE(loadMid.valid);
+    CHECK(fsm.getState() == CombatFSM::State::RANGED_LOAD);
+    CHECK(loadMid.animId == anim::LOAD_BOW);
+
+    // 4. Once LoadBow finishes, transitions to COMBAT_IDLE holding ReadyBow (29).
+    in.currentAnimTime = 0.98f;
+    auto ready = fsm.resolve(in, caps, wl);
+    REQUIRE(ready.valid);
+    CHECK(fsm.getState() == CombatFSM::State::COMBAT_IDLE);
+    CHECK(ready.animId == anim::READY_BOW);
+    CHECK(ready.loop);
+
+    // 5. Cast-time bow shot (Aimed Shot / Steady Shot): LoadBow precast -> HoldBow aiming loop -> AttackBow release.
+    fsm.startSpellCast(anim::LOAD_BOW, anim::HOLD_BOW, true, 0);
+    in.currentAnimId = anim::READY_BOW;
+    auto pre = fsm.resolve(in, caps, wl);
+    REQUIRE(pre.valid);
+    CHECK(fsm.getState() == CombatFSM::State::SPELL_PRECAST);
+    CHECK(pre.animId == anim::LOAD_BOW);
+
+    in.currentAnimId = anim::LOAD_BOW;
+    in.currentAnimTime = 0.98f;
+    in.currentAnimDuration = 1.0f;
+    auto hold = fsm.resolve(in, caps, wl);
+    REQUIRE(hold.valid);
+    CHECK(fsm.getState() == CombatFSM::State::SPELL_CASTING);
+    CHECK(hold.animId == anim::HOLD_BOW);
+    CHECK(hold.loop);
+
+    // Shot release overrides SPELL_CASTING into RANGED_SHOOT (AttackBow 46).
+    in.rangedShootTimer = 0.6f;
+    auto release = fsm.resolve(in, caps, wl);
+    REQUIRE(release.valid);
+    CHECK(fsm.getState() == CombatFSM::State::RANGED_SHOOT);
+    CHECK(release.animId == anim::ATTACK_BOW);
+}

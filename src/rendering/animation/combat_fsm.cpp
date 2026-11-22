@@ -227,7 +227,17 @@ void CombatFSM::setCharging(bool charging) {
 
 // ── State transitions ────────────────────────────────────────────────────────
 
-void CombatFSM::updateTransitions(const Input& in) {
+static uint32_t resolveRangedLoadAnim(const AnimCapabilitySet& caps, const WeaponLoadout& loadout) {
+    switch (loadout.rangedType) {
+        case RangedWeaponType::BOW:      return caps.resolvedLoadBow;
+        case RangedWeaponType::GUN:      return caps.resolvedLoadRifle;
+        case RangedWeaponType::CROSSBOW: return caps.resolvedLoadBow;
+        default:                         return 0;
+    }
+}
+
+void CombatFSM::updateTransitions(const Input& in, const AnimCapabilitySet& caps,
+                                   const WeaponLoadout& loadout) {
     // Stun override: can't act while stunned
     if (stunned_ && state_ != State::STUNNED) {
         state_ = State::STUNNED;
@@ -307,7 +317,13 @@ void CombatFSM::updateTransitions(const Input& in) {
                 if (in.swimming) {
                     state_ = State::INACTIVE;
                 } else if (in.inCombat && in.grounded) {
-                    state_ = State::RANGED_LOAD;
+                    if (resolveRangedLoadAnim(caps, loadout) != 0) {
+                        rangedLoadAnimSeen_ = false;
+                        rangedLoadFrames_ = 0;
+                        state_ = State::RANGED_LOAD;
+                    } else {
+                        state_ = State::COMBAT_IDLE;
+                    }
                 } else {
                     state_ = State::INACTIVE;
                 }
@@ -315,12 +331,19 @@ void CombatFSM::updateTransitions(const Input& in) {
             break;
 
         case State::RANGED_LOAD:
-            if (in.swimming || in.jumping || !in.grounded || in.moving) {
+            if (in.swimming || in.jumping || !in.grounded || in.moving || !in.inCombat) {
                 state_ = State::INACTIVE;
-            } else if (in.inCombat) {
-                state_ = State::COMBAT_IDLE;
             } else {
-                state_ = State::INACTIVE;
+                const uint32_t expectedAnim = resolveRangedLoadAnim(caps, loadout);
+                if (expectedAnim == 0) {
+                    state_ = State::COMBAT_IDLE;
+                } else if (in.haveAnimState) {
+                    if (in.currentAnimId == expectedAnim) rangedLoadAnimSeen_ = true;
+                    if ((rangedLoadAnimSeen_ && oneShotComplete(in, expectedAnim)) ||
+                        (!rangedLoadAnimSeen_ && ++rangedLoadFrames_ > 10)) {
+                        state_ = State::COMBAT_IDLE;
+                    }
+                }
             }
             break;
 
@@ -437,7 +460,7 @@ void CombatFSM::updateTransitions(const Input& in) {
 
 AnimOutput CombatFSM::resolve(const Input& in, const AnimCapabilitySet& caps,
                                const WeaponLoadout& loadout) {
-    updateTransitions(in);
+    updateTransitions(in, caps, loadout);
 
     // A kit animation outlasts the stun its spell applies: the original
     // knocks a stunned player down with Knockdown (121), then stuns.
@@ -598,6 +621,8 @@ void CombatFSM::reset() {
     offHandTurn_ = false;
     offHandThisSwing_ = false;
     lastMeleeSwingSerial_ = 0;
+    rangedLoadAnimSeen_ = false;
+    rangedLoadFrames_ = 0;
 }
 
 } // namespace rendering

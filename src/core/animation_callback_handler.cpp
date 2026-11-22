@@ -596,25 +596,55 @@ void AnimationCallbackHandler::setupCallbacks() {
         const uint32_t visual = spell->second.spellVisualId;
         constexpr uint32_t none = rendering::SpellVisualSystem::kNoAnimation;
 
-        // A creature's ranged weapon spell — either explicitly requiring a bow,
-        // gun, or crossbow (Shoot 22907/29575, Arcane Shot 36609, Multi-Shot
-        // 29576) or flagged SPELL_ATTR_RANGED (0x00000002) with no weapon
-        // restriction and no authored SpellVisual precast/cast animation
-        // (Charged Arcane Shot 38808, Shoot Arcane Explosion Arrow 36327) — is
-        // shot with the creature's ranged weapon, drawn in hand from the cast's
-        // start until its next melee swing.
-        if (!isLocalPlayer && entitySpawner_.getCreatureInstanceId(guid) == instanceId &&
-            rendering::isCreatureRangedWeaponSpell(
-                spell->second.attr,
-                spell->second.equippedItemClass,
-                spell->second.equippedItemSubClassMask,
-                visuals->precastAnimation(visual),
-                visuals->castAnimation(visual),
-                none)) {
+        // Ranged bow/gun/crossbow spells — either explicitly requiring a bow,
+        // gun, or crossbow (Shoot 22907/29575, Arcane Shot 36609/3044, Steady
+        // Shot 34120, Aimed Shot 19434, Multi-Shot 2643/29576) or flagged
+        // SPELL_ATTR_RANGED (0x00000002) with no weapon restriction and no
+        // authored SpellVisual precast/cast animation (Charged Arcane Shot
+        // 38808, Shoot Arcane Explosion Arrow 36327).
+        const bool isRangedWeaponSpell = rendering::isCreatureRangedWeaponSpell(
+            spell->second.attr,
+            spell->second.equippedItemClass,
+            spell->second.equippedItemSubClassMask,
+            visuals->precastAnimation(visual),
+            visuals->castAnimation(visual),
+            none);
+        if (isLocalPlayer && isRangedWeaponSpell &&
+            (phase == game::SpellAnimPhase::PRECAST || phase == game::SpellAnimPhase::CAST)) {
+            const auto rangedType = ac->getWeaponLoadout().rangedType;
+            uint32_t loadAnim = 0, holdAnim = 0, shotAnim = 0;
+            if (rangedType == rendering::RangedWeaponType::BOW ||
+                rangedType == rendering::RangedWeaponType::CROSSBOW) {
+                loadAnim = rendering::anim::LOAD_BOW;
+                holdAnim = rendering::anim::HOLD_BOW;
+                shotAnim = rendering::anim::ATTACK_BOW;
+            } else if (rangedType == rendering::RangedWeaponType::GUN) {
+                loadAnim = rendering::anim::LOAD_RIFLE;
+                holdAnim = rendering::anim::HOLD_RIFLE;
+                shotAnim = rendering::anim::ATTACK_RIFLE;
+            }
+            if (holdAnim != 0) {
+                if (phase == game::SpellAnimPhase::PRECAST) {
+                    castState.oneShot.reset();
+                    castState.hold = rendering::SpellCastHold{spellId, holdAnim, false};
+                    ac->startSpellCast(loadAnim, holdAnim, true, 0);
+                } else {
+                    castState.hold.reset();
+                    castState.oneShot = rendering::SpellCastOneShot{spellId, shotAnim};
+                    ac->triggerRangedShot();
+                }
+                LOG_DEBUG("Local ranged cast animation spell=", spellId,
+                          " phase=", static_cast<int>(phase));
+                return;
+            }
+        }
+        const bool isRemoteCreature = entitySpawner_.getCreatureInstanceId(guid) == instanceId;
+        const bool isRemotePlayer = !isLocalPlayer && entitySpawner_.getPlayerInstanceId(guid) == instanceId;
+        if (!isLocalPlayer && (isRemoteCreature || isRemotePlayer) && isRangedWeaponSpell) {
             const auto unit = std::dynamic_pointer_cast<game::Unit>(gameHandler_.getEntityManager().getEntity(guid));
             const auto ranged = unit ? entitySpawner_.rangedWeaponAnimations(*unit) : std::nullopt;
             if (ranged && (phase == game::SpellAnimPhase::PRECAST || phase == game::SpellAnimPhase::CAST)) {
-                entitySpawner_.setCreatureRangedDrawn(guid, true);
+                if (isRemoteCreature) entitySpawner_.setCreatureRangedDrawn(guid, true);
                 uint32_t playingAnim = 0;
                 const bool playingOneShot = cr->isPlayingOneShot(instanceId, &playingAnim);
                 const uint32_t kitAnim = (phase == game::SpellAnimPhase::PRECAST) ? ranged->aim : ranged->shot;
