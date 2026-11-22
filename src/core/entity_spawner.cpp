@@ -439,6 +439,7 @@ void EntitySpawner::shutdown() {
     remoteWasAirborne_.clear();
     remoteAirborneLegs_.clear();
     remoteLegYawOffsets_.clear();
+    remoteTorsoYawOffsets_.clear();
     remoteTurns_.clear();
     hoverAirborne_.clear();
     liftOffEmoted_.clear();
@@ -473,6 +474,7 @@ void EntitySpawner::clearRemoteMotionState(uint64_t guid) {
     remoteWasAirborne_.erase(guid);
     remoteAirborneLegs_.erase(guid);
     remoteLegYawOffsets_.erase(guid);
+    remoteTorsoYawOffsets_.erase(guid);
     remoteTurns_.erase(guid);
     hoverAirborne_.erase(guid);
     liftOffEmoted_.erase(guid);
@@ -519,6 +521,7 @@ void EntitySpawner::resetAllState() {
     remoteWasAirborne_.clear();
     remoteAirborneLegs_.clear();
     remoteLegYawOffsets_.clear();
+    remoteTorsoYawOffsets_.clear();
     remoteTurns_.clear();
     hoverAirborne_.clear();
     liftOffEmoted_.clear();

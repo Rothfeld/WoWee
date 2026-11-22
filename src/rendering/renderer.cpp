@@ -2332,17 +2332,23 @@ void Renderer::update(float deltaTime) {
         // Smoothly slew the relative lower-body offset within [-pi/2, +pi/2]
         // (through 0 / front on direction reversal) to match Native TBC 2.4.3.
         const bool mounted = animationController_ && animationController_->isMounted();
+        const bool swimming = cameraController->isSwimming();
+        const bool airborne = !cameraController->isGrounded() && !swimming &&
+                              !cameraController->isFlightAirborne();
         const bool resetLegYaw = taxiFlight || playerBodyHeld_.has_value() ||
                                  cameraController->isFlightAirborne();
         if (resetLegYaw) {
             characterLegYawOffsetRad_ = 0.0f;
+            characterTorsoYawOffsetRad_ = 0.0f;
         } else {
             // Swim-left/right sequences already contain the lateral body pose.
             // Applying the land-stride yaw and spine counter-rotation twists it twice.
-            const bool swimming = cameraController->isSwimming();
             const float targetLegYawRad = swimming ? 0.0f : cameraController->getTargetLegYawOffsetRad();
+            const float targetTorsoYawRad = strafeTorsoYawTarget(targetLegYawRad, airborne, mounted);
             characterLegYawOffsetRad_ = stepLegYawOffset(
                 characterLegYawOffsetRad_, targetLegYawRad, deltaTime);
+            characterTorsoYawOffsetRad_ = stepLegYawOffset(
+                characterTorsoYawOffsetRad_, targetTorsoYawRad, deltaTime);
         }
         const float logicalDeltaDeg = hasLastLogicalCharacterYaw_
             ? std::remainder(characterYaw - lastLogicalCharacterYaw_, 360.0f) : 0.0f;
@@ -2367,7 +2373,7 @@ void Renderer::update(float deltaTime) {
         const float modelYawRad = glm::radians(characterYaw + characterTurnBodyLagDeg_) + characterLegYawOffsetRad_;
         characterRenderer->setInstanceRotation(characterInstanceId, glm::vec3(0.0f, 0.0f, modelYawRad));
         characterRenderer->setInstanceTorsoYaw(characterInstanceId,
-            mounted ? 0.0f : -characterLegYawOffsetRad_);
+            mounted ? 0.0f : characterTorsoYawOffsetRad_);
 
         if (playerBodyHeld_) {
             characterRenderer->setInstancePosition(characterInstanceId, glm::vec3(*playerBodyHeld_));

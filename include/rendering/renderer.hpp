@@ -499,6 +499,7 @@ private:
     uint32_t characterInstanceId = 0;
     float characterYaw = 0.0f;
     float characterLegYawOffsetRad_ = 0.0f;
+    float characterTorsoYawOffsetRad_ = 0.0f;
     float characterTurnBodyLagDeg_ = 0.0f;
     float lastLogicalCharacterYaw_ = 0.0f;
     bool hasLastLogicalCharacterYaw_ = false;

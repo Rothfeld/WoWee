@@ -73,4 +73,16 @@ inline GroundDirection airborneLegDirection(std::optional<GroundDirection>& held
     return *held;
 }
 
+// Target SpineLow upper-body counter-rotation relative to the lower-body yaw.
+// On the ground, counter-rotating by -targetLegYawRad keeps the torso aligned
+// with gameplay facing while the legs run sideways. While airborne (jump/fall)
+// or mounted, Native TBC 2.4.3 does not counter-rotate SpineLow so the whole
+// body faces the jump direction cleanly (avoiding spine-twist contortion on
+// models whose JumpStart/Jump animations pitch/roll SpineLow, such as
+// BloodElfMale, BloodElfFemale, and HumanMale).
+inline float strafeTorsoYawTarget(float targetLegYawRad, bool airborne, bool mounted) {
+    if (mounted || airborne) return 0.0f;
+    return -std::clamp(targetLegYawRad, -kLegYawMaxOffsetRad, kLegYawMaxOffsetRad);
+}
+
 } // namespace wowee::rendering

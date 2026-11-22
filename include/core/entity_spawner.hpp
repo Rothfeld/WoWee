@@ -413,6 +413,8 @@ public:
     }
     // Smoothed lower-body yaw offset relative to facing (rendering::stepLegYawOffset).
     std::unordered_map<uint64_t, float>& getRemoteLegYawOffsets() { return remoteLegYawOffsets_; }
+    // Smoothed upper-body SpineLow counter-rotation (rendering::strafeTorsoYawTarget).
+    std::unordered_map<uint64_t, float>& getRemoteTorsoYawOffsets() { return remoteTorsoYawOffsets_; }
     // Another player's facing seen by the previous frame and its turn shuffle.
     struct RemoteTurn {
         std::optional<float> lastFacing;
@@ -665,6 +667,7 @@ private:
     std::unordered_map<uint64_t, bool> remoteWasAirborne_;
     std::unordered_map<uint64_t, std::optional<rendering::GroundDirection>> remoteAirborneLegs_;
     std::unordered_map<uint64_t, float> remoteLegYawOffsets_;
+    std::unordered_map<uint64_t, float> remoteTorsoYawOffsets_;
     std::unordered_map<uint64_t, RemoteTurn> remoteTurns_;
     std::unordered_map<uint64_t, bool> creatureWasWalking_;
     std::unordered_map<uint64_t, bool> creatureSwimmingState_;

@@ -497,6 +497,34 @@ TEST_CASE("Legs keep the takeoff direction until landing", "[movement][animation
     REQUIRE(airborneLegDirection(held, false, none).modelYawOffset == 0);
 }
 
+TEST_CASE("Strafe jump unwinds SpineLow torso counter-rotation while airborne", "[movement][animation]") {
+    using wowee::rendering::stepLegYawOffset;
+    using wowee::rendering::strafeTorsoYawTarget;
+    constexpr float halfPi = 1.57079632679f;
+    constexpr float quarterPi = 0.78539816339f;
+
+    // Grounded strafe counter-rotates the torso to preserve gameplay facing.
+    REQUIRE(strafeTorsoYawTarget(-halfPi, false, false) == Catch::Approx(halfPi));
+    REQUIRE(strafeTorsoYawTarget(halfPi, false, false) == Catch::Approx(-halfPi));
+    REQUIRE(strafeTorsoYawTarget(-quarterPi, false, false) == Catch::Approx(quarterPi));
+    REQUIRE(strafeTorsoYawTarget(0.0f, false, false) == Catch::Approx(0.0f));
+
+    // Airborne jump or mount clears SpineLow counter-rotation so the whole body
+    // aligns with the jump direction without twisting SpineLow.
+    REQUIRE(strafeTorsoYawTarget(-halfPi, true, false) == Catch::Approx(0.0f));
+    REQUIRE(strafeTorsoYawTarget(halfPi, true, false) == Catch::Approx(0.0f));
+    REQUIRE(strafeTorsoYawTarget(-quarterPi, true, false) == Catch::Approx(0.0f));
+    REQUIRE(strafeTorsoYawTarget(-halfPi, false, true) == Catch::Approx(0.0f));
+
+    // Stepping from grounded strafe right (+90 deg torso counter-yaw) into an
+    // airborne jump smoothly unwinds torso yaw to 0 without a 1-frame snap.
+    float torso = halfPi;
+    for (int i = 0; i < 20; ++i) {
+        torso = stepLegYawOffset(torso, strafeTorsoYawTarget(-halfPi, true, false), 1.0f / 60.0f);
+    }
+    REQUIRE(std::abs(torso) < 0.01f);
+}
+
 TEST_CASE("Strafe and diagonal leg yaw slews smoothly through front", "[movement][animation]") {
     using wowee::rendering::kLegYawDecayPerSec;
     using wowee::rendering::stepLegYawOffset;
