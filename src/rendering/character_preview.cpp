@@ -1386,10 +1386,8 @@ void CharacterPreview::attachWeaponEnchantVisual(uint32_t attachmentId, int8_t h
 }
 
 void CharacterPreview::loadRacialBackdrop(game::Race race) {
-    // Nothing to stand in front of when the background is meant to show
-    // through. Skipped here rather than removed afterwards, so a portrait does
-    // not read and build a scene on every rebuild only to discard it.
-    if (transparentBackground_) return;
+    // Only character select/creation scenes render a 3D racial backdrop.
+    if (!previewLoadsRacialBackdrop(backgroundMode_)) return;
 
     if (!charRenderer_ || !assetManager_) return;
     if (backdropRace_ == static_cast<int>(race) && backdropInstanceId_ != 0) {
@@ -1536,11 +1534,8 @@ void CharacterPreview::compositePass(VkCommandBuffer cmd, uint32_t frameIndex) {
     std::memcpy(previewUBOMapped_[fi], &ubo, sizeof(GPUPerFrameData));
 
     // Begin off-screen render pass
-    // Nothing at all behind a portrait, so the frame art around it shows
-    // through; the studio backdrop everywhere else.
-    VkClearColorValue clearColor = transparentBackground_
-        ? VkClearColorValue{{0.0f, 0.0f, 0.0f, 0.0f}}
-        : VkClearColorValue{{0.05f, 0.05f, 0.1f, 1.0f}};
+    const auto rgba = previewClearColorRGBA(backgroundMode_);
+    VkClearColorValue clearColor{{rgba[0], rgba[1], rgba[2], rgba[3]}};
     renderTarget_->beginPass(cmd, clearColor);
 
     // Preview rendering bypasses Renderer::renderWorld(), so it must run the
@@ -1580,11 +1575,9 @@ void CharacterPreview::zoom(float wheelDelta) {
     applyPreviewView();
 }
 
-void CharacterPreview::setTransparentBackground(bool transparent) {
-    transparentBackground_ = transparent;
-    // The scene model behind the character is as opaque as the clear colour,
-    // so it goes as well.
-    if (transparent && backdropInstanceId_ != 0 && charRenderer_) {
+void CharacterPreview::setBackgroundMode(PreviewBackgroundMode mode) {
+    backgroundMode_ = mode;
+    if (!previewLoadsRacialBackdrop(mode) && backdropInstanceId_ != 0 && charRenderer_) {
         charRenderer_->removeInstance(backdropInstanceId_);
         if (backdropModelId_ > 0) charRenderer_->unloadModelIfUnused(backdropModelId_);
         backdropInstanceId_ = 0;

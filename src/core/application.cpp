@@ -35,6 +35,7 @@
 #include "core/logger.hpp"
 #include "core/memory_monitor.hpp"
 #include "rendering/renderer.hpp"
+#include "rendering/preview_background.hpp"
 #include "rendering/post_process_pipeline.hpp"
 #include "rendering/loot_sparkles.hpp"
 #include "rendering/vk_context.hpp"
@@ -5910,7 +5911,8 @@ void Application::render() {
                     // rebuilt - and drawing from that is a use-after-free
                     // rather than a stale picture.
                     portrait->externalTexture = unitPortrait_.textureId();
-                    portrait->desaturated = gameHandler->isPlayerGhost();
+                    portrait->desaturated = rendering::shouldDesaturatePlayerPortrait(
+                        gameHandler->isPlayerGhost());
                 }
 
                 // Every texture SetPortraitTexture was told to fill with the

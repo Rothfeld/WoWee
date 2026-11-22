@@ -3427,6 +3427,14 @@ add_test(NAME channel_visual_parity COMMAND test_channel_visual_parity)
 set_tests_properties(channel_visual_parity PROPERTIES SKIP_RETURN_CODE 4)
 register_test_target(test_channel_visual_parity)
 
+# Unit portrait background mode & ghost/Wisp desaturation parity tests
+add_executable(test_unit_portrait test_unit_portrait.cpp)
+target_include_directories(test_unit_portrait PRIVATE ${TEST_INCLUDE_DIRS})
+target_include_directories(test_unit_portrait SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
+target_link_libraries(test_unit_portrait PRIVATE catch2_main)
+add_test(NAME unit_portrait COMMAND test_unit_portrait)
+register_test_target(test_unit_portrait)
+
 get_property(ALL_TEST_TARGETS GLOBAL PROPERTY WOWEE_ALL_TEST_TARGETS)
 list(LENGTH ALL_TEST_TARGETS _wowee_test_target_count)
 message(STATUS "Test targets registered: ${_wowee_test_target_count}")

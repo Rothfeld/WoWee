@@ -3,6 +3,7 @@
 #include "pipeline/char_sections.hpp"
 #include "pipeline/guild_tabard.hpp"
 
+#include "rendering/preview_background.hpp"
 #include "game/character.hpp"
 #include <glm/glm.hpp>
 #include <vulkan/vulkan.h>
@@ -96,11 +97,16 @@ public:
     /// predicts. False when the loaded model has no such camera.
     bool setModelFrameView(float facingRadians, float cameraScale);
 
-    /// Draws the character against nothing rather than a lit backdrop, so what
-    /// surrounds it is transparent. A portrait is masked by the frame art
-    /// around it, and anything opaque behind the head shows as a block of
-    /// colour inside that frame.
-    void setTransparentBackground(bool transparent);
+    /// Selects whether the preview renders the 3D racial glue scene, a
+    /// transparent alpha=0 background (full-body UI model frames), or an
+    /// opaque black portrait disc (circular/micro SetPortraitTexture frames).
+    void setBackgroundMode(PreviewBackgroundMode mode);
+
+    /// Convenience wrapper kept for callers selecting Transparent vs RacialScene.
+    void setTransparentBackground(bool transparent) {
+        setBackgroundMode(transparent ? PreviewBackgroundMode::Transparent
+                                      : PreviewBackgroundMode::RacialScene);
+    }
 
     // Off-screen composite pass - call from Renderer::beginFrame() before main render pass
     void compositePass(VkCommandBuffer cmd, uint32_t frameIndex);
@@ -221,7 +227,7 @@ private:
     float modelHeadZ_ = 0.0f;
     glm::vec3 previewStandPosition_{0.0f};
     glm::vec3 previewViewDirection_{0.0f, 1.0f, 0.0f};
-    bool transparentBackground_ = false;
+    PreviewBackgroundMode backgroundMode_ = PreviewBackgroundMode::RacialScene;
     uint8_t sheathState_ = 1;
 
     // Cached info from loadCharacter() for later recompositing.
