@@ -765,7 +765,13 @@ void M2Renderer::renderM2Ribbons(VkCommandBuffer cmd, VkDescriptorSet perFrameSe
         }
         const uint32_t vertCount = static_cast<uint32_t>(written) - firstVert;
         if (vertCount >= 4) {
-            draws.push_back({.texSet = texSet, .pipeline = strip.additive ? ribbonAdditivePipeline_ : ribbonPipeline_,
+            VkPipeline pipe = ribbonAdditivePipeline_;
+            if (strip.blendMode == 2) {
+                pipe = ribbonPipeline_;
+            } else if (strip.blendMode == 4 && ribbonModPipeline_) {
+                pipe = ribbonModPipeline_;
+            }
+            draws.push_back({.texSet = texSet, .pipeline = pipe,
                              .firstVertex = firstVert, .vertexCount = vertCount});
         } else {
             written = firstVert;

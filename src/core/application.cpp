@@ -4579,6 +4579,10 @@ void Application::syncChannelVisuals() {
             } else if (origin.source == rendering::SpellLaunchOrigin::Source::Attachment &&
                        characters->getAttachmentTransform(channel.casterInstanceId, origin.attachmentId, hand)) {
                 channel.start = glm::vec3(hand[3]);
+            } else if (origin.source == rendering::SpellLaunchOrigin::Source::Attachment &&
+                       origin.attachmentId != rendering::kAttachChestId &&
+                       characters->getAttachmentTransform(channel.casterInstanceId, rendering::kAttachChestId, hand)) {
+                channel.start = glm::vec3(hand[3]);
             }
         }
         const uint64_t target = static_cast<uint64_t>(entity->getField(objectLo)) |

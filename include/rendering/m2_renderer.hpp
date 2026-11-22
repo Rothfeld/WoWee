@@ -624,7 +624,7 @@ public:
     /// ribbons. u runs along the strip, v across it (0 one edge, 1 the other).
     struct ChainStrip {
         std::string texturePath;
-        bool additive = true;
+        uint8_t blendMode = 3;  // SpellChainEffects.dbc BlendMode: 2=Alpha, 3/6=Add, 4=Mod
         glm::vec3 color{1.0f};
         float alpha = 1.0f;
         float halfWidth = 0.0f;
@@ -1070,6 +1070,7 @@ private:
     // Ribbon pipelines (additive + alpha-blend)
     VkPipeline ribbonPipeline_ = VK_NULL_HANDLE;          // Alpha-blend ribbons
     VkPipeline ribbonAdditivePipeline_ = VK_NULL_HANDLE;  // Additive ribbons
+    VkPipeline ribbonModPipeline_ = VK_NULL_HANDLE;       // Mod (multiply) ribbons (e.g. SpellChainEffects blendMode 4)
     // Geometry-model particles: ribbon vertex layout and shaders, triangle lists.
     VkPipeline particleMeshPipeline_ = VK_NULL_HANDLE;
     VkPipeline particleMeshAdditivePipeline_ = VK_NULL_HANDLE;

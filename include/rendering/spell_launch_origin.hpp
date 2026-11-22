@@ -26,11 +26,37 @@ struct SpellLaunchOrigin {
 };
 
 inline constexpr uint32_t kAttachLaunchHandFallback = 2;   // M2 HandLeft
+inline constexpr uint32_t kAttachChestBloodFrontId = 15;   // M2 ChestBloodFront (impact/reflect)
+inline constexpr uint32_t kAttachBreathId = 17;            // M2 Breath / Mouth
+inline constexpr uint32_t kAttachHeadId = 18;              // M2 Head
+inline constexpr uint32_t kAttachBaseId = 19;              // M2 Base
 inline constexpr uint32_t kAttachSpellLeftHandId = 21;     // M2 SpellLeftHand
 inline constexpr uint32_t kAttachSpellRightHandId = 22;    // M2 SpellRightHand
-inline constexpr uint32_t kAttachChestBloodFrontId = 15;   // M2 ChestBloodFront (impact/reflect)
+inline constexpr uint32_t kAttachSpecial1Id = 23;          // M2 Special1 (e.g. Beholder center eye)
+inline constexpr uint32_t kAttachSpecial2Id = 24;          // M2 Special2 (e.g. Beholder left eye)
+inline constexpr uint32_t kAttachSpecial3Id = 25;          // M2 Special3 (e.g. Beholder right eye)
 inline constexpr uint32_t kAttachChestId = 34;             // M2 Chest (beam fallback)
 inline constexpr uint32_t kNoSpellAnimationId = 0xffffffffu;
+
+// Map SpellVisual.dbc MissileAttachment (TBC col 15, values 0..8) to M2 attachment ID.
+// Follows the exact SpellVisualKit attachment slot order:
+//   0=Head(18), 1=Chest(34), 2=Base(19), 3=LeftHand(21), 4=RightHand(22),
+//   5=Breath(17), 6=Special1(23), 7=Special2(24), 8=Special3(25).
+// Unknown/negative values fall back to Chest (34).
+inline constexpr uint32_t missileAttachmentToM2Id(int32_t missileAttachment) {
+    switch (missileAttachment) {
+        case 0: return kAttachHeadId;
+        case 1: return kAttachChestId;
+        case 2: return kAttachBaseId;
+        case 3: return kAttachSpellLeftHandId;
+        case 4: return kAttachSpellRightHandId;
+        case 5: return kAttachBreathId;
+        case 6: return kAttachSpecial1Id;
+        case 7: return kAttachSpecial2Id;
+        case 8: return kAttachSpecial3Id;
+        default: return kAttachChestId;
+    }
+}
 
 inline uint32_t fallbackAttachmentForReleaseSide(char side) {
     if (side == 'R') return kAttachSpellRightHandId;
@@ -102,7 +128,7 @@ inline SpellLaunchOrigin resolveBeamStartOrigin(const pipeline::M2Model* model,
     SpellLaunchOrigin out;
     if (missileAttachment != -1) {
         out.source = SpellLaunchOrigin::Source::Attachment;
-        out.attachmentId = kAttachChestId;
+        out.attachmentId = missileAttachmentToM2Id(missileAttachment);
         return out;
     }
     if (const auto* ev = findSequenceSpellReleaseEvent(model, animationId)) {

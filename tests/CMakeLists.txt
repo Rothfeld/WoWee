@@ -2636,6 +2636,7 @@ target_include_directories(test_chain_effect PRIVATE ${TEST_INCLUDE_DIRS})
 target_include_directories(test_chain_effect SYSTEM PRIVATE
     ${TEST_SYSTEM_INCLUDE_DIRS})
 target_link_libraries(test_chain_effect PRIVATE catch2_main)
+wowee_test_link_glm(test_chain_effect)
 add_test(NAME chain_effect COMMAND test_chain_effect)
 register_test_target(test_chain_effect)
 

@@ -1680,6 +1680,7 @@ void M2Renderer::recreatePipelines() {
     destroy(device, particleMod2xPipeline_);
     destroy(device, ribbonPipeline_);
     destroy(device, ribbonAdditivePipeline_);
+    destroy(device, ribbonModPipeline_);
     destroy(device, particleMeshPipeline_);
     destroy(device, particleMeshAdditivePipeline_);
 

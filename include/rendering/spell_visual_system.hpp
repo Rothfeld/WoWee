@@ -504,11 +504,11 @@ private:
         std::string texture;
         float avgSegLen = 0, width = 0, noiseScale = 0, texCoordScale = 0;
         uint32_t segDurationMs = 0, segDelayMs = 0;
-        float minDurBetweenJoints = 0, jointSmoothness = 0;
+        float minDurBetweenJoints = 0, maxDurBetweenJoints = 0, jointSmoothness = 0;
         uint32_t flags = 0;
         float pulseSpeed = 0, pulseOnLength = 0, pulseFadeLength = 0;
         ChainJoints joints;
-        float jointMoveSpeed = 0, majorJointMoveSpeed = 0;
+        float jointMoveSpeed = 0;
         glm::vec2 flickerOn{0.0f}, flickerOff{0.0f};  // seconds, min..max
         float arcHeight = 0, minArcAngle = 0, maxArcAngle = 0, minArcSpin = 0, maxArcSpin = 0;
         std::vector<uint32_t> strands;  // Combo: further rows drawn between the same ends

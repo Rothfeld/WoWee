@@ -554,6 +554,7 @@ bool M2Renderer::buildMainPassPipelines(VkDescriptorSetLayout perFrameLayout) {
 
             ribbonPipeline_         = buildRibbonPipeline(PipelineBuilder::blendAlpha());
             ribbonAdditivePipeline_ = buildRibbonPipeline(PipelineBuilder::blendAdditive());
+            ribbonModPipeline_      = buildRibbonPipeline(modBlend);
             particleMeshPipeline_ = buildRibbonPipeline(PipelineBuilder::blendAlpha(),
                                                         VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
             particleMeshAdditivePipeline_ = buildRibbonPipeline(PipelineBuilder::blendAdditive(),
@@ -1048,6 +1049,7 @@ void M2Renderer::shutdown() {
     destroyPipeline(particleMod2xPipeline_);
     destroyPipeline(ribbonPipeline_);
     destroyPipeline(ribbonAdditivePipeline_);
+    destroyPipeline(ribbonModPipeline_);
     destroyPipeline(particleMeshPipeline_);
     destroyPipeline(particleMeshAdditivePipeline_);
 

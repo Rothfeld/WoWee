@@ -36,27 +36,59 @@ inline float chainTexCoord(float s, float length, float texCoordScale, float t) 
 }
 
 /// The further strands a row's Combo string adds, drawn whole between the
-/// same ends. Each entry is 4 bytes: a row ID's bits 0-6 in the first, ID
-/// bit 7 as 0x02 and ID bit 8 as 0x20 of the fourth; bytes 2-3 are always
-/// 0x01 and the fourth's 0x10 is not interpreted. Native Tear of Azzinoth
-/// Summon Channel 39857 (237: "o..\x03", "o..\x13", 239 twice) draws three
-/// green waves; Sunshatter 45215 (215) a blue bolt (209), a broad
-/// purple-white wave (211) and thin purple bolts (217) beside its green one.
-/// An entry with 0x20 set adds another copy of the row itself (`parent`),
-/// whatever ID it spells: build 8606 draws Fel Consumption 45023 (314, two
-/// entries spelling 315 Beam_Purple) as three green SoulBeam strands lit
-/// together, no purple; the Fel Crystals' Fel Crystal Visual 44355 (292, one
-/// entry spelling 293 DrainManaLightning) as two thin yellow strands, no
-/// green lightning (_experiments/20261119T1500Z.beam_bend_motion).
-inline std::vector<uint32_t> chainComboStrands(std::string_view combo, uint32_t parent) {
+/// same ends. Each entry is 4 bytes inside a NUL-terminated DBC string, so
+/// byte 0 always has bit 0 forced to 1 (avoiding 0x00) and byte 3 carries the
+/// real bit 0 (0x10), bit 7 (0x02), and bit 8 (0x20) of the 9-bit row ID;
+/// bytes 1-2 are always 0x01. Every one of the 245 Combo entries across all
+/// 320 rows of TBC 2.4.3 SpellChainEffects.dbc resolves to an existing row:
+/// - Fel Crystal Visual 292 (even, 0x124): "%\x01\x01!" -> 292 (not 293).
+/// - Fel Consumption 314 (even, 0x13a): ";\x01\x01!" x2 -> 314, 314 (not 315).
+/// - Parhelion Plaza crystal beam 377: "{\x01\x01!" x4 + "{\x01\x011" x5 ->
+///   4x 378 (pulsing green flecks) + 5x 379 (faint pulsing alpha-blended mist).
+/// - Open Portal from Shattrath 411 (odd, 0x19b): "\x1b\x01\x013" x7 -> 411 x7.
+inline std::vector<uint32_t> chainComboStrands(std::string_view combo, uint32_t /*parent*/ = 0) {
     assert(combo.size() % 4 == 0);
     std::vector<uint32_t> ids;
     for (size_t i = 0; i < combo.size(); i += 4) {
-        const auto low = static_cast<uint8_t>(combo[i]);
-        const auto high = static_cast<uint8_t>(combo[i + 3]);
-        ids.push_back((high & 0x20u) ? parent : low | ((high & 0x02u) << 6));
+        const auto low = static_cast<uint32_t>(static_cast<uint8_t>(combo[i]));
+        const auto high = static_cast<uint32_t>(static_cast<uint8_t>(combo[i + 3]));
+        const uint32_t id = (low & 0x7eu) | ((high & 0x10u) >> 4) |
+                            ((high & 0x02u) << 6) | ((high & 0x20u) << 3);
+        ids.push_back(id);
     }
     return ids;
+}
+
+/// Supported SpellChainEffects.dbc BlendMode values (EGxBlend):
+/// 2 = Alpha, 3 = Add, 4 = Mod (multiply, used by *_Inverted.blp / Beam_WebBlack),
+/// 6 = ModAdd / AddAlpha. All 320 TBC 2.4.3 rows use one of these four.
+inline constexpr bool chainBlendSupported(uint8_t blendMode) {
+    return blendMode == 2 || blendMode == 3 || blendMode == 4 || blendMode == 6;
+}
+
+/// SpellChainEffects Flags bit 0x20 enables travelling pulse windows.
+inline constexpr bool chainUsesPulse(uint32_t flags, float pulseSpeed) {
+    return (flags & 0x20u) != 0 && pulseSpeed != 0.0f;
+}
+
+/// SpellChainEffects Flags bit 0x10 enables on/off flickering on non-pulsing
+/// strands. Rows without 0x10 (e.g. Fel Lightning 297 Flags 0x46, Forked
+/// Lightning 95 Flags 0x46, Parhelion Plaza 377 Flags 0x48) carry leftover
+/// flicker durations but stay lit continuously.
+inline constexpr bool chainUsesFlicker(uint32_t flags, float maxFlickerOn, float maxFlickerOff) {
+    return (flags & 0x10u) != 0 && (maxFlickerOn > 0.0f || maxFlickerOff > 0.0f);
+}
+
+/// Transverse sinusoidal wave offset s yards along a beam of `length` yards at
+/// age `t`. Multiplied by sin(pi * s / length) so both ends stay pinned to the
+/// caster and target attachments instead of detaching by up to WaveHeight yards.
+inline float chainWaveOffset(float s, float length, float waveHeight,
+                             float waveFreq, float waveSpeed, float t) {
+    assert(length > 0.0f);
+    if (waveHeight == 0.0f) return 0.0f;
+    constexpr float kPi = 3.14159265358979323846f;
+    const float envelope = std::sin(kPi * std::clamp(s / length, 0.0f, 1.0f));
+    return waveHeight * envelope * std::sin(waveFreq * s - waveSpeed * t);
 }
 
 /// How lit a pulsing row is s yards from the caster on a beam `length`

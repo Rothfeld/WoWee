@@ -3,13 +3,16 @@
 #include <catch_amalgamated.hpp>
 
 #include "rendering/chain_effect.hpp"
+#include "rendering/spell_launch_origin.hpp"
 #include "tbc_data_test_util.hpp"
 
 #include <cmath>
 #include <cstring>
+#include <unordered_set>
 
 using wowee::rendering::CastBeamTiming;
 using wowee::rendering::castBeamTiming;
+using wowee::rendering::chainBlendSupported;
 using wowee::rendering::chainComboStrands;
 using wowee::rendering::chainEndTaper;
 using wowee::rendering::chainEndTexV;
@@ -18,6 +21,9 @@ using wowee::rendering::chainNoiseStep;
 using wowee::rendering::chainPulse;
 using wowee::rendering::chainSegmentCount;
 using wowee::rendering::chainTexCoord;
+using wowee::rendering::chainUsesFlicker;
+using wowee::rendering::chainUsesPulse;
+using wowee::rendering::chainWaveOffset;
 using wowee::rendering::ChainJoints;
 using wowee::rendering::chainJointOffsetAt;
 using wowee::rendering::chainJointRadius;
@@ -67,21 +73,56 @@ TEST_CASE("A zero TexCoordScale beam stands still", "[chain]") {
     CHECK(repeats(20.0f, 0.0f) == Catch::Approx(1.0f));
 }
 
-TEST_CASE("Combo names further rows, with ID bits 7 in the entry's last byte; 0x20 copies the row", "[chain]") {
-    // Chain 215 (Sunshatter, Black Temple door channel).
+TEST_CASE("Combo decodes exact 9-bit row IDs: bit 0 in b3&0x10, bit 7 in b3&0x02, bit 8 in b3&0x20", "[chain]") {
+    // Chain 215 (Sunshatter, Black Temple door channel): 211, 208, 209x3, 216x3.
     const std::string sunshatter("S\x01\x01\x13Q\x01\x01\x03Q\x01\x01\x13Q\x01\x01\x13Q\x01\x01\x13"
                                  "Y\x01\x01\x03Y\x01\x01\x03Y\x01\x01\x03", 32);
-    CHECK(chainComboStrands(sunshatter, 215) == std::vector<uint32_t>{211, 209, 209, 209, 209, 217, 217, 217});
-    // Chain 237 (Blades of Azzinoth's Tear of Azzinoth Summon Channel).
-    CHECK(chainComboStrands(std::string("o\x01\x01\x03o\x01\x01\x13", 8), 237) == std::vector<uint32_t>{239, 239});
-    // Chain 292 (Fel Crystal Visual): '%' with 0x21 spells 293 but natively
-    // draws a second 292 strand and no green 293 lightning.
+    CHECK(chainComboStrands(sunshatter, 215) == std::vector<uint32_t>{211, 208, 209, 209, 209, 216, 216, 216});
+    // Chain 237 (Blades of Azzinoth's Tear of Azzinoth Summon Channel): 238, 239.
+    CHECK(chainComboStrands(std::string("o\x01\x01\x03o\x01\x01\x13", 8), 237) == std::vector<uint32_t>{238, 239});
+    // Chain 292 (Fel Crystal Visual, even 0x124): '%' (0x25) + 0x21 (bit 0 = 0, bit 8 = 1) -> 292.
     CHECK(chainComboStrands(std::string("%\x01\x01!", 4), 292) == std::vector<uint32_t>{292});
-    // Chain 314 (Fel Consumption): two more SoulBeam strands, no Beam_Purple 315.
+    // Chain 314 (Fel Consumption, even 0x13a): ';' (0x3b) + 0x21 -> 314, 314.
     CHECK(chainComboStrands(std::string(";\x01\x01!;\x01\x01!", 8), 314) == std::vector<uint32_t>{314, 314});
-    // Chain 48: below 128.
-    CHECK(chainComboStrands(std::string("1\x01\x01\x01", 4), 48) == std::vector<uint32_t>{49});
+    // Chain 377 (Parhelion Plaza gazebo): '{' (0x7b) + 0x21 -> 378 (even), '{' + 0x31 -> 379 (odd).
+    CHECK(chainComboStrands(std::string("{\x01\x01!{\x01\x01" "1", 8), 377) == std::vector<uint32_t>{378, 379});
+    // Chain 411 (Open Portal from Shattrath, odd 0x19b): 0x1b + 0x33 -> 411.
+    CHECK(chainComboStrands(std::string("\x1b\x01\x01" "3", 4), 411) == std::vector<uint32_t>{411});
+    // Chain 48: '1' (0x31) + 0x01 (bit 0 = 0) -> 48.
+    CHECK(chainComboStrands(std::string("1\x01\x01\x01", 4), 48) == std::vector<uint32_t>{48});
     CHECK(chainComboStrands("", 1).empty());
+}
+
+TEST_CASE("Wave offset vanishes at both endpoints and peaks inside", "[chain]") {
+    // Parhelion Plaza chain 377: WaveHeight=1.70, WaveFreq=0.1571, WaveSpeed=-2.0.
+    CHECK(chainWaveOffset(0.0f, 15.0f, 1.70f, 0.1571f, -2.0f, 0.4f) == Catch::Approx(0.0f).margin(1e-6f));
+    CHECK(chainWaveOffset(15.0f, 15.0f, 1.70f, 0.1571f, -2.0f, 0.4f) == Catch::Approx(0.0f).margin(1e-6f));
+    // At midpoint envelope == 1.0, full sine amplitude applies.
+    CHECK(chainWaveOffset(5.0f, 10.0f, 2.0f, 0.0f, -1.5707963f, 1.0f) == Catch::Approx(2.0f).margin(1e-4f));
+    CHECK(chainWaveOffset(5.0f, 10.0f, 0.0f, 1.0f, 2.0f, 0.5f) == 0.0f);
+}
+
+TEST_CASE("Flicker requires Flags 0x10 and Pulse requires Flags 0x20; BlendModes 2/3/4/6 supported", "[chain]") {
+    // Fel Lightning (chain 297, Flags 0x46) and Forked Lightning (chain 95, Flags 0x46):
+    // non-zero flicker durations without 0x10 must NOT flicker.
+    CHECK_FALSE(chainUsesFlicker(0x46u, 0.37f, 0.45f));
+    CHECK_FALSE(chainUsesPulse(0x46u, 150.0f));
+    // Parhelion Plaza primary strand (chain 377, Flags 0x48): neither pulses nor flickers.
+    CHECK_FALSE(chainUsesFlicker(0x48u, 0.66f, 0.55f));
+    CHECK_FALSE(chainUsesPulse(0x48u, -5.5f));
+    // Parhelion Plaza combo strands (378/379, Flags 0x68): pulse enabled, flicker off.
+    CHECK(chainUsesPulse(0x68u, -15.5f));
+    CHECK_FALSE(chainUsesFlicker(0x68u, 0.66f, 0.55f));
+    // Open Portal from Shattrath (chain 411, Flags 0x36): both 0x10 and 0x20 set.
+    CHECK(chainUsesFlicker(0x36u, 0.50f, 0.65f));
+    CHECK(chainUsesPulse(0x36u, 100.0f));
+
+    CHECK(chainBlendSupported(2));
+    CHECK(chainBlendSupported(3));
+    CHECK(chainBlendSupported(4));
+    CHECK(chainBlendSupported(6));
+    CHECK_FALSE(chainBlendSupported(0));
+    CHECK_FALSE(chainBlendSupported(5));
 }
 
 TEST_CASE("Pulse: Fel Consumption's lit window runs from the target to the caster and comes again", "[chain]") {
@@ -220,6 +261,98 @@ TEST_CASE("Shipped TBC SpellChainEffects.dbc carries Chain Heal 2000 ms / 200 ms
     const auto [spDur, spDel] = findRow(220); // Spite
     CHECK(spDur == 6499);
     CHECK(spDel == 300);
+
+    const auto [felDur, felDel] = findRow(297); // Fel Lightning (Sunblade Protector 46480)
+    CHECK(felDur == 1000);
+    CHECK(felDel == 0);
+}
+
+TEST_CASE("All 320 shipped TBC SpellChainEffects.dbc rows have valid layout, textures, blend modes, and 0 missing Combo IDs",
+          "[chain][tbc]") {
+    const auto bytes = wowee::test::readTbcData("dbfilesclient/spellchaineffects.dbc");
+    REQUIRE(bytes.size() >= 20);
+    uint32_t nrec = 0, nfields = 0, recSize = 0, strSize = 0;
+    std::memcpy(&nrec, bytes.data() + 4, 4);
+    std::memcpy(&nfields, bytes.data() + 8, 4);
+    std::memcpy(&recSize, bytes.data() + 12, 4);
+    std::memcpy(&strSize, bytes.data() + 16, 4);
+    REQUIRE(recSize == 173);
+    REQUIRE(nfields == 47);
+    const size_t strBase = 20 + static_cast<size_t>(nrec) * recSize;
+    REQUIRE(strBase + strSize <= bytes.size());
+
+    auto getStr = [&](uint32_t off) -> std::string_view {
+        if (off >= strSize) return {};
+        const char* p = reinterpret_cast<const char*>(bytes.data() + strBase + off);
+        return std::string_view(p, strnlen(p, strSize - off));
+    };
+
+    std::unordered_set<uint32_t> allIds;
+    allIds.reserve(nrec);
+    for (uint32_t i = 0; i < nrec; ++i) {
+        uint32_t id = 0;
+        std::memcpy(&id, bytes.data() + 20 + static_cast<size_t>(i) * recSize, 4);
+        allIds.insert(id);
+    }
+
+    size_t totalComboEntries = 0;
+    for (uint32_t i = 0; i < nrec; ++i) {
+        const uint8_t* r = bytes.data() + 20 + static_cast<size_t>(i) * recSize;
+        uint32_t id = 0, texOff = 0, flags = 0, comboOff = 0;
+        float avgSegLen = 0.0f, width = 0.0f, jointSmoothness = 0.0f;
+        std::memcpy(&id, r, 4);
+        std::memcpy(&avgSegLen, r + 1 * 4, 4);
+        std::memcpy(&width, r + 2 * 4, 4);
+        std::memcpy(&texOff, r + 7 * 4, 4);
+        std::memcpy(&flags, r + 8 * 4, 4);
+        std::memcpy(&jointSmoothness, r + 16 * 4, 4);
+        std::memcpy(&comboOff, r + 161, 4);
+        const uint8_t blendMode = r[160];
+
+        INFO("SpellChainEffects row " << id);
+        CHECK(std::isfinite(avgSegLen));
+        CHECK(avgSegLen > 0.0f);
+        CHECK(std::isfinite(width));
+        CHECK(width > 0.0f);
+        CHECK(jointSmoothness >= 0.0f);
+        CHECK(jointSmoothness <= 1.0f);
+        CHECK_FALSE(getStr(texOff).empty());
+        CHECK(chainBlendSupported(blendMode));
+
+        if (comboOff != 0) {
+            const auto combo = getStr(comboOff);
+            REQUIRE(combo.size() % 4 == 0);
+            const auto strands = chainComboStrands(combo, id);
+            totalComboEntries += strands.size();
+            for (uint32_t targetId : strands) {
+                INFO("Combo target " << targetId << " from row " << id);
+                CHECK(allIds.count(targetId) == 1);
+            }
+            if (id == 342) {
+                // Felmyst Demonic Vapor (spell 45389): 7x 343 (pulsing purple/magenta arcing web strands).
+                CHECK(strands == std::vector<uint32_t>{343, 343, 343, 343, 343, 343, 343});
+            }
+            if (id == 377) {
+                // Parhelion Plaza crystal beam: 4x 378 + 5x 379.
+                CHECK(strands == std::vector<uint32_t>{378, 378, 378, 378, 379, 379, 379, 379, 379});
+            }
+            if (id == 388) {
+                // Shadowsword Soulbinder (spell 46442): BlendMode 4 (Mod) Beam_WebBlack + 3x 387 Beam_Purple.
+                CHECK(blendMode == 4);
+                CHECK(strands == std::vector<uint32_t>{387, 387, 387});
+            }
+        }
+        if (id == 297) {
+            // Fel Lightning (Sunblade Protector 46480): green ShockLightning, non-flickering (Flags 0x46).
+            CHECK(flags == 0x46u);
+            CHECK(r[157] == 126);
+            CHECK(r[158] == 210);
+            CHECK(r[159] == 0);
+            CHECK(blendMode == 3);
+            CHECK_FALSE(chainUsesFlicker(flags, 0.37f, 0.45f));
+        }
+    }
+    CHECK(totalComboEntries == 245);
 }
 
 TEST_CASE("Chain beam endpoints taper to a point over the first and last segment with centred V", "[chain]") {
@@ -256,4 +389,18 @@ TEST_CASE("Chain beam endpoints taper to a point over the first and last segment
     CHECK(chainEndTaper(1, 2) == 1.0f);
     CHECK(chainEndTexV(0, 2, 0) == 0.0f);
     CHECK(chainEndTexV(1, 2, 1) == 1.0f);
+}
+
+TEST_CASE("SpellVisual.dbc MissileAttachment 0..8 maps to SpellVisualKit M2 attachment IDs", "[chain]") {
+    using wowee::rendering::missileAttachmentToM2Id;
+    CHECK(missileAttachmentToM2Id(0) == 18);  // Head (Spotlight)
+    CHECK(missileAttachmentToM2Id(1) == 34);  // Chest (Blood Siphon, Containment Beam)
+    CHECK(missileAttachmentToM2Id(2) == 19);  // Base (Netherbeam)
+    CHECK(missileAttachmentToM2Id(3) == 21);  // SpellLeftHand (Blue Beam, Ribbon Pole)
+    CHECK(missileAttachmentToM2Id(4) == 22);  // SpellRightHand (Energy Surge)
+    CHECK(missileAttachmentToM2Id(5) == 17);  // Breath (Chaos Gazer Drain Life 46291)
+    CHECK(missileAttachmentToM2Id(6) == 23);  // Special1 (Beholder center eye: Eyebeam, Fiery Glare)
+    CHECK(missileAttachmentToM2Id(7) == 24);  // Special2 (Beholder left eye: Arcane Glare, Dark Glare)
+    CHECK(missileAttachmentToM2Id(8) == 25);  // Special3 (Beholder right eye: Shadow Glare)
+    CHECK(missileAttachmentToM2Id(-1) == 34); // Fallback when passed directly
 }
