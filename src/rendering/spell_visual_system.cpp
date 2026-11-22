@@ -583,8 +583,10 @@ float SpellVisualSystem::spawnKitEffects(uint32_t kitId, const glm::vec3& worldP
         const bool breath = slotFollowsBone(attachment);
         const glm::vec3 spawn = attachment ? glm::vec3(attachMat[3]) : worldPosition;
         const uint32_t instanceId = breath
-            ? m2Renderer_->createInstanceWithMatrix(modelId, glm::scale(attachMat, glm::vec3(effect.scale)), spawn)
-            : m2Renderer_->createInstance(modelId, spawn, glm::vec3(0.0f), effect.scale);
+            ? m2Renderer_->createInstanceWithMatrix(modelId, glm::scale(attachMat, glm::vec3(effect.scale)), spawn,
+                                                    /*allowPositionDedup=*/false)
+            : m2Renderer_->createInstance(modelId, spawn, glm::vec3(0.0f), effect.scale,
+                                          /*allowPositionDedup=*/false);
         if (instanceId == 0) {
             LOG_WARNING("SpellVisual: instance failed for kit=", kitId, " model=", effect.path);
             continue;
@@ -648,7 +650,8 @@ void SpellVisualSystem::playEffectAtAttachment(uint32_t effectNameId, uint32_t a
     if (modelId == 0) return;
     const float scale = effectScale(effectNameId);
     const uint32_t instanceId = m2Renderer_->createInstanceWithMatrix(
-        modelId, glm::scale(attachMat, glm::vec3(scale)), glm::vec3(attachMat[3]));
+        modelId, glm::scale(attachMat, glm::vec3(scale)), glm::vec3(attachMat[3]),
+        /*allowPositionDedup=*/false);
     if (instanceId == 0) {
         LOG_WARNING("SpellVisual: instance failed for effect ", effectNameId, " model=", path->second);
         return;
@@ -697,7 +700,8 @@ void SpellVisualSystem::playResistImmuneEffect(const glm::vec3& impactPosition,
     }
     const float scale = effectScale(kEffectResistImmune);
     const uint32_t instanceId = m2Renderer_->createInstanceWithMatrix(
-        modelId, placementModelMatrix(impactPosition, rotation, scale), impactPosition);
+        modelId, placementModelMatrix(impactPosition, rotation, scale), impactPosition,
+        /*allowPositionDedup=*/false);
     if (instanceId == 0) {
         LOG_WARNING("SpellVisual: instance failed for resist/immune effect model=", path->second);
         return;
@@ -856,9 +860,7 @@ void SpellVisualSystem::startChannelVisual(uint32_t visualId, const glm::vec3& p
     updateChannelVisual(attachInstanceId, 0);
     const auto kit = channelKits_.find(visualId);
     if (kit == channelKits_.end() || !kit->second) return;
-    const float remaining = durationMs == std::numeric_limits<uint32_t>::max()
-        ? std::numeric_limits<float>::infinity()
-        : durationMs / 1000.0f;
+    const float remaining = channelDurationSeconds(durationMs);
     unitChannelVisuals_[attachInstanceId] = {visualId, remaining};
     startKitLight(kit->second, attachInstanceId);
     startKitWeaponTrail(kit->second, attachInstanceId);
@@ -869,23 +871,32 @@ void SpellVisualSystem::startChannelVisual(uint32_t visualId, const glm::vec3& p
     }
     const auto effects = kitEffects_.find(kit->second);
     if (effects == kitEffects_.end()) return;
-    auto* characters = renderer_->getCharacterRenderer();
+    auto* characters = renderer_ ? renderer_->getCharacterRenderer() : nullptr;
     for (const auto& effect : effects->second) {
         const uint32_t model = loadSpellModel(effect.path);
         if (!model) continue;
-        glm::vec3 spawn = position;
+        uint32_t attachment = effect.attachment;
         glm::mat4 transform(1.0f);
-        if (effect.attachment) {
-            if (!characters || !characters->getAttachmentTransform(attachInstanceId, effect.attachment, transform)) {
-                LOG_ERROR("Channel attachment unavailable: ", effect.attachment, " model=", effect.path);
-                continue;
-            }
-            spawn = glm::vec3(transform[3]);
+        if (slotSkippedWhenAbsent(attachment) &&
+            (!characters || !characters->getAttachmentTransform(attachInstanceId, attachment, transform))) {
+            LOG_DEBUG("Channel visual: kit=", kit->second, " attachment ", attachment,
+                      " absent on instance ", attachInstanceId, "; not shown: ", effect.path);
+            continue;
         }
-        const bool breath = slotFollowsBone(effect.attachment);
+        if (attachment != 0 &&
+            (!characters || !characters->getAttachmentTransform(attachInstanceId, attachment, transform))) {
+            LOG_WARNING("Channel visual: kit=", kit->second, " attachment ", attachment,
+                        " unavailable on instance ", attachInstanceId,
+                        "; placed at unit position, model=", effect.path);
+            attachment = 0;
+        }
+        const glm::vec3 spawn = attachment ? glm::vec3(transform[3]) : position;
+        const bool breath = slotFollowsBone(attachment);
         const uint32_t instance = breath
-            ? m2Renderer_->createInstanceWithMatrix(model, glm::scale(transform, glm::vec3(effect.scale)), spawn)
-            : m2Renderer_->createInstance(model, spawn, glm::vec3(0), effect.scale);
+            ? m2Renderer_->createInstanceWithMatrix(model, glm::scale(transform, glm::vec3(effect.scale)), spawn,
+                                                    /*allowPositionDedup=*/false)
+            : m2Renderer_->createInstance(model, spawn, glm::vec3(0), effect.scale,
+                                          /*allowPositionDedup=*/false);
         if (!instance) { LOG_ERROR("Channel effect instance failed: ", effect.path); continue; }
         m2Renderer_->setInstanceIsSpellVisual(instance);
         // A channel effect plays Stand once, then loops Hold, as a state
@@ -897,13 +908,14 @@ void SpellVisualSystem::startChannelVisual(uint32_t visualId, const glm::vec3& p
         // black spikes round him.
         m2Renderer_->startInstanceStateEffect(instance);
         activeSpellVisuals_.push_back({.instanceId = instance, .elapsed = 0.0f,
-            .duration = durationMs / 1000.0f, .isPrecast = false, .attachmentId = effect.attachment,
+            .duration = remaining, .isPrecast = false, .attachmentId = attachment,
             .attachInstanceId = attachInstanceId, .isChannel = true, .orientWithAttachment = breath,
             .effectScale = effect.scale});
         if (!breath)
             placeOnUnit(activeSpellVisuals_.back(), characters, spawn,
-                        effect.attachment ? attachmentScale(transform) : 1.0f);
-        LOG_INFO("Channel visual: kit=", kit->second, " attachment=", effect.attachment, " model=", effect.path);
+                        attachment ? attachmentScale(transform) : 1.0f);
+        LOG_INFO("Channel visual: kit=", kit->second, " attachment=", attachment,
+                 " instanceId=", instance, " model=", effect.path);
     }
 }
 
@@ -969,7 +981,8 @@ void SpellVisualSystem::syncAuraVisuals(uint32_t attachInstanceId,
             }
             const uint32_t model = loadSpellModel(effect.path);
             if (!model) { LOG_ERROR("Aura model unavailable: ", effect.path); continue; }
-            const uint32_t instance = m2Renderer_->createInstance(model, position, glm::vec3(0), 1.0f);
+            const uint32_t instance = m2Renderer_->createInstance(model, position, glm::vec3(0), 1.0f,
+                                                                  /*allowPositionDedup=*/false);
             if (!instance) { LOG_ERROR("Aura instance failed: ", effect.path); continue; }
             m2Renderer_->setInstanceIsSpellVisual(instance);
             m2Renderer_->startInstanceStateEffect(instance);
@@ -1070,6 +1083,8 @@ void SpellVisualSystem::updateChannelVisual(uint32_t attachInstanceId, uint32_t 
     }
     if (!remainingMs) {
         stopChannelSound(attachInstanceId);
+        fieldChannels_.erase(attachInstanceId);
+        heldChannelKits_.erase(attachInstanceId);
         if (unitChannelVisuals_.erase(attachInstanceId))
             applyCharacterProcedures(attachInstanceId);
     } else if (const auto chan = unitChannelVisuals_.find(attachInstanceId);
@@ -1286,41 +1301,46 @@ void SpellVisualSystem::syncChannels(const std::vector<UnitChannel>& fieldChanne
     if (!m2Renderer_) return;
     if (!spellVisualDbcLoaded_) loadSpellVisualDbc();
     if (!spellVisualDbcLoaded_) return;
-    // Channels the server has ended whose fields are not yet cleared are over.
-    std::erase_if(endedChannels_, [&](uint64_t guid) {
-        return std::none_of(fieldChannels.begin(), fieldChannels.end(),
-                            [&](const UnitChannel& channel) { return channel.casterGuid == guid; });
-    });
-    std::vector<UnitChannel> channels;
-    for (const auto& channel : fieldChannels)
-        if (!endedChannels_.contains(channel.casterGuid)) channels.push_back(channel);
 
-    // ChannelKit effects of channels seen only through the fields. A unit
-    // whose MSG_CHANNEL_START was received already has them, for that
-    // channel's duration; startChannelVisual replaces held ones.
-    std::unordered_map<uint32_t, uint32_t> current;
-    for (const auto& channel : channels)
-        if (channel.casterInstanceId) current[channel.casterInstanceId] = channel.visualId;
-    for (auto it = fieldChannels_.begin(); it != fieldChannels_.end();) {
-        const auto now = current.find(it->first);
-        if (now == current.end() || now->second != it->second) {
-            if (heldChannelKits_.erase(it->first) || unitChannelVisuals_.count(it->first))
-                updateChannelVisual(it->first, 0);
-            it = fieldChannels_.erase(it);
-        } else {
-            ++it;
+    std::vector<FieldChannelEntry> rawEntries;
+    rawEntries.reserve(fieldChannels.size());
+    for (size_t i = 0; i < fieldChannels.size(); ++i) {
+        rawEntries.push_back({.casterGuid = fieldChannels[i].casterGuid,
+                              .casterInstanceId = fieldChannels[i].casterInstanceId,
+                              .visualId = fieldChannels[i].visualId,
+                              .sourceIndex = i});
+    }
+    std::unordered_map<uint32_t, uint32_t> activeVisualByInstance;
+    activeVisualByInstance.reserve(unitChannelVisuals_.size());
+    for (const auto& [inst, active] : unitChannelVisuals_) {
+        activeVisualByInstance.emplace(inst, active.visualId);
+    }
+    std::unordered_set<uint32_t> instancesWithChannelEffects;
+    for (const auto& v : activeSpellVisuals_) {
+        if (v.isChannel && v.attachInstanceId != 0) {
+            instancesWithChannelEffects.insert(v.attachInstanceId);
         }
     }
-    for (const auto& channel : channels) {
-        if (!channel.casterInstanceId || fieldChannels_.count(channel.casterInstanceId)) continue;
+
+    const FieldChannelSyncPlan plan = reconcileFieldChannels(
+        rawEntries, activeVisualByInstance, instancesWithChannelEffects,
+        fieldChannels_, heldChannelKits_, endedChannels_);
+
+    for (const uint32_t inst : plan.instancesToStop) {
+        updateChannelVisual(inst, 0);
+    }
+    for (const size_t idx : plan.channelsToStart) {
+        const auto& channel = fieldChannels[idx];
+        startChannelVisual(channel.visualId, channel.casterPosition,
+                           std::numeric_limits<uint32_t>::max(), channel.casterInstanceId);
         fieldChannels_[channel.casterInstanceId] = channel.visualId;
-        const bool playing = unitChannelVisuals_.count(channel.casterInstanceId) != 0 ||
-            std::any_of(activeSpellVisuals_.begin(), activeSpellVisuals_.end(),
-                [&](const SpellVisualInstance& v) { return v.isChannel && v.attachInstanceId == channel.casterInstanceId; });
-        if (playing) continue;
-        startChannelVisual(channel.visualId, channel.casterPosition, std::numeric_limits<uint32_t>::max(),
-                           channel.casterInstanceId);
         heldChannelKits_.insert(channel.casterInstanceId);
+    }
+
+    std::vector<UnitChannel> channels;
+    channels.reserve(plan.liveChannelIndices.size());
+    for (const size_t idx : plan.liveChannelIndices) {
+        channels.push_back(fieldChannels[idx]);
     }
 
     std::vector<M2Renderer::ChainStrip> strips;
@@ -1657,7 +1677,8 @@ void SpellVisualSystem::playPersistentArea(uint64_t key, uint32_t visualId, cons
     for (const auto& effect : effects->second) {
         const uint32_t modelId = loadSpellModel(effect.path);
         if (modelId == 0) continue;
-        const uint32_t instanceId = m2Renderer_->createInstance(modelId, worldPosition, glm::vec3(0.0f), effect.scale);
+        const uint32_t instanceId = m2Renderer_->createInstance(modelId, worldPosition, glm::vec3(0.0f), effect.scale,
+                                                                /*allowPositionDedup=*/false);
         if (instanceId == 0) {
             LOG_WARNING("SpellVisual: persistent area instance failed, model=", effect.path);
             continue;
@@ -1929,7 +1950,8 @@ void SpellVisualSystem::dropAreaImpacts(float deltaTime) {
             if (const auto floorZ = projected_texture::nearestSurfaceZ(area.center.z, reach, terH, wmoH)) {
                 at.z = *floorZ;
             }
-            const uint32_t instanceId = m2Renderer_->createInstance(modelId, at, glm::vec3(0.0f), 1.0f);
+            const uint32_t instanceId = m2Renderer_->createInstance(modelId, at, glm::vec3(0.0f), 1.0f,
+                                                                    /*allowPositionDedup=*/false);
             if (instanceId == 0) {
                 LOG_WARNING("SpellVisual: area impact instance failed, model=", area.impacts.path);
                 continue;
@@ -2061,7 +2083,8 @@ void SpellVisualSystem::update(float deltaTime) {
                     }
                 }
             }
-            it->instanceId = m2Renderer_->createInstance(it->modelId, it->start, glm::vec3(0.0f), it->scale);
+            it->instanceId = m2Renderer_->createInstance(it->modelId, it->start, glm::vec3(0.0f), it->scale,
+                                                         /*allowPositionDedup=*/false);
             if (!it->instanceId) {
                 LOG_WARNING("SpellVisual: failed to create missile instance for visualId=", it->visualId);
                 if (it->impactAtEnd) arrivals.push_back({it->visualId, it->end, it->targetAttachInstanceId});
@@ -2249,6 +2272,8 @@ void SpellVisualSystem::removeCasterStages(uint32_t attachInstanceId) {
         m2Renderer_->removeInstance(effect.instanceId);
         return true;
     });
+    fieldChannels_.erase(attachInstanceId);
+    heldChannelKits_.erase(attachInstanceId);
     if (unitChannelVisuals_.erase(attachInstanceId))
         applyCharacterProcedures(attachInstanceId);
     clearUnitKitLight(attachInstanceId);

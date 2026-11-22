@@ -389,7 +389,7 @@ void M2Renderer::setInstanceTransform(uint32_t instanceId, const glm::mat4& tran
     // of its own. Both hulls then wrote their transform to the one instance, so
     // it rendered at whichever ship updated last, and whichever hull unloaded
     // first destroyed it for the other.
-    if (!inst.cachedIsGroundDetail) {
+    if (inst.usesPositionDedup()) {
         auto keyFor = [&](const glm::vec3& p) {
             return DedupKey{.modelId = inst.modelId,
                             .qx = static_cast<int32_t>(std::round(p.x * 10.0f)),
@@ -462,13 +462,16 @@ void M2Renderer::removeInstance(uint32_t instanceId) {
     // Remove from spatial grid incrementally (same pattern as the move-update path)
     eraseBounds(spatialGrid, inst.worldBoundsMin, inst.worldBoundsMax, instanceId);
 
-    // Remove from dedup map
-    if (!inst.cachedIsGroundDetail) {
+    // Remove from dedup map only if this instance still owns that cell
+    if (inst.usesPositionDedup()) {
         DedupKey dk{.modelId = inst.modelId,
                     .qx = static_cast<int32_t>(std::round(inst.position.x * 10.0f)),
                     .qy = static_cast<int32_t>(std::round(inst.position.y * 10.0f)),
                     .qz = static_cast<int32_t>(std::round(inst.position.z * 10.0f))};
-        instanceDedupMap_.erase(dk);
+        auto dit = instanceDedupMap_.find(dk);
+        if (dit != instanceDedupMap_.end() && dit->second == instanceId) {
+            instanceDedupMap_.erase(dit);
+        }
     }
 
     destroyInstanceBones(inst, /*defer=*/true);
@@ -508,13 +511,33 @@ void M2Renderer::removeInstance(uint32_t instanceId) {
 void M2Renderer::setInstanceIsGameObject(uint32_t instanceId, bool isGameObject) {
     auto idxIt = instanceIndexById.find(instanceId);
     if (idxIt == instanceIndexById.end() || idxIt->second >= instances.size()) return;
-    instances[idxIt->second].isGameObject = isGameObject;
+    auto& inst = instances[idxIt->second];
+    if (isGameObject) {
+        DedupKey dk{.modelId = inst.modelId,
+                    .qx = static_cast<int32_t>(std::round(inst.position.x * 10.0f)),
+                    .qy = static_cast<int32_t>(std::round(inst.position.y * 10.0f)),
+                    .qz = static_cast<int32_t>(std::round(inst.position.z * 10.0f))};
+        auto dit = instanceDedupMap_.find(dk);
+        if (dit != instanceDedupMap_.end() && dit->second == instanceId) {
+            instanceDedupMap_.erase(dit);
+        }
+    }
+    inst.isGameObject = isGameObject;
 }
 
 void M2Renderer::setInstanceIsSpellVisual(uint32_t instanceId) {
     auto idxIt = instanceIndexById.find(instanceId);
     assert(idxIt != instanceIndexById.end());
-    instances[idxIt->second].isSpellVisual = true;
+    auto& inst = instances[idxIt->second];
+    DedupKey dk{.modelId = inst.modelId,
+                .qx = static_cast<int32_t>(std::round(inst.position.x * 10.0f)),
+                .qy = static_cast<int32_t>(std::round(inst.position.y * 10.0f)),
+                .qz = static_cast<int32_t>(std::round(inst.position.z * 10.0f))};
+    auto dit = instanceDedupMap_.find(dk);
+    if (dit != instanceDedupMap_.end() && dit->second == instanceId) {
+        instanceDedupMap_.erase(dit);
+    }
+    inst.isSpellVisual = true;
 }
 
 void M2Renderer::setSkipCollision(uint32_t instanceId, bool skip) {
@@ -695,8 +718,8 @@ void M2Renderer::rebuildSpatialIndex() {
         auto mdlIt = models.find(inst.modelId);
         inst.cachedModel = (mdlIt != models.end()) ? &mdlIt->second : nullptr;
 
-        // Rebuild dedup map (skip ground detail)
-        if (!inst.cachedIsGroundDetail) {
+        // Rebuild dedup map (static world doodads only)
+        if (inst.usesPositionDedup()) {
             DedupKey dk{.modelId = inst.modelId,
                         .qx = static_cast<int32_t>(std::round(inst.position.x * 10.0f)),
                         .qy = static_cast<int32_t>(std::round(inst.position.y * 10.0f)),

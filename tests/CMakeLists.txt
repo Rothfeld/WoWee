@@ -3392,6 +3392,24 @@ register_test_target(test_corpse_aura_kit)
 wowee_add_packet_test(test_mirror_image
     SOURCES ${CMAKE_SOURCE_DIR}/src/game/character.cpp)
 
+# Channeled-spell caster hand glow / SpellVisual ChannelKit & M2 dedup parity tests
+add_executable(test_channel_visual_parity
+    test_channel_visual_parity.cpp
+    ${TEST_COMMON_SOURCES}
+    ${CMAKE_SOURCE_DIR}/src/pipeline/dbc_loader.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/dbc_layout.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/m2_loader.cpp
+)
+target_include_directories(test_channel_visual_parity PRIVATE ${TEST_INCLUDE_DIRS})
+target_include_directories(test_channel_visual_parity SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
+target_compile_definitions(test_channel_visual_parity PRIVATE
+    WOWEE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+target_link_libraries(test_channel_visual_parity PRIVATE catch2_main)
+wowee_test_link_glm(test_channel_visual_parity)
+add_test(NAME channel_visual_parity COMMAND test_channel_visual_parity)
+set_tests_properties(channel_visual_parity PROPERTIES SKIP_RETURN_CODE 4)
+register_test_target(test_channel_visual_parity)
+
 get_property(ALL_TEST_TARGETS GLOBAL PROPERTY WOWEE_ALL_TEST_TARGETS)
 list(LENGTH ALL_TEST_TARGETS _wowee_test_target_count)
 message(STATUS "Test targets registered: ${_wowee_test_target_count}")

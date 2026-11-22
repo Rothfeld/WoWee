@@ -1,6 +1,7 @@
 #pragma once
 
 #include "rendering/body_collision.hpp"
+#include "rendering/channel_visual_lifecycle.hpp"
 #include "rendering/collision_geometry.hpp"
 #include "rendering/spatial_grid.hpp"
 #include "rendering/shadow_params.hpp"
@@ -399,6 +400,14 @@ struct M2Instance {
     // decides what is in range. Archimonde's Banish_Chest glow and his body
     // have to come and go together.
     [[nodiscard]] bool serverVisibility() const { return isGameObject || isSpellVisual || externalPose; }
+    [[nodiscard]] bool usesPositionDedup() const noexcept {
+        return m2InstanceUsesPositionDedup(
+            cachedIsGroundDetail,
+            cachedModel && cachedModel->isSpellEffect,
+            isSpellVisual,
+            isGameObject,
+            externalPose);
+    }
     /// Posed by its owner rather than by this renderer: model matrix, bone
     /// matrices, sequence and clocks are written each frame through
     /// setExternalPose, and update() neither advances nor animates it. Its

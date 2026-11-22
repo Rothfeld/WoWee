@@ -4592,6 +4592,8 @@ void Application::syncChannelVisuals() {
     const uint16_t spellField = game::fieldIndex(game::UF::UNIT_CHANNEL_SPELL);
     const uint16_t objectLo = game::fieldIndex(game::UF::UNIT_FIELD_CHANNEL_OBJECT_LO);
     const uint16_t objectHi = game::fieldIndex(game::UF::UNIT_FIELD_CHANNEL_OBJECT_HI);
+    const uint16_t healthField = game::fieldIndex(game::UF::UNIT_FIELD_HEALTH);
+    const uint16_t maxHealthField = game::fieldIndex(game::UF::UNIT_FIELD_MAXHEALTH);
     std::vector<rendering::SpellVisualSystem::UnitChannel> channels;
     if (spellField == 0xFFFF || objectLo == 0xFFFF || objectHi == 0xFFFF) {
         visuals->syncChannels(channels);
@@ -4641,6 +4643,10 @@ void Application::syncChannelVisuals() {
             continue;
         const uint32_t spellId = entity->getField(spellField);
         if (!spellId) continue;
+        if (maxHealthField != 0xFFFF && entity->getField(maxHealthField) > 0 &&
+            healthField != 0xFFFF && entity->getField(healthField) == 0) {
+            continue;
+        }
         const auto spell = spells.find(spellId);
         if (spell == spells.end() || !spell->second.spellVisualId) continue;
         rendering::SpellVisualSystem::UnitChannel channel;

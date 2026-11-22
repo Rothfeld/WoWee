@@ -144,7 +144,9 @@ uint32_t M2Renderer::createInstance(uint32_t modelId, const glm::vec3& position,
     // Deduplicate: skip if same model already at nearly the same position.
     // Uses hash map for O(1) lookup instead of O(N) scan.
     // Spell effects are exempt - transient visuals must always create fresh instances.
-    if (allowPositionDedup && !mdlRef.isGroundDetail && !mdlRef.isSpellEffect) {
+    const bool useDedup = m2ModelUsesPositionDedup(
+        allowPositionDedup, mdlRef.isGroundDetail, mdlRef.isSpellEffect);
+    if (useDedup) {
         DedupKey dk{.modelId = modelId,
                     .qx = static_cast<int32_t>(std::round(position.x * 10.0f)),
                     .qy = static_cast<int32_t>(std::round(position.y * 10.0f)),
@@ -194,7 +196,7 @@ uint32_t M2Renderer::createInstance(uint32_t modelId, const glm::vec3& position,
 
     // Register in dedup map before pushing (uses original position, not ground-adjusted)
     // Spell effects are exempt from dedup tracking (transient, overlapping allowed).
-    if (allowPositionDedup && !mdlRef.isGroundDetail && !mdlRef.isSpellEffect) {
+    if (useDedup) {
         DedupKey dk{.modelId = modelId,
                     .qx = static_cast<int32_t>(std::round(position.x * 10.0f)),
                     .qy = static_cast<int32_t>(std::round(position.y * 10.0f)),
@@ -236,14 +238,18 @@ uint32_t M2Renderer::createInstanceWithMatrix(uint32_t modelId, const glm::mat4&
     for (int c = 0; c < 4; c++)
         for (int r = 0; r < 4; r++)
             if (!std::isfinite(modelMatrix[c][r])) return 0;
-    if (models.find(modelId) == models.end()) {
+    auto modelIt = models.find(modelId);
+    if (modelIt == models.end()) {
         LOG_WARNING("Cannot create instance: model ", modelId, " not loaded");
         return 0;
     }
+    const auto& mdl2 = modelIt->second;
     modelUnusedSince_.erase(modelId);
 
-    // Deduplicate: O(1) hash lookup
-    if (allowPositionDedup) {
+    // Deduplicate: O(1) hash lookup (spell effects and ground detail exempt)
+    const bool useDedup = m2ModelUsesPositionDedup(
+        allowPositionDedup, mdl2.isGroundDetail, mdl2.isSpellEffect);
+    if (useDedup) {
         DedupKey dk{.modelId = modelId,
                     .qx = static_cast<int32_t>(std::round(position.x * 10.0f)),
                     .qy = static_cast<int32_t>(std::round(position.y * 10.0f)),
@@ -263,10 +269,9 @@ uint32_t M2Renderer::createInstanceWithMatrix(uint32_t modelId, const glm::mat4&
     instance.modelMatrix = modelMatrix;
     instance.invModelMatrix = glm::inverse(modelMatrix);
     glm::vec3 localMin, localMax;
-    getTightCollisionBounds(models[modelId], localMin, localMax);
+    getTightCollisionBounds(mdl2, localMin, localMax);
     transformAABB(instance.modelMatrix, localMin, localMax, instance.worldBoundsMin, instance.worldBoundsMax);
     // Cache model flags on instance to avoid per-frame hash lookups
-    const auto& mdl2 = models[modelId];
     instance.cachedHasAnimation = mdl2.hasAnimation;
     instance.cachedDisableAnimation = mdl2.disableAnimation;
     instance.cachedHasParticleEmitters = !mdl2.particleEmitters.empty();
@@ -295,8 +300,8 @@ uint32_t M2Renderer::createInstanceWithMatrix(uint32_t modelId, const glm::mat4&
         seedUnanimatedSequence(mdl2, instance);
     }
 
-    // Register in dedup map
-    if (allowPositionDedup) {
+    // Register in dedup map (static world doodads only)
+    if (useDedup) {
         DedupKey dk{.modelId = modelId,
                     .qx = static_cast<int32_t>(std::round(position.x * 10.0f)),
                     .qy = static_cast<int32_t>(std::round(position.y * 10.0f)),
