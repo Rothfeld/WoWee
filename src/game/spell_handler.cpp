@@ -780,19 +780,19 @@ bool SpellHandler::spellMissShowsResistEffect(uint8_t missType) {
 std::optional<GameHandler::HitReaction> GameHandler::spellMissHitReaction(
     uint8_t missType, bool hasMissile) {
     switch (missType) {
-        case SpellMissInfo::RESIST:
         case SpellMissInfo::DODGE:
-        case SpellMissInfo::EVADE:
-        case SpellMissInfo::IMMUNE:
-        case SpellMissInfo::IMMUNE2:
-        case SpellMissInfo::DEFLECT:
-        case SpellMissInfo::REFLECT:
             return GameHandler::HitReaction::DODGE;
         case SpellMissInfo::PARRY:
             return GameHandler::HitReaction::PARRY;
         case SpellMissInfo::BLOCK:
             return GameHandler::HitReaction::SHIELD_BLOCK;
         case SpellMissInfo::MISS:
+        case SpellMissInfo::RESIST:
+        case SpellMissInfo::EVADE:
+        case SpellMissInfo::IMMUNE:
+        case SpellMissInfo::IMMUNE2:
+        case SpellMissInfo::DEFLECT:
+        case SpellMissInfo::REFLECT:
             return hasMissile ? std::optional{GameHandler::HitReaction::DODGE} : std::nullopt;
         default:
             return std::nullopt;
@@ -4216,8 +4216,10 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
     //   Spell (3207, spells\resist_immune_effect.m2) facing the caster plus the
     //   victim's reaction animation (Dodge/Parry/ShieldBlock), or bounce the
     //   missile back to the caster on SPELL_MISS_REFLECT.
-    // - Non-missile spells (instant magic, melee abilities, ranged ammo) play
-    //   the victim's reaction animation immediately with no resist forcefield.
+    // - Non-missile spells (instant magic, periodic aura pulses like Fire Shield
+    //   11968, melee abilities, ranged ammo) play a victim animation only for
+    //   explicit physical defensive outcomes (Dodge/Parry/Block); Resist, Immune,
+    //   Miss, Evade, Deflect, Reflect, and Absorb leave the victim still.
     if (!data.missTargets.empty()) {
         const uint64_t casterGuid = data.casterUnit != 0 ? data.casterUnit : data.casterGuid;
         const uint32_t visualId = rangedWeaponAttack ? 0 : resolveSpellVisualId(data.spellId);

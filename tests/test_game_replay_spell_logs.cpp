@@ -215,17 +215,34 @@ TEST_CASE("spell miss resist effect and victim animation rules match TBC 2.4.3",
     CHECK_FALSE(SpellHandler::spellMissShowsResistEffect(MI::REFLECT));
 
     // Victim reaction mapping across missile and non-missile spells.
+    // Missile spells play Dodge at arrival on Resist/Immune/Miss/Evade/Deflect/Reflect.
     CHECK(GameHandler::spellMissHitReaction(MI::RESIST, true) == GameHandler::HitReaction::DODGE);
-    CHECK(GameHandler::spellMissHitReaction(MI::RESIST, false) == GameHandler::HitReaction::DODGE);
     CHECK(GameHandler::spellMissHitReaction(MI::IMMUNE, true) == GameHandler::HitReaction::DODGE);
-    CHECK(GameHandler::spellMissHitReaction(MI::IMMUNE, false) == GameHandler::HitReaction::DODGE);
+    CHECK(GameHandler::spellMissHitReaction(MI::IMMUNE2, true) == GameHandler::HitReaction::DODGE);
+    CHECK(GameHandler::spellMissHitReaction(MI::EVADE, true) == GameHandler::HitReaction::DODGE);
+    CHECK(GameHandler::spellMissHitReaction(MI::DEFLECT, true) == GameHandler::HitReaction::DODGE);
+    CHECK(GameHandler::spellMissHitReaction(MI::REFLECT, true) == GameHandler::HitReaction::DODGE);
+    CHECK(GameHandler::spellMissHitReaction(MI::MISS, true) == GameHandler::HitReaction::DODGE);
+    CHECK(GameHandler::spellMissHitReaction(MI::DODGE, true) == GameHandler::HitReaction::DODGE);
+    CHECK(GameHandler::spellMissHitReaction(MI::PARRY, true) == GameHandler::HitReaction::PARRY);
+    CHECK(GameHandler::spellMissHitReaction(MI::BLOCK, true) == GameHandler::HitReaction::SHIELD_BLOCK);
+    CHECK_FALSE(GameHandler::spellMissHitReaction(MI::ABSORB, true).has_value());
+    CHECK_FALSE(GameHandler::spellMissHitReaction(MI::NONE, true).has_value());
+
+    // Non-missile spells (instant magic, periodic aura pulses, melee abilities)
+    // play a victim reaction only on explicit physical Dodge/Parry/Block.
     CHECK(GameHandler::spellMissHitReaction(MI::DODGE, false) == GameHandler::HitReaction::DODGE);
     CHECK(GameHandler::spellMissHitReaction(MI::PARRY, false) == GameHandler::HitReaction::PARRY);
     CHECK(GameHandler::spellMissHitReaction(MI::BLOCK, false) == GameHandler::HitReaction::SHIELD_BLOCK);
-    CHECK(GameHandler::spellMissHitReaction(MI::REFLECT, true) == GameHandler::HitReaction::DODGE);
-    CHECK(GameHandler::spellMissHitReaction(MI::MISS, true) == GameHandler::HitReaction::DODGE);
+    CHECK_FALSE(GameHandler::spellMissHitReaction(MI::RESIST, false).has_value());
+    CHECK_FALSE(GameHandler::spellMissHitReaction(MI::IMMUNE, false).has_value());
+    CHECK_FALSE(GameHandler::spellMissHitReaction(MI::IMMUNE2, false).has_value());
+    CHECK_FALSE(GameHandler::spellMissHitReaction(MI::EVADE, false).has_value());
+    CHECK_FALSE(GameHandler::spellMissHitReaction(MI::DEFLECT, false).has_value());
+    CHECK_FALSE(GameHandler::spellMissHitReaction(MI::REFLECT, false).has_value());
     CHECK_FALSE(GameHandler::spellMissHitReaction(MI::MISS, false).has_value());
-    CHECK_FALSE(GameHandler::spellMissHitReaction(MI::ABSORB, true).has_value());
+    CHECK_FALSE(GameHandler::spellMissHitReaction(MI::ABSORB, false).has_value());
+    CHECK_FALSE(GameHandler::spellMissHitReaction(MI::NONE, false).has_value());
 }
 
 TEST_CASE("TBC SMSG_SPELL_GO miss targets fire victim hit reactions and parse reflectResult", "[replay][spellmiss]") {
@@ -244,7 +261,9 @@ TEST_CASE("TBC SMSG_SPELL_GO miss targets fire victim hit reactions and parse re
         CHECK(data.missTargets[0].reflectResult == MI::IMMUNE);
     }
 
-    // Non-missile SMSG_SPELL_GO misses trigger victim hit reactions on both player and creature.
+    // Non-missile SMSG_SPELL_GO misses: physical Dodge/Parry/Block animate,
+    // while Resist/Immune/Miss/Reflect on instant spells and periodic aura pulses
+    // (e.g. Entropic Horror Fire Shield 11968, Fire Blast 2136, Arcane Explosion 1449) do not.
     struct Case {
         uint64_t caster;
         uint64_t victim;
@@ -253,15 +272,20 @@ TEST_CASE("TBC SMSG_SPELL_GO miss targets fire victim hit reactions and parse re
         std::optional<GameHandler::HitReaction> expected;
     };
     const Case cases[] = {
-        {kMob,    kPlayer, 2136, MI::RESIST,  GameHandler::HitReaction::DODGE},
-        {kMob,    kPlayer, 2136, MI::IMMUNE,  GameHandler::HitReaction::DODGE},
-        {kMob,    kPlayer, 1752, MI::DODGE,   GameHandler::HitReaction::DODGE},
-        {kMob,    kPlayer, 1752, MI::PARRY,   GameHandler::HitReaction::PARRY},
-        {kMob,    kPlayer, 1752, MI::BLOCK,   GameHandler::HitReaction::SHIELD_BLOCK},
-        {kMob,    kPlayer, 2764, MI::MISS,    std::nullopt},
-        {kPlayer, kMob,    2136, MI::IMMUNE,  GameHandler::HitReaction::DODGE},
-        {kPlayer, kMob,    1752, MI::PARRY,   GameHandler::HitReaction::PARRY},
-        {kMob,    kPlayer, 2136, MI::REFLECT, GameHandler::HitReaction::DODGE},
+        {kMob,    kPlayer, 11968, MI::RESIST,  std::nullopt},
+        {kMob,    kPlayer, 11968, MI::IMMUNE,  std::nullopt},
+        {kMob,    kPlayer, 2136,  MI::RESIST,  std::nullopt},
+        {kMob,    kPlayer, 2136,  MI::IMMUNE,  std::nullopt},
+        {kMob,    kPlayer, 2136,  MI::REFLECT, std::nullopt},
+        {kMob,    kPlayer, 1449,  MI::RESIST,  std::nullopt},
+        {kMob,    kPlayer, 589,   MI::RESIST,  std::nullopt},
+        {kMob,    kPlayer, 1752,  MI::DODGE,   GameHandler::HitReaction::DODGE},
+        {kMob,    kPlayer, 1752,  MI::PARRY,   GameHandler::HitReaction::PARRY},
+        {kMob,    kPlayer, 1752,  MI::BLOCK,   GameHandler::HitReaction::SHIELD_BLOCK},
+        {kMob,    kPlayer, 1752,  MI::IMMUNE,  std::nullopt},
+        {kMob,    kPlayer, 2764,  MI::MISS,    std::nullopt},
+        {kPlayer, kMob,    2136,  MI::IMMUNE,  std::nullopt},
+        {kPlayer, kMob,    1752,  MI::PARRY,   GameHandler::HitReaction::PARRY},
     };
     for (const auto& c : cases) {
         Session s("tbc");
