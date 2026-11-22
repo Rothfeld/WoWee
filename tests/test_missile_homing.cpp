@@ -288,3 +288,46 @@ TEST_CASE("isValidSpellMissileSpeed and isStationaryFlashMissile handle Kael Pur
     CHECK_FALSE(isStationaryFlashMissile(/*nominalSpeed=*/20.0f, /*flightDuration=*/1.5f, /*animDurationSec=*/1.0f));
     CHECK_FALSE(isStationaryFlashMissile(/*nominalSpeed=*/24.0f, /*flightDuration=*/2.0f, /*animDurationSec=*/0.667f));
 }
+
+TEST_CASE("Stuck arrow policy, fade, and chest-bone local tracking", "[missile][stuck-arrows]") {
+    using wowee::rendering::shouldStickPhysicalProjectile;
+    using wowee::rendering::stuckArrowOpacity;
+    using wowee::rendering::computeStuckArrowLocalPose;
+    using wowee::rendering::evaluateStuckArrowWorldPose;
+
+    // Arrows that hit stick; bullets, thrown weapons, and misses do not.
+    CHECK(shouldStickPhysicalProjectile("Item\\ObjectComponents\\Ammo\\ArrowFlight_01.m2", false, true));
+    CHECK(shouldStickPhysicalProjectile("Item\\ObjectComponents\\Ammo\\ArrowFireFlight_01.m2", false, true));
+    CHECK_FALSE(shouldStickPhysicalProjectile("Item\\ObjectComponents\\Ammo\\ArrowFlight_01.m2", false, false));
+    CHECK_FALSE(shouldStickPhysicalProjectile("Item\\ObjectComponents\\Ammo\\BulletFlight_01.m2", false, true));
+    CHECK_FALSE(shouldStickPhysicalProjectile("Item\\ObjectComponents\\Weapon\\Thrown_1H_Dagger_A_01.m2", true, true));
+
+    // Opacity stays 1.0 until the final 0.5 s fade window, then ramps linearly to 0.0 at 3.0 s.
+    CHECK(stuckArrowOpacity(0.0f) == Catch::Approx(1.0f));
+    CHECK(stuckArrowOpacity(2.5f) == Catch::Approx(1.0f));
+    CHECK(stuckArrowOpacity(2.75f) == Catch::Approx(0.5f));
+    CHECK(stuckArrowOpacity(3.0f) == Catch::Approx(0.0f));
+
+    // Rigidly tracks chest attachment translation and 90-degree yaw rotation.
+    glm::mat4 chestAtHit(1.0f);
+    chestAtHit[3] = glm::vec4(10.0f, 20.0f, 1.2f, 1.0f);
+    const auto local = computeStuckArrowLocalPose(chestAtHit, glm::vec3(1.0f, 0.0f, 0.0f), 0);
+
+    glm::vec3 p0(0.0f), r0(0.0f);
+    evaluateStuckArrowWorldPose(chestAtHit, local, p0, r0);
+    CHECK(p0.x == Catch::Approx(10.0f));
+    CHECK(p0.z == Catch::Approx(1.24f));
+    CHECK(r0.z == Catch::Approx(0.0f).margin(1e-4f));
+
+    // Rotate chest +90 deg around Z and move to (15, 25, 1.2): arrow rotates +90 deg with body.
+    glm::mat4 chestTurned(1.0f);
+    chestTurned[0] = glm::vec4(0.0f, 1.0f, 0.0f, 0.0f);
+    chestTurned[1] = glm::vec4(-1.0f, 0.0f, 0.0f, 0.0f);
+    chestTurned[2] = glm::vec4(0.0f, 0.0f, 1.0f, 0.0f);
+    chestTurned[3] = glm::vec4(15.0f, 25.0f, 1.2f, 1.0f);
+    glm::vec3 p1(0.0f), r1(0.0f);
+    evaluateStuckArrowWorldPose(chestTurned, local, p1, r1);
+    CHECK(p1.y == Catch::Approx(25.0f));
+    CHECK(p1.z == Catch::Approx(1.24f));
+    CHECK(r1.z == Catch::Approx(1.5707963f).margin(1e-4f));
+}

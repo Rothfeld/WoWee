@@ -4,6 +4,7 @@
 #include <cassert>
 #include <cmath>
 #include <cstdint>
+#include <string_view>
 #include <glm/glm.hpp>
 
 namespace wowee::rendering {
@@ -151,6 +152,104 @@ inline HomingStepResult stepHomingMissile(const glm::vec3& currentPos,
         .animProgress = animProgress,
         .arrived = false,
     };
+}
+
+/// Stuck-arrow lifetime and fade constants measured on Native TBC 2.4.3 (build 8606):
+/// Arcatraz Warder arrows stick in the target's torso for ~3.0 s, tracking chest bone
+/// rotation/movement and fading out cleanly at expiry.
+inline constexpr float kStuckArrowLifetimeSec = 3.0f;
+inline constexpr float kStuckArrowFadeSec = 0.5f;
+inline constexpr size_t kMaxStuckArrowsPerTarget = 8u;
+
+/// True when a physical ranged projectile should remain embedded in the target's
+/// body on arrival (arrows that hit; excludes bullets, spinning thrown weapons,
+/// and missed shots).
+inline bool shouldStickPhysicalProjectile(std::string_view modelPath, bool spin, bool hitTarget) {
+    if (spin || !hitTarget || modelPath.empty()) return false;
+    const size_t slash = modelPath.find_last_of("\\/");
+    const std::string_view base = (slash == std::string_view::npos) ? modelPath : modelPath.substr(slash + 1);
+    constexpr std::string_view kNeedle = "arrow";
+    if (base.size() < kNeedle.size()) return false;
+    for (size_t i = 0; i + kNeedle.size() <= base.size(); ++i) {
+        bool match = true;
+        for (size_t j = 0; j < kNeedle.size(); ++j) {
+            const char c = base[i + j];
+            const char lower = (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c;
+            if (lower != kNeedle[j]) { match = false; break; }
+        }
+        if (match) return true;
+    }
+    return false;
+}
+
+/// Opacity (1..0) of a stuck arrow at `stuckElapsed` seconds after impact.
+inline float stuckArrowOpacity(float stuckElapsed,
+                               float lifetime = kStuckArrowLifetimeSec,
+                               float fadeSec = kStuckArrowFadeSec) {
+    if (!std::isfinite(stuckElapsed) || stuckElapsed <= 0.0f) return 1.0f;
+    if (stuckElapsed >= lifetime) return 0.0f;
+    const float fadeStart = std::max(0.0f, lifetime - fadeSec);
+    if (stuckElapsed <= fadeStart || fadeSec <= 1e-4f) return 1.0f;
+    return std::clamp((lifetime - stuckElapsed) / fadeSec, 0.0f, 1.0f);
+}
+
+/// Target-chest-local pose for an embedded arrow so it translates and rotates
+/// rigidly with the target's torso bone without inheriting bone scale.
+struct StuckArrowLocalPose {
+    glm::vec3 localOffset{0.0f};
+    glm::vec3 localDir{1.0f, 0.0f, 0.0f};
+};
+
+inline glm::mat3 orthonormalAttachBasis(const glm::mat4& attachMat) {
+    glm::vec3 c0(attachMat[0]);
+    glm::vec3 c1(attachMat[1]);
+    glm::vec3 c2(attachMat[2]);
+    const float l0 = glm::length(c0);
+    const float l1 = glm::length(c1);
+    const float l2 = glm::length(c2);
+    c0 = (l0 > 1e-4f) ? (c0 / l0) : glm::vec3(1.0f, 0.0f, 0.0f);
+    c1 = (l1 > 1e-4f) ? (c1 / l1) : glm::vec3(0.0f, 1.0f, 0.0f);
+    c2 = (l2 > 1e-4f) ? (c2 / l2) : glm::vec3(0.0f, 0.0f, 1.0f);
+    return glm::mat3(c0, c1, c2);
+}
+
+/// Convert world flight direction at impact into the target chest attachment's
+/// local frame with a small deterministic spread across `slotIndex` so multiple
+/// arrows on the same unit do not overlap identically.
+inline StuckArrowLocalPose computeStuckArrowLocalPose(const glm::mat4& attachMat,
+                                                      const glm::vec3& worldDir,
+                                                      uint32_t slotIndex) {
+    const glm::mat3 basis = orthonormalAttachBasis(attachMat);
+    const glm::vec3 normDir = (glm::length(worldDir) > 1e-4f)
+        ? glm::normalize(worldDir) : glm::vec3(1.0f, 0.0f, 0.0f);
+    const glm::vec3 localDir = glm::normalize(glm::transpose(basis) * normDir);
+    // Small chest-local scatter (y = lateral, z = vertical). The arrow M2's
+    // Impact animation (anim::IMPACT = 191) scales Bone 1 to 0.5025 and shifts
+    // it by -0.738 yd along +X so the arrowhead embeds at the attachment origin
+    // while the fletching protrudes out the incoming (-localDir) side.
+    static constexpr glm::vec2 kScatter[8] = {
+        { 0.00f,  0.04f},
+        {-0.09f,  0.10f},
+        { 0.09f, -0.04f},
+        {-0.06f, -0.09f},
+        { 0.11f,  0.08f},
+        {-0.11f,  0.01f},
+        { 0.05f,  0.12f},
+        {-0.04f, -0.12f},
+    };
+    const glm::vec2 jitter = kScatter[slotIndex % 8u];
+    const glm::vec3 localOffset = glm::vec3(0.0f, jitter.x, jitter.y);
+    return {localOffset, localDir};
+}
+
+inline void evaluateStuckArrowWorldPose(const glm::mat4& attachMat,
+                                        const StuckArrowLocalPose& local,
+                                        glm::vec3& outPos,
+                                        glm::vec3& outRot) {
+    const glm::mat3 basis = orthonormalAttachBasis(attachMat);
+    outPos = glm::vec3(attachMat[3]) + basis * local.localOffset;
+    const glm::vec3 worldDir = basis * local.localDir;
+    outRot = missileDirectionToEuler(worldDir);
 }
 
 }  // namespace wowee::rendering

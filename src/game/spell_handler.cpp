@@ -924,12 +924,14 @@ void SpellHandler::launchAmmoProjectile(const SpellGoData& data) {
         return;
     }
     model = model.substr(0, model.rfind('.')) + ".m2";
-    std::vector<uint64_t> targets;
-    for (const uint64_t hit : data.hitTargets) targets.push_back(hit);
-    for (const auto& miss : data.missTargets) targets.push_back(miss.targetGuid);
-    if (targets.empty() && data.targetGuid != 0) targets.push_back(data.targetGuid);
+    std::vector<std::pair<uint64_t, bool>> targets;
+    for (const uint64_t hit : data.hitTargets) targets.emplace_back(hit, true);
+    for (const auto& miss : data.missTargets) targets.emplace_back(miss.targetGuid, false);
+    if (targets.empty() && data.targetGuid != 0) targets.emplace_back(data.targetGuid, true);
     static constexpr uint32_t kAttachRightHand = 1, kAttachChestFront = 15;
-    for (const uint64_t target : targets) {
+    const std::string fullModelPath = directory + model;
+    const std::string fullTexturePath = texture.empty() ? "" : directory + texture + ".blp";
+    for (const auto& [target, isHit] : targets) {
         glm::vec3 start, end;
         if (target == data.casterUnit || !resolveUnitPosition(data.casterUnit, start) ||
             !resolveUnitPosition(target, end)) continue;
@@ -940,7 +942,7 @@ void SpellHandler::launchAmmoProjectile(const SpellGoData& data) {
         const uint32_t targetInstance = owner_.resolveUnitRenderInstance(target);
         if (targetInstance && characters->getAttachmentTransform(targetInstance, kAttachChestFront, transform))
             end = glm::vec3(transform[3]);
-        LOG_DEBUG("Ammo projectile: spell ", data.spellId, " ", directory, model, " speed ", speed);
+        LOG_DEBUG("Ammo projectile: spell ", data.spellId, " ", fullModelPath, " speed ", speed);
         auto targetResolver = [this, target]() -> std::optional<rendering::MissileTargetSample> {
             glm::vec3 pos;
             if (!resolveUnitPosition(target, pos)) return std::nullopt;
@@ -955,9 +957,10 @@ void SpellHandler::launchAmmoProjectile(const SpellGoData& data) {
             }
             return rendering::MissileTargetSample{pos, instance};
         };
-        visuals->playPhysicalProjectile(directory + model, texture.empty() ? "" : directory + texture + ".blp",
+        const bool stickOnHit = rendering::shouldStickPhysicalProjectile(fullModelPath, thrown, isHit);
+        visuals->playPhysicalProjectile(fullModelPath, fullTexturePath,
                                         start, end, glm::length(end - start) / speed, thrown,
-                                        std::move(targetResolver), speed);
+                                        std::move(targetResolver), speed, stickOnHit);
     }
 }
 
@@ -1128,8 +1131,9 @@ void SpellHandler::launchRangedWeaponProjectile(uint32_t spellId, uint64_t targe
         pos.z += 1.0f;
         return rendering::MissileTargetSample{pos, instance};
     };
+    const bool stickOnHit = rendering::shouldStickPhysicalProjectile(modelPath, spin, /*hitTarget=*/true);
     visuals->playPhysicalProjectile(modelPath, texturePath, start, end, duration, spin,
-                                    std::move(targetResolver), speed);
+                                    std::move(targetResolver), speed, stickOnHit);
 }
 
 

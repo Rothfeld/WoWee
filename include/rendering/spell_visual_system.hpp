@@ -241,7 +241,8 @@ public:
                                 float duration,
                                 bool spin,
                                 MissileTargetResolver targetResolver = {},
-                                float speed = 0.0f);
+                                float speed = 0.0f,
+                                bool stickOnHit = false);
 
     // Advance lifetime timers and remove expired instances.
     void update(float deltaTime);
@@ -338,6 +339,12 @@ private:
         float speed = 0.0f;
         float distanceTraveled = 0.0f;
         bool spin = false;
+        bool stickOnHit = false;
+        bool stuck = false;
+        float stuckElapsed = 0.0f;
+        uint32_t targetInstanceId = 0;
+        uint32_t targetAttachmentId = kAttachChestBloodFrontId;
+        StuckArrowLocalPose stuckLocal;
         MissileTargetResolver targetResolver;
     };
 

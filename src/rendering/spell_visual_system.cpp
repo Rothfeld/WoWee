@@ -2064,7 +2064,8 @@ void SpellVisualSystem::playPhysicalProjectile(const std::string& modelPath,
                                                 float duration,
                                                 bool spin,
                                                 MissileTargetResolver targetResolver,
-                                                float speed) {
+                                                float speed,
+                                                bool stickOnHit) {
     if (!renderer_ || modelPath.empty()) return;
     auto* characterRenderer = renderer_->getCharacterRenderer();
     if (!characterRenderer) return;
@@ -2101,8 +2102,12 @@ void SpellVisualSystem::playPhysicalProjectile(const std::string& modelPath,
     }
 
     glm::vec3 resolvedEnd = end;
+    uint32_t targetInstanceId = 0;
     if (targetResolver) {
-        if (const auto sample = targetResolver()) resolvedEnd = sample->position;
+        if (const auto sample = targetResolver()) {
+            resolvedEnd = sample->position;
+            targetInstanceId = sample->attachInstanceId;
+        }
     }
     const glm::vec3 delta = resolvedEnd - start;
     const float dist = glm::length(delta);
@@ -2111,11 +2116,15 @@ void SpellVisualSystem::playPhysicalProjectile(const std::string& modelPath,
 
     const uint32_t instanceId = characterRenderer->createInstance(modelId, start, rotation, 1.0f);
     if (instanceId == 0) return;
+    if (characterRenderer->hasAnimation(instanceId, anim::IN_FLIGHT)) {
+        characterRenderer->playAnimation(instanceId, anim::IN_FLIGHT, /*loop=*/true);
+    }
     physicalProjectiles_.push_back({.instanceId = instanceId, .start = start, .end = resolvedEnd,
                                     .pos = start, .dir = initDir, .rotation = rotation, .elapsed = 0.0f,
                                     .duration = std::max(duration, 0.05f),
                                     .speed = (std::isfinite(speed) && speed > 0.0f) ? speed : 0.0f,
-                                    .distanceTraveled = 0.0f, .spin = spin,
+                                    .distanceTraveled = 0.0f, .spin = spin, .stickOnHit = stickOnHit,
+                                    .targetInstanceId = targetInstanceId,
                                     .targetResolver = std::move(targetResolver)});
 }
 
@@ -2470,10 +2479,31 @@ void SpellVisualSystem::update(float deltaTime) {
 
     if (charRenderer) {
         for (auto it = physicalProjectiles_.begin(); it != physicalProjectiles_.end(); ) {
+            if (it->stuck) {
+                it->stuckElapsed += deltaTime;
+                glm::mat4 chestMat(1.0f);
+                const bool haveTarget = it->targetInstanceId != 0 &&
+                    charRenderer->getAttachmentTransform(it->targetInstanceId, it->targetAttachmentId, chestMat);
+                if (!haveTarget || it->stuckElapsed >= kStuckArrowLifetimeSec) {
+                    charRenderer->removeInstance(it->instanceId);
+                    it = physicalProjectiles_.erase(it);
+                    continue;
+                }
+                glm::vec3 worldPos(0.0f), worldRot(0.0f);
+                evaluateStuckArrowWorldPose(chestMat, it->stuckLocal, worldPos, worldRot);
+                charRenderer->setInstancePosition(it->instanceId, worldPos);
+                charRenderer->setInstanceRotation(it->instanceId, worldRot);
+                charRenderer->setInstanceOpacity(it->instanceId, stuckArrowOpacity(it->stuckElapsed));
+                ++it;
+                continue;
+            }
             it->elapsed += deltaTime;
             bool arrived = false;
             if (it->targetResolver && it->speed > 0.0f) {
-                if (const auto sample = it->targetResolver()) it->end = sample->position;
+                if (const auto sample = it->targetResolver()) {
+                    it->end = sample->position;
+                    if (sample->attachInstanceId != 0) it->targetInstanceId = sample->attachInstanceId;
+                }
                 const float stepSpeed = (it->elapsed >= missileMaxFlightDuration(it->duration)) ? 0.0f : it->speed;
                 const HomingStepResult step = stepHomingMissile(
                     it->pos, it->end, it->dir, stepSpeed, deltaTime, it->distanceTraveled);
@@ -2497,8 +2527,57 @@ void SpellVisualSystem::update(float deltaTime) {
                 arrived = t >= 1.0f;
             }
             if (arrived) {
-                charRenderer->removeInstance(it->instanceId);
-                it = physicalProjectiles_.erase(it);
+                bool embedded = false;
+                if (it->stickOnHit && it->targetInstanceId != 0) {
+                    uint32_t attachId = kAttachChestBloodFrontId;
+                    glm::mat4 chestMat(1.0f);
+                    if (!charRenderer->getAttachmentTransform(it->targetInstanceId, attachId, chestMat)) {
+                        attachId = kAttachChestId;
+                        if (!charRenderer->getAttachmentTransform(it->targetInstanceId, attachId, chestMat)) {
+                            attachId = 0;
+                        }
+                    }
+                    if (attachId != 0) {
+                        size_t stuckOnTarget = 0;
+                        auto oldest = physicalProjectiles_.end();
+                        for (auto s = physicalProjectiles_.begin(); s != physicalProjectiles_.end(); ++s) {
+                            if (s->stuck && s->targetInstanceId == it->targetInstanceId) {
+                                ++stuckOnTarget;
+                                if (oldest == physicalProjectiles_.end() || s->stuckElapsed > oldest->stuckElapsed)
+                                    oldest = s;
+                            }
+                        }
+                        if (stuckOnTarget >= kMaxStuckArrowsPerTarget && oldest != physicalProjectiles_.end()) {
+                            charRenderer->removeInstance(oldest->instanceId);
+                            const size_t idx = static_cast<size_t>(it - physicalProjectiles_.begin());
+                            const size_t oldIdx = static_cast<size_t>(oldest - physicalProjectiles_.begin());
+                            physicalProjectiles_.erase(oldest);
+                            it = physicalProjectiles_.begin() + static_cast<ptrdiff_t>(oldIdx < idx ? idx - 1 : idx);
+                        }
+                        it->stuck = true;
+                        it->stuckElapsed = 0.0f;
+                        it->targetAttachmentId = attachId;
+                        it->stuckLocal = computeStuckArrowLocalPose(
+                            chestMat, it->dir, static_cast<uint32_t>(stuckOnTarget));
+                        glm::vec3 worldPos(0.0f), worldRot(0.0f);
+                        evaluateStuckArrowWorldPose(chestMat, it->stuckLocal, worldPos, worldRot);
+                        charRenderer->setInstancePosition(it->instanceId, worldPos);
+                        charRenderer->setInstanceRotation(it->instanceId, worldRot);
+                        charRenderer->setInstanceOpacity(it->instanceId, 1.0f);
+                        if (charRenderer->hasAnimation(it->instanceId, anim::IMPACT)) {
+                            charRenderer->playAnimation(
+                                it->instanceId, anim::IMPACT, /*loop=*/false,
+                                /*oneShotReturnAnim=*/0, /*holdFinalPose=*/true);
+                        }
+                        embedded = true;
+                    }
+                }
+                if (embedded) {
+                    ++it;
+                } else {
+                    charRenderer->removeInstance(it->instanceId);
+                    it = physicalProjectiles_.erase(it);
+                }
             } else {
                 ++it;
             }
@@ -2611,6 +2690,11 @@ void SpellVisualSystem::transferUnitVisuals(uint32_t fromInstanceId, uint32_t to
             }
         } else if (havePos) {
             placeOnUnit(visual, characters, newPos, 1.0f);
+        }
+    }
+    for (auto& proj : physicalProjectiles_) {
+        if (proj.targetInstanceId == fromInstanceId) {
+            proj.targetInstanceId = toInstanceId;
         }
     }
     if (auto node = unitAuraVisuals_.extract(fromInstanceId)) {
