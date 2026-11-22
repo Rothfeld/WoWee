@@ -330,8 +330,13 @@ void EntityController::processOutOfRangeObjects(const std::vector<uint64_t>& gui
         // CMaNGOS removes an expired totem this way (out-of-range block in
         // SMSG_UPDATE_OBJECT), not with SMSG_DESTROY_OBJECT.
         owner_.releaseTotem(guid);
+        uint64_t removedPetSummoner = 0;
         // Trigger despawn callbacks before removing entity
         if (entity->getType() == ObjectType::UNIT) {
+            if (const uint16_t lo = fieldIndex(UF::UNIT_FIELD_SUMMONEDBY_LO); lo != 0xFFFF) {
+                removedPetSummoner = static_cast<uint64_t>(entity->getField(lo)) |
+                                     (static_cast<uint64_t>(entity->getField(fieldIndex(UF::UNIT_FIELD_SUMMONEDBY_HI))) << 32);
+            }
             owner_.mirrorImageDataRef().erase(guid);
             if (owner_.creatureDespawnCallbackRef()) {
                 owner_.creatureDespawnCallbackRef()(guid);
@@ -363,6 +368,13 @@ void EntityController::processOutOfRangeObjects(const std::vector<uint64_t>& gui
             owner_.clearPlayerTransport();
         }
         entityManager.removeEntity(guid);
+        if (removedPetSummoner != 0 && removedPetSummoner != owner_.getPlayerGuid()) {
+            for (const auto& token : unitEventTokens(owner_, removedPetSummoner)) {
+                if (token.rfind("party", 0) == 0 || token.rfind("raid", 0) == 0) {
+                    owner_.fireAddonEvent("UNIT_PET", {token});
+                }
+            }
+        }
         if (guid == owner_.getTargetGuid() && !owner_.isGroupMember(guid)) owner_.clearTarget();
         if (owner_.getCombatHandler()) {
             if (guid == owner_.getCombatHandler()->getAutoAttackTargetGuid())
@@ -3047,6 +3059,10 @@ void EntityController::mirrorGroupMemberState(const Entity& entity) {
         if (pvpFfa) member.onlineStatus |= 0x10u;
         if (afk) member.onlineStatus |= 0x40u;
         if (dnd) member.onlineStatus |= 0x80u;
+        if (const uint16_t summon = fieldIndex(UF::UNIT_FIELD_SUMMON); summon != 0xFFFF) {
+            member.petGuid = static_cast<uint64_t>(entity.getField(summon)) |
+                             (static_cast<uint64_t>(entity.getField(summon + 1)) << 32);
+        }
         return;
     }
 }
@@ -3077,6 +3093,16 @@ void EntityController::onValuesUpdatePlayer(const UpdateBlock& block, std::share
     if (block.guid != owner_.getPlayerGuid()) {
         owner_.updateOtherPlayerVisibleItems(block.guid, entity->getFields());
         announceGroupQuestLog(block);
+        if (const uint16_t summon = fieldIndex(UF::UNIT_FIELD_SUMMON);
+            summon != 0xFFFF &&
+            (block.fields.find(summon) != block.fields.end() ||
+             block.fields.find(summon + 1) != block.fields.end())) {
+            for (const auto& token : unitEventTokens(owner_, block.guid)) {
+                if (token.rfind("party", 0) == 0 || token.rfind("raid", 0) == 0) {
+                    pendingEvents_.emit("UNIT_PET", {token});
+                }
+            }
+        }
     }
 
     // Unit field update (player IS a unit)
@@ -3591,9 +3617,14 @@ void EntityController::handleDestroyObject(network::Packet& packet) {
         }
         owner_.releaseTotem(data.guid);
         // Mirror out-of-range handling: invoke render-layer despawn callbacks before entity removal.
+        uint64_t destroyedPetSummoner = 0;
         auto entity = entityManager.getEntity(data.guid);
         if (entity) {
             if (entity->getType() == ObjectType::UNIT) {
+                if (const uint16_t lo = fieldIndex(UF::UNIT_FIELD_SUMMONEDBY_LO); lo != 0xFFFF) {
+                    destroyedPetSummoner = static_cast<uint64_t>(entity->getField(lo)) |
+                                           (static_cast<uint64_t>(entity->getField(fieldIndex(UF::UNIT_FIELD_SUMMONEDBY_HI))) << 32);
+                }
                 owner_.mirrorImageDataRef().erase(data.guid);
                 if (owner_.creatureDespawnCallbackRef()) {
                     owner_.creatureDespawnCallbackRef()(data.guid);
@@ -3627,6 +3658,13 @@ void EntityController::handleDestroyObject(network::Packet& packet) {
         }
         owner_.clearTransportAttachment(data.guid);
         entityManager.removeEntity(data.guid);
+        if (destroyedPetSummoner != 0 && destroyedPetSummoner != owner_.getPlayerGuid()) {
+            for (const auto& token : unitEventTokens(owner_, destroyedPetSummoner)) {
+                if (token.rfind("party", 0) == 0 || token.rfind("raid", 0) == 0) {
+                    owner_.fireAddonEvent("UNIT_PET", {token});
+                }
+            }
+        }
         LOG_INFO("Destroyed entity: 0x", std::hex, data.guid, std::dec,
                  " (", (data.isDeath ? "death" : "despawn"), ")");
     } else {
