@@ -13,6 +13,7 @@
 #include "rendering/chain_effect.hpp"
 #include "rendering/missile_homing.hpp"
 #include "rendering/spell_missile_motion.hpp"
+#include "rendering/spell_visual_kit_policy.hpp"
 #include "rendering/m2_renderer.hpp"
 #include "rendering/spell_launch_origin.hpp"
 #include "rendering/weapon_trail.hpp"
@@ -282,6 +283,8 @@ public:
     void reset();
 
     /// M2 attachment IDs used by SpellVisualKit slots.
+    static constexpr uint32_t kAttachRightWeapon = 1;
+    static constexpr uint32_t kAttachLeftWeapon = 2;
     static constexpr uint32_t kAttachBreath = 17;
     static constexpr uint32_t kAttachSpellLeftHand = 21;
     static constexpr uint32_t kAttachSpellRightHand = 22;
@@ -289,8 +292,9 @@ public:
     static constexpr uint32_t kAttachSpecial3 = 25;
 
     // Slots whose effect takes the attachment bone's full orientation, every
-    // frame, and not only the unit's yaw: Breath 17, SpellLeftHand/SpellRightHand
-    // 21-22, and Special 23-25.
+    // frame, and not only the unit's yaw: HandRight/HandLeft 1-2 (held weapon
+    // effects such as Brewfest Mug, Flaming Torch, Mining Pick), Breath 17,
+    // SpellLeftHand/SpellRightHand 21-22, and Special 23-25.
     // - Onyxia's Flame Breath 18435 (cast kit 4450 SpecialEffect0,
     //   dragonflamebreath.m2): the fire first dives with her head to the ground
     //   ahead of her, then climbs as the SpellCastDirected head lifts.
@@ -301,7 +305,9 @@ public:
     // Head 18 (overhead anchor), Base 19, Chest 34, and World 0 stay upright
     // with the unit's yaw only.
     static constexpr bool slotFollowsBone(uint32_t attachment) {
-        return attachment == kAttachBreath ||
+        return attachment == kAttachRightWeapon ||
+               attachment == kAttachLeftWeapon ||
+               attachment == kAttachBreath ||
                attachment == kAttachSpellLeftHand ||
                attachment == kAttachSpellRightHand ||
                (attachment >= kAttachSpecial1 && attachment <= kAttachSpecial3);
@@ -408,6 +414,7 @@ private:
     std::unordered_map<uint32_t, uint32_t> kitAnimations_;
     std::unordered_map<uint32_t, uint32_t> kitSounds_;       // SpellVisualKit col 15 -> SoundEntries ID
     std::unordered_map<uint32_t, uint32_t> kitShakes_;       // SpellVisualKit col 16 -> SpellEffectCameraShakes ID
+    std::unordered_map<uint32_t, uint32_t> kitFlags_;        // SpellVisualKit col 37 -> Flags
     CameraShakeTable cameraShakeTable_;
     std::unordered_map<uint32_t, uint32_t> activePrecastSounds_;  // attachInstanceId -> AudioEngine soundId
     std::unordered_map<uint32_t, uint32_t> activeChannelSounds_;  // attachInstanceId -> AudioEngine soundId
@@ -429,9 +436,10 @@ private:
     std::unordered_map<uint32_t, uint32_t> persistentAreaKits_;
     std::unordered_map<uint64_t, std::vector<uint32_t>> persistentAreas_;  // key -> M2 instances
     // Slots whose effect is not drawn on a model lacking their attachment:
-    // spell hands 21/22 and breath 17 (others fall back to the unit position).
+    // weapon hands 1/2, spell hands 21/22, and breath 17 (others fall back to the unit position).
     static constexpr bool slotSkippedWhenAbsent(uint32_t attachment) {
-        return attachment == kAttachSpellLeftHand || attachment == kAttachSpellRightHand ||
+        return attachment == kAttachRightWeapon || attachment == kAttachLeftWeapon ||
+               attachment == kAttachSpellLeftHand || attachment == kAttachSpellRightHand ||
                attachment == kAttachBreath;
     }
     /// SpellVisualKit CharProc 0: CharParamZero is a SpellChainEffects.dbc id,
@@ -453,6 +461,11 @@ private:
     /// Freeze Anim, 27619/45438 Ice Block, 17624 Petrification, etc.).
     static constexpr uint32_t kCharProcFreezeAnim = 11;
     static constexpr uint32_t kCharProcOpacity = 14;
+    /// SpellVisualKit CharProc 15: timed opacity fade (startAlpha, endAlpha, duration).
+    static constexpr uint32_t kCharProcOpacityFade = 15;
+    /// SpellVisualKit CharProc 17: temporary visual equipment override
+    /// (CharParamZero = equip slot 0 Head, CharParamOne = Item.dbc entry ID).
+    static constexpr uint32_t kCharProcEquipOverride = 17;
     /// SpellVisualKit CharProc 13: CharParamZero 0xRRGGBB tints the light on
     /// the unit for CharParamOne seconds (CharacterRenderer::startInstanceKitLight).
     static constexpr uint32_t kCharProcLight = 13;
@@ -484,14 +497,18 @@ private:
         // The same visuals, oldest application first.
         std::vector<uint32_t> applied;
     };
-    // CharProc 1 colour, CharProc 11 animation freeze, and CharProc 14 opacity
-    // of a kit, where it has them.
+    // CharProc 1 colour, CharProc 11 animation freeze, CharProc 14 opacity,
+    // and CharProc 17 head item display override of a kit, where it has them.
     struct KitCharacterProcedures {
         std::optional<glm::vec3> color;
         std::optional<float> opacity;
         bool freezeAnimation = false;
+        uint32_t headItemDisplayId = 0;
     };
     std::unordered_map<uint32_t, KitCharacterProcedures> kitCharacterProcedures_;
+    std::unordered_map<uint32_t, KitOpacityFadeSpec> kitOpacityFades_;
+    std::unordered_map<uint32_t, uint32_t> activeKitHeadOverride_; // attachInstanceId -> active ItemDisplayInfo ID
+    uint32_t nextKitHeadOverrideModelId_ = 997000;
     struct KitLight {
         glm::vec3 color{1.0f};
         float seconds = 0.0f;
@@ -501,6 +518,8 @@ private:
     std::vector<ActiveUnitWeaponTrail> activeWeaponTrails_;
     /// Start the kit's CharProc 13 light on the unit, where the kit has one.
     void startKitLight(uint32_t kitId, uint32_t attachInstanceId);
+    /// Start the kit's CharProc 15 timed opacity fade on the unit, where the kit has one.
+    void startKitOpacityFade(uint32_t kitId, uint32_t attachInstanceId);
     /// Start the kit's CharProc 8 weapon swing trail on the unit, where the kit has one.
     void startKitWeaponTrail(uint32_t kitId, uint32_t attachInstanceId);
     void updateWeaponTrails(float deltaTime);

@@ -9,6 +9,7 @@
 
 #include "pipeline/m2_loader.hpp"
 #include "rendering/m2_track_sampler.hpp"
+#include "rendering/spell_visual_kit_policy.hpp"
 #include "rendering/spell_visual_system.hpp"
 
 #include <cstdlib>
@@ -227,4 +228,65 @@ TEST_CASE("Cone of Cold emits along local -Z and SpellLeftHand aims -Z forward i
         CHECK(negZ.x > 0.85f);
         CHECK(std::abs(negZ.z) < 0.35f);
     }
+}
+
+TEST_CASE("SpellVisualKit weapon slots follow hand bone orientation", "[spell-visual]") {
+    using wowee::rendering::SpellVisualSystem;
+    CHECK(SpellVisualSystem::slotFollowsBone(SpellVisualSystem::kAttachRightWeapon));
+    CHECK(SpellVisualSystem::slotFollowsBone(SpellVisualSystem::kAttachLeftWeapon));
+    CHECK(SpellVisualSystem::kAttachRightWeapon == 1u);
+    CHECK(SpellVisualSystem::kAttachLeftWeapon == 2u);
+}
+
+TEST_CASE("SpellVisualKit CharProc 15 opacity fade and CharProc 17 equip override parsers",
+          "[spell-visual][charproc]") {
+    using namespace wowee::rendering;
+
+    // CharProc 15: kit 6795 Teleport Test (0 -> 1 over 1000 ms),
+    // kit 6978 Coalesce (1 -> 0 over 1 s), kit 3269 Jeff Dummy 1 (0.6 -> 2.0 clamped to 1.0 over 500 ms).
+    const auto teleport = parseKitOpacityFadeCharProc(0.0f, 1.0f, 1000.0f);
+    REQUIRE(teleport.has_value());
+    CHECK(teleport->startAlpha == Catch::Approx(0.0f));
+    CHECK(teleport->endAlpha == Catch::Approx(1.0f));
+    CHECK(teleport->durationSec == Catch::Approx(1.0f));
+
+    const auto coalesce = parseKitOpacityFadeCharProc(1.0f, 0.0f, 1.0f);
+    REQUIRE(coalesce.has_value());
+    CHECK(coalesce->startAlpha == Catch::Approx(1.0f));
+    CHECK(coalesce->endAlpha == Catch::Approx(0.0f));
+    CHECK(coalesce->durationSec == Catch::Approx(1.0f));
+
+    const auto clamped = parseKitOpacityFadeCharProc(0.6f, 2.0f, 500.0f);
+    REQUIRE(clamped.has_value());
+    CHECK(clamped->endAlpha == Catch::Approx(1.0f));
+    CHECK(clamped->durationSec == Catch::Approx(0.5f));
+
+    CHECK_FALSE(parseKitOpacityFadeCharProc(0.0f, 1.0f, 0.0f).has_value());
+
+    // CharProc 17: kit 8381 Jack-o'-Lanterned! (44185) & kit 8081 Conflagration (42380)
+    // slot 0 (Head), Item.dbc entry 33292 (Hallowed Helm -> ItemDisplayInfo 46514).
+    const auto pumpkin = parseKitEquipOverrideCharProc(0.0f, 33292.0f);
+    REQUIRE(pumpkin.has_value());
+    CHECK(pumpkin->slot == 0u);
+    CHECK(pumpkin->itemId == 33292u);
+    CHECK_FALSE(parseKitEquipOverrideCharProc(0.0f, 0.0f).has_value());
+    CHECK_FALSE(parseKitEquipOverrideCharProc(-1.0f, 33292.0f).has_value());
+
+    // Character model name -> TBC race/gender IDs for per-race helm cut resolution.
+    const auto hum = raceGenderFromCharacterModelName("HumanMale");
+    REQUIRE(hum.has_value());
+    CHECK(hum->raceId == 1u);
+    CHECK(hum->genderId == 0u);
+
+    const auto bef = raceGenderFromCharacterModelName("BloodElfFemale");
+    REQUIRE(bef.has_value());
+    CHECK(bef->raceId == 10u);
+    CHECK(bef->genderId == 1u);
+
+    const auto scm = raceGenderFromCharacterModelName("ScourgeMale");
+    REQUIRE(scm.has_value());
+    CHECK(scm->raceId == 5u);
+    CHECK(scm->genderId == 0u);
+
+    CHECK_FALSE(raceGenderFromCharacterModelName("DragonOnyxia").has_value());
 }

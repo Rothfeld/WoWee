@@ -2744,8 +2744,9 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos,
         // Kit opacity transition, carried to the unit's weapons and their effects.
         if (inst.kitOpacity != inst.kitOpacityTarget) {
             inst.kitOpacityTime += deltaTime;
+            const float duration = inst.kitOpacityDuration > 0.0f ? inst.kitOpacityDuration : kKitOpacityTransition;
             inst.kitOpacity = kitTransitionOpacity(inst.kitOpacityFrom, inst.kitOpacityTarget,
-                                                   inst.kitOpacityTime, kKitOpacityTransition);
+                                                   inst.kitOpacityTime, duration);
             // Attachments follow the drawn value; their own target matches it so
             // their entries in this loop do not start a transition.
             for (const auto& attachment : inst.weaponAttachments) {
@@ -5358,6 +5359,7 @@ void CharacterRenderer::setInstanceKitAppearance(uint32_t instanceId, const glm:
         instance.kitOpacityFrom = instance.kitOpacity;
         instance.kitOpacityTarget = opacity;
         instance.kitOpacityTime = 0.0f;
+        instance.kitOpacityDuration = kKitOpacityTransition;
     }
     for (const auto& attachment : instance.weaponAttachments) {
         auto& weapon = instances.at(attachment.weaponInstanceId);
@@ -5367,6 +5369,64 @@ void CharacterRenderer::setInstanceKitAppearance(uint32_t instanceId, const glm:
             auto& fx = instances.at(effect.effectInstanceId);
             fx.kitColor = color;
             fx.kitOpacity = fx.kitOpacityTarget = instance.kitOpacity;
+        }
+    }
+}
+
+void CharacterRenderer::startInstanceKitOpacityFade(uint32_t instanceId, float startAlpha, float endAlpha,
+                                                    float durationSec) {
+    auto it = instances.find(instanceId);
+    if (it == instances.end()) return;
+    auto& instance = it->second;
+    const float clampedStart = std::clamp(startAlpha, 0.0f, 1.0f);
+    const float clampedEnd = std::clamp(endAlpha, 0.0f, 1.0f);
+    instance.kitOpacity = clampedStart;
+    instance.kitOpacityFrom = clampedStart;
+    instance.kitOpacityTarget = clampedEnd;
+    instance.kitOpacityTime = 0.0f;
+    instance.kitOpacityDuration = durationSec > 0.0f ? durationSec : kKitOpacityTransition;
+    for (const auto& attachment : instance.weaponAttachments) {
+        if (auto w = instances.find(attachment.weaponInstanceId); w != instances.end())
+            w->second.kitOpacity = w->second.kitOpacityTarget = clampedStart;
+        for (const auto& effect : attachment.effects) {
+            if (auto e = instances.find(effect.effectInstanceId); e != instances.end())
+                e->second.kitOpacity = e->second.kitOpacityTarget = clampedStart;
+        }
+    }
+}
+
+bool CharacterRenderer::setInstanceKitHeadOverride(uint32_t charInstanceId, const pipeline::M2Model& helmModel,
+                                                   uint32_t helmModelId, const std::string& texturePath) {
+    auto charIt = instances.find(charInstanceId);
+    if (charIt == instances.end()) return false;
+    clearInstanceKitHeadOverride(charInstanceId);
+    for (const auto& wa : charIt->second.weaponAttachments) {
+        if (wa.attachmentId == 11u && !wa.isKitOverride) {
+            if (auto wIt = instances.find(wa.weaponInstanceId); wIt != instances.end())
+                wIt->second.visible = false;
+        }
+    }
+    if (!attachWeapon(charInstanceId, 11u, helmModel, helmModelId, texturePath)) {
+        clearInstanceKitHeadOverride(charInstanceId);
+        return false;
+    }
+    charIt = instances.find(charInstanceId);
+    if (charIt != instances.end() && !charIt->second.weaponAttachments.empty()) {
+        charIt->second.weaponAttachments.back().isKitOverride = true;
+    }
+    return true;
+}
+
+void CharacterRenderer::clearInstanceKitHeadOverride(uint32_t charInstanceId) {
+    detachWeapons(charInstanceId, [](const WeaponAttachment& wa) {
+        return wa.isKitOverride;
+    });
+    auto charIt = instances.find(charInstanceId);
+    if (charIt == instances.end()) return;
+    for (const auto& wa : charIt->second.weaponAttachments) {
+        if (wa.attachmentId == 11u && !wa.isKitOverride) {
+            if (auto wIt = instances.find(wa.weaponInstanceId); wIt != instances.end())
+                wIt->second.visible = charIt->second.visible;
         }
     }
 }
@@ -6254,7 +6314,7 @@ bool CharacterRenderer::getInstancePosition(uint32_t instanceId, glm::vec3& outP
 
 void CharacterRenderer::detachWeapon(uint32_t charInstanceId, uint32_t attachmentId) {
     detachWeapons(charInstanceId, [attachmentId](const WeaponAttachment& wa) {
-        return wa.attachmentId == attachmentId;
+        return wa.attachmentId == attachmentId && !wa.isKitOverride;
     });
 }
 

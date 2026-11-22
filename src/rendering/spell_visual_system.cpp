@@ -21,6 +21,7 @@
 #include "audio/audio_engine.hpp"
 #include "audio/sound_entries.hpp"
 #include "core/application.hpp"
+#include "core/helm_visual.hpp"
 #include "core/logger.hpp"
 #include <algorithm>
 #include <cmath>
@@ -128,19 +129,26 @@ void SpellVisualSystem::loadSpellVisualDbc() {
         LOG_WARNING("SpellVisual: SpellVisualEffectName layout lacks Scale; every effect drawn at 1");
 
     // Kit effect fields to probe, in priority order.
-    // SpecialEffect0 > BaseEffect > LeftHand > RightHand > Chest > Head > Breath
+    // SpecialEffect0 > BaseEffect > LeftHand > RightHand > Chest > Head > Breath > LeftWeapon > RightWeapon
     struct KitField { const char* name; uint32_t fallback; };
     static constexpr KitField kitFieldDefs[] = {
-        {.name = "SpecialEffect0",  .fallback = 11}, {.name = "BaseEffect",       .fallback = 5},
-        {.name = "LeftHandEffect",   .fallback = 6}, {.name = "RightHandEffect",  .fallback = 7},
-        {.name = "ChestEffect",      .fallback = 4}, {.name = "HeadEffect",       .fallback = 3},
-        {.name = "BreathEffect",     .fallback = 8}, {.name = "SpecialEffect1",  .fallback = 12},
-        {.name = "SpecialEffect2",  .fallback = 13}, {.name = "WorldEffect",     .fallback = 14},
+        {.name = "SpecialEffect0",    .fallback = 11}, {.name = "BaseEffect",        .fallback = 5},
+        {.name = "LeftHandEffect",    .fallback = 6},  {.name = "RightHandEffect",   .fallback = 7},
+        {.name = "ChestEffect",       .fallback = 4},  {.name = "HeadEffect",        .fallback = 3},
+        {.name = "BreathEffect",      .fallback = 8},  {.name = "SpecialEffect1",    .fallback = 12},
+        {.name = "SpecialEffect2",    .fallback = 13}, {.name = "WorldEffect",       .fallback = 14},
+        {.name = "LeftWeaponEffect",  .fallback = 9},  {.name = "RightWeaponEffect", .fallback = 10},
     };
     constexpr size_t numKitFields = sizeof(kitFieldDefs) / sizeof(kitFieldDefs[0]);
     uint32_t kitFields[numKitFields];
-    for (size_t k = 0; k < numKitFields; ++k)
-        kitFields[k] = kitLayout ? kitLayout->field(kitFieldDefs[k].name) : kitFieldDefs[k].fallback;
+    for (size_t k = 0; k < numKitFields; ++k) {
+        uint32_t f = kitLayout ? kitLayout->tryField(kitFieldDefs[k].name) : 0xFFFFFFFFu;
+        kitFields[k] = (f != 0xFFFFFFFFu) ? f : kitFieldDefs[k].fallback;
+    }
+    uint32_t kitShakeField = kitLayout ? kitLayout->tryField("ShakeID") : 0xFFFFFFFFu;
+    if (kitShakeField == 0xFFFFFFFFu) kitShakeField = 16;
+    uint32_t kitFlagsField = kitLayout ? kitLayout->tryField("Flags") : 0xFFFFFFFFu;
+    if (kitFlagsField == 0xFFFFFFFFu) kitFlagsField = 37;
 
     // Load SpellVisualEffectName.dbc - ID → M2 path
     auto fxDbc = cachedAssetManager_->loadDBC("SpellVisualEffectName.dbc");
@@ -179,6 +187,23 @@ void SpellVisualSystem::loadSpellVisualDbc() {
         procParamTwoFields[k] = kitLayout ? kitLayout->tryField("CharParamTwo" + std::to_string(k)) : 0xFFFFFFFFu;
         procParamThreeFields[k] = kitLayout ? kitLayout->tryField("CharParamThree" + std::to_string(k)) : 0xFFFFFFFFu;
     }
+    std::unordered_map<uint32_t, uint32_t> itemDisplayIds;
+    bool itemDbcLoaded = false;
+    auto resolveItemDisplayId = [&](uint32_t itemId) -> uint32_t {
+        if (!itemDbcLoaded) {
+            itemDbcLoaded = true;
+            if (auto itemDbc = cachedAssetManager_->loadDBC("Item.dbc");
+                itemDbc && itemDbc->isLoaded() && itemDbc->getFieldCount() >= 2) {
+                for (uint32_t r = 0; r < itemDbc->getRecordCount(); ++r) {
+                    const uint32_t id = itemDbc->getUInt32(r, 0);
+                    const uint32_t disp = itemDbc->getUInt32(r, 1);
+                    if (id && disp) itemDisplayIds[id] = disp;
+                }
+            }
+        }
+        const auto found = itemDisplayIds.find(itemId);
+        return found != itemDisplayIds.end() ? found->second : 0u;
+    };
     if (kitDbc && kitDbc->isLoaded()) {
         uint32_t fc = kitDbc->getFieldCount();
         for (uint32_t i = 0; i < kitDbc->getRecordCount(); ++i) {
@@ -189,9 +214,13 @@ void SpellVisualSystem::loadSpellVisualDbc() {
                 if (const uint32_t soundId = kitDbc->getUInt32(i, 15); soundId != 0)
                     kitSounds_[kitId] = soundId;
             }
-            if (fc > 16) {
-                if (const uint32_t shakeId = kitDbc->getUInt32(i, 16); shakeId != 0)
+            if (fc > kitShakeField) {
+                if (const uint32_t shakeId = kitDbc->getUInt32(i, kitShakeField); shakeId != 0)
                     kitShakes_[kitId] = shakeId;
+            }
+            if (fc > kitFlagsField) {
+                if (const uint32_t flags = kitDbc->getUInt32(i, kitFlagsField); flags != 0)
+                    kitFlags_[kitId] = flags;
             }
             // Attachment semantics come from the kit slot, not the filename.
             // HeadEffect uses the model's overhead anchor, not its animated
@@ -216,7 +245,10 @@ void SpellVisualSystem::loadSpellVisualDbc() {
             // GnomeMale 0.5, HumanMale 1, Infernal 1.8, Dragon 5.5. Ice
             // Block's cube (BaseEffect icebarrier_state) measured about 4 yd
             // times that scale times the unit's own scale on each of them.
-            static constexpr uint32_t attachments[] = {23, 19, 21, 22, 34, kAttachHeadId, kAttachBreath, 24, 25, 0};
+            static constexpr uint32_t attachments[] = {
+                23, 19, 21, 22, 34, kAttachHeadId, kAttachBreath, 24, 25, 0,
+                kAttachLeftWeapon, kAttachRightWeapon,
+            };
             for (size_t k = 0; k < numKitFields; ++k) {
                 if (kitFields[k] >= fc) continue;
                 const uint32_t effectId = kitDbc->getUInt32(i, kitFields[k]);
@@ -286,6 +318,24 @@ void SpellVisualSystem::loadSpellVisualDbc() {
                     const float p3 = kitDbc->getFloat(i, procParamThreeFields[k]);
                     if (const auto spec = parseWeaponTrailCharProc(param, p1, p2, p3)) {
                         kitWeaponTrails_[kitId] = *spec;
+                    }
+                } else if (procedure == kCharProcOpacityFade) {
+                    if (procParamOneFields[k] < fc && procParamTwoFields[k] < fc) {
+                        const float p1 = kitDbc->getFloat(i, procParamOneFields[k]);
+                        const float p2 = kitDbc->getFloat(i, procParamTwoFields[k]);
+                        if (const auto spec = parseKitOpacityFadeCharProc(param, p1, p2)) {
+                            kitOpacityFades_[kitId] = *spec;
+                        }
+                    }
+                } else if (procedure == kCharProcEquipOverride) {
+                    if (procParamOneFields[k] < fc) {
+                        const float p1 = kitDbc->getFloat(i, procParamOneFields[k]);
+                        if (const auto spec = parseKitEquipOverrideCharProc(param, p1);
+                            spec && spec->slot == 0) {
+                            if (const uint32_t dispId = resolveItemDisplayId(spec->itemId); dispId != 0) {
+                                kitCharacterProcedures_[kitId].headItemDisplayId = dispId;
+                            }
+                        }
                     }
                 }
             }
@@ -499,6 +549,7 @@ void SpellVisualSystem::playSpellVisualPrecast(uint32_t visualId, const glm::vec
         snd != 0 && attachInstanceId != 0) {
         activePrecastSounds_[attachInstanceId] = snd;
     }
+    playKitShake(kit->second, worldPosition);
     spawnKitEffects(kit->second, worldPosition, attachInstanceId, duration, KitStage::Precast);
     startKitWeaponTrail(kit->second, attachInstanceId);
 }
@@ -836,6 +887,7 @@ void SpellVisualSystem::playSpellVisual(uint32_t visualId, const glm::vec3& worl
     if (attachInstanceId != 0) stopPrecastSound(attachInstanceId);
     playKitSound(kit->second, worldPosition, attachInstanceId, /*stoppable=*/false);
     playKitShake(kit->second, worldPosition);
+    startKitOpacityFade(kit->second, attachInstanceId);
     spawnKitEffects(kit->second, worldPosition, attachInstanceId, -1.0f, KitStage::Cast);
     startKitWeaponTrail(kit->second, attachInstanceId);
 }
@@ -1074,6 +1126,7 @@ void SpellVisualSystem::applyCharacterProcedures(uint32_t attachInstanceId) {
     glm::vec3 color(1.0f);
     float opacity = 1.0f;
     bool colored = false, faded = false, frozen = false;
+    uint32_t headDisplayId = 0;
     auto applyKit = [&](uint32_t kitId) {
         if (!kitId) return;
         const auto procedures = kitCharacterProcedures_.find(kitId);
@@ -1081,15 +1134,17 @@ void SpellVisualSystem::applyCharacterProcedures(uint32_t attachInstanceId) {
         if (!colored && procedures->second.color) { color = *procedures->second.color; colored = true; }
         if (!faded && procedures->second.opacity) { opacity = *procedures->second.opacity; faded = true; }
         if (procedures->second.freezeAnimation) frozen = true;
+        if (!headDisplayId && procedures->second.headItemDisplayId != 0)
+            headDisplayId = procedures->second.headItemDisplayId;
     };
     if (const auto chan = unitChannelVisuals_.find(attachInstanceId); chan != unitChannelVisuals_.end()) {
         if (const auto kit = channelKits_.find(chan->second.visualId); kit != channelKits_.end())
             applyKit(kit->second);
     }
     if (const auto auras = unitAuraVisuals_.find(attachInstanceId);
-        auras != unitAuraVisuals_.end() && !(colored && faded && frozen)) {
+        auras != unitAuraVisuals_.end() && !(colored && faded && frozen && headDisplayId != 0)) {
         for (auto visual = auras->second.applied.rbegin();
-             visual != auras->second.applied.rend() && !(colored && faded && frozen); ++visual) {
+             visual != auras->second.applied.rend() && !(colored && faded && frozen && headDisplayId != 0); ++visual) {
             const auto kit = stateKits_.find(*visual);
             if (kit != stateKits_.end()) applyKit(kit->second);
         }
@@ -1097,8 +1152,48 @@ void SpellVisualSystem::applyCharacterProcedures(uint32_t attachInstanceId) {
     LOG_DEBUG("Kit appearance: owner=", attachInstanceId,
               " channel=", unitChannelVisuals_.count(attachInstanceId),
               " color=(", color.r, ",", color.g, ",", color.b, ") opacity=", opacity,
-              " frozen=", frozen);
+              " frozen=", frozen, " headDisplay=", headDisplayId);
     characters->setInstanceKitAppearance(attachInstanceId, color, opacity, frozen);
+
+    const uint32_t prevHead = activeKitHeadOverride_.count(attachInstanceId)
+                                  ? activeKitHeadOverride_[attachInstanceId] : 0u;
+    if (headDisplayId != prevHead) {
+        if (headDisplayId == 0) {
+            characters->clearInstanceKitHeadOverride(attachInstanceId);
+            activeKitHeadOverride_.erase(attachInstanceId);
+        } else if (cachedAssetManager_) {
+            uint8_t raceId = 0;
+            uint8_t genderId = 0;
+            if (const auto* md = characters->getInstanceModelData(attachInstanceId)) {
+                if (const auto rg = raceGenderFromCharacterModelName(md->name)) {
+                    raceId = rg->raceId;
+                    genderId = rg->genderId;
+                }
+            }
+            const core::HelmVisual helm =
+                core::resolveHelmVisual(*cachedAssetManager_, headDisplayId, raceId, genderId);
+            pipeline::M2Model helmModel;
+            auto tryLoadHelm = [&](const std::string& path) -> bool {
+                if (path.empty()) return false;
+                auto bytes = cachedAssetManager_->readFile(path);
+                if (bytes.empty()) return false;
+                helmModel = pipeline::M2Loader::load(bytes);
+                if (!helmModel.isValid()) return false;
+                if (helmModel.version >= 264) {
+                    const std::string skinPath = path.substr(0, path.size() - 3) + "00.skin";
+                    auto skinBytes = cachedAssetManager_->readFile(skinPath);
+                    if (!skinBytes.empty()) pipeline::M2Loader::loadSkin(skinBytes, helmModel);
+                }
+                return true;
+            };
+            if (helm.valid() && (tryLoadHelm(helm.racialModelPath) || tryLoadHelm(helm.baseModelPath))) {
+                if (characters->setInstanceKitHeadOverride(
+                        attachInstanceId, helmModel, nextKitHeadOverrideModelId_++, helm.texturePath)) {
+                    activeKitHeadOverride_[attachInstanceId] = headDisplayId;
+                }
+            }
+        }
+    }
 }
 
 void SpellVisualSystem::updateChannelVisual(uint32_t attachInstanceId, uint32_t remainingMs) {
@@ -1563,6 +1658,7 @@ void SpellVisualSystem::playSpellVisualKit(uint32_t kitId, const glm::vec3& worl
     }
     LOG_DEBUG("SpellVisualKit: id=", kitId, " animation=", animation->second);
     startKitLight(kitId, attachInstanceId);
+    startKitOpacityFade(kitId, attachInstanceId);
     startKitWeaponTrail(kitId, attachInstanceId);
     playKitSound(kitId, worldPosition, attachInstanceId, /*stoppable=*/false);
     playKitShake(kitId, worldPosition);
@@ -1578,6 +1674,19 @@ void SpellVisualSystem::startKitLight(uint32_t kitId, uint32_t attachInstanceId)
     characters->startInstanceKitLight(attachInstanceId, light->second.color, light->second.seconds);
     LOG_DEBUG("Kit light: owner=", attachInstanceId, " kit=", kitId, " color=(", light->second.color.r, ",",
               light->second.color.g, ",", light->second.color.b, ") seconds=", light->second.seconds);
+}
+
+void SpellVisualSystem::startKitOpacityFade(uint32_t kitId, uint32_t attachInstanceId) {
+    if (!attachInstanceId) return;
+    const auto fadeIt = kitOpacityFades_.find(kitId);
+    if (fadeIt == kitOpacityFades_.end()) return;
+    auto* characters = renderer_ ? renderer_->getCharacterRenderer() : nullptr;
+    if (!characters) return;
+    characters->startInstanceKitOpacityFade(attachInstanceId, fadeIt->second.startAlpha,
+                                            fadeIt->second.endAlpha, fadeIt->second.durationSec);
+    LOG_DEBUG("Kit opacity fade: owner=", attachInstanceId, " kit=", kitId,
+              " alpha=", fadeIt->second.startAlpha, "->", fadeIt->second.endAlpha,
+              " duration=", fadeIt->second.durationSec, "s");
 }
 
 void SpellVisualSystem::startKitWeaponTrail(uint32_t kitId, uint32_t attachInstanceId) {
@@ -2553,10 +2662,13 @@ void SpellVisualSystem::transferUnitVisuals(uint32_t fromInstanceId, uint32_t to
         if (beam.start.instanceId == fromInstanceId) beam.start.instanceId = toInstanceId;
         if (beam.end.instanceId == fromInstanceId) beam.end.instanceId = toInstanceId;
     }
+    activeKitHeadOverride_.erase(fromInstanceId);
+    activeKitHeadOverride_.erase(toInstanceId);
     applyCharacterProcedures(toInstanceId);
 }
 
 void SpellVisualSystem::reset() {
+    activeKitHeadOverride_.clear();
     for (const auto& [inst, snd] : activePrecastSounds_) audio::AudioEngine::instance().stopSound(snd);
     for (const auto& [inst, snd] : activeChannelSounds_) audio::AudioEngine::instance().stopSound(snd);
     for (const auto& [key, snd] : activeAreaSounds_) audio::AudioEngine::instance().stopSound(snd);

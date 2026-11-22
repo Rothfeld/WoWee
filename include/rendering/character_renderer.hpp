@@ -68,6 +68,7 @@ struct WeaponAttachment {
     // weapon, always at attachmentId (helm, shoulders).
     int8_t heldSheathState = -1;
     uint32_t sheathAttachmentId = UINT32_MAX;
+    bool isKitOverride = false; // temporary SpellVisualKit CharProc 17 override (e.g. Hallowed Helm)
     std::vector<WeaponEffectAttachment> effects;
 };
 
@@ -229,6 +230,16 @@ public:
     /// _experiments/20261118T001500Z.pair6_kit_colour_timing).
     void setInstanceKitAppearance(uint32_t instanceId, const glm::vec3& color, float opacity,
                                   bool freezeAnimation = false);
+    /// SpellVisualKit CharProc 15: timed opacity fade from startAlpha to endAlpha
+    /// over durationSec seconds (e.g. Teleport Test 6795, Materialize 7032/7467).
+    void startInstanceKitOpacityFade(uint32_t instanceId, float startAlpha, float endAlpha,
+                                     float durationSec);
+    /// SpellVisualKit CharProc 17: temporary visual head item override (e.g.
+    /// Jack-o'-Lanterned! 44185 / Conflagration 42380 -> Hallowed Helm).
+    /// Hides any normal equipped helm on attachment 11 until cleared.
+    bool setInstanceKitHeadOverride(uint32_t charInstanceId, const pipeline::M2Model& helmModel,
+                                    uint32_t helmModelId, const std::string& texturePath);
+    void clearInstanceKitHeadOverride(uint32_t charInstanceId);
     /// SpellVisualKit CharProc 13 ("Glowy"): all light on the model (ambient,
     /// sun, interior and local lights) is multiplied by color for seconds,
     /// from now, whatever happens to the aura or spell that played the kit;
@@ -616,6 +627,7 @@ private:
         float kitOpacityFrom = 1.0f;
         float kitOpacityTarget = 1.0f;
         float kitOpacityTime = 0.0f;
+        float kitOpacityDuration = kKitOpacityTransition;
         // SpellVisualKit CharProc 11: holds the instance's animation clock and
         // current pose motionless until cleared.
         bool kitAnimationFrozen = false;
