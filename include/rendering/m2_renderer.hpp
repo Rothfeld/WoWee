@@ -818,6 +818,10 @@ public:
                         glm::vec3& adjustedPos, float playerRadius = 0.5f,
                         float playerHeight = 2.0f, bool allowHorizontalRise = true) const;
     std::optional<float> getFloorHeight(float glX, float glY, float glZ, float* outNormalZ = nullptr) const;
+    // Authored collision faces of every movement-blocking instance overlapping
+    // the world box, transformed to world space.
+    void appendBodyCollisionTriangles(const glm::vec3& worldLow, const glm::vec3& worldHigh,
+                                      std::vector<movement::BodyTriangle>& triangles) const;
     // Constrain a downward grounding snap against the complete upright body.
     // Returns true only when authored geometry blocks the requested descent.
     bool constrainFloorSnap(const glm::vec3& from, float requestedZ,
@@ -999,10 +1003,6 @@ public:
     void setPredecodedBLPCache(std::unordered_map<std::string, pipeline::BLPImage>* cache) { predecodedBLPCache_ = cache; }
 
 private:
-    // Authored collision faces of every movement-blocking instance overlapping
-    // the world box, transformed to world space.
-    void appendBodyCollisionTriangles(const glm::vec3& worldLow, const glm::vec3& worldHigh,
-                                      std::vector<movement::BodyTriangle>& triangles) const;
     bool initialized_ = false;
     bool insideInterior = false;
     std::optional<std::pair<glm::vec3, glm::vec3>> visibleRegion_;

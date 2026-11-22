@@ -9,9 +9,15 @@
 // hand for the ray test - rather than by calling the functions a second way.
 #include "rendering/body_collision.hpp"
 #include "rendering/movement_limits.hpp"
+#include "rendering/placement_transform.hpp"
+#include "core/coordinates.hpp"
+#include "pipeline/wmo_loader.hpp"
 #include <catch_amalgamated.hpp>
 
 #include <cmath>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <limits>
 #include <vector>
 
@@ -464,4 +470,501 @@ TEST_CASE("grounded step over a low authored edge returns to the sole height") {
           Catch::Approx(.2f).margin(.002f));
     CHECK(stepBodyAcross(from, beyond, radius, height, block, kMaxStepUp).z ==
           Catch::Approx(0.f).margin(.0001f));
+}
+
+namespace {
+
+std::filesystem::path findTbcDataDir() {
+    if (const char* env = std::getenv("WOWEE_TBC_DATA_DIR"); env && *env) {
+        std::filesystem::path p(env);
+        if (std::filesystem::exists(p / "world/wmo/dungeon/qt_sunwell/sunwell.wmo")) return p;
+    }
+    const std::filesystem::path fallback("/workspace/azerothcore/client/wowee-data/expansions/tbc");
+    if (std::filesystem::exists(fallback / "world/wmo/dungeon/qt_sunwell/sunwell.wmo")) return fallback;
+    return {};
+}
+
+std::vector<uint8_t> readBinaryFile(const std::filesystem::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    REQUIRE(in.good());
+    return std::vector<uint8_t>((std::istreambuf_iterator<char>(in)),
+                                std::istreambuf_iterator<char>());
+}
+
+std::optional<float> raycastFloorZ(std::span<const wowee::rendering::movement::BodyTriangle> tris,
+                                   float x, float y, float maxZ, float* outNormalZ = nullptr) {
+    std::optional<float> bestZ;
+    float bestNz = 1.0f;
+    const glm::vec3 origin(x, y, maxZ + 200.0f);
+    const glm::vec3 dir(0.0f, 0.0f, -1.0f);
+    for (const auto& tri : tris) {
+        const float t = rayTriangleIntersect(origin, dir, tri[0], tri[1], tri[2]);
+        if (t <= 0.0f) continue;
+        const float hitZ = origin.z - t;
+        if (hitZ > maxZ) continue;
+        glm::vec3 n = glm::cross(tri[1] - tri[0], tri[2] - tri[0]);
+        const float nLen = glm::length(n);
+        if (nLen <= 1e-6f) continue;
+        n /= nLen;
+        if (n.z < 0.0f) n = -n;
+        if (!bestZ || hitZ > *bestZ) {
+            bestZ = hitZ;
+            bestNz = n.z;
+        }
+    }
+    if (bestZ && outNormalZ) *outNormalZ = bestNz;
+    return bestZ;
+}
+
+struct SimulatedWalker {
+    glm::vec3 pos;
+    float radius;
+    float height;
+    bool grounded = true;
+    bool stepFromRest = false;
+    float verticalVelocity = 0.0f;
+    float walkableBaseZ = 0.0f;
+
+    void advanceFrame(const glm::vec2& horizDir, float speed, float dt,
+                      std::span<const wowee::rendering::movement::BodyTriangle> allTris) {
+        using namespace wowee::rendering::movement;
+        constexpr float kGravity = -19.29f;
+        const int physSteps = std::max(1, static_cast<int>(std::ceil(dt / (1.0f / 30.0f))));
+        const float pdt = dt / static_cast<float>(physSteps);
+        const glm::vec2 unitDir = glm::length(horizDir) > 1e-6f ? glm::normalize(horizDir) : glm::vec2(0.0f);
+
+        std::vector<BodyTriangle> localTris;
+        for (int ps = 0; ps < physSteps; ++ps) {
+            bool stepFinishedThisFrame = false;
+            const bool canRetryRest = stepFromRest && !grounded && verticalVelocity <= 0.0f;
+            stepFromRest = false;
+
+            const glm::vec3 prevPos = pos;
+            glm::vec3 target = pos;
+            target.x += unitDir.x * speed * pdt;
+            target.y += unitDir.y * speed * pdt;
+            target.z -= 0.5f * kGravity * pdt * pdt;
+            verticalVelocity += kGravity * pdt;
+            target.z += verticalVelocity * pdt;
+
+            const glm::vec3 fullDelta = target - pos;
+            const float dist = glm::length(fullDelta);
+            const int substeps = std::clamp(static_cast<int>(std::ceil(dist / 0.20f)), 1, 32);
+            const glm::vec3 subDelta = fullDelta / static_cast<float>(substeps);
+
+            if (grounded && pos.z < walkableBaseZ) walkableBaseZ = pos.z;
+            bool subCanStepFromRest = canRetryRest;
+            glm::vec3 stepPos = pos;
+
+            // Gather triangles near this physics step once for fast testing.
+            const glm::vec3 qLow = glm::min(pos, target) - glm::vec3(radius + 1.5f, radius + 1.5f, 2.5f);
+            const glm::vec3 qHigh = glm::max(pos, target) + glm::vec3(radius + 1.5f, radius + 1.5f, height + kMaxStepUp + 1.5f);
+            localTris.clear();
+            for (const auto& tri : allTris) {
+                const glm::vec3 tMin = glm::min(tri[0], glm::min(tri[1], tri[2]));
+                const glm::vec3 tMax = glm::max(tri[0], glm::max(tri[1], tri[2]));
+                if (glm::any(glm::lessThan(tMax, qLow)) || glm::any(glm::greaterThan(tMin, qHigh))) continue;
+                localTris.push_back(tri);
+            }
+
+            for (int i = 0; i < substeps; ++i) {
+                glm::vec3 candidate = stepPos + subDelta;
+                const glm::vec3 horizontal(candidate.x, candidate.y, stepPos.z);
+                glm::vec3 horizAdj = horizontal;
+                const bool horizContact = moveBody(stepPos, horizontal, radius, height,
+                                                   localTris, horizAdj, false);
+                bool didStepUp = false;
+                if (horizContact && (grounded || subCanStepFromRest)) {
+                    const bool fromRest = !grounded;
+                    const float budget = std::max(0.0f, (walkableBaseZ + kMaxStepUp) - stepPos.z);
+                    if (budget > 1e-4f) {
+                        glm::vec3 landingFace(0.0f, 0.0f, 1.0f);
+                        glm::vec3 landingNormal(0.0f, 0.0f, 1.0f);
+                        const glm::vec3 stepped = stepBodyAcross(
+                            stepPos, horizontal, radius, height, localTris, budget,
+                            &landingFace, &landingNormal);
+                        const glm::vec2 intent(horizontal - stepPos);
+                        bool farther = glm::dot(glm::vec2(stepped - stepPos), intent) >
+                            glm::dot(glm::vec2(horizAdj - stepPos), intent) + 1e-6f;
+                        if (fromRest && !isWalkableNormal(landingFace.z)) farther = false;
+                        if (farther) {
+                            horizAdj = stepped;
+                            didStepUp = stepped.z > stepPos.z + 1e-5f;
+                            if (didStepUp) {
+                                stepFinishedThisFrame = true;
+                                if (isWalkableNormal(landingFace.z)) {
+                                    grounded = true;
+                                    verticalVelocity = 0.0f;
+                                    subCanStepFromRest = false;
+                                    if (isWalkableNormal(landingNormal.z)) {
+                                        walkableBaseZ = stepped.z;
+                                    }
+                                } else {
+                                    grounded = false;
+                                    subCanStepFromRest = true;
+                                }
+                            }
+                        }
+                    }
+                }
+                if (didStepUp && subDelta.z <= 0.0f) {
+                    candidate = horizAdj;
+                } else {
+                    candidate = horizAdj + glm::vec3(0.0f, 0.0f, subDelta.z);
+                    glm::vec3 vertAdj = candidate;
+                    if (moveBody(horizAdj, candidate, radius, height, localTris, vertAdj, true)) {
+                        candidate = vertAdj;
+                    }
+                }
+                stepPos = candidate;
+            }
+
+            // Grounding pass matching CameraController::groundFollowedCharacter
+            const float stepBudget = grounded
+                ? (stepPos.z > walkableBaseZ
+                       ? std::max(0.05f, (walkableBaseZ + kMaxStepUp) - stepPos.z)
+                       : kMaxStepUp)
+                : 1.2f;
+            float floorNz = 1.0f;
+            std::optional<float> groundH = raycastFloorZ(localTris, stepPos.x, stepPos.y,
+                                                         stepPos.z + stepBudget, &floorNz);
+            if (groundH && !isWalkableNormal(floorNz)) groundH = std::nullopt;
+
+            std::optional<float> steepSupportZ;
+            bool bevelOnWalkable = false;
+            if ((grounded || stepFinishedThisFrame) && verticalVelocity <= 0.0f &&
+                (!groundH || *groundH < stepPos.z - 1e-4f)) {
+                const float minSweepZ = stepPos.z - std::max(1.5f, radius * kBodyBevel + 0.5f);
+                const float reqZ = groundH ? std::max(*groundH, minSweepZ) : minSweepZ;
+                if (reqZ < stepPos.z - 1e-4f) {
+                    float supZ = reqZ, supNormZ = 1.0f, supFaceZ = 1.0f;
+                    if (constrainBodyDescent(stepPos, reqZ, radius, height, localTris, supZ, supNormZ, &supFaceZ)) {
+                        if (isWalkableNormal(supFaceZ) && supZ <= walkableBaseZ + kMaxStepUp + 1e-3f) {
+                            groundH = supZ;
+                            bevelOnWalkable = !isWalkableNormal(supNormZ);
+                        } else {
+                            steepSupportZ = supZ;
+                        }
+                    }
+                }
+            }
+
+            if (groundH) {
+                const float dz = *groundH - stepPos.z;
+                const bool nearGround = grounded && dz >= 0.0f && dz <= stepBudget + 0.05f;
+                const bool slopeGrace = grounded && dz >= -(stepBudget + 0.05f) && dz <= (stepBudget + 0.05f) * 1.5f;
+                const bool airLanding = !grounded && verticalVelocity <= 0.0f && dz >= 0.0f && prevPos.z >= *groundH;
+                if (nearGround || slopeGrace || airLanding) {
+                    float snapH = *groundH;
+                    bool steep = false;
+                    bool soleOnWalkable = !bevelOnWalkable;
+                    if (steepSupportZ && *steepSupportZ > snapH) {
+                        snapH = *steepSupportZ;
+                        steep = true;
+                        soleOnWalkable = false;
+                    } else if (!steepSupportZ && !bevelOnWalkable && snapH < stepPos.z) {
+                        float supZ = snapH, supNormZ = 1.0f, supFaceZ = 1.0f;
+                        if (constrainBodyDescent(stepPos, snapH, radius, height, localTris, supZ, supNormZ, &supFaceZ)) {
+                            snapH = supZ;
+                            if (isWalkableNormal(supFaceZ) && supZ <= walkableBaseZ + kMaxStepUp + 1e-3f) {
+                                steep = false;
+                                soleOnWalkable = isWalkableNormal(supNormZ);
+                            } else {
+                                steep = true;
+                                soleOnWalkable = false;
+                            }
+                        }
+                    }
+                    stepPos.z = snapH;
+                    grounded = !steep;
+                    if (grounded) {
+                        verticalVelocity = 0.0f;
+                        if (soleOnWalkable || snapH < walkableBaseZ) walkableBaseZ = snapH;
+                    } else if (stepFinishedThisFrame) {
+                        stepFromRest = true;
+                    }
+                } else {
+                    if (steepSupportZ) stepPos.z = std::max(stepPos.z, *steepSupportZ);
+                    grounded = false;
+                    if (stepFinishedThisFrame) stepFromRest = true;
+                }
+            } else {
+                if (steepSupportZ) stepPos.z = std::max(stepPos.z, *steepSupportZ);
+                grounded = false;
+                if (stepFinishedThisFrame) stepFromRest = true;
+            }
+            pos = stepPos;
+        }
+    }
+};
+
+} // namespace
+
+TEST_CASE("WMO movement triangle and antiportal filters match TBC 2.4.3 rules", "[collision][wmo]") {
+    using wowee::rendering::wmoGroupIsAntiportal;
+    using wowee::rendering::wmoTriangleBlocksMovement;
+
+    // Explicit collision hulls (0x08), rendered non-detail (0x20 without 0x04), and unflagged (0x00) block.
+    for (uint8_t mopy : {0x00, 0x08, 0x48, 0x4a, 0x20, 0x60, 0x22, 0x62, 0x28, 0x6c}) {
+        INFO("mopy 0x" << std::hex << int(mopy));
+        CHECK(wmoTriangleBlocksMovement(mopy));
+    }
+    // Detail-only / camera-passthrough faces without 0x08 never block player movement.
+    for (uint8_t mopy : {0x04, 0x24, 0x64, 0x26, 0x66, 0x02}) {
+        INFO("mopy 0x" << std::hex << int(mopy));
+        CHECK_FALSE(wmoTriangleBlocksMovement(mopy));
+    }
+
+    // MOGP 0x4000000 and Sunwell's sunwell_051 ("antiportal" with flags 0x9) are both antiportals.
+    CHECK(wmoGroupIsAntiportal(0x4000000u, ""));
+    CHECK(wmoGroupIsAntiportal(0x4000009u, "plaza"));
+    CHECK(wmoGroupIsAntiportal(0x9u, "antiportal"));
+    CHECK(wmoGroupIsAntiportal(0x9u, "AntiPortal"));
+    CHECK_FALSE(wmoGroupIsAntiportal(0x9u, "plaza"));
+    CHECK_FALSE(wmoGroupIsAntiportal(0x2001u, "wallsplit"));
+    CHECK_FALSE(wmoGroupIsAntiportal(0x9u, "StairsDetail"));
+}
+
+TEST_CASE("stair edge tie-breaking and constrainBodyDescent preserve walkable tread normals", "[collision][stairs]") {
+    using namespace wowee::rendering::movement;
+    const float r = 0.305556f, h = 2.03127f;
+
+    // Vertical riser (x = 0, z in [0, 0.85]) sharing its top edge with horizontal tread (x in [0, 2], z = 0.85).
+    const BodyTriangle riserA{glm::vec3(0, -2, 0), glm::vec3(0, 2, 0), glm::vec3(0, 2, 0.85f)};
+    const BodyTriangle riserB{glm::vec3(0, -2, 0), glm::vec3(0, 2, 0.85f), glm::vec3(0, -2, 0.85f)};
+    const BodyTriangle treadA{glm::vec3(0, -2, 0.85f), glm::vec3(2, -2, 0.85f), glm::vec3(2, 2, 0.85f)};
+    const BodyTriangle treadB{glm::vec3(0, -2, 0.85f), glm::vec3(2, 2, 0.85f), glm::vec3(0, 2, 0.85f)};
+
+    const std::vector<BodyTriangle> riserFirst{riserA, riserB, treadA, treadB};
+    const std::vector<BodyTriangle> treadFirst{treadA, treadB, riserA, riserB};
+
+    for (const auto& order : {riserFirst, treadFirst}) {
+        glm::vec3 landingFace(0.0f);
+        const glm::vec3 stepped = stepBodyAcross({-0.31f, 0.0f, 0.0f}, {-0.15f, 0.0f, 0.0f},
+                                                 r, h, order, kMaxStepUp, &landingFace);
+        const float expectedZ = 0.85f - 0.15f * kBodyBevel;
+        CHECK(stepped.z == Catch::Approx(expectedZ).margin(1e-3f));
+        CHECK(landingFace.z == Catch::Approx(1.0f).margin(1e-4f));
+
+        // Even when slightly sunk by crease skin contact, constrainBodyDescent holds the bevel height.
+        float supZ = 0.0f, supNormZ = 0.0f, supFaceZ = 0.0f;
+        REQUIRE(constrainBodyDescent({-0.15f, 0.0f, expectedZ - 0.002f}, 0.0f,
+                                     r, h, order, supZ, supNormZ, &supFaceZ));
+        CHECK(supZ == Catch::Approx(expectedZ - 0.002f).margin(1e-3f));
+        CHECK(supNormZ < kMinWalkableNormalZ);
+        CHECK(supFaceZ == Catch::Approx(1.0f).margin(1e-4f));
+    }
+
+    // Retaining wall ending at requestedZ (z = 0) does not falsely block a snap to z = 0.
+    const std::vector<BodyTriangle> cliffWall{
+        BodyTriangle{glm::vec3(0, -2, -5.0f), glm::vec3(0, 2, -5.0f), glm::vec3(0, 2, 0.0f)},
+        BodyTriangle{glm::vec3(0, -2, -5.0f), glm::vec3(0, 2, 0.0f), glm::vec3(0, -2, 0.0f)}};
+    float dummyZ = 0.0f, dummyFaceZ = 0.0f;
+    CHECK_FALSE(constrainBodyDescent({-0.05f, 0.0f, 0.02f}, 0.0f, r, h, cliffWall, dummyZ, dummyFaceZ));
+}
+
+TEST_CASE("synthetic stairs climb smoothly while >1.0 yd walls and steep pedestals block", "[collision][stairs]") {
+    using namespace wowee::rendering::movement;
+    REQUIRE(kMaxStepUp == Catch::Approx(1.0f));
+
+    // Build a 4-step staircase (0.85 yd risers, 0.65 yd shallow treads) over an overlapping lower floor z=0,
+    // followed by a 1.15 yd blocking wall at x = 6.0.
+    std::vector<BodyTriangle> mesh;
+    auto addQuad = [&](glm::vec3 a, glm::vec3 b, glm::vec3 c, glm::vec3 d) {
+        mesh.push_back({a, b, c});
+        mesh.push_back({a, c, d});
+    };
+    // Overlapping lower slab under the entire staircase (reproducing Sunwell's lower slab geometry)
+    addQuad({-4, -14, 0}, {8, -14, 0}, {8, 14, 0}, {-4, 14, 0});
+    const float risers[4] = {0.85f, 1.70f, 2.55f, 3.40f};
+    const float xs[5] = {0.0f, 0.65f, 1.30f, 1.95f, 5.50f};
+    float prevZ = 0.0f;
+    for (int s = 0; s < 4; ++s) {
+        addQuad({xs[s], -13, prevZ}, {xs[s], 13, prevZ}, {xs[s], 13, risers[s]}, {xs[s], -13, risers[s]});
+        addQuad({xs[s], -13, risers[s]}, {xs[s + 1], -13, risers[s]}, {xs[s + 1], 13, risers[s]}, {xs[s], 13, risers[s]});
+        prevZ = risers[s];
+    }
+    // Full-height room wall on the top landing at x = 5.50 (3.40 -> 8.00)
+    addQuad({5.50f, -13, 3.40f}, {5.50f, 13, 3.40f}, {5.50f, 13, 8.00f}, {5.50f, -13, 8.00f});
+
+    struct BodySpec { const char* name; float r; float h; };
+    const BodySpec bodies[] = {
+        {"Human", 0.305556f, 2.03127f},
+        {"Tauren", 0.972222f, 2.23244f},
+        {"CatForm", 0.611111f, 1.22222f},
+    };
+    for (const auto& body : bodies) {
+        for (float speed : {7.0f, 35.0f}) {
+            for (float fps : {20.0f, 60.0f, 144.0f}) {
+                for (glm::vec2 dir : {glm::vec2(1.0f, 0.0f), glm::vec2(1.0f, 0.65f)}) {
+                    INFO(body.name << " speed=" << speed << " fps=" << fps << " dirY=" << dir.y);
+                    SimulatedWalker w{{-2.0f, -1.5f, 0.0f}, body.r, body.h, true, false, 0.0f, 0.0f};
+                    const float totalSec = (speed > 20.0f) ? 0.45f : 1.6f;
+                    const int frames = static_cast<int>(std::ceil(totalSec * fps));
+                    for (int f = 0; f < frames; ++f) {
+                        w.advanceFrame(dir, speed, 1.0f / fps, mesh);
+                    }
+                    // Must climb all four 0.85 yd steps onto z = 3.40, and stop cleanly in front of the wall at x = 5.50!
+                    CHECK(w.pos.z == Catch::Approx(3.40f).margin(0.02f));
+                    CHECK(w.pos.x > 2.5f);
+                    CHECK(w.pos.x <= 5.50f - body.r + 0.02f);
+                    CHECK(w.grounded);
+                }
+            }
+        }
+    }
+
+    // A 1.15 yd waist-high ledge (just 0.15 yd over kMaxStepUp = 1.0f) must NEVER be climbed onto z = 1.15,
+    // even by Tauren (bevel = 1.80 yd) across 60 frames at 1x and 5x!
+    std::vector<BodyTriangle> ledgeMesh;
+    auto addLedgeQuad = [&](glm::vec3 a, glm::vec3 b, glm::vec3 c, glm::vec3 d) {
+        ledgeMesh.push_back({a, b, c});
+        ledgeMesh.push_back({a, c, d});
+    };
+    addLedgeQuad({-4, -4, 0}, {6, -4, 0}, {6, 4, 0}, {-4, 4, 0});
+    addLedgeQuad({1.0f, -4, 0.0f}, {1.0f, 4, 0.0f}, {1.0f, 4, 1.15f}, {1.0f, -4, 1.15f});
+    addLedgeQuad({1.0f, -4, 1.15f}, {4.0f, -4, 1.15f}, {4.0f, 4, 1.15f}, {1.0f, 4, 1.15f});
+    for (const auto& body : bodies) {
+        for (float speed : {7.0f, 35.0f}) {
+            SimulatedWalker w{{-1.5f, 0.0f, 0.0f}, body.r, body.h, true, false, 0.0f, 0.0f};
+            for (int f = 0; f < 60; ++f) {
+                const glm::vec3 prev = w.pos;
+                const float prevBase = w.walkableBaseZ;
+                const bool prevGrd = w.grounded;
+                w.advanceFrame({1.0f, 0.0f}, speed, 1.0f / 60.0f, ledgeMesh);
+                INFO(body.name << " speed=" << speed << " f=" << f
+                     << " prev=(" << prev.x << "," << prev.z << ") base=" << prevBase << " grd=" << prevGrd
+                     << " -> pos=(" << w.pos.x << "," << w.pos.z << ") newBase=" << w.walkableBaseZ << " newGrd=" << w.grounded);
+                REQUIRE(w.pos.z <= 1.005f);
+            }
+            CHECK(w.pos.x < 1.0f);
+        }
+    }
+
+    // Exodar DR_TABLE_MEDIUM_01 (1.45 yd tall, 74-deg sloped pedestal + flat z=1.45 top) must NOT be climbable!
+    std::vector<BodyTriangle> tableMesh;
+    auto addTableQuad = [&](glm::vec3 a, glm::vec3 b, glm::vec3 c, glm::vec3 d) {
+        tableMesh.push_back({a, b, c});
+        tableMesh.push_back({a, c, d});
+    };
+    addTableQuad({-3, -3, 0}, {4, -3, 0}, {4, 3, 0}, {-3, 3, 0});
+    const float lean = 1.45f * 0.276f / 0.961f;
+    addTableQuad({1.0f, -2.0f, 0.0f}, {1.0f + lean, -2.0f, 1.45f}, {1.0f + lean, 2.0f, 1.45f}, {1.0f, 2.0f, 0.0f});
+    addTableQuad({1.0f + lean, -2.0f, 1.45f}, {3.0f, -2.0f, 1.45f}, {3.0f, 2.0f, 1.45f}, {1.0f + lean, 2.0f, 1.45f});
+
+    for (float speed : {7.0f, 35.0f}) {
+        for (float fps : {20.0f, 60.0f}) {
+            SimulatedWalker w{{0.0f, 0.0f, 0.0f}, 0.305556f, 2.03127f, true, false, 0.0f, 0.0f};
+            for (int f = 0; f < 40; ++f) {
+                const glm::vec3 prev = w.pos;
+                const float prevBase = w.walkableBaseZ;
+                const bool prevGrd = w.grounded;
+                w.advanceFrame({1.0f, 0.0f}, speed, 1.0f / fps, tableMesh);
+                INFO("table speed=" << speed << " fps=" << fps << " f=" << f
+                     << " prev=(" << prev.x << "," << prev.z << ") base=" << prevBase << " grd=" << prevGrd
+                     << " -> pos=(" << w.pos.x << "," << w.pos.z << ") newBase=" << w.walkableBaseZ << " newGrd=" << w.grounded);
+                REQUIRE(w.pos.z <= 1.005f);
+            }
+            CHECK(w.pos.x < 1.0f + lean);
+        }
+    }
+}
+
+TEST_CASE("shipped Sunwell Plateau Parhelion Plaza stairs climb at 1x and 5x while walls block",
+          "[collision][wmo][sunwell]") {
+    using namespace wowee::rendering;
+    using namespace wowee::rendering::movement;
+
+    const auto tbcDir = findTbcDataDir();
+    if (tbcDir.empty()) {
+        SKIP("TBC extracted data directory not available");
+    }
+
+    const auto wmoDir = tbcDir / "world/wmo/dungeon/qt_sunwell";
+    auto model = wowee::pipeline::WMOLoader::load(readBinaryFile(wmoDir / "sunwell.wmo"));
+    REQUIRE(model.nGroups >= 52);
+    REQUIRE(wowee::pipeline::WMOLoader::loadGroup(readBinaryFile(wmoDir / "sunwell_001.wmo"), model, 1));
+    REQUIRE(wowee::pipeline::WMOLoader::loadGroup(readBinaryFile(wmoDir / "sunwell_039.wmo"), model, 39));
+    REQUIRE(wowee::pipeline::WMOLoader::loadGroup(readBinaryFile(wmoDir / "sunwell_051.wmo"), model, 51));
+
+    // Verify group 51 ("antiportal", flags 0x9) is detected as an antiportal and skipped.
+    CHECK(wmoGroupIsAntiportal(model.groups[51].flags, model.groups[51].name));
+    CHECK_FALSE(wmoGroupIsAntiportal(model.groups[1].flags, model.groups[1].name));
+    CHECK_FALSE(wmoGroupIsAntiportal(model.groups[39].flags, model.groups[39].name));
+
+    // MODF uid 1993110 in sunwellplateau_30_28.adt: pos=(16078.585938, 40.581085, 15425.220703), rot=(0, 269, 0).
+    constexpr float kDeg = wowee::core::coords::PI / 180.0f;
+    const glm::mat4 worldMat = placementModelMatrix(
+        wowee::core::coords::adtToWorld(16078.585938f, 40.581085f, 15425.220703f),
+        glm::vec3(0.0f, 0.0f, (269.0f + 180.0f) * kDeg),
+        1.0f);
+
+    std::vector<BodyTriangle> sunwellTris;
+    size_t group39Blocking = 0;
+    for (uint32_t gi : {1u, 39u, 51u}) {
+        const auto& g = model.groups[gi];
+        if ((g.flags & 0x80u) != 0 || wmoGroupIsAntiportal(g.flags, g.name)) continue;
+        const size_t numTris = g.indices.size() / 3;
+        for (size_t t = 0; t < numTris; ++t) {
+            const uint8_t mopy = t < g.triFlags.size() ? g.triFlags[t] : 0;
+            if (!wmoTriangleBlocksMovement(mopy)) continue;
+            if (gi == 39u) ++group39Blocking;
+            sunwellTris.push_back({
+                glm::vec3(worldMat * glm::vec4(g.vertices[g.indices[t * 3]].position, 1.0f)),
+                glm::vec3(worldMat * glm::vec4(g.vertices[g.indices[t * 3 + 1]].position, 1.0f)),
+                glm::vec3(worldMat * glm::vec4(g.vertices[g.indices[t * 3 + 2]].position, 1.0f))});
+        }
+    }
+    // sunwell_039 ("wallsplit") is 100% detail (0x24) and must contribute zero blocking triangles.
+    CHECK(group39Blocking == 0);
+    REQUIRE(sunwellTris.size() > 9000);
+
+    auto runRoute = [&](glm::vec3 serverStart, float serverYaw, float holdSec,
+                        float speed, float radius, float height) {
+        // serverToCanonical swaps (x, y) and canonicalToRender swaps (x, y) back, so render == server (X, Y, Z).
+        const glm::vec3 renderStart = wowee::core::coords::canonicalToRender(
+            wowee::core::coords::serverToCanonical(serverStart));
+        const glm::vec2 renderFwd(std::cos(serverYaw), std::sin(serverYaw));
+        SimulatedWalker w{renderStart, radius, height, true, false, 0.0f, renderStart.z};
+        const int frames = static_cast<int>(std::ceil(holdSec * 60.0f));
+        for (int f = 0; f < frames; ++f) {
+            w.advanceFrame(renderFwd, speed, 1.0f / 60.0f, sunwellTris);
+        }
+        return wowee::core::coords::canonicalToServer(wowee::core::coords::renderToCanonical(w.pos));
+    };
+
+    for (auto [raceName, r, h] : {std::tuple{"Human", 0.305556f, 2.03127f},
+                                  std::tuple{"Tauren", 0.972222f, 2.23244f}}) {
+        for (auto [speed, scale] : {std::pair{7.0f, 1.0f}, std::pair{35.0f, 0.22f}}) {
+            INFO(raceName << " speed=" << speed);
+
+            // 1. Sunken courtyard border curb + multi-step Arch Mage stairs (straight & diagonal)
+            const glm::vec3 curbEnd = runRoute({1637.50f, 911.50f, 14.65f}, 1.570796f, 2.6f * scale, speed, r, h);
+            CHECK(curbEnd.y > 925.0f);
+            CHECK(curbEnd.z > 16.80f);
+
+            const glm::vec3 curbDiag = runRoute({1645.01f, 911.75f, 14.64f}, 2.15f, 2.8f * scale, speed, r, h);
+            CHECK(curbDiag.y > 923.0f);
+            CHECK(curbDiag.z > 16.80f);
+
+            // 2. Main south staircase (0.808 / 0.761 / 0.940 yd vertical 0x48 risers, straight & diagonal)
+            const glm::vec3 mainEnd = runRoute({1719.50f, 873.50f, 15.56f}, 3.141593f, 2.2f * scale, speed, r, h);
+            CHECK(mainEnd.x < 1707.0f);
+            CHECK(mainEnd.z == Catch::Approx(18.029f).margin(0.08f));
+
+            const glm::vec3 mainDiag = runRoute({1719.50f, 871.50f, 15.56f}, 2.85f, 2.4f * scale, speed, r, h);
+            CHECK(mainDiag.x < 1707.0f);
+            CHECK(mainDiag.z == Catch::Approx(18.029f).margin(0.08f));
+
+            // 3. 7-step white marble gazebo stairs (previously blocked by sunwell_051 antiportal!)
+            const glm::vec3 gazeboEnd = runRoute({1649.14f, 838.709f, 33.94f}, 3.09212f, 2.0f * scale, speed, r, h);
+            CHECK(gazeboEnd.x < 1638.0f);
+            CHECK(gazeboEnd.z > 35.10f);
+
+            // 4. Real Parhelion Plaza solid wall: must still stop both races at 1x and 5x!
+            const glm::vec3 wallEnd = runRoute({1633.00f, 931.80f, 17.09f}, 0.0f, 1.8f * scale, speed, r, h);
+            CHECK(wallEnd.x < 1638.5f);
+            CHECK(wallEnd.z < 18.15f);
+        }
+    }
 }

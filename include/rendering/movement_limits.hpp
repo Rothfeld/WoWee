@@ -6,12 +6,15 @@
 
 namespace wowee::rendering::movement {
 
-// The retail client rejects ground steeper than 50 degrees and steps higher
-// than roughly 0.6 yards. Keep these limits shared by terrain, WMO, and M2
-// collision paths so release builds cannot silently diverge by surface type.
+// Build 8606 rejects ground steeper than 50 degrees and steps higher than
+// 1.0 yard (measured live in Sunwell Plateau Parhelion Plaza: 16.9000 ->
+// 17.9000 against an Arch Mage pillar, and walked smoothly up authored
+// 0.76-0.94 yd WMO stair risers and Anvilmar's 0.879 yd top-capped railing
+// while stopping at >1.0 yd walls). Keep these limits shared by terrain,
+// WMO, and M2 collision paths so release builds cannot silently diverge.
 inline constexpr float kMaxWalkableSlopeDegrees = 50.0f;
 inline constexpr float kMinWalkableNormalZ = 0.642787635f; // cos(50 degrees)
-inline constexpr float kMaxStepUp = 0.60f;
+inline constexpr float kMaxStepUp = 1.0f;
 
 inline bool isWalkableNormal(float normalZ) {
     return normalZ >= kMinWalkableNormalZ;

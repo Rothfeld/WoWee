@@ -1,5 +1,6 @@
 #pragma once
 
+#include "rendering/body_collision.hpp"
 #include "rendering/collision_geometry.hpp"
 #include "rendering/vk_shader.hpp"
 #include "rendering/spatial_grid.hpp"
@@ -416,6 +417,21 @@ public:
                             bool airborne = false, float playerRadius = 0.5f,
                             float playerHeight = 2.0f) const;
 
+    /// Append movement-blocking WMO triangles overlapping `[worldLow, worldHigh]`,
+    /// transformed into world space for 3D beveled-box sweeping and step-up.
+    void appendBodyCollisionTriangles(const glm::vec3& worldLow, const glm::vec3& worldHigh,
+                                      std::vector<movement::BodyTriangle>& triangles) const;
+
+    /// Constrain a downward grounding snap against movement-blocking WMO faces.
+    bool constrainFloorSnap(const glm::vec3& from, float requestedZ,
+                            float radius, float height,
+                            float& supportZ, float& supportNormalZ) const;
+
+    /// Grounded beveled-box step across movement-blocking WMO faces.
+    [[nodiscard]] glm::vec3 stepBody(const glm::vec3& from, const glm::vec3& to,
+                                     float radius, float height, float maxStepUp,
+                                     glm::vec3* landingFace = nullptr) const;
+
     /// Whether solid WMO geometry stands between two points - a sight line
     /// rather than a step, so no player radius and no step height. See the
     /// definition for why checkWallCollision cannot answer this.
@@ -691,12 +707,9 @@ private:
         // Per-collision-triangle MOPY flags (indexed by collision tri index, i.e. triStart/3)
         std::vector<uint8_t> triMopyFlags;
         std::vector<uint8_t> triMaterials;
-        /// True when no triangle in this group blocks: no collision hull, and
-        /// nothing rendered that is not detail. Detail never blocks, so such a
-        /// group is walk-through in its entirety - which is a thing to be
-        /// walked through only if it was meant to be, and Darkshore's bridges
-        /// are 428 triangles of it.
-        bool noBlockingTriangles = false;
+        /// MOGP 0x4000000 or group name "antiportal": visibility occlusion helper,
+        /// never drawn and never offered to movement, floor, or camera collision.
+        bool antiportal = false;
         /// MOGP 0x80: no collision triangles, never the group a point is in.
         bool unreachable = false;
 

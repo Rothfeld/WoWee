@@ -19,6 +19,7 @@
 #include <array>
 #include <optional>
 #include <limits>
+#include <string_view>
 
 #include <glm/glm.hpp>
 
@@ -53,6 +54,39 @@ inline float pointAABBDistanceSq(const glm::vec3& p, const glm::vec3& bmin,
 /// non-detail); this one is the camera's only.
 inline constexpr bool wmoTriangleStopsCamera(uint8_t mopyFlags) {
     return (mopyFlags & 0x02) == 0;
+}
+
+/// Whether a WMO triangle with these MOPY flags participates in player
+/// movement, floor, and line-of-sight collision.
+///
+/// Build 8606 collides against explicit collision hulls (0x08, whether rendered
+/// or material 0xFF) and rendered non-detail surfaces (0x20 without 0x04), plus
+/// legacy unflagged triangles (0x00). Pure detail / camera-passthrough geometry
+/// (0x04 without 0x08, such as 0x24, 0x64, 0x26, 0x66 on StairsDetail,
+/// wallsplit, crystals, railings, and antiportals) never blocks movement.
+inline constexpr bool wmoTriangleBlocksMovement(uint8_t mopyFlags) {
+    if (mopyFlags == 0) return true;
+    if ((mopyFlags & 0x08u) != 0) return true;
+    return (mopyFlags & 0x20u) != 0 && (mopyFlags & 0x04u) == 0;
+}
+
+/// Whether a WMO group is an invisible antiportal blocker rather than world
+/// geometry. Some TBC WMOs set MOGP 0x4000000; others (notably Sunwell
+/// Plateau's sunwell_051.wmo cutting across the Parhelion Plaza 7-step gazebo
+/// stairs) carry flags 0x9 and identify the antiportal via MOGN name
+/// "antiportal" (matching CMaNGOS WMOGroup::ShouldSkip).
+inline constexpr bool wmoGroupIsAntiportal(uint32_t groupFlags,
+                                           std::string_view groupName) {
+    if ((groupFlags & 0x4000000u) != 0) return true;
+    constexpr std::string_view kAntiportal = "antiportal";
+    if (groupName.size() != kAntiportal.size()) return false;
+    for (size_t i = 0; i < kAntiportal.size(); ++i) {
+        const char c = groupName[i];
+        const char lower = (c >= 'A' && c <= 'Z')
+            ? static_cast<char>(c - 'A' + 'a') : c;
+        if (lower != kAntiportal[i]) return false;
+    }
+    return true;
 }
 
 /// Moller-Trumbore. Distance along `dir` to the triangle, or negative for a

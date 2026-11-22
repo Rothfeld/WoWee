@@ -1718,7 +1718,7 @@ void WMORenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const
             const auto& group = model.groups[gi];
 
             // Only skip antiportal geometry
-            if (group.groupFlags & 0x4000000) continue;
+            if (group.antiportal) continue;
 
             // Skip groups with invalid GPU resources
             if (group.vertexBuffer == VK_NULL_HANDLE || group.indexBuffer == VK_NULL_HANDLE) continue;
@@ -1861,7 +1861,7 @@ void WMORenderer::renderShadow(VkCommandBuffer cmd, const glm::mat4& lightSpaceM
             if (group.vertexBuffer == VK_NULL_HANDLE || group.indexBuffer == VK_NULL_HANDLE) continue;
 
             // Skip antiportal geometry
-            if (group.groupFlags & 0x4000000) continue;
+            if (group.antiportal) continue;
 
             // Per-group AABB cull against shadow frustum
             if (gi < instance.worldGroupBounds.size()) {
@@ -2060,7 +2060,8 @@ bool WMORenderer::createGroupResources(const pipeline::WMOGroup& group, GroupRes
     // triangle of theirs is offered to any query, and no containment test
     // places a point in them.
     resources.unreachable = (groupFlags & kWMOGroupUnreachable) != 0;
-    if (resources.unreachable) {
+    resources.antiportal = wmoGroupIsAntiportal(groupFlags, group.name);
+    if (resources.unreachable || resources.antiportal) {
         // Vertices stay for the box; without indices nothing can be hit.
     } else if (!group.triFlags.empty()) {
         // Store all triangles but tag each with MOPY flags for collision filtering
@@ -2087,39 +2088,11 @@ bool WMORenderer::createGroupResources(const pipeline::WMOGroup& group, GroupRes
     // Build 2D spatial grid for fast collision triangle lookup
     resources.buildCollisionGrid();
 
-    // What this group offers to stand on, said once per group.
-    //
-    // Darkshore's bridges are walked through, and they are WMOs rather than
-    // doodads - world/wmo/kalimdor/collidabledoodads/darkshore/bridge - so the
-    // floor under them is this list. A group that draws and has no triangles
-    // here, or whose triangles are all detail, is a floor that cannot be found,
-    // and neither shows up as anything but falling.
-    {
-        size_t hull = 0, renderedSolid = 0, detail = 0;
-        for (uint8_t mopy : resources.triMopyFlags) {
-            if (mopy & 0x08) ++hull;
-            if ((mopy & 0x20) && !(mopy & 0x04)) ++renderedSolid;
-            if (mopy & 0x04) ++detail;
-        }
-        // At warning, because the log carries nothing below it - which is why
-        // the first attempt at this said nothing at all.
-        //
-        // Only a group that offers no floor. Every group saying its counts is
-        // thousands of lines and buries the ones that matter; a group with no
-        // triangles at all, or none that block, is the whole of what "walked
-        // through it" looks like from here.
-        const size_t tris = resources.collisionIndices.size() / 3;
-        resources.noBlockingTriangles = (tris > 0 && hull == 0 && renderedSolid == 0);
-        if (!resources.unreachable && (tris == 0 || resources.noBlockingTriangles)) {
-            LOG_WARNING("WMO group offers no floor: verts=",
-                        resources.collisionVertices.size(),
-                        " tris=", tris,
-                        " hull(0x08)=", hull,
-                        " renderedSolid(0x20 not 0x04)=", renderedSolid,
-                        " detail(0x04)=", detail,
-                        " - nothing here blocks, so anything standing on this "
-                        "group falls through it");
-        }
+    if (!resources.unreachable && !resources.antiportal &&
+        resources.collisionIndices.empty()) {
+        LOG_WARNING("WMO group offers no triangles: verts=",
+                    resources.collisionVertices.size(),
+                    " name='", group.name, "'");
     }
 
     // Create batches
@@ -2247,7 +2220,7 @@ int WMORenderer::findContainingGroup(const ModelData& model, const glm::vec3& lo
 
     for (size_t gi = 0; gi < model.groups.size(); gi++) {
         const auto& group = model.groups[gi];
-        if (group.unreachable) continue;
+        if (group.unreachable || group.antiportal) continue;
         if (localPos.x >= group.geometryMin.x && localPos.x <= group.geometryMax.x &&
             localPos.y >= group.geometryMin.y && localPos.y <= group.geometryMax.y &&
             localPos.z >= group.geometryMin.z && localPos.z <= group.geometryMax.z) {
@@ -2326,7 +2299,7 @@ bool WMORenderer::portalVisibleGroups(const WMOInstance& instance, const ModelDa
         for (size_t gi = 0; cameraIndoors && gi < model.groups.size(); ++gi) {
             if (static_cast<int>(gi) == camGroup) continue;
             const auto& g = model.groups[gi];
-            if (!(g.groupFlags & WMO_GROUP_FLAG_OUTDOOR) || g.unreachable) continue;
+            if (!(g.groupFlags & WMO_GROUP_FLAG_OUTDOOR) || g.unreachable || g.antiportal) continue;
             if (glm::all(glm::greaterThanEqual(localRealCam, g.boundingBoxMin)) &&
                 glm::all(glm::lessThanEqual(localRealCam, g.boundingBoxMax))) {
                 cameraIndoors = false;
@@ -2374,7 +2347,7 @@ std::vector<uint8_t> WMORenderer::hiddenUnreachableGroups(const WMOInstance& ins
     const glm::vec3 localCam(instance.invModelMatrix * glm::vec4(camPos, 1.0f));
     const bool cameraInBuilding = std::any_of(model.groups.begin(), model.groups.end(),
         [&](const auto& group) {
-            return !group.unreachable &&
+            return !group.unreachable && !group.antiportal &&
                    glm::all(glm::greaterThanEqual(localCam, group.boundingBoxMin)) &&
                    glm::all(glm::lessThanEqual(localCam, group.boundingBoxMax));
         });
@@ -2668,7 +2641,7 @@ void WMORenderer::getVisibleGroupsViaPortals(const ModelData& model,
         for (size_t gi = 0; gi < model.groups.size(); gi++) {
             if (static_cast<int>(gi) == cameraGroup) continue;
             const auto& g = model.groups[gi];
-            if (!(g.groupFlags & WMO_GROUP_FLAG_OUTDOOR) || g.unreachable) continue;
+            if (!(g.groupFlags & WMO_GROUP_FLAG_OUTDOOR) || g.unreachable || g.antiportal) continue;
             if (cameraLocalPos.x >= g.boundingBoxMin.x && cameraLocalPos.x <= g.boundingBoxMax.x &&
                 cameraLocalPos.y >= g.boundingBoxMin.y && cameraLocalPos.y <= g.boundingBoxMax.y &&
                 cameraLocalPos.z >= g.boundingBoxMin.z && cameraLocalPos.z <= g.boundingBoxMax.z) {
@@ -3365,7 +3338,7 @@ void WMORenderer::appendSurfaceTriangles(const glm::vec3& boxMin, const glm::vec
                 if (glm::any(glm::lessThan(gMax, boxMin)) || glm::any(glm::greaterThan(gMin, boxMax))) continue;
             }
             // What drawWMOs leaves out: antiportals.
-            if (group.groupFlags & 0x4000000u) continue;
+            if (group.antiportal) continue;
             if (!instance.drawnGroups.empty() && !instance.drawnGroups[gi]) continue;
             group.getTrianglesInRange(localMin.x, localMin.y, localMax.x, localMax.y, triangles);
             for (uint32_t triStart : triangles) {
@@ -3469,6 +3442,11 @@ std::optional<float> WMORenderer::getFloorHeight(float glX, float glY, float glZ
         if (!trianglesAlongRay(group, localOrigin, localDir, tl_triScratch)) return;
 
         for (uint32_t triStart : tl_triScratch) {
+            const uint32_t triIdx = triStart / 3;
+            if (triIdx < group.triMopyFlags.size() &&
+                !wmoTriangleBlocksMovement(group.triMopyFlags[triIdx])) {
+                continue;
+            }
             const glm::vec3& v0 = verts[indices[triStart]];
             const glm::vec3& v1 = verts[indices[triStart + 1]];
             const glm::vec3& v2 = verts[indices[triStart + 2]];
@@ -3735,6 +3713,11 @@ std::optional<float> WMORenderer::getInstanceFloorHeight(uint32_t instanceId,
         // hundred units away from what it crosses.
         if (!trianglesAlongRay(group, localOrigin, localDir, tl_triScratch)) continue;
         for (uint32_t triStart : tl_triScratch) {
+            const uint32_t triIdx = triStart / 3;
+            if (triIdx < group.triMopyFlags.size() &&
+                !wmoTriangleBlocksMovement(group.triMopyFlags[triIdx])) {
+                continue;
+            }
             const auto& verts = group.collisionVertices;
             const auto& indices = group.collisionIndices;
             const glm::vec3& v0 = verts[indices[triStart]];
@@ -3977,6 +3960,11 @@ bool WMORenderer::segmentBlocked(const glm::vec3& from, const glm::vec3& to) con
             const auto& indices = group.collisionIndices;
             for (uint32_t triStart : tl_triScratch) {
                 if (triStart + 2 >= indices.size()) continue;
+                const uint32_t triIdx = triStart / 3;
+                if (triIdx < group.triMopyFlags.size() &&
+                    !wmoTriangleBlocksMovement(group.triMopyFlags[triIdx])) {
+                    continue;
+                }
                 const glm::vec3& v0 = verts[indices[triStart]];
                 const glm::vec3& v1 = verts[indices[triStart + 1]];
                 const glm::vec3& v2 = verts[indices[triStart + 2]];
@@ -3988,176 +3976,157 @@ bool WMORenderer::segmentBlocked(const glm::vec3& from, const glm::vec3& to) con
     return false;
 }
 
-bool WMORenderer::checkWallCollision(const glm::vec3& from, const glm::vec3& to, glm::vec3& adjustedPos, bool insideWMO,
-                                      bool airborne, float playerRadius, float playerHeight) const {
-    QueryTimer timer(&queryTimeMs, &queryCallCount);
-    adjustedPos = to;
-    bool blocked = false;
-
-    glm::vec3 moveDir = to - from;
-    float moveDistSq = glm::dot(moveDir, moveDir);
-    if (moveDistSq < 1e-6f) return false;
-
-    // Player collision parameters - WoW-style horizontal cylinder
-    // Tighter radius when inside for more responsive indoor collision
-    const float PLAYER_RADIUS = airborne ? playerRadius : (insideWMO ? 0.45f : 0.50f);
-    const float PLAYER_HEIGHT = airborne ? playerHeight : 2.0f;
-    thread_local std::vector<movement::BodyTriangle> bodyTriangles;
-    bodyTriangles.clear();
-
-    glm::vec3 queryMin = glm::min(from, to) - glm::vec3(8.0f, 8.0f, 5.0f);
-    glm::vec3 queryMax = glm::max(from, to) + glm::vec3(8.0f, 8.0f, 5.0f);
-    gatherCandidates(queryMin, queryMax, tl_candidateScratch);
-
+void WMORenderer::appendBodyCollisionTriangles(const glm::vec3& worldLow, const glm::vec3& worldHigh,
+                                               std::vector<movement::BodyTriangle>& triangles) const {
+    gatherCandidates(worldLow, worldHigh, tl_candidateScratch);
     for (size_t idx : tl_candidateScratch) {
         const auto& instance = instances[idx];
         if (outsideCollisionFocus(instance)) continue;
+        if (glm::any(glm::lessThan(instance.worldBoundsMax, worldLow)) ||
+            glm::any(glm::greaterThan(instance.worldBoundsMin, worldHigh))) {
+            continue;
+        }
 
-        const float broadMargin = PLAYER_RADIUS + 1.5f;
-        if (from.x < instance.worldBoundsMin.x - broadMargin && to.x < instance.worldBoundsMin.x - broadMargin) continue;
-        if (from.x > instance.worldBoundsMax.x + broadMargin && to.x > instance.worldBoundsMax.x + broadMargin) continue;
-        if (from.y < instance.worldBoundsMin.y - broadMargin && to.y < instance.worldBoundsMin.y - broadMargin) continue;
-        if (from.y > instance.worldBoundsMax.y + broadMargin && to.y > instance.worldBoundsMax.y + broadMargin) continue;
-        if (from.z > instance.worldBoundsMax.z + PLAYER_HEIGHT && to.z > instance.worldBoundsMax.z + PLAYER_HEIGHT) continue;
-        if (from.z + PLAYER_HEIGHT < instance.worldBoundsMin.z && to.z + PLAYER_HEIGHT < instance.worldBoundsMin.z) continue;
-
-        auto it = loadedModels.find(instance.modelId);
+        const auto it = loadedModels.find(instance.modelId);
         if (it == loadedModels.end()) continue;
-
         const ModelData& model = it->second;
 
-        // World-space pre-pass: skip instances where no groups are near the movement
-        const float wallMargin = PLAYER_RADIUS + 2.0f;
-        bool anyGroupNear = false;
-        for (size_t gi = 0; gi < model.groups.size() && gi < instance.worldGroupBounds.size(); ++gi) {
-            const auto& [gMin, gMax] = instance.worldGroupBounds[gi];
-            if (to.x >= gMin.x - wallMargin && to.x <= gMax.x + wallMargin &&
-                to.y >= gMin.y - wallMargin && to.y <= gMax.y + wallMargin &&
-                to.z + PLAYER_HEIGHT >= gMin.z && to.z <= gMax.z + wallMargin) {
-                anyGroupNear = true;
-                break;
-            }
+        glm::vec3 localLow(std::numeric_limits<float>::max());
+        glm::vec3 localHigh(std::numeric_limits<float>::lowest());
+        for (int corner = 0; corner < 8; ++corner) {
+            const glm::vec3 world((corner & 1) ? worldHigh.x : worldLow.x,
+                                  (corner & 2) ? worldHigh.y : worldLow.y,
+                                  (corner & 4) ? worldHigh.z : worldLow.z);
+            const glm::vec3 local(instance.invModelMatrix * glm::vec4(world, 1.0f));
+            localLow = glm::min(localLow, local);
+            localHigh = glm::max(localHigh, local);
         }
-        if (!anyGroupNear) continue;
 
-        // Transform positions into local space using cached inverse
-        glm::vec3 localFrom = glm::vec3(instance.invModelMatrix * glm::vec4(from, 1.0f));
-        glm::vec3 localTo = glm::vec3(instance.invModelMatrix * glm::vec4(to, 1.0f));
-        float localFeetZ = localTo.z;
         for (size_t gi = 0; gi < model.groups.size(); ++gi) {
-            // World-space group cull
+            const auto& group = model.groups[gi];
+            if (group.unreachable || group.antiportal || group.collisionIndices.empty()) continue;
             if (gi < instance.worldGroupBounds.size()) {
                 const auto& [gMin, gMax] = instance.worldGroupBounds[gi];
-                if (to.x < gMin.x - wallMargin || to.x > gMax.x + wallMargin ||
-                    to.y < gMin.y - wallMargin || to.y > gMax.y + wallMargin ||
-                    to.z > gMax.z + PLAYER_HEIGHT || to.z + PLAYER_HEIGHT < gMin.z) {
+                if (glm::any(glm::lessThan(gMax, worldLow)) ||
+                    glm::any(glm::greaterThan(gMin, worldHigh))) {
                     continue;
                 }
             }
-
-            const auto& group = model.groups[gi];
-            // Local-space AABB check
-            float margin = PLAYER_RADIUS + 2.0f;
-            if (localTo.x < group.boundingBoxMin.x - margin || localTo.x > group.boundingBoxMax.x + margin ||
-                localTo.y < group.boundingBoxMin.y - margin || localTo.y > group.boundingBoxMax.y + margin ||
-                localTo.z < group.boundingBoxMin.z - margin || localTo.z > group.boundingBoxMax.z + margin) {
+            if (glm::any(glm::lessThan(group.boundingBoxMax, localLow)) ||
+                glm::any(glm::greaterThan(group.boundingBoxMin, localHigh))) {
                 continue;
             }
 
+            group.getTrianglesInRange(localLow.x, localLow.y, localHigh.x, localHigh.y, tl_triScratch);
             const auto& verts = group.collisionVertices;
             const auto& indices = group.collisionIndices;
-
-            // Use spatial grid: query range covering the movement segment + player radius
-            float rangeMinX = std::min(localFrom.x, localTo.x) - PLAYER_RADIUS - 1.5f;
-            float rangeMinY = std::min(localFrom.y, localTo.y) - PLAYER_RADIUS - 1.5f;
-            float rangeMaxX = std::max(localFrom.x, localTo.x) + PLAYER_RADIUS + 1.5f;
-            float rangeMaxY = std::max(localFrom.y, localTo.y) + PLAYER_RADIUS + 1.5f;
-            group.getTrianglesInRange(rangeMinX, rangeMinY, rangeMaxX, rangeMaxY, tl_triScratch);
-
             for (uint32_t triStart : tl_triScratch) {
-                // Use pre-computed Z bounds for fast vertical reject
-                const auto& tb = group.triBounds[triStart / 3];
-
-                // Only collide with walls in player's vertical range
-                if (tb.maxZ < (airborne ? std::min(localFrom.z, localTo.z) : localFeetZ + 0.3f)) continue;
-                if (tb.minZ > std::max(localFrom.z, localTo.z) + PLAYER_HEIGHT) continue;
-
-                // Only skip geometry the movement controller can step onto.
-                // A separate, larger threshold lets waist-high railings pass
-                // through wall collision while grounding rejects their tops.
-                if (!airborne && tb.maxZ <= localFeetZ + movement::kMaxStepUp) continue;
-
-                // Use MOPY flags to filter wall collision. Blocking set is the
-                // union of both flag conventions seen in the assets:
-                //  - explicit collision hulls (0x08), rendered or not - tunnel
-                //    walls rely on invisible hulls;
-                //  - rendered geometry (0x20) that is not detail (0x04) - the
-                //    Deeprun Tram gates carry render flags without 0x08 and
-                //    were walk-through when only 0x08 blocked.
-                // Detail/decorative (0x04: gears, railings, webs) never blocks.
-                uint32_t triIdx = triStart / 3;
-                // Detail never blocks - unless it is all the group has.
-                //
-                // A group whose every triangle is detail has nothing left to
-                // stand on or walk into once detail is excluded, and a group
-                // that offers no collision at all is not what the flag means:
-                // 0x04 marks the gears and railings *among* solid geometry, so
-                // that they do not block. Darkshore's bridges are 428 triangles
-                // and every one of them is detail, which is why they are walked
-                // through.
-                if (!group.noBlockingTriangles &&
-                    !group.triMopyFlags.empty() && triIdx < group.triMopyFlags.size()) {
-                    uint8_t mopy = group.triMopyFlags[triIdx];
-                    if (mopy != 0) {
-                        const bool collisionHull = (mopy & 0x08) != 0;
-                        const bool renderedSolid = (mopy & 0x20) != 0 && !(mopy & 0x04);
-                        if (!collisionHull && !renderedSolid) continue;
-                    }
+                const uint32_t triIdx = triStart / 3;
+                if (triIdx < group.triBounds.size()) {
+                    const auto& tb = group.triBounds[triIdx];
+                    if (tb.maxZ < localLow.z || tb.minZ > localHigh.z) continue;
                 }
-
-                const glm::vec3& v0 = verts[indices[triStart]];
-                const glm::vec3& v1 = verts[indices[triStart + 1]];
-                const glm::vec3& v2 = verts[indices[triStart + 2]];
-
-                if (airborne) {
-                    // Step allowance belongs to grounded movement. In flight,
-                    // sweep the complete upright body against every solid face,
-                    // including the underside and top of a railing.
-                    bodyTriangles.push_back({
-                        glm::vec3(instance.modelMatrix * glm::vec4(v0, 1.0f)),
-                        glm::vec3(instance.modelMatrix * glm::vec4(v1, 1.0f)),
-                        glm::vec3(instance.modelMatrix * glm::vec4(v2, 1.0f))});
+                if (triIdx < group.triMopyFlags.size() &&
+                    !wmoTriangleBlocksMovement(group.triMopyFlags[triIdx])) {
                     continue;
                 }
-
-                // Use precomputed normal for swept test and push fallback
-                glm::vec3 normal = group.triNormals[triStart / 3];
-                if (glm::dot(normal, normal) < 0.5f) continue;  // degenerate
-
-                if (std::abs(normal.z) >= kWallMaxAbsNormalZ) continue;
-                const auto closest = closestHorizontalPointInSlab(
-                    glm::vec2(localTo), v0, v1, v2,
-                    localFeetZ + movement::kMaxStepUp, localFeetZ + PLAYER_HEIGHT);
-                if (!closest) continue;
-                const auto priorClosest = closestHorizontalPointInSlab(
-                    glm::vec2(localFrom), v0, v1, v2,
-                    localFeetZ + movement::kMaxStepUp, localFeetZ + PLAYER_HEIGHT);
-                const glm::vec2 push = horizontalWallSeparation(
-                    glm::vec2(localFrom) - *priorClosest, glm::vec2(localTo) - *closest,
-                    glm::vec2(normal), PLAYER_RADIUS + 0.005f);
-                if (glm::dot(push, push) == 0.0f) continue;
-                const glm::vec3 pushLocal(push, 0.0f);
-                localTo += pushLocal;
-                const glm::vec3 pushWorld(instance.modelMatrix * glm::vec4(pushLocal, 0.0f));
-                adjustedPos += pushWorld;
-                blocked = true;
+                triangles.push_back({
+                    glm::vec3(instance.modelMatrix * glm::vec4(verts[indices[triStart]], 1.0f)),
+                    glm::vec3(instance.modelMatrix * glm::vec4(verts[indices[triStart + 1]], 1.0f)),
+                    glm::vec3(instance.modelMatrix * glm::vec4(verts[indices[triStart + 2]], 1.0f))});
             }
         }
     }
+}
 
-    if (airborne)
-        return movement::moveBody(from, to, playerRadius, playerHeight, bodyTriangles, adjustedPos, false);
-    return blocked;
+bool WMORenderer::constrainFloorSnap(const glm::vec3& from, float requestedZ,
+                                     float radius, float height,
+                                     float& supportZ, float& supportNormalZ) const {
+    assert(requestedZ < from.z);
+    QueryTimer timer(&queryTimeMs, &queryCallCount);
+    const float bodyRadius = std::max(radius, 0.1f);
+    const float bodyHeight = std::max(height, bodyRadius * movement::kBodyBevel + 0.01f);
+    thread_local std::vector<movement::BodyTriangle> triangles;
+    triangles.clear();
+    appendBodyCollisionTriangles(
+        glm::vec3(from.x - bodyRadius - 0.1f, from.y - bodyRadius - 0.1f, requestedZ - 0.1f),
+        glm::vec3(from.x + bodyRadius + 0.1f, from.y + bodyRadius + 0.1f, from.z + bodyHeight + 0.1f),
+        triangles);
+    return movement::constrainBodyDescent(from, requestedZ, bodyRadius, bodyHeight,
+                                          triangles, supportZ, supportNormalZ);
+}
+
+glm::vec3 WMORenderer::stepBody(const glm::vec3& from, const glm::vec3& to,
+                                float radius, float height, float maxStepUp,
+                                glm::vec3* landingFace) const {
+    QueryTimer timer(&queryTimeMs, &queryCallCount);
+    const float bodyRadius = std::max(radius, 0.1f);
+    const float bodyHeight = std::max(height, bodyRadius * movement::kBodyBevel + 0.01f);
+    thread_local std::vector<movement::BodyTriangle> triangles;
+    triangles.clear();
+    appendBodyCollisionTriangles(
+        glm::min(from, to) - glm::vec3(bodyRadius + 0.25f, bodyRadius + 0.25f, 0.25f),
+        glm::max(from, to) + glm::vec3(bodyRadius + 0.25f, bodyRadius + 0.25f, bodyHeight + maxStepUp + 0.25f),
+        triangles);
+    return movement::stepBodyAcross(from, to, bodyRadius, bodyHeight, triangles, maxStepUp, landingFace);
+}
+
+bool WMORenderer::checkWallCollision(const glm::vec3& from, const glm::vec3& to, glm::vec3& adjustedPos, bool /*insideWMO*/,
+                                      bool airborne, float playerRadius, float playerHeight) const {
+    QueryTimer timer(&queryTimeMs, &queryCallCount);
+    adjustedPos = to;
+
+    const glm::vec3 moveDir = to - from;
+    if (glm::dot(moveDir, moveDir) < 1e-6f) return false;
+
+    const float bodyRadius = std::max(playerRadius, 0.1f);
+    const float bodyHeight = std::max(playerHeight, bodyRadius * movement::kBodyBevel + 0.01f);
+    const float maxLift = airborne ? 0.0f : movement::kMaxStepUp;
+    thread_local std::vector<movement::BodyTriangle> bodyTriangles;
+    bodyTriangles.clear();
+    appendBodyCollisionTriangles(
+        glm::min(from, to) - glm::vec3(bodyRadius + 0.25f, bodyRadius + 0.25f, 0.25f),
+        glm::max(from, to) + glm::vec3(bodyRadius + 0.25f, bodyRadius + 0.25f, bodyHeight + maxLift + 0.25f),
+        bodyTriangles);
+    if (bodyTriangles.empty()) return false;
+
+    if (airborne) {
+        return movement::moveBody(from, to, bodyRadius, bodyHeight, bodyTriangles, adjustedPos, false);
+    }
+
+    const glm::vec3 horizontal(to.x, to.y, from.z);
+    glm::vec3 horizontalAdjusted = horizontal;
+    bool collided = false;
+    if (glm::dot(glm::vec2(horizontal - from), glm::vec2(horizontal - from)) > 1e-12f) {
+        collided = movement::moveBody(from, horizontal, bodyRadius, bodyHeight,
+                                      bodyTriangles, horizontalAdjusted, false);
+        if (collided) {
+            const glm::vec3 stepped = movement::stepBodyAcross(
+                from, horizontal, bodyRadius, bodyHeight, bodyTriangles, movement::kMaxStepUp);
+            const glm::vec2 intent(horizontal - from);
+            if (glm::dot(glm::vec2(stepped - from), intent) >
+                glm::dot(glm::vec2(horizontalAdjusted - from), intent) + 1e-6f) {
+                horizontalAdjusted = stepped;
+                // A step that carried virtually the whole horizontal move is a
+                // stair/curb climb rather than a blocking wall.
+                collided = glm::distance(glm::vec2(stepped), glm::vec2(horizontal)) > 1e-3f;
+            }
+        }
+    }
+    if (horizontalAdjusted.z > from.z + 1e-5f && to.z <= from.z) {
+        adjustedPos = horizontalAdjusted;
+        return collided;
+    }
+    const glm::vec3 verticalTarget = horizontalAdjusted + glm::vec3(0.0f, 0.0f, to.z - from.z);
+    if (std::abs(verticalTarget.z - horizontalAdjusted.z) > 1e-6f) {
+        glm::vec3 verticalAdjusted = verticalTarget;
+        collided |= movement::moveBody(horizontalAdjusted, verticalTarget, bodyRadius, bodyHeight,
+                                       bodyTriangles, verticalAdjusted, true);
+        adjustedPos = verticalAdjusted;
+    } else {
+        adjustedPos = horizontalAdjusted;
+    }
+    return collided;
 }
 
 void WMORenderer::updateActiveGroup(float glX, float glY, float glZ) {
@@ -4173,7 +4142,8 @@ void WMORenderer::updateActiveGroup(float glX, float glY, float glZ) {
                 // Still inside active group?
                 if (activeGroup_.groupIdx >= 0 && static_cast<size_t>(activeGroup_.groupIdx) < model.groups.size()) {
                     const auto& group = model.groups[activeGroup_.groupIdx];
-                    if (!group.unreachable && localPos.x >= group.boundingBoxMin.x && localPos.x <= group.boundingBoxMax.x &&
+                    if (!group.unreachable && !group.antiportal &&
+                        localPos.x >= group.boundingBoxMin.x && localPos.x <= group.boundingBoxMax.x &&
                         localPos.y >= group.boundingBoxMin.y && localPos.y <= group.boundingBoxMax.y &&
                         localPos.z >= group.boundingBoxMin.z && localPos.z <= group.boundingBoxMax.z) {
                         return;  // Still in same group
@@ -4184,7 +4154,8 @@ void WMORenderer::updateActiveGroup(float glX, float glY, float glZ) {
                 for (uint32_t ngi : activeGroup_.neighborGroups) {
                     if (ngi < model.groups.size()) {
                         const auto& group = model.groups[ngi];
-                        if (!group.unreachable && localPos.x >= group.boundingBoxMin.x && localPos.x <= group.boundingBoxMax.x &&
+                        if (!group.unreachable && !group.antiportal &&
+                            localPos.x >= group.boundingBoxMin.x && localPos.x <= group.boundingBoxMax.x &&
                             localPos.y >= group.boundingBoxMin.y && localPos.y <= group.boundingBoxMax.y &&
                             localPos.z >= group.boundingBoxMin.z && localPos.z <= group.boundingBoxMax.z) {
                             // Moved to a neighbor group - update
@@ -4331,7 +4302,7 @@ bool WMORenderer::isInsideWMOGroups(float glX, float glY, float glZ,
         const glm::vec3 localPos =
             glm::vec3(instance.invModelMatrix * glm::vec4(glX, glY, glZ, 1.0f));
         for (const auto& group : model.groups) {
-            if (group.unreachable) continue;
+            if (group.unreachable || group.antiportal) continue;
             if (interiorOnly && !(group.groupFlags & kWMOGroupIndoor)) continue;
             if (localPos.x >= group.boundingBoxMin.x && localPos.x <= group.boundingBoxMax.x &&
                 localPos.y >= group.boundingBoxMin.y && localPos.y <= group.boundingBoxMax.y &&
@@ -4652,7 +4623,7 @@ std::optional<WMORenderer::InteriorLocation> WMORenderer::getInteriorLocation(co
         bool inAnyIndoorBox = false;
         bool inAnyEnclosedIndoorBox = false;
         for (const auto& group : model.groups) {
-            if (group.unreachable) continue;
+            if (group.unreachable || group.antiportal) continue;
             if ((group.groupFlags & kWMOGroupIndoor) == 0) continue;
             if (glm::all(glm::greaterThanEqual(local, group.geometryMin)) &&
                 glm::all(glm::lessThanEqual(local, group.geometryMax))) {
@@ -4918,9 +4889,13 @@ float WMORenderer::raycastTriangles(const glm::vec3& origin, const glm::vec3& di
             group.getTrianglesInRange(rMinX, rMinY, rMaxX, rMaxY, tl_triScratch);
 
             for (uint32_t triStart : tl_triScratch) {
-                if (camera && triStart / 3 < group.triMopyFlags.size() &&
-                    !wmoTriangleStopsCamera(group.triMopyFlags[triStart / 3])) {
-                    continue;
+                const uint32_t triIdx = triStart / 3;
+                if (triIdx < group.triMopyFlags.size()) {
+                    const uint8_t mopy = group.triMopyFlags[triIdx];
+                    if (camera ? !wmoTriangleStopsCamera(mopy)
+                               : !wmoTriangleBlocksMovement(mopy)) {
+                        continue;
+                    }
                 }
                 const glm::vec3& v0 = verts[indices[triStart]];
                 const glm::vec3& v1 = verts[indices[triStart + 1]];
@@ -5073,7 +5048,7 @@ void WMORenderer::registerRtModel(uint32_t modelId, const ModelData& model) {
     for (const auto& group : model.groups) {
         // Groups the renderer never draws would cast shadows the player
         // cannot see the source of.
-        if (group.allUntextured || (group.groupFlags & 0x4000000u)) continue;
+        if (group.allUntextured || group.antiportal) continue;
         if (group.collisionVertices.empty()) continue;
         const uint32_t base = static_cast<uint32_t>(src.positions.size());
         src.positions.insert(src.positions.end(), group.collisionVertices.begin(),

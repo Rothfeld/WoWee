@@ -490,8 +490,14 @@ bool WMOLoader::loadGroup(const std::vector<uint8_t>& groupData,
             // MOGP starts with groupName(4) + descriptiveName(4) offsets into MOGN,
             // followed by flags at offset +8.
             uint32_t mogpOffset = offset;
-            mogpOffset += 4; // skip groupName offset
-            mogpOffset += 4; // skip descriptiveGroupName offset
+            const int32_t groupNameOfs = read<int32_t>(groupData, mogpOffset);
+            const int32_t descNameOfs = read<int32_t>(groupData, mogpOffset);
+            if (groupNameOfs >= 0 && static_cast<size_t>(groupNameOfs) < model.groupNameRaw.size()) {
+                group.name = readString(model.groupNameRaw, static_cast<uint32_t>(groupNameOfs));
+            }
+            if (descNameOfs >= 0 && static_cast<size_t>(descNameOfs) < model.groupNameRaw.size()) {
+                group.description = readString(model.groupNameRaw, static_cast<uint32_t>(descNameOfs));
+            }
             group.flags = read<uint32_t>(groupData, mogpOffset);
             bool isInterior = (group.flags & 0x2000) != 0;
             core::Logger::getInstance().debug("  Group flags: 0x", std::hex, group.flags, std::dec,

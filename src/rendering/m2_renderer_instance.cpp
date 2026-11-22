@@ -1383,21 +1383,12 @@ bool M2Renderer::constrainFloorSnap(const glm::vec3& from, float requestedZ,
                                    float& supportZ, float& supportNormalZ) const {
     assert(requestedZ < from.z);
     QueryTimer timer(&queryTimeMs, &queryCallCount);
-    const glm::vec3 to(from.x, from.y, requestedZ);
-    const glm::vec3 delta = to - from;
     thread_local std::vector<movement::BodyTriangle> triangles;
     triangles.clear();
-    appendBodyCollisionTriangles(glm::vec3(from.x-radius, from.y-radius, requestedZ),
-                                 glm::vec3(from.x+radius, from.y+radius, from.z+height), triangles);
-    std::optional<movement::BodyContact> first;
-    for (const auto& triangle : triangles) {
-        const auto contact = movement::sweepBodyTriangle(from, delta, radius, height, triangle);
-        if (contact && (!first || contact->time < first->time)) first = contact;
-    }
-    if (!first) return false;
-    supportZ = from.z + delta.z * first->time;
-    supportNormalZ = first->normal.z;
-    return true;
+    appendBodyCollisionTriangles(glm::vec3(from.x-radius-0.1f, from.y-radius-0.1f, requestedZ-0.1f),
+                                 glm::vec3(from.x+radius+0.1f, from.y+radius+0.1f, from.z+height+0.1f), triangles);
+    return movement::constrainBodyDescent(from, requestedZ, radius, height,
+                                          triangles, supportZ, supportNormalZ);
 }
 
 glm::vec3 M2Renderer::stepBody(const glm::vec3& from, const glm::vec3& to,

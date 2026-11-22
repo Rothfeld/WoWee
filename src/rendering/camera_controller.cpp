@@ -261,143 +261,166 @@ glm::vec3 CameraController::sweepAgainstWalls(const glm::vec3& from, const glm::
     if (distSq <= 1e-4f) return to;   // stationary: not worth a collision call
 
     const float dist = std::sqrt(distSq);
-    // Tighter steps indoors, where the geometry is closer together.
-    const float stepSize = cachedInsideWMO ? 0.20f : 0.35f;
-    const int steps = std::max(1, std::min(8, static_cast<int>(std::ceil(dist / stepSize))));
+    // Tighter steps indoors, where geometry is closer together; up to 32
+    // substeps so high-speed movement (.modify speed 5 / mounts) climbs
+    // multi-step stairs riser by riser without skipping treads or tunneling.
+    const float stepSize = cachedInsideWMO ? 0.20f : 0.25f;
+    const int steps = std::clamp(static_cast<int>(std::ceil(dist / stepSize)), 1, 32);
     const glm::vec3 stepDelta = delta / static_cast<float>(steps);
 
+    const float bodyRadius = std::max(collisionRadius_, 0.1f);
+    const float bodyHeight = std::max(collisionHeight_, bodyRadius * movement::kBodyBevel + 0.01f);
+    const bool activeM2 = includeDoodads && m2Renderer && !externalFollow_;
+    if (grounded && from.z < walkableStepBaseZ_) walkableStepBaseZ_ = from.z;
+    bool canStepFromRest = stepFromRest_;
+
+    thread_local std::vector<movement::BodyTriangle> combinedTris;
     glm::vec3 stepPos = from;
     for (int i = 0; i < steps; i++) {
         glm::vec3 candidate = stepPos + stepDelta;
 
-        if (wmoRenderer) {
-            glm::vec3 adjusted;
-            if (!grounded) {
-                // Airborne bodies have no step-up allowance. Separate lateral
-                // contact from head/foot contact, as for authored M2 geometry.
+        if (wmoRenderer || activeM2) {
+            const float maxLift = (!swimming && !isFlightAirborne() && (grounded || canStepFromRest))
+                ? std::max(0.0f, (walkableStepBaseZ_ + movement::kMaxStepUp) - stepPos.z) : 0.0f;
+            const glm::vec3 boxLow = glm::min(stepPos, candidate) -
+                glm::vec3(bodyRadius + 0.25f, bodyRadius + 0.25f, 0.25f);
+            const glm::vec3 boxHigh = glm::max(stepPos, candidate) +
+                glm::vec3(bodyRadius + 0.25f, bodyRadius + 0.25f, bodyHeight + maxLift + 0.25f);
+
+            combinedTris.clear();
+            if (wmoRenderer) {
+                wmoRenderer->appendBodyCollisionTriangles(boxLow, boxHigh, combinedTris);
+            }
+            const size_t wmoTriCount = combinedTris.size();
+            if (activeM2) {
+                m2Renderer->appendBodyCollisionTriangles(boxLow, boxHigh, combinedTris);
+            }
+            const bool hasWmoTris = wmoTriCount > 0;
+            const bool hasM2Tris = combinedTris.size() > wmoTriCount;
+
+            if (!combinedTris.empty()) {
+                // Resolve lateral movement with allowHorizontalRise = false so
+                // vertical step gain is exclusively governed by stepBodyAcross's
+                // `walkableStepBaseZ_ + kMaxStepUp` ceiling (preventing bevel
+                // ratcheting over >1.0 yd walls or pedestals).
                 const glm::vec3 horizontal(candidate.x, candidate.y, stepPos.z);
-                glm::vec3 horizontalAdjusted;
-                wmoRenderer->checkWallCollision(stepPos, horizontal, horizontalAdjusted,
-                    cachedInsideWMO, true, collisionRadius_, collisionHeight_);
-                candidate = horizontalAdjusted + glm::vec3(0, 0, candidate.z - stepPos.z);
-                if (wmoRenderer->checkWallCollision(horizontalAdjusted, candidate, adjusted,
-                        cachedInsideWMO, true, collisionRadius_, collisionHeight_)) {
-                    if (adjusted.z > candidate.z + 0.00001f && verticalVelocity <= 0.0f &&
-                            !swimming && !isFlightAirborne()) {
-                        // Beveled-foot contact against a rail side is not a
-                        // landing. Marking it grounded enables a step-up onto
-                        // a top that the jump never reached.
-                        const auto support = wmoRenderer->getFloorHeight(
-                            adjusted.x, adjusted.y, adjusted.z + 0.01f);
-                        if (support && std::abs(*support - adjusted.z) <= 0.02f) {
-                            grounded = true;
-                            verticalVelocity = 0.0f;
+                glm::vec3 horizontalAdjusted = horizontal;
+                bool horizontalContact = false;
+                const glm::vec2 horizDelta(horizontal.x - stepPos.x, horizontal.y - stepPos.y);
+                if (glm::dot(horizDelta, horizDelta) > 1e-12f) {
+                    horizontalContact = movement::moveBody(
+                        stepPos, horizontal, bodyRadius, bodyHeight,
+                        combinedTris, horizontalAdjusted, false);
+                }
+
+                if (horizontalContact) {
+                    if (hasWmoTris) ++movementTraceWmoContacts_;
+                    if (hasM2Tris) ++movementTraceM2Contacts_;
+                    static const bool traceContact = core::envFlagEnabled("WOWEE_BODY_CONTACT_TRACE");
+                    if (traceContact) {
+                        LOG_INFO("Body horizontal contact: from=", stepPos.x, ",", stepPos.y, ",", stepPos.z,
+                            " requested=", horizontal.x, ",", horizontal.y, ",", horizontal.z,
+                            " resolved=", horizontalAdjusted.x, ",", horizontalAdjusted.y, ",", horizontalAdjusted.z,
+                            " grounded=", grounded);
+                    }
+                }
+
+                // `landingFace.z` tells whether the touched triangle is walkable
+                // (true for stair treads even while riding the lower bevel);
+                // `landingNormal.z` tells whether the flat sole itself has
+                // landed on that surface (`>= cos 50 deg`), which is the only
+                // condition that advances `walkableStepBaseZ_` for the next riser.
+                bool didStepUp = false;
+                if (horizontalContact && (grounded || canStepFromRest) &&
+                    !swimming && !isFlightAirborne()) {
+                    const bool fromRest = !grounded;
+                    const float stepBudget = std::max(
+                        0.0f, (walkableStepBaseZ_ + movement::kMaxStepUp) - stepPos.z);
+                    if (stepBudget > 1e-4f) {
+                        glm::vec3 landingFace(0.0f, 0.0f, 1.0f);
+                        glm::vec3 landingNormal(0.0f, 0.0f, 1.0f);
+                        const glm::vec3 stepped = movement::stepBodyAcross(
+                            stepPos, horizontal, bodyRadius, bodyHeight,
+                            combinedTris, stepBudget, &landingFace, &landingNormal);
+                        const glm::vec2 intent(horizontal - stepPos);
+                        bool farther = glm::dot(glm::vec2(stepped - stepPos), intent) >
+                            glm::dot(glm::vec2(horizontalAdjusted - stepPos), intent) + 1e-6f;
+                        if (fromRest && !movement::isWalkableNormal(landingFace.z)) {
+                            farther = false;
+                        }
+                        static const bool traceStep = core::envFlagEnabled("WOWEE_BODY_CONTACT_TRACE");
+                        if (traceStep) {
+                            LOG_INFO("Body grounded step: from=", stepPos.x, ",", stepPos.y, ",", stepPos.z,
+                                " stepped=", stepped.x, ",", stepped.y, ",", stepped.z,
+                                " ordinary=", horizontalAdjusted.x, ",", horizontalAdjusted.y, ",", horizontalAdjusted.z,
+                                " faceZ=", landingFace.z, " normZ=", landingNormal.z, " selected=", farther);
+                        }
+                        if (farther) {
+                            horizontalAdjusted = stepped;
+                            didStepUp = stepped.z > stepPos.z + 1e-5f;
+                            if (didStepUp) {
+                                stepFinishedThisFrame_ = true;
+                                if (movement::isWalkableNormal(landingFace.z)) {
+                                    grounded = true;
+                                    verticalVelocity = 0.0f;
+                                    canStepFromRest = false;
+                                    stepFromRest_ = false;
+                                    if (movement::isWalkableNormal(landingNormal.z)) {
+                                        walkableStepBaseZ_ = stepped.z;
+                                    }
+                                } else {
+                                    grounded = false;
+                                    canStepFromRest = true;
+                                }
+                            }
                         }
                     }
-                    if (adjusted.z < candidate.z - 0.00001f && verticalVelocity > 0.0f)
-                        verticalVelocity = 0.0f;
-                    candidate = adjusted;
                 }
-            } else if (wmoRenderer->checkWallCollision(stepPos, candidate, adjusted, cachedInsideWMO)) {
-                ++movementTraceWmoContacts_;
-                candidate.x = adjusted.x;
-                candidate.y = adjusted.y;
-                // Up is a ramp; down would be a wall pulling the feet under the floor.
-                candidate.z = std::max(candidate.z, adjusted.z);
-            }
-        }
 
-        if (includeDoodads && m2Renderer && !externalFollow_) {
-            // Resolve lateral movement before vertical movement. A diagonal
-            // head contact can come from running into a side, not from the
-            // jump itself; only the vertical sweep may cancel ascent.
-            glm::vec3 horizontal(candidate.x, candidate.y, stepPos.z);
-            glm::vec3 horizontalAdjusted;
-            const bool horizontalContact = m2Renderer->checkCollision(stepPos, horizontal, horizontalAdjusted,
-                collisionRadius_, collisionHeight_, grounded);
-            if (horizontalContact) {
-                ++movementTraceM2Contacts_;
-                static const bool traceContact = core::envFlagEnabled("WOWEE_BODY_CONTACT_TRACE");
-                if (traceContact) {
-                    LOG_INFO("M2 horizontal contact: from=", stepPos.x, ",", stepPos.y, ",", stepPos.z,
-                        " requested=", horizontal.x, ",", horizontal.y, ",", horizontal.z,
-                        " resolved=", horizontalAdjusted.x, ",", horizontalAdjusted.y, ",", horizontalAdjusted.z,
-                        " grounded=", grounded);
-                }
-            }
-            // Build 8606 steps a grounded body onto the authored face it walks
-            // into, whatever that face's slope: native feet rest exactly on the
-            // Exodar table's 74-degree sides and on hammer handles before
-            // falling or walking on. Ground-follow then decides whether that
-            // face supports standing. Ledger #12.
-            //
-            // A step that ends on a face too steep to stand on leaves the body
-            // there at rest, and the next frame it steps again - onto walkable
-            // ground or not at all. Alcaz Island dock (redridgedocks03): the
-            // deck meets the beam in front of the boardwalk with a 0.4-yard
-            // riser of 57-66 degree faces. 8606 at 20 and at 60 fps walks
-            // over it without losing speed, one frame on the riser
-            // (-2697.70, -4694.68, 9.67) and the next on the beam; it does not
-            // climb the Exodar table's 74-degree pedestal at 20 fps, where the
-            // second step would end on the pedestal side again.
-            if (horizontalContact && (grounded || stepFromRest_) && !swimming && !isFlightAirborne()) {
-                glm::vec3 landingFace(0.0f, 0.0f, 1.0f);
-                const glm::vec3 stepped = m2Renderer->stepBody(stepPos, horizontal,
-                    collisionRadius_, collisionHeight_, movement::kMaxStepUp, &landingFace);
-                const glm::vec2 intent(horizontal - stepPos);
-                bool farther = glm::dot(glm::vec2(stepped - stepPos), intent) >
-                    glm::dot(glm::vec2(horizontalAdjusted - stepPos), intent) + 1e-6f;
-                const bool fromRest = !grounded;
-                if (fromRest && !movement::isWalkableNormal(landingFace.z)) farther = false;
-                // The step's raised path must also clear building geometry.
-                if (farther && wmoRenderer) {
-                    const glm::vec3 raised(stepPos.x, stepPos.y, std::max(stepPos.z, stepped.z));
-                    glm::vec3 ignored;
-                    farther = !wmoRenderer->checkWallCollision(stepPos, raised, ignored,
-                                  cachedInsideWMO, true, collisionRadius_, collisionHeight_) &&
-                              !wmoRenderer->checkWallCollision(raised, stepped, ignored,
-                                  cachedInsideWMO, true, collisionRadius_, collisionHeight_);
-                }
-                static const bool traceStep = core::envFlagEnabled("WOWEE_BODY_CONTACT_TRACE");
-                if (traceStep) {
-                    LOG_INFO("M2 grounded step: from=", stepPos.x, ",", stepPos.y, ",", stepPos.z,
-                        " stepped=", stepped.x, ",", stepped.y, ",", stepped.z,
-                        " ordinary=", horizontalAdjusted.x, ",", horizontalAdjusted.y, ",", horizontalAdjusted.z,
-                        " selected=", farther);
-                }
-                if (farther) {
-                    horizontalAdjusted = stepped;
-                    stepFinishedThisFrame_ = true;
-                    if (fromRest) {
-                        grounded = true;
-                        verticalVelocity = 0.0f;
-                        stepFromRest_ = false;
+                if (didStepUp && stepDelta.z <= 0.0f) {
+                    candidate = horizontalAdjusted;
+                } else {
+                    candidate = horizontalAdjusted + glm::vec3(0.0f, 0.0f, stepDelta.z);
+                    if (std::abs(candidate.z - horizontalAdjusted.z) > 1e-6f) {
+                        glm::vec3 adjusted = candidate;
+                        if (movement::moveBody(horizontalAdjusted, candidate, bodyRadius, bodyHeight,
+                                               combinedTris, adjusted, true)) {
+                            if (hasWmoTris) ++movementTraceWmoContacts_;
+                            if (hasM2Tris) ++movementTraceM2Contacts_;
+                            if (adjusted.z > candidate.z + 0.00001f && verticalVelocity <= 0.0f &&
+                                !swimming && !isFlightAirborne()) {
+                                bool walkableSupport = false;
+                                if (wmoRenderer) {
+                                    float nz = 0.0f;
+                                    const auto support = wmoRenderer->getFloorHeight(
+                                        adjusted.x, adjusted.y, adjusted.z + 0.02f, &nz);
+                                    if (support && movement::isWalkableNormal(nz) &&
+                                        std::abs(*support - adjusted.z) <= 0.03f) {
+                                        walkableSupport = true;
+                                    }
+                                }
+                                if (!walkableSupport && activeM2) {
+                                    float nz = 0.0f;
+                                    const auto support = m2Renderer->getFloorHeight(
+                                        adjusted.x, adjusted.y, adjusted.z + 0.02f, &nz);
+                                    if (support && movement::isWalkableNormal(nz) &&
+                                        std::abs(*support - adjusted.z) <= 0.03f) {
+                                        walkableSupport = true;
+                                    }
+                                }
+                                if (walkableSupport) {
+                                    grounded = true;
+                                    verticalVelocity = 0.0f;
+                                    walkableStepBaseZ_ = adjusted.z;
+                                }
+                            }
+                            if (adjusted.z < candidate.z - 0.00001f && verticalVelocity > 0.0f) {
+                                verticalVelocity = 0.0f;
+                            }
+                            candidate = adjusted;
+                        }
                     }
                 }
-            }
-            candidate = horizontalAdjusted + glm::vec3(0.0f, 0.0f, candidate.z - stepPos.z);
-            glm::vec3 adjusted;
-            if (m2Renderer->checkCollision(horizontalAdjusted, candidate, adjusted,
-                    collisionRadius_, collisionHeight_)) {
-                ++movementTraceM2Contacts_;
-                // A beveled side contact stops penetration, but only a
-                // walkable surface at the feet can end a fall. Otherwise the
-                // next horizontal sweep would gain a grounded step allowance.
-                if (adjusted.z > candidate.z + 0.00001f && verticalVelocity <= 0.0f &&
-                    !swimming && !isFlightAirborne()) {
-                    float normalZ = 0.0f;
-                    const auto support = m2Renderer->getFloorHeight(
-                        adjusted.x, adjusted.y, adjusted.z + 0.01f, &normalZ);
-                    if (support && movement::isWalkableNormal(normalZ) &&
-                        std::abs(*support - adjusted.z) <= 0.02f) {
-                        grounded = true;
-                        verticalVelocity = 0.0f;
-                    }
-                }
-                if (adjusted.z < candidate.z - 0.00001f && verticalVelocity > 0.0f) {
-                    verticalVelocity = 0.0f;
-                }
-                candidate = adjusted;
             }
         }
 
@@ -1545,7 +1568,11 @@ void CameraController::groundFollowedCharacter(float deltaTime, FrameInput& f,
     // Ground the character to terrain or WMO floor
     // Skip entirely while swimming - the swim floor clamp handles vertical bounds.
     if (!swimming) {
-        float stepUpBudget = grounded ? movement::kMaxStepUp : 1.2f;
+        float stepUpBudget = grounded
+            ? (hasRealGround_ && targetPos.z > walkableStepBaseZ_
+                   ? std::max(0.05f, (walkableStepBaseZ_ + movement::kMaxStepUp) - targetPos.z)
+                   : movement::kMaxStepUp)
+            : 1.2f;
         // 1. Center-only sample for terrain/WMO floor selection.
         //    Using only the center prevents tunnel entrances from snapping
         //    to terrain when offset samples miss the WMO floor geometry.
@@ -1660,17 +1687,18 @@ void CameraController::groundFollowedCharacter(float deltaTime, FrameInput& f,
             groundH = lastGroundedPos_.z;
         }
 
-        // 1b. Multi-sample WMO floors when in/near WMO space to avoid
-        // falling through narrow board/plank gaps where center ray misses.
-        if (wmoRenderer && nearWmoSpace) {
+        // 1b. Multi-sample WMO floors when the center ray missed or dropped
+        // through a narrow board/plank gap at the player's current floor level.
+        // Gated to misses/drops with a tight ceiling around lastGroundZ so an
+        // offset point 0.35 yd ahead cannot prematurely snap a stationary player
+        // up onto a nearby 0.88 yd railing or stair tread before body contact.
+        if (wmoRenderer && nearWmoSpace &&
+            (!groundH || (grounded && hasRealGround_ && *groundH < lastGroundZ - 0.35f))) {
             const float wmoMultiBaseZ = grounded ? std::max(targetPos.z, lastGroundZ) : lastGroundZ;
             const float wmoProbeZ = wmoMultiBaseZ + stepUpBudget + 0.6f;
             const float minWalkableWmo =
                 cachedInsideWMO ? MIN_WALKABLE_NORMAL_WMO : MIN_WALKABLE_NORMAL_TERRAIN;
-            // Airborne, anything above the last known ground is a roof rather
-            // than a step, so the ceiling of the band comes down.
-            float maxZ = targetPos.z + stepUpBudget;
-            if (!grounded) maxZ = std::min(maxZ, lastGroundZ + stepUpBudget + 0.5f);
+            const float maxZ = std::min(targetPos.z + stepUpBudget, lastGroundZ + 0.35f);
 
             auto wh = highestWalkableFloor(
                 [this](float x, float y, float z, float* nz) {
@@ -2003,6 +2031,58 @@ void CameraController::groundFollowedCharacter(float deltaTime, FrameInput& f,
             }
         }
 
+        // 3D beveled-box support check across both WMO and M2 collision faces:
+        // when the center ray under `(targetPos.x, targetPos.y)` misses or hits
+        // a lower tread/slab below `targetPos.z` while the body's lower bevel
+        // rests on an upper stair tread, railing, or steep pedestal, clamp the
+        // descent to that exact contact height. Walkable faces (`face.z >=
+        // cos 50 deg`) supply real grounded support even over open risers or
+        // stacked slabs; steeper faces block penetration while leaving the
+        // player ungrounded so steep walls/pedestals cannot be climbed.
+        std::optional<float> steepBodySupportZ;
+        bool bodyBevelOnWalkableFace = false;
+        if (!externalFollow_ && !hoverActive_ && (wmoRenderer || m2Renderer) &&
+            !(isFlightAirborne() && f.spaceHeld) &&
+            ((grounded || stepFinishedThisFrame_) && verticalVelocity <= 0.0f) &&
+            (!groundH || *groundH < targetPos.z - 1e-4f)) {
+            const float bodyRadius = std::max(collisionRadius_, 0.1f);
+            const float bodyHeight = std::max(collisionHeight_,
+                bodyRadius * movement::kBodyBevel + 0.01f);
+            const float minSweepZ = targetPos.z -
+                std::max(1.5f, bodyRadius * movement::kBodyBevel + 0.5f);
+            const float requestedZ = groundH ? std::max(*groundH, minSweepZ) : minSweepZ;
+            if (requestedZ < targetPos.z - 1e-4f) {
+                thread_local std::vector<movement::BodyTriangle> snapTriangles;
+                snapTriangles.clear();
+                const glm::vec3 snapLow(targetPos.x - bodyRadius - 0.1f,
+                                        targetPos.y - bodyRadius - 0.1f,
+                                        requestedZ - 0.1f);
+                const glm::vec3 snapHigh(targetPos.x + bodyRadius + 0.1f,
+                                         targetPos.y + bodyRadius + 0.1f,
+                                         targetPos.z + bodyHeight + 0.1f);
+                if (wmoRenderer) {
+                    wmoRenderer->appendBodyCollisionTriangles(snapLow, snapHigh, snapTriangles);
+                }
+                if (m2Renderer) {
+                    m2Renderer->appendBodyCollisionTriangles(snapLow, snapHigh, snapTriangles);
+                }
+                float supportZ = requestedZ;
+                float supportNormalZ = 1.0f;
+                float supportFaceZ = 1.0f;
+                if (!snapTriangles.empty() &&
+                    movement::constrainBodyDescent(targetPos, requestedZ, bodyRadius, bodyHeight,
+                                                   snapTriangles, supportZ, supportNormalZ, &supportFaceZ)) {
+                    if (movement::isWalkableNormal(supportFaceZ) &&
+                        supportZ <= walkableStepBaseZ_ + movement::kMaxStepUp + 1e-3f) {
+                        groundH = supportZ;
+                        bodyBevelOnWalkableFace = !movement::isWalkableNormal(supportNormalZ);
+                    } else {
+                        steepBodySupportZ = supportZ;
+                    }
+                }
+            }
+        }
+
         if (groundH) {
             hasRealGround_ = true;
             noGroundTimer_ = 0.0f;
@@ -2044,19 +2124,52 @@ void CameraController::groundFollowedCharacter(float deltaTime, FrameInput& f,
                 static constexpr float HOVER_HEIGHT = 4.0f;  // ~4 yards above ground
                 float snapH = hoverActive_ ? (*groundH + HOVER_HEIGHT) : *groundH;
                 bool steepBodyContact = false;
-                if (m2Renderer && !externalFollow_ && !hoverActive_ && snapH < feetZ) {
+                bool soleOnWalkableFloor = !bodyBevelOnWalkableFace;
+                if (steepBodySupportZ && !hoverActive_ && *steepBodySupportZ > snapH) {
+                    snapH = *steepBodySupportZ;
+                    steepBodyContact = true;
+                    soleOnWalkableFloor = false;
+                } else if (!steepBodySupportZ && !bodyBevelOnWalkableFace &&
+                           !externalFollow_ && !hoverActive_ &&
+                           snapH < feetZ && (wmoRenderer || m2Renderer)) {
+                    const float bodyRadius = std::max(collisionRadius_, 0.1f);
+                    const float bodyHeight = std::max(collisionHeight_,
+                        bodyRadius * movement::kBodyBevel + 0.01f);
+                    thread_local std::vector<movement::BodyTriangle> snapTriangles;
+                    snapTriangles.clear();
+                    const glm::vec3 snapLow(targetPos.x - bodyRadius - 0.1f,
+                                            targetPos.y - bodyRadius - 0.1f,
+                                            snapH - 0.1f);
+                    const glm::vec3 snapHigh(targetPos.x + bodyRadius + 0.1f,
+                                             targetPos.y + bodyRadius + 0.1f,
+                                             feetZ + bodyHeight + 0.1f);
+                    if (wmoRenderer) {
+                        wmoRenderer->appendBodyCollisionTriangles(snapLow, snapHigh, snapTriangles);
+                    }
+                    if (m2Renderer) {
+                        m2Renderer->appendBodyCollisionTriangles(snapLow, snapHigh, snapTriangles);
+                    }
                     float supportZ = snapH;
                     float supportNormalZ = 1.0f;
-                    if (m2Renderer->constrainFloorSnap(targetPos, snapH, collisionRadius_,
-                            collisionHeight_, supportZ, supportNormalZ)) {
+                    float supportFaceZ = 1.0f;
+                    if (!snapTriangles.empty() &&
+                        movement::constrainBodyDescent(targetPos, snapH, bodyRadius, bodyHeight,
+                                                       snapTriangles, supportZ, supportNormalZ, &supportFaceZ)) {
                         snapH = supportZ;
-                        steepBodyContact = !movement::isWalkableNormal(supportNormalZ);
+                        if (movement::isWalkableNormal(supportFaceZ) &&
+                            supportZ <= walkableStepBaseZ_ + movement::kMaxStepUp + 1e-3f) {
+                            steepBodyContact = false;
+                            soleOnWalkableFloor = movement::isWalkableNormal(supportNormalZ);
+                        } else {
+                            steepBodyContact = true;
+                            soleOnWalkableFloor = false;
+                        }
                     }
                 }
                 static const bool traceContact = core::envFlagEnabled("WOWEE_BODY_CONTACT_TRACE");
-                if (traceContact && movementTraceM2Contacts_ > 0) {
-                    LOG_INFO("Ground snap after M2 contact: feet=", feetZ, " floor=", snapH,
-                        " grounded=", grounded, " slopeGrace=", slopeGrace);
+                if (traceContact && (movementTraceWmoContacts_ > 0 || movementTraceM2Contacts_ > 0)) {
+                    LOG_INFO("Ground snap after body contact: feet=", feetZ, " floor=", snapH,
+                        " grounded=", grounded, " slopeGrace=", slopeGrace, " steep=", steepBodyContact);
                 }
                 targetPos.z = snapH;
                 bool steepTerrain = false;
@@ -2068,14 +2181,25 @@ void CameraController::groundFollowedCharacter(float deltaTime, FrameInput& f,
                 }
                 // Steep surfaces block penetration but cannot support standing.
                 // Preserve falling velocity for downhill contact projection.
-                if (!steepTerrain && !steepBodyContact) verticalVelocity = 0.0f;
+                if (!steepTerrain && !steepBodyContact) {
+                    verticalVelocity = 0.0f;
+                    if (soleOnWalkableFloor || snapH < walkableStepBaseZ_) {
+                        walkableStepBaseZ_ = snapH;
+                    }
+                }
                 grounded = !steepTerrain && !steepBodyContact;
                 lastGroundZ = snapH;
             } else {
+                if (steepBodySupportZ && !hoverActive_) {
+                    targetPos.z = std::max(targetPos.z, *steepBodySupportZ);
+                }
                 grounded = false;
                 lastGroundZ = *groundH;
             }
             } else {
+                if (steepBodySupportZ && !hoverActive_) {
+                    targetPos.z = std::max(targetPos.z, *steepBodySupportZ);
+                }
                 hasRealGround_ = false;
                 noGroundTimer_ += f.physicsDeltaTime;
 
@@ -3610,6 +3734,7 @@ void CameraController::reset() {
     // Normal movement resolves contact once the collision meshes are loaded.
     if (onlineMode) {
         lastGroundZ = spawnPos.z;
+        walkableStepBaseZ_ = spawnPos.z;
         hasCachedFloor_ = false;
 
         camera->setRotation(yaw, pitch);
@@ -3749,6 +3874,7 @@ void CameraController::reset() {
     if (foundBest) {
         spawnPos = bestPos;
         lastGroundZ = spawnPos.z - 0.05f;
+        walkableStepBaseZ_ = lastGroundZ;
     }
 
     camera->setRotation(yaw, pitch);
@@ -3790,6 +3916,7 @@ void CameraController::teleportTo(const glm::vec3& pos) {
     sitting = false;
     seatedInChair_ = false;
     lastGroundZ = pos.z;
+    walkableStepBaseZ_ = pos.z;
     noGroundTimer_ = 0.0f;  // Reset grace period so terrain has time to stream
     autoUnstuckFired_ = false;
     continuousFallTime_ = 0.0f;

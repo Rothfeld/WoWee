@@ -2829,10 +2829,11 @@ wowee_add_test(test_quest_giver_status
             ${TEST_COMMON_SOURCES})
 
 # ── test_collision_geometry ──────────────────────────────────
-# The ray, box and focus tests every collision query is built from. Both
-# renderers had their own copy, and a difference moves where the world is solid.
+# The ray, box and focus tests every collision query is built from, plus 3D
+# beveled-box stair/wall/pedestal stepping and shipped Sunwell WMO stairs.
 wowee_add_test(test_collision_geometry
     SOURCES test_collision_geometry.cpp
+            ${CMAKE_SOURCE_DIR}/src/pipeline/wmo_loader.cpp
             ${TEST_COMMON_SOURCES})
 
 # ── test_entity_floor_arbitration ────────────────────────────

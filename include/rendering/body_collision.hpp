@@ -136,6 +136,21 @@ inline bool moveBody(const glm::vec3& from, const glm::vec3& to,
     return collided;
 }
 
+// When a vertical sweep meets the shared edge between a stair's vertical riser
+// (face.z == 0) and its horizontal tread (face.z == 1), both triangles report
+// the same hit distance within floating-point rounding. Prefer the flatter
+// face so the landing normal reflects the walkable tread regardless of triangle
+// ordering in the mesh.
+inline bool preferSupportContact(const BodyContact& candidate,
+                                 const BodyContact& current,
+                                 float travelLength) {
+    constexpr float kTieDistance = 1e-4f;
+    const float diff = (candidate.time - current.time) * travelLength;
+    if (diff < -kTieDistance) return true;
+    if (diff > kTieDistance) return false;
+    return candidate.face.z > current.face.z;
+}
+
 // Grounded step: lift the body by up to maxStepUp (less under a ceiling),
 // move it across without rising, then lower it no further than the original
 // sole. The result rests on whatever authored face the descent meets first,
@@ -146,17 +161,22 @@ inline bool moveBody(const glm::vec3& from, const glm::vec3& to,
 // on the ground the walker already stood on.
 //
 // `landingFace`, when given, receives the up-facing normal of the face the
-// descent rests on; nothing is written when it rests on no face.
+// descent rests on; `landingNormal` receives the separating axis normal (which
+// is vertical when the flat sole lands on a horizontal tread and ~0.4757 when
+// the lower bevel rides a sharp edge).
 inline glm::vec3 stepBodyAcross(const glm::vec3& from, const glm::vec3& to,
         float radius, float height, std::span<const BodyTriangle> triangles, float maxStepUp,
-        glm::vec3* landingFace = nullptr) {
+        glm::vec3* landingFace = nullptr, glm::vec3* landingNormal = nullptr) {
     assert(std::abs(to.z - from.z) < 1e-6f);
     assert(std::isfinite(maxStepUp) && maxStepUp > 0.0f);
     const auto firstContact = [&](const glm::vec3& start, const glm::vec3& delta) {
+        const float travel = glm::length(delta);
         std::optional<BodyContact> first;
         for (const auto& triangle : triangles) {
             const auto contact = sweepBodyTriangle(start, delta, radius, height, triangle);
-            if (contact && (!first || contact->time < first->time)) first = contact;
+            if (contact && (!first || preferSupportContact(*contact, *first, travel))) {
+                first = contact;
+            }
         }
         return first;
     };
@@ -166,9 +186,41 @@ inline glm::vec3 stepBodyAcross(const glm::vec3& from, const glm::vec3& to,
     glm::vec3 across;
     moveBody(from + up, to + up, radius, height, triangles, across, false);
     const glm::vec3 down(0.0f, 0.0f, from.z - across.z);
-    const auto support = firstContact(across, down);
-    if (support && landingFace) *landingFace = support->face;
+    const auto support = (down.z < -1e-6f) ? firstContact(across, down) : std::nullopt;
+    if (landingFace) *landingFace = support ? support->face : glm::vec3(0.0f);
+    if (landingNormal) *landingNormal = support ? support->normal : glm::vec3(0.0f);
     return across + down * (support ? support->time : 1.0f);
+}
+
+// Constrain a downward grounding snap (`requestedZ < from.z`) against the
+// complete upright beveled body. Starts `2 * kContactSkin` above `from.z` so a
+// body already resting in skin-depth crease contact with a stair bevel is not
+// treated as a pre-existing overlap and dropped through the step. Returns true
+// only when authored geometry blocks the descent above `requestedZ`, writing
+// the clamped sole height to `supportZ`, the separating axis Z (`first->normal.z`)
+// to `supportNormalZ`, and optionally the touched triangle's upward face normal
+// Z (`first->face.z`) to `outFaceZ`.
+inline bool constrainBodyDescent(const glm::vec3& from, float requestedZ,
+        float radius, float height, std::span<const BodyTriangle> triangles,
+        float& supportZ, float& supportNormalZ, float* outFaceZ = nullptr) {
+    assert(requestedZ < from.z);
+    const glm::vec3 probeFrom(from.x, from.y, from.z + kContactSkin * 2.0f);
+    const glm::vec3 delta(0.0f, 0.0f, requestedZ - probeFrom.z);
+    const float travel = probeFrom.z - requestedZ;
+    std::optional<BodyContact> first;
+    for (const auto& triangle : triangles) {
+        const auto contact = sweepBodyTriangle(probeFrom, delta, radius, height, triangle);
+        if (contact && (!first || preferSupportContact(*contact, *first, travel))) {
+            first = contact;
+        }
+    }
+    if (!first) return false;
+    const float hitZ = std::min(from.z, probeFrom.z + delta.z * first->time);
+    if (hitZ <= requestedZ + 1e-4f) return false;
+    supportZ = hitZ;
+    supportNormalZ = first->normal.z;
+    if (outFaceZ) *outFaceZ = first->face.z;
+    return true;
 }
 
 } // namespace wowee::rendering::movement

@@ -37,7 +37,7 @@ TEST_CASE("a walkable slope out-climbs the step-up budget in a long frame") {
     // A slow frame does not. This is the case that put the player inside the
     // hill, so grounding has to recover from penetration rather than assume it
     // cannot happen.
-    CHECK(riseOverFrame(14.0f, 1.0f / 20.0f) > kMaxStepUp);
+    CHECK(riseOverFrame(14.0f, 1.0f / 15.0f) > kMaxStepUp);
 }
 
 // Facing crosses two representations: the renderer holds the character's yaw in
