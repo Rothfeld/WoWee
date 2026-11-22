@@ -59,6 +59,26 @@ inline constexpr uint32_t missileAttachmentToM2Id(int32_t missileAttachment) {
     }
 }
 
+// Map SpellVisual.dbc MissileDestinationAttachment (TBC col 9) to M2 attachment ID.
+// Verified on Native 2.4.3 (build 8606):
+//   1 = ChestBloodFront (15, default for bolts like Fireball 67 / Frostbolt 13),
+//   2 = Base / feet (19, e.g. Incendiary Shot 7756, Incinerate 7675, Bomb 148/3819),
+//   0 = Head (18), 3..8 = LeftHand/RightHand/Breath/Special1..3.
+inline constexpr uint32_t missileDestinationAttachmentToM2Id(uint32_t destAttachment) {
+    switch (destAttachment) {
+        case 0: return kAttachHeadId;
+        case 1: return kAttachChestBloodFrontId;
+        case 2: return kAttachBaseId;
+        case 3: return kAttachSpellLeftHandId;
+        case 4: return kAttachSpellRightHandId;
+        case 5: return kAttachBreathId;
+        case 6: return kAttachSpecial1Id;
+        case 7: return kAttachSpecial2Id;
+        case 8: return kAttachSpecial3Id;
+        default: return kAttachChestBloodFrontId;
+    }
+}
+
 inline uint32_t fallbackAttachmentForReleaseSide(char side) {
     if (side == 'R') return kAttachSpellRightHandId;
     if (side == 'L') return kAttachSpellLeftHandId;

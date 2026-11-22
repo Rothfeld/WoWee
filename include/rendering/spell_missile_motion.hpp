@@ -57,8 +57,23 @@ glm::vec3 applyMissileMotion(const glm::vec3& start, const glm::vec3& end,
                              float progress, const MissileMotionOutput& out);
 
 /// Default parabolic arc (transUp = 4 * t * (1 - t) * startDistance * 0.15) used by
-/// SpellVisual.dbc rows with MissilePathType == 2 and MissileMotion == 0.
+/// SpellVisual.dbc rows with MissilePathType == 2 and MissileMotion == 0, and by
+/// ground-destination lobbed missiles (MissilePathType == 0, MissileDestinationAttachment == 2).
 MissileMotionOutput defaultParabolicMotion(float startDistance, float progress);
+
+/// Whether a TBC 2.4.3 missile with MissileMotion == 0 follows the default parabolic arc.
+/// Verified on Native 2.4.3 (build 8606):
+///   - MissilePathType == 2 always arcs (e.g. Throw Liquid Fire 7139, Mortar 7339, Boulder 7340).
+///   - MissilePathType == 0 with MissileDestinationAttachment == 2 (base/ground) aimed at a
+///     ground destination (TARGET_FLAG_DEST_LOCATION) arcs (e.g. Telonicus Bomb 37036 / visual 148,
+///     Rough Copper Bomb 4064 / visual 3819), whereas destAtt == 1 (13900, 17501, 3720) and
+///     unit-targeted destAtt == 2 (Incendiary Shot 30481 / visual 7756) fly straight.
+inline constexpr bool missileUsesDefaultParabolicArc(uint32_t pathType,
+                                                     uint32_t dbcDestinationAttachment,
+                                                     bool isGroundDestination) {
+    if (pathType == 2u) return true;
+    return pathType == 0u && dbcDestinationAttachment == 2u && isGroundDestination;
+}
 
 /// Loads and evaluates TBC 2.4.3 SpellMissileMotion.dbc Lua motion scripts in a
 /// minimal sandboxed Lua 5.1 state (exposing only degree-based sin/cos and script globals).

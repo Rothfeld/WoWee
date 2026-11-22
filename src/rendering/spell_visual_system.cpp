@@ -1626,13 +1626,6 @@ void SpellVisualSystem::playImpactAreaKit(uint32_t visualId, const glm::vec3& de
                     KitStage::Other);
 }
 
-void SpellVisualSystem::scheduleImpactAreaKit(uint32_t visualId, const glm::vec3& destination, float delay) {
-    assert(std::isfinite(delay) && delay >= 0.0f);
-    pendingAreaImpacts_.push_back({.visualId = visualId, .destination = destination, .remaining = delay});
-    LOG_INFO("SpellVisual: impact area of visual ", visualId, " lands in ", delay, "s at (",
-             destination.x, ",", destination.y, ",", destination.z, ")");
-}
-
 void SpellVisualSystem::playSpellVisualKit(uint32_t kitId, const glm::vec3& worldPosition,
                                             uint32_t attachInstanceId) {
     if (!spellVisualDbcLoaded_) loadSpellVisualDbc();
@@ -1952,6 +1945,8 @@ bool SpellVisualSystem::playSpellMissile(uint32_t visualId, const glm::vec3& sta
 
     const auto ptIt = spellVisualMissilePathType_.find(visualId);
     const uint32_t pathType = (ptIt != spellVisualMissilePathType_.end()) ? ptIt->second : 0u;
+    const auto attIt = missileAttachments_.find(visualId);
+    const uint32_t dbcDestAttach = (attIt != missileAttachments_.end()) ? attIt->second.destination : 0u;
     const auto motIt = spellVisualMissileMotion_.find(visualId);
     const uint32_t motionId = (motIt != spellVisualMissileMotion_.end()) ? motIt->second : 0u;
     const int count = static_cast<int>(std::max(1u, missileMotionTable_.missileCount(motionId)));
@@ -1975,13 +1970,14 @@ bool SpellVisualSystem::playSpellMissile(uint32_t visualId, const glm::vec3& sta
                                   .destinationAttachment = destinationAttachment,
                                   .targetResolver = targetResolver,
                                   .motionId = motionId, .pathType = pathType,
+                                  .dbcDestinationAttachment = dbcDestAttach,
                                   .missileIndex = idx, .missileCount = count,
                                   .rand1 = unitDist(motionRng), .rand2 = unitDist(motionRng),
                                   .rand3 = unitDist(motionRng), .startDistance = distance});
     }
     LOG_INFO("SpellVisual: missile visualId=", visualId, " model=", modelPath,
              " distance=", distance, " speed=", speed, " lands=", duration, "s leaves=", launchDelay,
-             "s motion=", motionId, " pathType=", pathType, " count=", count);
+             "s motion=", motionId, " pathType=", pathType, " destAtt=", dbcDestAttach, " count=", count);
     return true;
 }
 
@@ -2002,8 +1998,12 @@ bool SpellVisualSystem::evaluateMissileMotion(const SpellMissile& missile, float
         };
         return missileMotionTable_.evaluate(missile.motionId, in, out);
     }
-    if (missile.pathType == 2u) {
-        out = defaultParabolicMotion(missile.startDistance, progress);
+    const bool isGroundDest = (missile.targetInstanceId == 0 && !missile.targetResolver);
+    if (missileUsesDefaultParabolicArc(missile.pathType, missile.dbcDestinationAttachment, isGroundDest)) {
+        const float arcDist = (missile.pathType == 2u)
+            ? missile.startDistance
+            : glm::length(glm::vec2(missile.end.x - missile.start.x, missile.end.y - missile.start.y));
+        out = defaultParabolicMotion(arcDist, progress);
         return true;
     }
     return false;
@@ -2229,16 +2229,6 @@ void SpellVisualSystem::update(float deltaTime) {
             }
             ++it;
         }
-    }
-    for (auto it = pendingAreaImpacts_.begin(); it != pendingAreaImpacts_.end(); ) {
-        it->remaining -= deltaTime;
-        if (it->remaining > 0.0f) {
-            ++it;
-            continue;
-        }
-        const PendingAreaImpact landed = *it;
-        it = pendingAreaImpacts_.erase(it);
-        playImpactAreaKit(landed.visualId, landed.destination);
     }
     if (activeSpellVisuals_.empty() && physicalProjectiles_.empty() && spellMissiles_.empty())
         return;
@@ -2701,7 +2691,6 @@ void SpellVisualSystem::reset() {
         if (m2Renderer_ && missile.instanceId) m2Renderer_->removeInstance(missile.instanceId);
     }
     spellMissiles_.clear();
-    pendingAreaImpacts_.clear();
     if (renderer_ && renderer_->getCharacterRenderer()) {
         for (const auto& projectile : physicalProjectiles_)
             renderer_->getCharacterRenderer()->removeInstance(projectile.instanceId);

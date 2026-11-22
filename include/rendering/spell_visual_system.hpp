@@ -85,13 +85,6 @@ public:
     /// 46648 (visual 10441, kit 9254 Shadow_Fissure_Base): the pink beams and
     /// dark shards native draws where the Spectral Rift opens.
     void playImpactAreaKit(uint32_t visualId, const glm::vec3& destination);
-    /// The ImpactAreaKit of a missile spell plays when its missile reaches the
-    /// destination, delay seconds from now (distance / Spell.dbc Speed), also
-    /// when the spell hit units: native 2.4.3 (pair 13) drops Infernal 32148's
-    /// infernal_impact column (visual 7920, kit 9322) where the Infernal_Ball
-    /// lands, about 6 s after SMSG_SPELL_GO for a relay 116 yd away, nothing
-    /// at SPELL_GO.
-    void scheduleImpactAreaKit(uint32_t visualId, const glm::vec3& destination, float delay);
     /// One SpellVisualEffectName.dbc model at a unit's M2 attachment, e.g. a
     /// UnitBlood.dbc combat blood spurt at ChestBloodFront (15).
     void playEffectAtAttachment(uint32_t effectNameId, uint32_t attachInstanceId, uint32_t attachment);
@@ -377,6 +370,7 @@ private:
         MissileTargetResolver targetResolver;
         uint32_t motionId = 0;       // SpellVisual.MissileMotion -> SpellMissileMotion.dbc
         uint32_t pathType = 0;       // SpellVisual.MissilePathType (2 = parabola fallback)
+        uint32_t dbcDestinationAttachment = 0;  // SpellVisual.MissileDestinationAttachment (2 = base/ground)
         int missileIndex = 0;
         int missileCount = 1;
         float rand1 = 0.5f;
@@ -621,12 +615,6 @@ private:
                      const glm::vec3& position, float scale);
     std::vector<PhysicalProjectile> physicalProjectiles_;
     std::vector<SpellMissile> spellMissiles_;
-    struct PendingAreaImpact {
-        uint32_t visualId = 0;
-        glm::vec3 destination{0.0f};
-        float remaining = 0.0f;      // seconds until the missile lands
-    };
-    std::vector<PendingAreaImpact> pendingAreaImpacts_;
     std::unordered_map<uint32_t, std::string> spellVisualMissilePath_; // visualId → missile M2 path
     std::unordered_map<uint32_t, float> spellVisualMissileScale_;
     std::unordered_map<uint32_t, uint32_t> spellVisualMissilePathType_;

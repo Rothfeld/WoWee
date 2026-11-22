@@ -814,13 +814,15 @@ bool SpellHandler::launchSpellMissile(uint32_t spellId, uint32_t visualId, uint6
     glm::vec3 start, end;
     if (!resolveUnitPosition(casterGuid, start) || !resolveUnitPosition(targetGuid, end))
         return false;
-    static constexpr uint32_t kAttachChestFront = rendering::kAttachChestBloodFrontId;
     const auto attachments = svs->missileAttachments(visualId);
     const int32_t missileAttachment = attachments ? attachments->launch : -1;
-    if (attachments && (attachments->launch != -1 || attachments->destination != 1)) {
+    const uint32_t destAttach = attachments
+        ? rendering::missileDestinationAttachmentToM2Id(attachments->destination)
+        : rendering::kAttachChestBloodFrontId;
+    if (attachments && (attachments->launch != -1 || (attachments->destination != 1 && attachments->destination != 2))) {
         LOG_WARNING("SpellVisual: missile visual ", visualId, " launch attachment ", attachments->launch,
                     " destination ", attachments->destination,
-                    " not verified against the original; using release event / chest 15");
+                    " not verified against the original; using release event / m2 attachment ", destAttach);
     }
     const uint32_t casterInstance = owner_.resolveUnitRenderInstance(casterGuid);
     const uint32_t targetInstance = owner_.resolveUnitRenderInstance(targetGuid);
@@ -857,10 +859,10 @@ bool SpellHandler::launchSpellMissile(uint32_t spellId, uint32_t visualId, uint6
                             std::dec, "; using the unit position");
             }
         }
-        if (targetInstance != 0 && characters->getAttachmentTransform(targetInstance, kAttachChestFront, transform)) {
+        if (targetInstance != 0 && characters->getAttachmentTransform(targetInstance, destAttach, transform)) {
             end = glm::vec3(transform[3]);
-        } else {
-            LOG_WARNING("SpellVisual: missile attachment ", kAttachChestFront, " missing on 0x", std::hex, targetGuid,
+        } else if (destAttach != rendering::kAttachBaseId) {
+            LOG_WARNING("SpellVisual: missile attachment ", destAttach, " missing on 0x", std::hex, targetGuid,
                         std::dec, "; using the unit position");
         }
     }
@@ -883,8 +885,8 @@ bool SpellHandler::launchSpellMissile(uint32_t spellId, uint32_t visualId, uint6
     };
     return svs->playSpellMissile(visualId, start, end, speed, launchDelay, impactAtEnd,
                                  /*areaImpactAtEnd=*/false, resistEffectAtEnd, std::move(onArrive),
-                                 casterInstance, launchOrigin, targetInstance, kAttachChestFront,
-                                 makeTargetResolver(targetGuid, kAttachChestFront));
+                                 casterInstance, launchOrigin, targetInstance, destAttach,
+                                 makeTargetResolver(targetGuid, destAttach));
 }
 
 void SpellHandler::launchAmmoProjectile(const SpellGoData& data) {
@@ -4140,23 +4142,18 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
                     }
                 }
             }
+            bool launchedGroundMissile = false;
             if (data.destination) {
                 if (auto* renderer = owner_.services().renderer) {
                     if (auto* svs = renderer->getSpellVisualSystem()) {
                         const glm::vec3 destination = core::coords::canonicalToRender(
                             core::coords::serverToCanonical(*data.destination));
-                        // A missile spell's area impact plays where and when its
-                        // missile reaches the destination. Aimed at a ground
-                        // point only, the missile flies there: Supremus'
-                        // volcanoes (Volcanic Geyser 40118, visual 9466,
-                        // Fireball_Blue_Missile_High, speed 10) spew blue
-                        // fireballs to random points in the original. One that
-                        // also hit units flies to them (below) and the area
-                        // impact waits for the landing: Hyjal's Infernal 32148
-                        // (visual 7920, two hits) drops its infernal_impact
-                        // column (ImpactAreaKit 9322) only as the Infernal_Ball
-                        // lands, about 6 s after SPELL_GO in the original;
-                        // played at SPELL_GO it was over long before.
+                        // A ground-destination missile (TARGET_FLAG_DEST_LOCATION) flies
+                        // once to the destination point and plays ImpactAreaKit + per-hit
+                        // impacts on landing: Telonicus Bomb 37036 (visual 148, destAtt 2,
+                        // parabolic arc to feet), Rough Copper Bomb 4064 (visual 3819),
+                        // Supremus Volcanic Geyser 40118 (visual 9466), and Hyjal Infernal
+                        // 32148 (visual 7920).
                         const float speed = resolveSpellMissileSpeed(data.spellId);
                         glm::vec3 start;
                         const bool missile = svs->hasSpellMissile(visualId) &&
@@ -4164,9 +4161,6 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
                             resolveUnitPosition(data.casterUnit, start);
                         if (!missile) {
                             svs->playImpactAreaKit(visualId, destination);
-                        } else if (!data.hitTargets.empty()) {
-                            svs->scheduleImpactAreaKit(visualId, destination,
-                                                       glm::length(destination - start) / speed);
                         } else {
                             const uint32_t casterInst = owner_.resolveUnitRenderInstance(data.casterUnit);
                             auto* characters = renderer->getCharacterRenderer();
@@ -4186,9 +4180,25 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
                                     start = glm::vec3(transform[3]);
                                 }
                             }
-                            if (!svs->playSpellMissile(visualId, start, destination, speed, origin.launchDelaySeconds,
-                                                       /*impactAtEnd=*/false, /*areaImpactAtEnd=*/true,
-                                                       /*resistEffectAtEnd=*/false, {}, casterInst, origin)) {
+                            std::function<void()> onArrive;
+                            if (!data.hitTargets.empty()) {
+                                const uint32_t spellIdCopy = data.spellId;
+                                const auto hitCopy = data.hitTargets;
+                                onArrive = [this, spellIdCopy, hitCopy]() {
+                                    for (const auto& tgt : hitCopy) {
+                                        if (tgt != 0) triggerImpactVisual(spellIdCopy, tgt);
+                                    }
+                                };
+                            }
+                            const uint32_t destAttach = attachments
+                                ? rendering::missileDestinationAttachmentToM2Id(attachments->destination)
+                                : rendering::kAttachBaseId;
+                            launchedGroundMissile = svs->playSpellMissile(
+                                visualId, start, destination, speed, origin.launchDelaySeconds,
+                                /*impactAtEnd=*/false, /*areaImpactAtEnd=*/true,
+                                /*resistEffectAtEnd=*/false, std::move(onArrive), casterInst, origin,
+                                /*targetInstanceId=*/0, destAttach);
+                            if (!launchedGroundMissile) {
                                 svs->playImpactAreaKit(visualId, destination);
                             }
                         }
@@ -4198,11 +4208,13 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
             // The missile, where the spell has one, and the impact at each hit
             // target - played by the missile when it lands, or straight away
             // for a spell that does not fly.
-            for (const auto& tgt : data.hitTargets) {
-                if (tgt == 0) continue;
-                if (!launchSpellMissile(data.spellId, visualId, data.casterUnit, tgt,
-                                        /*impactAtEnd=*/true)) {
-                    triggerImpactVisual(data.spellId, tgt);
+            if (!launchedGroundMissile) {
+                for (const auto& tgt : data.hitTargets) {
+                    if (tgt == 0) continue;
+                    if (!launchSpellMissile(data.spellId, visualId, data.casterUnit, tgt,
+                                            /*impactAtEnd=*/true)) {
+                        triggerImpactVisual(data.spellId, tgt);
+                    }
                 }
             }
         }

@@ -2,6 +2,7 @@
 
 #include "pipeline/dbc_layout.hpp"
 #include "pipeline/dbc_loader.hpp"
+#include "rendering/spell_launch_origin.hpp"
 #include "rendering/spell_missile_motion.hpp"
 
 #include <cmath>
@@ -228,5 +229,53 @@ TEST_CASE("All 83 shipped TBC 2.4.3 SpellMissileMotion.dbc scripts compile and e
         in.missileIndex = 1;
         REQUIRE(table.evaluate(19, in, b));
         CHECK(b.transAngle - a.transAngle == Catch::Approx(360.0f / 7.0f));
+    }
+}
+
+TEST_CASE("TBC 2.4.3 MissileDestinationAttachment and ground-lob parabolic arc parity",
+          "[missile][motion][dbc]") {
+    // M2 attachment mapping for SpellVisual.MissileDestinationAttachment (col 9).
+    CHECK(missileDestinationAttachmentToM2Id(1u) == kAttachChestBloodFrontId);
+    CHECK(missileDestinationAttachmentToM2Id(2u) == kAttachBaseId);
+    CHECK(missileDestinationAttachmentToM2Id(0u) == kAttachHeadId);
+    CHECK(missileDestinationAttachmentToM2Id(3u) == kAttachSpellLeftHandId);
+    CHECK(missileDestinationAttachmentToM2Id(4u) == kAttachSpellRightHandId);
+    CHECK(missileDestinationAttachmentToM2Id(5u) == kAttachBreathId);
+
+    // Native 2.4.3 (build 8606) verified truth table for MissileMotion == 0:
+    // - Telonicus Bomb 37036 (visual 148) & Rough Copper Bomb 4064 (visual 3819):
+    //   pathType=0, destAtt=2, ground destination -> parabolic arc to feet.
+    CHECK(missileUsesDefaultParabolicArc(/*pathType=*/0u, /*dbcDestinationAttachment=*/2u,
+                                         /*isGroundDestination=*/true));
+    // - Fiery Burst 13900 (516), Cannon Fire 17501 (612), Throw Syndicate Bomb 3720 (67):
+    //   pathType=0, destAtt=1, ground destination -> straight line.
+    CHECK_FALSE(missileUsesDefaultParabolicArc(0u, 1u, true));
+    // - Incendiary Shot 30481 (7756): pathType=0, destAtt=2, unit-targeted -> straight to feet.
+    CHECK_FALSE(missileUsesDefaultParabolicArc(0u, 2u, false));
+    // - Fireball 133 (67): pathType=0, destAtt=1, unit-targeted -> straight to chest.
+    CHECK_FALSE(missileUsesDefaultParabolicArc(0u, 1u, false));
+    // - Incinerate 29722 (7675): pathType=1, destAtt=2, unit-targeted -> ground-hugging, not default parabola.
+    CHECK_FALSE(missileUsesDefaultParabolicArc(1u, 2u, false));
+    // - Throw Liquid Fire 23970 (7139), Mortar (7339), Boulder (7340): pathType=2 -> always parabolic arc.
+    CHECK(missileUsesDefaultParabolicArc(2u, 2u, false));
+    CHECK(missileUsesDefaultParabolicArc(2u, 1u, false));
+    CHECK(missileUsesDefaultParabolicArc(2u, 2u, true));
+
+    DBCFile svDbc;
+    if (!loadTbcDbc("SpellVisual.dbc", svDbc)) {
+        SKIP("TBC 2.4.3 SpellVisual.dbc not available locally");
+    }
+    REQUIRE(svDbc.getFieldCount() == 25u);
+
+    // Telonicus Bomb (spell 37036 -> SpellVisual 148) and Rough Copper Bomb (spell 4064 -> SpellVisual 3819)
+    // both carry pathType=0, destAtt=2, motion=0 with ImpactAreaKit != 0.
+    for (const uint32_t vid : {148u, 3819u}) {
+        const int32_t rec = svDbc.findRecordById(vid);
+        REQUIRE(rec >= 0);
+        const uint32_t r = static_cast<uint32_t>(rec);
+        CHECK(svDbc.getUInt32(r, 8u) == 0u);   // MissilePathType
+        CHECK(svDbc.getUInt32(r, 9u) == 2u);   // MissileDestinationAttachment (base/feet)
+        CHECK(svDbc.getUInt32(r, 20u) == 0u);  // MissileMotion
+        CHECK(svDbc.getUInt32(r, 23u) != 0u);  // ImpactAreaKit
     }
 }
