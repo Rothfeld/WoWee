@@ -331,3 +331,16 @@ TEST_CASE("Stuck arrow policy, fade, and chest-bone local tracking", "[missile][
     CHECK(p1.z == Catch::Approx(1.24f));
     CHECK(r1.z == Catch::Approx(1.5707963f).margin(1e-4f));
 }
+
+TEST_CASE("Physical projectile replaceable texture slots preserve hardcoded ribbon textures", "[missile][stuck-arrows]") {
+    using wowee::rendering::isReplaceableProjectileTextureType;
+    // Hardcoded filename slots (type 0, e.g. BulletFlight_01.m2 slot 0 SPELLS\GRADIENT128.BLP
+    // and ArrowFlight_01.m2 slot 1 SPELLS\GRADIENT128.BLP) must never be overwritten.
+    CHECK_FALSE(isReplaceableProjectileTextureType(0u));
+    CHECK_FALSE(isReplaceableProjectileTextureType(1u));
+    // Object skin (2, ArrowFlight_01.m2 slot 0), weapon blade (3), and weapon handle (4)
+    // accept ItemDisplayInfo.dbc skin textures.
+    CHECK(isReplaceableProjectileTextureType(2u));
+    CHECK(isReplaceableProjectileTextureType(3u));
+    CHECK(isReplaceableProjectileTextureType(4u));
+}

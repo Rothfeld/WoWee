@@ -2096,8 +2096,18 @@ void SpellVisualSystem::playPhysicalProjectile(const std::string& modelPath,
         }
         if (model.vertices.empty() || !characterRenderer->loadModel(model, modelId)) return;
         if (!texturePath.empty()) {
-            if (auto* texture = characterRenderer->loadTexture(texturePath))
-                characterRenderer->setModelTexture(modelId, 0, texture);
+            if (auto* texture = characterRenderer->loadTexture(texturePath)) {
+                bool appliedReplaceable = false;
+                for (uint32_t slot = 0; slot < model.textures.size(); ++slot) {
+                    if (isReplaceableProjectileTextureType(model.textures[slot].type)) {
+                        characterRenderer->setModelTexture(modelId, slot, texture);
+                        appliedReplaceable = true;
+                    }
+                }
+                if (!appliedReplaceable && !model.textures.empty() && model.textures[0].filename.empty()) {
+                    characterRenderer->setModelTexture(modelId, 0, texture);
+                }
+            }
         }
     }
 

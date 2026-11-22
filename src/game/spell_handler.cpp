@@ -1107,6 +1107,7 @@ void SpellHandler::launchRangedWeaponProjectile(uint32_t spellId, uint64_t targe
                 isWeaponSubclass(ranged.item.itemClass, ranged.item.subClass, WEAPON_SUBCLASS_BOW) ||
                 isWeaponSubclass(ranged.item.itemClass, ranged.item.subClass, WEAPON_SUBCLASS_CROSSBOW)))) {
         modelPath = "Item\\ObjectComponents\\Ammo\\ArrowFlight_01.m2";
+        texturePath = "Item\\ObjectComponents\\Ammo\\Arrow_A_01Brown.blp";
     } else {
         modelPath = "Item\\ObjectComponents\\Ammo\\BulletFlight_01.m2";
     }
@@ -3823,9 +3824,11 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
     SpellGoData data;
     if (!owner_.getPacketParsers()->parseSpellGo(packet, data)) return;
     const bool rangedWeaponAttack = spellclass::isRangedWeaponAutoAttack(data.spellId);
-    // Build 8606 draws a Spectral Sentry's Shoot bolt flying to its target
-    // (_experiments/20261118T091949Z.creature_swing_anim, arrow).
-    if (data.casterUnit != owner_.getPlayerGuid() && data.ammoDisplayId != 0) launchAmmoProjectile(data);
+    // Launch physical ammo projectiles from SMSG_SPELL_GO CAST_FLAG_AMMO for
+    // both players and creatures using the exact ItemDisplayInfo.dbc model and
+    // texture (ArrowFlight_01 + Arrow_A_01Brown, elemental arrows, bullets,
+    // thrown weapons).
+    if (data.ammoDisplayId != 0) launchAmmoProjectile(data);
 
     bool casterFinishedTimedCast = false;
     if (data.casterUnit == owner_.getPlayerGuid()) {
@@ -3907,12 +3910,14 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
                     csm->playRangedShot(rangedSub);
                 }
             }
-            uint64_t projectileTarget = data.targetGuid;
-            if (projectileTarget == 0 && !data.hitTargets.empty())
-                projectileTarget = data.hitTargets.front();
-            if (projectileTarget == 0 && !data.missTargets.empty())
-                projectileTarget = data.missTargets.front().targetGuid;
-            launchRangedWeaponProjectile(sid, projectileTarget);
+            if (data.ammoDisplayId == 0) {
+                uint64_t projectileTarget = data.targetGuid;
+                if (projectileTarget == 0 && !data.hitTargets.empty())
+                    projectileTarget = data.hitTargets.front();
+                if (projectileTarget == 0 && !data.missTargets.empty())
+                    projectileTarget = data.missTargets.front().targetGuid;
+                launchRangedWeaponProjectile(sid, projectileTarget);
+            }
         }
 
         // Instant melee abilities → trigger attack animation. Range decides this, not

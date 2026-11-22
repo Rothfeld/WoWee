@@ -252,4 +252,13 @@ inline void evaluateStuckArrowWorldPose(const glm::mat4& attachMat,
     outRot = missileDirectionToEuler(worldDir);
 }
 
+/// True when an M2 texture slot on a physical projectile (arrow, bullet, thrown
+/// weapon) accepts the ItemDisplayInfo.dbc skin texture rather than keeping its
+/// hardcoded M2 filename (e.g. BulletFlight_01.m2 slot 0 SPELLS\GRADIENT128.BLP
+/// is type 0 and must not be overwritten, while ArrowFlight_01.m2 slot 0 is
+/// type 2 object skin).
+inline bool isReplaceableProjectileTextureType(uint32_t textureType) {
+    return textureType == 2u || textureType == 3u || textureType == 4u;
+}
+
 }  // namespace wowee::rendering
