@@ -836,10 +836,10 @@ TEST_CASE("TBC sent chat shows only what the server echoes", "[chat][tbc]") {
     s.spawnPlayer({{UF::UNIT_FIELD_HEALTH, 100}, {UF::UNIT_FIELD_LEVEL, 2}});
     s.receive(nameResponse(Session::kPlayerGuid, "Graulbert"));
     int bubbles = 0;
-    s.handler().setChatBubbleCallback([&](uint64_t guid, const std::string& text, bool yell) {
+    s.handler().setChatBubbleCallback([&](uint64_t guid, const std::string& text, ChatType type) {
         CHECK(guid == Session::kPlayerGuid);
         CHECK(text == "bubblecheck");
-        CHECK_FALSE(yell);
+        CHECK(type == ChatType::SAY);
         ++bubbles;
     });
     auto rows = [&](ChatType type) {

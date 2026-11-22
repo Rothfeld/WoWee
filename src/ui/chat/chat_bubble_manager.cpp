@@ -10,14 +10,34 @@
 #include "core/entity_spawner.hpp"
 #include "rendering/character_renderer.hpp"
 #include <imgui.h>
+#include "ui/interface_fonts.hpp"
 #include "ui/sight_cache.hpp"
 #include "ui/ui_texture_load.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <glm/glm.hpp>
 
 namespace wowee { namespace ui {
 
-void ChatBubbleManager::addBubble(uint64_t senderGuid, const std::string& message, bool isYell) {
+namespace {
+struct RenderedBubbleLine {
+    std::string text;
+    float widthPx = 0.0f;
+};
+
+std::string trimTrailingWhitespace(std::string s) {
+    while (!s.empty() && (s.back() == ' ' || s.back() == '\n' || s.back() == '\r')) {
+        s.pop_back();
+    }
+    return s;
+}
+} // namespace
+
+void ChatBubbleManager::addBubble(uint64_t senderGuid, const std::string& message,
+                                  game::ChatType chatType) {
+    const bool isYell = (chatType == game::ChatType::YELL ||
+                         chatType == game::ChatType::MONSTER_YELL);
     float duration = 8.0f + static_cast<float>(message.size()) * 0.06f;
     if (isYell) duration += 2.0f;
     if (duration > 15.0f) duration = 15.0f;
@@ -28,7 +48,7 @@ void ChatBubbleManager::addBubble(uint64_t senderGuid, const std::string& messag
             b.message = message;
             b.timeRemaining = duration;
             b.totalDuration = duration;
-            b.isYell = isYell;
+            b.chatType = chatType;
             return;
         }
     }
@@ -36,13 +56,19 @@ void ChatBubbleManager::addBubble(uint64_t senderGuid, const std::string& messag
     if (bubbles_.size() >= kMaxBubbles) {
         bubbles_.erase(bubbles_.begin());
     }
-    bubbles_.push_back({.senderGuid = senderGuid, .message = message, .timeRemaining = duration, .totalDuration = duration, .isYell = isYell});
+    bubbles_.push_back({
+        .senderGuid = senderGuid,
+        .message = message,
+        .timeRemaining = duration,
+        .totalDuration = duration,
+        .chatType = chatType,
+    });
 }
 
 void ChatBubbleManager::render(game::GameHandler& gameHandler, const UIServices& services) {
-    // Off means off: the queue is dropped as well, so turning the setting off
-    // clears what is on screen rather than leaving it to fade for five seconds.
-    if (!show_) { bubbles_.clear(); return; }
+    // Off means off: drop disabled bubble categories immediately rather than
+    // leaving them on screen to fade out.
+    if (!show_ && !showParty_) { bubbles_.clear(); return; }
     if (bubbles_.empty()) return;
 
     auto* renderer = services.renderer;
@@ -61,6 +87,11 @@ void ChatBubbleManager::render(game::GameHandler& gameHandler, const UIServices&
     // Update and render bubbles
     for (int i = static_cast<int>(bubbles_.size()) - 1; i >= 0; --i) {
         auto& bubble = bubbles_[i];
+        const bool isParty = isPartyChatBubbleType(bubble.chatType);
+        if ((isParty && !showParty_) || (!isParty && !show_)) {
+            bubbles_.erase(bubbles_.begin() + i);
+            continue;
+        }
         bubble.timeRemaining -= dt;
         if (bubble.timeRemaining <= 0.0f) {
             bubbles_.erase(bubbles_.begin() + i);
@@ -124,26 +155,56 @@ void ChatBubbleManager::render(game::GameHandler& gameHandler, const UIServices&
 
         // Into the background draw list, which is where the interface is
         // drawn - and drawn into before it, so the interface covers this.
-        //
-        // These were ImGui windows, and an ImGui window is above every draw
-        // list the interface uses, whatever the interface is doing: a bubble
-        // sat on top of the auction house, the bags, the map, anything open.
-        // Nothing about the position was wrong; a window was simply the one
-        // thing that cannot go underneath.
         ImDrawList* dl = ImGui::GetBackgroundDrawList();
-        ImFont* font = ImGui::GetFont();
-        const float scale = screenH / 768.0f;
-        const float fontSize = 15.0f * scale;
-        const float kWrapWidth = 300.0f * scale;
-        const ImVec2 padding(16.0f * scale, 12.0f * scale);
+        ImFont* font = interfaceFaceOrDefault("frizqt__");
+        const ChatBubbleMetrics m = chatBubbleMetrics(screenH);
+        const float fontSize = static_cast<float>(m.pixelHeight);
 
-        const ImVec2 textSize =
-            font->CalcTextSizeA(fontSize, FLT_MAX, kWrapWidth, bubble.message.c_str());
-        const ImVec2 size(textSize.x + padding.x * 2.0f, textSize.y + padding.y * 2.0f);
-        // The point is where the speaker's head is, and the bubble sits above
-        // it, centred - which is what the window's pivot of (0.5, 1) did.
-        const ImVec2 topLeft(screenX - size.x * 0.5f, screenY - size.y);
-        // The tail is drawn below this point (see the tail quad).
+        std::vector<RenderedBubbleLine> wrappedLines;
+        float maxLineW = 0.0f;
+        if (const auto nativeRows = interfaceWrap(bubble.message, "frizqt__",
+                                                  kBubbleFontHeightUi, m.wrapWidthUi,
+                                                  false, m.scale);
+            !nativeRows.empty()) {
+            const NativeTextMeasure measure = interfaceTextMeasure("frizqt__", m.pixelHeight);
+            for (const auto& row : nativeRows) {
+                std::string lineText;
+                for (const auto& run : row.runs) {
+                    lineText += run.text;
+                }
+                lineText = trimTrailingWhitespace(std::move(lineText));
+                const float w = (measure.face && !lineText.empty())
+                    ? static_cast<float>(measure.width(lineText))
+                    : row.width;
+                maxLineW = std::max(maxLineW, w);
+                wrappedLines.push_back({std::move(lineText), w});
+            }
+        } else {
+            const char* lineStart = bubble.message.c_str();
+            const char* textEnd = lineStart + bubble.message.size();
+            while (lineStart < textEnd) {
+                const char* lineEnd = font->CalcWordWrapPosition(fontSize, lineStart, textEnd, m.wrapWidthPx);
+                if (lineEnd == lineStart) {
+                    lineEnd = lineStart + 1;
+                }
+                const char* trimEnd = lineEnd;
+                while (trimEnd > lineStart && (trimEnd[-1] == ' ' || trimEnd[-1] == '\n' || trimEnd[-1] == '\r')) {
+                    --trimEnd;
+                }
+                std::string lineText(lineStart, trimEnd);
+                const float w = font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, lineStart, trimEnd).x;
+                maxLineW = std::max(maxLineW, w);
+                wrappedLines.push_back({std::move(lineText), w});
+                lineStart = lineEnd;
+                while (lineStart < textEnd && (*lineStart == ' ' || *lineStart == '\n' || *lineStart == '\r')) {
+                    ++lineStart;
+                }
+            }
+        }
+        if (wrappedLines.empty()) continue;
+
+        const ChatBubbleBox box = computeChatBubbleBox(
+            screenX, screenY, maxLineW, static_cast<int>(wrappedLines.size()), m);
 
         static const auto background = uploadUiTextureFromBlp(services.assetManager,
             "Interface/Tooltips/ChatBubble-Background.blp", window);
@@ -154,12 +215,16 @@ void ChatBubbleManager::render(game::GameHandler& gameHandler, const UIServices&
         if (!background || !border || !tail)
             throw std::runtime_error("Missing authored chat bubble textures");
         const ImU32 tint = IM_COL32(255, 255, 255, static_cast<int>(255 * alpha));
-        const float x0 = topLeft.x, y0 = topLeft.y;
-        const float x1 = x0 + size.x, y1 = y0 + size.y;
-        const float edge = 16.0f * scale;
-        dl->AddImage((ImTextureID)(uintptr_t)background, ImVec2(x0 + 3 * scale, y0 + 3 * scale),
-            ImVec2(x1 - 3 * scale, y1 - 3 * scale), ImVec2(0, 0), ImVec2(1, 1), tint);
+        const float x0 = box.x0, y0 = box.y0;
+        const float x1 = box.x1, y1 = box.y1;
+        const float edge = m.edge;
+        if (box.bgX1 > box.bgX0 && box.bgY1 > box.bgY0) {
+            dl->AddImage((ImTextureID)(uintptr_t)background,
+                ImVec2(box.bgX0, box.bgY0), ImVec2(box.bgX1, box.bgY1),
+                ImVec2(0, 0), ImVec2(1, 1), tint);
+        }
         const auto piece = [&](int index, float left, float top, float right, float bottom, bool rotated = false) {
+            if (right <= left || bottom <= top) return;
             const float u0 = index / 8.0f, u1 = (index + 1) / 8.0f;
             dl->AddImageQuad((ImTextureID)(uintptr_t)border,
                 ImVec2(left, top), ImVec2(right, top), ImVec2(right, bottom), ImVec2(left, bottom),
@@ -174,35 +239,23 @@ void ChatBubbleManager::render(game::GameHandler& gameHandler, const UIServices&
         piece(1, x1 - edge, y0 + edge, x1, y1 - edge);
         piece(2, x0 + edge, y0, x1 - edge, y0 + edge, true);
         piece(3, x0 + edge, y1 - edge, x1 - edge, y1, true);
-        dl->AddImage((ImTextureID)(uintptr_t)tail, ImVec2(screenX - edge, y1 - edge * .5f),
-            ImVec2(screenX + edge, y1 + edge * 1.5f), ImVec2(0, 0), ImVec2(1, 1), tint);
+        dl->AddImage((ImTextureID)(uintptr_t)tail,
+            ImVec2(box.tailX0, box.tailY0), ImVec2(box.tailX1, box.tailY1),
+            ImVec2(0, 0), ImVec2(1, 1), tint);
 
-        const ImVec4 textColor = bubble.isYell
-            ? ImVec4(1.0f, 0.2f, 0.2f, alpha)
-            : ImVec4(1.0f, 1.0f, 1.0f, alpha);
-        const ImU32 textColU32 = ImGui::ColorConvertFloat4ToU32(textColor);
+        const ChatBubbleColor col = chatBubbleColor(bubble.chatType);
+        const ImU32 textColU32 = ImGui::ColorConvertFloat4ToU32(
+            ImVec4(col.r, col.g, col.b, alpha));
         // Center-align each wrapped line inside the bubble, matching Native TBC 2.4.3.
-        const char* lineStart = bubble.message.c_str();
-        const char* textEnd = lineStart + bubble.message.size();
-        float lineY = topLeft.y + padding.y;
-        const float boxInnerW = size.x - padding.x * 2.0f;
-        while (lineStart < textEnd) {
-            const char* lineEnd = font->CalcWordWrapPosition(fontSize, lineStart, textEnd, kWrapWidth);
-            if (lineEnd == lineStart) {
-                lineEnd = lineStart + 1;
+        float lineY = std::floor(y0 + m.padY);
+        const float boxInnerW = box.width - m.padX * 2.0f;
+        for (const auto& line : wrappedLines) {
+            const float lineX = std::floor(x0 + m.padX + std::max(0.0f, (boxInnerW - line.widthPx) * 0.5f));
+            if (!line.text.empty()) {
+                dl->AddText(font, fontSize, ImVec2(lineX, lineY), textColU32,
+                            line.text.c_str(), line.text.c_str() + line.text.size());
             }
-            const char* trimEnd = lineEnd;
-            while (trimEnd > lineStart && (trimEnd[-1] == ' ' || trimEnd[-1] == '\n' || trimEnd[-1] == '\r')) {
-                --trimEnd;
-            }
-            const ImVec2 lineSz = font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, lineStart, trimEnd);
-            const float lineX = topLeft.x + padding.x + std::max(0.0f, (boxInnerW - lineSz.x) * 0.5f);
-            dl->AddText(font, fontSize, ImVec2(lineX, lineY), textColU32, lineStart, trimEnd);
             lineY += fontSize;
-            lineStart = lineEnd;
-            while (lineStart < textEnd && (*lineStart == ' ' || *lineStart == '\n' || *lineStart == '\r')) {
-                ++lineStart;
-            }
         }
     }
 }
@@ -212,8 +265,8 @@ void ChatBubbleManager::setupCallback(game::GameHandler& gameHandler) {
         // The line as the chat frame has it: 2.4.3 resolves no $-token in what
         // an NPC says (game/text_tokens.hpp).
         gameHandler.setChatBubbleCallback(
-            [this](uint64_t guid, const std::string& msg, bool isYell) {
-                addBubble(guid, msg, isYell);
+            [this](uint64_t guid, const std::string& msg, game::ChatType chatType) {
+                addBubble(guid, msg, chatType);
             });
         callbackSet_ = true;
     }

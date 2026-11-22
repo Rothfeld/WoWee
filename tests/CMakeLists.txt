@@ -1720,6 +1720,23 @@ target_link_libraries(test_native_text_metrics PRIVATE catch2_main)
 add_test(NAME native_text_metrics COMMAND test_native_text_metrics)
 register_test_target(test_native_text_metrics)
 
+# ── test_chat_bubble_layout ──────────────────────────────────
+# Speech bubble text colors, font pixel height, wrap width, and 9-slice/tail
+# dimensions against TBC 2.4.3 (build 8606).
+add_executable(test_chat_bubble_layout
+    test_chat_bubble_layout.cpp
+    ${CMAKE_SOURCE_DIR}/src/ui/native_text_metrics.cpp
+)
+target_include_directories(test_chat_bubble_layout PRIVATE ${TEST_INCLUDE_DIRS})
+target_include_directories(test_chat_bubble_layout SYSTEM PRIVATE
+    ${TEST_SYSTEM_INCLUDE_DIRS}
+    ${CMAKE_SOURCE_DIR}/extern/imgui
+)
+target_link_libraries(test_chat_bubble_layout PRIVATE catch2_main)
+wowee_test_link_glm(test_chat_bubble_layout)
+add_test(NAME chat_bubble_layout COMMAND test_chat_bubble_layout)
+register_test_target(test_chat_bubble_layout)
+
 # ── test_native_glyph_raster ─────────────────────────────────
 # Interface glyph baseline, placement, 4-bit coverage and the FreeType 2.1.10
 # rasterizer, as the original 2.4.3 client draws glyphs.

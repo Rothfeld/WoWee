@@ -1667,19 +1667,19 @@ void ChatHandler::tryJoinZoneChannels() {
 
 void ChatHandler::emitChatBubble(const MessageChatData& data) {
     if (owner_.chatBubbleCallbackRef() && data.senderGuid != 0) {
-        bool bubble = (data.type == ChatType::SAY || data.type == ChatType::YELL ||
-                       data.type == ChatType::MONSTER_SAY || data.type == ChatType::MONSTER_YELL ||
-                       data.type == ChatType::MONSTER_PARTY);
-        // Party Chat Bubbles, a separate box beside the one for say and yell,
-        // and read by nothing until now: party lines never floated over anyone
-        // whichever way it was set. Off unless asked for, as it ships, since a
-        // five-person group talking is a lot of text over the fight.
-        if (!bubble && (data.type == ChatType::PARTY || data.type == ChatType::RAID)) {
+        bool bubble = false;
+        if (data.type == ChatType::SAY || data.type == ChatType::YELL ||
+            data.type == ChatType::MONSTER_SAY || data.type == ChatType::MONSTER_YELL ||
+            data.type == ChatType::MONSTER_PARTY) {
+            bubble = addons::storedCVarValue("chatBubbles", "1") != "0";
+        } else if (data.type == ChatType::PARTY || data.type == ChatType::RAID) {
+            // Party Chat Bubbles, a separate box beside the one for say and yell.
+            // Off unless asked for, as it ships, since a five-person group talking
+            // is a lot of text over the fight.
             bubble = addons::storedCVarValue("chatBubblesParty", "0") != "0";
         }
         if (bubble) {
-            bool isYell = (data.type == ChatType::YELL || data.type == ChatType::MONSTER_YELL);
-            owner_.chatBubbleCallbackRef()(data.senderGuid, data.message, isYell);
+            owner_.chatBubbleCallbackRef()(data.senderGuid, data.message, data.type);
         }
     }
 }

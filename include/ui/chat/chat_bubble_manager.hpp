@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ui/chat/chat_bubble_layout.hpp"
 #include "ui/ui_services.hpp"
 #include <cstdint>
 #include <string>
@@ -18,7 +19,8 @@ namespace ui {
 class ChatBubbleManager {
 public:
     /** Add or replace a bubble for the given entity. */
-    void addBubble(uint64_t senderGuid, const std::string& message, bool isYell);
+    void addBubble(uint64_t senderGuid, const std::string& message,
+                   game::ChatType chatType = game::ChatType::SAY);
 
     /** Render and tick all active bubbles (projects to screen via camera). */
     void render(game::GameHandler& gameHandler, const UIServices& services);
@@ -28,12 +30,14 @@ public:
 
     [[nodiscard]] bool empty() const { return bubbles_.empty(); }
 
-    /// The chatBubbles CVar. The interface options put a checkbox on it and
-    /// nothing here read it, so turning bubbles off left them on the screen.
-    /// Turning it off drops what is queued too, rather than leaving the last
-    /// few to fade.
+    /// The chatBubbles CVar (SAY/YELL/MONSTER_*). Turning it off drops queued
+    /// non-party bubbles immediately rather than leaving them to fade.
     [[nodiscard]] bool bubblesShown() const { return show_; }
     void setBubblesShown(bool shown) { show_ = shown; }
+
+    /// The chatBubblesParty CVar (PARTY/RAID).
+    [[nodiscard]] bool partyBubblesShown() const { return showParty_; }
+    void setPartyBubblesShown(bool shown) { showParty_ = shown; }
 
 private:
     struct ChatBubble {
@@ -41,11 +45,12 @@ private:
         std::string message;
         float timeRemaining = 0.0f;
         float totalDuration = 0.0f;
-        bool isYell = false;
+        game::ChatType chatType = game::ChatType::SAY;
     };
     std::vector<ChatBubble> bubbles_;
     bool callbackSet_ = false;
     bool show_ = true;
+    bool showParty_ = false;
 
     static constexpr size_t kMaxBubbles = 10;
 };
