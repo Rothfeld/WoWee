@@ -1370,7 +1370,11 @@ EntityController::UnitFieldUpdateResult EntityController::applyUnitFieldsOnUpdat
                     pendingEvents_.emit("PLAYER_DEAD", {});
                 }
                 if ((entity->getType() == ObjectType::UNIT || entity->getType() == ObjectType::PLAYER) && owner_.npcDeathCallbackRef()) {
-                    owner_.npcDeathCallbackRef()(block.guid, false);
+                    // A unit already prone via UNIT_DYNFLAG_DEAD (e.g. Permanent
+                    // Feign Death 29266) stays lying dead instead of popping up
+                    // to replay the standing->falling DEATH animation.
+                    const bool alreadyProne = (unit->getDynamicFlags() & UNIT_DYNFLAG_DEAD) != 0;
+                    owner_.npcDeathCallbackRef()(block.guid, alreadyProne);
                     result.npcDeathNotified = true;
                 }
             } else if (oldHealth == 0 && val > 0) {
@@ -1544,7 +1548,7 @@ EntityController::UnitFieldUpdateResult EntityController::applyUnitFieldsOnUpdat
                         owner_.npcDeathCallbackRef()(block.guid, false);
                         result.npcDeathNotified = true;
                     }
-                } else if (wasDead && !nowDead) {
+                } else if (unitDynDeadClearIsRespawn(oldDyn, val, unit->getHealth(), unit->getMaxHealth())) {
                     owner_.playerDeadRef() = false;
                     owner_.releasedSpiritRef() = false;
                     owner_.clearReleaseTimer();
@@ -1565,7 +1569,7 @@ EntityController::UnitFieldUpdateResult EntityController::applyUnitFieldsOnUpdat
                         owner_.npcDeathCallbackRef()(block.guid, false);
                         result.npcDeathNotified = true;
                     }
-                } else if (wasDead && !nowDead) {
+                } else if (unitDynDeadClearIsRespawn(oldDyn, val, unit->getHealth(), unit->getMaxHealth())) {
                     if (!result.npcRespawnNotified && owner_.npcRespawnCallbackRef()) {
                         owner_.npcRespawnCallbackRef()(block.guid);
                         result.npcRespawnNotified = true;

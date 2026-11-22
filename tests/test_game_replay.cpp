@@ -404,6 +404,67 @@ TEST_CASE("killed while feigning stays dead when the feign ends", "[replay]") {
     CHECK(std::count(events.begin(), events.end(), "PLAYER_ALIVE") == 0);
 }
 
+// Arcatraz Warder Corpse (entry 21304, aura 29266 Permanent Feign Death) spawns
+// alive with UNIT_DYNFLAG_DEAD + UNIT_FLAG2_FEIGN_DEATH. Killing it sets health=0
+// and strips the feign aura (clearing UNIT_DYNFLAG_DEAD) in the same VALUES block.
+// Clearing UNIT_DYNFLAG_DEAD at health==0 must NOT fire npcRespawnCallback.
+TEST_CASE("killing a feigning NPC keeps it dead instead of standing up", "[replay][corpse]") {
+    Session s;
+    constexpr uint64_t kNpcGuid = 0xf130005338596e3full;
+    int deathCalls = 0;
+    bool lastAlreadyDead = false;
+    int respawnCalls = 0;
+    s.handler().setNpcDeathCallback([&](uint64_t guid, bool alreadyDead) {
+        if (guid == kNpcGuid) {
+            ++deathCalls;
+            lastAlreadyDead = alreadyDead;
+        }
+    });
+    s.handler().setNpcRespawnCallback([&](uint64_t guid) {
+        if (guid == kNpcGuid) ++respawnCalls;
+    });
+
+    s.spawnPlayer({{UF::UNIT_FIELD_HEALTH, 300}, {UF::UNIT_FIELD_MAXHEALTH, 300}});
+    s.receive(UpdateObject().create(kNpcGuid, wowee::game::ObjectType::UNIT, {
+        {UF::UNIT_FIELD_DISPLAYID, 19993},
+        {UF::UNIT_FIELD_HEALTH, 10000},
+        {UF::UNIT_FIELD_MAXHEALTH, 10000},
+        {UF::UNIT_FIELD_FLAGS_2, 0x1},
+        {UF::UNIT_DYNAMIC_FLAGS, 0x20},
+    }));
+    CHECK(deathCalls == 1);
+    CHECK(lastAlreadyDead);
+    CHECK(respawnCalls == 0);
+
+    // Kill update: health -> 0, feign aura stripped (flags2 -> 0, dynFlags -> 0).
+    s.receive(UpdateObject().values(kNpcGuid, {
+        {UF::UNIT_FIELD_HEALTH, 0},
+        {UF::UNIT_FIELD_FLAGS_2, 0},
+        {UF::UNIT_DYNAMIC_FLAGS, 0},
+    }));
+    CHECK(respawnCalls == 0);
+    CHECK(lastAlreadyDead);
+
+    // Contrast: a feigning NPC that cancels Feign Death while alive DOES stand up.
+    constexpr uint64_t kLivingFeignGuid = 0xf130005338596e40ull;
+    int livingRespawnCalls = 0;
+    s.handler().setNpcRespawnCallback([&](uint64_t guid) {
+        if (guid == kLivingFeignGuid) ++livingRespawnCalls;
+    });
+    s.receive(UpdateObject().create(kLivingFeignGuid, wowee::game::ObjectType::UNIT, {
+        {UF::UNIT_FIELD_DISPLAYID, 19993},
+        {UF::UNIT_FIELD_HEALTH, 10000},
+        {UF::UNIT_FIELD_MAXHEALTH, 10000},
+        {UF::UNIT_FIELD_FLAGS_2, 0x1},
+        {UF::UNIT_DYNAMIC_FLAGS, 0x20},
+    }));
+    s.receive(UpdateObject().values(kLivingFeignGuid, {
+        {UF::UNIT_FIELD_FLAGS_2, 0},
+        {UF::UNIT_DYNAMIC_FLAGS, 0},
+    }));
+    CHECK(livingRespawnCalls == 1);
+}
+
 // A player created while feigning, as after a relog or a teleport mid-feign.
 TEST_CASE("a player created feigning is alive, and stays so when it ends", "[replay]") {
     Session s;

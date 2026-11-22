@@ -236,6 +236,20 @@ TEST_CASE("Dead pose state covers corpse, feign death, stand-state dead, and emo
     REQUIRE_FALSE(isUnitDeadPose(100, 100, UNIT_DYNFLAG_TAPPED, 1, 0));
 }
 
+TEST_CASE("Clearing UNIT_DYNFLAG_DEAD only respawns living units", "[entity][corpse]") {
+    // Killing a feigning NPC (e.g. Warder Corpse with aura 29266) drops health to 0
+    // and strips UNIT_DYNFLAG_DEAD in the same update: must NOT trigger respawn.
+    REQUIRE_FALSE(unitDynDeadClearIsRespawn(UNIT_DYNFLAG_DEAD, 0, 0, 10000));
+    REQUIRE_FALSE(unitDynDeadClearIsRespawn(UNIT_DYNFLAG_DEAD, UNIT_DYNFLAG_LOOTABLE, 0, 10000));
+    // Still lootable even with non-zero health placeholder: not a living respawn.
+    REQUIRE_FALSE(unitDynDeadClearIsRespawn(UNIT_DYNFLAG_DEAD, UNIT_DYNFLAG_LOOTABLE, 100, 100));
+    // Cancelling Feign Death while alive or resurrecting with health > 0: IS a respawn.
+    REQUIRE(unitDynDeadClearIsRespawn(UNIT_DYNFLAG_DEAD, 0, 10000, 10000));
+    // No transition when flag was not cleared.
+    REQUIRE_FALSE(unitDynDeadClearIsRespawn(0, 0, 10000, 10000));
+    REQUIRE_FALSE(unitDynDeadClearIsRespawn(UNIT_DYNFLAG_DEAD, UNIT_DYNFLAG_DEAD, 10000, 10000));
+}
+
 TEST_CASE("Tap flags follow each expansion's dynamic flag layout", "[entity][tap]") {
     // CMaNGOS-TBC: 0x04 TAPPED only for viewers without the tap, 0x08 ROOTED.
     REQUIRE(unitTappedByOther(UNIT_DYNFLAG_TAPPED, true));

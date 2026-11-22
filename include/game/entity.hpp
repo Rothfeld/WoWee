@@ -121,6 +121,22 @@ inline bool isUnitDeadPose(uint32_t health, uint32_t maxHealth, uint32_t dynamic
            npcEmoteState == EMOTE_STATE_DEAD;
 }
 
+/// True when clearing UNIT_DYNFLAG_DEAD transitions the unit back to a living,
+/// standing state (e.g. resurrection or cancelling Feign Death while alive).
+/// False when the unit is still dead (health == 0 or still carries corpse flags),
+/// such as killing a unit with Permanent Feign Death (29266) where the server
+/// strips the feign aura and clears UNIT_DYNFLAG_DEAD in the death update.
+inline bool unitDynDeadClearIsRespawn(uint32_t oldDynamicFlags,
+                                      uint32_t newDynamicFlags,
+                                      uint32_t currentHealth,
+                                      uint32_t maxHealth) {
+    const bool wasDynDead = (oldDynamicFlags & UNIT_DYNFLAG_DEAD) != 0;
+    const bool nowDynDead = (newDynamicFlags & UNIT_DYNFLAG_DEAD) != 0;
+    if (!wasDynDead || nowDynDead) return false;
+    if (currentHealth == 0) return false;
+    return !isUnitCorpseState(currentHealth, maxHealth, newDynamicFlags);
+}
+
 /**
  * Update types for SMSG_UPDATE_OBJECT
  */
