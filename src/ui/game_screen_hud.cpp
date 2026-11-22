@@ -1664,6 +1664,15 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         }
         if (showPlate && legacyPlates) {
             nameColor = (guid == worldHoverGuid_ || plateHovered) ? IM_COL32(255, 255, 0, 255) : IM_COL32(255, 255, 255, 255);
+        } else if (!showPlate && gameHandler.isPlayerGhost() &&
+                   addons::storedCVarValue("ffxDeath", "1") != "0") {
+            const ui::LegacyPlateRgb washed = ui::applyDeathEffectToWorldLabel({
+                static_cast<uint8_t>((nameColor >> IM_COL32_R_SHIFT) & 0xFF),
+                static_cast<uint8_t>((nameColor >> IM_COL32_G_SHIFT) & 0xFF),
+                static_cast<uint8_t>((nameColor >> IM_COL32_B_SHIFT) & 0xFF),
+            });
+            const uint8_t alpha = static_cast<uint8_t>((nameColor >> IM_COL32_A_SHIFT) & 0xFF);
+            nameColor = IM_COL32(washed.r, washed.g, washed.b, alpha);
         }
         // Sub-label below the name: guild tag for players, subtitle for NPCs
         std::string subLabel;

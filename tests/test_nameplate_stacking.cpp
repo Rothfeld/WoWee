@@ -359,6 +359,40 @@ TEST_CASE("TBC 2.4.3 nameplate fill colors and target opacity rules", "[nameplat
     CHECK(legacyPlateAlpha(true, false) == 0.5f);
 }
 
+TEST_CASE("TBC 2.4.3 ghost death-effect desaturates 3D overhead unit names like fxaa compositeDeath",
+          "[nameplates][ghost][death]") {
+    // Spirit Healer / friendly NPC green (0, 255, 0) -> pale cyan-white (230, 255, 255),
+    // matching Native 2.4.3 measured (229, 255, 255) in ghost form.
+    const auto friendly = applyDeathEffectToWorldLabel({0, 255, 0});
+    CHECK(friendly.r == 230);
+    CHECK(friendly.g == 255);
+    CHECK(friendly.b == 255);
+
+    // Friendly non-PvP player blue (128, 128, 255) -> pale cyan-white (231, 255, 255)
+    const auto player = applyDeathEffectToWorldLabel({128, 128, 255});
+    CHECK(static_cast<int>(player.r) == 231);
+    CHECK(static_cast<int>(player.g) == 255);
+    CHECK(static_cast<int>(player.b) == 255);
+
+    // Hostile red (255, 0, 0) -> desaturated cyan-grey (146, 199, 217)
+    const auto hostile = applyDeathEffectToWorldLabel({255, 0, 0});
+    CHECK(hostile.r == 146);
+    CHECK(hostile.g == 199);
+    CHECK(hostile.b == 217);
+
+    // Neutral yellow (255, 255, 0) -> white (255, 255, 255)
+    const auto neutral = applyDeathEffectToWorldLabel({255, 255, 0});
+    CHECK(neutral.r == 255);
+    CHECK(neutral.g == 255);
+    CHECK(neutral.b == 255);
+
+    // Black stays black
+    const auto black = applyDeathEffectToWorldLabel({0, 0, 0});
+    CHECK(black.r == 0);
+    CHECK(black.g == 0);
+    CHECK(black.b == 0);
+}
+
 TEST_CASE("TBC 2.4.3 <GM> prefix on 3D overhead player names follows PLAYER_FLAGS 0x08", "[nameplates][gm]") {
     CHECK(formatPlayerWorldName("Edric", 0x00u, false) == "Edric");
     CHECK(formatPlayerWorldName("Edric", kPlayerFlagGm, false) == "<GM>Edric");

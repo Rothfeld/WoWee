@@ -345,6 +345,27 @@ inline LegacyPlateRgb legacyPlateFillColor(bool isPlayer, bool isHostile,
     return {0, 255, 0};
 }
 
+/// TBC 2.4.3 death-effect compositing (matching fxaa.frag.glsl compositeDeath):
+/// Native 2.4.3 renders 3D overhead unit names into the 3D scene before the
+/// screen-space ghost desaturation pass, while 2D V nameplates and unit frames
+/// draw after it. Apply the same luminance + cyan midtone lift to 3D overhead
+/// world labels while `isPlayerGhost() && ffxDeath != "0"`.
+inline LegacyPlateRgb applyDeathEffectToWorldLabel(LegacyPlateRgb c) {
+    const float r = static_cast<float>(c.r) / 255.0f;
+    const float g = static_cast<float>(c.g) / 255.0f;
+    const float b = static_cast<float>(c.b) / 255.0f;
+    const float gray = std::clamp(0.299f * r + 0.587f * g + 0.144f * b, 0.0f, 1.0f);
+    const float midtone = 4.0f * gray * (1.0f - gray);
+    const auto toByte = [](float v) -> uint8_t {
+        return static_cast<uint8_t>(std::clamp(v, 0.0f, 1.0f) * 255.0f + 0.5f);
+    };
+    return {
+        toByte(gray + (83.0f / 255.0f) * midtone),
+        toByte(gray + (147.0f / 255.0f) * midtone),
+        toByte(gray + (168.0f / 255.0f) * midtone),
+    };
+}
+
 /// TBC 2.4.3 (build 8606) nameplate opacity: 1.0 when no target is selected or
 /// when this unit is the current target; 0.5 for non-target plates while another
 /// unit is targeted (measured on pair 8 via WorldFrame child GetAlpha()).
