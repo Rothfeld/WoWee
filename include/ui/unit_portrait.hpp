@@ -56,6 +56,20 @@ inline std::string temporaryPortraitPath(uint8_t raceId, uint8_t gender, bool is
     return "Interface\\CharacterFrame\\TemporaryPortrait";
 }
 
+/// Resolve `CreatureDisplayInfo.dbc` col 9 (`PortraitTextureName`) to a UI
+/// texture path (`Interface\Icons\<Name>`). Empty when the display uses a
+/// normal 3D head portrait.
+inline std::string creatureDisplayPortraitPath(std::string_view portraitTextureName) {
+    if (portraitTextureName.empty()) return {};
+    if (portraitTextureName.find('\\') != std::string_view::npos ||
+        portraitTextureName.find('/') != std::string_view::npos) {
+        return std::string(portraitTextureName);
+    }
+    std::string path = "Interface\\Icons\\";
+    path.append(portraitTextureName);
+    return path;
+}
+
 class UnitPortrait {
 public:
     /// How much of the character to show. A portrait is the face in a circle;

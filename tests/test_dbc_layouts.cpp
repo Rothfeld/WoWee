@@ -241,3 +241,54 @@ TEST_CASE("TaxiNodes mount columns map Horde before Alliance", "[dbc][layout][ta
         }
     }
 }
+
+TEST_CASE("TBC DBC layout exposes CreatureDisplayInfo PortraitTextureName and has no duplicate keys",
+          "[dbc][layout][portrait]") {
+    DBCLayout layout;
+    REQUIRE(layout.loadFromJson(layoutPath("tbc")));
+
+    const auto* cdi = layout.getLayout("CreatureDisplayInfo");
+    REQUIRE(cdi != nullptr);
+    CHECK(cdi->field("PortraitTextureName") == 9u);
+
+    const auto* itemSubClass = layout.getLayout("ItemSubClass");
+    REQUIRE(itemSubClass != nullptr);
+    CHECK(itemSubClass->field("ClassID") == 0u);
+    CHECK(itemSubClass->field("SubClassID") == 1u);
+    CHECK(itemSubClass->field("DisplayName") == 10u);
+    CHECK(itemSubClass->field("VerboseName") == 27u);
+
+    // Verify no duplicate top-level table keys exist in TBC dbc_layouts.json
+    // (nlohmann::json::parse silently overwrites duplicate keys unless checked).
+    std::ifstream in(layoutPath("tbc"));
+    REQUIRE(in.is_open());
+    std::vector<std::string> topLevelKeys;
+    int depth = 0;
+    struct KeyCollector : nlohmann::json_sax<nlohmann::json> {
+        int& depth;
+        std::vector<std::string>& keys;
+        KeyCollector(int& d, std::vector<std::string>& k) : depth(d), keys(k) {}
+        bool null() override { return true; }
+        bool boolean(bool) override { return true; }
+        bool number_integer(number_integer_t) override { return true; }
+        bool number_unsigned(number_unsigned_t) override { return true; }
+        bool number_float(number_float_t, const string_t&) override { return true; }
+        bool string(string_t&) override { return true; }
+        bool binary(binary_t&) override { return true; }
+        bool start_object(std::size_t) override { ++depth; return true; }
+        bool key(string_t& val) override {
+            if (depth == 1) keys.push_back(val);
+            return true;
+        }
+        bool end_object() override { --depth; return true; }
+        bool start_array(std::size_t) override { return true; }
+        bool end_array() override { return true; }
+        bool parse_error(std::size_t, const std::string&, const nlohmann::detail::exception&) override {
+            return false;
+        }
+    };
+    KeyCollector collector{depth, topLevelKeys};
+    REQUIRE(nlohmann::json::sax_parse(in, &collector));
+    std::sort(topLevelKeys.begin(), topLevelKeys.end());
+    CHECK(std::adjacent_find(topLevelKeys.begin(), topLevelKeys.end()) == topLevelKeys.end());
+}

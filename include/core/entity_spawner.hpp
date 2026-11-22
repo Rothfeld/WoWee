@@ -182,6 +182,9 @@ public:
     bool areCreatureLookupsBuilt() const { return creatureLookupsBuilt_; }
     bool areGameObjectLookupsBuilt() const { return gameObjectLookupsBuilt_; }
     std::string getModelPathForDisplayId(uint32_t displayId) const;
+    /// Custom 2D portrait icon path from CreatureDisplayInfo.dbc col 9
+    /// (`PortraitTextureName`), or empty when the display renders a 3D head.
+    std::string getPortraitTexturePath(uint32_t displayId) const;
     /// The skin textures a creature display wears, by M2 texture type - 11,
     /// 12 and 13 are skin1, skin2 and skin3 in CreatureDisplayInfo.dbc.
     ///
@@ -510,6 +513,7 @@ private:
     struct CreatureDisplayData {
         uint32_t modelId = 0;
         std::string skin1, skin2, skin3;  // Texture names from CreatureDisplayInfo.dbc
+        std::string portraitTextureName;  // Col 9: custom 2D portrait icon name (if non-empty)
         uint32_t extraDisplayId = 0;      // Link to CreatureDisplayInfoExtra.dbc
         /// CreatureDisplayInfo.CreatureModelScale, which is how one model is
         /// reused at different sizes: the boar model is 0.6 for a piglet and

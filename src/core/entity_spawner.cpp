@@ -946,6 +946,11 @@ void EntitySpawner::buildCreatureDisplayLookups() {
             data.skin1 = cdi->getString(i, cdiL ? (*cdiL)["Skin1"] : 6);
             data.skin2 = cdi->getString(i, cdiL ? (*cdiL)["Skin2"] : 7);
             data.skin3 = cdi->getString(i, cdiL ? (*cdiL)["Skin3"] : 8);
+            const uint32_t portraitField = cdiL ? cdiL->tryField("PortraitTextureName") : 9u;
+            const uint32_t resolvedPortraitField = (portraitField != 0xFFFFFFFFu) ? portraitField : 9u;
+            if (resolvedPortraitField < cdi->getFieldCount()) {
+                data.portraitTextureName = cdi->getString(i, resolvedPortraitField);
+            }
             // How big this display draws its model. One model serves many
             // displays at many sizes - the boar is 0.6 for a piglet and 1.5
             // for a giant across ten of them - and reading none of it drew
@@ -1283,6 +1288,17 @@ void EntitySpawner::buildCreatureDisplayLookups() {
     }
 
     creatureLookupsBuilt_ = true;
+}
+
+std::string EntitySpawner::getPortraitTexturePath(uint32_t displayId) const {
+    if (displayId == 0) return {};
+    auto it = displayDataMap_.find(displayId);
+    if (it == displayDataMap_.end() || it->second.portraitTextureName.empty()) return {};
+    const std::string& name = it->second.portraitTextureName;
+    if (name.find('\\') != std::string::npos || name.find('/') != std::string::npos) {
+        return name;
+    }
+    return "Interface\\Icons\\" + name;
 }
 
 std::string EntitySpawner::getModelPathForDisplayId(uint32_t displayId) const {

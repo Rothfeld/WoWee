@@ -5842,7 +5842,22 @@ void Application::render() {
                             }
                         }
                     }
+                    std::string playerCustomPortrait;
                     if (shiftedDisplay != 0 && entitySpawner_) {
+                        playerCustomPortrait = entitySpawner_->getPortraitTexturePath(shiftedDisplay);
+                    }
+                    if (!playerCustomPortrait.empty()) {
+                        portrait->externalTexture = 0;
+                        portrait->texturePath = playerCustomPortrait;
+                        portrait->texCoord[0] = 0.0f;
+                        portrait->texCoord[1] = 1.0f;
+                        portrait->texCoord[2] = 0.0f;
+                        portrait->texCoord[3] = 1.0f;
+                        portrait->texCoordRotated = false;
+                        portrait->isCircularPortrait = true;
+                        portrait->desaturated = rendering::shouldDesaturatePlayerPortrait(
+                            gameHandler->isPlayerGhost());
+                    } else if (shiftedDisplay != 0 && entitySpawner_) {
                         uint8_t pRace = 0, pGender = 0, pFacial = 0;
                         uint32_t pAppearance = 0;
                         if (!gameHandler->getPlayerAppearance(gameHandler->getPlayerGuid(),
@@ -5912,15 +5927,18 @@ void Application::render() {
                         unitPortrait_.update(*gameHandler, assetManager.get(),
                                              renderer.get(), io.DeltaTime);
                     }
-                    // Assigned every frame including when it is zero. Keeping
-                    // the last good handle instead would leave the widget
-                    // pointing at a descriptor set that has been destroyed -
-                    // the render target is torn down whenever the model is
-                    // rebuilt - and drawing from that is a use-after-free
-                    // rather than a stale picture.
-                    portrait->externalTexture = unitPortrait_.textureId();
-                    portrait->desaturated = rendering::shouldDesaturatePlayerPortrait(
-                        gameHandler->isPlayerGhost());
+                    if (playerCustomPortrait.empty()) {
+                        // Assigned every frame including when it is zero. Keeping
+                        // the last good handle instead would leave the widget
+                        // pointing at a descriptor set that has been destroyed -
+                        // the render target is torn down whenever the model is
+                        // rebuilt - and drawing from that is a use-after-free
+                        // rather than a stale picture.
+                        portrait->externalTexture = unitPortrait_.textureId();
+                        portrait->isCircularPortrait = false;
+                        portrait->desaturated = rendering::shouldDesaturatePlayerPortrait(
+                            gameHandler->isPlayerGhost());
+                    }
                 }
 
                 // Every texture SetPortraitTexture was told to fill with the
@@ -5929,10 +5947,22 @@ void Application::render() {
                 // target is and one kept across that is stale. The list is
                 // short - five frames name the player in all of FrameXML - so
                 // this costs a handful of lookups rather than a scan.
-                const uint64_t playerFace = unitPortrait_.textureId();
+                const std::string playerCustomPortrait =
+                    (portrait && portrait->isCircularPortrait && portrait->externalTexture == 0)
+                        ? portrait->texturePath : std::string();
+                const uint64_t playerFace = playerCustomPortrait.empty() ? unitPortrait_.textureId() : 0;
                 for (uint32_t id : widgets.playerPortraits()) {
                     if (ui::Widget* w = widgets.get(id)) {
                         w->externalTexture = playerFace;
+                        w->isCircularPortrait = !playerCustomPortrait.empty();
+                        if (!playerCustomPortrait.empty()) {
+                            w->texturePath = playerCustomPortrait;
+                            w->texCoord[0] = 0.0f;
+                            w->texCoord[1] = 1.0f;
+                            w->texCoord[2] = 0.0f;
+                            w->texCoord[3] = 1.0f;
+                            w->texCoordRotated = false;
+                        }
                     }
                 }
 
@@ -5997,6 +6027,7 @@ void Application::render() {
                     if (claimed.empty() && alsoClaimed.empty()) continue;
 
                     bool built = false;
+                    std::string customPortrait;
                     face.portrait->setFraming(ui::UnitPortrait::Framing::Face);
                     // Sized for the circle it is drawn into rather than for the
                     // paperdoll - the shape as much as the scale, since a
@@ -6105,10 +6136,13 @@ void Application::render() {
                                 displayId = u->getDisplayId();
                             }
                         }
+                        if (displayId != 0 && entitySpawner_) {
+                            customPortrait = entitySpawner_->getPortraitTexturePath(displayId);
+                        }
                         // Mirror image creatures (UNIT_FLAG2_MIRROR_IMAGE + SMSG_MIRRORIMAGE_DATA,
                         // e.g. Kil'jaeden's Sinister Reflections) carry the cloned player's
                         // skin, face, hair, and equipment separately from CreatureDisplayInfo.
-                        if (face.guid != 0) {
+                        if (customPortrait.empty() && face.guid != 0) {
                             if (const auto* mirror = gameHandler->getMirrorImageData(face.guid);
                                 mirror && mirror->hasPlayerAppearance() &&
                                 game::hasPlayerModel(static_cast<game::Race>(mirror->raceId))) {
@@ -6153,7 +6187,7 @@ void Application::render() {
                         // nothing on it. Tried first for that reason.
                         uint8_t nRace = 0, nSex = 0, nFacial = 0;
                         uint32_t nBytes = 0;
-                        if (!built && displayId != 0 && entitySpawner_ &&
+                        if (customPortrait.empty() && !built && displayId != 0 && entitySpawner_ &&
                             entitySpawner_->getHumanoidAppearance(displayId, nRace, nSex,
                                                                   nBytes, nFacial)) {
                             // Dressed, from the same row. A questgiver's helm
@@ -6178,7 +6212,7 @@ void Application::render() {
                                 assetManager.get(), renderer.get(), io.DeltaTime);
                         }
                         std::string modelPath;
-                        if (!built && displayId != 0 && entitySpawner_) {
+                        if (customPortrait.empty() && !built && displayId != 0 && entitySpawner_) {
                             modelPath = entitySpawner_->getModelPathForDisplayId(displayId);
                         }
                         if (!modelPath.empty()) {
@@ -6188,9 +6222,9 @@ void Application::render() {
                                 assetManager.get(), renderer.get(), io.DeltaTime);
                         }
                     }
-                    const uint64_t drawn = built ? face.portrait->textureId() : 0;
-                    std::string fallbackPortrait;
-                    if (drawn == 0 && face.guid != 0) {
+                    const uint64_t drawn = (customPortrait.empty() && built) ? face.portrait->textureId() : 0;
+                    std::string fallbackPortrait = customPortrait;
+                    if (drawn == 0 && fallbackPortrait.empty() && face.guid != 0) {
                         uint8_t fbRace = 0;
                         uint8_t fbGender = 0xFF;
                         if (game::Unit* u = gameHandler->getUnitByGuid(face.guid)) {
@@ -6209,6 +6243,7 @@ void Application::render() {
                     auto applyPortraitWidget = [&](ui::Widget* w) {
                         if (!w) return;
                         w->externalTexture = drawn;
+                        w->isCircularPortrait = !customPortrait.empty();
                         if (drawn == 0 && !fallbackPortrait.empty()) {
                             w->texturePath = fallbackPortrait;
                             w->texCoord[0] = 0.0f;
