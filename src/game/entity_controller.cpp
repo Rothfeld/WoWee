@@ -98,9 +98,10 @@ void restoreMovementSpline(const UpdateBlock& block, Entity& entity, const Entit
     const uint32_t enterCycleBit = wotlkFlags ? SplineFlagWotlk::ENTER_CYCLE : SplineFlag::ENTER_CYCLE;
     const bool cyclic = (block.splineFlags & cyclicBit) != 0;
     const bool enterCycle = cyclic && (block.splineFlags & enterCycleBit) != 0;
-    const bool smooth = wotlkFlags
+    const bool smooth = (wotlkFlags
         ? (block.splineFlags & SplineFlagWotlk::CATMULLROM) != 0
-        : (block.splineFlags & SplineFlag::FLYING_TBC) != 0;
+        : (block.splineFlags & SplineFlag::FLYING_TBC) != 0) &&
+        (cyclic || path.size() >= 3);
     entity.startMoveAlongPath(path, entity.getOrientation(), block.splineDurationMs / 1000.0f,
                               smooth,
                               facingTargetGuid == 0, cyclic, finalOrientation, facingTargetGuid,

@@ -47,7 +47,12 @@ glm::vec3 CatmullRomSpline::evaluatePosition(uint32_t pathTimeMs) const {
     }
     float t = glm::clamp(static_cast<float>(pathTimeMs - t1Ms)
                        / static_cast<float>(segDuration), 0.0f, 1.0f);
-    if (interpolation_ == SplineInterpolation::Linear) {
+    // A two-key non-looping spline has no interior control points; clamped
+    // Catmull-Rom endpoints (p0=p1, p3=p2) turn a straight segment into a
+    // slow-fast-slow S-curve (0.5x speed at t=0), causing 10 Hz flying
+    // MonsterMove updates to lag and skip forward on every packet.
+    if (interpolation_ == SplineInterpolation::Linear ||
+        (keys_.size() == 2 && !timeClosed_)) {
         return glm::mix(keys_[segIdx].position, keys_[segIdx + 1].position, t);
     }
     float t2 = t * t;
@@ -86,7 +91,8 @@ SplineEvalResult CatmullRomSpline::evaluate(uint32_t pathTimeMs) const {
             / static_cast<float>(segDuration);
     t = glm::clamp(t, 0.0f, 1.0f);
 
-    if (interpolation_ == SplineInterpolation::Linear) {
+    if (interpolation_ == SplineInterpolation::Linear ||
+        (keys_.size() == 2 && !timeClosed_)) {
         const glm::vec3 p1 = keys_[segIdx].position;
         const glm::vec3 p2 = keys_[segIdx + 1].position;
         return {glm::mix(p1, p2, t), p2 - p1};

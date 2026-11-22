@@ -4052,14 +4052,9 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                     posChanging && !entity->isEntityMoving() && !transportAttached;
                 const bool isMovingNow =
                     !deadOrCorpse && (entityIsMoving || positionOnlyLocomotion);
-                if (deadOrCorpse || largeCorrection) {
+                if (deadOrCorpse || largeCorrection || entityIsMoving) {
                     charRenderer->setInstancePosition(instanceId, renderPos);
                 } else if (planarDistSq > kMoveThreshSq || dz > 0.08f) {
-                    // Entity::updateMovement already evaluates the server spline for
-                    // this frame. Starting another renderer interpolation here resets
-                    // that interpolation every frame and leaves the model trailing its
-                    // authoritative entity position. Copy the evaluated position
-                    // directly; animation transitions remain driven below.
                     charRenderer->setInstancePosition(instanceId, renderPos);
                 }
                 // When entity is moving but getX/Y/Z is stale (distance-culled),

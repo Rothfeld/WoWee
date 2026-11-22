@@ -337,9 +337,17 @@ TEST_CASE("CatmullRomSpline with two points", "[spline]") {
     auto end = spline.evaluatePosition(1000);
     REQUIRE(end.x == Catch::Approx(10.0f).margin(0.01f));
 
-    // Midpoint should be near 5
+    // Two-point non-looping spline must advance at constant linear speed
+    // (no 0.5x entry slow-down from duplicated endpoints).
+    auto q1 = spline.evaluatePosition(100);
+    REQUIRE(q1.x == Catch::Approx(1.0f).margin(0.01f));
+
     auto mid = spline.evaluatePosition(500);
-    REQUIRE(mid.x == Catch::Approx(5.0f).margin(1.0f));
+    REQUIRE(mid.x == Catch::Approx(5.0f).margin(0.01f));
+
+    auto q3 = spline.evaluate(750);
+    REQUIRE(q3.position.x == Catch::Approx(7.5f).margin(0.01f));
+    REQUIRE(q3.tangent.x == Catch::Approx(10.0f).margin(0.01f));
 }
 
 TEST_CASE("Linear interpolation stays on the chord between two keys", "[spline][linear]") {

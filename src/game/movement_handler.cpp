@@ -2448,9 +2448,11 @@ void MovementHandler::handleMonsterMove(network::Packet& packet) {
             path.push_back({wpCanonical.x, wpCanonical.y, wpCanonical.z});
         }
         path.push_back({destCanonical.x, destCanonical.y, destCanonical.z});
-        // TBC ground splines are piecewise linear; only Flying (0x200)
-        // selects Catmull-Rom in CMaNGOS MoveSplineFlag.
-        const bool smooth = !isActiveExpansion("tbc") || (data.splineFlags & SplineFlag::FLYING_TBC) != 0;
+        // TBC ground splines are piecewise linear; only multi-segment Flying (0x200)
+        // paths select Catmull-Rom in CMaNGOS MoveSplineFlag. A 2-point segment
+        // has no interior control points and always interpolates linearly.
+        const bool smooth = (!isActiveExpansion("tbc") || (data.splineFlags & SplineFlag::FLYING_TBC) != 0) &&
+                            path.size() >= 3;
         const bool wotlkFlags = isActiveExpansion("wotlk");
         const uint32_t cyclicBit = wotlkFlags ? SplineFlagWotlk::CYCLIC : SplineFlag::CYCLIC;
         const uint32_t enterCycleBit = wotlkFlags ? SplineFlagWotlk::ENTER_CYCLE : SplineFlag::ENTER_CYCLE;

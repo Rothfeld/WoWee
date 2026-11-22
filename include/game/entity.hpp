@@ -257,7 +257,35 @@ public:
                            uint32_t splineFlags, uint64_t facingTargetGuid = 0,
                            std::optional<float> finalOrientation = std::nullopt,
                            bool cyclic = false, bool enterCycle = false) {
-        startMoveAlongPath(path, destO, totalDuration, smooth, followPathFacing,
+        const bool effectiveSmooth = smooth && (cyclic || path.size() >= 3);
+        // When a non-cyclic server spline refreshes an already-active spline
+        // (such as CMaNGOS 10 Hz flying patrol/formation updates) within a
+        // small network-jitter distance of our current interpolated position,
+        // anchor the new spline at our current (x, y, z) so packet dispatch
+        // jitter does not visibly snap the unit forward or backward.
+        if (isServerSplineActive() && !cyclic && path.size() >= 2 && totalDuration > 0.05f) {
+            const float segDx = path.back()[0] - path.front()[0];
+            const float segDy = path.back()[1] - path.front()[1];
+            const float segDz = path.back()[2] - path.front()[2];
+            const float errDx = path.front()[0] - x;
+            const float errDy = path.front()[1] - y;
+            const float errDz = path.front()[2] - z;
+            constexpr float kMinMoveSq = 0.001f * 0.001f;
+            constexpr float kMaxBlendErrSq = 2.0f * 2.0f;
+            if (segDx * segDx + segDy * segDy + segDz * segDz > kMinMoveSq &&
+                errDx * errDx + errDy * errDy + errDz * errDz <= kMaxBlendErrSq) {
+                auto continuousPath = path;
+                continuousPath.front() = {x, y, z};
+                startMoveAlongPath(continuousPath, destO, totalDuration, effectiveSmooth,
+                                   followPathFacing, cyclic, finalOrientation,
+                                   facingTargetGuid, enterCycle);
+                serverSpline_ = isMoving_;
+                hasServerSplinePosition_ = true;
+                serverSplineFlags_ = splineFlags;
+                return;
+            }
+        }
+        startMoveAlongPath(path, destO, totalDuration, effectiveSmooth, followPathFacing,
                            cyclic, finalOrientation, facingTargetGuid, enterCycle);
         serverSpline_ = isMoving_;
         hasServerSplinePosition_ = true;

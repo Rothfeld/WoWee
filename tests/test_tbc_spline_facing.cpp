@@ -463,3 +463,74 @@ TEST_CASE("TBC MOVEMENTBLOCK cyclic spline with Flying+Cyclic+Enter_Cycle parses
     CHECK(block.splinePath.front()[0] == Catch::Approx(nodes[1].x));
     CHECK(block.splinePath.back()[0] == Catch::Approx(nodes[5].x));
 }
+
+TEST_CASE("TBC 10 Hz 2-point flying SMSG_MONSTER_MOVE advances linearly without forward skips", "[tbc][spline][flying]") {
+    // Replays captured Black Temple Dragonmaw Wind Reaver (entry 23330) 10 Hz
+    // SMSG_MONSTER_MOVE packets (flags=0x300 FLYING_TBC|WALKMODE, pointCount=1,
+    // constant 12.75 yd/s). Previously, 2-point Catmull-Rom clamped endpoints
+    // ran at 0.5x speed and snapped forward ~0.5 yd on every 100 ms packet.
+    struct PacketStep {
+        float dtAfterPrevSec;
+        glm::vec3 start;
+        glm::vec3 dest;
+        uint32_t durationMs;
+    };
+    const PacketStep stream[] = {
+        {0.000f, {595.93f, 745.84f, 102.04f}, {610.05f, 734.80f, 103.77f}, 1412},
+        {0.072f, {596.96f, 745.03f, 102.17f}, {610.05f, 734.80f, 103.77f}, 1309},
+        {0.100f, {597.99f, 744.22f, 102.29f}, {610.05f, 734.80f, 103.77f}, 1205},
+        {0.124f, {599.03f, 743.41f, 102.42f}, {607.80f, 731.09f, 103.77f}, 1191},
+        {0.095f, {599.80f, 742.34f, 102.54f}, {607.80f, 731.09f, 103.77f}, 1087},
+        {0.100f, {600.56f, 741.26f, 102.66f}, {607.80f, 731.09f, 103.77f}, 983},
+    };
+
+    Unit drake(0xf130005b22596daeull);
+    const glm::vec3 s0 = serverToCanonical(stream[0].start);
+    drake.setPosition(s0.x, s0.y, s0.z, 0.0f);
+
+    float maxPacketSnap = 0.0f;
+    float minFrameSpeed = 1e9f;
+    float maxFrameSpeed = 0.0f;
+
+    for (size_t i = 0; i < std::size(stream); ++i) {
+        if (stream[i].dtAfterPrevSec > 0.0f) {
+            constexpr int kSubFrames = 6;
+            const float subDt = stream[i].dtAfterPrevSec / static_cast<float>(kSubFrames);
+            for (int f = 0; f < kSubFrames; ++f) {
+                const glm::vec3 before(drake.getX(), drake.getY(), drake.getZ());
+                drake.updateMovement(subDt);
+                const glm::vec3 after(drake.getX(), drake.getY(), drake.getZ());
+                const float spd = glm::length(after - before) / subDt;
+                minFrameSpeed = std::min(minFrameSpeed, spd);
+                maxFrameSpeed = std::max(maxFrameSpeed, spd);
+            }
+        }
+        const glm::vec3 beforePkt(drake.getX(), drake.getY(), drake.getZ());
+        const glm::vec3 sc = serverToCanonical(stream[i].start);
+        const glm::vec3 dc = serverToCanonical(stream[i].dest);
+        const float yaw = std::atan2(-(dc.y - sc.y), dc.x - sc.x);
+        drake.startServerSpline({{sc.x, sc.y, sc.z}, {dc.x, dc.y, dc.z}},
+                                yaw, stream[i].durationMs / 1000.0f,
+                                /*smooth=*/true, /*followPathFacing=*/true,
+                                /*splineFlags=*/0x300u);
+        const glm::vec3 afterPkt(drake.getX(), drake.getY(), drake.getZ());
+        if (i > 0) {
+            maxPacketSnap = std::max(maxPacketSnap, glm::length(afterPkt - beforePkt));
+        }
+    }
+
+    // Zero discontinuity on 10 Hz refreshes and steady ~12.75 yd/s velocity throughout.
+    CHECK(maxPacketSnap < 0.001f);
+    CHECK(minFrameSpeed > 11.5f);
+    CHECK(maxFrameSpeed < 14.5f);
+
+    // Large server teleport (>2 yd error) must still snap authoritatively.
+    const glm::vec3 teleStart = serverToCanonical({650.0f, 700.0f, 120.0f});
+    const glm::vec3 teleDest = serverToCanonical({660.0f, 700.0f, 120.0f});
+    drake.startServerSpline({{teleStart.x, teleStart.y, teleStart.z},
+                             {teleDest.x, teleDest.y, teleDest.z}},
+                            0.0f, 1.0f, true, true, 0x300u);
+    CHECK(drake.getX() == Catch::Approx(teleStart.x).margin(0.01f));
+    CHECK(drake.getY() == Catch::Approx(teleStart.y).margin(0.01f));
+    CHECK(drake.getZ() == Catch::Approx(teleStart.z).margin(0.01f));
+}
