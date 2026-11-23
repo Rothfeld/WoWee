@@ -532,11 +532,12 @@ glm::vec3 CameraController::moveBodyOnFoot(const glm::vec3& start, const glm::ve
             " triangles=", terrainCount, "/", wmoCount, "/", m2Count);
     }
     if (move.ceiling && verticalVelocity > 0.0f) verticalVelocity = 0.0f;
-    if (walked && move.support == movement::BodySupport::None) {
-        // Walked off: the fall carries the velocity the body actually had in
-        // this frame, not the one asked for. Native leaving the Dustwallow
-        // plank ramp while sliding along its edge falls at 3.44 yd/s along the
-        // edge, the run speed's part in that direction.
+    if ((walked && move.support == movement::BodySupport::None) || (!walked && move.deflected)) {
+        // Walked off, or turned aside in the air: the fall goes on at the
+        // velocity the body actually had in this frame, not the one it left
+        // the ground with. Native falling off the Dustwallow plank ramp
+        // (-2692.0, -4695.0) slides along a rail in the air and keeps that
+        // 3.44 yd/s along the rail's direction after it has passed it.
         airborneHorizontalVelocity_ = glm::vec3(move.position.x - from.x, move.position.y - from.y, 0.0f) / stepSeconds;
     }
     // Perched counts as on the ground for everything but the step budget: the
