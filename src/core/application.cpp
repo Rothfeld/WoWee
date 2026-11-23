@@ -5872,6 +5872,9 @@ void Application::render() {
                                                               pRace, pGender, pAppearance, pFacial)) {
                             for (const auto& c : gameHandler->getCharacters()) {
                                 if (c.guid == gameHandler->getPlayerGuid()) {
+                                    pRace = static_cast<uint8_t>(c.race);
+                                    pGender = (c.gender == game::Gender::FEMALE ||
+                                               (c.gender == game::Gender::NONBINARY && c.useFemaleModel)) ? 1u : 0u;
                                     pAppearance = c.appearanceBytes;
                                     pFacial = c.facialFeatures;
                                     break;
@@ -5880,15 +5883,17 @@ void Application::render() {
                         }
                         core::PlayerHumanoidMorph illusion;
                         bool renderedPortrait = false;
-                        if (entitySpawner_->resolvePlayerIllusion(shiftedDisplay, pAppearance, pFacial, illusion) &&
-                            illusion.isEquipablePlayerIllusion &&
+                        if (entitySpawner_->resolvePlayerIllusion(shiftedDisplay, pAppearance, pFacial,
+                                                                  illusion, pRace, pGender) &&
+                            (illusion.isEquipablePlayerIllusion || illusion.usePlayerAppearance) &&
                             game::hasPlayerModel(static_cast<game::Race>(illusion.targetRace))) {
                             const bool hideHelm = !gameHandler->isHelmVisible();
                             const bool hideCloak = !gameHandler->isCloakVisible();
                             std::vector<game::EquipmentItem> worn;
                             std::array<uint32_t, 19> displayIds{};
                             std::array<uint8_t, 19> invTypes{};
-                            if (gameHandler->getOtherPlayerEquipment(gameHandler->getPlayerGuid(),
+                            if (illusion.isEquipablePlayerIllusion &&
+                                gameHandler->getOtherPlayerEquipment(gameHandler->getPlayerGuid(),
                                                                      displayIds, invTypes)) {
                                 for (size_t slot = 0; slot < displayIds.size(); ++slot) {
                                     if (displayIds[slot] == 0) continue;
@@ -5908,7 +5913,8 @@ void Application::render() {
                             renderedPortrait = unitPortrait_.updatePlayer(
                                 illusion.targetRace, illusion.targetSex,
                                 illusion.appearanceBytes, illusion.facialHair, worn,
-                                assetManager.get(), renderer.get(), io.DeltaTime);
+                                assetManager.get(), renderer.get(), io.DeltaTime,
+                                illusion.textureRace, illusion.textureSex);
                         } else {
                             uint8_t nRace = 0, nSex = 0, nFacial = 0;
                             uint32_t nBytes = 0;
@@ -6066,7 +6072,9 @@ void Application::render() {
                     }
                     bool usePlayerPortrait = false;
                     uint8_t drawRace = 0, drawGender = 0, drawFacial = 0;
+                    uint8_t drawTexRace = 0, drawTexGender = 0xFF;
                     uint32_t drawAppearance = 0;
+                    bool allowPlayerPortraitEquip = true;
                     if (face.guid != 0 &&
                         gameHandler->getPlayerAppearance(face.guid, race, gender,
                                                          appearance, facial)) {
@@ -6078,12 +6086,16 @@ void Application::render() {
                             drawFacial = facial;
                         } else if (entitySpawner_) {
                             core::PlayerHumanoidMorph illusion;
-                            if (entitySpawner_->resolvePlayerIllusion(morphedDisplayId, appearance, facial, illusion) &&
-                                illusion.isEquipablePlayerIllusion &&
+                            if (entitySpawner_->resolvePlayerIllusion(morphedDisplayId, appearance, facial,
+                                                                      illusion, race, gender) &&
+                                (illusion.isEquipablePlayerIllusion || illusion.usePlayerAppearance) &&
                                 game::hasPlayerModel(static_cast<game::Race>(illusion.targetRace))) {
                                 usePlayerPortrait = true;
+                                allowPlayerPortraitEquip = illusion.isEquipablePlayerIllusion;
                                 drawRace = illusion.targetRace;
                                 drawGender = illusion.targetSex;
+                                drawTexRace = illusion.textureRace;
+                                drawTexGender = illusion.textureSex;
                                 drawAppearance = illusion.appearanceBytes;
                                 drawFacial = illusion.facialHair;
                             }
@@ -6112,7 +6124,8 @@ void Application::render() {
                         std::vector<game::EquipmentItem> worn;
                         std::array<uint32_t, 19> displayIds{};
                         std::array<uint8_t, 19> invTypes{};
-                        if (gameHandler->getOtherPlayerEquipment(face.guid, displayIds,
+                        if (allowPlayerPortraitEquip &&
+                            gameHandler->getOtherPlayerEquipment(face.guid, displayIds,
                                                                  invTypes)) {
                             for (size_t slot = 0; slot < displayIds.size(); ++slot) {
                                 if (displayIds[slot] == 0) continue;
@@ -6129,7 +6142,8 @@ void Application::render() {
                         // unit would go on showing it.
                         built = face.portrait->updatePlayer(
                             drawRace, drawGender, drawAppearance, drawFacial, worn,
-                            assetManager.get(), renderer.get(), io.DeltaTime);
+                            assetManager.get(), renderer.get(), io.DeltaTime,
+                            drawTexRace, drawTexGender);
                         face.portrait->setSubjectGuid(built ? face.guid : 0);
                     } else if (!morphed && std::string_view(face.unit).starts_with("party") &&
                                face.portrait->updateKnownSubject(face.guid, io.DeltaTime)) {

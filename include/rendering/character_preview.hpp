@@ -42,7 +42,8 @@ public:
     bool loadCharacter(game::Race race, game::Gender gender,
                        uint8_t skin, uint8_t face,
                        uint8_t hairStyle, uint8_t hairColor,
-                       uint8_t facialHair, bool useFemaleModel = false);
+                       uint8_t facialHair, bool useFemaleModel = false,
+                       uint8_t textureRace = 0, uint8_t textureSex = 0xFF);
 
     /// Any model by path, with none of the appearance work - for a creature,
     /// whose M2 names its own textures and has no geosets to choose between.

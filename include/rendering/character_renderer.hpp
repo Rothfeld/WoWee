@@ -251,6 +251,10 @@ public:
     bool setInstanceKitHeadOverride(uint32_t charInstanceId, const pipeline::M2Model& helmModel,
                                     uint32_t helmModelId, const std::string& texturePath);
     void clearInstanceKitHeadOverride(uint32_t charInstanceId);
+    /// Use passive world doodad lighting (1.0x outdoor diffuse + base ambient)
+    /// rather than 2.5x unit diffuse + unit ambient (e.g. player CORPSE bones
+    /// World/Generic/PassiveDoodads/DeathSkeletons/*DeathSkeleton.m2).
+    void setInstanceDoodadLighting(uint32_t instanceId, bool enabled);
     /// SpellVisualKit CharProc 13 ("Glowy"): all light on the model (ambient,
     /// sun, interior and local lights) is multiplied by color for seconds,
     /// from now, whatever happens to the aura or spell that played the kit;
@@ -281,8 +285,9 @@ public:
     using UnitFloorLightQuery = std::function<UnitFloorLight(const glm::vec3& pos, float sampleHeight)>;
     void setUnitFloorLightQuery(UnitFloorLightQuery query) { unitFloorLightQuery_ = std::move(query); }
     void setOutdoorUnitLight(const glm::vec3& unitAmbient, const glm::vec3& diffuseBase,
-                             const glm::vec3& lightDir) {
+                             const glm::vec3& lightDir, const glm::vec3& ambientBase) {
         outdoorUnitAmbient_ = unitAmbient;
+        outdoorAmbientBase_ = ambientBase;
         outdoorDiffuseBase_ = diffuseBase;
         outdoorLightDir_ = lightDir;
     }
@@ -644,6 +649,7 @@ private:
         // current pose motionless until cleared.
         bool kitAnimationFrozen = false;
         uint32_t auraStateAnimId = 0;
+        bool doodadLighting = false;
         float fadeInTime = 0.0f;          // elapsed fade time (seconds)
         float fadeInDuration = 0.0f;      // total fade duration (0 = no fade)
         float fadeInTargetOpacity = 1.0f; // destination opacity at end of fade-in
@@ -911,6 +917,7 @@ private:
     InteriorLightQuery interiorLightQuery_;
     UnitFloorLightQuery unitFloorLightQuery_;
     glm::vec3 outdoorUnitAmbient_{0.5f};
+    glm::vec3 outdoorAmbientBase_{0.5f};
     glm::vec3 outdoorDiffuseBase_{1.0f};
     glm::vec3 outdoorLightDir_{0.3f, -0.7f, 0.6f};
 

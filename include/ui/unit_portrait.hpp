@@ -108,7 +108,8 @@ public:
                       uint8_t facialFeatures,
                       const std::vector<game::EquipmentItem>& equipment,
                       pipeline::AssetManager* assets,
-                      rendering::Renderer* renderer, float deltaTime);
+                      rendering::Renderer* renderer, float deltaTime,
+                      uint8_t textureRace = 0, uint8_t textureGender = 0xFF);
 
     /// Show a creature instead, by the model its display id names.
     ///
@@ -223,6 +224,8 @@ private:
     /// rather than by a guid that this only ever sees one of at a time.
     uint8_t  loadedRace_ = 0xFF;
     uint8_t  loadedGender_ = 0xFF;
+    uint8_t  loadedTextureRace_ = 0;
+    uint8_t  loadedTextureGender_ = 0xFF;
     uint32_t loadedAppearance_ = 0;
     uint8_t  loadedFacialFeatures_ = 0;
     // uint64_t, not size_t: the hash is sixty-four bits and storing it in a

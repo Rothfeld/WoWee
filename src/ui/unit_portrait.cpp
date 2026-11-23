@@ -206,7 +206,8 @@ bool UnitPortrait::updatePlayer(uint8_t race, uint8_t gender,
                                 uint32_t appearanceBytes, uint8_t facialFeatures,
                                 const std::vector<game::EquipmentItem>& equipment,
                                 pipeline::AssetManager* assets,
-                                rendering::Renderer* renderer, float deltaTime) {
+                                rendering::Renderer* renderer, float deltaTime,
+                                uint8_t textureRace, uint8_t textureGender) {
     if (!assets || !renderer) return false;
 
     if (!preview_) {
@@ -227,6 +228,8 @@ bool UnitPortrait::updatePlayer(uint8_t race, uint8_t gender,
     const bool changed = (loadedAppearance_ != appearanceBytes) ||
                          (loadedFacialFeatures_ != facialFeatures) ||
                          (loadedRace_ != race) || (loadedGender_ != gender) ||
+                         (loadedTextureRace_ != textureRace) ||
+                         (loadedTextureGender_ != textureGender) ||
                          (loadedEquipHash_ != equipHash) ||
                          (loadedBake_ != pendingBake_) ||
                          (loadedGuildTabard_ != pendingGuildTabard_) ||
@@ -242,7 +245,8 @@ bool UnitPortrait::updatePlayer(uint8_t race, uint8_t gender,
         if (preview_->loadCharacter(static_cast<game::Race>(race),
                                     static_cast<game::Gender>(gender),
                                     skin, face, hairStyle, hairColor,
-                                    facialFeatures, gender == 1)) {
+                                    facialFeatures, gender == 1,
+                                    textureRace, textureGender)) {
             // After the model, because applyEquipment reads its geosets, and
             // only where there is something to apply - an empty list is
             // "nothing known yet", and dressing a model in it strips it.
@@ -265,6 +269,8 @@ bool UnitPortrait::updatePlayer(uint8_t race, uint8_t gender,
         loadedGuid_ = 0;
         loadedRace_ = race;
         loadedGender_ = gender;
+        loadedTextureRace_ = textureRace;
+        loadedTextureGender_ = textureGender;
         loadedAppearance_ = appearanceBytes;
         loadedFacialFeatures_ = facialFeatures;
         loadedEquipHash_ = equipHash;

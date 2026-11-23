@@ -558,7 +558,8 @@ void CharacterPreview::destroyFBO() {
 bool CharacterPreview::loadCharacter(game::Race race, game::Gender gender,
                                       uint8_t skin, uint8_t face,
                                       uint8_t hairStyle, uint8_t hairColor,
-                                      uint8_t facialHair, bool useFemaleModel) {
+                                      uint8_t facialHair, bool useFemaleModel,
+                                      uint8_t textureRace, uint8_t textureSex) {
     if (!charRenderer_ || !assetManager_ || !assetManager_->isInitialized()) {
         return false;
     }
@@ -656,9 +657,13 @@ bool CharacterPreview::loadCharacter(game::Race race, game::Gender gender,
     }
 
     // Look up CharSections.dbc for all appearance textures
-    uint32_t targetRaceId = static_cast<uint32_t>(race);
-    uint32_t targetSexId = (gender == game::Gender::FEMALE ||
-                            (gender == game::Gender::NONBINARY && useFemaleModel)) ? 1u : 0u;
+    uint32_t targetRaceId = (textureRace != 0)
+        ? static_cast<uint32_t>(textureRace)
+        : static_cast<uint32_t>(race);
+    uint32_t targetSexId = (textureRace != 0 && textureSex <= 1)
+        ? static_cast<uint32_t>(textureSex)
+        : ((gender == game::Gender::FEMALE ||
+            (gender == game::Gender::NONBINARY && useFemaleModel)) ? 1u : 0u);
 
     pipeline::CharacterSectionTextures sections;
     std::string hairScalpPath;

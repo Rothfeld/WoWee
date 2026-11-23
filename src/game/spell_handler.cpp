@@ -19,6 +19,7 @@
 #include "rendering/renderer.hpp"
 #include "rendering/camera_controller.hpp"
 #include "rendering/character_renderer.hpp"
+#include "rendering/spell_visual_kit_policy.hpp"
 #include "rendering/spell_visual_system.hpp"
 #include "audio/audio_coordinator.hpp"
 #include "audio/spell_sound_manager.hpp"
@@ -4151,12 +4152,21 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
                         // Sinister Beam 40859 (chain targets 10); others fan out
                         // from the caster.
                         bool chained = false, channelled = false;
+                        bool hasInstantAreaDest = true;
                         owner_.loadSpellNameCache();
                         if (const auto spell = owner_.spellNameCacheRef().find(data.spellId);
                             spell != owner_.spellNameCacheRef().end()) {
                             for (uint32_t jumps : spell->second.effectChainTargets) chained |= jumps > 1;
                             // SPELL_ATTR_EX_IS_CHANNELED (0x4) / IS_SELF_CHANNELED (0x40)
                             channelled = (spell->second.attrEx & 0x44u) != 0;
+                            hasInstantAreaDest = rendering::spellHasInstantAreaDestination(
+                                spell->second.targetFlags,
+                                {spell->second.implicitTargetsA[0],
+                                 spell->second.implicitTargetsA[1],
+                                 spell->second.implicitTargetsA[2]},
+                                {spell->second.implicitTargetsB[0],
+                                 spell->second.implicitTargetsB[1],
+                                 spell->second.implicitTargetsB[2]});
                         }
                         // A jumping channel's beam runs on through its other
                         // targets, hit or missed, in packet order: Jeklik's
@@ -4178,7 +4188,7 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
                         if (!data.hitTargets.empty())
                             svs->playCasterImpactKit(visualId, casterPos,
                                                      owner_.resolveUnitRenderInstance(data.casterUnit));
-                        if (data.destination)
+                        if (data.destination && hasInstantAreaDest)
                             svs->playInstantAreaKit(visualId, core::coords::canonicalToRender(
                                 core::coords::serverToCanonical(*data.destination)));
                     }

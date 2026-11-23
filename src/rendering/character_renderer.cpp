@@ -4506,13 +4506,17 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
                     DirectionalLightRig rig{};
                     if (instance.floorLight.isInterior) {
                         rig = blendIndoorWithOutdoorRig(
-                            instance.floorLight.indoorRig, outdoorUnitAmbient_, outdoorDiffuseBase_,
-                            outdoorLightDir_, instance.floorLight.exteriorBlend, true);
+                            instance.floorLight.indoorRig,
+                            instance.doodadLighting ? outdoorAmbientBase_ : outdoorUnitAmbient_,
+                            outdoorDiffuseBase_,
+                            outdoorLightDir_, instance.floorLight.exteriorBlend, !instance.doodadLighting);
                         matData.interiorLit = (instance.floorLight.exteriorBlend < 1.0f) ? 1 : 0;
                     } else {
-                        const float diffScale = instance.floorLight.terrainShadowed ? 0.5f : 2.5f;
+                        const float diffScale = instance.floorLight.terrainShadowed
+                            ? 0.5f
+                            : (instance.doodadLighting ? 1.0f : 2.5f);
                         rig = {
-                            .ambient = outdoorUnitAmbient_,
+                            .ambient = instance.doodadLighting ? outdoorAmbientBase_ : outdoorUnitAmbient_,
                             .diffuse = outdoorDiffuseBase_ * diffScale,
                             .dir = outdoorLightDir_,
                         };
@@ -4730,13 +4734,17 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
                 DirectionalLightRig rig{};
                 if (instance.floorLight.isInterior) {
                     rig = blendIndoorWithOutdoorRig(
-                        instance.floorLight.indoorRig, outdoorUnitAmbient_, outdoorDiffuseBase_,
-                        outdoorLightDir_, instance.floorLight.exteriorBlend, true);
+                        instance.floorLight.indoorRig,
+                        instance.doodadLighting ? outdoorAmbientBase_ : outdoorUnitAmbient_,
+                        outdoorDiffuseBase_,
+                        outdoorLightDir_, instance.floorLight.exteriorBlend, !instance.doodadLighting);
                     matData.interiorLit = (instance.floorLight.exteriorBlend < 1.0f) ? 1 : 0;
                 } else {
-                    const float diffScale = instance.floorLight.terrainShadowed ? 0.5f : 2.5f;
+                    const float diffScale = instance.floorLight.terrainShadowed
+                        ? 0.5f
+                        : (instance.doodadLighting ? 1.0f : 2.5f);
                     rig = {
-                        .ambient = outdoorUnitAmbient_,
+                        .ambient = instance.doodadLighting ? outdoorAmbientBase_ : outdoorUnitAmbient_,
                         .diffuse = outdoorDiffuseBase_ * diffScale,
                         .dir = outdoorLightDir_,
                     };
@@ -5472,6 +5480,13 @@ void CharacterRenderer::setInstanceKitAppearance(uint32_t instanceId, const glm:
             fx.kitColor = color;
             fx.kitOpacity = fx.kitOpacityTarget = instance.kitOpacity;
         }
+    }
+}
+
+void CharacterRenderer::setInstanceDoodadLighting(uint32_t instanceId, bool enabled) {
+    auto it = instances.find(instanceId);
+    if (it != instances.end()) {
+        it->second.doodadLighting = enabled;
     }
 }
 

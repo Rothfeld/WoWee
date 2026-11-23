@@ -226,7 +226,8 @@ public:
     /// out.isEquipablePlayerIllusion is true when the player wears their live
     /// equipment on the target race/sex model (e.g. Old Hillsbrad Human Illusion).
     bool resolvePlayerIllusion(uint32_t displayId, uint32_t playerAppearanceBytes,
-                               uint8_t playerFacialHair, PlayerHumanoidMorph& out) const;
+                               uint8_t playerFacialHair, PlayerHumanoidMorph& out,
+                               uint8_t playerRace = 0, uint8_t playerSex = 0) const;
     bool isEquipableHumanoidDisplay(uint32_t displayId) const;
 
     /// What that humanoid is wearing, as (ItemDisplayInfo id, inventory type)
@@ -717,7 +718,8 @@ private:
     void buildPlayerBaseAppearance(uint32_t instanceId, uint32_t modelId,
                                    uint8_t raceId, uint8_t genderId,
                                    uint32_t appearanceBytes, uint8_t facialFeatures,
-                                   OnlinePlayerAppearanceState& outState);
+                                   OnlinePlayerAppearanceState& outState,
+                                   uint8_t textureRaceId = 0, uint8_t textureGenderId = 0xFF);
     void applyPlayerEquipmentToInstance(uint64_t guid, const OnlinePlayerAppearanceState& st,
                                         const std::array<uint32_t, 19>& displayInfoIds,
                                         const std::array<uint8_t, 19>& inventoryTypes);

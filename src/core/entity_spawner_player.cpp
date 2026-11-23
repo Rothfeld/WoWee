@@ -161,12 +161,15 @@ bool EntitySpawner::loadCharacterMorphModel(uint32_t displayId, uint8_t raceId, 
 void EntitySpawner::buildPlayerBaseAppearance(uint32_t instanceId, uint32_t modelId,
                                               uint8_t raceId, uint8_t genderId,
                                               uint32_t appearanceBytes, uint8_t facialFeatures,
-                                              OnlinePlayerAppearanceState& outState) {
+                                              OnlinePlayerAppearanceState& outState,
+                                              uint8_t textureRaceId, uint8_t textureGenderId) {
     auto* charRenderer = renderer_->getCharacterRenderer();
     if (!charRenderer) return;
 
-    const std::string defaultSkin = defaultBodySkinPath(raceId, genderId);
-    const std::string pelvisPath = defaultPelvisPath(raceId, genderId);
+    const uint8_t texRace = (textureRaceId != 0) ? textureRaceId : raceId;
+    const uint8_t texGender = (textureRaceId != 0 && textureGenderId <= 1) ? textureGenderId : genderId;
+    const std::string defaultSkin = defaultBodySkinPath(texRace, texGender);
+    const std::string pelvisPath = defaultPelvisPath(texRace, texGender);
     const AppearanceBytes look = unpackAppearanceBytes(appearanceBytes);
     const uint8_t hairStyleId = look.hairStyleId;
 
@@ -182,8 +185,8 @@ void EntitySpawner::buildPlayerBaseAppearance(uint32_t instanceId, uint32_t mode
         const auto csF = pipeline::detectCharSectionsFields(charSectionsDbc.get(), csL);
 
         pipeline::CharacterAppearance who;
-        who.raceId = raceId;
-        who.sexId = genderId;
+        who.raceId = texRace;
+        who.sexId = texGender;
         who.skinId = look.skinId;
         who.faceId = look.faceId;
         who.hairStyleId = look.hairStyleId;
@@ -312,6 +315,7 @@ void EntitySpawner::spawnOnlinePlayer(uint64_t guid,
         const auto instance = charRenderer->createInstance(modelId, position,
             glm::vec3(0, 0, orientation + glm::radians(90.0f)), 1.0f);
         if (!instance) { LOG_ERROR("Cannot create corpse skeleton: ", path); return; }
+        charRenderer->setInstanceDoodadLighting(instance, true);
         playerInstances_[guid] = instance;
         LOG_INFO("Corpse bones spawned guid=", guid, " model=", path);
         return;

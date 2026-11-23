@@ -589,7 +589,8 @@ void Renderer::updatePerFrameUBO() {
         if (characterRenderer) {
             characterRenderer->setOutdoorUnitLight(lp.ambientColor * unitAmbGain,
                                                    lp.diffuseColor,
-                                                   glm::vec3(currentFrameData.lightDir));
+                                                   glm::vec3(currentFrameData.lightDir),
+                                                   lp.ambientColor);
         }
         if (m2Renderer) {
             m2Renderer->setLighting(&currentFrameData.lightDir.x,

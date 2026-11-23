@@ -40,6 +40,12 @@ struct PlayerHumanoidMorph {
     bool usePlayerAppearance = false;
     uint8_t targetRace = 0;
     uint8_t targetSex = 0;
+    /// Race/sex used for CharSections.dbc texture lookup. Matches targetRace /
+    /// targetSex when CreatureDisplayInfoExtra specifies DisplayRaceID, and
+    /// preserves the player's own UNIT_BYTES_0 race/sex on bare racial morphs
+    /// (ExtraDisplayInfoID == 0).
+    uint8_t textureRace = 0;
+    uint8_t textureSex = 0;
     /// Packed PLAYER_BYTES: skin | (face << 8) | (hairStyle << 16) | (hairColor << 24).
     uint32_t appearanceBytes = 0;
     uint8_t facialHair = 0;
@@ -79,6 +85,8 @@ inline PlayerHumanoidMorph resolvePlayerHumanoidMorph(
     PlayerHumanoidMorph out;
     out.targetRace = extra.raceId;
     out.targetSex = extra.sexId;
+    out.textureRace = extra.raceId;
+    out.textureSex = extra.sexId;
     out.isEquipablePlayerIllusion = extra.canEquip;
 
     const bool hasPresetAppearance =

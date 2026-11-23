@@ -214,6 +214,9 @@ void EntitySpawner::syncPlayerMorphs() {
             if (!havePlayerLook && guid == gameHandler_->getPlayerGuid()) {
                 for (const auto& ch : gameHandler_->getCharacters()) {
                     if (ch.guid == guid) {
+                        pRace = static_cast<uint8_t>(ch.race);
+                        pGender = (ch.gender == game::Gender::FEMALE ||
+                                   (ch.gender == game::Gender::NONBINARY && ch.useFemaleModel)) ? 1u : 0u;
                         pAppearance = ch.appearanceBytes;
                         pFacial = ch.facialFeatures;
                         havePlayerLook = true;
@@ -223,7 +226,7 @@ void EntitySpawner::syncPlayerMorphs() {
             }
             PlayerHumanoidMorph illusion;
             const bool hasResolvedIllusion =
-                resolvePlayerIllusion(display, pAppearance, pFacial, illusion);
+                resolvePlayerIllusion(display, pAppearance, pFacial, illusion, pRace, pGender);
             const bool isEquipableIllusion =
                 hasResolvedIllusion && illusion.isEquipablePlayerIllusion;
             const bool usesPlayerCharacterBase =
@@ -253,7 +256,8 @@ void EntitySpawner::syncPlayerMorphs() {
             if (usesPlayerCharacterBase) {
                 buildPlayerBaseAppearance(instance, modelId, illusion.targetRace, illusion.targetSex,
                                           illusion.appearanceBytes, illusion.facialHair,
-                                          entry.illusionAppearance);
+                                          entry.illusionAppearance,
+                                          illusion.textureRace, illusion.textureSex);
             } else {
                 applyCreatureInstanceAppearance(instance, modelId, display);
             }
@@ -1754,24 +1758,32 @@ bool EntitySpawner::getHumanoidAppearance(uint32_t displayId, uint8_t& race,
 bool EntitySpawner::resolvePlayerIllusion(uint32_t displayId,
                                           uint32_t playerAppearanceBytes,
                                           uint8_t playerFacialHair,
-                                          PlayerHumanoidMorph& out) const {
+                                          PlayerHumanoidMorph& out,
+                                          uint8_t playerRace,
+                                          uint8_t playerSex) const {
     auto disp = displayDataMap_.find(displayId);
     if (disp == displayDataMap_.end()) return false;
     if (disp->second.extraDisplayId == 0) {
         // Bare racial CreatureDisplayInfo rows (e.g. 15475 BloodElfFemale,
         // 15476 BloodElfMale, 16125 DraeneiMale) carry no CreatureDisplayInfoExtra
-        // record. When a player is morphed into one, Native 2.4.3 renders the
-        // target racial model unarmored (isEquipablePlayerIllusion = false)
-        // using the morphed player's own PLAYER_BYTES / PLAYER_BYTES_2 wrapped
-        // into the target race/sex limits rather than creature defaults (0, 0, 0).
+        // record (so there is no DisplayRaceID / DisplaySexID override). When a
+        // player is morphed into one, Native 2.4.3 loads the target M2 unarmored
+        // (isEquipablePlayerIllusion = false) while binding replaceable character
+        // textures (Type 1 skin/face/facialHair/underwear, Type 6 hair, Type 8
+        // skinExtra) from the player's own UNIT_BYTES_0 (playerRace, playerSex)
+        // and PLAYER_BYTES / PLAYER_BYTES_2.
         const auto bareIt = bareRacialDisplayMap_.find(displayId);
         if (bareIt == bareRacialDisplayMap_.end()) return false;
         const uint8_t race = bareIt->second.first;
         const uint8_t sex = bareIt->second.second;
         if (race == 0 || !game::hasPlayerModel(static_cast<game::Race>(race))) return false;
 
+        const uint8_t texRace = (playerRace != 0 && game::hasPlayerModel(static_cast<game::Race>(playerRace)))
+            ? playerRace : race;
+        const uint8_t texSex = (playerRace != 0 && game::hasPlayerModel(static_cast<game::Race>(playerRace)))
+            ? playerSex : sex;
         PlayerIllusionRaceLimits limits;
-        if (auto limIt = raceAppearanceLimits_.find(static_cast<uint16_t>((race << 8) | sex));
+        if (auto limIt = raceAppearanceLimits_.find(static_cast<uint16_t>((texRace << 8) | texSex));
             limIt != raceAppearanceLimits_.end()) {
             limits = limIt->second;
         }
@@ -1783,6 +1795,8 @@ bool EntitySpawner::resolvePlayerIllusion(uint32_t displayId,
         out.usePlayerAppearance = true;
         out.targetRace = race;
         out.targetSex = sex;
+        out.textureRace = texRace;
+        out.textureSex = texSex;
         out.appearanceBytes = packAppearanceBytes(
             wrapAppearanceIndex(pSkin, limits.skinCount),
             wrapAppearanceIndex(pFace, limits.faceCount),
