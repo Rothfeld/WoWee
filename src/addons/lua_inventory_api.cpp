@@ -1856,10 +1856,12 @@ static int lua_EquipItemByName(lua_State* L) {
         LOG_WARNING("EquipItemByName: no carried item matched");
         return 0;
     }
-    const int wantSlot = static_cast<int>(luaL_optnumber(L, 2, 0));
-    // Zero is "no slot named", not slot zero - the interface's own numbering
-    // starts at one, so there is no ambiguity to resolve.
-    if (wantSlot >= 1 && wantSlot <= game::Inventory::NUM_EQUIP_SLOTS) {
+    const bool hasExplicitSlot = !lua_isnoneornil(L, 2);
+    const int wantSlot = hasExplicitSlot ? static_cast<int>(luaL_checknumber(L, 2)) : -1;
+    // Explicit slot 0 names CharacterAmmoSlot (/equipslot 0 Rough Arrow); slots
+    // 1..19 name worn equipment slots. Omitting arg 2 (/equip) uses wantSlot -1.
+    if (wantSlot >= 0 && wantSlot <= game::Inventory::NUM_EQUIP_SLOTS) {
+        const uint8_t destSlot = static_cast<uint8_t>(wantSlot - 1);
         // Through the bind check: native 2.4.3 EquipItemByName(ring, 11)
         // raises EQUIP_BIND for a ring it would bind.
         const auto& carried = gh->getInventory();
@@ -1867,7 +1869,7 @@ static int lua_EquipItemByName(lua_State* L) {
             const auto& sl = carried.getBackpackSlot(i);
             if (!sl.empty() && sl.item.itemId == itemId) {
                 gh->equipFromWireToSlot(0xFF, static_cast<uint8_t>(game::Inventory::NUM_EQUIP_SLOTS + i),
-                                        static_cast<uint8_t>(wantSlot - 1));
+                                        destSlot);
                 return 0;
             }
         }
@@ -1876,7 +1878,7 @@ static int lua_EquipItemByName(lua_State* L) {
                 const auto& sl = carried.getBagSlot(bag, i);
                 if (!sl.empty() && sl.item.itemId == itemId) {
                     gh->equipFromWireToSlot(static_cast<uint8_t>(game::Inventory::FIRST_BAG_EQUIP_SLOT + bag),
-                                            static_cast<uint8_t>(i), static_cast<uint8_t>(wantSlot - 1));
+                                            static_cast<uint8_t>(i), destSlot);
                     return 0;
                 }
             }
@@ -1930,6 +1932,9 @@ static int lua_IsEquippedItem(lua_State* L) {
         for (int i = 0; i < kEquipSlots && !worn; ++i) {
             const auto& sl = inv.getEquipSlot(static_cast<game::EquipSlot>(i));
             worn = !sl.empty() && sl.item.itemId == itemId;
+        }
+        if (!worn && equippedAmmoItemId(L) == itemId) {
+            worn = true;
         }
     }
     lua_pushboolean(L, worn ? 1 : 0);

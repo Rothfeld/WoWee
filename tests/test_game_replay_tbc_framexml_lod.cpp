@@ -317,3 +317,270 @@ TEST_CASE("TBC FrameXML + all 16 Blizzard_* LoD addons boot with 0 Lua errors", 
     }
     CHECK(errors.size() == beforeExercise);
 }
+
+TEST_CASE("TBC UNIT_DYNFLAG_DEAD feigning NPCs report Dead and 0 health while self/party keep real health",
+          "[tbc][unit][feigndeath]") {
+    Session session{"tbc"};
+    wowee::addons::LuaEngine lua;
+    REQUIRE(lua.initialize());
+    lua.setGameHandler(&session.handler());
+    wowee::addons::applyApiConventions(lua.getState(), "tbc");
+
+    constexpr uint64_t kWarderCorpseGuid = 0xF130005338000101ull;
+    constexpr uint64_t kPartyHunterGuid  = 0x0000000000000077ull;
+
+    // Local player feigning death still sees own real health.
+    session.receive(UpdateObject().tbc().create(
+        Session::kPlayerGuid, ObjectType::PLAYER,
+        {{UF::UNIT_FIELD_HEALTH, 3500},
+         {UF::UNIT_FIELD_MAXHEALTH, 4000},
+         {UF::UNIT_FIELD_LEVEL, 70},
+         {UF::UNIT_FIELD_FLAGS_2, 0x1u},
+         {UF::UNIT_DYNAMIC_FLAGS, wowee::game::UNIT_DYNFLAG_DEAD}},
+        true));
+
+    // Warder Corpse (21304): living NPC (health 6200/6200) with Permanent Feign Death (UNIT_DYNFLAG_DEAD).
+    session.receive(UpdateObject().tbc().create(
+        kWarderCorpseGuid, ObjectType::UNIT,
+        {{UF::OBJECT_FIELD_ENTRY, 21304},
+         {UF::UNIT_FIELD_HEALTH, 6200},
+         {UF::UNIT_FIELD_MAXHEALTH, 6200},
+         {UF::UNIT_FIELD_LEVEL, 70},
+         {UF::UNIT_FIELD_FLAGS_2, 0x1u},
+         {UF::UNIT_DYNAMIC_FLAGS, wowee::game::UNIT_DYNFLAG_DEAD}}));
+
+    // Party hunter feigning death retains real health for party members.
+    session.receive(UpdateObject().tbc().create(
+        kPartyHunterGuid, ObjectType::PLAYER,
+        {{UF::UNIT_FIELD_HEALTH, 2900},
+         {UF::UNIT_FIELD_MAXHEALTH, 3200},
+         {UF::UNIT_FIELD_LEVEL, 70},
+         {UF::UNIT_FIELD_FLAGS_2, 0x1u},
+         {UF::UNIT_DYNAMIC_FLAGS, wowee::game::UNIT_DYNFLAG_DEAD}}));
+    {
+        wowee::network::Packet roster(wowee::game::wireOpcode(wowee::game::Opcode::SMSG_GROUP_LIST));
+        roster.writeUInt8(0);
+        roster.writeUInt8(0);
+        roster.writeUInt8(0);
+        roster.writeUInt8(0);
+        roster.writeUInt64(1);
+        roster.writeUInt32(1);
+        roster.writeString("PartyHunter");
+        roster.writeUInt64(kPartyHunterGuid);
+        roster.writeUInt8(1);
+        roster.writeUInt8(0);
+        roster.writeUInt8(0);
+        roster.writeUInt64(Session::kPlayerGuid);
+        session.receive(roster);
+    }
+
+    session.handler().setTarget(kWarderCorpseGuid);
+    REQUIRE(lua.executeString(
+        "__self_hp = UnitHealth('player')\n"
+        "__self_dead = UnitIsDead('player') and 1 or 0\n"
+        "__warder_hp = UnitHealth('target')\n"
+        "__warder_max = UnitHealthMax('target')\n"
+        "__warder_dead = UnitIsDead('target') and 1 or 0\n"
+        "__warder_dog = UnitIsDeadOrGhost('target') and 1 or 0\n"
+        "__warder_fd = UnitIsFeignDeath('target') or 0\n"));
+
+    session.handler().setTarget(kPartyHunterGuid);
+    REQUIRE(lua.executeString(
+        "__party_hp = UnitHealth('target')\n"
+        "__party_dead = UnitIsDead('target') and 1 or 0\n"));
+
+    // Clearing UNIT_DYNFLAG_DEAD restores live health on Warder/NPC.
+    session.receive(UpdateObject().tbc().values(
+        kWarderCorpseGuid, {{UF::UNIT_DYNAMIC_FLAGS, 0u}}));
+    session.handler().setTarget(kWarderCorpseGuid);
+    REQUIRE(lua.executeString(
+        "__warder_up_hp = UnitHealth('target')\n"
+        "__warder_up_dead = UnitIsDead('target') and 1 or 0\n"));
+
+    lua_State* L = lua.getState();
+    auto numGlobal = [&](const char* name) {
+        lua_getglobal(L, name);
+        const double v = lua_tonumber(L, -1);
+        lua_pop(L, 1);
+        return v;
+    };
+    CHECK(numGlobal("__self_hp") == 3500.0);
+    CHECK(numGlobal("__self_dead") == 0.0);
+    CHECK(numGlobal("__warder_hp") == 0.0);
+    CHECK(numGlobal("__warder_max") == 6200.0);
+    CHECK(numGlobal("__warder_dead") == 1.0);
+    CHECK(numGlobal("__warder_dog") == 1.0);
+    CHECK(numGlobal("__warder_fd") == 1.0);
+    CHECK(numGlobal("__party_hp") == 2900.0);
+    CHECK(numGlobal("__party_dead") == 0.0);
+    CHECK(numGlobal("__warder_up_hp") == 6200.0);
+    CHECK(numGlobal("__warder_up_dead") == 0.0);
+}
+
+TEST_CASE("TBC ammo equipping routes through CMSG_SET_AMMO and supports inventory slot 0",
+          "[tbc][inventory][ammo]") {
+    using wowee::game::Opcode;
+    Session session{"tbc"};
+    wowee::addons::LuaEngine lua;
+    REQUIRE(lua.initialize());
+    lua.setGameHandler(&session.handler());
+    wowee::addons::applyApiConventions(lua.getState(), "tbc");
+
+    constexpr uint32_t kRoughArrow = 2512;
+    session.receive(UpdateObject().tbc().create(
+        Session::kPlayerGuid, ObjectType::PLAYER,
+        {{UF::UNIT_FIELD_HEALTH, 2000},
+         {UF::UNIT_FIELD_MAXHEALTH, 2000},
+         {UF::UNIT_FIELD_LEVEL, 70},
+         {UF::PLAYER_AMMO_ID, 0}},
+        true));
+
+    auto& arrowInfo = session.handler().itemInfoCacheRef()[kRoughArrow];
+    arrowInfo.valid = true;
+    arrowInfo.entry = kRoughArrow;
+    arrowInfo.name = "Rough Arrow";
+    arrowInfo.itemClass = 6; // Projectile
+    arrowInfo.subClass = 2;  // Arrow
+    arrowInfo.inventoryType = wowee::game::InvType::AMMO;
+
+    wowee::game::ItemDef arrowDef{};
+    arrowDef.itemId = kRoughArrow;
+    arrowDef.name = "Rough Arrow";
+    arrowDef.stackCount = 200;
+    arrowDef.inventoryType = wowee::game::InvType::AMMO;
+    session.handler().getInventory().setBackpackSlot(0, arrowDef);
+
+    auto readSetAmmoIds = [&]() {
+        std::vector<uint32_t> ids;
+        for (auto pkt : session.sent().of(Opcode::CMSG_SET_AMMO)) {
+            ids.push_back(pkt.readUInt32());
+        }
+        return ids;
+    };
+
+    // 1. EquipItemByName("Rough Arrow") (/equip Rough Arrow) sends CMSG_SET_AMMO(2512), never CMSG_AUTOEQUIP_ITEM.
+    REQUIRE(lua.executeString("EquipItemByName('Rough Arrow')"));
+    CHECK(session.sent().of(Opcode::CMSG_AUTOEQUIP_ITEM).empty());
+    REQUIRE(readSetAmmoIds() == std::vector<uint32_t>{kRoughArrow});
+
+    // 2. PickupContainerItem(0, 1) -> CursorCanGoInSlot(0) true, PickupInventoryItem(0) sends CMSG_SET_AMMO(2512).
+    REQUIRE(lua.executeString(
+        "PickupContainerItem(0, 1)\n"
+        "__fits0 = CursorCanGoInSlot(0) and 1 or 0\n"
+        "__fits1 = CursorCanGoInSlot(1) and 1 or 0\n"
+        "PickupInventoryItem(0)\n"));
+    CHECK(lua.evaluateBoolean("__fits0 == 1 and __fits1 == 0"));
+    REQUIRE(readSetAmmoIds() == std::vector<uint32_t>{kRoughArrow, kRoughArrow});
+
+    // 3. PickupContainerItem(0, 1) -> EquipCursorItem(0) sends CMSG_SET_AMMO(2512).
+    REQUIRE(lua.executeString(
+        "PickupContainerItem(0, 1)\n"
+        "EquipCursorItem(0)\n"));
+    REQUIRE(readSetAmmoIds() == std::vector<uint32_t>{kRoughArrow, kRoughArrow, kRoughArrow});
+
+    // 4. Server updates PLAYER_AMMO_ID -> IsEquippedItem("Rough Arrow") is true,
+    //    and clicking CharacterAmmoSlot with an empty cursor sends CMSG_SET_AMMO(0) to clear.
+    session.receive(UpdateObject().tbc().values(
+        Session::kPlayerGuid, {{UF::PLAYER_AMMO_ID, kRoughArrow}}));
+    REQUIRE(lua.executeString(
+        "__is_eq = IsEquippedItem('Rough Arrow') and 1 or 0\n"
+        "PickupInventoryItem(0)\n"));
+    CHECK(lua.evaluateBoolean("__is_eq == 1"));
+    REQUIRE(readSetAmmoIds() == std::vector<uint32_t>{kRoughArrow, kRoughArrow, kRoughArrow, 0u});
+}
+
+TEST_CASE("TBC PetActionBarFrame offsets right of ShapeshiftBarFrame when pet spells arrive before FrameXML load",
+          "[tbc][framexml][petbar][stance]") {
+    const auto tbcDir = resolveTbcDataDir();
+    if (tbcDir.empty()) {
+        SKIP("Set WOWEE_TBC_DATA_DIR to client/wowee-data/expansions/tbc");
+    }
+    const auto frameXmlDir = tbcDir / "interface" / "framexml";
+    REQUIRE(std::filesystem::is_directory(frameXmlDir));
+
+    Session session{"tbc"};
+    constexpr uint64_t kPetGuid = 0xF140002E0F0000D0ull;
+
+    // Spawn Rogue player + pet entity + Stealth (1784) + SMSG_PET_SPELLS BEFORE FrameXML loads,
+    // reproducing WoWee world-entry packet order where SMSG_PET_SPELLS arrives before loadFrameXml.
+    session.receive(UpdateObject().tbc().create(
+        Session::kPlayerGuid, ObjectType::PLAYER,
+        {{UF::UNIT_FIELD_HEALTH, 4000},
+         {UF::UNIT_FIELD_MAXHEALTH, 4000},
+         {UF::UNIT_FIELD_LEVEL, 70},
+         {UF::UNIT_FIELD_BYTES_0, packUnitBytes0(1, 4, 0, 3)},
+         {UF::UNIT_FIELD_SUMMON, static_cast<uint32_t>(kPetGuid & 0xFFFFFFFFull)}},
+        true));
+    session.receive(UpdateObject().tbc().create(
+        kPetGuid, ObjectType::UNIT,
+        {{UF::OBJECT_FIELD_ENTRY, 15372},
+         {UF::UNIT_FIELD_HEALTH, 2000},
+         {UF::UNIT_FIELD_MAXHEALTH, 2000},
+         {UF::UNIT_FIELD_LEVEL, 70}}));
+
+    session.handler().spellNameCacheLoadedRef() = true;
+    auto& stealth = session.handler().spellNameCacheRef()[1784];
+    stealth.name = "Stealth";
+    stealth.shapeshiftForm = 30;
+    stealth.stanceBarOrder = 0;
+    {
+        wowee::network::Packet init(wowee::game::wireOpcode(wowee::game::Opcode::SMSG_INITIAL_SPELLS));
+        init.writeUInt8(0);
+        init.writeUInt16(1);
+        init.writeUInt16(1784);
+        init.writeUInt16(0);
+        init.writeUInt16(0);
+        session.receive(init);
+    }
+    {
+        wowee::network::Packet petPkt(wowee::game::wireOpcode(wowee::game::Opcode::SMSG_PET_SPELLS));
+        petPkt.writeUInt64(kPetGuid);
+        petPkt.writeUInt16(0);
+        petPkt.writeUInt32(0);
+        petPkt.writeUInt8(1);
+        petPkt.writeUInt8(1);
+        petPkt.writeUInt16(0);
+        for (int i = 0; i < 10; ++i) petPkt.writeUInt32(0);
+        petPkt.writeUInt8(0);
+        session.receive(petPkt);
+    }
+    REQUIRE(session.handler().hasPet());
+
+    wowee::addons::AddonManager mgr;
+    REQUIRE(mgr.initialize(&session.handler()));
+    auto* lua = mgr.getLuaEngine();
+    REQUIRE(lua != nullptr);
+    lua->widgets().noteScreenSize(1280.0f, 720.0f);
+    wowee::addons::removeApiAbsentFrom(lua->getState(), "tbc");
+    wowee::addons::applyApiConventions(lua->getState(), "tbc");
+
+    REQUIRE(mgr.loadFrameXml(frameXmlDir.string()));
+
+    // During loadFrameXml (TOC line 81 PetActionBarFrame.xml before line 82 BonusActionBarFrame.xml),
+    // PetActionBarFrame must NOT have prematurely locked itself at PETACTIONBAR_XPOS = 36.
+    CHECK(lua->evaluateBoolean("not PetActionBarFrame.locked"));
+
+    // Fire the login sequence as world_loader and ReloadUI do.
+    mgr.fireEvent("VARIABLES_LOADED", {});
+    mgr.fireEvent("PLAYER_LOGIN", {});
+    mgr.fireEvent("PLAYER_ENTERING_WORLD", {});
+    mgr.fireEvent("PET_BAR_UPDATE", {});
+
+    REQUIRE(mgr.runScript(
+        "__forms = GetNumShapeshiftForms()\n"
+        "__stance_right = ShapeshiftButton1:GetRight()\n"
+        "__pet_xpos = PETACTIONBAR_XPOS\n"
+        "__pet1_left = PetActionButton1:GetLeft()\n"));
+
+    lua_State* L = lua->getState();
+    auto numGlobal = [&](const char* name) {
+        lua_getglobal(L, name);
+        const double v = lua_tonumber(L, -1);
+        lua_pop(L, 1);
+        return v;
+    };
+    CHECK(numGlobal("__forms") == 1.0);
+    CHECK(numGlobal("__pet_xpos") == Catch::Approx(numGlobal("__stance_right") + 20.0).margin(0.05));
+    CHECK(numGlobal("__pet_xpos") > 200.0);
+    CHECK(numGlobal("__pet1_left") > numGlobal("__stance_right"));
+}

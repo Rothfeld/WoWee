@@ -5,6 +5,7 @@
 #include "addons/lua_api_registrations.hpp"
 #include "addons/expansion_api_surface.hpp"
 #include "game/expansion_profile.hpp"
+#include "game/game_handler.hpp"
 
 extern "C" {
 #include <lua.h>
@@ -950,6 +951,25 @@ bool AddonManager::loadFrameXml(const std::string& frameXmlDir) {
         LuaEngine& e;
         ~BudgetReset() { e.setChunkTimeoutMs(0); }
     } budgetReset{luaEngine_};
+    // Match native 2.4.3 FrameXML build order: world units (target, focus,
+    // mouseover, pet) are not exposed to OnLoad scripts before FrameXML has
+    // finished loading all manifest files (e.g. PetActionBarFrame.xml loads
+    // before BonusActionBarFrame.xml creates ShapeshiftBarFrame).
+    struct InterfaceLoadingScope {
+        game::GameHandler* gh = nullptr;
+        bool previous = false;
+        explicit InterfaceLoadingScope(game::GameHandler* h)
+            : gh(h), previous(h ? h->isInterfaceLoading() : false) {
+            if (gh) {
+                gh->setInterfaceLoading(true);
+            }
+        }
+        ~InterfaceLoadingScope() {
+            if (gh) {
+                gh->setInterfaceLoading(previous);
+            }
+        }
+    } loadingScope{gameHandler_};
     auto sinceMs = [](std::chrono::steady_clock::time_point from) {
         return std::chrono::duration_cast<std::chrono::milliseconds>(
                    std::chrono::steady_clock::now() - from).count();

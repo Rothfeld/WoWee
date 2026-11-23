@@ -1635,33 +1635,20 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             && pointer.x >= std::min(nameX, barX) - 2.0f
             && pointer.x <= std::max(nameX + textSize.x, barX + barW) + 2.0f
             && pointer.y >= nameY - 1.0f && pointer.y <= sy + barH + 2.0f;
-        // Name color communicates reaction too: friendly players blue, enemies red.
-        // Every player-controlled unit takes the player colours: the original
-        // draws a player's Imp, Stoneskin Totem, Skeletal Warrior and Boar
-        // Spirit in the same blue as a friendly player
-        // (_experiments/20261117T165200Z.pair4_kits/original-summons.png),
-        // as it does companions.
-        ImU32 nameColor;
-        if (isCorpse && legacyPlates) {
-            nameColor = IM_COL32(128, 128, 128, A(255));
-        } else if (isPlayer || (unit->getUnitFlags() & game::UNIT_FLAG_PLAYER_CONTROLLED) != 0) {
-            // A friendly one flagged for PvP (UNIT_FLAG_PVP; CMaNGOS SetPvP
-            // copies it to the player's pets and guardians) is the friendly
-            // green, grouped or not: original 2.4.3 pair 0 draws flagged
-            // <GM>Edric and his imp Quztog (0,255,0), the colour of a friendly
-            // NPC (_experiments/20261117T181105Z.pair0_ghost_names_gossip).
-            nameColor = isHostile
-                ? IM_COL32(220, 80, 80, A(255))
-                : (unit->getUnitFlags() & game::UNIT_FLAG_PVP) != 0
-                    ? IM_COL32(0, 255, 0, A(255))
-                    : IM_COL32(128, 128, 255, A(255));
-        } else {
-            const int reaction = gameHandler.unitReactionToPlayer(*unit);
-            if (isHostile || reaction <= 2) nameColor = IM_COL32(255, 0, 0, A(255));
-            else if (reaction == 3) nameColor = IM_COL32(255, 128, 0, A(255));
-            else if (reaction == 4) nameColor = IM_COL32(255, 255, 0, A(255));
-            else nameColor = IM_COL32(0, 255, 0, A(255));
-        }
+        // Name color communicates reaction too: friendly players and friendly
+        // player-controlled pets/minions/totems/guardians are blue (128,128,255),
+        // PvP-flagged friendly players are green (0,255,0), enemies are red.
+        const bool isPlayerControlled =
+            (unit->getUnitFlags() & game::UNIT_FLAG_PLAYER_CONTROLLED) != 0;
+        const bool isPvpFlagged =
+            (unit->getUnitFlags() & game::UNIT_FLAG_PVP) != 0;
+        const int reaction = (isPlayer || isPlayerControlled)
+            ? 5
+            : gameHandler.unitReactionToPlayer(*unit);
+        const ui::LegacyPlateRgb baseNameRgb = ui::worldUnitNameRgb(
+            isCorpse && legacyPlates, isPlayer, isPlayerControlled,
+            isPvpFlagged, isHostile, reaction);
+        ImU32 nameColor = IM_COL32(baseNameRgb.r, baseNameRgb.g, baseNameRgb.b, A(255));
         if (showPlate && legacyPlates) {
             nameColor = (guid == worldHoverGuid_ || plateHovered) ? IM_COL32(255, 255, 0, 255) : IM_COL32(255, 255, 255, 255);
         } else if (!showPlate && gameHandler.isPlayerGhost() &&

@@ -427,3 +427,37 @@ TEST_CASE("TBC 2.4.3 3D world unit overhead name perspective size caps close-ran
     // Tall unit scale (e.g. Mountain Giant) scales proportionally
     CHECK(worldNameFontSize(projY, 20.0f, h720, 3.0f) == Catch::Approx(px20 * 3.0f).margin(0.1f));
 }
+
+TEST_CASE("TBC 2.4.3 3D world unit overhead name color keeps friendly pets/minions blue under owner PvP flag",
+          "[nameplates][color][pvp][pets]") {
+    // Unflagged friendly player -> blue (128, 128, 255)
+    auto c = worldUnitNameRgb(false, true, true, false, false, 5);
+    CHECK((c.r == 128 && c.g == 128 && c.b == 255));
+
+    // PvP-flagged friendly player -> green (0, 255, 0)
+    c = worldUnitNameRgb(false, true, true, true, false, 5);
+    CHECK((c.r == 0 && c.g == 255 && c.b == 0));
+
+    // Friendly non-player pet/minion/totem/guardian with UNIT_FLAG_PLAYER_CONTROLLED:
+    // stays blue (128, 128, 255) even when CMaNGOS Unit::SetPvP propagates UNIT_FLAG_PVP.
+    c = worldUnitNameRgb(false, false, true, false, false, 5);
+    CHECK((c.r == 128 && c.g == 128 && c.b == 255));
+    c = worldUnitNameRgb(false, false, true, true, false, 5);
+    CHECK((c.r == 128 && c.g == 128 && c.b == 255));
+
+    // Hostile player and hostile player-controlled pet -> red (220, 80, 80)
+    c = worldUnitNameRgb(false, true, true, true, true, 1);
+    CHECK((c.r == 220 && c.g == 80 && c.b == 80));
+    c = worldUnitNameRgb(false, false, true, true, true, 1);
+    CHECK((c.r == 220 && c.g == 80 && c.b == 80));
+
+    // Non-player-controlled NPCs follow reaction (hostile, unfriendly, neutral, friendly)
+    c = worldUnitNameRgb(false, false, false, false, false, 2);
+    CHECK((c.r == 255 && c.g == 0 && c.b == 0));
+    c = worldUnitNameRgb(false, false, false, false, false, 3);
+    CHECK((c.r == 255 && c.g == 128 && c.b == 0));
+    c = worldUnitNameRgb(false, false, false, false, false, 4);
+    CHECK((c.r == 255 && c.g == 255 && c.b == 0));
+    c = worldUnitNameRgb(false, false, false, false, false, 5);
+    CHECK((c.r == 0 && c.g == 255 && c.b == 0));
+}

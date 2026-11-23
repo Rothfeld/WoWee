@@ -198,14 +198,17 @@ public:
     // interfaces ask - this client's own popup and FrameXML's EQUIP_BIND - and
     // both come back through here, so without it the answer to the prompt
     // raises the prompt again.
+    static constexpr uint8_t kAmmoEquipDestSlot = 0xFF;
+    void setAmmo(uint32_t itemId);
+    bool isAmmoItem(const ItemDef& item) const;
     void equipItemToSlot(uint64_t itemGuid, uint8_t equipSlot);
     void autoEquipItemBySlot(int backpackIndex, bool confirmed = false);
     void autoEquipItemInBag(int bagIndex, int slotIndex, bool confirmed = false);
     /// Equip the item at wire position (srcBag, srcSlot) into equipment slot
-    /// destSlot (0-based) - a drop onto a paperdoll slot, EquipCursorItem,
-    /// EquipItemByName with a slot. An item it would bind is held back and
-    /// EQUIP_BIND_CONFIRM fired instead, with "0" as native 2.4.3 sends it
-    /// for all three; answers true then.
+    /// destSlot (0-based, or kAmmoEquipDestSlot for inventory slot 0) - a drop
+    /// onto a paperdoll slot, EquipCursorItem, EquipItemByName with a slot. An
+    /// item it would bind is held back and EQUIP_BIND_CONFIRM fired instead,
+    /// with "0" as native 2.4.3 sends it for all three; answers true then.
     bool equipFromWireToSlot(uint8_t srcBag, uint8_t srcSlot, uint8_t destSlot, bool confirmed = false);
 
     /// Whether equipping what is in a slot would bind it - ItemDef carries

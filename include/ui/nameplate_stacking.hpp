@@ -331,6 +331,44 @@ struct LegacyPlateRgb {
     uint8_t b = 0;
 };
 
+/// TBC 2.4.3 (build 8606) 3D world overhead unit name RGB (before 2D plate
+/// override or ghost desaturation):
+/// - PvP-flagged friendly players are green (0, 255, 0); unflagged friendly
+///   players are blue (128, 128, 255).
+/// - Friendly non-player player-controlled units (pets, minions, totems,
+///   guardians) remain blue (128, 128, 255) even when CMaNGOS Unit::SetPvP
+///   propagates UNIT_FLAG_PVP to them alongside their PvP-flagged owner.
+/// - Hostile player-controlled units are (220, 80, 80); NPCs follow reaction.
+inline LegacyPlateRgb worldUnitNameRgb(bool isCorpsePlate,
+                                       bool isPlayer,
+                                       bool isPlayerControlled,
+                                       bool isPvpFlagged,
+                                       bool isHostile,
+                                       int reactionToPlayer) {
+    if (isCorpsePlate) {
+        return {128, 128, 128};
+    }
+    if (isPlayer || isPlayerControlled) {
+        if (isHostile) {
+            return {220, 80, 80};
+        }
+        if (isPlayer && isPvpFlagged) {
+            return {0, 255, 0};
+        }
+        return {128, 128, 255};
+    }
+    if (isHostile || reactionToPlayer <= 2) {
+        return {255, 0, 0};
+    }
+    if (reactionToPlayer == 3) {
+        return {255, 128, 0};
+    }
+    if (reactionToPlayer == 4) {
+        return {255, 255, 0};
+    }
+    return {0, 255, 0};
+}
+
 /// TBC 2.4.3 (build 8606) nameplate health bar fill RGB:
 /// friendly player = blue (0,0,255), friendly pet/NPC = green (0,255,0),
 /// neutral = yellow (255,255,0), hostile = red (255,0,0), tapped = grey (128,128,128).

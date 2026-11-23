@@ -92,12 +92,12 @@ static int lua_UnitName(lua_State* L) {
 
 static int lua_UnitHealth(lua_State* L) {
     const char* uid = luaL_optstring(L, 1, "player");
+    auto* gh = getGameHandler(L);
     auto* unit = resolveUnit(L, uid);
     if (unit) {
-        lua_pushnumber(L, unit->getHealth());
+        lua_pushnumber(L, unitAppearsDeadByDynFlags(gh, unit) ? 0 : unit->getHealth());
     } else {
         // Fallback: party member stats for out-of-range members
-        auto* gh = getGameHandler(L);
         std::string uidStr(uid);
         toLowerInPlace(uidStr);
         uint64_t guid = gh ? resolveUnitGuid(gh, uidStr) : 0;
@@ -240,12 +240,12 @@ static int lua_UnitExists(lua_State* L) {
 
 static int lua_UnitIsDead(lua_State* L) {
     const char* uid = luaL_optstring(L, 1, "player");
+    auto* gh = getGameHandler(L);
     auto* unit = resolveUnit(L, uid);
     if (unit) {
-        lua_pushboolean(L, unit->getHealth() == 0);
+        lua_pushboolean(L, unit->getHealth() == 0 || unitAppearsDeadByDynFlags(gh, unit));
     } else {
         // Fallback: party member stats for out-of-range members
-        auto* gh = getGameHandler(L);
         std::string uidStr(uid);
         toLowerInPlace(uidStr);
         uint64_t guid = gh ? resolveUnitGuid(gh, uidStr) : 0;
@@ -356,7 +356,7 @@ static int lua_UnitIsDeadOrGhost(lua_State* L) {
     const char* uid = luaL_optstring(L, 1, "player");
     auto* unit = resolveUnit(L, uid);
     auto* gh = getGameHandler(L);
-    bool dead = (unit && unit->getHealth() == 0);
+    bool dead = unit && (unit->getHealth() == 0 || unitAppearsDeadByDynFlags(gh, unit));
     if (!dead && gh) {
         std::string uidStr(uid);
         toLowerInPlace(uidStr);
@@ -1378,9 +1378,11 @@ static int lua_UnitCharacterPoints(lua_State* L) {
 
 static int lua_PetHasActionBar(lua_State* L) {
     auto* gh = getGameHandler(L);
-    // nil under Mind Control in build 8606: the possessed unit's actions are
-    // on bonus bar five, not the pet bar.
-    lua_pushboolean(L, gh && gh->hasPet() && gh->getPossessedGuid() == 0);
+    // nil while FrameXML is still loading (PetActionBarFrame.xml loads before
+    // BonusActionBarFrame.xml creates ShapeshiftBarFrame; PET_BAR_UPDATE after
+    // PLAYER_ENTERING_WORLD brings the bar up with the stance offset), and nil
+    // under Mind Control in build 8606 (possessed unit uses bonus bar five).
+    lua_pushboolean(L, gh && !gh->isInterfaceLoading() && gh->hasPet() && gh->getPossessedGuid() == 0);
     return 1;
 }
 static int lua_PetCanBeDismissed(lua_State* L) {
@@ -3654,15 +3656,16 @@ void registerUnitLuaAPI(lua_State* L) {
                 // for that logic.
                 {"CursorCanGoInSlot",       [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
-            const int slot = static_cast<int>(luaL_optnumber(L, 1, 0));
+            const int slot = static_cast<int>(luaL_optnumber(L, 1, -1));
             const uint32_t held = cursorItemId();
-            if (!gh || slot < 1 || held == 0) { lua_pushboolean(L, 0); return 1; }
+            if (!gh || slot < 0 || held == 0) { lua_pushboolean(L, 0); return 1; }
             const auto* info = gh->getItemInfo(held);
             if (!info || !info->valid) { lua_pushboolean(L, 0); return 1; }
-            // Paperdoll slot ids are the EquipSlot enum plus one.
+            // Paperdoll slot ids are the EquipSlot enum plus one; 0 is CharacterAmmoSlot.
             using namespace game::InvType;
             bool fits = false;
             switch (info->inventoryType) {
+                case AMMO:       fits = (slot == 0);  break;
                 case HEAD:       fits = (slot == 1);  break;
                 case NECK:       fits = (slot == 2);  break;
                 case SHOULDERS:  fits = (slot == 3);  break;

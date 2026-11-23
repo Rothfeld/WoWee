@@ -1960,20 +1960,22 @@ static int lua_PickupInventoryItem(lua_State* L) {
     auto* gh = getGameHandler(L);
     if (!gh) return 0;
     int slot = static_cast<int>(luaL_checknumber(L, 1));
-    if (slot < 1 || slot > 23) return 0;
+    if (slot < 0 || slot > 23) return 0;
 
     // Before the pickup, because the paperdoll has no SpellCanTargetItem branch
     // of its own - a left-click on a worn weapon always arrives here, and while
     // a stone or an oil is waiting for a target that click is the target.
-    if (slot <= 19 && completedItemTarget(L, gh->getEquipSlotGuid(slot - 1))) return 0;
+    if (slot >= 1 && slot <= 19 && completedItemTarget(L, gh->getEquipSlotGuid(slot - 1))) return 0;
 
     // Worn gear is what usually needs repairing, and the paperdoll has no
     // branch of its own for it either.
-    if (slot <= 19 && repairedHeldItem(gh, gh->getEquipSlotGuid(slot - 1))) return 0;
+    if (slot >= 1 && slot <= 19 && repairedHeldItem(gh, gh->getEquipSlotGuid(slot - 1))) return 0;
 
     if (droppedItemFromNowhere(L)) return 0;
 
     // Carrying something: equip it here, which is the other half of the drag.
+    // For slot == 0 (CharacterAmmoSlot), static_cast<uint8_t>(slot - 1) is
+    // 0xFF (kAmmoEquipDestSlot), which routes through CMSG_SET_AMMO.
     uint8_t srcBag = 0, srcSlot = 0;
     if (cursorWireSlot(srcBag, srcSlot)) {
         const auto held = cursorItemSlot();
@@ -1990,6 +1992,17 @@ static int lua_PickupInventoryItem(lua_State* L) {
         else gh->fireAddonEvent("ITEM_LOCK_CHANGED",
                                 {std::to_string(held.bag), std::to_string(held.slot)});
         gh->fireAddonEvent("ITEM_LOCK_CHANGED", {std::to_string(slot)});
+        return 0;
+    }
+
+    if (slot == 0) {
+        if (s_cursorType == CursorType::NONE) {
+            const uint32_t ammoId = equippedAmmoItemId(L);
+            if (ammoId != 0) {
+                gh->equipFromWireToSlot(0xFF, 0xFF, 0xFF);
+                playHeldOrSlotItemSound(gh, ammoId, /*pickup=*/true);
+            }
+        }
         return 0;
     }
 
@@ -2047,7 +2060,7 @@ static int lua_DeleteCursorItem(lua_State* L) {
 static int lua_EquipCursorItem(lua_State* L) {
     if (s_cursorType != CursorType::ITEM || s_cursorId == 0) return 0;
     const int slot = static_cast<int>(luaL_checknumber(L, 1));
-    if (slot < 1 || slot > 19) return 0;
+    if (slot < 0 || slot > 19) return 0;
     return lua_PickupInventoryItem(L);
 }
 

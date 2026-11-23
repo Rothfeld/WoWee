@@ -35,7 +35,9 @@
 #include "rendering/lens_flare.hpp"
 #include "rendering/wmo_renderer.hpp"
 #include "rendering/terrain_manager.hpp"
+#include "rendering/lighting_manager.hpp"
 #include "rendering/minimap.hpp"
+#include "ui/minimap_projection.hpp"
 #include "rendering/world_map.hpp"
 #include "rendering/character_renderer.hpp"
 #include "core/entity_spawner.hpp"
@@ -414,6 +416,11 @@ void GameScreen::render(game::GameHandler& gameHandler) {
         if (renderer) {
             if (auto* minimap = renderer->getMinimap()) {
                 minimap->setOpacity(1.0f);
+                if (const auto* lm = renderer->getLightingManager()) {
+                    const auto& lp = lm->getLightingParams();
+                    minimap->setTerrainLightTint(
+                        computeMinimapTerrainTint(lp.ambientColor, lp.diffuseColor));
+                }
             }
         }
     }

@@ -198,3 +198,32 @@ TEST_CASE("AreaPOI town rim arrow suppresses own city while showing in surroundi
     // Inside Shattrath City (zone 3703, subzone Aldor Rise 3704): suppress Shattrath City POI (area 3703).
     CHECK_FALSE(shouldShowAreaPoiRimArrow(3703, 3703, 3704, 3703, "Shattrath City", "Shattrath City"));
 }
+
+TEST_CASE("Outdoor minimap terrain tint follows Light.dbc ambient and top-down diffuse",
+          "[minimap][lighting]") {
+    using wowee::ui::computeMinimapTerrainTint;
+
+    // Coldridge Valley daytime (LightParams 34): near-full snow brightness (~0.84, 0.90, 0.95).
+    const glm::vec3 coldridge = computeMinimapTerrainTint(
+        glm::vec3(0.116f, 0.323f, 0.492f), glm::vec3(0.799f, 0.636f, 0.512f));
+    CHECK(coldridge.r == Catch::Approx(0.8351f).margin(1e-3f));
+    CHECK(coldridge.g == Catch::Approx(0.8954f).margin(1e-3f));
+    CHECK(coldridge.b == Catch::Approx(0.9528f).margin(1e-3f));
+
+    // Mirage Raceway at 23:12 night (LightParams 239): cool blue-grey cast (B > G > R)
+    // instead of unlit daytime tan (1, 1, 1).
+    const glm::vec3 mirageNight = computeMinimapTerrainTint(
+        glm::vec3(0.0f, 0.118f, 0.235f), glm::vec3(0.310f, 0.468f, 0.788f));
+    CHECK(mirageNight.r == Catch::Approx(0.279f).margin(1e-3f));
+    CHECK(mirageNight.g == Catch::Approx(0.5392f).margin(1e-3f));
+    CHECK(mirageNight.b == Catch::Approx(0.9442f).margin(1e-3f));
+    CHECK(mirageNight.b > mirageNight.g);
+    CHECK(mirageNight.g > mirageNight.r);
+
+    // Sunstrider Isle at 22:47 night (LightParams 379): clamps blue highlight cleanly at 1.0.
+    const glm::vec3 sunstriderNight = computeMinimapTerrainTint(
+        glm::vec3(0.243f, 0.307f, 0.556f), glm::vec3(0.314f, 0.427f, 0.541f));
+    CHECK(sunstriderNight.r == Catch::Approx(0.5256f).margin(1e-3f));
+    CHECK(sunstriderNight.g == Catch::Approx(0.6913f).margin(1e-3f));
+    CHECK(sunstriderNight.b == Catch::Approx(1.0f).margin(1e-5f));
+}

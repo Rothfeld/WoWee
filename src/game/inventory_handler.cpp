@@ -1948,6 +1948,30 @@ void InventoryHandler::equipItemToSlot(uint64_t itemGuid, uint8_t equipSlot) {
     owner_.getSocket()->send(pkt);
 }
 
+bool InventoryHandler::isAmmoItem(const ItemDef& item) const {
+    if (item.inventoryType == InvType::AMMO) {
+        return true;
+    }
+    if (item.itemId == 0) {
+        return false;
+    }
+    const auto* info = owner_.getItemInfo(item.itemId);
+    return info && info->valid && info->inventoryType == InvType::AMMO;
+}
+
+void InventoryHandler::setAmmo(uint32_t itemId) {
+    if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) {
+        return;
+    }
+    const uint32_t wire = wireOpcode(Opcode::CMSG_SET_AMMO);
+    if (wire == 0xFFFF) {
+        return;
+    }
+    network::Packet pkt(static_cast<uint16_t>(wire));
+    pkt.writeUInt32(itemId);
+    owner_.getSocket()->send(pkt);
+}
+
 void InventoryHandler::autoEquipItemBySlot(int backpackIndex, bool confirmed) {
     if (backpackIndex < 0 || backpackIndex >= owner_.inventoryRef().getBackpackSize()) return;
     const auto& slot = owner_.inventoryRef().getBackpackSlot(backpackIndex);
@@ -1966,6 +1990,11 @@ void InventoryHandler::autoEquipItemBySlot(int backpackIndex, bool confirmed) {
         return;
     }
 
+    if (isAmmoItem(slot.item)) {
+        setAmmo(slot.item.itemId);
+        return;
+    }
+
     if (owner_.getState() == WorldState::IN_WORLD && owner_.getSocket()) {
         auto packet = AutoEquipItemPacket::build(0xFF, wireSlot);
         owner_.getSocket()->send(packet);
@@ -1975,6 +2004,8 @@ void InventoryHandler::autoEquipItemBySlot(int backpackIndex, bool confirmed) {
 void InventoryHandler::autoEquipItemInBag(int bagIndex, int slotIndex, bool confirmed) {
     if (bagIndex < 0 || bagIndex >= owner_.inventoryRef().NUM_BAG_SLOTS) return;
     if (slotIndex < 0 || slotIndex >= owner_.inventoryRef().getBagSize(bagIndex)) return;
+    const auto& bagSlot = owner_.inventoryRef().getBagSlot(bagIndex, slotIndex);
+    if (bagSlot.empty()) return;
 
     if (!confirmed && equipWouldBindFromBag(bagIndex, slotIndex)) {
         pendingEquip_ = PendingEquip{.active = true, .fromBag = true, .bag = bagIndex, .slot = slotIndex,
@@ -1982,6 +2013,11 @@ void InventoryHandler::autoEquipItemInBag(int bagIndex, int slotIndex, bool conf
         if (owner_.addonEventCallbackRef())
             owner_.addonEventCallbackRef()("AUTOEQUIP_BIND_CONFIRM",
                                            {std::to_string(slotIndex)});
+        return;
+    }
+
+    if (isAmmoItem(bagSlot.item)) {
+        setAmmo(bagSlot.item.itemId);
         return;
     }
 
@@ -1994,18 +2030,39 @@ void InventoryHandler::autoEquipItemInBag(int bagIndex, int slotIndex, bool conf
 
 bool InventoryHandler::equipFromWireToSlot(uint8_t srcBag, uint8_t srcSlot, uint8_t destSlot, bool confirmed) {
     constexpr uint8_t kBackpackBag = 0xFF;
+    if (destSlot == kAmmoEquipDestSlot && srcBag == kBackpackBag && srcSlot == 0xFF) {
+        setAmmo(0);
+        return false;
+    }
     bool binds = false;
-    if (srcBag == kBackpackBag && srcSlot >= Inventory::NUM_EQUIP_SLOTS)
-        binds = equipWouldBindFromBackpack(srcSlot - Inventory::NUM_EQUIP_SLOTS);
-    else if (srcBag >= Inventory::FIRST_BAG_EQUIP_SLOT &&
-             srcBag < Inventory::FIRST_BAG_EQUIP_SLOT + Inventory::NUM_BAG_SLOTS)
-        binds = equipWouldBindFromBag(srcBag - Inventory::FIRST_BAG_EQUIP_SLOT, srcSlot);
+    uint32_t srcItemId = 0;
+    const auto& inv = owner_.inventoryRef();
+    if (srcBag == kBackpackBag && srcSlot >= Inventory::NUM_EQUIP_SLOTS) {
+        const int bpIdx = srcSlot - Inventory::NUM_EQUIP_SLOTS;
+        binds = equipWouldBindFromBackpack(bpIdx);
+        if (bpIdx >= 0 && bpIdx < inv.getBackpackSize() && !inv.getBackpackSlot(bpIdx).empty()) {
+            srcItemId = inv.getBackpackSlot(bpIdx).item.itemId;
+        }
+    } else if (srcBag >= Inventory::FIRST_BAG_EQUIP_SLOT &&
+               srcBag < Inventory::FIRST_BAG_EQUIP_SLOT + Inventory::NUM_BAG_SLOTS) {
+        const int bagIdx = srcBag - Inventory::FIRST_BAG_EQUIP_SLOT;
+        binds = equipWouldBindFromBag(bagIdx, srcSlot);
+        if (srcSlot < inv.getBagSize(bagIdx) && !inv.getBagSlot(bagIdx, srcSlot).empty()) {
+            srcItemId = inv.getBagSlot(bagIdx, srcSlot).item.itemId;
+        }
+    }
     if (!confirmed && binds) {
         pendingEquip_ = PendingEquip{.active = true, .toSlot = true,
                                      .srcBag = srcBag, .srcSlot = srcSlot, .destSlot = destSlot};
         if (owner_.addonEventCallbackRef())
             owner_.addonEventCallbackRef()("EQUIP_BIND_CONFIRM", {"0"});
         return true;
+    }
+    if (destSlot == kAmmoEquipDestSlot) {
+        if (srcItemId != 0) {
+            setAmmo(srcItemId);
+        }
+        return false;
     }
     swapContainerItems(srcBag, srcSlot, kBackpackBag, destSlot);
     return false;

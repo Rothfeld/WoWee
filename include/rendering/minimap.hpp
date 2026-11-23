@@ -77,6 +77,10 @@ public:
     void zoomOut() { viewRadius = std::min(800.0f, viewRadius + 50.0f); }
 
     void setOpacity(float opacity) { opacity_ = opacity; }
+    void setTerrainLightTint(const glm::vec3& tint) {
+        terrainLightTint_ = glm::clamp(tint, glm::vec3(0.0f), glm::vec3(1.0f));
+    }
+    [[nodiscard]] const glm::vec3& getTerrainLightTint() const { return terrainLightTint_; }
 
     /// Where the map is drawn, in pixels from the top-left of the window.
     ///
@@ -172,6 +176,7 @@ private:
     bool rotateWithCamera = false;
     bool squareShape = false;
     float opacity_ = 1.0f;
+    glm::vec3 terrainLightTint_{1.0f};
     bool  haveRect_ = false;
     bool  frameHidden_ = false;
     float rectX_ = 0.0f, rectY_ = 0.0f, rectW_ = 0.0f, rectH_ = 0.0f;

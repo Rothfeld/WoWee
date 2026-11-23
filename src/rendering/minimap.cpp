@@ -64,19 +64,31 @@ void Minimap::buildDisplayPipeline(VkDevice device,
     attrs[0] = { .location = 0, .binding = 0, .format = VK_FORMAT_R32G32_SFLOAT, .offset = 0 };
     attrs[1] = { .location = 1, .binding = 0, .format = VK_FORMAT_R32G32_SFLOAT, .offset = 2 * sizeof(float) };
 
+    VkPipelineColorBlendAttachmentState displayBlend{};
+    displayBlend.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                                  VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    displayBlend.blendEnable = VK_TRUE;
+    displayBlend.srcColorBlendFactor = VK_BLEND_FACTOR_CONSTANT_COLOR;
+    displayBlend.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    displayBlend.colorBlendOp = VK_BLEND_OP_ADD;
+    displayBlend.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    displayBlend.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    displayBlend.alphaBlendOp = VK_BLEND_OP_ADD;
+
     displayPipeline = PipelineBuilder()
         .setShaders(vertStage, fragStage)
         .setVertexInput({ binding }, attrs)
         .setTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
         .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE)
         .setNoDepthTest()
-        .setColorBlendAttachment(PipelineBuilder::blendAlpha())
+        .setColorBlendAttachment(displayBlend)
         .setMultisample(targetPass_ != VK_NULL_HANDLE ? targetSamples_
                                                       : vkCtx->getMsaaSamples())
         .setLayout(displayPipelineLayout)
         .setRenderPass(targetPass_ != VK_NULL_HANDLE ? targetPass_
                                                      : vkCtx->getImGuiRenderPass())
-        .setDynamicStates(viewportAndScissorDynamic())
+        .setDynamicStates({VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR,
+                           VK_DYNAMIC_STATE_BLEND_CONSTANTS})
         .build(device, vkCtx->getPipelineCache());
 }
 
@@ -712,6 +724,13 @@ void Minimap::render(VkCommandBuffer cmd, const Camera& playerCamera,
     push.zoomRadius = zoomRadius;
     push.squareShape = squareShape ? 1 : 0;
     push.opacity = opacity_;
+
+    const glm::vec3 effectiveTint =
+        (interiorComposite_ ? glm::vec3(1.0f) : terrainLightTint_) * opacity_;
+    const float blendConstants[4] = {
+        effectiveTint.r, effectiveTint.g, effectiveTint.b, opacity_
+    };
+    vkCmdSetBlendConstants(cmd, blendConstants);
 
     vkCmdPushConstants(cmd, displayPipelineLayout,
                        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,

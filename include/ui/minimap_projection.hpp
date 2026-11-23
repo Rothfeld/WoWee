@@ -111,4 +111,15 @@ inline bool shouldShowAreaPoiRimArrow(uint32_t poiAreaId,
     return true;
 }
 
+/// Top-down Light.dbc terrain colour multiplier for outdoor minimap tiles in
+/// TBC 2.4.3 (normal = +Z against canonical top-down light z = -0.9, clamped
+/// to [0, 1] so baked daytime BLP tiles darken and cool at night without
+/// over-blowing daytime highlights).
+inline glm::vec3 computeMinimapTerrainTint(const glm::vec3& ambientColor,
+                                           const glm::vec3& diffuseColor) {
+    constexpr float kTopDownNdotL = 0.9f;
+    return glm::clamp(ambientColor + kTopDownNdotL * diffuseColor,
+                      glm::vec3(0.0f), glm::vec3(1.0f));
+}
+
 }  // namespace wowee::ui

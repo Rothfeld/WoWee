@@ -387,7 +387,7 @@ inline uint64_t resolveUnitGuid(game::GameHandler* gh, const std::string& uid) {
     // the build is done.
     if (gh->isInterfaceLoading() &&
         (uid.rfind("target", 0) == 0 || uid.rfind("focus", 0) == 0 ||
-         uid.rfind("mouseover", 0) == 0)) {
+         uid.rfind("mouseover", 0) == 0 || uid.rfind("pet", 0) == 0)) {
         return 0;
     }
     if (uid == "player")      return gh->getPlayerGuid();
@@ -1052,6 +1052,43 @@ inline const game::GroupMember* findPartyMember(game::GameHandler* gh, uint64_t 
         if (m.guid == guid) return &m;
     }
     return nullptr;
+}
+
+/// Whether a living unit carrying UNIT_DYNFLAG_DEAD (Feign Death / Permanent
+/// Feign Death 29266, e.g. Warder Corpse 21304) reports as dead (0 health) to
+/// UnitHealth, UnitIsDead, and UnitIsDeadOrGhost in TBC 2.4.3.
+/// Self, own pet, and party/raid members (plus their pets) retain real health.
+inline bool unitAppearsDeadByDynFlags(game::GameHandler* gh, const game::Unit* unit) {
+    if (!unit || (unit->getDynamicFlags() & game::UNIT_DYNFLAG_DEAD) == 0) {
+        return false;
+    }
+    if (!gh) {
+        return true;
+    }
+    const uint64_t guid = unit->getGuid();
+    if (guid == gh->getPlayerGuid() || guid == gh->getPetGuid()) {
+        return false;
+    }
+    if (findPartyMember(gh, guid) != nullptr) {
+        return false;
+    }
+    const uint16_t summonField = game::fieldIndex(game::UF::UNIT_FIELD_SUMMON);
+    for (const auto& m : gh->getPartyData().members) {
+        if (m.petGuid != 0 && m.petGuid == guid) {
+            return false;
+        }
+        if (summonField != 0xFFFF) {
+            if (const auto memberEnt = gh->getEntityManager().getEntity(m.guid)) {
+                const uint64_t summonGuid =
+                    static_cast<uint64_t>(memberEnt->getField(summonField)) |
+                    (static_cast<uint64_t>(memberEnt->getField(summonField + 1)) << 32);
+                if (summonGuid == guid) {
+                    return false;
+                }
+            }
+        }
+    }
+    return true;
 }
 
 /// The talent at a position in the tree, by the tab and index FrameXML counts
