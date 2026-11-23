@@ -31,6 +31,24 @@ inline constexpr bool gestureWeaponPoseActive(uint32_t gestureAnimation,
 inline constexpr uint8_t animationSheathState(uint32_t animationWeaponFlags, uint8_t sheathState) {
     return (animationWeaponFlags & 0x20u) && sheathState == 0 ? 1 : sheathState;
 }
+/// Update whether an animation with AnimationData.WeaponFlags 0x20 is currently
+/// holding a unit's melee weapons drawn at sheath state 0.
+/// - NPCs (`latchPersistently = true`) stay drawn after their first 0x20 swing
+///   (Leotheras the Blind 21215, Defias Thug in build 8606).
+/// - Players (`latchPersistently = false`) control sheath state explicitly via
+///   CMSG_SETSHEATHED / UNIT_FIELD_BYTES_2 byte 0, so a one-shot 0x20 swing at
+///   sheath state 0 (e.g. `.damage` or a melee packet arriving before
+///   UNIT_FIELD_BYTES_2) draws the weapon only while the 0x20 animation plays
+///   and returns it cleanly to its sheath point when Stand resumes.
+inline constexpr bool updateWeaponsDrawnByAnimation(bool currentlyDrawn,
+                                                    bool latchPersistently,
+                                                    bool poseSheathes,
+                                                    bool activeAnimDrawsMelee) {
+    if (latchPersistently) {
+        return currentlyDrawn || (!poseSheathes && activeAnimDrawsMelee);
+    }
+    return !poseSheathes && activeAnimDrawsMelee;
+}
 /// Whether a pose animation flagged in AnimationData.WeaponFlags (0x04 or 0x10)
 /// sheathes a weapon whose held sheath state is `weaponHeldSheathState` while
 /// the unit is in `unitSheathState`.

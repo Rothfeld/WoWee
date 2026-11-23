@@ -487,6 +487,7 @@ void AppearanceComposer::loadEquippedWeapons() {
     // Main, off hand, and back quiver: held point by slot, sheath point by Item SheatheType.
     for (const uint32_t point : {kAttachShield, kAttachRightHand, kAttachLeftHand, kAttachSheathMainHand})
         charRenderer->detachWeapon(charInstanceId, point);
+    charRenderer->setLatchWeaponsDrawnByAnimation(charInstanceId, false);
     charRenderer->setSheathState(charInstanceId, sheathState_);
 
     for (const auto slot : {game::EquipSlot::MAIN_HAND, game::EquipSlot::OFF_HAND}) {

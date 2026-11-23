@@ -3166,19 +3166,31 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos,
             }
         }
         // Weapon swings, ready stances and Whirlwind (WeaponFlags 0x20) draw
-        // the melee weapons even at sheath state 0, and they stay drawn
-        // (animationSheathState).
-        if (instance.poseSheathAnimation == 0 && !instance.weaponsDrawnByAnimation) {
+        // the melee weapons even at sheath state 0. NPCs latch drawn for the
+        // life of the instance (Leotheras/Defias Thug); players follow their
+        // explicit UNIT_FIELD_BYTES_2 sheath state once the 0x20 animation ends.
+        bool activeAnimDrawsMelee = false;
+        uint32_t drawingAnim = 0;
+        uint32_t drawingFlags = 0;
+        if (instance.poseSheathAnimation == 0) {
             for (const uint32_t animation : {upperAnimation, instance.currentAnimationId}) {
                 const auto flags = animationWeaponFlags_.find(animation);
                 if (animation != 0 && flags != animationWeaponFlags_.end() &&
                     animationSheathState(flags->second, instance.sheathState) != instance.sheathState) {
-                    LOG_INFO("Animation ", animation, " (weapon flags ", flags->second, ") draws the weapons of instance ",
-                             pair.first, " at sheath state ", int(instance.sheathState));
-                    instance.weaponsDrawnByAnimation = true;
+                    activeAnimDrawsMelee = true;
+                    drawingAnim = animation;
+                    drawingFlags = flags->second;
                     break;
                 }
             }
+        }
+        const bool prevDrawn = instance.weaponsDrawnByAnimation;
+        instance.weaponsDrawnByAnimation = updateWeaponsDrawnByAnimation(
+            prevDrawn, instance.latchWeaponsDrawnByAnimation,
+            instance.poseSheathAnimation != 0, activeAnimDrawsMelee);
+        if (!prevDrawn && instance.weaponsDrawnByAnimation) {
+            LOG_INFO("Animation ", drawingAnim, " (weapon flags ", drawingFlags, ") draws the weapons of instance ",
+                     pair.first, " at sheath state ", int(instance.sheathState));
         }
 
         for (auto& wa : instance.weaponAttachments) {
@@ -6205,6 +6217,14 @@ void CharacterRenderer::clearWeaponsDrawnByAnimation(uint32_t instanceId) {
     auto it = instances.find(instanceId);
     if (it == instances.end()) return;
     it->second.weaponsDrawnByAnimation = false;
+}
+
+void CharacterRenderer::setLatchWeaponsDrawnByAnimation(uint32_t instanceId, bool latch) {
+    auto it = instances.find(instanceId);
+    if (it == instances.end()) return;
+    if (it->second.latchWeaponsDrawnByAnimation == latch) return;
+    it->second.latchWeaponsDrawnByAnimation = latch;
+    if (!latch) it->second.weaponsDrawnByAnimation = false;
 }
 
 void CharacterRenderer::setStandState(uint32_t instanceId, uint8_t standState) {

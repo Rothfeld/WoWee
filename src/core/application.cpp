@@ -4317,8 +4317,10 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
             auto entity = gameHandler->getEntityManager().getEntity(guid);
             if (!entity || entity->getType() != game::ObjectType::PLAYER) continue;
             // Weapons follow the player's sheath state (UNIT_FIELD_BYTES_2 byte 0).
-            charRenderer->setSheathState(instanceId,
-                entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_2)) & 0xFF);
+            const uint8_t remoteSheath =
+                entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_2)) & 0xFF;
+            charRenderer->setLatchWeaponsDrawnByAnimation(instanceId, false);
+            charRenderer->setSheathState(instanceId, remoteSheath);
 
             // Distance cull
             if (havePPos) {

@@ -75,6 +75,16 @@ TEST_CASE("Weapon swings and ready stances draw melee weapons at any sheath stat
     CHECK(animationSheathState(0, 2) == 2);
     CHECK(animationSheathState(0x10, 0) == 0);
     CHECK(animationSheathState(0x04, 1) == 1);
+
+    // NPCs latch weapons drawn after their first 0x20 swing (Leotheras/Defias Thug).
+    CHECK(updateWeaponsDrawnByAnimation(false, /*latch=*/true, false, true));
+    CHECK(updateWeaponsDrawnByAnimation(true, /*latch=*/true, false, false));
+
+    // Players draw only while the 0x20 animation plays and return cleanly to
+    // their sheath point when Stand resumes at sheath state 0.
+    CHECK(updateWeaponsDrawnByAnimation(false, /*latch=*/false, false, true));
+    CHECK_FALSE(updateWeaponsDrawnByAnimation(true, /*latch=*/false, false, false));
+    CHECK_FALSE(updateWeaponsDrawnByAnimation(true, /*latch=*/false, true, true));
 }
 
 TEST_CASE("Thrown and non-shot 0x10 poses sheathe a drawn ranged weapon", "[animation][weapons]") {

@@ -402,6 +402,10 @@ public:
     /** Clear the sticky combat-animation draw latch (e.g. when a player explicitly
      *  sheathes with Z or swims after swinging a weapon). */
     void clearWeaponsDrawnByAnimation(uint32_t instanceId);
+    /** Whether a WeaponFlags 0x20 animation permanently latches melee weapons drawn
+     *  at sheath state 0 (true for NPCs like Leotheras/Defias Thug; false for
+     *  players, whose sheath state is driven explicitly by UNIT_FIELD_BYTES_2). */
+    void setLatchWeaponsDrawnByAnimation(uint32_t instanceId, bool latch);
     /** Unit stand state (UNIT_FIELD_BYTES_1 byte 0): a pose whose animation's
      *  AnimationData.WeaponFlags has 0x04 or 0x10 shows the weapons sheathed
      *  whatever the sheath state, as gestures do (gestureSheathesWeapons). */
@@ -555,9 +559,11 @@ private:
         // Playing animation whose WeaponFlags sheathe (0x04 / 0x10), 0 if none.
         uint32_t poseSheathAnimation = 0;
         uint32_t poseSheathFlags = 0;  // AnimationData WeaponFlags of poseSheathAnimation
-        // An animation with WeaponFlags 0x20 has drawn the melee weapons; they
-        // stay drawn for the life of the instance (animationSheathState).
+        // An animation with WeaponFlags 0x20 has drawn the melee weapons; NPCs
+        // keep them drawn for the life of the instance while players follow
+        // their explicit UNIT_FIELD_BYTES_2 sheath state once the swing ends.
         bool weaponsDrawnByAnimation = false;
+        bool latchWeaponsDrawnByAnimation = true;
         uint8_t sheathState = 1;
         // The unit's stand state puts its weapons away (sit, sleep, kneel,
         // chairs): the AnimationData.WeaponFlags of its pose, see setStandState.

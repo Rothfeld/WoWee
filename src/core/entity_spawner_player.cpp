@@ -874,9 +874,11 @@ void EntitySpawner::applyPlayerEquipmentToInstance(uint64_t guid,
                              equippedItemVisual(weapDisplayId, permanent, temporary));
         }
     }
-    if (const auto entity = gameHandler_ ? gameHandler_->getEntityManager().getEntity(guid) : nullptr)
+    if (const auto entity = gameHandler_ ? gameHandler_->getEntityManager().getEntity(guid) : nullptr) {
+        charRenderer->setLatchWeaponsDrawnByAnimation(st.instanceId, false);
         charRenderer->setSheathState(st.instanceId,
             entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_2)) & 0xFF);
+    }
 }
 
 uint32_t EntitySpawner::remoteIdleAnimation(uint64_t guid) const {
