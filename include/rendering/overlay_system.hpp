@@ -31,7 +31,7 @@ public:
     using SurfaceTriangles = std::function<void(const glm::vec3& min, const glm::vec3& max,
                                                 std::vector<glm::vec3>& out)>;
 
-    explicit OverlaySystem(VkContext* ctx);
+    OverlaySystem(VkContext* ctx, VkDescriptorSetLayout perFrameLayout);
     ~OverlaySystem();
 
     OverlaySystem(const OverlaySystem&) = delete;
@@ -44,7 +44,7 @@ public:
     void setSelectionCircle(const glm::vec3& pos, float radius, const glm::vec3& color);
     void setSelectionCirclePosition(const glm::vec3& pos);
     void clearSelectionCircle();
-    void renderSelectionCircle(const glm::mat4& view, const glm::mat4& projection,
+    void renderSelectionCircle(const glm::mat4& view, VkDescriptorSet perFrameSet,
                                VkCommandBuffer cmd,
                                const HeightQuery2D& terrainHeight,
                                const HeightQuery3D& wmoHeight,
@@ -60,7 +60,7 @@ public:
     void clearGroundTargetReticle();
     /// Projected straight down onto the terrain and WMO triangles within the
     /// radius above and below the centre, like the selection circle.
-    void renderGroundTargetReticle(const glm::mat4& view, const glm::mat4& projection,
+    void renderGroundTargetReticle(VkDescriptorSet perFrameSet,
                                    VkCommandBuffer cmd, const SurfaceTriangles& surfaces);
 
     // Ground blob shadows under units (rendering/unit_shadow.hpp)
@@ -69,7 +69,7 @@ public:
     /// Multiplies ShadowBlob.blp onto the terrain and WMO triangles under
     /// each unit near enough to the floor below it. Recorded after the
     /// ground and before units, so it never darkens a model.
-    void renderUnitShadows(const glm::mat4& view, const glm::mat4& projection,
+    void renderUnitShadows(VkDescriptorSet perFrameSet,
                            const glm::vec3& cameraPos, float fogStart, float fogEnd,
                            VkCommandBuffer cmd,
                            const HeightQuery2D& terrainHeight,
@@ -105,6 +105,7 @@ private:
     void initBrightnessPipeline();
 
     VkContext* vkCtx_ = nullptr;
+    VkDescriptorSetLayout perFrameLayout_ = VK_NULL_HANDLE;
 
     // Selection circle resources
     VkPipeline selCirclePipeline_ = VK_NULL_HANDLE;

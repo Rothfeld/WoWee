@@ -412,5 +412,33 @@ std::array<glm::vec3, 12> TerrainMeshGenerator::chunkQuadTriangles(const float c
     const glm::vec3 br = at(x + 1.0f, y + 1.0f, centre + 9);
     return {c, tl, tr, c, tr, br, c, br, bl, c, bl, tl};
 }
+
+std::array<glm::vec3, 12> TerrainMeshGenerator::chunkQuadTriangles(int tileX, int tileY,
+                                                                   int chunkX, int chunkY,
+                                                                   const HeightMap& heightMap,
+                                                                   float baseZ,
+                                                                   int qx, int qy) {
+    assert(qx >= 0 && qx < 8 && qy >= 0 && qy < 8);
+    constexpr float kStepsPerTile = 128.0f;
+    const float ts = core::coords::TILE_SIZE;
+    auto at = [&](float fx, float fy, int index) {
+        float h = heightMap.heights[index];
+        if (!std::isfinite(h)) h = 0.0f;
+        const float gridX = static_cast<float>(chunkY) * 8.0f + fy;
+        const float gridY = static_cast<float>(chunkX) * 8.0f + fx;
+        return glm::vec3(
+            (32.0f - static_cast<float>(tileY) - gridX / kStepsPerTile) * ts,
+            (32.0f - static_cast<float>(tileX) - gridY / kStepsPerTile) * ts,
+            baseZ + h);
+    };
+    const int centre = 9 + qy * 17 + qx;
+    const float x = static_cast<float>(qx), y = static_cast<float>(qy);
+    const glm::vec3 c = at(x + 0.5f, y + 0.5f, centre);
+    const glm::vec3 tl = at(x, y, centre - 9);
+    const glm::vec3 tr = at(x + 1.0f, y, centre - 8);
+    const glm::vec3 bl = at(x, y + 1.0f, centre + 8);
+    const glm::vec3 br = at(x + 1.0f, y + 1.0f, centre + 9);
+    return {c, tl, tr, c, tr, br, c, br, bl, c, bl, tl};
+}
 } // namespace pipeline
 } // namespace wowee

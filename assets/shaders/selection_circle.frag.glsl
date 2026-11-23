@@ -2,12 +2,11 @@
 // The selection texture projected straight down over the square centre +-
 // half side: a point takes the texture coordinates of the square point above
 // or below it, on a floor, a slope or a wall alike.
-layout(set = 0, binding = 0) uniform sampler2D selectionTexture;
+layout(set = 1, binding = 0) uniform sampler2D selectionTexture;
 layout(push_constant) uniform Push {
-    mat4 mvp;
     vec4 color;
     vec4 square;          // centre x, y; half side; u sign (-1 mirrors the texture across its vertical)
-    vec4 axisAndHeights;  // right axis x, y; lowest and highest z drawn
+    vec4 axisAndHeights;  // the square's right axis x, y; lowest and highest z drawn
 } push;
 layout(location = 0) in vec3 worldPos;
 layout(location = 0) out vec4 outColor;

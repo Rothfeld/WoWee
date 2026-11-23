@@ -252,7 +252,7 @@ public:
     /// This frame's ground blob shadows (EntitySpawner::collectUnitShadows).
     void setUnitShadows(std::vector<UnitShadowBlob> blobs);
     void refreshSelectionCirclePosition();
-    void renderUnitShadows(const glm::mat4& view, const glm::mat4& projection, VkCommandBuffer cmd);
+    void renderUnitShadows(VkDescriptorSet perFrameSet, VkCommandBuffer cmd);
 
     // CPU timing stats (milliseconds, last frame).
     double getLastUpdateMs() const { return lastUpdateMs; }

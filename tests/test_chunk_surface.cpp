@@ -259,3 +259,43 @@ TEST_CASE("quad triangles are the surface chunkSurfacePoint samples", "[chunksur
         }
     }
 }
+
+TEST_CASE("tile-indexed chunkQuadTriangles match TerrainMeshGenerator vertices bit-for-bit at large coords",
+          "[chunksurface]") {
+    // Sunstrider Isle tile (tileX=12, tileY=43 -> X~-6361, Y~10348): projected
+    // ground decals (unit shadows, selection circle) must share exact vertex
+    // coordinates with the rendered terrain mesh to avoid depth z-fighting.
+    wowee::pipeline::ADTTerrain terrain;
+    terrain.loaded = true;
+    terrain.coord = {12, 43};
+    const int cx = 7, cy = 11;
+    auto& chunk = terrain.getChunk(cx, cy);
+    chunk.flags = 0;
+    chunk.position[2] = 34.08f;
+    chunk.heightMap = gridWhere([](float x, float y) {
+        return 1.5f * std::sin(0.8f * x) + 0.9f * std::cos(0.5f * y);
+    });
+    const auto mesh = TerrainMeshGenerator::generate(terrain);
+    const auto& cm = mesh.getChunk(cx, cy);
+    REQUIRE(cm.isValid());
+
+    for (int qy = 0; qy < 8; ++qy) {
+        for (int qx = 0; qx < 8; ++qx) {
+            const auto tris = TerrainMeshGenerator::chunkQuadTriangles(
+                terrain.coord.x, terrain.coord.y, cx, cy, chunk.heightMap, chunk.position[2], qx, qy);
+            const int centreIdx = 9 + qy * 17 + qx;
+            const int expectedIdx[12] = {
+                centreIdx, centreIdx - 9, centreIdx - 8,
+                centreIdx, centreIdx - 8, centreIdx + 9,
+                centreIdx, centreIdx + 9, centreIdx + 8,
+                centreIdx, centreIdx + 8, centreIdx - 9,
+            };
+            for (int k = 0; k < 12; ++k) {
+                const auto& v = cm.vertices[expectedIdx[k]];
+                CHECK(tris[k].x == v.position[0]);
+                CHECK(tris[k].y == v.position[1]);
+                CHECK(tris[k].z == v.position[2]);
+            }
+        }
+    }
+}

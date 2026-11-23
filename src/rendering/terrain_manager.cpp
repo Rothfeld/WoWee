@@ -2234,16 +2234,20 @@ void TerrainManager::appendSurfaceTriangles(const glm::vec3& boxMin, const glm::
     for (float x = boxMin.x - unitSize; x <= boxMax.x + unitSize; x += step) {
         for (float y = boxMin.y - unitSize; y <= boxMax.y + unitSize; y += step) {
             float fracX = 0.0f, fracY = 0.0f;
-            const pipeline::MapChunk* chunk = findChunkAt(x, y, fracX, fracY);
-            if (!chunk) continue;
+            const TerrainTile* tile = nullptr;
+            const pipeline::MapChunk* chunk = findChunkAt(x, y, fracX, fracY, &tile);
+            if (!chunk || !tile) continue;
             const int qx = glm::clamp(static_cast<int>(std::floor(fracX)), 0, 7);
             const int qy = glm::clamp(static_cast<int>(std::floor(fracY)), 0, 7);
             const auto key = std::make_tuple(chunk, qx, qy);
             if (std::find(seen.begin(), seen.end(), key) != seen.end()) continue;
             seen.push_back(key);
             if (chunk->isHole(qy, qx)) continue;  // the order isHoleAt and the mesh use
+            const ptrdiff_t chunkIdx = chunk - tile->terrain.chunks.data();
+            const int cx = static_cast<int>(chunkIdx % 16);
+            const int cy = static_cast<int>(chunkIdx / 16);
             const auto tris = pipeline::TerrainMeshGenerator::chunkQuadTriangles(
-                chunk->position, chunk->heightMap, qx, qy, unitSize);
+                tile->coord.x, tile->coord.y, cx, cy, chunk->heightMap, chunk->position[2], qx, qy);
             for (size_t t = 0; t < tris.size(); t += 3) {
                 const glm::vec3 lo = glm::min(tris[t], glm::min(tris[t + 1], tris[t + 2]));
                 const glm::vec3 hi = glm::max(tris[t], glm::max(tris[t + 1], tris[t + 2]));

@@ -17,8 +17,8 @@
 namespace wowee {
 namespace rendering {
 
-OverlaySystem::OverlaySystem(VkContext* ctx)
-    : vkCtx_(ctx) {}
+OverlaySystem::OverlaySystem(VkContext* ctx, VkDescriptorSetLayout perFrameLayout)
+    : vkCtx_(ctx), perFrameLayout_(perFrameLayout) {}
 
 OverlaySystem::~OverlaySystem() {
     cleanup();
@@ -184,12 +184,11 @@ namespace {
 
 /// selection_circle.vert/.frag's push block.
 struct SelectionPush {
-    glm::mat4 mvp;
     glm::vec4 color;
     glm::vec4 square;          // centre x, y; half side; u sign (-1 mirrors)
     glm::vec4 axisAndHeights;  // the square's right axis x, y; lowest and highest z drawn
 };
-static_assert(sizeof(SelectionPush) == 112, "must match selection_circle's push block");
+static_assert(sizeof(SelectionPush) == 48, "must match selection_circle's push block");
 
 }  // namespace
 
@@ -218,7 +217,7 @@ void OverlaySystem::initSelectionCircle() {
     pcRange.size = sizeof(SelectionPush);
     if (!selCircleSet_) throw std::logic_error("Selection texture was not initialized");
     if (!selCirclePipelineLayout_)
-        selCirclePipelineLayout_ = createPipelineLayout(device, {selCircleSetLayout_}, {pcRange});
+        selCirclePipelineLayout_ = createPipelineLayout(device, {perFrameLayout_, selCircleSetLayout_}, {pcRange});
 
     // World-space triangles of the surfaces under the ring, rebuilt each frame.
     VkVertexInputBindingDescription vertBind{0, sizeof(glm::vec3), VK_VERTEX_INPUT_RATE_VERTEX};
@@ -232,11 +231,8 @@ void OverlaySystem::initSelectionCircle() {
         .setTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
         .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE)
         .setDepthTest(true, false, VK_COMPARE_OP_LESS_OR_EQUAL)
-        // The ring lies on the very triangles the world drew, transformed
-        // here on the CPU rather than by their own shaders: pulled forward by
-        // the smallest depth step (and the triangle's slope) so it does not
-        // fight them.
-        .setDepthBias(-1.0f, -1.0f)
+        // Drawn on the world's own triangles with PerFrame projection * (view * pos).
+        .setDepthBias(-2.0f, -2.0f)
         .setColorBlendAttachment(PipelineBuilder::blendAdditive())
         .setMultisample(vkCtx_->getMsaaSamples())
         .setLayout(selCirclePipelineLayout_)
@@ -252,7 +248,7 @@ void OverlaySystem::initSelectionCircle() {
     }
 }
 
-void OverlaySystem::renderSelectionCircle(const glm::mat4& view, const glm::mat4& projection,
+void OverlaySystem::renderSelectionCircle(const glm::mat4& view, VkDescriptorSet perFrameSet,
                                            VkCommandBuffer cmd,
                                            const HeightQuery2D& terrainHeight,
                                            const HeightQuery3D& wmoHeight,
@@ -329,13 +325,13 @@ void OverlaySystem::renderSelectionCircle(const glm::mat4& view, const glm::mat4
     glm::vec2 right(view[0][0], view[1][0]);
     right = glm::normalize(right);
     SelectionPush push{};
-    push.mvp = projection * view;
     push.color = glm::vec4(selCircleColor_, 1.0f);
     push.square = glm::vec4(center.x, center.y, radius, 1.0f);
     push.axisAndHeights = glm::vec4(right, boxMin.z, boxMax.z);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, selCirclePipeline_);
+    VkDescriptorSet sets[2] = {perFrameSet, selCircleSet_};
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, selCirclePipelineLayout_,
-                            0, 1, &selCircleSet_, 0, nullptr);
+                            0, 2, sets, 0, nullptr);
     VkDeviceSize offset = 0;
     vkCmdBindVertexBuffers(cmd, 0, 1, &buffer.buffer, &offset);
     vkCmdPushConstants(cmd, selCirclePipelineLayout_,
@@ -359,7 +355,7 @@ void OverlaySystem::initGroundTargetReticle() {
     VkPushConstantRange pcRange{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                                 sizeof(SelectionPush)};
     if (!reticlePipelineLayout_)
-        reticlePipelineLayout_ = createPipelineLayout(device, {reticleAcceptableSetLayout_}, {pcRange});
+        reticlePipelineLayout_ = createPipelineLayout(device, {perFrameLayout_, reticleAcceptableSetLayout_}, {pcRange});
     VkVertexInputBindingDescription vertBind{0, sizeof(glm::vec3), VK_VERTEX_INPUT_RATE_VERTEX};
     VkVertexInputAttributeDescription position{0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0};
     reticlePipeline_ = PipelineBuilder()
@@ -369,7 +365,7 @@ void OverlaySystem::initGroundTargetReticle() {
         .setTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
         .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE)
         .setDepthTest(true, false, VK_COMPARE_OP_LESS_OR_EQUAL)
-        .setDepthBias(-1.0f, -1.0f)
+        .setDepthBias(-2.0f, -2.0f)
         .setColorBlendAttachment(PipelineBuilder::blendAlpha())
         .setMultisample(vkCtx_->getMsaaSamples())
         .setLayout(reticlePipelineLayout_)
@@ -381,7 +377,7 @@ void OverlaySystem::initGroundTargetReticle() {
     if (!reticlePipeline_) throw std::runtime_error("Ground target reticle pipeline failed to build");
 }
 
-void OverlaySystem::renderGroundTargetReticle(const glm::mat4& view, const glm::mat4& projection,
+void OverlaySystem::renderGroundTargetReticle(VkDescriptorSet perFrameSet,
                                               VkCommandBuffer cmd, const SurfaceTriangles& surfaces) {
     if (!reticleVisible_ || cmd == VK_NULL_HANDLE || !reticleAcceptableTexture_.isValid()) return;
     initGroundTargetReticle();
@@ -413,7 +409,6 @@ void OverlaySystem::renderGroundTargetReticle(const glm::mat4& view, const glm::
     vmaUnmapMemory(vkCtx_->getAllocator(), buffer.allocation);
 
     SelectionPush push{};
-    push.mvp = projection * view;
     push.color = glm::vec4(1.0f);
     // Fixed to the world, whichever way the camera looks, the triangle's
     // apex (the texture's top) to the north and the texture mirrored left to
@@ -423,8 +418,9 @@ void OverlaySystem::renderGroundTargetReticle(const glm::mat4& view, const glm::
     push.axisAndHeights = glm::vec4(0.0f, -1.0f, boxMin.z, boxMax.z);
     VkDescriptorSet set = reticleAcceptable_ ? reticleAcceptableSet_ : reticleUnacceptableSet_;
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, reticlePipeline_);
+    VkDescriptorSet sets[2] = {perFrameSet, set};
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, reticlePipelineLayout_,
-                            0, 1, &set, 0, nullptr);
+                            0, 2, sets, 0, nullptr);
     VkDeviceSize offset = 0;
     vkCmdBindVertexBuffers(cmd, 0, 1, &buffer.buffer, &offset);
     vkCmdPushConstants(cmd, reticlePipelineLayout_,
@@ -436,13 +432,12 @@ namespace {
 
 /// unit_shadow.vert/.frag's push block.
 struct UnitShadowPush {
-    glm::mat4 mvp;
     glm::vec4 centreAxis;  // unit position x, y; facing x, y
     glm::vec4 halfAndZ;    // half extent along facing, across; lowest and highest z drawn
     glm::vec4 camera;      // camera position; unused
     glm::vec4 fog;         // fog start, end; unused
 };
-static_assert(sizeof(UnitShadowPush) == 128, "must match unit_shadow's push block");
+static_assert(sizeof(UnitShadowPush) == 64, "must match unit_shadow's push block");
 
 }  // namespace
 
@@ -464,7 +459,7 @@ void OverlaySystem::initUnitShadows() {
     VkPushConstantRange pcRange{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                                 sizeof(UnitShadowPush)};
     if (!shadowPipelineLayout_)
-        shadowPipelineLayout_ = createPipelineLayout(device, {shadowSetLayout_}, {pcRange});
+        shadowPipelineLayout_ = createPipelineLayout(device, {perFrameLayout_, shadowSetLayout_}, {pcRange});
     VkVertexInputBindingDescription vertBind{0, sizeof(glm::vec3), VK_VERTEX_INPUT_RATE_VERTEX};
     VkVertexInputAttributeDescription position{0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0};
     // Multiplied onto the ground: dst * src.
@@ -480,8 +475,8 @@ void OverlaySystem::initUnitShadows() {
         .setTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
         .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE)
         .setDepthTest(true, false, VK_COMPARE_OP_LESS_OR_EQUAL)
-        // Drawn on the world's own triangles, as the selection circle.
-        .setDepthBias(-1.0f, -1.0f)
+        // Drawn on the world's own triangles with PerFrame projection * (view * pos).
+        .setDepthBias(-2.0f, -2.0f)
         .setColorBlendAttachment(modulate)
         .setMultisample(vkCtx_->getMsaaSamples())
         .setLayout(shadowPipelineLayout_)
@@ -493,7 +488,7 @@ void OverlaySystem::initUnitShadows() {
     if (!shadowPipeline_) throw std::runtime_error("Unit shadow pipeline failed to build");
 }
 
-void OverlaySystem::renderUnitShadows(const glm::mat4& view, const glm::mat4& projection,
+void OverlaySystem::renderUnitShadows(VkDescriptorSet perFrameSet,
                                       const glm::vec3& cameraPos, float fogStart, float fogEnd,
                                       VkCommandBuffer cmd,
                                       const HeightQuery2D& terrainHeight,
@@ -527,7 +522,6 @@ void OverlaySystem::renderUnitShadows(const glm::mat4& view, const glm::mat4& pr
         if (surfaces) surfaces(boxMin, boxMax, triangles);
         if (triangles.size() == first) continue;
         Draw draw{};
-        draw.push.mvp = projection * view;
         draw.push.centreAxis = glm::vec4(p.x, p.y, axis.x, axis.y);
         draw.push.halfAndZ = glm::vec4(blob.halfExtent, boxMin.z, boxMax.z);
         draw.push.camera = glm::vec4(cameraPos, 0.0f);
@@ -558,8 +552,9 @@ void OverlaySystem::renderUnitShadows(const glm::mat4& view, const glm::mat4& pr
     vmaUnmapMemory(vkCtx_->getAllocator(), buffer.allocation);
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowPipeline_);
+    VkDescriptorSet sets[2] = {perFrameSet, shadowSet_};
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowPipelineLayout_,
-                            0, 1, &shadowSet_, 0, nullptr);
+                            0, 2, sets, 0, nullptr);
     VkDeviceSize offset = 0;
     vkCmdBindVertexBuffers(cmd, 0, 1, &buffer.buffer, &offset);
     for (const auto& draw : draws) {

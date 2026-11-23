@@ -33,5 +33,5 @@ void main() {
     Normal = aNormal;
     TexCoord = aTexCoord;
     LayerUV = aLayerUV;
-    gl_Position = projection * view * worldPos;
+    gl_Position = projection * (view * worldPos);
 }

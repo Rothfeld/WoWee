@@ -979,7 +979,7 @@ bool Renderer::initialize(core::Window* win) {
     renderGraph_ = std::make_unique<RenderGraph>();
 
     // Create overlay system (selection circle + fullscreen overlay)
-    overlaySystem_ = std::make_unique<OverlaySystem>(vkCtx);
+    overlaySystem_ = std::make_unique<OverlaySystem>(vkCtx, perFrameSetLayout);
     renderGraph_->registerResource("shadow_depth");
     renderGraph_->registerResource("volumetric_fog");
     renderGraph_->registerResource("reflection_texture");
@@ -2817,9 +2817,9 @@ void Renderer::setUnitShadows(std::vector<UnitShadowBlob> blobs) {
     if (overlaySystem_) overlaySystem_->setUnitShadows(std::move(blobs));
 }
 
-void Renderer::renderUnitShadows(const glm::mat4& view, const glm::mat4& projection, VkCommandBuffer cmd) {
+void Renderer::renderUnitShadows(VkDescriptorSet perFrameSet, VkCommandBuffer cmd) {
     if (!camera) return;
-    overlaySystem_->renderUnitShadows(view, projection, camera->getPosition(),
+    overlaySystem_->renderUnitShadows(perFrameSet, camera->getPosition(),
         currentFrameData.fogParams.x, currentFrameData.fogParams.y, cmd,
         terrainManager ? OverlaySystem::HeightQuery2D([&](float x, float y) { return terrainManager->getHeightAt(x, y); }) : OverlaySystem::HeightQuery2D{},
         wmoRenderer ? OverlaySystem::HeightQuery3D([&](float x, float y, float z) { return wmoRenderer->getFloorHeight(x, y, z); }) : OverlaySystem::HeightQuery3D{},
@@ -3362,7 +3362,6 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
     uint32_t frameIdx = vkCtx->getCurrentFrame();
     VkDescriptorSet perFrameSet = perFrameDescSets[frameIdx];
     const glm::mat4& view = camera ? camera->getViewMatrix() : glm::mat4(1.0f);
-    const glm::mat4& projection = camera ? camera->getProjectionMatrix() : glm::mat4(1.0f);
 
     // GPU crash diagnostic: skip individual renderers to isolate which one faults
     static const bool envSkipWMO = (std::getenv("WOWEE_SKIP_WMO") != nullptr);
@@ -3637,14 +3636,14 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
             VkCommandBuffer cmd = beginSecondary(SEC_SELECTION);
             setSecondaryViewportScissor(cmd);
             if (overlaySystem_) {
-                renderUnitShadows(view, projection, cmd);
+                renderUnitShadows(perFrameSet, cmd);
                 refreshSelectionCirclePosition();
-                overlaySystem_->renderSelectionCircle(view, projection, cmd,
+                overlaySystem_->renderSelectionCircle(view, perFrameSet, cmd,
                     terrainManager ? OverlaySystem::HeightQuery2D([&](float x, float y) { return terrainManager->getHeightAt(x, y); }) : OverlaySystem::HeightQuery2D{},
                     wmoRenderer ? OverlaySystem::HeightQuery3D([&](float x, float y, float z) { return wmoRenderer->getFloorHeight(x, y, z); }) : OverlaySystem::HeightQuery3D{},
                     m2Renderer ? OverlaySystem::HeightQuery3D([&](float x, float y, float z) { return m2Renderer->getFloorHeight(x, y, z); }) : OverlaySystem::HeightQuery3D{},
                     selectionSurfaces(terrainManager.get(), wmoRenderer.get()));
-                overlaySystem_->renderGroundTargetReticle(view, projection, cmd,
+                overlaySystem_->renderGroundTargetReticle(perFrameSet, cmd,
                     selectionSurfaces(terrainManager.get(), wmoRenderer.get()));
             }
             vkEndCommandBuffer(cmd);
@@ -3837,14 +3836,14 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
         }
 
         if (overlaySystem_) {
-            renderUnitShadows(view, projection, currentCmd);
+            renderUnitShadows(perFrameSet, currentCmd);
             refreshSelectionCirclePosition();
-            overlaySystem_->renderSelectionCircle(view, projection, currentCmd,
+            overlaySystem_->renderSelectionCircle(view, perFrameSet, currentCmd,
                 terrainManager ? OverlaySystem::HeightQuery2D([&](float x, float y) { return terrainManager->getHeightAt(x, y); }) : OverlaySystem::HeightQuery2D{},
                 wmoRenderer ? OverlaySystem::HeightQuery3D([&](float x, float y, float z) { return wmoRenderer->getFloorHeight(x, y, z); }) : OverlaySystem::HeightQuery3D{},
                 m2Renderer ? OverlaySystem::HeightQuery3D([&](float x, float y, float z) { return m2Renderer->getFloorHeight(x, y, z); }) : OverlaySystem::HeightQuery3D{},
                 selectionSurfaces(terrainManager.get(), wmoRenderer.get()));
-            overlaySystem_->renderGroundTargetReticle(view, projection, currentCmd,
+            overlaySystem_->renderGroundTargetReticle(perFrameSet, currentCmd,
                 selectionSurfaces(terrainManager.get(), wmoRenderer.get()));
         }
 

@@ -144,6 +144,16 @@ public:
                                                         const HeightMap& heightMap,
                                                         int qx, int qy, float unitSize);
 
+    /// Same quad triangles computed with generateVertices's single-multiply
+    /// tile formula so projected decals (unit shadows, selection circle,
+    /// ground reticle) share bit-identical vertex coordinates with the drawn
+    /// terrain mesh at large world coordinates.
+    static std::array<glm::vec3, 12> chunkQuadTriangles(int tileX, int tileY,
+                                                        int chunkX, int chunkY,
+                                                        const HeightMap& heightMap,
+                                                        float baseZ,
+                                                        int qx, int qy);
+
 private:
     /**
      * Generate mesh for a single map chunk
