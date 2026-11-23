@@ -76,6 +76,17 @@ void M2Renderer::setInstanceFade(uint32_t instanceId, float alpha) {
     instances[idxIt->second].fade = std::clamp(alpha, 0.0f, 1.0f);
 }
 
+void M2Renderer::setInstanceTint(uint32_t instanceId, const glm::vec3& tint) {
+    auto idxIt = instanceIndexById.find(instanceId);
+    if (idxIt == instanceIndexById.end()) return;
+    auto& inst = instances[idxIt->second];
+    const glm::vec3 clamped = glm::clamp(tint, glm::vec3(0.0f), glm::vec3(1.0f));
+    inst.instanceTint = clamped;
+    inst.hasInstanceTint = (std::abs(clamped.r - 1.0f) > 1e-4f ||
+                            std::abs(clamped.g - 1.0f) > 1e-4f ||
+                            std::abs(clamped.b - 1.0f) > 1e-4f);
+}
+
 void M2Renderer::setInstanceIndoorLighting(uint32_t instanceId, const glm::vec3& color,
                                            const DirectionalLightRig* rig) {
     const auto index = instanceIndexById.find(instanceId);
@@ -168,8 +179,10 @@ void M2Renderer::restartInstanceAnimation(uint32_t instanceId) {
     if (idxIt == instanceIndexById.end()) return;
     auto& inst = instances[idxIt->second];
     inst.animTime = 0.0f;
+    inst.emitterAccumulators.clear();
     inst.emitterPrevSequence = -1;
     inst.emitterPrevAnimTime = 0.0f;
+    inst.ribbonHasPrevState = false;
     inst.shakePrevSequence = -1;
     inst.shakePrevAnimTime = 0.0f;
     if (inst.cachedModel) computeBoneMatrices(*inst.cachedModel, inst, &cachedCamPos_);
@@ -179,8 +192,10 @@ void M2Renderer::startInstanceStateEffect(uint32_t instanceId) {
     auto& instance = instances.at(instanceIndexById.at(instanceId));
     assert(instance.cachedModel);
     startStateEffect(*instance.cachedModel, instance);
+    instance.emitterAccumulators.clear();
     instance.emitterPrevSequence = -1;
     instance.emitterPrevAnimTime = 0.0f;
+    instance.ribbonHasPrevState = false;
     instance.shakePrevSequence = -1;
     instance.shakePrevAnimTime = 0.0f;
     computeBoneMatrices(*instance.cachedModel, instance, &cachedCamPos_);

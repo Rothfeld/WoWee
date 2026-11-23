@@ -178,3 +178,47 @@ TEST_CASE("TBC 2.4.3 CreatureDisplayInfoExtra.dbc marks Old Hillsbrad Human Illu
     CHECK(dbc.getUInt32(static_cast<uint32_t>(femaleIdx), 2) == 1u); // Female
     CHECK((dbc.getUInt32(static_cast<uint32_t>(femaleIdx), 19) & 0x1u) == 1u);
 }
+
+TEST_CASE("Bare racial CreatureDisplayInfo morphs wrap player appearance without equipping gear (S8)",
+          "[illusion][morph][dbc]") {
+    // Bare racial displays (15475 BloodElfFemale, 15476 BloodElfMale, 16125 DraeneiMale)
+    // have ExtraDisplayInfoID == 0 and empty TextureVariation in TBC CreatureDisplayInfo.dbc.
+    const char* tbcRoot = std::getenv("WOWEE_TBC_DATA_DIR");
+    if (tbcRoot && *tbcRoot) {
+        const std::filesystem::path cdiPath =
+            std::filesystem::path(tbcRoot) / "dbfilesclient" / "creaturedisplayinfo.dbc";
+        if (std::filesystem::exists(cdiPath)) {
+            std::ifstream in(cdiPath, std::ios::binary);
+            std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)),
+                                       std::istreambuf_iterator<char>());
+            wowee::pipeline::DBCFile cdi;
+            REQUIRE(cdi.load(bytes));
+            for (uint32_t did : {15475u, 15476u, 16125u}) {
+                INFO("displayId=" << did);
+                const int32_t rec = cdi.findRecordById(did);
+                REQUIRE(rec >= 0);
+                // col 3 = ExtendedDisplayInfoID == 0
+                CHECK(cdi.getUInt32(static_cast<uint32_t>(rec), 3) == 0u);
+            }
+        }
+    }
+
+    // Edrikg's PLAYER_BYTES (skin=5, face=6, hair=7, hairColor=9, facial=1) wrapped into
+    // Blood Elf Male limits (10 skins, 10 faces, 11 hair styles, 10 hair colors, 10 facial)
+    // preserves exact indices while keeping isEquipablePlayerIllusion = false.
+    constexpr PlayerIllusionRaceLimits kBloodElfMaleLimits{
+        .skinCount = 10,
+        .faceCount = 10,
+        .hairStyleCount = 11,
+        .hairColorCount = 10,
+        .facialHairCount = 10,
+    };
+    const uint32_t edrikgBytes = packAppearanceBytes(5, 6, 7, 9);
+    const uint32_t wrapped = packAppearanceBytes(
+        wrapAppearanceIndex(static_cast<uint8_t>(edrikgBytes & 0xFFu), kBloodElfMaleLimits.skinCount),
+        wrapAppearanceIndex(static_cast<uint8_t>((edrikgBytes >> 8) & 0xFFu), kBloodElfMaleLimits.faceCount),
+        wrapAppearanceIndex(static_cast<uint8_t>((edrikgBytes >> 16) & 0xFFu), kBloodElfMaleLimits.hairStyleCount),
+        wrapAppearanceIndex(static_cast<uint8_t>((edrikgBytes >> 24) & 0xFFu), kBloodElfMaleLimits.hairColorCount));
+    CHECK(wrapped == edrikgBytes);
+    CHECK(wrapAppearanceIndex(1, kBloodElfMaleLimits.facialHairCount) == 1u);
+}

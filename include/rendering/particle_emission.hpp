@@ -9,7 +9,10 @@
 #include <utility>
 #include <vector>
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtx/quaternion.hpp>
 #include "pipeline/m2_loader.hpp"
+#include "rendering/m2_billboard.hpp"
 #include "rendering/m2_track_sampler.hpp"
 
 namespace wowee::rendering {
@@ -409,6 +412,21 @@ inline glm::vec3 outdoorParticleLight(const glm::vec3& ambient, const glm::vec3&
                       glm::vec3(0.0f), glm::vec3(1.0f));
 }
 
+/// Outdoor lighting for server-visible entity particles and lit ribbons
+/// (GameObjects, units, and spell visuals) without kParticleOwnColor (0x1).
+/// Unlike static ADT map doodads (above), TBC 2.4.3 lights dynamic entity
+/// emitters with the upward outdoor rig scaled by the zone's AreaTable
+/// AmbientMultiplier gain (unitAmbGain = 1 + 2 * AmbientMultiplier): at Mirage
+/// Raceway at night (Light 230, ambient 0/0.118/0.235, direct 0.279/0.421/0.709,
+/// -lightDir.z = 0.518, Thousand Needles AmbientMultiplier = 0.5 -> gain 2.0),
+/// Blacksmith_smoke.m2 (GO 1604) and SandVortex.m2#1 (NPC 19922) render cool
+/// blue-grey (~0.29, 0.67, 1.00) rather than near-black (~0.10, 0.27, 0.48).
+inline glm::vec3 outdoorEntityParticleLight(const glm::vec3& ambient, const glm::vec3& diffuse,
+                                            const glm::vec3& lightDir, float unitAmbGain) {
+    const glm::vec3 base = ambient + diffuse * std::max(-lightDir.z, 0.0f);
+    return glm::clamp(base * std::max(unitAmbGain, 0.0f), glm::vec3(0.0f), glm::vec3(1.0f));
+}
+
 // Plane emitter (type 1) travel direction: inclination from +Z, azimuth from
 // +Y (matching sphericalParticleEmission). At horizontal range 0 the fan lies
 // in the emitter bone's YZ plane: Hurricane 16914 (LightningStorm_Cloud_State
@@ -429,6 +447,38 @@ inline glm::vec3 planeParticleDirection(float inclination, float azimuth) {
 inline float particleContinuousEmissionIncrement(float rate, float dt, float random01) {
     assert(random01 >= 0.0f && random01 <= 1.0f);
     return rate * dt * random01;
+}
+
+/// True when a continuous emitter's rate or enabledIn track contains any idle
+/// (`<= 0`) keyframe in `sequenceIndex` (or its global sequence), marking it as
+/// a windowed/pulsed emitter rather than a steady-state ambient emitter.
+/// In TBC 2.4.3 `M2ParticleOld`, an idle emitter (`rate <= 0` or disabled) keeps
+/// its next-spawn countdown at zero so its leading particle spawns immediately
+/// upon entering an active `rate > 0` pulse: e.g. all 6 `ArcaneForceShield_*.m2`
+/// models (33810 Rock Shell, em[0..4] `0 -> 10.02 -> 0` over 133-167 ms,
+/// integral ~0.67-0.84) and 154 short-pulse TBC `Spells/*.m2` emitters.
+inline bool emitterHasIdlePhase(const pipeline::M2AnimationTrack& emissionRate,
+                                const pipeline::M2AnimationTrack& enabledIn,
+                                int sequenceIndex) {
+    auto trackHasNonPositive = [&](const pipeline::M2AnimationTrack& track) {
+        if (track.sequences.empty()) return false;
+        const size_t idx = track.globalSequence >= 0 ? 0u : static_cast<size_t>(std::max(sequenceIndex, 0));
+        if (idx >= track.sequences.size()) return false;
+        for (const float v : track.sequences[idx].floatValues) {
+            if (v <= 0.0f) return true;
+        }
+        return false;
+    };
+    return trackHasNonPositive(emissionRate) || trackHasNonPositive(enabledIn);
+}
+
+/// Initial continuous-emitter accumulator: `1.0f` for pulsed/windowed emitters
+/// (so an immediate `[0..100ms]` pulse also spawns its leading particle at
+/// `t = 0`), and `random01` in `[0, 1)` for steady-state ambient emitters (so
+/// multiple placed smoke/mist doodads do not puff in lockstep on spawn).
+inline float initialContinuousEmitterAccumulator(bool hasIdlePhase, float random01) {
+    assert(random01 >= 0.0f && random01 <= 1.0f);
+    return hasIdlePhase ? 1.0f : std::min(random01, 0.999999f);
 }
 
 /// Discrete Squirt (`0x8000`) particle count for one crossed positive rate
@@ -623,6 +673,93 @@ inline uint32_t particleCell(const pipeline::M2ParticleEmitter& em, float lifeRa
 /// independent of frame rate.
 inline float ribbonGravityStepZ(float gravity, float prevAge, float newAge, float scaleZ = 1.0f) {
     return gravity * (newAge * newAge - prevAge * prevAge) * scaleZ;
+}
+
+/// Linear lifetime alpha fade `[1 -> 0]` for an M2 ribbon edge of `age` seconds
+/// over `edgeLifetime` seconds. TBC 2.4.3 `M2Ribbon` attenuates vertex alpha as
+/// `1 - age / edgeLifetime` so uniform tiling ribbon textures (such as
+/// `WarpStorm.m2` `SPELLS\LIGHTNING3.BLP`, which stays bright at `u = 1`) taper
+/// smoothly into wispy tails instead of ending at a hard full-brightness cutoff.
+inline float ribbonEdgeAgeFade(float age, float edgeLifetime) {
+    if (edgeLifetime <= 1e-5f) return 0.0f;
+    return std::clamp(1.0f - age / edgeLifetime, 0.0f, 1.0f);
+}
+
+/// Interpolate a looping M2 sequence clock at `fraction` in `[0, 1]` from
+/// `prevAnimTimeMs` to `currAnimTimeMs`, unwrapping across `animDurationMs`
+/// when a looping sequence wraps (`currAnimTimeMs < prevAnimTimeMs`).
+inline float interpolateSequenceTimeMs(float prevAnimTimeMs, float currAnimTimeMs,
+                                       float animDurationMs, float fraction) {
+    const float t = std::clamp(fraction, 0.0f, 1.0f);
+    if (currAnimTimeMs < prevAnimTimeMs && animDurationMs > 0.0f) {
+        const float unwrapped = glm::mix(prevAnimTimeMs, currAnimTimeMs + animDurationMs, t);
+        float wrapped = std::fmod(unwrapped, animDurationMs);
+        if (wrapped < 0.0f) wrapped += animDurationMs;
+        return wrapped;
+    }
+    return glm::mix(prevAnimTimeMs, currAnimTimeMs, t);
+}
+
+/// Evaluate the model-space bone matrix of `boneIdx` at `(sequenceIndex,
+/// animTimeMs, globalSequenceTimeMs)` by walking only its ancestor chain from
+/// root down to `boneIdx` (typically 2-5 bones), including camera-facing
+/// billboard bones (`WarpStorm.m2` bone 4 spherical billboard -> bones 18..22 ->
+/// ribbon emitter bones 30..35). Used to sub-step fast-spinning ribbon emitters
+/// when `edgesPerSecond * dt >= 1` spawns multiple edges in one frame.
+inline glm::mat4 evaluateRibbonBoneTransform(
+    const std::vector<pipeline::M2Bone>& bones,
+    const std::vector<uint32_t>& globalSequenceDurations,
+    uint32_t boneIdx,
+    int sequenceIndex,
+    float animTimeMs,
+    float globalSequenceTimeMs,
+    const glm::mat4& invModelMatrix,
+    const glm::vec3* cameraPosWorld = nullptr) {
+    if (boneIdx >= bones.size()) return glm::mat4(1.0f);
+    uint32_t chain[32];
+    size_t depth = 0;
+    int32_t cur = static_cast<int32_t>(boneIdx);
+    while (cur >= 0 && static_cast<size_t>(cur) < bones.size() && depth < 32) {
+        chain[depth++] = static_cast<uint32_t>(cur);
+        const int32_t parent = bones[cur].parentBone;
+        if (parent == cur) break;
+        cur = parent;
+    }
+
+    const glm::vec3 camModel = cameraPosWorld
+        ? glm::vec3(invModelMatrix * glm::vec4(*cameraPosWorld, 1.0f))
+        : glm::vec3(0.0f);
+    glm::vec3 upModel(0.0f, 0.0f, 1.0f);
+    if (cameraPosWorld) {
+        const glm::vec3 rawUp = glm::vec3(invModelMatrix * glm::vec4(0.0f, 0.0f, 1.0f, 0.0f));
+        const float upLen = glm::length(rawUp);
+        if (upLen > 1e-6f) upModel = rawUp / upLen;
+    }
+
+    glm::mat4 mat(1.0f);
+    for (size_t k = depth; k > 0; --k) {
+        const auto& bone = bones[chain[k - 1]];
+        const glm::vec3 trans = m2_track::sampleVec3(
+            bone.translation, sequenceIndex, animTimeMs, globalSequenceTimeMs,
+            globalSequenceDurations, glm::vec3(0.0f));
+        const glm::quat rot = m2_track::sampleQuat(
+            bone.rotation, sequenceIndex, animTimeMs, globalSequenceTimeMs,
+            globalSequenceDurations);
+        const glm::vec3 scl = m2_track::sampleVec3(
+            bone.scale, sequenceIndex, animTimeMs, globalSequenceTimeMs,
+            globalSequenceDurations, glm::vec3(1.0f));
+
+        if (cameraPosWorld && isBillboardBone(bone.flags)) {
+            mat = billboardBoneMatrix(bone.flags, bone.pivot, trans, scl, mat, camModel, upModel);
+        } else {
+            glm::mat4 local = glm::translate(glm::mat4(1.0f), bone.pivot + trans);
+            local *= glm::toMat4(rot);
+            local = glm::scale(local, scl);
+            local = glm::translate(local, -bone.pivot);
+            mat = mat * local;
+        }
+    }
+    return mat;
 }
 
 } // namespace wowee::rendering

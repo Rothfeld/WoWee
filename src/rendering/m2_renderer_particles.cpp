@@ -77,8 +77,17 @@ glm::vec3 M2Renderer::interpFBlockVec3(const pipeline::M2FBlock& fb, float lifeR
 
 void M2Renderer::emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt) {
 
+    std::uniform_real_distribution<float> distN(-1.0f, 1.0f);
+
     if (inst.emitterAccumulators.size() != gpu.particleEmitters.size()) {
         inst.emitterAccumulators.resize(gpu.particleEmitters.size(), 0.0f);
+        for (size_t ei = 0; ei < gpu.particleEmitters.size(); ++ei) {
+            const auto& em = gpu.particleEmitters[ei];
+            const float initRand01 = (distN(particleRng_) + 1.0f) * 0.5f;
+            inst.emitterAccumulators[ei] = initialContinuousEmitterAccumulator(
+                emitterHasIdlePhase(em.emissionRate, em.enabledIn, inst.currentSequenceIndex),
+                initRand01);
+        }
     }
     if (inst.emitterPreviousBirth.size() != gpu.particleEmitters.size()) {
         inst.emitterPreviousBirth.assign(gpu.particleEmitters.size(), glm::mat4(1.0f));
@@ -97,8 +106,6 @@ void M2Renderer::emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt
     const bool includeStartBoundary = freshSequence && prevAnimTime <= 0.001f;
     inst.emitterPrevSequence = inst.currentSequenceIndex;
     inst.emitterPrevAnimTime = inst.animTime;
-
-    std::uniform_real_distribution<float> distN(-1.0f, 1.0f);
 
     for (size_t ei = 0; ei < gpu.particleEmitters.size(); ei++) {
         const auto& em = gpu.particleEmitters[ei];
@@ -247,8 +254,10 @@ void M2Renderer::emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt
         }
 
         if (m2_track::sampleFloat(em.enabledIn, inst.currentSequenceIndex, inst.animTime,
-                                  inst.globalSequenceTime, gpu.globalSequenceDurations, 1.0f) <= 0.0f)
+                                  inst.globalSequenceTime, gpu.globalSequenceDurations, 1.0f) <= 0.0f) {
+            inst.emitterAccumulators[ei] = 1.0f;
             continue;
+        }
 
         float rate = interpFloat(em.emissionRate, inst.animTime, inst.globalSequenceTime,
                                  inst.currentSequenceIndex, gpu.globalSequenceDurations);
@@ -257,6 +266,12 @@ void M2Renderer::emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt
             rate = 0.0f;
         float life = interpFloat(em.lifespan, inst.animTime, inst.globalSequenceTime,
                                  inst.currentSequenceIndex, gpu.globalSequenceDurations);
+        // Re-arm continuous emitters during authored idle (`rate <= 0`) windows so
+        // short-pulse spell emitters (e.g. ArcaneForceShield_*.m2 em[0..4] `0 -> 10 -> 0`
+        // over 133-167 ms) deterministically spawn their leading particle at pulse onset.
+        if (rate <= 0.0f) {
+            inst.emitterAccumulators[ei] = 1.0f;
+        }
         // What the player asked to see of it, before the floor below. The order
         // is the whole point: thinning first and flooring second lets a low
         // setting take smoke, dust and spell effects down while a candle is
@@ -375,6 +390,10 @@ void M2Renderer::updateRibbons(M2Instance& inst, const M2ModelGPU& gpu, float dt
         inst.ribbonEdgeAccumulators.resize(emitters.size(), 0.0f);
     }
 
+    const bool canSubstep = inst.ribbonHasPrevState &&
+                            inst.ribbonPrevSequence == inst.currentSequenceIndex &&
+                            dt > 1e-5f;
+
     for (size_t ri = 0; ri < emitters.size(); ri++) {
         const auto& em = emitters[ri];
         auto& edges    = inst.ribbonEdges[ri];
@@ -439,26 +458,58 @@ void M2Renderer::updateRibbons(M2Instance& inst, const M2ModelGPU& gpu, float dt
         // casting hand to the target, also when the bolt crosses the gap in a
         // frame or two (Frostbolt Volley 8398 at 6.8 and 7.8 yd).
         if ((emit || finalEdge) && visibility > 0.5f) {
+            const bool startingFresh = edges.empty();
             accum += emit ? em.edgesPerSecond * dt : 0.0f;
-            if (edges.empty() || finalEdge) accum = std::max(accum, 1.0f);
+            if (startingFresh || finalEdge) accum = std::max(accum, 1.0f);
             while (accum >= 1.0f) {
                 accum -= 1.0f;
+                float edgeAge = 0.0f;
+                glm::mat4 stepEmitterToWorld = emitterToWorld;
+                if (emit && !startingFresh && !finalEdge && canSubstep && em.edgesPerSecond > 0.0f) {
+                    edgeAge = std::clamp(accum / em.edgesPerSecond, 0.0f, dt);
+                    if (edgeAge >= em.edgeLifetime) continue;
+                    const float subFrac = std::clamp(1.0f - edgeAge / dt, 0.0f, 1.0f);
+                    glm::mat4 stepModel(0.0f);
+                    for (int c = 0; c < 4; ++c) {
+                        stepModel[c] = glm::mix(inst.ribbonPrevModelMatrix[c], inst.modelMatrix[c], subFrac);
+                    }
+                    if (!gpu.bones.empty() && boneIdx < gpu.bones.size()) {
+                        const float stepAnimTime = interpolateSequenceTimeMs(
+                            inst.ribbonPrevAnimTime, inst.animTime, inst.animDuration, subFrac);
+                        const float stepGlobalTime = glm::mix(
+                            inst.ribbonPrevGlobalSeqTime, inst.globalSequenceTime, subFrac);
+                        const glm::mat4 stepInvModel = glm::inverse(stepModel);
+                        const glm::mat4 stepBone = evaluateRibbonBoneTransform(
+                            gpu.bones, gsd, boneIdx, seq, stepAnimTime, stepGlobalTime,
+                            stepInvModel, &cachedCamPos_);
+                        stepEmitterToWorld = stepModel * stepBone;
+                    } else {
+                        stepEmitterToWorld = stepModel;
+                    }
+                }
+
                 M2Instance::RibbonEdge e;
-                e.worldPos = spineWorld;
-                e.top = glm::vec3(emitterToWorld *
+                e.worldPos = glm::vec3(stepEmitterToWorld * glm::vec4(em.position, 1.0f));
+                e.top = glm::vec3(stepEmitterToWorld *
                     glm::vec4(em.position + glm::vec3(0.0f, heightAbove, 0.0f), 1.0f));
-                e.bottom = glm::vec3(emitterToWorld *
+                e.bottom = glm::vec3(stepEmitterToWorld *
                     glm::vec4(em.position - glm::vec3(0.0f, heightBelow, 0.0f), 1.0f));
+                if (edgeAge > 0.0f && em.gravity != 0.0f) {
+                    const float dz = ribbonGravityStepZ(em.gravity, 0.0f, edgeAge, scaleZ);
+                    e.worldPos.z += dz;
+                    e.top.z += dz;
+                    e.bottom.z += dz;
+                }
                 e.color = color;
                 e.alpha = alpha;
-                e.age = 0.0f;
+                e.age = edgeAge;
                 edges.push_back(e);
 
                 // Diagnostic: log first ribbon edge per spell effect instance+emitter
                 if (gpu.isSpellEffect && edges.size() == 1) {
                     LOG_INFO("SpellEffect: ribbon edge[0] for '", gpu.name,
-                             "' emitter=", ri, " pos=(", spineWorld.x, ",", spineWorld.y,
-                             ",", spineWorld.z, ") hA=", heightAbove, " hB=", heightBelow,
+                             "' emitter=", ri, " pos=(", e.worldPos.x, ",", e.worldPos.y,
+                             ",", e.worldPos.z, ") hA=", heightAbove, " hB=", heightBelow,
                              " vis=", visibility, " eps=", em.edgesPerSecond,
                              " edgeLife=", em.edgeLifetime, " bone=", em.bone);
                 }
@@ -467,6 +518,12 @@ void M2Renderer::updateRibbons(M2Instance& inst, const M2ModelGPU& gpu, float dt
             accum = 0.0f;
         }
     }
+
+    inst.ribbonHasPrevState = true;
+    inst.ribbonPrevSequence = inst.currentSequenceIndex;
+    inst.ribbonPrevAnimTime = inst.animTime;
+    inst.ribbonPrevGlobalSeqTime = inst.globalSequenceTime;
+    inst.ribbonPrevModelMatrix = inst.modelMatrix;
 }
 
 // ---------------------------------------------------------------------------
@@ -552,7 +609,7 @@ void M2Renderer::renderParticleMeshes(VkCommandBuffer cmd, VkDescriptorSet perFr
                                                        em.twinkleScaleMin, em.twinkleScaleMax,
                                                        em.twinklePercent);
             if (twinkle <= 0.0f) continue;
-            const glm::vec3 color = interpFBlockVec3(em.particleColor, lifeRatio);
+            const glm::vec3 color = interpFBlockVec3(em.particleColor, lifeRatio) * inst.instanceTint;
             const float alpha = std::min(interpFBlockFloat(em.particleAlpha, lifeRatio), 1.0f) * inst.fade;
             const float scale = interpFBlockFloat(em.particleScale, lifeRatio) * twinkle;
             const uint8_t blendMode = mesh.blendMode;
@@ -699,7 +756,10 @@ void M2Renderer::renderM2Ribbons(VkCommandBuffer cmd, VkDescriptorSet perFrameSe
                 : ((inst.indoorLighting & 2u)
                     ? glm::vec3((inst.indoorLighting >> 8) & 255u, (inst.indoorLighting >> 16) & 255u,
                                 (inst.indoorLighting >> 24) & 255u) / 255.0f
-                    : outdoorParticleLight(outdoorAmbient_, outdoorDiffuse_, outdoorLightDir_));
+                    : (inst.serverVisibility()
+                        ? outdoorEntityParticleLight(outdoorAmbient_, outdoorDiffuse_,
+                                                     outdoorLightDir_, outdoorEntityLightGain_)
+                        : outdoorParticleLight(outdoorAmbient_, outdoorDiffuse_, outdoorLightDir_)));
 
             // Descriptor set for texture
             VkDescriptorSet texSet = (ri < gpu.ribbonTexSets.size())
@@ -717,16 +777,16 @@ void M2Renderer::renderM2Ribbons(VkCommandBuffer cmd, VkDescriptorSet perFrameSe
             }
 
             uint32_t firstVert = static_cast<uint32_t>(written);
+            const float edgeLifetime = gpu.ribbonEmitters[ri].edgeLifetime;
 
             // Emit triangle strip: 2 verts per edge (top + bottom)
             for (size_t ei = 0; ei < edges.size(); ei++) {
                 assert(written + 2 <= ribbonVertexCapacity_[frame]);
                 const auto& e = edges[ei];
-                // No fade with edge age: the texture runs head (u=0) to tail (u=1)
-                // and carries the falloff (e.g. RIBBONNE1_RED2.BLP is bright at u=0
-                // and fades to black at u=1). edges.back() is the newest edge at the
-                // emitter head; edges.front() is the oldest edge at the trail tail.
-                float a = e.alpha * inst.fade;
+                // Attenuate vertex alpha by linear lifetime fade (1 - age / edgeLifetime)
+                // so uniform tiling textures (e.g. WarpStorm.m2 LIGHTNING3.BLP) taper
+                // smoothly into wispy tails while head-to-tail ramp textures stay crisp.
+                float a = e.alpha * inst.fade * ribbonEdgeAgeFade(e.age, edgeLifetime);
                 float u = 1.0f - static_cast<float>(ei) / static_cast<float>(edges.size() - 1);
 
                 // In TBC M2 ribbons, the -heightBelow edge (-localY) carries v=0
@@ -736,7 +796,7 @@ void M2Renderer::renderM2Ribbons(VkCommandBuffer cmd, VkDescriptorSet perFrameSe
                 // local +Y to -Z (downward), so mapping +localY->v=1 and
                 // -localY->v=0 places the bright crisp edge at the top (+Z) and
                 // fades softly downward, matching native TBC 2.4.3.
-                const glm::vec3 litColor = e.color * ribbonLight;
+                const glm::vec3 litColor = e.color * ribbonLight * inst.instanceTint;
                 const glm::vec3& top = e.top;
                 dst[written * 9 + 0] = top.x;
                 dst[written * 9 + 1] = top.y;
@@ -1086,7 +1146,10 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
         const glm::vec3 placementLight = (inst.indoorLighting & 2u)
             ? glm::vec3((inst.indoorLighting >> 8) & 255u, (inst.indoorLighting >> 16) & 255u,
                         (inst.indoorLighting >> 24) & 255u) / 255.0f
-            : outdoorParticleLight(outdoorAmbient_, outdoorDiffuse_, outdoorLightDir_);
+            : (inst.serverVisibility()
+                ? outdoorEntityParticleLight(outdoorAmbient_, outdoorDiffuse_,
+                                             outdoorLightDir_, outdoorEntityLightGain_)
+                : outdoorParticleLight(outdoorAmbient_, outdoorDiffuse_, outdoorLightDir_));
 
         // Emit in authored emitter order rather than swap-and-pop particle
         // order: keeps later additive flames (e.g. StratholmeFireSmokeEmberM
@@ -1134,7 +1197,7 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
                 if (p.emitterIndex != targetEmitter) continue;
 
                 float lifeRatio = p.life / std::max(p.maxLife, 0.001f);
-                glm::vec3 color = interpFBlockVec3(em.particleColor, lifeRatio);
+                glm::vec3 color = interpFBlockVec3(em.particleColor, lifeRatio) * inst.instanceTint;
                 if (!(em.flags & kParticleOwnColor)) color *= placementLight;
                 // Scaled by the instance fade, as its mesh is: an owner fading
                 // out (a creature's death, a hidden player) takes its particles

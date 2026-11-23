@@ -1299,8 +1299,16 @@ void EntitySpawner::syncUnitAuraVisuals(const game::Entity& entity, uint32_t ins
     } else if (const auto* auras = gameHandler_->getUnitAuras(entity.getGuid())) {
         for (const auto& aura : *auras) addAura(aura.spellId);
     }
-    std::sort(auraVisuals.begin(), auraVisuals.end());
-    auraVisuals.erase(std::unique(auraVisuals.begin(), auraVisuals.end()), auraVisuals.end());
+    {
+        std::vector<uint32_t> uniqueOrdered;
+        uniqueOrdered.reserve(auraVisuals.size());
+        for (uint32_t vis : auraVisuals) {
+            if (std::find(uniqueOrdered.begin(), uniqueOrdered.end(), vis) == uniqueOrdered.end()) {
+                uniqueOrdered.push_back(vis);
+            }
+        }
+        auraVisuals = std::move(uniqueOrdered);
+    }
     std::sort(transformAuraVisuals.begin(), transformAuraVisuals.end());
     transformAuraVisuals.erase(std::unique(transformAuraVisuals.begin(), transformAuraVisuals.end()),
                                transformAuraVisuals.end());

@@ -290,3 +290,44 @@ TEST_CASE("SpellVisualKit CharProc 15 opacity fade and CharProc 17 equip overrid
 
     CHECK_FALSE(raceGenderFromCharacterModelName("DragonOnyxia").has_value());
 }
+
+TEST_CASE("SpellVisualKit policies for InstantAreaKit destination, CharProc 1 effect tinting, and Drunken Master AnimID (S1/S3/S4)",
+          "[spell-visual][charproc]") {
+    using namespace wowee::rendering;
+
+    SECTION("S1: Spell.dbc destination classification distinguishes 4929 Summon Burning Exile from 42052 Volcanic Geyser") {
+        // 4929 Summon Burning Exile (SV 33, InstantAreaKit 9173): Targets=0, tA={32,0,0}, tB={0,0,0} -> destination!
+        CHECK(spellHasInstantAreaDestination(0x0u, {32u, 0u, 0u}, {0u, 0u, 0u}));
+        // 2120 Flamestrike: Targets=0x40 (TARGET_FLAG_DEST_LOCATION), tA={16,28,0} -> destination!
+        CHECK(spellHasInstantAreaDestination(0x40u, {16u, 28u, 0u}, {0u, 0u, 0u}));
+        // 42052 Volcanic Geyser (SV 33, InstantAreaKit 9173): Targets=0, tA={22,0,0} (SRC), tB={15,0,0} -> NOT destination!
+        CHECK_FALSE(spellHasInstantAreaDestination(0x0u, {22u, 0u, 0u}, {15u, 0u, 0u}));
+    }
+
+    SECTION("S3: Non-black CharProc 1 tints attached spell M2s (35409 Brain Damage), while 0x000000 leaves Rock Shell shield untinted") {
+        // 35409 Brain Damage (kit 7095): 0x800000 -> tints arcanepower_state_chest.m2 red.
+        CHECK(kitCharProcTintsAttachedEffects(glm::vec3(128.0f / 255.0f, 0.0f, 0.0f)));
+        // 33810 Rock Shell (kit 6926) & Vertex Color Black (kit 7641): 0x000000 -> body silhouette only.
+        CHECK_FALSE(kitCharProcTintsAttachedEffects(glm::vec3(0.0f, 0.0f, 0.0f)));
+    }
+
+    SECTION("S4: 42696 Drunken Master Whirlwind (126) takes priority over Stun (14) and blocks periodic Knockdown (121)") {
+        constexpr uint32_t kNoAnim = SpellVisualSystem::kNoAnimation;
+        constexpr uint32_t kStand = 0u;
+        constexpr uint32_t kStun = 14u;
+        constexpr uint32_t kWhirlwind = 126u;
+
+        // Even when co-applied stun aura 42695 (kit 8163, AnimID 14) sits ahead of 42696 (kit 8158, AnimID 126)
+        // in newest-first order, Whirlwind (126) wins over generic Stun (14).
+        const uint32_t candidates[] = {kStun, kWhirlwind};
+        const uint32_t chosen = selectAuraStateAnimation(candidates, kNoAnim, kStand, kStun);
+        CHECK(chosen == kWhirlwind);
+        CHECK(auraStateSuppressesOneShotKitAnim(chosen, kNoAnim, kStand, kStun));
+
+        // Pure Stun (14) alone still plays Stun over Stand (0) and does NOT suppress ImpactKits.
+        const uint32_t stunOnly[] = {kStun, kStand};
+        const uint32_t chosenStun = selectAuraStateAnimation(stunOnly, kNoAnim, kStand, kStun);
+        CHECK(chosenStun == kStun);
+        CHECK_FALSE(auraStateSuppressesOneShotKitAnim(chosenStun, kNoAnim, kStand, kStun));
+    }
+}

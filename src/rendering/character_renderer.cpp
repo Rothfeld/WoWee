@@ -2183,6 +2183,11 @@ void CharacterRenderer::playAnimation(uint32_t instanceId, uint32_t animationId,
     if (!frozenAnimationAllowsPlay(instance.kitAnimationFrozen, instance.currentSequenceIndex)) {
         return;
     }
+    if (animationId == anim::STUN && instance.auraStateAnimId != 0 &&
+        hasAnimation(instanceId, instance.auraStateAnimId)) {
+        animationId = instance.auraStateAnimId;
+        loop = true;
+    }
     syncAttachedWeaponAnimations(instanceId, animationId);
     auto& model = models[instance.modelId].data;
 
@@ -5467,6 +5472,21 @@ void CharacterRenderer::setInstanceKitAppearance(uint32_t instanceId, const glm:
             fx.kitColor = color;
             fx.kitOpacity = fx.kitOpacityTarget = instance.kitOpacity;
         }
+    }
+}
+
+void CharacterRenderer::setInstanceAuraStateAnimation(uint32_t instanceId, uint32_t animationId) {
+    auto it = instances.find(instanceId);
+    if (it == instances.end()) return;
+    auto& instance = it->second;
+    if (instance.auraStateAnimId == animationId) return;
+    const uint32_t prev = instance.auraStateAnimId;
+    instance.auraStateAnimId = animationId;
+    if (animationId != 0 && instance.currentAnimationId == anim::STUN && !instance.isDead &&
+        hasAnimation(instanceId, animationId)) {
+        playAnimation(instanceId, animationId, true);
+    } else if (animationId == 0 && prev != 0 && instance.currentAnimationId == prev && !instance.isDead) {
+        playAnimation(instanceId, anim::STAND, true);
     }
 }
 

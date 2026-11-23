@@ -670,6 +670,11 @@ float SpellVisualSystem::spawnKitEffects(uint32_t kitId, const glm::vec3& worldP
             continue;
         }
         m2Renderer_->setInstanceIsSpellVisual(instanceId);
+        if (const auto proc = kitCharacterProcedures_.find(kitId);
+            proc != kitCharacterProcedures_.end() && proc->second.color &&
+            kitCharProcTintsAttachedEffects(*proc->second.color)) {
+            m2Renderer_->setInstanceTint(instanceId, *proc->second.color);
+        }
         if (stage == KitStage::Precast) {
             m2Renderer_->startInstanceStateEffect(instanceId);
         } else {
@@ -983,6 +988,11 @@ void SpellVisualSystem::startChannelVisual(uint32_t visualId, const glm::vec3& p
                                           /*allowPositionDedup=*/false);
         if (!instance) { LOG_ERROR("Channel effect instance failed: ", effect.path); continue; }
         m2Renderer_->setInstanceIsSpellVisual(instance);
+        if (const auto proc = kitCharacterProcedures_.find(kit->second);
+            proc != kitCharacterProcedures_.end() && proc->second.color &&
+            kitCharProcTintsAttachedEffects(*proc->second.color)) {
+            m2Renderer_->setInstanceTint(instance, *proc->second.color);
+        }
         // A channel effect plays Stand once, then loops Hold, as a state
         // effect does (27 of 65 TBC ChannelKit models author both). Dark
         // Channeling 21157 on Magister Kalendris (Shadow_Snare_High_base:
@@ -1110,14 +1120,16 @@ void SpellVisualSystem::syncAuraVisuals(uint32_t attachInstanceId,
 uint32_t SpellVisualSystem::auraStateAnimation(uint32_t attachInstanceId) const {
     const auto unit = unitAuraVisuals_.find(attachInstanceId);
     if (unit == unitAuraVisuals_.end()) return kNoAnimation;
+    std::vector<uint32_t> candidates;
+    candidates.reserve(unit->second.applied.size());
     for (auto visual = unit->second.applied.rbegin(); visual != unit->second.applied.rend(); ++visual) {
         const auto kit = stateKits_.find(*visual);
         if (kit == stateKits_.end() || !kit->second) continue;
         const auto animation = kitAnimations_.find(kit->second);
         if (animation != kitAnimations_.end() && animation->second != kNoAnimation)
-            return animation->second;
+            candidates.push_back(animation->second);
     }
-    return kNoAnimation;
+    return selectAuraStateAnimation(candidates, kNoAnimation, anim::STAND, anim::STUN);
 }
 
 void SpellVisualSystem::applyCharacterProcedures(uint32_t attachInstanceId) {
@@ -1154,6 +1166,23 @@ void SpellVisualSystem::applyCharacterProcedures(uint32_t attachInstanceId) {
               " color=(", color.r, ",", color.g, ",", color.b, ") opacity=", opacity,
               " frozen=", frozen, " headDisplay=", headDisplayId);
     characters->setInstanceKitAppearance(attachInstanceId, color, opacity, frozen);
+
+    const uint32_t stateAnim = auraStateAnimation(attachInstanceId);
+    const uint32_t overrideStunAnim =
+        auraStateSuppressesOneShotKitAnim(stateAnim, kNoAnimation, anim::STAND, anim::STUN)
+            ? stateAnim : 0u;
+    characters->setInstanceAuraStateAnimation(attachInstanceId, overrideStunAnim);
+
+    if (m2Renderer_) {
+        const glm::vec3 fxTint = (colored && kitCharProcTintsAttachedEffects(color))
+            ? color : glm::vec3(1.0f);
+        for (const auto& sv : activeSpellVisuals_) {
+            if (sv.attachInstanceId == attachInstanceId && !sv.decaying &&
+                (sv.auraVisualId != 0 || sv.isChannel)) {
+                m2Renderer_->setInstanceTint(sv.instanceId, fxTint);
+            }
+        }
+    }
 
     const uint32_t prevHead = activeKitHeadOverride_.count(attachInstanceId)
                                   ? activeKitHeadOverride_[attachInstanceId] : 0u;
@@ -1635,8 +1664,12 @@ void SpellVisualSystem::playSpellVisualKit(uint32_t kitId, const glm::vec3& worl
         return;
     }
     auto* cr = renderer_ ? renderer_->getCharacterRenderer() : nullptr;
-    // A corpse keeps its death pose (CharacterRenderer::isInstanceDead).
+    const uint32_t activeAuraAnim = attachInstanceId ? auraStateAnimation(attachInstanceId) : kNoAnimation;
+    // A corpse keeps its death pose (CharacterRenderer::isInstanceDead), and an
+    // active non-Stand, non-Stun aura StateKit animation (such as 42696 Drunken
+    // Master Whirlwind 126) is not interrupted by periodic self-proc one-shots.
     if (cr && attachInstanceId && animation->second != 0xffffffffu &&
+        !auraStateSuppressesOneShotKitAnim(activeAuraAnim, kNoAnimation, anim::STAND, anim::STUN) &&
         !cr->isInstanceDead(attachInstanceId) && cr->hasAnimation(attachInstanceId, animation->second)) {
         uint32_t current = 0; float time = 0, duration = 0;
         cr->getAnimationState(attachInstanceId, current, time, duration);
@@ -2748,6 +2781,9 @@ void SpellVisualSystem::transferUnitVisuals(uint32_t fromInstanceId, uint32_t to
     }
     activeKitHeadOverride_.erase(fromInstanceId);
     activeKitHeadOverride_.erase(toInstanceId);
+    if (characters && characters->hasInstance(fromInstanceId)) {
+        characters->setInstanceAuraStateAnimation(fromInstanceId, 0u);
+    }
     applyCharacterProcedures(toInstanceId);
 }
 

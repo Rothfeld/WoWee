@@ -332,6 +332,10 @@ struct M2Instance {
     /// between zones. Below one the instance is drawn in the blended pass
     /// alone, every layer of it, since an opaque layer cannot fade otherwise.
     float fade = 1.0f;
+    /// Optional per-instance RGB color multiplier (e.g. SpellVisualKit CharProc 1
+    /// non-black tint on attached spell visual M2s such as 35409 Brain Damage).
+    glm::vec3 instanceTint{1.0f};
+    bool hasInstanceTint = false;
     /// Its effect has ended (retireInstance): the mesh and ribbons are gone,
     /// no particle is born, and the particles alive finish their lives; the
     /// instance is removed with the last of them.
@@ -366,6 +370,11 @@ struct M2Instance {
     // One deque of edges per ribbon emitter on this instance
     std::vector<std::deque<RibbonEdge>> ribbonEdges;
     std::vector<float> ribbonEdgeAccumulators; // fractional edge counter per emitter
+    bool ribbonHasPrevState = false;
+    int ribbonPrevSequence = -1;
+    float ribbonPrevAnimTime = 0.0f;
+    float ribbonPrevGlobalSeqTime = 0.0f;
+    glm::mat4 ribbonPrevModelMatrix{1.0f};
 
     // Cached model flags (set at creation to avoid per-frame hash lookups)
     bool cachedHasAnimation = false;
@@ -745,6 +754,9 @@ public:
     void setInstanceHighlight(uint32_t instanceId, float amount);
     /// See M2Instance::fade.
     void setInstanceFade(uint32_t instanceId, float alpha);
+    /// Set a per-instance RGB color multiplier (1,1,1 clears hasInstanceTint).
+    void setInstanceTint(uint32_t instanceId, const glm::vec3& tint);
+    void setOutdoorEntityLightGain(float gain) { outdoorEntityLightGain_ = std::max(gain, 0.0f); }
     /// Take the light off whatever has it, whichever instance that was.
     void clearInstanceHighlights();
     /// Set the animation sequence by animation ID (e.g. anim::OPEN, anim::CLOSE).
@@ -1507,6 +1519,7 @@ private:
     glm::vec3 outdoorLightDir_{0.0f, 0.0f, -1.0f};
     glm::vec3 outdoorDiffuse_{0.0f, 0.0f, 0.0f};
     glm::vec3 outdoorAmbient_{1.0f, 1.0f, 1.0f};
+    float outdoorEntityLightGain_ = 1.0f;
     float furthestDrawnSq_ = 0.0f;
     bool forceNoCull_ = false;
 

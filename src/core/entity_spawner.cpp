@@ -33,6 +33,7 @@
 #include "game/game_handler.hpp"
 #include "game/game_services.hpp"
 #include "game/transport_manager.hpp"
+#include "game/zone_manager.hpp"
 
 #include <cmath>
 #include <bit>
@@ -82,6 +83,13 @@ void EntitySpawner::initialize() {
 }
 
 void EntitySpawner::update() {
+    if (renderer_) {
+        if (auto* m2 = renderer_->getM2Renderer()) {
+            const auto* zm = renderer_->getZoneManager();
+            const float ambMult = zm ? zm->getAreaAmbientMultiplier(renderer_->getCurrentAreaId()) : 0.0f;
+            m2->setOutdoorEntityLightGain(1.0f + 2.0f * ambMult);
+        }
+    }
     processPlayerSpawnQueue();
     processCreatureSpawnQueue();
     processAsyncNpcCompositeResults();
@@ -214,14 +222,17 @@ void EntitySpawner::syncPlayerMorphs() {
                 }
             }
             PlayerHumanoidMorph illusion;
+            const bool hasResolvedIllusion =
+                resolvePlayerIllusion(display, pAppearance, pFacial, illusion);
             const bool isEquipableIllusion =
-                resolvePlayerIllusion(display, pAppearance, pFacial, illusion) &&
-                illusion.isEquipablePlayerIllusion;
+                hasResolvedIllusion && illusion.isEquipablePlayerIllusion;
+            const bool usesPlayerCharacterBase =
+                isEquipableIllusion || (hasResolvedIllusion && illusion.usePlayerAppearance);
 
             uint32_t modelId = 0;
             std::string modelPath;
             float unusedHeight = 0.0f;
-            const bool modelLoaded = isEquipableIllusion
+            const bool modelLoaded = usesPlayerCharacterBase
                 ? loadCharacterMorphModel(display, illusion.targetRace, illusion.targetSex, modelId, modelPath)
                 : loadRemoteMountModel(display, modelId, modelPath, unusedHeight);
             if (!modelLoaded) {
@@ -239,7 +250,7 @@ void EntitySpawner::syncPlayerMorphs() {
             entry.instanceId = instance;
             entry.playerInstanceId = playerInstance;
             entry.isEquipableIllusion = isEquipableIllusion;
-            if (isEquipableIllusion) {
+            if (usesPlayerCharacterBase) {
                 buildPlayerBaseAppearance(instance, modelId, illusion.targetRace, illusion.targetSex,
                                           illusion.appearanceBytes, illusion.facialHair,
                                           entry.illusionAppearance);
@@ -1745,7 +1756,41 @@ bool EntitySpawner::resolvePlayerIllusion(uint32_t displayId,
                                           uint8_t playerFacialHair,
                                           PlayerHumanoidMorph& out) const {
     auto disp = displayDataMap_.find(displayId);
-    if (disp == displayDataMap_.end() || disp->second.extraDisplayId == 0) return false;
+    if (disp == displayDataMap_.end()) return false;
+    if (disp->second.extraDisplayId == 0) {
+        // Bare racial CreatureDisplayInfo rows (e.g. 15475 BloodElfFemale,
+        // 15476 BloodElfMale, 16125 DraeneiMale) carry no CreatureDisplayInfoExtra
+        // record. When a player is morphed into one, Native 2.4.3 renders the
+        // target racial model unarmored (isEquipablePlayerIllusion = false)
+        // using the morphed player's own PLAYER_BYTES / PLAYER_BYTES_2 wrapped
+        // into the target race/sex limits rather than creature defaults (0, 0, 0).
+        const auto bareIt = bareRacialDisplayMap_.find(displayId);
+        if (bareIt == bareRacialDisplayMap_.end()) return false;
+        const uint8_t race = bareIt->second.first;
+        const uint8_t sex = bareIt->second.second;
+        if (race == 0 || !game::hasPlayerModel(static_cast<game::Race>(race))) return false;
+
+        PlayerIllusionRaceLimits limits;
+        if (auto limIt = raceAppearanceLimits_.find(static_cast<uint16_t>((race << 8) | sex));
+            limIt != raceAppearanceLimits_.end()) {
+            limits = limIt->second;
+        }
+        const uint8_t pSkin = static_cast<uint8_t>(playerAppearanceBytes & 0xFFu);
+        const uint8_t pFace = static_cast<uint8_t>((playerAppearanceBytes >> 8) & 0xFFu);
+        const uint8_t pHair = static_cast<uint8_t>((playerAppearanceBytes >> 16) & 0xFFu);
+        const uint8_t pHairColor = static_cast<uint8_t>((playerAppearanceBytes >> 24) & 0xFFu);
+        out.isEquipablePlayerIllusion = false;
+        out.usePlayerAppearance = true;
+        out.targetRace = race;
+        out.targetSex = sex;
+        out.appearanceBytes = packAppearanceBytes(
+            wrapAppearanceIndex(pSkin, limits.skinCount),
+            wrapAppearanceIndex(pFace, limits.faceCount),
+            wrapAppearanceIndex(pHair, limits.hairStyleCount),
+            wrapAppearanceIndex(pHairColor, limits.hairColorCount));
+        out.facialHair = wrapAppearanceIndex(playerFacialHair, limits.facialHairCount);
+        return true;
+    }
     auto extraIt = humanoidExtraMap_.find(disp->second.extraDisplayId);
     if (extraIt == humanoidExtraMap_.end()) return false;
 

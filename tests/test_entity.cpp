@@ -503,10 +503,11 @@ TEST_CASE("Strafe jump unwinds SpineLow torso counter-rotation while airborne", 
     constexpr float halfPi = 1.57079632679f;
     constexpr float quarterPi = 0.78539816339f;
 
-    // Grounded strafe counter-rotates the torso to preserve gameplay facing.
-    REQUIRE(strafeTorsoYawTarget(-halfPi, false, false) == Catch::Approx(halfPi));
-    REQUIRE(strafeTorsoYawTarget(halfPi, false, false) == Catch::Approx(-halfPi));
-    REQUIRE(strafeTorsoYawTarget(-quarterPi, false, false) == Catch::Approx(quarterPi));
+    // Grounded strafe counter-rotates SpineLow by -0.5 * legYaw (+-45 deg on
+    // pure strafe, +-22.5 deg on diagonal strafe), matching Native TBC 2.4.3.
+    REQUIRE(strafeTorsoYawTarget(-halfPi, false, false) == Catch::Approx(0.5f * halfPi));
+    REQUIRE(strafeTorsoYawTarget(halfPi, false, false) == Catch::Approx(-0.5f * halfPi));
+    REQUIRE(strafeTorsoYawTarget(-quarterPi, false, false) == Catch::Approx(0.5f * quarterPi));
     REQUIRE(strafeTorsoYawTarget(0.0f, false, false) == Catch::Approx(0.0f));
 
     // Airborne jump or mount clears SpineLow counter-rotation so the whole body
@@ -516,9 +517,9 @@ TEST_CASE("Strafe jump unwinds SpineLow torso counter-rotation while airborne", 
     REQUIRE(strafeTorsoYawTarget(-quarterPi, true, false) == Catch::Approx(0.0f));
     REQUIRE(strafeTorsoYawTarget(-halfPi, false, true) == Catch::Approx(0.0f));
 
-    // Stepping from grounded strafe right (+90 deg torso counter-yaw) into an
+    // Stepping from grounded strafe right (+45 deg torso counter-yaw) into an
     // airborne jump smoothly unwinds torso yaw to 0 without a 1-frame snap.
-    float torso = halfPi;
+    float torso = 0.5f * halfPi;
     for (int i = 0; i < 20; ++i) {
         torso = stepLegYawOffset(torso, strafeTorsoYawTarget(-halfPi, true, false), 1.0f / 60.0f);
     }

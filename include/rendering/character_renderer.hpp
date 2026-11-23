@@ -238,6 +238,9 @@ public:
     /// _experiments/20261118T001500Z.pair6_kit_colour_timing).
     void setInstanceKitAppearance(uint32_t instanceId, const glm::vec3& color, float opacity,
                                   bool freezeAnimation = false);
+    /// Active non-Stand, non-Stun aura StateKit animation (e.g. 42696 Drunken
+    /// Master Whirlwind 126) that overrides generic Stun (14) while active; 0 = none.
+    void setInstanceAuraStateAnimation(uint32_t instanceId, uint32_t animationId);
     /// SpellVisualKit CharProc 15: timed opacity fade from startAlpha to endAlpha
     /// over durationSec seconds (e.g. Teleport Test 6795, Materialize 7032/7467).
     void startInstanceKitOpacityFade(uint32_t instanceId, float startAlpha, float endAlpha,
@@ -640,6 +643,7 @@ private:
         // SpellVisualKit CharProc 11: holds the instance's animation clock and
         // current pose motionless until cleared.
         bool kitAnimationFrozen = false;
+        uint32_t auraStateAnimId = 0;
         float fadeInTime = 0.0f;          // elapsed fade time (seconds)
         float fadeInDuration = 0.0f;      // total fade duration (0 = no fade)
         float fadeInTargetOpacity = 1.0f; // destination opacity at end of fade-in

@@ -1778,8 +1778,15 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
 
                     // Handle texture animation: if this batch has per-instance uvOffset,
                     // write a separate SSBO range with the correct offsets.
+                    bool anyInstanceTinted = false;
+                    for (size_t j = lodIdx; j < lodEnd; ++j) {
+                        if (instances[pending[j].instanceIdx].hasInstanceTint) {
+                            anyInstanceTinted = true;
+                            break;
+                        }
+                    }
                     bool hasBatchTexAnim = (batch.textureAnimIndex != 0xFFFF && model.hasTextureAnimation)
-                                           ||
+                                           || anyInstanceTinted ||
                                            !batch.animatedColorRGB.sequences.empty() ||
                                            !batch.animatedColorAlpha.sequences.empty() ||
                                            !batch.animatedTextureWeight.sequences.empty();

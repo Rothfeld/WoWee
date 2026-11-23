@@ -52,8 +52,13 @@ inline glm::vec3 animatedBatchTint(const M2ModelGPU& model,
 inline uint32_t packAnimatedBatchTint(const M2ModelGPU& model,
                                       const M2ModelGPU::BatchGPU& batch,
                                       const M2Instance& instance) {
-    if (batch.animatedColorRGB.sequences.empty()) return 0u;
-    const auto rgb = glm::uvec3(glm::round(animatedBatchTint(model, batch, instance) * 255.0f));
+    if (batch.animatedColorRGB.sequences.empty() && !instance.hasInstanceTint) return 0u;
+    const glm::vec3 baseTint = batch.animatedColorRGB.sequences.empty()
+        ? batch.tint
+        : animatedBatchTint(model, batch, instance);
+    const glm::vec3 combined = glm::clamp(baseTint * instance.instanceTint,
+                                          glm::vec3(0.0f), glm::vec3(1.0f));
+    const auto rgb = glm::uvec3(glm::round(combined * 255.0f));
     return (1u << 24) | rgb.r | (rgb.g << 8) | (rgb.b << 16);
 }
 
