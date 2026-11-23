@@ -100,8 +100,18 @@ TEST_CASE("effectiveSkyCloudDensity suppresses clear-night procedural clouds and
     // Storm weather at night still brings in overcast storm clouds.
     CHECK(effectiveSkyCloudDensity(false, 0.5f, 23.2f, 0.5f) == Catch::Approx(0.2f));
 
+    // Dusk zones whose DBC SkyTop stays bright past 19:00 (e.g. Orgrimmar LightParams 247
+    // at 19:45: SkyTop = (116, 78, 114), sunset keyframe at 21:00, night at 22:00)
+    // keep full DBC dusk clouds until SkyTop darkens into night.
+    const glm::vec3 orgDuskTop(116.0f / 255.0f, 78.0f / 255.0f, 114.0f / 255.0f);
+    const glm::vec3 tanarisNightTop(26.0f / 255.0f, 27.0f / 255.0f, 28.0f / 255.0f);
+    CHECK(effectiveSkyCloudDensity(false, 0.5f, 19.75f, 0.0f, orgDuskTop) == Catch::Approx(0.5f));
+    CHECK(effectiveSkyCloudDensity(false, 0.5f, 22.0f, 0.0f, glm::vec3(0.0f)) == Catch::Approx(0.0f));
+    CHECK(effectiveSkyCloudDensity(false, 0.5f, 22.25f, 0.0f, tanarisNightTop) == Catch::Approx(0.0f));
+
     // Custom M2 skyboxes (Outland) never receive procedural dome clouds.
     CHECK(effectiveSkyCloudDensity(true, 0.5f, 12.0f, 0.8f) == Catch::Approx(0.0f));
+    CHECK(effectiveSkyCloudDensity(true, 0.5f, 19.75f, 0.0f, orgDuskTop) == Catch::Approx(0.0f));
 }
 
 TEST_CASE("moon trajectory, angular scale, and visibility match Native TBC 2.4.3 night sky", "[sky][night][moon]") {

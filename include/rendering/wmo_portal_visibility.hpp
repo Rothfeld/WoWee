@@ -452,4 +452,25 @@ enum class RaySurfaceHit : uint8_t {
     return visible;
 }
 
+/// Whether any point of a WMO group's world AABB `[gMin, gMax]` lies within the
+/// active `viewDistance` (`farclip`), optionally clamped to `maxGroupDistance`
+/// when `clampToMaxGroupDistance` is enabled.
+///
+/// Matches TerrainRenderer and M2Renderer view-distance culling so distant WMOs
+/// and their doodads (e.g. Durotar's OrcZeppelinTower.wmo at ~625 yd when
+/// `farclip` is 477 yd) do not draw silhouettes past `viewDistance`.
+[[nodiscard]] inline bool wmoGroupWithinViewDistance(
+    const glm::vec3& gMin,
+    const glm::vec3& gMax,
+    const glm::vec3& camPos,
+    float viewDistance,
+    bool clampToMaxGroupDistance = false,
+    float maxGroupDistance = 500.0f) {
+    const float effectiveDistance =
+        clampToMaxGroupDistance ? std::min(viewDistance, maxGroupDistance) : viewDistance;
+    const glm::vec3 closestPoint = glm::clamp(camPos, gMin, gMax);
+    const glm::vec3 delta = closestPoint - camPos;
+    return glm::dot(delta, delta) <= effectiveDistance * effectiveDistance;
+}
+
 }  // namespace wowee::rendering

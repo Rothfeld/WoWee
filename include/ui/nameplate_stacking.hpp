@@ -37,15 +37,24 @@ inline float unitNameScale(float attachmentHeight) {
     return attachmentHeight > 4.0f ? 0.3796f * attachmentHeight : 1.0f;
 }
 
-/// PLAYER_FLAGS bit 0x08 (PLAYER_FLAG_GM): GM tag visible on 3D overhead names.
-constexpr uint32_t kPlayerFlagGm = 0x08u;
+/// PLAYER_FLAGS overhead tag bits (CMaNGOS Player.h PlayerFlags):
+/// 0x02 = <AFK>, 0x04 = <DND>, 0x08 = <GM>.
+constexpr uint32_t kPlayerFlagAfk = 0x02u;
+constexpr uint32_t kPlayerFlagDnd = 0x04u;
+constexpr uint32_t kPlayerFlagGm  = 0x08u;
 
-/// Format a player's 3D world overhead name, prepending "<GM>" when
-/// PLAYER_FLAGS bit 0x08 (PLAYER_FLAG_GM) is set (matching Native TBC 2.4.3).
+/// Format a player's 3D world overhead name, prepending "<GM>", "<AFK>", or
+/// "<DND>" from PLAYER_FLAGS (matching Native TBC 2.4.3 CGPlayer_C overhead names).
 inline std::string formatPlayerWorldName(const std::string& name, uint32_t playerFlags, bool isPlate) {
-    if (name.empty()) return name;
-    if (!isPlate && (playerFlags & kPlayerFlagGm) != 0) {
+    if (name.empty() || isPlate) return name;
+    if ((playerFlags & kPlayerFlagGm) != 0) {
         return "<GM>" + name;
+    }
+    if ((playerFlags & kPlayerFlagAfk) != 0) {
+        return "<AFK>" + name;
+    }
+    if ((playerFlags & kPlayerFlagDnd) != 0) {
+        return "<DND>" + name;
     }
     return name;
 }

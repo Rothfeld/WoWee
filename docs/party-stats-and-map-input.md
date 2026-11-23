@@ -31,6 +31,7 @@ Live regression: hold right mouse, transfer out of an instance, release during
 loading, then move the pointer without buttons. Camera must stay fixed. Repeat
 entering the instance. Check the alive party member's frame after both transfers.
 
-Party portrait models retain their subject GUID. When that member leaves object
-visibility, the portrait continues rendering its last known appearance. A different
-GUID cannot reuse that image, and shutdown invalidates the retained subject.
+Party portraits render a live 3D head-and-shoulders model while the party member
+is inside world visibility (`EntityManager`), and display the 2D racial
+`TemporaryPortrait-*` texture (`ui::resolveUnitPortraitFallback`) while outside
+world visibility, matching TBC 2.4.3 `SetPortraitTexture`.

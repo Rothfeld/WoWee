@@ -526,3 +526,23 @@ TEST_CASE("collectVisibleGroupsThroughPortals rejects back-facing portals and pr
         CHECK(std::find(visible.begin(), visible.end(), 1u) != visible.end());
     }
 }
+
+TEST_CASE("wmoGroupWithinViewDistance culls distant WMO groups past farclip while keeping occupied/straddling groups", "[wmo][farclip]") {
+    using wowee::rendering::wmoGroupWithinViewDistance;
+
+    const glm::vec3 cam(1962.0f, -4752.7f, 56.2f);
+    // Camera inside or straddling group AABB -> distance 0, always visible
+    CHECK(wmoGroupWithinViewDistance(
+        glm::vec3(1900.0f, -4800.0f, 20.0f), glm::vec3(2000.0f, -4700.0f, 90.0f), cam, 477.0f));
+
+    // Durotar Zeppelin tower (~625 yd west of Valley of Honor): culled at TBC default farclip=477,
+    // visible at TBC max farclip=777 and WoWee default viewDistance=1900.
+    const glm::vec3 zepMin(1940.0f, -4145.0f, 30.0f);
+    const glm::vec3 zepMax(1980.0f, -4105.0f, 120.0f);
+    CHECK_FALSE(wmoGroupWithinViewDistance(zepMin, zepMax, cam, 477.0f));
+    CHECK(wmoGroupWithinViewDistance(zepMin, zepMax, cam, 777.0f));
+    CHECK(wmoGroupWithinViewDistance(zepMin, zepMax, cam, 1900.0f));
+
+    // Optional maxGroupDistance clamp when WOWEE_WMO_CULL distanceCulling is active
+    CHECK_FALSE(wmoGroupWithinViewDistance(zepMin, zepMax, cam, 1900.0f, true, 500.0f));
+}

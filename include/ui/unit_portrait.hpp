@@ -56,6 +56,20 @@ inline std::string temporaryPortraitPath(uint8_t raceId, uint8_t gender, bool is
     return "Interface\\CharacterFrame\\TemporaryPortrait";
 }
 
+/// Resolve the 2D fallback portrait path for a unit slot when no 3D portrait is
+/// drawn (`drawnTextureId == 0`, e.g. an out-of-visibility party member where
+/// `!UnitIsVisible("party1")`). Matches Native TBC 2.4.3 `SetPortraitTexture`.
+inline std::string resolveUnitPortraitFallback(uint64_t drawnTextureId,
+                                               std::string_view customPortrait,
+                                               uint64_t guid,
+                                               uint8_t raceId,
+                                               uint8_t gender,
+                                               bool isPet = false) {
+    if (!customPortrait.empty()) return std::string(customPortrait);
+    if (drawnTextureId != 0 || guid == 0) return {};
+    return temporaryPortraitPath(raceId, gender, isPet);
+}
+
 /// Resolve `CreatureDisplayInfo.dbc` col 9 (`PortraitTextureName`) to a UI
 /// texture path (`Interface\Icons\<Name>`). Empty when the display uses a
 /// normal 3D head portrait.
@@ -178,11 +192,6 @@ public:
     /// not drag Vulkan into the widget tree.
     [[nodiscard]] uint64_t textureId() const;
 
-    // A party member remains the same subject outside world visibility. Keep
-    // rendering their last known model, never another slot occupant's face.
-    void setSubjectGuid(uint64_t guid) { subjectGuid_ = guid; }
-    bool updateKnownSubject(uint64_t guid, float deltaTime);
-
     void shutdown(rendering::Renderer* renderer);
 
 private:
@@ -201,7 +210,6 @@ private:
     int targetWidth_ = 640;
     int targetHeight_ = 800;
     bool registered_ = false;
-    uint64_t subjectGuid_ = 0;
 
     // What the loaded model was built from, so a reload happens only on a real
     // change rather than every frame.

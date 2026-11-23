@@ -338,21 +338,11 @@ uint64_t UnitPortrait::textureId() const {
     return reinterpret_cast<uint64_t>(preview_->getTextureId());
 }
 
-bool UnitPortrait::updateKnownSubject(uint64_t guid, float deltaTime) {
-    if (guid == 0 || guid != subjectGuid_ || !preview_ || !preview_->isModelLoaded())
-        return false;
-    preview_->update(deltaTime);
-    preview_->render();
-    preview_->requestComposite();
-    return true;
-}
-
 void UnitPortrait::shutdown(rendering::Renderer* renderer) {
     if (preview_ && registered_ && renderer) renderer->unregisterPreview(preview_.get());
     registered_ = false;
     preview_.reset();
     initialized_ = false;
-    subjectGuid_ = 0;
 }
 
 } // namespace wowee::ui

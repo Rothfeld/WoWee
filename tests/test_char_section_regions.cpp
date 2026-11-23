@@ -467,4 +467,13 @@ TEST_CASE("Out-of-range SetPortraitTexture fallback resolves valid TBC Temporary
     CHECK(blpWidth(root, wowee::ui::temporaryPortraitPath(0, 0xFF)) == 64);
     CHECK(wowee::ui::temporaryPortraitPath(0, 0xFF, true) == "Interface\\CharacterFrame\\TemporaryPortrait-Pet");
     CHECK(blpWidth(root, wowee::ui::temporaryPortraitPath(0, 0xFF, true)) == 64);
+
+    // Out-of-visibility party member (drawnTextureId == 0, guid != 0) resolves to 2D TemporaryPortrait,
+    // whereas an active in-range 3D portrait (drawnTextureId != 0) uses the 3D render.
+    CHECK(wowee::ui::resolveUnitPortraitFallback(0, "", 25ULL, 1, 0, false) ==
+          "Interface\\CharacterFrame\\TemporaryPortrait-Male-Human");
+    CHECK(wowee::ui::resolveUnitPortraitFallback(99ULL, "", 25ULL, 1, 0, false).empty());
+    CHECK(wowee::ui::resolveUnitPortraitFallback(0, "Interface\\Icons\\INV_Misc_QuestionMark", 25ULL, 1, 0, false) ==
+          "Interface\\Icons\\INV_Misc_QuestionMark");
+    CHECK(wowee::ui::resolveUnitPortraitFallback(0, "", 0ULL, 1, 0, false).empty());
 }

@@ -400,15 +400,24 @@ TEST_CASE("TBC 2.4.3 ghost death-effect desaturates 3D overhead unit names like 
     CHECK(black.b == 0);
 }
 
-TEST_CASE("TBC 2.4.3 <GM> prefix on 3D overhead player names follows PLAYER_FLAGS 0x08", "[nameplates][gm]") {
+TEST_CASE("TBC 2.4.3 <GM>, <AFK>, and <DND> prefixes on 3D overhead player names follow PLAYER_FLAGS", "[nameplates][gm][afk]") {
     CHECK(formatPlayerWorldName("Edric", 0x00u, false) == "Edric");
+    CHECK(formatPlayerWorldName("Pertybarry", kPlayerFlagAfk, false) == "<AFK>Pertybarry");
+    CHECK(formatPlayerWorldName("Pertybarry", kPlayerFlagDnd, false) == "<DND>Pertybarry");
     CHECK(formatPlayerWorldName("Edric", kPlayerFlagGm, false) == "<GM>Edric");
     CHECK(formatPlayerWorldName("Edric", 0x01u | kPlayerFlagGm | 0x20u, false) == "<GM>Edric");
     CHECK(formatPlayerWorldName("High Warlord Edric", kPlayerFlagGm, false) == "<GM>High Warlord Edric");
-    // 2D nameplate bars keep plain unit name without <GM> prefix
+    // <GM> takes precedence over <AFK>/<DND>; <AFK> takes precedence over <DND>
+    CHECK(formatPlayerWorldName("Edric", kPlayerFlagGm | kPlayerFlagAfk, false) == "<GM>Edric");
+    CHECK(formatPlayerWorldName("Edric", kPlayerFlagGm | kPlayerFlagDnd, false) == "<GM>Edric");
+    CHECK(formatPlayerWorldName("Pertybarry", kPlayerFlagAfk | kPlayerFlagDnd, false) == "<AFK>Pertybarry");
+    // 2D nameplate bars keep plain unit name without overhead status prefixes
     CHECK(formatPlayerWorldName("Edric", kPlayerFlagGm, true) == "Edric");
+    CHECK(formatPlayerWorldName("Pertybarry", kPlayerFlagAfk, true) == "Pertybarry");
+    CHECK(formatPlayerWorldName("Pertybarry", kPlayerFlagDnd, true) == "Pertybarry");
     // Empty name stays empty
     CHECK(formatPlayerWorldName("", kPlayerFlagGm, false).empty());
+    CHECK(formatPlayerWorldName("", kPlayerFlagAfk, false).empty());
 }
 
 TEST_CASE("TBC 2.4.3 3D world unit overhead name perspective size caps close-range blowup", "[nameplates][scale]") {

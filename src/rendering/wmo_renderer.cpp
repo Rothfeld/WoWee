@@ -1759,19 +1759,13 @@ void WMORenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const
                 continue;
             }
 
-            // The distance test used to run whether distanceCulling was set or
-            // not - the flag only chose between two distances - so turning that
-            // flag off never stopped anything past viewDistance_ disappearing.
-            // Now nothing is dropped at all unless culling is asked for.
-            if (cullingEnabled_ && gi < instance.worldGroupBounds.size()) {
+            // Enforce viewDistance_ (farclip) unconditionally on every WMO group's
+            // world AABB so buildings match terrain and M2 view-distance culling;
+            // the tighter maxGroupDistance clamp stays behind WOWEE_WMO_CULL.
+            if (gi < instance.worldGroupBounds.size()) {
                 const auto& [gMin, gMax] = instance.worldGroupBounds[gi];
-
-                glm::vec3 closestPoint = glm::clamp(camPos, gMin, gMax);
-                float distSq = glm::dot(closestPoint - camPos, closestPoint - camPos);
-                const float groupViewDistance = doDistanceCull
-                    ? std::min(viewDistance_, maxGroupDistance)
-                    : viewDistance_;
-                if (distSq > groupViewDistance * groupViewDistance) {
+                if (!wmoGroupWithinViewDistance(gMin, gMax, camPos, viewDistance_,
+                                                doDistanceCull, maxGroupDistance)) {
                     result.distanceCulled++;
                     continue;
                 }
@@ -2477,6 +2471,7 @@ void WMORenderer::updateRoomVisibility(const Camera& camera, const glm::vec3* vi
     const glm::vec3 camPos = camera.getPosition();
     const glm::vec3 viewer = viewerPos ? *viewerPos : camPos;
     const bool cullIndoors = portalCulling;
+    const bool doDistanceCull = distanceCulling && cullingEnabled_;
     std::unordered_set<uint32_t> drawn;
     for (auto& instance : instances) {
         instance.drawnGroups.clear();
@@ -2487,15 +2482,31 @@ void WMORenderer::updateRoomVisibility(const Camera& camera, const glm::vec3* vi
             continue;
         }
         const bool skipExteriorGroups = exteriorHiddenWmo_.has_value() && instance.id == *exteriorHiddenWmo_;
+        bool anyGroupPastViewDistance = false;
+        for (size_t g = 0; g < mdlIt->second.groups.size() && g < instance.worldGroupBounds.size(); ++g) {
+            const auto& [gMin, gMax] = instance.worldGroupBounds[g];
+            if (!wmoGroupWithinViewDistance(gMin, gMax, camPos, viewDistance_,
+                                            doDistanceCull, maxGroupDistance)) {
+                anyGroupPastViewDistance = true;
+                break;
+            }
+        }
         drawn.clear();
         const auto hidden = hiddenUnreachableGroups(instance, mdlIt->second, camPos, viewer, frustum);
         if (!portalVisibleGroups(instance, mdlIt->second, camPos, viewer, frustum, viewProj, cullIndoors, drawn)) {
-            if (hidden.empty() && !skipExteriorGroups) continue;
+            if (hidden.empty() && !skipExteriorGroups && !anyGroupPastViewDistance) continue;
             for (size_t g = 0; g < mdlIt->second.groups.size(); ++g) drawn.insert(static_cast<uint32_t>(g));
         }
         instance.drawnGroups.assign(mdlIt->second.groups.size(), 0);
         for (uint32_t g : drawn) {
             if (skipExteriorGroups && wmoGroupSeesExterior(mdlIt->second.groups[g].groupFlags)) continue;
+            if (g < instance.worldGroupBounds.size()) {
+                const auto& [gMin, gMax] = instance.worldGroupBounds[g];
+                if (!wmoGroupWithinViewDistance(gMin, gMax, camPos, viewDistance_,
+                                                doDistanceCull, maxGroupDistance)) {
+                    continue;
+                }
+            }
             instance.drawnGroups[g] = hidden.empty() || !hidden[g];
         }
     }

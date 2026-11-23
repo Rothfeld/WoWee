@@ -63,13 +63,18 @@ struct SkyParams {
 ///
 /// Native TBC 2.4.3 CSkyScene renders only the untextured vertex-band sky dome
 /// and Stars.m2 on clear night skies (no procedural FBM cloud dome), while
-/// preserving daytime DBC clouds and storm overcast clouds at any hour.
+/// preserving daytime and dusk DBC clouds (until SkyTop actually darkens into
+/// night, e.g. 21:00..22:00 in Orgrimmar/Durotar/Elwynn) and storm overcast
+/// clouds at any hour.
 inline float effectiveSkyCloudDensity(bool useOriginalSkybox,
                                       float dbcCloudDensity,
                                       float timeOfDayHours,
-                                      float weatherIntensity) {
+                                      float weatherIntensity,
+                                      const glm::vec3& skyTopColor = glm::vec3(0.0f)) {
     if (useOriginalSkybox) return 0.0f;
-    const float daylightFactor = 1.0f - starFieldTimeVisibility(timeOfDayHours);
+    const float darkSky = 1.0f - skySmoothstep(0.14f, 0.30f, skyColorLuminance(skyTopColor));
+    const float clearNightSuppression = starFieldTimeVisibility(timeOfDayHours) * darkSky;
+    const float daylightFactor = 1.0f - clearNightSuppression;
     const float clearSkyDensity = std::clamp(dbcCloudDensity, 0.0f, 1.0f) * daylightFactor;
     const float weatherBoost = (weatherIntensity > 0.05f) ? (weatherIntensity * 0.4f) : 0.0f;
     return std::min(1.0f, clearSkyDensity + weatherBoost);

@@ -171,7 +171,7 @@ void SkySystem::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
     if (clouds_) {
         const float effectiveDensity = effectiveSkyCloudDensity(
             params.useOriginalSkybox, params.cloudDensity,
-            params.timeOfDay, params.weatherIntensity);
+            params.timeOfDay, params.weatherIntensity, params.skyTopColor);
         if (effectiveDensity > 0.01f) {
             clouds_->setDensity(effectiveDensity);
             clouds_->render(cmd, perFrameSet, params);

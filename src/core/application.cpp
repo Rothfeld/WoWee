@@ -6157,11 +6157,11 @@ void Application::render() {
                             drawRace, drawGender, drawAppearance, drawFacial, worn,
                             assetManager.get(), renderer.get(), io.DeltaTime,
                             drawTexRace, drawTexGender);
-                        face.portrait->setSubjectGuid(built ? face.guid : 0);
-                    } else if (!morphed && std::string_view(face.unit).starts_with("party") &&
-                               face.portrait->updateKnownSubject(face.guid, io.DeltaTime)) {
-                        built = true;
                     } else {
+                        // Out-of-range party members (!UnitIsVisible) have no entity in
+                        // EntityManager and fall through to resolveUnitPortraitFallback(...)
+                        // matching Native TBC 2.4.3 SetPortraitTexture rather than keeping
+                        // a stale 3D render.
                         uint32_t displayId = 0;
                         if (face.guid != 0) {
                             // A unit, not any entity: the display id lives on
@@ -6258,10 +6258,9 @@ void Application::render() {
                         }
                     }
                     const uint64_t drawn = (customPortrait.empty() && built) ? face.portrait->textureId() : 0;
-                    std::string fallbackPortrait = customPortrait;
-                    if (drawn == 0 && fallbackPortrait.empty() && face.guid != 0) {
-                        uint8_t fbRace = 0;
-                        uint8_t fbGender = 0xFF;
+                    uint8_t fbRace = 0;
+                    uint8_t fbGender = 0xFF;
+                    if (drawn == 0 && customPortrait.empty() && face.guid != 0) {
                         if (game::Unit* u = gameHandler->getUnitByGuid(face.guid)) {
                             const uint16_t b0Idx = game::fieldIndex(game::UF::UNIT_FIELD_BYTES_0);
                             if (b0Idx != 0xFFFF) {
@@ -6272,9 +6271,10 @@ void Application::render() {
                         }
                         if (fbRace == 0) fbRace = gameHandler->lookupPlayerRace(face.guid);
                         if (fbGender == 0xFF) fbGender = gameHandler->lookupPlayerGender(face.guid);
-                        fallbackPortrait = ui::temporaryPortraitPath(
-                            fbRace, fbGender, std::string_view(face.unit) == "pet");
                     }
+                    const std::string fallbackPortrait = ui::resolveUnitPortraitFallback(
+                        drawn, customPortrait, face.guid, fbRace, fbGender,
+                        std::string_view(face.unit) == "pet");
                     auto applyPortraitWidget = [&](ui::Widget* w) {
                         if (!w) return;
                         w->externalTexture = drawn;
