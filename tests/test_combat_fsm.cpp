@@ -775,3 +775,99 @@ TEST_CASE("CombatFSM: RANGED_LOAD completes LoadBow before returning to ReadyBow
     CHECK(fsm.getState() == CombatFSM::State::RANGED_SHOOT);
     CHECK(release.animId == anim::ATTACK_BOW);
 }
+
+TEST_CASE("CombatFSM: Auto Shot ranged aiming holds HoldBow between shots and across move-stop",
+          "[combat][ranged][tbc]") {
+    CombatFSM fsm;
+    auto caps = makeCombatCaps();
+    caps.resolvedReadyBow = anim::READY_BOW;
+    caps.resolvedLoadBow = anim::LOAD_BOW;
+    caps.resolvedHoldBow = anim::HOLD_BOW;
+    caps.resolvedFireBow = anim::ATTACK_BOW;
+
+    WeaponLoadout wl;
+    wl.inventoryType = wowee::game::InvType::ONE_HAND;
+    wl.rangedType = RangedWeaponType::BOW;
+
+    auto in = combatInput();
+    in.rangedWeaponActive = true;
+    in.rangedAiming = true;
+    in.rangedAnimId = anim::ATTACK_BOW;
+    in.haveAnimState = true;
+    in.currentAnimId = anim::STAND;
+    in.currentAnimDuration = 1.0f;
+
+    // 1. Entering ranged aiming while stationary starts LoadBow (105), not ReadyBow (29).
+    auto aimLoad = fsm.resolve(in, caps, wl);
+    REQUIRE(aimLoad.valid);
+    CHECK(fsm.getState() == CombatFSM::State::RANGED_LOAD);
+    CHECK(aimLoad.animId == anim::LOAD_BOW);
+    CHECK_FALSE(aimLoad.loop);
+
+    // 2. Completing LoadBow while Auto Shot aiming is active holds HoldBow (109), NOT ReadyBow (29).
+    in.currentAnimId = anim::LOAD_BOW;
+    in.currentAnimTime = 0.98f;
+    auto aimHold = fsm.resolve(in, caps, wl);
+    REQUIRE(aimHold.valid);
+    CHECK(fsm.getState() == CombatFSM::State::RANGED_HOLD);
+    CHECK(aimHold.animId == anim::HOLD_BOW);
+    CHECK(aimHold.loop);
+
+    // 3. Auto Shot fires (AttackBow 46), then reloads LoadBow (105), then holds HoldBow (109) until next shot.
+    in.rangedShootTimer = 0.6f;
+    auto shot = fsm.resolve(in, caps, wl);
+    REQUIRE(shot.valid);
+    CHECK(fsm.getState() == CombatFSM::State::RANGED_SHOOT);
+    CHECK(shot.animId == anim::ATTACK_BOW);
+
+    in.rangedShootTimer = 0.0f;
+    in.currentAnimId = anim::ATTACK_BOW;
+    in.currentAnimTime = 0.6f;
+    in.currentAnimDuration = 0.6f;
+    auto reload = fsm.resolve(in, caps, wl);
+    REQUIRE(reload.valid);
+    CHECK(fsm.getState() == CombatFSM::State::RANGED_LOAD);
+    CHECK(reload.animId == anim::LOAD_BOW);
+
+    in.currentAnimId = anim::LOAD_BOW;
+    in.currentAnimTime = 0.98f;
+    in.currentAnimDuration = 1.0f;
+    auto holdAgain = fsm.resolve(in, caps, wl);
+    REQUIRE(holdAgain.valid);
+    CHECK(fsm.getState() == CombatFSM::State::RANGED_HOLD);
+    CHECK(holdAgain.animId == anim::HOLD_BOW);
+    CHECK(holdAgain.loop);
+
+    // 4. Moving cancels RANGED_HOLD to INACTIVE; stopping while still in range re-enters LoadBow -> HoldBow.
+    in.moving = true;
+    fsm.resolve(in, caps, wl);
+    CHECK(fsm.getState() == CombatFSM::State::INACTIVE);
+
+    in.moving = false;
+    in.currentAnimId = anim::RUN;
+    auto stopLoad = fsm.resolve(in, caps, wl);
+    REQUIRE(stopLoad.valid);
+    CHECK(fsm.getState() == CombatFSM::State::RANGED_LOAD);
+    CHECK(stopLoad.animId == anim::LOAD_BOW);
+
+    in.currentAnimId = anim::LOAD_BOW;
+    in.currentAnimTime = 0.98f;
+    auto stopHold = fsm.resolve(in, caps, wl);
+    REQUIRE(stopHold.valid);
+    CHECK(fsm.getState() == CombatFSM::State::RANGED_HOLD);
+    CHECK(stopHold.animId == anim::HOLD_BOW);
+
+    // 5. Target stepping into 5 yd deadzone or >35 yd out of range (!rangedAiming) drops HoldBow to ReadyBow (29);
+    //    stepping back into range re-enters LoadBow (105).
+    in.rangedAiming = false;
+    auto deadzoneReady = fsm.resolve(in, caps, wl);
+    REQUIRE(deadzoneReady.valid);
+    CHECK(fsm.getState() == CombatFSM::State::COMBAT_IDLE);
+    CHECK(deadzoneReady.animId == anim::READY_BOW);
+
+    in.rangedAiming = true;
+    auto reAim = fsm.resolve(in, caps, wl);
+    REQUIRE(reAim.valid);
+    CHECK(fsm.getState() == CombatFSM::State::RANGED_LOAD);
+    CHECK(reAim.animId == anim::LOAD_BOW);
+}

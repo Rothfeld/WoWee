@@ -308,6 +308,7 @@ void AnimationController::resetCombatVisualState() {
     rangedAnimId_ = 0;
     restoreWeaponAfterRangedShot_ = false;
     characterAnimator_.setRangedWeaponActive(false);
+    characterAnimator_.setRangedAiming(false);
     stunned_ = false;
     charging_ = false;
 
@@ -474,6 +475,10 @@ void AnimationController::setRangedWeaponActive(bool active) {
     characterAnimator_.setRangedWeaponActive(active);
 }
 
+void AnimationController::setRangedAiming(bool aiming) {
+    characterAnimator_.setRangedAiming(aiming);
+}
+
 void AnimationController::setCharging(bool c) {
     charging_ = c;
     characterAnimator_.setCharging(c);
@@ -483,8 +488,8 @@ void AnimationController::triggerRangedShot() {
     auto* characterRenderer = renderer_->getCharacterRenderer();
     uint32_t characterInstanceId = renderer_->getCharacterInstanceId();
     if (!characterRenderer || characterInstanceId == 0) return;
-    if (rangedShootTimer_ > 0.0f) return;
     if (characterAnimator_.getActivity().isEmoteActive()) characterAnimator_.cancelEmote();
+    lastPlayerAnimRequest_ = UINT32_MAX;
 
     auto has = [&](uint32_t id) { return characterRenderer->hasAnimation(characterInstanceId, id); };
 

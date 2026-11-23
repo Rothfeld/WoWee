@@ -45,6 +45,7 @@ public:
     void setEquippedWeaponType(const WeaponLoadout& loadout) override;
     void setEquippedRangedType(RangedWeaponType type) override;
     void setRangedWeaponActive(bool active) override;
+    void setRangedAiming(bool aiming) { rangedAiming_ = aiming; }
     void playEmote(uint32_t animId, bool loop) override;
     void cancelEmote() override;
     void startLooting() override;
@@ -152,6 +153,7 @@ private:
     bool lowHealth_ = false;
     bool inCombat_ = false;
     bool rangedWeaponActive_ = false;
+    bool rangedAiming_ = false;
     bool wasDead_ = false;
 
     float lastDt_ = 0.0f;

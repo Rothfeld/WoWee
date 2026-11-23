@@ -39,6 +39,12 @@ network::Packet CancelCastPacket::build(uint32_t spellId) {
     return packet;
 }
 
+network::Packet CancelAutoRepeatSpellPacket::build() {
+    network::Packet packet(wireOpcode(Opcode::CMSG_CANCEL_AUTO_REPEAT_SPELL));
+    LOG_DEBUG("Built CMSG_CANCEL_AUTO_REPEAT_SPELL");
+    return packet;
+}
+
 // ============================================================
 // Random Roll
 // ============================================================

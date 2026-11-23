@@ -2336,6 +2336,11 @@ void SpellVisualSystem::update(float deltaTime) {
                         characters->getBonePointTransform(it->casterInstanceId, it->launchOrigin.bone,
                                                           it->launchOrigin.localOffset, mat)) {
                         it->start = glm::vec3(mat[3]);
+                    } else if (it->launchOrigin.source == SpellLaunchOrigin::Source::RangedWeaponShot &&
+                               characters->getRangedShotLaunchTransform(
+                                   it->casterInstanceId, it->launchOrigin.shootAnimationId,
+                                   it->launchOrigin.attachmentId, it->launchOrigin.preferWeaponMuzzle, mat)) {
+                        it->start = glm::vec3(mat[3]);
                     } else if (it->launchOrigin.source == SpellLaunchOrigin::Source::Attachment &&
                                characters->getAttachmentTransform(it->casterInstanceId,
                                                                   it->launchOrigin.attachmentId, mat)) {

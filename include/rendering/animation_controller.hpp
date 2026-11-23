@@ -108,6 +108,7 @@ public:
     // ── Ranged combat ──────────────────────────────────────────────────────
     void setEquippedRangedType(RangedWeaponType type);
     void setRangedWeaponActive(bool active);
+    void setRangedAiming(bool aiming);
     void setRangedShotCompleteCallback(std::function<void()> callback) {
         rangedShotCompleteCallback_ = std::move(callback);
     }

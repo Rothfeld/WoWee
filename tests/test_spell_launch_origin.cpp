@@ -105,9 +105,13 @@ TEST_CASE("resolveBeamStartOrigin respects MissileAttachment and race $CSL/$CSR"
     REQUIRE(handBeam.source == SpellLaunchOrigin::Source::EventBone);
     REQUIRE(handBeam.bone == 134);
 
-    const auto chestBeam = resolveBeamStartOrigin(&undead, 124, 3);
+    const auto chestBeam = resolveBeamStartOrigin(&undead, 124, 1);
     REQUIRE(chestBeam.source == SpellLaunchOrigin::Source::Attachment);
     REQUIRE(chestBeam.attachmentId == kAttachChestId);
+
+    const auto leftHandBeam = resolveBeamStartOrigin(&undead, 124, 3);
+    REQUIRE(leftHandBeam.source == SpellLaunchOrigin::Source::Attachment);
+    REQUIRE(leftHandBeam.attachmentId == kAttachSpellLeftHandId);
 }
 
 TEST_CASE("computeBonePointWorldTransform combines position, yaw, scale, bone matrix, and offset", "[spell_origin]") {
@@ -191,5 +195,37 @@ TEST_CASE("M2Loader parses TBC 2.4.3 $CSL/$CSR/$CST release events across races 
         CHECK(missileFlightSpeed(6.0f, 24.0f, origin.launchDelaySeconds) == Catch::Approx(48.0f));
         CHECK(missileFlightSpeed(15.0f, 24.0f, origin.launchDelaySeconds) ==
               Catch::Approx(15.0f / (15.0f / 24.0f - origin.launchDelaySeconds)));
+    }
+
+    SECTION("BloodElfMale.m2 and HumanMale.m2 bow release samples raised HandLeft (2) at AttackBow (46, t=0), never behind-back HandRight (1)") {
+        const auto beBytes = readFileBytes(dataDir / "character/bloodelf/male/bloodelfmale.m2");
+        REQUIRE(!beBytes.empty());
+        const M2Model bloodElf = M2Loader::load(beBytes);
+
+        // Old buggy origin: HandRight (1) during ReadyBow (29) sits 0.75m behind the character's back!
+        glm::mat4 readyRight(1.0f);
+        REQUIRE(evaluateModelAttachmentAtAnimation(bloodElf, 1, 29, 0.0f, 0.0f, 0.0f, readyRight));
+        CHECK(readyRight[3].x < -0.5f);
+
+        // Old buggy origin during LoadBow (105, t=300ms): HandRight (1) reaches behind the head into the quiver!
+        glm::mat4 loadRight(1.0f);
+        REQUIRE(evaluateModelAttachmentAtAnimation(bloodElf, 1, 105, 300.0f, 0.0f, 0.0f, loadRight));
+        CHECK(loadRight[3].x < 0.1f);
+        CHECK(loadRight[3].z > 1.75f);
+
+        // Unblended AttackBow (46, t=0ms) HandLeft (2) bow grip is extended +0.93m forward at shoulder/eye level (+1.47m)!
+        glm::mat4 attackBowLeft(1.0f);
+        REQUIRE(evaluateModelAttachmentAtAnimation(bloodElf, 2, 46, 0.0f, 0.0f, 0.0f, attackBowLeft));
+        CHECK(attackBowLeft[3].x > 0.85f);
+        CHECK(attackBowLeft[3].z > 1.35f);
+        CHECK(attackBowLeft[3].z < 1.65f);
+
+        const auto hmBytes = readFileBytes(dataDir / "character/human/male/humanmale.m2");
+        REQUIRE(!hmBytes.empty());
+        const M2Model human = M2Loader::load(hmBytes);
+        glm::mat4 humanBowLeft(1.0f);
+        REQUIRE(evaluateModelAttachmentAtAnimation(human, 2, 46, 0.0f, 0.0f, 0.0f, humanBowLeft));
+        CHECK(humanBowLeft[3].x > 0.85f);
+        CHECK(humanBowLeft[3].z > 1.45f);
     }
 }

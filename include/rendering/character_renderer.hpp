@@ -452,6 +452,13 @@ public:
     bool getAttachmentTransform(uint32_t instanceId, uint32_t attachmentId, glm::mat4& outTransform);
     bool getBonePointTransform(uint32_t instanceId, uint16_t boneIndex,
                                const glm::vec3& localOffset, glm::mat4& outTransform) const;
+    /// Sample the caster's ranged release point (attached rifle/crossbow muzzle 36
+    /// when `preferWeaponMuzzle` is set, else `fallbackAttachmentId` on the wielder)
+    /// at `(shootAnimId, t = 0)` without cross-fade blend contamination from a prior
+    /// Stand/Run/ReadyBow/LoadBow pose.
+    bool getRangedShotLaunchTransform(uint32_t instanceId, uint32_t shootAnimId,
+                                      uint32_t fallbackAttachmentId, bool preferWeaponMuzzle,
+                                      glm::mat4& outTransform);
 
     /// World-space [base, tip] blade span of one currently drawn melee weapon.
     struct DrawnWeaponSpan {

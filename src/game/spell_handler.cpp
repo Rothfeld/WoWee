@@ -17,10 +17,14 @@
 #include "game/packet_parsers.hpp"
 #include "game/entity.hpp"
 #include "rendering/renderer.hpp"
+#include "rendering/animation_controller.hpp"
+#include "rendering/animation/animation_ids.hpp"
+#include "rendering/animation/spell_cast_anim_policy.hpp"
 #include "rendering/camera_controller.hpp"
 #include "rendering/character_renderer.hpp"
 #include "rendering/spell_visual_kit_policy.hpp"
 #include "rendering/spell_visual_system.hpp"
+#include "game/world_packets.hpp"
 #include "audio/audio_coordinator.hpp"
 #include "audio/spell_sound_manager.hpp"
 #include "audio/combat_sound_manager.hpp"
@@ -831,11 +835,41 @@ bool SpellHandler::launchSpellMissile(uint32_t spellId, uint32_t visualId, uint6
     auto* characters = renderer->getCharacterRenderer();
     const auto* casterModel = (characters && casterInstance) ? characters->getInstanceModelData(casterInstance) : nullptr;
     const uint32_t castAnim = svs->castAnimation(visualId);
-    const rendering::SpellLaunchOrigin launchOrigin =
+    rendering::SpellLaunchOrigin launchOrigin =
         rendering::resolveSpellLaunchOrigin(casterModel, castAnim, missileAttachment, skipReleaseDelay);
+    if (!skipReleaseDelay &&
+        launchOrigin.source == rendering::SpellLaunchOrigin::Source::Attachment &&
+        missileAttachment == -1) {
+        owner_.loadSpellNameCache();
+        if (const auto spIt = owner_.spellNameCacheRef().find(spellId);
+            spIt != owner_.spellNameCacheRef().end() &&
+            rendering::isCreatureRangedWeaponSpell(
+                spIt->second.attr,
+                spIt->second.equippedItemClass,
+                spIt->second.equippedItemSubClassMask,
+                svs->precastAnimation(visualId),
+                castAnim,
+                rendering::SpellVisualSystem::kNoAnimation)) {
+            uint32_t shootAnim = rendering::anim::ATTACK_BOW;
+            if (casterGuid == owner_.getPlayerGuid()) {
+                const auto& rng = owner_.getInventory().getEquipSlot(EquipSlot::RANGED);
+                if (!rng.empty() &&
+                    isWeaponSubclass(rng.item.itemClass, rng.item.subClass, WEAPON_SUBCLASS_GUN)) {
+                    shootAnim = rendering::anim::ATTACK_RIFLE;
+                }
+            }
+            launchOrigin.source = rendering::SpellLaunchOrigin::Source::RangedWeaponShot;
+            launchOrigin.shootAnimationId = shootAnim;
+            launchOrigin.attachmentId = rendering::kAttachLaunchHandFallback;
+            launchOrigin.preferWeaponMuzzle = true;
+            launchOrigin.launchDelaySeconds = 0.0f;
+        }
+    }
     const float launchDelay = launchOrigin.launchDelaySeconds;
 
-    if (!skipReleaseDelay && launchOrigin.source != rendering::SpellLaunchOrigin::Source::EventBone) {
+    if (!skipReleaseDelay &&
+        launchOrigin.source != rendering::SpellLaunchOrigin::Source::EventBone &&
+        launchOrigin.source != rendering::SpellLaunchOrigin::Source::RangedWeaponShot) {
         static std::unordered_set<uint64_t> said;
         const uint64_t key = (static_cast<uint64_t>(visualId) << 32) | (casterModel ? casterModel->sequences.size() : 0u);
         if (said.size() < 128 && said.insert(key).second)
@@ -851,6 +885,10 @@ bool SpellHandler::launchSpellMissile(uint32_t spellId, uint32_t visualId, uint6
             if (launchOrigin.source == rendering::SpellLaunchOrigin::Source::EventBone) {
                 placed = characters->getBonePointTransform(casterInstance, launchOrigin.bone,
                                                            launchOrigin.localOffset, transform);
+            } else if (launchOrigin.source == rendering::SpellLaunchOrigin::Source::RangedWeaponShot) {
+                placed = characters->getRangedShotLaunchTransform(
+                    casterInstance, launchOrigin.shootAnimationId,
+                    launchOrigin.attachmentId, launchOrigin.preferWeaponMuzzle, transform);
             } else if (launchOrigin.source == rendering::SpellLaunchOrigin::Source::Attachment) {
                 placed = characters->getAttachmentTransform(casterInstance, launchOrigin.attachmentId, transform);
             }
@@ -929,16 +967,30 @@ void SpellHandler::launchAmmoProjectile(const SpellGoData& data) {
     for (const uint64_t hit : data.hitTargets) targets.emplace_back(hit, true);
     for (const auto& miss : data.missTargets) targets.emplace_back(miss.targetGuid, false);
     if (targets.empty() && data.targetGuid != 0) targets.emplace_back(data.targetGuid, true);
-    static constexpr uint32_t kAttachRightHand = 1, kAttachChestFront = 15;
+    static constexpr uint32_t kAttachRightHand = 1, kAttachLeftHand = 2, kAttachChestFront = 15;
     const std::string fullModelPath = directory + model;
     const std::string fullTexturePath = texture.empty() ? "" : directory + texture + ".blp";
+    bool isBulletOrGun = (model.rfind("Bullet", 0) == 0 || model.rfind("bullet", 0) == 0);
+    if (!thrown && !isBulletOrGun && data.casterUnit == owner_.getPlayerGuid()) {
+        const auto& rng = owner_.getInventory().getEquipSlot(EquipSlot::RANGED);
+        if (!rng.empty() && isWeaponSubclass(rng.item.itemClass, rng.item.subClass, WEAPON_SUBCLASS_GUN)) {
+            isBulletOrGun = true;
+        }
+    }
+    const uint32_t shootAnimId = thrown
+        ? rendering::anim::ATTACK_THROWN
+        : (isBulletOrGun ? rendering::anim::ATTACK_RIFLE : rendering::anim::ATTACK_BOW);
+    const uint32_t launchHandId = thrown ? kAttachRightHand : kAttachLeftHand;
+    const bool preferMuzzle = !thrown;
     for (const auto& [target, isHit] : targets) {
         glm::vec3 start, end;
         if (target == data.casterUnit || !resolveUnitPosition(data.casterUnit, start) ||
             !resolveUnitPosition(target, end)) continue;
         glm::mat4 transform(1.0f);
         const uint32_t casterInstance = owner_.resolveUnitRenderInstance(data.casterUnit);
-        if (casterInstance && characters->getAttachmentTransform(casterInstance, kAttachRightHand, transform))
+        if (casterInstance &&
+            characters->getRangedShotLaunchTransform(casterInstance, shootAnimId,
+                                                     launchHandId, preferMuzzle, transform))
             start = glm::vec3(transform[3]);
         const uint32_t targetInstance = owner_.resolveUnitRenderInstance(target);
         if (targetInstance && characters->getAttachmentTransform(targetInstance, kAttachChestFront, transform))
@@ -1065,9 +1117,6 @@ void SpellHandler::launchRangedWeaponProjectile(uint32_t spellId, uint64_t targe
     if (!visuals || !characters) return;
 
     glm::vec3 start = renderer->getCharacterPosition() + glm::vec3(0.0f, 0.0f, 1.0f);
-    glm::mat4 handTransform(1.0f);
-    if (characters->getAttachmentTransform(renderer->getCharacterInstanceId(), 1, handTransform))
-        start = glm::vec3(handTransform[3]);
 
     glm::vec3 end;
     if (!resolveUnitPosition(targetGuid, end)) return;
@@ -1077,9 +1126,15 @@ void SpellHandler::launchRangedWeaponProjectile(uint32_t spellId, uint64_t targe
     std::string modelPath;
     std::string texturePath;
     bool spin = false;
+    uint32_t shootAnimId = rendering::anim::ATTACK_BOW;
+    uint32_t launchHandId = 2u;
+    bool preferMuzzle = true;
 
     if (spellId == 2764 || (!ranged.empty() && ranged.item.inventoryType == InvType::THROWN)) {
         spin = true;
+        shootAnimId = rendering::anim::ATTACK_THROWN;
+        launchHandId = 1u;
+        preferMuzzle = false;
         if (!ranged.empty() && ranged.item.displayInfoId != 0) {
             auto displayDbc = assets->loadDBC("ItemDisplayInfo.dbc");
             if (displayDbc && displayDbc->isLoaded()) {
@@ -1103,14 +1158,38 @@ void SpellHandler::launchRangedWeaponProjectile(uint32_t spellId, uint64_t targe
         }
         if (modelPath.empty())
             modelPath = "Item\\ObjectComponents\\Weapon\\Thrown_1H_Dagger_A_01.m2";
-    } else if (spellId == 75 || (!ranged.empty() &&
+    } else if (spellId == 5019) {
+        shootAnimId = rendering::anim::SPELL_CAST_DIRECTED;
+        launchHandId = 1u;
+        preferMuzzle = false;
+        modelPath = "Item\\ObjectComponents\\Ammo\\BulletFlight_01.m2";
+    } else if (!ranged.empty() &&
                (ranged.item.inventoryType == InvType::RANGED_BOW ||
                 isWeaponSubclass(ranged.item.itemClass, ranged.item.subClass, WEAPON_SUBCLASS_BOW) ||
-                isWeaponSubclass(ranged.item.itemClass, ranged.item.subClass, WEAPON_SUBCLASS_CROSSBOW)))) {
+                isWeaponSubclass(ranged.item.itemClass, ranged.item.subClass, WEAPON_SUBCLASS_CROSSBOW))) {
+        shootAnimId = rendering::anim::ATTACK_BOW;
+        launchHandId = 2u;
+        preferMuzzle = true;
+        modelPath = "Item\\ObjectComponents\\Ammo\\ArrowFlight_01.m2";
+        texturePath = "Item\\ObjectComponents\\Ammo\\Arrow_A_01Brown.blp";
+    } else if (!ranged.empty() &&
+               isWeaponSubclass(ranged.item.itemClass, ranged.item.subClass, WEAPON_SUBCLASS_GUN)) {
+        shootAnimId = rendering::anim::ATTACK_RIFLE;
+        launchHandId = 2u;
+        preferMuzzle = true;
+        modelPath = "Item\\ObjectComponents\\Ammo\\BulletFlight_01.m2";
+    } else if (spellId == 75) {
         modelPath = "Item\\ObjectComponents\\Ammo\\ArrowFlight_01.m2";
         texturePath = "Item\\ObjectComponents\\Ammo\\Arrow_A_01Brown.blp";
     } else {
+        shootAnimId = rendering::anim::ATTACK_RIFLE;
         modelPath = "Item\\ObjectComponents\\Ammo\\BulletFlight_01.m2";
+    }
+
+    glm::mat4 handTransform(1.0f);
+    if (characters->getRangedShotLaunchTransform(renderer->getCharacterInstanceId(),
+                                                 shootAnimId, launchHandId, preferMuzzle, handTransform)) {
+        start = glm::vec3(handTransform[3]);
     }
 
     const float dbcSpeed = resolveSpellMissileSpeed(spellId);
@@ -1807,6 +1886,24 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid, std::optiona
         return;
     }
 
+    // Auto Shot (75) and wand Shoot (5019) toggle off via CMSG_CANCEL_AUTO_REPEAT_SPELL
+    // when pressed again while already active, respecting the secureAbilityToggle guard.
+    if ((spellId == 75 || spellId == 5019) && autoRepeatSpellId_ == spellId) {
+        if (restorationActive_) cancelCast();
+        const auto now = std::chrono::steady_clock::now();
+        const auto since = std::chrono::duration_cast<std::chrono::milliseconds>(
+            now - autoRepeatToggledAt_).count();
+        constexpr long kToggleGuardMs = 500;
+        if (autoRepeatToggledAt_.time_since_epoch().count() != 0 &&
+            since < kToggleGuardMs &&
+            addons::storedCVarValue("secureAbilityToggle", "0") != "0") {
+            return;
+        }
+        cancelAutoRepeatSpell();
+        autoRepeatToggledAt_ = now;
+        return;
+    }
+
     // Native 2.4.3 checks equipment requirements (e.g. Backstab dagger, Shoot
     // wand) BEFORE auto-acquiring a hostile target, and acquires the target
     // BEFORE power/form/range checks.
@@ -2196,8 +2293,14 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid, std::optiona
         if (range && *range != spellclass::SpellRangeCheck::InRange) {
             raiseGlobalStringError(owner_, *range == spellclass::SpellRangeCheck::TooClose
                                                ? "SPELL_FAILED_TOO_CLOSE" : "ERR_SPELL_OUT_OF_RANGE");
-            owner_.fireAddonEvent("UNIT_SPELLCAST_FAILED", spellcastArgs("player", spellId));
-            return;
+            // On Native TBC 2.4.3, Auto Shot (75) and wand Shoot (5019) still send
+            // CMSG_CAST_SPELL and arm auto-repeat when pressed outside firing range
+            // (so the enemy selection circle pulses and walking into range shoots
+            // automatically; CMaNGOS Spell.cpp:3297 "always cast autorepeat dummy").
+            if (spellId != 75 && spellId != 5019) {
+                owner_.fireAddonEvent("UNIT_SPELLCAST_FAILED", spellcastArgs("player", spellId));
+                return;
+            }
         }
     }
 
@@ -2401,6 +2504,7 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid, std::optiona
     if ((spellId == kAutoShot || spellId == kShoot) && autoRepeatSpellId_ != spellId) {
         autoRepeatSpellId_ = spellId;
         autoRepeatCastCount_ = castCount_;
+        autoRepeatToggledAt_ = std::chrono::steady_clock::now();
         if (owner_.addonEventCallbackRef()) {
             owner_.addonEventCallbackRef()("START_AUTOREPEAT_SPELL", {});
         }
@@ -2526,6 +2630,21 @@ void SpellHandler::startCraftQueue(uint32_t spellId, int count) {
 void SpellHandler::cancelCraftQueue() {
     craftQueueSpellId_ = 0;
     craftQueueRemaining_ = 0;
+}
+
+void SpellHandler::cancelAutoRepeatSpell() {
+    if (autoRepeatSpellId_ == 0) return;
+    const uint32_t stoppedSpell = autoRepeatSpellId_;
+    autoRepeatSpellId_ = 0;
+    if (owner_.isInWorld() && owner_.getSocket()) {
+        owner_.getSocket()->send(CancelAutoRepeatSpellPacket::build());
+    }
+    if (owner_.spellCastAnimCallbackRef()) {
+        owner_.spellCastAnimCallbackRef()(owner_.getPlayerGuid(), SpellAnimPhase::STOP, stoppedSpell);
+    }
+    if (owner_.addonEventCallbackRef()) {
+        owner_.addonEventCallbackRef()("STOP_AUTOREPEAT_SPELL", {});
+    }
 }
 
 void SpellHandler::cancelShapeshiftForm() {
@@ -3825,11 +3944,6 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
     SpellGoData data;
     if (!owner_.getPacketParsers()->parseSpellGo(packet, data)) return;
     const bool rangedWeaponAttack = spellclass::isRangedWeaponAutoAttack(data.spellId);
-    // Launch physical ammo projectiles from SMSG_SPELL_GO CAST_FLAG_AMMO for
-    // both players and creatures using the exact ItemDisplayInfo.dbc model and
-    // texture (ArrowFlight_01 + Arrow_A_01Brown, elemental arrows, bullets,
-    // thrown weapons).
-    if (data.ammoDisplayId != 0) launchAmmoProjectile(data);
 
     bool casterFinishedTimedCast = false;
     if (data.casterUnit == owner_.getPlayerGuid()) {
@@ -3956,7 +4070,7 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
         if (owner_.spellCastAnimCallbackRef()) {
             if (!rangedWeaponAttack && !restorationLoop)
                 owner_.spellCastAnimCallbackRef()(owner_.getPlayerGuid(), SpellAnimPhase::CAST, data.spellId);
-            else if (wasInTimedCast)
+            else if (wasInTimedCast || rangedWeaponAttack)
                 owner_.spellCastAnimCallbackRef()(owner_.getPlayerGuid(), SpellAnimPhase::STOP, data.spellId);
         }
         if (restKind == spellclass::RestChannelKind::POTION ||
@@ -4062,6 +4176,12 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
         if (targetsPlayer && !rangedWeaponAttack)
             playSpellCastSound(data.spellId);
     }
+
+    // Launch physical ammo projectiles from SMSG_SPELL_GO CAST_FLAG_AMMO AFTER
+    // the caster's ranged weapon swap and shot animation have been triggered so
+    // the projectile leaves the unsheathed ranged weapon / release hand rather
+    // than a stale pre-shot pose.
+    if (data.ammoDisplayId != 0) launchAmmoProjectile(data);
 
     // Clear unit cast bar and retire any precast visuals for a timed cast
     // that just completed (local or remote), before CastKit spawns below.

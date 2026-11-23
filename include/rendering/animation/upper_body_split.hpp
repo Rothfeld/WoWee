@@ -42,6 +42,12 @@ inline constexpr bool isStationaryUpperBodyStance(uint32_t animationId) {
         case anim::READY_2H_LOOSE:
         case anim::READY_BOW:
         case anim::READY_RIFLE:
+        case anim::READY_THROWN:
+        case anim::READY_SPELL_DIRECTED:
+        case anim::READY_SPELL_OMNI:
+        case anim::HOLD_BOW:
+        case anim::HOLD_RIFLE:
+        case anim::HOLD_THROWN:
         case anim::STEALTH_STAND:
             return true;
         default:
@@ -90,6 +96,12 @@ inline constexpr bool upperBodyAllowsBase(uint32_t baseAnimId, uint32_t baseBody
         case anim::READY_2H_LOOSE:
         case anim::READY_BOW:
         case anim::READY_RIFLE:
+        case anim::READY_THROWN:
+        case anim::READY_SPELL_DIRECTED:
+        case anim::READY_SPELL_OMNI:
+        case anim::HOLD_BOW:
+        case anim::HOLD_RIFLE:
+        case anim::HOLD_THROWN:
         case anim::SWIM_IDLE:
         case anim::FLY_IDLE:
         case anim::STEALTH_STAND:

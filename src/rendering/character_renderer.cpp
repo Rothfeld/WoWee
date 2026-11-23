@@ -48,6 +48,7 @@
 #include "rendering/animation/sequence_variation.hpp"
 #include "rendering/animation/animation_ids.hpp"
 #include "rendering/animation/freeze_anim_policy.hpp"
+#include "rendering/spell_launch_origin.hpp"
 #include "core/thread_pool.hpp"
 #include "rendering/vk_context.hpp"
 #include "rendering/bone_slots.hpp"
@@ -6613,6 +6614,96 @@ bool CharacterRenderer::getBonePointTransform(uint32_t instanceId, uint16_t bone
         : getModelMatrix(instance);
     outTransform = modelMat * instance.boneMatrices[boneIndex] * glm::translate(glm::mat4(1.0f), localOffset);
     return true;
+}
+
+bool CharacterRenderer::getRangedShotLaunchTransform(uint32_t instanceId, uint32_t shootAnimId,
+                                                     uint32_t fallbackAttachmentId, bool preferWeaponMuzzle,
+                                                     glm::mat4& outTransform) {
+    auto instIt = instances.find(instanceId);
+    if (instIt == instances.end()) return false;
+    const auto& instance = instIt->second;
+    auto modelIt = models.find(instance.modelId);
+    if (modelIt == models.end()) return false;
+    const auto& model = modelIt->second.data;
+
+    const glm::mat4 charModelMat = instance.hasOverrideModelMatrix
+        ? instance.overrideModelMatrix
+        : getModelMatrix(instance);
+
+    uint32_t effectiveAnimId = 0;
+    if (instance.currentAnimationId == anim::ATTACK_RIFLE ||
+        (instance.upperBodySequenceIndex >= 0 &&
+         static_cast<size_t>(instance.upperBodySequenceIndex) < model.sequences.size() &&
+         model.sequences[instance.upperBodySequenceIndex].id == anim::ATTACK_RIFLE)) {
+        effectiveAnimId = anim::ATTACK_RIFLE;
+    } else if (shootAnimId != 0 && hasAnimation(instanceId, shootAnimId)) {
+        effectiveAnimId = shootAnimId;
+    } else if (shootAnimId == anim::ATTACK_BOW && hasAnimation(instanceId, anim::FIRE_BOW)) {
+        effectiveAnimId = anim::FIRE_BOW;
+    } else if (shootAnimId == anim::FIRE_BOW && hasAnimation(instanceId, anim::ATTACK_BOW)) {
+        effectiveAnimId = anim::ATTACK_BOW;
+    }
+
+    auto evalCharBone = [&](uint16_t boneIdx, glm::mat4& outBoneMat) -> bool {
+        if (effectiveAnimId != 0 &&
+            evaluateModelBoneAtAnimation(model, boneIdx, effectiveAnimId, 0.0f,
+                                         instance.globalSequenceTime, instance.torsoYawOverrideRad,
+                                         outBoneMat)) {
+            return true;
+        }
+        if (boneIdx < instance.boneMatrices.size()) {
+            outBoneMat = instance.boneMatrices[boneIdx];
+            return true;
+        }
+        return false;
+    };
+
+    if (preferWeaponMuzzle) {
+        for (const auto& wa : instance.weaponAttachments) {
+            const bool isRangedSlot = (wa.heldSheathState == 2);
+            const bool isUnsheathedHand = !weaponSheathed(instance, wa) &&
+                                          (wa.attachmentId == 1 || wa.attachmentId == 2);
+            if (!isRangedSlot && !isUnsheathedHand) continue;
+
+            uint16_t muzBone = 0;
+            glm::vec3 muzOffset(0.0f);
+            if (!findAttachmentBone(wa.weaponModelId, kAttachRangedMuzzleId, muzBone, muzOffset)) {
+                continue;
+            }
+            glm::mat4 charBoneMat(1.0f);
+            if (!evalCharBone(wa.boneIndex, charBoneMat)) continue;
+            const glm::mat4 weaponMat =
+                charModelMat * charBoneMat * glm::translate(glm::mat4(1.0f), wa.offset) * wa.localTransform;
+            glm::mat4 weaponBoneMat(1.0f);
+            if (auto weapIt = instances.find(wa.weaponInstanceId);
+                weapIt != instances.end() && muzBone < weapIt->second.boneMatrices.size()) {
+                weaponBoneMat = weapIt->second.boneMatrices[muzBone];
+            }
+            outTransform = weaponMat * weaponBoneMat * glm::translate(glm::mat4(1.0f), muzOffset);
+            return true;
+        }
+    }
+
+    const uint32_t candidates[2] = {
+        fallbackAttachmentId,
+        (fallbackAttachmentId == 2u) ? 1u : 2u,
+    };
+    for (uint32_t attachId : candidates) {
+        if (attachId == 0) continue;
+        if (effectiveAnimId != 0) {
+            glm::mat4 modelAttachMat(1.0f);
+            if (evaluateModelAttachmentAtAnimation(model, attachId, effectiveAnimId, 0.0f,
+                                                   instance.globalSequenceTime, instance.torsoYawOverrideRad,
+                                                   modelAttachMat)) {
+                outTransform = charModelMat * modelAttachMat;
+                return true;
+            }
+        }
+        if (getAttachmentTransform(instanceId, attachId, outTransform)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 void CharacterRenderer::dumpAnimations(uint32_t instanceId) const {

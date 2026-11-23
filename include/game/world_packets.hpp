@@ -1767,6 +1767,12 @@ public:
     static network::Packet build(uint32_t spellId);
 };
 
+/** CMSG_CANCEL_AUTO_REPEAT_SPELL packet builder */
+class CancelAutoRepeatSpellPacket {
+public:
+    static network::Packet build();
+};
+
 // ============================================================
 // Random Roll
 // ============================================================

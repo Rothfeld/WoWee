@@ -36,6 +36,7 @@ public:
         MELEE_SWING,
         RANGED_SHOOT,
         RANGED_LOAD,
+        RANGED_HOLD,
         SPELL_PRECAST,
         SPELL_CASTING,
         SPELL_FINALIZE,
@@ -55,6 +56,7 @@ public:
         bool sprinting = false;
         bool lowHealth = false;
         bool rangedWeaponActive = false;
+        bool rangedAiming = false;
         float meleeSwingTimer = 0.0f;   // >0 = melee active
         std::optional<bool> meleeSwingOffHand; // Explicit hand from HITINFO_LEFTSWING when present
         uint32_t meleeSwingSerial = 0;  // Increments on each newly started swing (including queued follow-ups)

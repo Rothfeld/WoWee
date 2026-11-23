@@ -626,8 +626,19 @@ void AnimationCallbackHandler::setupCallbacks() {
             if (holdAnim != 0) {
                 if (phase == game::SpellAnimPhase::PRECAST) {
                     castState.oneShot.reset();
+                    const auto curState = ac->getCombatState();
+                    // Auto Shot (75): CombatFSM already drives RANGED_LOAD -> RANGED_HOLD
+                    // continuously while stationary and in range; do not replay LoadBow on
+                    // every SMSG_SPELL_START(75) 500ms before the next shot.
+                    if (spellId == 75 &&
+                        (curState == rendering::CombatFSM::State::RANGED_LOAD ||
+                         curState == rendering::CombatFSM::State::RANGED_HOLD)) {
+                        return;
+                    }
+                    const uint32_t precastAnim =
+                        (curState == rendering::CombatFSM::State::RANGED_HOLD) ? 0u : loadAnim;
                     castState.hold = rendering::SpellCastHold{spellId, holdAnim, false};
-                    ac->startSpellCast(loadAnim, holdAnim, true, 0);
+                    ac->startSpellCast(precastAnim, holdAnim, true, 0);
                 } else {
                     castState.hold.reset();
                     castState.oneShot = rendering::SpellCastOneShot{spellId, shotAnim};

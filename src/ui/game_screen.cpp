@@ -896,17 +896,45 @@ void GameScreen::render(game::GameHandler& gameHandler) {
     // Update renderer face-target position and selection circle
     auto* renderer = services_.renderer;
     if (renderer) {
+        const uint32_t autoRepeatSpellId = gameHandler.getAutoRepeatSpellId();
+        auto target = gameHandler.hasTarget() ? gameHandler.getTarget() : nullptr;
+        bool targetUnitAttackable = false;
+        if (target && target->getGuid() != gameHandler.getPlayerGuid() &&
+            (target->getType() == game::ObjectType::UNIT ||
+             target->getType() == game::ObjectType::PLAYER)) {
+            const auto unit = std::static_pointer_cast<game::Unit>(target);
+            const bool alive = !(unit->getHealth() == 0 && unit->getMaxHealth() > 0);
+            targetUnitAttackable = alive && gameHandler.canPlayerAttackUnit(*unit);
+        }
+        const bool autoRepeatAttacksTarget = (autoRepeatSpellId != 0) && targetUnitAttackable;
+        bool rangedAutoShootInRange = false;
+        if (autoRepeatAttacksTarget && autoRepeatSpellId == 75 && target) {
+            const auto rng = gameHandler.unitSpellRange(75, target->getGuid());
+            rangedAutoShootInRange =
+                !rng.has_value() || *rng == game::spellclass::SpellRangeCheck::InRange;
+        }
+        auto* composer = core::Application::getInstance().getAppearanceComposer();
+        auto* ac = renderer->getAnimationController();
+        const bool playerAlive = !gameHandler.isPlayerDead() && !gameHandler.isPlayerGhost();
+        if (rangedAutoShootInRange && playerAlive && (!ac || !ac->isMounted()) &&
+            composer && !composer->isShowingRanged()) {
+            composer->showRangedWeapon(true);
+        }
         // Receiving damage enters combat without enabling melee attack stance.
-        // Auto-repeat ranged spells (Auto Shot 75, wand Shoot 5019) hold the
-        // combat ready stance between shots just as melee auto-attack does.
+        // Auto Shot (75) aims (LoadBow -> HoldBow) when the target is in range,
+        // stays in Stand (0) if armed out of range while weapons are still
+        // sheathed, and holds ReadyBow (29) if the ranged weapon is already drawn.
         const bool combatStanceActive =
-            gameHandler.hasAutoAttackIntent() || gameHandler.getAutoRepeatSpellId() != 0;
-        if (auto* ac = renderer->getAnimationController()) ac->setInCombat(combatStanceActive &&
-                              !gameHandler.isPlayerDead() &&
-                              !gameHandler.isPlayerGhost());
+            gameHandler.hasAutoAttackIntent() ||
+            autoRepeatSpellId == 5019 ||
+            rangedAutoShootInRange ||
+            (autoRepeatSpellId != 0 && composer && composer->isShowingRanged());
+        if (ac) {
+            ac->setRangedAiming(rangedAutoShootInRange && playerAlive);
+            ac->setInCombat(combatStanceActive && playerAlive);
+        }
         static glm::vec3 targetGLPos;
         if (gameHandler.hasTarget()) {
-            auto target = gameHandler.getTarget();
             if (target) {
                 // Prefer the renderer's actual instance position so the selection
                 // circle tracks the rendered model (not a parallel entity-space
@@ -989,10 +1017,14 @@ void GameScreen::render(game::GameHandler& gameHandler) {
                 // draws no ring, while another player there gets one.
                 if (target->getGuid() == gameHandler.getPlayerGuid()) showSelectionCircle = false;
                 if (showSelectionCircle && knownSize) {
-                    if (gameHandler.hasAutoAttackIntent() &&
-                        gameHandler.getAutoAttackTargetGuid() == target->getGuid()) {
+                    const bool meleeAttackingTarget =
+                        gameHandler.hasAutoAttackIntent() &&
+                        gameHandler.getAutoAttackTargetGuid() == target->getGuid();
+                    if (meleeAttackingTarget || autoRepeatAttacksTarget) {
                         // Build 8606 attack selection alternates pink/red and
-                        // pale yellow once per second, even outside melee range.
+                        // pale yellow once per second for both melee auto-attack
+                        // and ranged auto-repeat (Auto Shot 75 / Shoot 5019),
+                        // even outside firing range.
                         const float pulse = 0.5f + 0.5f * std::sin(
                             static_cast<float>(ImGui::GetTime() * 6.283185307179586));
                         circleColor = glm::vec3(1.0f, 0.5f + 0.5f * pulse, 0.5f);

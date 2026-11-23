@@ -196,6 +196,9 @@ AnimCapabilitySet AnimCapabilityProbe::probe(Renderer* renderer, uint32_t instan
     }
     caps.resolvedLoadBow = has(anim::LOAD_BOW) ? anim::LOAD_BOW : 0;
     caps.resolvedLoadRifle = has(anim::LOAD_RIFLE) ? anim::LOAD_RIFLE : 0;
+    caps.resolvedHoldBow = has(anim::HOLD_BOW) ? anim::HOLD_BOW : 0;
+    caps.resolvedHoldRifle = has(anim::HOLD_RIFLE) ? anim::HOLD_RIFLE : 0;
+    caps.resolvedHoldThrown = has(anim::HOLD_THROWN) ? anim::HOLD_THROWN : 0;
 
     // ── Special attacks ─────────────────────────────────────────────────
     caps.resolvedSpecial1H = has(anim::SPECIAL_1H) ? anim::SPECIAL_1H : 0;

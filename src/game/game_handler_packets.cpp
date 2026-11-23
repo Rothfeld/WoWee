@@ -1405,7 +1405,14 @@ void GameHandler::registerCoreOpcodes() {
             (!packet.hasFullPackedGuid() || packet.readPackedGuid() != playerGuid)) {
             return;
         }
-        if (spellHandler_) spellHandler_->clearAutoRepeat();
+        uint32_t stoppedSpell = 0;
+        if (spellHandler_) {
+            stoppedSpell = spellHandler_->getAutoRepeatSpellId();
+            spellHandler_->clearAutoRepeat();
+        }
+        if (stoppedSpell != 0 && spellCastAnimCallbackRef()) {
+            spellCastAnimCallbackRef()(playerGuid, SpellAnimPhase::STOP, stoppedSpell);
+        }
         fireAddonEvent("STOP_AUTOREPEAT_SPELL", {});
     };
 

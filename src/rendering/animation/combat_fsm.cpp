@@ -236,6 +236,16 @@ static uint32_t resolveRangedLoadAnim(const AnimCapabilitySet& caps, const Weapo
     }
 }
 
+static uint32_t resolveRangedHoldAnim(const AnimCapabilitySet& caps, const WeaponLoadout& loadout) {
+    switch (loadout.rangedType) {
+        case RangedWeaponType::BOW:      return caps.resolvedHoldBow;
+        case RangedWeaponType::GUN:      return caps.resolvedHoldRifle;
+        case RangedWeaponType::CROSSBOW: return caps.resolvedHoldBow;
+        case RangedWeaponType::THROWN:   return caps.resolvedHoldThrown;
+        default:                         return 0;
+    }
+}
+
 void CombatFSM::updateTransitions(const Input& in, const AnimCapabilitySet& caps,
                                    const WeaponLoadout& loadout) {
     // Stun override: can't act while stunned
@@ -287,7 +297,19 @@ void CombatFSM::updateTransitions(const Input& in, const AnimCapabilitySet& caps
             if (!in.inCombat) {
                 weaponsDrawn_ = false;
             } else if (in.grounded && !in.swimming && !in.moving) {
-                state_ = (in.hasUnsheathe && !weaponsDrawn_) ? State::UNSHEATHE : State::COMBAT_IDLE;
+                if (in.rangedAiming && in.rangedWeaponActive) {
+                    if (resolveRangedLoadAnim(caps, loadout) != 0) {
+                        rangedLoadAnimSeen_ = false;
+                        rangedLoadFrames_ = 0;
+                        state_ = State::RANGED_LOAD;
+                    } else if (resolveRangedHoldAnim(caps, loadout) != 0) {
+                        state_ = State::RANGED_HOLD;
+                    } else {
+                        state_ = (in.hasUnsheathe && !weaponsDrawn_) ? State::UNSHEATHE : State::COMBAT_IDLE;
+                    }
+                } else {
+                    state_ = (in.hasUnsheathe && !weaponsDrawn_) ? State::UNSHEATHE : State::COMBAT_IDLE;
+                }
             }
             break;
 
@@ -297,6 +319,14 @@ void CombatFSM::updateTransitions(const Input& in, const AnimCapabilitySet& caps
                 state_ = State::INACTIVE;
             } else if (!in.inCombat) {
                 state_ = in.hasSheathe ? State::SHEATHE : State::INACTIVE;
+            } else if (in.rangedAiming && in.rangedWeaponActive) {
+                if (resolveRangedLoadAnim(caps, loadout) != 0) {
+                    rangedLoadAnimSeen_ = false;
+                    rangedLoadFrames_ = 0;
+                    state_ = State::RANGED_LOAD;
+                } else if (resolveRangedHoldAnim(caps, loadout) != 0) {
+                    state_ = State::RANGED_HOLD;
+                }
             }
             break;
 
@@ -314,13 +344,16 @@ void CombatFSM::updateTransitions(const Input& in, const AnimCapabilitySet& caps
 
         case State::RANGED_SHOOT:
             if (in.rangedShootTimer <= 0.0f) {
-                if (in.swimming) {
+                if (in.swimming || in.moving) {
                     state_ = State::INACTIVE;
                 } else if (in.inCombat && in.grounded) {
                     if (resolveRangedLoadAnim(caps, loadout) != 0) {
                         rangedLoadAnimSeen_ = false;
                         rangedLoadFrames_ = 0;
                         state_ = State::RANGED_LOAD;
+                    } else if (in.rangedAiming && in.rangedWeaponActive &&
+                               resolveRangedHoldAnim(caps, loadout) != 0) {
+                        state_ = State::RANGED_HOLD;
                     } else {
                         state_ = State::COMBAT_IDLE;
                     }
@@ -335,15 +368,35 @@ void CombatFSM::updateTransitions(const Input& in, const AnimCapabilitySet& caps
                 state_ = State::INACTIVE;
             } else {
                 const uint32_t expectedAnim = resolveRangedLoadAnim(caps, loadout);
+                const auto advanceAfterLoad = [&]() {
+                    if (in.rangedAiming && in.rangedWeaponActive &&
+                        resolveRangedHoldAnim(caps, loadout) != 0) {
+                        state_ = State::RANGED_HOLD;
+                    } else {
+                        state_ = State::COMBAT_IDLE;
+                    }
+                };
                 if (expectedAnim == 0) {
-                    state_ = State::COMBAT_IDLE;
+                    advanceAfterLoad();
                 } else if (in.haveAnimState) {
                     if (in.currentAnimId == expectedAnim) rangedLoadAnimSeen_ = true;
                     if ((rangedLoadAnimSeen_ && oneShotComplete(in, expectedAnim)) ||
                         (!rangedLoadAnimSeen_ && ++rangedLoadFrames_ > 10)) {
-                        state_ = State::COMBAT_IDLE;
+                        advanceAfterLoad();
                     }
                 }
+            }
+            break;
+
+        case State::RANGED_HOLD:
+            weaponsDrawn_ = true;
+            if (in.swimming || in.jumping || !in.grounded || in.moving) {
+                state_ = State::INACTIVE;
+            } else if (!in.inCombat) {
+                state_ = in.hasSheathe ? State::SHEATHE : State::INACTIVE;
+            } else if (!in.rangedAiming || !in.rangedWeaponActive ||
+                       resolveRangedHoldAnim(caps, loadout) == 0) {
+                state_ = State::COMBAT_IDLE;
             }
             break;
 
@@ -561,6 +614,11 @@ AnimOutput CombatFSM::resolve(const Input& in, const AnimCapabilitySet& caps,
                 default: break;
             }
             loop = false;
+            break;
+
+        case State::RANGED_HOLD:
+            animId = resolveRangedHoldAnim(caps, loadout);
+            loop = true;
             break;
 
         case State::SPELL_PRECAST:

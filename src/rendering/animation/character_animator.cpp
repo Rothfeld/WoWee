@@ -155,6 +155,7 @@ AnimOutput CharacterAnimator::resolveAnimation() {
     combatIn.sprinting = fi.sprinting;
     combatIn.lowHealth = lowHealth_;
     combatIn.rangedWeaponActive = rangedWeaponActive_;
+    combatIn.rangedAiming = rangedAiming_;
     combatIn.meleeSwingTimer = fi.meleeSwingTimer;
     combatIn.meleeSwingOffHand = fi.meleeSwingOffHand;
     combatIn.meleeSwingSerial = fi.meleeSwingSerial;

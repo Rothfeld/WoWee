@@ -177,9 +177,12 @@ TEST_CASE("Turn shuffle preserves stationary upper-body stance above SpineLow", 
 
     for (uint32_t stance : {anim::READY_UNARMED, anim::READY_1H, anim::READY_2H,
                             anim::READY_2H_LOOSE, anim::READY_BOW, anim::READY_RIFLE,
+                            anim::READY_THROWN, anim::READY_SPELL_DIRECTED, anim::READY_SPELL_OMNI,
+                            anim::HOLD_BOW, anim::HOLD_RIFLE, anim::HOLD_THROWN,
                             anim::STEALTH_STAND}) {
         in.previousAnimId = stance;
         CHECK(shouldPreserveUpperBodyStanceOnShuffle(in));
+        CHECK(upperBodyAllowsBase(stance, kBfReady, false));
     }
 
     // Models without SpineLow (quadrupeds) play full-body shuffle.

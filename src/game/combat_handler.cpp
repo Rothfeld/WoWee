@@ -1569,9 +1569,14 @@ void CombatHandler::setTarget(uint64_t guid) {
     // Only when the target actually changes, and only when something is being
     // swung at: re-selecting the same unit is not a change, and stopping an
     // attack nobody started would send a cancel for nothing.
-    if (guid != owner_.getTargetGuid() && autoAttackRequested_ &&
+    if (guid != owner_.getTargetGuid() &&
         addons::storedCVarValue("stopAutoAttackOnTargetChange", "0") != "0") {
-        stopAutoAttack();
+        if (autoAttackRequested_) {
+            stopAutoAttack();
+        }
+        if (owner_.getSpellHandler() && owner_.getSpellHandler()->getAutoRepeatSpellId() != 0) {
+            owner_.getSpellHandler()->cancelAutoRepeatSpell();
+        }
     }
 
     owner_.setTargetGuidRaw(guid);

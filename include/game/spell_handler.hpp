@@ -135,6 +135,7 @@ public:
     /// Auto Shot or Shoot while it repeats, otherwise 0.
     [[nodiscard]] uint32_t getAutoRepeatSpellId() const { return autoRepeatSpellId_; }
     void clearAutoRepeat() { autoRepeatSpellId_ = 0; }
+    void cancelAutoRepeatSpell();
     [[nodiscard]] bool isGameObjectInteractionCasting() const;
     // The cast or channel in progress, else a cast sent and not yet answered,
     // else a spell waiting on the targeting cursor, else the ability queued for
@@ -653,6 +654,7 @@ private:
     /// second press inside a short window is an accident rather than a
     /// decision. See the SPELL_ID_ATTACK branch in castSpell.
     std::chrono::steady_clock::time_point autoAttackToggledAt_{};
+    std::chrono::steady_clock::time_point autoRepeatToggledAt_{};
     uint32_t queuedSpellId_ = 0;
     uint64_t queuedSpellTarget_ = 0;
 
