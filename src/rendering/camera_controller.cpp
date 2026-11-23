@@ -9,9 +9,11 @@
 #include "ui/framexml_takeover.hpp"
 #include "rendering/movement_limits.hpp"
 #include "rendering/body_collision.hpp"
+#include "rendering/body_mover.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <future>
 #include <limits>
@@ -37,7 +39,11 @@ namespace rendering {
 
 namespace {
 
-constexpr float kMaxPhysicsDelta = 1.0f / 30.0f;
+// One physics step per frame down to 20 frames per second: native moves the
+// whole frame in one piece (measured at 16 to 36 ms frames), and whether a
+// step up is taken depends on that whole move. Longer frames are not measured
+// and are split.
+constexpr float kMaxPhysicsDelta = 0.05f;
 // Measured native 2.4.3 drift after a standing jump; see moveFollowedCharacter.
 constexpr float kAirborneDriftSpeed = 2.5f;
 
@@ -452,6 +458,98 @@ void CameraController::setFlyingActive(bool active) {
         flightAirborne_ = false;
         midAirFlightEngaged_ = false;
     }
+}
+
+glm::vec3 CameraController::moveBodyOnFoot(const glm::vec3& start, const glm::vec3& target,
+                                           float stepSeconds) {
+    assert(stepSeconds > 0.0f);
+    const float radius = std::max(collisionRadius_, 0.1f);
+    const float height = std::max(collisionHeight_, radius * movement::kBodyBevel + 0.01f);
+    const float minWalkable = ignoreSlopeLimit_ ? 0.0f : movement::kMinWalkableNormalZ;
+    // Depth a body set down by the server, a teleport or another movement
+    // mode may sit inside its floor and still be stood on it, not dropped
+    // through: server heights are not this client's triangles to the millimetre.
+    constexpr float kSunkTolerance = 0.25f;
+
+    thread_local std::vector<movement::BodyTriangle> triangles;
+    thread_local std::vector<glm::vec3> terrainCorners;
+    triangles.clear();
+    terrainCorners.clear();
+    const glm::vec3 reach(radius + 0.25f, radius + 0.25f, 0.0f);
+    const glm::vec3 low = glm::min(start, target) - reach -
+        glm::vec3(0.0f, 0.0f, movement::kMaxStepDown + 0.25f);
+    const glm::vec3 high = glm::max(start, target) + reach +
+        glm::vec3(0.0f, 0.0f, height + movement::kMaxStepUp + kSunkTolerance + 0.25f);
+    if (terrainManager) {
+        terrainManager->appendSurfaceTriangles(low, high, terrainCorners);
+        for (size_t i = 0; i + 2 < terrainCorners.size(); i += 3)
+            triangles.push_back({terrainCorners[i], terrainCorners[i + 1], terrainCorners[i + 2]});
+    }
+    const size_t terrainCount = triangles.size();
+    if (wmoRenderer) wmoRenderer->appendBodyCollisionTriangles(low, high, triangles);
+    const size_t wmoCount = triangles.size() - terrainCount;
+    if (m2Renderer) m2Renderer->appendBodyCollisionTriangles(low, high, triangles);
+    const size_t m2Count = triangles.size() - terrainCount - wmoCount;
+
+    glm::vec3 from = start;
+    const glm::vec3 delta = target - start;
+    const glm::vec3 horizontal(delta.x, delta.y, 0.0f);
+    const bool supported = grounded && verticalVelocity <= 0.0f;
+    if (supported) {
+        if (const auto rest = movement::lowerBody(from + glm::vec3(0.0f, 0.0f, kSunkTolerance),
+                                                  kSunkTolerance, radius, height, triangles)) {
+            from.z = std::max(from.z, rest->position.z);
+        }
+    }
+    if (from.z < walkableStepBaseZ_ || !bodyStepBaseKnown_) walkableStepBaseZ_ = from.z;
+    bodyStepBaseKnown_ = true;
+
+    movement::BodyMove move;
+    bool walked = false;
+    if (supported) {
+        // One yard above where the sole last stood on ground.
+        const float budget = std::clamp(walkableStepBaseZ_ + movement::kMaxStepUp - from.z,
+                                        0.0f, movement::kMaxStepUp);
+        move = movement::walkBody(from, horizontal, budget, radius, height, triangles, minWalkable);
+        // A perch is left by stepping on from it, or by falling.
+        walked = !bodyPerched_ || move.stepped;
+    }
+    if (!walked) {
+        move = movement::fallBody(from, glm::vec3(horizontal.x, horizontal.y, delta.z),
+                                  radius, height, triangles, minWalkable);
+    }
+    if (move.deflected) {
+        if (wmoCount > 0 || terrainCount > 0) ++movementTraceWmoContacts_;
+        if (m2Count > 0) ++movementTraceM2Contacts_;
+    }
+    static const bool traceContact = core::envFlagEnabled("WOWEE_BODY_CONTACT_TRACE");
+    if (traceContact && (move.deflected || move.stepped || move.ceiling)) {
+        LOG_INFO("Body move: from=", from.x, ",", from.y, ",", from.z,
+            " requested=", target.x, ",", target.y, ",", target.z,
+            " to=", move.position.x, ",", move.position.y, ",", move.position.z,
+            " walked=", walked, " stepped=", move.stepped, " deflected=", move.deflected,
+            " ceiling=", move.ceiling, " support=", static_cast<int>(move.support),
+            " triangles=", terrainCount, "/", wmoCount, "/", m2Count);
+    }
+    if (move.ceiling && verticalVelocity > 0.0f) verticalVelocity = 0.0f;
+    if (walked && move.support == movement::BodySupport::None) {
+        // Walked off: the fall carries the velocity the body actually had in
+        // this frame, not the one asked for. Native leaving the Dustwallow
+        // plank ramp while sliding along its edge falls at 3.44 yd/s along the
+        // edge, the run speed's part in that direction.
+        airborneHorizontalVelocity_ = glm::vec3(move.position.x - from.x, move.position.y - from.y, 0.0f) / stepSeconds;
+    }
+    // Perched counts as on the ground for everything but the step budget: the
+    // body is held, mid-step, as on the nose of a stair.
+    grounded = move.support != movement::BodySupport::None;
+    bodyPerched_ = move.support == movement::BodySupport::Steep;
+    if (grounded) verticalVelocity = 0.0f;
+    // The step's yard is counted from where the sole last stood, or from
+    // where a fall ended.
+    const bool landed = !walked && move.support == movement::BodySupport::Walkable;
+    if (move.soleOnGround || landed || move.position.z < walkableStepBaseZ_)
+        walkableStepBaseZ_ = move.position.z;
+    return move.position;
 }
 
 glm::vec3 CameraController::moveFollowedCharacter(float /*deltaTime*/, FrameInput& f,
@@ -1056,6 +1154,21 @@ glm::vec3 CameraController::moveFollowedCharacter(float /*deltaTime*/, FrameInpu
         }
     }
 
+    // On foot the whole body moves among the triangles of terrain, buildings
+    // and doodads alike (rendering/body_mover.hpp). The other ways of moving
+    // keep their own vertical rules and only sweep against walls.
+    bodyMoved_ = false;
+    const bool onFoot = !externalFollow_ && !swimming && !isFlightAirborne() && !hoverActive_ &&
+        !sitting && !seatedInChair_ && !waterWalkActive_ && gravitySuspendTimer_ <= 0.0f &&
+        !groundNotStreamedYet(targetPos.x, targetPos.y);
+    if (onFoot) {
+        targetPos = moveBodyOnFoot(*followTarget, targetPos, f.physicsDeltaTime);
+        bodyMoved_ = true;
+        return targetPos;
+    }
+    bodyPerched_ = false;
+    bodyStepBaseKnown_ = false;
+
     // Sweep collisions in small steps to reduce tunneling through thin walls/floors.
     // Skip entirely when stationary to avoid wasting collision calls.
     // Use tighter steps when inside WMO for more precise collision.
@@ -1581,6 +1694,21 @@ void CameraController::groundFollowedCharacter(float deltaTime, FrameInput& f,
         return;
     }
 
+    if (bodyMoved_) {
+        // moveBodyOnFoot has already stood the body on what holds it.
+        hasRealGround_ = grounded;
+        hasCachedFloor_ = false;
+        if (grounded) {
+            noGroundTimer_ = 0.0f;
+            lastGroundZ = targetPos.z;
+            if (!bodyPerched_) {
+                lastGroundedPos_ = targetPos;
+                hasLastGroundedPos_ = true;
+            }
+        } else {
+            noGroundTimer_ += f.physicsDeltaTime;
+        }
+    } else
     // Ground the character to terrain or WMO floor
     // Skip entirely while swimming - the swim floor clamp handles vertical bounds.
     if (!swimming) {
@@ -2603,6 +2731,47 @@ void CameraController::updateThirdPersonCamera(float deltaTime, FrameInput& f) {
         LOG_WARNING("Flight: landed");
     }
     updateOrbitCamera(deltaTime, f, viewTarget_ ? *viewTarget_ : targetPos);
+    // WOWEE_BODY_DUMP=/path/prefix: when /path/prefix.request exists (one
+    // number, the half-extent in yards), writes every movement collision
+    // triangle around the followed character to /path/prefix.tris, one per
+    // line: source (T terrain, W WMO, M doodad) and nine render coordinates.
+    static const char* bodyDumpPrefix = std::getenv("WOWEE_BODY_DUMP");
+    if (bodyDumpPrefix && followTarget) {
+        const std::string request = std::string(bodyDumpPrefix) + ".request";
+        if (std::ifstream in(request); in) {
+            float extent = 0.0f;
+            in >> extent;
+            assert(extent > 0.0f);
+            in.close();
+            const glm::vec3 low = *followTarget - glm::vec3(extent);
+            const glm::vec3 high = *followTarget + glm::vec3(extent);
+            std::ofstream out(std::string(bodyDumpPrefix) + ".tris.tmp");
+            out.precision(9);
+            out << "# body radius " << collisionRadius_ << " height " << collisionHeight_
+                << " position " << followTarget->x << ' ' << followTarget->y << ' ' << followTarget->z << '\n';
+            std::vector<movement::BodyTriangle> tris;
+            const auto write = [&](char source) {
+                for (const auto& t : tris) {
+                    out << source;
+                    for (const auto& v : t) out << ' ' << v.x << ' ' << v.y << ' ' << v.z;
+                    out << '\n';
+                }
+                tris.clear();
+            };
+            if (terrainManager) {
+                std::vector<glm::vec3> flat;
+                terrainManager->appendSurfaceTriangles(low, high, flat);
+                for (size_t i = 0; i + 2 < flat.size(); i += 3) tris.push_back({flat[i], flat[i + 1], flat[i + 2]});
+                write('T');
+            }
+            if (wmoRenderer) { wmoRenderer->appendBodyCollisionTriangles(low, high, tris); write('W'); }
+            if (m2Renderer) { m2Renderer->appendBodyCollisionTriangles(low, high, tris); write('M'); }
+            out.close();
+            std::filesystem::rename(std::string(bodyDumpPrefix) + ".tris.tmp", std::string(bodyDumpPrefix) + ".tris");
+            std::filesystem::remove(request);
+            LOG_INFO("Body collision triangles dumped to ", bodyDumpPrefix, ".tris");
+        }
+    }
     static const bool traceMovement = core::envFlagEnabled("WOWEE_MOVEMENT_TRACE");
     if (traceMovement && followTarget) {
         // Render coordinates, yards, degrees, seconds. SDL ticks are process-relative.

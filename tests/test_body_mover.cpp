@@ -1,0 +1,283 @@
+// The on-foot body mover against the situations it was derived from.
+//
+// The geometry here is made up, in the proportions of the places native was
+// measured at (see rendering/body_mover.hpp): a floor with a wall leaning 84
+// degrees, a tall hull at 64.6 degrees, a 57.4 degree bump with ground behind
+// it, stairs, ledges. Native's own frames and WoWee's triangles for the real
+// places are replayed by sim.cpp in the workspace experiment
+// _experiments/20261123T182500Z.movement_collision_parity.
+#include "rendering/body_mover.hpp"
+#include <catch_amalgamated.hpp>
+
+#include <cmath>
+#include <vector>
+
+using namespace wowee::rendering::movement;
+
+namespace {
+
+constexpr float kRadius = 0.305555552f;   // human male, as dumped by the client
+constexpr float kHeight = 2.0312655f;
+constexpr float kFrameRun = 7.0f / 30.0f; // one 30 fps frame at run speed
+constexpr float kGravity = 19.29110527f;
+
+using Mesh = std::vector<BodyTriangle>;
+
+void quad(Mesh& mesh, glm::vec3 a, glm::vec3 b, glm::vec3 c, glm::vec3 d) {
+    mesh.push_back({a, b, c});
+    mesh.push_back({a, c, d});
+}
+
+void floorAt(Mesh& mesh, float z, float x0 = -20.0f, float x1 = 20.0f) {
+    quad(mesh, {x0, -20, z}, {x1, -20, z}, {x1, 20, z}, {x0, 20, z});
+}
+
+// A face rising from the line x = foot at z = base, leaning away from -x by
+// `degrees` from the horizontal, `tall` yards high.
+void slope(Mesh& mesh, float foot, float base, float degrees, float tall) {
+    const float run = tall / std::tan(glm::radians(degrees));
+    quad(mesh, {foot, -20, base}, {foot + run, -20, base + tall},
+         {foot + run, 20, base + tall}, {foot, 20, base});
+}
+
+// The controller's side of the mover, as CameraController::moveBodyOnFoot.
+struct Walker {
+    glm::vec3 position;
+    bool grounded = true;   // held: on ground, or perched
+    bool perched = false;
+    float verticalVelocity = 0.0f;
+    float baseZ = 0.0f;
+
+    BodyMove frame(const Mesh& mesh, glm::vec3 run, float dt = 1.0f / 30.0f) {
+        BodyMove move;
+        bool walked = false;
+        if (position.z < baseZ) baseZ = position.z;
+        if (grounded && verticalVelocity <= 0.0f) {
+            const float budget = std::clamp(baseZ + kMaxStepUp - position.z, 0.0f, kMaxStepUp);
+            move = walkBody(position, run, budget, kRadius, kHeight, mesh);
+            walked = !perched || move.stepped;
+        }
+        if (!walked) {
+            const float drop = verticalVelocity * dt - 0.5f * kGravity * dt * dt;
+            verticalVelocity -= kGravity * dt;
+            move = fallBody(position, run + glm::vec3(0, 0, drop), kRadius, kHeight, mesh);
+        }
+        position = move.position;
+        grounded = move.support != BodySupport::None;
+        perched = move.support == BodySupport::Steep;
+        if (grounded) verticalVelocity = 0.0f;
+        const bool landed = !walked && move.support == BodySupport::Walkable;
+        if (move.soleOnGround || landed || position.z < baseZ) baseZ = position.z;
+        return move;
+    }
+};
+
+} // namespace
+
+TEST_CASE("A wall leaning 84 degrees is slid along and never climbed", "[body_mover]") {
+    // Orgrimmar (1826.75, -4245.98): native keeps its height at 7 and 3.5
+    // yd/s, 30 and 60 frames per second. A lifted body clears such a wall by
+    // 0.105 yd per yard of lift, so a short frame's move fits above it.
+    Mesh mesh;
+    floorAt(mesh, 0.0f);
+    slope(mesh, 2.0f, -0.5f, 84.0f, 10.0f);
+    for (const float run : {kFrameRun, kFrameRun * 0.5f, kFrameRun * 0.25f}) {
+        for (const glm::vec2 heading : {glm::vec2(1.0f, 0.0f), glm::normalize(glm::vec2(1.0f, 0.4f))}) {
+            Walker walker{.position = {1.0f, 0.0f, 0.0f}};
+            float furthestX = walker.position.x;
+            for (int i = 0; i < 90; ++i) {
+                const BodyMove move = walker.frame(mesh, glm::vec3(heading * run, 0.0f));
+                INFO("run " << run << " frame " << i);
+                REQUIRE(move.support == BodySupport::Walkable);
+                REQUIRE(std::abs(walker.position.z) < 0.003f);
+                furthestX = std::max(furthestX, walker.position.x);
+            }
+            // Stopped by the wall, at the body's shoulder.
+            REQUIRE(furthestX < 2.0f);
+            REQUIRE(furthestX > 2.0f - kRadius - 0.2f);
+            // An oblique approach keeps moving along it.
+            if (heading.y > 0.0f) REQUIRE(walker.position.y > 1.0f);
+        }
+    }
+}
+
+TEST_CASE("A tall face too steep to stand on is not stepped onto", "[body_mover]") {
+    // The Northshire tree hull, 64.6 degrees and 7 yd tall: native slides
+    // along it for seconds without rising.
+    Mesh mesh;
+    floorAt(mesh, 0.0f);
+    slope(mesh, 2.0f, 0.0f, 64.6f, 7.0f);
+    Walker walker{.position = {1.0f, 0.0f, 0.0f}};
+    const glm::vec3 run(glm::normalize(glm::vec2(1.0f, 0.5f)) * kFrameRun, 0.0f);
+    for (int i = 0; i < 60; ++i) {
+        const BodyMove move = walker.frame(mesh, run);
+        INFO("frame " << i);
+        REQUIRE(move.support == BodySupport::Walkable);
+        REQUIRE(std::abs(walker.position.z) < 0.003f);
+    }
+    REQUIRE(walker.position.y > 2.0f);
+}
+
+TEST_CASE("A steep bump with ground behind it is walked over", "[body_mover]") {
+    // The Dustwallow plank ramp's 57.4 degree bump: native crosses it in two
+    // frames at the full horizontal move.
+    Mesh mesh;
+    floorAt(mesh, 0.0f, -20.0f, 2.0f);
+    slope(mesh, 2.0f, 0.0f, 57.4f, 0.5f);
+    const float top = 2.0f + 0.5f / std::tan(glm::radians(57.4f));
+    quad(mesh, {top, -20, 0.5f}, {20, -20, 0.5f}, {20, 20, 0.5f}, {top, 20, 0.5f});
+    Walker walker{.position = {1.0f, 0.0f, 0.0f}};
+    for (int i = 0; i < 12; ++i) {
+        const float before = walker.position.x;
+        walker.frame(mesh, {kFrameRun, 0.0f, 0.0f});
+        INFO("frame " << i << " at " << walker.position.x << ", " << walker.position.z);
+        REQUIRE(walker.position.x == Catch::Approx(before + kFrameRun).margin(1e-4));
+    }
+    REQUIRE(walker.grounded);
+    REQUIRE_FALSE(walker.perched);
+    REQUIRE(walker.position.z == Catch::Approx(0.5f).margin(0.003));
+}
+
+TEST_CASE("Stairs are climbed and descended a whole frame at a time", "[body_mover]") {
+    Mesh mesh;
+    floorAt(mesh, 0.0f, -20.0f, 2.0f);
+    for (int stepIndex = 0; stepIndex < 6; ++stepIndex) {
+        const float x = 2.0f + 0.5f * static_cast<float>(stepIndex);
+        const float z = 0.4f * static_cast<float>(stepIndex);
+        quad(mesh, {x, -20, z}, {x, -20, z + 0.4f}, {x, 20, z + 0.4f}, {x, 20, z});
+        quad(mesh, {x, -20, z + 0.4f}, {x + 0.5f, -20, z + 0.4f}, {x + 0.5f, 20, z + 0.4f}, {x, 20, z + 0.4f});
+    }
+    floorAt(mesh, 2.4f, 5.0f, 20.0f);
+    Walker walker{.position = {1.0f, 0.0f, 0.0f}};
+    for (int i = 0; i < 30; ++i) {
+        const float before = walker.position.x;
+        const BodyMove move = walker.frame(mesh, {kFrameRun, 0.0f, 0.0f});
+        INFO("up, frame " << i << " at " << walker.position.x << ", " << walker.position.z);
+        // Held every frame: on a tread, or by the bevel on the next tread's nose.
+        REQUIRE(move.support != BodySupport::None);
+        REQUIRE(walker.position.x == Catch::Approx(before + kFrameRun).margin(1e-4));
+    }
+    REQUIRE(walker.position.z == Catch::Approx(2.4f).margin(0.003));
+    for (int i = 0; i < 30; ++i) {
+        const BodyMove move = walker.frame(mesh, {-kFrameRun, 0.0f, 0.0f});
+        INFO("down, frame " << i << " at " << walker.position.x << ", " << walker.position.z);
+        REQUIRE(move.support == BodySupport::Walkable);
+    }
+    REQUIRE(walker.position.z == Catch::Approx(0.0f).margin(0.003));
+}
+
+TEST_CASE("A step is one yard at most", "[body_mover]") {
+    for (const float tall : {0.95f, 1.05f, 1.3f}) {
+        Mesh mesh;
+        floorAt(mesh, 0.0f, -20.0f, 2.0f);
+        quad(mesh, {2, -20, 0}, {2, -20, tall}, {2, 20, tall}, {2, 20, 0});
+        floorAt(mesh, tall, 2.0f, 20.0f);
+        Walker walker{.position = {1.0f, 0.0f, 0.0f}};
+        for (int i = 0; i < 40; ++i) walker.frame(mesh, {kFrameRun, 0.0f, 0.0f});
+        INFO("ledge " << tall << " reached " << walker.position.x << ", " << walker.position.z);
+        REQUIRE(walker.grounded);
+        if (tall < 1.0f) {
+            REQUIRE(walker.position.z == Catch::Approx(tall).margin(0.003));
+            REQUIRE(walker.position.x > 3.0f);
+        } else {
+            // Not onto it, and not hung on its edge by the bevel either: from
+            // there the rest of the yard does not reach the top.
+            REQUIRE(walker.position.z == Catch::Approx(0.0f).margin(0.003));
+            REQUIRE(walker.position.x < 2.0f);
+        }
+    }
+}
+
+TEST_CASE("Walking off a low ledge lowers the body; a high one drops it", "[body_mover]") {
+    Mesh low;
+    floorAt(low, 0.0f, -20.0f, 2.0f);
+    floorAt(low, -0.44f, 2.0f, 20.0f);
+    Walker walker{.position = {1.0f, 0.0f, 0.0f}};
+    for (int i = 0; i < 8; ++i) {
+        const BodyMove move = walker.frame(low, {kFrameRun, 0.0f, 0.0f});
+        // Native: 0.44 yd down within one frame at the Anvilmar railing.
+        REQUIRE(move.support == BodySupport::Walkable);
+    }
+    REQUIRE(walker.position.z == Catch::Approx(-0.44f).margin(0.003));
+
+    Mesh high;
+    floorAt(high, 0.0f, -20.0f, 2.0f);
+    floorAt(high, -3.0f, 2.0f, 20.0f);
+    Walker faller{.position = {1.0f, 0.0f, 0.0f}};
+    int airborneFrames = 0;
+    for (int i = 0; i < 40; ++i) {
+        faller.frame(high, {kFrameRun, 0.0f, 0.0f});
+        if (!faller.grounded) ++airborneFrames;
+    }
+    REQUIRE(faller.grounded);
+    REQUIRE(faller.position.z == Catch::Approx(-3.0f).margin(0.003));
+    // 3 yd at 19.29 yd/s^2 is 0.558 s, 17 frames; the first of the drop is
+    // ridden down the ledge's edge on the bevel.
+    REQUIRE(airborneFrames >= 10);
+    REQUIRE(airborneFrames <= 19);
+}
+
+TEST_CASE("A falling body is turned aside by a steep face and keeps its drop", "[body_mover]") {
+    // The Exodar table's sides: native falls along them in free fall while
+    // its horizontal move is taken out.
+    Mesh mesh;
+    floorAt(mesh, 0.0f);
+    slope(mesh, 2.0f, 0.0f, 74.6f, 4.0f);
+    const glm::vec3 start(2.0f, 0.0f, 2.0f);  // above the face, feet clear of it
+    const glm::vec3 delta(kFrameRun, 0.0f, -0.1f);
+    const BodyMove move = fallBody(start, delta, kRadius, kHeight, mesh);
+    REQUIRE(move.support == BodySupport::None);
+    REQUIRE(move.position.z == Catch::Approx(start.z + delta.z).margin(1e-4));
+    REQUIRE(move.position.x <= start.x + kFrameRun);
+    // And it comes to rest on the floor at the face's foot.
+    Walker walker{.position = start, .grounded = false};
+    for (int i = 0; i < 40 && !walker.grounded; ++i) walker.frame(mesh, {kFrameRun, 0.0f, 0.0f});
+    REQUIRE(walker.grounded);
+    REQUIRE(walker.position.z == Catch::Approx(0.0f).margin(0.003));
+}
+
+TEST_CASE("A ceiling ends a jump and a low roof refuses a step", "[body_mover]") {
+    Mesh mesh;
+    floorAt(mesh, 0.0f);
+    floorAt(mesh, kHeight + 0.5f);
+    const BodyMove jump = fallBody({0, 0, 0.2f}, {0.0f, 0.0f, 1.0f}, kRadius, kHeight, mesh);
+    REQUIRE(jump.ceiling);
+    REQUIRE(jump.position.z < 0.5f);
+
+    // A 0.9 yd ledge under a roof 0.5 yd over the head: no room on top.
+    quad(mesh, {2, -20, 0}, {2, -20, 0.9f}, {2, 20, 0.9f}, {2, 20, 0});
+    floorAt(mesh, 0.9f, 2.0f, 20.0f);
+    Walker walker{.position = {1.0f, 0.0f, 0.0f}};
+    for (int i = 0; i < 10; ++i) walker.frame(mesh, {kFrameRun, 0.0f, 0.0f});
+    REQUIRE(walker.grounded);
+    REQUIRE(walker.position.z == Catch::Approx(0.0f).margin(0.003));
+    REQUIRE(walker.position.x < 2.0f);
+}
+
+TEST_CASE("A jump that reaches a ledge's edge with the bevel gets onto it", "[body_mover]") {
+    // Native clears the Northshire fence hull, 1.60 to 1.65 yd tall, with a
+    // jump whose sole peaks 1.64 yd up, and walks on across it.
+    Mesh mesh;
+    floorAt(mesh, 0.0f, -20.0f, 3.0f);
+    quad(mesh, {3, -20, 0}, {3, -20, 1.7f}, {3, 20, 1.7f}, {3, 20, 0});
+    floorAt(mesh, 1.7f, 3.0f, 20.0f);
+    Walker walker{.position = {0.5f, 0.0f, 0.0f}};
+    walker.grounded = false;
+    walker.verticalVelocity = 7.9555f;  // native jump velocity: 1.64 yd apex
+    for (int i = 0; i < 40; ++i) walker.frame(mesh, {kFrameRun, 0.0f, 0.0f});
+    REQUIRE(walker.grounded);
+    REQUIRE(walker.position.z == Catch::Approx(1.7f).margin(0.003));
+    REQUIRE(walker.position.x > 3.0f);
+
+    // A ledge beyond the bevel's reach is not got onto.
+    Mesh tall;
+    floorAt(tall, 0.0f, -20.0f, 3.0f);
+    quad(tall, {3, -20, 0}, {3, -20, 2.4f}, {3, 20, 2.4f}, {3, 20, 0});
+    floorAt(tall, 2.4f, 3.0f, 20.0f);
+    Walker blocked{.position = {0.5f, 0.0f, 0.0f}};
+    blocked.grounded = false;
+    blocked.verticalVelocity = 7.9555f;
+    for (int i = 0; i < 40; ++i) blocked.frame(tall, {kFrameRun, 0.0f, 0.0f});
+    REQUIRE(blocked.grounded);
+    REQUIRE(blocked.position.z == Catch::Approx(0.0f).margin(0.003));
+}

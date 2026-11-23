@@ -527,6 +527,9 @@ private:
     /// Where the followed character wants to be this frame: the movement
     /// intent and the swept wall collision. The floor is not consulted yet.
     glm::vec3 moveFollowedCharacter(float deltaTime, FrameInput& f, glm::vec3& prevTargetPos);
+    // On foot: move the body from `start` toward `target` among terrain, WMO
+    // and doodad triangles; sets grounded, bodyPerched_ and the step base.
+    glm::vec3 moveBodyOnFoot(const glm::vec3& start, const glm::vec3& target, float stepSeconds);
 
     /// What the floor queries answer directly under the character: the floor
     /// that was chosen, and the three surfaces that were offered. The recovery
@@ -943,6 +946,14 @@ private:
     // from that rest, onto walkable ground only (stepFromRest_).
     bool stepFinishedThisFrame_ = false;
     bool stepFromRest_ = false;
+    // On foot: resting on a face too steep to stand on, reached by a step
+    // that leads on to ground (rendering/body_mover.hpp).
+    bool bodyPerched_ = false;
+    // walkableStepBaseZ_ was set by moveBodyOnFoot; another movement mode
+    // (swimming, flight, a taxi) leaves it stale.
+    bool bodyStepBaseKnown_ = false;
+    // This physics step was moved and grounded by moveBodyOnFoot.
+    bool bodyMoved_ = false;
     glm::vec3 airborneHorizontalVelocity_{0.0f};
     bool preserveAirborneMomentum_ = false;
     // Whether the keys that gave airborneHorizontalVelocity_ were a strafe

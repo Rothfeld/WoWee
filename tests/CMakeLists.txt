@@ -2894,6 +2894,12 @@ wowee_add_test(test_collision_geometry
             ${CMAKE_SOURCE_DIR}/src/pipeline/wmo_loader.cpp
             ${TEST_COMMON_SOURCES})
 
+# ── test_body_mover ──────────────────────────────────────────
+# The on-foot body mover: walls slid along, steps, ledges, steep faces, falls.
+wowee_add_test(test_body_mover
+    SOURCES test_body_mover.cpp
+            ${TEST_COMMON_SOURCES})
+
 # ── test_entity_floor_arbitration ────────────────────────────
 # Grounded-unit vertical placement across terrain, WMO and M2 doodad floors.
 wowee_add_test(test_entity_floor_arbitration

@@ -1217,9 +1217,10 @@ players: `rendering::airborneLegDirection` latches the movement-flag
 direction at takeoff. `build/bin/test_entity '[animation]'`. Evidence:
 `_experiments/20261119T1040.jump_legs/` in the workspace.
 
-Descending floor selection excludes prop/structure candidates above previous
-feet. A nearby log rim must not hide terrain crossed beneath it. Terrain retains
-its endpoint crossing rule for uphill landings; grounded step-up is separate.
+Floor selection by height queries (`groundFollowedCharacter`) applies to the
+movement modes that are not on foot; see "Walking and falling on foot" below.
+Descending floor selection there excludes prop/structure candidates above
+previous feet. A nearby log rim must not hide terrain crossed beneath it.
 
 Authored M2 contact uses an upright beveled box. TBC build 8606's shape
 constructor at `0x632650` supplies nine points: the sole, four corners at
@@ -1230,10 +1231,72 @@ CreatureModelData's width/height to file rounding.
 
 Continuous separating-axis tests sweep that body against placed triangles,
 including triangles classified as local floors. Native collision geometry stays
-solid regardless of the name or local orientation of its model. Resolve lateral
-motion before vertical motion. Lateral overhang contact preserves feet height;
-vertical head contact stops ascent; foot support clears falling velocity.
-Grounded step-up remains a separate floor-selection decision.
+solid regardless of the name or local orientation of its model.
+
+### Walking and falling on foot
+
+`build/bin/test_body_mover` runs the rules below on made-up geometry.
+
+On foot (not swimming, flying, hovering, seated, water walking, on a taxi, or
+while the ground is still streaming in) `CameraController::moveBodyOnFoot`
+moves that body among the triangles of terrain, WMOs and doodads alike, with
+`walkBody` / `fallBody` from `include/rendering/body_mover.hpp`. It decides
+position, grounding and step-up in one place; the floor queries of
+`groundFollowedCharacter` serve only the other movement modes. The rules were
+read off native per-frame positions (200 Hz reads of the native player
+position) replayed against WoWee's own triangles for the same places:
+
+- One step per frame with the whole frame's move (`kMaxPhysicsDelta` 50 ms).
+  Native moves a 16 to 36 ms frame in one piece, and whether it steps up
+  depends on that whole move; splitting a frame changes the outcome.
+- Walking: level when nothing is in the way. Otherwise lift by what is left of
+  one yard over where the sole last stood on ground, carry the whole move,
+  lower onto what is there. It is a step only if the lifted move meets nothing.
+- Ground is a face up to 50 degrees under the body, whether the sole stands
+  on it or the bevel hangs on its edge (native rides the nose of the
+  Northshire Abbey steps down that way).
+- A step that does not put the sole on ground (it ends on a steeper face, or
+  hung on an edge) is taken only when repeating the same move from there does,
+  within the yard. On a steeper face the body is perched, and next frame steps
+  on or falls.
+- A step refused, the move is replaced by its part along the refusing face
+  and tried from the same place, without first closing the gap to the face;
+  refused again, by its part along both faces; in a corner the body stays.
+- After a level move the body is lowered up to a yard onto ground; held up by
+  a steep face instead, it is lowered as a fall would, turned aside by it.
+  With no ground there it falls, at the velocity it actually had that frame.
+- Falling: horizontal move and drop are swept together; ground ends the fall,
+  under the sole or caught by the bevel (native gets onto the Northshire
+  fence hull, 1.60 to 1.65 yd, with a 1.64 yd jump); any other face turns the
+  body aside horizontally and leaves the drop alone.
+
+Gotchas:
+
+- The sweep ignores a triangle the body already overlaps by more than the
+  contact skin (1.4 mm), so a body inside its floor would fall through it.
+  `moveBodyOnFoot` first stands a body sunk up to 0.25 yd back on its floor:
+  server and teleport heights are not this client's triangles to the millimetre.
+- Perched counts as grounded for animation, jumping and movement flags
+  (`bodyPerched_` only decides step-or-fall); a walker on a steep bump would
+  otherwise flicker into the falling state.
+- Native steps onto some holds this refuses: the 74.6 degree sides of the
+  Exodar table DR_TABLE_MEDIUM_01 and a Northshire Abbey pillar base, where it
+  hops up to a yard, hangs or falls back. It refuses others of every slope
+  measured (55 to 84 degrees: tree hull, rock face, leaning wall). What tells
+  them apart natively is not established; "leads to ground" matches the plank
+  ramp bump, tree, rock face, fence and walls and gives a slide at the table.
+- Along the foot of the Orgrimmar wall's 77 degree section native slides at
+  about three quarters of the speed the projection gives.
+- Under a low overhang (leaning trunk at Orgrimmar 1823.7, -4235.4) native
+  stops dead; WoWee slides along the underside and gets through.
+- Native frames longer than 36 ms were not measured (typing into the native
+  client at 10 frames per second failed); WoWee splits frames over 50 ms.
+
+Workspace evidence and the replay tool (`sim.cpp`, native frames, triangle
+dumps): `_experiments/20261123T182500Z.movement_collision_parity/`.
+`WOWEE_BODY_DUMP=/path/prefix` makes the client write the collision triangles
+around the character to `/path/prefix.tris` whenever `/path/prefix.request`
+(one number, the half-extent in yards) appears.
 
 `test_collision_geometry` covers fast thin-wall crossings in both directions,
 ceiling winding, and sustained contact with an overhang without downward drift.
