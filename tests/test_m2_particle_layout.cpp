@@ -274,8 +274,9 @@ TEST_CASE("Particle sprites keep authored lifecycle scale above one yard", "[m2]
     CHECK(particleSpriteHalfWidth(0x0u, 0.0000278f, 1.0f) == Catch::Approx(0.0000278f));
 }
 
-TEST_CASE("Emitters with flag 0x20 or NoTrail size their sprites by placement", "[m2][particle]") {
+TEST_CASE("Emitters with flag 0x20 or NoTrail+0x200 size their sprites by placement", "[m2][particle]") {
     using wowee::rendering::particleSpriteHalfWidth;
+    using wowee::rendering::particleMeshBasis;
     // LootFX.m2 over GnomeBigGear (sparkle scale 3.52): star #3 (0x229, mid
     // scale 0.0833) grows with it, flare #0 (0x101, 0.1389) stays authored.
     CHECK(particleSpriteHalfWidth(0x229u, 0.0833f, 3.52f) == Catch::Approx(0.2932f).margin(0.0001f));
@@ -285,9 +286,30 @@ TEST_CASE("Emitters with flag 0x20 or NoTrail size their sprites by placement", 
     // Mark of Kael'Thas, GO size 5, flames 0x521.
     CHECK(particleSpriteHalfWidth(0x521u, 0.5556f, 5.0f) == Catch::Approx(2.778f));
     // Time Rift (display scale 4): ring #1 (0x1219) and toon smoke #3 (0x219)
-    // ride their bones without 0x20 and grow with the creature.
+    // combine NoTrail (0x10) with 0x200 and grow with the creature.
     CHECK(particleSpriteHalfWidth(0x1219u, 2.461f, 4.0f) == Catch::Approx(9.844f));
     CHECK(particleSpriteHalfWidth(0x219u, 2.908f, 4.0f) == Catch::Approx(11.632f));
+    // DruidMorph_Impact_Base.m2 on Bonechewer Combatant (display scale 3.25):
+    // NoTrail emitters without 0x20/0x200 (#1 0x1f, #2 0x1b TOONSMOKE16, #4 0x19 stardust)
+    // keep authored sprite size; beam #3 (0x439) has 0x20 and scales with the caster.
+    CHECK(particleSpriteHalfWidth(0x1fu, 0.656f, 3.25f) == Catch::Approx(0.656f));
+    CHECK(particleSpriteHalfWidth(0x1bu, 0.433f, 3.25f) == Catch::Approx(0.433f));
+    CHECK(particleSpriteHalfWidth(0x19u, 0.250f, 3.25f) == Catch::Approx(0.250f));
+    CHECK(particleSpriteHalfWidth(0x439u, 0.500f, 3.25f) == Catch::Approx(1.625f));
+    // Whirlwind_State_Base.m2 geometry particles (#0/#1 0x0d): without 0x20,
+    // birthBasis keeps rotation but strips placement scale; with 0x20, scale stays.
+    const glm::mat3 scaledRot = glm::mat3(
+        glm::scale(glm::mat4(1.0f), glm::vec3(3.25f)) *
+        glm::rotate(glm::mat4(1.0f), glm::radians(90.0f), glm::vec3(0, 0, 1)));
+    const glm::mat3 unscaledBasis = particleMeshBasis(0x0du, scaledRot);
+    CHECK(glm::length(unscaledBasis[0]) == Catch::Approx(1.0f));
+    CHECK(glm::length(unscaledBasis[1]) == Catch::Approx(1.0f));
+    CHECK(glm::length(unscaledBasis[2]) == Catch::Approx(1.0f));
+    CHECK(unscaledBasis[0].y == Catch::Approx(1.0f));
+    const glm::mat3 scaledBasis = particleMeshBasis(0x28u, scaledRot);
+    CHECK(glm::length(scaledBasis[0]) == Catch::Approx(3.25f));
+    CHECK(glm::length(scaledBasis[1]) == Catch::Approx(3.25f));
+    CHECK(glm::length(scaledBasis[2]) == Catch::Approx(3.25f));
 }
 
 TEST_CASE("XYQuad sprites span their emitter bone's placed X and Y", "[m2][particle]") {

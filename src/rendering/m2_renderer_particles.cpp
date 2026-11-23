@@ -621,7 +621,7 @@ void M2Renderer::renderParticleMeshes(VkCommandBuffer cmd, VkDescriptorSet perFr
                 case ParticleBlendPipeline::Mod2x:    pipeline = particleMeshMod2xPipeline_; break;
             }
             // Tumbling: a constant angular velocity in the birth frame.
-            glm::mat3 basis = p.birthBasis;
+            glm::mat3 basis = particleMeshBasis(em.flags, p.birthBasis);
             const float rate = glm::length(p.tumbleRate);
             if (rate > 0.0f)
                 basis = basis * glm::mat3(glm::rotate(glm::mat4(1.0f), rate * p.life, p.tumbleRate / rate));

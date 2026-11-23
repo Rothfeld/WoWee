@@ -210,17 +210,42 @@ inline float particlePlacementScale(const glm::mat4& model) {
 //   (median blob) at sparkle scales 1, 3.5 and 4.7 in the original, while its
 //   spread and rise grow; Light of Elune (feralaslightblue.m2, 0x1) drops the
 //   same small dots at GO sizes 0.5, 2 and 5.
-// - NoTrail (0x10) emitters, drawn in their bone's frame, take the
-//   placement scale with or without 0x20: Time Rift (display 18877, scale 4,
-//   time_rift1.m2) draws its rings (#0/#1, 0x1219, authored half width
-//   about 2.5) about 19 yd across at 58 yd in the original, its toon smoke
-//   (#3, 0x219) as a cloud of the same size; at authored size WoWee drew
-//   them a quarter as large
+// - NoTrail (0x10) emitters with flag 0x200 take the placement scale without
+//   0x20: Time Rift (display 18877, scale 4, time_rift1.m2) draws its rings
+//   (#0/#1, 0x1219, authored half width about 2.5) about 19 yd across at 58 yd
+//   in the original, its toon smoke (#3, 0x219) as a cloud of the same size;
+//   at authored size WoWee drew them a quarter as large
 //   (_experiments/20261119T082500Z.orient_shadow/, sweep_fix).
-// Unobserved: model-frame emitters (0x80/0x4000, not NoTrail) without 0x20.
+// - NoTrail (0x10) emitters without 0x20 or 0x200 keep authored size:
+//   Combat Rage 41251 on Bonechewer Combatant (display 21550, scale 3.25) and
+//   .modify scale 3 Human plays DruidMorph_Impact_Base.m2 (#1 0x1f, #2 0x1b
+//   TOONSMOKE16.BLP, #4 0x19 stardust) as discrete ~1.0x puffs while #3
+//   (0x439, with 0x20) scales 3.25x; scaling all 0x10 emitters blew #1/#2 into
+//   a giant opaque cloud over the combatant's head.
 inline constexpr uint32_t kParticleScaledSprite = 0x20;
+inline constexpr uint32_t kParticleScaledNoTrail = 0x200;
+inline bool particleScaleAppliesToSize(uint32_t flags) {
+    return (flags & kParticleScaledSprite) != 0 ||
+           ((flags & kParticleNoTrail) != 0 && (flags & kParticleScaledNoTrail) != 0);
+}
 inline float particleSpriteHalfWidth(uint32_t flags, float authoredScale, float placementScale) {
-    return flags & (kParticleScaledSprite | 0x10u) ? authoredScale * placementScale : authoredScale;
+    return particleScaleAppliesToSize(flags) ? authoredScale * placementScale : authoredScale;
+}
+
+/// Orientation/scale basis for a detached geometry-model particle mesh.
+/// Follows `particleScaleAppliesToSize`: emitters without `0x20` (e.g.
+/// `Whirlwind_State_Base.m2` #0/#1, flags `0x0d`, on Combat Rage 41251)
+/// keep authored mesh scale (normalized basis columns) while preserving
+/// emitter rotation; emitters with `0x20` (e.g. `SandVortex.m2` `0x28`,
+/// `BoneArmor_Head.m2` `0x629`) inherit placement scale from `birthBasis`.
+inline glm::mat3 particleMeshBasis(uint32_t flags, const glm::mat3& birthBasis) {
+    if (particleScaleAppliesToSize(flags)) return birthBasis;
+    glm::mat3 basis = birthBasis;
+    for (int c = 0; c < 3; ++c) {
+        const float len = glm::length(basis[c]);
+        basis[c] = len > 1e-6f ? (basis[c] / len) : glm::vec3(0.0f);
+    }
+    return basis;
 }
 
 // NoTrail particles remain attached to the animated emitter. Other particles

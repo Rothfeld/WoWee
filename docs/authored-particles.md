@@ -90,10 +90,15 @@ about three times as large over GnomeBigGear (sparkle scale 3.5) as over a
 sign (1) in the original, while the flare (0x101) stays 0.13-0.18 yd across;
 Light of Elune (0x1) drops equally small dots at GO sizes 0.5, 2 and 5, and
 Mark of Kael'Thas (GO 185170, size 5, 0x521) burns in flames several yards
-wide. NoTrail (`0x10`) emitters, drawn in their bone's frame, grow with the
-placement too: Time Rift (display 18877, scale 4) draws its rings (#0/#1,
-0x1219) and toon smoke (#3, 0x219) four times their authored size in the
-original. Unobserved: model-frame emitters (0x80/0x4000) without `0x20`. An all-zero lifecycle
+wide. NoTrail (`0x10`) emitters with `0x200` grow with placement too: Time Rift
+(display 18877, scale 4) draws its rings (#0/#1, 0x1219) and toon smoke (#3,
+0x219) four times their authored size in the original. NoTrail (`0x10`)
+emitters without `0x20` or `0x200` keep authored size: Combat Rage (`41251`) on
+Bonechewer Combatant (display 21550, scale 3.25) plays
+`DruidMorph_Impact_Base.m2` smoke (#1 `0x1f`, #2 `0x1b`) and stars (#4 `0x19`)
+at authored size while #3 (`0x439`, with `0x20`) scales with placement, and
+geometry particles (`Whirlwind_State_Base.m2` `0x0d`, no `0x20`) likewise keep
+authored mesh size via `particleMeshBasis`. An all-zero lifecycle
 alpha is authored (14 TBC emitters) and draws nothing.
 An item visual (ItemVisuals.dbc model on a weapon's attachment 0-4) is an
 exception for `0x20` emitters (Fear_State_Head #0 is 0x19 and so authored
