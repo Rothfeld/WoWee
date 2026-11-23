@@ -291,4 +291,165 @@ enum class RaySurfaceHit : uint8_t {
     return false;
 }
 
+/// Walk in-frustum, front-facing, screen-rect-clipped portals from `seedGroups`
+/// and return every WMO group index visible through the portal graph.
+///
+/// Each hop clips the child portal's NDC rectangle against the parent's seen
+/// rectangle and checks the MOPR side plane, matching `getVisibleGroupsFromOutside`
+/// and `isExteriorVisibleThroughPortals`. Without screen-rect clipping and
+/// front-facing plane tests, walking a city WMO such as `ogrimmar.wmo` from
+/// Valley of Honor (`grp 53`) or Hall of the Brave (`grp 105`) leaks through
+/// occluded tunnel portals (`53 -> 33 -> 32 -> 31 -> 30 -> 29 -> 34 -> 11 -> 0`)
+/// and draws distant interior canyon arches (`BigCanyon01..03`, `0x00a905`)
+/// across the open sky behind the palisade wall.
+[[nodiscard]] inline std::vector<uint32_t> collectVisibleGroupsThroughPortals(
+    const std::vector<PortalGroupInfo>& groups,
+    const std::vector<PortalPlaneInfo>& portals,
+    const std::vector<glm::vec3>& portalVertices,
+    const std::vector<PortalRefInfo>& portalRefs,
+    const std::vector<uint32_t>& seedGroups,
+    uint32_t cameraSeedGroup,
+    const glm::vec3& localCamPos,
+    const Frustum& frustum,
+    const glm::mat4& viewProj,
+    const glm::mat4& modelMatrix) {
+    using Rect = glm::vec4;  // (minX, minY, maxX, maxY) in NDC
+    constexpr Rect kFullScreen(-1.0f, -1.0f, 1.0f, 1.0f);
+    constexpr Rect kEmptyRect(1.0f, 1.0f, -1.0f, -1.0f);
+
+    if (groups.empty()) return {};
+
+    const glm::mat4 localToClip = viewProj * modelMatrix;
+
+    auto portalInFrustum = [&](const PortalPlaneInfo& portal) -> bool {
+        if (portal.vertexCount < 3) return false;
+        if (static_cast<size_t>(portal.startVertex) + portal.vertexCount > portalVertices.size()) {
+            return false;
+        }
+        glm::vec3 pMin = portalVertices[portal.startVertex];
+        glm::vec3 pMax = pMin;
+        for (uint16_t i = 1; i < portal.vertexCount; ++i) {
+            const glm::vec3& v = portalVertices[portal.startVertex + i];
+            pMin = glm::min(pMin, v);
+            pMax = glm::max(pMax, v);
+        }
+        const glm::vec3 corners[8] = {
+            {pMin.x, pMin.y, pMin.z}, {pMax.x, pMin.y, pMin.z},
+            {pMin.x, pMax.y, pMin.z}, {pMax.x, pMax.y, pMin.z},
+            {pMin.x, pMin.y, pMax.z}, {pMax.x, pMin.y, pMax.z},
+            {pMin.x, pMax.y, pMax.z}, {pMax.x, pMax.y, pMax.z},
+        };
+        glm::vec3 worldMin(std::numeric_limits<float>::max());
+        glm::vec3 worldMax(std::numeric_limits<float>::lowest());
+        for (const auto& c : corners) {
+            const glm::vec3 wc(modelMatrix * glm::vec4(c, 1.0f));
+            worldMin = glm::min(worldMin, wc);
+            worldMax = glm::max(worldMax, wc);
+        }
+        return frustum.intersectsAABB(worldMin, worldMax);
+    };
+
+    auto portalRect = [&](const PortalPlaneInfo& portal) -> Rect {
+        Rect r = kEmptyRect;
+        for (uint16_t i = 0; i < portal.vertexCount; ++i) {
+            const glm::vec4 clip = localToClip * glm::vec4(portalVertices[portal.startVertex + i], 1.0f);
+            if (clip.w <= 1e-3f) return kFullScreen;
+            const glm::vec2 ndc = glm::vec2(clip) / clip.w;
+            r.x = std::min(r.x, ndc.x);
+            r.y = std::min(r.y, ndc.y);
+            r.z = std::max(r.z, ndc.x);
+            r.w = std::max(r.w, ndc.y);
+        }
+        return r;
+    };
+
+    auto portalStraddlesCamera = [&](const PortalPlaneInfo& portal, float pad) -> bool {
+        if (portal.vertexCount < 3) return false;
+        if (static_cast<size_t>(portal.startVertex) + portal.vertexCount > portalVertices.size()) {
+            return false;
+        }
+        glm::vec3 pMin = portalVertices[portal.startVertex];
+        glm::vec3 pMax = pMin;
+        for (uint16_t i = 1; i < portal.vertexCount; ++i) {
+            const glm::vec3& v = portalVertices[portal.startVertex + i];
+            pMin = glm::min(pMin, v);
+            pMax = glm::max(pMax, v);
+        }
+        return glm::all(glm::greaterThanEqual(localCamPos, pMin - glm::vec3(pad))) &&
+               glm::all(glm::lessThanEqual(localCamPos, pMax + glm::vec3(pad)));
+    };
+
+    struct QueueEntry {
+        uint32_t group;
+        Rect rect;
+    };
+    std::vector<Rect> seenRect(groups.size(), kEmptyRect);
+    std::vector<QueueEntry> queue;
+    queue.reserve(groups.size() * 2);
+
+    for (uint32_t gi : seedGroups) {
+        if (gi >= groups.size()) continue;
+        if (seenRect[gi].x < seenRect[gi].z) continue;
+        seenRect[gi] = kFullScreen;
+        queue.push_back({gi, kFullScreen});
+    }
+
+    if (!portals.empty() && !portalRefs.empty()) {
+        constexpr float kStartRoomPlaneEpsilon = -0.35f;
+        constexpr float kDoorwayStraddlePad = 0.35f;
+        const size_t maxExpansions = groups.size() * 4 + 64;
+
+        for (size_t qi = 0; qi < queue.size() && qi < maxExpansions; ++qi) {
+            const uint32_t current = queue[qi].group;
+            const Rect parent = queue[qi].rect;
+            const auto& grp = groups[current];
+            const float minSide = (current == cameraSeedGroup) ? kStartRoomPlaneEpsilon : 0.0f;
+
+            for (uint16_t pi = 0; pi < grp.portalCount; ++pi) {
+                const uint32_t refIdx = static_cast<uint32_t>(grp.portalStart) + pi;
+                if (refIdx >= portalRefs.size()) break;
+                const auto& ref = portalRefs[refIdx];
+                if (ref.groupIndex >= groups.size() || ref.portalIndex >= portals.size()) continue;
+
+                const auto& portal = portals[ref.portalIndex];
+                const float sideDist =
+                    (glm::dot(portal.normal, localCamPos) + portal.distance) * static_cast<float>(ref.side);
+                if (sideDist <= minSide) continue;
+                const bool straddling =
+                    (current == cameraSeedGroup) && portalStraddlesCamera(portal, kDoorwayStraddlePad);
+                if (!straddling && !portalInFrustum(portal)) continue;
+
+                const Rect through = straddling ? kFullScreen : portalRect(portal);
+                const Rect clipped(std::max(through.x, parent.x), std::max(through.y, parent.y),
+                                   std::min(through.z, parent.z), std::min(through.w, parent.w));
+                if (clipped.x >= clipped.z || clipped.y >= clipped.w) continue;
+
+                Rect& prev = seenRect[ref.groupIndex];
+                const bool emptyPrev = (prev.x >= prev.z || prev.y >= prev.w);
+                const bool expands = emptyPrev ||
+                                     clipped.x < prev.x - 1e-4f || clipped.y < prev.y - 1e-4f ||
+                                     clipped.z > prev.z + 1e-4f || clipped.w > prev.w + 1e-4f;
+                if (!expands) continue;
+
+                if (emptyPrev) {
+                    prev = clipped;
+                } else {
+                    prev = Rect(std::min(prev.x, clipped.x), std::min(prev.y, clipped.y),
+                                std::max(prev.z, clipped.z), std::max(prev.w, clipped.w));
+                }
+                queue.push_back({ref.groupIndex, clipped});
+            }
+        }
+    }
+
+    std::vector<uint32_t> visible;
+    visible.reserve(groups.size());
+    for (uint32_t gi = 0; gi < static_cast<uint32_t>(groups.size()); ++gi) {
+        if (seenRect[gi].x < seenRect[gi].z && seenRect[gi].y < seenRect[gi].w) {
+            visible.push_back(gi);
+        }
+    }
+    return visible;
+}
+
 }  // namespace wowee::rendering

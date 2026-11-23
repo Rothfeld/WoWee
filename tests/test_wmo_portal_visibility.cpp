@@ -449,3 +449,80 @@ TEST_CASE("Terrain-floored indoor WMO group enclosure excludes outdoor terrain o
     CHECK_FALSE(isTerrainPointEnclosedByIndoorGroup(
         RaySurfaceHit::None, RaySurfaceHit::None, 1, 0));
 }
+
+TEST_CASE("collectVisibleGroupsThroughPortals clips multi-hop portals to seen screen rect", "[wmo][portal]") {
+    using wowee::rendering::collectVisibleGroupsThroughPortals;
+
+    // Group 0 (valley) --p0 (left side of view)--> Group 1 (tunnel) --p1 (right side of view)--> Group 2 (distant canyon)
+    // Both p0 and p1 lie inside the camera frustum, but their projected screen rects do not overlap,
+    // so Group 2 is occluded behind the wall between p0 and p1 and must NOT be collected.
+    std::vector<PortalPlaneInfo> portals;
+    std::vector<glm::vec3> verts;
+    const uint16_t p0 = addXPortal(portals, verts, 10.0f,  4.0f,  7.0f, 0.0f, 4.0f);  // left-of-center
+    const uint16_t p1 = addXPortal(portals, verts, 20.0f, -8.0f, -4.0f, 0.0f, 4.0f);  // right-of-center
+    const uint16_t p2 = addXPortal(portals, verts, 20.0f,  7.0f, 13.0f, 0.0f, 4.0f);  // aligned behind p0
+
+    const std::vector<PortalRefInfo> refs = {
+        {p0, 1, -1},  // grp 0 -> grp 1 (camera at x < 10 -> side < 0 -> side * -1 > 0)
+        {p1, 2, -1},  // grp 1 -> grp 2 (non-overlapping with p0)
+        {p2, 3, -1},  // grp 1 -> grp 3 (overlaps p0 in screen space)
+    };
+    const std::vector<PortalGroupInfo> groups = {
+        {kWmoGroupFlagIndoor | kWmoGroupFlagExteriorLit, 0, 1},
+        {kWmoGroupFlagIndoor, 1, 2},
+        {kWmoGroupFlagIndoor | kWmoGroupFlagShowExteriorSky, 0, 0},
+        {kWmoGroupFlagIndoor, 0, 0},
+    };
+
+    const glm::vec3 cam(0.0f, 0.0f, 2.0f);
+    const glm::mat4 vp = makeViewProj(cam, glm::vec3(20.0f, 0.0f, 2.0f));
+    const auto visible = collectVisibleGroupsThroughPortals(
+        groups, portals, verts, refs, {0}, 0, cam, makeFrustum(vp), vp, glm::mat4(1.0f));
+
+    auto has = [&](uint32_t g) {
+        return std::find(visible.begin(), visible.end(), g) != visible.end();
+    };
+    CHECK(has(0));
+    CHECK(has(1));
+    CHECK_FALSE(has(2));
+    CHECK(has(3));
+}
+
+TEST_CASE("collectVisibleGroupsThroughPortals rejects back-facing portals and preserves straddled doorway", "[wmo][portal]") {
+    using wowee::rendering::collectVisibleGroupsThroughPortals;
+
+    // Group 0 (room) --p0 (at x=10)--> Group 1 (hall) --p1 (back-facing at x=15)--> Group 2 (hidden)
+    std::vector<PortalPlaneInfo> portals;
+    std::vector<glm::vec3> verts;
+    const uint16_t p0 = addXPortal(portals, verts, 10.0f, -2.0f, 2.0f, 0.0f, 4.0f);
+    const uint16_t p1 = addXPortal(portals, verts, 15.0f, -2.0f, 2.0f, 0.0f, 4.0f);
+
+    const std::vector<PortalRefInfo> refs = {
+        {p0, 1, -1},  // front-facing from x < 10
+        {p1, 2,  1},  // back-facing from x < 15 (MOPR side +1 expects camera at x > 15)
+    };
+    const std::vector<PortalGroupInfo> groups = {
+        {kWmoGroupFlagIndoor, 0, 1},
+        {kWmoGroupFlagIndoor, 1, 1},
+        {kWmoGroupFlagIndoor, 0, 0},
+    };
+
+    // Inside Group 0 looking through p0: Group 1 visible, Group 2 rejected because p1 is back-facing.
+    {
+        const glm::vec3 cam(5.0f, 0.0f, 2.0f);
+        const glm::mat4 vp = makeViewProj(cam, glm::vec3(20.0f, 0.0f, 2.0f));
+        const auto visible = collectVisibleGroupsThroughPortals(
+            groups, portals, verts, refs, {0}, 0, cam, makeFrustum(vp), vp, glm::mat4(1.0f));
+        CHECK(std::find(visible.begin(), visible.end(), 1u) != visible.end());
+        CHECK(std::find(visible.begin(), visible.end(), 2u) == visible.end());
+    }
+
+    // Camera straddling doorway p0 slightly past x=10 (x=10.2, within 0.35 tolerance): Group 1 stays visible.
+    {
+        const glm::vec3 cam(10.2f, 0.0f, 2.0f);
+        const glm::mat4 vp = makeViewProj(cam, glm::vec3(20.0f, 0.0f, 2.0f));
+        const auto visible = collectVisibleGroupsThroughPortals(
+            groups, portals, verts, refs, {0}, 0, cam, makeFrustum(vp), vp, glm::mat4(1.0f));
+        CHECK(std::find(visible.begin(), visible.end(), 1u) != visible.end());
+    }
+}

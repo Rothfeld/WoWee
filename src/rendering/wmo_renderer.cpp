@@ -1699,10 +1699,11 @@ void WMORenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const
     // little too much, it means the building vanishes. Seeding from both is a
     // superset of either, so it can only ever add groups.
     const glm::vec3 portalViewerPos = viewerPos ? *viewerPos : camPos;
-    // Indoors the portal walk is an optimisation and stays behind WOWEE_WMO_CULL.
-    // From outside it decides what exists: rooms are drawn only through their
-    // doorways, so it runs whether or not culling was asked for.
-    bool doPortalCull = portalCulling && cullingEnabled_;
+    // Both outdoors and indoors, the portal graph decides which WMO groups exist
+    // in view: in portal-managed city WMOs like ogrimmar.wmo, skipping the indoor
+    // walk draws distant occluded canyon groups (BigCanyon01..03) over the open
+    // sky behind Valley of Honor. Distance culling stays behind WOWEE_WMO_CULL.
+    bool doPortalCull = portalCulling;
     bool doDistanceCull = distanceCulling && cullingEnabled_;
 
     auto cullInstance = [&](size_t instIdx, InstanceDrawList& result) {
@@ -2420,7 +2421,7 @@ bool WMORenderer::portalVisibleGroups(const WMOInstance& instance, const ModelDa
         // city WMO means the streets and facades stay drawn however the walk
         // goes. Ironforge is interior throughout, that seed contributes
         // almost nothing, and the entire result rests on the traversal.
-        getVisibleGroupsViaPortals(model, localRealCam, localViewer, frustum, instance.modelMatrix, out);
+        getVisibleGroupsViaPortals(model, localRealCam, localViewer, frustum, viewProj, instance.modelMatrix, out);
     } else {
         getVisibleGroupsFromOutside(model, localRealCam, localViewer, frustum, viewProj, instance.modelMatrix, out);
     }
@@ -2475,7 +2476,7 @@ void WMORenderer::updateRoomVisibility(const Camera& camera, const glm::vec3* vi
     frustum.extractFromMatrix(viewProj);
     const glm::vec3 camPos = camera.getPosition();
     const glm::vec3 viewer = viewerPos ? *viewerPos : camPos;
-    const bool cullIndoors = portalCulling && cullingEnabled_;
+    const bool cullIndoors = portalCulling;
     std::unordered_set<uint32_t> drawn;
     for (auto& instance : instances) {
         instance.drawnGroups.clear();
@@ -2736,6 +2737,7 @@ void WMORenderer::getVisibleGroupsViaPortals(const ModelData& model,
                                               const glm::vec3& cameraLocalPos,
                                               const glm::vec3& viewerLocalPos,
                                               const Frustum& frustum,
+                                              const glm::mat4& viewProj,
                                               const glm::mat4& modelMatrix,
                                               std::unordered_set<uint32_t>& outVisibleGroups) const {
     constexpr uint32_t WMO_GROUP_FLAG_OUTDOOR = 0x8;
@@ -2798,48 +2800,20 @@ void WMORenderer::getVisibleGroupsViaPortals(const ModelData& model,
         }
     }
 
-    // Exterior groups are never portal-culled. AABB containment misclassifies
-    // doorway/awning thresholds as indoors (interior boxes spill past the
-    // door and outdoor boxes don't always overlap them), and a wrong BFS
-    // start then hides the whole city. Portal traversal below only decides
-    // interior-only groups; streets and facades always draw (distance culling
-    // still bounds them).
-    for (size_t gi = 0; gi < model.groups.size(); ++gi) {
-        const uint32_t f = model.groups[gi].groupFlags;
-        if (!(f & WMO_GROUP_FLAG_INDOOR) || (f & WMO_GROUP_FLAG_OUTDOOR))
-            outVisibleGroups.insert(static_cast<uint32_t>(gi));
-    }
-
-    // BFS through portals from both viewpoints' groups plus every always-visible
-    // exterior group, so interiors seen through open doors still draw even when
-    // one viewpoint's containing group was misclassified.
-    //
-    // The character's group is seeded alongside the camera's because in a
-    // doorway or a hallway the two are in different rooms. Walking from only one
-    // of them, while judging every door against the camera's frustum, is what
-    // emptied Ironforge. A second seed can only add groups, never remove any,
-    // and drawing a room too many is the failure this should have.
-    std::vector<bool> visited(model.groups.size(), false);
-    std::vector<uint32_t> queue;
-    queue.reserve(model.groups.size());
-
-    auto seed = [&](int gi) {
+    // Seed both viewpoints' groups, the floor-beneath groups, and every
+    // exterior group, then walk front-facing, in-frustum, screen-rect-clipped
+    // portals. Without screen-rect clipping and MOPR side checks, walking a
+    // city WMO such as Orgrimmar leaks through occluded tunnel portals behind
+    // canyon walls and draws distant indoor arches across the open sky.
+    std::vector<uint32_t> seedGroups;
+    seedGroups.reserve(model.groups.size());
+    auto addSeed = [&](int gi) {
         if (gi < 0 || gi >= static_cast<int>(model.groups.size())) return;
-        if (visited[gi]) return;
-        visited[gi] = true;
-        queue.push_back(static_cast<uint32_t>(gi));
-        outVisibleGroups.insert(static_cast<uint32_t>(gi));
+        seedGroups.push_back(static_cast<uint32_t>(gi));
     };
-    seed(cameraGroup);
-    seed(findContainingGroup(model, viewerLocalPos));
-    // Each viewpoint also stands in the room a unit there is given
-    // (roomHides): the group whose box holds it and whose surface is first
-    // below it. The best-fit box need not be that room. In Dire Maul West's
-    // Court of the Highborne the walkway's best-fit box is group 80, but its
-    // floor at z -3.57 belongs to group 72, as do the Eldreth units standing
-    // on it. Walking from 80 alone reached 72 only through a portal in view;
-    // pitching the camera down took that portal off screen and the units
-    // under the camera vanished, where build 8606 keeps drawing them.
+    addSeed(cameraGroup);
+    addSeed(findContainingGroup(model, viewerLocalPos));
+
     const glm::vec3 localDown = glm::normalize(glm::vec3(glm::inverse(modelMatrix) * glm::vec4(0, 0, -1, 0)));
     for (const glm::vec3& point : {cameraLocalPos, viewerLocalPos}) {
         const int room = groupBeneath(model, point, localDown);
@@ -2847,44 +2821,47 @@ void WMORenderer::getVisibleGroupsViaPortals(const ModelData& model,
         const auto& group = model.groups[static_cast<size_t>(room)];
         if (glm::all(glm::greaterThanEqual(point, group.boundingBoxMin)) &&
             glm::all(glm::lessThanEqual(point, group.boundingBoxMax))) {
-            seed(room);
+            addSeed(room);
         }
     }
 
-    // Exterior groups were inserted above without being queued; they are portals
-    // into the interior too.
-    for (uint32_t gi : outVisibleGroups) {
-        if (!visited[gi]) {
-            visited[gi] = true;
-            queue.push_back(gi);
+    for (size_t gi = 0; gi < model.groups.size(); ++gi) {
+        const uint32_t f = model.groups[gi].groupFlags;
+        if (!(f & WMO_GROUP_FLAG_INDOOR) || (f & WMO_GROUP_FLAG_OUTDOOR)) {
+            seedGroups.push_back(static_cast<uint32_t>(gi));
         }
     }
 
-    size_t queueIdx = 0;
-    while (queueIdx < queue.size()) {
-        uint32_t currentGroup = queue[queueIdx++];
-
-        // Get portal refs for this group
-        if (currentGroup >= model.groupPortalRefs.size()) continue;
-        auto [portalStart, portalCount] = model.groupPortalRefs[currentGroup];
-
-        for (uint16_t pi = 0; pi < portalCount; pi++) {
-            uint16_t refIdx = portalStart + pi;
-            if (refIdx >= model.portalRefs.size()) continue;
-
-            const auto& ref = model.portalRefs[refIdx];
-            uint32_t targetGroup = ref.groupIndex;
-
-            if (targetGroup >= model.groups.size()) continue;
-            if (visited[targetGroup]) continue;
-
-            // Check if portal is visible from camera
-            if (isPortalVisible(model, ref.portalIndex, cameraLocalPos, frustum, modelMatrix)) {
-                visited[targetGroup] = true;
-                outVisibleGroups.insert(targetGroup);
-                queue.push_back(targetGroup);
-            }
+    std::vector<PortalGroupInfo> groups;
+    groups.reserve(model.groups.size());
+    for (size_t gi = 0; gi < model.groups.size(); ++gi) {
+        PortalGroupInfo info{};
+        info.groupFlags = model.groups[gi].groupFlags;
+        if (gi < model.groupPortalRefs.size()) {
+            info.portalStart = model.groupPortalRefs[gi].first;
+            info.portalCount = model.groupPortalRefs[gi].second;
         }
+        groups.push_back(info);
+    }
+
+    std::vector<PortalPlaneInfo> portals;
+    portals.reserve(model.portals.size());
+    for (const auto& p : model.portals) {
+        portals.push_back({p.startVertex, p.vertexCount, p.normal, p.distance});
+    }
+
+    std::vector<PortalRefInfo> refs;
+    refs.reserve(model.portalRefs.size());
+    for (const auto& r : model.portalRefs) {
+        refs.push_back({r.portalIndex, r.groupIndex, r.side});
+    }
+
+    const std::vector<uint32_t> visible = collectVisibleGroupsThroughPortals(
+        groups, portals, model.portalVertices, refs,
+        seedGroups, static_cast<uint32_t>(cameraGroup),
+        cameraLocalPos, frustum, viewProj, modelMatrix);
+    for (uint32_t gi : visible) {
+        outVisibleGroups.insert(gi);
     }
 }
 

@@ -915,6 +915,7 @@ private:
                                      const glm::vec3& cameraLocalPos,
                                      const glm::vec3& viewerLocalPos,
                                      const Frustum& frustum,
+                                     const glm::mat4& viewProj,
                                      const glm::mat4& modelMatrix,
                                      std::unordered_set<uint32_t>& outVisibleGroups) const;
 
