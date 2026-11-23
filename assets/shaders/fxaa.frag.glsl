@@ -104,27 +104,37 @@ vec3 compositeDeath(vec3 scene) {
     return min(vec3(gray) + (vec3(83.0, 147.0, 168.0) / 255.0) * midtone, vec3(1.0));
 }
 
-void main() {
+vec3 compositeDrunk(vec3 scene, vec2 uv) {
     float drunk = clamp(pc.intoxication, 0.0, 1.0);
-    vec2 uv     = TexCoord + vec2(
-        sin(TexCoord.y * 34.0) * pc.rcpFrame.x,
-        cos(TexCoord.x * 29.0) * pc.rcpFrame.y) * (3.0 * drunk);
-    vec2 rcp    = pc.rcpFrame;
+    if (drunk <= 0.0) return scene;
+    // Native 2.4.3 fullscreen drunk blur: smooth, wide, isotropic Gaussian blur
+    // (~5-6 px sigma at 1280x720) with no sine-wave UV ripple or ghosting.
+    // 7x7 bilinear-spaced taps at 2.2px step (normalized to 1280x720) cover +-6.6px
+    // smoothly with Gaussian weights (sigma = 5.5px).
+    const float w[7] = float[](0.0681, 0.1292, 0.1932, 0.2190, 0.1932, 0.1292, 0.0681);
+    vec2 stepUV = vec2(2.2) / vec2(1280.0, 720.0);
+    vec3 blurred = vec3(0.0);
+    for (int y = 0; y < 7; ++y) {
+        float wy = w[y];
+        float oy = (float(y) - 3.0) * stepUV.y;
+        for (int x = 0; x < 7; ++x) {
+            float ox = (float(x) - 3.0) * stepUV.x;
+            blurred += texture(uScene, uv + vec2(ox, oy)).rgb * (w[x] * wy);
+        }
+    }
+    return mix(scene, blurred, drunk);
+}
 
-    // --- Centre, with the drunk blur folded in before anything reads it ---
+void main() {
+    vec2 uv  = TexCoord;
+    vec2 rcp = pc.rcpFrame;
+
+    // --- Centre sample ---
     vec3 rgbM = texture(uScene, uv).rgb;
-    if (drunk > 0.0) {
-        vec2 radius = rcp * mix(1.0, 5.0, drunk);
-        vec3 blur = rgbM;
-        blur += texture(uScene, uv + vec2( radius.x, 0.0)).rgb;
-        blur += texture(uScene, uv + vec2(-radius.x, 0.0)).rgb;
-        blur += texture(uScene, uv + vec2(0.0,  radius.y)).rgb;
-        blur += texture(uScene, uv + vec2(0.0, -radius.y)).rgb;
-        blur += texture(uScene, uv + radius).rgb;
-        blur += texture(uScene, uv - radius).rgb;
-        blur += texture(uScene, uv + vec2(radius.x, -radius.y)).rgb;
-        blur += texture(uScene, uv + vec2(-radius.x, radius.y)).rgb;
-        rgbM = mix(rgbM, blur / 9.0, 0.75 * drunk);
+    if (pc.intoxication > 0.0) {
+        vec3 drunkScene = compositeDrunk(rgbM, uv);
+        outColor = vec4(compositeDeath(compositeNetherWorld(compositeGlow(drunkScene, uv), uv)), 1.0);
+        return;
     }
 
     // --- Cardinal neighbours: is there an edge here at all ---
@@ -232,7 +242,6 @@ void main() {
     if (!horzSpan) finalUV.x += pixelOffsetFinal * lengthSign;
 
     vec3 fxaaResult = texture(uScene, finalUV).rgb;
-    fxaaResult = mix(fxaaResult, rgbM, 0.75 * drunk);
 
     // Post-FXAA contrast-adaptive sharpening (unsharp mask), only when FSR2
     // hands over its sharpness: it restores what the upscale softened.

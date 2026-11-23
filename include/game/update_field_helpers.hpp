@@ -81,7 +81,11 @@ inline DecodedPlayerBytes3 decodePlayerBytes3(uint32_t raw) {
     } else {
         out.drunkState = 0u;
     }
-    out.intoxication = static_cast<float>(out.drunkState) / 3.0f;
+    // Native 2.4.3 scales fullscreen drunk blur continuously with m_drunk
+    // (empirically ~0.50 at m_drunk~13100, ~0.95-1.00 by m_drunk>=32768).
+    out.intoxication = (out.drunkValue > 0u)
+        ? std::clamp(static_cast<float>(out.drunkValue) / 32768.0f, 0.15f, 1.0f)
+        : 0.0f;
     out.arenaFaction = static_cast<uint8_t>((raw >> 24) & 0xFFu);
     return out;
 }

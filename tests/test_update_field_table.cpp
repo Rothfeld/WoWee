@@ -135,16 +135,16 @@ TEST_CASE("H10 update field helpers match TBC server semantics", "[updatefields]
     CHECK(tipsy.gender == 0u);
     CHECK(tipsy.drunkValue == 256u);
     CHECK(tipsy.drunkState == 1u);
-    CHECK(tipsy.intoxication == Catch::Approx(1.0f / 3.0f));
+    CHECK(tipsy.intoxication == Catch::Approx(0.15f));
 
     const auto drunk = decodePlayerBytes3(12800u | 1u);
     CHECK(drunk.gender == 1u);
     CHECK(drunk.drunkValue == 12800u);
     CHECK(drunk.drunkState == 2u);
-    CHECK(drunk.intoxication == Catch::Approx(2.0f / 3.0f));
+    CHECK(drunk.intoxication == Catch::Approx(12800.0f / 32768.0f));
 
-    const auto smashed = decodePlayerBytes3(25600u);
-    CHECK(smashed.drunkValue == 25600u);
+    const auto smashed = decodePlayerBytes3(32768u);
+    CHECK(smashed.drunkValue == 32768u);
     CHECK(smashed.drunkState == 3u);
     CHECK(smashed.intoxication == Catch::Approx(1.0f));
 

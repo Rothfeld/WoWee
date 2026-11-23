@@ -3764,8 +3764,8 @@ void CameraController::update(float deltaTime) {
     // That one is what being drunk does to the character rather than to the
     // picture, and turning it off would be an advantage rather than a comfort.
     if (intoxication_ > 0.0f && camera) {
-        const float swayYaw = std::sin(intoxicationTime_ * 1.35f) * 2.5f * intoxication_ * shakeScale_;
-        const float swayPitch = std::sin(intoxicationTime_ * 1.8f + 0.7f) * 1.6f * intoxication_ * shakeScale_;
+        const float swayYaw = std::sin(intoxicationTime_ * 0.85f) * 1.0f * intoxication_ * shakeScale_;
+        const float swayPitch = std::sin(intoxicationTime_ * 1.1f + 0.7f) * 0.7f * intoxication_ * shakeScale_;
         camera->setRotation(yaw + swayYaw,
                             glm::clamp(pitch + swayPitch, MIN_PITCH, MAX_PITCH));
     }
