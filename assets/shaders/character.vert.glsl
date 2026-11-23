@@ -84,5 +84,5 @@ void main() {
     Tangent = T;
     Bitangent = B;
 
-    gl_Position = projection * view * worldPos;
+    gl_Position = projection * (view * worldPos);
 }

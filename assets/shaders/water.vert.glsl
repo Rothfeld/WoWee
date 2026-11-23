@@ -172,7 +172,7 @@ void main() {
         VertexLighting = clamp(ambientColor.rgb + lightColor.rgb * max(toLight.z, 0.0), 0.0, 1.0);
         vec3 halfDir = normalize(toLight + normalize(viewPos.xyz - FragPos));
         VertexSpecular = specularColor.rgb * pow(max(halfDir.z, 0.0), 6.0);
-        gl_Position = projection * view * worldPos;
+        gl_Position = projection * (view * worldPos);
         ScreenUV = gl_Position.xy / gl_Position.w * 0.5 + 0.5;
         return;
     }
@@ -204,7 +204,7 @@ void main() {
     FragPos = worldPos.xyz;
     TexCoord = aTexCoord;
     LiquidDepth = aLiquidDepth;
-    vec4 clipPos = projection * view * worldPos;
+    vec4 clipPos = projection * (view * worldPos);
     gl_Position = clipPos;
     vec2 ndc = clipPos.xy / max(clipPos.w, 1e-5);
     ScreenUV = ndc * 0.5 + 0.5;

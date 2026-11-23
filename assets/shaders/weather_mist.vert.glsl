@@ -23,7 +23,7 @@ layout(location = 0) out vec2 vTexCoord;
 layout(location = 1) out vec4 vColor;
 
 void main() {
-    gl_Position = projection * view * vec4(viewPos.xyz + aPositionAlpha.xyz, 1.0);
+    gl_Position = projection * (view * vec4(viewPos.xyz + aPositionAlpha.xyz, 1.0));
     vTexCoord = aTexCoord;
     vColor = vec4(fogColor.rgb, aPositionAlpha.w);
 }

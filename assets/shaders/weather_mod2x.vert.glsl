@@ -25,7 +25,7 @@ layout(location = 0) out vec2 vTexCoord;
 layout(location = 1) out float vFog;
 
 void main() {
-    gl_Position = projection * view * vec4(viewPos.xyz + aPosition.xyz, 1.0);
+    gl_Position = projection * (view * vec4(viewPos.xyz + aPosition.xyz, 1.0));
     vTexCoord = aTexCoord;
     float dist = length(aPosition.xyz);
     vFog = clamp((fogParams.y - dist) / (fogParams.y - fogParams.x), 0.0, 1.0);

@@ -380,5 +380,5 @@ void main() {
     vNormal = normalize(mix(bladeNormal, vec3(0.0, 0.0, 1.0), 0.5));
 
     vWorldPos = world;
-    gl_Position = projection * view * vec4(world, 1.0);
+    gl_Position = projection * (view * vec4(world, 1.0));
 }

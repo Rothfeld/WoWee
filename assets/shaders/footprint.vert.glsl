@@ -29,5 +29,5 @@ void main() {
     float dist = length(worldPos.xyz - viewPos.xyz);
     float fogRange = max(fogParams.y - fogParams.x, 1.0);
     fogVisibility = 1.0 - clamp((dist - fogParams.x) / fogRange, 0.0, 1.0);
-    gl_Position = projection * view * worldPos;
+    gl_Position = projection * (view * worldPos);
 }

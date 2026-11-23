@@ -28,7 +28,7 @@ layout(location = 0) in vec4 aPositionAlpha;  // xyz camera-relative, w alpha
 layout(location = 0) out vec4 vColor;
 
 void main() {
-    gl_Position = projection * view * vec4(viewPos.xyz + aPositionAlpha.xyz, 1.0);
+    gl_Position = projection * (view * vec4(viewPos.xyz + aPositionAlpha.xyz, 1.0));
     float dist = length(aPositionAlpha.xyz);
     float fog = clamp((fogParams.y - dist) / (fogParams.y - fogParams.x), 0.0, 1.0);
     vColor = vec4(mix(fogColor.rgb, push.color.rgb, fog), aPositionAlpha.w);

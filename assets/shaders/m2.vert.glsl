@@ -191,7 +191,7 @@ void main() {
                               (packedTint >> 16) & 255u) / 255.0,
                          (packedTint & (1u << 24)) != 0u ? 1.0 : 0.0);
 
-    gl_Position = projection * view * worldPos;
+    gl_Position = projection * (view * worldPos);
     // A sky model sits on the far plane whatever its radius, so the depth
     // test rejects it wherever terrain has already been drawn. The sky is
     // drawn after the ground now, and this is what makes that free.

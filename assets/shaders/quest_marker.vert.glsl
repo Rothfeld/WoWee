@@ -24,5 +24,5 @@ layout(location = 0) out vec2 TexCoord;
 
 void main() {
     TexCoord = aTexCoord;
-    gl_Position = projection * view * push.model * vec4(aPos, 1.0);
+    gl_Position = projection * (view * (push.model * vec4(aPos, 1.0)));
 }

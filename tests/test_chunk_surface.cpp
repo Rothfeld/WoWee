@@ -13,6 +13,11 @@
 #include <catch_amalgamated.hpp>
 
 #include <cmath>
+#include <filesystem>
+#include <fstream>
+#include <string>
+
+#include <glm/gtc/matrix_transform.hpp>
 
 #include "pipeline/terrain_mesh.hpp"
 
@@ -298,4 +303,54 @@ TEST_CASE("tile-indexed chunkQuadTriangles match TerrainMeshGenerator vertices b
             }
         }
     }
+}
+
+TEST_CASE("projection * (view * worldPos) preserves painting-in-front-of-wall depth at Karazhan coords",
+          "[chunksurface][depth]") {
+    // Karazhan Banquet Hall south wall (~x=-11015, y=-1900, z=86):
+    // painting canvas sits 0.1468 yd in front of the stone wall.
+    // Left-to-right (projection * view) * worldPos suffers float32 cancellation
+    // at |worldPos| ~ 11000, inverting NDC z against projection * (view * worldPos).
+    glm::mat4 proj = glm::perspective(glm::radians(60.0f), 16.0f / 9.0f, 0.22f, 30000.0f);
+    proj[1][1] *= -1.0f;
+
+    const glm::vec4 wall(-11015.0f, -1900.0f, 86.0f, 1.0f);
+    const glm::vec4 paint(-11014.853f, -1900.0f, 86.0f, 1.0f);
+    const glm::vec3 fwd = glm::normalize(glm::vec3(-0.97f, 0.0f, -0.24f));
+    const glm::vec3 up(0.0f, 0.0f, 1.0f);
+
+    for (float camX : {-10975.0f, -10970.0f, -10960.0f, -10955.0f}) {
+        const glm::vec3 eye(camX, -1900.0f, 91.0f);
+        const glm::mat4 view = glm::lookAt(eye, eye + fwd, up);
+
+        const glm::vec4 clipWall = proj * (view * wall);
+        const glm::vec4 clipPaint = proj * (view * paint);
+        const float ndcWall = clipWall.z / clipWall.w;
+        const float ndcPaint = clipPaint.z / clipPaint.w;
+
+        INFO("camX=" << camX << " ndcPaint=" << ndcPaint << " ndcWall=" << ndcWall);
+        CHECK(ndcPaint < ndcWall);
+    }
+
+    // Guard against reintroducing unparenthesized "projection * view *" in any GLSL shader.
+    namespace fs = std::filesystem;
+    fs::path shaderDir = fs::path("assets") / "shaders";
+    if (!fs::exists(shaderDir)) {
+        shaderDir = fs::path(__FILE__).parent_path().parent_path() / "assets" / "shaders";
+    }
+    REQUIRE(fs::exists(shaderDir));
+    int checked = 0;
+    for (const auto& entry : fs::directory_iterator(shaderDir)) {
+        if (entry.path().extension() != ".glsl") continue;
+        ++checked;
+        std::ifstream in(entry.path());
+        std::string line;
+        int lineNo = 0;
+        while (std::getline(in, line)) {
+            ++lineNo;
+            INFO(entry.path().filename().string() << ":" << lineNo << ": " << line);
+            CHECK(line.find("projection * view *") == std::string::npos);
+        }
+    }
+    CHECK(checked > 20);
 }

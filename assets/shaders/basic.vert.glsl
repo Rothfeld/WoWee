@@ -30,5 +30,5 @@ void main() {
     FragPos = worldPos.xyz;
     Normal = mat3(push.model) * aNormal;
     TexCoord = aTexCoord;
-    gl_Position = projection * view * worldPos;
+    gl_Position = projection * (view * worldPos);
 }

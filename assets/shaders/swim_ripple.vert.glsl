@@ -22,5 +22,5 @@ layout(location = 0) out float vAlpha;
 void main() {
     gl_PointSize = aSize;
     vAlpha = aAlpha;
-    gl_Position = projection * view * vec4(aPos, 1.0);
+    gl_Position = projection * (view * vec4(aPos, 1.0));
 }

@@ -23,5 +23,5 @@ layout(location = 0) out float vBrightness;
 
 void main() {
     vBrightness = push.brightness;
-    gl_Position = projection * view * vec4(aPos, 1.0);
+    gl_Position = projection * (view * vec4(aPos, 1.0));
 }

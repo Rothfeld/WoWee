@@ -33,7 +33,7 @@ void main() {
     float life = aVelocityDeath.w - aStartBirth.w;
     float age = clamp(push.timeAndSize.x - aStartBirth.w, 0.0, life);
     vec3 rel = aStartBirth.xyz + aVelocityDeath.xyz * age;
-    gl_Position = projection * view * vec4(viewPos.xyz + rel, 1.0);
+    gl_Position = projection * (view * vec4(viewPos.xyz + rel, 1.0));
 
     float fadeOut = clamp((life - age) * 5.0, 0.0, 1.0);
     float fadeIn = clamp(age * 5.0, 0.0, 1.0);
