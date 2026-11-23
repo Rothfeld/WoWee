@@ -237,6 +237,23 @@ TEST_CASE("Sphere emitters: elevation above the horizontal plane, no negative ra
     CHECK(death.direction == glm::vec3(0));
     // Etherial.m2 Death #21 (radius 0, 0x100): straight up.
     CHECK(sphericalParticleEmission(0, 0, 3.0f, 0, 0.5f, 0x100).direction == glm::vec3(0, 0, 1));
+    // Etherial.m2 Death #17/#19 (radius 0, vertical 0, horizontal pi, zSource -1.111):
+    // zSource below the emitter directs zero-radius particles straight up +Z.
+    const auto eth17 = sphericalParticleEmission(0.0f, 0.0f, 0.0f, 1.2f, 0.5f, 0x400, -1.1111112f);
+    CHECK(eth17.offset == glm::vec3(0));
+    CHECK(eth17.direction.x == Catch::Approx(0.0f).margin(1e-5f));
+    CHECK(eth17.direction.y == Catch::Approx(0.0f).margin(1e-5f));
+    CHECK(eth17.direction.z == Catch::Approx(1.0f).margin(1e-5f));
+    // Etherial.m2 Death #18 (radius 0..0.833, vertical 0, horizontal pi, zSource -1.111):
+    // fans upward in a cone from (0, 0, -1.111) through the horizontal disk offset.
+    const auto eth18 = sphericalParticleEmission(0.0f, 0.8333333f, 0.0f, 0.0f, 1.0f, 0x400, -1.1111112f);
+    CHECK(eth18.offset.y == Catch::Approx(0.8333333f).margin(1e-5f));
+    CHECK(eth18.direction.y == Catch::Approx(0.6f).margin(1e-4f));
+    CHECK(eth18.direction.z == Catch::Approx(0.8f).margin(1e-4f));
+    // Plane emitter with non-zero zSource directs from (0, 0, zSource) through offset.
+    const glm::vec3 planeDir = wowee::rendering::zSourceParticleDirection(
+        glm::vec3(0.0f, 0.0f, 0.0f), 2.0f, glm::vec3(1.0f, 0.0f, 0.0f));
+    CHECK(planeDir == glm::vec3(0.0f, 0.0f, -1.0f));
     // Strike_Impact_Chest.m2 #1 (Flurry 12970 CastKit 3010 LeftHand/RightHand &
     // melee impacts): radius 0, vertical pi, horizontal 0, flags 0x8429 (no 0x100).
     // Must spawn at emitter center and travel radially in the billboard YZ plane

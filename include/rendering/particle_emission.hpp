@@ -415,14 +415,32 @@ struct ParticleEmission {
 //   streaks 4 yd across that drew a white curtain at the Ethereal's waist.
 //   11 TBC sphere emitters author negative radii (Etherial/EtherialRobe
 //   Death, Illidan's glaive, shadow_nova_area's first 90 ms, IceNuke).
+/// M2 particle `zSource` (track #9, parsed into `em.deceleration`): when non-zero,
+/// particles travel away from `(0, 0, zSource)` through their local spawn offset
+/// instead of using the default sphere/plane angular direction (465 TBC emitters,
+/// e.g. Etherial.m2 #17-#19 and EtherialRobe.m2 #12-#14 with `zSource = -1.11`
+/// rise in an upward cone rather than shooting horizontally sideways).
+inline glm::vec3 zSourceParticleDirection(const glm::vec3& localOffset, float zSource,
+                                          const glm::vec3& fallbackDirection) {
+    if (std::abs(zSource) <= 1e-5f) return fallbackDirection;
+    const glm::vec3 fromZSource = localOffset - glm::vec3(0.0f, 0.0f, zSource);
+    const float lenSq = glm::dot(fromZSource, fromZSource);
+    if (lenSq > 1e-10f) return fromZSource / std::sqrt(lenSq);
+    return glm::vec3(0.0f, 0.0f, zSource < 0.0f ? 1.0f : -1.0f);
+}
+
 inline ParticleEmission sphericalParticleEmission(float length, float width,
-    float elevation, float azimuth, float radius, uint32_t flags) {
+    float elevation, float azimuth, float radius, uint32_t flags,
+    float zSource = 0.0f) {
     const glm::vec3 direction(std::cos(elevation) * std::sin(azimuth),
                               std::cos(elevation) * std::cos(azimuth), std::sin(elevation));
     const float sampledRadius = glm::mix(length, width, radius);
     const glm::vec3 offset = direction * std::fmax(sampledRadius, 0.0f);
-    return {offset, (flags & 0x100u) != 0 ? glm::vec3(0, 0, 1)
-                    : sampledRadius >= 0.0f ? direction : glm::vec3(0)};
+    if ((flags & 0x100u) != 0) {
+        return {offset, glm::vec3(0, 0, 1)};
+    }
+    const glm::vec3 fallback = sampledRadius >= 0.0f ? direction : glm::vec3(0);
+    return {offset, zSourceParticleDirection(offset, zSource, fallback)};
 }
 
 // Plane emitter (type 1) birth offset in the emitter bone's XY plane.

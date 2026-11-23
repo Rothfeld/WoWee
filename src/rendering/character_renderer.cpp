@@ -3245,13 +3245,37 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos,
 
             const bool sheathed = weaponSheathed(instance, wa);
             const bool hiddenHoldable = sheathed && wa.sheathAttachmentId == UINT32_MAX;
-            weapIt->second.visible = instance.visible && !instance.replaced && !hiddenHoldable;
+            bool attachmentVisible = true;
+            if (!hiddenHoldable && instance.cachedModel) {
+                const auto& m2Data = instance.cachedModel->data;
+                const uint32_t activeAttId = sheathed ? wa.sheathAttachmentId : wa.attachmentId;
+                const pipeline::M2Attachment* activeAtt = nullptr;
+                if (activeAttId < m2Data.attachmentLookup.size()) {
+                    const uint16_t idx = m2Data.attachmentLookup[activeAttId];
+                    if (idx < m2Data.attachments.size()) activeAtt = &m2Data.attachments[idx];
+                }
+                if (!activeAtt) {
+                    for (const auto& a : m2Data.attachments) {
+                        if (a.id == activeAttId) {
+                            activeAtt = &a;
+                            break;
+                        }
+                    }
+                }
+                if (activeAtt && !activeAtt->animateAttached.sequences.empty()) {
+                    attachmentVisible = m2_track::sampleFloat(
+                        activeAtt->animateAttached, instance.currentSequenceIndex,
+                        instance.animationTime, instance.globalSequenceTime,
+                        m2Data.globalSequenceDurations, 1.0f) > 0.0f;
+                }
+            }
+            weapIt->second.visible = instance.visible && !instance.replaced && !hiddenHoldable && attachmentVisible;
             weapIt->second.roomHidden = instance.roomHidden;
             for (const auto& effect : wa.effects) {
                 instances.at(effect.effectInstanceId).visible = weapIt->second.visible;
                 instances.at(effect.effectInstanceId).roomHidden = instance.roomHidden;
             }
-            if (hiddenHoldable) continue;
+            if (hiddenHoldable || !attachmentVisible) continue;
 
             // Get the bone matrix for the attachment bone
             glm::mat4 boneMat(1.0f);

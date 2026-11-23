@@ -134,6 +134,10 @@ struct M2Attachment {
     uint32_t id;        // 0=Head, 1=RightHand, 2=LeftHand, etc.
     uint16_t bone;      // Bone index
     glm::vec3 position; // Offset from bone pivot
+    /// Animated attachment visibility (M2Attachment::animate_attached, byte bool).
+    /// Empty track means always visible; 0 hides attached items (e.g. Etherial.m2
+    /// hides RightHand/LeftHand weapons when the body dissolves during Death).
+    M2AnimationTrack animateAttached;
 };
 
 // Light definition baked into M2 model (torches, totems, runestones, etc.)

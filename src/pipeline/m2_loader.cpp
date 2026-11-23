@@ -1635,16 +1635,25 @@ M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
                 att.id = da.id;
                 att.bone = da.bone;
                 att.position = glm::vec3(da.position[0], da.position[1], da.position[2]);
-                model.attachments.push_back(att);
+                M2TrackDiskVanilla td{};
+                std::memcpy(&td, da.trackData, sizeof(td));
+                parseAnimTrackVanilla(m2Data, td, att.animateAttached, TrackType::BYTE_BOOL, vanillaSeqWindows);
+                model.attachments.push_back(std::move(att));
             }
         } else {
+            std::vector<uint32_t> attSeqFlags;
+            attSeqFlags.reserve(model.sequences.size());
+            for (const auto& seq : model.sequences) attSeqFlags.push_back(seq.flags);
             auto diskAttachments = readArray<M2AttachmentDisk>(m2Data, header.ofsAttachments, header.nAttachments);
             for (const auto& da : diskAttachments) {
                 M2Attachment att;
                 att.id = da.id;
                 att.bone = da.bone;
                 att.position = glm::vec3(da.position[0], da.position[1], da.position[2]);
-                model.attachments.push_back(att);
+                M2TrackDisk td{};
+                std::memcpy(&td, da.trackData, sizeof(td));
+                parseAnimTrack(m2Data, td, att.animateAttached, TrackType::BYTE_BOOL, attSeqFlags);
+                model.attachments.push_back(std::move(att));
             }
         }
         core::Logger::getInstance().debug("  Attachments: ", model.attachments.size());

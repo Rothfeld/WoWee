@@ -142,15 +142,19 @@ void M2Renderer::emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt
             p.life = ageSeconds;
             p.maxLife = life;
 
+            const float zSource = interpFloat(em.deceleration, sampleAnimTime,
+                inst.globalSequenceTime, inst.currentSequenceIndex, gpu.globalSequenceDurations);
             glm::vec3 localPos = em.position;
+            glm::vec3 localOffset(0.0f);
             glm::vec3 sphereDirection(0.0f);
             if (em.emitterType == 1) {
                 const float length = interpFloat(em.emissionAreaLength, sampleAnimTime,
                     inst.globalSequenceTime, inst.currentSequenceIndex, gpu.globalSequenceDurations);
                 const float width = interpFloat(em.emissionAreaWidth, sampleAnimTime,
                     inst.globalSequenceTime, inst.currentSequenceIndex, gpu.globalSequenceDurations);
-                localPos += planeParticleOffset(length, width,
+                localOffset = planeParticleOffset(length, width,
                     distN(particleRng_), distN(particleRng_));
+                localPos += localOffset;
             }
             if (em.emitterType == 2) {
                 const float length = interpFloat(em.emissionAreaLength, sampleAnimTime,
@@ -163,8 +167,9 @@ void M2Renderer::emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt
                     inst.globalSequenceTime, inst.currentSequenceIndex, gpu.globalSequenceDurations);
                 const auto emission = sphericalParticleEmission(length, width,
                     distN(particleRng_) * vertical, distN(particleRng_) * horizontal,
-                    (distN(particleRng_) + 1.0f) * 0.5f, em.flags);
-                localPos += emission.offset;
+                    (distN(particleRng_) + 1.0f) * 0.5f, em.flags, zSource);
+                localOffset = emission.offset;
+                localPos += localOffset;
                 sphereDirection = emission.direction;
             }
             if (em.emitterType == 3 && !em.splinePoints.empty()) {
@@ -205,7 +210,8 @@ void M2Renderer::emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt
 
             const float inclination = distN(particleRng_) * vRange;
             const float azimuth = distN(particleRng_) * hRange;
-            const glm::vec3 dir = planeParticleDirection(inclination, azimuth);
+            const glm::vec3 dir = zSourceParticleDirection(
+                localOffset, zSource, planeParticleDirection(inclination, azimuth));
             const float variation = interpFloat(em.speedVariation, sampleAnimTime,
                 inst.globalSequenceTime, inst.currentSequenceIndex, gpu.globalSequenceDurations);
             speed *= 1.0f + distN(particleRng_) * variation;
