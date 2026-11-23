@@ -2407,8 +2407,8 @@ void CharacterRenderer::playAnimation(uint32_t instanceId, uint32_t animationId,
     // Track death state for preventing movement while dead
     if (animationId == anim::DEATH || animationId == anim::DEAD) {
         instance.isDead = true;
-    } else if (instance.isDead && animationId == 0) {
-        instance.isDead = false;  // Respawned
+    } else if (instance.isDead) {
+        instance.isDead = false;  // Respawned or exited a Dead-pose aura (e.g. Impaling Spine)
     }
 
     // Find animation sequence index by ID

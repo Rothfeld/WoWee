@@ -174,10 +174,16 @@ AnimOutput CharacterAnimator::resolveAnimation() {
 
     // ── Combat FSM (highest priority for non-mount) ─────────────────────
     auto combatOut = combat_.resolve(combatIn, caps_, loadout_);
-    if (auraHold_ && !fi.sitting &&
-        (combat_.getState() == CombatFSM::State::INACTIVE ||
-         combat_.getState() == CombatFSM::State::COMBAT_IDLE)) {
+    const bool combatAllowsAuraHold =
+        combat_.getState() == CombatFSM::State::INACTIVE ||
+        combat_.getState() == CombatFSM::State::COMBAT_IDLE ||
+        combat_.getState() == CombatFSM::State::STUNNED;
+    if (auraHold_ && (!fi.sitting || combat_.getState() == CombatFSM::State::STUNNED) &&
+        combatAllowsAuraHold) {
         // Locomotion keeps tracking jumps and landings under the hold.
+        // Mirrors resolveRemoteIdleAnimation(): a stun aura's authored StateKit
+        // AnimID (e.g. Naj'entus Impaling Spine 39837 -> Dead 6) overrides
+        // generic UNIT_FLAG_STUNNED (Stun 14).
         locomotion_.resolve(locomotionInput(), caps_);
         return AnimOutput::ok(auraHold_, true);
     }

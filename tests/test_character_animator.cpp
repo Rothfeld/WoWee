@@ -96,9 +96,13 @@ TEST_CASE("Attack mode transitions do not draw already-held weapons", "[animatio
     REQUIRE(animator.getLastOutput().animId == anim::READY_1H);
 }
 
-TEST_CASE("An aura's held animation replaces running and jumping but not a stun", "[animation][aura]") {
+TEST_CASE("An aura's held animation replaces running, jumping, and generic stun", "[animation][aura]") {
     // Native 2.4.3 under Whirlwind (13736): spins while running and jumping
     // (_experiments/20261117T2335Z.aura_state_locomotion).
+    // Native 2.4.3 under stun auras with an authored StateKit AnimID (e.g.
+    // Naj'entus Impaling Spine 39837 -> Dead 6, Drunken Master 42696 -> Whirlwind 126)
+    // plays the StateKit animation over generic UNIT_FLAG_STUNNED (Stun 14);
+    // plain stuns without a held StateKit animation play Stun (14).
     CharacterAnimator animator;
     AnimCapabilitySet caps;
     caps.resolvedStand = anim::STAND;
@@ -128,9 +132,13 @@ TEST_CASE("An aura's held animation replaces running and jumping but not a stun"
     animator.setStunned(true);
     animator.setFrameInput(frame);
     animator.update(0.016f);
+    REQUIRE(animator.getLastOutput().animId == anim::WHIRLWIND);
+    // Clearing the StateKit aura while still stunned falls back to generic STUN (14).
+    animator.setAuraHoldAnimation(0);
+    animator.setFrameInput(frame);
+    animator.update(0.016f);
     REQUIRE(animator.getLastOutput().animId == anim::STUN);
     animator.setStunned(false);
-    animator.setAuraHoldAnimation(0);
     animator.setFrameInput(frame);
     animator.update(0.016f);
     REQUIRE(animator.getLastOutput().animId == anim::RUN);
@@ -732,5 +740,47 @@ TEST_CASE("TBC 2.4.3 speed scaling & sequence parity across 0.5x..10x speeds, mo
         flyer.setFrameInput(fi);
         flyer.update(dt60);
         CHECK(flyer.getLastOutput().animId == anim::SWIM);
+    }
+
+    // 7) Stun aura with authored StateKit AnimID (e.g. Naj'entus Impaling Spine 39837 -> Dead 6)
+    //    overrides generic STUN (14), while a plain stun without auraHold plays STUN (14).
+    {
+        AnimCapabilitySet caps;
+        caps.resolvedStand = anim::STAND;
+        caps.resolvedRun = anim::RUN;
+        caps.resolvedCombatIdle = anim::READY_1H;
+        caps.resolvedReady1H = anim::READY_1H;
+        caps.resolvedStun = anim::STUN;
+
+        CharacterAnimator impaled;
+        impaled.setCapabilities(caps);
+        WeaponLoadout weapon;
+        weapon.inventoryType = wowee::game::InvType::ONE_HAND;
+        impaled.setWeaponLoadout(weapon);
+        impaled.setInCombat(true);
+
+        CharacterAnimator::FrameInput fi;
+        fi.grounded = true;
+
+        // Plain stun (no StateKit AnimID): plays STUN (14).
+        impaled.setStunned(true);
+        impaled.setAuraHoldAnimation(0);
+        impaled.setFrameInput(fi);
+        impaled.update(dt60);
+        CHECK(impaled.getLastOutput().animId == anim::STUN);
+
+        // Impaling Spine (39837): UNIT_FLAG_STUNNED + StateKit AnimID=DEAD (6) -> plays DEAD (6).
+        impaled.setAuraHoldAnimation(anim::DEAD);
+        impaled.setFrameInput(fi);
+        impaled.update(dt60);
+        CHECK(impaled.getLastOutput().animId == anim::DEAD);
+        CHECK(impaled.getLastOutput().loop);
+
+        // Spine removed while still in combat -> returns to combat idle READY_1H.
+        impaled.setAuraHoldAnimation(0);
+        impaled.setStunned(false);
+        impaled.setFrameInput(fi);
+        impaled.update(dt60);
+        CHECK(impaled.getLastOutput().animId == anim::READY_1H);
     }
 }
