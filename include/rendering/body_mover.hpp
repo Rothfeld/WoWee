@@ -51,13 +51,36 @@
 //
 // Which steep faces native will step onto is not settled by the face's slope:
 // it steps onto 74.6 and 57.4 degrees above and refuses 55.3, 63, 64.6, 77.4
-// and 84. What separates them in every case measured is where the step leads.
-// The bump and (on the paths that climbed it) the table have walkable ground
-// within the yard; the hull, the rock face and the wall do not. So a step that
-// does not put the sole on ground is taken here only when repeating the same
-// move from it does, within the step budget. Native also hops onto the
-// table's sides where that is not so and falls back, and hangs a yard up on a
-// Northshire Abbey pillar base; WoWee slides along both instead.
+// and 84. The rule used here - a step that does not put the sole on ground is
+// taken only when repeating the same move from it does, within the step
+// budget - is this client's, not native's: it keeps the body off faces native
+// also stays off in the cases first measured, and no more is claimed for it.
+//
+// What native does, from 144 further paired runs
+// (_experiments/20261123T214000Z.movement_collision_parity_rule; the rule that
+// covers all of it is not found, so none of it is built in below):
+//  - Flat floor, a 74.5 degree side met by a corner of the body (Exodar
+//    table, square on and 30 degrees off, run speed to three times that):
+//    never stepped onto, at any gap. Square on the body stands off by whatever
+//    the last free frame left, up to 0.40 yd.
+//  - The ridge where two such sides meet, met edge-on (the edge against the
+//    body's side, not a body corner against a face): the step is taken in that
+//    frame, 12 of 12, to the height lowerBody() gives within 3 mm, and the
+//    body falls from there unless the next step fits the rest of the yard.
+//    WoWee slides round the ridge.
+//  - Orgrimmar wall, 84 degrees, on its 17 degree ramp, head-on: slides when
+//    the level free run at the frame's start is 0.287 yd or less (34 runs),
+//    is lifted when it is 0.295 or more (24 runs), whatever the frame's move.
+//    Lifted by what is left of the yard, carried until the lifted body meets
+//    the wall, left at that height: +1.0000 in 19. Held there it neither
+//    slides nor falls until the forward key is released. 32 degrees off
+//    head-on it slides at every gap up to 1.05 yd (20 runs).
+//  - The yard is counted from the last ground: two-frame climbs end exactly a
+//    yard above it.
+//  - Set by its bevel on the edge of a walkable face after such a step, native
+//    falls in the next frame (7 of 7); isBodyGround() below calls that ground.
+//  - An edge it cannot be raised over within the yard (a leaning trunk's
+//    underside at Orgrimmar) stops native dead; WoWee slides along it.
 namespace wowee::rendering::movement {
 
 // Furthest a walking body is lowered onto ground in one frame. Native lowers
