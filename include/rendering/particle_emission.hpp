@@ -80,6 +80,21 @@ inline float particleRotation(float spin, float ageSeconds) {
 // crystals. Water, smoke and steam vents mostly do not.
 inline constexpr uint32_t kParticleOwnColor = 0x1;
 
+/// Effective RGB color for an M2 particle emitter.
+/// Emitters with `kParticleOwnColor` (0x1) keep their authored color, ignoring
+/// both scene/MODD placement lighting and instance-level color tint (such as
+/// SpellVisualKit CharProc 1 on 39383 Fury of Medivh / Archimonde_Fire, 348
+/// Immolate / Immolate_State_Base, and 35409 Brain Damage /
+/// ArcanePower_State_Chest #0, whose meshes still take the kit tint while its
+/// 0x409 particles stay untinted). Emitters without 0x1 take both.
+inline glm::vec3 particleEffectiveColor(uint32_t flags,
+                                        const glm::vec3& authoredColor,
+                                        const glm::vec3& placementLight,
+                                        const glm::vec3& instanceTint) {
+    if (flags & kParticleOwnColor) return authoredColor;
+    return authoredColor * placementLight * instanceTint;
+}
+
 // Flag 0x40 (`InheritVelocity` / `UseBurstMultiplier`, 240 TBC emitters:
 // Gyrocopter, RocketMount, PhoenixPet, WaterElemental #2/#3, WellOfSoulsPain,
 // Firework_RomanCandle): newly spawned detached particles inherit the emitter's

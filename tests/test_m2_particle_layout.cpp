@@ -1309,3 +1309,37 @@ TEST_CASE("Alpha-blended M2 ribbons sort before transparent meshes while additiv
     CHECK_FALSE(ribbonDrawsBeforeTransparent(5u));  // Mod
     CHECK_FALSE(ribbonDrawsBeforeTransparent(6u));  // Mod2x
 }
+
+TEST_CASE("kParticleOwnColor (0x1) preserves authored particle color against SpellVisualKit CharProc 1 tint",
+          "[m2][particle]") {
+    using namespace wowee::rendering;
+
+    // Karazhan Chess Event 39383 Fury of Medivh (SpellVisual 8993, StateKit 7622):
+    // CharProc 1 sets red unit tint 0xe75641 (0.906, 0.337, 0.255) on the burning
+    // target while spells/archimonde_fire.m2 part[3] (flags 0x229, kParticleOwnColor)
+    // authors yellow-white core flames (250, 214, 158) that must stay untinted.
+    const glm::vec3 fireMid(250.0f / 255.0f, 214.0f / 255.0f, 158.0f / 255.0f);
+    const glm::vec3 kitRed(231.0f / 255.0f, 86.0f / 255.0f, 65.0f / 255.0f);
+    const glm::vec3 light(0.4f, 0.5f, 0.6f);
+
+    const glm::vec3 ownFire = particleEffectiveColor(0x229u, fireMid, light, kitRed);
+    CHECK(ownFire.r == Catch::Approx(fireMid.r));
+    CHECK(ownFire.g == Catch::Approx(fireMid.g));
+    CHECK(ownFire.b == Catch::Approx(fireMid.b));
+
+    // 35409 Brain Damage (kit 7095, CharProc 1 = 0x800000): arcanepower_state_chest.m2
+    // part[0] (flags 0x409, kParticleOwnColor) stays untinted white/blue while the
+    // model's mesh batches take the red kit tint.
+    const glm::vec3 white(1.0f, 1.0f, 1.0f);
+    const glm::vec3 brainRed(128.0f / 255.0f, 0.0f, 0.0f);
+    const glm::vec3 ownZap = particleEffectiveColor(0x409u, white, light, brainRed);
+    CHECK(ownZap.r == Catch::Approx(1.0f));
+    CHECK(ownZap.g == Catch::Approx(1.0f));
+    CHECK(ownZap.b == Catch::Approx(1.0f));
+
+    // Emitters without kParticleOwnColor (0x1) take both placementLight and instanceTint.
+    const glm::vec3 tinted = particleEffectiveColor(0x228u, fireMid, light, kitRed);
+    CHECK(tinted.r == Catch::Approx(fireMid.r * light.r * kitRed.r));
+    CHECK(tinted.g == Catch::Approx(fireMid.g * light.g * kitRed.g));
+    CHECK(tinted.b == Catch::Approx(fireMid.b * light.b * kitRed.b));
+}
