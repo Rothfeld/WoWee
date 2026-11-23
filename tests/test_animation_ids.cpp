@@ -255,6 +255,21 @@ TEST_CASE("Creature spline movement retains aquatic and aerial poses", "[creatur
     CHECK(creatureMovingAnimation(true, true, true) == anim::FLY_FORWARD);
 }
 
+TEST_CASE("Mounted creature mount animation uses locomotion and neutral idle only", "[creature-locomotion]") {
+    using wowee::rendering::creatureMountAnimation;
+    // Moving: Run/Walk/Swim/FlyForward.
+    CHECK(creatureMountAnimation(/*moving=*/true, /*flying=*/false, /*swimming=*/false, /*walking=*/false) == anim::RUN);
+    CHECK(creatureMountAnimation(/*moving=*/true, /*flying=*/false, /*swimming=*/false, /*walking=*/true) == anim::WALK);
+    CHECK(creatureMountAnimation(/*moving=*/true, /*flying=*/false, /*swimming=*/true, /*walking=*/false) == anim::SWIM);
+    CHECK(creatureMountAnimation(/*moving=*/true, /*flying=*/true, /*swimming=*/false, /*walking=*/true) == anim::FLY_FORWARD);
+    // Idle: Stand/SwimIdle/FlyIdle (hover or flying), never rider cast/combat/emote poses.
+    CHECK(creatureMountAnimation(/*moving=*/false, /*flying=*/false, /*swimming=*/false, /*walking=*/false) == anim::STAND);
+    CHECK(creatureMountAnimation(/*moving=*/false, /*flying=*/false, /*swimming=*/false, /*walking=*/true) == anim::STAND);
+    CHECK(creatureMountAnimation(/*moving=*/false, /*flying=*/false, /*swimming=*/true, /*walking=*/false) == anim::SWIM_IDLE);
+    CHECK(creatureMountAnimation(/*moving=*/false, /*flying=*/true, /*swimming=*/false, /*walking=*/false) == anim::FLY_IDLE);
+    CHECK(creatureMountAnimation(/*moving=*/false, /*flying=*/false, /*swimming=*/false, /*walking=*/false, /*hoverIdle=*/true) == anim::FLY_IDLE);
+}
+
 TEST_CASE("Spline gait follows speed against the model's unscaled Walk movingSpeed", "[creature-locomotion]") {
     // Native 8606 observations (_experiments/20261117T215856Z.berserker_gait and
     // _experiments/20261122T201500Z.akama_walk_gait_parity):

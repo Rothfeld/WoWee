@@ -24,6 +24,7 @@
 #include "pipeline/wmo_loader.hpp"
 #include "pipeline/wmo_group_path.hpp"
 #include "rendering/animation/animation_ids.hpp"
+#include "rendering/animation/creature_locomotion.hpp"
 #include "rendering/animation/rider_pose.hpp"
 #include "pipeline/dbc_loader.hpp"
 #include "pipeline/asset_manager.hpp"
@@ -1808,11 +1809,10 @@ void EntitySpawner::processPendingRemotePlayerMounts() {
                 return entity && entity->isActivelyMoving();
             }();
             const bool flying = creatureFlyingState_.count(guid) > 0;
+            const bool swimming = creatureSwimmingState_.count(guid) > 0;
             const bool walking = remoteGaitWalks(guid, mountInstance);
-            uint32_t mountAnim = moving
-                ? (flying ? rendering::anim::FLY_FORWARD
-                          : (walking ? rendering::anim::WALK : rendering::anim::RUN))
-                : (flying ? rendering::anim::FLY_IDLE : rendering::anim::STAND);
+            uint32_t mountAnim = rendering::creatureMountAnimation(
+                moving, flying, swimming, walking, remoteIdlesInHover(guid));
             if (!cr->hasAnimation(mountInstance, mountAnim)) {
                 mountAnim = moving ? rendering::anim::RUN : rendering::anim::STAND;
             }

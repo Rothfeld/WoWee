@@ -4112,32 +4112,43 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                     uint32_t curAnimId = 0; float curT = 0.0f, curDur = 0.0f;
                     bool gotState = charRenderer->getAnimationState(instanceId, curAnimId, curT, curDur);
                     if (!gotState || !rendering::anim::isCorpsePose(curAnimId)) {
-                        uint32_t targetAnim;
-                        if (isMovingNow && auraLocomotion) {
-                            targetAnim = auraLocomotion;
-                        } else if (isMovingNow) {
-                            targetAnim = rendering::creatureMovingAnimation(
-                                isFlyingNow, isSwimmingNow, isWalkingNow, isStealthedNow);
-                        } else {
-                            if (isFlyingNow)        targetAnim = rendering::anim::FLY_IDLE;
-                            else if (isSwimmingNow) targetAnim = rendering::anim::SWIM_IDLE;
-                            else {
-                                // Resume a retained state emote (work/chop loop),
-                                // but only if this model ships the animation -
-                                // display swaps can land on models without it
-                                // (the log-carrying peasant has no chop anim).
-                                targetAnim = entitySpawner_->remoteIdleAnimation(guid);
-                                auto emoteIt = _creatureActiveEmotes.find(guid);
-                                if (targetAnim == rendering::anim::STAND && emoteIt != _creatureActiveEmotes.end() &&
-                                    charRenderer->hasAnimation(instanceId, emoteIt->second)) {
-                                    targetAnim = emoteIt->second;
-                                }
-                            }
-                        }
                         if (creatureMount) {
-                            charRenderer->playAnimation(creatureMount->instanceId, targetAnim, true);
+                            // Mounts only play locomotion and neutral idle poses; rider
+                            // cast holds, combat ready stances, emotes, and auras stay
+                            // on the rider's upper body (e.g. Dragonmaw Wind Reaver
+                            // casting spell 40877 while arriving must not stick its
+                            // NetherDrakeElite mount in ReadySpellDirected).
+                            uint32_t mountAnim = rendering::creatureMountAnimation(
+                                isMovingNow, isFlyingNow, isSwimmingNow, isWalkingNow,
+                                entitySpawner_->remoteIdlesInHover(guid));
+                            if (!charRenderer->hasAnimation(creatureMount->instanceId, mountAnim)) {
+                                mountAnim = isMovingNow ? rendering::anim::RUN : rendering::anim::STAND;
+                            }
+                            charRenderer->playAnimation(creatureMount->instanceId, mountAnim, true);
                             charRenderer->playAnimation(instanceId, rendering::anim::MOUNT, true);
                         } else {
+                            uint32_t targetAnim;
+                            if (isMovingNow && auraLocomotion) {
+                                targetAnim = auraLocomotion;
+                            } else if (isMovingNow) {
+                                targetAnim = rendering::creatureMovingAnimation(
+                                    isFlyingNow, isSwimmingNow, isWalkingNow, isStealthedNow);
+                            } else {
+                                if (isFlyingNow)        targetAnim = rendering::anim::FLY_IDLE;
+                                else if (isSwimmingNow) targetAnim = rendering::anim::SWIM_IDLE;
+                                else {
+                                    // Resume a retained state emote (work/chop loop),
+                                    // but only if this model ships the animation -
+                                    // display swaps can land on models without it
+                                    // (the log-carrying peasant has no chop anim).
+                                    targetAnim = entitySpawner_->remoteIdleAnimation(guid);
+                                    auto emoteIt = _creatureActiveEmotes.find(guid);
+                                    if (targetAnim == rendering::anim::STAND && emoteIt != _creatureActiveEmotes.end() &&
+                                        charRenderer->hasAnimation(instanceId, emoteIt->second)) {
+                                        targetAnim = emoteIt->second;
+                                    }
+                                }
+                            }
                             charRenderer->playAnimation(instanceId, targetAnim, /*loop=*/true);
                         }
                     }

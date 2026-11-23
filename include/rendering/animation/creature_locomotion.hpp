@@ -16,6 +16,19 @@ inline constexpr uint32_t creatureMovingAnimation(bool flying, bool swimming, bo
     return walking ? anim::WALK : anim::RUN;
 }
 
+// Mount animation for a mounted creature (locomotion and neutral idle only).
+// Rider-side overlays (spell cast holds such as ReadySpellDirected, melee ready
+// stances, stun, emotes, aura poses, stealth) play on the rider's upper body,
+// never on the mount model.
+inline constexpr uint32_t creatureMountAnimation(bool moving, bool flying,
+                                                 bool swimming, bool walking,
+                                                 bool hoverIdle = false) {
+    if (moving) return creatureMovingAnimation(flying, swimming, walking, /*stealthed=*/false);
+    if (flying || hoverIdle) return anim::FLY_IDLE;
+    if (swimming) return anim::SWIM_IDLE;
+    return anim::STAND;
+}
+
 // Ground locomotion sequences whose playback rate scales with world speed /
 // (abs(M2Sequence::movingSpeed) * instanceScale). Matches Native TBC 2.4.3
 // where StealthWalk (119), StealthRun (223), and Sprint (143) scale identically
