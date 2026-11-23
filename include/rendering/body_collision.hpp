@@ -26,12 +26,20 @@ inline std::array<glm::vec3, 9> bodySupportPoints(float radius) {
              {radius, radius, bevel}, {radius, -radius, bevel},
              {-radius, radius, bevel}, {-radius, -radius, bevel}}};
 }
+// Wound so that (b - a) x (c - a) points out of the solid, as WMO and M2
+// collision triangles are stored.
 using BodyTriangle = std::array<glm::vec3, 3>;
 
 // Separation left between a body and the face it was stopped by. A contact
 // in a crease pushes the body this far along one face's normal, which can
 // carry it this far into the neighbouring face.
 inline constexpr float kContactSkin = 0.0014f;
+
+// The heightfield has no back: its triangles face up whatever order the mesh
+// generator hands them in.
+inline BodyTriangle upFacing(const glm::vec3& a, const glm::vec3& b, const glm::vec3& c) {
+    return glm::cross(b - a, c - a).z < 0.0f ? BodyTriangle{a, c, b} : BodyTriangle{a, b, c};
+}
 
 struct BodyContact {
     float time;
@@ -51,6 +59,14 @@ inline std::optional<BodyContact> sweepBodyTriangle(const glm::vec3& from,
     const std::array edges = {b-a, c-b, a-c};
     const glm::vec3 triangleNormal = glm::cross(edges[0], edges[1]);
     if (glm::dot(triangleNormal, triangleNormal) < 1e-10f) return std::nullopt;
+    // A triangle is solid from its front only, the side its winding faces:
+    // a body moving with the winding normal passes; one moving along the
+    // face still meets its edges. Native steps over the edge of the coral
+    // sheet around a Karabor Sewers rock (Black Temple, 346.8, 816.5) and
+    // comes down through its back, and stands 0.1 yd lower than a back-facing
+    // face under the Northshire Abbey steps; solid from both sides, WoWee
+    // rested on the sheet's back, wedged against the rock in an endless fall.
+    if (glm::dot(delta, triangleNormal) > 0.0f) return std::nullopt;
     float enter = -std::numeric_limits<float>::infinity();
     float leave = std::numeric_limits<float>::infinity();
     float enterSpeed = 0.0f;
@@ -94,6 +110,12 @@ inline std::optional<BodyContact> sweepBodyTriangle(const glm::vec3& from,
     // (redridgedocks03) a body sliding into the fold between the ramp and the
     // riser in front of the beam went through the riser and was held inside
     // the deck. A departing body entered long ago and is still let go.
+    //
+    // Native does hold a body that has come down astride a single-sided sheet
+    // (the coral at the Karabor Sewers rock: one frame with no horizontal
+    // move, then a second of sliding off sideways). Holding it here by the
+    // rule that one frame suggests - no motion against the front of a
+    // triangle stood in - kept it there for good, so it is not held.
     if (enter > 1.0f || leave < 0.0f) return std::nullopt;
     if (enter < -1e-5f && -enter * enterSpeed > kContactSkin) return std::nullopt;
     glm::vec3 face = glm::normalize(triangleNormal);

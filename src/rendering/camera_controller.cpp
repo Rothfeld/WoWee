@@ -483,7 +483,7 @@ glm::vec3 CameraController::moveBodyOnFoot(const glm::vec3& start, const glm::ve
     if (terrainManager) {
         terrainManager->appendSurfaceTriangles(low, high, terrainCorners);
         for (size_t i = 0; i + 2 < terrainCorners.size(); i += 3)
-            triangles.push_back({terrainCorners[i], terrainCorners[i + 1], terrainCorners[i + 2]});
+            triangles.push_back(movement::upFacing(terrainCorners[i], terrainCorners[i + 1], terrainCorners[i + 2]));
     }
     const size_t terrainCount = triangles.size();
     if (wmoRenderer) wmoRenderer->appendBodyCollisionTriangles(low, high, triangles);
@@ -532,6 +532,8 @@ glm::vec3 CameraController::moveBodyOnFoot(const glm::vec3& start, const glm::ve
             " triangles=", terrainCount, "/", wmoCount, "/", m2Count);
     }
     if (move.ceiling && verticalVelocity > 0.0f) verticalVelocity = 0.0f;
+    // Wedged in the air: the fall starts over instead of gathering speed.
+    if (!walked && move.held && verticalVelocity < 0.0f) verticalVelocity = 0.0f;
     if ((walked && move.support == movement::BodySupport::None) || (!walked && move.deflected)) {
         // Walked off, or turned aside in the air: the fall goes on at the
         // velocity the body actually had in this frame, not the one it left
@@ -2762,7 +2764,8 @@ void CameraController::updateThirdPersonCamera(float deltaTime, FrameInput& f) {
             if (terrainManager) {
                 std::vector<glm::vec3> flat;
                 terrainManager->appendSurfaceTriangles(low, high, flat);
-                for (size_t i = 0; i + 2 < flat.size(); i += 3) tris.push_back({flat[i], flat[i + 1], flat[i + 2]});
+                for (size_t i = 0; i + 2 < flat.size(); i += 3)
+                    tris.push_back(movement::upFacing(flat[i], flat[i + 1], flat[i + 2]));
                 write('T');
             }
             if (wmoRenderer) { wmoRenderer->appendBodyCollisionTriangles(low, high, tris); write('W'); }

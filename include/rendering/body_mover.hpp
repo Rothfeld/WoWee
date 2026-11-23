@@ -29,7 +29,10 @@
 //  Falling. Horizontal move and drop are swept together. Ground ends the
 //  fall, under the sole or caught by the bevel. Any other face turns the body
 //  aside horizontally and leaves the drop alone, so a steep face is slid down
-//  at free-fall speed.
+//  at free-fall speed. Wedged between such faces the body hangs and its fall
+//  starts over each frame.
+//
+//  Triangles are solid from their front only (body_collision.hpp).
 //
 // Measured against this:
 //  - Dustwallow plank ramp (-2697.7, -4701.1): 106 native frames - the ramp,
@@ -72,6 +75,7 @@ struct BodyMove {
     bool stepped = false;    // lifted over or onto something
     bool deflected = false;  // the horizontal move was turned aside or stopped
     bool ceiling = false;    // an upward move was stopped
+    bool held = false;       // a fall was stopped by faces that are not ground
 };
 
 inline std::optional<BodyContact> firstBodyContact(const glm::vec3& from, const glm::vec3& delta,
@@ -161,6 +165,7 @@ inline BodyMove fallBody(const glm::vec3& from, const glm::vec3& delta,
             // (an edge): only the vertical motion is stopped.
             move.position.z += n.z > 0.0f ? kContactSkin : -kContactSkin;
             if (n.z < 0.0f) move.ceiling = true;
+            else move.held = true;
             remaining.z = 0.0f;
             continue;
         }
@@ -175,6 +180,11 @@ inline BodyMove fallBody(const glm::vec3& from, const glm::vec3& delta,
         const float into = glm::dot(remaining, n);
         if (into < 0.0f) remaining -= glm::vec3(level, 0.0f) * (into / levelSq);
     }
+    // Turned aside five times with drop still left: wedged between faces
+    // that are not ground. The body hangs there and its fall starts over
+    // (native in such a spot drops 0.0105 yd, a first frame of fall, frame
+    // after frame).
+    if (remaining.z < -1e-6f) move.held = true;
     if (delta.z <= 0.0f) {
         if (const auto rest = lowerBody(move.position, kContactSkin * 2.0f, radius, height, triangles)) {
             if (isBodyGround(*rest, minWalkableNormalZ)) {
@@ -231,10 +241,18 @@ inline BodyMove walkBody(const glm::vec3& from, const glm::vec3& horizontalDelta
     };
     // Whether repeating `delta` from a hold puts the sole on ground.
     const auto leadsToGround = [&](glm::vec3 perch, const glm::vec3& delta, float budget) {
-        for (int repeat = 0; repeat < 8; ++repeat) {
+        // The budget ends the search: every repeat that goes on rises. The
+        // count only bounds the work on a hold that rises by hairs.
+        for (int repeat = 0; repeat < 48; ++repeat) {
             const Step next = step(perch, delta, budget);
             if (!next.taken) return false;
-            if (next.level || !next.rest || isBodySoleOnGround(*next.rest, minWalkableNormalZ)) return true;
+            if (next.level || (next.rest && isBodySoleOnGround(*next.rest, minWalkableNormalZ))) return true;
+            if (!next.rest) {
+                // Carried over the hold with nothing under it down to the
+                // hold's height: ground a step further down, or a pit.
+                const auto below = lowerBody(next.end, kMaxStepDown, radius, height, triangles);
+                return below && isBodySoleOnGround(*below, minWalkableNormalZ);
+            }
             const float rise = next.end.z - perch.z;
             if (rise <= 1e-4f) return false;
             budget -= rise;

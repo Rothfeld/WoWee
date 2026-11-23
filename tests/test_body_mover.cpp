@@ -23,7 +23,10 @@ constexpr float kGravity = 19.29110527f;
 
 using Mesh = std::vector<BodyTriangle>;
 
-void quad(Mesh& mesh, glm::vec3 a, glm::vec3 b, glm::vec3 c, glm::vec3 d) {
+// A quad solid from the side `front` points to: triangles are one-sided.
+void quad(Mesh& mesh, glm::vec3 a, glm::vec3 b, glm::vec3 c, glm::vec3 d,
+          glm::vec3 front = {0.0f, 0.0f, 1.0f}) {
+    if (glm::dot(glm::cross(b - a, c - a), front) < 0.0f) { std::swap(b, d); }
     mesh.push_back({a, b, c});
     mesh.push_back({a, c, d});
 }
@@ -33,11 +36,11 @@ void floorAt(Mesh& mesh, float z, float x0 = -20.0f, float x1 = 20.0f) {
 }
 
 // A face rising from the line x = foot at z = base, leaning away from -x by
-// `degrees` from the horizontal, `tall` yards high.
+// `degrees` from the horizontal, `tall` yards high, solid from the -x side.
 void slope(Mesh& mesh, float foot, float base, float degrees, float tall) {
     const float run = tall / std::tan(glm::radians(degrees));
     quad(mesh, {foot, -20, base}, {foot + run, -20, base + tall},
-         {foot + run, 20, base + tall}, {foot, 20, base});
+         {foot + run, 20, base + tall}, {foot, 20, base}, {-1.0f, 0.0f, 0.2f});
 }
 
 // The controller's side of the mover, as CameraController::moveBodyOnFoot.
@@ -144,7 +147,7 @@ TEST_CASE("Stairs are climbed and descended a whole frame at a time", "[body_mov
     for (int stepIndex = 0; stepIndex < 6; ++stepIndex) {
         const float x = 2.0f + 0.5f * static_cast<float>(stepIndex);
         const float z = 0.4f * static_cast<float>(stepIndex);
-        quad(mesh, {x, -20, z}, {x, -20, z + 0.4f}, {x, 20, z + 0.4f}, {x, 20, z});
+        quad(mesh, {x, -20, z}, {x, -20, z + 0.4f}, {x, 20, z + 0.4f}, {x, 20, z}, {-1.0f, 0.0f, 0.0f});
         quad(mesh, {x, -20, z + 0.4f}, {x + 0.5f, -20, z + 0.4f}, {x + 0.5f, 20, z + 0.4f}, {x, 20, z + 0.4f});
     }
     floorAt(mesh, 2.4f, 5.0f, 20.0f);
@@ -170,7 +173,7 @@ TEST_CASE("A step is one yard at most", "[body_mover]") {
     for (const float tall : {0.95f, 1.05f, 1.3f}) {
         Mesh mesh;
         floorAt(mesh, 0.0f, -20.0f, 2.0f);
-        quad(mesh, {2, -20, 0}, {2, -20, tall}, {2, 20, tall}, {2, 20, 0});
+        quad(mesh, {2, -20, 0}, {2, -20, tall}, {2, 20, tall}, {2, 20, 0}, {-1.0f, 0.0f, 0.0f});
         floorAt(mesh, tall, 2.0f, 20.0f);
         Walker walker{.position = {1.0f, 0.0f, 0.0f}};
         for (int i = 0; i < 40; ++i) walker.frame(mesh, {kFrameRun, 0.0f, 0.0f});
@@ -239,13 +242,14 @@ TEST_CASE("A falling body is turned aside by a steep face and keeps its drop", "
 TEST_CASE("A ceiling ends a jump and a low roof refuses a step", "[body_mover]") {
     Mesh mesh;
     floorAt(mesh, 0.0f);
-    floorAt(mesh, kHeight + 0.5f);
+    quad(mesh, {-20, -20, kHeight + 0.5f}, {20, -20, kHeight + 0.5f}, {20, 20, kHeight + 0.5f},
+         {-20, 20, kHeight + 0.5f}, {0.0f, 0.0f, -1.0f});
     const BodyMove jump = fallBody({0, 0, 0.2f}, {0.0f, 0.0f, 1.0f}, kRadius, kHeight, mesh);
     REQUIRE(jump.ceiling);
     REQUIRE(jump.position.z < 0.5f);
 
     // A 0.9 yd ledge under a roof 0.5 yd over the head: no room on top.
-    quad(mesh, {2, -20, 0}, {2, -20, 0.9f}, {2, 20, 0.9f}, {2, 20, 0});
+    quad(mesh, {2, -20, 0}, {2, -20, 0.9f}, {2, 20, 0.9f}, {2, 20, 0}, {-1.0f, 0.0f, 0.0f});
     floorAt(mesh, 0.9f, 2.0f, 20.0f);
     Walker walker{.position = {1.0f, 0.0f, 0.0f}};
     for (int i = 0; i < 10; ++i) walker.frame(mesh, {kFrameRun, 0.0f, 0.0f});
@@ -259,7 +263,7 @@ TEST_CASE("A jump that reaches a ledge's edge with the bevel gets onto it", "[bo
     // jump whose sole peaks 1.64 yd up, and walks on across it.
     Mesh mesh;
     floorAt(mesh, 0.0f, -20.0f, 3.0f);
-    quad(mesh, {3, -20, 0}, {3, -20, 1.7f}, {3, 20, 1.7f}, {3, 20, 0});
+    quad(mesh, {3, -20, 0}, {3, -20, 1.7f}, {3, 20, 1.7f}, {3, 20, 0}, {-1.0f, 0.0f, 0.0f});
     floorAt(mesh, 1.7f, 3.0f, 20.0f);
     Walker walker{.position = {0.5f, 0.0f, 0.0f}};
     walker.grounded = false;
@@ -272,7 +276,7 @@ TEST_CASE("A jump that reaches a ledge's edge with the bevel gets onto it", "[bo
     // A ledge beyond the bevel's reach is not got onto.
     Mesh tall;
     floorAt(tall, 0.0f, -20.0f, 3.0f);
-    quad(tall, {3, -20, 0}, {3, -20, 2.4f}, {3, 20, 2.4f}, {3, 20, 0});
+    quad(tall, {3, -20, 0}, {3, -20, 2.4f}, {3, 20, 2.4f}, {3, 20, 0}, {-1.0f, 0.0f, 0.0f});
     floorAt(tall, 2.4f, 3.0f, 20.0f);
     Walker blocked{.position = {0.5f, 0.0f, 0.0f}};
     blocked.grounded = false;
@@ -280,4 +284,45 @@ TEST_CASE("A jump that reaches a ledge's edge with the bevel gets onto it", "[bo
     for (int i = 0; i < 40; ++i) blocked.frame(tall, {kFrameRun, 0.0f, 0.0f});
     REQUIRE(blocked.grounded);
     REQUIRE(blocked.position.z == Catch::Approx(0.0f).margin(0.003));
+}
+
+TEST_CASE("A triangle is solid from its front only", "[body_mover]") {
+    // Native walks through the back of the coral sheet at a Karabor Sewers
+    // rock; solid from both sides it wedged WoWee in an endless fall.
+    Mesh mesh;
+    floorAt(mesh, 0.0f);
+    quad(mesh, {2, -20, 0}, {2, -20, 3}, {2, 20, 3}, {2, 20, 0}, {-1.0f, 0.0f, 0.0f});
+    Walker front{.position = {1.0f, 0.0f, 0.0f}};
+    for (int i = 0; i < 20; ++i) front.frame(mesh, {kFrameRun, 0.0f, 0.0f});
+    REQUIRE(front.position.x < 2.0f);
+    Walker back{.position = {3.0f, 0.0f, 0.0f}};
+    for (int i = 0; i < 20; ++i) back.frame(mesh, {-kFrameRun, 0.0f, 0.0f});
+    REQUIRE(back.position.x < 0.0f);
+    REQUIRE(back.grounded);
+}
+
+TEST_CASE("A fall wedged between steep faces hangs and does not gather speed", "[body_mover]") {
+    // Two 70 degree faces meeting in a V over a pit: nothing to stand on.
+    Mesh mesh;
+    const float run = 4.0f / std::tan(glm::radians(70.0f));
+    quad(mesh, {0, -20, 0}, {-run, -20, 4}, {-run, 20, 4}, {0, 20, 0}, {1.0f, 0.0f, 0.3f});
+    quad(mesh, {0, -20, 0}, {run, -20, 4}, {run, 20, 4}, {0, 20, 0}, {-1.0f, 0.0f, 0.3f});
+    Walker walker{.position = {0.0f, 0.0f, 3.0f}, .grounded = false};
+    BodyMove last;
+    float fastest = 0.0f;
+    for (int i = 0; i < 90; ++i) {
+        last = walker.frame(mesh, {0.0f, 0.0f, 0.0f});
+        if (last.held) walker.verticalVelocity = std::max(walker.verticalVelocity, 0.0f);
+        fastest = std::min(fastest, walker.verticalVelocity);
+    }
+    REQUIRE(last.support == BodySupport::None);
+    REQUIRE(last.held);
+    REQUIRE(walker.position.z > 0.0f);
+    REQUIRE(fastest > -12.0f);   // the 3 yd drop into the V, no more
+    const float restZ = walker.position.z;
+    for (int i = 0; i < 30; ++i) {
+        last = walker.frame(mesh, {0.0f, 0.0f, 0.0f});
+        if (last.held) walker.verticalVelocity = std::max(walker.verticalVelocity, 0.0f);
+    }
+    REQUIRE(walker.position.z == Catch::Approx(restZ).margin(0.01));
 }

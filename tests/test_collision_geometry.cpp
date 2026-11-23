@@ -267,42 +267,55 @@ TEST_CASE("cylinder contact clips ramp edges below the step height", "[collision
 }
 
 
-TEST_CASE("beveled body cannot tunnel through a thin wall") {
+TEST_CASE("beveled body cannot tunnel through a thin wall from its front") {
     using namespace wowee::rendering::movement;
+    // Wound to face +x. A triangle is solid from its front only.
     const std::array wall = {
         BodyTriangle{glm::vec3(0,-10,-5),glm::vec3(0,10,-5),glm::vec3(0,10,10)},
         BodyTriangle{glm::vec3(0,-10,-5),glm::vec3(0,10,10),glm::vec3(0,-10,10)}};
-    for (float sign : {-1.0f, 1.0f}) {
-        for (float travel : {3.0f, 10.0f, 100.0f}) {
-            glm::vec3 result;
-            REQUIRE(moveBody({sign*2,0,0},{sign*(2-travel),0,0},.5f,2.0f,wall,result));
-            CHECK(std::abs(result.x-sign*.5014f)<.001f);
-            CHECK(std::abs(result.z)<.001f);
-        }
+    for (float travel : {3.0f, 10.0f, 100.0f}) {
+        glm::vec3 result;
+        REQUIRE(moveBody({2,0,0},{2-travel,0,0},.5f,2.0f,wall,result));
+        CHECK(std::abs(result.x-.5014f)<.001f);
+        CHECK(std::abs(result.z)<.001f);
+        // From behind it is not there.
+        CHECK_FALSE(moveBody({-2,0,0},{travel-2,0,0},.5f,2.0f,wall,result));
+        CHECK(result.x == Catch::Approx(travel-2));
     }
 }
 
-TEST_CASE("a body falling into a crease rests on both faces") {
+TEST_CASE("a body falling into a crease is held by the faces around it") {
     using namespace wowee::rendering::movement;
     // Placed collision of redridgedocks03 at Alcaz Island (uid 381622): the
-    // fold between the deck's steep riser and the face in front of the beam.
-    // Native 2.4.3 stood in this fold at (-2697.70, -4694.83, 9.43). The skin
-    // push off one face used to carry the body into the other, which was then
-    // ignored as an existing overlap: the body fell through into the deck.
-    const std::array crease = {
-        BodyTriangle{glm::vec3(-2712.85693f,-4694.49658f,9.70793915f),
-                     glm::vec3(-2693.99902f,-4694.67871f,9.72304153f),
-                     glm::vec3(-2712.64478f,-4691.78418f,10.4850664f)},
-        BodyTriangle{glm::vec3(-2691.69751f,-4694.95459f,9.32808304f),
-                     glm::vec3(-2712.85693f,-4694.49658f,9.70793915f),
-                     glm::vec3(-2715.01074f,-4694.64746f,9.30869675f)}};
+    // fold between the deck's steep riser and the ramp below it, every
+    // triangle within reach of the body. Native 2.4.3 passes through this
+    // fold at (-2697.70, -4694.80, 9.47). The skin push off one face used to
+    // carry the body into another, which was then ignored as an existing
+    // overlap: the body fell through into the deck. Lowered and let slide it
+    // comes to rest on the ramp at the riser's foot.
+    const std::vector<BodyTriangle> crease = {
+        BodyTriangle{glm::vec3(-2693.8662109375f, -4691.9970703125f, 10.494579315185547f), glm::vec3(-2712.644775390625f, -4691.7841796875f, 10.485066413879395f), glm::vec3(-2693.9990234375f, -4694.6787109375f, 9.723041534423828f)},
+        BodyTriangle{glm::vec3(-2712.85693359375f, -4694.49658203125f, 9.707939147949219f), glm::vec3(-2693.9990234375f, -4694.6787109375f, 9.723041534423828f), glm::vec3(-2712.644775390625f, -4691.7841796875f, 10.485066413879395f)},
+        BodyTriangle{glm::vec3(-2712.85546875f, -4694.3125f, 8.66351318359375f), glm::vec3(-2712.642822265625f, -4691.57373046875f, 9.289741516113281f), glm::vec3(-2694.004150390625f, -4695.2587890625f, 8.661027908325195f)},
+        BodyTriangle{glm::vec3(-2693.8642578125f, -4691.783203125f, 9.281665802001953f), glm::vec3(-2694.004150390625f, -4695.2587890625f, 8.661027908325195f), glm::vec3(-2712.642822265625f, -4691.57373046875f, 9.289741516113281f)},
+        BodyTriangle{glm::vec3(-2715.2373046875f, -4698.2119140625f, 8.458189010620117f), glm::vec3(-2691.388427734375f, -4698.5439453125f, 8.531855583190918f), glm::vec3(-2715.0107421875f, -4694.6474609375f, 9.308696746826172f)},
+        BodyTriangle{glm::vec3(-2691.697509765625f, -4694.95458984375f, 9.328083038330078f), glm::vec3(-2715.0107421875f, -4694.6474609375f, 9.308696746826172f), glm::vec3(-2691.388427734375f, -4698.5439453125f, 8.531855583190918f)},
+        BodyTriangle{glm::vec3(-2715.0107421875f, -4694.6474609375f, 9.308696746826172f), glm::vec3(-2691.697509765625f, -4694.95458984375f, 9.328083038330078f), glm::vec3(-2715.00927734375f, -4694.47802734375f, 8.34953498840332f)},
+        BodyTriangle{glm::vec3(-2691.696044921875f, -4694.779296875f, 8.332366943359375f), glm::vec3(-2715.00927734375f, -4694.47802734375f, 8.34953498840332f), glm::vec3(-2691.697509765625f, -4694.95458984375f, 9.328083038330078f)},
+        BodyTriangle{glm::vec3(-2712.85693359375f, -4694.49658203125f, 9.707939147949219f), glm::vec3(-2691.697509765625f, -4694.95458984375f, 9.328083038330078f), glm::vec3(-2693.9990234375f, -4694.6787109375f, 9.723041534423828f)},
+        BodyTriangle{glm::vec3(-2691.697509765625f, -4694.95458984375f, 9.328083038330078f), glm::vec3(-2712.85693359375f, -4694.49658203125f, 9.707939147949219f), glm::vec3(-2715.0107421875f, -4694.6474609375f, 9.308696746826172f)},
+    };
     glm::vec3 body(-2697.726074f,-4694.811035f,9.414773f);
     for (int frame = 0; frame < 20; ++frame) {
         glm::vec3 result;
         moveBody(body, body + glm::vec3(0,0,-0.2f), .306f, 2.031f, crease, result);
         body = result;
-        CHECK(body.z > 9.41f);
+        // Held at the riser's foot on the ramp below it (z 9.31 there), not
+        // let through into the deck.
+        CHECK(body.z > 9.30f);
+        CHECK(body.z < 9.42f);
         CHECK(body.y < -4694.80f);
+        CHECK(body.y > -4694.90f);
     }
 }
 
@@ -322,19 +335,19 @@ TEST_CASE("a body overlapping a face deeper than the skin still leaves it") {
     CHECK_FALSE(moveBody({0,0,-.001f},{0,0,.5f},.3f,2.0f,floor,result));
 }
 
-TEST_CASE("flat character head stops on either winding of a ceiling") {
+TEST_CASE("flat character head stops on a ceiling facing down") {
     using namespace wowee::rendering::movement;
+    // Wound to face up: a floor seen from below, which is not there.
     std::array ceiling = {
         BodyTriangle{glm::vec3(-5,-5,1.8f),glm::vec3(5,-5,1.8f),glm::vec3(5,5,1.8f)},
         BodyTriangle{glm::vec3(-5,-5,1.8f),glm::vec3(5,5,1.8f),glm::vec3(-5,5,1.8f)}};
-    for (int winding=0;winding<2;++winding) {
-        glm::vec3 result;
-        REQUIRE(moveBody({0,0,0},{0,0,1},.30555f,1.607f,ceiling,result));
-        CHECK(std::abs(result.z-(1.8f-1.607f-.0014f))<.001f);
-        CHECK(std::abs(result.x)<.001f);
-        CHECK(std::abs(result.y)<.001f);
-        for (auto& triangle:ceiling) std::swap(triangle[0],triangle[1]);
-    }
+    glm::vec3 result;
+    CHECK_FALSE(moveBody({0,0,0},{0,0,1},.30555f,1.607f,ceiling,result));
+    for (auto& triangle:ceiling) std::swap(triangle[0],triangle[1]);
+    REQUIRE(moveBody({0,0,0},{0,0,1},.30555f,1.607f,ceiling,result));
+    CHECK(std::abs(result.z-(1.8f-1.607f-.0014f))<.001f);
+    CHECK(std::abs(result.x)<.001f);
+    CHECK(std::abs(result.y)<.001f);
 }
 
 TEST_CASE("overhang contact cannot push walking feet downward") {
@@ -461,9 +474,10 @@ TEST_CASE("grounded step over a low authored edge returns to the sole height") {
         block.push_back({a,b,c});
         block.push_back({a,c,d});
     };
-    quad({0,-2,0},{0,2,0},{0,2,.2f},{0,-2,.2f});
-    quad({0,-2,.2f},{0,2,.2f},{.1f,2,.2f},{.1f,-2,.2f});
-    quad({.1f,-2,.2f},{.1f,2,.2f},{.1f,2,0},{.1f,-2,0});
+    // Wound outward: west face, top, east face.
+    quad({0,-2,0},{0,-2,.2f},{0,2,.2f},{0,2,0});
+    quad({0,-2,.2f},{.1f,-2,.2f},{.1f,2,.2f},{0,2,.2f});
+    quad({.1f,-2,.2f},{.1f,-2,0},{.1f,2,0},{.1f,2,.2f});
     const float radius = .305556f, height = 2.03127f;
     const glm::vec3 from(-radius - .01f, 0, 0), onTop(.05f, 0, 0), beyond(.5f, 0, 0);
     CHECK(stepBodyAcross(from, onTop, radius, height, block, kMaxStepUp).z ==
@@ -780,12 +794,13 @@ TEST_CASE("synthetic stairs climb smoothly while >1.0 yd walls and steep pedesta
     const float xs[5] = {0.0f, 0.65f, 1.30f, 1.95f, 5.50f};
     float prevZ = 0.0f;
     for (int s = 0; s < 4; ++s) {
-        addQuad({xs[s], -13, prevZ}, {xs[s], 13, prevZ}, {xs[s], 13, risers[s]}, {xs[s], -13, risers[s]});
+        // Risers face the walker (-x), treads and slab face up: triangles are one-sided.
+        addQuad({xs[s], -13, prevZ}, {xs[s], -13, risers[s]}, {xs[s], 13, risers[s]}, {xs[s], 13, prevZ});
         addQuad({xs[s], -13, risers[s]}, {xs[s + 1], -13, risers[s]}, {xs[s + 1], 13, risers[s]}, {xs[s], 13, risers[s]});
         prevZ = risers[s];
     }
     // Full-height room wall on the top landing at x = 5.50 (3.40 -> 8.00)
-    addQuad({5.50f, -13, 3.40f}, {5.50f, 13, 3.40f}, {5.50f, 13, 8.00f}, {5.50f, -13, 8.00f});
+    addQuad({5.50f, -13, 3.40f}, {5.50f, -13, 8.00f}, {5.50f, 13, 8.00f}, {5.50f, 13, 3.40f});
 
     struct BodySpec { const char* name; float r; float h; };
     const BodySpec bodies[] = {
@@ -822,7 +837,7 @@ TEST_CASE("synthetic stairs climb smoothly while >1.0 yd walls and steep pedesta
         ledgeMesh.push_back({a, c, d});
     };
     addLedgeQuad({-4, -4, 0}, {6, -4, 0}, {6, 4, 0}, {-4, 4, 0});
-    addLedgeQuad({1.0f, -4, 0.0f}, {1.0f, 4, 0.0f}, {1.0f, 4, 1.15f}, {1.0f, -4, 1.15f});
+    addLedgeQuad({1.0f, -4, 0.0f}, {1.0f, -4, 1.15f}, {1.0f, 4, 1.15f}, {1.0f, 4, 0.0f});
     addLedgeQuad({1.0f, -4, 1.15f}, {4.0f, -4, 1.15f}, {4.0f, 4, 1.15f}, {1.0f, 4, 1.15f});
     for (const auto& body : bodies) {
         for (float speed : {7.0f, 35.0f}) {
