@@ -106,3 +106,34 @@ TEST_CASE("possessed unit action routing sends spells via CMSG_PET_CAST_SPELL", 
     // Empty slot does nothing.
     REQUIRE(possessActionRoute(0u, false) == PossessActionRoute::None);
 }
+
+TEST_CASE("isPetActionActive highlights matching command and reaction slots without cross-type collision", "[pet][possess]") {
+    const uint32_t stay       = packPetAction(ActionType::Command,  kStay);
+    const uint32_t follow     = packPetAction(ActionType::Command,  kFollow);
+    const uint32_t attack     = packPetAction(ActionType::Command,  kAttack);
+    const uint32_t passive    = packPetAction(ActionType::Reaction, kPassive);
+    const uint32_t defensive  = packPetAction(ActionType::Reaction, kDefensive);
+    const uint32_t aggressive = packPetAction(ActionType::Reaction, kAggressive);
+
+    // Karazhan Chess / Mind Control initial SMSG_PET_SPELLS state:
+    // command=kFollow(1), react=kDefensive(1) -> Follow and Defensive active.
+    REQUIRE_FALSE(isPetActionActive(stay,       kFollow, kDefensive));
+    REQUIRE(      isPetActionActive(follow,     kFollow, kDefensive));
+    REQUIRE_FALSE(isPetActionActive(attack,     kFollow, kDefensive));
+    REQUIRE_FALSE(isPetActionActive(passive,    kFollow, kDefensive));
+    REQUIRE(      isPetActionActive(defensive,  kFollow, kDefensive));
+    REQUIRE_FALSE(isPetActionActive(aggressive, kFollow, kDefensive));
+
+    // Cross-type collision check: kFollow(1) vs kDefensive(1) and kStay(0) vs kPassive(0)
+    // must only match their own ActionType.
+    REQUIRE(      isPetActionActive(stay,      kStay, kAggressive));
+    REQUIRE_FALSE(isPetActionActive(passive,   kStay, kAggressive));
+    REQUIRE(      isPetActionActive(aggressive, kStay, kAggressive));
+    REQUIRE_FALSE(isPetActionActive(attack,    kStay, kAggressive));
+
+    // Castable spells and empty slots are never command/reaction active.
+    REQUIRE_FALSE(isPetActionActive(0u, kStay, kPassive));
+    REQUIRE_FALSE(isPetActionActive(packPetAction(ActionType::Passive,  37146u), kFollow, kDefensive));
+    REQUIRE_FALSE(isPetActionActive(packPetAction(ActionType::Enabled,  2649u),  kFollow, kDefensive));
+    REQUIRE_FALSE(isPetActionActive(packPetAction(ActionType::Disabled, 2649u),  kFollow, kDefensive));
+}

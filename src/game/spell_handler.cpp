@@ -5097,6 +5097,7 @@ void SpellHandler::handlePetSpells(network::Packet& packet) {
         // should be redrawn.
         owner_.fireAddonEvent("PET_UI_UPDATE", {});
         owner_.fireAddonEvent("PET_BAR_UPDATE", {});
+        owner_.fireAddonEvent("ACTIONBAR_UPDATE_STATE", {});
         owner_.fireAddonEvent("SPELLS_CHANGED", {});
         return;
     }
@@ -5115,6 +5116,7 @@ void SpellHandler::handlePetSpells(network::Packet& packet) {
         // should be redrawn.
         owner_.fireAddonEvent("PET_UI_UPDATE", {});
         owner_.fireAddonEvent("PET_BAR_UPDATE", {});
+        owner_.fireAddonEvent("ACTIONBAR_UPDATE_STATE", {});
         owner_.fireAddonEvent("SPELLS_CHANGED", {});
         return;
     }
@@ -5184,30 +5186,37 @@ void SpellHandler::handlePetSpells(network::Packet& packet) {
         // should be redrawn.
         owner_.fireAddonEvent("PET_UI_UPDATE", {});
     owner_.fireAddonEvent("PET_BAR_UPDATE", {});
+    owner_.fireAddonEvent("ACTIONBAR_UPDATE_STATE", {});
     owner_.fireAddonEvent("SPELLS_CHANGED", {});
 }
 
 void SpellHandler::sendPetAction(uint32_t action, uint64_t targetGuid) {
-    if (!owner_.hasPet() || owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
-    auto pkt = PetActionPacket::build(owner_.petGuidRef(), action, targetGuid);
+    const uint64_t actorGuid = owner_.petGuidRef() != 0
+        ? owner_.petGuidRef()
+        : owner_.getPossessedGuid();
+    if (actorGuid == 0 || owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
+    auto pkt = PetActionPacket::build(actorGuid, action, targetGuid);
     owner_.getSocket()->send(pkt);
-    LOG_DEBUG("sendPetAction: petGuid=0x", std::hex, owner_.petGuidRef(),
+    LOG_DEBUG("sendPetAction: petGuid=0x", std::hex, actorGuid,
               " action=0x", action, " target=0x", targetGuid, std::dec);
 
     // The server does not echo SMSG_PET_SPELLS or SMSG_PET_MODE after
     // CMSG_PET_ACTION for stance/command changes. Update local command/react
-    // state immediately and fire PET_BAR_UPDATE so PetActionBar_Update()
-    // moves the active checked border onto the chosen button.
+    // state immediately and fire PET_BAR_UPDATE + ACTIONBAR_UPDATE_STATE so
+    // both PetActionBar_Update() and possess-bar ActionButton_UpdateState()
+    // move the active checked border onto the chosen button.
     const auto type = pet::petActionType(action);
     const uint32_t id = pet::petActionId(action);
     if (type == pet::ActionType::Reaction && id <= pet::kAggressive) {
         owner_.petReactRef() = static_cast<uint8_t>(id);
         owner_.fireAddonEvent("PET_BAR_UPDATE", {});
+        owner_.fireAddonEvent("ACTIONBAR_UPDATE_STATE", {});
     } else if (type == pet::ActionType::Command) {
         if (id == pet::kStay || id == pet::kFollow) {
             owner_.petCommandRef() = static_cast<uint8_t>(id);
         }
         owner_.fireAddonEvent("PET_BAR_UPDATE", {});
+        owner_.fireAddonEvent("ACTIONBAR_UPDATE_STATE", {});
     }
 }
 

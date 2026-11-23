@@ -61,6 +61,18 @@ constexpr bool isPetSpellAction(uint32_t packed) {
     return t != ActionType::Command && t != ActionType::Reaction;
 }
 
+/// Whether a packed pet/possess action slot is currently active (checked on
+/// the pet bar and on bonus bar 5 while possessing a unit).
+constexpr bool isPetActionActive(uint32_t packed, uint8_t commandState, uint8_t reactState) {
+    if (packed == 0) return false;
+    const uint32_t id = petActionId(packed);
+    switch (petActionType(packed)) {
+        case ActionType::Command:  return id == commandState;
+        case ActionType::Reaction: return id == reactState;
+        default:                   return false;
+    }
+}
+
 /// How a possessed unit's bonus bar 5 slot must be dispatched to the server.
 /// CMaNGOS-TBC HandlePetAction rejects non-ACT_COMMAND packets for possessed
 /// units (UNIT_STAT_POSSESSED), so spells must go via CMSG_PET_CAST_SPELL.

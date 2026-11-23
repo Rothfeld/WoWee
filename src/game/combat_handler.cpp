@@ -1567,7 +1567,8 @@ void CombatHandler::handlePetMode(network::Packet& packet) {
     if (packet.hasRemaining(12)) {
         uint64_t modeGuid = packet.readUInt64();
         uint32_t mode     = packet.readUInt32();
-        if (modeGuid == owner_.petGuidRef()) {
+        if (modeGuid == owner_.petGuidRef() ||
+            (owner_.getPossessedGuid() != 0 && modeGuid == owner_.getPossessedGuid())) {
             // COMMAND_ATTACK is 2. The pet frame lights its attack indicator on
             // the start and clears it on the stop, so only the crossing matters
             // - this packet arrives for every mode change, and firing on each
@@ -1582,6 +1583,7 @@ void CombatHandler::handlePetMode(network::Packet& packet) {
                     nowAttacking ? "PET_ATTACK_START" : "PET_ATTACK_STOP", {});
             }
             owner_.fireAddonEvent("PET_BAR_UPDATE", {});
+            owner_.fireAddonEvent("ACTIONBAR_UPDATE_STATE", {});
             LOG_DEBUG("SMSG_PET_MODE: command=", static_cast<int>(owner_.petCommandRef()),
                       " react=", static_cast<int>(owner_.petReactRef()));
         }

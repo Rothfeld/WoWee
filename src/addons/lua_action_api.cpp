@@ -564,7 +564,13 @@ static int lua_GetActionTexture(lua_State* L) {
 // IsCurrentAction(slot) → boolean
 static int lua_IsCurrentAction(lua_State* L) {
     auto* gh = getGameHandler(L);
-    const int slot = static_cast<int>(luaL_optnumber(L, 1, 0)) - 1;
+    const int slot1 = static_cast<int>(luaL_optnumber(L, 1, 0));
+    if (uint32_t packed; possessSlot(gh, slot1, packed)) {
+        lua_pushboolean(L, game::pet::isPetActionActive(
+            packed, gh->getPetCommand(), gh->getPetReact()));
+        return 1;
+    }
+    const int slot = slot1 - 1;
     bool current = false;
     const auto* shown = gh ? game::shownAction(*gh, slot) : nullptr;
     std::optional<game::ActionBarSlot> standIn;
@@ -2881,11 +2887,19 @@ void registerActionLuaAPI(lua_State* L) {
             lua_pushstring(L, game::buildItemLink(target.id, info->quality, info->name).c_str());
             return 2;
         }},
-                // WoweeActionInfo(slot) -> "spell"|"item"|"macro", the spell
-                // id, item id or macro index; for the client's own SetAction.
+                // WoweeActionInfo(slot) -> "spell"|"item"|"macro"|"pet", the spell
+                // id, item id, macro index, or 1-based pet/possess bar slot; for
+                // the client's own SetAction.
                 {"WoweeActionInfo", [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
-            const auto* shown = gh ? game::shownAction(*gh, static_cast<int>(luaL_optnumber(L, 1, 0)) - 1) : nullptr;
+            const int slot1 = static_cast<int>(luaL_optnumber(L, 1, 0));
+            if (uint32_t packed; possessSlot(gh, slot1, packed)) {
+                if (packed == 0) return 0;
+                lua_pushstring(L, "pet");
+                lua_pushnumber(L, slot1 - 120);
+                return 2;
+            }
+            const auto* shown = gh ? game::shownAction(*gh, slot1 - 1) : nullptr;
             if (!shown) return 0;
             switch (shown->type) {
                 case game::ActionBarSlot::SPELL: lua_pushstring(L, "spell"); lua_pushnumber(L, shown->id); return 2;
@@ -3310,7 +3324,8 @@ void registerActionLuaAPI(lua_State* L) {
 
             const char* tokenName = nullptr;
             const char* tokenTexture = nullptr;
-            bool active = false;
+            const bool active = game::pet::isPetActionActive(
+                packed, gh->getPetCommand(), gh->getPetReact());
 
             if (type == game::pet::ActionType::Command) {
                 switch (action) {
@@ -3324,9 +3339,6 @@ void registerActionLuaAPI(lua_State* L) {
                         tokenName = "PET_DISMISS";        tokenTexture = "PET_DISMISS_TEXTURE"; break;
                     default: break;
                 }
-                // The command the pet is under: native 2.4.3 lights Follow
-                // for a felhunter just summoned.
-                active = (action == gh->getPetCommand());
             } else if (type == game::pet::ActionType::Reaction) {
                 switch (action) {
                     case game::pet::kPassive:
@@ -3337,8 +3349,6 @@ void registerActionLuaAPI(lua_State* L) {
                         tokenName = "PET_MODE_AGGRESSIVE"; tokenTexture = "PET_AGGRESSIVE_TEXTURE"; break;
                     default: break;
                 }
-                // The stance the pet is in is the one drawn as chosen.
-                active = (action == gh->getPetReact());
             }
             // 2.4.3's shape (pair 21, felhunter): name, subtext, texture,
             // isToken, isActive, autoCastAllowed, autoCastEnabled, flags as
