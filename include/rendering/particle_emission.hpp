@@ -222,6 +222,13 @@ inline float particlePlacementScale(const glm::mat4& model) {
 //   TOONSMOKE16.BLP, #4 0x19 stardust) as discrete ~1.0x puffs while #3
 //   (0x439, with 0x20) scales 3.25x; scaling all 0x10 emitters blew #1/#2 into
 //   a giant opaque cloud over the combatant's head.
+// - XYQuad (0x1000) emitters with both NoTrail (0x10) and 0x20 lie in the
+//   emitter bone's placed XY plane (already scaled by placementScale) while
+//   0x20 also scales the sprite size by placementScale, compounding to
+//   placementScale^2. On Lady Malande (display 21419, scale 2.1,
+//   Helm_Robe_RaidPriest_F_01_BeF.m2 emitter #2, 0x1239, authored 0.222-0.25),
+//   native draws the halo ring at ~2.1x the single-scaled radius (~1.05 yd
+//   radius vs ~0.50 yd), whereas at net scale 1.05 native and WoWee match.
 inline constexpr uint32_t kParticleScaledSprite = 0x20;
 inline constexpr uint32_t kParticleScaledNoTrail = 0x200;
 inline bool particleScaleAppliesToSize(uint32_t flags) {
@@ -229,7 +236,12 @@ inline bool particleScaleAppliesToSize(uint32_t flags) {
            ((flags & kParticleNoTrail) != 0 && (flags & kParticleScaledNoTrail) != 0);
 }
 inline float particleSpriteHalfWidth(uint32_t flags, float authoredScale, float placementScale) {
-    return particleScaleAppliesToSize(flags) ? authoredScale * placementScale : authoredScale;
+    float size = particleScaleAppliesToSize(flags) ? authoredScale * placementScale : authoredScale;
+    if ((flags & (kParticleXYQuad | kParticleScaledSprite | kParticleNoTrail)) ==
+        (kParticleXYQuad | kParticleScaledSprite | kParticleNoTrail)) {
+        size *= placementScale;
+    }
+    return size;
 }
 
 /// Orientation/scale basis for a detached geometry-model particle mesh.

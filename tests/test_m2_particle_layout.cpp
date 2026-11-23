@@ -301,6 +301,12 @@ TEST_CASE("Emitters with flag 0x20 or NoTrail+0x200 size their sprites by placem
     // star rays #1/#2 (0x639) have 0x20 and scale with Malande.
     CHECK(particleSpriteHalfWidth(0x19u, 1.417f, 2.1f) == Catch::Approx(1.417f));
     CHECK(particleSpriteHalfWidth(0x639u, 0.056f, 2.1f) == Catch::Approx(0.1176f).margin(0.0001f));
+    // Lady Malande (display 21419, scale 2.1): Helm_Robe_RaidPriest_F_01_BeF.m2
+    // emitter #2 (0x1239 = XYQuad | 0x20 | NoTrail) compounds bone placement scale
+    // with 0x20 sprite scaling, while billboard emitters #0/#1 (0x0239) scale once.
+    CHECK(particleSpriteHalfWidth(0x1239u, 0.25f, 2.1f) == Catch::Approx(0.25f * 2.1f * 2.1f).margin(0.0001f));
+    CHECK(particleSpriteHalfWidth(0x1239u, 0.25f, 1.0f) == Catch::Approx(0.25f).margin(0.0001f));
+    CHECK(particleSpriteHalfWidth(0x0239u, 0.1667f, 2.1f) == Catch::Approx(0.1667f * 2.1f).margin(0.0001f));
     // Whirlwind_State_Base.m2 geometry particles (#0/#1 0x0d): without 0x20,
     // birthBasis keeps rotation but strips placement scale; with 0x20, scale stays.
     const glm::mat3 scaledRot = glm::mat3(
