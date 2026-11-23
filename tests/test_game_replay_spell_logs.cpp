@@ -396,3 +396,95 @@ TEST_CASE("energize and periodic power logs scale rage and runic power from tent
         CHECK(texts[0].amount == 2);
     }
 }
+
+TEST_CASE("direct spell damage triggers hit-flinch while absorbed hits and periodic DoT ticks do not", "[replay][spell][hitflinch]") {
+    using wowee::game::GameHandler;
+    using HR = GameHandler::HitReaction;
+
+    // Pure classification rules
+    CHECK(GameHandler::spellDamageHitReaction(1351, false, 64) == HR::SPELL_WOUND);      // Arcane Missiles
+    CHECK(GameHandler::spellDamageHitReaction(2100, true, 64) == HR::SPELL_CRIT_WOUND);  // Arcane crit
+    CHECK(GameHandler::spellDamageHitReaction(420, false, 32) == HR::SPELL_WOUND);       // Shadow Bolt
+    CHECK(GameHandler::spellDamageHitReaction(500, false, 1) == HR::WOUND);              // Physical spell
+    CHECK(GameHandler::spellDamageHitReaction(900, true, 1) == HR::CRIT_WOUND);          // Physical spell crit
+    CHECK_FALSE(GameHandler::spellDamageHitReaction(0, false, 64).has_value());          // Fully absorbed/resisted
+
+    auto makeTbcSpellDamageLog = [](uint64_t target, uint64_t attacker, uint32_t spellId,
+                                    uint32_t damage, uint8_t schoolMask, uint32_t absorbed,
+                                    uint32_t flags) {
+        Packet p(wireOpcode(Opcode::SMSG_SPELLNONMELEEDAMAGELOG));
+        p.writePackedGuid(target);
+        p.writePackedGuid(attacker);
+        p.writeUInt32(spellId);
+        p.writeUInt32(damage);
+        p.writeUInt8(schoolMask);
+        p.writeUInt32(absorbed);
+        p.writeUInt32(0);      // resisted
+        p.writeUInt8(0);       // physicalLog
+        p.writeUInt8(0);       // unused
+        p.writeUInt32(0);      // blocked
+        p.writeUInt32(flags);  // HitInfo (0x02 = crit)
+        p.writeUInt8(0);       // debug
+        return p;
+    };
+
+    // 1. Arcane Missiles (29956) hitting local player triggers SPELL_WOUND
+    {
+        Session s("tbc");
+        std::vector<std::tuple<uint64_t, uint64_t, HR>> reactions;
+        s.handler().setHitReactionCallback([&](uint64_t a, uint64_t v, HR r) {
+            reactions.emplace_back(a, v, r);
+        });
+        s.receive(makeTbcSpellDamageLog(kPlayer, kMob, 29956, 1351, 64, 0, 0));
+        REQUIRE(reactions.size() == 1);
+        CHECK(std::get<0>(reactions[0]) == kMob);
+        CHECK(std::get<1>(reactions[0]) == kPlayer);
+        CHECK(std::get<2>(reactions[0]) == HR::SPELL_WOUND);
+    }
+
+    // 2. Observed spell crit hitting another player also triggers SPELL_CRIT_WOUND
+    {
+        Session s("tbc");
+        std::vector<std::tuple<uint64_t, uint64_t, HR>> reactions;
+        s.handler().setHitReactionCallback([&](uint64_t a, uint64_t v, HR r) {
+            reactions.emplace_back(a, v, r);
+        });
+        constexpr uint64_t kOtherPlayer = 0x0000000000000099ULL;
+        s.receive(makeTbcSpellDamageLog(kOtherPlayer, kMob, 686, 1800, 32, 0, 0x02));
+        REQUIRE(reactions.size() == 1);
+        CHECK(std::get<1>(reactions[0]) == kOtherPlayer);
+        CHECK(std::get<2>(reactions[0]) == HR::SPELL_CRIT_WOUND);
+    }
+
+    // 3. Fully absorbed spell (damage == 0, absorbed > 0) does NOT trigger hit-flinch
+    {
+        Session s("tbc");
+        std::vector<std::tuple<uint64_t, uint64_t, HR>> reactions;
+        s.handler().setHitReactionCallback([&](uint64_t a, uint64_t v, HR r) {
+            reactions.emplace_back(a, v, r);
+        });
+        s.receive(makeTbcSpellDamageLog(kPlayer, kMob, 8921, 0, 64, 300, 0));
+        CHECK(reactions.empty());
+    }
+
+    // 4. Periodic DoT tick (SMSG_PERIODICAURALOG auraType=3) does NOT trigger hit-flinch
+    {
+        Session s("tbc");
+        std::vector<std::tuple<uint64_t, uint64_t, HR>> reactions;
+        s.handler().setHitReactionCallback([&](uint64_t a, uint64_t v, HR r) {
+            reactions.emplace_back(a, v, r);
+        });
+        Packet p(wireOpcode(Opcode::SMSG_PERIODICAURALOG));
+        p.writePackedGuid(kPlayer);
+        p.writePackedGuid(kMob);
+        p.writeUInt32(172);  // Corruption
+        p.writeUInt32(1);    // count
+        p.writeUInt32(3);    // SPELL_AURA_PERIODIC_DAMAGE
+        p.writeUInt32(45);   // damage
+        p.writeUInt32(32);   // schoolMask (Shadow)
+        p.writeUInt32(0);    // absorbed
+        p.writeUInt32(0);    // resisted
+        s.receive(p);
+        CHECK(reactions.empty());
+    }
+}

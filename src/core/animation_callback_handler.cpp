@@ -224,11 +224,13 @@ void AnimationCallbackHandler::setupCallbacks() {
 
         uint32_t animId = 0;
         switch (reaction) {
-            case game::GameHandler::HitReaction::WOUND:      animId = rendering::anim::COMBAT_WOUND; break;
-            case game::GameHandler::HitReaction::CRIT_WOUND: animId = rendering::anim::COMBAT_CRITICAL; break;
-            case game::GameHandler::HitReaction::DODGE:      animId = rendering::anim::DODGE; break;
+            case game::GameHandler::HitReaction::WOUND:
+            case game::GameHandler::HitReaction::SPELL_WOUND:      animId = rendering::anim::COMBAT_WOUND; break;
+            case game::GameHandler::HitReaction::CRIT_WOUND:
+            case game::GameHandler::HitReaction::SPELL_CRIT_WOUND: animId = rendering::anim::COMBAT_CRITICAL; break;
+            case game::GameHandler::HitReaction::DODGE:            animId = rendering::anim::DODGE; break;
             case game::GameHandler::HitReaction::BLOCK:
-            case game::GameHandler::HitReaction::SHIELD_BLOCK: animId = rendering::anim::SHIELD_BLOCK; break;
+            case game::GameHandler::HitReaction::SHIELD_BLOCK:     animId = rendering::anim::SHIELD_BLOCK; break;
             case game::GameHandler::HitReaction::PARRY: {
                 uint32_t ready = 0;
                 if (isLocalPlayer) {
@@ -285,7 +287,9 @@ void AnimationCallbackHandler::setupCallbacks() {
             return;
         }
         if ((reaction == game::GameHandler::HitReaction::WOUND ||
-             reaction == game::GameHandler::HitReaction::CRIT_WOUND) &&
+             reaction == game::GameHandler::HitReaction::CRIT_WOUND ||
+             reaction == game::GameHandler::HitReaction::SPELL_WOUND ||
+             reaction == game::GameHandler::HitReaction::SPELL_CRIT_WOUND) &&
             renderer_.getAudioCoordinator()) {
             if (auto* nvm = renderer_.getAudioCoordinator()->getNpcVoiceManager()) {
                 if (auto ent = gameHandler_.getEntityManager().getEntity(victimGuid);
@@ -294,8 +298,10 @@ void AnimationCallbackHandler::setupCallbacks() {
                     glm::vec3 pos = core::coords::canonicalToRender(
                         glm::vec3(ent->getX(), ent->getY(), ent->getZ()));
                     entitySpawner_.getRenderPositionForGuid(victimGuid, pos);
-                    nvm->playWound(victimGuid, dispId,
-                                   reaction == game::GameHandler::HitReaction::CRIT_WOUND, pos);
+                    const bool isCritWound =
+                        reaction == game::GameHandler::HitReaction::CRIT_WOUND ||
+                        reaction == game::GameHandler::HitReaction::SPELL_CRIT_WOUND;
+                    nvm->playWound(victimGuid, dispId, isCritWound, pos);
                 }
             }
         }

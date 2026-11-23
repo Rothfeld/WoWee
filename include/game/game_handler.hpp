@@ -1636,10 +1636,15 @@ public:
     void setNpcSwingCallback(NpcSwingCallback cb) { npcSwingCallback_ = std::move(cb); }
 
     // Hit reaction callback - triggers victim animation (dodge, block, wound, crit wound)
-    enum class HitReaction : uint8_t { WOUND, CRIT_WOUND, DODGE, PARRY, BLOCK, SHIELD_BLOCK };
+    enum class HitReaction : uint8_t { WOUND, CRIT_WOUND, SPELL_WOUND, SPELL_CRIT_WOUND, DODGE, PARRY, BLOCK, SHIELD_BLOCK };
     /// Victim HitReaction animation for an SMSG_SPELL_GO miss entry, if any.
     [[nodiscard]] static std::optional<HitReaction> spellMissHitReaction(
         uint8_t missType, bool hasMissile);
+    /// Victim HitReaction for an SMSG_SPELLNONMELEEDAMAGELOG direct hit, if any.
+    /// Physical spells (schoolMask == 1) use WOUND/CRIT_WOUND (with blood spurt);
+    /// magic spells use SPELL_WOUND/SPELL_CRIT_WOUND (flinch + vocalization, no blood).
+    [[nodiscard]] static std::optional<HitReaction> spellDamageHitReaction(
+        uint32_t damage, bool isCrit, uint32_t schoolMask);
     using HitReactionCallback = std::function<void(uint64_t attackerGuid, uint64_t victimGuid, HitReaction reaction)>;
     void setHitReactionCallback(HitReactionCallback cb) { hitReactionCallback_ = std::move(cb); }
 

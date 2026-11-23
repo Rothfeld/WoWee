@@ -1029,12 +1029,35 @@ void CombatHandler::handleAttackerStateUpdate(network::Packet& packet) {
 
 }
 
+std::optional<GameHandler::HitReaction> GameHandler::spellDamageHitReaction(
+    uint32_t damage, bool isCrit, uint32_t schoolMask) {
+    if (damage == 0) return std::nullopt;
+    // Physical spells (SPELL_SCHOOL_MASK_NORMAL = 0x1) trigger melee-style wound + blood spurt;
+    // magic school spells (Arcane, Fire, Frost, Shadow, Nature, Holy) trigger wound flinch without blood.
+    if (schoolMask == 1u) {
+        return isCrit ? HitReaction::CRIT_WOUND : HitReaction::WOUND;
+    }
+    return isCrit ? HitReaction::SPELL_CRIT_WOUND : HitReaction::SPELL_WOUND;
+}
+
 void CombatHandler::handleSpellDamageLog(network::Packet& packet) {
     SpellDamageLogData data;
     if (!owner_.getPacketParsers()->parseSpellDamageLog(packet, data)) return;
 
     bool isPlayerSource = (data.attackerGuid == owner_.getPlayerGuid());
     bool isPlayerTarget = (data.targetGuid == owner_.getPlayerGuid());
+
+    // Direct spell damage triggers victim hit-flinch (CombatWound 9 / CombatCritical 10)
+    // for local player, remote players, and creatures alike — including spells whose
+    // SpellVisualKit impact omits startAnimId (Arcane Missiles 7268/29956, Moonfire 8921,
+    // Shadow Bolt 686, Smite 585). Periodic DoT ticks (SMSG_PERIODICAURALOG) do not flinch.
+    if (owner_.hitReactionCallbackRef()) {
+        if (const auto reaction = GameHandler::spellDamageHitReaction(
+                data.damage, data.isCrit, data.schoolMask);
+            reaction.has_value()) {
+            owner_.hitReactionCallbackRef()(data.attackerGuid, data.targetGuid, *reaction);
+        }
+    }
 
     // UNIT_COMBAT whoever cast it, as for a swing: a WOUND of the damage
     // (`.damage 50 2 133` on the original: target|WOUND|CRITICAL|75|4).
@@ -1051,6 +1074,13 @@ void CombatHandler::handleSpellDamageLog(network::Packet& packet) {
     if (isPlayerTarget && data.attackerGuid != 0) {
         hostileAttackers_.insert(data.attackerGuid);
         autoTargetAttacker(data.attackerGuid);
+    }
+    if (isPlayerTarget && data.damage > 0) {
+        if (auto* ac = owner_.services().audioCoordinator) {
+            if (auto* asm_ = ac->getActivitySoundManager()) {
+                asm_->playWound(data.isCrit);
+            }
+        }
     }
 
     const auto line = [&](CombatTextEntry::Type type, uint32_t amount, bool reduction = false) {
