@@ -296,6 +296,11 @@ TEST_CASE("Emitters with flag 0x20 or NoTrail+0x200 size their sprites by placem
     CHECK(particleSpriteHalfWidth(0x1bu, 0.433f, 3.25f) == Catch::Approx(0.433f));
     CHECK(particleSpriteHalfWidth(0x19u, 0.250f, 3.25f) == Catch::Approx(0.250f));
     CHECK(particleSpriteHalfWidth(0x439u, 0.500f, 3.25f) == Catch::Approx(1.625f));
+    // BlessingofSpellProtection_Base.m2 on Lady Malande (display 21419, scale 2.1):
+    // shockwave halo #0 (0x19, NoTrail without 0x20/0x200) keeps authored 1.417 yd size;
+    // star rays #1/#2 (0x639) have 0x20 and scale with Malande.
+    CHECK(particleSpriteHalfWidth(0x19u, 1.417f, 2.1f) == Catch::Approx(1.417f));
+    CHECK(particleSpriteHalfWidth(0x639u, 0.056f, 2.1f) == Catch::Approx(0.1176f).margin(0.0001f));
     // Whirlwind_State_Base.m2 geometry particles (#0/#1 0x0d): without 0x20,
     // birthBasis keeps rotation but strips placement scale; with 0x20, scale stays.
     const glm::mat3 scaledRot = glm::mat3(
