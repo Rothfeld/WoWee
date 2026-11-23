@@ -334,9 +334,12 @@ void CharacterRenderer::buildMainPassPipelines(VkDevice device, VkRenderPass mai
     };
 
     // --- Build pipelines ---
+    // Match D3D9 D3DCMP_LESSEQUAL (and M2Renderer / WMORenderer / TerrainRenderer)
+    // so later coplanar submesh/layer draws overwrite earlier ones deterministically
+    // instead of failing z < z and z-fighting (e.g. TitanFemale.m2 skirt).
     auto buildCharPipeline = [&](VkPipelineColorBlendAttachmentState blendState,
                                   bool depthWrite, bool alphaToCoverage = false,
-                                  VkCompareOp depthCompare = VK_COMPARE_OP_LESS,
+                                  VkCompareOp depthCompare = VK_COMPARE_OP_LESS_OR_EQUAL,
                                   VkCullModeFlags cullMode = VK_CULL_MODE_NONE) -> VkPipeline {
         auto builder = PipelineBuilder()
             .setShaders(charVert.stageInfo(VK_SHADER_STAGE_VERTEX_BIT),
@@ -393,7 +396,7 @@ void CharacterRenderer::buildMainPassPipelines(VkDevice device, VkRenderPass mai
     // sides; native shows a Chillwind Chimaera's wings from below.
     culledPipelines_.clear();
     auto culled = [&](VkPipeline twoSided, VkPipelineColorBlendAttachmentState blendState, bool depthWrite,
-                      bool alphaToCoverage = false, VkCompareOp depthCompare = VK_COMPARE_OP_LESS) {
+                      bool alphaToCoverage = false, VkCompareOp depthCompare = VK_COMPARE_OP_LESS_OR_EQUAL) {
         culledPipelines_[twoSided] = buildCharPipeline(blendState, depthWrite, alphaToCoverage, depthCompare,
                                                        VK_CULL_MODE_BACK_BIT);
     };

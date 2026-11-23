@@ -38,6 +38,7 @@ layout(location = 3) out vec3 Tangent;
 layout(location = 4) out vec3 Bitangent;
 layout(location = 5) out vec2 TexCoord2;
 layout(location = 6) out vec2 EnvCoord;
+layout(location = 7) out float NormalWeight;
 
 vec3 safeNormalize(vec3 v, vec3 fallback) {
     float len2 = dot(v, v);
@@ -69,6 +70,7 @@ void main() {
     mat3 modelMat3 = mat3(push.model);
     FragPos = worldPos.xyz;
     Normal = modelMat3 * skinnedNorm;
+    NormalWeight = clamp(length(aNormal), 0.0, 1.0);
     TexCoord = aTexCoord;
     TexCoord2 = aTexCoord2;
     // M2 environment mapping (texture coordinate -1), as m2.vert: the

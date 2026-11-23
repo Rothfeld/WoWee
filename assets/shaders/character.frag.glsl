@@ -112,6 +112,7 @@ layout(location = 3) in vec3 Tangent;
 layout(location = 4) in vec3 Bitangent;
 layout(location = 5) in vec2 TexCoord2In;
 layout(location = 6) in vec2 EnvCoord;
+layout(location = 7) in float NormalWeight;
 
 layout(location = 0) out vec4 outColor;
 
@@ -485,6 +486,12 @@ void main() {
         // as m2.frag.
         result = lightDir.w != 0.0 ? texColor.rgb : texColor.rgb * (1.0 + warm);
     } else {
+        // Zero-normal M2 vertices (e.g. TitanFemale.m2 skirt, 106/660 TBC creatures)
+        // evaluate N.L = 0 in D3D9/TBC Gouraud lighting instead of snapping to a
+        // synthetic (0, 0, 1) normal. Scaling by interpolated NormalWeight preserves
+        // smooth falloff across triangles mixing unit-normal and zero-normal vertices.
+        vec3 lightNorm = (dot(Normal, Normal) > 1e-8) ? (norm * clamp(NormalWeight, 0.0, 1.0)) : vec3(0.0);
+
         vec3 ldir = normalize(-lightDir.xyz);
         vec3 kitLight = vec3(kitLightR, kitLightG, kitLightB);
         vec3 ambient = ambientColor.rgb * kitLight;
@@ -494,23 +501,23 @@ void main() {
         // surface, so those pixels come out one flat tone that reads as a
         // separate, untextured piece - the bare shins against the lit thighs
         // were the case. 0.22 is the floor localLightContribution uses.
-        float diff = 0.22 + 0.78 * max(dot(norm, ldir), 0.0);
+        float diff = 0.22 + 0.78 * max(dot(lightNorm, ldir), 0.0);
 
         vec3 viewDir = normalize(viewPos.xyz - FragPos);
         vec3 halfDir = normalize(ldir + viewDir);
-        float spec = pow(max(dot(norm, halfDir), 0.0), 32.0) * specularIntensity;
+        float spec = pow(max(dot(lightNorm, halfDir), 0.0), 32.0) * specularIntensity;
 
         float shadow = 1.0;
         if (shadowParams.x > 0.5) {
-            float normalOffset = shadowTexel() * 2.0 * (1.0 - abs(dot(norm, ldir)));
-            vec3 biasedPos = FragPos + norm * normalOffset;
+            float normalOffset = shadowTexel() * 2.0 * (1.0 - abs(dot(lightNorm, ldir)));
+            vec3 biasedPos = FragPos + lightNorm * normalOffset;
             vec4 lsPos = lightSpaceMatrix * vec4(biasedPos, 1.0);
             vec3 proj = lsPos.xyz / lsPos.w;
             proj.xy = proj.xy * 0.5 + 0.5;
             if (proj.x >= 0.0 && proj.x <= 1.0 &&
                 proj.y >= 0.0 && proj.y <= 1.0 &&
                 proj.z >= 0.0 && proj.z <= 1.0) {
-                float bias = max(0.0005 * (1.0 - abs(dot(norm, ldir))), 0.00005);
+                float bias = max(0.0005 * (1.0 - abs(dot(lightNorm, ldir))), 0.00005);
                 shadow = sampleShadowPCF(uShadowMap, vec3(proj.xy, proj.z - bias));
             }
             shadow = mix(1.0, shadow, shadowParams.y);
@@ -540,10 +547,10 @@ void main() {
                 ? safeNormalize(-vec3(unitLightDirX, unitLightDirY, unitLightDirZ), ldir)
                 : ldir;
             vec3 m2Point = tbcM2PointLightSum(
-                FragPos, norm,
+                FragPos, lightNorm,
                 vec3(unitModelCenterX, unitModelCenterY, unitModelCenterZ),
                 unitModelRadius) * kitLight;
-            vec3 baseLight = clamp(effAmbient + max(dot(norm, effDir), 0.0) * effDiffuse + m2Point, 0.0, 1.0);
+            vec3 baseLight = clamp(effAmbient + max(dot(lightNorm, effDir), 0.0) * effDiffuse + m2Point, 0.0, 1.0);
             vec3 shaded = clamp(effAmbient + m2Point, 0.0, 1.0);
             vec3 litFactor = (interiorLit != 0) ? baseLight : mix(shaded, baseLight, shadow);
             vec3 hoverAdd = hoverHighlight * ambientColor.rgb * kitLight;
@@ -557,7 +564,7 @@ void main() {
     // TBC model2.bls (lightDir.w != 0.0) already accumulates M2 point lights
     // inside the [0, 1] ADD_SAT clamp above.
     if (unlit == 0 && lightDir.w == 0.0)
-        result += localLightContribution(FragPos, norm, texColor.rgb) * vec3(kitLightR, kitLightG, kitLightB);
+        result += localLightContribution(FragPos, (dot(Normal, Normal) > 1e-8) ? (norm * clamp(NormalWeight, 0.0, 1.0)) : vec3(0.0), texColor.rgb) * vec3(kitLightR, kitLightG, kitLightB);
     result *= vec3(kitColorR, kitColorG, kitColorB);
 
     // Without the TBC light, unit highlight doubles the shaded colour. Before

@@ -1,6 +1,10 @@
 #include <algorithm>
 #include <catch_amalgamated.hpp>
+#include <filesystem>
+#include <fstream>
 #include <numeric>
+#include <sstream>
+#include <string>
 #include <vector>
 #include "rendering/character_material_policy.hpp"
 
@@ -108,4 +112,36 @@ TEST_CASE("character batch ordering scopes materialLayer within each submesh", "
     // priorityPlane still takes top precedence across submeshes.
     CHECK(characterBatchDrawsBefore(-1, 3, 2, 0, 0, 0));
     CHECK(characterBatchDrawsBefore(0, 1, 0, 1, 0, 0));
+}
+
+namespace {
+std::string readRepoText(const char* relPath) {
+    namespace fs = std::filesystem;
+    fs::path dir = fs::path(__FILE__).parent_path().parent_path();
+    std::ifstream in(dir / relPath);
+    REQUIRE(in.good());
+    std::ostringstream ss;
+    ss << in.rdbuf();
+    return ss.str();
+}
+} // namespace
+
+TEST_CASE("character shaders preserve zero-normal diffuse attenuation instead of synthetic up normal", "[character][m2]") {
+    // Models like TitanFemale.m2 (82/950 zero-normal skirt verts, 106/660 TBC
+    // creature M2s) rely on D3D9/TBC Gouraud N.L = 0 on zero-normal vertices.
+    // Snapping zero normals to (0, 0, 1) creates bright polygonal triangles
+    // and sharp seams across the skirt.
+    const std::string vert = readRepoText("assets/shaders/character.vert.glsl");
+    const std::string frag = readRepoText("assets/shaders/character.frag.glsl");
+    CHECK(vert.find("out float NormalWeight") != std::string::npos);
+    CHECK(vert.find("NormalWeight = clamp(length(aNormal), 0.0, 1.0);") != std::string::npos);
+    CHECK(frag.find("in float NormalWeight") != std::string::npos);
+    CHECK(frag.find("vec3 lightNorm = (dot(Normal, Normal) > 1e-8) ? (norm * clamp(NormalWeight, 0.0, 1.0)) : vec3(0.0);") != std::string::npos);
+}
+
+TEST_CASE("character pipelines default to LESS_OR_EQUAL depth compare matching D3D9", "[character][m2]") {
+    const std::string src = readRepoText("src/rendering/character_renderer.cpp");
+    CHECK(src.find("VkCompareOp depthCompare = VK_COMPARE_OP_LESS_OR_EQUAL") != std::string::npos);
+    CHECK(src.find("VkCompareOp depthCompare = VK_COMPARE_OP_LESS,") == std::string::npos);
+    CHECK(src.find("VkCompareOp depthCompare = VK_COMPARE_OP_LESS)") == std::string::npos);
 }
