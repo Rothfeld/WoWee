@@ -530,6 +530,8 @@ private:
     // On foot: move the body from `start` toward `target` among terrain, WMO
     // and doodad triangles; sets grounded, bodyPerched_ and the step base.
     glm::vec3 moveBodyOnFoot(const glm::vec3& start, const glm::vec3& target, float stepSeconds);
+    // One part of that move, no longer than the body's radius.
+    glm::vec3 moveBodyOnFootOnce(const glm::vec3& start, const glm::vec3& target, float stepSeconds);
 
     /// What the floor queries answer directly under the character: the floor
     /// that was chosen, and the three surfaces that were offered. The recovery

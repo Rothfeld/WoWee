@@ -463,6 +463,28 @@ void CameraController::setFlyingActive(bool active) {
 glm::vec3 CameraController::moveBodyOnFoot(const glm::vec3& start, const glm::vec3& target,
                                            float stepSeconds) {
     assert(stepSeconds > 0.0f);
+    // A move longer than the body's radius is taken in equal parts no longer
+    // than that. At run speed a frame's move (0.23 yd at 30 frames per
+    // second) is shorter and is taken whole, as native takes it. At five
+    // times that (.modify speed 5, 1.16 yd a frame) native runs the Gorefiend's
+    // Vigil stairs in Black Temple up and down at full speed, 0.93 yd of rise
+    // or drop a frame, and at a wall its last frame ends at the wall, not a
+    // frame's move short of it. Taken whole, such a move rose or dropped more
+    // than a step: WoWee stopped on the stairs going up and left them going down.
+    const glm::vec3 whole = target - start;
+    const float run = glm::length(glm::vec2(whole));
+    const float radius = std::max(collisionRadius_, 0.1f);
+    const int parts = std::max(1, static_cast<int>(std::ceil(run / radius)));
+    glm::vec3 position = start;
+    for (int part = 0; part < parts; ++part) {
+        position = moveBodyOnFootOnce(position, position + whole / static_cast<float>(parts),
+                                      stepSeconds / static_cast<float>(parts));
+    }
+    return position;
+}
+
+glm::vec3 CameraController::moveBodyOnFootOnce(const glm::vec3& start, const glm::vec3& target,
+                                               float stepSeconds) {
     const float radius = std::max(collisionRadius_, 0.1f);
     const float height = std::max(collisionHeight_, radius * movement::kBodyBevel + 0.01f);
     const float minWalkable = ignoreSlopeLimit_ ? 0.0f : movement::kMinWalkableNormalZ;

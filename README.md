@@ -1246,9 +1246,13 @@ position, grounding and step-up in one place; the floor queries of
 read off native per-frame positions (200 Hz reads of the native player
 position) replayed against WoWee's own triangles for the same places:
 
-- One step per frame with the whole frame's move (`kMaxPhysicsDelta` 50 ms).
-  Native moves a 16 to 36 ms frame in one piece, and whether it steps up
-  depends on that whole move; splitting a frame changes the outcome.
+- One step per frame with the whole frame's move (`kMaxPhysicsDelta` 50 ms),
+  as long as that move is no longer than the body's radius: at run speed
+  native moves a 16 to 36 ms frame in one piece, and whether it steps up
+  depends on that whole move. A longer move (`.modify speed 5`: 1.16 yd a
+  frame) is taken in equal parts no longer than the radius; native runs the
+  Gorefiend's Vigil stairs in Black Temple both ways at that speed, 0.93 yd
+  of rise or drop a frame.
 - Walking: level when nothing is in the way. Otherwise lift by what is left of
   one yard over where the sole last stood on ground, carry the whole move,
   lower onto what is there. It is a step only if the lifted move meets nothing.
@@ -1301,6 +1305,13 @@ Gotchas:
   measured (55 to 84 degrees: tree hull, rock face, leaning wall). What tells
   them apart natively is not established; "leads to ground" matches the plank
   ramp bump, tree, rock face, fence and walls and gives a slide at the table.
+- Running at the Orgrimmar wall at five times run speed, native ends the
+  frame that reaches the wall exactly one yard up it and hangs there, when it
+  had more than about half a yard of free run in that frame; arriving within
+  0.07 yd it slides as at run speed. With the Exodar table (steps when a
+  face is met after 0.15 yd or more of free run in the frame, slides when met
+  within 0.12) this is the best lead on native's step rule: a full-yard lift
+  is taken on arrival, not from standing contact. Not built; WoWee slides.
 - Along the foot of the Orgrimmar wall's 77 degree section native slides at
   about three quarters of the speed the projection gives.
 - Under a low overhang (leaning trunk at Orgrimmar 1823.7, -4235.4) native
