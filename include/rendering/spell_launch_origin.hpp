@@ -2,6 +2,8 @@
 
 #include "pipeline/m2_loader.hpp"
 #include "rendering/m2_track_sampler.hpp"
+#include <array>
+#include <cstddef>
 #include <cstdint>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -81,6 +83,46 @@ inline constexpr uint32_t missileDestinationAttachmentToM2Id(uint32_t destAttach
         case 7: return kAttachSpecial2Id;
         case 8: return kAttachSpecial3Id;
         default: return kAttachChestBloodFrontId;
+    }
+}
+
+// Map SpellVisual.dbc MissileDestinationAttachment (TBC col 9, signed int32)
+// for channel/cast beams to M2 attachment ID. Uses the SpellVisualKit slot map:
+//   0=Head(20), 1=Chest(34), 2=Base(19, e.g. Netherspite 30463..30465 SV 7759..7761),
+//   3=LeftHand(21), 4=RightHand(22), 5=Breath(17), 6..8=Special1..3(23..25),
+//   default/-1=Chest(34, e.g. Netherspite player beams 30400..30402 SV 7739..7741).
+inline constexpr uint32_t beamDestinationAttachmentToM2Id(int32_t destAttachment) {
+    return missileAttachmentToM2Id(destAttachment);
+}
+
+struct BeamAttachmentCandidates {
+    std::array<uint32_t, 4> ids{};
+    size_t count = 0;
+};
+
+// Ordered M2 attachment fallback chain for beam start/end lookup on drawn units
+// and undrawn helper models:
+// - Base (19) never climbs up to Chest (34) when absent; it falls back to unit feet.
+// - Chest (34, present on 577/660 TBC creature M2s) falls back to ChestBloodFront
+//   (15, present on 622/660 TBC creature M2s) before falling back to unit position.
+// - Head (20) tries HeadTop (18) before Chest (34/15).
+// - SpellLeftHand/RightHand (21/22) try weapon HandLeft/Right (2/1) before Chest (34/15).
+inline constexpr BeamAttachmentCandidates beamAttachmentFallbacks(uint32_t primary) {
+    switch (primary) {
+        case kAttachBaseId:
+            return {{kAttachBaseId, 0u, 0u, 0u}, 1};
+        case kAttachChestId:
+            return {{kAttachChestId, kAttachChestBloodFrontId, 0u, 0u}, 2};
+        case kAttachChestBloodFrontId:
+            return {{kAttachChestBloodFrontId, kAttachChestId, 0u, 0u}, 2};
+        case kAttachHeadId:
+            return {{kAttachHeadId, kAttachHeadTopId, kAttachChestId, kAttachChestBloodFrontId}, 4};
+        case kAttachSpellLeftHandId:
+            return {{kAttachSpellLeftHandId, kAttachLaunchHandFallback, kAttachChestId, kAttachChestBloodFrontId}, 4};
+        case kAttachSpellRightHandId:
+            return {{kAttachSpellRightHandId, 1u, kAttachChestId, kAttachChestBloodFrontId}, 4};
+        default:
+            return {{primary, kAttachChestId, kAttachChestBloodFrontId, 0u}, 3};
     }
 }
 

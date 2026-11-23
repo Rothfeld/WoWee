@@ -7,6 +7,7 @@
 #include <fstream>
 #include <glm/gtc/matrix_transform.hpp>
 
+using wowee::pipeline::M2Attachment;
 using wowee::pipeline::M2Bone;
 using wowee::pipeline::M2Loader;
 using wowee::pipeline::M2Model;
@@ -266,4 +267,59 @@ TEST_CASE("M2Loader parses TBC 2.4.3 $CSL/$CSR/$CST release events across races 
         CHECK(hfBeam.source == SpellLaunchOrigin::Source::EventBone);
         CHECK(hfBeam.localOffset.y > 0.1f);
     }
+
+    SECTION("Netherspite (taerar.m2) Base (19) sits at ground origin while Chest (34) sits +5.96m up; InvisibleStalker.m2 Chest (34) sits at +1.883m") {
+        const auto taerarBytes = readFileBytes(dataDir / "creature/dragon/taerar.m2");
+        REQUIRE(!taerarBytes.empty());
+        const M2Model taerar = M2Loader::load(taerarBytes);
+
+        const M2Attachment* baseAtt = nullptr;
+        const M2Attachment* chestAtt = nullptr;
+        for (const auto& att : taerar.attachments) {
+            if (att.id == kAttachBaseId) baseAtt = &att;
+            if (att.id == kAttachChestId) chestAtt = &att;
+        }
+        REQUIRE(baseAtt != nullptr);
+        REQUIRE(chestAtt != nullptr);
+        // Netherspite portal->boss beams (30463..30465, SV 7759..7761) author
+        // MissileDestinationAttachment = 2 -> Base (19) at (0,0,0), not Chest (34) at (+5.72, 0, +5.96).
+        CHECK(beamDestinationAttachmentToM2Id(2) == kAttachBaseId);
+        CHECK(beamDestinationAttachmentToM2Id(1) == kAttachChestId);
+        CHECK(beamDestinationAttachmentToM2Id(-1) == kAttachChestId);
+        CHECK(glm::length(baseAtt->position) < 0.05f);
+        CHECK(chestAtt->position.z > 5.5f);
+
+        // Portal stalker (InvisibleStalker.m2, displayId 16946, displayScale 2.0):
+        // att 34 sits at z = +1.8825m in model space -> +3.765m at displayScale 2.0.
+        const auto stalkerBytes = readFileBytes(dataDir / "creature/invisiblestalker/invisiblestalker.m2");
+        REQUIRE(!stalkerBytes.empty());
+        const M2Model stalker = M2Loader::load(stalkerBytes);
+        const M2Attachment* stalkerChest = nullptr;
+        for (const auto& att : stalker.attachments) {
+            if (att.id == kAttachChestId) stalkerChest = &att;
+        }
+        REQUIRE(stalkerChest != nullptr);
+        CHECK(stalkerChest->position.z == Catch::Approx(1.882534f).margin(1e-3f));
+    }
+}
+
+TEST_CASE("beamAttachmentFallbacks preserves Base (19) at feet and falls Chest (34) back to ChestBloodFront (15)", "[spell_origin]") {
+    // Base (19) must never climb up to Chest (34) when absent on a model.
+    const auto baseFb = beamAttachmentFallbacks(kAttachBaseId);
+    REQUIRE(baseFb.count == 1);
+    CHECK(baseFb.ids[0] == kAttachBaseId);
+
+    // Chest (34, present on 577/660 TBC creature M2s) falls back to ChestBloodFront (15, 622/660) before unit feet.
+    const auto chestFb = beamAttachmentFallbacks(kAttachChestId);
+    REQUIRE(chestFb.count == 2);
+    CHECK(chestFb.ids[0] == kAttachChestId);
+    CHECK(chestFb.ids[1] == kAttachChestBloodFrontId);
+
+    // Head (20) tries HeadTop (18) before Chest (34) and ChestBloodFront (15).
+    const auto headFb = beamAttachmentFallbacks(kAttachHeadId);
+    REQUIRE(headFb.count == 4);
+    CHECK(headFb.ids[0] == kAttachHeadId);
+    CHECK(headFb.ids[1] == kAttachHeadTopId);
+    CHECK(headFb.ids[2] == kAttachChestId);
+    CHECK(headFb.ids[3] == kAttachChestBloodFrontId);
 }

@@ -95,13 +95,30 @@ TEST_CASE("Combo decodes exact 9-bit row IDs: bit 0 in b3&0x10, bit 7 in b3&0x02
     CHECK(chainComboStrands("", 1).empty());
 }
 
-TEST_CASE("Wave offset vanishes at both endpoints and peaks inside", "[chain]") {
+TEST_CASE("Wave offset pins endpoints, holds full WaveHeight across long spans, and moves toward caster for +WaveSpeed", "[chain]") {
     // Parhelion Plaza chain 377: WaveHeight=1.70, WaveFreq=0.1571, WaveSpeed=-2.0.
     CHECK(chainWaveOffset(0.0f, 15.0f, 1.70f, 0.1571f, -2.0f, 0.4f) == Catch::Approx(0.0f).margin(1e-6f));
     CHECK(chainWaveOffset(15.0f, 15.0f, 1.70f, 0.1571f, -2.0f, 0.4f) == Catch::Approx(0.0f).margin(1e-6f));
-    // At midpoint envelope == 1.0, full sine amplitude applies.
-    CHECK(chainWaveOffset(5.0f, 10.0f, 2.0f, 0.0f, -1.5707963f, 1.0f) == Catch::Approx(2.0f).margin(1e-4f));
+    // At midpoint envelope == 1.0, phase = waveFreq * s + waveSpeed * t.
+    CHECK(chainWaveOffset(5.0f, 10.0f, 2.0f, 0.0f, 1.5707963f, 1.0f) == Catch::Approx(2.0f).margin(1e-4f));
     CHECK(chainWaveOffset(5.0f, 10.0f, 0.0f, 1.0f, 2.0f, 0.5f) == 0.0f);
+
+    // Netherspite Portal Beam - Serenity (30464, chain 269) across 71.2 yd:
+    // WaveHeight=0.55, WaveFreq=0.7226, WaveSpeed=+9.20.
+    // Endpoint ramp is min(4 yd, 0.25 * 71.2) = 4.0 yd, so s = 65 yd (6.2 yd from
+    // Netherspite) retains 100% WaveHeight instead of being flattened by sin(pi*s/L).
+    const float length = 71.2f, wh = 0.55f, wf = 0.7226f, ws = 9.20f;
+    CHECK(chainWaveOffset(2.0f, length, wh, wf, ws, 0.0f) ==
+          Catch::Approx(0.5f * wh * std::sin(wf * 2.0f)).margin(1e-5f));
+    CHECK(chainWaveOffset(65.0f, length, wh, wf, ws, 0.0f) ==
+          Catch::Approx(wh * std::sin(wf * 65.0f)).margin(1e-5f));
+    // Crest at s0 = (pi/2) / wf at t=0 moves toward caster (s1 < s0) at t=0.25s:
+    // s(t) = (pi/2 - ws * t) / wf -> ds/dt = -9.20 / 0.7226 = -12.73 yd/s.
+    const float s0 = (1.5707963f) / wf + 26.1f;  // interior crest
+    const float s1 = s0 - (ws * 0.25f) / wf;
+    CHECK(s1 < s0);
+    CHECK(chainWaveOffset(s0, length, wh, wf, ws, 0.0f) == Catch::Approx(wh).margin(1e-4f));
+    CHECK(chainWaveOffset(s1, length, wh, wf, ws, 0.25f) == Catch::Approx(wh).margin(1e-4f));
 }
 
 TEST_CASE("Flicker requires Flags 0x10 and Pulse requires Flags 0x20; BlendModes 2/3/4/6 supported", "[chain]") {
@@ -468,4 +485,86 @@ TEST_CASE("SMSG_SPELL_UPDATE_CHAIN_TARGETS decodes caster, spell, and target lis
 
     // Truncated target array is rejected safely.
     CHECK_FALSE(parseSpellUpdateChainTargetsBytes(buf.data(), 16 + 8).has_value());
+}
+
+TEST_CASE("Netherspite TBC SpellVisual.dbc and SpellChainEffects.dbc preserve distinct destination attachments and shapes",
+          "[chain][tbc]") {
+    using wowee::rendering::beamDestinationAttachmentToM2Id;
+    using wowee::rendering::kAttachBaseId;
+    using wowee::rendering::kAttachChestId;
+
+    // Verify SpellVisual.dbc MissileDestinationAttachment (col 9):
+    // Portal->Boss (30463..30465, SV 7759..7761) author 2 -> Base (19);
+    // Portal->Player (30400..30402, SV 7739..7741) author 1 -> Chest (34).
+    const auto svBytes = wowee::test::readTbcData("dbfilesclient/spellvisual.dbc");
+    REQUIRE(svBytes.size() >= 20);
+    uint32_t svNrec = 0, svRecSize = 0;
+    std::memcpy(&svNrec, svBytes.data() + 4, 4);
+    std::memcpy(&svRecSize, svBytes.data() + 12, 4);
+    REQUIRE(svRecSize >= 16 * 4);
+
+    auto readSvDest = [&](uint32_t targetVid) -> int32_t {
+        for (uint32_t i = 0; i < svNrec; ++i) {
+            const uint8_t* r = svBytes.data() + 20 + static_cast<size_t>(i) * svRecSize;
+            uint32_t vid = 0;
+            std::memcpy(&vid, r, 4);
+            if (vid == targetVid) {
+                int32_t dest = 0;
+                std::memcpy(&dest, r + 9 * 4, 4);
+                return dest;
+            }
+        }
+        FAIL("SpellVisual row not found: " << targetVid);
+        return -1;
+    };
+
+    for (uint32_t bossVid : {7759u, 7760u, 7761u}) {
+        const int32_t dest = readSvDest(bossVid);
+        CHECK(dest == 2);
+        CHECK(beamDestinationAttachmentToM2Id(dest) == kAttachBaseId);
+    }
+    for (uint32_t playerVid : {7739u, 7740u, 7741u}) {
+        const int32_t dest = readSvDest(playerVid);
+        CHECK(dest == 1);
+        CHECK(beamDestinationAttachmentToM2Id(dest) == kAttachChestId);
+    }
+
+    // Verify SpellChainEffects.dbc rows 13 (Perseverence Red), 268 (Dominance Blue), 269 (Serenity Green):
+    const auto ceBytes = wowee::test::readTbcData("dbfilesclient/spellchaineffects.dbc");
+    REQUIRE(ceBytes.size() >= 20);
+    uint32_t ceNrec = 0, ceRecSize = 0;
+    std::memcpy(&ceNrec, ceBytes.data() + 4, 4);
+    std::memcpy(&ceRecSize, ceBytes.data() + 12, 4);
+    REQUIRE(ceRecSize == 173);
+
+    auto checkChain = [&](uint32_t targetId, float expSegLen, float expTexScale,
+                          float expWaveHeight, float expWaveFreq, float expWaveSpeed) {
+        for (uint32_t i = 0; i < ceNrec; ++i) {
+            const uint8_t* r = ceBytes.data() + 20 + static_cast<size_t>(i) * ceRecSize;
+            uint32_t id = 0;
+            std::memcpy(&id, r, 4);
+            if (id == targetId) {
+                float avgSegLen = 0, texScale = 0, wh = 0, wf = 0, ws = 0;
+                std::memcpy(&avgSegLen, r + 1 * 4, 4);
+                std::memcpy(&texScale, r + 4 * 4, 4);
+                std::memcpy(&wh, r + 19 * 4, 4);
+                std::memcpy(&wf, r + 20 * 4, 4);
+                std::memcpy(&ws, r + 21 * 4, 4);
+                CHECK(avgSegLen == Catch::Approx(expSegLen).margin(1e-3f));
+                CHECK(texScale == Catch::Approx(expTexScale).margin(1e-3f));
+                CHECK(wh == Catch::Approx(expWaveHeight).margin(1e-3f));
+                CHECK(wf == Catch::Approx(expWaveFreq).margin(1e-3f));
+                CHECK(ws == Catch::Approx(expWaveSpeed).margin(1e-3f));
+                return;
+            }
+        }
+        FAIL("SpellChainEffects row not found: " << targetId);
+    };
+
+    // Red (13): straight (WaveHeight 0), fast droplets toward target (+5.0)
+    checkChain(13, 2.78f, 5.0f, 0.0f, 0.0f, 0.0f);
+    // Blue (268): coarse 2.78 yd zigzag (WaveHeight 1.70, WaveFreq 1.791, WaveSpeed +2.40), scroll toward portal (-2.0)
+    checkChain(268, 2.78f, -2.0f, 1.70f, 1.791f, 2.40f);
+    // Green (269): smooth 0.5485 yd sine wave (WaveHeight 0.55, WaveFreq 0.7226, WaveSpeed +9.20), scroll toward portal (-2.0)
+    checkChain(269, 0.5485f, -2.0f, 0.55f, 0.7226f, 9.20f);
 }

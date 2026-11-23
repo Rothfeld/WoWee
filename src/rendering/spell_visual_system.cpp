@@ -383,6 +383,8 @@ void SpellVisualSystem::loadSpellVisualDbc() {
 
         if (svMissileAttachmentField < svFc)
             launchAttachments_[vid] = static_cast<int32_t>(svDbc->getUInt32(i, svMissileAttachmentField));
+        if (svMissileDestinationField < svFc)
+            destAttachments_[vid] = static_cast<int32_t>(svDbc->getUInt32(i, svMissileDestinationField));
 
         // The missile flies from caster to target. It used to stand in for a
         // missing cast or impact kit instead, parked at one end, which is why a
@@ -1341,12 +1343,12 @@ glm::vec3 SpellVisualSystem::beamEnd(const ChainEnd& end) {
         const uint32_t att = (end.origin.source == SpellLaunchOrigin::Source::Attachment)
                                  ? end.origin.attachmentId
                                  : end.attachment;
-        if (characters->getAttachmentTransform(end.instanceId, att, point))
-            return glm::vec3(point[3]);
-        if (att == kAttachHeadId && characters->getAttachmentTransform(end.instanceId, kAttachHeadTopId, point))
-            return glm::vec3(point[3]);
-        if (att != kAttachChestId && characters->getAttachmentTransform(end.instanceId, kAttachChestId, point))
-            return glm::vec3(point[3]);
+        const auto candidates = beamAttachmentFallbacks(att);
+        for (size_t i = 0; i < candidates.count; ++i) {
+            if (characters->getAttachmentTransform(end.instanceId, candidates.ids[i], point)) {
+                return glm::vec3(point[3]);
+            }
+        }
     }
     return end.position;
 }
@@ -1992,6 +1994,13 @@ SpellLaunchOrigin SpellVisualSystem::castBeamStartOrigin(uint32_t visualId, cons
     const int32_t missileAttachment = it != launchAttachments_.end() ? it->second : 1;
     const uint32_t castAnim = castAnimation(visualId);
     return resolveBeamStartOrigin(casterModel, castAnim, missileAttachment);
+}
+
+uint32_t SpellVisualSystem::beamDestinationAttachment(uint32_t visualId) {
+    if (!spellVisualDbcLoaded_) loadSpellVisualDbc();
+    const auto it = destAttachments_.find(visualId);
+    const int32_t destAttachment = it != destAttachments_.end() ? it->second : 1;
+    return beamDestinationAttachmentToM2Id(destAttachment);
 }
 
 bool SpellVisualSystem::hasSpellMissile(uint32_t visualId) {

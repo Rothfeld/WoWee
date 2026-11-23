@@ -210,6 +210,9 @@ public:
     /// M2's $CSL/$CSR/$CST release event on the cast animation when MissileAttachment == -1,
     /// falling back to Chest (34) when the model lacks that animation's release event.
     SpellLaunchOrigin castBeamStartOrigin(uint32_t visualId, const pipeline::M2Model* casterModel);
+    /// Target-side M2 attachment ID for channel/cast beams from SpellVisual.dbc
+    /// MissileDestinationAttachment (col 9: 0=Head 20, 1=Chest 34, 2=Base 19, etc.).
+    uint32_t beamDestinationAttachment(uint32_t visualId);
 
     using MissileTargetResolver = std::function<std::optional<MissileTargetSample>()>;
 
@@ -642,6 +645,7 @@ private:
     SpellMissileMotionTable missileMotionTable_;
     std::unordered_map<uint32_t, MissileAttachments> missileAttachments_;
     std::unordered_map<uint32_t, int32_t> launchAttachments_;  // SpellVisual MissileAttachment, every visual
+    std::unordered_map<uint32_t, int32_t> destAttachments_;    // SpellVisual MissileDestinationAttachment, every visual
     std::unordered_map<std::string, uint32_t> spellVisualModelIds_;   // M2 path → M2Renderer modelId
     std::unordered_set<uint32_t> spellVisualFailedModels_;           // modelIds that failed to load (negative cache)
     uint32_t nextSpellVisualModelId_ = 999000; // Reserved range 999000-999799

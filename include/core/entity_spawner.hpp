@@ -345,6 +345,10 @@ public:
     /// Green Beam from above its feet. nullopt for other models or when the
     /// model has no such attachment.
     std::optional<glm::vec3> helperModelAttachment(uint32_t displayId, uint32_t attachmentId);
+    /// Effective render scale of a creature (server OBJECT_FIELD_SCALE_X times
+    /// CreatureDisplayInfo.Scale times CreatureModelData.ModelScale, or hunter
+    /// pet family scale). Used for undrawn helper-model attachment placement too.
+    float creatureRenderScale(const game::Unit& unit, uint32_t displayId, float serverScale) const;
     uint32_t remoteIdleAnimation(uint64_t guid) const;
     /// A creature idles in Hover (193) while its movement flags carry
     /// LEVITATING (CMaNGOS: InhabitType air, Creature.cpp SetLevitate) or
@@ -545,7 +549,6 @@ private:
     float creatureDisplayScale(uint32_t displayId) const;
     /// CreatureDisplayInfo.CreatureModelAlpha as 0-1, or 1.0 for an unknown display.
     float creatureDisplayAlpha(uint32_t displayId) const;
-    float creatureRenderScale(const game::Unit& unit, uint32_t displayId, float serverScale) const;
     std::unordered_map<uint32_t, CreatureFamilyScale> creatureFamilyScales_;
 
     /// Apply the textures a creature display names: its own skin variations,

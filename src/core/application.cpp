@@ -4671,30 +4671,41 @@ void Application::syncChannelVisuals() {
         }
         return guid == self ? renderer->getCharacterInstanceId() : gameHandler->resolveUnitRenderInstance(guid);
     };
-    // Where a beam meets this object, false when it is not in the world.
-    auto endpoint = [&](const game::Entity& entity, glm::vec3& out) {
+    // Where a beam meets this object at `targetAttachment`, false when it is not in the world.
+    auto endpoint = [&](const game::Entity& entity, uint32_t targetAttachment, glm::vec3& out) {
         const uint32_t instance = (entity.getType() == game::ObjectType::UNIT ||
                                    entity.getType() == game::ObjectType::PLAYER) ? instanceOf(entity.getGuid()) : 0;
-        glm::mat4 chest(1.0f);
-        if (instance && characters && characters->getAttachmentTransform(instance, 34, chest)) {
-            out = glm::vec3(chest[3]);
-            return true;
+        if (instance && characters) {
+            const auto candidates = rendering::beamAttachmentFallbacks(targetAttachment);
+            for (size_t i = 0; i < candidates.count; ++i) {
+                glm::mat4 attMat(1.0f);
+                if (characters->getAttachmentTransform(instance, candidates.ids[i], attMat)) {
+                    out = glm::vec3(attMat[3]);
+                    return true;
+                }
+            }
         }
         if (instance && characters && characters->getInstancePosition(instance, out)) return true;
         if (entity.getGuid() == self) { out = possessedBody_ ? glm::vec3(heldPlayerBody_) : renderer->getCharacterPosition(); return true; }
         out = core::coords::canonicalToRender(glm::vec3(entity.getX(), entity.getY(), entity.getZ()));
-        // An undrawn helper model's chest, placed as CharacterRenderer would
-        // place the model: facing + 90 degrees about Z, object scale.
+        // An undrawn helper model's attachment, placed as CharacterRenderer would
+        // place the model: facing + 90 degrees about Z, full creatureRenderScale
+        // (OBJECT_FIELD_SCALE_X * CreatureDisplayInfo.Scale * CreatureModelData.ModelScale).
         if (instance == 0 && entitySpawner_ && (entity.getType() == game::ObjectType::UNIT)) {
             const auto& unit = static_cast<const game::Unit&>(entity);
-            if (const auto offset = entitySpawner_->helperModelAttachment(unit.getDisplayId(), 34)) {
-                const uint32_t scaleBits = entity.getField(game::fieldIndex(game::UF::OBJECT_FIELD_SCALE_X));
-                float scale = 1.0f;
-                if (scaleBits) std::memcpy(&scale, &scaleBits, sizeof(scale));
-                const float yaw = entity.getOrientation() + glm::radians(90.0f);
-                const glm::vec3 local = *offset * scale;
-                out += glm::vec3(local.x * std::cos(yaw) - local.y * std::sin(yaw),
-                                 local.x * std::sin(yaw) + local.y * std::cos(yaw), local.z);
+            const auto candidates = rendering::beamAttachmentFallbacks(targetAttachment);
+            for (size_t i = 0; i < candidates.count; ++i) {
+                if (const auto offset = entitySpawner_->helperModelAttachment(unit.getDisplayId(), candidates.ids[i])) {
+                    const uint32_t scaleBits = entity.getField(game::fieldIndex(game::UF::OBJECT_FIELD_SCALE_X));
+                    float serverScale = 1.0f;
+                    if (scaleBits) std::memcpy(&serverScale, &scaleBits, sizeof(serverScale));
+                    const float renderScale = entitySpawner_->creatureRenderScale(unit, unit.getDisplayId(), serverScale);
+                    const float yaw = entity.getOrientation() + glm::radians(90.0f);
+                    const glm::vec3 local = *offset * renderScale;
+                    out += glm::vec3(local.x * std::cos(yaw) - local.y * std::sin(yaw),
+                                     local.x * std::sin(yaw) + local.y * std::cos(yaw), local.z);
+                    break;
+                }
             }
         }
         return true;
@@ -4715,35 +4726,42 @@ void Application::syncChannelVisuals() {
         channel.casterGuid = guid;
         channel.casterInstanceId = instanceOf(guid);
         channel.visualId = spell->second.spellVisualId;
-        endpoint(*entity, channel.casterPosition);
+        endpoint(*entity, rendering::kAttachChestId, channel.casterPosition);
         channel.start = channel.casterPosition;
-        // The caster's end follows the hand/event a missile would leave
-        // (SpellVisualSystem::beamStartOrigin), animated with the pose.
+        // The caster's end follows the hand/event/attachment a missile or beam
+        // leaves (SpellVisualSystem::beamStartOrigin), animated with the pose.
+        const auto* casterModel = (channel.casterInstanceId && characters)
+                                      ? characters->getInstanceModelData(channel.casterInstanceId)
+                                      : nullptr;
+        const auto origin = visuals->beamStartOrigin(channel.visualId, casterModel);
         if (channel.casterInstanceId && characters) {
-            const auto* casterModel = characters->getInstanceModelData(channel.casterInstanceId);
-            const auto origin = visuals->beamStartOrigin(channel.visualId, casterModel);
             glm::mat4 hand(1.0f);
             if (origin.source == rendering::SpellLaunchOrigin::Source::EventBone &&
                 characters->getBonePointTransform(channel.casterInstanceId, origin.bone, origin.localOffset, hand)) {
                 channel.start = glm::vec3(hand[3]);
-            } else if (origin.source == rendering::SpellLaunchOrigin::Source::Attachment &&
-                       characters->getAttachmentTransform(channel.casterInstanceId, origin.attachmentId, hand)) {
-                channel.start = glm::vec3(hand[3]);
-            } else if (origin.source == rendering::SpellLaunchOrigin::Source::Attachment &&
-                       origin.attachmentId == rendering::kAttachHeadId &&
-                       characters->getAttachmentTransform(channel.casterInstanceId, rendering::kAttachHeadTopId, hand)) {
-                channel.start = glm::vec3(hand[3]);
-            } else if (origin.source == rendering::SpellLaunchOrigin::Source::Attachment &&
-                       origin.attachmentId != rendering::kAttachChestId &&
-                       characters->getAttachmentTransform(channel.casterInstanceId, rendering::kAttachChestId, hand)) {
-                channel.start = glm::vec3(hand[3]);
+            } else if (origin.source == rendering::SpellLaunchOrigin::Source::Attachment) {
+                bool placed = false;
+                const auto candidates = rendering::beamAttachmentFallbacks(origin.attachmentId);
+                for (size_t i = 0; i < candidates.count; ++i) {
+                    if (characters->getAttachmentTransform(channel.casterInstanceId, candidates.ids[i], hand)) {
+                        channel.start = glm::vec3(hand[3]);
+                        placed = true;
+                        break;
+                    }
+                }
+                if (!placed && origin.attachmentId == rendering::kAttachBaseId) {
+                    characters->getInstancePosition(channel.casterInstanceId, channel.start);
+                }
             }
+        } else if (origin.source == rendering::SpellLaunchOrigin::Source::Attachment) {
+            endpoint(*entity, origin.attachmentId, channel.start);
         }
+        const uint32_t destAttach = visuals->beamDestinationAttachment(channel.visualId);
         const uint64_t target = static_cast<uint64_t>(entity->getField(objectLo)) |
                                 (static_cast<uint64_t>(entity->getField(objectHi)) << 32);
         if (target && target != guid) {
             if (const auto targetEntity = gameHandler->getEntityManager().getEntity(target))
-                channel.hasTarget = endpoint(*targetEntity, channel.end);
+                channel.hasTarget = endpoint(*targetEntity, destAttach, channel.end);
         }
         channel.spellId = spellId;
         // A jumping channel's further targets, after the channel object.
@@ -4752,7 +4770,7 @@ void Application::syncChannelVisuals() {
                 if (hop == target || hop == guid) continue;
                 const auto hopEntity = gameHandler->getEntityManager().getEntity(hop);
                 glm::vec3 at;
-                if (hopEntity && endpoint(*hopEntity, at)) channel.hops.push_back(at);
+                if (hopEntity && endpoint(*hopEntity, destAttach, at)) channel.hops.push_back(at);
             }
         }
         channels.push_back(channel);

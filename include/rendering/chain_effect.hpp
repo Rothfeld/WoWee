@@ -98,15 +98,24 @@ inline constexpr bool chainUsesFlicker(uint32_t flags, float maxFlickerOn, float
 }
 
 /// Transverse sinusoidal wave offset s yards along a beam of `length` yards at
-/// age `t`. Multiplied by sin(pi * s / length) so both ends stay pinned to the
-/// caster and target attachments instead of detaching by up to WaveHeight yards.
+/// age `t`.
+/// - Phase is `waveFreq * s + waveSpeed * t`: positive WaveSpeed moves crests
+///   from target toward caster (verified on build 8606 Netherspite Serenity
+///   30464 chain 269 WaveFreq 0.7226, WaveSpeed +9.20 -> -12.73 yd/s toward
+///   portal, and Dominance 30463 chain 268 WaveFreq 1.791, WaveSpeed +2.40).
+/// - Ramps linearly from 0 over min(4 yd, 0.25 * length) at each end so both
+///   endpoints stay pinned to their attachments while long beams (32-71 yd)
+///   keep full WaveHeight across their span instead of collapsing to straight
+///   lines over the outer quarters.
 inline float chainWaveOffset(float s, float length, float waveHeight,
                              float waveFreq, float waveSpeed, float t) {
     assert(length > 0.0f);
     if (waveHeight == 0.0f) return 0.0f;
-    constexpr float kPi = 3.14159265358979323846f;
-    const float envelope = std::sin(kPi * std::clamp(s / length, 0.0f, 1.0f));
-    return waveHeight * envelope * std::sin(waveFreq * s - waveSpeed * t);
+    const float endRamp = std::min(4.0f, 0.25f * length);
+    const float edgeDist = std::min(s, length - s);
+    if (edgeDist <= 0.0f || endRamp <= 0.0f) return 0.0f;
+    const float envelope = std::min(1.0f, edgeDist / endRamp);
+    return waveHeight * envelope * std::sin(waveFreq * s + waveSpeed * t);
 }
 
 /// How lit a pulsing row is s yards from the caster on a beam `length`

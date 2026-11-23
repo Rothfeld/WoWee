@@ -4277,6 +4277,7 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
                         // went to, hit or missed (Forked Lightning 38145 missed
                         // both players and drew to both), else to its
                         // destination (Wrath of the Astromancer 42784).
+                        const uint32_t destAttach = svs->beamDestinationAttachment(visualId);
                         std::vector<rendering::SpellVisualSystem::ChainEnd> ends;
                         auto addEnd = [&](uint64_t guid) {
                             glm::vec3 position;
@@ -4285,13 +4286,13 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
                                           " skipped (caster, none or position unknown)");
                                 return;
                             }
-                            ends.push_back({owner_.resolveUnitRenderInstance(guid), position});
+                            ends.push_back({owner_.resolveUnitRenderInstance(guid), position, destAttach});
                         };
                         for (const auto& tgt : data.hitTargets) addEnd(tgt);
                         for (const auto& miss : data.missTargets) addEnd(miss.targetGuid);
                         if (ends.empty() && data.destination)
                             ends.push_back({0, core::coords::canonicalToRender(
-                                core::coords::serverToCanonical(*data.destination))});
+                                core::coords::serverToCanonical(*data.destination)), destAttach});
                         // A spell whose effect jumps between targets (EffectChainTarget
                         // above 1) runs its beam caster -> first target -> second ...
                         // in the packet's hit order, as native Mother Shahraz's
