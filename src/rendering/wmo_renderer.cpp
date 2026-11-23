@@ -4113,7 +4113,8 @@ bool WMORenderer::segmentBlocked(const glm::vec3& from, const glm::vec3& to) con
 }
 
 void WMORenderer::appendBodyCollisionTriangles(const glm::vec3& worldLow, const glm::vec3& worldHigh,
-                                               std::vector<movement::BodyTriangle>& triangles) const {
+                                               std::vector<movement::BodyTriangle>& triangles,
+                                               std::vector<std::pair<movement::BodyTriangle, uint8_t>>* passed) const {
     gatherCandidates(worldLow, worldHigh, tl_candidateScratch);
     for (size_t idx : tl_candidateScratch) {
         const auto& instance = instances[idx];
@@ -4162,14 +4163,16 @@ void WMORenderer::appendBodyCollisionTriangles(const glm::vec3& worldLow, const 
                     const auto& tb = group.triBounds[triIdx];
                     if (tb.maxZ < localLow.z || tb.minZ > localHigh.z) continue;
                 }
-                if (triIdx < group.triMopyFlags.size() &&
-                    !wmoTriangleBlocksMovement(group.triMopyFlags[triIdx])) {
-                    continue;
-                }
-                triangles.push_back({
+                const movement::BodyTriangle triangle{
                     glm::vec3(instance.modelMatrix * glm::vec4(verts[indices[triStart]], 1.0f)),
                     glm::vec3(instance.modelMatrix * glm::vec4(verts[indices[triStart + 1]], 1.0f)),
-                    glm::vec3(instance.modelMatrix * glm::vec4(verts[indices[triStart + 2]], 1.0f))});
+                    glm::vec3(instance.modelMatrix * glm::vec4(verts[indices[triStart + 2]], 1.0f))};
+                if (triIdx < group.triMopyFlags.size() &&
+                    !wmoTriangleBlocksMovement(group.triMopyFlags[triIdx])) {
+                    if (passed) passed->emplace_back(triangle, group.triMopyFlags[triIdx]);
+                    continue;
+                }
+                triangles.push_back(triangle);
             }
         }
     }

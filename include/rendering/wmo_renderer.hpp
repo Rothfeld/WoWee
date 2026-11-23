@@ -421,7 +421,8 @@ public:
     /// Append movement-blocking WMO triangles overlapping `[worldLow, worldHigh]`,
     /// transformed into world space for 3D beveled-box sweeping and step-up.
     void appendBodyCollisionTriangles(const glm::vec3& worldLow, const glm::vec3& worldHigh,
-                                      std::vector<movement::BodyTriangle>& triangles) const;
+                                      std::vector<movement::BodyTriangle>& triangles,
+                                      std::vector<std::pair<movement::BodyTriangle, uint8_t>>* passed = nullptr) const;
 
     /// Constrain a downward grounding snap against movement-blocking WMO faces.
     bool constrainFloorSnap(const glm::vec3& from, float requestedZ,

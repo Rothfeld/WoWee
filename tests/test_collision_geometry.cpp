@@ -291,8 +291,7 @@ TEST_CASE("a body falling into a crease is held by the faces around it") {
     // triangle within reach of the body. Native 2.4.3 passes through this
     // fold at (-2697.70, -4694.80, 9.47). The skin push off one face used to
     // carry the body into another, which was then ignored as an existing
-    // overlap: the body fell through into the deck. Lowered and let slide it
-    // comes to rest on the ramp at the riser's foot.
+    // overlap: the body fell through into the deck.
     const std::vector<BodyTriangle> crease = {
         BodyTriangle{glm::vec3(-2693.8662109375f, -4691.9970703125f, 10.494579315185547f), glm::vec3(-2712.644775390625f, -4691.7841796875f, 10.485066413879395f), glm::vec3(-2693.9990234375f, -4694.6787109375f, 9.723041534423828f)},
         BodyTriangle{glm::vec3(-2712.85693359375f, -4694.49658203125f, 9.707939147949219f), glm::vec3(-2693.9990234375f, -4694.6787109375f, 9.723041534423828f), glm::vec3(-2712.644775390625f, -4691.7841796875f, 10.485066413879395f)},
@@ -310,10 +309,10 @@ TEST_CASE("a body falling into a crease is held by the faces around it") {
         glm::vec3 result;
         moveBody(body, body + glm::vec3(0,0,-0.2f), .306f, 2.031f, crease, result);
         body = result;
-        // Held at the riser's foot on the ramp below it (z 9.31 there), not
-        // let through into the deck.
-        CHECK(body.z > 9.30f);
-        CHECK(body.z < 9.42f);
+        // Held in the fold, where native stands (z 9.43 to 9.47), not let
+        // through into the deck.
+        CHECK(body.z > 9.41f);
+        CHECK(body.z < 9.48f);
         CHECK(body.y < -4694.80f);
         CHECK(body.y > -4694.90f);
     }
@@ -329,6 +328,9 @@ TEST_CASE("a body overlapping a face deeper than the skin still leaves it") {
     CHECK_FALSE(moveBody({0,0,-.1f},{0,0,.5f},.3f,2.0f,floor,result));
     CHECK(result.z == Catch::Approx(.5f));
     CHECK_FALSE(moveBody({0,0,-.1f},{1,0,-.1f},.3f,2.0f,floor,result));
+    // And carried by it still: no sinking further.
+    CHECK(moveBody({0,0,-.1f},{0,0,-.6f},.3f,2.0f,floor,result));
+    CHECK(result.z > -.11f);
     // Within the skin, moving deeper is contact; moving out is not.
     CHECK(moveBody({0,0,-.001f},{0,0,-.5f},.3f,2.0f,floor,result));
     CHECK(result.z > -.002f);

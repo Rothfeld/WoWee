@@ -326,3 +326,34 @@ TEST_CASE("A fall wedged between steep faces hangs and does not gather speed", "
     }
     REQUIRE(walker.position.z == Catch::Approx(restZ).margin(0.01));
 }
+
+TEST_CASE("A face the body stands in still carries it", "[body_mover]") {
+    // Native set down 0.3 yd inside the steep face of a Karabor Sewers rubble
+    // block, with nothing under it, hangs there. Overlaps ignored, WoWee fell
+    // out of the world from that spot.
+    Mesh floor;
+    floorAt(floor, 0.0f);
+    Walker sunk{.position = {0.0f, 0.0f, -0.6f}, .grounded = false};
+    for (int i = 0; i < 30; ++i) {
+        const BodyMove move = sunk.frame(floor, {0.0f, 0.0f, 0.0f});
+        if (move.held) sunk.verticalVelocity = std::max(sunk.verticalVelocity, 0.0f);
+    }
+    REQUIRE(sunk.position.z == Catch::Approx(-0.6f).margin(0.01));
+    REQUIRE(sunk.grounded);
+    // And is free to move along it and out of it.
+    const BodyMove out = fallBody(sunk.position, {0.5f, 0.0f, 1.0f}, kRadius, kHeight, floor);
+    REQUIRE(out.position.z == Catch::Approx(0.4f).margin(0.01));
+    REQUIRE(out.position.x == Catch::Approx(0.5f).margin(0.01));
+
+    Mesh steep;
+    slope(steep, 0.0f, -5.0f, 70.0f, 10.0f);   // through the body, nothing below
+    Walker hung{.position = {1.9f, 0.0f, -0.3f}, .grounded = false};
+    BodyMove last;
+    for (int i = 0; i < 60; ++i) {
+        last = hung.frame(steep, {0.0f, 0.0f, 0.0f});
+        if (last.held) hung.verticalVelocity = std::max(hung.verticalVelocity, 0.0f);
+    }
+    REQUIRE(last.held);
+    REQUIRE_FALSE(hung.grounded);
+    REQUIRE(hung.position.z > -1.0f);
+}

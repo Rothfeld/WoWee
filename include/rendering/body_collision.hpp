@@ -70,6 +70,7 @@ inline std::optional<BodyContact> sweepBodyTriangle(const glm::vec3& from,
     float enter = -std::numeric_limits<float>::infinity();
     float leave = std::numeric_limits<float>::infinity();
     float enterSpeed = 0.0f;
+    float standingDepth = std::numeric_limits<float>::infinity();
     glm::vec3 normal(0.0f);
     const auto axisOverlap = [&](glm::vec3 axis) {
         const float lengthSq = glm::dot(axis, axis);
@@ -80,6 +81,9 @@ inline std::optional<BodyContact> sweepBodyTriangle(const glm::vec3& from,
         const float shapeHigh = std::max({0.0f, bevel*axis.z+extent, height*axis.z+extent});
         const float low = std::min({glm::dot(a,axis),glm::dot(b,axis),glm::dot(c,axis)}) - shapeHigh;
         const float high = std::max({glm::dot(a,axis),glm::dot(b,axis),glm::dot(c,axis)}) - shapeLow;
+        // How far the body would have to move along this axis to clear the
+        // triangle where it stands; the least over all axes is how deep it is in.
+        standingDepth = std::min(standingDepth, std::min(-low, high));
         const float speed = glm::dot(delta,axis);
         if (std::abs(speed) < 1e-8f) return low <= 0.0f && high >= 0.0f;
         const float first = std::min(low/speed,high/speed);
@@ -101,22 +105,29 @@ inline std::optional<BodyContact> sweepBodyTriangle(const glm::vec3& from,
     for (const auto& edge:edges)
         for (const auto& bodyEdge:bodyEdges)
             if (!axisOverlap(glm::cross(edge,bodyEdge))) return std::nullopt;
-    // Existing overlap must not trap an actor or block departure. Continuous
-    // tests catch entry before overlap; tangent contact has no entering time.
+    // A triangle the body already stands in, deeper than the contact skin,
+    // still carries it: it stops the downward part of a move, and nothing
+    // else. Native set down inside the steep face of a rubble block in the
+    // Karabor Sewers (347.5, 815.7, 0.3 yd under the face, nothing below)
+    // hangs there; ignored, as overlaps once were, that face let WoWee fall
+    // out of the world, and a body sunk in its floor fell through it.
     //
-    // Except an overlap no deeper than the contact skin, moving deeper: that is
-    // a face the body touches, entered by the skin push off its neighbour in a
-    // crease. Ignored, the body passed through it - at the Alcaz Island dock
-    // (redridgedocks03) a body sliding into the fold between the ramp and the
-    // riser in front of the beam went through the riser and was held inside
-    // the deck. A departing body entered long ago and is still let go.
-    //
-    // Native does hold a body that has come down astride a single-sided sheet
-    // (the coral at the Karabor Sewers rock: one frame with no horizontal
-    // move, then a second of sliding off sideways). Holding it here by the
-    // rule that one frame suggests - no motion against the front of a
-    // triangle stood in - kept it there for good, so it is not held.
+    // Horizontally such a triangle is not there: existing overlap must not
+    // trap an actor or block departure. (Native is turned aside by a coral
+    // sheet it has come down astride at the rock beside that rubble - a frame
+    // with no horizontal move, then a second of sliding off. Stopping all
+    // motion against the front of a triangle stood in reproduces that frame
+    // and then keeps the body there for good.)
     if (enter > 1.0f || leave < 0.0f) return std::nullopt;
+    if (standingDepth > kContactSkin) {
+        const glm::vec3 front = glm::normalize(triangleNormal);
+        if (delta.z >= 0.0f || front.z <= 0.0f) return std::nullopt;
+        return BodyContact{0.0f, glm::vec3(0.0f, 0.0f, 1.0f), front};
+    }
+    // Touching, not in. A contact entered before this move began is one the
+    // body is leaving or sliding along - except within the skin and moving
+    // deeper: a face entered by the skin push off its neighbour in a crease
+    // (the Alcaz Island dock, redridgedocks03), which answers like any contact.
     if (enter < -1e-5f && -enter * enterSpeed > kContactSkin) return std::nullopt;
     glm::vec3 face = glm::normalize(triangleNormal);
     if (face.z < 0.0f) face = -face;

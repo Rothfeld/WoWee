@@ -1267,7 +1267,9 @@ position) replayed against WoWee's own triangles for the same places:
   With no ground there it falls, at the velocity it actually had that frame.
 - Triangles are solid from their front only, the side their winding faces
   (WMO and M2 collision triangles are wound outward; terrain is turned up).
-  A body moving with a triangle's normal passes it.
+  A body moving with a triangle's normal passes it. A triangle the body
+  already stands in by more than the contact skin (1.4 mm) still carries it -
+  the downward part of a move is stopped - and is otherwise not there.
 - Falling: horizontal move and drop are swept together; ground ends the fall,
   under the sole or caught by the bevel (native gets onto the Northshire
   fence hull, 1.60 to 1.65 yd, with a 1.64 yd jump); any other face turns the
@@ -1277,17 +1279,19 @@ position) replayed against WoWee's own triangles for the same places:
 
 Gotchas:
 
-- The sweep ignores a triangle the body already overlaps by more than the
-  contact skin (1.4 mm), so a body inside its floor would fall through it.
-  `moveBodyOnFoot` first stands a body sunk up to 0.25 yd back on its floor:
-  server and teleport heights are not this client's triangles to the millimetre.
+- `moveBodyOnFoot` first stands a body sunk up to 0.25 yd back on its floor:
+  server and teleport heights are not this client's triangles to the
+  millimetre. Sunk deeper it stays at that depth, carried by the floor it is in.
 - Single-sided sheets (the coral around the Karabor Sewers rock at Black
   Temple 346.8, 816.5): a walker steps over such a sheet's edge and comes down
-  through its back, native and WoWee alike. Native is then held astride it
-  (one frame without horizontal move, a second of sliding off sideways, then
-  on around the rock); WoWee is not held and walks on, over the rock. Solid
-  from both sides, as triangles were before, the body rested on the sheet's
-  back, wedged against the rock, falling without end.
+  through its back, native and WoWee alike. Native is then turned aside by
+  the sheet it is astride (one frame without horizontal move, a second of
+  sliding off sideways, then on around the rock); WoWee walks on, over the
+  rock. Solid from both sides, as triangles were before, the body rested on
+  the sheet's back, wedged against the rock, falling without end.
+- The collision floor has gaps native does not fall through: inside the
+  rubble block at Black Temple (347.5, 815.7) there is no triangle under the
+  block's own steep face. A body in such a face hangs there, as native does.
 - Perched counts as grounded for animation, jumping and movement flags
   (`bodyPerched_` only decides step-or-fall); a walker on a steep bump would
   otherwise flicker into the falling state.

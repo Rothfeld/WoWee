@@ -2768,7 +2768,20 @@ void CameraController::updateThirdPersonCamera(float deltaTime, FrameInput& f) {
                     tris.push_back(movement::upFacing(flat[i], flat[i + 1], flat[i + 2]));
                 write('T');
             }
-            if (wmoRenderer) { wmoRenderer->appendBodyCollisionTriangles(low, high, tris); write('W'); }
+            if (wmoRenderer) {
+                // WMO triangles the movement filter leaves out go to
+                // /path/prefix.passed with their MOPY flags.
+                std::vector<std::pair<movement::BodyTriangle, uint8_t>> passed;
+                wmoRenderer->appendBodyCollisionTriangles(low, high, tris, &passed);
+                write('W');
+                std::ofstream skipped(std::string(bodyDumpPrefix) + ".passed");
+                skipped.precision(9);
+                for (const auto& [t, flags] : passed) {
+                    skipped << static_cast<int>(flags);
+                    for (const auto& v : t) skipped << ' ' << v.x << ' ' << v.y << ' ' << v.z;
+                    skipped << '\n';
+                }
+            }
             if (m2Renderer) { m2Renderer->appendBodyCollisionTriangles(low, high, tris); write('M'); }
             out.close();
             std::filesystem::rename(std::string(bodyDumpPrefix) + ".tris.tmp", std::string(bodyDumpPrefix) + ".tris");
