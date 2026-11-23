@@ -52,4 +52,18 @@ inline bool characterBatchNeedsCutout(CharacterMaterialDomain domain,
            (blendMode >= 2 && !textureHasAlpha) || hairMaterial;
 }
 
+// Strict weak ordering for M2 character/weapon batches.
+// priorityPlane orders global draw planes first; materialLayer orders stacked
+// passes on the SAME submesh (skinSectionIndex) rather than across different
+// submeshes. Sorting globally on materialLayer pulls a later submesh's layer-0
+// additive glow shell (e.g. Glave_1H_DualBlade_D_02.m2 submesh 1) BEFORE an
+// earlier submesh's layer-1 Mod2x reflection and layer-2 Alpha mask (submesh 0),
+// causing the blade's Mod2x/Alpha passes to wipe out the glow over the blade.
+inline bool characterBatchDrawsBefore(int8_t prioA, uint16_t submeshA, uint16_t layerA,
+                                      int8_t prioB, uint16_t submeshB, uint16_t layerB) {
+    if (prioA != prioB) return prioA < prioB;
+    if (submeshA != submeshB) return submeshA < submeshB;
+    return layerA < layerB;
+}
+
 } // namespace wowee::rendering

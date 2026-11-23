@@ -1910,8 +1910,8 @@ bool CharacterRenderer::loadModel(const pipeline::M2Model& model, uint32_t id) {
 
     vkCtx_->endUploadBatch();
 
-    // Precompute batch render order (priorityPlane, materialLayer). The result
-    // depends only on the model, so caching it here removes the per-frame
+    // Precompute batch render order (priorityPlane, skinSectionIndex, materialLayer).
+    // The result depends only on the model, so caching it here removes the per-frame
     // per-instance allocate + sort from render().
     gpuModel.sortedBatchIndices.resize(gpuModel.data.batches.size());
     std::iota(gpuModel.sortedBatchIndices.begin(), gpuModel.sortedBatchIndices.end(), 0);
@@ -1919,9 +1919,9 @@ bool CharacterRenderer::loadModel(const pipeline::M2Model& model, uint32_t id) {
         [&batches = gpuModel.data.batches](size_t a, size_t b) {
             const auto& ba = batches[a];
             const auto& bb = batches[b];
-            if (ba.priorityPlane != bb.priorityPlane)
-                return ba.priorityPlane < bb.priorityPlane;
-            return ba.materialLayer < bb.materialLayer;
+            return characterBatchDrawsBefore(
+                ba.priorityPlane, ba.skinSectionIndex, ba.materialLayer,
+                bb.priorityPlane, bb.skinSectionIndex, bb.materialLayer);
         });
 
 

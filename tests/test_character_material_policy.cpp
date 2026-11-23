@@ -1,6 +1,10 @@
+#include <algorithm>
 #include <catch_amalgamated.hpp>
+#include <numeric>
+#include <vector>
 #include "rendering/character_material_policy.hpp"
 
+using wowee::rendering::characterBatchDrawsBefore;
 using wowee::rendering::characterBatchIsHair;
 using wowee::rendering::characterBatchNeedsCutout;
 using wowee::rendering::characterMaterialDomain;
@@ -70,4 +74,38 @@ TEST_CASE("attached equipment uses authored material alpha and not character geo
     CHECK_FALSE(characterBatchIsHair(attachment, false, 201, 1, 1));
     CHECK_FALSE(characterBatchIsHair(attachment, false, 42, 0, 2));
     CHECK_FALSE(characterBatchIsHair(attachment, true, 201, 0, 1));
+}
+
+TEST_CASE("character batch ordering scopes materialLayer within each submesh", "[character][m2]") {
+    // Glave_1H_DualBlade_D_02.m2 (Warglaive of Azzinoth):
+    //   batch 0: prio=0, submesh=0, layer=0 (Opaque blade)
+    //   batch 1: prio=0, submesh=0, layer=1 (Mod2x ArmorReflect4)
+    //   batch 2: prio=0, submesh=0, layer=2 (Alpha hilt mask)
+    //   batch 3: prio=0, submesh=1, layer=0 (AddAlpha scrolling green glow shell)
+    // Submesh 1's layer-0 glow shell must draw AFTER submesh 0's layer-1/2 passes
+    // so the blade's Mod2x reflection and Alpha mask do not wipe out the glow.
+    struct BatchKey { int8_t prio; uint16_t submesh; uint16_t layer; };
+    const std::vector<BatchKey> batches = {
+        {0, 0, 0},
+        {0, 0, 1},
+        {0, 0, 2},
+        {0, 1, 0},
+    };
+    std::vector<size_t> order(batches.size());
+    std::iota(order.begin(), order.end(), 0);
+    std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) {
+        return characterBatchDrawsBefore(
+            batches[a].prio, batches[a].submesh, batches[a].layer,
+            batches[b].prio, batches[b].submesh, batches[b].layer);
+    });
+    CHECK(order == std::vector<size_t>{0, 1, 2, 3});
+
+    // Within one submesh, materialLayer still orders passes 0 -> 1 -> 2.
+    CHECK(characterBatchDrawsBefore(0, 0, 0, 0, 0, 1));
+    CHECK(characterBatchDrawsBefore(0, 0, 1, 0, 0, 2));
+    CHECK_FALSE(characterBatchDrawsBefore(0, 0, 2, 0, 0, 1));
+
+    // priorityPlane still takes top precedence across submeshes.
+    CHECK(characterBatchDrawsBefore(-1, 3, 2, 0, 0, 0));
+    CHECK(characterBatchDrawsBefore(0, 1, 0, 1, 0, 0));
 }
