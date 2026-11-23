@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <chrono>
 #include <vector>
 #include <map>
@@ -372,6 +373,43 @@ private:
     // Fallback lighting
     LightingParams fallbackParams_;
 };
+
+/// TBC 2.4.3 M2 Mod (blendMode 5) / Mod2x (blendMode 6) source color before
+/// framebuffer modulation, matching assets/shaders/character.frag.glsl.
+///
+/// Lit Mod/Mod2x batches (rf_flags 0x10 -> unlit == false, e.g. FelBeast.m2
+/// Batch[4] Mod2x carapace pass) attenuate rawTexRgb by clamped vertex diffuse
+/// lighting before mixing toward the blend neutral (1.0 for Mod, 0.5 for Mod2x),
+/// whereas unlit batches (rf_flags 0x11) preserve unlit tinted texture RGB.
+inline glm::vec3 tbcModBlendSourceColor(const glm::vec3& rawTexRgb,
+                                        const glm::vec3& batchTint,
+                                        const glm::vec3& litFactor,
+                                        const glm::vec3& hoverAdd,
+                                        const glm::vec3& kitColor,
+                                        bool unlit,
+                                        bool mod2x,
+                                        float fogFactor,
+                                        float opacity) {
+    const glm::vec3 shaded = unlit
+        ? (rawTexRgb * batchTint * kitColor)
+        : (rawTexRgb * glm::clamp(batchTint * litFactor + hoverAdd,
+                                  glm::vec3(0.0f), glm::vec3(1.0f)) * kitColor);
+    const glm::vec3 neutral(mod2x ? 0.5f : 1.0f);
+    const float weight = std::clamp(fogFactor * opacity, 0.0f, 1.0f);
+    return glm::mix(neutral, shaded, weight);
+}
+
+/// TBC 2.4.3 terrain.bls primary vertex light factor, matching terrain.frag.glsl:
+/// clamps (ambient + shadow * max(N.L, 0) * diffuse) to [0, 1] when legacy TBC
+/// lighting (lightDir.w != 0) is active.
+inline glm::vec3 tbcTerrainLightFactor(const glm::vec3& ambient,
+                                       const glm::vec3& diffuse,
+                                       float ndl,
+                                       float shadow,
+                                       bool legacyClamp) {
+    const glm::vec3 factor = ambient + shadow * std::max(ndl, 0.0f) * diffuse;
+    return legacyClamp ? glm::clamp(factor, glm::vec3(0.0f), glm::vec3(1.0f)) : factor;
+}
 
 } // namespace rendering
 } // namespace wowee

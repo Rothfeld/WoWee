@@ -3,6 +3,7 @@
 #include "pipeline/dbc_loader.hpp"
 #include "rendering/night_sky_math.hpp"
 #include "rendering/sky_params_from_lighting.hpp"
+#include "rendering/sky_system.hpp"
 #include "tbc_data_test_util.hpp"
 
 #include <cmath>
@@ -74,6 +75,33 @@ TEST_CASE("sky cloud layer enables on Azeroth DBC clouds and skips Outland skybo
     // Outland custom skybox M2s (Hellfire, Netherstorm, Nagrand) are never overlaid
     CHECK_FALSE(shouldRenderSkyClouds(true, 0.5f, 0.0f));
     CHECK_FALSE(shouldRenderSkyClouds(true, 1.0f, 1.0f));
+}
+
+TEST_CASE("effectiveSkyCloudDensity suppresses clear-night procedural clouds and preserves daytime and storm clouds", "[sky][night][clouds]") {
+    // Clear night at Mirage Raceway (23:12 = 23.2h, FloatBand[3] = 0.5) and midnight (00:03):
+    // Native TBC 2.4.3 CSkyScene renders only vertex sky bands + Stars.m2 (zero procedural clouds).
+    CHECK(effectiveSkyCloudDensity(false, 0.5f, 23.2f, 0.0f) == Catch::Approx(0.0f));
+    CHECK(effectiveSkyCloudDensity(false, 0.5f, 0.05f, 0.0f) == Catch::Approx(0.0f));
+    CHECK(effectiveSkyCloudDensity(false, 0.5f, 3.5f, 0.0f) == Catch::Approx(0.0f));
+
+    // Daytime (06:00..18:00) preserves full authored DBC cloud density (FloatBand[3] = 0.5).
+    CHECK(effectiveSkyCloudDensity(false, 0.5f, 6.0f, 0.0f) == Catch::Approx(0.5f));
+    CHECK(effectiveSkyCloudDensity(false, 0.5f, 12.0f, 0.0f) == Catch::Approx(0.5f));
+    CHECK(effectiveSkyCloudDensity(false, 0.5f, 18.0f, 0.0f) == Catch::Approx(0.5f));
+
+    // Smooth dusk fade-out (18:00..20:00) and dawn fade-in (04:00..06:00).
+    const float duskMid = effectiveSkyCloudDensity(false, 0.5f, 19.0f, 0.0f);
+    const float dawnMid = effectiveSkyCloudDensity(false, 0.5f, 5.0f, 0.0f);
+    CHECK(duskMid > 0.05f);
+    CHECK(duskMid < 0.45f);
+    CHECK(dawnMid > 0.05f);
+    CHECK(dawnMid < 0.45f);
+
+    // Storm weather at night still brings in overcast storm clouds.
+    CHECK(effectiveSkyCloudDensity(false, 0.5f, 23.2f, 0.5f) == Catch::Approx(0.2f));
+
+    // Custom M2 skyboxes (Outland) never receive procedural dome clouds.
+    CHECK(effectiveSkyCloudDensity(true, 0.5f, 12.0f, 0.8f) == Catch::Approx(0.0f));
 }
 
 TEST_CASE("moon trajectory, angular scale, and visibility match Native TBC 2.4.3 night sky", "[sky][night][moon]") {

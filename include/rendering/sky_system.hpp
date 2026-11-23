@@ -1,8 +1,10 @@
 #pragma once
 
+#include <algorithm>
 #include <memory>
 #include <glm/glm.hpp>
 #include <vulkan/vulkan.h>
+#include "rendering/night_sky_math.hpp"
 
 namespace wowee {
 namespace rendering {
@@ -56,6 +58,22 @@ struct SkyParams {
     bool skyboxHasStars = false;  // Does loaded skybox include baked stars?
     bool useOriginalSkybox = false; // Original camera-centered client M2 is active
 };
+
+/// Effective procedural cloud density in [0, 1] for Azeroth/Eversong skies.
+///
+/// Native TBC 2.4.3 CSkyScene renders only the untextured vertex-band sky dome
+/// and Stars.m2 on clear night skies (no procedural FBM cloud dome), while
+/// preserving daytime DBC clouds and storm overcast clouds at any hour.
+inline float effectiveSkyCloudDensity(bool useOriginalSkybox,
+                                      float dbcCloudDensity,
+                                      float timeOfDayHours,
+                                      float weatherIntensity) {
+    if (useOriginalSkybox) return 0.0f;
+    const float daylightFactor = 1.0f - starFieldTimeVisibility(timeOfDayHours);
+    const float clearSkyDensity = std::clamp(dbcCloudDensity, 0.0f, 1.0f) * daylightFactor;
+    const float weatherBoost = (weatherIntensity > 0.05f) ? (weatherIntensity * 0.4f) : 0.0f;
+    return std::min(1.0f, clearSkyDensity + weatherBoost);
+}
 
 /**
  * Unified sky rendering system

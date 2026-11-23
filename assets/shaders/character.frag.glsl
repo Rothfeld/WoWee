@@ -397,7 +397,11 @@ void main() {
                   colorKeyBlack == 0 &&
                   heightMapVariance > 0.001 &&
                   lodFactor < 0.99;
+    // TBC model2.bls shades characters and creatures strictly from smooth
+    // vertex normals; Sobel albedo-gradient normal maps create harsh micro-ridges
+    // on bare skin/sleeves under 2.5x unit diffuse.
     bool useNormalMap = enableNormalMap != 0 &&
+                        lightDir.w == 0.0 &&
                         unlit == 0 &&
                         lodFactor < 0.99 &&
                         normalMapStrength > 0.001;
@@ -550,7 +554,9 @@ void main() {
         }
     }
 
-    if (unlit == 0)
+    // TBC model2.bls (lightDir.w != 0.0) already accumulates M2 point lights
+    // inside the [0, 1] ADD_SAT clamp above.
+    if (unlit == 0 && lightDir.w == 0.0)
         result += localLightContribution(FragPos, norm, texColor.rgb) * vec3(kitLightR, kitLightG, kitLightB);
     result *= vec3(kitColorR, kitColorG, kitColorB);
 
@@ -564,7 +570,11 @@ void main() {
     if (blendMode == 5 || blendMode == 6) {
         float fogFactor = clamp((gFogParams.y - fogDepth) / (gFogParams.y - gFogParams.x), 0.0, 1.0);
         vec3 neutral = vec3(blendMode == 5 ? 1.0 : 0.5);
-        outColor = vec4(mix(neutral, texColor.rgb, fogFactor * opacity), texColor.a * opacity);
+        // Use shaded `result` rather than raw `texColor.rgb`: in TBC model2.bls,
+        // lit Mod/Mod2x batches (rf_flags 0x10 / unlit == 0, e.g. FelBeast.m2
+        // Batch[4] Mod2x carapace pass) multiply texture by vertex diffuse light
+        // before framebuffer modulation, while unlit != 0 batches keep texColor.rgb.
+        outColor = vec4(mix(neutral, result, fogFactor * opacity), texColor.a * opacity);
         return;
     }
     if (blendMode == 3 || blendMode == 4 || blendMode == 7) {

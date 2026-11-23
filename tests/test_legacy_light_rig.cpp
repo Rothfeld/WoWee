@@ -5,6 +5,7 @@
 #include "pipeline/adt_loader.hpp"
 #include "pipeline/adt_mcsh.hpp"
 #include "rendering/legacy_light_direction.hpp"
+#include "rendering/lighting_manager.hpp"
 
 #include <glm/glm.hpp>
 
@@ -184,4 +185,49 @@ TEST_CASE("computeTerrainMcshFactor applies 0.7x TBC attenuation across night an
         CHECK(shd.g / lit.g == Catch::Approx(0.7f));
         CHECK(shd.b / lit.b == Catch::Approx(0.7f));
     }
+}
+
+TEST_CASE("tbcModBlendSourceColor attenuates lit Mod2x M2 batches at night while preserving unlit Mod2x", "[lighting][unit][m2]") {
+    // Mirage Raceway (LightParams 239) night (23:12): Ambient_DBC = (0, 30, 60)/255 -> R = 0.
+    // On a shaded FelBeast.m2 carapace normal (N.L == 0), litFactor = (0, 0.118, 0.235).
+    const glm::vec3 orangeTex(0.75f, 0.42f, 0.18f);
+    const glm::vec3 white(1.0f);
+    const glm::vec3 zero(0.0f);
+    const glm::vec3 nightShadowLit(0.0f, 30.0f / 255.0f, 60.0f / 255.0f);
+
+    // Lit Mod2x batch (rf_flags = 0x10 -> unlit = false): red channel attenuates to 0 in shadow
+    // so framebuffer 2*src*dst darkens the shaded orange ridge instead of glowing unlit.
+    const glm::vec3 litSrc = wowee::rendering::tbcModBlendSourceColor(
+        orangeTex, white, nightShadowLit, zero, white, false, true, 1.0f, 1.0f);
+    CHECK(litSrc.r == Catch::Approx(0.0f));
+    CHECK(litSrc.g == Catch::Approx(orangeTex.g * (30.0f / 255.0f)));
+    CHECK(litSrc.b == Catch::Approx(orangeTex.b * (60.0f / 255.0f)));
+
+    // Unlit Mod2x batch (rf_flags = 0x11 -> unlit = true): retains full unlit texture RGB.
+    const glm::vec3 unlitSrc = wowee::rendering::tbcModBlendSourceColor(
+        orangeTex, white, nightShadowLit, zero, white, true, true, 1.0f, 1.0f);
+    CHECK(unlitSrc.r == Catch::Approx(orangeTex.r));
+    CHECK(unlitSrc.g == Catch::Approx(orangeTex.g));
+    CHECK(unlitSrc.b == Catch::Approx(orangeTex.b));
+
+    // Full fog (fogFactor = 0) converges to Mod2x neutral (0.5) and Mod neutral (1.0).
+    const glm::vec3 foggedMod2x = wowee::rendering::tbcModBlendSourceColor(
+        orangeTex, white, nightShadowLit, zero, white, false, true, 0.0f, 1.0f);
+    const glm::vec3 foggedMod = wowee::rendering::tbcModBlendSourceColor(
+        orangeTex, white, nightShadowLit, zero, white, false, false, 0.0f, 1.0f);
+    CHECK(foggedMod2x.r == Catch::Approx(0.5f));
+    CHECK(foggedMod.r == Catch::Approx(1.0f));
+}
+
+TEST_CASE("tbcTerrainLightFactor clamps primary vertex lighting to [0, 1] matching TBC terrain.bls", "[lighting][terrain][tbc]") {
+    // Sunstrider Isle (LightParams 379) night (23:36): amb=(0.259, 0.333, 0.596), diff=(0.314, 0.427, 0.541).
+    // At N.L = 0.85, unclamped blue is 0.596 + 0.85*0.541 = 1.05585; TBC terrain.bls clamps to 1.0.
+    const glm::vec3 amb(0.259f, 0.333f, 0.596f);
+    const glm::vec3 diff(0.314f, 0.427f, 0.541f);
+    const glm::vec3 clamped = wowee::rendering::tbcTerrainLightFactor(amb, diff, 0.85f, 1.0f, true);
+    const glm::vec3 unclamped = wowee::rendering::tbcTerrainLightFactor(amb, diff, 0.85f, 1.0f, false);
+    CHECK(clamped.r == Catch::Approx(0.259f + 0.85f * 0.314f));
+    CHECK(clamped.g == Catch::Approx(0.333f + 0.85f * 0.427f));
+    CHECK(clamped.b == Catch::Approx(1.0f));
+    CHECK(unclamped.b > 1.05f);
 }

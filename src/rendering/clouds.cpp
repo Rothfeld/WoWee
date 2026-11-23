@@ -141,8 +141,8 @@ void Clouds::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const SkyP
     // Sun intensity based on elevation
     float sunIntensity = sunAboveHorizon;
 
-    // Keep full DBC authored luminance both day and night so night clouds
-    // match Native TBC 2.4.3's blue star-cloud band instead of being crushed.
+    // Preserve authored DBC IntBand[10]/[11] luminance for daytime clouds and
+    // storm overcast clouds without extra attenuation.
     float ambient = 1.0f;
 
     CloudPush push{};

@@ -829,7 +829,7 @@ VkTexture* TerrainRenderer::createAlphaTexture(const std::vector<uint8_t>& alpha
         return opaqueAlphaTexture.get();
     }
     tex->createSampler(vkCtx->getDevice(), VK_FILTER_LINEAR, VK_FILTER_LINEAR,
-                        VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE);
+                        VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, 1.0f);
 
     VkTexture* raw = tex.get();
     // One per chunk layer, under a key nothing ever looks up again, so these
@@ -862,7 +862,7 @@ VkTexture* TerrainRenderer::createShadowTexture(const std::array<uint8_t, 512>& 
         return unshadowedTexture.get();
     }
     tex->createSampler(vkCtx->getDevice(), VK_FILTER_LINEAR, VK_FILTER_LINEAR,
-                        VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE);
+                        VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, 1.0f);
 
     VkTexture* raw = tex.get();
     evictTexturesFor(64 * 64);

@@ -164,23 +164,18 @@ void SkySystem::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
                            nightFactor, celestialVisibility);
     }
 
-    // --- Clouds (DBC-driven colors + sun/night lighting) ---
-    // Native TBC 2.4.3 renders DBC-tinted clouds on Azeroth outdoor skies
-    // (LightSkyboxId == 0) using LightIntBand[10] (cloud sun) and [11] (cloud
-    // emissive) weighted by LightFloatBand[3], which yields luminous clouds by
-    // day and the blue star-cloud / Milky Way band at night while staying clear
-    // in desert zones with FloatBand[3] == 0 (e.g. Tanaris). Outland skybox M2s
-    // return early above so custom skyboxes are unaffected.
-    if (clouds_ && shouldRenderSkyClouds(params.useOriginalSkybox,
-                                         params.cloudDensity,
-                                         params.weatherIntensity)) {
-        float effectiveDensity = params.cloudDensity;
-        if (params.weatherIntensity > 0.05f) {
-            float weatherBoost = params.weatherIntensity * 0.4f;
-            effectiveDensity = glm::min(1.0f, effectiveDensity + weatherBoost);
+    // --- Clouds (DBC-driven daytime clouds + storm overcast) ---
+    // Native TBC 2.4.3 CSkyScene draws only the untextured vertex-band sky dome
+    // and Stars.m2 on clear night skies; procedural FBM clouds fade out at dusk
+    // and stay suppressed on clear nights while remaining active by day or storm.
+    if (clouds_) {
+        const float effectiveDensity = effectiveSkyCloudDensity(
+            params.useOriginalSkybox, params.cloudDensity,
+            params.timeOfDay, params.weatherIntensity);
+        if (effectiveDensity > 0.01f) {
+            clouds_->setDensity(effectiveDensity);
+            clouds_->render(cmd, perFrameSet, params);
         }
-        clouds_->setDensity(effectiveDensity);
-        clouds_->render(cmd, perFrameSet, params);
     }
 
     // --- Lens flare (attenuated by atmosphere) ---

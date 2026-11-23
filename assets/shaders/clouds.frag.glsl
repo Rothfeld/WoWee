@@ -124,12 +124,12 @@ void main() {
     float sunUp = clamp(sunDir.z, 0.0, 1.0);      // day factor
     float sunView = max(dot(dir, sunDir), 0.0);   // view alignment with the sun
 
-    // Blend directly between DBC IntBand[11] (cloud emissive/shade) and
-    // IntBand[10] (cloud sun/highlight), with gentle boost matching Native TBC
-    // 2.4.3 luminous clouds by day and bright blue star-cloud band at night.
+    // Blend between DBC IntBand[11] (cloud emissive/shade) and IntBand[10]
+    // (cloud sun/highlight), with gentle sunlit boost during daytime and
+    // unboosted authored luminance during night storms.
     float towardSun = fbm(p + q * 1.4 + sunDir.xy * 0.35, 5);
     float highlight = clamp(0.40 + (shape - towardSun) * 1.8 + cloud * 0.45, 0.0, 1.0);
-    vec3 litCloud = min(push.cloudColor.rgb * mix(1.38, 1.15, sunUp), vec3(1.0));
+    vec3 litCloud = min(push.cloudColor.rgb * mix(1.0, 1.15, sunUp), vec3(1.0));
     vec3 cloudRgb = mix(push.cloudEmissiveColor.rgb, litCloud, highlight) * ambient;
 
     // Forward scattering: thin cloud near the sun glows warm during daytime

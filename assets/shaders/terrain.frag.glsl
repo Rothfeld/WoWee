@@ -94,12 +94,11 @@ float sampleAlpha(sampler2D tex, vec2 uv) {
     // as a hard step.
     vec2 edge = min(uv, 1.0 - uv);
     float border = min(edge.x, edge.y);
-    float blurWeight = 1.0 - smoothstep(1.0 / 64.0, 8.0 / 64.0, border);
-    // The seam this hides is a chunk edge seen close up. Far enough away a
-    // whole chunk is a few pixels across and the blur is hiding something
-    // nobody can see - while still costing four taps per layer, on the band
-    // that is 44% of every chunk, on the pass that covers the screen. At a
-    // 2400-yard view distance that is most of the terrain drawn.
+    // Full 4-tap half-texel tent weight at chunk borders to hide seams, plus a
+    // close-range interior tent weight (0.65) to soften 1-texel stair-steps on
+    // shallow diagonal 4-bit (0..15) 64x64 MCAL roads without diluting uniform
+    // 0.0 / 1.0 coverage. Fades to 0 past 260 yd so far chunks take one tap.
+    float blurWeight = max(1.0 - smoothstep(1.0 / 64.0, 8.0 / 64.0, border), 0.65);
     blurWeight *= gBlurDistFade;
     float center = texture(tex, uv).r;
     if (blurWeight < 0.001) return center;
@@ -210,14 +209,12 @@ void main() {
     // normals from their screen-space brightness amplifies mip sampling noise.
 
     vec3 lightDir2 = normalize(-lightDir.xyz);
-    vec3 ambient = ambientColor.rgb * finalColor.rgb;
     // Lambert, as every other surface has it. This took abs() of the angle
     // and floored it at 0.2, so a slope turned from the sun was lit as one
     // turned toward it, and hills had no shape at low sun. The ambient term
     // is what keeps the shaded side from black, as it does for the models
     // standing on it.
     float diff = max(dot(norm, lightDir2), 0.0);
-    vec3 diffuse = diff * lightColor.rgb * finalColor.rgb;
 
     float shadow = 1.0;
     if (shadowParams.x > 0.5) {
@@ -236,9 +233,13 @@ void main() {
 
     RtLight rt = rtLightAt(FragPos);
     shadow = rtShadow(rt, shadow);
-    ambient = rtAmbient(rt, ambientColor.rgb) * finalColor.rgb;
-
-    vec3 result = ambient + shadow * diffuse;
+    vec3 lightFactor = rtAmbient(rt, ambientColor.rgb) + shadow * diff * lightColor.rgb;
+    // TBC 2.4.3 terrain.bls clamps vertex primary color (ambient + NdotL * diffuse)
+    // to [0, 1] before multiplying blended layer albedo.
+    if (lightDir.w != 0.0) {
+        lightFactor = clamp(lightFactor, 0.0, 1.0);
+    }
+    vec3 result = lightFactor * finalColor.rgb;
     // ADT MCSH 64x64 baked terrain shadow map (1.0 = shadowed, 0.0 = lit).
     // Native TBC 2.4.3 darkens terrain under baked MCSH shadows by ~30% (0.7x)
     // across both night and day lighting even when dynamic shadows are off.
