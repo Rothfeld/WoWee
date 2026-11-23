@@ -9,6 +9,7 @@ using wowee::rendering::effectiveUnitOpacity;
 using wowee::rendering::fadeInOpacity;
 using wowee::rendering::fadeOutOpacity;
 using wowee::rendering::kKitOpacityTransitionSeconds;
+using wowee::rendering::kitOpacityTransitionDuration;
 using wowee::rendering::kitTransitionOpacity;
 using wowee::rendering::kUnitDespawnFadeOutSeconds;
 using wowee::rendering::kUnitFadeSeconds;
@@ -75,6 +76,31 @@ TEST_CASE("stealth and SpellVisualKit opacity eases cubically over 1 s both ways
     CHECK(effectiveUnitOpacity(1.0f, 0.5f, 0.3f) == Catch::Approx(0.15f));
     CHECK(effectiveUnitOpacity(0.5f, 1.0f, 0.5f) == Catch::Approx(0.25f));
     CHECK(effectiveUnitOpacity(1.0f, 0.0f, 0.3f) == 0.0f);
+}
+
+TEST_CASE("already-stealthed unit entering view applies kit opacity immediately without becoming opaque first",
+          "[unit-fade][stealth]") {
+    // Initial aura sync on a newly created instance (or visual transfer across a
+    // display swap) uses a 0 s kit opacity duration, while runtime aura changes
+    // retain the 1.0 s cubic ease-in.
+    CHECK(kitOpacityTransitionDuration(/*initialAppearanceSync=*/true) == 0.0f);
+    CHECK(kitOpacityTransitionDuration(/*initialAppearanceSync=*/false) == kKitOpacityTransitionSeconds);
+
+    const float initialKitOpacity =
+        kitTransitionOpacity(1.0f, 0.3f, 0.0f, kitOpacityTransitionDuration(/*initialAppearanceSync=*/true));
+    CHECK(initialKitOpacity == Catch::Approx(0.3f));
+
+    // As the unit fades in over kUnitFadeSeconds (0.5 s), effective opacity rises
+    // monotonically from 0.0 -> 0.3 and never peaks near 1.0 (opaque).
+    float prev = 0.0f;
+    for (float t : {0.0f, 0.1f, 0.25f, 0.4f, 0.5f, 0.75f, 1.0f}) {
+        const float spawnAlpha = fadeInOpacity(1.0f, t, kUnitFadeSeconds);
+        const float eff = effectiveUnitOpacity(spawnAlpha, 1.0f, initialKitOpacity);
+        CHECK(eff >= prev - 1e-6f);
+        CHECK(eff <= 0.3f + 1e-6f);
+        prev = eff;
+    }
+    CHECK(prev == Catch::Approx(0.3f));
 }
 
 TEST_CASE("faded unit schedules whole-unit depth prepass before color across body and attachments", "[unit-fade][stealth]") {

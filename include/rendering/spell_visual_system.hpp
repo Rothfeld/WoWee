@@ -524,8 +524,12 @@ private:
     /// Start the kit's CharProc 8 weapon swing trail on the unit, where the kit has one.
     void startKitWeaponTrail(uint32_t kitId, uint32_t attachInstanceId);
     void updateWeaponTrails(float deltaTime);
-    void applyCharacterProcedures(uint32_t attachInstanceId);
+    void applyCharacterProcedures(uint32_t attachInstanceId, bool immediateOpacity = false);
     std::unordered_map<uint32_t, UnitAuraVisuals> unitAuraVisuals_;
+    /// Character instances that have completed at least one syncAuraVisuals()
+    /// pass (or received transferred visuals). Used to distinguish initial
+    /// appearance from runtime aura application/removal for CharProc 14 opacity.
+    std::unordered_set<uint32_t> syncedAuraInstances_;
     struct ActiveChannelVisual {
         uint32_t visualId = 0;
         float remaining = 0.0f;  // seconds; inf for field-driven channels

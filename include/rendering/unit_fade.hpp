@@ -59,6 +59,17 @@ inline float fadeOutOpacity(float startOpacity, float elapsed, float duration) {
     return std::clamp(startOpacity * (1.0f - elapsed / duration), 0.0f, 1.0f);
 }
 
+/// Duration for a SpellVisualKit CharProc 14 opacity update.
+/// Initial aura sync on a newly created unit instance (or visual transfer across
+/// an in-place display swap/morph) applies any already-active CharProc 14 opacity
+/// immediately (0 s) so a unit entering view stealthed or translucent fades
+/// directly from 0 -> target instead of appearing opaque and then turning
+/// translucent. Runtime aura applications and removals ease over
+/// kKitOpacityTransitionSeconds (1.0 s).
+inline constexpr float kitOpacityTransitionDuration(bool initialAppearanceSync) {
+    return initialAppearanceSync ? 0.0f : kKitOpacityTransitionSeconds;
+}
+
 /// Opacity `elapsed` seconds into a SpellVisualKit CharProc 14 transition
 /// (Stealth 0.3, Ghost 0.5, Transparency 75% 0.25, Banish, etc.). Native
 /// 2.4.3 eases both ways over 1 s as the cube of elapsed/duration.

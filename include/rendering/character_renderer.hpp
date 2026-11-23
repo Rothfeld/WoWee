@@ -235,9 +235,12 @@ public:
     /// the new one over kKitOpacityTransition seconds, eased in as the cube
     /// of elapsed/duration, both ways (original 2.4.3: Transparency 25%/75%,
     /// Steal Magic, Banish, Stealth, whatever the kit's CharParamOne-Three;
-    /// _experiments/20261118T001500Z.pair6_kit_colour_timing).
+    /// _experiments/20261118T001500Z.pair6_kit_colour_timing). Pass
+    /// immediateOpacity=true on initial appearance sync or visual transfer so
+    /// units entering view already stealthed/translucent start at their aura
+    /// opacity instead of appearing opaque first.
     void setInstanceKitAppearance(uint32_t instanceId, const glm::vec3& color, float opacity,
-                                  bool freezeAnimation = false);
+                                  bool freezeAnimation = false, bool immediateOpacity = false);
     /// Active non-Stand, non-Stun aura StateKit animation (e.g. 42696 Drunken
     /// Master Whirlwind 126) that overrides generic Stun (14) while active; 0 = none.
     void setInstanceAuraStateAnimation(uint32_t instanceId, uint32_t animationId);

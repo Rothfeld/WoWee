@@ -1017,14 +1017,15 @@ void SpellVisualSystem::syncAuraVisuals(uint32_t attachInstanceId,
                                        const std::vector<uint32_t>& visualIds,
                                        bool observerConcealed) {
     if (!m2Renderer_ || !attachInstanceId) return;
+    auto* characters = renderer_ ? renderer_->getCharacterRenderer() : nullptr;
+    glm::vec3 position;
+    if (!characters || !characters->getInstancePosition(attachInstanceId, position)) return;
+    const bool initialSync = syncedAuraInstances_.insert(attachInstanceId).second;
     auto found = unitAuraVisuals_.find(attachInstanceId);
     if (found != unitAuraVisuals_.end() && found->second.ids == visualIds &&
         found->second.observerConcealed == observerConcealed) return;
     if (found == unitAuraVisuals_.end() && visualIds.empty()) return;
     if (!spellVisualDbcLoaded_) loadSpellVisualDbc();
-    auto* characters = renderer_->getCharacterRenderer();
-    glm::vec3 position;
-    if (!characters || !characters->getInstancePosition(attachInstanceId, position)) return;
 
     for (auto it = activeSpellVisuals_.begin(); it != activeSpellVisuals_.end();) {
         if (it->attachInstanceId == attachInstanceId && it->auraVisualId && !it->decaying &&
@@ -1114,7 +1115,7 @@ void SpellVisualSystem::syncAuraVisuals(uint32_t attachInstanceId,
             applied.push_back(visual);
     if (visualIds.empty()) unitAuraVisuals_.erase(attachInstanceId);
     else unitAuraVisuals_[attachInstanceId] = {visualIds, observerConcealed, std::move(applied)};
-    applyCharacterProcedures(attachInstanceId);
+    applyCharacterProcedures(attachInstanceId, initialSync);
 }
 
 uint32_t SpellVisualSystem::auraStateAnimation(uint32_t attachInstanceId) const {
@@ -1132,7 +1133,7 @@ uint32_t SpellVisualSystem::auraStateAnimation(uint32_t attachInstanceId) const 
     return selectAuraStateAnimation(candidates, kNoAnimation, anim::STAND, anim::STUN);
 }
 
-void SpellVisualSystem::applyCharacterProcedures(uint32_t attachInstanceId) {
+void SpellVisualSystem::applyCharacterProcedures(uint32_t attachInstanceId, bool immediateOpacity) {
     auto* characters = renderer_ ? renderer_->getCharacterRenderer() : nullptr;
     if (!characters || !characters->hasInstance(attachInstanceId)) return;
     glm::vec3 color(1.0f);
@@ -1164,8 +1165,8 @@ void SpellVisualSystem::applyCharacterProcedures(uint32_t attachInstanceId) {
     LOG_DEBUG("Kit appearance: owner=", attachInstanceId,
               " channel=", unitChannelVisuals_.count(attachInstanceId),
               " color=(", color.r, ",", color.g, ",", color.b, ") opacity=", opacity,
-              " frozen=", frozen, " headDisplay=", headDisplayId);
-    characters->setInstanceKitAppearance(attachInstanceId, color, opacity, frozen);
+              " immediate=", immediateOpacity, " frozen=", frozen, " headDisplay=", headDisplayId);
+    characters->setInstanceKitAppearance(attachInstanceId, color, opacity, frozen, immediateOpacity);
 
     const uint32_t stateAnim = auraStateAnimation(attachInstanceId);
     const uint32_t overrideStunAnim =
@@ -2251,6 +2252,10 @@ void SpellVisualSystem::update(float deltaTime) {
             glm::vec3 position;
             return !characters->getInstancePosition(entry.first, position);
         });
+        std::erase_if(syncedAuraInstances_, [&](uint32_t instanceId) {
+            glm::vec3 position;
+            return !characters->getInstancePosition(instanceId, position);
+        });
         for (auto it = recentUnitImpacts_.begin(); it != recentUnitImpacts_.end(); ) {
             glm::vec3 position;
             if (!characters->getInstancePosition(it->first, position)) {
@@ -2462,6 +2467,7 @@ void SpellVisualSystem::update(float deltaTime) {
             glm::vec3 position;
             if (!charRenderer || !charRenderer->getInstancePosition(it->attachInstanceId, position)) {
                 unitAuraVisuals_.erase(it->attachInstanceId);
+                syncedAuraInstances_.erase(it->attachInstanceId);
                 m2Renderer_->removeInstance(it->instanceId);
                 it = activeSpellVisuals_.erase(it);
                 continue;
@@ -2786,10 +2792,12 @@ void SpellVisualSystem::transferUnitVisuals(uint32_t fromInstanceId, uint32_t to
     }
     activeKitHeadOverride_.erase(fromInstanceId);
     activeKitHeadOverride_.erase(toInstanceId);
+    syncedAuraInstances_.erase(fromInstanceId);
+    syncedAuraInstances_.insert(toInstanceId);
     if (characters && characters->hasInstance(fromInstanceId)) {
         characters->setInstanceAuraStateAnimation(fromInstanceId, 0u);
     }
-    applyCharacterProcedures(toInstanceId);
+    applyCharacterProcedures(toInstanceId, /*immediateOpacity=*/true);
 }
 
 void SpellVisualSystem::reset() {
@@ -2801,6 +2809,7 @@ void SpellVisualSystem::reset() {
     activeChannelSounds_.clear();
     activeAreaSounds_.clear();
     unitAuraVisuals_.clear();
+    syncedAuraInstances_.clear();
     unitChannelVisuals_.clear();
     recentUnitImpacts_.clear();
     beams_.clear();

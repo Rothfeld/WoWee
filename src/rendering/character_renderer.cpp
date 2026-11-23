@@ -5507,16 +5507,23 @@ void CharacterRenderer::clearInstanceKitLight(uint32_t instanceId) {
 }
 
 void CharacterRenderer::setInstanceKitAppearance(uint32_t instanceId, const glm::vec3& color, float opacity,
-                                                 bool freezeAnimation) {
+                                                 bool freezeAnimation, bool immediateOpacity) {
     assert(opacity >= 0.0f && opacity <= 1.0f);
     auto& instance = instances.at(instanceId);
     instance.kitColor = color;
     instance.kitAnimationFrozen = freezeAnimation;
-    if (opacity != instance.kitOpacityTarget) {
-        instance.kitOpacityFrom = instance.kitOpacity;
+    const float transitionDuration = kitOpacityTransitionDuration(immediateOpacity);
+    if (transitionDuration <= 0.0f) {
+        instance.kitOpacity = opacity;
+        instance.kitOpacityFrom = opacity;
         instance.kitOpacityTarget = opacity;
         instance.kitOpacityTime = 0.0f;
         instance.kitOpacityDuration = kKitOpacityTransition;
+    } else if (opacity != instance.kitOpacityTarget) {
+        instance.kitOpacityFrom = instance.kitOpacity;
+        instance.kitOpacityTarget = opacity;
+        instance.kitOpacityTime = 0.0f;
+        instance.kitOpacityDuration = transitionDuration;
     }
     for (const auto& attachment : instance.weaponAttachments) {
         auto& weapon = instances.at(attachment.weaponInstanceId);
