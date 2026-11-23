@@ -898,6 +898,7 @@ GameScreen::UnitLabelVisibility GameScreen::unitLabelVisibility(
     const bool playerControlled = (unit.getUnitFlags() & game::UNIT_FLAG_PLAYER_CONTROLLED) != 0;
     const bool friendlyPlayerControlled = !isPlayer && !hostile && (ownPet || playerControlled);
     const int reaction = gameHandler.unitReactionToPlayer(unit);
+    const bool canAttack = gameHandler.canPlayerAttackUnit(unit);
     const bool showEnemyTotems = addons::storedCVarValue("nameplateShowEnemyTotems", "1") != "0";
     const bool showFriendlyTotems = addons::storedCVarValue("nameplateShowFriendlyTotems", "0") != "0";
     const bool showEnemyPets = addons::storedCVarValue("nameplateShowEnemyPets", "1") != "0";
@@ -921,6 +922,7 @@ GameScreen::UnitLabelVisibility GameScreen::unitLabelVisibility(
             .isPlayer = isPlayer,
             .isOwnCharacter = own,
             .isHostile = hostile,
+            .canAttack = canAttack,
             .isOwnPet = ownPet,
             .isPlayerControlled = playerControlled,
             .isCompanion = companion,
@@ -942,7 +944,7 @@ GameScreen::UnitLabelVisibility GameScreen::unitLabelVisibility(
         });
     } else {
         if (!unit.getHealth() && !target) return {};
-        const bool enemyPlate = ui::isEnemyNameplateUnit(isPlayer, hostile, friendlyPlayerControlled, reaction);
+        const bool enemyPlate = ui::isEnemyNameplateUnit(isPlayer, hostile, friendlyPlayerControlled, reaction, canAttack);
         plate = enemyPlate ? settingsPanel_.showEnemyNameplates_ : settingsPanel_.showFriendlyNameplates_;
         if (totem) plate = plate && (hostile ? showEnemyTotems : showFriendlyTotems);
         if (pet) plate = plate && (hostile ? showEnemyPets : showFriendlyPets);

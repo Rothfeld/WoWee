@@ -299,9 +299,16 @@ TEST_CASE("TBC 2.4.3 nameplate visibility matrix for pets, players, NPCs, range,
     // Companion (non-combat pet): never gets a 2D plate
     checkUnit({.isCompanion = true, .reactionToPlayer = 5, .distSqFromPlayer = 9.0f},
               false, false, false, false);
-    // Neutral creature (reaction 4): shown with V and Ctrl+V
-    checkUnit({.reactionToPlayer = 4, .distSqFromPlayer = 100.0f},
+    // Neutral attackable creature (reaction 4, canAttack=true, e.g. Gamon with .gm off): V and Ctrl+V
+    checkUnit({.canAttack = true, .reactionToPlayer = 4, .distSqFromPlayer = 100.0f},
               false, true, false, true);
+    // Neutral non-attackable friendly-faction NPC (reaction 4, canAttack=false,
+    // e.g. Blood Elf in Orgrimmar Inn or Human in Exodar, or Gamon with .gm on): Shift+V and Ctrl+V
+    checkUnit({.canAttack = false, .reactionToPlayer = 4, .distSqFromPlayer = 100.0f},
+              false, false, true, true);
+    // Hostile creature when unattackable (e.g. .gm on): Shift+V and Ctrl+V
+    checkUnit({.isHostile = true, .canAttack = false, .reactionToPlayer = 2, .distSqFromPlayer = 100.0f},
+              false, false, true, true);
     // Hostile creature: shown with V and Ctrl+V
     checkUnit({.isHostile = true, .reactionToPlayer = 2, .distSqFromPlayer = 100.0f},
               false, true, false, true);

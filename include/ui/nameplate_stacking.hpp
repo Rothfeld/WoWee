@@ -271,11 +271,17 @@ inline NameplateToggleState toggleNameplates(NameplateToggleState state,
 constexpr float kLegacyPlateMaxRangeSq = 20.0f * 20.0f;
 
 /// Whether a unit belongs to the enemy nameplate toggle (V) rather than the
-/// friendly nameplate toggle (Shift+V). Friendly players, friendly NPCs
-/// (reaction >= 5), and friendly player-controlled pets belong to Shift+V.
+/// friendly nameplate toggle (Shift+V).
+/// In TBC 2.4.3 (build 8606), V shows attackable units (CGUnit_C::CanAttack)
+/// and Shift+V shows non-attackable units — including friendly players,
+/// friendly pets, neutral-standing home-faction NPCs (e.g. Blood Elves in
+/// Orgrimmar or Humans in Exodar, reaction == 4 with canAttack == false), and
+/// units unattackable while .gm on is active.
 inline bool isEnemyNameplateUnit(bool isPlayer, bool isHostile,
                                  bool isFriendlyPlayerControlled,
-                                 int reactionToPlayer) {
+                                 int reactionToPlayer,
+                                 bool canAttack = true) {
+    if (!canAttack) return false;
     return isHostile || (!isPlayer && !isFriendlyPlayerControlled && reactionToPlayer <= 4);
 }
 
@@ -283,6 +289,7 @@ struct LegacyPlateEligibilityInput {
     bool isPlayer = false;
     bool isOwnCharacter = false;
     bool isHostile = false;
+    bool canAttack = true;
     bool isOwnPet = false;
     bool isPlayerControlled = false;
     bool isCompanion = false;
@@ -311,7 +318,7 @@ inline bool legacyPlateEligible(const LegacyPlateEligibilityInput& in) {
     const bool friendlyPlayerControlled =
         !in.isPlayer && !in.isHostile && (in.isOwnPet || in.isPlayerControlled);
     const bool enemyPlate = isEnemyNameplateUnit(
-        in.isPlayer, in.isHostile, friendlyPlayerControlled, in.reactionToPlayer);
+        in.isPlayer, in.isHostile, friendlyPlayerControlled, in.reactionToPlayer, in.canAttack);
     bool plate = enemyPlate ? in.showEnemyPlates : in.showFriendlyPlates;
     if (in.isTotem) {
         plate = plate && (in.isHostile ? in.showEnemyTotems : in.showFriendlyTotems);
