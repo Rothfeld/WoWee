@@ -143,6 +143,8 @@ public:
     [[nodiscard]] bool isPlayingOneShot(uint32_t instanceId, uint32_t* outAnimId = nullptr) const;
     /// Set the looping animation to resume when the currently playing one-shot ends.
     void setOneShotReturn(uint32_t instanceId, uint32_t returnAnim);
+    /// Looping animation this instance should resume after a newly triggered one-shot ends.
+    [[nodiscard]] uint32_t getOneShotResumeAnimation(uint32_t instanceId) const;
     /// Play other animations on each arm alone, until the next playAnimation.
     void setArmAnimations(uint32_t instanceId, uint32_t leftArmAnim, uint32_t rightArmAnim);
     // Loop an animation on SpineLow and its descendants; zero removes the layer.

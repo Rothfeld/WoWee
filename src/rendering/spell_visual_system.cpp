@@ -1680,7 +1680,8 @@ void SpellVisualSystem::playSpellVisualKit(uint32_t kitId, const glm::vec3& worl
         } else if (attachInstanceId == renderer_->getCharacterInstanceId()) {
             renderer_->getAnimationController()->playKitAnimation(animation->second);
         } else {
-            cr->playAnimation(attachInstanceId, animation->second, false);
+            const uint32_t returnAnim = cr->getOneShotResumeAnimation(attachInstanceId);
+            cr->playAnimation(attachInstanceId, animation->second, false, returnAnim);
         }
     }
     LOG_DEBUG("SpellVisualKit: id=", kitId, " animation=", animation->second);

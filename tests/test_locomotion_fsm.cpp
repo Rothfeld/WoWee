@@ -759,3 +759,19 @@ TEST_CASE("Animation blend transition preserves pose across same-frame and mid-b
         CHECK(out.blendElapsed == Catch::Approx(0.0f));
     }
 }
+
+TEST_CASE("SpellVisualKit one-shot preserves hovering or combat idle return animation", "[locomotion][oneshot]") {
+    using wowee::rendering::resolveOneShotResumeAnimation;
+
+    // Looping hover (Illidan hovering in HOVER 193 before PlaySpellVisual 7668 anim 172)
+    // resumes HOVER 193 rather than dropping to STAND 0 on the ground.
+    CHECK(resolveOneShotResumeAnimation(true, false, anim::HOVER, 0) == anim::HOVER);
+    CHECK(resolveOneShotResumeAnimation(true, false, anim::READY_1H, 0) == anim::READY_1H);
+    CHECK(resolveOneShotResumeAnimation(true, false, anim::STAND, 0) == anim::STAND);
+
+    // Chained one-shot preserves the active one-shot's scheduled return animation.
+    CHECK(resolveOneShotResumeAnimation(false, false, anim::DRUID_CAT_RAKE, anim::HOVER) == anim::HOVER);
+
+    // Frozen pose returns 0 (STAND).
+    CHECK(resolveOneShotResumeAnimation(false, true, anim::DEAD, anim::HOVER) == 0);
+}

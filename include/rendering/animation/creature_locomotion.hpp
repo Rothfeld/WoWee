@@ -300,4 +300,19 @@ inline AnimationBlendTransition resolveAnimationBlendTransition(
     return out;
 }
 
+// Choose the looping animation a remote unit should resume after a one-shot
+// SpellVisualKit animation completes. A hovering unit (e.g. Illidan playing
+// SpellVisualKit 7668 anim 172 while in HOVER 193 before EMOTE_ONESHOT_LAND)
+// must return to HOVER (193) rather than dropping to STAND (0) on the ground
+// and then snapping back up to play LAND (200).
+inline constexpr uint32_t resolveOneShotResumeAnimation(
+    bool animationLoop,
+    bool holdFinalPose,
+    uint32_t currentAnimationId,
+    uint32_t oneShotReturnAnim) {
+    if (animationLoop) return currentAnimationId;
+    if (!holdFinalPose) return oneShotReturnAnim;
+    return 0;
+}
+
 } // namespace wowee::rendering

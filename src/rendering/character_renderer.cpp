@@ -2754,6 +2754,15 @@ void CharacterRenderer::setOneShotReturn(uint32_t instanceId, uint32_t returnAni
     }
 }
 
+uint32_t CharacterRenderer::getOneShotResumeAnimation(uint32_t instanceId) const {
+    const auto it = instances.find(instanceId);
+    if (it == instances.end()) return 0;
+    const auto& instance = it->second;
+    return resolveOneShotResumeAnimation(
+        instance.animationLoop, instance.holdFinalPose,
+        instance.currentAnimationId, instance.oneShotReturnAnim);
+}
+
 void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos,
                                uint32_t onlyInstance) {
     std::unordered_set<uint32_t> scopedIds;
