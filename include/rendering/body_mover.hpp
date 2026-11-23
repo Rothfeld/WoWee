@@ -184,14 +184,36 @@ inline BodyMove fallBody(const glm::vec3& from, const glm::vec3& delta,
         move.position += remaining * contact->time;
         remaining *= 1.0f - contact->time;
         const glm::vec3 n = contact->normal;
-        if (n.z > 0.0f && remaining.z <= 0.0f && contact->face.z >= minWalkableNormalZ) {
-            // Ground, met by the sole or caught on its edge by the bevel:
-            // native clears the Northshire fence hull (1.60 to 1.65 yd) with
-            // a 1.64 yd jump and walks on over it.
+        if (n.z >= minWalkableNormalZ && remaining.z <= 0.0f && contact->face.z >= minWalkableNormalZ) {
+            // Ground under the sole ends the fall.
             move.position += n * kContactSkin;
             move.support = BodySupport::Walkable;
-            move.soleOnGround = n.z >= minWalkableNormalZ;
+            move.soleOnGround = true;
             return move;
+        }
+        if (n.z > 0.0f && remaining.z <= 0.0f && contact->face.z >= minWalkableNormalZ) {
+            // The edge of walkable ground under the bevel. The rest of the
+            // move goes along the contact, up the bevel; the fall ends if
+            // that stands the sole on the ground. Native coming down on the
+            // near edge of the Northshire fence hull's top (-8941.81, -106.28,
+            // its bevel 0.21 yd over the edge) ends that frame 0.146 yd on
+            // and 0.0055 yd higher with its sole on the top, and walks on.
+            // Where it does not - hung by the bevel on the rim of the Exodar
+            // table, the top half a yard further up - native keeps falling,
+            // turned aside by the rim as by any other face (7 of 7).
+            const glm::vec3 held = move.position + n * kContactSkin;
+            const float into = glm::dot(remaining, n);
+            const glm::vec3 along = into < 0.0f ? remaining - n * into : remaining;
+            const auto stop = firstBodyContact(held, along, radius, height, triangles);
+            const glm::vec3 end = held + along * (stop ? stop->time : 1.0f);
+            const float rise = std::max(end.z - held.z, 0.0f);
+            if (const auto rest = lowerBody(end, rise + kContactSkin * 2.0f, radius, height, triangles);
+                rest && isBodySoleOnGround(*rest, minWalkableNormalZ)) {
+                move.position = rest->position;
+                move.support = BodySupport::Walkable;
+                move.soleOnGround = true;
+                return move;
+            }
         }
         const glm::vec2 level(n.x, n.y);
         const float levelSq = glm::dot(level, level);
@@ -222,9 +244,9 @@ inline BodyMove fallBody(const glm::vec3& from, const glm::vec3& delta,
     if (remaining.z < -1e-6f) move.held = true;
     if (delta.z <= 0.0f) {
         if (const auto rest = lowerBody(move.position, kContactSkin * 2.0f, radius, height, triangles)) {
-            if (isBodyGround(*rest, minWalkableNormalZ)) {
+            if (isBodySoleOnGround(*rest, minWalkableNormalZ)) {
                 move.support = BodySupport::Walkable;
-                move.soleOnGround = isBodySoleOnGround(*rest, minWalkableNormalZ);
+                move.soleOnGround = true;
                 move.position = rest->position;
             }
         }
@@ -248,6 +270,11 @@ inline BodyMove walkBody(const glm::vec3& from, const glm::vec3& horizontalDelta
         glm::vec3 end{0.0f};
         std::optional<BodyRest> rest;
         glm::vec3 blocker{0.0f};
+        // The first thing in the level move's way that is not ground was an
+        // edge against the body, not a corner of the body against a face.
+        bool edgeMet = false;
+        // Ended on a hold from which repeating the move reaches ground.
+        bool leads = false;
     };
     const auto step = [&](const glm::vec3& start, const glm::vec3& delta, float budget) {
         Step result;
@@ -258,6 +285,19 @@ inline BodyMove walkBody(const glm::vec3& from, const glm::vec3& horizontalDelta
             return result;
         }
         result.blocker = ahead->normal;
+        {
+            constexpr float kTie = 1e-4f;
+            const float travel = glm::length(delta);
+            std::optional<BodyContact> wall;
+            for (const auto& triangle : triangles) {
+                const auto contact = sweepBodyTriangle(start, delta, radius, height, triangle);
+                if (!contact || contact->standing || contact->face.z >= minWalkableNormalZ) continue;
+                const float later = wall ? (contact->time - wall->time) * travel : -1.0f;
+                // Of contacts met together, a corner on a face decides.
+                if (later < -kTie || (later <= kTie && contact->corner && !wall->corner)) wall = contact;
+            }
+            result.edgeMet = wall && !wall->corner;
+        }
         glm::vec3 up(0.0f, 0.0f, budget);
         if (budget > 1e-4f)
             if (const auto ceiling = firstBodyContact(start, up, radius, height, triangles))
@@ -295,13 +335,24 @@ inline BodyMove walkBody(const glm::vec3& from, const glm::vec3& horizontalDelta
         }
         return false;
     };
-    // The whole move from `from`: a step is taken only onto ground under the
-    // sole, or onto a hold - a steep face, or an edge under the bevel - that
-    // leads there.
-    const auto attempt = [&](const glm::vec3& delta) {
+    // The whole move from `from`: a step is taken onto ground under the
+    // sole; onto a hold - a steep face, or an edge under the bevel - that
+    // leads there; and onto whatever is there when what stood in the level
+    // move's way was an edge. Native takes that last step in the frame it
+    // meets the ridge between two 74.5 degree sides of the Exodar table
+    // edge-on, 12 of 12, to this height within 3 mm, and never steps onto
+    // such a side met by a corner of the body (header comment).
+    const auto attempt = [&](const glm::vec3& delta, bool ownMove) {
         Step first = step(from, delta, stepBudget);
+        // Only the move itself steps over an edge; its part along a face it
+        // was turned aside by does not. In the corner of the Northshire Abbey
+        // doorway (-8916.2, -141.76) native creeps 0.001 yd a frame, where
+        // stepping over the second wall's edge bobbed the body 0.09 yd.
+        if (!ownMove) first.edgeMet = false;
+        if (first.taken && first.rest && !isBodySoleOnGround(*first.rest, minWalkableNormalZ))
+            first.leads = leadsToGround(first.end, delta, stepBudget - (first.end.z - from.z));
         if (first.taken && first.rest && !isBodySoleOnGround(*first.rest, minWalkableNormalZ) &&
-            !leadsToGround(first.end, delta, stepBudget - (first.end.z - from.z))) {
+            !first.edgeMet && !first.leads) {
             first.taken = false;
             first.blocker = first.rest->normal;
         }
@@ -314,7 +365,7 @@ inline BodyMove walkBody(const glm::vec3& from, const glm::vec3& horizontalDelta
         // again, the part of that along the second face, when that does not
         // lead back into the first (the foot of a wall where a slope meets
         // it). In a corner nothing is left and the body stays.
-        Step taken = attempt(horizontalDelta);
+        Step taken = attempt(horizontalDelta, true);
         glm::vec2 intent(horizontalDelta.x, horizontalDelta.y);
         glm::vec2 firstWall(0.0f);
         for (int slide = 0; slide < 2 && !taken.taken; ++slide) {
@@ -327,12 +378,18 @@ inline BodyMove walkBody(const glm::vec3& from, const glm::vec3& horizontalDelta
             if (glm::dot(intent, intent) <= 1e-12f) break;
             if (slide == 1 && glm::dot(intent, firstWall) < -1e-6f) break;
             firstWall = wall;
-            taken = attempt(glm::vec3(intent, 0.0f));
+            taken = attempt(glm::vec3(intent, 0.0f), false);
         }
         if (taken.taken) {
             move.position = taken.end;
             move.stepped = !taken.level;
-            perched = taken.rest && !isBodyGround(*taken.rest, minWalkableNormalZ);
+            // Hung by the bevel on the edge of ground the body stands - it
+            // rides the nose of a stair that way - unless it came there over
+            // an edge and the move does not lead on to ground: native set on
+            // the Exodar table's rim after a step onto the ridge falls in the
+            // next frame, 7 of 7.
+            perched = taken.rest && !isBodySoleOnGround(*taken.rest, minWalkableNormalZ) &&
+                      (!isBodyGround(*taken.rest, minWalkableNormalZ) || (taken.edgeMet && !taken.leads));
         }
     }
 

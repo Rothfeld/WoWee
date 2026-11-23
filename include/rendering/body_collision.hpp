@@ -50,6 +50,10 @@ struct BodyContact {
     // Not met by moving: the body stood in this triangle already and is
     // carried by it (sweepBodyTriangle).
     bool standing = false;
+    // A corner of the body met the triangle's face: the separating direction
+    // is the face's own normal. Otherwise an edge or corner of the triangle
+    // met a side, bevel or edge of the body.
+    bool corner = false;
 };
 
 inline std::optional<BodyContact> sweepBodyTriangle(const glm::vec3& from,
@@ -75,7 +79,8 @@ inline std::optional<BodyContact> sweepBodyTriangle(const glm::vec3& from,
     float enterSpeed = 0.0f;
     float standingDepth = std::numeric_limits<float>::infinity();
     glm::vec3 normal(0.0f);
-    const auto axisOverlap = [&](glm::vec3 axis) {
+    bool enteredOnFace = false;
+    const auto axisOverlap = [&](glm::vec3 axis, bool faceAxis = false) {
         const float lengthSq = glm::dot(axis, axis);
         if (lengthSq < 1e-10f) return true;
         axis /= std::sqrt(lengthSq);
@@ -91,11 +96,11 @@ inline std::optional<BodyContact> sweepBodyTriangle(const glm::vec3& from,
         if (std::abs(speed) < 1e-8f) return low <= 0.0f && high >= 0.0f;
         const float first = std::min(low/speed,high/speed);
         const float last = std::max(low/speed,high/speed);
-        if (first > enter) { enter=first; enterSpeed=std::abs(speed); normal=speed>0.0f ? -axis : axis; }
+        if (first > enter) { enter=first; enterSpeed=std::abs(speed); normal=speed>0.0f ? -axis : axis; enteredOnFace=faceAxis; }
         leave = std::min(leave,last);
         return enter <= leave;
     };
-    if (!axisOverlap(triangleNormal)) return std::nullopt;
+    if (!axisOverlap(triangleNormal, true)) return std::nullopt;
     const std::array<glm::vec3,7> faceAxes = {{
         {1,0,0},{0,1,0},{0,0,1},
         {kBodyBevel,0,-1},{-kBodyBevel,0,-1},
@@ -134,7 +139,7 @@ inline std::optional<BodyContact> sweepBodyTriangle(const glm::vec3& from,
     if (enter < -1e-5f && -enter * enterSpeed > kContactSkin) return std::nullopt;
     glm::vec3 face = glm::normalize(triangleNormal);
     if (face.z < 0.0f) face = -face;
-    return BodyContact{std::max(0.0f,enter),normal,face};
+    return BodyContact{std::max(0.0f,enter),normal,face,false,enteredOnFace};
 }
 
 inline bool moveBody(const glm::vec3& from, const glm::vec3& to,
