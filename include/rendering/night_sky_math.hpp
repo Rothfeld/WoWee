@@ -32,6 +32,16 @@ inline float starFieldTimeVisibility(float timeOfDayHours) {
     return 0.0f;
 }
 
+/// Overcast cloud-deck cover in [0, 1] from effective DBC cloud density.
+/// Clear-night Azeroth zones (Elwynn, Orgrimmar, Westfall, Barrens) author
+/// LightFloatBand[3] <= 0.50 -> 0.0 (stars and moon stay unattenuated).
+/// Permanent-overcast zones (Karazhan 386 / Deadwind Pass 19 / Duskwood 57 at
+/// 0.70, Plaguelands at 0.68, Storm at 0.95) ramp to 1.0 so thick overcast
+/// cloud cover hides stars and moon just like storm weather.
+inline float overcastCloudCover(float effectiveCloudDensity) {
+    return skySmoothstep(0.55f, 0.68f, effectiveCloudDensity);
+}
+
 /// Atmospheric attenuation for stars in [0, 1].
 /// Attenuates under heavy weather/overcast, low DBC celestialGlowThrough
 /// (LightFloatBand[2]), and bright zenith skies, without crushing clear-night

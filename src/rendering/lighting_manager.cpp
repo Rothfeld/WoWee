@@ -484,6 +484,8 @@ void LightingManager::updateWithStormWeight(const glm::vec3& playerPos, uint32_t
         newParams.skySmogColor = glm::vec3(0.0f);
         newParams.cloudColor = glm::vec3(0.0f);
         newParams.cloudEmissiveColor = glm::vec3(0.0f);
+        newParams.cloudLayer2Color = glm::vec3(0.0f);
+        newParams.cloudLayer2Weight = 0.0f;
         newParams.fogStart = newParams.fogEnd = newParams.fogDensity = 0.0f;
         newParams.celestialGlowThrough = 0.0f;
         newParams.cloudDensity = newParams.horizonGlow = 0.0f;
@@ -524,6 +526,8 @@ void LightingManager::updateWithStormWeight(const glm::vec3& playerPos, uint32_t
             newParams.skySmogColor += params.skySmogColor * share;
             newParams.cloudColor += params.cloudColor * share;
             newParams.cloudEmissiveColor += params.cloudEmissiveColor * share;
+            newParams.cloudLayer2Color += params.cloudLayer2Color * share;
+            newParams.cloudLayer2Weight += params.cloudLayer2Weight * share;
             newParams.fogStart += params.fogStart * share;
             newParams.fogEnd += params.fogEnd * share;
             newParams.fogDensity += params.fogDensity * share;
@@ -688,6 +692,8 @@ void LightingManager::updateWithStormWeight(const glm::vec3& playerPos, uint32_t
     currentParams_.skySmogColor = glm::mix(currentParams_.skySmogColor, newParams.skySmogColor, blendFactor);
     currentParams_.cloudColor = glm::mix(currentParams_.cloudColor, newParams.cloudColor, blendFactor);
     currentParams_.cloudEmissiveColor = glm::mix(currentParams_.cloudEmissiveColor, newParams.cloudEmissiveColor, blendFactor);
+    currentParams_.cloudLayer2Color = glm::mix(currentParams_.cloudLayer2Color, newParams.cloudLayer2Color, blendFactor);
+    currentParams_.cloudLayer2Weight = glm::mix(currentParams_.cloudLayer2Weight, newParams.cloudLayer2Weight, blendFactor);
     currentParams_.fogStart = glm::mix(currentParams_.fogStart, newParams.fogStart, blendFactor);
     currentParams_.fogEnd = glm::mix(currentParams_.fogEnd, newParams.fogEnd, blendFactor);
     currentParams_.fogDensity = glm::mix(currentParams_.fogDensity, newParams.fogDensity, blendFactor);
@@ -840,6 +846,14 @@ LightingParams LightingManager::sampleLightParams(const LightParamsProfile* prof
     params.cloudEmissiveColor = (cloudEmissiveBand.numKeyframes > 0)
         ? sampleColorBand(cloudEmissiveBand, timeHalfMinutes)
         : params.skyMiddleColor;
+    const auto& cloudLayer2Band = profile->colorBands[LightParamsProfile::CLOUD_LAYER2_COLOR];
+    if (cloudLayer2Band.numKeyframes > 0) {
+        const glm::vec3 layer2 = sampleColorBand(cloudLayer2Band, timeHalfMinutes);
+        if (glm::dot(layer2, layer2) > 1e-5f) {
+            params.cloudLayer2Color = layer2;
+            params.cloudLayer2Weight = 1.0f;
+        }
+    }
 
     // Sample float bands. The fog distance is stored in the same
     // thirty-sixths of a yard as the light positions, and was being used raw:

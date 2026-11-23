@@ -131,8 +131,12 @@ void Clouds::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const SkyP
 
     // DBC IntBand[10] (cloud sun/highlight) and IntBand[11] (cloud emissive/shade)
     // are already authored per hour (warm/white by day, luminous cyan-blue at night).
+    // Overcast zones (e.g. Karazhan 386 / Deadwind Pass 19, FloatBand[3]=0.70)
+    // author bright IntBand[10]/[11] overcast sky with dark IntBand[12] storm clouds.
+    const float overcast = overcastCloudCover(density_);
+    const float layer2Mix = overcast * glm::clamp(params.cloudLayer2Weight, 0.0f, 1.0f);
     glm::vec3 cloudLitColor = params.cloudColor;
-    glm::vec3 cloudShadeColor = params.cloudEmissiveColor;
+    glm::vec3 cloudShadeColor = glm::mix(params.cloudEmissiveColor, params.cloudLayer2Color, layer2Mix);
 
     // Sun direction (opposite of light direction).
     glm::vec3 sunDir = -glm::normalize(params.directionalDir);
@@ -149,7 +153,7 @@ void Clouds::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const SkyP
     push.cloudColor         = glm::vec4(cloudLitColor, 1.0f);
     push.cloudEmissiveColor = glm::vec4(cloudShadeColor, 1.0f);
     push.sunDirDensity      = glm::vec4(sunDir, density_);
-    push.windAndLight       = glm::vec4(windOffset_, sunIntensity, ambient, 0.0f);
+    push.windAndLight       = glm::vec4(windOffset_, sunIntensity, ambient, overcast);
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_);
 

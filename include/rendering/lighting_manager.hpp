@@ -41,6 +41,8 @@ struct LightingParams {
     glm::vec3 skySmogColor{0.85f, 0.88f, 0.92f};   // Sky smog horizon fringe (2.5 deg, IntBand 6)
     glm::vec3 cloudColor{0.9f, 0.95f, 1.0f};       // DBC cloud sun/tint color (IntBand 10)
     glm::vec3 cloudEmissiveColor{0.2f, 0.3f, 0.45f}; // DBC cloud ambient/emissive color (IntBand 11)
+    glm::vec3 cloudLayer2Color{0.0f, 0.0f, 0.0f};  // DBC secondary/underside cloud color (IntBand 12)
+    float cloudLayer2Weight = 0.0f;                 // 1 when IntBand 12 is authored non-black
 
     float celestialGlowThrough = 1.0f;              // Sun/moon glow-through switch (FloatBand 2)
     float cloudDensity = 0.3f;                      // Sky smog / cloud weight (FloatBand 3)
@@ -152,6 +154,7 @@ struct LightParamsProfile {
         SUN_COLOR = 9,
         CLOUD_SUN_COLOR = 10,
         CLOUD_EMISSIVE_COLOR = 11,
+        CLOUD_LAYER2_COLOR = 12,
         OCEAN_SHALLOW_COLOR = 14,
         OCEAN_DEEP_COLOR = 15,
         RIVER_SHALLOW_COLOR = 16,

@@ -35,6 +35,8 @@ struct SkyParams {
     glm::vec3 fogColor{0.5f, 0.6f, 0.7f};
     glm::vec3 cloudColor{0.9f, 0.95f, 1.0f};
     glm::vec3 cloudEmissiveColor{0.2f, 0.3f, 0.45f};
+    glm::vec3 cloudLayer2Color{0.0f, 0.0f, 0.0f};
+    float cloudLayer2Weight = 0.0f;
 
     // Atmospheric effects
     float celestialGlowThrough = 1.0f; // 0-1 (LightFloatBand 2)
@@ -72,10 +74,17 @@ inline float effectiveSkyCloudDensity(bool useOriginalSkybox,
                                       float weatherIntensity,
                                       const glm::vec3& skyTopColor = glm::vec3(0.0f)) {
     if (useOriginalSkybox) return 0.0f;
+    const float clampedDensity = std::clamp(dbcCloudDensity, 0.0f, 1.0f);
     const float darkSky = 1.0f - skySmoothstep(0.14f, 0.30f, skyColorLuminance(skyTopColor));
-    const float clearNightSuppression = starFieldTimeVisibility(timeOfDayHours) * darkSky;
+    // Clear-night Azeroth zones author LightFloatBand[3] <= 0.50 and show only
+    // stars at night; permanent-overcast zones (Karazhan 386 / Deadwind Pass 19
+    // / Duskwood 57 at 0.70, Plaguelands 0.68, Blasted Lands 0.85, Storm 0.95)
+    // keep their authored cloud deck at all hours.
+    const float overcastPersistence = skySmoothstep(0.55f, 0.65f, clampedDensity);
+    const float clearNightSuppression =
+        starFieldTimeVisibility(timeOfDayHours) * darkSky * (1.0f - overcastPersistence);
     const float daylightFactor = 1.0f - clearNightSuppression;
-    const float clearSkyDensity = std::clamp(dbcCloudDensity, 0.0f, 1.0f) * daylightFactor;
+    const float clearSkyDensity = clampedDensity * daylightFactor;
     const float weatherBoost = (weatherIntensity > 0.05f) ? (weatherIntensity * 0.4f) : 0.0f;
     return std::min(1.0f, clearSkyDensity + weatherBoost);
 }

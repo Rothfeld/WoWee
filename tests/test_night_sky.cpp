@@ -109,6 +109,16 @@ TEST_CASE("effectiveSkyCloudDensity suppresses clear-night procedural clouds and
     CHECK(effectiveSkyCloudDensity(false, 0.5f, 22.0f, 0.0f, glm::vec3(0.0f)) == Catch::Approx(0.0f));
     CHECK(effectiveSkyCloudDensity(false, 0.5f, 22.25f, 0.0f, tanarisNightTop) == Catch::Approx(0.0f));
 
+    // Permanent-overcast zones (Karazhan LightParams 386 / Deadwind Pass 19 / Duskwood 57:
+    // FloatBand[3] = 0.70, SkyTop = (27, 34, 37)) keep their full overcast cloud deck at night
+    // and suppress stars/moon through overcastCloudCover.
+    const glm::vec3 karaNightTop(27.0f / 255.0f, 34.0f / 255.0f, 37.0f / 255.0f);
+    CHECK(effectiveSkyCloudDensity(false, 0.70f, 22.2f, 0.0f, karaNightTop) == Catch::Approx(0.70f));
+    CHECK(effectiveSkyCloudDensity(false, 0.68f, 0.05f, 0.0f, glm::vec3(0.0f)) == Catch::Approx(0.68f));
+    CHECK(overcastCloudCover(0.50f) == Catch::Approx(0.0f));
+    CHECK(overcastCloudCover(0.70f) == Catch::Approx(1.0f));
+    CHECK(starFieldEffectiveIntensity(22.2f, overcastCloudCover(0.70f), 1.0f, karaNightTop) == Catch::Approx(0.0f));
+
     // Custom M2 skyboxes (Outland) never receive procedural dome clouds.
     CHECK(effectiveSkyCloudDensity(true, 0.5f, 12.0f, 0.8f) == Catch::Approx(0.0f));
     CHECK(effectiveSkyCloudDensity(true, 0.5f, 19.75f, 0.0f, orgDuskTop) == Catch::Approx(0.0f));

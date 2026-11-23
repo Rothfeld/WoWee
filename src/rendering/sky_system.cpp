@@ -135,11 +135,17 @@ void SkySystem::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
         return;
     }
 
+    const float effectiveCloudDensity = effectiveSkyCloudDensity(
+        params.useOriginalSkybox, params.cloudDensity,
+        params.timeOfDay, params.weatherIntensity, params.skyTopColor);
+    const float effectiveOvercast = std::max(
+        params.weatherIntensity, overcastCloudCover(effectiveCloudDensity));
+
     if (starField_) {
         starField_->setEnabled(renderProceduralStars);
         if (renderProceduralStars) {
             starField_->render(cmd, perFrameSet, params.timeOfDay,
-                               params.weatherIntensity, params.celestialGlowThrough,
+                               effectiveOvercast, params.celestialGlowThrough,
                                params.skyTopColor);
         }
     }
@@ -150,7 +156,7 @@ void SkySystem::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
         return;
     }
 
-    const float overcastAttenuation = 1.0f - glm::smoothstep(0.15f, 0.70f, params.weatherIntensity);
+    const float overcastAttenuation = 1.0f - glm::smoothstep(0.15f, 0.70f, effectiveOvercast);
     const float celestialVisibility =
         overcastAttenuation * glm::clamp(params.celestialGlowThrough, 0.0f, 1.0f);
 
@@ -158,22 +164,16 @@ void SkySystem::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
     if (celestial_) {
         const float nightFactor = moonNightVisibility(
             params.timeOfDay, params.skyTopColor,
-            params.weatherIntensity, params.celestialGlowThrough);
+            effectiveOvercast, params.celestialGlowThrough);
         celestial_->render(cmd, perFrameSet, params.timeOfDay,
                            &params.directionalDir, &params.sunColor, params.gameTime,
                            nightFactor, celestialVisibility);
     }
 
-    // --- Clouds (DBC-driven daytime clouds + storm overcast) ---
-    // Native TBC 2.4.3 CSkyScene draws only the untextured vertex-band sky dome
-    // and Stars.m2 on clear night skies; procedural FBM clouds fade out at dusk
-    // and stay suppressed on clear nights while remaining active by day or storm.
+    // --- Clouds (DBC-driven daytime clouds, permanent overcast, + storm overcast) ---
     if (clouds_) {
-        const float effectiveDensity = effectiveSkyCloudDensity(
-            params.useOriginalSkybox, params.cloudDensity,
-            params.timeOfDay, params.weatherIntensity, params.skyTopColor);
-        if (effectiveDensity > 0.01f) {
-            clouds_->setDensity(effectiveDensity);
+        if (effectiveCloudDensity > 0.01f) {
+            clouds_->setDensity(effectiveCloudDensity);
             clouds_->render(cmd, perFrameSet, params);
         }
     }

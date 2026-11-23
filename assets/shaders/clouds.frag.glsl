@@ -88,6 +88,7 @@ void main() {
     float windOffset = push.windAndLight.x;
     float sunIntensity = push.windAndLight.y;
     float ambient = push.windAndLight.z;
+    float overcast = push.windAndLight.w;
 
     // Project the view ray onto a flat cloud layer. The +0.08 bias tempers the
     // extreme UV stretching right at the horizon.
@@ -114,11 +115,11 @@ void main() {
     // Overall visibility follows DBC density (0 = clear sky, e.g. Tanaris)
     cloud *= clamp(density * 1.9, 0.0, 1.0);
 
-    // Horizon fade: keep the lowest horizon fog ring (0-3.5 deg) clean while
-    // allowing daytime clouds and the night blue star-cloud / Milky Way band
-    // to arch down behind distant hills like Native TBC 2.4.3.
-    cloud *= smoothstep(0.06, 0.22, altitude);
-    if (cloud < 0.01) discard;
+    // Horizon fade: keep the lowest horizon fog ring clean on clear days, and
+    // wrap overcast cloud decks closer to the horizon (Karazhan / Deadwind Pass).
+    float horizonFade = smoothstep(mix(0.06, 0.0, overcast), mix(0.22, 0.06, overcast), altitude);
+    cloud *= horizonFade;
+    if (cloud < 0.01 && overcast < 0.01) discard;
 
     // --- Lighting ---
     float sunUp = clamp(sunDir.z, 0.0, 1.0);      // day factor
@@ -142,6 +143,20 @@ void main() {
 
     // --- Edge softness for alpha ---
     float alpha = clamp(cloud * smoothstep(0.0, 0.22, cloud) * 0.88, 0.0, 0.92);
+
+    // Permanent-overcast zones (e.g. Karazhan / Deadwind Pass, FloatBand[3] >= 0.65)
+    // blanket the sky in an opaque cloud deck tinted by IntBand[10]/[11] with
+    // large low-frequency dark storm billows tinted by IntBand[12].
+    if (overcast > 0.001) {
+        vec2 op = uv * 0.36 + wind * 0.55;
+        vec2 oq = vec2(fbm(op, 3), fbm(op + vec2(4.1, 2.7), 3));
+        float billow = fbm(op + oq * 1.1, 4);
+        float darkMass = smoothstep(0.36, 0.72, billow);
+        vec3 overcastRgb = mix(push.cloudColor.rgb, push.cloudEmissiveColor.rgb, darkMass * 0.72) * ambient;
+        float overcastAlpha = horizonFade * mix(0.92, 0.98, darkMass);
+        cloudRgb = mix(cloudRgb, overcastRgb, overcast);
+        alpha = mix(alpha, overcastAlpha, overcast);
+    }
 
     if (alpha < 0.01) discard;
 
