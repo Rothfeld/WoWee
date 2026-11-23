@@ -79,7 +79,7 @@ inline std::optional<BodyContact> sweepBodyTriangle(const glm::vec3& from,
     float enterSpeed = 0.0f;
     float standingDepth = std::numeric_limits<float>::infinity();
     glm::vec3 normal(0.0f);
-    bool enteredOnFace = false;
+    float faceEnter = -std::numeric_limits<float>::infinity();
     const auto axisOverlap = [&](glm::vec3 axis, bool faceAxis = false) {
         const float lengthSq = glm::dot(axis, axis);
         if (lengthSq < 1e-10f) return true;
@@ -96,7 +96,8 @@ inline std::optional<BodyContact> sweepBodyTriangle(const glm::vec3& from,
         if (std::abs(speed) < 1e-8f) return low <= 0.0f && high >= 0.0f;
         const float first = std::min(low/speed,high/speed);
         const float last = std::max(low/speed,high/speed);
-        if (first > enter) { enter=first; enterSpeed=std::abs(speed); normal=speed>0.0f ? -axis : axis; enteredOnFace=faceAxis; }
+        if (first > enter) { enter=first; enterSpeed=std::abs(speed); normal=speed>0.0f ? -axis : axis; }
+        if (faceAxis) faceEnter = first;
         leave = std::min(leave,last);
         return enter <= leave;
     };
@@ -139,7 +140,12 @@ inline std::optional<BodyContact> sweepBodyTriangle(const glm::vec3& from,
     if (enter < -1e-5f && -enter * enterSpeed > kContactSkin) return std::nullopt;
     glm::vec3 face = glm::normalize(triangleNormal);
     if (face.z < 0.0f) face = -face;
-    return BodyContact{std::max(0.0f,enter),normal,face,false,enteredOnFace};
+    // A corner (or, flat on, a whole edge or side) of the body on the face:
+    // the face's own axis is entered last, or within a tenth of a millimetre
+    // of the last. Flat on to a wall the body's side axes are entered at the
+    // same instant and rounding picks among them.
+    const bool corner = (enter - faceEnter) * glm::length(delta) <= 1e-4f;
+    return BodyContact{std::max(0.0f,enter),normal,face,false,corner};
 }
 
 inline bool moveBody(const glm::vec3& from, const glm::vec3& to,

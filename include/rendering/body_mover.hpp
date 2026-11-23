@@ -58,7 +58,8 @@
 //
 // What native does, from 144 further paired runs
 // (_experiments/20261123T214000Z.movement_collision_parity_rule; the rule that
-// covers all of it is not found, so none of it is built in below):
+// covers all of it is not found; the ridge step and the fall from ground's
+// edge are built in below, the rest is not):
 //  - Flat floor, a 74.5 degree side met by a corner of the body (Exodar
 //    table, square on and 30 degrees off, run speed to three times that):
 //    never stepped onto, at any gap. Square on the body stands off by whatever
@@ -67,7 +68,8 @@
 //    body's side, not a body corner against a face): the step is taken in that
 //    frame, 12 of 12, to the height lowerBody() gives within 3 mm, and the
 //    body falls from there unless the next step fits the rest of the yard.
-//    WoWee slides round the ridge.
+//    Built in: walkBody takes that step when the frame's own move meets
+//    an edge (Step::edgeMet).
 //  - Orgrimmar wall, 84 degrees, on its 17 degree ramp, head-on: slides when
 //    the level free run at the frame's start is 0.287 yd or less (34 runs),
 //    is lifted when it is 0.295 or more (24 runs), whatever the frame's move.
@@ -78,7 +80,10 @@
 //  - The yard is counted from the last ground: two-frame climbs end exactly a
 //    yard above it.
 //  - Set by its bevel on the edge of a walkable face after such a step, native
-//    falls in the next frame (7 of 7); isBodyGround() below calls that ground.
+//    falls in the next frame (7 of 7). Built in: such a body is perched,
+//    and fallBody ends a fall on ground's edge only when the rest of the
+//    move, along the contact, stands the sole on it (the Northshire fence
+//    hull: _experiments/20261123T230000Z.movement_collision_parity_landing).
 //  - An edge it cannot be raised over within the yard (a leaning trunk's
 //    underside at Orgrimmar) stops native dead; WoWee slides along it.
 namespace wowee::rendering::movement {
