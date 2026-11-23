@@ -47,6 +47,9 @@ struct BodyContact {
     // The touched triangle's own unit normal, facing up. `normal` is the
     // separating direction, which at an edge is not the face's.
     glm::vec3 face;
+    // Not met by moving: the body stood in this triangle already and is
+    // carried by it (sweepBodyTriangle).
+    bool standing = false;
 };
 
 inline std::optional<BodyContact> sweepBodyTriangle(const glm::vec3& from,
@@ -122,7 +125,7 @@ inline std::optional<BodyContact> sweepBodyTriangle(const glm::vec3& from,
     if (standingDepth > kContactSkin) {
         const glm::vec3 front = glm::normalize(triangleNormal);
         if (delta.z >= 0.0f || front.z <= 0.0f) return std::nullopt;
-        return BodyContact{0.0f, glm::vec3(0.0f, 0.0f, 1.0f), front};
+        return BodyContact{0.0f, glm::vec3(0.0f, 0.0f, 1.0f), front, true};
     }
     // Touching, not in. A contact entered before this move began is one the
     // body is leaving or sliding along - except within the skin and moving

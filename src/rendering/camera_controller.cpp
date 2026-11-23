@@ -488,10 +488,11 @@ glm::vec3 CameraController::moveBodyOnFootOnce(const glm::vec3& start, const glm
     const float radius = std::max(collisionRadius_, 0.1f);
     const float height = std::max(collisionHeight_, radius * movement::kBodyBevel + 0.01f);
     const float minWalkable = ignoreSlopeLimit_ ? 0.0f : movement::kMinWalkableNormalZ;
-    // Depth a body set down by the server, a teleport or another movement
-    // mode may sit inside its floor and still be stood on it, not dropped
-    // through: server heights are not this client's triangles to the millimetre.
-    constexpr float kSunkTolerance = 0.25f;
+    // A body found inside ground within a step above its feet is stood on that
+    // ground: server and teleport heights are not this client's triangles to
+    // the millimetre, and a floor can stream in over a body that has already
+    // been set down on the terrain under it.
+    constexpr float kSunkTolerance = movement::kMaxStepUp;
 
     thread_local std::vector<movement::BodyTriangle> triangles;
     thread_local std::vector<glm::vec3> terrainCorners;
@@ -519,7 +520,8 @@ glm::vec3 CameraController::moveBodyOnFootOnce(const glm::vec3& start, const glm
     const bool supported = grounded && verticalVelocity <= 0.0f;
     if (supported) {
         if (const auto rest = movement::lowerBody(from + glm::vec3(0.0f, 0.0f, kSunkTolerance),
-                                                  kSunkTolerance, radius, height, triangles)) {
+                                                  kSunkTolerance, radius, height, triangles, true);
+            rest && movement::isBodyGround(*rest, minWalkable)) {
             from.z = std::max(from.z, rest->position.z);
         }
     }
@@ -564,6 +566,19 @@ glm::vec3 CameraController::moveBodyOnFootOnce(const glm::vec3& start, const glm
         // 3.44 yd/s along the rail's direction after it has passed it.
         airborneHorizontalVelocity_ = glm::vec3(move.position.x - from.x, move.position.y - from.y, 0.0f) / stepSeconds;
     }
+    if (move.support == movement::BodySupport::None &&
+        (gravitySuspendTimer_ > 0.0f || groundNotStreamedYet(move.position.x, move.position.y))) {
+        // Held in the air until the ground arrives: when it has, stand on it.
+        if (const auto rest = movement::lowerBody(move.position, movement::kMaxStepDown,
+                                                  radius, height, triangles);
+            rest && movement::isBodyGround(*rest, minWalkable)) {
+            move.position = rest->position;
+            move.support = movement::BodySupport::Walkable;
+            move.soleOnGround = movement::isBodySoleOnGround(*rest, minWalkable);
+        }
+    }
+    if (move.support == movement::BodySupport::Walkable && gravitySuspendTimer_ > 0.0f)
+        gravitySuspendTimer_ = 0.0f;
     // Perched counts as on the ground for everything but the step budget: the
     // body is held, mid-step, as on the nose of a stair.
     grounded = move.support != movement::BodySupport::None;
@@ -759,7 +774,17 @@ glm::vec3 CameraController::moveFollowedCharacter(float /*deltaTime*/, FrameInpu
         if (waterJumpAirborne_) inWater = false;
 
         if (inWater) {
+        // Falling into water: native stops at the depth a swimmer floats at,
+        // in the frame it gets there, and does not sink on. Off the
+        // Dustwallow plank ramp (-2692, -4692) it enters at 19 yd/s and
+        // swims at z -1.82 from that frame; in the Undercity canal at -66.06.
+        // WoWee carried the fall on to -3.44 and swam at that depth.
+        const bool fellIn = !swimming && !grounded && verticalVelocity < 0.0f && waterH.has_value();
         swimming = true;
+        if (fellIn) {
+            verticalVelocity = 0.0f;
+            targetPos.z = std::max(targetPos.z, *waterH - swimSurfaceOffset_);
+        }
         // Swim movement follows look pitch (f.forward/back), while strafe stays
         // lateral for stable control.
         float swimSpeed = (swimSpeedOverride_ > 0.0f && swimSpeedOverride_ < 500.0f && !std::isnan(swimSpeedOverride_))
@@ -1183,9 +1208,14 @@ glm::vec3 CameraController::moveFollowedCharacter(float /*deltaTime*/, FrameInpu
     // and doodads alike (rendering/body_mover.hpp). The other ways of moving
     // keep their own vertical rules and only sweep against walls.
     bodyMoved_ = false;
+    // Also while gravity is held off after a world entry or teleport, and over
+    // terrain that has not streamed in: the fall is already taken out of the
+    // move there, and the buildings that have arrived are solid. Left to the
+    // floor queries, a character set down 0.05 yd under an Undercity floor
+    // with the Tirisfal tile above still pending hung there ungrounded and
+    // drifted through the bank's walls.
     const bool onFoot = !externalFollow_ && !swimming && !isFlightAirborne() && !hoverActive_ &&
-        !sitting && !seatedInChair_ && !waterWalkActive_ && gravitySuspendTimer_ <= 0.0f &&
-        !groundNotStreamedYet(targetPos.x, targetPos.y);
+        !sitting && !seatedInChair_ && !waterWalkActive_;
     if (onFoot) {
         targetPos = moveBodyOnFoot(*followTarget, targetPos, f.physicsDeltaTime);
         bodyMoved_ = true;

@@ -1237,8 +1237,8 @@ solid regardless of the name or local orientation of its model.
 
 `build/bin/test_body_mover` runs the rules below on made-up geometry.
 
-On foot (not swimming, flying, hovering, seated, water walking, on a taxi, or
-while the ground is still streaming in) `CameraController::moveBodyOnFoot`
+On foot (not swimming, flying, hovering, seated, water walking or on a taxi)
+`CameraController::moveBodyOnFoot`
 moves that body among the triangles of terrain, WMOs and doodads alike, with
 `walkBody` / `fallBody` from `include/rendering/body_mover.hpp`. It decides
 position, grounding and step-up in one place; the floor queries of
@@ -1283,9 +1283,20 @@ position) replayed against WoWee's own triangles for the same places:
 
 Gotchas:
 
-- `moveBodyOnFoot` first stands a body sunk up to 0.25 yd back on its floor:
-  server and teleport heights are not this client's triangles to the
-  millimetre. Sunk deeper it stays at that depth, carried by the floor it is in.
+- `moveBodyOnFoot` first stands a body found inside ground within a step
+  above its feet on that ground: server and teleport heights are not this
+  client's triangles to the millimetre, and a floor can stream in over a body
+  already set down on the terrain under it. Sunk deeper it stays at that
+  depth, carried by the floor it is in.
+- A body lifted to be lowered (for a step, or for the check above) is not
+  carried by triangles it overlaps at the lifted height (`lowerBody`'s
+  `fromLifted`): a head lifted into the single-sided floor of the storey above
+  would otherwise be stood up there.
+- While gravity is held off after a world entry or teleport
+  (`gravitySuspendTimer_`) and over terrain not yet streamed in, the mover
+  still runs: the fall is already out of the move, the buildings that have
+  arrived are solid, and the body is stood on ground as soon as there is some
+  within a step below.
 - Single-sided sheets (the coral around the Karabor Sewers rock at Black
   Temple 346.8, 816.5): a walker steps over such a sheet's edge and comes down
   through its back, native and WoWee alike. Native is then turned aside by

@@ -99,22 +99,34 @@ struct BodyRest {
 // Starts two contact skins higher so a body already resting is found resting.
 // Among faces met within 2 mm of the first, the flattest is the support: a
 // body standing on a floor against a leaning wall touches both.
+//
+// `fromLifted` says the body was put at `from` to be lowered - lifted for a
+// step, or raised to look for the floor it has sunk into - and does not stand
+// there. A triangle it overlaps at that height is then not one that carries
+// it: a lifted head inside the single-sided floor of the storey above would
+// otherwise be "carried" up there.
 inline std::optional<BodyRest> lowerBody(const glm::vec3& from, float distance,
-        float radius, float height, std::span<const BodyTriangle> triangles) {
+        float radius, float height, std::span<const BodyTriangle> triangles,
+        bool fromLifted = false) {
     assert(distance > 0.0f);
     constexpr float kSupportTie = 0.002f;
     const glm::vec3 start = from + glm::vec3(0.0f, 0.0f, kContactSkin * 2.0f);
     const float travel = distance + kContactSkin * 2.0f;
     const glm::vec3 delta(0.0f, 0.0f, -travel);
+    const auto meet = [&](const BodyTriangle& triangle) {
+        auto contact = sweepBodyTriangle(start, delta, radius, height, triangle);
+        if (contact && fromLifted && contact->standing) contact.reset();
+        return contact;
+    };
     std::optional<BodyContact> first;
     for (const auto& triangle : triangles) {
-        const auto contact = sweepBodyTriangle(start, delta, radius, height, triangle);
+        const auto contact = meet(triangle);
         if (contact && (!first || contact->time < first->time)) first = contact;
     }
     if (!first) return std::nullopt;
     BodyContact best = *first;
     for (const auto& triangle : triangles) {
-        const auto contact = sweepBodyTriangle(start, delta, radius, height, triangle);
+        const auto contact = meet(triangle);
         if (contact && (contact->time - first->time) * travel <= kSupportTie && contact->face.z > best.face.z)
             best = *contact;
     }
@@ -233,7 +245,7 @@ inline BodyMove walkBody(const glm::vec3& from, const glm::vec3& horizontalDelta
             return result;
         }
         result.taken = true;
-        result.rest = lowerBody(start + up + delta, up.z, radius, height, triangles);
+        result.rest = lowerBody(start + up + delta, up.z, radius, height, triangles, true);
         // Nothing under the lifted body above its starting height: it was
         // carried over something lower than the step.
         result.end = result.rest ? result.rest->position : start + delta;
