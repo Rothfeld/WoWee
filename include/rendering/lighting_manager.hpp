@@ -194,6 +194,34 @@ struct LightParamsProfile {
  * - Interpolates between keyframes
  * - Provides lighting parameters for rendering
  */
+/// Liquid medium the camera eye is currently submerged in.
+/// Water/ocean uses each Light.dbc volume's LightParamsIDUnderwater, whereas
+/// Slime (LightParams 6) and Magma (LightParams 7) use the global built-in
+/// LightParams rows authored in LightParams.dbc / LightIntBand.dbc.
+enum class SubmergedLiquid : uint8_t {
+    None = 0,
+    Water = 1,
+    Magma = 2,
+    Slime = 3,
+};
+
+/// Classify a LiquidType.dbc / WMO MLIQ / ADT MH2O liquidType ID into its
+/// submersion medium (water/ocean, magma, or slime).
+inline constexpr SubmergedLiquid classifySubmergedLiquid(uint16_t liquidType) {
+    if (liquidType == 0) return SubmergedLiquid::Water;
+    if (liquidType == 21) return SubmergedLiquid::Slime;  // Naxxramas - Slime
+    if (liquidType == 41 || liquidType == 61) return SubmergedLiquid::Water;
+    switch ((liquidType - 1u) % 4u) {
+        case 2u: return SubmergedLiquid::Magma;
+        case 3u: return SubmergedLiquid::Slime;
+        default: return SubmergedLiquid::Water;
+    }
+}
+
+/// Global LightParams.dbc IDs for submersion in Slime and Magma.
+inline constexpr uint32_t kLightParamsSlime = 6;
+inline constexpr uint32_t kLightParamsMagma = 7;
+
 class LightingManager {
 public:
     LightingManager();
@@ -224,7 +252,8 @@ public:
     /// TBC 2.4.3 weather grade transitions).
     void updateWithStormWeight(const glm::vec3& playerPos, uint32_t mapId, uint32_t zoneId,
                                float gameTime, float stormWeight,
-                               bool isUnderwater = false, bool isGhost = false);
+                               SubmergedLiquid submerged = SubmergedLiquid::None,
+                               bool isGhost = false);
 
     /**
      * Get current lighting parameters
@@ -311,7 +340,8 @@ private:
     /**
      * Get LightParams ID based on conditions
      */
-    uint32_t selectLightParamsId(const LightVolume* volume, bool isRaining, bool isUnderwater, bool isGhost) const;
+    uint32_t selectLightParamsId(const LightVolume* volume, bool isRaining,
+                                 SubmergedLiquid submerged, bool isGhost) const;
 
     /**
      * Sample lighting from LightParams profile

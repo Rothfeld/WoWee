@@ -317,12 +317,14 @@ void LightingManager::update(const glm::vec3& playerPos, uint32_t mapId, uint32_
                               float gameTime,
                               bool isRaining, bool isUnderwater, bool isGhost) {
     updateWithStormWeight(playerPos, mapId, zoneId, gameTime,
-                          isRaining ? 1.0f : 0.0f, isUnderwater, isGhost);
+                          isRaining ? 1.0f : 0.0f,
+                          isUnderwater ? SubmergedLiquid::Water : SubmergedLiquid::None,
+                          isGhost);
 }
 
 void LightingManager::updateWithStormWeight(const glm::vec3& playerPos, uint32_t mapId, uint32_t zoneId,
                                             float gameTime, float stormWeight,
-                                            bool isUnderwater, bool isGhost) {
+                                            SubmergedLiquid submerged, bool isGhost) {
     if (!initialized_) return;
     const float clampedStorm = glm::clamp(stormWeight, 0.0f, 1.0f);
 
@@ -430,8 +432,8 @@ void LightingManager::updateWithStormWeight(const glm::vec3& playerPos, uint32_t
                     if (t == target.end()) target.emplace_back(skyIt->second, share);
                     else t->second += share;
                 };
-                const uint32_t clearId = selectLightParamsId(wv.volume, false, isUnderwater, isGhost);
-                const uint32_t stormId = selectLightParamsId(wv.volume, true, isUnderwater, isGhost);
+                const uint32_t clearId = selectLightParamsId(wv.volume, false, submerged, isGhost);
+                const uint32_t stormId = selectLightParamsId(wv.volume, true, submerged, isGhost);
                 if (clearId == stormId || clampedStorm <= 0.001f) {
                     accumulateSky(clearId, wv.weight);
                 } else if (clampedStorm >= 0.999f) {
@@ -537,8 +539,8 @@ void LightingManager::updateWithStormWeight(const glm::vec3& playerPos, uint32_t
             blendedDir += params.directionalDir * share;
         };
         for (const auto& wv : blend) {
-            const uint32_t clearId = selectLightParamsId(wv.volume, false, isUnderwater, isGhost);
-            const uint32_t stormId = selectLightParamsId(wv.volume, true, isUnderwater, isGhost);
+            const uint32_t clearId = selectLightParamsId(wv.volume, false, submerged, isGhost);
+            const uint32_t stormId = selectLightParamsId(wv.volume, true, submerged, isGhost);
             if (clearId == stormId || clampedStorm <= 0.001f) {
                 accumulateSample(clearId, wv.weight);
             } else if (clampedStorm >= 0.999f) {
@@ -599,8 +601,10 @@ void LightingManager::updateWithStormWeight(const glm::vec3& playerPos, uint32_t
     // The amount is a setting rather than a constant, because how much haze a
     // zone should have is taste and the right value is not the same at noon in
     // Elwynn as at night in Hellfire. Zero is the old behaviour exactly.
-    newParams.fogColor = glm::mix(newParams.fogColor, newParams.skyMiddleColor,
-                                  glm::clamp(fogSkyBlend_, 0.0f, 1.0f));
+    if (submerged == SubmergedLiquid::None) {
+        newParams.fogColor = glm::mix(newParams.fogColor, newParams.skyMiddleColor,
+                                      glm::clamp(fogSkyBlend_, 0.0f, 1.0f));
+    }
 
     // How much fog, as a multiplier on the distances the zone asks for.
     //
@@ -789,10 +793,19 @@ std::vector<LightingManager::WeightedVolume> LightingManager::findLightVolumes(
     return weighted;
 }
 
-uint32_t LightingManager::selectLightParamsId(const LightVolume* volume, bool isRaining, bool isUnderwater, bool isGhost) const {
+uint32_t LightingManager::selectLightParamsId(const LightVolume* volume, bool isRaining,
+                                              SubmergedLiquid submerged, bool isGhost) const {
     if (!volume) return 0;
     if (isGhost) return volume->lightParamsIdDeath;
 
+    if (submerged == SubmergedLiquid::Slime && lightParamsProfiles_.contains(kLightParamsSlime)) {
+        return kLightParamsSlime;
+    }
+    if (submerged == SubmergedLiquid::Magma && lightParamsProfiles_.contains(kLightParamsMagma)) {
+        return kLightParamsMagma;
+    }
+
+    const bool isUnderwater = submerged != SubmergedLiquid::None;
     // Select appropriate LightParams based on conditions
     if (isUnderwater && isRaining && volume->lightParamsIdUnderwaterRain != 0) {
         return volume->lightParamsIdUnderwaterRain;

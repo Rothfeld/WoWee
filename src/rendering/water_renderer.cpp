@@ -1663,9 +1663,12 @@ std::optional<float> WaterRenderer::getWaterHeightAt(float glX, float glY) const
     return best;
 }
 
-std::optional<float> WaterRenderer::getNearestWaterHeightAt(float glX, float glY, float queryZ, float maxAbove) const {
+std::optional<float> WaterRenderer::getNearestWaterHeightAt(float glX, float glY, float queryZ,
+                                                            float maxAbove,
+                                                            uint16_t* outLiquidType) const {
     std::optional<float> best;
     float bestDist = 1e9f;
+    uint16_t bestType = 0;
 
     for (const auto& surface : surfaces) {
         const auto grid = wateredGridPosition(surface, glX, glY);
@@ -1686,9 +1689,11 @@ std::optional<float> WaterRenderer::getNearestWaterHeightAt(float glX, float glY
         if (!best || dist < bestDist) {
             best = h;
             bestDist = dist;
+            bestType = surface.liquidType;
         }
     }
 
+    if (best && outLiquidType) *outLiquidType = bestType;
     return best;
 }
 

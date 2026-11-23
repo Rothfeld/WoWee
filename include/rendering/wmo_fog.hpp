@@ -13,6 +13,19 @@ struct WMOFogSample {
     float weight = 1.0f;
 };
 
+/// WMO compilers emit pure blue (0, 0, 255) (1364/1565 TBC MFOG records) or a
+/// degenerate ~1-inch end distance (undercity.wmo MFOG[1]: 0.027778 yd) when
+/// no underwater fog was authored for a record. Treat those stubs as unauthored
+/// so underwater interiors fall back to Light.dbc's LightParamsIDUnderwater
+/// instead of turning the screen solid blue.
+inline bool wmoFogHasAuthoredUnderwater(const pipeline::WMOFog& fog) {
+    if (fog.endDist2 <= 0.05f) return false;
+    const bool pureBlueStub = fog.color2.r <= 0.002f &&
+                              fog.color2.g <= 0.002f &&
+                              fog.color2.b >= 0.995f;
+    return !pureBlueStub;
+}
+
 inline std::optional<WMOFogSample> sampleWMOFog(
     std::span<const pipeline::WMOFog> fogs, const std::array<uint8_t, 4>& indices,
     const glm::vec3& position, bool underwater,
@@ -24,7 +37,8 @@ inline std::optional<WMOFogSample> sampleWMOFog(
             end * (underwater ? fog.startFactor2 : fog.startFactor), end, 1.0f};
     };
     const auto& base = fogs[0];
-    const bool hasBase = base.largeRadius > 0.0f || (base.flags & 1) != 0;
+    const bool hasBase = (base.largeRadius > 0.0f || (base.flags & 1) != 0) &&
+                         (!underwater || wmoFogHasAuthoredUnderwater(base));
     // Record zero provides the WMO default when authored (largeRadius > 0 or
     // infinite-radius flag 0x1). When no global WMO fog was authored, the WMO
     // compiler writes a zero-radius white stub in record zero (37 TBC WMOs -
@@ -42,6 +56,7 @@ inline std::optional<WMOFogSample> sampleWMOFog(
         for (size_t j = 0; j < i; ++j) duplicate |= indices[j] == indices[i];
         if (duplicate) continue;
         const auto& fog = fogs[indices[i]];
+        if (underwater && !wmoFogHasAuthoredUnderwater(fog)) continue;
         const float distance = glm::distance(position, fog.position);
         float weight = 0.0f;
         if (fog.flags & 1) weight = 1.0f;

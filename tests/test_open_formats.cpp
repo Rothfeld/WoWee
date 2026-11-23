@@ -6,6 +6,7 @@
 #include "pipeline/wowee_terrain_loader.hpp"
 #include "pipeline/adt_loader.hpp"
 #include "rendering/wmo_fog.hpp"
+#include "rendering/lighting_manager.hpp"
 #include <filesystem>
 #include <fstream>
 #include <cstring>
@@ -128,6 +129,56 @@ TEST_CASE("WMO fog resolves local MFOG spheres when record zero is unauthored st
     CHECK(insideUw->color.g == Catch::Approx(75.0f / 255.0f));
     CHECK(insideUw->start == Catch::Approx(361.11111f * 0.01f));
     CHECK(insideUw->end == Catch::Approx(361.11111f));
+
+    // Undercity MFOG[1] carries a degenerate 1-inch (0.027778 yd) pure-blue
+    // (0,0,255) underwater compiler stub while MFOG[0] carries authored green.
+    // Underwater sampling must skip the stub instead of turning the screen blue.
+    WMOFog ucBase{};
+    ucBase.largeRadius = 2.8f;
+    ucBase.endDist = 230.556f;
+    ucBase.startFactor = 0.5f;
+    ucBase.color1 = glm::vec4(67.0f / 255.0f, 142.0f / 255.0f, 132.0f / 255.0f, 1.0f);
+    ucBase.endDist2 = 41.6667f;
+    ucBase.startFactor2 = 0.5f;
+    ucBase.color2 = glm::vec4(28.0f / 255.0f, 144.0f / 255.0f, 75.0f / 255.0f, 1.0f);
+
+    WMOFog ucTradeStub{};
+    ucTradeStub.position = glm::vec3(-52.2f, -0.2f, -103.0f);
+    ucTradeStub.smallRadius = 50.0f;
+    ucTradeStub.largeRadius = 58.3f;
+    ucTradeStub.endDist = 166.667f;
+    ucTradeStub.startFactor = 0.35f;
+    ucTradeStub.color1 = glm::vec4(67.0f / 255.0f, 135.0f / 255.0f, 142.0f / 255.0f, 1.0f);
+    ucTradeStub.endDist2 = 0.027778f;
+    ucTradeStub.startFactor2 = 1.0f;
+    ucTradeStub.color2 = glm::vec4(0.0f, 0.0f, 1.0f, 1.0f);
+
+    const std::vector<WMOFog> ucFogs{ucBase, ucTradeStub};
+    CHECK(wowee::rendering::wmoFogHasAuthoredUnderwater(ucBase));
+    CHECK_FALSE(wowee::rendering::wmoFogHasAuthoredUnderwater(ucTradeStub));
+    const auto ucUw = wowee::rendering::sampleWMOFog(
+        ucFogs, {1, 0, 0, 0}, ucTradeStub.position, true, barrensNight);
+    REQUIRE(ucUw);
+    CHECK(ucUw->color.g == Catch::Approx(144.0f / 255.0f));
+    CHECK(ucUw->end == Catch::Approx(41.6667f));
+
+    // Stormwind-style all-stub underwater MFOG yields nullopt so Light.dbc
+    // LightParamsIDUnderwater applies cleanly.
+    const std::vector<WMOFog> swFogs{stub};
+    CHECK_FALSE(wowee::rendering::sampleWMOFog(swFogs, {0, 0, 0, 0}, glm::vec3(0.0f), true, barrensNight));
+
+    // TBC LiquidType.dbc + WMO MLIQ submersion classification.
+    using wowee::rendering::SubmergedLiquid;
+    using wowee::rendering::classifySubmergedLiquid;
+    CHECK(classifySubmergedLiquid(1) == SubmergedLiquid::Water);
+    CHECK(classifySubmergedLiquid(2) == SubmergedLiquid::Water);
+    CHECK(classifySubmergedLiquid(3) == SubmergedLiquid::Magma);
+    CHECK(classifySubmergedLiquid(4) == SubmergedLiquid::Slime);
+    CHECK(classifySubmergedLiquid(21) == SubmergedLiquid::Slime);  // Naxxramas Slime
+    CHECK(classifySubmergedLiquid(41) == SubmergedLiquid::Water);  // Coilfang Water
+    CHECK(classifySubmergedLiquid(61) == SubmergedLiquid::Water);  // Hyjal Water
+    CHECK(classifySubmergedLiquid(15) == SubmergedLiquid::Magma);
+    CHECK(classifySubmergedLiquid(16) == SubmergedLiquid::Slime);
 
     // Midpoint of MFOG[1] falloff band (dist = 164.25, weight = 0.5) blends with
     // outdoor Light.dbc fallback, never with stub record zero's white (1,1,1).

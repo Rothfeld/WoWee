@@ -209,7 +209,11 @@ public:
     /// Like getWaterHeightAt but only returns water surfaces whose height is
     /// close to the query Z (within maxAbove units above). Avoids false
     /// underwater detection from elevated WMO water far above the camera.
-    std::optional<float> getNearestWaterHeightAt(float glX, float glY, float queryZ, float maxAbove = 15.0f) const;
+    /// When outLiquidType is non-null and a surface is found, writes that
+    /// surface's LiquidType ID.
+    std::optional<float> getNearestWaterHeightAt(float glX, float glY, float queryZ,
+                                                 float maxAbove = 15.0f,
+                                                 uint16_t* outLiquidType = nullptr) const;
     // A surface belongs to this volume only when no solid terrain/roof or floating hull
     // separates it from the query (`wmoId == 0` identifies outdoor terrain/ocean water).
     using WaterColumnBlockedQuery = std::function<bool(const glm::vec3& position, float surface, uint32_t wmoId)>;

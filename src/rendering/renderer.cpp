@@ -626,27 +626,35 @@ void Renderer::updatePerFrameUBO() {
 
     if (wmoRenderer) {
         const glm::vec3 position = camera->getPosition();
+        uint16_t eyeLiquidType = 0;
         const auto waterHeight = waterRenderer
-            ? waterRenderer->getNearestWaterHeightAt(position.x, position.y, position.z, 400.0f)
+            ? waterRenderer->getNearestWaterHeightAt(position.x, position.y, position.z, 400.0f, &eyeLiquidType)
             : std::optional<float>{};
+        const SubmergedLiquid submerged = (waterHeight && position.z < *waterHeight)
+            ? classifySubmergedLiquid(eyeLiquidType)
+            : SubmergedLiquid::None;
         // Authored WMO fog is the fog of the interior only. From Echo Ridge
         // Mine's entrance (md_goldmine.wmo, MFOG 69 and 200 yards) build 8606
         // shows Northshire's trees outside in their own colours, and from the
         // stairs to Illidan's door (blacktemple.wmo group 23, a teal sphere
         // ending at 417 yards) the floating rocks outside are not teal.
+        // Submersion in Slime (LightParams 6) or Magma (LightParams 7) uses
+        // the global LightParams fog directly rather than WMO MFOG.
         currentFrameData.outdoorFogColor = currentFrameData.fogColor;
         currentFrameData.outdoorFogParams = currentFrameData.fogParams;
-        const WMOFogSample outdoorFallback{
-            glm::vec3(currentFrameData.outdoorFogColor),
-            currentFrameData.outdoorFogParams.x,
-            currentFrameData.outdoorFogParams.y,
-        };
-        const auto fog = wmoRenderer->getFog(
-            position, waterHeight && position.z < *waterHeight, outdoorFallback);
-        if (fog) {
-            currentFrameData.fogColor = glm::vec4(fog->color, 1);
-            currentFrameData.fogParams.x = fog->start;
-            currentFrameData.fogParams.y = fog->end;
+        if (submerged != SubmergedLiquid::Slime && submerged != SubmergedLiquid::Magma) {
+            const WMOFogSample outdoorFallback{
+                glm::vec3(currentFrameData.outdoorFogColor),
+                currentFrameData.outdoorFogParams.x,
+                currentFrameData.outdoorFogParams.y,
+            };
+            const auto fog = wmoRenderer->getFog(
+                position, submerged == SubmergedLiquid::Water, outdoorFallback);
+            if (fog) {
+                currentFrameData.fogColor = glm::vec4(fog->color, 1);
+                currentFrameData.fogParams.x = fog->start;
+                currentFrameData.fogParams.y = fog->end;
+            }
         }
     } else {
         currentFrameData.outdoorFogColor = currentFrameData.fogColor;
@@ -2247,15 +2255,18 @@ void Renderer::update(float deltaTime) {
         // Lighting follows the eye, including an orbit below the surface while
         // the player remains above it. Swimming alone does not submerge a view.
         const auto eye = camera->getPosition();
+        uint16_t eyeLiquidType = 0;
         const auto eyeWater = waterRenderer
-            ? waterRenderer->getNearestWaterHeightAt(eye.x, eye.y, eye.z, 400.0f)
+            ? waterRenderer->getNearestWaterHeightAt(eye.x, eye.y, eye.z, 400.0f, &eyeLiquidType)
             : std::nullopt;
-        const bool isUnderwater = eyeWater && eye.z < *eyeWater;
+        const SubmergedLiquid submerged = (eyeWater && eye.z < *eyeWater)
+            ? classifySubmergedLiquid(eyeLiquidType)
+            : SubmergedLiquid::None;
         const uint32_t resolvedZoneId = getCurrentZoneId();
 
         lightingManager->updateWithStormWeight(
             characterPosition, mapId, resolvedZoneId,
-            gameTime, stormWeight, isUnderwater,
+            gameTime, stormWeight, submerged,
             gh && (gh->isPlayerGhost() || gh->hasInvisibilityGlow()));
 
         // Sync weather visual renderer with game state
