@@ -799,4 +799,13 @@ inline glm::mat4 evaluateRibbonBoneTransform(
     return mat;
 }
 
+/// Alpha-blended M2 ribbons (M2Blend <= 2: Opaque/AlphaKey/Alpha) sort before
+/// transparent M2 meshes and additive particles so dark/black shadow trails
+/// (e.g. Banish_Chest_Purple.m2, Shadow_ImpactDD_Uber_Chest.m2,
+/// Shadowbolt_Missile.m2, blend=2 RGB=(0,0,0)) composite underneath the
+/// spell's additive glow rather than punching opaque black lines through it.
+inline constexpr bool ribbonDrawsBeforeTransparent(uint16_t blendMode) {
+    return blendMode <= 2u;
+}
+
 } // namespace wowee::rendering

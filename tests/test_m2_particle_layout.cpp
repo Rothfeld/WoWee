@@ -1276,3 +1276,19 @@ TEST_CASE("Detached particle gravity stays world -Z under pitched bone attachmen
     CHECK(worldYards.y == Catch::Approx(0.0f).margin(1e-5f));
     CHECK(worldYards.z == Catch::Approx(-1.0f).margin(1e-5f));
 }
+
+TEST_CASE("Alpha-blended M2 ribbons sort before transparent meshes while additive ribbons sort after", "[m2][particle][ribbon]") {
+    using namespace wowee::rendering;
+    // Banish_Chest_Purple.m2, Shadow_ImpactDD_Uber_Chest.m2, and Shadowbolt_Missile.m2
+    // author blend=2 (M2Blend Alpha) black ribbons that must draw before additive
+    // spell meshes/particles so the glow composites over them instead of being
+    // punched black. Additive (blend=3/4) and Mod/Mod2x (blend=5/6) ribbons stay
+    // in AfterTransparent.
+    CHECK(ribbonDrawsBeforeTransparent(0u));  // Opaque
+    CHECK(ribbonDrawsBeforeTransparent(1u));  // AlphaKey
+    CHECK(ribbonDrawsBeforeTransparent(2u));  // Alpha
+    CHECK_FALSE(ribbonDrawsBeforeTransparent(3u));  // NoAlphaAdd
+    CHECK_FALSE(ribbonDrawsBeforeTransparent(4u));  // Add
+    CHECK_FALSE(ribbonDrawsBeforeTransparent(5u));  // Mod
+    CHECK_FALSE(ribbonDrawsBeforeTransparent(6u));  // Mod2x
+}

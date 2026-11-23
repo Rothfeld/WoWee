@@ -638,9 +638,13 @@ public:
      */
 
     /**
-     * Render M2 ribbon emitters (spell trails / wing effects)
+     * Render M2 ribbon emitters (spell trails / wing effects). Call
+     * BeforeTransparent once between opaque and transparent mesh passes (for
+     * alpha-blended ribbons), then AfterTransparent once after particles (for
+     * additive ribbons, SpellChainEffects beams, and weapon trails).
      */
-    void renderM2Ribbons(VkCommandBuffer cmd, VkDescriptorSet perFrameSet);
+    void renderM2Ribbons(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
+                         ParticlePhase phase = ParticlePhase::AfterTransparent);
 
     /// A SpellChainEffects.dbc beam for one frame: a camera-facing strip
     /// through spine points, drawn with the ribbon pipelines after the M2
@@ -1463,6 +1467,7 @@ private:
     std::vector<ParticleRun> particleRuns_;
     // Vertices the BeforeTransparent call wrote this frame; AfterTransparent appends after them.
     uint32_t particleBeforeTransparentEnd_ = 0;
+    size_t ribbonBeforeTransparentEnd_ = 0;
     /// Vertices the particle buffer holds. Not MAX_M2_PARTICLES, which is the
     /// cap on one instance's particles: this has to hold a whole frame's.
     static constexpr size_t MAX_M2_PARTICLE_VERTS = 32768;

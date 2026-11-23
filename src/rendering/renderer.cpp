@@ -3442,9 +3442,13 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
                 waterRenderer->setRenderExtent(activeRenderExtent_);
                 waterRenderer->render(blended, perFrameSet, *camera, globalTime, false, frameIdx);
             }
-            // Negative priority-plane emitters sort under the transparent
-            // batches: BFD_WispSmall's black underlay (-100) beneath its glow.
+            // Negative priority-plane emitters and alpha-blended ribbons sort
+            // under transparent M2 batches: BFD_WispSmall's black underlay
+            // (-100) and Banish_Chest_Purple / Shadow_ImpactDD_Uber black
+            // ribbons beneath their additive glow.
             m2Renderer->renderM2Particles(blended, perFrameSet,
+                M2Renderer::ParticlePhase::BeforeTransparent);
+            m2Renderer->renderM2Ribbons(blended, perFrameSet,
                 M2Renderer::ParticlePhase::BeforeTransparent);
         };
         const auto drawCharactersBefore = [&](float depth) {
@@ -3579,7 +3583,8 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
                 m2Renderer->renderM2Particles(cmd, perFrameSet,
                     M2Renderer::ParticlePhase::AfterTransparent);
                 const auto tParts = std::chrono::steady_clock::now();
-                m2Renderer->renderM2Ribbons(cmd, perFrameSet);
+                m2Renderer->renderM2Ribbons(cmd, perFrameSet,
+                    M2Renderer::ParticlePhase::AfterTransparent);
                 const auto tParticles = std::chrono::steady_clock::now();
                 vkEndCommandBuffer(cmd);
 
@@ -3867,7 +3872,8 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
             recordWorldModels(currentCmd, currentCmd);
             m2Renderer->renderM2Particles(currentCmd, perFrameSet,
                     M2Renderer::ParticlePhase::AfterTransparent);
-            m2Renderer->renderM2Ribbons(currentCmd, perFrameSet);
+            m2Renderer->renderM2Ribbons(currentCmd, perFrameSet,
+                M2Renderer::ParticlePhase::AfterTransparent);
             if (vkCtx) vkCtx->gpuMark(currentCmd, "m2");
             lastM2RenderMs = std::chrono::duration<double, std::milli>(
                 std::chrono::steady_clock::now() - m2Start).count();

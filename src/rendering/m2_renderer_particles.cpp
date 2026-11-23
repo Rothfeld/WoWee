@@ -676,13 +676,17 @@ void M2Renderer::renderParticleMeshes(VkCommandBuffer cmd, VkDescriptorSet perFr
     }
 }
 
-void M2Renderer::renderM2Ribbons(VkCommandBuffer cmd, VkDescriptorSet perFrameSet) {
-    renderParticleMeshes(cmd, perFrameSet);
+void M2Renderer::renderM2Ribbons(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
+                                 ParticlePhase phase) {
+    const bool before = phase == ParticlePhase::BeforeTransparent;
+    if (!before) renderParticleMeshes(cmd, perFrameSet);
     const uint32_t frame = vkCtx_->getCurrentFrame();
     if (!ribbonPipeline_ || !ribbonAdditivePipeline_ || !ribbonVB_[frame] || !ribbonVBMapped_[frame]) return;
     // Diagnostic: WOWEE_M2_NO_RIBBONS=1 drops every M2 ribbon trail draw.
     static const bool kNoRibbons = envFlagEnabled("WOWEE_M2_NO_RIBBONS");
     if (kNoRibbons) return;
+
+    if (before) ribbonBeforeTransparentEnd_ = 0;
 
     // Trail edges carry their world ends (updateRibbons); SpellChainEffects
     // beams below are widened across their direction and the line of sight.
@@ -690,44 +694,48 @@ void M2Renderer::renderM2Ribbons(VkCommandBuffer cmd, VkDescriptorSet perFrameSe
     const glm::vec3 upWorld(0.0f, 0.0f, 1.0f);
 
     // Every edge of every trail is drawn: Al'ar alone carries ten trails of
-    // up to 200 edges (100 per second for 2 s). The buffer grows to fit.
-    size_t required = 0;
-    for (const auto& inst : instances) {
-        if (!inst.cachedModel || inst.cachedModel->ribbonEmitters.empty()) continue;
-        for (const auto& edges : inst.ribbonEdges) required += edges.size() * 2;
-    }
-    for (const auto& strip : chainStrips_) required += strip.spine.size() * 2;
-    for (const auto& strip : weaponTrailStrips_) required += strip.edges.size() * 2;
-    if (required > ribbonVertexCapacity_[frame]) {
-        const size_t capacity = std::max(required, ribbonVertexCapacity_[frame] * 2);
-        VkBufferCreateInfo info{.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
-        info.size = capacity * 9 * sizeof(float);
-        info.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
-        VmaAllocationCreateInfo allocationInfo{};
-        allocationInfo.usage = VMA_MEMORY_USAGE_CPU_TO_GPU;
-        allocationInfo.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT;
-        ::VkBuffer buffer = VK_NULL_HANDLE;
-        VmaAllocation allocation = VK_NULL_HANDLE;
-        VmaAllocationInfo mapped{};
-        const auto allocator = vkCtx_->getAllocator();
-        const VkResult result = vmaCreateBuffer(allocator, &info, &allocationInfo, &buffer, &allocation, &mapped);
-        if (result != VK_SUCCESS) {
-            LOG_ERROR("Ribbon vertex buffer allocation failed: ", result, " vertices=", capacity);
-            throw std::runtime_error("Ribbon vertex buffer allocation failed");
+    // up to 200 edges (100 per second for 2 s). Size for both phases up front
+    // so AfterTransparent never reallocates ribbonVB_[frame] after
+    // BeforeTransparent has recorded draws against it.
+    if (before || ribbonBeforeTransparentEnd_ == 0) {
+        size_t required = 0;
+        for (const auto& inst : instances) {
+            if (!inst.cachedModel || inst.cachedModel->ribbonEmitters.empty()) continue;
+            for (const auto& edges : inst.ribbonEdges) required += edges.size() * 2;
         }
-        const ::VkBuffer previousBuffer = ribbonVB_[frame];
-        const VmaAllocation previousAllocation = ribbonVBAlloc_[frame];
-        vkCtx_->deferAfterAllFrameFences([allocator, previousBuffer, previousAllocation] {
-            vmaDestroyBuffer(allocator, previousBuffer, previousAllocation);
-        });
-        ribbonVB_[frame] = buffer;
-        ribbonVBAlloc_[frame] = allocation;
-        ribbonVBMapped_[frame] = mapped.pMappedData;
-        ribbonVertexCapacity_[frame] = capacity;
+        for (const auto& strip : chainStrips_) required += strip.spine.size() * 2;
+        for (const auto& strip : weaponTrailStrips_) required += strip.edges.size() * 2;
+        if (required > ribbonVertexCapacity_[frame]) {
+            const size_t capacity = std::max(required, ribbonVertexCapacity_[frame] * 2);
+            VkBufferCreateInfo info{.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+            info.size = capacity * 9 * sizeof(float);
+            info.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+            VmaAllocationCreateInfo allocationInfo{};
+            allocationInfo.usage = VMA_MEMORY_USAGE_CPU_TO_GPU;
+            allocationInfo.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT;
+            ::VkBuffer buffer = VK_NULL_HANDLE;
+            VmaAllocation allocation = VK_NULL_HANDLE;
+            VmaAllocationInfo mapped{};
+            const auto allocator = vkCtx_->getAllocator();
+            const VkResult result = vmaCreateBuffer(allocator, &info, &allocationInfo, &buffer, &allocation, &mapped);
+            if (result != VK_SUCCESS) {
+                LOG_ERROR("Ribbon vertex buffer allocation failed: ", result, " vertices=", capacity);
+                throw std::runtime_error("Ribbon vertex buffer allocation failed");
+            }
+            const ::VkBuffer previousBuffer = ribbonVB_[frame];
+            const VmaAllocation previousAllocation = ribbonVBAlloc_[frame];
+            vkCtx_->deferAfterAllFrameFences([allocator, previousBuffer, previousAllocation] {
+                vmaDestroyBuffer(allocator, previousBuffer, previousAllocation);
+            });
+            ribbonVB_[frame] = buffer;
+            ribbonVBAlloc_[frame] = allocation;
+            ribbonVBMapped_[frame] = mapped.pMappedData;
+            ribbonVertexCapacity_[frame] = capacity;
+        }
     }
 
     float* dst     = static_cast<float*>(ribbonVBMapped_[frame]);
-    size_t written = 0;
+    size_t written = before ? 0 : ribbonBeforeTransparentEnd_;
 
     ribbonDraws_.clear();
     auto& draws = ribbonDraws_;
@@ -743,8 +751,12 @@ void M2Renderer::renderM2Ribbons(VkCommandBuffer cmd, VkDescriptorSet perFrameSe
             const auto& edges = inst.ribbonEdges[ri];
             if (edges.size() < 2) continue;
 
+            // Alpha-blended ribbons draw BeforeTransparent; additive ribbons draw AfterTransparent.
+            const uint16_t blendMode = gpu.ribbonBlendModes.at(ri);
+            if (ribbonDrawsBeforeTransparent(blendMode) != before) continue;
+
             // Select blend pipeline based on material blend mode
-            const bool additive = gpu.ribbonBlendModes.at(ri) >= 3;
+            const bool additive = blendMode >= 3;
             VkPipeline pipe = additive ? ribbonAdditivePipeline_ : ribbonPipeline_;
 
             // M2 material flag 0x01 is Unlit. Lit ribbons (e.g. Spells\ChargeTrail.m2
@@ -834,8 +846,8 @@ void M2Renderer::renderM2Ribbons(VkCommandBuffer cmd, VkDescriptorSet perFrameSe
     }
 
     // SpellChainEffects beams: widened across their own direction and the
-    // line of sight.
-    for (const auto& strip : chainStrips_) {
+    // line of sight (AfterTransparent only).
+    if (!before) for (const auto& strip : chainStrips_) {
         assert(strip.spine.size() == strip.u.size());
         assert(strip.fade.empty() || strip.fade.size() == strip.spine.size());
         if (strip.spine.size() < 2) continue;
@@ -885,7 +897,7 @@ void M2Renderer::renderM2Ribbons(VkCommandBuffer cmd, VkDescriptorSet perFrameSe
 
     // SpellVisualKit CharProc == 8 weapon swing trails: untextured alpha-blended
     // triangle strips connecting sampled world-space weapon blade [base, tip] edges.
-    if (!weaponTrailStrips_.empty()) {
+    if (!before && !weaponTrailStrips_.empty()) {
         const VkDescriptorSet whiteSet = whiteRibbonTextureSet();
         if (whiteSet) {
             for (const auto& strip : weaponTrailStrips_) {
@@ -919,7 +931,7 @@ void M2Renderer::renderM2Ribbons(VkCommandBuffer cmd, VkDescriptorSet perFrameSe
     }
 
     // Periodic diagnostic: spell ribbon draw count
-    {
+    if (!before) {
         static uint32_t ribbonDiagFrame_ = 0;
         if (++ribbonDiagFrame_ % 300 == 1) {
             size_t spellRibbonDraws = 0;
@@ -941,7 +953,8 @@ void M2Renderer::renderM2Ribbons(VkCommandBuffer cmd, VkDescriptorSet perFrameSe
         }
     }
 
-    if (draws.empty() || written == 0) return;
+    if (before) ribbonBeforeTransparentEnd_ = written;
+    if (draws.empty()) return;
 
     VkExtent2D ext = vkCtx_->getSwapchainExtent();
     VkViewport vp{};
