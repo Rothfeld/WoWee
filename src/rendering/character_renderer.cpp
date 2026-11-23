@@ -2418,6 +2418,17 @@ void CharacterRenderer::playAnimation(uint32_t instanceId, uint32_t animationId,
     const bool previousReversed = instance.playReversed;
     const uint32_t previousRepeats = instance.sequenceRepeatsRemaining;
     const int previousSequence = instance.currentSequenceIndex;
+    const int previousBlendSequence = instance.blendSequenceIndex;
+    const float previousBlendTime = instance.blendAnimationTime;
+    const float previousBlendDuration = instance.blendDuration;
+    const float previousBlendElapsed = instance.blendElapsed;
+    const float previousBlendPlaybackRate = instance.blendPlaybackRate;
+    const bool previousBlendLoop = instance.blendAnimationLoop;
+    const uint32_t previousBlendAnimId =
+        (previousBlendSequence >= 0 &&
+         static_cast<size_t>(previousBlendSequence) < model.sequences.size())
+            ? model.sequences[previousBlendSequence].id
+            : 0u;
     instance.currentAnimationId = animationId;
     instance.currentSequenceIndex = -1;
     instance.armSequenceIndex[0] = instance.armSequenceIndex[1] = -1;
@@ -2560,18 +2571,41 @@ void CharacterRenderer::playAnimation(uint32_t instanceId, uint32_t animationId,
         instance.animationTime = previousTime;
         instance.sequenceRepeatsRemaining = previousRepeats;
     } else {
-        instance.blendSequenceIndex = -1;
-        if (previousSequence >= 0 && instance.currentSequenceIndex >= 0 && !frozenStandIn &&
-            (previousId != instance.currentAnimationId || !loop)) {
-            instance.blendDuration = model.sequences[instance.currentSequenceIndex].blendTime;
-            if (instance.blendDuration > 0.0f) {
-                instance.blendSequenceIndex = previousSequence;
-                instance.blendAnimationTime = previousTime;
-                instance.blendPlaybackRate = instance.playbackRate;
-                instance.blendAnimationLoop = previousLoop;
-                instance.blendElapsed = 0.0f;
-            }
+        const float targetBlendDuration =
+            (instance.currentSequenceIndex >= 0 &&
+             static_cast<size_t>(instance.currentSequenceIndex) < model.sequences.size())
+                ? static_cast<float>(model.sequences[instance.currentSequenceIndex].blendTime)
+                : 0.0f;
+        const AnimationBlendTransition blend = resolveAnimationBlendTransition({
+            .previousSequenceIndex = previousSequence,
+            .previousAnimId = previousId,
+            .previousTime = previousTime,
+            .previousPlaybackRate = instance.playbackRate,
+            .previousLoop = previousLoop,
+            .previousBlendSequenceIndex = previousBlendSequence,
+            .previousBlendAnimId = previousBlendAnimId,
+            .previousBlendTime = previousBlendTime,
+            .previousBlendDuration = previousBlendDuration,
+            .previousBlendElapsed = previousBlendElapsed,
+            .previousBlendPlaybackRate = previousBlendPlaybackRate,
+            .previousBlendLoop = previousBlendLoop,
+            .newSequenceIndex = instance.currentSequenceIndex,
+            .newAnimId = instance.currentAnimationId,
+            .newBlendDuration = targetBlendDuration,
+            .newLoop = loop,
+            .frozenStandIn = frozenStandIn,
+        });
+        if (blend.resumePreviousBlendPose && previousBlendSequence >= 0 &&
+            static_cast<size_t>(previousBlendSequence) < model.sequences.size()) {
+            instance.currentSequenceIndex = previousBlendSequence;
+            instance.animationTime = previousBlendTime;
         }
+        instance.blendSequenceIndex = blend.blendSequenceIndex;
+        instance.blendAnimationTime = blend.blendAnimationTime;
+        instance.blendPlaybackRate = blend.blendPlaybackRate;
+        instance.blendAnimationLoop = blend.blendAnimationLoop;
+        instance.blendDuration = blend.blendDuration;
+        instance.blendElapsed = blend.blendElapsed;
         // When exiting a turn shuffle back to a full-body animation, keep the
         // upper body blending from its preserved stance (not the unposed
         // shuffle upper body). If returning to the same stance (e.g. Stand),

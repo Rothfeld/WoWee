@@ -655,3 +655,107 @@ TEST_CASE("Wisp stand-in continuity and slope-drop airborne grace prevent animat
     CHECK_FALSE(effectiveAnimationGrounded(false, true, 0.0f));
     CHECK(effectiveAnimationGrounded(false, true, 0.50f, true));
 }
+
+TEST_CASE("Animation blend transition preserves pose across same-frame and mid-blend reversals", "[locomotion][blend]") {
+    using wowee::rendering::AnimationBlendTransitionInput;
+    using wowee::rendering::resolveAnimationBlendTransition;
+
+    // 1. Same-frame round-trip: Channel (124) -> Stand (0) -> Channel (124)
+    // before update() advances blendElapsed (e.g. MSG_CHANNEL_UPDATE 0 followed
+    // immediately by MSG_CHANNEL_START in the same packet burst).
+    {
+        AnimationBlendTransitionInput in;
+        in.previousSequenceIndex = 0;  // unrendered Stand
+        in.previousAnimId = anim::STAND;
+        in.previousTime = 0.0f;
+        in.previousLoop = true;
+        in.previousBlendSequenceIndex = 42;  // ChannelCastDirected (124)
+        in.previousBlendAnimId = anim::CHANNEL_CAST_DIRECTED;
+        in.previousBlendTime = 512.0f;
+        in.previousBlendDuration = 150.0f;
+        in.previousBlendElapsed = 0.0f;
+        in.previousBlendLoop = true;
+        in.newSequenceIndex = 42;
+        in.newAnimId = anim::CHANNEL_CAST_DIRECTED;
+        in.newBlendDuration = 150.0f;
+        in.newLoop = true;
+
+        const auto out = resolveAnimationBlendTransition(in);
+        CHECK(out.resumePreviousBlendPose);
+        CHECK(out.blendSequenceIndex == -1);
+    }
+
+    // 2. Same-frame redirect: Run (5) -> Stand (0) -> Attack (16) before Stand
+    // ever rendered keeps Run as the outgoing blend source.
+    {
+        AnimationBlendTransitionInput in;
+        in.previousSequenceIndex = 0;
+        in.previousAnimId = anim::STAND;
+        in.previousTime = 0.0f;
+        in.previousLoop = true;
+        in.previousBlendSequenceIndex = 5;
+        in.previousBlendAnimId = anim::RUN;
+        in.previousBlendTime = 240.0f;
+        in.previousBlendDuration = 150.0f;
+        in.previousBlendElapsed = 0.0f;
+        in.previousBlendPlaybackRate = 1.25f;
+        in.previousBlendLoop = true;
+        in.newSequenceIndex = 16;
+        in.newAnimId = anim::ATTACK_UNARMED;
+        in.newBlendDuration = 150.0f;
+        in.newLoop = false;
+
+        const auto out = resolveAnimationBlendTransition(in);
+        CHECK_FALSE(out.resumePreviousBlendPose);
+        CHECK(out.blendSequenceIndex == 5);
+        CHECK(out.blendAnimationTime == Catch::Approx(240.0f));
+        CHECK(out.blendPlaybackRate == Catch::Approx(1.25f));
+        CHECK(out.blendElapsed == Catch::Approx(0.0f));
+    }
+
+    // 3. Mid-blend reversal: Channel (124) -> Stand (0) advanced 15 ms of 150 ms
+    // (10% toward Stand), then reversed back to Channel (124) continues from 90%
+    // elapsed so outgoing Stand weight is 10%, not 100%.
+    {
+        AnimationBlendTransitionInput in;
+        in.previousSequenceIndex = 0;
+        in.previousAnimId = anim::STAND;
+        in.previousTime = 15.0f;
+        in.previousLoop = true;
+        in.previousBlendSequenceIndex = 42;
+        in.previousBlendAnimId = anim::CHANNEL_CAST_DIRECTED;
+        in.previousBlendTime = 600.0f;
+        in.previousBlendDuration = 150.0f;
+        in.previousBlendElapsed = 15.0f;
+        in.previousBlendLoop = true;
+        in.newSequenceIndex = 42;
+        in.newAnimId = anim::CHANNEL_CAST_DIRECTED;
+        in.newBlendDuration = 150.0f;
+        in.newLoop = true;
+
+        const auto out = resolveAnimationBlendTransition(in);
+        CHECK(out.resumePreviousBlendPose);
+        CHECK(out.blendSequenceIndex == 0);
+        CHECK(out.blendAnimationTime == Catch::Approx(15.0f));
+        CHECK(out.blendElapsed == Catch::Approx(135.0f));
+    }
+
+    // 4. Normal transition when no active blend is in flight.
+    {
+        AnimationBlendTransitionInput in;
+        in.previousSequenceIndex = 0;
+        in.previousAnimId = anim::STAND;
+        in.previousTime = 300.0f;
+        in.previousLoop = true;
+        in.newSequenceIndex = 42;
+        in.newAnimId = anim::CHANNEL_CAST_DIRECTED;
+        in.newBlendDuration = 150.0f;
+        in.newLoop = true;
+
+        const auto out = resolveAnimationBlendTransition(in);
+        CHECK_FALSE(out.resumePreviousBlendPose);
+        CHECK(out.blendSequenceIndex == 0);
+        CHECK(out.blendAnimationTime == Catch::Approx(300.0f));
+        CHECK(out.blendElapsed == Catch::Approx(0.0f));
+    }
+}

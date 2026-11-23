@@ -201,4 +201,103 @@ inline constexpr bool preservesPlayingSequenceOnStandIn(
            previousReversed == resolvedReversed;
 }
 
+struct AnimationBlendTransitionInput {
+    int previousSequenceIndex = -1;
+    uint32_t previousAnimId = 0;
+    float previousTime = 0.0f;
+    float previousPlaybackRate = 1.0f;
+    bool previousLoop = true;
+
+    int previousBlendSequenceIndex = -1;
+    uint32_t previousBlendAnimId = 0;
+    float previousBlendTime = 0.0f;
+    float previousBlendDuration = 0.0f;
+    float previousBlendElapsed = 0.0f;
+    float previousBlendPlaybackRate = 1.0f;
+    bool previousBlendLoop = true;
+
+    int newSequenceIndex = -1;
+    uint32_t newAnimId = 0;
+    float newBlendDuration = 0.0f;
+    bool newLoop = true;
+    bool frozenStandIn = false;
+};
+
+struct AnimationBlendTransition {
+    bool resumePreviousBlendPose = false;
+    int blendSequenceIndex = -1;
+    float blendAnimationTime = 0.0f;
+    float blendPlaybackRate = 1.0f;
+    bool blendAnimationLoop = true;
+    float blendDuration = 0.0f;
+    float blendElapsed = 0.0f;
+};
+
+// Resolve the outgoing blend pose when CharacterRenderer::playAnimation()
+// switches sequences. Handles three real-time blending invariants:
+// 1. Same-frame round-trip (A -> B -> A before update() advances blendElapsed):
+//    B was never rendered (0 ms elapsed), so cancel the unrendered transition
+//    and continue A continuously from its previous timestamp (e.g. server
+//    re-channeling sends MSG_CHANNEL_UPDATE 0 + MSG_CHANNEL_START in one tick).
+// 2. Same-frame redirect (A -> B -> C with blendElapsed == 0): keep A as the
+//    outgoing blend source instead of flashing the unrendered B.
+// 3. Mid-blend reversal (A -> B for fraction p, then B -> A): preserve C0
+//    continuity by reversing the blend at elapsed = newBlendDuration * (1 - p)
+//    instead of snapping from (1 - p) of A back to 100% B.
+inline AnimationBlendTransition resolveAnimationBlendTransition(
+    const AnimationBlendTransitionInput& in) {
+    AnimationBlendTransition out;
+    if (in.frozenStandIn || in.previousSequenceIndex < 0 || in.newSequenceIndex < 0 ||
+        (in.previousAnimId == in.newAnimId && in.newLoop)) {
+        return out;
+    }
+
+    if (in.previousBlendSequenceIndex >= 0 && in.previousBlendElapsed <= 0.0f) {
+        if (in.newLoop && in.previousBlendLoop && in.previousBlendAnimId == in.newAnimId) {
+            out.resumePreviousBlendPose = true;
+            return out;
+        }
+        if (in.newBlendDuration > 0.0f) {
+            out.blendSequenceIndex = in.previousBlendSequenceIndex;
+            out.blendAnimationTime = in.previousBlendTime;
+            out.blendPlaybackRate = in.previousBlendPlaybackRate;
+            out.blendAnimationLoop = in.previousBlendLoop;
+            out.blendDuration = in.newBlendDuration;
+            out.blendElapsed = 0.0f;
+        }
+        return out;
+    }
+
+    if (in.previousBlendSequenceIndex >= 0 &&
+        in.previousBlendDuration > 0.0f &&
+        in.previousBlendElapsed > 0.0f &&
+        in.previousBlendElapsed < in.previousBlendDuration &&
+        in.previousBlendAnimId == in.newAnimId) {
+        if (in.newLoop && in.previousBlendLoop) {
+            out.resumePreviousBlendPose = true;
+        }
+        if (in.newBlendDuration > 0.0f) {
+            const float prevProgress = std::clamp(
+                in.previousBlendElapsed / in.previousBlendDuration, 0.0f, 1.0f);
+            out.blendSequenceIndex = in.previousSequenceIndex;
+            out.blendAnimationTime = in.previousTime;
+            out.blendPlaybackRate = in.previousPlaybackRate;
+            out.blendAnimationLoop = in.previousLoop;
+            out.blendDuration = in.newBlendDuration;
+            out.blendElapsed = in.newBlendDuration * (1.0f - prevProgress);
+        }
+        return out;
+    }
+
+    if (in.newBlendDuration > 0.0f) {
+        out.blendSequenceIndex = in.previousSequenceIndex;
+        out.blendAnimationTime = in.previousTime;
+        out.blendPlaybackRate = in.previousPlaybackRate;
+        out.blendAnimationLoop = in.previousLoop;
+        out.blendDuration = in.newBlendDuration;
+        out.blendElapsed = 0.0f;
+    }
+    return out;
+}
+
 } // namespace wowee::rendering
