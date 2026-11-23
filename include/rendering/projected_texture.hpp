@@ -13,11 +13,13 @@
 // ground under the quad, with the grid's texture coordinates interpolated
 // across the quad, is that projection sampled at the grid's spacing.
 
+#include <algorithm>
 #include <array>
 #include <cassert>
 #include <cmath>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <optional>
 #include <span>
 #include <vector>
@@ -35,6 +37,13 @@ inline constexpr float kCellSize = 533.33333f / 16.0f / 8.0f / 4.0f;
 inline constexpr int kMaxCellsPerSide = 48;
 /// Raised off the surface it lies on so the depth test keeps it in front.
 inline constexpr float kSurfaceLift = 0.04f;
+/// Steepest surface slope (|dz| / horizontal distance) bridged between adjacent
+/// grid samples (~56 degrees). Preserves walkable slopes (45 deg+) while
+/// rejecting vertical walls, pillars, and upper ledges/ceilings.
+inline constexpr float kMaxSlopeTan = 1.5f;
+/// Minimum vertical step allowance between adjacent grid samples so low stair
+/// treads and curbs stay continuous even when cells are closely spaced.
+inline constexpr float kMaxStepHeight = 0.55f;
 
 /// The quad's corners in the order (0,0) (1,0) (1,1) (0,1), preserving the
 /// authored winding of the first triangle: the two vertices shared by both
@@ -122,30 +131,117 @@ inline void buildGrid(const std::array<Corner, 4>& c, const glm::vec3& origin,
     auto bilinear = [](auto a, auto b, auto cc, auto d, float u, float v) {
         return a * ((1.0f - u) * (1.0f - v)) + b * (u * (1.0f - v)) + cc * (u * v) + d * ((1.0f - u) * v);
     };
-    std::vector<Vertex> grid(static_cast<size_t>((cellsU + 1) * (cellsV + 1)));
+    const int cols = cellsU + 1;
+    const int rows = cellsV + 1;
+    const size_t totalVerts = static_cast<size_t>(cols * rows);
+    std::vector<Vertex> grid(totalVerts);
+    std::vector<glm::vec3> worldPos(totalVerts);
+    std::vector<float> quadPlaneZ(totalVerts);
     for (int j = 0; j <= cellsV; ++j) {
         for (int i = 0; i <= cellsU; ++i) {
             const float u = static_cast<float>(i) / cellsU;
             const float v = static_cast<float>(j) / cellsV;
             glm::vec3 p = bilinear(c[0].position, c[1].position, c[2].position, c[3].position, u, v);
+            const size_t idx = static_cast<size_t>(j * cols + i);
+            quadPlaneZ[idx] = p.z;
             if (auto h = surface(p.x, p.y, p.z, reach)) p.z = *h + kSurfaceLift;
+            worldPos[idx] = p;
             const glm::vec3 n = bilinear(c[0].normal, c[1].normal, c[2].normal, c[3].normal, u, v);
             const glm::vec2 t0 = bilinear(c[0].uv0, c[1].uv0, c[2].uv0, c[3].uv0, u, v);
             const glm::vec2 t1 = bilinear(c[0].uv1, c[1].uv1, c[2].uv1, c[3].uv1, u, v);
             const glm::vec3 rel = p - origin;
-            grid[static_cast<size_t>(j * (cellsU + 1) + i)] = Vertex{{
+            grid[idx] = Vertex{{
                 rel.x, rel.y, rel.z, n.x, n.y, n.z, t0.x, t0.y, t1.x, t1.y,
                 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f}};
         }
     }
+
+    // Flood-fill surface continuity from the quad center so vertical cliffs
+    // (pillars, walls, ceiling/capital hits) never stretch vertical curtains or
+    // emit disconnected patches high above the floor.
+    const auto edgeContinuous = [&](size_t u, size_t v) {
+        const glm::vec3 d = worldPos[v] - worldPos[u];
+        const float ds = std::hypot(d.x, d.y);
+        const float maxDz = std::max(kMaxSlopeTan * ds, kMaxStepHeight);
+        return std::abs(d.z) <= maxDz;
+    };
+
+    const int centerI = cellsU / 2;
+    const int centerJ = cellsV / 2;
+    size_t seed = static_cast<size_t>(centerJ * cols + centerI);
+    const float seedTol = kMaxStepHeight + kSurfaceLift;
+    if (std::abs(worldPos[seed].z - quadPlaneZ[seed]) > seedTol) {
+        int bestDist2 = std::numeric_limits<int>::max();
+        bool foundNearPlane = false;
+        float bestDz = std::numeric_limits<float>::max();
+        for (int j = 0; j < rows; ++j) {
+            for (int i = 0; i < cols; ++i) {
+                const size_t idx = static_cast<size_t>(j * cols + i);
+                const float dz = std::abs(worldPos[idx].z - quadPlaneZ[idx]);
+                const int di = i - centerI;
+                const int dj = j - centerJ;
+                const int dist2 = di * di + dj * dj;
+                if (dz <= seedTol) {
+                    if (!foundNearPlane || dist2 < bestDist2) {
+                        foundNearPlane = true;
+                        bestDist2 = dist2;
+                        seed = idx;
+                    }
+                } else if (!foundNearPlane && dz < bestDz) {
+                    bestDz = dz;
+                    seed = idx;
+                }
+            }
+        }
+    }
+
+    std::vector<uint8_t> reachable(totalVerts, 0);
+    std::vector<size_t> queue;
+    queue.reserve(totalVerts);
+    reachable[seed] = 1;
+    queue.push_back(seed);
+    for (size_t head = 0; head < queue.size(); ++head) {
+        const size_t cur = queue[head];
+        const int ci = static_cast<int>(cur % static_cast<size_t>(cols));
+        const int cj = static_cast<int>(cur / static_cast<size_t>(cols));
+        constexpr int kDx[4] = {-1, 1, 0, 0};
+        constexpr int kDy[4] = {0, 0, -1, 1};
+        for (int dir = 0; dir < 4; ++dir) {
+            const int ni = ci + kDx[dir];
+            const int nj = cj + kDy[dir];
+            if (ni < 0 || ni >= cols || nj < 0 || nj >= rows) continue;
+            const size_t next = static_cast<size_t>(nj * cols + ni);
+            if (reachable[next] || !edgeContinuous(cur, next)) continue;
+            reachable[next] = 1;
+            queue.push_back(next);
+        }
+    }
+
+    const auto emitTri = [&](size_t i0, size_t i1, size_t i2) {
+        if (!reachable[i0] || !reachable[i1] || !reachable[i2]) return;
+        if (!edgeContinuous(i0, i1) || !edgeContinuous(i1, i2) || !edgeContinuous(i2, i0)) return;
+        out.push_back(grid[i0]);
+        out.push_back(grid[i1]);
+        out.push_back(grid[i2]);
+    };
+
     out.reserve(static_cast<size_t>(cellsU * cellsV * 6));
     for (int j = 0; j < cellsV; ++j) {
         for (int i = 0; i < cellsU; ++i) {
-            const size_t a = static_cast<size_t>(j * (cellsU + 1) + i);
+            const size_t a = static_cast<size_t>(j * cols + i);
             const size_t b = a + 1;
-            const size_t d = a + static_cast<size_t>(cellsU + 1);
+            const size_t d = a + static_cast<size_t>(cols);
             const size_t e = d + 1;
-            for (size_t k : {a, b, e, a, e, d}) out.push_back(grid[k]);
+            const int count = reachable[a] + reachable[b] + reachable[d] + reachable[e];
+            if (count == 4) {
+                emitTri(a, b, e);
+                emitTri(a, e, d);
+            } else if (count == 3) {
+                if (!reachable[e]) emitTri(a, b, d);
+                else if (!reachable[d]) emitTri(a, b, e);
+                else if (!reachable[b]) emitTri(a, e, d);
+                else emitTri(b, e, d);
+            }
         }
     }
 }

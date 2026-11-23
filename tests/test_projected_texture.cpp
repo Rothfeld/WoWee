@@ -116,3 +116,70 @@ TEST_CASE("nearestSurfaceZ follows uphill and downhill slopes and keeps caves un
     // Out-of-reach surfaces yield nullopt so callers fall back cleanly.
     CHECK_FALSE(pt::nearestSurfaceZ(0.0f, 16.0f, 40.0f, std::nullopt).has_value());
 }
+
+TEST_CASE("buildGrid rejects vertical pillar and wall jumps while keeping low steps", "[projected_texture]") {
+    // 23.1 x 23.1 yd quad (Consecration_Impact_Base) on a flat floor at z=92.76,
+    // overlapping a solid pillar whose capital/ceiling hits at z=104.5 (still
+    // inside reach=16.33) and a low 0.4 yd dais step at z=93.16.
+    const float half = 11.55f;
+    const float floorZ = 92.76f;
+    const std::array<pt::Corner, 4> c{{
+        {{-half, -half, floorZ}, {0, 0, 1}, {0, 0}, {0, 0}},
+        {{ half, -half, floorZ}, {0, 0, 1}, {1, 0}, {1, 0}},
+        {{ half,  half, floorZ}, {0, 0, 1}, {1, 1}, {1, 1}},
+        {{-half,  half, floorZ}, {0, 0, 1}, {0, 1}, {0, 1}},
+    }};
+    const auto surface = [&](float x, float y, float planeZ, float reach) -> std::optional<float> {
+        float h = floorZ;
+        // Pillar footprint around (5, 0) with radius 2.0: floor cut out, capital at +11.74 yd.
+        if (std::hypot(x - 5.0f, y) < 2.0f) {
+            h = floorZ + 11.74f;
+        } else if (x < -7.0f) {
+            // Room wall beyond x = -7: upper ledge at +9.0 yd.
+            h = floorZ + 9.0f;
+        } else if (y > 6.0f) {
+            // Low dais step (+0.4 yd) should remain continuous.
+            h = floorZ + 0.4f;
+        }
+        if (std::abs(h - planeZ) > reach) return std::nullopt;
+        return h;
+    };
+
+    std::vector<pt::Vertex> out;
+    const glm::vec3 origin(0.0f, 0.0f, floorZ);
+    pt::buildGrid(c, origin, surface, out);
+    REQUIRE(!out.empty());
+    REQUIRE(out.size() % 3 == 0);
+
+    bool sawFloor = false;
+    bool sawLowStep = false;
+    for (const auto& v : out) {
+        const float worldZ = v.data[2] + origin.z;
+        // No vertex may jump onto the pillar capital or upper wall ledge.
+        REQUIRE(worldZ < floorZ + 1.0f);
+        if (std::abs(worldZ - (floorZ + pt::kSurfaceLift)) < 1e-3f) sawFloor = true;
+        if (std::abs(worldZ - (floorZ + 0.4f + pt::kSurfaceLift)) < 1e-3f) sawLowStep = true;
+    }
+    REQUIRE(sawFloor);
+    REQUIRE(sawLowStep);
+}
+
+TEST_CASE("buildGrid seeds on floor when quad center lands on a raised pillar", "[projected_texture]") {
+    const std::array<pt::Corner, 4> c{{
+        {{-6, -6, 10}, {0, 0, 1}, {0, 0}, {0, 0}},
+        {{ 6, -6, 10}, {0, 0, 1}, {1, 0}, {1, 0}},
+        {{ 6,  6, 10}, {0, 0, 1}, {1, 1}, {1, 1}},
+        {{-6,  6, 10}, {0, 0, 1}, {0, 1}, {0, 1}},
+    }};
+    const auto surface = [](float x, float y, float, float) -> std::optional<float> {
+        // Thin pillar right at the quad center (0, 0).
+        if (std::hypot(x, y) < 1.0f) return 18.0f;
+        return 10.0f;
+    };
+    std::vector<pt::Vertex> out;
+    pt::buildGrid(c, glm::vec3(0, 0, 10), surface, out);
+    REQUIRE(!out.empty());
+    for (const auto& v : out) {
+        REQUIRE(v.data[2] + 10.0f == Catch::Approx(10.0f + pt::kSurfaceLift).margin(1e-4));
+    }
+}
