@@ -218,6 +218,21 @@ inline constexpr bool initiatesMeleeAutoAttackPostCast(uint32_t attr,
     return (attrEx2 & kAttrEx2InitiateCombatPostCast) != 0;
 }
 
+/// Whether completing this ranged weapon ability (SMSG_SPELL_GO) automatically
+/// initiates Hunter Auto Shot (75) in native TBC 2.4.3:
+/// - SPELL_ATTR_USES_RANGED_SLOT (attr 0x00000002)
+/// - Without SPELL_ATTR_CANCELS_AUTO_ATTACK_COMBAT (attr 0x00100000, e.g. Scatter Shot 19503)
+/// - Excluding the direct repeating/throw spells themselves (Auto Shot 75, Shoot 5019, Throw 2764).
+/// Covers Arcane Shot, Aimed Shot, Steady Shot, Multi-Shot, Serpent/Viper/Scorpid Sting,
+/// Concussive Shot, Silencing Shot, Distracting Shot, and Tranquilizing Shot.
+inline constexpr bool initiatesRangedAutoShotPostCast(uint32_t spellId, uint32_t attr) {
+    constexpr uint32_t kAttrUsesRangedSlot    = 0x00000002u;
+    constexpr uint32_t kAttrCancelsAutoAttack = 0x00100000u;
+    if (spellId == 75u || spellId == 5019u || spellId == 2764u) return false;
+    if ((attr & kAttrCancelsAutoAttack) != 0) return false;
+    return (attr & kAttrUsesRangedSlot) != 0;
+}
+
 /// Spell.dbc AttributesEx combo-point / reactive-proc flags (CMaNGOS SpellDefines.h):
 /// - 0x00100000 SPELL_ATTR_EX_FINISHING_MOVE_DAMAGE (Eviscerate, Rip, Overpower, ...)
 /// - 0x00400000 SPELL_ATTR_EX_FINISHING_MOVE_DURATION (Slice and Dice, Kidney Shot, Maim)

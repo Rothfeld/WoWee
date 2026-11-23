@@ -1861,10 +1861,10 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid, std::optiona
     }
 
     // Attack routes to auto-attack instead of cast (toggles off if already
-    // swinging, otherwise acquires the nearest enemy if needed and starts).
+    // swinging or auto-shooting, otherwise acquires the nearest enemy if needed and starts).
     if (spellId == SPELL_ID_ATTACK) {
         if (restorationActive_) cancelCast();
-        if (owner_.hasAutoAttackIntent()) {
+        if (owner_.hasAutoAttackIntent() || autoRepeatSpellId_ == 75u) {
             const auto now = std::chrono::steady_clock::now();
             const auto since = std::chrono::duration_cast<std::chrono::milliseconds>(
                 now - autoAttackToggledAt_).count();
@@ -3721,11 +3721,23 @@ void SpellHandler::handleCastFailed(network::Packet& packet) {
     // Refused before it ever repeated, so the start announced on the press
     // needs its stop: the server only cancels a repeat that was running. A
     // refused later press leaves the running one alone.
+    const bool wasAutoShot = (data.spellId == 75u && autoRepeatSpellId_ == 75u);
     if (data.spellId != 0 && data.spellId == autoRepeatSpellId_ &&
         answersPress(data, autoRepeatCastCount_)) {
         autoRepeatSpellId_ = 0;
         if (owner_.addonEventCallbackRef()) {
             owner_.addonEventCallbackRef()("STOP_AUTOREPEAT_SPELL", {});
+        }
+    }
+    // Server-side SPELL_FAILED_TOO_CLOSE (canonical 128, TBC 122) on Auto Shot (75):
+    // when autoRangedCombat is enabled, switch directly to melee auto-attack even on
+    // large raid bosses whose server-side deadzone exceeds standard client melee reach.
+    constexpr uint8_t kSpellFailedTooClose = 128u;
+    if (wasAutoShot && data.result == kSpellFailedTooClose &&
+        owner_.getCombatHandler() && owner_.getCombatHandler()->canUseAutoRangedCombat()) {
+        const uint64_t tgt = owner_.getTargetGuid();
+        if (tgt != 0 && tgt != owner_.getPlayerGuid()) {
+            owner_.getCombatHandler()->startAutoAttack(tgt, /*forceMelee=*/true);
         }
     }
     // The server cancels the GCD of a cast it refuses, so the guess goes too.
@@ -3940,6 +3952,36 @@ void SpellHandler::handleSpellStart(network::Packet& packet) {
     }
 }
 
+void SpellHandler::initiatePostCastCombat(const SpellGoData& data) {
+    const auto cast = owner_.spellNameCacheRef().find(data.spellId);
+    if (cast == owner_.spellNameCacheRef().end()) return;
+
+    uint64_t target = data.targetGuid;
+    if (target == 0 && !data.hitTargets.empty()) target = data.hitTargets.front();
+    if (target == 0 && !data.missTargets.empty()) target = data.missTargets.front().targetGuid;
+    if (target == 0 || target == owner_.getPlayerGuid()) return;
+
+    // Spells with SPELL_ATTR_EX2_INITIATE_COMBAT_POST_CAST (Cheap Shot, Shiv,
+    // Judgement, Ambush, Garrote, Backstab, Mutilate, Pounce, Ravage, Shred)
+    // start melee auto-attack only after the server confirms SMSG_SPELL_GO.
+    if (spellclass::initiatesMeleeAutoAttackPostCast(
+            cast->second.attr, cast->second.attrEx, cast->second.attrEx2)) {
+        if (!owner_.hasAutoAttackIntent() ||
+            owner_.getCombatHandler()->getAutoAttackTargetGuid() != target) {
+            owner_.startAutoAttack(target);
+        }
+    }
+
+    // Ranged weapon abilities (SPELL_ATTR_USES_RANGED_SLOT without
+    // SPELL_ATTR_CANCELS_AUTO_ATTACK_COMBAT: Arcane Shot, Aimed Shot, Steady Shot,
+    // Multi-Shot, Stings, Concussive/Silencing/Distracting/Tranq Shot) automatically
+    // initiate Auto Shot (75) on SMSG_SPELL_GO in native TBC 2.4.3.
+    if (spellclass::initiatesRangedAutoShotPostCast(data.spellId, cast->second.attr) &&
+        autoRepeatSpellId_ == 0 && hasKnownSpell(75u)) {
+        castSpell(75u, target);
+    }
+}
+
 void SpellHandler::handleSpellGo(network::Packet& packet) {
     SpellGoData data;
     if (!owner_.getPacketParsers()->parseSpellGo(packet, data)) return;
@@ -4108,23 +4150,7 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
         if (owner_.addonEventCallbackRef() && !rangedWeaponAttack)
             owner_.addonEventCallbackRef()("UNIT_SPELLCAST_STOP", spellcastArgs("player", data.spellId));
 
-        // Spells with SPELL_ATTR_EX2_INITIATE_COMBAT_POST_CAST (Cheap Shot, Shiv,
-        // Judgement, Ambush, Garrote, Backstab, Mutilate, Pounce, Ravage, Shred)
-        // start melee auto-attack only after the server confirms SMSG_SPELL_GO.
-        if (cast != owner_.spellNameCacheRef().end() &&
-            spellclass::initiatesMeleeAutoAttackPostCast(
-                cast->second.attr, cast->second.attrEx, cast->second.attrEx2)) {
-            uint64_t attackTarget = data.targetGuid;
-            if (attackTarget == 0 && !data.hitTargets.empty())
-                attackTarget = data.hitTargets.front();
-            if (attackTarget == 0 && !data.missTargets.empty())
-                attackTarget = data.missTargets.front().targetGuid;
-            if (attackTarget != 0 && attackTarget != owner_.getPlayerGuid() &&
-                (!owner_.hasAutoAttackIntent() ||
-                 owner_.getCombatHandler()->getAutoAttackTargetGuid() != attackTarget)) {
-                owner_.startAutoAttack(attackTarget);
-            }
-        }
+        initiatePostCastCombat(data);
 
         // Craft queue: re-cast if more crafts remaining
         if (craftQueueRemaining_ > 0 && craftQueueSpellId_ == data.spellId) {

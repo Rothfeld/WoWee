@@ -571,6 +571,35 @@ TEST_CASE("isAuraCombatTextLogged matches native TBC 2.4.3 Spell.dbc Attributes"
     CHECK(isAuraCombatTextLogged(0x00000010u));       // Dazed 1604
 }
 
+TEST_CASE("initiatesRangedAutoShotPostCast matches native TBC 2.4.3 Spell.dbc Attributes",
+          "[spell][classification][ranged][tbc]") {
+    using namespace wowee::game::spellclass;
+
+    // Hunter ranged weapon shots/stings with SPELL_ATTR_USES_RANGED_SLOT (0x02) and no cancel bit (0x100000):
+    CHECK(initiatesRangedAutoShotPostCast(3044u,  0x00010002u)); // Arcane Shot
+    CHECK(initiatesRangedAutoShotPostCast(19434u, 0x00410012u)); // Aimed Shot R1
+    CHECK(initiatesRangedAutoShotPostCast(20904u, 0x00410012u)); // Aimed Shot R6
+    CHECK(initiatesRangedAutoShotPostCast(27065u, 0x00410012u)); // Aimed Shot R7
+    CHECK(initiatesRangedAutoShotPostCast(34120u, 0x00410012u)); // Steady Shot
+    CHECK(initiatesRangedAutoShotPostCast(2643u,  0x00010002u)); // Multi-Shot
+    CHECK(initiatesRangedAutoShotPostCast(1978u,  0x00010002u)); // Serpent Sting
+    CHECK(initiatesRangedAutoShotPostCast(5116u,  0x00010002u)); // Concussive Shot
+    CHECK(initiatesRangedAutoShotPostCast(34490u, 0x00010002u)); // Silencing Shot
+    CHECK(initiatesRangedAutoShotPostCast(20736u, 0x00010002u)); // Distracting Shot
+    CHECK(initiatesRangedAutoShotPostCast(19801u, 0x00010002u)); // Tranquilizing Shot
+
+    // Scatter Shot carries SPELL_ATTR_CANCELS_AUTO_ATTACK_COMBAT (0x00100000): never starts Auto Shot.
+    CHECK_FALSE(initiatesRangedAutoShotPostCast(19503u, 0x00110002u));
+
+    // Hunter's Mark lacks SPELL_ATTR_USES_RANGED_SLOT: never starts Auto Shot.
+    CHECK_FALSE(initiatesRangedAutoShotPostCast(1130u, 0x04010000u));
+
+    // Direct repeating/throw spells themselves do not re-trigger Auto Shot post-cast.
+    CHECK_FALSE(initiatesRangedAutoShotPostCast(75u,   0x00050012u)); // Auto Shot
+    CHECK_FALSE(initiatesRangedAutoShotPostCast(5019u, 0x00000012u)); // Shoot (wand)
+    CHECK_FALSE(initiatesRangedAutoShotPostCast(2764u, 0x00410012u)); // Throw
+}
+
 // ---------------------------------------------------------------------------
 // Action bar rank auto-upgrade (Native 2.4.3 SMSG_LEARNED_SPELL parity)
 // ---------------------------------------------------------------------------

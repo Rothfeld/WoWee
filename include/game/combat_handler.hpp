@@ -41,8 +41,9 @@ public:
     void registerOpcodes(DispatchTable& table);
 
     // --- Public API (delegated from GameHandler) ---
-    void startAutoAttack(uint64_t targetGuid);
+    void startAutoAttack(uint64_t targetGuid, bool forceMelee = false);
     void stopAutoAttack();
+    [[nodiscard]] bool canUseAutoRangedCombat() const;
     [[nodiscard]] bool isAutoAttacking() const { return autoAttacking_; }
     [[nodiscard]] bool hasAutoAttackIntent() const { return autoAttackRequested_; }
     [[nodiscard]] bool isInCombat() const { return autoAttacking_ || !hostileAttackers_.empty(); }
@@ -229,6 +230,7 @@ private:
 
     void autoTargetAttacker(uint64_t attackerGuid);
     void announceLeaveCombat();
+    void stopMeleeAutoAttackOnly();
 
     GameHandler& owner_;
 
@@ -243,6 +245,7 @@ private:
     uint64_t autoAttackTarget_ = 0;
     bool autoAttackOutOfRange_ = false;
     float autoAttackRangeWarnCooldown_ = 0.0f;
+    float autoRangedSwitchCooldown_ = 0.0f;
     /// Seconds until "You are too far away!" is said again while the attack
     /// stays out of reach (kSwingRangeRepeatSeconds after the last one).
     float autoAttackRangeRepeat_ = 0.0f;

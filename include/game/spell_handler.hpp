@@ -548,6 +548,7 @@ private:
     /// display flies from the caster's right hand to each target at the
     /// spell's Speed.
     void launchAmmoProjectile(const SpellGoData& data);
+    void initiatePostCastCombat(const SpellGoData& data);
     void refreshRestorationFromPlayerAuras();
     void stopRestorationPresentation();
 

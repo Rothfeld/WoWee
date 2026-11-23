@@ -306,7 +306,20 @@ void CombatHandler::registerOpcodes(DispatchTable& table) {
 // Auto-attack
 // ============================================================
 
-void CombatHandler::startAutoAttack(uint64_t targetGuid) {
+bool CombatHandler::canUseAutoRangedCombat() const {
+    if (owner_.isPlayerDead() || owner_.isPlayerGhost()) return false;
+    if (addons::storedCVarValue("autoRangedCombat", "1") == "0") return false;
+    auto* sh = owner_.getSpellHandler();
+    if (!sh || !sh->hasKnownSpell(75u)) return false;
+    const auto& ranged = owner_.getInventory().getEquipSlot(EquipSlot::RANGED);
+    if (ranged.empty()) return false;
+    return ranged.item.inventoryType == InvType::RANGED_BOW ||
+           isWeaponSubclass(ranged.item.itemClass, ranged.item.subClass, WEAPON_SUBCLASS_BOW) ||
+           isWeaponSubclass(ranged.item.itemClass, ranged.item.subClass, WEAPON_SUBCLASS_GUN) ||
+           isWeaponSubclass(ranged.item.itemClass, ranged.item.subClass, WEAPON_SUBCLASS_CROSSBOW);
+}
+
+void CombatHandler::startAutoAttack(uint64_t targetGuid, bool forceMelee) {
     // Can't attack yourself
     if (targetGuid == owner_.getPlayerGuid()) return;
     if (targetGuid == 0) return;
@@ -354,6 +367,27 @@ void CombatHandler::startAutoAttack(uint64_t targetGuid) {
             return;
         }
         owner_.dismount();
+    }
+
+    // Native TBC 2.4.3 CVar "autoRangedCombat" (default "1"): initiating attack
+    // (right-click, /startattack, Attack button) on an enemy outside melee reach
+    // with Auto Shot (75) and a bow/gun/crossbow starts Auto Shot instead of melee.
+    if (!forceMelee && canUseAutoRangedCombat() && owner_.unitWithinMeleeReach(targetGuid) == false) {
+        const auto bowRange = owner_.unitSpellRange(75u, targetGuid);
+        if (!bowRange.has_value() || *bowRange != spellclass::SpellRangeCheck::TooClose) {
+            if (owner_.isLootWindowOpen()) owner_.closeLoot();
+            stopMeleeAutoAttackOnly();
+            auto* sh = owner_.getSpellHandler();
+            if (sh && sh->getAutoRepeatSpellId() != 75u) {
+                sh->castSpell(75u, targetGuid);
+                autoRangedSwitchCooldown_ = 0.35f;
+            }
+            return;
+        }
+    }
+
+    if (auto* sh = owner_.getSpellHandler(); sh && sh->getAutoRepeatSpellId() == 75u) {
+        sh->cancelAutoRepeatSpell();
     }
 
     if (autoAttackRequested_ && autoAttackTarget_ == targetGuid) return;
@@ -404,7 +438,7 @@ void CombatHandler::startAutoAttack(uint64_t targetGuid) {
     LOG_INFO("Starting auto-attack on 0x", std::hex, targetGuid, std::dec);
 }
 
-void CombatHandler::stopAutoAttack() {
+void CombatHandler::stopMeleeAutoAttackOnly() {
     if (!autoAttacking_ && !autoAttackRequested_) return;
     autoAttackRequested_ = false;
     autoAttacking_ = false;
@@ -421,6 +455,13 @@ void CombatHandler::stopAutoAttack() {
         announceLeaveCombat();
     }
     LOG_INFO("Stopping auto-attack");
+}
+
+void CombatHandler::stopAutoAttack() {
+    stopMeleeAutoAttackOnly();
+    if (auto* sh = owner_.getSpellHandler(); sh && sh->getAutoRepeatSpellId() == 75u) {
+        sh->cancelAutoRepeatSpell();
+    }
 }
 
 void CombatHandler::announceLeaveCombat() {
@@ -1081,9 +1122,47 @@ void CombatHandler::updateAutoAttack(float deltaTime) {
     // A successful swing, another swing error, or stopping clears the latch.
     if (autoAttackRangeRepeat_ > 0.0f)
         autoAttackRangeRepeat_ = std::max(0.0f, autoAttackRangeRepeat_ - deltaTime);
+    if (autoRangedSwitchCooldown_ > 0.0f)
+        autoRangedSwitchCooldown_ = std::max(0.0f, autoRangedSwitchCooldown_ - deltaTime);
     if (autoAttackRequested_ && autoAttackOutOfRange_ && autoAttackRangeRepeat_ <= 0.0f) {
         owner_.errorGlobal("ERR_BADATTACKPOS");
         autoAttackRangeRepeat_ = kSwingRangeRepeatSeconds;
+    }
+
+    // Native TBC 2.4.3 CVar "autoRangedCombat" (default "1"): automatically
+    // switches between ranged Auto Shot (75) and melee auto-attack as distance
+    // crosses the melee/ranged boundary.
+    if (autoRangedSwitchCooldown_ <= 0.0f && canUseAutoRangedCombat()) {
+        auto* sh = owner_.getSpellHandler();
+        const uint32_t autoRepeat = sh ? sh->getAutoRepeatSpellId() : 0u;
+        if (autoRepeat == 75u && !autoAttackRequested_) {
+            const uint64_t tgt = owner_.getTargetGuid();
+            if (tgt != 0 && tgt != owner_.getPlayerGuid()) {
+                auto entity = owner_.getEntityManager().getEntity(tgt);
+                auto* unit = dynamic_cast<Unit*>(entity.get());
+                const bool alive = unit && !(unit->getHealth() == 0 && unit->getMaxHealth() > 0);
+                if (alive && owner_.canPlayerAttackUnit(*unit)) {
+                    const auto meleeReach = owner_.unitWithinMeleeReach(tgt);
+                    const auto bowRange = owner_.unitSpellRange(75u, tgt);
+                    if ((meleeReach && *meleeReach) ||
+                        (bowRange && *bowRange == spellclass::SpellRangeCheck::TooClose)) {
+                        sh->cancelAutoRepeatSpell();
+                        startAutoAttack(tgt, /*forceMelee=*/true);
+                        autoRangedSwitchCooldown_ = 0.35f;
+                    }
+                }
+            }
+        } else if (autoAttackRequested_ && autoAttackTarget_ != 0 && autoRepeat == 0u) {
+            const uint64_t tgt = autoAttackTarget_;
+            const auto meleeReach = owner_.unitWithinMeleeReach(tgt);
+            const auto bowRange = owner_.unitSpellRange(75u, tgt);
+            if ((meleeReach && !*meleeReach) &&
+                (bowRange && *bowRange == spellclass::SpellRangeCheck::InRange)) {
+                stopMeleeAutoAttackOnly();
+                sh->castSpell(75u, tgt);
+                autoRangedSwitchCooldown_ = 0.35f;
+            }
+        }
     }
 
     // Do not cancel or resend attacks based on a guessed melee radius.
@@ -1110,6 +1189,7 @@ void CombatHandler::resetAllCombatState() {
     autoAttackTarget_ = 0;
     autoAttackOutOfRange_ = false;
     autoAttackRangeWarnCooldown_ = 0.0f;
+    autoRangedSwitchCooldown_ = 0.0f;
     autoAttackRangeRepeat_ = 0.0f;
     lastMeleeSwingMs_ = 0;
     incomingHitDamage_ = -1;
