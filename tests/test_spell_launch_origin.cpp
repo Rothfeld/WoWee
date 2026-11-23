@@ -112,6 +112,17 @@ TEST_CASE("resolveBeamStartOrigin respects MissileAttachment and race $CSL/$CSR"
     const auto leftHandBeam = resolveBeamStartOrigin(&undead, 124, 3);
     REQUIRE(leftHandBeam.source == SpellLaunchOrigin::Source::Attachment);
     REQUIRE(leftHandBeam.attachmentId == kAttachSpellLeftHandId);
+
+    // When the caster model lacks a release event for the cast/channel animation
+    // (e.g. TitanFemale / Maiden of Virtue lacking SpellCastDirected 53), fall back
+    // to Chest (34) matching Native 2.4.3 rather than HandLeft (2).
+    const auto missingAnimBeam = resolveBeamStartOrigin(&undead, 53, -1);
+    REQUIRE(missingAnimBeam.source == SpellLaunchOrigin::Source::Attachment);
+    REQUIRE(missingAnimBeam.attachmentId == kAttachChestId);
+
+    const auto nullModelBeam = resolveBeamStartOrigin(nullptr, 53, -1);
+    REQUIRE(nullModelBeam.source == SpellLaunchOrigin::Source::Attachment);
+    REQUIRE(nullModelBeam.attachmentId == kAttachChestId);
 }
 
 TEST_CASE("computeBonePointWorldTransform combines position, yaw, scale, bone matrix, and offset", "[spell_origin]") {
@@ -227,5 +238,32 @@ TEST_CASE("M2Loader parses TBC 2.4.3 $CSL/$CSR/$CST release events across races 
         REQUIRE(evaluateModelAttachmentAtAnimation(human, 2, 46, 0.0f, 0.0f, 0.0f, humanBowLeft));
         CHECK(humanBowLeft[3].x > 0.85f);
         CHECK(humanBowLeft[3].z > 1.45f);
+    }
+
+    SECTION("Cast beam origin resolves $CSL/$CSR on SpellCastDirected (53) and falls back to Chest (34) on TitanFemale") {
+        // TitanFemale (Maiden of Virtue, displayId 16198) lacks SpellCastDirected (53);
+        // Holy Wrath (32445) / Chain Lightning (421) beams originate from Chest (34), not HandLeft (2).
+        const auto tfBytes = readFileBytes(dataDir / "creature/titanfemale/titanfemale.m2");
+        REQUIRE(!tfBytes.empty());
+        const M2Model titanFemale = M2Loader::load(tfBytes);
+        const auto tfBeam = resolveBeamStartOrigin(&titanFemale, 53, -1);
+        CHECK(tfBeam.source == SpellLaunchOrigin::Source::Attachment);
+        CHECK(tfBeam.attachmentId == kAttachChestId);
+
+        // ScourgeMale authors $CSR (right hand, -Y) on SpellCastDirected (53).
+        const auto smBytes = readFileBytes(dataDir / "character/scourge/male/scourgemale.m2");
+        REQUIRE(!smBytes.empty());
+        const M2Model scourgeMale = M2Loader::load(smBytes);
+        const auto smBeam = resolveBeamStartOrigin(&scourgeMale, 53, -1);
+        CHECK(smBeam.source == SpellLaunchOrigin::Source::EventBone);
+        CHECK(smBeam.localOffset.y < -0.1f);
+
+        // HumanFemale authors $CSL (left hand, +Y) on SpellCastDirected (53).
+        const auto hfBytes = readFileBytes(dataDir / "character/human/female/humanfemale.m2");
+        REQUIRE(!hfBytes.empty());
+        const M2Model humanFemale = M2Loader::load(hfBytes);
+        const auto hfBeam = resolveBeamStartOrigin(&humanFemale, 53, -1);
+        CHECK(hfBeam.source == SpellLaunchOrigin::Source::EventBone);
+        CHECK(hfBeam.localOffset.y > 0.1f);
     }
 }

@@ -1327,17 +1327,27 @@ SpellVisualSystem::BeamState SpellVisualSystem::newBeamState(uint32_t chainId) {
     return state;
 }
 
-// A beam ends at its unit's attachment (the chest, 34, unless it is the
-// caster's start) while the unit is drawn, at the chest when the model
+// A beam ends at its unit's resolved origin (EventBone or M2 attachment, chest 34
+// by default) while the unit is drawn, falling back to chest 34 when the model
 // lacks that point; otherwise at the position recorded when it started.
 glm::vec3 SpellVisualSystem::beamEnd(const ChainEnd& end) {
     auto* characters = renderer_ ? renderer_->getCharacterRenderer() : nullptr;
     glm::mat4 point(1.0f);
-    if (end.instanceId && characters && characters->getAttachmentTransform(end.instanceId, end.attachment, point))
-        return glm::vec3(point[3]);
-    if (end.instanceId && end.attachment != 34 && characters &&
-        characters->getAttachmentTransform(end.instanceId, 34, point))
-        return glm::vec3(point[3]);
+    if (end.instanceId && characters) {
+        if (end.origin.source == SpellLaunchOrigin::Source::EventBone &&
+            characters->getBonePointTransform(end.instanceId, end.origin.bone, end.origin.localOffset, point)) {
+            return glm::vec3(point[3]);
+        }
+        const uint32_t att = (end.origin.source == SpellLaunchOrigin::Source::Attachment)
+                                 ? end.origin.attachmentId
+                                 : end.attachment;
+        if (characters->getAttachmentTransform(end.instanceId, att, point))
+            return glm::vec3(point[3]);
+        if (att == kAttachHeadId && characters->getAttachmentTransform(end.instanceId, kAttachHeadTopId, point))
+            return glm::vec3(point[3]);
+        if (att != kAttachChestId && characters->getAttachmentTransform(end.instanceId, kAttachChestId, point))
+            return glm::vec3(point[3]);
+    }
     return end.position;
 }
 
@@ -1664,7 +1674,15 @@ void SpellVisualSystem::playCastKit(uint32_t visualId, const glm::vec3& casterPo
                         " but neither SegDuration, an effect model, nor a spell duration times it; beam not drawn");
         return;
     }
-    ChainEnd from{casterInstanceId, casterPosition, beamStartAttachment(visualId)};
+    auto* characters = renderer_ ? renderer_->getCharacterRenderer() : nullptr;
+    const auto* casterModel = (casterInstanceId && characters)
+                                  ? characters->getInstanceModelData(casterInstanceId)
+                                  : nullptr;
+    const SpellLaunchOrigin startOrigin = castBeamStartOrigin(visualId, casterModel);
+    const uint32_t startAttachment = (startOrigin.source == SpellLaunchOrigin::Source::Attachment)
+                                         ? startOrigin.attachmentId
+                                         : kAttachChestId;
+    ChainEnd from{casterInstanceId, casterPosition, startAttachment, startOrigin};
     for (size_t hop = 0; hop < ends.size(); ++hop) {
         const auto& end = ends[hop];
         const auto timing = castBeamTiming(chainIt->second.segDurationMs, chainIt->second.segDelayMs,
@@ -1954,31 +1972,26 @@ void SpellVisualSystem::stopPersistentArea(uint64_t key) {
 }
 
 // A beam leaves the caster where a missile of the same SpellVisual would:
-// MissileAttachment -1 (Fel Energy Cosmetic 44574, Fel Crystal Cosmetic
-// 44374, Mind Flay, Drain Life, Chain Lightning) at the hand the pose
-// raises toward the target, M2 attachment 2 (see the missile launch in
-// spell_handler.cpp). Build 8606, Magisters' Terrace Observation Grounds,
-// both clients in one instance: the Sunblade Warlock's green beam leaves
-// its outstretched hand; WoWee started it at the chest (34). A human
-// player channelling Drain Life 689 or 44374 on the Shimmering Flats, arm
-// raised away from the target, starts both natively and at attachment 2
-// next to the chest. Other MissileAttachment values (Blue Beam 38034: 3,
-// Fel Crystal Visual 44355: 1) keep the chest, which matched native for 38034
-// (_experiments/20261119T1530Z.beam_caster_end).
-uint32_t SpellVisualSystem::beamStartAttachment(uint32_t visualId) {
-    if (!spellVisualDbcLoaded_) loadSpellVisualDbc();
-    const auto it = launchAttachments_.find(visualId);
-    if (it == launchAttachments_.end()) return kAttachChestId;
-    if (it->second == -1) return kAttachLaunchHandFallback;
-    return missileAttachmentToM2Id(it->second);
-}
-
+// MissileAttachment -1 (Fel Energy Cosmetic 44574, Fel Crystal Cosmetic 44374,
+// Mind Flay, Drain Life, Chain Lightning 421, Holy Wrath 32445) uses the caster
+// M2's $CSL/$CSR/$CST release event on the channel/cast animation, falling back
+// to Chest (34) when the model lacks that animation's release event (e.g.
+// TitanFemale / Maiden of Virtue). Non-(-1) MissileAttachment maps via
+// missileAttachmentToM2Id.
 SpellLaunchOrigin SpellVisualSystem::beamStartOrigin(uint32_t visualId, const pipeline::M2Model* casterModel) {
     if (!spellVisualDbcLoaded_) loadSpellVisualDbc();
     const auto it = launchAttachments_.find(visualId);
-    const int32_t missileAttachment = it != launchAttachments_.end() ? it->second : 0;
+    const int32_t missileAttachment = it != launchAttachments_.end() ? it->second : 1;
     const uint32_t chanAnim = channelAnimation(visualId);
     return resolveBeamStartOrigin(casterModel, chanAnim, missileAttachment);
+}
+
+SpellLaunchOrigin SpellVisualSystem::castBeamStartOrigin(uint32_t visualId, const pipeline::M2Model* casterModel) {
+    if (!spellVisualDbcLoaded_) loadSpellVisualDbc();
+    const auto it = launchAttachments_.find(visualId);
+    const int32_t missileAttachment = it != launchAttachments_.end() ? it->second : 1;
+    const uint32_t castAnim = castAnimation(visualId);
+    return resolveBeamStartOrigin(casterModel, castAnim, missileAttachment);
 }
 
 bool SpellVisualSystem::hasSpellMissile(uint32_t visualId) {

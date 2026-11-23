@@ -51,6 +51,7 @@ public:
         uint32_t instanceId = 0;
         glm::vec3 position{0.0f};
         uint32_t attachment = 34;  // M2 attachment followed while the unit is drawn
+        SpellLaunchOrigin origin{};  // Optional EventBone/Attachment origin for caster start
     };
     /// SMSG_SPELL_GO's CastKit: its effects at the caster, and, where the
     /// kit's CharProc 0 names a SpellChainEffects row, a beam from the caster
@@ -202,11 +203,13 @@ public:
     // of a missile visual. Only TBC declares the columns.
     struct MissileAttachments { int32_t launch = -1; uint32_t destination = 0; };
     std::optional<MissileAttachments> missileAttachments(uint32_t visualId);
-    /// The caster's attachment a channel or cast kit beam starts at.
-    uint32_t beamStartAttachment(uint32_t visualId);
     /// Caster-side beam start origin resolved against the caster's M2 ($CSL/$CSR/$CST
-    /// on the channel animation when MissileAttachment == -1, else chest 34).
+    /// on the channel animation when MissileAttachment == -1, else Chest 34).
     SpellLaunchOrigin beamStartOrigin(uint32_t visualId, const pipeline::M2Model* casterModel);
+    /// Caster-side beam start origin for cast-kit beams (CharProc 12): uses the caster
+    /// M2's $CSL/$CSR/$CST release event on the cast animation when MissileAttachment == -1,
+    /// falling back to Chest (34) when the model lacks that animation's release event.
+    SpellLaunchOrigin castBeamStartOrigin(uint32_t visualId, const pipeline::M2Model* casterModel);
 
     using MissileTargetResolver = std::function<std::optional<MissileTargetSample>()>;
 

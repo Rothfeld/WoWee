@@ -145,9 +145,12 @@ inline SpellLaunchOrigin resolveSpellLaunchOrigin(const pipeline::M2Model* model
 
 // Resolve caster-side beam start origin for channeled/cast beams.
 // When SpellVisual.dbc MissileAttachment == -1 (Drain Life, Drain Soul, Mind Flay,
-// Chain Lightning), prefer the model's $CSL/$CSR/$CST event on the channel/cast
-// animation (e.g. $CSL on Gnome/Human, $CSR on ScourgeMale/DwarfFemale/TrollMale),
-// falling back to HandLeft (2). Non-(-1) MissileAttachment keeps Chest (34).
+// Chain Lightning, Holy Wrath), prefer the model's $CSL/$CSR/$CST event on the
+// channel/cast animation (e.g. $CSL on Gnome/Human, $CSR on ScourgeMale/DwarfFemale/
+// TrollMale). When the model has no release event for that animation (e.g.
+// TitanFemale / Maiden of Virtue, which lacks SpellCastDirected 53), fall back to
+// Chest (34) matching Native 2.4.3. Non-(-1) MissileAttachment maps via
+// missileAttachmentToM2Id.
 inline SpellLaunchOrigin resolveBeamStartOrigin(const pipeline::M2Model* model,
                                                 uint32_t animationId,
                                                 int32_t missileAttachment) {
@@ -169,7 +172,7 @@ inline SpellLaunchOrigin resolveBeamStartOrigin(const pipeline::M2Model* model,
         return out;
     }
     out.source = SpellLaunchOrigin::Source::Attachment;
-    out.attachmentId = kAttachLaunchHandFallback;
+    out.attachmentId = kAttachChestId;
     return out;
 }
 
