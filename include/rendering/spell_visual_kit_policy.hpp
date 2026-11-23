@@ -100,6 +100,18 @@ inline bool kitCharProcTintsAttachedEffects(const glm::vec3& kitColor) {
     return kitColor.r > 0.0f || kitColor.g > 0.0f || kitColor.b > 0.0f;
 }
 
+/// True when starting or ending a channel of `channelVisualId` on a unit
+/// shares the same SpellVisual ID as an active aura StateKit (`auraVisualId`)
+/// on that same unit. In TBC 2.4.3 (verified on Tempest-Smith mutual 37112
+/// Power Up, SV 8636: ChannelKit 7371 + StateKit 7373), starting or ending a
+/// channel of visualId V retires/suppresses an already-active aura StateKit of
+/// the same visualId V on that unit until the aura is removed and re-applied,
+/// while leaving auras with different visualIds untouched.
+inline constexpr bool channelVisualSuppressesAuraVisual(uint32_t channelVisualId,
+                                                        uint32_t auraVisualId) {
+    return channelVisualId != 0 && channelVisualId == auraVisualId;
+}
+
 /// Choose the active aura StateKit animation from `candidateAnimIds` ordered
 /// newest-application-first. Dedicated action/pose StateKit animations (e.g.
 /// 42696 Drunken Master kit 8158 Whirlwind 126, 36402 Drowned 132) take

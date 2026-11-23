@@ -525,7 +525,13 @@ private:
     void startKitWeaponTrail(uint32_t kitId, uint32_t attachInstanceId);
     void updateWeaponTrails(float deltaTime);
     void applyCharacterProcedures(uint32_t attachInstanceId, bool immediateOpacity = false);
+    void suppressAuraVisual(uint32_t attachInstanceId, uint32_t visualId);
+    bool isAuraVisualSuppressed(uint32_t attachInstanceId, uint32_t visualId) const;
     std::unordered_map<uint32_t, UnitAuraVisuals> unitAuraVisuals_;
+    /// Per-unit aura SpellVisual IDs suppressed because the same unit started
+    /// or ended a channel sharing that SpellVisual ID while the aura was active.
+    /// Cleared automatically when the aura is removed so re-application works.
+    std::unordered_map<uint32_t, std::unordered_set<uint32_t>> suppressedAuraVisuals_;
     /// Character instances that have completed at least one syncAuraVisuals()
     /// pass (or received transferred visuals). Used to distinguish initial
     /// appearance from runtime aura application/removal for CharProc 14 opacity.

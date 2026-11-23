@@ -330,4 +330,15 @@ TEST_CASE("SpellVisualKit policies for InstantAreaKit destination, CharProc 1 ef
         CHECK(chosenStun == kStun);
         CHECK_FALSE(auraStateSuppressesOneShotKitAnim(chosenStun, kNoAnim, kStand, kStun));
     }
+
+    SECTION("Mutual channel/aura SpellVisual collision suppresses matching StateKit visualId only") {
+        // Tempest-Smith 37112 Power Up (SV 8636: ChannelKit 7371 + StateKit 7373).
+        CHECK(channelVisualSuppressesAuraVisual(8636u, 8636u));
+        // Unrelated aura visuals (e.g. Shadowform SV 3619) stay active.
+        CHECK_FALSE(channelVisualSuppressesAuraVisual(8636u, 3619u));
+        // Zero visualId never suppresses.
+        CHECK_FALSE(channelVisualSuppressesAuraVisual(0u, 0u));
+        CHECK_FALSE(channelVisualSuppressesAuraVisual(0u, 8636u));
+        CHECK_FALSE(channelVisualSuppressesAuraVisual(8636u, 0u));
+    }
 }
