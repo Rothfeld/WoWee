@@ -534,7 +534,7 @@ private:
     // and doodad triangles; sets grounded, bodyPerched_ and the step base.
     glm::vec3 moveBodyOnFoot(const glm::vec3& start, const glm::vec3& target, float stepSeconds);
     // One part of that move, no longer than the body's radius.
-    glm::vec3 moveBodyOnFootOnce(const glm::vec3& start, const glm::vec3& target, float stepSeconds);
+    glm::vec3 moveBodyOnFootOnce(const glm::vec3& start, const glm::vec3& target, float stepSeconds, bool wholeMove);
 
     /// What the floor queries answer directly under the character: the floor
     /// that was chosen, and the three surfaces that were offered. The recovery
@@ -961,6 +961,10 @@ private:
     // Up-facing normal of the building's slope the last walk carried the sole
     // onto from ground; zero when there is none (movement::walkBody).
     glm::vec3 bodyWalkedOntoSlope_{0.0f};
+    // The level velocity the keys ask for in this physics step, as it would
+    // be on the ground: what a body that lands part way through the step
+    // walks on with (moveBodyOnFootOnce).
+    glm::vec3 bodyGroundVelocity_{0.0f};
     // walkableStepBaseZ_ was set by moveBodyOnFoot; another movement mode
     // (swimming, flight, a taxi) leaves it stale.
     bool bodyStepBaseKnown_ = false;

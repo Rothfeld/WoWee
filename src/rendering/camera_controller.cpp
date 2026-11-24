@@ -478,13 +478,15 @@ glm::vec3 CameraController::moveBodyOnFoot(const glm::vec3& start, const glm::ve
     glm::vec3 position = start;
     for (int part = 0; part < parts; ++part) {
         position = moveBodyOnFootOnce(position, position + whole / static_cast<float>(parts),
-                                      stepSeconds / static_cast<float>(parts));
+                                      stepSeconds / static_cast<float>(parts), parts == 1);
     }
+    // Asked for anew in every physics step that walks.
+    bodyGroundVelocity_ = glm::vec3(0.0f);
     return position;
 }
 
 glm::vec3 CameraController::moveBodyOnFootOnce(const glm::vec3& start, const glm::vec3& target,
-                                               float stepSeconds) {
+                                               float stepSeconds, bool wholeMove) {
     const float radius = std::max(collisionRadius_, 0.1f);
     const float height = std::max(collisionHeight_, radius * movement::kBodyBevel + 0.01f);
     const float minWalkable = ignoreSlopeLimit_ ? 0.0f : movement::kMinWalkableNormalZ;
@@ -536,7 +538,7 @@ glm::vec3 CameraController::moveBodyOnFootOnce(const glm::vec3& start, const glm
         // The step height above where the sole last stood on ground.
         const float budget = std::clamp(walkableStepBaseZ_ + maxStep - from.z, 0.0f, maxStep);
         move = movement::walkBody(from, horizontal, budget, radius, height, triangles, minWalkable, maxStep,
-                                  terrainCount, bodyWalkedOntoSlope_);
+                                  terrainCount, bodyWalkedOntoSlope_, wholeMove);
         // A perch is left by stepping on from it - up, or to where the sole
         // stands on ground - or by falling. A step from a perch that ends
         // hung by the bevel is another perch: native set on the rim of the
@@ -550,7 +552,8 @@ glm::vec3 CameraController::moveBodyOnFootOnce(const glm::vec3& start, const glm
     }
     if (!walked) {
         move = movement::fallBody(from, glm::vec3(horizontal.x, horizontal.y, delta.z),
-                                  radius, height, triangles, minWalkable, maxStep, terrainCount);
+                                  radius, height, triangles, minWalkable, maxStep, terrainCount,
+                                  glm::vec3(bodyGroundVelocity_.x, bodyGroundVelocity_.y, 0.0f) * stepSeconds);
     }
     if (move.deflected) {
         if (wmoCount > 0 || terrainCount > 0) ++movementTraceWmoContacts_;
@@ -1126,6 +1129,7 @@ glm::vec3 CameraController::moveFollowedCharacter(float /*deltaTime*/, FrameInpu
         const glm::vec3 horizontalVelocity =
             (!grounded || startWaterJump) && preserveAirborneMomentum_ && !knockbackActive_
                 ? airborneHorizontalVelocity_ : f.movement * f.speed;
+        bodyGroundVelocity_ = f.movement * f.speed;
         targetPos += horizontalVelocity * f.physicsDeltaTime;
 
         // Apply server-driven knockback horizontal velocity (decays over time).

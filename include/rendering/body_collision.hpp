@@ -56,6 +56,10 @@ struct BodyContact {
     bool corner = false;
     // The touched triangle's unit normal as wound, out of the solid.
     glm::vec3 front{0.0f};
+    // Where an edge of the triangle crossed an edge of the body's underside:
+    // the two sides of the underside that meet in that edge, as the
+    // directions they separate the body from the triangle by. Zero otherwise.
+    std::array<glm::vec3, 2> bodyFaces{glm::vec3(0.0f), glm::vec3(0.0f)};
 };
 
 inline std::optional<BodyContact> sweepBodyTriangle(const glm::vec3& from,
@@ -82,6 +86,8 @@ inline std::optional<BodyContact> sweepBodyTriangle(const glm::vec3& from,
     float standingDepth = std::numeric_limits<float>::infinity();
     glm::vec3 normal(0.0f);
     float faceEnter = -std::numeric_limits<float>::infinity();
+    int enterBodyEdge = -1;
+    int bodyEdgeTried = -1;
     const auto axisOverlap = [&](glm::vec3 axis, bool faceAxis = false) {
         const float lengthSq = glm::dot(axis, axis);
         if (lengthSq < 1e-10f) return true;
@@ -98,7 +104,7 @@ inline std::optional<BodyContact> sweepBodyTriangle(const glm::vec3& from,
         if (std::abs(speed) < 1e-8f) return low <= 0.0f && high >= 0.0f;
         const float first = std::min(low/speed,high/speed);
         const float last = std::max(low/speed,high/speed);
-        if (first > enter) { enter=first; enterSpeed=std::abs(speed); normal=speed>0.0f ? -axis : axis; }
+        if (first > enter) { enter=first; enterSpeed=std::abs(speed); normal=speed>0.0f ? -axis : axis; enterBodyEdge=bodyEdgeTried; }
         if (faceAxis) faceEnter = first;
         leave = std::min(leave,last);
         return enter <= leave;
@@ -114,8 +120,8 @@ inline std::optional<BodyContact> sweepBodyTriangle(const glm::vec3& from,
         {1,1,kBodyBevel},{-1,1,kBodyBevel},
         {1,-1,kBodyBevel},{-1,-1,kBodyBevel}}};
     for (const auto& edge:edges)
-        for (const auto& bodyEdge:bodyEdges)
-            if (!axisOverlap(glm::cross(edge,bodyEdge))) return std::nullopt;
+        for (bodyEdgeTried = 0; bodyEdgeTried < static_cast<int>(bodyEdges.size()); ++bodyEdgeTried)
+            if (!axisOverlap(glm::cross(edge,bodyEdges[bodyEdgeTried]))) return std::nullopt;
     // A triangle the body already stands in, deeper than the contact skin,
     // still carries it: it stops the downward part of a move, and nothing
     // else. Native set down inside the steep face of a rubble block in the
@@ -148,7 +154,20 @@ inline std::optional<BodyContact> sweepBodyTriangle(const glm::vec3& from,
     // of the last. Flat on to a wall the body's side axes are entered at the
     // same instant and rounding picks among them.
     const bool corner = (enter - faceEnter) * glm::length(delta) <= 1e-4f;
-    return BodyContact{std::max(0.0f,enter),normal,face,false,corner,front};
+    BodyContact contact{std::max(0.0f,enter),normal,face,false,corner,front};
+    if (!corner && enterBodyEdge >= 3) {
+        // An edge of the underside - from the sole to a lower corner - and
+        // the two sides of the underside that meet in it. `normal` points
+        // from the triangle to the body, so the edge is the one on the
+        // body's side facing against it. (The box's own edges are not
+        // measured, and keep the one separating direction.)
+        const float sx = normal.x > 0.0f ? -1.0f : 1.0f;
+        const float sy = normal.y > 0.0f ? -1.0f : 1.0f;
+        const float bevelLength = std::sqrt(1.0f + kBodyBevel * kBodyBevel);
+        contact.bodyFaces = {glm::vec3(-sx * kBodyBevel / bevelLength, 0.0f, 1.0f / bevelLength),
+                             glm::vec3(0.0f, -sy * kBodyBevel / bevelLength, 1.0f / bevelLength)};
+    }
+    return contact;
 }
 
 // The body's box alone - its upright part, from the lower corners at bevel

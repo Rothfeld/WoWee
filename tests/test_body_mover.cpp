@@ -52,11 +52,18 @@ struct Walker {
     float baseZ = 0.0f;
     size_t terrain = 0;     // how many of the mesh's first triangles are the terrain's
     glm::vec3 walkedOntoSlope{0.0f};
+    glm::vec3 airMove{0.0f};  // the level move of a frame in the air
+    bool airborneBefore = false;  // a walker begun in the air leaves the ground with its first frame's run
 
+    // One frame as CameraController::moveBodyOnFootOnce takes it: `run` is
+    // the level move the forward key asks for.
     BodyMove frame(const Mesh& mesh, glm::vec3 run, float dt = 1.0f / 30.0f) {
         BodyMove move;
         bool walked = false;
+        if (grounded || !airborneBefore) airMove = run;
+        airborneBefore = true;
         if (position.z < baseZ) baseZ = position.z;
+        const glm::vec3 from = position;
         if (grounded && verticalVelocity <= 0.0f) {
             const float budget = std::clamp(baseZ + kMaxStepUp - position.z, 0.0f, kMaxStepUp);
             move = walkBody(position, run, budget, kRadius, kHeight, mesh, kMinWalkableNormalZ, kMaxStepUp, terrain,
@@ -70,8 +77,12 @@ struct Walker {
         if (!walked) {
             const float drop = verticalVelocity * dt - 0.5f * kGravity * dt * dt;
             verticalVelocity -= kGravity * dt;
-            move = fallBody(position, run + glm::vec3(0, 0, drop), kRadius, kHeight, mesh,
-                            kMinWalkableNormalZ, kMaxStepUp, terrain);
+            move = fallBody(position, airMove + glm::vec3(0, 0, drop), kRadius, kHeight, mesh,
+                            kMinWalkableNormalZ, kMaxStepUp, terrain, run);
+            if (move.held && verticalVelocity < 0.0f) verticalVelocity = 0.0f;
+            if (move.deflected) airMove = glm::vec3(move.levelKept, 0.0f);
+        } else if (move.support == BodySupport::None) {
+            airMove = glm::vec3(move.position.x - from.x, move.position.y - from.y, 0.0f);
         }
         position = move.position;
         grounded = move.support != BodySupport::None;
@@ -1002,5 +1013,76 @@ TEST_CASE("Ground the lifted body is carried into takes it on up past the yard",
             INFO("frame of " << dt << " s, at y " << walker.position.y << " z " << walker.position.z);
             CHECK(walker.position.y < -1.0f);
         }
+    }
+}
+
+TEST_CASE("A step over a wall the box meets lifts by the move over the radius and falls back from the nose", "[body_mover]") {
+    // Dun Morogh (-5164.4, 664.7), WoWee's own triangles moved to the
+    // origin: a level floor, an upright riser 0.654 yd high along a line
+    // 4.5 degrees off the x axis, a level top. Native heading 78.7 degrees.
+    const glm::vec2 along(std::cos(glm::radians(-4.5f)), std::sin(glm::radians(-4.5f)));
+    const glm::vec2 beyond(-along.y, along.x);
+    const float top = 0.654f;
+    const auto at = [&](float a, float b, float z) { return glm::vec3(along * a + beyond * b, z); };
+    const Mesh mesh = {
+        {{{-30.0f, -30.0f, 0.0f}, {30.0f, -30.0f, 0.0f}, {30.0f, 30.0f, 0.0f}}},
+        {{{-30.0f, -30.0f, 0.0f}, {30.0f, 30.0f, 0.0f}, {-30.0f, 30.0f, 0.0f}}},
+        {{at(-10.0f, 0.0f, 0.0f), at(10.0f, 0.0f, 0.0f), at(-10.0f, 0.0f, top)}},
+        {{at(10.0f, 0.0f, 0.0f), at(10.0f, 0.0f, top), at(-10.0f, 0.0f, top)}},
+        {{at(-10.0f, 0.0f, top), at(10.0f, 0.0f, top), at(-10.0f, 20.0f, top)}},
+        {{at(10.0f, 0.0f, top), at(10.0f, 20.0f, top), at(-10.0f, 20.0f, top)}},
+    };
+    const glm::vec3 heading(std::cos(glm::radians(78.7f)), std::sin(glm::radians(78.7f)), 0.0f);
+
+    SECTION("at run speed: up by 1.4233 times the move, back down the nose, up again") {
+        // Native (4 runs at 33 to 35 ms): +0.3288 for a move of 0.2310; a
+        // first frame of fall; then (-0.0174, -0.0174, -0.0322), (-0.0288,
+        // -0.0288, -0.0532), (-0.0415, -0.0415, -0.0767) - the drop over the
+        // bevel on either axis; on the top eight frames after the first step.
+        const float dt = 0.033f;
+        Walker walker{.position = glm::vec3(0.0f, -0.45f, 0.0f)};
+        const BodyMove up = walker.frame(mesh, heading * (7.0f * dt), dt);
+        REQUIRE(up.support == BodySupport::None);
+        CHECK(walker.position.z == Catch::Approx(7.0f * dt * (1.0f / kRadius - kBodyBevel)).margin(1e-3f));
+        walker.frame(mesh, heading * (7.0f * dt), dt);
+        // Besides the drop's push the body goes on with what the nose left
+        // of its level move, along the nose (native does so in the first
+        // frame of the fall only).
+        const glm::vec3 kept = walker.airMove;
+        CHECK(glm::length(kept) < 0.03f);
+        for (int fall = 0; fall < 3; ++fall) {
+            const glm::vec3 before = walker.position;
+            walker.frame(mesh, heading * (7.0f * dt), dt);
+            const glm::vec3 moved = walker.position - before - kept;
+            INFO("fall frame " << fall + 2 << ": " << moved.x << " " << moved.y << " " << moved.z);
+            REQUIRE(moved.z < -0.02f);
+            CHECK(moved.x == Catch::Approx(moved.z / kBodyBevel).margin(1.5e-3f));
+            CHECK(moved.y == Catch::Approx(moved.z / kBodyBevel).margin(1.5e-3f));
+        }
+        int frames = 5;
+        while (frames < 14 && !(walker.grounded && walker.position.z > top - 0.01f)) {
+            walker.frame(mesh, heading * (7.0f * dt), dt);
+            ++frames;
+        }
+        CHECK(frames <= 9);
+    }
+    SECTION("at a third of that the nose is within the lowering and the body climbs it") {
+        // Native (speed 0.3, 34 ms): +0.1084, +0.1176, +0.1233, +0.1170,
+        // +0.1195, +0.0685, never in the air.
+        const float dt = 0.033f;
+        Walker walker{.position = glm::vec3(0.0f, -0.40f, 0.0f)};
+        int frames = 0;
+        float rose = 0.0f;
+        while (frames < 20 && walker.position.z < top - 0.01f) {
+            const float before = walker.position.z;
+            const BodyMove move = walker.frame(mesh, heading * (2.1f * dt), dt);
+            REQUIRE(move.support != BodySupport::None);
+            if (walker.position.z > before + 0.01f) rose = std::max(rose, walker.position.z - before);
+            ++frames;
+        }
+        CHECK(frames <= 9);
+        // The first frame may rise by the 0.089 yd the nose stands above
+        // the box's lower corners besides.
+        CHECK(rose < 0.21f);
     }
 }
