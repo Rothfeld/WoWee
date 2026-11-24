@@ -13,7 +13,11 @@
 // already packed correctly and can be sent straight back; everything the client
 // builds itself goes through packPetAction.
 
+#include <cmath>
 #include <cstdint>
+#include <cstring>
+#include <string>
+#include <vector>
 
 namespace wowee {
 namespace game {
@@ -88,6 +92,32 @@ constexpr PossessActionRoute possessActionRoute(uint32_t packed, bool groundTarg
     if (!isPetSpellAction(packed)) return PossessActionRoute::PetAction;
     if (petActionId(packed) == 0) return PossessActionRoute::None;
     return groundTargeted ? PossessActionRoute::GroundTarget : PossessActionRoute::PetCastSpell;
+}
+
+/// Spell ID for Hunter's Beast Lore (applies SPELL_AURA_EMPATHY, aura 121).
+inline constexpr uint32_t kSpellBeastLore = 1462;
+/// CreatureTemplate type_flags bit for tameable beasts (CREATURE_TYPEFLAGS_TAMEABLE).
+inline constexpr uint32_t kCreatureTypeFlagTameable = 0x00000001u;
+
+/// Decode an IEEE-754 float packed into a uint32 update field (e.g.
+/// UNIT_FIELD_MINDAMAGE / UNIT_FIELD_MAXDAMAGE) and round to a non-negative
+/// integer for Beast Lore tooltip display.
+inline int32_t decodeUnitDamageField(uint32_t rawBits) {
+    float value = 0.0f;
+    std::memcpy(&value, &rawBits, sizeof(value));
+    if (!std::isfinite(value) || value < 0.0f) return 0;
+    return static_cast<int32_t>(std::lround(value));
+}
+
+/// Join non-empty pet diet names with ", " (matching FrameXML BuildListString).
+inline std::string joinPetDietNames(const std::vector<std::string>& foods) {
+    std::string out;
+    for (const auto& f : foods) {
+        if (f.empty()) continue;
+        if (!out.empty()) out += ", ";
+        out += f;
+    }
+    return out;
 }
 
 } // namespace pet

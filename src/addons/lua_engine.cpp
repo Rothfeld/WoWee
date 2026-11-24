@@ -3754,11 +3754,13 @@ int lua_Tooltip_SetUnit(lua_State* L) {
     };
     auto format = [](std::string pattern, std::initializer_list<std::string> args) {
         for (const auto& arg : args) {
-            const size_t at = pattern.find("%s");
+            const size_t sAt = pattern.find("%s");
+            const size_t dAt = pattern.find("%d");
+            const size_t at = std::min(sAt, dAt);
             assert(at != std::string::npos);
             pattern.replace(at, 2, arg);
         }
-        assert(pattern.find("%s") == std::string::npos);
+        assert(pattern.find("%s") == std::string::npos && pattern.find("%d") == std::string::npos);
         return pattern;
     };
     auto callUnitString = [L, &uidStr](const char* function) {
@@ -3865,6 +3867,73 @@ int lua_Tooltip_SetUnit(lua_State* L) {
         addLine("PvP", 1.0f, 1.0f, 1.0f);
     if (!isPlayer && unit && gh->isCreatureRacialLeader(unit->getEntry()))
         addLine(global("PVP_RANK_LEADER"), 1.0f, 1.0f, 1.0f);
+
+    // Beast Lore (spell 1462 / SPELL_AURA_EMPATHY): appends Damage, Armor,
+    // Health, Diet, and Tameable / Cannot be Tamed lines to the unit tooltip.
+    if (!isPlayer && unit && !isCorpse) {
+        bool hasBeastLore = false;
+        if (const auto* auras = gh->getUnitAuras(guid)) {
+            for (const auto& aura : *auras) {
+                if (!aura.isEmpty() && aura.spellId == game::pet::kSpellBeastLore) {
+                    hasBeastLore = true;
+                    break;
+                }
+            }
+        }
+        if (hasBeastLore) {
+            const uint16_t minDmgIdx = game::fieldIndex(game::UF::UNIT_FIELD_MINDAMAGE);
+            const uint16_t maxDmgIdx = game::fieldIndex(game::UF::UNIT_FIELD_MAXDAMAGE);
+            const uint16_t armorIdx  = game::fieldIndex(game::UF::UNIT_FIELD_RESISTANCES);
+            const int32_t minDmg = minDmgIdx != 0xFFFF ? game::pet::decodeUnitDamageField(unit->getField(minDmgIdx)) : 0;
+            const int32_t maxDmg = maxDmgIdx != 0xFFFF ? game::pet::decodeUnitDamageField(unit->getField(maxDmgIdx)) : 0;
+            if (maxDmg > 0) {
+                if (minDmg == maxDmg) {
+                    addLine(format(global("SINGLE_DAMAGE_TEMPLATE"), {std::to_string(maxDmg)}), 1.0f, 1.0f, 1.0f);
+                } else {
+                    addLine(format(global("DAMAGE_TEMPLATE"), {std::to_string(minDmg), std::to_string(maxDmg)}), 1.0f, 1.0f, 1.0f);
+                }
+            }
+            if (armorIdx != 0xFFFF) {
+                const uint32_t armor = unit->getField(armorIdx);
+                addLine(format(global("ARMOR_TEMPLATE"), {std::to_string(armor)}), 1.0f, 1.0f, 1.0f);
+            }
+            if (const uint32_t maxHp = unit->getMaxHealth(); maxHp > 0) {
+                const std::string hpLabel = global("HEALTH");
+                addLine(std::to_string(maxHp) + " " + (hpLabel.empty() ? "Health" : hpLabel), 1.0f, 1.0f, 1.0f);
+            }
+            // Diet from CreatureFamily.dbc PetFoodMask -> ItemPetFood.dbc
+            const uint32_t family = gh->getCreatureFamily(unit->getEntry());
+            if (family != 0) {
+                auto* assets = gh->services().assetManager;
+                const auto* layouts = wowee::pipeline::getActiveDBCLayout();
+                const auto* famLayout = layouts ? layouts->getLayout("CreatureFamily") : nullptr;
+                const auto* foodLayout = layouts ? layouts->getLayout("ItemPetFood") : nullptr;
+                if (assets && famLayout && foodLayout) {
+                    const auto families = assets->loadDBC("CreatureFamily.dbc");
+                    const auto foods = assets->loadDBC("ItemPetFood.dbc");
+                    const int32_t famRow = families && families->isLoaded() ? families->findRecordById(family) : -1;
+                    if (famRow >= 0 && foods && foods->isLoaded()) {
+                        const uint32_t mask = families->getUInt32(static_cast<uint32_t>(famRow), famLayout->field("PetFoodMask"));
+                        std::vector<std::string> dietNames;
+                        for (uint32_t bit = 0; bit < 32; ++bit) {
+                            if (!(mask & (1u << bit))) continue;
+                            const int32_t foodRow = foods->findRecordById(bit + 1);
+                            if (foodRow >= 0) {
+                                dietNames.push_back(foods->getString(static_cast<uint32_t>(foodRow), foodLayout->field("Name")));
+                            }
+                        }
+                        if (const std::string diet = game::pet::joinPetDietNames(dietNames); !diet.empty()) {
+                            addLine(format(global("PET_DIET_TEMPLATE"), {diet}), 1.0f, 1.0f, 1.0f);
+                        }
+                    }
+                }
+            }
+            const auto& cache = gh->getCreatureInfoCache();
+            const auto it = cache.find(unit->getEntry());
+            const bool tameable = it != cache.end() && (it->second.typeFlags & game::pet::kCreatureTypeFlagTameable) != 0;
+            addLine(global(tameable ? "TAMEABLE" : "NOT_TAMEABLE"), 1.0f, 1.0f, 1.0f);
+        }
+    }
 
     if (unit) {
         if (const auto harvesting = ui::corpseHarvestPresentation(*gh, *unit)) {

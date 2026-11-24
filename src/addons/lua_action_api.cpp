@@ -3137,7 +3137,7 @@ void registerActionLuaAPI(lua_State* L) {
             if (!gh || !gh->hasPet()) return 0;
             auto* pet = resolveUnit(L, "pet");
             lua_pushnumber(L, 1);
-            if (pet && pet->getMaxPowerByType(4) != 0) lua_pushnumber(L, 1);
+            if (pet && gh->getPossessedGuid() == 0 && pet->getMaxPowerByType(4) != 0) lua_pushnumber(L, 1);
             else lua_pushnil(L);
             return 2;
         }},
@@ -3235,10 +3235,12 @@ void registerActionLuaAPI(lua_State* L) {
                 // that range, and the damage each is worth - three quarters,
                 // normal, a quarter more - is the game's, not a guess.
                 {"GetPetHappiness", [](lua_State* L) -> int {
-            // No pet, or one without happiness (a warlock's felhunter):
+            // No pet, possessed unit, or one without happiness (a warlock's felhunter):
             // native 2.4.3 answers nil, 100, 0.
+            auto* gh = getGameHandler(L);
             auto* pet = resolveUnit(L, "pet");
-            const uint32_t maxHappiness = pet ? pet->getMaxPowerByType(4) : 0;
+            const uint32_t maxHappiness = (pet && (!gh || gh->getPossessedGuid() == 0))
+                ? pet->getMaxPowerByType(4) : 0;
             if (maxHappiness == 0) {
                 lua_pushnil(L); lua_pushnumber(L, 100); lua_pushnumber(L, 0);
                 return 3;

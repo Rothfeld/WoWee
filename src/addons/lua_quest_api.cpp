@@ -4418,25 +4418,8 @@ void registerQuestLuaAPI(lua_State* L) {
                 // Single-select, not a set of ticks: the click handler calls
                 // Set…Filter(id - 1, 1, 1) and nothing ever unticks, so the
                 // state is one index and zero is the "All" row.
-                // GetPetTrainingPoints() -> total, spent. Craft_UpdateTrainingPoints
-                // calls it on every CraftFrame_Update, Enchanting included;
-                // undefined, the update raised before the selection's Create
-                // button and DoCraft below it ran. 2.4.3 answers 0, 0 without a
-                // pet (pair 8 rogue). A pet's points (UNIT_TRAINING_POINTS) are
-                // not in this client's update field table.
-                {"GetPetTrainingPoints", [](lua_State* L) -> int {
-            auto* gh = getGameHandler(L);
-            if (gh && gh->hasPet()) {
-                static bool said = false;
-                if (!said) {
-                    said = true;
-                    LOG_ERROR("GetPetTrainingPoints: the pet's UNIT_TRAINING_POINTS is not parsed; answering 0, 0");
-                }
-            }
-            lua_pushnumber(L, 0);
-            lua_pushnumber(L, 0);
-            return 2;
-        }},
+                // (GetPetTrainingPoints is registered in lua_action_api.cpp,
+                // reading UNIT_TRAINING_POINTS.)
                 // ---- Craft frame ----------------------------------------
                 {"GetNumCrafts", [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);

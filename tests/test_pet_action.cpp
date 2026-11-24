@@ -137,3 +137,19 @@ TEST_CASE("isPetActionActive highlights matching command and reaction slots with
     REQUIRE_FALSE(isPetActionActive(packPetAction(ActionType::Enabled,  2649u),  kFollow, kDefensive));
     REQUIRE_FALSE(isPetActionActive(packPetAction(ActionType::Disabled, 2649u),  kFollow, kDefensive));
 }
+
+TEST_CASE("Beast Lore damage decoding and diet formatting", "[pet][beastlore]") {
+    auto toBits = [](float f) {
+        uint32_t b = 0;
+        std::memcpy(&b, &f, sizeof(b));
+        return b;
+    };
+    REQUIRE(decodeUnitDamageField(toBits(2.7f)) == 3);
+    REQUIRE(decodeUnitDamageField(toBits(4.2f)) == 4);
+    REQUIRE(decodeUnitDamageField(toBits(0.0f)) == 0);
+    REQUIRE(decodeUnitDamageField(toBits(-5.0f)) == 0);
+
+    REQUIRE(joinPetDietNames({}) == "");
+    REQUIRE(joinPetDietNames({"Meat"}) == "Meat");
+    REQUIRE(joinPetDietNames({"Meat", "", "Fish", "Fruit"}) == "Meat, Fish, Fruit");
+}
