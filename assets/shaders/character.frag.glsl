@@ -536,9 +536,10 @@ void main() {
             //   and blended with outdoor light on transBatch vertices (MOCV.a).
             // - Authored M2Light point lights add diffColor*diffIntensity*N.L/(0.7*d + 0.03*d^2)
             //   before the [0, 1] clamp.
-            // - Hover and target add 1.0 * Ambient_DBC (c29) after batch tint and
-            //   CharProc 1 kitColor, clamped to [0, 1], so tinted/shadowform units
-            //   brighten on mouseover/target instead of having hoverAdd crushed by kitColor.
+            // - Hover and target add 1.0 * Ambient_DBC (c29) after batch tint,
+            //   CharProc 13 kitLight, and CharProc 1 kitColor, clamped to [0, 1], so
+            //   tinted/shadowform (CharProc 1) and dark-lit (CharProc 13, e.g. Stolen
+            //   Soul Visual 32395 with kitLight = 0) units brighten on mouseover/target.
             vec3 effAmbient = (unitHasCustomLight != 0
                 ? vec3(interiorLightR, interiorLightG, interiorLightB)
                 : ambientColor.rgb * unitLight.x) * kitLight;
@@ -555,7 +556,7 @@ void main() {
             vec3 baseLight = clamp(effAmbient + max(dot(lightNorm, effDir), 0.0) * effDiffuse + m2Point, 0.0, 1.0);
             vec3 shaded = clamp(effAmbient + m2Point, 0.0, 1.0);
             vec3 litFactor = (interiorLit != 0) ? baseLight : mix(shaded, baseLight, shadow);
-            vec3 hoverAdd = hoverHighlight * ambientColor.rgb * kitLight;
+            vec3 hoverAdd = hoverHighlight * ambientColor.rgb;
             result = rawTexRgb * clamp(batchTint * litFactor * vec3(kitColorR, kitColorG, kitColorB) + hoverAdd, 0.0, 1.0);
         } else if (interiorLit != 0) {
             vec3 interiorLight = vec3(interiorLightR, interiorLightG, interiorLightB) * kitLight;

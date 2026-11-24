@@ -407,6 +407,14 @@ private:
     LightingParams fallbackParams_;
 };
 
+/// TBC 2.4.3 M2 hover/target highlight additive lighting term, matching
+/// assets/shaders/character.frag.glsl. Independent of CharProc 13 kitLight
+/// so dark-lit units (e.g. Stolen Soul Visual 32395, kitLight = 0) still
+/// lighten by hoverHighlight * ambientColor on mouseover/target.
+inline glm::vec3 tbcUnitHoverAdd(float hoverHighlight, const glm::vec3& ambientColor) {
+    return hoverHighlight * ambientColor;
+}
+
 /// TBC 2.4.3 M2 Mod (blendMode 5) / Mod2x (blendMode 6) source color before
 /// framebuffer modulation, matching assets/shaders/character.frag.glsl.
 ///

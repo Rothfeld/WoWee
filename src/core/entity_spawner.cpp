@@ -1751,13 +1751,11 @@ bool EntitySpawner::getHumanoidAppearance(uint32_t displayId, uint8_t& race,
         // with no texture on it, which is what the creature path will give.
         return race != 0 && game::hasPlayerModel(static_cast<game::Race>(race));
     }
-    if (auto bareIt = bareRacialDisplayMap_.find(displayId); bareIt != bareRacialDisplayMap_.end()) {
-        race = bareIt->second.first;
-        sex = bareIt->second.second;
-        appearanceBytes = 0;
-        facialHair = 0;
-        return race != 0 && game::hasPlayerModel(static_cast<game::Race>(race));
-    }
+    // Bare racial CreatureDisplayInfo rows (extraDisplayId == 0, e.g. 15476
+    // used by Stolen Soul) have no CreatureDisplayInfoExtra record. Native
+    // 2.4.3 renders creatures using them as raw creature M2s (all geosets
+    // active, default untextured replaceable slots) rather than stripping them
+    // to naked CharSections (player morphs are handled by resolvePlayerIllusion).
     return false;
 }
 
@@ -2940,17 +2938,11 @@ void EntitySpawner::applyCreatureInstanceAppearance(uint32_t instanceId, uint32_
     const bool humanoidAppearance = itDisplayData != displayDataMap_.end() &&
         itDisplayData->second.extraDisplayId != 0 &&
         humanoidExtraMap_.find(itDisplayData->second.extraDisplayId) != humanoidExtraMap_.end();
-    if (!humanoidAppearance) {
-        if (auto bareIt = bareRacialDisplayMap_.find(displayId); bareIt != bareRacialDisplayMap_.end()) {
-            const std::array<uint32_t, 19> noEquip{};
-            const std::array<uint8_t, 19> noInv{};
-            applyCharacterAppearanceToCreatureInstance(
-                instanceId, modelId,
-                bareIt->second.first, bareIt->second.second,
-                0u, 0u, 0u, noEquip, noInv);
-            return;
-        }
-    }
+    // Creatures using bare racial CreatureDisplayInfo rows (extraDisplayId == 0,
+    // e.g. Stolen Soul displayId 15476) do NOT have CreatureDisplayInfoExtra or
+    // SMSG_MIRRORIMAGE_DATA. Native 2.4.3 renders them as raw creature M2s with
+    // all geosets active (robe/cape/sleeves) and default white replaceable slots,
+    // not stripped to naked CharSections + bareGeosetsFor().
     charRenderer->setInstanceCreatureMaterialRules(instanceId, !humanoidAppearance);
 
     // Per-instance hair, skin and head-detail overrides. These run for every

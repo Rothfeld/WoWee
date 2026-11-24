@@ -255,6 +255,24 @@ TEST_CASE("tbcModBlendSourceColor applies CharProc 1 kitColor before hoverAdd in
     CHECK(normalHovered.r == Catch::Approx(robeTex.r * 1.0f));
     CHECK(normalHovered.g == Catch::Approx(robeTex.g * 1.0f));
     CHECK(normalHovered.b == Catch::Approx(robeTex.b * 1.0f));
+
+    // Stolen Soul Visual (Spell 32395, SVK 6374, CharProc 13 kitLight = 0x000000):
+    // litFactor is crushed to 0 by kitLight, but hoverAdd is independent of kitLight
+    // so mouseover/target lightens the silhouette by rawTexRgb * ambientColor.
+    const glm::vec3 whiteTex(1.0f);
+    const glm::vec3 zeroLit(0.0f);
+    const glm::vec3 stolenUnhovered = wowee::rendering::tbcModBlendSourceColor(
+        whiteTex, white, zeroLit, wowee::rendering::tbcUnitHoverAdd(0.0f, ambientHover),
+        white, false, false, 1.0f, 1.0f);
+    const glm::vec3 stolenHovered = wowee::rendering::tbcModBlendSourceColor(
+        whiteTex, white, zeroLit, wowee::rendering::tbcUnitHoverAdd(1.0f, ambientHover),
+        white, false, false, 1.0f, 1.0f);
+    CHECK(stolenUnhovered.r == Catch::Approx(0.0f));
+    CHECK(stolenUnhovered.g == Catch::Approx(0.0f));
+    CHECK(stolenUnhovered.b == Catch::Approx(0.0f));
+    CHECK(stolenHovered.r == Catch::Approx(ambientHover.r));
+    CHECK(stolenHovered.g == Catch::Approx(ambientHover.g));
+    CHECK(stolenHovered.b == Catch::Approx(ambientHover.b));
 }
 
 TEST_CASE("tbcTerrainLightFactor clamps primary vertex lighting to [0, 1] matching TBC terrain.bls", "[lighting][terrain][tbc]") {
