@@ -1610,8 +1610,23 @@ EntityController::UnitFieldUpdateResult EntityController::applyUnitFieldsOnUpdat
             }
         }
         else if (key == ufi.faction) {
+            const uint32_t oldFt = unit->getFactionTemplate();
             unit->setFactionTemplate(val);
-            unit->setHostile(owner_.isDuelOpponent(*unit) || owner_.isHostileFaction(val));
+            if (block.guid == owner_.getPlayerGuid()) {
+                owner_.notePlayerFactionTemplate(val);
+                if (val != oldFt) {
+                    pendingEvents_.emit("UNIT_FACTION", {"player"});
+                    if (owner_.getTargetGuid() != 0)
+                        pendingEvents_.emit("UNIT_FACTION", {"target"});
+                }
+            } else {
+                unit->setHostile(owner_.isDuelOpponent(*unit) || owner_.isHostileFaction(val));
+                if (val != oldFt) {
+                    auto uid = owner_.guidToUnitId(block.guid);
+                    if (!uid.empty())
+                        pendingEvents_.emit("UNIT_FACTION", {uid});
+                }
+            }
         } else if (key == ufi.boundingRadius) {
             unit->setBoundingRadius(bitsToFloat(val));
         } else if (key == ufi.combatReach) {

@@ -167,13 +167,15 @@ TEST_CASE("H10 update field helpers match TBC server semantics", "[updatefields]
     CHECK(normalizeGameObjectAnimProgress(255u) == Catch::Approx(1.0f));
     CHECK(normalizeGameObjectAnimProgress(300u) == Catch::Approx(1.0f));
 
-    // 6. Drunk perceived enemy level reduction (TBC 2.4.3: up to -5 on non-friends)
-    CHECK(drunkPerceivedUnitLevel(70, 0u, false) == 70);
-    CHECK(drunkPerceivedUnitLevel(70, 65534u, false) == 65);     // .modify drunk 100 -> -5
-    CHECK(drunkPerceivedUnitLevel(70, 32768u, false) == 68);     // ~50% drunk -> -2
-    CHECK(drunkPerceivedUnitLevel(3, 65534u, false) == 1);       // clamped at level 1
-    CHECK(drunkPerceivedUnitLevel(70, 65534u, true) == 70);      // friendly/self unchanged
-    CHECK(drunkPerceivedUnitLevel(-1, 65534u, false) == -1);     // skull worldboss unchanged
+    // 6. Drunk perceived enemy level reduction (TBC 2.4.3: up to -5 on hostile/unfriendly <= 3)
+    CHECK(drunkPerceivedUnitLevel(70, 0u, 2) == 70);
+    CHECK(drunkPerceivedUnitLevel(70, 65534u, 2) == 65);     // .modify drunk 100 on hostile -> -5
+    CHECK(drunkPerceivedUnitLevel(67, 65534u, 3) == 62);     // unfriendly -> -5
+    CHECK(drunkPerceivedUnitLevel(70, 32768u, 2) == 68);     // ~50% drunk -> -2
+    CHECK(drunkPerceivedUnitLevel(3, 65534u, 2) == 1);       // clamped at level 1
+    CHECK(drunkPerceivedUnitLevel(66, 65534u, 4) == 66);     // neutral (Talbuk Thorngrazer FT 7) unchanged
+    CHECK(drunkPerceivedUnitLevel(70, 65534u, 5) == 70);     // friendly/self unchanged
+    CHECK(drunkPerceivedUnitLevel(-1, 65534u, 2) == -1);     // skull worldboss unchanged
 
     // 7. Placeholder G_Jewel* designer marker visibility by GameObject type/flags
     CHECK(isHiddenDesignerMarkerGameObject(8u, 0u, "World\\Goober\\G_JewelBlue.m2"));       // 181958 Master's Terrace Focus

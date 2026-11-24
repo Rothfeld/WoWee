@@ -3737,14 +3737,6 @@ std::optional<int> GameHandler::forcedReactionRank(uint32_t factionTemplateId) c
 int GameHandler::unitReactionToPlayer(const Unit& unit) const {
     if (isDuelOpponent(unit)) return 2;
     const uint32_t ft = unit.getFactionTemplate();
-    if (unit.getType() == ObjectType::UNIT && !isFriendlyFaction(ft)) {
-        const uint64_t playerGuid = getPlayerGuid();
-        if ((combatHandler_ && combatHandler_->isAggressiveTowardPlayer(unit.getGuid())) ||
-            ((unit.getUnitFlags() & UNIT_FLAG_IN_COMBAT) != 0 && playerGuid != 0 &&
-             unitTargetGuid(unit) == playerGuid)) {
-            return 2;
-        }
-    }
     // UnitReaction numbers ranks from 1 (hated); ReputationRank from 0.
     if (const auto forced = forcedReactionRank(ft)) return *forced + 1;
     if (auto it = factionTemplateRepList_.find(ft);

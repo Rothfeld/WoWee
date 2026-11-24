@@ -202,12 +202,13 @@ static int lua_UnitLevel(lua_State* L) {
             lua_pushnumber(L, -1);
             return 1;
         }
-        const bool friendOrSelf = !gh || unit->getGuid() == gh->getPlayerGuid() ||
-                                  gh->playerIsFriendOf(*unit);
+        const int reaction = (!gh || unit->getGuid() == gh->getPlayerGuid())
+                                 ? 5
+                                 : gh->unitReactionToPlayer(*unit);
         lua_pushnumber(L, game::drunkPerceivedUnitLevel(
             static_cast<int>(unit->getLevel()),
             gh ? gh->getPlayerDrunkValue() : 0u,
-            friendOrSelf));
+            reaction));
     } else {
         auto* gh = getGameHandler(L);
         std::string uidStr(uid);

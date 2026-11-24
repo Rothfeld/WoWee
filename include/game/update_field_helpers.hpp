@@ -115,10 +115,11 @@ inline float normalizeGameObjectAnimProgress(uint32_t rawProgress) {
 }
 
 /// TBC 2.4.3 perceived enemy level when the local player is intoxicated:
-/// non-friendly units appear up to 5 levels lower (`(drunkByte * 5) / 255`,
-/// clamped to >= 1), while self, friendly units, and skull/-1 bosses are unchanged.
-inline int drunkPerceivedUnitLevel(int actualLevel, uint16_t playerDrunkValue, bool unitIsFriendOrSelf) {
-    if (actualLevel <= 0 || playerDrunkValue == 0u || unitIsFriendOrSelf) {
+/// hostile/unfriendly units (`unitReaction <= 3`) appear up to 5 levels lower
+/// (`(drunkByte * 5) / 255`, clamped to >= 1), while neutral (`4`), friendly (`>= 5`),
+/// self, and skull/-1 bosses are unchanged.
+inline int drunkPerceivedUnitLevel(int actualLevel, uint16_t playerDrunkValue, int unitReaction) {
+    if (actualLevel <= 0 || playerDrunkValue == 0u || unitReaction > 3) {
         return actualLevel;
     }
     const int drunkByte = static_cast<int>((playerDrunkValue >> 8) & 0xFFu);
