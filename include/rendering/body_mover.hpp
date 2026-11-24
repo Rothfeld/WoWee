@@ -167,10 +167,12 @@
 //    lower corner of the body's box and stops the move when met within it. A
 //    flatter one of the terrain is met by the sole and stops the move when
 //    the sole, moved level, would be more than 0.1 yd beyond the face's plane
-//    (Valley of Trials 0.096 to 0.100, Tanaris 0.098 to 0.151), and only
-//    where the walk does not lead over the face to ground again. Such a face
+//    (Valley of Trials 0.096 to 0.100, Tanaris 0.098 to 0.151). Such a face
 //    of a building does not: native walks onto the 54 degree bank beside a
 //    Karabor Sewers ramp from 0.05 to 0.12 yd before its plane (3 frames).
+//    Either kind stops the walk only where the walk does not lead over the
+//    face to ground again (a step with a 77 degree riser in the Karabor
+//    Sewers is walked up to and climbed).
 //  - Of several such faces the flattest turns the move first, of equally
 //    steep ones the first met (Eastern Plaguelands gully, Exodar pillar
 //    corner).
@@ -758,9 +760,8 @@ inline BodyMove walkBody(glm::vec3 from, const glm::vec3& requestedDelta, float 
         // onto a 54 degree bank of the building beside it with whole moves,
         // the bank's plane 0.12 and 0.05 yd ahead of its sole (341.8, 815.1,
         // where it goes on over the bank, a third of a yard wide) and 0.06
-        // yd ahead (346.7, 814.4, where steeper faces follow). And such a
-        // face stops the move only where the walk does not lead over it to
-        // ground again, as a step onto anything that is not ground.
+        // yd ahead (346.7, 814.4, where steeper faces follow), and onto the
+        // 57 degree bump of the Dustwallow plank ramp from 0.11 yd.
         //
         // Of several such faces the flattest turns the move first, and of
         // equally steep ones the first met; a face the turned move then
@@ -816,30 +817,34 @@ inline BodyMove walkBody(glm::vec3 from, const glm::vec3& requestedDelta, float 
                 const float ahead = glm::dot(front, from - triangle[0]) / into;
                 if (ahead >= -kContactSkin && ahead < travel - kSoleEntry) consider(bySole, ahead / travel, front);
             }
-            if (bySole.met) {
-                // Whether the walk leads over the face to ground again: the
-                // move repeated from where it ends, set down each time, until
-                // the body rests on something that is not ground. A walk
-                // that stays on ground is past the face already.
-                bool crossed = true;
-                glm::vec3 at = first.end;
-                for (int repeat = 0; repeat < 8; ++repeat) {
-                    const auto rest = lowerBody(at + delta + glm::vec3(0.0f, 0.0f, maxStep), 2.0f * maxStep,
-                                                radius, height, triangles, true);
-                    if (!rest) { crossed = false; break; }
-                    if (!isBodySoleOnGround(*rest, minWalkableNormalZ)) {
-                        const float rise = std::max(0.0f, rest->position.z - at.z);
-                        crossed = rise <= maxStep && leadsToGround(rest->position, delta, maxStep - rise);
-                        break;
-                    }
-                    at = rest->position;
-                }
-                if (crossed) bySole.met = false;
-            }
             const bool walkedUp = first.taken && !first.level && first.rest &&
                                   isBodySoleOnGround(*first.rest, minWalkableNormalZ);
             Stop stop = bySole;
             if (byCorner.met) consider(stop, byCorner.at, byCorner.front);
+            // Such a face stops the walk only where the walk does not lead
+            // over it to ground again: the move repeated from where it ends,
+            // as long as it stays on ground, until it is refused or comes to
+            // rest on something that is not ground - which then has to lead
+            // to ground as any hold does. Native walks up to a step with a
+            // 77 degree riser in the Karabor Sewers (337.3, 802.4) and up it,
+            // a corner of its box meeting the riser at the very end of the
+            // move before; turned along the riser there, the walker crept
+            // along it for good.
+            if (stop.met && walkedUp) {
+                bool leadsOver = true;
+                glm::vec3 at = first.end;
+                for (int repeat = 0; repeat < 8; ++repeat) {
+                    const Step next = step(at, delta, maxStep);
+                    if (!next.taken) { leadsOver = false; break; }
+                    if (next.rest && !isBodySoleOnGround(*next.rest, minWalkableNormalZ)) {
+                        const float rise = std::max(0.0f, next.end.z - at.z);
+                        leadsOver = rise <= maxStep && leadsToGround(next.end, delta, maxStep - rise);
+                        break;
+                    }
+                    at = next.end;
+                }
+                if (leadsOver) stop.met = false;
+            }
             // A move refused for another reason is turned by the face a
             // corner of the box meets only for a body that stands on ground:
             // on a steep face it is on its way down, and what it does there
