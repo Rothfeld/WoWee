@@ -478,6 +478,7 @@ void EntitySpawner::shutdown() {
     pendingRemotePlayerMounts_.clear();
     gameObjectInstances_.clear();
     fadingGameObjects_.clear();
+    fadingInGameObjects_.clear();
 }
 
 void EntitySpawner::clearRemoteMotionState(uint64_t guid) {
@@ -526,6 +527,7 @@ void EntitySpawner::resetAllState() {
     pendingRemotePlayerMounts_.clear();
     gameObjectInstances_.clear();
     fadingGameObjects_.clear();
+    fadingInGameObjects_.clear();
 
     // Clear animation state maps
     creatureWasMoving_.clear();

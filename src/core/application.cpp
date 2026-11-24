@@ -4764,11 +4764,38 @@ void Application::syncChannelVisuals() {
             endpoint(*entity, origin.attachmentId, channel.start);
         }
         const uint32_t destAttach = visuals->beamDestinationAttachment(channel.visualId);
-        const uint64_t target = static_cast<uint64_t>(entity->getField(objectLo)) |
-                                (static_cast<uint64_t>(entity->getField(objectHi)) << 32);
+        const bool isFishingLine = visuals->hasFishingLine(channel.visualId);
+        if (isFishingLine && channel.casterInstanceId && characters) {
+            const auto spans = characters->getDrawnMeleeWeaponSpans(channel.casterInstanceId);
+            if (!spans.empty()) {
+                channel.start = spans.front().tipWorld;
+            }
+        }
+        uint64_t target = static_cast<uint64_t>(entity->getField(objectLo)) |
+                          (static_cast<uint64_t>(entity->getField(objectHi)) << 32);
+        if (isFishingLine && (!target || target == guid)) {
+            for (const auto& [goGuid, goEnt] : entities) {
+                if (!goEnt || goEnt->getType() != game::ObjectType::GAMEOBJECT) continue;
+                const uint64_t createdBy = static_cast<uint64_t>(goEnt->getField(6)) |
+                                           (static_cast<uint64_t>(goEnt->getField(7)) << 32);
+                if (createdBy != guid) continue;
+                const auto& go = static_cast<const game::GameObject&>(*goEnt);
+                const auto* info = gameHandler->getCachedGameObjectInfo(go.getEntry());
+                if ((info && info->type == 17u) || go.getDisplayId() == 668u) {
+                    target = goGuid;
+                    break;
+                }
+            }
+        }
         if (target && target != guid) {
-            if (const auto targetEntity = gameHandler->getEntityManager().getEntity(target))
+            if (const auto targetEntity = gameHandler->getEntityManager().getEntity(target)) {
                 channel.hasTarget = endpoint(*targetEntity, destAttach, channel.end);
+                if (channel.hasTarget && isFishingLine &&
+                    targetEntity->getType() == game::ObjectType::GAMEOBJECT) {
+                    channel.end.z += 0.25f;
+                    channel.lineAlpha = entitySpawner_ ? entitySpawner_->getGameObjectFade(target) : 1.0f;
+                }
+            }
         }
         channel.spellId = spellId;
         // A jumping channel's further targets, after the channel object.

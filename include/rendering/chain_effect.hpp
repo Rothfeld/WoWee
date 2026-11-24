@@ -6,6 +6,7 @@
 /// Measured against build 8606 with paired captures of the same server beam
 /// (_experiments/20261118T1328Z.hydross_beam_scroll in the workspace root).
 
+#include <glm/glm.hpp>
 #include <algorithm>
 #include <cassert>
 #include <cmath>
@@ -293,6 +294,37 @@ inline float chainEndTexV(size_t index, size_t vertexCount, int edge) {
 ///   native draws only BaseEffect 272 (Magic_PreCast_Hand orbs) and no beam.
 inline constexpr bool stateKitDrawsChannelBeam(float charParamOne) {
     return charParamOne != 0.0f;
+}
+
+/// Decode SpellVisualKit CharProc 10 (Fishing Line) CharParamZero into linear
+/// RGB in [0, 1]. TBC 2.4.3 SpellVisual 759 -> ChannelKit 830 carries
+/// CharProc0 = 10, CharParamZero0 = 13619151.0f (0xCFCFCF, light silver-gray).
+inline glm::vec3 parseFishingLineColor(float charParamZero) {
+    assert(std::isfinite(charParamZero) && charParamZero >= 0.0f && charParamZero < 16777216.0f);
+    const auto rgb = static_cast<uint32_t>(charParamZero);
+    return glm::vec3(
+        static_cast<float>((rgb >> 16) & 0xFFu) / 255.0f,
+        static_cast<float>((rgb >> 8) & 0xFFu) / 255.0f,
+        static_cast<float>(rgb & 0xFFu) / 255.0f);
+}
+
+/// Build a gently sagging catenary/parabolic spine from the fishing pole tip
+/// to the fishing bobber top (in world space, Z up).
+inline std::vector<glm::vec3> buildFishingLineSpine(const glm::vec3& poleTip,
+                                                    const glm::vec3& bobberTop,
+                                                    int segments = 16) {
+    assert(segments >= 2);
+    const float dist = glm::length(bobberTop - poleTip);
+    const float sag = std::clamp(dist * 0.08f, 0.12f, 0.85f);
+    std::vector<glm::vec3> spine;
+    spine.reserve(static_cast<size_t>(segments) + 1);
+    for (int i = 0; i <= segments; ++i) {
+        const float t = static_cast<float>(i) / static_cast<float>(segments);
+        glm::vec3 p = glm::mix(poleTip, bobberTop, t);
+        p.z -= sag * 4.0f * t * (1.0f - t);
+        spine.push_back(p);
+    }
+    return spine;
 }
 
 }  // namespace wowee::rendering

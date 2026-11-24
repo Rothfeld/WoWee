@@ -669,6 +669,7 @@ public:
         std::vector<glm::vec3> spine;
         std::vector<float> u;
         std::vector<float> fade;  // alpha factor per spine vertex; empty: lit whole
+        bool taperEnds = true;    // pinch endpoints to 0 width (chain beams); false for fishing line
     };
     /// Replaces the beams drawn from the next frame on.
     void setChainStrips(std::vector<ChainStrip> strips) { chainStrips_ = std::move(strips); }

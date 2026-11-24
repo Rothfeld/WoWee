@@ -876,7 +876,9 @@ void M2Renderer::renderM2Ribbons(VkCommandBuffer cmd, VkDescriptorSet perFrameSe
         assert(strip.spine.size() == strip.u.size());
         assert(strip.fade.empty() || strip.fade.size() == strip.spine.size());
         if (strip.spine.size() < 2) continue;
-        const VkDescriptorSet texSet = chainTextureSet(strip.texturePath);
+        const VkDescriptorSet texSet = strip.texturePath.empty()
+                                           ? whiteRibbonTextureSet()
+                                           : chainTextureSet(strip.texturePath);
         if (!texSet) continue;
         const ChainBlendPipeline blendKind = chainBlendPipeline(strip.blendMode);
         const uint32_t firstVert = static_cast<uint32_t>(written);
@@ -887,7 +889,9 @@ void M2Renderer::renderM2Ribbons(VkCommandBuffer cmd, VkDescriptorSet perFrameSe
             glm::vec3 side = upWorld;
             const glm::vec3 cross = glm::cross(dir, camPos - p);
             if (glm::length(cross) > 1e-6f) side = glm::normalize(cross);
-            const float halfWidth = strip.halfWidth * chainEndTaper(i, strip.spine.size());
+            const float halfWidth = strip.taperEnds
+                                        ? strip.halfWidth * chainEndTaper(i, strip.spine.size())
+                                        : strip.halfWidth;
             const float vertAlpha = strip.alpha * (strip.fade.empty() ? 1.0f : strip.fade[i]);
             // EGxBlend_ModAdd (DST_COLOR, ONE) ignores srcAlpha in hardware blend;
             // scale RGB by alpha/pulse fade so fading strands attenuate cleanly to dst.
@@ -900,7 +904,9 @@ void M2Renderer::renderM2Ribbons(VkCommandBuffer cmd, VkDescriptorSet perFrameSe
                 out[3] = vertColor.r; out[4] = vertColor.g; out[5] = vertColor.b;
                 out[6] = vertAlpha;
                 out[7] = strip.u[i];
-                out[8] = chainEndTexV(i, strip.spine.size(), edge);
+                out[8] = strip.taperEnds
+                             ? chainEndTexV(i, strip.spine.size(), edge)
+                             : static_cast<float>(edge);
                 ++written;
             }
         }

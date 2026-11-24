@@ -1,6 +1,7 @@
 #include "ui/framexml_takeover.hpp"
 #include "core/env_flag.hpp"
 #include "game/game_handler.hpp"
+#include "game/game_object_interaction.hpp"
 #include "game/cast_result_text.hpp"
 #include "game/achievement_criteria.hpp"
 #include "game/packed_time.hpp"
@@ -570,10 +571,11 @@ void GameHandler::registerCoreOpcodes() {
         LOG_DEBUG("SMSG_GAMEOBJECT_SPAWN_ANIM_OBSOLETE guid=0x", std::hex, guid, std::dec);
         if (gameObjectSpawnAnimCallback_) gameObjectSpawnAnimCallback_(guid);
     };
-    dispatchTable_[Opcode::SMSG_GAMEOBJECT_DESPAWN_ANIM] = [](network::Packet& packet) {
+    dispatchTable_[Opcode::SMSG_GAMEOBJECT_DESPAWN_ANIM] = [this](network::Packet& packet) {
         if (!packet.hasRemaining(8)) return;
         const uint64_t guid = packet.readUInt64();
         LOG_DEBUG("SMSG_GAMEOBJECT_DESPAWN_ANIM guid=0x", std::hex, guid, std::dec);
+        if (gameObjectDespawnAnimCallback_) gameObjectDespawnAnimCallback_(guid);
     };
     // Back to READY (1), closed. 0 is ACTIVE, open.
     dispatchTable_[Opcode::SMSG_GAMEOBJECT_RESET_STATE] = [this](network::Packet& packet) {
@@ -1331,20 +1333,25 @@ void GameHandler::registerCoreOpcodes() {
                                | (static_cast<uint64_t>(go->getField(7)) << 32);
             auto* info = getCachedGameObjectInfo(go->getEntry());
             ownedFishingBite = createdBy == playerGuid && (!info || info->type == 17);
+            const uint32_t customSlot = normalizeGameObjectCustomAnimSlot(
+                info ? info->type : 0xFFFFFFFFu, animId);
             if (ownedFishingBite) {
                 hookedFishingBobberGuid_ = guid;
-                // G_FishingBobber.m2 sequence 153 is its authored 1.33s bite/splash
-                // animation; sequence 0 is the normal three-second idle bob.
-                constexpr uint32_t kFishingBobberBiteAnimation = 153;
+                // G_FishingBobber.m2 Custom0 (slot 0 -> AnimationData 153) is its
+                // authored 1.33s bite/splash animation and water splash particle burst;
+                // sequence 0 is the normal three-second idle bob.
                 if (gameObjectCustomAnimCallback_)
-                    gameObjectCustomAnimCallback_(guid, kFishingBobberBiteAnimation);
+                    gameObjectCustomAnimCallback_(guid, 0u);
                 withSoundManager(&audio::AudioCoordinator::getUiSoundManager,
                                  [](auto* sfx) { sfx->playFishingBite(); });
                 LOG_WARNING("Fishing bite ready: guid=0x", std::hex, guid, std::dec,
                             " serverAnimProgress=", animId);
+            } else if (gameObjectCustomAnimCallback_) {
+                gameObjectCustomAnimCallback_(guid, customSlot);
             }
+            return;
         }
-        if (!ownedFishingBite && gameObjectCustomAnimCallback_)
+        if (gameObjectCustomAnimCallback_)
             gameObjectCustomAnimCallback_(guid, animId);
     };
 

@@ -164,6 +164,19 @@ inline std::optional<uint32_t> gameObjectCustomAnimation(uint32_t index) {
     return kCustom0 + index;
 }
 
+/// Normalize the SMSG_GAMEOBJECT_CUSTOM_ANIM payload to a Custom0-3 slot index
+/// (0-3) before passing to gameObjectCustomAnimation().
+///
+/// Fishing bobbers (GAMEOBJECT_TYPE_FISHINGNODE = 17, G_FishingBobber.m2) use
+/// Custom0 (slot 0 -> AnimationData 153) for their bite/splash animation and
+/// water splash particle emitter; CMaNGOS sends 0 while AzerothCore sends
+/// animation progress (100), so fishing bobbers always map to Custom0 (0).
+inline uint32_t normalizeGameObjectCustomAnimSlot(uint32_t goType, uint32_t packetAnimId) {
+    constexpr uint32_t kGameObjectTypeFishingNode = 17u;
+    if (goType == kGameObjectTypeFishingNode) return 0u;
+    return packetAnimId;
+}
+
 /// Client-local GameObject open/close transition when a reader, gossip, or
 /// questgiver dialog opens on `newGuid` (0 when no dialog is open).
 ///

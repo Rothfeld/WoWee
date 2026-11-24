@@ -968,6 +968,11 @@ public:
     [[nodiscard]] uint32_t getDisplayId() const { return displayId; }
     void setDisplayId(uint32_t id) { displayId = id; }
 
+    // True when created via SMSG_UPDATE_OBJECT UPDATETYPE_CREATE_OBJECT2
+    // (newly spawned dynamic GameObject such as a fishing bobber).
+    [[nodiscard]] bool isNewlySpawned() const { return newlySpawned_; }
+    void setNewlySpawned(bool v) { newlySpawned_ = v; }
+
     /// Full 3D world-space orientation quaternion (x, y, z, w in server/render
     /// coordinates) from GAMEOBJECT_ROTATION / GAMEOBJECT_PARENTROTATION /
     /// UPDATEFLAG_ROTATION.
@@ -992,6 +997,7 @@ protected:
     uint32_t displayId = 0;
     glm::quat rotation_{1.0f, 0.0f, 0.0f, 0.0f};
     bool hasRotation_ = false;
+    bool newlySpawned_ = false;
 };
 
 /// What to call this entity on screen, whatever kind it turns out to be.

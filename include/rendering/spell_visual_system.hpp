@@ -108,6 +108,7 @@ public:
         glm::vec3 start{0.0f};
         glm::vec3 end{0.0f};
         uint32_t spellId = 0;
+        float lineAlpha = 1.0f;  // opacity multiplier for CharProc 10 fishing line (synced with bobber fade)
         // Further targets a jumping channel's beam runs on to: end -> hops[0] -> hops[1] ...
         std::vector<glm::vec3> hops;
     };
@@ -140,6 +141,8 @@ public:
     uint32_t precastAnimation(uint32_t visualId);
     uint32_t castAnimation(uint32_t visualId);
     uint32_t channelAnimation(uint32_t visualId);
+    /// True when the visual's ChannelKit carries CharProc 10 (Fishing Line).
+    [[nodiscard]] bool hasFishingLine(uint32_t visualId);
     [[nodiscard]] bool hasPrecastSound(uint32_t visualId);
     [[nodiscard]] bool hasCastSound(uint32_t visualId);
     [[nodiscard]] bool hasImpactSound(uint32_t visualId);
@@ -483,6 +486,9 @@ private:
     /// (_experiments/20261118T1800Z.cthun_beams in the workspace root).
     static constexpr uint32_t kCharProcCastChain = 12;
     static constexpr uint32_t kCharProcColor = 1;
+    /// SpellVisualKit CharProc 10: fishing line from pole tip to bobber.
+    /// CharParamZero is an 0xRRGGBB integer stored as a float (Kit 830 = 0xCFCFCF).
+    static constexpr uint32_t kCharProcFishingLine = 10;
     /// SpellVisualKit CharProc 11: freezes the unit's model animation clock in
     /// place while any active aura's StateKit carries it (10255 Stoned, 16245
     /// Freeze Anim, 27619/45438 Ice Block, 17624 Petrification, etc.).
@@ -597,6 +603,7 @@ private:
     };
     std::unordered_map<uint32_t, ChainEffect> chainEffects_;
     std::unordered_map<uint32_t, KitChainEffect> kitChainEffects_;  // kit -> chain effect & CharParamOne
+    std::unordered_map<uint32_t, glm::vec3> kitFishingLineColor_;   // kit -> CharProc 10 RGB color
     void loadChainEffects();
     // One strand (the beam's row or one its Combo adds): wave and arc
     // planes, and interior vertex offsets in noise radii across the beam

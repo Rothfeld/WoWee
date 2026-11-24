@@ -568,3 +568,25 @@ TEST_CASE("Netherspite TBC SpellVisual.dbc and SpellChainEffects.dbc preserve di
     // Green (269): smooth 0.5485 yd sine wave (WaveHeight 0.55, WaveFreq 0.7226, WaveSpeed +9.20), scroll toward portal (-2.0)
     checkChain(269, 0.5485f, -2.0f, 0.55f, 0.7226f, 9.20f);
 }
+
+TEST_CASE("CharProc 10 fishing line color and sagging spine geometry", "[chain][fishing]") {
+    using wowee::rendering::buildFishingLineSpine;
+    using wowee::rendering::parseFishingLineColor;
+    // SpellVisual 759 -> ChannelKit 830: CharProc0 = 10, CharParamZero0 = 13619151.0f (0xCFCFCF).
+    const glm::vec3 color = parseFishingLineColor(13619151.0f);
+    CHECK(color.r == Catch::Approx(0xCF / 255.0f).margin(1e-4f));
+    CHECK(color.g == Catch::Approx(0xCF / 255.0f).margin(1e-4f));
+    CHECK(color.b == Catch::Approx(0xCF / 255.0f).margin(1e-4f));
+
+    const glm::vec3 poleTip(0.0f, 0.0f, 3.0f);
+    const glm::vec3 bobberTop(10.0f, 0.0f, 0.5f);
+    const auto spine = buildFishingLineSpine(poleTip, bobberTop, 16);
+    REQUIRE(spine.size() == 17);
+    CHECK(spine.front().x == Catch::Approx(poleTip.x));
+    CHECK(spine.front().z == Catch::Approx(poleTip.z));
+    CHECK(spine.back().x == Catch::Approx(bobberTop.x));
+    CHECK(spine.back().z == Catch::Approx(bobberTop.z));
+    // Midpoint sags below the straight chord midpoint (z = 1.75).
+    CHECK(spine[8].z < 1.75f);
+    CHECK(spine[8].z > 0.5f);
+}

@@ -21,6 +21,7 @@
 #include "rendering/vk_context.hpp"
 #include "rendering/character_renderer.hpp"
 #include "rendering/corpse_aura_policy.hpp"
+#include "rendering/unit_fade.hpp"
 #include "rendering/wmo_renderer.hpp"
 #include "rendering/water_renderer.hpp"
 #include "rendering/terrain_manager.hpp"
@@ -1929,6 +1930,19 @@ void EntitySpawner::spawnOnlineGameObject(uint64_t guid, uint32_t entry, uint32_
         }
 
         gameObjectInstances_[guid] = {.modelId = modelId, .instanceId = instanceId, .displayId = displayId, .isWmo = false, .scale = scale};
+
+        // Newly spawned dynamic M2 GameObjects (e.g. fishing bobber CREATE_OBJECT2)
+        // fade in over kGameObjectFadeInSeconds (1.5 s) matching TBC 2.4.3.
+        if (!isTransportGO && gameHandler_) {
+            if (auto ent = gameHandler_->getEntityManager().getEntity(guid);
+                ent && ent->getType() == game::ObjectType::GAMEOBJECT) {
+                const auto& go = static_cast<const game::GameObject&>(*ent);
+                if (rendering::gameObjectSpawnFadeDuration(go.isNewlySpawned()) > 0.0f) {
+                    m2Renderer->setInstanceFade(instanceId, 0.0f);
+                    fadingInGameObjects_.push_back({guid, instanceId, std::chrono::steady_clock::now(), 0.0f});
+                }
+            }
+        }
 
         // ...and the pose the server described before this model existed.
         if (auto pending = gameObjectPendingState_.find(guid);

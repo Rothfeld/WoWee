@@ -2278,25 +2278,47 @@ void EntitySpawner::onGameObjectInfoReceived(uint32_t entry) {
 
 void EntitySpawner::despawnGameObjectFromServer(uint64_t guid) {
     serverGameObjectSpawns_.erase(guid);
+    float startAlpha = 1.0f;
+    for (auto fit = fadingInGameObjects_.begin(); fit != fadingInGameObjects_.end(); ++fit) {
+        if (fit->guid == guid) {
+            startAlpha = fit->currentAlpha;
+            fadingInGameObjects_.erase(fit);
+            break;
+        }
+    }
     auto it = gameObjectInstances_.find(guid);
     auto* m2 = renderer_ ? renderer_->getM2Renderer() : nullptr;
     if (it != gameObjectInstances_.end() && !it->second.isWmo && m2 &&
         !(gameHandler_ && gameHandler_->isTransportGuid(guid))) {
-        fadingGameObjects_.push_back({it->second.instanceId, std::chrono::steady_clock::now()});
+        fadingGameObjects_.push_back({it->second.instanceId, std::chrono::steady_clock::now(), startAlpha});
         gameObjectInstances_.erase(it);  // despawnGameObject must not remove it now
-        LOG_DEBUG("Fading out gameobject: guid=0x", std::hex, guid, std::dec);
+        LOG_DEBUG("Fading out gameobject: guid=0x", std::hex, guid, std::dec, " startAlpha=", startAlpha);
     }
     despawnGameObject(guid);
 }
 
+float EntitySpawner::getGameObjectFade(uint64_t guid) const {
+    for (const auto& fadingIn : fadingInGameObjects_) {
+        if (fadingIn.guid == guid) return fadingIn.currentAlpha;
+    }
+    return gameObjectInstances_.contains(guid) ? 1.0f : 0.0f;
+}
+
 void EntitySpawner::processFadingGameObjects() {
-    if (fadingGameObjects_.empty()) return;
+    if (fadingGameObjects_.empty() && fadingInGameObjects_.empty()) return;
     auto* m2 = renderer_ ? renderer_->getM2Renderer() : nullptr;
     assert(m2 && "fading game objects without an M2 renderer");
     const auto now = std::chrono::steady_clock::now();
+    std::erase_if(fadingInGameObjects_, [&](FadingInGameObject& fadingIn) {
+        const float elapsed = std::chrono::duration<float>(now - fadingIn.start).count();
+        const float alpha = rendering::fadeInOpacity(1.0f, elapsed, rendering::kGameObjectFadeInSeconds);
+        fadingIn.currentAlpha = alpha;
+        m2->setInstanceFade(fadingIn.instanceId, alpha);
+        return alpha >= 1.0f;
+    });
     std::erase_if(fadingGameObjects_, [&](const FadingGameObject& fading) {
         const float elapsed = std::chrono::duration<float>(now - fading.start).count();
-        const float alpha = rendering::fadeOutOpacity(1.0f, elapsed, rendering::kGameObjectFadeSeconds);
+        const float alpha = rendering::fadeOutOpacity(fading.startAlpha, elapsed, rendering::kGameObjectFadeSeconds);
         if (alpha <= 0.0f) {
             m2->removeInstance(fading.instanceId);
             return true;
@@ -2310,11 +2332,13 @@ void EntitySpawner::removeFadingGameObjects() {
     if (auto* m2 = renderer_ ? renderer_->getM2Renderer() : nullptr)
         for (const auto& fading : fadingGameObjects_) m2->removeInstance(fading.instanceId);
     fadingGameObjects_.clear();
+    fadingInGameObjects_.clear();
 }
 
 void EntitySpawner::despawnGameObject(uint64_t guid) {
     gameObjectAppliedState_.erase(guid);
     gameObjectPendingAnimProgress_.erase(guid);
+    std::erase_if(fadingInGameObjects_, [guid](const FadingInGameObject& f) { return f.guid == guid; });
     pendingTransportDoodadBatches_.erase(
         std::remove_if(pendingTransportDoodadBatches_.begin(), pendingTransportDoodadBatches_.end(),
                        [guid](const PendingTransportDoodadBatch& b) { return b.guid == guid; }),

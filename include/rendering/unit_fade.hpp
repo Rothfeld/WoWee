@@ -35,6 +35,18 @@ inline constexpr float kUnitDespawnFadeOutSeconds = 1.5f;
 /// when the server destroys it. WoWee removed it in one frame.
 inline constexpr float kGameObjectFadeSeconds = 1.5f;
 
+/// Newly spawned dynamic game objects (SMSG_UPDATE_OBJECT UPDATETYPE_CREATE_OBJECT2,
+/// e.g. G_FishingBobber.m2) fade in over 1.5 s on TBC 2.4.3 build 8606
+/// (measured on pair 12 Crystal Lake dock capture: alpha 0 -> 1 over ~1.5 s).
+inline constexpr float kGameObjectFadeInSeconds = 1.5f;
+
+/// Spawn fade-in duration for a non-transport M2 GameObject. Static world
+/// objects already present when entering view appear immediately (0 s);
+/// newly spawned dynamic objects (CREATE_OBJECT2) fade in over 1.5 s.
+inline constexpr float gameObjectSpawnFadeDuration(bool newlySpawned) {
+    return newlySpawned ? kGameObjectFadeInSeconds : 0.0f;
+}
+
 /// Spawn fade-in duration for a creature instance. In-place display changes
 /// (shapeshift/transform IN or OUT, death revert to native display, `.npc setmodel`)
 /// swap models immediately at full display alpha (0 s) on TBC 2.4.3 build 8606;

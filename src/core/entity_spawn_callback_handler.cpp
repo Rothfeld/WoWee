@@ -112,6 +112,12 @@ void EntitySpawnCallbackHandler::setupCallbacks() {
         entitySpawner_.despawnGameObjectFromServer(guid);
     });
 
+    // SMSG_GAMEOBJECT_DESPAWN_ANIM (0x215): sent ahead of out-of-range when a
+    // dynamic GameObject (such as a fishing bobber) despawns; begin fade-out now.
+    gameHandler_.setGameObjectDespawnAnimCallback([this](uint64_t guid) {
+        entitySpawner_.despawnGameObjectFromServer(guid);
+    });
+
     // GameObject metadata arrival - settles the animation policy for models that
     // spawned before their type was known.
     gameHandler_.setGameObjectInfoCallback([this](uint32_t entry) {

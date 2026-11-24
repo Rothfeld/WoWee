@@ -289,6 +289,8 @@ void SpellVisualSystem::loadSpellVisualDbc() {
                         kitLights_[kitId] = {.color = glm::vec3(((rgb >> 16) & 0xFF) / 255.0f,
                                                                 ((rgb >> 8) & 0xFF) / 255.0f, (rgb & 0xFF) / 255.0f),
                                              .seconds = seconds};
+                } else if (procedure == kCharProcFishingLine) {
+                    kitFishingLineColor_[kitId] = parseFishingLineColor(param);
                 } else if (procedure == kCharProcOpacity) {
                     assert(std::isfinite(param) && param >= 0.0f && param <= 1.0f);
                     kitCharacterProcedures_[kitId].opacity = param;
@@ -1642,6 +1644,13 @@ void SpellVisualSystem::appendBeamStrip(std::vector<M2Renderer::ChainStrip>& str
 // (_experiments/20261119T1300Z.channel_end, bmdie9_sheet.jpg).
 void SpellVisualSystem::endChannel(uint64_t casterGuid) { endedChannels_.insert(casterGuid); }
 
+bool SpellVisualSystem::hasFishingLine(uint32_t visualId) {
+    if (!visualId) return false;
+    if (!spellVisualDbcLoaded_) loadSpellVisualDbc();
+    const auto kit = channelKits_.find(visualId);
+    return kit != channelKits_.end() && kitFishingLineColor_.contains(kit->second);
+}
+
 void SpellVisualSystem::startChannel(uint64_t casterGuid) { endedChannels_.erase(casterGuid); }
 
 void SpellVisualSystem::syncChannels(const std::vector<UnitChannel>& fieldChannels) {
@@ -1694,6 +1703,31 @@ void SpellVisualSystem::syncChannels(const std::vector<UnitChannel>& fieldChanne
     std::unordered_set<uint64_t> live;
     for (const auto& channel : channels) {
         if (!channel.hasTarget) continue;
+        // CharProc 10 (Fishing Line): SpellVisual 759 -> ChannelKit 830 carries
+        // CharParamZero = 0xCFCFCF and draws a thin sagging silver-gray line from
+        // the caster's fishing pole tip to the fishing bobber.
+        if (const auto kit = channelKits_.find(channel.visualId); kit != channelKits_.end()) {
+            if (const auto flIt = kitFishingLineColor_.find(kit->second);
+                flIt != kitFishingLineColor_.end()) {
+                const float lineAlpha = std::clamp(channel.lineAlpha, 0.0f, 1.0f);
+                if (lineAlpha > 1e-3f && glm::length(channel.end - channel.start) > 1e-3f) {
+                    M2Renderer::ChainStrip line;
+                    line.texturePath.clear();
+                    line.blendMode = 2;  // Alpha
+                    line.color = flIt->second;
+                    line.alpha = 0.78f * lineAlpha;
+                    line.halfWidth = 0.011f;
+                    line.taperEnds = false;
+                    line.spine = buildFishingLineSpine(channel.start, channel.end, 16);
+                    line.u.resize(line.spine.size());
+                    for (size_t i = 0; i < line.spine.size(); ++i) {
+                        line.u[i] = static_cast<float>(i) / static_cast<float>(line.spine.size() - 1);
+                    }
+                    strips.push_back(std::move(line));
+                }
+                continue;
+            }
+        }
         // The ChannelKit's beam, else the StateKit's when CharParamOne != 0:
         // Shared Bonds 41363 (visual 8244, no ChannelKit, StateKit 7030 ->
         // chain 2 HealBeam, CharParamOne 1.0) draws a beam natively (build

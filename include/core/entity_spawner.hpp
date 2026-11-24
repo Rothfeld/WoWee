@@ -79,6 +79,8 @@ public:
     /// fades out over rendering::kGameObjectFadeSeconds; transports, WMOs and
     /// objects not yet drawn go at once.
     void despawnGameObjectFromServer(uint64_t guid);
+    /// Current fade opacity (0..1) of a live or fading-in GameObject (1.0 if fully visible).
+    [[nodiscard]] float getGameObjectFade(uint64_t guid) const;
 
     // Re-evaluate the animation policy for spawned game objects of this entry.
     // Called when a GAMEOBJECT_QUERY_RESPONSE finally supplies the type that the
@@ -930,9 +932,21 @@ private:
     std::unordered_map<uint64_t, uint8_t> gameObjectPendingAnimProgress_;
     /// Last GOState applied per spawned game object, for rules that need its type later.
     std::unordered_map<uint64_t, uint8_t> gameObjectAppliedState_;
-    /// Removed objects' M2 instances still fading out, with their start time.
-    struct FadingGameObject { uint32_t instanceId; std::chrono::steady_clock::time_point start; };
+    /// Removed objects' M2 instances still fading out, with their start time and starting alpha.
+    struct FadingGameObject {
+        uint32_t instanceId = 0;
+        std::chrono::steady_clock::time_point start;
+        float startAlpha = 1.0f;
+    };
     std::vector<FadingGameObject> fadingGameObjects_;
+    /// Newly spawned dynamic M2 game objects fading in (0 -> 1 over kGameObjectFadeInSeconds).
+    struct FadingInGameObject {
+        uint64_t guid = 0;
+        uint32_t instanceId = 0;
+        std::chrono::steady_clock::time_point start;
+        float currentAlpha = 0.0f;
+    };
+    std::vector<FadingInGameObject> fadingInGameObjects_;
     void processFadingGameObjects();
     void removeFadingGameObjects();
     struct PendingTransportMove {

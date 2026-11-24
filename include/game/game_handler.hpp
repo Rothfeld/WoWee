@@ -1892,6 +1892,9 @@ public:
     using GameObjectSpawnAnimCallback = std::function<void(uint64_t guid)>;
     void setGameObjectSpawnAnimCallback(GameObjectSpawnAnimCallback cb) { gameObjectSpawnAnimCallback_ = std::move(cb); }
 
+    using GameObjectDespawnAnimCallback = std::function<void(uint64_t guid)>;
+    void setGameObjectDespawnAnimCallback(GameObjectDespawnAnimCallback cb) { gameObjectDespawnAnimCallback_ = std::move(cb); }
+
     // GameObject state change callback (triggered when GAMEOBJECT_BYTES_1 updates - state byte changes)
     // goState: 0=READY(closed), 1=OPEN, 2=DESTROYED
     using GameObjectStateCallback = std::function<void(uint64_t guid, uint8_t goState)>;
@@ -5274,6 +5277,7 @@ private:
     GameObjectInfoCallback gameObjectInfoCallback_;
     GameObjectCustomAnimCallback gameObjectCustomAnimCallback_;
     GameObjectSpawnAnimCallback gameObjectSpawnAnimCallback_;
+    GameObjectDespawnAnimCallback gameObjectDespawnAnimCallback_;
     GameObjectStateCallback gameObjectStateCallback_;
     GameObjectAnimProgressCallback gameObjectAnimProgressCallback_;
     SprintAuraCallback sprintAuraCallback_;

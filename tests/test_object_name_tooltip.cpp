@@ -263,3 +263,24 @@ TEST_CASE("GameObject client-local dialog open/close transitions avoid duplicate
     CHECK(idleTr.closeGuid == 0);
     CHECK(idleTr.openGuid == 0);
 }
+
+TEST_CASE("Fishing bobber SMSG_GAMEOBJECT_CUSTOM_ANIM normalizes to Custom0 (slot 0 -> AnimationData 153)",
+          "[gameobject][fishing]") {
+    using wowee::game::gameObjectCustomAnimation;
+    using wowee::game::normalizeGameObjectCustomAnimSlot;
+    constexpr uint32_t kFishingNodeType = 17u;
+    constexpr uint32_t kGooberType = 10u;
+
+    // CMaNGOS sends 0, AzerothCore sends animProgress (100); both normalize to slot 0 (Custom0 = 153).
+    CHECK(normalizeGameObjectCustomAnimSlot(kFishingNodeType, 0u) == 0u);
+    CHECK(normalizeGameObjectCustomAnimSlot(kFishingNodeType, 100u) == 0u);
+    CHECK(normalizeGameObjectCustomAnimSlot(kFishingNodeType, 153u) == 0u);
+    CHECK(gameObjectCustomAnimation(normalizeGameObjectCustomAnimSlot(kFishingNodeType, 0u)) == 153u);
+    CHECK(gameObjectCustomAnimation(normalizeGameObjectCustomAnimSlot(kFishingNodeType, 100u)) == 153u);
+
+    // Non-fishing GameObjects pass their Custom0-3 slot unchanged.
+    CHECK(normalizeGameObjectCustomAnimSlot(kGooberType, 0u) == 0u);
+    CHECK(normalizeGameObjectCustomAnimSlot(kGooberType, 2u) == 2u);
+    CHECK(gameObjectCustomAnimation(normalizeGameObjectCustomAnimSlot(kGooberType, 2u)) == 155u);
+    CHECK_FALSE(gameObjectCustomAnimation(153u).has_value());
+}

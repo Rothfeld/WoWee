@@ -2866,6 +2866,12 @@ void EntityController::onCreateGameObject(const UpdateBlock& block, std::shared_
         }
     }
 
+    // Mark newly spawned dynamic GameObjects (CREATE_OBJECT2 or player-created
+    // objects such as fishing bobbers) so EntitySpawner fades them in.
+    const uint64_t goCreatedBy = static_cast<uint64_t>(go->getField(6)) |
+                                 (static_cast<uint64_t>(go->getField(7)) << 32);
+    go->setNewlySpawned(block.updateType == UpdateType::CREATE_OBJECT2 || goCreatedBy != 0);
+
     // Detect transport GameObjects via UPDATEFLAG_TRANSPORT (0x0002)
     LOG_DEBUG("GameObject CREATE: guid=0x", std::hex, block.guid, std::dec,
              " entry=", go->getEntry(), " displayId=", go->getDisplayId(),

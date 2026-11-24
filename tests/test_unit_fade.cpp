@@ -148,3 +148,17 @@ TEST_CASE("sustained unit-attached spell visuals inherit owner effective opacity
     CHECK(attachedSpellVisualFade(/*sustainedUnitVisual=*/false, /*ownerRoomHidden=*/true, 0.3f) == 0.0f);
     CHECK(attachedSpellVisualFade(/*sustainedUnitVisual=*/true, /*ownerRoomHidden=*/true, 0.65f) == 0.0f);
 }
+
+TEST_CASE("newly spawned dynamic GameObjects fade in over 1.5s while static GOs appear immediately",
+          "[unit-fade][gameobject][fishing]") {
+    using namespace wowee::rendering;
+    CHECK(gameObjectSpawnFadeDuration(/*newlySpawned=*/false) == Catch::Approx(0.0f));
+    CHECK(gameObjectSpawnFadeDuration(/*newlySpawned=*/true) == Catch::Approx(kGameObjectFadeInSeconds));
+    CHECK(kGameObjectFadeInSeconds == Catch::Approx(1.5f));
+
+    CHECK(fadeInOpacity(1.0f, 0.0f, kGameObjectFadeInSeconds) == Catch::Approx(0.0f));
+    CHECK(fadeInOpacity(1.0f, 0.75f, kGameObjectFadeInSeconds) == Catch::Approx(0.25f));
+    CHECK(fadeInOpacity(1.0f, 1.5f, kGameObjectFadeInSeconds) == Catch::Approx(1.0f));
+    CHECK(fadeOutOpacity(0.5f, 0.75f, kGameObjectFadeSeconds) == Catch::Approx(0.25f));
+    CHECK(fadeOutOpacity(0.5f, 1.5f, kGameObjectFadeSeconds) == Catch::Approx(0.0f));
+}
