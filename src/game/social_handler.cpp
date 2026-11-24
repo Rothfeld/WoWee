@@ -5487,10 +5487,11 @@ void SocialHandler::handleSetFactionStanding(network::Packet& packet) {
     //   WotLK:   RAF bonus (float), showVisual (uint8), count
     // Treating WotLK's first float byte as showVisual shifted the entire packet,
     // producing bogus counts, faction names, standings, and chat messages.
+    bool showVisual = true;
     if (isActiveExpansion("wotlk")) {
         if (!packet.hasRemaining(9)) return;
         /*float rafBonus =*/ packet.readFloat();
-        /*uint8_t showVisual =*/ packet.readUInt8();
+        showVisual = (packet.readUInt8() != 0);
     } else if (isActiveExpansion("tbc")) {
         if (!packet.hasRemaining(8)) return;
         /*float rafBonus =*/ packet.readFloat();
@@ -5502,6 +5503,7 @@ void SocialHandler::handleSetFactionStanding(network::Packet& packet) {
     count = std::min(count, 128u);
     owner_.loadFactionNameCache();
     bool anyChanged = false;
+    bool anyRankIncreased = false;
     for (uint32_t i = 0; i < count && packet.hasRemaining(8); ++i) {
         // The packet carries Faction.dbc ReputationListID, not the faction ID.
         uint32_t repListId = packet.readUInt32();
@@ -5552,9 +5554,13 @@ void SocialHandler::handleSetFactionStanding(network::Packet& packet) {
         if (before.id != after.id) {
             const std::string label = owner_.globalString(("FACTION_STANDING_LABEL" + std::to_string(after.id)).c_str());
             owner_.systemGlobal("FACTION_STANDING_CHANGED", {label, name});
+            if (after.id > before.id) {
+                anyRankIncreased = true;
+            }
         }
     }
     if (anyChanged) owner_.fireAddonEvent("UPDATE_FACTION", {});
+    if (anyRankIncreased && showVisual) owner_.notifyReputationLevelUp();
 }
 
 void SocialHandler::handleSetFactionAtWar(network::Packet& packet) {

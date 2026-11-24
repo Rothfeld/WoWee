@@ -3057,6 +3057,15 @@ public:
     using LevelUpCallback = std::function<void(uint32_t newLevel)>;
     void setLevelUpCallback(LevelUpCallback cb) { levelUpCallback_ = std::move(cb); }
 
+    // Reputation standing tier-up callback - fires when a faction standing crosses upward into a higher rank
+    using ReputationLevelUpCallback = std::function<void()>;
+    void setReputationLevelUpCallback(ReputationLevelUpCallback cb) {
+        reputationLevelUpCallback_ = std::move(cb);
+    }
+    void notifyReputationLevelUp() {
+        if (reputationLevelUpCallback_) reputationLevelUpCallback_();
+    }
+
     // Stat deltas from the last SMSG_LEVELUP_INFO (valid until next level-up)
     struct LevelUpDeltas {
         uint32_t hp   = 0;
@@ -5922,6 +5931,7 @@ private:
     NpcFarewellCallback npcFarewellCallback_;
     NpcVendorCallback npcVendorCallback_;
     LevelUpCallback levelUpCallback_;
+    ReputationLevelUpCallback reputationLevelUpCallback_;
     LevelUpDeltas lastLevelUpDeltas_;
     std::vector<TempEnchantTimer> tempEnchantTimers_;
     std::vector<BookPage> bookPages_;            // pages collected for the current readable item

@@ -181,6 +181,7 @@ public:
 
     // ── Effect triggers ────────────────────────────────────────────────────
     void triggerLevelUpEffect(const glm::vec3& position);
+    void triggerReputationLevelUpEffect(const glm::vec3& position);
 
     // ── Mount ──────────────────────────────────────────────────────────────
     void setMounted(uint32_t mountInstId, uint32_t mountDisplayId,

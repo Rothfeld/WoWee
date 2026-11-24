@@ -660,7 +660,7 @@ void AnimationController::triggerLevelUpEffect(const glm::vec3& position) {
     auto* levelUpEffect = renderer_->getLevelUpEffect();
     if (!levelUpEffect) return;
 
-    if (!levelUpEffect->isModelLoaded()) {
+    if (!levelUpEffect->isModelLoaded(LevelUpEffect::Kind::LevelUp)) {
         auto* m2Renderer = renderer_->getM2Renderer();
         if (m2Renderer) {
             auto* assetManager = core::Application::getInstance().getAssetManager();
@@ -671,15 +671,42 @@ void AnimationController::triggerLevelUpEffect(const glm::vec3& position) {
                 auto skinData = assetManager->readFile("Spells\\LevelUp\\LevelUp00.skin");
                 LOG_INFO("LevelUpEffect: m2Data=", m2Data.size(), " skinData=", skinData.size());
                 if (!m2Data.empty()) {
-                    levelUpEffect->loadModel(m2Renderer, m2Data, skinData);
+                    levelUpEffect->loadModel(LevelUpEffect::Kind::LevelUp, m2Renderer, m2Data, skinData);
                 } else {
-                    LOG_WARNING("LevelUpEffect: failed to read Spell\\LevelUp\\LevelUp.m2");
+                    LOG_WARNING("LevelUpEffect: failed to read Spells\\LevelUp\\LevelUp.m2");
                 }
             }
         }
     }
 
-    levelUpEffect->trigger(position);
+    levelUpEffect->trigger(LevelUpEffect::Kind::LevelUp, position);
+}
+
+void AnimationController::triggerReputationLevelUpEffect(const glm::vec3& position) {
+    auto* levelUpEffect = renderer_->getLevelUpEffect();
+    if (!levelUpEffect) return;
+
+    if (!levelUpEffect->isModelLoaded(LevelUpEffect::Kind::ReputationLevelUp)) {
+        auto* m2Renderer = renderer_->getM2Renderer();
+        if (m2Renderer) {
+            auto* assetManager = core::Application::getInstance().getAssetManager();
+            if (!assetManager) {
+                LOG_WARNING("LevelUpEffect: no asset manager available for ReputationLevelUp");
+            } else {
+                // SpellVisualEffectName.dbc id=2922 ("HARDCODED Reputation") -> Spells\ReputationLevelUp.mdx
+                auto m2Data = assetManager->readFile("Spells\\ReputationLevelUp.m2");
+                auto skinData = assetManager->readFile("Spells\\ReputationLevelUp00.skin");
+                LOG_INFO("LevelUpEffect(Reputation): m2Data=", m2Data.size(), " skinData=", skinData.size());
+                if (!m2Data.empty()) {
+                    levelUpEffect->loadModel(LevelUpEffect::Kind::ReputationLevelUp, m2Renderer, m2Data, skinData);
+                } else {
+                    LOG_WARNING("LevelUpEffect: failed to read Spells\\ReputationLevelUp.m2");
+                }
+            }
+        }
+    }
+
+    levelUpEffect->trigger(LevelUpEffect::Kind::ReputationLevelUp, position);
 }
 
 // ── Mount ────────────────────────────────────────────────────────────────────

@@ -589,3 +589,86 @@ TEST_CASE("Guild bank parity: GetCoinText uses coin words, toplevel Show raises,
     s.receive(evt);
     CHECK(s.sent().of(Opcode::CMSG_GUILD_BANK_QUERY_TAB).size() == queriesBefore + 1);
 }
+
+TEST_CASE("SMSG_SET_FACTION_STANDING fires reputation level-up callback only on upward standing tier transitions",
+          "[replay][social][reputation][levelup]") {
+    auto initFactions = [](Session& s, int32_t standing14, int32_t standing15) {
+        Packet init = packetFor(Opcode::SMSG_INITIALIZE_FACTIONS);
+        init.writeUInt32(128);
+        for (uint32_t i = 0; i < 128; ++i) {
+            uint8_t flags = (i == 14 || i == 15) ? wowee::game::GameHandler::FACTION_FLAG_VISIBLE : 0;
+            int32_t standing = (i == 14) ? standing14 : (i == 15 ? standing15 : 0);
+            init.writeUInt8(flags);
+            init.writeUInt32(static_cast<uint32_t>(standing));
+        }
+        s.receive(init);
+    };
+
+    SECTION("TBC rank-up, spillover deduplication, rank-down, and same-rank gain") {
+        Session s("tbc");
+        auto& gh = s.handler();
+        wowee::game::GameHandlerTestAccess::setFaction(gh, 970, 14, "Sporeggar", 0);
+        wowee::game::GameHandlerTestAccess::setFaction(gh, 942, 15, "Cenarion Expedition", 0);
+        initFactions(s, -1500, 2900);  // Unfriendly, Neutral
+
+        int repLevelUpCount = 0;
+        gh.setReputationLevelUpCallback([&]() { ++repLevelUpCount; });
+
+        auto sendTbcStanding = [&](const std::vector<std::pair<uint32_t, int32_t>>& entries) {
+            Packet pkt = packetFor(Opcode::SMSG_SET_FACTION_STANDING);
+            pkt.writeFloat(0.0f);  // TBC RAF bonus
+            pkt.writeUInt32(static_cast<uint32_t>(entries.size()));
+            for (const auto& [repListId, standing] : entries) {
+                pkt.writeUInt32(repListId);
+                pkt.writeUInt32(static_cast<uint32_t>(standing));
+            }
+            s.receive(pkt);
+        };
+
+        // Unfriendly (-1500) -> Neutral (0): rank UP -> fires once.
+        sendTbcStanding({{14, 0}});
+        CHECK(repLevelUpCount == 1);
+
+        // Same-rank gain Neutral (0) -> Neutral (500): no tier cross -> does not fire.
+        sendTbcStanding({{14, 500}});
+        CHECK(repLevelUpCount == 1);
+
+        // Spillover packet where BOTH factions cross upward (Neutral -> Friendly): fires only once per packet.
+        sendTbcStanding({{14, 3000}, {15, 3100}});
+        CHECK(repLevelUpCount == 2);
+
+        // Rank DOWN Friendly (3000) -> Neutral (0): does not fire.
+        sendTbcStanding({{14, 0}});
+        CHECK(repLevelUpCount == 2);
+    }
+
+    SECTION("WotLK showVisual byte gates the reputation level-up callback") {
+        Session s("wotlk");
+        auto& gh = s.handler();
+        wowee::game::GameHandlerTestAccess::setFaction(gh, 970, 14, "Sporeggar", 0);
+        initFactions(s, 0, 0);
+
+        int repLevelUpCount = 0;
+        gh.setReputationLevelUpCallback([&]() { ++repLevelUpCount; });
+
+        // showVisual = 0 suppresses visual/sound callback even on Neutral -> Friendly.
+        Packet hidden = packetFor(Opcode::SMSG_SET_FACTION_STANDING);
+        hidden.writeFloat(0.0f);
+        hidden.writeUInt8(0);  // showVisual = false
+        hidden.writeUInt32(1);
+        hidden.writeUInt32(14);
+        hidden.writeUInt32(3000);
+        s.receive(hidden);
+        CHECK(repLevelUpCount == 0);
+
+        // showVisual = 1 fires callback on Friendly -> Honored.
+        Packet shown = packetFor(Opcode::SMSG_SET_FACTION_STANDING);
+        shown.writeFloat(0.0f);
+        shown.writeUInt8(1);  // showVisual = true
+        shown.writeUInt32(1);
+        shown.writeUInt32(14);
+        shown.writeUInt32(9000);
+        s.receive(shown);
+        CHECK(repLevelUpCount == 1);
+    }
+}

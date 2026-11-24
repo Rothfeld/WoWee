@@ -39,6 +39,21 @@ void AudioCallbackHandler::setupCallbacks() {
         }
     });
 
+    // Reputation standing tier-up callback - play ReputationLevelUp sound + 3D M2 effect
+    gameHandler_.setReputationLevelUpCallback([this]() {
+        const float sfxScale = audioCoordinator_ ? audioCoordinator_->getSfxVolumeScale() : 1.0f;
+        if (sfxScale > 0.0f) {
+            if (const auto* entry = audio::SoundEntryTable::instance().findByName(&assetManager_, "ReputationLevelUp")) {
+                audio::SoundEntryTable::instance().play2D(&assetManager_, entry->id, sfxScale);
+            }
+        }
+        if (renderer_) {
+            if (auto* ac = renderer_->getAnimationController()) {
+                ac->triggerReputationLevelUpEffect(renderer_->getCharacterPosition());
+            }
+        }
+    });
+
     // Achievement earned callback - show toast banner
     gameHandler_.setAchievementEarnedCallback([this](uint32_t /*achievementId*/,
                                                     const std::string& /*name*/) {
