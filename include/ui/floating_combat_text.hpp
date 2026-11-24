@@ -165,8 +165,8 @@ inline Presentation presentationFor(const game::CombatTextEntry& e) {
 /// lines on the player are reported via COMBAT_TEXT_UPDATE to Blizzard_CombatText.
 inline bool showsInWorld(game::CombatTextEntry::Type type) {
     using T = game::CombatTextEntry;
-    return type != T::ENERGIZE && type != T::POWER_DRAIN &&
-           type != T::PROC_TRIGGER && type != T::HONOR_GAIN;
+    return type != T::ENERGIZE && type != T::PERIODIC_ENERGIZE &&
+           type != T::POWER_DRAIN && type != T::PROC_TRIGGER && type != T::HONOR_GAIN;
 }
 
 /// Whether build 8606 draws this specific entry in 3D world space.

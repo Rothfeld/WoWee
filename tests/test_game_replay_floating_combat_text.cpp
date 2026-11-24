@@ -279,20 +279,26 @@ TEST_CASE("Blizzard_CombatText receives spell power gains without melee swing or
     CHECK(msgs[0].g == Catch::Approx(0.1));
     CHECK(msgs[0].b == Catch::Approx(1.0));
 
-    // 3. SMSG_PERIODICAURALOG (PERIODIC_ENERGIZE = 24, Bloodrage tick +1 Rage) fires +1 Rage.
+    // 3. SMSG_PERIODICAURALOG (PERIODIC_ENERGIZE = 24, e.g. Bloodrage tick or Vaelastrasz
+    // Essence of the Red 23513 ticking +500 Mana / +50 Energy / +20 Rage) must NOT fire
+    // COMBAT_TEXT_UPDATE in TBC 2.4.3 (verified on Pair 8; only instant SMSG_SPELLENERGIZELOG does).
     h.clearRecorded();
     Packet periodicEnergize(wireOpcode(Opcode::SMSG_PERIODICAURALOG));
     periodicEnergize.writePackedGuid(Session::kPlayerGuid);
     periodicEnergize.writePackedGuid(Session::kPlayerGuid);
-    periodicEnergize.writeUInt32(29131); // Bloodrage periodic aura
-    periodicEnergize.writeUInt32(1);     // count
+    periodicEnergize.writeUInt32(23513); // Essence of the Red
+    periodicEnergize.writeUInt32(3);     // count
+    periodicEnergize.writeUInt32(24);    // SPELL_AURA_PERIODIC_ENERGIZE
+    periodicEnergize.writeUInt32(0);     // POWER_MANA
+    periodicEnergize.writeUInt32(500);
+    periodicEnergize.writeUInt32(24);    // SPELL_AURA_PERIODIC_ENERGIZE
+    periodicEnergize.writeUInt32(3);     // POWER_ENERGY
+    periodicEnergize.writeUInt32(50);
     periodicEnergize.writeUInt32(24);    // SPELL_AURA_PERIODIC_ENERGIZE
     periodicEnergize.writeUInt32(1);     // POWER_RAGE
-    periodicEnergize.writeUInt32(10);    // 1 Rage in tenths
+    periodicEnergize.writeUInt32(200);   // 20 Rage in tenths
     h.session.receive(periodicEnergize);
-    msgs = h.recorded();
-    REQUIRE(msgs.size() == 1);
-    CHECK(msgs[0].text == "+1 Rage");
+    CHECK(h.recorded().empty());
 
     // 4. Natural UNIT_FIELD_POWER1 mana regeneration tick fires UNIT_MANA (not UNIT_POWER)
     // and does NOT emit +Mana FCT.

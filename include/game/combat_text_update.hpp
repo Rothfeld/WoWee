@@ -40,7 +40,8 @@ struct CombatTextUpdate {
 inline std::optional<CombatTextUpdate> combatTextUpdateFor(CombatTextEntry::Type type, int32_t amount,
                                                            bool fromSpell, uint8_t powerType,
                                                            std::string_view casterName,
-                                                           int32_t precedingDamage) {
+                                                           int32_t precedingDamage,
+                                                           bool isWotlk = false) {
     using T = CombatTextEntry;
     const std::string spell = fromSpell ? "SPELL_" : "";
     const std::string value = std::to_string(amount);
@@ -81,6 +82,15 @@ inline std::optional<CombatTextUpdate> combatTextUpdateFor(CombatTextEntry::Type
             static constexpr const char* kPower[] = {"MANA", "RAGE", "FOCUS", "ENERGY"};
             if (amount <= 0 || powerType > 3) return std::nullopt;
             return CombatTextUpdate{kPower[powerType], value, {}};
+        }
+        case T::PERIODIC_ENERGIZE: {
+            // Empirical 2.4.3 (pair 8, Essence of the Red 23513): SMSG_PERIODICAURALOG
+            // auraType 21/24 never fires COMBAT_TEXT_UPDATE in Classic/TBC (only instant
+            // SMSG_SPELLENERGIZELOG gains do; GlobalStrings OPTION_TOOLTIP_COMBAT_TEXT_SHOW_MANA).
+            // WotLK 3.x introduced PERIODIC_ENERGIZE (fctPeriodicEnergyGains).
+            if (!isWotlk || amount <= 0 || powerType > 3) return std::nullopt;
+            static constexpr const char* kPower[] = {"MANA", "RAGE", "FOCUS", "ENERGY"};
+            return CombatTextUpdate{"PERIODIC_ENERGIZE", value, kPower[powerType]};
         }
         case T::HONOR_GAIN:
             return CombatTextUpdate{"HONOR_GAINED", value, {}};

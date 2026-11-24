@@ -244,7 +244,8 @@ inline ClassicCombatMessage buildClassicCombatMessage(const ClassicCombatInput& 
             if (!dstMe) m.args.push_back(in.dstName);
             return m;
         }
-        case T::ENERGIZE: {
+        case T::ENERGIZE:
+        case T::PERIODIC_ENERGIZE: {
             // "Bob gains 5 Mana from Mana Spring." is SELFOTHER: the "your"
             // is left unsaid, and the line is the player's own buff event.
             m.event = byActor("SPELL", in.src, in.dst, "BUFF");

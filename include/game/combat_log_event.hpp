@@ -149,7 +149,8 @@ inline std::vector<std::string> buildCombatLogEvent(const CombatLogEventInput& i
             suffix = damageSuffix(false, false, false);
             break;
         case T::ENERGIZE:
-            event = "SPELL_ENERGIZE";
+        case T::PERIODIC_ENERGIZE:
+            event = (in.type == T::PERIODIC_ENERGIZE) ? "SPELL_PERIODIC_ENERGIZE" : "SPELL_ENERGIZE";
             prefix = spellPrefix();
             suffix = {amount, std::to_string(in.powerType)};
             break;

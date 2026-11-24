@@ -391,7 +391,7 @@ TEST_CASE("energize and periodic power logs scale rage and runic power from tent
 
         const auto& texts = s.handler().getCombatText();
         REQUIRE(texts.size() == 1);
-        CHECK(texts[0].type == CombatTextEntry::ENERGIZE);
+        CHECK(texts[0].type == CombatTextEntry::PERIODIC_ENERGIZE);
         CHECK(texts[0].powerType == 1);
         CHECK(texts[0].amount == 2);
     }

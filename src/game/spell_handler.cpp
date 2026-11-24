@@ -7205,7 +7205,7 @@ void SpellHandler::handlePeriodicAuraLog(network::Packet& packet) {
             uint32_t rawAmount = packet.readUInt32();
             const int32_t amount = displayPowerAmount(periodicPowerType, static_cast<int32_t>(rawAmount));
             if ((isPlayerVictim || isPlayerCaster) && amount > 0)
-                owner_.addCombatText(CombatTextEntry::ENERGIZE, amount,
+                owner_.addCombatText(CombatTextEntry::PERIODIC_ENERGIZE, amount,
                               spellId, isPlayerCaster, periodicPowerType, casterGuid, victimGuid);
         } else if (auraType == 64) {
             // PERIODIC_MANA_LEECH: miscValue(powerType) + amount + float multiplier

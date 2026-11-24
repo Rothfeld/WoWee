@@ -521,7 +521,8 @@ void CombatHandler::addCombatText(CombatTextEntry::Type type, int32_t amount, ui
                 if (caster.empty()) caster = "Unknown";
             }
             const auto update = combatTextUpdateFor(type, amount, isSpellAbility, powerType, caster,
-                                                    reduction ? incomingHitDamage_ : -1);
+                                                    reduction ? incomingHitDamage_ : -1,
+                                                    isActiveExpansion("wotlk"));
             if (!reduction) {
                 const bool damage = type == T::MELEE_DAMAGE || type == T::GLANCING || type == T::CRUSHING ||
                                     type == T::CRIT_DAMAGE || type == T::SPELL_DAMAGE || type == T::PERIODIC_DAMAGE;

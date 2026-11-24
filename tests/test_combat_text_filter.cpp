@@ -104,6 +104,14 @@ TEST_CASE("COMBAT_TEXT_UPDATE carries build 8606's message types and data", "[co
     REQUIRE(energy);
     CHECK(energy->type == "ENERGY");
     CHECK(energy->arg2 == "100");
+    // Periodic energize (Essence of the Red, Mana Spring, Bloodrage ticks) is suppressed
+    // in Classic/TBC and emits PERIODIC_ENERGIZE in WotLK.
+    CHECK_FALSE(combatTextUpdateFor(CombatTextEntry::PERIODIC_ENERGIZE, 500, true, 0, "Vael", -1, false).has_value());
+    auto wotlkPeriodic = combatTextUpdateFor(CombatTextEntry::PERIODIC_ENERGIZE, 500, true, 0, "Vael", -1, true);
+    REQUIRE(wotlkPeriodic);
+    CHECK(wotlkPeriodic->type == "PERIODIC_ENERGIZE");
+    CHECK(wotlkPeriodic->arg2 == "500");
+    CHECK(wotlkPeriodic->arg3 == "MANA");
     CHECK(combatTextUpdateFor(CombatTextEntry::MISS, 0, false, 0, "", -1)->type == "MISS");
     auto absorbed = combatTextUpdateFor(CombatTextEntry::ABSORB, 14, false, 0, "", -1);
     CHECK(absorbed->type == "ABSORB");
