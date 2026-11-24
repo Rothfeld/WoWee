@@ -84,7 +84,10 @@ TEST_CASE("Inventory and mail results name their GlobalStrings line", "[tbc][inv
     // those items." on the original.
     CHECK(std::string_view(inventoryResultGlobalName(17)) == "ERR_ITEM_MAX_COUNT");
     CHECK(std::string_view(inventoryResultGlobalName(1)) == "ERR_CANT_EQUIP_LEVEL_I");
+    CHECK(std::string_view(inventoryResultGlobalName(2)) == "ERR_CANT_EQUIP_SKILL");
+    CHECK(std::string_view(inventoryResultGlobalName(8)) == "ERR_PROFICIENCY_NEEDED");
     CHECK(std::string_view(inventoryResultGlobalName(14)) == "ERR_2HSKILLNOTFOUND");
+    CHECK(std::string_view(inventoryResultGlobalName(23)) == "ERR_ITEM_NOT_FOUND");
     CHECK(std::string_view(inventoryResultGlobalName(80)) == "ERR_CANT_EQUIP_RATING");
     CHECK(inventoryResultGlobalName(0) == nullptr);
     CHECK(inventoryResultGlobalName(59) == nullptr);
@@ -95,4 +98,34 @@ TEST_CASE("Inventory and mail results name their GlobalStrings line", "[tbc][inv
     CHECK(mailResultGlobalName(5) == nullptr);
     CHECK(std::string_view(formatGlobalString("You must reach level %d to use that item.", {"70"})) ==
           "You must reach level 70 to use that item.");
+}
+
+TEST_CASE("useItemById auto-equips unequipped equippable items and uses equipped ones", "[tbc][inventory]") {
+    // Strong Fishing Pole: invType=17 (2H weapon), itemClass=2 (weapon).
+    CHECK(isEquippableForUse(17, 2));
+    // Consumable / Hearthstone: invType=0.
+    CHECK_FALSE(isEquippableForUse(0, 0));
+    // Quest item carrying a non-zero invType must still be used, never equipped.
+    CHECK_FALSE(isEquippableForUse(17, 12));
+
+    // Unequipped Strong Fishing Pole in backpack -> CMSG_AUTOEQUIP_ITEM (so server
+    // equips it or returns EQUIP_ERR_CANT_EQUIP_SKILL instead of EQUIP_ERR_ITEM_NOT_FOUND).
+    CHECK(resolveItemByIdAction(/*equippable=*/true, /*inEquipped=*/false, /*inBag=*/true, /*inKeyring=*/false) ==
+          ItemByIdAction::AUTO_EQUIP_BAG);
+
+    // Already-equipped trinket/weapon (even with a second copy in bag) -> CMSG_USE_ITEM on worn slot.
+    CHECK(resolveItemByIdAction(/*equippable=*/true, /*inEquipped=*/true, /*inBag=*/true, /*inKeyring=*/false) ==
+          ItemByIdAction::USE_EQUIPPED);
+    CHECK(resolveItemByIdAction(/*equippable=*/true, /*inEquipped=*/true, /*inBag=*/false, /*inKeyring=*/false) ==
+          ItemByIdAction::USE_EQUIPPED);
+
+    // Non-equippable consumable in bag -> CMSG_USE_ITEM from bag.
+    CHECK(resolveItemByIdAction(/*equippable=*/false, /*inEquipped=*/false, /*inBag=*/true, /*inKeyring=*/false) ==
+          ItemByIdAction::USE_BAG);
+    // Key in keyring -> CMSG_USE_ITEM from keyring.
+    CHECK(resolveItemByIdAction(/*equippable=*/false, /*inEquipped=*/false, /*inBag=*/false, /*inKeyring=*/true) ==
+          ItemByIdAction::USE_KEYRING);
+    // Missing item -> NONE.
+    CHECK(resolveItemByIdAction(/*equippable=*/true, /*inEquipped=*/false, /*inBag=*/false, /*inKeyring=*/false) ==
+          ItemByIdAction::NONE);
 }

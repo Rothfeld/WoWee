@@ -2914,52 +2914,86 @@ void InventoryHandler::unequipToBackpack(EquipSlot equipSlot) {
 void InventoryHandler::useItemById(uint32_t itemId, uint64_t unitTarget) {
     if (itemId == 0) return;
     LOG_DEBUG("useItemById: searching for itemId=", itemId);
-    for (int i = 0; i < owner_.inventoryRef().getBackpackSize(); i++) {
-        const auto& slot = owner_.inventoryRef().getBackpackSlot(i);
-        if (!slot.empty() && slot.item.itemId == itemId) {
-            LOG_DEBUG("useItemById: found itemId=", itemId, " at backpack slot ", i);
-            useItemBySlot(i, false, unitTarget);
-            return;
-        }
-    }
-    for (int bag = 0; bag < owner_.inventoryRef().NUM_BAG_SLOTS; bag++) {
-        int bagSize = owner_.inventoryRef().getBagSize(bag);
-        for (int slot = 0; slot < bagSize; slot++) {
-            const auto& bagSlot = owner_.inventoryRef().getBagSlot(bag, slot);
-            if (!bagSlot.empty() && bagSlot.item.itemId == itemId) {
-                LOG_DEBUG("useItemById: found itemId=", itemId, " in bag ", bag, " slot ", slot);
-                useItemInBag(bag, slot, false, unitTarget);
-                return;
-            }
-        }
-    }
-    // The keyring and the worn slots, which this searched neither of.
-    //
-    // A key lives nowhere else, so a macro or an action-bar slot naming one
-    // could never find it. The worn slots are worse than an omission: /use
-    // with an equipment slot number reads that slot's item id and hands it
-    // straight to this, so the one call site written for equipped items was
-    // the one that could not work at all.
-    //
-    // Last, so nothing that already resolved changes where it resolves to. A
-    // trinket carried in a bag and a second one worn keep answering the bag.
-    for (int i = 0; i < owner_.inventoryRef().getKeyringSize(); i++) {
-        const auto& slot = owner_.inventoryRef().getKeyringSlot(i);
-        if (!slot.empty() && slot.item.itemId == itemId) {
-            LOG_DEBUG("useItemById: found itemId=", itemId, " in keyring slot ", i);
-            useKeyringItem(i, false, unitTarget);
-            return;
-        }
-    }
+
+    const auto* info = owner_.getItemInfo(itemId);
+    const bool equippable = info && info->valid &&
+                            isEquippableForUse(info->inventoryType, info->itemClass);
+
+    int equippedSlot = -1;
     for (int i = 0; i < Inventory::NUM_EQUIP_SLOTS; i++) {
         const auto& slot =
             owner_.inventoryRef().getEquipSlot(static_cast<EquipSlot>(i));
         if (!slot.empty() && slot.item.itemId == itemId) {
-            LOG_DEBUG("useItemById: found itemId=", itemId, " equipped in slot ", i);
-            useEquippedItem(i, false, unitTarget);
-            return;
+            equippedSlot = i;
+            break;
         }
     }
+
+    int backpackSlot = -1;
+    int bagIdx = -1;
+    int bagSlotIdx = -1;
+    for (int i = 0; i < owner_.inventoryRef().getBackpackSize(); i++) {
+        const auto& slot = owner_.inventoryRef().getBackpackSlot(i);
+        if (!slot.empty() && slot.item.itemId == itemId) {
+            backpackSlot = i;
+            break;
+        }
+    }
+    if (backpackSlot < 0) {
+        for (int bag = 0; bag < owner_.inventoryRef().NUM_BAG_SLOTS && bagIdx < 0; bag++) {
+            int bagSize = owner_.inventoryRef().getBagSize(bag);
+            for (int slot = 0; slot < bagSize; slot++) {
+                const auto& bagSlot = owner_.inventoryRef().getBagSlot(bag, slot);
+                if (!bagSlot.empty() && bagSlot.item.itemId == itemId) {
+                    bagIdx = bag;
+                    bagSlotIdx = slot;
+                    break;
+                }
+            }
+        }
+    }
+
+    int keyringSlot = -1;
+    for (int i = 0; i < owner_.inventoryRef().getKeyringSize(); i++) {
+        const auto& slot = owner_.inventoryRef().getKeyringSlot(i);
+        if (!slot.empty() && slot.item.itemId == itemId) {
+            keyringSlot = i;
+            break;
+        }
+    }
+
+    const bool inBag = (backpackSlot >= 0 || bagIdx >= 0);
+    switch (resolveItemByIdAction(equippable, equippedSlot >= 0, inBag, keyringSlot >= 0)) {
+        case ItemByIdAction::USE_EQUIPPED:
+            LOG_DEBUG("useItemById: found itemId=", itemId, " equipped in slot ", equippedSlot);
+            useEquippedItem(equippedSlot, false, unitTarget);
+            return;
+        case ItemByIdAction::AUTO_EQUIP_BAG:
+            if (backpackSlot >= 0) {
+                LOG_DEBUG("useItemById: auto-equipping itemId=", itemId, " from backpack slot ", backpackSlot);
+                autoEquipItemBySlot(backpackSlot);
+            } else {
+                LOG_DEBUG("useItemById: auto-equipping itemId=", itemId, " from bag ", bagIdx, " slot ", bagSlotIdx);
+                autoEquipItemInBag(bagIdx, bagSlotIdx);
+            }
+            return;
+        case ItemByIdAction::USE_BAG:
+            if (backpackSlot >= 0) {
+                LOG_DEBUG("useItemById: found itemId=", itemId, " at backpack slot ", backpackSlot);
+                useItemBySlot(backpackSlot, false, unitTarget);
+            } else {
+                LOG_DEBUG("useItemById: found itemId=", itemId, " in bag ", bagIdx, " slot ", bagSlotIdx);
+                useItemInBag(bagIdx, bagSlotIdx, false, unitTarget);
+            }
+            return;
+        case ItemByIdAction::USE_KEYRING:
+            LOG_DEBUG("useItemById: found itemId=", itemId, " in keyring slot ", keyringSlot);
+            useKeyringItem(keyringSlot, false, unitTarget);
+            return;
+        case ItemByIdAction::NONE:
+            break;
+    }
+
     LOG_WARNING("useItemById: itemId=", itemId,
                 " not found in the bags, the keyring or the worn slots");
 }

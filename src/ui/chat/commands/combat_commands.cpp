@@ -332,7 +332,7 @@ public:
             std::string nameLow = info->name;
             for (char& c : nameLow) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
             if (nameLow == useArgLower) {
-                ctx.gameHandler.useItemBySlot(s, true);
+                ctx.gameHandler.useItemById(slot.item.itemId);
                 found = true;
             }
         }
@@ -346,7 +346,7 @@ public:
                 std::string nameLow = info->name;
                 for (char& c : nameLow) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
                 if (nameLow == useArgLower) {
-                    ctx.gameHandler.useItemInBag(b, s, true);
+                    ctx.gameHandler.useItemById(slot.item.itemId);
                     found = true;
                 }
             }

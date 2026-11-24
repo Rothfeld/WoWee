@@ -127,4 +127,39 @@ inline const char* mailResultGlobalName(uint32_t result) {
     }
 }
 
+// How activating an item by ID (action bar UseAction, UseItemByName, /use)
+// dispatches across worn slots, bags, and keyring.
+// Equippable non-quest items are used (CMSG_USE_ITEM) when already worn and
+// auto-equipped (CMSG_AUTOEQUIP_ITEM) when only carried in a bag; sending
+// CMSG_USE_ITEM for an unequipped equippable item causes the server to reply
+// EQUIP_ERR_ITEM_NOT_FOUND (23) instead of equipping or reporting equip errors
+// such as EQUIP_ERR_CANT_EQUIP_SKILL (2).
+enum class ItemByIdAction : uint8_t {
+    NONE,
+    USE_EQUIPPED,
+    AUTO_EQUIP_BAG,
+    USE_BAG,
+    USE_KEYRING,
+};
+
+inline bool isEquippableForUse(uint32_t inventoryType, uint32_t itemClass) {
+    constexpr uint32_t kItemClassQuest = 12;
+    return inventoryType != 0 && itemClass != kItemClassQuest;
+}
+
+inline ItemByIdAction resolveItemByIdAction(bool equippable,
+                                            bool inEquipped,
+                                            bool inBag,
+                                            bool inKeyring) {
+    if (equippable) {
+        if (inEquipped) return ItemByIdAction::USE_EQUIPPED;
+        if (inBag) return ItemByIdAction::AUTO_EQUIP_BAG;
+        return ItemByIdAction::NONE;
+    }
+    if (inBag) return ItemByIdAction::USE_BAG;
+    if (inKeyring) return ItemByIdAction::USE_KEYRING;
+    if (inEquipped) return ItemByIdAction::USE_EQUIPPED;
+    return ItemByIdAction::NONE;
+}
+
 } // namespace wowee::game
