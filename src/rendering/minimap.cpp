@@ -106,9 +106,9 @@ bool Minimap::initialize(VkContext* ctx, VkDescriptorSetLayout /*perFrameLayout*
         return false;
     }
 
-    // --- No-data fallback texture (dark blue-gray, 1x1) ---
+    // --- No-data fallback texture (solid black, matching Native TBC 2.4.3 outside-WMO/unmapped dungeon mask) ---
     noDataTexture = std::make_unique<VkTexture>();
-    uint8_t darkPixel[4] = { 12, 20, 30, 255 };
+    uint8_t darkPixel[4] = { 0, 0, 0, 255 };
     noDataTexture->upload(*vkCtx, darkPixel, 1, 1, VK_FORMAT_R8G8B8A8_UNORM, false);
     noDataTexture->createSampler(device, VK_FILTER_NEAREST, VK_FILTER_NEAREST,
                                  VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, 1.0f);
@@ -581,8 +581,8 @@ void Minimap::compositePass(VkCommandBuffer cmd, const glm::vec3& centerWorldPos
     // Update tile descriptor sets
     updateTileDescriptors(frameIdx, curTileX, curTileY);
 
-    // Begin off-screen render pass
-    VkClearColorValue clearColor = {{ 0.05f, 0.08f, 0.12f, 1.0f }};
+    // Begin off-screen render pass (solid black outside mapped tiles, matching Native 2.4.3)
+    VkClearColorValue clearColor = {{ 0.0f, 0.0f, 0.0f, 1.0f }};
     compositeTarget->beginPass(cmd, clearColor);
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, tilePipeline);

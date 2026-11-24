@@ -36,11 +36,8 @@ std::string trimTrailingWhitespace(std::string s) {
 
 void ChatBubbleManager::addBubble(uint64_t senderGuid, const std::string& message,
                                   game::ChatType chatType) {
-    const bool isYell = (chatType == game::ChatType::YELL ||
-                         chatType == game::ChatType::MONSTER_YELL);
-    float duration = 8.0f + static_cast<float>(message.size()) * 0.06f;
-    if (isYell) duration += 2.0f;
-    if (duration > 15.0f) duration = 15.0f;
+    float duration = 5.0f + static_cast<float>(message.size()) * 0.05f;
+    if (duration > 10.0f) duration = 10.0f;
 
     // Replace existing bubble for same sender
     for (auto& b : bubbles_) {
@@ -113,9 +110,10 @@ void ChatBubbleManager::render(game::GameHandler& gameHandler, const UIServices&
             auto& app = core::Application::getInstance();
             auto* spawner = app.getEntitySpawner();
             auto* characters = renderer->getCharacterRenderer();
-            const uint32_t instanceId = bubble.senderGuid == gameHandler.getPlayerGuid()
-                ? renderer->getCharacterInstanceId()
-                : (spawner ? spawner->characterInstanceIdForGuid(bubble.senderGuid) : 0);
+            uint32_t instanceId = spawner ? spawner->drawnInstanceIdForGuid(bubble.senderGuid) : 0;
+            if (instanceId == 0 && bubble.senderGuid == gameHandler.getPlayerGuid()) {
+                instanceId = renderer->getCharacterInstanceId();
+            }
             const bool mounted = entity->isUnit() &&
                 static_cast<const game::Unit&>(*entity).getMountDisplayId() != 0;
             if (!characters || instanceId == 0 ||
@@ -147,10 +145,10 @@ void ChatBubbleManager::render(game::GameHandler& gameHandler, const UIServices&
         if (screenX < -200.0f || screenX > screenW + 200.0f ||
             screenY < -100.0f || screenY > screenH + 100.0f) continue;
 
-        // Fade alpha over last 2 seconds
+        // Fade alpha over last 1 second
         float alpha = 1.0f;
-        if (bubble.timeRemaining < 2.0f) {
-            alpha = bubble.timeRemaining / 2.0f;
+        if (bubble.timeRemaining < 1.0f) {
+            alpha = bubble.timeRemaining;
         }
 
         // Into the background draw list, which is where the interface is

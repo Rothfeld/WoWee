@@ -1634,6 +1634,12 @@ std::vector<rendering::UnitShadowBlob> EntitySpawner::collectUnitShadows() const
         float yaw = 0.0f;
         if (!characters->getInstancePosition(ground, blob.position) || !characters->getInstanceYaw(ground, yaw))
             continue;
+        if (mountInstanceIdForGuid(guid) == 0) {
+            float footZ = 0.0f;
+            if (characters->getInstanceFootZ(drawn, footZ) && footZ > blob.position.z + 0.5f) {
+                blob.position.z = footZ;
+            }
+        }
         blob.axisX = {std::cos(yaw), std::sin(yaw)};
         blob.halfExtent = glm::vec2(box.max - box.min) * (0.5f * scale);
         blob.reach = (box.max.z - box.min.z) * scale * rendering::kUnitShadowReachPerBoxHeight;

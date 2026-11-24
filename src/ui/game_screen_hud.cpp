@@ -1097,8 +1097,10 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         auto* spawner = app.getEntitySpawner();
         auto* characters = appRenderer->getCharacterRenderer();
         if (!spawner || !characters) continue;
-        const auto instanceId = guid == playerGuid ? appRenderer->getCharacterInstanceId()
-                                                   : spawner->characterInstanceIdForGuid(guid);
+        uint32_t instanceId = spawner->drawnInstanceIdForGuid(guid);
+        if (instanceId == 0 && guid == playerGuid) {
+            instanceId = appRenderer->getCharacterInstanceId();
+        }
         if (!characters->getInstanceNamePosition(instanceId, unit->getMountDisplayId() != 0, renderPos))
             continue; // The model has not spawned yet.
         // Nor over a unit hidden in a room the camera does not see.
@@ -1799,7 +1801,19 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
     const uint64_t objectTooltipGuid = frameXmlOwnsMouse() || ImGui::GetIO().WantCaptureMouse
         || mouseoverGuid ? 0 : worldObjectHoverGuid_;
     const uint64_t tooltipGuid = mouseoverGuid ? mouseoverGuid : objectTooltipGuid;
-    if (services_.addonManager && worldTooltipGuid_ != tooltipGuid) {
+    bool mouseoverCorpse = false;
+    if (mouseoverGuid != 0) {
+        if (const auto hovered = std::dynamic_pointer_cast<game::Unit>(
+                gameHandler.getEntityManager().getEntity(mouseoverGuid))) {
+            mouseoverCorpse = hovered->getType() != game::ObjectType::PLAYER &&
+                              game::isUnitCorpseState(hovered->getHealth(),
+                                                      hovered->getMaxHealth(),
+                                                      hovered->getDynamicFlags());
+        }
+    }
+    if (services_.addonManager &&
+        (worldTooltipGuid_ != tooltipGuid ||
+         (mouseoverGuid != 0 && worldTooltipCorpse_ != mouseoverCorpse))) {
         auto* lua = services_.addonManager->getLuaEngine();
         std::string script;
         // A key's name still on its way: redraw once it is cached.
@@ -1904,6 +1918,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             LOG_ERROR("World tooltip update failed: ", lua->lastError());
         } else if (!keyNamePending) {
             worldTooltipGuid_ = tooltipGuid;
+            worldTooltipCorpse_ = mouseoverCorpse;
         }
     }
     if (auto* characters = appRenderer->getCharacterRenderer()) {
