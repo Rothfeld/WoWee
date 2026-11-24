@@ -365,10 +365,12 @@ TEST_CASE("Feign Death is not a death", "[replay]") {
     s.receive(UpdateObject().values(Session::kPlayerGuid,
                                     {{UF::UNIT_FIELD_FLAGS_2, 0x1}, {UF::UNIT_DYNAMIC_FLAGS, 0x20}}));
     CHECK_FALSE(s.handler().isPlayerDead());
+    CHECK(s.handler().isPlayerFeigningDeath());
 
     s.receive(UpdateObject().values(Session::kPlayerGuid,
                                     {{UF::UNIT_FIELD_FLAGS_2, 0}, {UF::UNIT_DYNAMIC_FLAGS, 0}}));
     CHECK_FALSE(s.handler().isPlayerDead());
+    CHECK_FALSE(s.handler().isPlayerFeigningDeath());
     CHECK(std::count(events.begin(), events.end(), "PLAYER_DEAD") == 0);
     CHECK(std::count(events.begin(), events.end(), "PLAYER_ALIVE") == 0);
 }
@@ -379,6 +381,7 @@ TEST_CASE("the dead flag at zero health is still a death", "[replay]") {
     s.receive(UpdateObject().values(Session::kPlayerGuid,
                                     {{UF::UNIT_FIELD_HEALTH, 0}, {UF::UNIT_DYNAMIC_FLAGS, 0x20}}));
     CHECK(s.handler().isPlayerDead());
+    CHECK_FALSE(s.handler().isPlayerFeigningDeath());
 }
 
 // vmangos's Unit::SetFeignDeath sets the dead flag alone.
@@ -387,6 +390,7 @@ TEST_CASE("the dead flag at full health is Feign Death without its flags2 bit", 
     s.spawnPlayer({{UF::UNIT_FIELD_HEALTH, 300}, {UF::UNIT_FIELD_MAXHEALTH, 300}});
     s.receive(UpdateObject().values(Session::kPlayerGuid, {{UF::UNIT_DYNAMIC_FLAGS, 0x20}}));
     CHECK_FALSE(s.handler().isPlayerDead());
+    CHECK(s.handler().isPlayerFeigningDeath());
 }
 
 TEST_CASE("killed while feigning stays dead when the feign ends", "[replay]") {
@@ -397,10 +401,13 @@ TEST_CASE("killed while feigning stays dead when the feign ends", "[replay]") {
     s.spawnPlayer({{UF::UNIT_FIELD_HEALTH, 300}, {UF::UNIT_FIELD_MAXHEALTH, 300}});
     s.receive(UpdateObject().values(Session::kPlayerGuid,
                                     {{UF::UNIT_FIELD_FLAGS_2, 0x1}, {UF::UNIT_DYNAMIC_FLAGS, 0x20}}));
+    CHECK(s.handler().isPlayerFeigningDeath());
     s.receive(UpdateObject().values(Session::kPlayerGuid, {{UF::UNIT_FIELD_HEALTH, 0}}));
+    CHECK_FALSE(s.handler().isPlayerFeigningDeath());
     s.receive(UpdateObject().values(Session::kPlayerGuid,
                                     {{UF::UNIT_FIELD_FLAGS_2, 0}, {UF::UNIT_DYNAMIC_FLAGS, 0}}));
     CHECK(s.handler().isPlayerDead());
+    CHECK_FALSE(s.handler().isPlayerFeigningDeath());
     CHECK(std::count(events.begin(), events.end(), "PLAYER_ALIVE") == 0);
 }
 

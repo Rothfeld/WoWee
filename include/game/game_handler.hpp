@@ -2143,6 +2143,7 @@ public:
 
     // Player death state
     bool isPlayerDead() const { return playerDead_; }
+    bool isPlayerFeigningDeath() const;
     bool isPlayerGhost() const { return releasedSpirit_; }
     /// True when PLAYER_FIELD_BYTES2 byte 1 carries PLAYER_FIELD_BYTE2_INVISIBILITY_GLOW (0x40),
     /// set by SPELL_AURA_MOD_INVISIBILITY (Mage Invisibility 32612, Lesser Invisibility 11392, etc.).

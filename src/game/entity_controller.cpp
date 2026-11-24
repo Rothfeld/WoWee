@@ -1327,6 +1327,7 @@ static bool isFeigningDeath(const Entity& entity, const Unit& unit) {
 // Classic WoW does not send SMSG_DEATH_RELEASE_LOC, so this cached position
 // is the primary source for canReclaimCorpse().
 void EntityController::markPlayerDead(const char* source) {
+    playerFeigningDeath_ = false;
     owner_.playerDeadRef() = true;
     owner_.releasedSpiritRef() = false;
     // owner_.movementInfoRef() is canonical (x=north, y=west); corpseX_/Y_ are
@@ -1551,6 +1552,7 @@ EntityController::UnitFieldUpdateResult EntityController::applyUnitFieldsOnUpdat
                 bool nowDead = (val & UNIT_DYNFLAG_DEAD) != 0;
                 if (!wasDead && nowDead && isFeigningDeath(*entity, *unit)) {
                     playerFeigningDeath_ = true;
+                    owner_.stopAutoAttack();
                 } else if (wasDead && !nowDead && playerFeigningDeath_) {
                     playerFeigningDeath_ = false;
                 } else if (!wasDead && nowDead) {

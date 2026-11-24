@@ -1204,7 +1204,8 @@ void AnimationController::updateCharacterAnimation() {
     auto* cameraController = renderer_->getCameraController();
     uint32_t characterInstanceId = renderer_->getCharacterInstanceId();
     const auto* handler = core::Application::getInstance().getGameHandler();
-    const bool dead = handler && handler->isPlayerDead() && !handler->isPlayerGhost();
+    const bool feigningDeath = handler && handler->isPlayerFeigningDeath();
+    const bool dead = (handler && handler->isPlayerDead() && !handler->isPlayerGhost()) || feigningDeath;
 
     uint32_t drawnInstanceId = characterInstanceId;
     if (handler && handler->getPlayerGuid() != 0) {

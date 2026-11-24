@@ -30,6 +30,7 @@ public:
     // --- Entity Manager access ---
     EntityManager& getEntityManager() { return entityManager; }
     [[nodiscard]] const EntityManager& getEntityManager() const { return entityManager; }
+    [[nodiscard]] bool isPlayerFeigningDeath() const { return playerFeigningDeath_; }
 
     // --- Name / info cache queries ---
     void queryPlayerName(uint64_t guid);

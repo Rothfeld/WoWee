@@ -4517,6 +4517,10 @@ uint64_t playerGuidField(const GameHandler& gh, UF field) {
 }
 } // namespace
 
+bool GameHandler::isPlayerFeigningDeath() const {
+    return entityController_ && entityController_->isPlayerFeigningDeath();
+}
+
 uint64_t GameHandler::getFarsightGuid() const { return playerGuidField(*this, UF::PLAYER_FARSIGHT); }
 
 uint32_t GameHandler::getPossessSpellId() const {
