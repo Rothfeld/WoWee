@@ -49,6 +49,7 @@ public:
     void offerQuestFromItem(uint64_t itemGuid, uint32_t questId);
 
     [[nodiscard]] bool isGossipWindowOpen() const { return gossipWindowOpen_; }
+    [[nodiscard]] bool isQuestGreetingOpen() const { return questGreetingOpen_; }
     [[nodiscard]] const GossipMessageData& getCurrentGossip() const { return currentGossip_; }
     [[nodiscard]] const std::string& getNpcText(uint32_t textId) const;
     /// What a quest giver says over its list of quests, from
@@ -311,6 +312,8 @@ public:
         // 2.4.3 enters the world with nothing selected (the log then picks its
         // first quest) but keeps the collapsed headers for the session.
         selectedQuestId_ = 0;
+        gossipWindowOpen_ = false;
+        gossipOptionPending_ = false;
         gossipShowPendingTextId_ = 0;
     }
 
@@ -356,6 +359,7 @@ private:
     // --- State ---
     // Gossip
     bool gossipWindowOpen_ = false;
+    bool gossipOptionPending_ = false;
     uint32_t gossipShowPendingTextId_ = 0;
     GossipMessageData currentGossip_;
     std::string questGreeting_;

@@ -107,6 +107,9 @@ struct GameHandlerTestAccess {
     static void fireBagUpdates(GameHandler& gh) {
         if (gh.inventoryHandler_) gh.inventoryHandler_->fireBagUpdates();
     }
+    static void closeDistantNpcWindows(GameHandler& gh) {
+        gh.closeDistantNpcWindows();
+    }
     static void setTaxiGraph(GameHandler& gh,
                              std::unordered_map<uint32_t, MovementHandler::TaxiNode> nodes,
                              std::vector<MovementHandler::TaxiPathEdge> edges) {

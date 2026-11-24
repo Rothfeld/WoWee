@@ -1387,7 +1387,7 @@ void QuestHandler::registerOpcodes(DispatchTable& table) {
 // ---------------------------------------------------------------------------
 
 void QuestHandler::selectGossipOption(uint32_t optionId, const std::string& code) {
-    if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket() || !gossipWindowOpen_) return;
+    if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket() || !gossipWindowOpen_ || gossipOptionPending_) return;
     LOG_INFO("selectGossipOption: optionId=", optionId,
              " npcGuid=0x", std::hex, currentGossip_.npcGuid, std::dec,
              " menuId=", currentGossip_.menuId,
@@ -1398,9 +1398,13 @@ void QuestHandler::selectGossipOption(uint32_t optionId, const std::string& code
     auto packet = GossipSelectOptionPacket::build(currentGossip_.npcGuid,
                                                   currentGossip_.menuId, optionId, code);
     owner_.getSocket()->send(packet);
-    // A late NPC-text reply must not auto-select this option again while
-    // waiting for the service response. Keep its data for that response.
-    gossipWindowOpen_ = false;
+    // Keep gossipWindowOpen_ true while awaiting the server response: a gossip
+    // script with action_menu_id = 0 sends no SMSG_GOSSIP_COMPLETE (e.g.
+    // Naturalist Bite freeing himself in Slave Pens), so GossipFrame remains
+    // visible until closed by SMSG_GOSSIP_COMPLETE, a replacement panel, or
+    // NPC flag-loss / death / range check in GameHandler::update().
+    // gossipOptionPending_ blocks duplicate clicks and late NPC-text redraws.
+    gossipOptionPending_ = true;
     gossipShowPendingTextId_ = 0;
 
     // The server dispatches the selected gossip action, including services.
@@ -1409,7 +1413,7 @@ void QuestHandler::selectGossipOption(uint32_t optionId, const std::string& code
 }
 
 void QuestHandler::selectGossipQuest(uint32_t questId) {
-    if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket() || !gossipWindowOpen_) return;
+    if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket() || !gossipWindowOpen_ || gossipOptionPending_) return;
 
     const QuestLogEntry* activeQuest = nullptr;
     for (const auto& q : questLog_) {
@@ -1461,7 +1465,7 @@ void QuestHandler::selectGossipQuest(uint32_t questId) {
         owner_.getSocket()->send(packet);
     }
 
-    gossipWindowOpen_ = false;
+    gossipOptionPending_ = true;
 }
 
 bool QuestHandler::requestQuestQuery(uint32_t questId, bool force) {
@@ -1581,6 +1585,7 @@ void QuestHandler::declineQuest(bool announce) {
 
 void QuestHandler::closeGossip() {
     gossipWindowOpen_ = false;
+    gossipOptionPending_ = false;
     gossipShowPendingTextId_ = 0;
     if (owner_.addonEventCallbackRef()) {
         owner_.addonEventCallbackRef()("GOSSIP_CLOSED", {});
@@ -2355,6 +2360,7 @@ void QuestHandler::handleGossipMessage(network::Packet& packet) {
     if (!ok) return;
     if (questDetailsOpen_) return; // Don't reopen gossip while viewing quest
     gossipWindowOpen_ = true;
+    gossipOptionPending_ = false;
     // Gossip carries its text as an npc-text id, not inline, so any greeting
     // left over from a quest list belongs to a different window.
     questGreeting_.clear();
@@ -2391,7 +2397,7 @@ void QuestHandler::handleGossipMessage(network::Packet& packet) {
         if (owner_.addonEventCallbackRef()) owner_.addonEventCallbackRef()("GOSSIP_SHOW", {});
         // Auto-selected service gossip never opens a panel. Preserve the current
         // merchant until its refreshed inventory arrives; real gossip closes it.
-        if (gossipWindowOpen_) {
+        if (gossipWindowOpen_ && !gossipOptionPending_) {
             owner_.closeVendor();
             owner_.setDialogGameObject(currentGossip_.npcGuid);
         }
@@ -2464,6 +2470,7 @@ void QuestHandler::handleQuestgiverQuestList(network::Packet& packet) {
 
     currentGossip_ = std::move(data);
     gossipWindowOpen_ = true;
+    gossipOptionPending_ = false;
     questGreetingOpen_ = true;
     // QUEST_GREETING, not GOSSIP_SHOW. This is SMSG_QUESTGIVER_QUEST_LIST - a
     // quest giver listing what it has, which the greeting frame answers.
@@ -2578,6 +2585,7 @@ void QuestHandler::handleGossipComplete(network::Packet& packet) {
     }
 
     gossipWindowOpen_ = false;
+    gossipOptionPending_ = false;
     gossipShowPendingTextId_ = 0;
     if (owner_.addonEventCallbackRef()) owner_.addonEventCallbackRef()("GOSSIP_CLOSED", {});
     currentGossip_ = GossipMessageData{};
@@ -2622,7 +2630,7 @@ void QuestHandler::handleNpcTextUpdate(network::Packet& packet) {
     LOG_DEBUG("NPC text update: id=", textId,
              " cached=", npcTextCache_.count(textId) ? "yes" : "no");
 
-    if (gossipWindowOpen_ && currentGossip_.titleTextId == textId) {
+    if (gossipWindowOpen_ && !gossipOptionPending_ && currentGossip_.titleTextId == textId) {
         const bool wasDeferred = (gossipShowPendingTextId_ == textId);
         if (wasDeferred) {
             gossipShowPendingTextId_ = 0;
@@ -2630,14 +2638,14 @@ void QuestHandler::handleNpcTextUpdate(network::Packet& packet) {
         if ((wasDeferred || newlyCached) && owner_.addonEventCallbackRef()) {
             owner_.addonEventCallbackRef()("GOSSIP_SHOW", {});
         }
-        if (wasDeferred && gossipWindowOpen_) {
+        if (wasDeferred && gossipWindowOpen_ && !gossipOptionPending_) {
             owner_.closeVendor();
             owner_.setDialogGameObject(currentGossip_.npcGuid);
         }
     }
     // First visit: the gossip message arrived before its text, so its emotes
     // start now. Later visits start them from handleGossipMessage.
-    if (newlyCached && gossipWindowOpen_ && currentGossip_.titleTextId == textId)
+    if (newlyCached && gossipWindowOpen_ && !gossipOptionPending_ && currentGossip_.titleTextId == textId)
         playPanelEmotes(currentGossip_.npcGuid, npcTextEmotes_[textId]);
 }
 
@@ -2776,6 +2784,7 @@ void QuestHandler::handleQuestDetails(network::Packet& packet) {
     questDetailsOpen_ = true;
     questDetailsOpenTime_ = std::chrono::steady_clock::now() + std::chrono::milliseconds(100);
     gossipWindowOpen_ = false;
+    gossipOptionPending_ = false;
     owner_.setDialogGameObject(data.npcGuid);
     if (owner_.addonEventCallbackRef()) owner_.addonEventCallbackRef()("QUEST_DETAIL", {});
 }
@@ -2801,6 +2810,7 @@ void QuestHandler::handleQuestRequestItems(network::Packet& packet) {
     currentQuestRequestItems_ = data;
     questRequestItemsOpen_ = true;
     gossipWindowOpen_ = false;
+    gossipOptionPending_ = false;
     questDetailsOpen_ = false;
     questDetailsOpenTime_ = std::chrono::steady_clock::time_point{};
     owner_.setDialogGameObject(data.npcGuid);
@@ -2864,6 +2874,7 @@ void QuestHandler::handleQuestOfferReward(network::Packet& packet) {
     questOfferRewardOpen_ = true;
     questRequestItemsOpen_ = false;
     gossipWindowOpen_ = false;
+    gossipOptionPending_ = false;
     questDetailsOpen_ = false;
     questDetailsOpenTime_ = std::chrono::steady_clock::time_point{};
     owner_.setDialogGameObject(data.npcGuid);

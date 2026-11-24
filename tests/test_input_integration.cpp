@@ -4898,6 +4898,85 @@ TEST_CASE_METHOD(Integration, "Uncached gossip pages defer GOSSIP_SHOW until NPC
     CHECK(shownTexts.size() == 4);
 }
 
+TEST_CASE_METHOD(Integration, "Gossip closes when NPC loses gossip flag, dies, or moves out of range after selection", "[gossip-close]") {
+    using namespace wowee::game;
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    const uint64_t npcGuid = 0xf1300045e5537755ULL;
+
+    auto spawnNpc = [&](float x, float y, float z, uint32_t npcFlags, uint32_t hp = 5000) {
+        auto unit = std::make_shared<Unit>(npcGuid);
+        unit->setPosition(x, y, z, 0.0f);
+        unit->setNpcFlags(npcFlags);
+        unit->setMaxHealth(5000);
+        unit->setHealth(hp);
+        handler.getEntityManager().addEntity(npcGuid, unit);
+        return unit;
+    };
+
+    auto openBiteGossip = [&]() {
+        wowee::network::Packet gossip(wireOpcode(Opcode::SMSG_GOSSIP_MESSAGE));
+        gossip.writeUInt64(npcGuid);
+        gossip.writeUInt32(7520);
+        gossip.writeUInt32(0); // cached/empty text
+        gossip.writeUInt32(1); // 1 option
+        gossip.writeUInt32(0); // optionId=0
+        gossip.writeUInt8(0);  // gossip icon
+        gossip.writeUInt8(0);  // not coded
+        gossip.writeUInt32(0); // no money
+        gossip.writeString("Alright, Bite, I'll let you out.");
+        gossip.writeString("");
+        gossip.writeUInt32(0); // 0 quests
+        session.receive(gossip);
+    };
+
+    int gossipClosedCount = 0;
+    handler.setAddonEventCallback([&](const std::string& name, const std::vector<std::string>&) {
+        if (name == "GOSSIP_CLOSED") ++gossipClosedCount;
+    });
+
+    // 1. Selecting a gossip option with no SMSG_GOSSIP_COMPLETE keeps gossip open
+    //    (blocking duplicate clicks), and clearing UNIT_NPC_FLAGS closes it immediately.
+    auto unit = spawnNpc(0.0f, 0.0f, 0.0f, NPC_FLAG_GOSSIP);
+    openBiteGossip();
+    REQUIRE(handler.isGossipWindowOpen());
+    handler.selectGossipOption(0);
+    CHECK(handler.isGossipWindowOpen());
+    handler.selectGossipOption(0); // duplicate while pending is ignored
+    CHECK(session.sent().of(Opcode::CMSG_GOSSIP_SELECT_OPTION).size() == 1);
+
+    GameHandlerTestAccess::closeDistantNpcWindows(handler);
+    CHECK(handler.isGossipWindowOpen());
+    CHECK(gossipClosedCount == 0);
+
+    // Server dbscripts_on_gossip command 29 removes NPC_FLAG_GOSSIP while stationary.
+    unit->setNpcFlags(0);
+    GameHandlerTestAccess::closeDistantNpcWindows(handler);
+    CHECK_FALSE(handler.isGossipWindowOpen());
+    CHECK(gossipClosedCount == 1);
+
+    // 2. If NPC keeps gossip flag but walks out of interaction range after selection,
+    //    gossip still closes (previously broken when selectGossipOption cleared gossipWindowOpen_).
+    unit->setNpcFlags(NPC_FLAG_GOSSIP);
+    openBiteGossip();
+    REQUIRE(handler.isGossipWindowOpen());
+    handler.selectGossipOption(0);
+    CHECK(handler.isGossipWindowOpen());
+    unit->setPosition(25.0f, 0.0f, 0.0f, 0.0f);
+    GameHandlerTestAccess::closeDistantNpcWindows(handler);
+    CHECK_FALSE(handler.isGossipWindowOpen());
+    CHECK(gossipClosedCount == 2);
+
+    // 3. If NPC dies while gossip is open, gossip closes.
+    unit->setPosition(0.0f, 0.0f, 0.0f, 0.0f);
+    openBiteGossip();
+    REQUIRE(handler.isGossipWindowOpen());
+    unit->setHealth(0);
+    GameHandlerTestAccess::closeDistantNpcWindows(handler);
+    CHECK_FALSE(handler.isGossipWindowOpen());
+    CHECK(gossipClosedCount == 3);
+}
+
 TEST_CASE_METHOD(Integration, "OnUpdate runs on frame 0 after Show() before layout, hiding cast-bar flash", "[castbar-flash]") {
     run(R"lua(
         local bar = CreateFrame("StatusBar", "TestCastBarFlash", UIParent)
