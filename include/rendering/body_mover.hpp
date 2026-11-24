@@ -86,6 +86,27 @@
 //    hull: _experiments/20261123T230000Z.movement_collision_parity_landing).
 //  - An edge it cannot be raised over within the yard (a leaning trunk's
 //    underside at Orgrimmar) stops native dead; WoWee slides along it.
+//
+// From replaying this mover against the native side of 323 paired runs
+// (_experiments/20261123T233500Z.movement_collision_parity_round10, batch.py):
+//  - A refused move is turned aside by what stops the body at its own height,
+//    when that is not ground - the wall it is sliding along - and not by a
+//    face only the body lifted a yard would meet further on (Orgrimmar wall
+//    folded along its diagonal, 1821.4, -4243.2: native slides on along the
+//    lower face). Built in (Step::wall).
+//  - It is turned aside along that face's own plane also where the face is
+//    met by its edge: at the Northshire Abbey doorway pillar (-8916.6,
+//    -141.3) the body's flat side meets the pillar's upright edge and native
+//    moves (-0.050, -0.076) a frame, along the pillar face, not along its
+//    own side. Built in (BodyContact::front).
+//  - An edge under the body's bevel is mostly not stepped over (97 of 108
+//    frames where the step would rest on something not ground, most of them
+//    on the skirt of the Orgrimmar wall's 77 degree section); an edge against
+//    the body's upright side mostly is (46 of 55, Exodar table). Built in as
+//    always and never (Step::edgeMet); what decides the rest is not found.
+//  - Not built in: at the foot of that folded wall (1819.8, -4242.5) the edge
+//    between its upper faces meets the body's side and native slides on along
+//    the face it was sliding along; WoWee steps 0.14 yd up it, twice a run.
 namespace wowee::rendering::movement {
 
 // Furthest a walking body is lowered onto ground in one frame. Native lowers
@@ -280,6 +301,8 @@ inline BodyMove walkBody(const glm::vec3& from, const glm::vec3& horizontalDelta
         bool edgeMet = false;
         // Ended on a hold from which repeating the move reaches ground.
         bool leads = false;
+        // `blocker` is a face that is not ground, met by the level move.
+        bool wall = false;
     };
     const auto step = [&](const glm::vec3& start, const glm::vec3& delta, float budget) {
         Step result;
@@ -290,6 +313,7 @@ inline BodyMove walkBody(const glm::vec3& from, const glm::vec3& horizontalDelta
             return result;
         }
         result.blocker = ahead->normal;
+        float wallAt = std::numeric_limits<float>::infinity();
         {
             constexpr float kTie = 1e-4f;
             const float travel = glm::length(delta);
@@ -298,10 +322,29 @@ inline BodyMove walkBody(const glm::vec3& from, const glm::vec3& horizontalDelta
                 const auto contact = sweepBodyTriangle(start, delta, radius, height, triangle);
                 if (!contact || contact->standing || contact->face.z >= minWalkableNormalZ) continue;
                 const float later = wall ? (contact->time - wall->time) * travel : -1.0f;
-                // Of contacts met together, a corner on a face decides.
-                if (later < -kTie || (later <= kTie && contact->corner && !wall->corner)) wall = contact;
+                // Of contacts met together, a corner on a face decides; of
+                // faces met together by an edge they share, the one the move
+                // runs into most squarely.
+                if (later < -kTie || (later <= kTie && contact->corner && !wall->corner) ||
+                    (later <= kTie && contact->corner == wall->corner &&
+                     glm::dot(delta, contact->front) < glm::dot(delta, wall->front)))
+                    wall = contact;
             }
-            result.edgeMet = wall && !wall->corner;
+            // An edge against the body's upright side or the side's lower
+            // edge: the separating direction is then flatter than the
+            // bevel faces' own normal. Under the bevel it is steeper.
+            static const float kBevelFaceNormalZ = 1.0f / std::sqrt(1.0f + kBodyBevel * kBodyBevel);
+            result.edgeMet = wall && !wall->corner && wall->normal.z < kBevelFaceNormalZ - 1e-3f;
+            // What the move is turned aside by is what stops the body where
+            // it stands, when that is not ground: the wall it slides along,
+            // not a face only the lifted body would meet further on.
+            if (wall) {
+                // Turned aside along the face's own plane, also where the
+                // face was met by its edge.
+                result.blocker = wall->front;
+                result.wall = true;
+                wallAt = wall->time;
+            }
         }
         glm::vec3 up(0.0f, 0.0f, budget);
         if (budget > 1e-4f)
@@ -309,7 +352,7 @@ inline BodyMove walkBody(const glm::vec3& from, const glm::vec3& horizontalDelta
                 up.z = std::max(0.0f, up.z * ceiling->time - kContactSkin);
         if (up.z <= 1e-4f) return result;
         if (const auto across = firstBodyContact(start + up, delta, radius, height, triangles)) {
-            result.blocker = across->normal;
+            if (across->time < wallAt) result.blocker = across->normal;
             return result;
         }
         result.taken = true;
@@ -359,7 +402,7 @@ inline BodyMove walkBody(const glm::vec3& from, const glm::vec3& horizontalDelta
         if (first.taken && first.rest && !isBodySoleOnGround(*first.rest, minWalkableNormalZ) &&
             !first.edgeMet && !first.leads) {
             first.taken = false;
-            first.blocker = first.rest->normal;
+            if (!first.wall) first.blocker = first.rest->normal;
         }
         return first;
     };

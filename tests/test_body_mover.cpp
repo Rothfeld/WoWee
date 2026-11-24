@@ -58,7 +58,11 @@ struct Walker {
         if (grounded && verticalVelocity <= 0.0f) {
             const float budget = std::clamp(baseZ + kMaxStepUp - position.z, 0.0f, kMaxStepUp);
             move = walkBody(position, run, budget, kRadius, kHeight, mesh);
-            walked = !perched || move.stepped;
+            const bool steppedOn = move.stepped &&
+                (move.soleOnGround || move.position.z > position.z + 1e-3f);
+            if (perched && steppedOn && !move.soleOnGround && move.support == BodySupport::Walkable)
+                move.support = BodySupport::Steep;
+            walked = !perched || steppedOn;
         }
         if (!walked) {
             const float drop = verticalVelocity * dt - 0.5f * kGravity * dt * dt;
@@ -356,4 +360,31 @@ TEST_CASE("A face the body stands in still carries it", "[body_mover]") {
     REQUIRE(last.held);
     REQUIRE_FALSE(hung.grounded);
     REQUIRE(hung.position.z > -1.0f);
+}
+
+TEST_CASE("Sliding along a wall is not turned by a face only the lifted body would meet", "[body_mover]") {
+    // Orgrimmar (1821.37, -4243.25, 42.08; coordinates here less (1821, -4243, 42)):
+    // a ramp, a wall leaning 84 degrees, and above the wall's diagonal a face
+    // leaning 77 degrees that stands out from it. Native, walking into the
+    // wall 32 degrees off head-on, slides along the 84 degree face on the
+    // ramp, (-0.1066, +0.0542, -0.0103) a frame. Turned aside by the upper
+    // face - what stops the body lifted a yard - the move led into the lower
+    // one and the body was stepped up it, 0.13 yd a frame.
+    const Mesh mesh = {
+        {{{-1.6428f, 2.4585f, -0.5194f}, {-1.4080f, 0.2563f, 0.0026f}, {6.9522f, -4.0107f, 0.8045f}}},
+        {{{6.7141f, -4.9126f, 9.3635f}, {6.9522f, -4.0107f, 0.8045f}, {-1.4080f, 0.2563f, 0.0026f}}},
+        {{{-1.6428f, 2.4585f, -0.5194f}, {6.8508f, -0.2847f, -0.3170f}, {7.7898f, 1.0786f, -0.8896f}}},
+        {{{6.8508f, -0.2847f, -0.3170f}, {-1.6428f, 2.4585f, -0.5194f}, {6.9522f, -4.0107f, 0.8045f}}},
+        {{{-1.4080f, 0.2563f, 0.0026f}, {-1.5737f, -1.5615f, 8.1004f}, {6.7141f, -4.9126f, 9.3635f}}},
+    };
+    const glm::vec3 from(0.374f, -0.2495f, 0.0769f);
+    const glm::vec3 run = glm::vec3(std::cos(-2.578f), std::sin(-2.578f), 0.0f) * kFrameRun;
+    const auto rest = lowerBody(from + glm::vec3(0, 0, 0.05f), 0.1f, kRadius, kHeight, mesh);
+    REQUIRE(rest);
+    const BodyMove move = walkBody(rest->position, run, kMaxStepUp, kRadius, kHeight, mesh);
+    const glm::vec3 moved = move.position - rest->position;
+    CHECK(move.support == BodySupport::Walkable);
+    CHECK(moved.x == Catch::Approx(-0.1066f).margin(0.003f));
+    CHECK(moved.y == Catch::Approx(0.0542f).margin(0.003f));
+    CHECK(moved.z == Catch::Approx(-0.0103f).margin(0.003f));
 }

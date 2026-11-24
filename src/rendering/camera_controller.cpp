@@ -535,8 +535,16 @@ glm::vec3 CameraController::moveBodyOnFootOnce(const glm::vec3& start, const glm
         const float budget = std::clamp(walkableStepBaseZ_ + movement::kMaxStepUp - from.z,
                                         0.0f, movement::kMaxStepUp);
         move = movement::walkBody(from, horizontal, budget, radius, height, triangles, minWalkable);
-        // A perch is left by stepping on from it, or by falling.
-        walked = !bodyPerched_ || move.stepped;
+        // A perch is left by stepping on from it - up, or to where the sole
+        // stands on ground - or by falling. A step from a perch that ends
+        // hung by the bevel is another perch: native set on the rim of the
+        // Exodar table after two steps up its ridge falls in the next frame.
+        const bool steppedOn = move.stepped &&
+            (move.soleOnGround || move.position.z > from.z + 1e-3f);
+        if (bodyPerched_ && steppedOn && !move.soleOnGround &&
+            move.support == movement::BodySupport::Walkable)
+            move.support = movement::BodySupport::Steep;
+        walked = !bodyPerched_ || steppedOn;
     }
     if (!walked) {
         move = movement::fallBody(from, glm::vec3(horizontal.x, horizontal.y, delta.z),

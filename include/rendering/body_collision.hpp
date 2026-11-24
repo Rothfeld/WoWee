@@ -54,6 +54,8 @@ struct BodyContact {
     // is the face's own normal. Otherwise an edge or corner of the triangle
     // met a side, bevel or edge of the body.
     bool corner = false;
+    // The touched triangle's unit normal as wound, out of the solid.
+    glm::vec3 front{0.0f};
 };
 
 inline std::optional<BodyContact> sweepBodyTriangle(const glm::vec3& from,
@@ -131,21 +133,22 @@ inline std::optional<BodyContact> sweepBodyTriangle(const glm::vec3& from,
     if (standingDepth > kContactSkin) {
         const glm::vec3 front = glm::normalize(triangleNormal);
         if (delta.z >= 0.0f || front.z <= 0.0f) return std::nullopt;
-        return BodyContact{0.0f, glm::vec3(0.0f, 0.0f, 1.0f), front, true};
+        return BodyContact{0.0f, glm::vec3(0.0f, 0.0f, 1.0f), front, true, false, front};
     }
     // Touching, not in. A contact entered before this move began is one the
     // body is leaving or sliding along - except within the skin and moving
     // deeper: a face entered by the skin push off its neighbour in a crease
     // (the Alcaz Island dock, redridgedocks03), which answers like any contact.
     if (enter < -1e-5f && -enter * enterSpeed > kContactSkin) return std::nullopt;
-    glm::vec3 face = glm::normalize(triangleNormal);
+    const glm::vec3 front = glm::normalize(triangleNormal);
+    glm::vec3 face = front;
     if (face.z < 0.0f) face = -face;
     // A corner (or, flat on, a whole edge or side) of the body on the face:
     // the face's own axis is entered last, or within a tenth of a millimetre
     // of the last. Flat on to a wall the body's side axes are entered at the
     // same instant and rounding picks among them.
     const bool corner = (enter - faceEnter) * glm::length(delta) <= 1e-4f;
-    return BodyContact{std::max(0.0f,enter),normal,face,false,corner};
+    return BodyContact{std::max(0.0f,enter),normal,face,false,corner,front};
 }
 
 inline bool moveBody(const glm::vec3& from, const glm::vec3& to,
