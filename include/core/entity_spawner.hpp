@@ -433,6 +433,9 @@ public:
     /// remoteAuraLocomotion each unit's locomotion was last chosen with.
     std::unordered_map<uint64_t, uint32_t>& getRemoteWasAuraLocomotion() { return remoteWasAuraLocomotion_; }
     std::unordered_map<uint64_t, bool>& getCreatureSwimmingState() { return creatureSwimmingState_; }
+    /// True when the creature carries server MOVEFLAG_SWIMMING and is actually
+    /// in loaded water at `renderPos` (or while world water data is not yet loaded).
+    bool isCreatureEffectivelySwimming(uint64_t guid, const glm::vec3& renderPos) const;
     std::unordered_map<uint64_t, bool>& getCreatureWalkingState() { return creatureWalkingState_; }
     std::unordered_map<uint64_t, bool>& getCreatureFlyingState() { return creatureFlyingState_; }
     std::unordered_map<uint64_t, uint32_t>& getCreatureActiveEmotes() { return creatureActiveEmotes_; }

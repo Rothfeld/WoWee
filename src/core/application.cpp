@@ -3821,7 +3821,6 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
         const float syncRadiusSq = 320.0f * 320.0f;
         auto& _creatureInstances = entitySpawner_->getCreatureInstances();
         auto& _creatureRenderPosCache = entitySpawner_->getCreatureRenderPosCache();
-        auto& _creatureSwimmingState = entitySpawner_->getCreatureSwimmingState();
         auto& _creatureFlyingState = entitySpawner_->getCreatureFlyingState();
         auto& _creatureActiveEmotes = entitySpawner_->getCreatureActiveEmotes();
         auto& _creatureWasMoving = entitySpawner_->getCreatureWasMoving();
@@ -3908,13 +3907,14 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
             const auto retainedFlags = entitySpawner_->getRemoteMovementFlags().find(guid);
             const bool levitating = retainedFlags != entitySpawner_->getRemoteMovementFlags().end() &&
                 (retainedFlags->second & static_cast<uint32_t>(game::MovementFlags::LEVITATING)) != 0;
+            const bool effectiveSwimming = entitySpawner_->isCreatureEffectivelySwimming(guid, renderPos);
             const bool groundCreature = !_creatureFlyingState.count(guid) &&
-                                        !_creatureSwimmingState.count(guid) && !levitating;
+                                        !effectiveSwimming && !levitating;
             const bool onTransport = gameHandler->transportAttachmentsRef().count(guid) != 0;
-            if (!onTransport && _creatureSwimmingState.count(guid) &&
+            if (!onTransport && effectiveSwimming &&
                 !_creatureFlyingState.count(guid) && renderer->getWaterRenderer()) {
                 const auto surface = renderer->getWaterRenderer()->getNearestWaterHeightAt(
-                    renderPos.x, renderPos.y, renderPos.z);
+                    renderPos.x, renderPos.y, renderPos.z, 100.0f);
                 if (surface) {
                     renderPos.z = rendering::creatureSwimmingZ(renderPos.z, false, true, surface,
                         entitySpawner_->getUnitSwimmingDepth(guid, instanceId));
@@ -4085,7 +4085,7 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                 // WoW M2 animation IDs: 4=Walk, 5=Run, 41=SwimIdle, 42=Swim.
                 // Only switch on transitions to avoid resetting animation time.
                 // Don't override Death (1) animation.
-                const bool isSwimmingNow = _creatureSwimmingState.count(guid) > 0;
+                const bool isSwimmingNow = effectiveSwimming;
                 const bool isWalkingNow  = entitySpawner_->remoteGaitWalks(
                     guid, creatureMount ? creatureMount->instanceId : instanceId);
                 const bool isFlyingNow   = _creatureFlyingState.count(guid) > 0;

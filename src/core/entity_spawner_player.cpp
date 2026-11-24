@@ -22,6 +22,8 @@
 #include "rendering/character_renderer.hpp"
 #include "rendering/corpse_aura_policy.hpp"
 #include "rendering/wmo_renderer.hpp"
+#include "rendering/water_renderer.hpp"
+#include "rendering/terrain_manager.hpp"
 #include "rendering/m2_renderer.hpp"
 #include "rendering/spell_visual_system.hpp"
 #include "game/game_utils.hpp"
@@ -978,6 +980,22 @@ bool EntitySpawner::remoteGaitWalks(uint64_t guid, uint32_t locomotionInstanceId
     return rendering::splineGroundGaitWalks(entity->getLocomotionSpeed(), *stride);
 }
 
+bool EntitySpawner::isCreatureEffectivelySwimming(uint64_t guid, const glm::vec3& renderPos) const {
+    if (creatureSwimmingState_.count(guid) == 0) return false;
+    if (!renderer_ || !renderer_->getWaterRenderer()) return true;
+    const auto* terrain = renderer_->getTerrainManager();
+    const auto* wmo = renderer_->getWMORenderer();
+    const bool terrainPending = terrain && terrain->isGroundPendingAt(renderPos.x, renderPos.y);
+    const bool worldLoaded = !terrainPending &&
+                             ((terrain && terrain->getLoadedTileCount() > 0) ||
+                              (wmo && wmo->getInstanceCount() > 0));
+    const auto surface = worldLoaded
+        ? renderer_->getWaterRenderer()->getNearestWaterHeightAt(
+              renderPos.x, renderPos.y, renderPos.z, 100.0f)
+        : std::nullopt;
+    return rendering::effectiveCreatureSwimming(true, worldLoaded, renderPos.z, surface);
+}
+
 uint32_t EntitySpawner::remoteResumeAnimation(uint64_t guid) const {
     // The per-frame sync replays locomotion only when the moving state
     // changes, so a one-shot that ends mid-move must resume it itself.
@@ -988,8 +1006,13 @@ uint32_t EntitySpawner::remoteResumeAnimation(uint64_t guid) const {
         const auto entity = gameHandler_->getEntityManager().getEntity(guid);
         const auto unit = std::dynamic_pointer_cast<game::Unit>(entity);
         const bool stealthed = unit && unit->hasCreepVisibility();
+        const bool swimming = entity
+            ? isCreatureEffectivelySwimming(
+                  guid, core::coords::canonicalToRender(
+                            glm::vec3(entity->getLatestX(), entity->getLatestY(), entity->getLatestZ())))
+            : (creatureSwimmingState_.count(guid) > 0);
         return rendering::creatureMovingAnimation(creatureFlyingState_.count(guid) > 0,
-                                                  creatureSwimmingState_.count(guid) > 0,
+                                                  swimming,
                                                   remoteGaitWalks(guid, instanceId),
                                                   stealthed);
     }

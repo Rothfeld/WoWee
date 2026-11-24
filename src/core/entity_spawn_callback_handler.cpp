@@ -237,7 +237,11 @@ void EntitySpawnCallbackHandler::setupCallbacks() {
                     auto* cr = renderer_.getCharacterRenderer();
                     bool gotState = cr->getAnimationState(instanceId, curAnimId, curT, curDur);
                     const bool walking = entitySpawner_.remoteGaitWalks(guid, instanceId);
-                    const bool swimming = entitySpawner_.getCreatureSwimmingState().count(guid) > 0;
+                    const bool swimming = ent
+                        ? entitySpawner_.isCreatureEffectivelySwimming(
+                              guid, core::coords::canonicalToRender(
+                                        glm::vec3(ent->getLatestX(), ent->getLatestY(), ent->getLatestZ())))
+                        : (entitySpawner_.getCreatureSwimmingState().count(guid) > 0);
                     const bool flying = entitySpawner_.getCreatureFlyingState().count(guid) > 0;
                     const bool stealthed = unit && unit->hasCreepVisibility();
                     const uint32_t auraLocomotion = entitySpawner_.remoteAuraLocomotion(guid);

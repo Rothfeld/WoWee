@@ -163,6 +163,31 @@ inline float creatureSwimmingZ(float serverZ, bool flying, bool swimming,
     return std::min(serverZ, *surface - authoredDepth);
 }
 
+// Tolerance above a liquid surface within which a creature carrying
+// MOVEFLAG_SWIMMING still counts as swimming (covers surface-swimming
+// creatures whose server Z sits at waterH before creatureSwimmingZ lowers it).
+inline constexpr float kCreatureSwimSurfaceTolerance = 0.25f;
+
+// Effective swimming state for a server-driven creature whose movement flags
+// carry MOVEFLAG_SWIMMING (0x200000).
+//
+// CMaNGOS sets MOVEFLAG_SWIMMING when an INHABIT_WATER creature spawns in water
+// (Creature.cpp:458), and does not always send SMSG_SPLINE_MOVE_STOP_SWIM when
+// a scripted waypoint path walks the creature onto dry land (e.g. Ghaz'an 18105
+// in The Underbog walking up the dry ramp from water z=50.61 to platform z=81.37
+// while retaining 0x8200101). Native TBC 2.4.3 plays ground Walk (4) / Run (5) /
+// Stand (0) once the creature is out of water and Swim (42) / SwimIdle (41) only
+// while actually submerged.
+inline bool effectiveCreatureSwimming(bool serverSwimFlag,
+                                      bool worldLoaded,
+                                      float unitZ,
+                                      std::optional<float> waterSurface) {
+    if (!serverSwimFlag) return false;
+    if (!worldLoaded) return true;
+    return waterSurface.has_value() &&
+           unitZ <= (*waterSurface + kCreatureSwimSurfaceTolerance);
+}
+
 // Minimum non-jump airborne duration (seconds) before local locomotion switches
 // from ground gait to FALL, matching Application's walk-off FALLING threshold.
 // Prevents brief bumpy-slope micro-ungrounding from flickering RUN -> FALL -> RUN

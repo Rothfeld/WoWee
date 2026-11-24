@@ -354,6 +354,28 @@ TEST_CASE("Aquatic creature surface limit preserves submerged server coordinates
     CHECK(creatureSwimmingZ(0.183376f, false, true, std::nullopt, depth) == 0.183376f);
 }
 
+TEST_CASE("Creature effective swimming clears stale MOVEFLAG_SWIMMING on dry land", "[creature-locomotion]") {
+    using wowee::rendering::effectiveCreatureSwimming;
+    constexpr float underbogWaterZ = 50.6091f;
+
+    // Ghaz'an (18105) swimming in the Underbog pool below water surface.
+    CHECK(effectiveCreatureSwimming(true, true, 40.64f, underbogWaterZ));
+    CHECK(effectiveCreatureSwimming(true, true, 32.47f, underbogWaterZ));
+    // Surface-swimming creature at the waterline stays swimming.
+    CHECK(effectiveCreatureSwimming(true, true, underbogWaterZ, underbogWaterZ));
+
+    // Ghaz'an walking up the dry ramp and onto the dry platform while CMaNGOS
+    // retains MOVEFLAG_SWIMMING (0x8200101): not swimming -> Walk/Run/Stand.
+    CHECK_FALSE(effectiveCreatureSwimming(true, true, 58.44f, underbogWaterZ));
+    CHECK_FALSE(effectiveCreatureSwimming(true, true, 75.40f, underbogWaterZ));
+    CHECK_FALSE(effectiveCreatureSwimming(true, true, 81.37f, std::nullopt));
+
+    // Without server swim flag: never swimming.
+    CHECK_FALSE(effectiveCreatureSwimming(false, true, 40.64f, underbogWaterZ));
+    // Before terrain/WMO water data is loaded: trust server swim flag.
+    CHECK(effectiveCreatureSwimming(true, false, 81.37f, std::nullopt));
+}
+
 // Build a synthetic AnimationData.dbc in memory.
 // AnimationData.dbc layout: each record has at least 1 field (the animation ID).
 // We use numFields=2 (id + dummy) to mirror the real DBC which has multiple fields.
