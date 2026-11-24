@@ -154,7 +154,7 @@ public:
     // _experiments/20261117T181105Z.pair0_ghost_names_gossip).
     // Returns true when the unit's active aura visual set or observer concealment changed.
     bool syncAuraVisuals(uint32_t attachInstanceId, const std::vector<uint32_t>& visualIds,
-                         bool observerConcealed);
+                         bool observerConcealed, bool unitDead = false);
     // The animation the unit holds while its auras last: the StateKit
     // animation (column 2) of its most recently applied aura that has one,
     // else kNoAnimation. Brood Power: Bronze (22291, kit 5769, Whirlwind 126)

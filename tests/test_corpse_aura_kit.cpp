@@ -16,6 +16,7 @@ using wowee::rendering::isCorpseAuraSuppressed;
 using wowee::rendering::KitLightState;
 using wowee::rendering::kSpellAttrEx3DeathPersistent;
 using wowee::rendering::resetKitLightOnDeath;
+using wowee::rendering::shouldPlayAuraDecayOnRemoval;
 using wowee::rendering::tickKitLight;
 
 TEST_CASE("corpse aura persistence respects SPELL_ATTR_EX3_DEATH_PERSISTENT", "[corpse-aura]") {
@@ -24,6 +25,10 @@ TEST_CASE("corpse aura persistence respects SPELL_ATTR_EX3_DEATH_PERSISTENT", "[
     CHECK(auraVisualPersistsOnCorpse(0x04100000u));
     CHECK_FALSE(auraVisualPersistsOnCorpse(0x00000000u));
     CHECK_FALSE(auraVisualPersistsOnCorpse(0x04000000u)); // Banish 44836 attrEx3
+
+    // Living aura removal plays Decay (159); unit death removes dropped aura visuals immediately.
+    CHECK(shouldPlayAuraDecayOnRemoval(false));
+    CHECK_FALSE(shouldPlayAuraDecayOnRemoval(true));
 }
 
 TEST_CASE("corpse aura suppression distinguishes corpses from living and feigning units", "[corpse-aura]") {
@@ -95,6 +100,7 @@ TEST_CASE("TBC Spell.dbc confirms Sathrovarr Demonic Visual 44800 is not death-p
     bool foundShadowImage = false;
     bool foundGhost = false;
     bool foundStolenSoulVisual = false;
+    bool foundEtherealBeacon = false;
     for (uint32_t i = 0; i < dbc.getRecordCount(); ++i) {
         const uint32_t id = dbc.getUInt32(i, idCol);
         const uint32_t attrEx3 = dbc.getUInt32(i, attrEx3Col);
@@ -116,10 +122,15 @@ TEST_CASE("TBC Spell.dbc confirms Sathrovarr Demonic Visual 44800 is not death-p
             foundStolenSoulVisual = true;
             CHECK(vis == 7264u);
             CHECK(auraVisualPersistsOnCorpse(attrEx3));
+        } else if (id == 32368u) {
+            foundEtherealBeacon = true;
+            CHECK(vis == 7943u);
+            CHECK_FALSE(auraVisualPersistsOnCorpse(attrEx3));
         }
     }
     CHECK(foundDemonic);
     CHECK(foundShadowImage);
     CHECK(foundGhost);
     CHECK(foundStolenSoulVisual);
+    CHECK(foundEtherealBeacon);
 }

@@ -17,6 +17,15 @@ inline constexpr bool auraVisualPersistsOnCorpse(uint32_t attrEx3) {
     return (attrEx3 & kSpellAttrEx3DeathPersistent) != 0u;
 }
 
+/// Whether removing a non-death-persistent aura state visual plays its M2
+/// Decay (159) outro animation. In TBC 2.4.3, removing an aura from a living
+/// unit (.unaura / dispel / expiry) plays Decay (159) (e.g. ArcanePower_State_Chest
+/// 1000 ms fade), while unit death removes dropped non-death-persistent aura
+/// visuals immediately (matching Precast/Cast/Channel removal on death).
+inline constexpr bool shouldPlayAuraDecayOnRemoval(bool unitDead) {
+    return !unitDead;
+}
+
 /// True when the unit is genuinely dead (corpse state) so non-death-persistent
 /// aura visuals and CharProc tints must be suppressed.
 /// A unit with health > 0 and UNIT_DYNFLAG_DEAD is feigning death, not a corpse.

@@ -1,4 +1,5 @@
 #include "rendering/spell_visual_system.hpp"
+#include "rendering/corpse_aura_policy.hpp"
 #include "rendering/aura_marker_visibility.hpp"
 #include "rendering/m2_renderer.hpp"
 #include "rendering/renderer.hpp"
@@ -1043,34 +1044,43 @@ void SpellVisualSystem::startChannelVisual(uint32_t visualId, const glm::vec3& p
 
 bool SpellVisualSystem::syncAuraVisuals(uint32_t attachInstanceId,
                                         const std::vector<uint32_t>& visualIds,
-                                        bool observerConcealed) {
+                                        bool observerConcealed,
+                                        bool unitDead) {
     if (!m2Renderer_ || !attachInstanceId) return false;
     auto* characters = renderer_ ? renderer_->getCharacterRenderer() : nullptr;
     glm::vec3 position;
     if (!characters || !characters->getInstancePosition(attachInstanceId, position)) return false;
     const bool initialSync = syncedAuraInstances_.insert(attachInstanceId).second;
     auto found = unitAuraVisuals_.find(attachInstanceId);
-    if (found != unitAuraVisuals_.end() && found->second.ids == visualIds &&
-        found->second.observerConcealed == observerConcealed) return false;
-    if (found == unitAuraVisuals_.end() && visualIds.empty()) return false;
+    const bool unchanged =
+        (found != unitAuraVisuals_.end() && found->second.ids == visualIds &&
+         found->second.observerConcealed == observerConcealed) ||
+        (found == unitAuraVisuals_.end() && visualIds.empty());
+    if (unchanged && !unitDead) return false;
     if (!spellVisualDbcLoaded_) loadSpellVisualDbc();
 
+    const bool playDecay = shouldPlayAuraDecayOnRemoval(unitDead);
     for (auto it = activeSpellVisuals_.begin(); it != activeSpellVisuals_.end();) {
-        if (it->attachInstanceId == attachInstanceId && it->auraVisualId && !it->decaying &&
+        const bool droppedAura = it->attachInstanceId == attachInstanceId && it->auraVisualId &&
             (std::find(visualIds.begin(), visualIds.end(), it->auraVisualId) == visualIds.end() ||
-             (it->concealmentDetectionMarker && !observerConcealed))) {
-            const float decay = m2Renderer_->finishInstanceStateEffect(it->instanceId);
+             (it->concealmentDetectionMarker && !observerConcealed));
+        if (droppedAura && (!it->decaying || !playDecay)) {
+            const float decay = playDecay ? m2Renderer_->finishInstanceStateEffect(it->instanceId) : 0.0f;
             if (decay > 0) {
                 it->decaying = true;
                 it->elapsed = 0;
                 it->duration = decay;
                 ++it;
+            } else if (!playDecay) {
+                m2Renderer_->removeInstance(it->instanceId);
+                it = activeSpellVisuals_.erase(it);
             } else {
                 m2Renderer_->retireInstance(it->instanceId);
                 it = activeSpellVisuals_.erase(it);
             }
         } else ++it;
     }
+    if (unchanged) return false;
     if (auto supIt = suppressedAuraVisuals_.find(attachInstanceId); supIt != suppressedAuraVisuals_.end()) {
         std::erase_if(supIt->second, [&](uint32_t vis) {
             return std::find(visualIds.begin(), visualIds.end(), vis) == visualIds.end();
@@ -2832,7 +2842,8 @@ void SpellVisualSystem::removeCasterStages(uint32_t attachInstanceId) {
     stopPrecastSound(attachInstanceId);
     stopChannelSound(attachInstanceId);
     for (auto it = activeSpellVisuals_.begin(); it != activeSpellVisuals_.end();) {
-        if (it->attachInstanceId == attachInstanceId && (it->isPrecast || it->isCast || it->isChannel)) {
+        if (it->attachInstanceId == attachInstanceId &&
+            (it->isPrecast || it->isCast || it->isChannel || (it->auraVisualId && it->decaying))) {
             LOG_DEBUG("SpellVisual: caster died, effect instance ", it->instanceId, " removed");
             m2Renderer_->removeInstance(it->instanceId);
             it = activeSpellVisuals_.erase(it);
