@@ -167,6 +167,30 @@ TEST_CASE("WMO fog resolves local MFOG spheres when record zero is unauthored st
     const std::vector<WMOFog> swFogs{stub};
     CHECK_FALSE(wowee::rendering::sampleWMOFog(swFogs, {0, 0, 0, 0}, glm::vec3(0.0f), true, barrensNight));
 
+    // Coilfang Reservoir entrance (coilfang_zangarentrance.wmo) MFOG[0] carries
+    // flag 0x10 with center (-2015.4, 237.7, 42.5) and largeRadius 861.4, outside
+    // the pipe geometry (~(-200, 0, -70)). Bounded flag-0x10 record zero must yield
+    // nullopt outside its radius (both dry and underwater) so Zangarmarsh Light.dbc
+    // applies, while still applying inside its sphere (e.g. stratholme_raid.wmo hub).
+    WMOFog coilfangEntrance{};
+    coilfangEntrance.flags = 0x10;
+    coilfangEntrance.position = glm::vec3(-2015.4f, 237.7f, 42.5f);
+    coilfangEntrance.smallRadius = 723.4f;
+    coilfangEntrance.largeRadius = 861.4f;
+    coilfangEntrance.endDist = 222.222f;
+    coilfangEntrance.startFactor = 0.25f;
+    coilfangEntrance.color1 = glm::vec4(139.0f / 255.0f, 179.0f / 255.0f, 139.0f / 255.0f, 1.0f);
+    coilfangEntrance.endDist2 = 222.222f;
+    coilfangEntrance.startFactor2 = -1.0f;
+    coilfangEntrance.color2 = glm::vec4(0.0f, 233.0f / 255.0f, 225.0f / 255.0f, 1.0f);
+    const std::vector<WMOFog> cfFogs{coilfangEntrance};
+    CHECK_FALSE(wowee::rendering::sampleWMOFog(cfFogs, {0, 0, 0, 0}, glm::vec3(-200.0f, 0.0f, -70.0f), true, barrensNight));
+    CHECK_FALSE(wowee::rendering::sampleWMOFog(cfFogs, {0, 0, 0, 0}, glm::vec3(-200.0f, 0.0f, -70.0f), false, barrensNight));
+    const auto cfInside = wowee::rendering::sampleWMOFog(
+        cfFogs, {0, 0, 0, 0}, coilfangEntrance.position, true, barrensNight);
+    REQUIRE(cfInside);
+    CHECK(cfInside->color.g == Catch::Approx(233.0f / 255.0f));
+
     // TBC LiquidType.dbc + WMO MLIQ submersion classification.
     using wowee::rendering::SubmergedLiquid;
     using wowee::rendering::classifySubmergedLiquid;

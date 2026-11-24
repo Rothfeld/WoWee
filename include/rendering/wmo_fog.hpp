@@ -36,18 +36,42 @@ inline std::optional<WMOFogSample> sampleWMOFog(
         return WMOFogSample{glm::vec3(underwater ? fog.color2 : fog.color1),
             end * (underwater ? fog.startFactor2 : fog.startFactor), end, 1.0f};
     };
+    constexpr uint32_t kWmoFogInfiniteRadius = 0x01;
+    // Flag 0x10 (coilfang_zangarentrance.wmo, coilfang_marsh.wmo, stratholme_raid.wmo):
+    // MFOG[0] is evaluated by its sphere radius instead of acting as an unconditional
+    // WMO-wide base. In coilfang_zangarentrance.wmo, MFOG[0] sits 2,015 yd away
+    // (largeRadius 861.4, uw=(0,233,225) cyan, dry=(139,179,139) green); build 8606
+    // falls back to Zangarmarsh Light.dbc (LightParams 432 dry / 506 underwater)
+    // inside the Coilfang Reservoir entrance pipe.
+    constexpr uint32_t kWmoFogBoundedBase = 0x10;
+    const auto sphereWeight = [&position](const pipeline::WMOFog& fog) {
+        if (fog.flags & kWmoFogInfiniteRadius) return 1.0f;
+        const float distance = glm::distance(position, fog.position);
+        if (distance <= fog.smallRadius) return 1.0f;
+        if (fog.largeRadius > fog.smallRadius) {
+            return glm::clamp((fog.largeRadius - distance) /
+                                  (fog.largeRadius - fog.smallRadius),
+                              0.0f, 1.0f);
+        }
+        return 0.0f;
+    };
     const auto& base = fogs[0];
-    const bool hasBase = (base.largeRadius > 0.0f || (base.flags & 1) != 0) &&
-                         (!underwater || wmoFogHasAuthoredUnderwater(base));
+    const bool baseAuthored = (base.largeRadius > 0.0f || (base.flags & kWmoFogInfiniteRadius) != 0) &&
+                              (!underwater || wmoFogHasAuthoredUnderwater(base));
+    const float baseWeight = !baseAuthored
+        ? 0.0f
+        : ((base.flags & kWmoFogBoundedBase) ? sphereWeight(base) : 1.0f);
+    const bool hasBase = baseWeight > 0.0f;
     // Record zero provides the WMO default when authored (largeRadius > 0 or
-    // infinite-radius flag 0x1). When no global WMO fog was authored, the WMO
-    // compiler writes a zero-radius white stub in record zero (37 TBC WMOs -
-    // wailingcaverns.wmo, md_mushroomcave*, md_icecave*, mini-hive*,
-    // stormwind.wmo, darnassis.wmo, kl_diremaul.wmo - still carry authored
-    // local spheres in records 1..N). Group refs select nearby local spheres;
-    // without an authored record zero, spheres blend against outdoor Light.dbc
-    // fog across their falloff shell and yield nullopt outside their radii.
-    // Repeated indices are padding, not additional weight.
+    // infinite-radius flag 0x1), unless flag 0x10 bounds it to its sphere radius.
+    // When no global WMO fog was authored, the WMO compiler writes a zero-radius
+    // white stub in record zero (37 TBC WMOs - wailingcaverns.wmo,
+    // md_mushroomcave*, md_icecave*, mini-hive*, stormwind.wmo, darnassis.wmo,
+    // kl_diremaul.wmo - still carry authored local spheres in records 1..N).
+    // Group refs select nearby local spheres; without an active record zero,
+    // spheres blend against outdoor Light.dbc fog across their falloff shell
+    // and yield nullopt outside their radii. Repeated indices are padding, not
+    // additional weight.
     float total = 0.0f;
     WMOFogSample local{glm::vec3(0.0f), 0.0f, 0.0f, 0.0f};
     for (size_t i = 0; i < indices.size(); ++i) {
@@ -57,13 +81,7 @@ inline std::optional<WMOFogSample> sampleWMOFog(
         if (duplicate) continue;
         const auto& fog = fogs[indices[i]];
         if (underwater && !wmoFogHasAuthoredUnderwater(fog)) continue;
-        const float distance = glm::distance(position, fog.position);
-        float weight = 0.0f;
-        if (fog.flags & 1) weight = 1.0f;
-        else if (distance <= fog.smallRadius) weight = 1.0f;
-        else if (fog.largeRadius > fog.smallRadius)
-            weight = glm::clamp((fog.largeRadius - distance) /
-                                (fog.largeRadius - fog.smallRadius), 0.0f, 1.0f);
+        const float weight = sphereWeight(fog);
         const auto value = sample(fog);
         local.color += value.color * weight;
         local.start += value.start * weight;
@@ -74,6 +92,11 @@ inline std::optional<WMOFogSample> sampleWMOFog(
     const float blend = std::min(total, 1.0f);
     if (hasBase) {
         auto result = sample(base);
+        if (outdoorFallback && baseWeight < 1.0f) {
+            result.color = glm::mix(outdoorFallback->color, result.color, baseWeight);
+            result.start = glm::mix(outdoorFallback->start, result.start, baseWeight);
+            result.end = glm::mix(outdoorFallback->end, result.end, baseWeight);
+        }
         if (total > 0.0f) {
             result.color = glm::mix(result.color, local.color / total, blend);
             result.start = glm::mix(result.start, local.start / total, blend);
