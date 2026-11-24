@@ -616,6 +616,16 @@ private:
     // announced once whichever of the many cast paths changed it.
     uint32_t announcedCastSpellId_ = 0;
     bool announcedAutoAttack_ = false;
+    // Set when pendingCastSpellId_ or a channel ends between update() ticks, so
+    // a 0 -> spell -> 0 pulse (e.g. PostClick SetChecked(1) followed by same-frame
+    // SMSG_CAST_FAILED / SMSG_SPELL_GO) still fires ACTIONBAR_UPDATE_STATE.
+    bool actionBarStateDirty_ = false;
+    void clearPendingCast(uint32_t matchSpellId = 0) {
+        if (pendingCastSpellId_ != 0 && (matchSpellId == 0 || pendingCastSpellId_ == matchSpellId)) {
+            pendingCastSpellId_ = 0;
+            actionBarStateDirty_ = true;
+        }
+    }
     /// Per action slot: whether it showed its spell's ActiveIconID when last
     /// announced. A change fires ACTIONBAR_SLOT_CHANGED <slot>, as native
     /// 2.4.3 does when Aspect of the Hawk's aura lands.

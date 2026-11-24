@@ -135,3 +135,71 @@ TEST_CASE("acquireAttackTarget selects nearest enemy in cone and respects target
     CHECK(gh.acquireAttackTarget(0) == 0);
     CHECK(gh.getTargetGuid() == Session::kPlayerGuid);
 }
+
+TEST_CASE("ACTIONBAR_UPDATE_STATE fires after same-frame cast fail, cancel, and channel stop",
+          "[replay][actionbar][fishing]") {
+    constexpr uint32_t kFishingSpellId = 33095u;
+    Session s("tbc");
+    auto& gh = s.handler();
+    gh.spellNameCacheRef()[kFishingSpellId].name = "Fishing";
+    gh.spellNameCacheLoadedRef() = true;
+    {
+        wowee::network::Packet learned(wowee::game::wireOpcode(Opcode::SMSG_LEARNED_SPELL));
+        learned.writeUInt32(kFishingSpellId);
+        s.receive(learned);
+    }
+
+    std::vector<std::string> events;
+    gh.setAddonEventCallback(
+        [&](const std::string& e, const std::vector<std::string>&) { events.push_back(e); });
+
+    auto sendCastFailed = [&](uint32_t spellId, uint8_t reason) {
+        wowee::network::Packet p(wowee::game::wireOpcode(Opcode::SMSG_CAST_FAILED));
+        p.writeUInt32(spellId);
+        p.writeUInt8(reason);
+        p.writeUInt8(1);  // castCount
+        s.receive(p);
+    };
+
+    // 1. Same-frame 0 -> 33095 -> 0 pulse (PostClick checked button on pendingCastSpellId_,
+    //    then SMSG_CAST_FAILED arrived before SpellHandler::updateTimers()).
+    events.clear();
+    gh.castSpell(kFishingSpellId, 0);
+    CHECK(gh.getActiveActionSpellId() == kFishingSpellId);
+    sendCastFailed(kFishingSpellId, 2);  // SPELL_FAILED_BAD_TARGETS
+    CHECK(gh.getActiveActionSpellId() == 0);
+    gh.getSpellHandler()->updateTimers(0.016f);
+    CHECK(count(events, "ACTIONBAR_UPDATE_STATE") == 1);
+    CHECK(count(events, "CURRENT_SPELL_CAST_CHANGED") == 1);
+
+    // 2. Same-frame castSpell -> cancelCast() before SMSG_SPELL_START clears pendingCastSpellId_.
+    events.clear();
+    gh.castSpell(kFishingSpellId, 0);
+    CHECK(gh.getActiveActionSpellId() == kFishingSpellId);
+    gh.cancelCast();
+    CHECK(gh.getActiveActionSpellId() == 0);
+    gh.getSpellHandler()->updateTimers(0.016f);
+    CHECK(count(events, "ACTIONBAR_UPDATE_STATE") == 1);
+
+    // 3. Channel lifecycle: MSG_CHANNEL_START clears pendingCastSpellId_ and MSG_CHANNEL_UPDATE(0)
+    //    clears active spell and fires ACTIONBAR_UPDATE_STATE.
+    events.clear();
+    gh.castSpell(kFishingSpellId, 0);
+    wowee::network::Packet chStart(wowee::game::wireOpcode(Opcode::MSG_CHANNEL_START));
+    chStart.writePackedGuid(Session::kPlayerGuid);
+    chStart.writeUInt32(kFishingSpellId);
+    chStart.writeUInt32(22000u);
+    s.receive(chStart);
+    CHECK(gh.getActiveActionSpellId() == kFishingSpellId);
+    gh.getSpellHandler()->updateTimers(0.016f);
+    CHECK(count(events, "ACTIONBAR_UPDATE_STATE") == 1);
+
+    events.clear();
+    wowee::network::Packet chStop(wowee::game::wireOpcode(Opcode::MSG_CHANNEL_UPDATE));
+    chStop.writePackedGuid(Session::kPlayerGuid);
+    chStop.writeUInt32(0u);
+    s.receive(chStop);
+    CHECK(gh.getActiveActionSpellId() == 0);
+    gh.getSpellHandler()->updateTimers(0.016f);
+    CHECK(count(events, "ACTIONBAR_UPDATE_STATE") == 1);
+}

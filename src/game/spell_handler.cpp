@@ -2577,6 +2577,7 @@ void SpellHandler::cancelCast() {
         LOG_INFO("Cancelled restoration aura: spellId=", auraSpell);
         return;
     }
+    clearPendingCast();
     if (!casting_) return;
     // GameObject interaction cast is client-side timing only.
     if (owner_.pendingGameObjectInteractGuidRef() == 0 &&
@@ -2591,6 +2592,7 @@ void SpellHandler::cancelCast() {
     casting_ = false;
     castIsChannel_ = false;
     currentCastSpellId_ = 0;
+    clearPendingCast();
     castTimeRemaining_ = 0.0f;
     craftQueueSpellId_ = 0;
     craftQueueRemaining_ = 0;
@@ -3525,11 +3527,12 @@ void SpellHandler::updateTimers(float dt) {
     // once, within the frame, whichever path made it.
     const uint32_t castNow = getActiveActionSpellId();
     const bool swingNow = owner_.isAutoAttacking();
-    if ((castNow != announcedCastSpellId_ || swingNow != announcedAutoAttack_) &&
+    if ((castNow != announcedCastSpellId_ || swingNow != announcedAutoAttack_ || actionBarStateDirty_) &&
         owner_.addonEventCallbackRef()) {
-        const bool castChanged = castNow != announcedCastSpellId_;
+        const bool castChanged = (castNow != announcedCastSpellId_) || actionBarStateDirty_;
         announcedCastSpellId_ = castNow;
         announcedAutoAttack_ = swingNow;
+        actionBarStateDirty_ = false;
         owner_.addonEventCallbackRef()("ACTIONBAR_UPDATE_STATE", {});
         if (castChanged) owner_.addonEventCallbackRef()("CURRENT_SPELL_CAST_CHANGED", {});
     }
@@ -3744,7 +3747,7 @@ void SpellHandler::handleCastFailed(network::Packet& packet) {
     bool ok = owner_.getPacketParsers() ? owner_.getPacketParsers()->parseCastFailed(packet, data)
                                     : CastFailedParser::parse(packet, data);
     if (!ok) return;
-    pendingCastSpellId_ = 0;
+    clearPendingCast();
 
     if (spellclass::isFishingCast(data.spellId)) {
         const auto& movement = owner_.movementInfoRef();
@@ -3764,6 +3767,7 @@ void SpellHandler::handleCastFailed(network::Packet& packet) {
     casting_ = false;
     castIsChannel_ = false;
     currentCastSpellId_ = 0;
+    clearPendingCast();
     // Only the refusal of the press that queued it: pressing it again while it
     // waits for the swing is refused, and the first is still queued.
     if (data.spellId == nextSwingSpellId_ && answersPress(data, nextSwingCastCount_)) nextSwingSpellId_ = 0;
@@ -3876,8 +3880,8 @@ void SpellHandler::handleSpellStart(network::Packet& packet) {
               " target=0x", std::hex, data.targetGuid, std::dec);
 
     const bool rangedWeaponAttack = spellclass::isRangedWeaponAutoAttack(data.spellId);
-    if (data.casterUnit == owner_.getPlayerGuid() && data.spellId == pendingCastSpellId_)
-        pendingCastSpellId_ = 0;
+    if (data.casterUnit == owner_.getPlayerGuid())
+        clearPendingCast(data.spellId);
 
     if (data.casterUnit == owner_.getPlayerGuid() && owner_.rangedWeaponSwapCallbackRef()) {
         owner_.loadSpellNameCache();
@@ -4040,7 +4044,7 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
     bool casterFinishedTimedCast = false;
     if (data.casterUnit == owner_.getPlayerGuid()) {
         if (data.spellId == nextSwingSpellId_) nextSwingSpellId_ = 0;
-        if (data.spellId == pendingCastSpellId_) pendingCastSpellId_ = 0;
+        clearPendingCast(data.spellId);
         owner_.loadSpellNameCache();
         spellclass::RestChannelKind restKind = spellclass::RestChannelKind::NONE;
         auto spellNameIt = owner_.spellNameCacheRef().find(data.spellId);
@@ -5498,6 +5502,7 @@ void SpellHandler::stopCasting() {
     casting_ = false;
     castIsChannel_ = false;
     currentCastSpellId_ = 0;
+    clearPendingCast();
     castTimeRemaining_ = 0.0f;
     castTimeTotal_ = 0.0f;
     owner_.pendingGameObjectInteractGuidRef() = 0;
@@ -5517,6 +5522,7 @@ void SpellHandler::resetCastState() {
     casting_ = false;
     castIsChannel_ = false;
     currentCastSpellId_ = 0;
+    clearPendingCast();
     castTimeRemaining_ = 0.0f;
     castTimeTotal_ = 0.0f;  // Must match castTimeRemaining_ to keep getCastProgress() == 0
     nextSwingSpellId_ = 0;
@@ -6671,7 +6677,7 @@ void SpellHandler::handleCastResult(network::Packet& packet) {
                                                    castResultMiscArg, castResultMiscArg2)) {
         LOG_DEBUG("SMSG_CAST_RESULT: spellId=", castResultSpellId, " result=", static_cast<int>(castResult));
         if (castResult != 0) {
-            pendingCastSpellId_ = 0;
+            clearPendingCast();
             if (spellclass::isFishingCast(castResultSpellId)) {
                 const auto& movement = owner_.movementInfoRef();
                 LOG_WARNING("Fishing cast failed: spell=", castResultSpellId,
@@ -6683,7 +6689,8 @@ void SpellHandler::handleCastResult(network::Packet& packet) {
             const uint64_t gatherGoGuid = owner_.lastInteractedGoGuidRef();
             const bool gatherCast = gatherGoGuid != 0 && isGatherSpellId(castResultSpellId);
             const bool started = casting_ && !castIsChannel_ && currentCastSpellId_ == castResultSpellId;
-            casting_ = false; castIsChannel_ = false; currentCastSpellId_ = 0; castTimeRemaining_ = 0.0f;
+            casting_ = false; castIsChannel_ = false; currentCastSpellId_ = 0;
+        clearPendingCast(); castTimeRemaining_ = 0.0f;
             owner_.lastInteractedGoGuidRef() = 0;
             owner_.pendingGameObjectInteractGuidRef() = 0;
             craftQueueSpellId_ = 0; craftQueueRemaining_ = 0;
@@ -6977,6 +6984,7 @@ void SpellHandler::handleSpellFailure(network::Packet& packet) {
         // Player's own cast failed - clear gather-node loot target so the
         // next timed cast doesn't try to loot a stale interrupted gather node.
         casting_ = false; castIsChannel_ = false; currentCastSpellId_ = 0;
+        clearPendingCast();
         if (failSpellId == nextSwingSpellId_) nextSwingSpellId_ = 0;
         owner_.lastInteractedGoGuidRef() = 0;
         craftQueueSpellId_ = 0;
@@ -7905,6 +7913,7 @@ void SpellHandler::handleChannelStart(network::Packet& packet) {
     uint32_t chanTotalMs = packet.readUInt32();
     if (chanTotalMs > 0 && chanCaster != 0) {
         if (chanCaster == owner_.getPlayerGuid()) {
+            clearPendingCast(chanSpellId);
             casting_            = true;
             castIsChannel_      = true;
             currentCastSpellId_ = chanSpellId;
@@ -7964,6 +7973,8 @@ void SpellHandler::handleChannelUpdate(network::Packet& packet) {
             casting_ = false;
             castIsChannel_ = false;
             currentCastSpellId_ = 0;
+            clearPendingCast(endedSpellId);
+            actionBarStateDirty_ = true;
         }
     } else if (chanCaster2 != 0) {
         auto it = unitCastStates_.find(chanCaster2);
