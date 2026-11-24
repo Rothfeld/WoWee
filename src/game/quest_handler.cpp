@@ -1400,6 +1400,7 @@ void QuestHandler::selectGossipOption(uint32_t optionId, const std::string& code
     // A late NPC-text reply must not auto-select this option again while
     // waiting for the service response. Keep its data for that response.
     gossipWindowOpen_ = false;
+    gossipShowPendingTextId_ = 0;
 
     // The server dispatches the selected gossip action, including services.
     // Option text also names destinations in guard menus and is not a service ID.
@@ -1572,6 +1573,7 @@ void QuestHandler::declineQuest(bool announce) {
 
 void QuestHandler::closeGossip() {
     gossipWindowOpen_ = false;
+    gossipShowPendingTextId_ = 0;
     if (owner_.addonEventCallbackRef()) {
         owner_.addonEventCallbackRef()("GOSSIP_CLOSED", {});
         // SMSG_QUESTGIVER_QUEST_LIST uses QuestFrame, not GossipFrame.
@@ -2347,18 +2349,18 @@ void QuestHandler::handleGossipMessage(network::Packet& packet) {
     questGreeting_.clear();
     questGreetingOpen_ = false;
 
-    // Asked for before the window is announced rather than after it.
-    //
-    // This client's own gossip window read the greeting again on every frame
-    // it drew, so it collected the reply whenever it landed and the order here
-    // could not matter. An interface driven by events reads it once, when it
-    // is told the window opened - so announcing first meant it always read an
-    // empty cache and drew the NPC dialog blank, and the text arriving a
-    // moment later had nobody left to tell.
-    //
-    // Moving it earlier is enough on any NPC talked to twice, where the text
-    // is already cached and the query is not sent at all. The first visit
-    // still needs the arrival to say so, which handleNpcTextUpdate now does.
+    // Single non-gossip service options (vendor, trainer, taxi, banker) are
+    // auto-selected by FrameXML without displaying GossipFrame.
+    const bool autoSelectNonGossip =
+        currentGossip_.quests.empty() &&
+        currentGossip_.options.size() == 1 &&
+        currentGossip_.options[0].icon != 0;
+
+    // When the gossip greeting text is not yet cached, query it and wait for
+    // SMSG_NPC_TEXT_UPDATE before firing GOSSIP_SHOW. Firing GOSSIP_SHOW early
+    // redraws GossipFrame with an empty greeting string while the query is in
+    // flight, causing a blank-parchment flicker on every uncached page turn.
+    bool deferGossipShow = false;
     if (currentGossip_.titleTextId > 0 && !npcTextCache_.count(currentGossip_.titleTextId)) {
         uint32_t wireOp = wireOpcode(Opcode::CMSG_NPC_TEXT_QUERY);
         if (wireOp != 0xFFFF && owner_.getSocket()) {
@@ -2366,13 +2368,20 @@ void QuestHandler::handleGossipMessage(network::Packet& packet) {
             qPkt.writeUInt32(currentGossip_.titleTextId);
             qPkt.writeUInt64(currentGossip_.npcGuid);
             owner_.getSocket()->send(qPkt);
+            if (!autoSelectNonGossip) {
+                deferGossipShow = true;
+                gossipShowPendingTextId_ = currentGossip_.titleTextId;
+            }
         }
     }
 
-    if (owner_.addonEventCallbackRef()) owner_.addonEventCallbackRef()("GOSSIP_SHOW", {});
-    // Auto-selected service gossip never opens a panel. Preserve the current
-    // merchant until its refreshed inventory arrives; real gossip closes it.
-    if (gossipWindowOpen_) owner_.closeVendor();
+    if (!deferGossipShow) {
+        gossipShowPendingTextId_ = 0;
+        if (owner_.addonEventCallbackRef()) owner_.addonEventCallbackRef()("GOSSIP_SHOW", {});
+        // Auto-selected service gossip never opens a panel. Preserve the current
+        // merchant until its refreshed inventory arrives; real gossip closes it.
+        if (gossipWindowOpen_) owner_.closeVendor();
+    }
 
     // Classify gossip quests and update quest log + overhead NPC markers.
     classifyGossipQuests(true);
@@ -2554,6 +2563,7 @@ void QuestHandler::handleGossipComplete(network::Packet& packet) {
     }
 
     gossipWindowOpen_ = false;
+    gossipShowPendingTextId_ = 0;
     if (owner_.addonEventCallbackRef()) owner_.addonEventCallbackRef()("GOSSIP_CLOSED", {});
     currentGossip_ = GossipMessageData{};
     questGreeting_.clear();
@@ -2590,20 +2600,23 @@ void QuestHandler::handleNpcTextUpdate(network::Packet& packet) {
             newlyCached = true;
         }
     }
+    if (!npcTextCache_.count(textId)) {
+        npcTextCache_[textId] = "";
+    }
     LOG_DEBUG("NPC text update: id=", textId,
              " cached=", npcTextCache_.count(textId) ? "yes" : "no");
 
-    // The window is already open and waiting on exactly this text, so say so.
-    //
-    // A cache filled without an event is this client's oldest shape of bug and
-    // it reads as "it only works the second time": the greeting is there for
-    // every later visit to the same NPC and blank on the first, because the
-    // first is the only one where the text arrives after the window did.
-    // GOSSIP_SHOW is the event the interface redraws the greeting on, and
-    // firing it again is what a second look at an open window means.
-    if (gossipWindowOpen_ && currentGossip_.titleTextId == textId &&
-        npcTextCache_.count(textId) && owner_.addonEventCallbackRef()) {
-        owner_.addonEventCallbackRef()("GOSSIP_SHOW", {});
+    if (gossipWindowOpen_ && currentGossip_.titleTextId == textId) {
+        const bool wasDeferred = (gossipShowPendingTextId_ == textId);
+        if (wasDeferred) {
+            gossipShowPendingTextId_ = 0;
+        }
+        if ((wasDeferred || newlyCached) && owner_.addonEventCallbackRef()) {
+            owner_.addonEventCallbackRef()("GOSSIP_SHOW", {});
+        }
+        if (wasDeferred && gossipWindowOpen_) {
+            owner_.closeVendor();
+        }
     }
     // First visit: the gossip message arrived before its text, so its emotes
     // start now. Later visits start them from handleGossipMessage.

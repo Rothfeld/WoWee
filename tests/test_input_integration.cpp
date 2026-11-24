@@ -4840,6 +4840,64 @@ TEST_CASE_METHOD(Integration, "Gossip and quest greeting panels hand their emote
     CHECK(played[2].second == std::vector<std::pair<uint32_t, uint32_t>>{{0, 1}});
 }
 
+TEST_CASE_METHOD(Integration, "Uncached gossip pages defer GOSSIP_SHOW until NPC text arrives", "[gossip-flicker]") {
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    std::vector<std::string> shownTexts;
+    handler.setAddonEventCallback([&](const std::string& name, const std::vector<std::string>&) {
+        if (name == "GOSSIP_SHOW") {
+            shownTexts.push_back(handler.getNpcText(handler.getCurrentGossip().titleTextId));
+        }
+    });
+
+    const std::vector<std::pair<uint32_t, uint32_t>> noEmotes{{0, 0}, {0, 0}, {0, 0}};
+    // Page 1 arrives with uncached textId 9834: must query text and NOT fire GOSSIP_SHOW with blank text.
+    session.receive(gossipWithText(182947, 9834));
+    CHECK(shownTexts.empty());
+    CHECK(session.sent().of(wowee::game::Opcode::CMSG_NPC_TEXT_QUERY).size() == 1);
+
+    // When SMSG_NPC_TEXT_UPDATE lands, GOSSIP_SHOW fires exactly once with the populated greeting text.
+    session.receive(npcTextUpdate(9834, noEmotes));
+    REQUIRE(shownTexts.size() == 1);
+    CHECK_FALSE(shownTexts[0].empty());
+
+    // Page 2 arrives with uncached textId 9835 while page 1 is open: stays on page 1 until text arrives.
+    session.receive(gossipWithText(182947, 9835));
+    CHECK(shownTexts.size() == 1);
+    CHECK(session.sent().of(wowee::game::Opcode::CMSG_NPC_TEXT_QUERY).size() == 2);
+    session.receive(npcTextUpdate(9835, noEmotes));
+    REQUIRE(shownTexts.size() == 2);
+    CHECK_FALSE(shownTexts[1].empty());
+
+    // Repeat visit to cached textId 9834 fires GOSSIP_SHOW immediately with zero extra query.
+    session.receive(gossipWithText(182947, 9834));
+    REQUIRE(shownTexts.size() == 3);
+    CHECK(session.sent().of(wowee::game::Opcode::CMSG_NPC_TEXT_QUERY).size() == 2);
+
+    // Closing gossip while an uncached text query is in flight suppresses the deferred GOSSIP_SHOW.
+    session.receive(gossipWithText(182947, 9836));
+    CHECK(shownTexts.size() == 3);
+    handler.closeGossip();
+    session.receive(npcTextUpdate(9836, noEmotes));
+    CHECK(shownTexts.size() == 3);
+
+    // Single non-gossip service option (vendor icon=1) with uncached text still fires GOSSIP_SHOW immediately.
+    wowee::network::Packet vendorGossip(wowee::game::wireOpcode(wowee::game::Opcode::SMSG_GOSSIP_MESSAGE));
+    vendorGossip.writeUInt64(999);
+    vendorGossip.writeUInt32(100);
+    vendorGossip.writeUInt32(9837);
+    vendorGossip.writeUInt32(1);
+    vendorGossip.writeUInt32(0);
+    vendorGossip.writeUInt8(1); // vendor icon
+    vendorGossip.writeUInt8(0);
+    vendorGossip.writeUInt32(0);
+    vendorGossip.writeString("Browse goods");
+    vendorGossip.writeString("");
+    vendorGossip.writeUInt32(0);
+    session.receive(vendorGossip);
+    CHECK(shownTexts.size() == 4);
+}
+
 TEST_CASE("Panel emotes run in order, each after the previous animation", "[npc-panel-emote]") {
     wowee::core::NpcPanelEmotes emotes;
     std::vector<uint32_t> started;

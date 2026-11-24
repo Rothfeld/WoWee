@@ -311,6 +311,7 @@ public:
         // 2.4.3 enters the world with nothing selected (the log then picks its
         // first quest) but keeps the collapsed headers for the session.
         selectedQuestId_ = 0;
+        gossipShowPendingTextId_ = 0;
     }
 
 private:
@@ -354,6 +355,7 @@ private:
     // --- State ---
     // Gossip
     bool gossipWindowOpen_ = false;
+    uint32_t gossipShowPendingTextId_ = 0;
     GossipMessageData currentGossip_;
     std::string questGreeting_;
     bool questGreetingOpen_ = false;
