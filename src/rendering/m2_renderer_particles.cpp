@@ -608,7 +608,7 @@ void M2Renderer::renderParticleMeshes(VkCommandBuffer cmd, VkDescriptorSet perFr
                 ? gpu.particleTexSets[p.emitterIndex] : VK_NULL_HANDLE;
             if (!texSet) continue;
             glm::mat4 bone(1.0f);
-            if ((em.flags & kParticleNoTrail) && !gpu.bones.empty()) bone = inst.boneMatrices.at(em.bone);
+            if ((em.flags & kParticleBoneFrame) && !gpu.bones.empty()) bone = inst.boneMatrices.at(em.bone);
             const glm::mat4 render = particleRenderTransform(em.flags, inst.modelMatrix, bone);
             const float lifeRatio = p.life / std::max(p.maxLife, 0.001f);
             const float twinkle = particleTwinkleScale(p.twinkleSeed, p.life, em.twinkleSpeed,
@@ -1184,7 +1184,7 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
 
             const glm::mat4 emitterBone = gpu.bones.empty() ? glm::mat4(1.0f)
                                                             : inst.boneMatrices.at(em.bone);
-            const glm::mat4 bone = (em.flags & kParticleNoTrail) ? emitterBone : glm::mat4(1.0f);
+            const glm::mat4 bone = (em.flags & kParticleBoneFrame) ? emitterBone : glm::mat4(1.0f);
             const glm::mat4 cachedParticleTransform = particleRenderTransform(
                 em.flags, inst.modelMatrix, bone);
             const std::pair<glm::vec3, glm::vec3> cachedQuadAxes =

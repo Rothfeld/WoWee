@@ -20,19 +20,20 @@ inline constexpr uint32_t kParticleNoTrail = 0x10;
 // Detached particles travel in yards (particleWorldVelocityBasis).
 inline constexpr uint32_t kParticleTravelsInYards = 0x8;
 inline constexpr uint32_t kParticleInModelSpace = 0x80;
-// Pre-264 flag 0x4000 also keeps trailing particles in the placed model's
-// frame (285 of 16070 TBC emitters). Zul'jin's claws
-// (Hand_1H_ZulAman_D_01Right.m2, 0x4429/0x4629, also item 33975 on a
-// player) keep their frost wisps on the claw in the original while the
-// wielder jumps or swings; in world space they left a trail of wisps and a
-// column behind every jump. Pain Suppression (33206, PainSuppression_State,
-// 0x4029) stays round a running player in the original. Emitters without
-// it trail in world space there as here: Frostguard's Shaman_Frost item
-// visual (0x209/0x9) and Widow's Remorse's own smoke (0x22d) are left
-// behind at the top of a jump. Unobserved: whether 0x4000 particles also
-// follow an animated emitter bone, as NoTrail ones do (177 of these emitters
-// sit on animated bones: hunter shot missiles, hanging braziers).
+// Pre-264 flag 0x4000 keeps particles in the animated emitter bone's frame
+// (model * bone), just like NoTrail (0x10) (285 of 16070 TBC emitters):
+// - Zul'jin's claws (Hand_1H_ZulAman_D_01Right.m2, 0x4429/0x4629, item 33975)
+//   keep their frost wisps on the claw while the wielder jumps or swings.
+// - Pain Suppression (33206, PainSuppression_State, 0x4029) stays round a
+//   running player.
+// - Murmur's mace/hand/head/shoulder sonic rings (Murmur.m2 #2-#5/#7-#8,
+//   0x4229, bone 84 mace tip, 2.0 s life) stay centered on the animated mace
+//   bone as Murmur sways and swings in build 8606; keeping them only in
+//   model-root space left a 2 s lingering trail of rings above his shoulder.
+// Emitters without 0x10/0x80/0x4000 trail in world space: Frostguard's
+// Shaman_Frost (0x209/0x9) and Widow's Remorse's smoke (0x22d).
 inline constexpr uint32_t kParticleFollowsModel = 0x4000;
+inline constexpr uint32_t kParticleBoneFrame = kParticleNoTrail | kParticleFollowsModel;
 inline constexpr uint32_t kParticleModelFrame = kParticleInModelSpace | kParticleFollowsModel;
 // Sprites lie flat in the XY plane of their emitter bone, as placed in the
 // world (particleQuadAxes). Ground rings stand on unrotated bones
@@ -139,7 +140,7 @@ inline glm::vec3 particleInheritedVelocity(uint32_t flags,
                                            const glm::vec3& localPos,
                                            float dt,
                                            float burstMultiplier) {
-    if (!(flags & kParticleInheritVelocity) || (flags & kParticleNoTrail)) return glm::vec3(0.0f);
+    if (!(flags & kParticleInheritVelocity) || (flags & kParticleBoneFrame)) return glm::vec3(0.0f);
     if (dt <= 1e-5f || burstMultiplier == 0.0f) return glm::vec3(0.0f);
     const glm::vec3 prevPos = glm::vec3(previous * glm::vec4(localPos, 1.0f));
     const glm::vec3 currPos = glm::vec3(current * glm::vec4(localPos, 1.0f));
@@ -275,20 +276,21 @@ inline glm::mat3 particleMeshBasis(uint32_t flags, const glm::mat3& birthBasis) 
     return basis;
 }
 
-// NoTrail particles remain attached to the animated emitter. Other particles
-// retain its birth pose, either in model space (0x80 or 0x4000) or in world
-// space. Bit 0x20 sizes sprites (particleSpriteHalfWidth); it does not select
-// a simulation coordinate system.
+// NoTrail (0x10) and FollowsModel (0x4000) particles remain attached to the
+// animated emitter bone (model * bone). ModelSpace (0x80) particles retain
+// their birth bone pose in the placed model's frame (model). Other particles
+// live in world space. Bit 0x20 sizes sprites (particleSpriteHalfWidth); it
+// does not select a simulation coordinate system.
 inline glm::mat4 particleRenderTransform(uint32_t flags, const glm::mat4& model,
                                          const glm::mat4& bone) {
-    if (flags & kParticleNoTrail) return model * bone;
-    return flags & kParticleModelFrame ? model : glm::mat4(1.0f);
+    if (flags & kParticleBoneFrame) return model * bone;
+    return (flags & kParticleInModelSpace) ? model : glm::mat4(1.0f);
 }
 
 inline glm::mat4 particleBirthTransform(uint32_t flags,
                                        const glm::mat4& model, const glm::mat4& bone) {
-    if (flags & kParticleNoTrail) return glm::mat4(1.0f);
-    return flags & kParticleModelFrame ? bone : model * bone;
+    if (flags & kParticleBoneFrame) return glm::mat4(1.0f);
+    return (flags & kParticleInModelSpace) ? bone : model * bone;
 }
 
 // Emitter position of a particle born `age` seconds before the end of a step

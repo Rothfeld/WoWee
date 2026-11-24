@@ -130,9 +130,11 @@ TEST_CASE("Trailing emitters preserve birth pose independent of emitter shape", 
     // ModelSpace keeps the model's movement, but never today's emitter pose.
     const auto movedModel = glm::translate(model, glm::vec3(3,0,0));
     CHECK(particleRenderTransform(0x89,movedModel,currentBone) * particleBirthTransform(0x89,model,birthBone) * origin == glm::vec4(13,2,0,1));
-    // So does 0x4000: Zul'jin's claw wisps (0x4429) ride the claw when its
-    // wielder jumps; Shaman_Frost (0x209) stays where it was born.
-    CHECK(particleRenderTransform(0x4429,movedModel,currentBone) * particleBirthTransform(0x4429,model,birthBone) * origin == glm::vec4(13,2,0,1));
+    // 0x4000 (kParticleFollowsModel) follows both model movement AND the
+    // animated emitter bone (Murmur.m2 #4 mace sonic rings 0x4229 on bone 84,
+    // Zul'jin's claw wisps 0x4429); Shaman_Frost (0x209) stays in world space.
+    CHECK(particleRenderTransform(0x4429,movedModel,currentBone) * particleBirthTransform(0x4429,model,birthBone) * origin == glm::vec4(13,4,0,1));
+    CHECK(particleRenderTransform(0x4229,movedModel,currentBone) * particleBirthTransform(0x4229,model,birthBone) * origin == glm::vec4(13,4,0,1));
     CHECK(particleRenderTransform(0x209,movedModel,currentBone) * particleBirthTransform(0x209,model,birthBone) * origin == glm::vec4(10,2,0,1));
 }
 
