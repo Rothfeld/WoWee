@@ -536,7 +536,7 @@ glm::vec3 CameraController::moveBodyOnFootOnce(const glm::vec3& start, const glm
         // The step height above where the sole last stood on ground.
         const float budget = std::clamp(walkableStepBaseZ_ + maxStep - from.z, 0.0f, maxStep);
         move = movement::walkBody(from, horizontal, budget, radius, height, triangles, minWalkable, maxStep,
-                                  terrainCount);
+                                  terrainCount, bodyWalkedOntoSlope_);
         // A perch is left by stepping on from it - up, or to where the sole
         // stands on ground - or by falling. A step from a perch that ends
         // hung by the bevel is another perch: native set on the rim of the
@@ -607,6 +607,8 @@ glm::vec3 CameraController::moveBodyOnFootOnce(const glm::vec3& start, const glm
     // body is held, mid-step, as on the nose of a stair.
     grounded = move.support != movement::BodySupport::None;
     bodyPerched_ = move.support == movement::BodySupport::Steep;
+    // The slope a walk has carried the sole onto is where the next walk may step on from.
+    bodyWalkedOntoSlope_ = walked ? move.walkedOntoSlope : glm::vec3(0.0f);
     if (grounded) verticalVelocity = 0.0f;
     // The step's yard is counted from where the sole last stood, or from
     // where a fall ended.
@@ -1246,6 +1248,7 @@ glm::vec3 CameraController::moveFollowedCharacter(float /*deltaTime*/, FrameInpu
         return targetPos;
     }
     bodyPerched_ = false;
+    bodyWalkedOntoSlope_ = glm::vec3(0.0f);
     bodyStepBaseKnown_ = false;
 
     // Sweep collisions in small steps to reduce tunneling through thin walls/floors.

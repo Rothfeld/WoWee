@@ -51,6 +51,7 @@ struct Walker {
     float verticalVelocity = 0.0f;
     float baseZ = 0.0f;
     size_t terrain = 0;     // how many of the mesh's first triangles are the terrain's
+    glm::vec3 walkedOntoSlope{0.0f};
 
     BodyMove frame(const Mesh& mesh, glm::vec3 run, float dt = 1.0f / 30.0f) {
         BodyMove move;
@@ -58,7 +59,8 @@ struct Walker {
         if (position.z < baseZ) baseZ = position.z;
         if (grounded && verticalVelocity <= 0.0f) {
             const float budget = std::clamp(baseZ + kMaxStepUp - position.z, 0.0f, kMaxStepUp);
-            move = walkBody(position, run, budget, kRadius, kHeight, mesh, kMinWalkableNormalZ, kMaxStepUp, terrain);
+            move = walkBody(position, run, budget, kRadius, kHeight, mesh, kMinWalkableNormalZ, kMaxStepUp, terrain,
+                            walkedOntoSlope);
             const bool steppedOn = move.stepped &&
                 (move.soleOnGround || move.position.z > position.z + 1e-3f);
             if (perched && steppedOn && !move.soleOnGround && move.support == BodySupport::Walkable)
@@ -74,6 +76,7 @@ struct Walker {
         position = move.position;
         grounded = move.support != BodySupport::None;
         perched = move.support == BodySupport::Steep;
+        walkedOntoSlope = walked ? move.walkedOntoSlope : glm::vec3(0.0f);
         if (grounded) verticalVelocity = 0.0f;
         const bool landed = !walked && move.support == BodySupport::Walkable;
         if (move.soleOnGround || landed || position.z < baseZ) baseZ = position.z;
@@ -874,4 +877,63 @@ TEST_CASE("The near edge of a top a hair over a yard up is got over when the top
     CHECK(walker.position.x > 2.0f);
     CHECK(walker.grounded);
     CHECK(walker.position.z == Catch::Approx(1.006f - 0.15f * (walker.position.x - 1.0f)).margin(0.01f));
+}
+
+TEST_CASE("A body walked off its ground onto a building's slope steps on up another steep face", "[body_mover]") {
+    // Karabor Sewers (347.2, 814.4), about the vertex its faces share: a 21
+    // degree ramp, ground of 43 degrees, a 54 degree bank, faces of 61 and 71
+    // degrees and ground of 40 degrees above them. Native, heading 23.6
+    // degrees, creeps along the foot of the bank until its sole is 1.1 mm or
+    // more beyond the ground's edge over the bank, then takes its whole move
+    // 0.21 to 0.40 yd up onto the 61 degree face (20 frames of 15 runs) and
+    // falls from there, on over the face and up the ramp beyond in most runs.
+    // Turned along the bank instead, the user's client went back down to the
+    // ramp and round again, 3 to 6 yd behind native after 3 s.
+    Mesh mesh;
+    mesh.push_back({glm::vec3(6.7100f, -1.2233f, 2.5427f), glm::vec3(0.0002f, -0.0002f, 0.0002f), glm::vec3(-5.8321f, 0.0276f, -2.1989f)});
+    mesh.push_back({glm::vec3(-5.8392f, -1.1474f, -2.2054f), glm::vec3(6.7100f, -1.2233f, 2.5427f), glm::vec3(-5.8321f, 0.0276f, -2.1989f)});
+    mesh.push_back({glm::vec3(6.8740f, -0.0330f, 2.5918f), glm::vec3(0.0002f, -0.0002f, 0.0002f), glm::vec3(6.7100f, -1.2233f, 2.5427f)});
+    mesh.push_back({glm::vec3(0.0002f, -0.0002f, 0.0002f), glm::vec3(6.8740f, -0.0330f, 2.5918f), glm::vec3(0.3541f, 1.1702f, 2.1854f)});   // 61 degrees
+    mesh.push_back({glm::vec3(-0.0908f, 1.1702f, 0.9725f), glm::vec3(-0.7883f, 1.1732f, 1.1582f), glm::vec3(0.0002f, -0.0002f, 0.0002f)}); // 40 degrees
+    mesh.push_back({glm::vec3(0.3541f, 1.1702f, 2.1854f), glm::vec3(-0.0908f, 1.1702f, 0.9725f), glm::vec3(0.0002f, -0.0002f, 0.0002f)});  // 71 degrees
+    mesh.push_back({glm::vec3(-5.8321f, 0.0276f, -2.1989f), glm::vec3(0.0002f, -0.0002f, 0.0002f), glm::vec3(-6.1592f, 1.1913f, -1.3156f)}); // 43 degrees
+    mesh.push_back({glm::vec3(-0.7883f, 1.1732f, 1.1582f), glm::vec3(-6.1592f, 1.1913f, -1.3156f), glm::vec3(0.0002f, -0.0002f, 0.0002f)}); // the bank
+    const glm::vec3 heading(std::cos(0.412f), std::sin(0.412f), 0.0f);
+    const glm::vec3 bank = glm::normalize(glm::cross(mesh[7][1] - mesh[7][0], mesh[7][2] - mesh[7][0]));
+
+    SECTION("the step itself, from 2 mm beyond the ground's edge") {
+        // Native's frame 19 of run u17_24: from (-0.3533, +0.0699, -0.0722) by (+0.2117, +0.0925, +0.3894).
+        const glm::vec3 from(-0.3533f, 0.0699f, -0.0722f);
+        const BodyMove step = walkBody(from, heading * 0.2310f, kMaxStepUp, kRadius, kHeight, mesh,
+                                       kMinWalkableNormalZ, kMaxStepUp, 0, bank);
+        CHECK(step.position.x - from.x == Catch::Approx(0.2117f).margin(0.002f));
+        CHECK(step.position.y - from.y == Catch::Approx(0.0925f).margin(0.002f));
+        CHECK(step.position.z - from.z == Catch::Approx(0.3894f).margin(0.005f));
+        CHECK(step.support == BodySupport::Steep);
+        // Not walked onto the bank - standing on ground - it is turned aside instead.
+        const BodyMove turned = walkBody(from, heading * 0.2310f, kMaxStepUp, kRadius, kHeight, mesh,
+                                         kMinWalkableNormalZ, kMaxStepUp, 0);
+        CHECK(turned.position.z - from.z < 0.15f);
+        // The same faces as terrain are not stepped onto.
+        const BodyMove terrain = walkBody(from, heading * 0.2310f, kMaxStepUp, kRadius, kHeight, mesh,
+                                          kMinWalkableNormalZ, kMaxStepUp, mesh.size(), bank);
+        CHECK(terrain.position.z - from.z < 0.15f);
+    }
+    SECTION("up the ramp, past the bank, within native's time") {
+        // After 3 s native is 10.8 to 15.9 yd on (8 arrival phases), 5 to 10 yd past the vertex.
+        for (const float back : {0.0f, 0.07f, 0.14f}) {
+            Walker walker{.position = glm::vec3(-3.5f, -1.35f, -1.32f) - heading * back};
+            walker.position.z = lowerBody(walker.position + glm::vec3(0, 0, 0.5f), 2.0f, kRadius, kHeight, mesh)->position.z;
+            walker.baseZ = walker.position.z;
+            float rise = 0.0f;
+            for (int i = 0; i < 90; ++i) {
+                const float before = walker.position.z;
+                walker.frame(mesh, heading * kFrameRun);
+                rise = std::max(rise, walker.position.z - before);
+            }
+            INFO("start " << back << " yd back, at x " << walker.position.x);
+            CHECK(rise > 0.2f);
+            CHECK(walker.position.x > 1.0f);
+        }
+    }
 }

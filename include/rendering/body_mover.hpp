@@ -181,10 +181,26 @@
 //    plane is 0.186 yd or more ahead of the sole and slides at 0.159 or
 //    less, whatever the move's length. Not built in: this mover takes such
 //    moves in equal parts.
-//  - Not built in: native steps onto steep faces with its whole move in
-//    places this mover turns aside (Valley of Trials -520.9, -4254.6, 0.48
-//    yd up a 75 degree face; Karabor Sewers 346.8, 814.4, 0.38 yd up a 61
-//    degree face after creeping down a 54 degree bank for five frames).
+//  - Not built in: native steps onto a steep face with its whole move in the
+//    Valley of Trials (-520.9, -4254.6, 0.48 yd up a 75 degree face), where
+//    this mover turns aside.
+//
+// A step from a slope
+// (_experiments/20261124T094500Z.movement_collision_parity_round18, bank.py,
+// feat18.cpp; built in, walkBody):
+//  - A walking body whose sole has gone over the edge of its ground onto a
+//    slope of a building - a face that is not ground, flatter than the
+//    body's underside - takes its next move, lifted by the move over the
+//    radius, carried and lowered, as a step onto another steep face, and
+//    falls from there (Karabor Sewers 347.2, 814.4: 20 frames of 25 with the
+//    sole 1.1 mm or more beyond the edge, none of 42 nearer; Orgrimmar
+//    1818.1, -4242.6, where the wall's 77 degree section begins above its
+//    53 degree skirt: 15 runs of 18). It does not step up the slope it is
+//    on (Orgrimmar skirt, 3 runs) save twice in the sewers, nor from a
+//    slope of the terrain (Tanaris, 6 runs).
+//  - While falling, what a steep face pushes the body aside by as it drops
+//    onto it - the drop over the face's slope, square to the face - is not
+//    kept as level velocity (camera_controller.cpp, BodyMove::levelKept).
 namespace wowee::rendering::movement {
 
 // What a character's scale (OBJECT_FIELD_SCALE_X times its model's) does to
@@ -216,6 +232,10 @@ struct BodyMove {
     bool deflected = false;  // the horizontal move was turned aside or stopped
     bool ceiling = false;    // an upward move was stopped
     bool held = false;       // a fall was stopped by faces that are not ground
+    // The up-facing normal of a slope - a face of a building that is not
+    // ground - a walk begun on ground has carried the sole onto; zero when
+    // there is none (walkBody).
+    glm::vec3 walkedOntoSlope{0.0f};
 };
 
 inline std::optional<BodyContact> firstBodyContact(const glm::vec3& from, const glm::vec3& delta,
@@ -233,6 +253,7 @@ struct BodyRest {
     glm::vec3 position;
     glm::vec3 face;    // up-facing normal of the supporting triangle
     glm::vec3 normal;  // separating direction of the contact
+    size_t triangle = 0;  // index of the supporting triangle
 };
 
 // Lower a body by up to `distance`; where it comes to rest, if on anything.
@@ -259,20 +280,23 @@ inline std::optional<BodyRest> lowerBody(const glm::vec3& from, float distance,
         return contact;
     };
     std::optional<BodyContact> first;
-    for (const auto& triangle : triangles) {
-        const auto contact = meet(triangle);
-        if (contact && (!first || contact->time < first->time)) first = contact;
+    size_t supporting = 0;
+    for (size_t index = 0; index < triangles.size(); ++index) {
+        const auto contact = meet(triangles[index]);
+        if (contact && (!first || contact->time < first->time)) { first = contact; supporting = index; }
     }
     if (!first) return std::nullopt;
     BodyContact best = *first;
-    for (const auto& triangle : triangles) {
-        const auto contact = meet(triangle);
-        if (contact && (contact->time - first->time) * travel <= kSupportTie && contact->face.z > best.face.z)
+    for (size_t index = 0; index < triangles.size(); ++index) {
+        const auto contact = meet(triangles[index]);
+        if (contact && (contact->time - first->time) * travel <= kSupportTie && contact->face.z > best.face.z) {
             best = *contact;
+            supporting = index;
+        }
     }
     glm::vec3 rest = start + delta * first->time;
     rest.z = std::min(rest.z, from.z);
-    return BodyRest{rest, best.face, best.normal};
+    return BodyRest{rest, best.face, best.normal, supporting};
 }
 
 // Ground is a face up to the walkable slope, under the body. The body may
@@ -281,6 +305,13 @@ inline std::optional<BodyRest> lowerBody(const glm::vec3& from, float distance,
 // pillar base there.
 inline bool isBodyGround(const BodyRest& rest, float minWalkableNormalZ) {
     return rest.face.z >= minWalkableNormalZ && rest.normal.z > 0.0f;
+}
+// Resting by the sole on a slope: a face that is not ground and flatter
+// than the body's underside toward it, so that the sole point meets it
+// before a lower corner of the box does.
+inline bool isBodySoleOnSlope(const BodyRest& rest, float radius, float minWalkableNormalZ) {
+    if (rest.face.z >= minWalkableNormalZ || glm::dot(rest.normal, rest.face) < 1.0f - 1e-4f) return false;
+    return radius * kBodyBevel * rest.face.z > radius * (std::abs(rest.face.x) + std::abs(rest.face.y));
 }
 // Standing on ground by the sole: where the next step's yard is counted from.
 // Counted from a body hung on an edge instead, the yard would be climbed
@@ -325,7 +356,7 @@ inline glm::vec3 turnedByOverlappedWalls(const glm::vec3& from, glm::vec3 delta,
 
 inline BodyMove walkBody(glm::vec3 from, const glm::vec3& requestedDelta, float stepBudget,
         float radius, float height, std::span<const BodyTriangle> triangles,
-        float minWalkableNormalZ, float maxStep, size_t heightfieldTriangles);
+        float minWalkableNormalZ, float maxStep, size_t heightfieldTriangles, const glm::vec3& walkedOntoSlope);
 
 // A falling (or rising) step: `delta` is the whole displacement of the frame.
 // `maxStep` is the step height of the walk that follows a landing;
@@ -356,7 +387,7 @@ inline BodyMove fallBody(const glm::vec3& from, const glm::vec3& delta,
             const glm::vec3 rest(remaining.x, remaining.y, 0.0f);
             if (delta.x * delta.x + delta.y * delta.y > 1e-10f && rest.x * rest.x + rest.y * rest.y > 1e-10f) {
                 BodyMove walked = walkBody(move.position, rest, maxStep, radius, height, triangles,
-                                           minWalkableNormalZ, maxStep, heightfieldTriangles);
+                                           minWalkableNormalZ, maxStep, heightfieldTriangles, glm::vec3(0.0f));
                 // Only a walk that stays on ground: a landing does not end in a perch or a second fall.
                 if (walked.support == BodySupport::Walkable) {
                     walked.deflected = walked.deflected || move.deflected;
@@ -436,7 +467,7 @@ inline BodyMove fallBody(const glm::vec3& from, const glm::vec3& delta,
 inline BodyMove walkBody(glm::vec3 from, const glm::vec3& requestedDelta, float stepBudget,
         float radius, float height, std::span<const BodyTriangle> triangles,
         float minWalkableNormalZ = kMinWalkableNormalZ, float maxStep = kMaxStepUp,
-        size_t heightfieldTriangles = 0) {
+        size_t heightfieldTriangles = 0, const glm::vec3& walkedOntoSlope = glm::vec3(0.0f)) {
     assert(heightfieldTriangles <= triangles.size());
     assert(std::abs(requestedDelta.z) < 1e-6f);
     assert(stepBudget >= 0.0f && stepBudget <= maxStep + 1e-4f);
@@ -724,8 +755,35 @@ inline BodyMove walkBody(glm::vec3 from, const glm::vec3& requestedDelta, float 
         if (!ownMove) first.edgeMet = false;
         if (first.taken && first.rest && !isBodySoleOnGround(*first.rest, minWalkableNormalZ))
             first.leads = leadsToGround(first.end, delta, stepBudget - (first.end.z - from.z));
+        // A body whose sole has walked off its ground onto a slope of a
+        // building - a face that is not ground, flatter than the body's
+        // underside - takes its move, lifted, carried and lowered, as a step
+        // onto another face of a building that is not ground. In the
+        // Karabor Sewers (347.2, 814.4; a ramp, ground of 43 degrees, a 54
+        // degree bank and faces of 61 and 71 degrees around one vertex)
+        // native creeps along the bank's foot, 0.007 to 0.008 yd a frame,
+        // while its sole is on the ground or up to 1.07 mm beyond the
+        // ground's edge over the bank (42 frames beyond the edge, 15 runs at
+        // eight arrival phases), and takes its whole move in the frame it
+        // starts 1.10 mm or more beyond it (20 frames; it lands 0.21 to 0.40
+        // yd up, on the 61 degree face or, twice, on the bank itself, within
+        // 2 mm of where the body lifted by the move over the radius, carried
+        // and lowered rests), then falls from there, on over the face or
+        // back down the bank. In 5 frames, 2.1 to 3.0 mm beyond the edge, it
+        // fell down the bank instead; what tells those from the 20 is not
+        // found. Sliding along the foot of the Orgrimmar wall with its sole
+        // over the 53 degree skirt it steps 0.35 to 0.37 yd up the 77
+        // degree section where that begins (13 runs) and does not step up
+        // the skirt itself (3 runs); from a slope of the terrain it does not
+        // step up that slope (Tanaris -7042.8, -3544.2, 6 runs). Built in
+        // for a step from one face onto another; the two steps up the bank
+        // itself are not.
+        // (_experiments/20261124T094500Z.movement_collision_parity_round18)
+        const bool ontoNextSlope = ownMove && walkedOntoSlope.z > 0.0f && first.taken && first.rest &&
+            !isBodyGround(*first.rest, minWalkableNormalZ) && first.rest->triangle >= heightfieldTriangles &&
+            glm::dot(walkedOntoSlope, first.rest->face) < 1.0f - 1e-4f;
         if (first.taken && first.rest && !isBodySoleOnGround(*first.rest, minWalkableNormalZ) &&
-            !first.edgeMet && !first.leads) {
+            !first.edgeMet && !first.leads && !ontoNextSlope) {
             first.taken = false;
             if (!first.wall) first.blocker = first.rest->normal;
         }
@@ -1013,6 +1071,13 @@ inline BodyMove walkBody(glm::vec3 from, const glm::vec3& requestedDelta, float 
     if (!rest) {
         move.position.z -= reach;
         return move;
+    }
+    // The sole has come down on a slope of a building, off the ground the
+    // walk began on: told to the caller for the next walk (ontoNextSlope
+    // above). The body itself is lowered as before.
+    if (isBodySoleOnSlope(*rest, radius, minWalkableNormalZ) && rest->triangle >= heightfieldTriangles) {
+        const auto before = lowerBody(origin, kContactSkin * 4.0f, radius, height, triangles);
+        if (before && isBodyGround(*before, minWalkableNormalZ)) move.walkedOntoSlope = rest->face;
     }
     // Held up by a steep face under the bevel: lowered as a fall lowers it,
     // the steep face turning it aside, so a body sliding along the foot of a

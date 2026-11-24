@@ -958,6 +958,9 @@ private:
     // On foot: resting on a face too steep to stand on, reached by a step
     // that leads on to ground (rendering/body_mover.hpp).
     bool bodyPerched_ = false;
+    // Up-facing normal of the building's slope the last walk carried the sole
+    // onto from ground; zero when there is none (movement::walkBody).
+    glm::vec3 bodyWalkedOntoSlope_{0.0f};
     // walkableStepBaseZ_ was set by moveBodyOnFoot; another movement mode
     // (swimming, flight, a taxi) leaves it stale.
     bool bodyStepBaseKnown_ = false;
