@@ -1214,3 +1214,93 @@ TEST_CASE("A fall stopped between faces that are not ground is stepped out of", 
     REQUIRE(walker.position.z == Catch::Approx(hung + 0.5f).margin(0.003));
     REQUIRE(walker.position.y > 0.4f);
 }
+
+namespace {
+
+// Six cells of the terrain around a gully in the Eastern Plaguelands (the
+// vertex 2679.166, -4979.167, 101.875 is the origin here): the heights of the
+// cells' corners and centres as the game's terrain has them, each cell a fan
+// of four triangles around its centre. Ground of 35 and 48 degrees runs up
+// the gully between faces of 57 to 65 degrees.
+Mesh gullyTerrain() {
+    constexpr float kCell = 4.1667f;
+    // corner[row][column]: y = (1 - row) * kCell, x = (column - 1) * kCell
+    constexpr float corner[4][3] = {{6.259f, -1.997f, -3.367f},
+                                    {7.176f, 0.0f, 2.478f},
+                                    {11.774f, 4.533f, 4.131f},
+                                    {15.224f, 9.138f, 3.761f}};
+    // centre[row][column] of the cell between corner rows row, row + 1 and columns column, column + 1
+    constexpr float centre[3][2] = {{2.076f, -2.086f}, {6.202f, 2.552f}, {10.276f, 4.736f}};
+    Mesh mesh;
+    for (int row = 0; row < 3; ++row) {
+        for (int column = 0; column < 2; ++column) {
+            const auto at = [&](int r, int c) {
+                return glm::vec3((c - 1) * kCell, (1 - r) * kCell, corner[r][c]);
+            };
+            const glm::vec3 middle((column - 0.5f) * kCell, (0.5f - row) * kCell, centre[row][column]);
+            const glm::vec3 around[4] = {at(row, column), at(row, column + 1), at(row + 1, column + 1), at(row + 1, column)};
+            for (int side = 0; side < 4; ++side) mesh.push_back(upFacing(middle, around[side], around[(side + 1) % 4]));
+        }
+    }
+    return mesh;
+}
+
+} // namespace
+
+TEST_CASE("A gully of the terrain between steep faces is walked up", "[body_mover]") {
+    // Eastern Plaguelands (2679.98, -4976.53), heading -2.044: native goes
+    // 8.1 to 8.8 yd up the gully at speeds 0.5 to 1.25 (13 paired runs),
+    // alternating whole moves with moves turned along the 65 degree face on
+    // its right. The walker stood still 2.2 yd in, or bobbed there.
+    // (_experiments/20261124T183500Z.movement_collision_parity_round23)
+    const Mesh mesh = gullyTerrain();
+    const glm::vec3 heading(std::cos(-2.044f), std::sin(-2.044f), 0.0f);
+    SECTION("at four speeds, without coming back down") {
+        for (const float speed : {3.5f, 5.25f, 7.0f, 8.75f}) {
+            Walker walker{.position = {0.814f, 2.637f, -1.2f}, .terrain = mesh.size()};
+            walker.grounded = false;
+            for (int i = 0; i < 20; ++i) walker.frame(mesh, glm::vec3(0.0f));
+            REQUIRE(walker.grounded);
+            walker.baseZ = walker.position.z;
+            // Up to the gully's head, 4 yd past the vertex and 4 yd above it.
+            int down = 0, frames = 0;
+            for (; frames < 150 && walker.position.y > -4.0f; ++frames) {
+                const float before = walker.position.z;
+                walker.frame(mesh, heading * (speed / 30.0f));
+                if (walker.position.z < before - 0.005f) ++down;
+            }
+            INFO("speed " << speed << " after " << frames << " frames at " << walker.position.x << " " << walker.position.y << " " << walker.position.z);
+            CHECK(walker.position.y <= -4.0f);
+            CHECK(walker.position.z > 4.0f);
+            CHECK(down <= 2);
+        }
+    }
+    // Four frames of one native run, each from native's own position.
+    const auto walk = [&](glm::vec3 from, float run, float budget) {
+        const auto stood = lowerBody(from + glm::vec3(0.0f, 0.0f, 0.05f), 0.1f, kRadius, kHeight, mesh);
+        REQUIRE(stood);
+        const BodyMove move = walkBody(stood->position, heading * run, budget, kRadius, kHeight, mesh,
+                                       kMinWalkableNormalZ, kMaxStepUp, mesh.size());
+        return move.position - stood->position;
+    };
+    SECTION("the sole a radius from the 65 degree face: the whole move, though the corner meets the face within it") {
+        // native (-0.1021, -0.1992, +0.2028); the corner would meet the face 0.0034 yd before the move's end
+        const glm::vec3 moved = walk({0.3696f, -1.5981f, 1.7901f}, 0.2238f, kMaxStepUp);
+        CHECK(glm::distance(moved, glm::vec3(-0.1021f, -0.1992f, 0.2028f)) < 0.003f);
+    }
+    SECTION("the sole nearer than that: turned along the face") {
+        // native (+0.0652, -0.1113, +0.1301)
+        const glm::vec3 moved = walk({0.3045f, -1.4868f, 1.6600f}, 0.2380f, kMaxStepUp);
+        CHECK(glm::distance(moved, glm::vec3(0.0652f, -0.1113f, 0.1301f)) < 0.003f);
+    }
+    SECTION("a face beside the foremost corner does not stop the move, which ends hung on the edge of ground") {
+        // native (-0.1116, -0.2183, +0.2342)
+        const glm::vec3 moved = walk({0.3235f, 0.4312f, -0.3744f}, 0.2451f, kMaxStepUp);
+        CHECK(glm::distance(moved, glm::vec3(-0.1116f, -0.2183f, 0.2342f)) < 0.003f);
+    }
+    SECTION("hung on that edge the move is turned along the face the foremost corner meets") {
+        // native (+0.0615, -0.1050, +0.1679)
+        const glm::vec3 moved = walk({0.2119f, 0.2129f, -0.1402f}, 0.2240f, kMaxStepUp - 0.2342f);
+        CHECK(glm::distance(moved, glm::vec3(0.0615f, -0.1050f, 0.1679f)) < 0.003f);
+    }
+}

@@ -5,6 +5,12 @@
 
 #include <vector>
 
+// Offline tools define this (to a printf) before including the header to see
+// what a walk decides; the client leaves it empty.
+#ifndef WOWEE_BODY_TRACE
+#define WOWEE_BODY_TRACE(...) ((void)0)
+#endif
+
 // One movement step of the upright beveled body among collision triangles
 // (terrain, WMO and doodad alike), after build 8606's walking and falling.
 // Derived from native per-frame positions read at 200 Hz, replayed against
@@ -194,6 +200,17 @@
 //  - Not built in: native steps onto a steep face with its whole move in the
 //    Valley of Trials (-520.9, -4254.6, 0.48 yd up a 75 degree face), where
 //    this mover turns aside.
+//
+// Up a gully of the terrain
+// (_experiments/20261124T183500Z.movement_collision_parity_round23, cornerscan.cpp,
+// faces.py; built in, walkBody, for faces of the terrain and the move itself):
+//  - Such a face stops the walk only where the corner that meets it is the
+//    foremost one along the move and the sole stands within the body's
+//    radius of the face's plane (Eastern Plaguelands gully, 2679.98,
+//    -4976.53: 6 frames of 6 and 25 against 185, at speeds 0.5 to 1.25).
+//  - The move may end hung by the bevel on an edge of the terrain's ground,
+//    and a body hung there is turned by the face a corner meets as one
+//    standing by its sole is.
 //
 // A step from a slope
 // (_experiments/20261124T094500Z.movement_collision_parity_round18, bank.py,
@@ -1019,6 +1036,11 @@ inline BodyMove walkBody(glm::vec3 from, const glm::vec3& requestedDelta, float 
         // doorway (-8916.2, -141.76) native creeps 0.001 yd a frame, where
         // stepping over the second wall's edge bobbed the body 0.09 yd.
         if (!ownMove) first.edgeMet = false;
+        WOWEE_BODY_TRACE("attempt d (%+.4f %+.4f) own %d: step taken %d level %d rest %d restz %+.4f soleground %d wall %d edgeMet %d air %d blocker (%+.3f %+.3f %+.3f)\n",
+            delta.x, delta.y, ownMove, first.taken, first.level, first.rest.has_value(),
+            first.rest ? first.rest->position.z - from.z : 0.0f,
+            first.rest && isBodySoleOnGround(*first.rest, minWalkableNormalZ), first.wall, first.edgeMet,
+            first.air.has_value(), first.blocker.x, first.blocker.y, first.blocker.z);
         if (first.taken && first.rest && !isBodySoleOnGround(*first.rest, minWalkableNormalZ))
             first.leads = leadsToGround(first.end, delta, stepBudget - (first.end.z - from.z));
         // A body whose sole has walked off its ground onto a slope of a
@@ -1048,8 +1070,27 @@ inline BodyMove walkBody(glm::vec3 from, const glm::vec3& requestedDelta, float 
         const bool ontoNextSlope = ownMove && walkedOntoSlope.z > 0.0f && first.taken && first.rest &&
             !isBodyGround(*first.rest, minWalkableNormalZ) && first.rest->triangle >= heightfieldTriangles &&
             glm::dot(walkedOntoSlope, first.rest->face) < 1.0f - 1e-4f;
+        // The move itself is also taken where it ends hung by the bevel on
+        // an edge of the terrain's ground, whether or not repeating it leads
+        // on: the heightfield has no risers, and under such a body's sole is
+        // the next facet of the same surface. (On the edge of a building's
+        // or an object's ground - the nose of a ledge - the rule above
+        // stands: a ledge a hair over a yard is not hung on.) Walking up an Eastern Plaguelands gully
+        // (2679.49, -4978.74; terrain of 35 and 48 degrees between faces of
+        // 57 to 65) native takes its whole move and ends +0.2342 up, hung on
+        // the edge of the 41 degree triangle beside it, where the body
+        // lifted, carried and lowered rests (+0.2341); in the next frame it
+        // is turned along the 65 degree face its foremost corner meets and
+        // ends hung on that edge again, +0.1679 (where the body lowered
+        // there rests within 0.3 mm), and walks on up. Refused there, the
+        // walker stood still at the gully's foot or bobbed in place (13
+        // paired runs at four speeds: native 8.1 to 8.8 yd up the gully in
+        // all, WoWee 2.1 to 2.5 yd in 10 and 4.4 to 7.2, bobbing, in 3).
+        // (_experiments/20261124T183500Z.movement_collision_parity_round23)
+        const bool ontoGroundsEdge = ownMove && first.taken && first.rest &&
+            first.rest->triangle < heightfieldTriangles && isBodyGround(*first.rest, minWalkableNormalZ);
         if (first.taken && first.rest && !isBodySoleOnGround(*first.rest, minWalkableNormalZ) &&
-            !first.edgeMet && !first.leads && !ontoNextSlope) {
+            !first.edgeMet && !first.leads && !ontoNextSlope && !ontoGroundsEdge) {
             first.taken = false;
             if (!first.wall) first.blocker = first.rest->normal;
         }
@@ -1116,6 +1157,36 @@ inline BodyMove walkBody(glm::vec3 from, const glm::vec3& requestedDelta, float 
             // face a corner of the box meets, which is what turns a move
             // refused for another reason.
             Stop byCorner, bySole, anyCorner;
+            // Two things the terrain's faces do not do to the move itself
+            // (measured in that gully, 16 paired runs at speeds 0.5 to 1.25;
+            // what buildings' faces do there is not measured, and the part
+            // of a move along a face is left as it was):
+            //
+            // A face nearer another corner of the box than the foremost one
+            // along the move does not stop it. The 59.6 degree face on the
+            // gully's far side, met by the corner beside the foremost one
+            // 0.014 to 0.18 yd on with as much as 0.23 yd of the move left,
+            // never turned native: its whole move in 6 frames of 6, at two
+            // headings. (No frame of the earlier rounds' recorded runs is
+            // turned by a face of the terrain met that way.)
+            //
+            // A face stops it only where the sole stands within the body's
+            // radius of the face's plane. Along the gully's 65.4 degree face
+            // native takes its whole move, the foremost corner meeting the
+            // face up to 0.084 yd before the move's end, in every frame the
+            // sole starts 0.3055 yd or more from the plane (25 frames, moves
+            // of 0.22 to 0.31 yd) and is turned along the face from 0.3043
+            // yd or less (185 frames; 3 more, at 0.308 to 0.326, beside the
+            // vertex where the next face begins). The radius is 0.3056; the
+            // comparison leaves the contact skin a resting body keeps. The
+            // gully's other steep faces turn native with the sole nearer
+            // than that; 4 frames it takes whole with the sole 0.19 to 0.25
+            // yd from three of them are not explained.
+            const auto foremostCornerMeets = [](const glm::vec3& front, const glm::vec3& heading) {
+                constexpr float kAlongAxis = 1e-4f;
+                return (std::abs(front.x) < kAlongAxis || std::abs(heading.x) < kAlongAxis || (front.x > 0.0f) != (heading.x > 0.0f)) &&
+                       (std::abs(front.y) < kAlongAxis || std::abs(heading.y) < kAlongAxis || (front.y > 0.0f) != (heading.y > 0.0f));
+            };
             for (size_t index = 0; index < triangles.size(); ++index) {
                 const BodyTriangle& triangle = triangles[index];
                 const glm::vec3 normal = glm::cross(triangle[1] - triangle[0], triangle[2] - triangle[0]);
@@ -1128,7 +1199,10 @@ inline BodyMove walkBody(glm::vec3 from, const glm::vec3& requestedDelta, float 
                 // nearest lower corner of the box.
                 const float soleNearer = radius * kBodyBevel * front.z - radius * (std::abs(front.x) + std::abs(front.y));
                 if (const auto contact = sweepBodyBoxTriangle(from, delta, radius, height, triangle);
-                    contact && contact->corner && contact->time < 1.0f - kContactSkin / travel) {
+                    contact && contact->corner && contact->time < 1.0f - kContactSkin / travel &&
+                    !(ownMove && index < heightfieldTriangles &&
+                      (!foremostCornerMeets(front, heading) ||
+                       (soleNearer <= 0.0f && glm::dot(front, from - triangle[0]) >= radius - kContactSkin)))) {
                     consider(anyCorner, contact->time, front);
                     if (soleNearer <= 0.0f) consider(byCorner, contact->time, front);
                 }
@@ -1170,7 +1244,12 @@ inline BodyMove walkBody(glm::vec3 from, const glm::vec3& requestedDelta, float 
                 if (leadsOver) stop.met = false;
             }
             // A move refused for another reason is turned by the face a
-            // corner of the box meets only for a body that stands on ground:
+            // corner of the box meets only for a body that stands on ground
+            // - by its sole, or hung on ground's edge by its bevel (native
+            // hung on the edge in the Eastern Plaguelands gully is turned
+            // along the 65 degree face its foremost corner meets 0.08 yd on,
+            // not along the face on the far side the level move would touch
+            // first; 3 runs of 3):
             // on a steep face it is on its way down, and what it does there
             // is the perch's. (Native standing on the 54 degree bank beside
             // the Karabor Sewers ramp, 346.8, 814.4, creeps down it for five
@@ -1179,8 +1258,10 @@ inline BodyMove walkBody(glm::vec3 from, const glm::vec3& requestedDelta, float 
             // along that face for good.)
             const auto standsOnGround = [&] {
                 const auto under = lowerBody(from, kContactSkin * 4.0f, radius, height, triangles);
-                return under && isBodySoleOnGround(*under, minWalkableNormalZ);
+                return under && isBodyGround(*under, minWalkableNormalZ);
             };
+            WOWEE_BODY_TRACE("  stops: walkedUp %d bySole %d (%.3f z %.3f) byCorner %d (%.3f z %.3f) anyCorner %d stop.met %d taken %d\n",
+                walkedUp, bySole.met, bySole.at, bySole.front.z, byCorner.met, byCorner.at, byCorner.front.z, anyCorner.met, stop.met, first.taken);
             if (walkedUp ? stop.met : (!first.taken && anyCorner.met && standsOnGround())) {
                 first.blocker = walkedUp ? stop.front : anyCorner.front;
                 first.taken = false;
