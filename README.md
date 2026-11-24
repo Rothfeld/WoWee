@@ -1273,6 +1273,11 @@ position) replayed against WoWee's own triangles for the same places:
   hung on an edge) is taken only when repeating the same move from there does,
   within the yard. On a steeper face the body is perched, and next frame steps
   on or falls.
+- A slope the sole itself rests on (a face that is not ground, flatter than
+  the underside's 61.6 degrees) is no perch: the body walks on from it
+  wherever its move carries it - native walks down the 52.7 degree side of an
+  Undercity barrel a whole move a frame - and falls from it only where it is
+  carried nowhere (no key, or the whole move refused).
 - A step refused, the move is replaced by its part along the refusing face
   and tried from the same place, without first closing the gap to the face;
   refused again, by its part along both faces; in a corner the body stays.
@@ -1287,9 +1292,23 @@ position) replayed against WoWee's own triangles for the same places:
 - Falling: horizontal move and drop are swept together; ground ends the fall,
   under the sole or caught by the bevel (native gets onto the Northshire
   fence hull, 1.60 to 1.65 yd, with a 1.64 yd jump); any other face turns the
-  body aside horizontally and leaves the drop alone. Wedged between faces
-  that are not ground the body hangs, still falling, and its fall speed
-  starts over each frame.
+  body aside horizontally and leaves the drop alone.
+- The bevel catches the body on the edge of ground only where the sole is
+  within 0.0832 yd of standing over that ground (`kEdgeCatch`; native: caught
+  at 0.0829, not at 0.0834). That is what gets a jump pressed against a wall
+  onto a ledge a little above the jump's top: up to 0.154 yd above it where
+  the wall runs along a world axis (the body's box is square to the axes),
+  0.125 yd at 16 degrees off, 0.11 yd at 37 to 45 degrees - and only in a
+  frame that goes down and begins with the body touching the edge that near
+  (at the Undercity ledge, 0.12 yd above the top at 16 degrees: a frame that
+  begins within 17 ms of the top), so it depends on the frame rate. Further
+  from the edge the edge turns the fall and the drop pushes the body back
+  off.
+- Wedged between faces that are not ground the body is held as on a perch (on
+  the ground for the controller): its fall starts over each frame, and the
+  keys' move is taken from there when it steps on. Left a fall, it kept
+  falling in place with the keys ignored (the Undercity barrel gap, 1578.43,
+  182.30).
 - Where an edge crosses an edge of the underside (from the sole to a lower
   corner) the drop pushes the body off along both sides of the underside that
   meet there: (d / bevel, d / bevel) for a drop of d, 45 degrees from the
@@ -1358,6 +1377,14 @@ Gotchas:
   ends at one place from seven arrival phases; WoWee creeps the other way
   along the kerb in about half of them. Not solved; measurements in
   `_experiments/20261124T140000Z.movement_collision_parity_round20/`.
+- Over the Undercity barrels (1578, 183) WoWee still ends on the floor where
+  its two frames on a barrel's side take it more than a yard under the ledge
+  (about 1 run in 10): native steps over the ledge's wall from the edge of
+  the barrel's top, is left in the air, falls back with no level velocity and
+  steps up again; WoWee counts the yard from the lowest point reached,
+  takes that step only standing by its sole, and keeps its slide along the
+  ledge's edge as it falls. Not solved; measurements in
+  `_experiments/20261124T160500Z.movement_collision_parity_round22/`.
 - Native frames longer than 36 ms were not measured (typing into the native
   client at 10 frames per second failed); WoWee splits frames over 50 ms.
 
