@@ -5475,6 +5475,9 @@ void SocialHandler::handleInitializeFactions(network::Packet& packet) {
     // Whether each faction with a standing is hostile is the at-war flag this
     // packet carries, so units judged before it arrived are judged again.
     owner_.refreshUnitHostility();
+    if (owner_.getWatchedFactionId() != 0) {
+        owner_.fireAddonEvent("UPDATE_FACTION", {});
+    }
 }
 
 void SocialHandler::handleSetFactionStanding(network::Packet& packet) {
@@ -5543,7 +5546,6 @@ void SocialHandler::handleSetFactionStanding(network::Packet& packet) {
             owner_.addLocalChatLine(ChatType::COMBAT_FACTION_CHANGE, line);
             if (!name.empty())
                 owner_.fireAddonEvent("COMBAT_TEXT_UPDATE", {"FACTION", name, std::to_string(delta)});
-            owner_.watchedFactionIdRef() = factionId;
         }
         const auto& before = reputationStandingFor(oldStanding);
         const auto& after = reputationStandingFor(standing);

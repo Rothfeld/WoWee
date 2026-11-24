@@ -1007,6 +1007,12 @@ void EntityController::setPlayerShapeshiftForm(uint8_t newForm) {
 }
 
 EntityController::PlayerFieldIndices EntityController::PlayerFieldIndices::resolve() {
+    const uint16_t fieldBytes2 = fieldIndex(UF::PLAYER_FIELD_BYTES2);
+    // PLAYER_FIELD_WATCHED_FACTION_INDEX immediately follows PLAYER_FIELD_BYTES2
+    // (TBC: UNIT_END + 0x0504 -> 0x0505; WotLK: UNIT_END + 0x04A3 -> 0x04A4).
+    const uint16_t watchedFaction = (fieldBytes2 != 0xFFFF)
+        ? static_cast<uint16_t>(fieldBytes2 + 1)
+        : static_cast<uint16_t>(0xFFFF);
     return PlayerFieldIndices{
         .xp = fieldIndex(UF::PLAYER_XP),
         .nextXp = fieldIndex(UF::PLAYER_NEXT_LEVEL_XP),
@@ -1022,6 +1028,7 @@ EntityController::PlayerFieldIndices EntityController::PlayerFieldIndices::resol
         .pBytes3 = fieldIndex(UF::PLAYER_BYTES_3),
         .chosenTitle = fieldIndex(UF::PLAYER_CHOSEN_TITLE),
         .knownTitles = fieldIndex(UF::PLAYER__FIELD_KNOWN_TITLES),
+        .watchedFaction = watchedFaction,
         .stats = {fieldIndex(UF::UNIT_FIELD_STAT0), fieldIndex(UF::UNIT_FIELD_STAT1),
          fieldIndex(UF::UNIT_FIELD_STAT2), fieldIndex(UF::UNIT_FIELD_STAT3),
          fieldIndex(UF::UNIT_FIELD_STAT4)},
@@ -1914,6 +1921,18 @@ bool EntityController::applyPlayerStatFields(const FlatFieldMap& fields,
             owner_.chosenTitleBitRef() = static_cast<int32_t>(val);
             LOG_DEBUG("PLAYER_CHOSEN_TITLE ", isCreate ? "from update fields: " : "updated: ",
                       owner_.chosenTitleBitRef());
+        }
+        else if (pfi.watchedFaction != 0xFFFF && key == pfi.watchedFaction) {
+            const int32_t repListId = static_cast<int32_t>(val);
+            const uint32_t newFactionId = (repListId >= 0)
+                ? owner_.getFactionIdByRepListId(static_cast<uint32_t>(repListId))
+                : 0u;
+            if (owner_.watchedFactionIdRef() != newFactionId) {
+                owner_.watchedFactionIdRef() = newFactionId;
+                pendingEvents_.emit("UPDATE_FACTION", {});
+            }
+            LOG_DEBUG("PLAYER_FIELD_WATCHED_FACTION_INDEX ", isCreate ? "(CREATE): " : "(VALUES): ",
+                      "repListId=", repListId, " factionId=", newFactionId);
         }
         else if (pfi.knownTitles != 0xFFFF && (key == pfi.knownTitles || key == pfi.knownTitles + 1)) {
             const uint32_t wordIdx = static_cast<uint32_t>(key - pfi.knownTitles);

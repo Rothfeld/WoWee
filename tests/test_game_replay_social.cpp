@@ -76,6 +76,7 @@ public:
         lua_pushlightuserdata(L, &s.handler());
         lua_setfield(L, LUA_REGISTRYINDEX, "wowee_game_handler");
         wowee::addons::registerSocialLuaAPI(L);
+        wowee::addons::registerUnitLuaAPI(L);
         REQUIRE(luaL_dostring(L, R"(
             function show(...)
                 local out = {}
@@ -338,6 +339,100 @@ TEST_CASE("First-time faction discovery via 4-byte SMSG_SET_FACTION_VISIBLE anno
     CHECK(lua.run("GetNumFactions()") == "7");
     CHECK(lua.run("(select(1, GetFactionInfo(7))), (select(9, GetFactionInfo(7))), (select(10, GetFactionInfo(7)))") ==
           "Inactive,true,true");
+}
+
+TEST_CASE("Reputation standing gain does not auto-watch; watched faction follows PLAYER_FIELD_WATCHED_FACTION_INDEX",
+          "[replay][social][reputation][watched-faction]") {
+    Session s("tbc");
+    auto& gh = s.handler();
+    wowee::game::GameHandlerTestAccess::setFaction(gh, 942, 48, "Cenarion Expedition");
+    wowee::game::GameHandlerTestAccess::setFaction(gh, 970, 56, "Sporeggar");
+
+    Packet init = packetFor(Opcode::SMSG_INITIALIZE_FACTIONS);
+    init.writeUInt32(64);
+    for (uint32_t i = 0; i < 64; ++i) {
+        const uint8_t flags = (i == 48 || i == 56) ? wowee::game::GameHandler::FACTION_FLAG_VISIBLE : 0;
+        init.writeUInt8(flags);
+        init.writeUInt32(0);
+    }
+    s.receive(init);
+
+    Lua lua(s);
+    lua.exec("FACTION_OTHER = 'Other'; FACTION_INACTIVE = 'Inactive'");
+
+    // Initially no faction is watched.
+    CHECK(gh.getWatchedFactionId() == 0);
+    CHECK(lua.run("(select(1, GetWatchedFactionInfo()))") == "nil");
+
+    // Gaining reputation via SMSG_SET_FACTION_STANDING must NOT auto-watch the faction.
+    Packet standing = packetFor(Opcode::SMSG_SET_FACTION_STANDING);
+    standing.writeFloat(0.0f);  // TBC RAF bonus
+    standing.writeUInt32(1);    // count = 1
+    standing.writeUInt32(56);   // Sporeggar repListId
+    standing.writeUInt32(21);   // new standing
+    s.receive(standing);
+
+    CHECK(gh.getWatchedFactionId() == 0);
+    CHECK(lua.run("(select(1, GetWatchedFactionInfo()))") == "nil");
+
+    // Server PLAYER_FIELD_WATCHED_FACTION_INDEX (= PLAYER_FIELD_BYTES2 + 1) syncs watched faction.
+    const uint16_t watchedField = static_cast<uint16_t>(
+        wowee::game::fieldIndex(wowee::game::UF::PLAYER_FIELD_BYTES2) + 1);
+    REQUIRE(watchedField == 1519);
+
+    std::vector<std::string> events;
+    gh.setAddonEventCallback([&](const std::string& ev, const std::vector<std::string>&) {
+        events.push_back(ev);
+    });
+
+    auto sendPlayerField = [&](uint16_t fieldIdx, uint32_t value) {
+        Packet pkt = packetFor(Opcode::SMSG_UPDATE_OBJECT);
+        pkt.writeUInt32(1);  // block count
+        pkt.writeUInt8(0);   // hasTransport
+        pkt.writeUInt8(0);   // UPDATETYPE_VALUES
+        // Packed GUID for playerGuid (1)
+        pkt.writeUInt8(0x01);
+        pkt.writeUInt8(static_cast<uint8_t>(gh.getPlayerGuid() & 0xFF));
+        const uint8_t blockCount = static_cast<uint8_t>(fieldIdx / 32 + 1);
+        pkt.writeUInt8(blockCount);
+        for (uint8_t b = 0; b < blockCount; ++b) {
+            uint32_t mask = (b == fieldIdx / 32) ? (1u << (fieldIdx % 32)) : 0u;
+            pkt.writeUInt32(mask);
+        }
+        pkt.writeUInt32(value);
+        s.receive(pkt);
+    };
+
+    // Spawn player entity so UPDATETYPE_VALUES applies to it.
+    auto playerUnit = std::make_shared<wowee::game::Player>(gh.getPlayerGuid());
+    gh.getEntityManager().addEntity(gh.getPlayerGuid(), playerUnit);
+
+    events.clear();
+    sendPlayerField(watchedField, 56u);  // Sporeggar
+    CHECK(gh.getWatchedFactionId() == 970);
+    CHECK(lua.run("(select(1, GetWatchedFactionInfo()))") == "Sporeggar");
+    CHECK(std::find(events.begin(), events.end(), "UPDATE_FACTION") != events.end());
+
+    // Server setting -1 (0xFFFFFFFF) unwatches the bar.
+    events.clear();
+    sendPlayerField(watchedField, 0xFFFFFFFFu);
+    CHECK(gh.getWatchedFactionId() == 0);
+    CHECK(lua.run("(select(1, GetWatchedFactionInfo()))") == "nil");
+    CHECK(std::find(events.begin(), events.end(), "UPDATE_FACTION") != events.end());
+
+    // Explicit SetWatchedFactionIndex sends CMSG_SET_WATCHED_FACTION and updates local watched faction.
+    // Rows: 1 = Other (header), 2 = Cenarion Expedition, 3 = Sporeggar
+    lua.run("SetWatchedFactionIndex(3)");
+    CHECK(gh.getWatchedFactionId() == 970);
+    CHECK(lua.run("(select(1, GetWatchedFactionInfo()))") == "Sporeggar");
+    REQUIRE(s.sent().of(Opcode::CMSG_SET_WATCHED_FACTION).size() == 1);
+    CHECK(s.sent().of(Opcode::CMSG_SET_WATCHED_FACTION).front().readUInt32() == 56u);
+
+    lua.run("SetWatchedFactionIndex(0)");
+    CHECK(gh.getWatchedFactionId() == 0);
+    CHECK(lua.run("(select(1, GetWatchedFactionInfo()))") == "nil");
+    REQUIRE(s.sent().of(Opcode::CMSG_SET_WATCHED_FACTION).size() == 2);
+    CHECK(s.sent().of(Opcode::CMSG_SET_WATCHED_FACTION).back().readUInt32() == 0xFFFFFFFFu);
 }
 
 TEST_CASE("Guild roster defaults to rank descending then name ascending, and sorts offline zones",

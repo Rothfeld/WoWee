@@ -6026,7 +6026,7 @@ private:
     UIErrorCallback uiErrorCallback_;
     GlobalStringLookup globalStringLookup_;
 
-    uint32_t watchedFactionId_ = 0; // auto-set to most recently changed faction
+    uint32_t watchedFactionId_ = 0; // server-authoritative via PLAYER_FIELD_WATCHED_FACTION_INDEX
 
     // ---- Loot window callback ----
     LootWindowCallback lootWindowCallback_;
