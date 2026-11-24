@@ -1798,6 +1798,12 @@ public:
     using KnockBackCallback = std::function<void(float vcos, float vsin, float hspeed, float vspeed)>;
     void setKnockBackCallback(KnockBackCallback cb) { knockBackCallback_ = std::move(cb); }
 
+    // The server let go of the player's body (root lifted, control given
+    // back); see MovementHandler::beginReleasedFall. Answers whether the body
+    // stands on ground; in the air, its landing is reported when it comes.
+    using ReleasedFallCallback = std::function<bool()>;
+    void setReleasedFallCallback(ReleasedFallCallback cb) { releasedFallCallback_ = std::move(cb); }
+
     // Camera shake callback: called when server sends SMSG_CAMERA_SHAKE.
     // Parameters: magnitude (world units), frequency (Hz), duration (seconds).
     using CameraShakeCallback = std::function<void(float magnitude, float frequency, float duration)>;
@@ -4505,6 +4511,7 @@ public:
     auto& hearthstonePreloadCallbackRef() { return hearthstonePreloadCallback_; }
     auto& hitReactionCallbackRef() { return hitReactionCallback_; }
     auto& knockBackCallbackRef() { return knockBackCallback_; }
+    auto& releasedFallCallbackRef() { return releasedFallCallback_; }
     auto& lootWindowCallbackRef() { return lootWindowCallback_; }
     auto& meleeSwingCallbackRef() { return meleeSwingCallback_; }
     auto& rangedWeaponSwapCallbackRef() { return rangedWeaponSwapCallback_; }
@@ -5254,6 +5261,7 @@ private:
 
     WorldEntryCallback worldEntryCallback_;
     KnockBackCallback knockBackCallback_;
+    ReleasedFallCallback releasedFallCallback_;
     CameraShakeCallback cameraShakeCallback_;
     AutoFollowCallback autoFollowCallback_;
     UnstuckCallback unstuckCallback_;

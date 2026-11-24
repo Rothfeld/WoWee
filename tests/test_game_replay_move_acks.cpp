@@ -419,8 +419,11 @@ TEST_CASE("TBC SMSG_MOVE_KNOCK_BACK echoes exact knockback velocity in ACK witho
         CHECK(ack.readUInt32() == 47u);
         const auto move = readTbcAckMovementInfo(ack);
         CHECK(move.time == tKnock1);
-        CHECK((move.flags & static_cast<uint32_t>(MovementFlags::FALLING)) != 0u);
-        CHECK((move.flags & static_cast<uint32_t>(MovementFlags::FORWARD)) == 0u);
+        // Native: 0x5001 - falling, and the level travel as forward with a
+        // pending stop.
+        CHECK(move.flags == (static_cast<uint32_t>(MovementFlags::FALLING) |
+                             static_cast<uint32_t>(MovementFlags::FORWARD) |
+                             static_cast<uint32_t>(MovementFlags::PENDING_STOP)));
         CHECK(move.fallTime == 0u);
         REQUIRE(move.hasJump);
         CHECK(move.zspeed == Catch::Approx(kVspeed).margin(1e-4f));
@@ -453,6 +456,156 @@ TEST_CASE("TBC SMSG_MOVE_KNOCK_BACK echoes exact knockback velocity in ACK witho
     auto land = lands[0];
     const auto landMove = readTbcAckMovementInfo(land);
     CHECK(landMove.fallTime == 640u);
+}
+
+// Build 8606, _experiments/20261124T202000Z.movement_collision_parity_round24
+// (kb.py): a knockback that arrives with the loss of control is acknowledged
+// with the flags the body had and is not flown; when control comes back the
+// body falls and lands - a heartbeat that says falling, then the landing.
+TEST_CASE("TBC knockback arriving with loss of control is acknowledged, not flown, and control regained lands the body",
+          "[replay][movement][tbc][knockback]") {
+    Session s("tbc");
+    spawnTbcPlayerAt(s, -265.645f, -19.7387f, 8.09701f, 1.59686f);
+
+    auto& gh = s.handler();
+    auto* mh = gh.getMovementHandler();
+    REQUIRE(mh != nullptr);
+
+    wowee::rendering::CameraController camCtrl(nullptr);
+    camCtrl.setMovementCallback([&gh](uint32_t op) {
+        gh.sendMovement(static_cast<Opcode>(op));
+    });
+    int launches = 0;
+    gh.setKnockBackCallback([&](float vcos, float vsin, float hspeed, float vspeed) {
+        ++launches;
+        camCtrl.applyKnockBack(vcos, vsin, hspeed, vspeed);
+    });
+    int releases = 0;
+    gh.setReleasedFallCallback([&] {
+        ++releases;
+        return true;  // the body stands on ground
+    });
+
+    mh->recordPhysicsSample(mh->currentMovementClockMs() + 150u);
+    wowee::network::Packet kb(wowee::game::wireOpcode(Opcode::SMSG_MOVE_KNOCK_BACK));
+    kb.writePackedGuid(Session::kPlayerGuid);
+    kb.writeUInt32(77u);
+    kb.writeFloat(0.38691f);
+    kb.writeFloat(0.922117f);
+    kb.writeFloat(15.0f);
+    kb.writeFloat(-21.3f);
+    wowee::network::Packet lost(wowee::game::wireOpcode(Opcode::SMSG_CLIENT_CONTROL_UPDATE));
+    lost.writePackedGuid(Session::kPlayerGuid);
+    lost.writeUInt8(0u);
+    s.receiveTogether({kb, lost});
+
+    CHECK(launches == 0);
+    const auto acks = s.sent().of(Opcode::CMSG_MOVE_KNOCK_BACK_ACK);
+    REQUIRE(acks.size() == 1u);
+    {
+        auto ack = acks[0];
+        CHECK(ack.readUInt64() == Session::kPlayerGuid);
+        CHECK(ack.readUInt32() == 77u);
+        const auto move = readTbcAckMovementInfo(ack);
+        CHECK(move.flags == 0u);
+        CHECK_FALSE(move.hasJump);
+    }
+    CHECK(mh->getMovementInfo().flags == 0u);
+    for (const Opcode stop : {Opcode::MSG_MOVE_STOP, Opcode::MSG_MOVE_STOP_STRAFE, Opcode::MSG_MOVE_STOP_TURN}) {
+        for (auto packet : s.sent().of(stop)) {
+            CHECK(readTbcAckMovementInfo(packet).flags == 0u);
+        }
+    }
+
+    const size_t sentWhileHeld = s.sent().all().size();
+    wowee::network::Packet back(wowee::game::wireOpcode(Opcode::SMSG_CLIENT_CONTROL_UPDATE));
+    back.writePackedGuid(Session::kPlayerGuid);
+    back.writeUInt8(1u);
+    s.receive(back);
+    CHECK(s.sent().all().size() == sentWhileHeld);
+
+    mh->recordPhysicsSample(mh->currentMovementClockMs() + 15000u);
+    mh->releaseHeldBody();
+    CHECK(releases == 1);
+    const auto beats = s.sent().of(Opcode::MSG_MOVE_HEARTBEAT);
+    REQUIRE(beats.size() == 1u);
+    {
+        auto beat = beats[0];
+        const auto move = readTbcAckMovementInfo(beat);
+        CHECK(move.flags == static_cast<uint32_t>(MovementFlags::FALLING));
+        CHECK(move.fallTime == 0u);
+    }
+    const auto lands = s.sent().of(Opcode::MSG_MOVE_FALL_LAND);
+    REQUIRE(lands.size() == 1u);
+    {
+        auto land = lands[0];
+        const auto move = readTbcAckMovementInfo(land);
+        CHECK(move.flags == 0u);
+        CHECK(move.fallTime <= 1u);
+    }
+    mh->releaseHeldBody();
+    CHECK(releases == 1);
+}
+
+TEST_CASE("TBC unroot is acknowledged as a body let go: falling, then the landing is owed",
+          "[replay][movement][tbc][root]") {
+    Session s("tbc");
+    spawnTbcPlayerAt(s, -306.0f, -39.0f, 8.07279f, 3.14f);
+    auto& gh = s.handler();
+    auto* mh = gh.getMovementHandler();
+    REQUIRE(mh != nullptr);
+    int releases = 0;
+    bool onGround = true;
+    gh.setReleasedFallCallback([&] { ++releases; return onGround; });
+
+    wowee::network::Packet root(wowee::game::wireOpcode(Opcode::SMSG_FORCE_MOVE_ROOT));
+    root.writePackedGuid(Session::kPlayerGuid);
+    root.writeUInt32(5u);
+    s.receive(root);
+    const auto rootAcks = s.sent().of(Opcode::CMSG_FORCE_MOVE_ROOT_ACK);
+    REQUIRE(rootAcks.size() == 1u);
+    {
+        auto ack = rootAcks[0];
+        ack.readUInt64();
+        ack.readUInt32();
+        CHECK(readTbcAckMovementInfo(ack).flags == static_cast<uint32_t>(MovementFlags::ROOT));
+    }
+    CHECK(releases == 0);
+
+    wowee::network::Packet unroot(wowee::game::wireOpcode(Opcode::SMSG_FORCE_MOVE_UNROOT));
+    unroot.writePackedGuid(Session::kPlayerGuid);
+    unroot.writeUInt32(6u);
+    s.receive(unroot);
+    const auto unrootAcks = s.sent().of(Opcode::CMSG_FORCE_MOVE_UNROOT_ACK);
+    REQUIRE(unrootAcks.size() == 1u);
+    {
+        auto ack = unrootAcks[0];
+        ack.readUInt64();
+        ack.readUInt32();
+        const auto move = readTbcAckMovementInfo(ack);
+        CHECK(move.flags == static_cast<uint32_t>(MovementFlags::FALLING));
+        CHECK(move.fallTime == 0u);
+    }
+    CHECK(releases == 1);
+    const auto lands = s.sent().of(Opcode::MSG_MOVE_FALL_LAND);
+    REQUIRE(lands.size() == 1u);
+    {
+        auto land = lands[0];
+        const auto move = readTbcAckMovementInfo(land);
+        CHECK(move.flags == 0u);
+        CHECK(move.fallTime <= 1u);
+    }
+    CHECK(mh->getMovementInfo().flags == 0u);
+    CHECK(s.sent().of(Opcode::MSG_MOVE_HEARTBEAT).empty());
+
+    // In the air when the root is lifted: the fall goes on, and the landing
+    // is the camera controller's to report.
+    onGround = false;
+    s.receive(root);
+    s.receive(unroot);
+    CHECK(releases == 2);
+    CHECK(s.sent().of(Opcode::MSG_MOVE_FALL_LAND).size() == 1u);
+    CHECK(mh->getMovementInfo().flags == static_cast<uint32_t>(MovementFlags::FALLING));
 }
 
 TEST_CASE("TBC MSG_MOVE_TELEPORT_ACK echoes 16-byte response and preserves server-granted flags",

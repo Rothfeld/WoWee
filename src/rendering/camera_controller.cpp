@@ -1038,7 +1038,6 @@ glm::vec3 CameraController::moveFollowedCharacter(float /*deltaTime*/, FrameInpu
             if (caughtMidAir) {
                 midAirFlightEngaged_ = true;
                 knockbackActive_ = false;
-                knockbackHorizVel_ = glm::vec2(0.0f);
             }
             LOG_WARNING("Flight: ", caughtMidAir ? "engaged mid-air" : "took off");
         }
@@ -1117,7 +1116,7 @@ glm::vec3 CameraController::moveFollowedCharacter(float /*deltaTime*/, FrameInpu
             airborneHorizontalVelocity_ = f.movement * takeoffSpeed;
             preserveAirborneMomentum_ = moveLenSq > 1e-6f;
             airborneMomentumStrafe_ = (f.nowStrafeLeft || f.nowStrafeRight) && !f.nowBackward;
-        } else if (!preserveAirborneMomentum_ && moveLenSq > 1e-6f && !knockbackActive_) {
+        } else if (!preserveAirborneMomentum_ && moveLenSq > 1e-6f) {
             // Airborne without momentum (a standing jump): the first direction
             // pressed drifts the character at a fixed speed in that direction
             // until landing, held or released, and later keys do not change
@@ -1127,25 +1126,13 @@ glm::vec3 CameraController::moveFollowedCharacter(float /*deltaTime*/, FrameInpu
             preserveAirborneMomentum_ = true;
             airborneMomentumStrafe_ = (f.nowStrafeLeft || f.nowStrafeRight) && !f.nowBackward;
         }
+        // A knockback is airborne momentum like a running jump's: the level
+        // velocity the server gave is kept to the landing (applyKnockBack).
         const glm::vec3 horizontalVelocity =
-            (!grounded || startWaterJump) && preserveAirborneMomentum_ && !knockbackActive_
+            (!grounded || startWaterJump) && preserveAirborneMomentum_
                 ? airborneHorizontalVelocity_ : f.movement * f.speed;
         bodyGroundVelocity_ = f.movement * f.speed;
         targetPos += horizontalVelocity * f.physicsDeltaTime;
-
-        // Apply server-driven knockback horizontal velocity (decays over time).
-        if (knockbackActive_) {
-            targetPos.x += knockbackHorizVel_.x * f.physicsDeltaTime;
-            targetPos.y += knockbackHorizVel_.y * f.physicsDeltaTime;
-            // Exponential drag: reduce each frame so the player decelerates naturally.
-            float drag = std::exp(-KNOCKBACK_HORIZ_DRAG * f.physicsDeltaTime);
-            knockbackHorizVel_ *= drag;
-            // Once negligible, clear the flag so collision/grounding work normally.
-            if (glm::dot(knockbackHorizVel_, knockbackHorizVel_) < 0.0025f) {
-                knockbackActive_ = false;
-                knockbackHorizVel_ = glm::vec2(0.0f);
-            }
-        }
 
         // Jump with input buffering and coyote time
         if (f.nowJump) jumpBufferTimer = JUMP_BUFFER_TIME;
@@ -3709,6 +3696,7 @@ void CameraController::update(float deltaTime) {
             midAirFlightEngaged_ = false;
             jumpReported_ = false;
         }
+        if (grounded || swimming) knockbackActive_ = false;
     }
 
     // Swimming state transitions
@@ -4433,8 +4421,21 @@ void CameraController::applyKnockBack(float vcos, float vsin, float hspeed, floa
     // The server sends (vcos, vsin) as the 2D direction vector in server/wire
     // coordinate space.  After the server->canonical->render swaps, the direction
     // in render space is simply (vcos, vsin) - the two swaps cancel each other.
-    knockbackHorizVel_ = glm::vec2(vcos, vsin) * hspeed;
+    //
+    // The level speed is kept whole until the body lands, as a running jump's
+    // is. Build 8606 knocked back with 20 yd/s level and 20.9 up (Reload
+    // Explode 13239, Tanaris flats) lands 40.85 yd away 2.042 s later, and by
+    // Blackheart's War Stomp (15 yd/s) 38.7 yd away after 2.581 s and 30.3 yd
+    // after 2.022 s: 20.0, 15.0 and 15.0 yd/s over the whole flight
+    // (_experiments/20261124T202000Z.movement_collision_parity_round24, kb.py).
+    airborneHorizontalVelocity_ = glm::vec3(vcos, vsin, 0.0f) * hspeed;
+    preserveAirborneMomentum_ = true;
+    airborneMomentumStrafe_ = false;
     knockbackActive_ = true;
+    // The landing is reported however short the flight: a body stopped at
+    // once by a ceiling stood on the ground again within the 0.15 s a fall
+    // has to last to be reported, and its packets said "falling" from then on.
+    jumpReported_ = true;
 
     // vspeed in the wire packet is negative when the server wants to launch the
     // player upward (matches CMaNGOS/TrinityCore: data << float(-speedZ)).  Negate

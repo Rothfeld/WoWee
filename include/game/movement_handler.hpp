@@ -281,6 +281,12 @@ public:
                                 uint64_t transportGuid,
                                 float localTransportO);
     void setFallStartMs(uint32_t ms) { fallStartMs_ = ms; }
+    /// Knockback orders received since the last call, each flown or - with
+    /// control taken by the server meanwhile - only acknowledged.
+    void applyPendingKnockBacks();
+    /// Sends what follows control being given back, once the server's last
+    /// spline for the player has ended.
+    void releaseHeldBody();
 
     // Taxi state references for GameHandler update/processing
     bool& onTaxiFlightRef() { return onTaxiFlight_; }
@@ -320,6 +326,16 @@ private:
     void handleForceSpeedChange(network::Packet& packet, const char* name, Opcode ackOpcode, float* speedStorage);
     void handleForceMoveRootState(network::Packet& packet, bool rooted);
     void handleMoveKnockBack(network::Packet& packet);
+    struct PendingKnockBack {
+        uint32_t counter;
+        float vcos;
+        float vsin;
+        float hspeed;
+        float vspeed;
+    };
+    void applyKnockBack(const PendingKnockBack& order);
+    enum class ReleasedFall { None, InAir, OnGround };
+    ReleasedFall beginReleasedFall();
     void handleTeleportAck(network::Packet& packet);
     void handleNewWorld(network::Packet& packet);
     void handleTransferPending(network::Packet& packet);
@@ -361,6 +377,13 @@ private:
 
     // Fall/jump tracking
     uint32_t fallStartMs_ = 0;
+    std::vector<PendingKnockBack> pendingKnockBacks_;
+    // Control came back and the release has not been sent yet; whether it
+    // came back while a server spline was still moving the body.
+    bool releasePending_ = false;
+    bool releaseCutsSpline_ = false;
+    // A fall announced by the next movement packet starts at that packet's time.
+    bool fallStartsWithNextPacket_ = false;
 
     // Physics samples for packet timestamps; see beginFrame.
     struct PhysicsSample {

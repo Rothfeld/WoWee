@@ -2758,6 +2758,10 @@ void Application::setState(AppState newState) {
                         renderer->getCameraController()->applyKnockBack(vcos, vsin, hspeed, vspeed);
                     }
                 });
+                gameHandler->setReleasedFallCallback([this]() {
+                    assert(renderer && renderer->getCameraController());
+                    return renderer->getCameraController()->releaseToFall();
+                });
                 gameHandler->setCameraShakeCallback([this](float magnitude, float frequency, float duration) {
                     if (renderer && renderer->getCameraController()) {
                         renderer->getCameraController()->triggerShake(magnitude, frequency, duration);
@@ -3271,6 +3275,7 @@ void Application::syncWMOTransportRideState() {
     }
     if (auto* movement = gameHandler->getMovementHandler()) {
         movement->recordPhysicsSample(movement->previousFrameStartMs());
+        movement->releaseHeldBody();
         movement->sendDueHeartbeats();
     }
     gameHandler->updateM2TransportBoarding(canonical);
@@ -3772,6 +3777,7 @@ void Application::applyServerMovementState(float deltaTime) {
         // post-intent callback after syncing this frame's pre-step heading.
         if (auto* movement = gameHandler->getMovementHandler()) {
             movement->recordPhysicsSample(movement->previousFrameStartMs());
+            movement->releaseHeldBody();
             movement->sendDueHeartbeats();
         }
 

@@ -93,6 +93,16 @@ struct GameHandlerTestAccess {
         for (int frame = 0; frame < 1000 && pending(); ++frame) gh.processQueuedIncomingPackets();
         REQUIRE_FALSE(pending());
     }
+    // Several packets that reach the client in one read, handled in one update.
+    static void receiveTogether(GameHandler& gh, const std::vector<network::Packet>& packets) {
+        for (const network::Packet& packet : packets) gh.enqueueIncomingPacket(packet);
+        auto pending = [&] {
+            return !gh.pendingIncomingPackets_.empty() ||
+                   gh.entityController_->hasPendingUpdateObjectWork();
+        };
+        for (int frame = 0; frame < 1000 && pending(); ++frame) gh.processQueuedIncomingPackets();
+        REQUIRE_FALSE(pending());
+    }
     static void enterWorld(GameHandler& gh) { gh.setState(WorldState::IN_WORLD); }
     // The thirty seconds of a running ready check, over.
     static void expireReadyCheck(GameHandler& gh) {
@@ -275,6 +285,9 @@ public:
         wowee::game::GameHandlerTestAccess::receive(handler_, packet);
     }
     void receive(const UpdateObject& update) { receive(update.packet()); }
+    void receiveTogether(const std::vector<wowee::network::Packet>& packets) {
+        wowee::game::GameHandlerTestAccess::receiveTogether(handler_, packets);
+    }
 
     // The player's own create block, as the server sends it on login.
     void spawnPlayer(const UpdateObject::Fields& fields) {

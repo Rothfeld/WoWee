@@ -430,12 +430,23 @@ void MovementHandler::handleClientControlUpdate(network::Packet& packet) {
         serverMovementAllowed_ = allowMovement;
         if (changed && !allowMovement) {
             // Force-stop local movement immediately when server revokes control.
+            // A fall of the body's own ends with it: the server places the
+            // body from here on, and no landing will be reported for it.
             movementInfo.flags &= ~(static_cast<uint32_t>(MovementFlags::FORWARD) |
                                     static_cast<uint32_t>(MovementFlags::BACKWARD) |
                                     static_cast<uint32_t>(MovementFlags::STRAFE_LEFT) |
                                     static_cast<uint32_t>(MovementFlags::STRAFE_RIGHT) |
                                     static_cast<uint32_t>(MovementFlags::TURN_LEFT) |
-                                    static_cast<uint32_t>(MovementFlags::TURN_RIGHT));
+                                    static_cast<uint32_t>(MovementFlags::TURN_RIGHT) |
+                                    static_cast<uint32_t>(MovementFlags::FALLING) |
+                                    static_cast<uint32_t>(MovementFlags::PENDING_STOP) |
+                                    static_cast<uint32_t>(MovementFlags::PENDING_STRAFE_STOP));
+            fallStartMs_ = 0;
+            movementInfo.jumpVelocity = 0.0f;
+            movementInfo.jumpSinAngle = 0.0f;
+            movementInfo.jumpCosAngle = 0.0f;
+            movementInfo.jumpXYSpeed = 0.0f;
+            releasePending_ = false;
             owner_.sendMovement(Opcode::MSG_MOVE_STOP);
             owner_.sendMovement(Opcode::MSG_MOVE_STOP_STRAFE);
             owner_.sendMovement(Opcode::MSG_MOVE_STOP_TURN);
@@ -445,6 +456,11 @@ void MovementHandler::handleClientControlUpdate(network::Packet& packet) {
             // _experiments/20261117T2245Z.player_control_loss).
             owner_.fireAddonEvent("PLAYER_CONTROL_LOST", {});
         } else if (changed && allowMovement) {
+            // The body is let go; see releaseHeldBody, which the frame runs
+            // once the server's last spline for it has ended.
+            releasePending_ = true;
+            auto self = owner_.getEntityManager().getEntity(owner_.getPlayerGuid());
+            releaseCutsSpline_ = isPlayerServerSplineActive() && self && self->isActivelyMoving();
             owner_.fireAddonEvent("PLAYER_CONTROL_GAINED", {});
         }
     }
@@ -801,6 +817,10 @@ void MovementHandler::sendMovement(Opcode opcode) {
         }
     } rollbackTimestamp{lastMovementTimestampMs_, prevLastMovementTimestampMs, packetSent};
     movementInfo.time = movementTime;
+    if (fallStartsWithNextPacket_) {
+        fallStartMs_ = movementTime;
+        fallStartsWithNextPacket_ = false;
+    }
 
     if (opcode == Opcode::MSG_MOVE_SET_FACING &&
         shouldSuppressPreWotlkSetFacing(movementTime)) {
@@ -876,7 +896,11 @@ void MovementHandler::sendMovement(Opcode opcode) {
             movementInfo.flags |= static_cast<uint32_t>(MovementFlags::BACKWARD);
             break;
         case Opcode::MSG_MOVE_STOP:
-            if (movementInfo.hasFlag(MovementFlags::FALLING)) {
+            // A stop with no direction set leaves nothing pending (native,
+            // control given back mid-spline: STOP 0x1000).
+            if (movementInfo.hasFlag(MovementFlags::FALLING) &&
+                (movementInfo.hasFlag(MovementFlags::FORWARD) ||
+                 movementInfo.hasFlag(MovementFlags::BACKWARD))) {
                 movementInfo.flags |= static_cast<uint32_t>(MovementFlags::PENDING_STOP);
             } else {
                 movementInfo.flags &= ~(static_cast<uint32_t>(MovementFlags::FORWARD) |
@@ -1551,6 +1575,9 @@ network::Packet MovementHandler::buildForceAck(Opcode ackOpcode, uint32_t counte
     } else {
         MovementPacket::writeMovementPayload(ack, wire);
     }
+    LOG_DEBUG("Sending movement ack: opcode=0x", std::hex, wireOpcode(ackOpcode),
+              " flags=0x", wire.flags, std::dec, " counter=", counter, " time=", wire.time,
+              " fallTime=", wire.fallTime);
     return ack;
 }
 
@@ -1638,6 +1665,7 @@ void MovementHandler::handleForceMoveRootState(network::Packet& packet, bool roo
         clientControlledUnit_ != 0 ? clientControlledUnit_ : owner_.getPlayerGuid();
     if (guid == 0 || guid != moverGuid) return;
 
+    ReleasedFall released = ReleasedFall::None;
     if (rooted) {
         // CMaNGOS WorldSession::VerifyMovementInfo rejects CMSG_FORCE_MOVE_ROOT_ACK
         // if MOVEFLAG_ROOT is sent alongside MOVEFLAG_MASK_MOVING.
@@ -1654,12 +1682,71 @@ void MovementHandler::handleForceMoveRootState(network::Packet& packet, bool roo
         movementInfo.flags |= static_cast<uint32_t>(MovementFlags::ROOT);
     } else {
         movementInfo.flags &= ~static_cast<uint32_t>(MovementFlags::ROOT);
+        // Build 8606 answers every unroot as a body let go: the
+        // acknowledgement (relayed as MSG_MOVE_UNROOT) says falling, flags
+        // 0x1000, and MSG_MOVE_FALL_LAND with flags 0 follows within a
+        // millisecond where it stands on ground (21 unroots of 21, stuns in
+        // the Shadow Labyrinth refectory;
+        // _experiments/20261124T202000Z.movement_collision_parity_round24).
+        if (guid == owner_.getPlayerGuid() && serverMovementAllowed_) released = beginReleasedFall();
     }
 
     if (!owner_.getSocket()) return;
     Opcode ackOp = rooted ? Opcode::CMSG_FORCE_MOVE_ROOT_ACK : Opcode::CMSG_FORCE_MOVE_UNROOT_ACK;
     if (wireOpcode(ackOp) == 0xFFFF) return;
     owner_.getSocket()->send(buildForceAck(ackOp, counter));
+    if (released != ReleasedFall::None) {
+        fallStartMs_ = lastMovementTimestampMs_;
+        fallStartsWithNextPacket_ = false;
+        if (released == ReleasedFall::OnGround) owner_.sendMovement(Opcode::MSG_MOVE_FALL_LAND);
+    }
+}
+
+// The server let go of the player's body (root lifted, control given back):
+// from the packet that says so it is falling. Where it stands on ground the
+// caller sends the landing right behind that packet; in the air the camera
+// controller reports the landing when it comes. Not for a body that swims,
+// flies, rides a taxi or is in the air already.
+MovementHandler::ReleasedFall MovementHandler::beginReleasedFall() {
+    constexpr uint32_t kNotOnFoot =
+        static_cast<uint32_t>(MovementFlags::FALLING) |
+        static_cast<uint32_t>(MovementFlags::SWIMMING) |
+        static_cast<uint32_t>(MovementFlags::FLYING) |
+        static_cast<uint32_t>(MovementFlags::ROOT);
+    if ((movementInfo.flags & kNotOnFoot) != 0) return ReleasedFall::None;
+    if (onTaxiFlight_ || taxiMountActive_ || taxiActivatePending_ || taxiClientActive_) return ReleasedFall::None;
+    if (!owner_.releasedFallCallbackRef()) return ReleasedFall::None;
+    movementInfo.flags |= static_cast<uint32_t>(MovementFlags::FALLING);
+    movementInfo.fallTime = 0;
+    movementInfo.jumpVelocity = 0.0f;
+    movementInfo.jumpSinAngle = 0.0f;
+    movementInfo.jumpCosAngle = 0.0f;
+    movementInfo.jumpXYSpeed = 0.0f;
+    // The fall starts at the instant of the packet that announces it.
+    fallStartMs_ = lastMovementTimestampMs_;
+    fallStartsWithNextPacket_ = true;
+    return owner_.releasedFallCallbackRef()() ? ReleasedFall::OnGround : ReleasedFall::InAir;
+}
+
+// Control given back (SMSG_CLIENT_CONTROL_UPDATE allow=1). Build 8606 then
+// sends a heartbeat that says falling (flags 0x1000) and MSG_MOVE_FALL_LAND
+// with flags 0 at the same millisecond - after Fear and Blind, with a
+// knockback at their start or without, five runs of five where the server's
+// last spline had ended; in the one run where control came back 0.58 s into a
+// 1.35 s spline the first packet was MSG_MOVE_STOP, flags 0x1000, instead.
+// _experiments/20261124T202000Z.movement_collision_parity_round24 (kb.py).
+void MovementHandler::releaseHeldBody() {
+    // Not while this client moves another unit (possession): the packets
+    // would be that unit's.
+    if (!releasePending_ || !serverMovementAllowed_ || isPlayerServerSplineActive() ||
+        playerServerSplineJustLanded_ || clientControlledUnit_ != 0) {
+        return;
+    }
+    releasePending_ = false;
+    const ReleasedFall released = beginReleasedFall();
+    if (released == ReleasedFall::None) return;
+    owner_.sendMovement(releaseCutsSpline_ ? Opcode::MSG_MOVE_STOP : Opcode::MSG_MOVE_HEARTBEAT);
+    if (released == ReleasedFall::OnGround) owner_.sendMovement(Opcode::MSG_MOVE_FALL_LAND);
 }
 
 void MovementHandler::handleForceMoveFlagChange(network::Packet& packet, const char* name,
@@ -1766,6 +1853,44 @@ void MovementHandler::handleMoveKnockBack(network::Packet& packet) {
         return;
     }
 
+    // Taken up once every packet that came with it has been handled
+    // (applyPendingKnockBacks): the server can take control in the same
+    // breath, and the knockback is then answered without being flown.
+    pendingKnockBacks_.push_back({counter, vcos, vsin, hspeed, vspeed});
+}
+
+// Build 8606, knocked back (Reload Explode 13239: 20 yd/s level, about 20 up)
+// by the same server tick that takes control from it (Fear 5782, Blind 2094:
+// SMSG_MOVE_KNOCK_BACK, then SMSG_CLIENT_CONTROL_UPDATE allow=0, then the first
+// SMSG_MONSTER_MOVE), three runs of three: it does not leave the ground, walks
+// the server's splines, and the knockback it acknowledges (relayed as
+// MSG_MOVE_KNOCK_BACK) carries flags 0 and the fall time of its last fall.
+// Knocked back while it has control: flags 0x5001 - falling, forward, pending
+// stop - on the acknowledgement and every heartbeat of the flight, 0 on the
+// landing (four knockbacks of four, level speed 15 and 20).
+// _experiments/20261124T202000Z.movement_collision_parity_round24 (kb.py).
+void MovementHandler::applyPendingKnockBacks() {
+    const std::vector<PendingKnockBack> orders = std::move(pendingKnockBacks_);
+    pendingKnockBacks_.clear();
+    for (const PendingKnockBack& order : orders) {
+        applyKnockBack(order);
+    }
+}
+
+void MovementHandler::applyKnockBack(const PendingKnockBack& order) {
+    const uint32_t counter = order.counter;
+    const float vcos = order.vcos;
+    const float vsin = order.vsin;
+    const float hspeed = order.hspeed;
+    const float vspeed = order.vspeed;
+    if (!serverMovementAllowed_) {
+        LOG_INFO("Knockback ", counter, " not flown: the server holds the character");
+        if (owner_.getSocket() && wireOpcode(Opcode::CMSG_MOVE_KNOCK_BACK_ACK) != 0xFFFF) {
+            owner_.getSocket()->send(buildForceAck(Opcode::CMSG_MOVE_KNOCK_BACK_ACK, counter));
+        }
+        return;
+    }
+
     if (owner_.isRestoring() || (owner_.isCasting() && !owner_.isChanneling())) {
         owner_.cancelCast();
     }
@@ -1791,6 +1916,11 @@ void MovementHandler::handleMoveKnockBack(network::Packet& packet) {
         static_cast<uint32_t>(MovementFlags::DESCENDING);
     movementInfo.flags &= ~kClearOnKnockBack;
     movementInfo.flags |= static_cast<uint32_t>(MovementFlags::FALLING);
+    if (hspeed > 0.0f) {
+        // The level travel of the flight, stopped by the landing.
+        movementInfo.flags |= static_cast<uint32_t>(MovementFlags::FORWARD) |
+                              static_cast<uint32_t>(MovementFlags::PENDING_STOP);
+    }
     movementInfo.fallTime = 0;
     movementInfo.jumpVelocity = -vspeed;
     movementInfo.jumpCosAngle = vcos;
@@ -1920,7 +2050,9 @@ void MovementHandler::handleOtherPlayerMovement(network::Packet& packet) {
             info.jumpSinAngle = kb->sinAngle;
             info.jumpXYSpeed = kb->xySpeed;
             info.jumpVelocity = kb->zSpeed;
-            airborne = true;
+            // A mover the server held when the knockback reached it answers
+            // without the falling flag and stays on the ground (build 8606,
+            // applyPendingKnockBacks); its trajectory is not flown here either.
             LOG_DEBUG("Remote knockback: guid=", moverGuid, " cos=", kb->cosAngle,
                       " sin=", kb->sinAngle, " xySpeed=", kb->xySpeed, " zSpeed=", kb->zSpeed);
         }

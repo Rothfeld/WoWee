@@ -3910,6 +3910,9 @@ void GameHandler::processQueuedIncomingPackets() {
         }
     }
 
+    // With everything that arrived together handled: a knockback is flown or,
+    // where the server took control in the same breath, only acknowledged.
+    if (movementHandler_) movementHandler_->applyPendingKnockBacks();
 }
 
 

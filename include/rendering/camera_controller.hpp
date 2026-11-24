@@ -387,6 +387,13 @@ public:
     /// move or turn it; its position and facing are placed from the server's
     /// spline each frame. moving/run/speed describe that spline for locomotion.
     void setServerControlled(bool controlled, bool moving, bool run, float speed = 0.0f) {
+        if (controlled && !serverControlled_) {
+            // The server takes the body: a flight of its own (jump, fall,
+            // knockback) ends here, and no landing is owed for it.
+            knockbackActive_ = false;
+            preserveAirborneMomentum_ = false;
+            jumpReported_ = false;
+        }
         serverControlled_ = controlled;
         serverDrivenMoving_ = controlled && moving;
         serverDrivenRun_ = controlled && moving && run;
@@ -444,6 +451,16 @@ public:
     [[nodiscard]] bool isAutoFollowing() const { return autoFollowTarget_ != nullptr; }
 
     // Trigger mount jump (applies vertical velocity for physics hop)
+
+    /// The server let go of a body it held (control given back, root
+    /// lifted) and the body is falling from that instant. True where it
+    /// stands on ground, the fall over at once; in the air its landing is
+    /// reported when it comes (MSG_MOVE_FALL_LAND).
+    bool releaseToFall() {
+        if (grounded) return true;
+        jumpReported_ = true;
+        return false;
+    }
 
     // Apply server-driven knockback impulse.
     // dir: render-space 2D direction unit vector (from vcos/vsin in packet)
@@ -1222,13 +1239,10 @@ private:
     bool hasCachedFloor_ = false;
     static constexpr float COLLISION_CACHE_DISTANCE = 0.15f;  // Re-check every 15cm
 
-    // Server-driven knockback state.
-    // When the server sends SMSG_MOVE_KNOCK_BACK, we apply horizontal + vertical
-    // impulse here and let the normal physics loop (gravity, collision) resolve it.
+    // In the air from a server knockback (SMSG_MOVE_KNOCK_BACK), until the
+    // body is on the ground again. Its velocity is the airborne momentum
+    // (airborneHorizontalVelocity_, verticalVelocity).
     bool knockbackActive_ = false;
-    glm::vec2 knockbackHorizVel_ = glm::vec2(0.0f); // render-space horizontal velocity (units/s)
-    // Horizontal velocity decays via WoW-like drag so the player doesn't slide forever.
-    static constexpr float KNOCKBACK_HORIZ_DRAG = 4.5f; // exponential decay rate (1/s)
 
     // Camera shake state (SMSG_CAMERA_SHAKE + CameraShakes.dbc)
     float shakeElapsed_   = 0.0f;
