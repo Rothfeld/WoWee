@@ -134,6 +134,16 @@ std::vector<uint16_t> helmHiddenGeosetGroups(pipeline::AssetManager& assets,
         LOG_WARNING("helmHiddenGeosetGroups: ItemDisplayInfo ", itemDisplayInfoId, " not found");
         return groups;
     }
+    // A head display without a model (e.g. Faerlina's ItemDisplayInfo 17731
+    // and 391 TBC CreatureDisplayInfoExtra rows) has no helmet geometry to
+    // clip hair, facial hair, or ears, so its HelmetGeosetVis masks do not apply.
+    const uint32_t leftModelCol = (*idiLayout)["LeftModel"];
+    const uint32_t rightModelCol = (*idiLayout)["RightModel"];
+    const bool hasModel =
+        (leftModelCol != 0xFFFFFFFFu && !displayInfo->getString(static_cast<uint32_t>(row), leftModelCol).empty()) ||
+        (rightModelCol != 0xFFFFFFFFu && !displayInfo->getString(static_cast<uint32_t>(row), rightModelCol).empty());
+    if (!hasModel) return groups;
+
     const uint32_t visId = displayInfo->getUInt32(static_cast<uint32_t>(row), visColumn);
     if (visId == 0) return groups;
 

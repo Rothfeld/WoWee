@@ -113,8 +113,14 @@ inline glm::vec3 particleEffectiveColor(uint32_t flags,
 inline constexpr uint32_t kParticleInheritVelocity = 0x40;
 
 // Twinkle size of a pre-264 emitter's particle (+0x180 speed, +0x184 percent,
-// +0x188/+0x18C scale min/max): a random factor between min and max, drawn
-// again every 1/speed seconds of the particle's age (once, for speed 0).
+// +0x188/+0x18C scale min/max): when `scaleMin != scaleMax`, draws a random
+// factor between min and max every 1/speed seconds of the particle's age
+// (once, for speed 0). A degenerate equal pair (`scaleMin == scaleMax`) has
+// no twinkle scale oscillation and leaves authored `particleScale` untouched
+// (1.0f): 190 TBC emitters author equal non-1 values such as [0.0, 0.0] on
+// Kobold/Miner-helm candles and Basilisks, [0.1, 0.1] on Stratholme/Naxxramas/
+// ZA/Atiesh weapon glows (`Sword_1H_Stratholme_D_01.m2` on Faerlina), and
+// [0.5, 0.5] on Priest T5 helms and Benediction.
 // When `twinklePercent < 1.0` (72 TBC emitters, e.g. Archimonde_Fire #1 with
 // speed 11, percent 0.9, scale 1.0-1.0; DetectInvis_Impact_Base #0/#1 with
 // percent 0.5; ArcanePower_State_Chest #0 with percent 0.6), each twinkle
@@ -125,7 +131,7 @@ inline float particleTwinkleScale(uint32_t seed, float age, float speed,
                                   float scaleMin, float scaleMax,
                                   float twinklePercent = 1.0f) {
     const bool canBlinkOff = twinklePercent < 1.0f;
-    if (!canBlinkOff && scaleMin == scaleMax) return scaleMin;
+    if (!canBlinkOff && scaleMin == scaleMax) return 1.0f;
     if (twinklePercent <= 0.0f) return 0.0f;
     const uint32_t period = speed > 0.0f ? static_cast<uint32_t>(age * speed) : 0u;
     uint32_t h = seed ^ (period * 0x9E3779B9u);
@@ -136,7 +142,7 @@ inline float particleTwinkleScale(uint32_t seed, float age, float speed,
         const float uVis = static_cast<float>(hv >> 8) / 16777216.0f;
         if (uVis >= twinklePercent) return 0.0f;
     }
-    if (scaleMin == scaleMax) return scaleMin;
+    if (scaleMin == scaleMax) return 1.0f;
     return scaleMin + (scaleMax - scaleMin) * (static_cast<float>(h >> 8) / 16777215.0f);
 }
 

@@ -898,6 +898,39 @@ TEST_CASE("Twinkle size stays within the authored range", "[m2][particle]") {
     CHECK(visibleHalf < 1100);
     // Zero twinklePercent always hides the particle.
     CHECK(particleTwinkleScale(7, 0.3f, 10.0f, 1.0f, 1.0f, 0.0f) == 0.0f);
+    // Degenerate equal scale pairs (scaleMin == scaleMax != 1.0) have no twinkle
+    // oscillation and leave authored particleScale untouched (1.0f when visible):
+    // 190 TBC emitters including Kobold/Miner-helm candles [0.0, 0.0], Faerlina's
+    // Sword_1H_Stratholme_D_01.m2 / Atiesh / Corrupted Ashbringer [0.1, 0.1],
+    // Priest T5 helms / Benediction [0.5, 0.5], and UI-AutoCastButton [12.0, 12.0].
+    CHECK(particleTwinkleScale(7, 0.3f, 0.0f, 0.0f, 0.0f, 1.0f) == 1.0f);
+    CHECK(particleTwinkleScale(7, 0.3f, 10.0f, 0.1f, 0.1f, 1.0f) == 1.0f);
+    CHECK(particleTwinkleScale(7, 0.3f, 10.0f, 0.5f, 0.5f, 1.0f) == 1.0f);
+    CHECK(particleTwinkleScale(7, 0.3f, 10.0f, 12.0f, 12.0f, 1.0f) == 1.0f);
+}
+
+TEST_CASE("TBC Stratholme sword and Kobold candle degenerate twinkle ranges keep authored scale", "[m2][particle]") {
+    using wowee::rendering::particleTwinkleScale;
+    const auto sword = wowee::pipeline::M2Loader::load(
+        wowee::test::readTbcData("item/objectcomponents/weapon/sword_1h_stratholme_d_01.m2"));
+    REQUIRE(sword.particleEmitters.size() == 3);
+    for (const auto& em : sword.particleEmitters) {
+        CHECK(em.twinkleScaleMin == Catch::Approx(0.1f));
+        CHECK(em.twinkleScaleMax == Catch::Approx(0.1f));
+        CHECK(particleTwinkleScale(42, 0.5f, em.twinkleSpeed,
+                                   em.twinkleScaleMin, em.twinkleScaleMax,
+                                   em.twinklePercent) == 1.0f);
+    }
+
+    const auto kobold = wowee::pipeline::M2Loader::load(
+        wowee::test::readTbcData("creature/kobold/kobold.m2"));
+    REQUIRE(kobold.particleEmitters.size() >= 1);
+    const auto& candle = kobold.particleEmitters[0];
+    CHECK(candle.twinkleScaleMin == 0.0f);
+    CHECK(candle.twinkleScaleMax == 0.0f);
+    CHECK(particleTwinkleScale(42, 0.5f, candle.twinkleSpeed,
+                               candle.twinkleScaleMin, candle.twinkleScaleMax,
+                               candle.twinklePercent) == 1.0f);
 }
 
 TEST_CASE("WaterElemental 0xc49 splash emitters use authored speed and zSource without inherited bone velocity", "[m2][particle]") {
