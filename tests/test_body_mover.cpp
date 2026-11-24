@@ -937,3 +937,26 @@ TEST_CASE("A body walked off its ground onto a building's slope steps on up anot
         }
     }
 }
+
+TEST_CASE("What a steep face pushes a falling body aside by is not kept as level velocity", "[body_mover]") {
+    // Karabor Sewers (347.0, 814.5): native sliding down a 71 degree face
+    // moves out from it by the frame's drop over the face's slope - 0.0112,
+    // 0.0175 and 0.0265 yd for drops of 0.0328, 0.0512 and 0.0774 - square to
+    // the face every frame, with no level velocity gathered from those pushes.
+    Mesh mesh;
+    slope(mesh, 0.0f, 0.0f, 71.0f, 6.0f);
+    // The body resting against the face, a yard up, falling with no level move of its own.
+    const float foot = 1.0f / std::tan(glm::radians(71.0f));
+    const glm::vec3 from(foot - kRadius - 0.01f, 0.0f, 1.0f - kRadius * kBodyBevel);
+    const BodyMove fall = fallBody(from, glm::vec3(0.0f, 0.0f, -0.0512f), kRadius, kHeight, mesh);
+    CHECK(fall.deflected);
+    CHECK(fall.position.z - from.z == Catch::Approx(-0.0512f).margin(0.002f));
+    CHECK(fall.position.x - from.x < -0.005f);
+    CHECK(glm::length(fall.levelKept) < 1e-6f);
+    // A level move along the face is kept whole, one into it not at all.
+    const BodyMove along = fallBody(from, glm::vec3(0.0f, 0.1f, -0.0512f), kRadius, kHeight, mesh);
+    CHECK(along.levelKept.y == Catch::Approx(0.1f).margin(1e-4f));
+    CHECK(std::abs(along.levelKept.x) < 1e-4f);
+    const BodyMove into = fallBody(from, glm::vec3(0.1f, 0.0f, -0.0512f), kRadius, kHeight, mesh);
+    CHECK(glm::length(into.levelKept) < 1e-4f);
+}

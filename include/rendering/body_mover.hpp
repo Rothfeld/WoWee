@@ -236,6 +236,9 @@ struct BodyMove {
     // ground - a walk begun on ground has carried the sole onto; zero when
     // there is none (walkBody).
     glm::vec3 walkedOntoSlope{0.0f};
+    // Of a fall: what the faces that turned it aside leave of the frame's
+    // level move - the move without what the drop was pushed aside by.
+    glm::vec2 levelKept{0.0f};
 };
 
 inline std::optional<BodyContact> firstBodyContact(const glm::vec3& from, const glm::vec3& delta,
@@ -369,6 +372,7 @@ inline BodyMove fallBody(const glm::vec3& from, const glm::vec3& delta,
     bool turned = false;
     glm::vec3 remaining = turnedByOverlappedWalls(from, delta, radius, height, triangles, minWalkableNormalZ, turned);
     if (turned) move.deflected = true;
+    move.levelKept = glm::vec2(remaining);
     for (int iteration = 0; iteration < 5 && glm::dot(remaining, remaining) > 1e-12f; ++iteration) {
         const auto contact = firstBodyContact(move.position, remaining, radius, height, triangles);
         if (!contact) { move.position += remaining; remaining = glm::vec3(0.0f); break; }
@@ -441,6 +445,8 @@ inline BodyMove fallBody(const glm::vec3& from, const glm::vec3& delta,
         }
         const float into = glm::dot(remaining, n);
         if (into < 0.0f) remaining -= glm::vec3(level, 0.0f) * (into / levelSq);
+        if (const float keptInto = glm::dot(move.levelKept, level); keptInto < 0.0f)
+            move.levelKept -= level * (keptInto / levelSq);
     }
     // Turned aside five times with drop still left: wedged between faces
     // that are not ground. The body hangs there and its fall starts over

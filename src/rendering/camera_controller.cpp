@@ -568,13 +568,23 @@ glm::vec3 CameraController::moveBodyOnFootOnce(const glm::vec3& start, const glm
     if (move.ceiling && verticalVelocity > 0.0f) verticalVelocity = 0.0f;
     // Wedged in the air: the fall starts over instead of gathering speed.
     if (!walked && move.held && verticalVelocity < 0.0f) verticalVelocity = 0.0f;
-    if ((walked && move.support == movement::BodySupport::None) || (!walked && move.deflected)) {
-        // Walked off, or turned aside in the air: the fall goes on at the
-        // velocity the body actually had in this frame, not the one it left
-        // the ground with. Native falling off the Dustwallow plank ramp
-        // (-2692.0, -4695.0) slides along a rail in the air and keeps that
-        // 3.44 yd/s along the rail's direction after it has passed it.
+    if (walked && move.support == movement::BodySupport::None) {
+        // Walked off: the fall goes on at the velocity the body actually had
+        // in this frame, not the one it left the ground with.
         airborneHorizontalVelocity_ = glm::vec3(move.position.x - from.x, move.position.y - from.y, 0.0f) / stepSeconds;
+    } else if (!walked && move.deflected) {
+        // Turned aside in the air: the fall goes on with what the faces left
+        // of its level velocity. Native falling off the Dustwallow plank ramp
+        // (-2692.0, -4695.0) slides along a rail in the air and keeps that
+        // 3.44 yd/s along the rail's direction after it has passed it. What
+        // a face pushes the body aside by as it drops onto it is no velocity:
+        // native sliding down a 71 degree face in the Karabor Sewers (347.0,
+        // 814.5) moves out from it by the frame's drop over the face's slope,
+        // 0.0112, 0.0175 and 0.0265 yd for drops of 0.0328, 0.0512 and
+        // 0.0774, always square to the face (5 runs). Kept as velocity, each
+        // frame's push was added to the next and the body drifted 0.05 yd
+        // further along in five frames.
+        airborneHorizontalVelocity_ = glm::vec3(move.levelKept, 0.0f) / stepSeconds;
     }
     if (move.support == movement::BodySupport::None &&
         (gravitySuspendTimer_ > 0.0f || groundNotStreamedYet(move.position.x, move.position.y))) {
