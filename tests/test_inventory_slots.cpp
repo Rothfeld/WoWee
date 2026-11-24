@@ -79,6 +79,19 @@ TEST_CASE("Every bank bag maps to a distinct slot in both numberings",
     }
 }
 
+TEST_CASE("ContainerIDToInventoryID maps worn bags 1..4 and bank bags 5..11",
+          "[bank][slots]") {
+    // Worn bags 1..4 -> inventory slots 20..23
+    for (int bag = 1; bag <= kWornBagCount; ++bag) {
+        REQUIRE(containerIdToInventoryId(bag) == 19 + bag);
+    }
+    // Bank bags 5..11 (TBC/WotLK layout) -> inventory slots 68..74
+    for (int i = 0; i < bankBagCount(); ++i) {
+        const int bagId = kWornBagCount + 1 + i;
+        REQUIRE(containerIdToInventoryId(bagId) == firstBankBagInventorySlot() + i);
+    }
+}
+
 TEST_CASE("The backpack and the worn bags are where the wire puts them",
           "[bank][slots]") {
     // Read out of cursorWireSlot and the split path, which have been sending

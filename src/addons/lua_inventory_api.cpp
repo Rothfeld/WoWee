@@ -3069,13 +3069,17 @@ static int lua_GetInventorySlotInfo(lua_State* L) {
         {"SECONDARYHAND",17,  "interface\\paperdoll\\UI-PaperDoll-Slot-SecondaryHand.blp"},
         {"RANGED",       18,  "interface\\paperdoll\\UI-PaperDoll-Slot-Ranged.blp"},
         {"TABARD",       19,  "interface\\paperdoll\\UI-PaperDoll-Slot-Tabard.blp"},
-        // The bag buttons along the main bar ask for these by name at load, and
-        // paperdollframe.lua does it in an OnLoad - so a gap here does not just
-        // lose the bags, it loses the file.
+        // The bag buttons along the main bar ask for Bag0Slot..Bag3Slot at load,
+        // and bankframe.lua asks for Bag1..Bag7 (strsub("BankFrameBagN", 10))
+        // for the seven bank bag slot background textures.
         {"BAG0",         20,  "interface\\paperdoll\\UI-PaperDoll-Slot-Bag.blp"},
         {"BAG1",         21,  "interface\\paperdoll\\UI-PaperDoll-Slot-Bag.blp"},
         {"BAG2",         22,  "interface\\paperdoll\\UI-PaperDoll-Slot-Bag.blp"},
         {"BAG3",         23,  "interface\\paperdoll\\UI-PaperDoll-Slot-Bag.blp"},
+        {"BAG4",         24,  "interface\\paperdoll\\UI-PaperDoll-Slot-Bag.blp"},
+        {"BAG5",         25,  "interface\\paperdoll\\UI-PaperDoll-Slot-Bag.blp"},
+        {"BAG6",         26,  "interface\\paperdoll\\UI-PaperDoll-Slot-Bag.blp"},
+        {"BAG7",         27,  "interface\\paperdoll\\UI-PaperDoll-Slot-Bag.blp"},
         {"AMMO",          0,  "interface\\paperdoll\\UI-PaperDoll-Slot-Ranged.blp"},
     };
     for (const auto& m : mapping) {
@@ -3378,58 +3382,83 @@ static int lua_GetInventoryItemTexture(lua_State* L) {
     return 1;
 }
 
-/// ContainerIDToInventoryID(bagID) → the equipment slot that bag is worn in.
+/// ContainerIDToInventoryID(bagID) → the equipment/bank-bag inventory slot ID.
 ///
-/// Bags 1 through 4 are inventory slots 20 through 23. The bag portrait button
-/// asks for this to put the bag's own tooltip on itself, and left undefined the
-/// call answered nil, which asked for the tooltip of no slot at all.
+/// Worn bags 1..4 map to inventory slots 20..23; bank bags 5..11 map to
+/// 68..74 (64..69 in Classic). ContainerFrame uses this for bag portrait
+/// tooltips and item links.
 static int lua_ContainerIDToInventoryID(lua_State* L) {
     const int bag = static_cast<int>(luaL_checknumber(L, 1));
-    lua_pushnumber(L, bag + 19);
+    lua_pushnumber(L, game::slots::containerIdToInventoryId(bag));
     return 1;
 }
 
 /// GetBagName(bagID) → the name of the bag in that slot, or nil for an empty
-/// one. The backpack is bag 0 and has a fixed name; the interface uses this to
-/// label the bag buttons and their tooltips.
+/// one. Covers the backpack (0), worn bags (1..4), and bank bags (5..11).
 static int lua_GetBagName(lua_State* L) {
     auto* gh = getGameHandler(L);
     const int bag = static_cast<int>(luaL_optnumber(L, 1, 0));
     if (bag == 0) { lua_pushstring(L, "Backpack"); return 1; }
-    if (!gh || bag < 1 || bag > 4) { return luaReturnNil(L); }
-    // An empty bag slot has no size, which is how the interface knows not to
-    // draw a bag there at all.
-    if (gh->getInventory().getBagSize(bag - 1) == 0) { return luaReturnNil(L); }
+    if (!gh) { return luaReturnNil(L); }
+
+    const auto& inv = gh->getInventory();
+    const game::ItemSlot* bagSlot = nullptr;
+    if (bag >= 1 && bag <= game::slots::kWornBagCount) {
+        if (inv.getBagSize(bag - 1) == 0) { return luaReturnNil(L); }
+        bagSlot = &inv.getEquipSlot(
+            static_cast<game::EquipSlot>(static_cast<int>(game::EquipSlot::BAG1) + bag - 1));
+    } else {
+        const int bankIndex = bag - (game::slots::kWornBagCount + 1);
+        if (bankIndex < 0 || bankIndex >= game::slots::bankBagCount()) {
+            return luaReturnNil(L);
+        }
+        if (inv.getBankBagSize(bankIndex) == 0) { return luaReturnNil(L); }
+        bagSlot = &inv.getBankBagItem(bankIndex);
+    }
+
+    if (bagSlot && !bagSlot->empty()) {
+        if (const auto* info = gh->getItemInfo(bagSlot->item.itemId); info && !info->name.empty()) {
+            lua_pushstring(L, info->name.c_str());
+            return 1;
+        }
+        if (!bagSlot->item.name.empty()) {
+            lua_pushstring(L, bagSlot->item.name.c_str());
+            return 1;
+        }
+    }
     lua_pushstring(L, "Bag");
     return 1;
 }
 
 /// SetBagPortraitTexture(texture, bagID) - the bag's own icon on the frame
-/// that opens it.
-///
-/// The backpack has no item behind it and keeps the pack icon. Bags 1 to 4 are
-/// worn in equipment slots 20 to 23, so the icon is the equipped bag's own -
-/// which is why every open bag used to wear the same generic pack.
+/// that opens it (backpack, worn bags 1..4, and bank bags 5..11).
 static int lua_SetBagPortraitTexture(lua_State* L) {
     if (!lua_istable(L, 1)) return 0;
     const int bag = static_cast<int>(luaL_optnumber(L, 2, 0));
 
     std::string icon = "Interface\\Buttons\\Button-Backpack-Up";
-    if (bag >= 1 && bag <= 4) {
-        if (auto* gh = getGameHandler(L)) {
-            const auto& slot = gh->getInventory().getEquipSlot(
+    if (auto* gh = getGameHandler(L)) {
+        const auto& inv = gh->getInventory();
+        const game::ItemSlot* slot = nullptr;
+        if (bag >= 1 && bag <= game::slots::kWornBagCount) {
+            slot = &inv.getEquipSlot(
                 static_cast<game::EquipSlot>(static_cast<int>(game::EquipSlot::BAG1) + bag - 1));
-            if (!slot.empty()) {
-                uint32_t displayId = slot.item.displayInfoId;
-                if (displayId == 0) {
-                    if (const auto* info = gh->getItemInfo(slot.item.itemId)) {
-                        displayId = info->displayInfoId;
-                    }
-                }
-                const std::string resolved =
-                    displayId ? gh->getItemIconPath(displayId) : std::string();
-                if (!resolved.empty()) icon = resolved;
+        } else {
+            const int bankIndex = bag - (game::slots::kWornBagCount + 1);
+            if (bankIndex >= 0 && bankIndex < game::slots::bankBagCount()) {
+                slot = &inv.getBankBagItem(bankIndex);
             }
+        }
+        if (slot && !slot->empty()) {
+            uint32_t displayId = slot->item.displayInfoId;
+            if (displayId == 0) {
+                if (const auto* info = gh->getItemInfo(slot->item.itemId)) {
+                    displayId = info->displayInfoId;
+                }
+            }
+            const std::string resolved =
+                displayId ? gh->getItemIconPath(displayId) : std::string();
+            if (!resolved.empty()) icon = resolved;
         }
     }
 

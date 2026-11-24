@@ -116,6 +116,20 @@ inline constexpr int toWireSlot(int inventorySlot)  { return inventorySlot - 1; 
 /// The inventory slot the first bank bag occupies, as Lua counts.
 inline int firstBankBagInventorySlot() { return toInventorySlot(bankBagWireSlot(0)); }
 
+/// Convert a 1-based Lua container ID (1..4 worn bags, 5..5+bankBagCount()-1
+/// bank bags) to its 1-based Lua inventory slot ID (20..23 worn, 68..74 bank
+/// in TBC/WotLK, 64..69 in Classic).
+inline int containerIdToInventoryId(int bagId) {
+    if (bagId >= 1 && bagId <= kWornBagCount) {
+        return toInventorySlot(wornBagContainer(bagId - 1));
+    }
+    const int bankIndex = bagId - (kWornBagCount + 1);
+    if (bankIndex >= 0 && bankIndex < bankBagCount()) {
+        return toInventorySlot(bankBagWireSlot(bankIndex));
+    }
+    return bagId + kWornBagFirst;
+}
+
 /// Where an item on the cursor was picked up from, in the numbering the
 /// interface bindings keep beside it: 0 the backpack, 1 to 4 a worn bag, and
 /// -1 worn equipment, where the slot is an equipment slot rather than an index
