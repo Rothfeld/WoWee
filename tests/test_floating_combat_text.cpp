@@ -270,3 +270,107 @@ TEST_CASE("normal ranged attacks (Auto Shot, Shoot, Throw) use white combat text
     CHECK(arcaneCol.g == Catch::Approx(222.0f / 255.0f));
     CHECK(arcaneCol.b == Catch::Approx(0.0f));
 }
+
+TEST_CASE("rapid .damage 6-digit stream uses below and left flanks instead of rightward train", "[fct][layout]") {
+    // Simulates spamming `.damage 300000` (~104 px wide at 720p) every ~180 ms
+    // (~12 px natural rise per arrival) so 6 numbers are simultaneously active:
+    // newestFirst = [220, 208, 196, 184, 172, 158].
+    std::vector<Box> boxes{
+        text(220.0f, 104.0f),
+        text(208.0f, 104.0f),
+        text(196.0f, 104.0f),
+        text(184.0f, 104.0f),
+        text(172.0f, 104.0f),
+        text(158.0f, 104.0f),
+    };
+    const Viewport vp{1280.0f, 720.0f, 720.0f / 768.0f};
+    layout(boxes, vp);
+
+    // Every pair must be non-overlapping and stay within [left1, center, right1].
+    for (size_t i = 0; i < boxes.size(); ++i) {
+        CHECK(fitsHorizontally(boxes[i], vp));
+        CHECK(std::abs(boxes[i].x - 640.0f) <= 130.0f);
+        for (size_t j = i + 1; j < boxes.size(); ++j) {
+            CHECK_FALSE(overlaps(boxes[i], boxes[j]));
+        }
+    }
+    // Center column has newest (220), lifted (164), dropped below newest (276), and upper lifted (108);
+    // flanks occupy both right (>640) and left (<640).
+    CHECK(boxes[0].x == Catch::Approx(640.0f));
+    CHECK(boxes[0].top == Catch::Approx(220.0f));
+    CHECK(boxes[1].x == Catch::Approx(640.0f));
+    CHECK(boxes[1].top == Catch::Approx(164.0f));
+    CHECK(boxes[2].x > 640.0f + 100.0f);
+    CHECK(boxes[3].x == Catch::Approx(640.0f));
+    CHECK(boxes[3].top == Catch::Approx(276.0f));
+    CHECK(boxes[4].x < 640.0f - 100.0f);
+    CHECK(boxes[5].x == Catch::Approx(640.0f));
+    CHECK(boxes[5].top == Catch::Approx(108.0f));
+
+    // Also verify 7 simultaneous same-frame hits expand symmetrically left and right
+    // rather than forming a lopsided rightward horizontal train.
+    std::vector<Box> burst(7, text(300.0f, 100.0f));
+    layout(burst, vp);
+    int leftCount = 0;
+    int rightCount = 0;
+    for (size_t i = 0; i < burst.size(); ++i) {
+        CHECK(fitsHorizontally(burst[i], vp));
+        if (burst[i].x < 639.0f) ++leftCount;
+        if (burst[i].x > 641.0f) ++rightCount;
+        for (size_t j = i + 1; j < burst.size(); ++j) {
+            CHECK_FALSE(overlaps(burst[i], burst[j]));
+        }
+    }
+    CHECK(leftCount == 2);
+    CHECK(rightCount == 2);
+}
+
+TEST_CASE("top-of-screen and bottom-of-screen clamping participate in layout without overlap", "[fct][layout]") {
+    const Viewport vp{1280.0f, 720.0f, 720.0f / 768.0f};
+    const float minTop = kTopBaseline * vp.uiScale - 28.0f;
+    const float maxTop = vp.height - kBottomBaselineFromBottom * vp.uiScale - 28.0f;
+
+    // Top-of-screen stream (e.g. Al'ar / mirage_B_top_spam where naturalTop ~ 95..65):
+    // lifting above 95 clamps to minTop (~51), which still overlaps 95, so the 4 numbers
+    // form (center, right, below, left) with zero post-clamp overlap.
+    std::vector<Box> topBoxes{
+        text(95.0f, 99.0f),
+        text(85.0f, 99.0f),
+        text(75.0f, 99.0f),
+        text(65.0f, 99.0f),
+    };
+    layout(topBoxes, vp);
+    for (size_t i = 0; i < topBoxes.size(); ++i) {
+        CHECK(topBoxes[i].top >= minTop - 0.01f);
+        for (size_t j = i + 1; j < topBoxes.size(); ++j) {
+            CHECK_FALSE(overlaps(topBoxes[i], topBoxes[j]));
+        }
+    }
+    CHECK(topBoxes[0].x == Catch::Approx(640.0f));
+    CHECK(topBoxes[1].x > 640.0f + 90.0f);
+    CHECK(topBoxes[2].x == Catch::Approx(640.0f));
+    CHECK(topBoxes[2].top == Catch::Approx(95.0f + 56.0f));
+    CHECK(topBoxes[3].x < 640.0f - 90.0f);
+
+    // Bottom-of-screen stream (hostile_A_spam_20yd where naturalTop >= maxTop):
+    // dropping below maxTop clamps to maxTop and is rejected, so the 4 numbers
+    // form (center bottom, center lifted, right, left) above MainMenuExpBar.
+    std::vector<Box> bottomBoxes{
+        text(660.0f, 99.0f),
+        text(650.0f, 99.0f),
+        text(640.0f, 99.0f),
+        text(635.0f, 99.0f),
+    };
+    layout(bottomBoxes, vp);
+    for (size_t i = 0; i < bottomBoxes.size(); ++i) {
+        CHECK(bottomBoxes[i].top <= maxTop + 0.01f);
+        for (size_t j = i + 1; j < bottomBoxes.size(); ++j) {
+            CHECK_FALSE(overlaps(bottomBoxes[i], bottomBoxes[j]));
+        }
+    }
+    CHECK(bottomBoxes[0].top == Catch::Approx(maxTop));
+    CHECK(bottomBoxes[1].x == Catch::Approx(640.0f));
+    CHECK(bottomBoxes[1].top == Catch::Approx(maxTop - 56.0f));
+    CHECK(bottomBoxes[2].x > 640.0f + 90.0f);
+    CHECK(bottomBoxes[3].x < 640.0f - 90.0f);
+}

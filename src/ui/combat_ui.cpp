@@ -302,13 +302,13 @@ void CombatUI::renderCombatText(game::GameHandler& gameHandler) {
     // Entries are oldest first; layout wants each unit's newest first.
     std::stable_sort(worldTexts.begin(), worldTexts.end(),
         [](const WorldText& a, const WorldText& b) { return a.guid < b.guid; });
+    const fct::Viewport viewport{screenW, screenH, uiScale};
     for (size_t begin = 0; begin < worldTexts.size();) {
         size_t end = begin;
         while (end < worldTexts.size() && worldTexts[end].guid == worldTexts[begin].guid) ++end;
         std::vector<fct::Box> boxes;
         for (size_t i = end; i-- > begin;) boxes.push_back(worldTexts[i].box);
-        fct::layout(boxes);
-        for (auto& box : boxes) fct::clampToTop(box, uiScale);
+        fct::layout(boxes, viewport);
         for (size_t i = begin; i < end; ++i) worldTexts[i].box = boxes[end - 1 - i];
         begin = end;
     }

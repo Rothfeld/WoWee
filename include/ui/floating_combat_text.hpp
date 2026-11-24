@@ -61,6 +61,12 @@ constexpr float kFadeOutStart = 0.76f;
 /// units of the 768-unit UI.
 constexpr float kTopBaseline = 79.0f * 768.0f / 720.0f;
 
+/// A number never drops below the top of the bottom action/XP bar: at 720
+/// lines, bottom-clamped digits span 643..662 px, resting at baseline 662 px
+/// (58 px above the bottom of the 720p viewport; hostile_A_spam_20yd in
+/// _experiments/20261123T213000Z.damage_spam_layout_parity).
+constexpr float kBottomBaselineFromBottom = 58.0f * 768.0f / 720.0f;
+
 /// Criticals and the outcome words (Miss, Dodge, Parry, Immune, Absorb...)
 /// stay fully opaque until 1.0 s: a "Miss" and a "Dodge" on the original read
 /// full white from 0.15 s to 1.0 s and faded out after, where a number of the
@@ -213,56 +219,161 @@ inline bool overlaps(const Box& a, const Box& b) {
            dx < 0.5f * (a.width + b.width) + 0.5f * (gap(a) + gap(b)) - 0.01f;
 }
 
+/// Optional screen bounds enforced during layout so top/bottom/edge-clamped
+/// candidates participate in collision checks instead of piling on top of each
+/// other after layout. Leave zero-initialized for unbounded layout.
+struct Viewport {
+    float width = 0.0f;
+    float height = 0.0f;
+    float uiScale = 0.0f;
+};
+
+inline float clampVertical(float top, const Box& box, const Viewport& vp) {
+    if (vp.uiScale <= 0.0f || vp.height <= 0.0f) return top;
+    const float minTop = kTopBaseline * vp.uiScale - box.fontPx;
+    const float maxTop = std::max(minTop, vp.height - kBottomBaselineFromBottom * vp.uiScale - box.fontPx);
+    return std::clamp(top, minTop, maxTop);
+}
+
+inline float clampHorizontal(float x, const Box& box, const Viewport& vp) {
+    if (vp.width <= 0.0f) return x;
+    const float halfW = 0.5f * box.width + 2.0f;
+    if (2.0f * halfW >= vp.width) return 0.5f * vp.width;
+    return std::clamp(x, halfW, vp.width - halfW);
+}
+
+inline bool fitsHorizontally(const Box& box, const Viewport& vp) {
+    if (vp.width <= 0.0f) return true;
+    const float halfW = 0.5f * box.width + 2.0f;
+    return box.x >= halfW - 0.01f && box.x <= vp.width - halfW + 0.01f;
+}
+
 /// Lays texts out newest first; every frame starts again from the natural
 /// positions, so a text drops back down once the one below it expires
 /// (measured with two criticals).
 ///
-/// The newest text keeps its natural place. An older text that collides is
-/// lifted over the texts above it while the total lift stays within one row;
-/// otherwise it is set right of the first text it collides with at its
-/// natural height; if that place is taken it drops one row below its natural
-/// place; only then does it keep stepping right. Measured cases: two
-/// simultaneous numbers stack; of three, the oldest goes beside the newest on
-/// the bottom row; of four (1, 22, 333, 4 sent together, st-original frames
-/// 520-545), 4 stays, 333 rises a row, 22 sits right of 4 and 1 hangs a row
-/// below the name line; a 0.3 s stream forms one column; in a 0.15 s stream
-/// the second number sits right of the third, slightly lower.
+/// Measured against TBC 2.4.3 build 8606 (_experiments/20261117T211838Z.fct_layout
+/// and _experiments/20261123T213000Z.damage_spam_layout_parity):
+/// 1. The newest text keeps its clamped natural place.
+/// 2. An older colliding text lifts above center blockers while total lift from
+///    its clamped natural top stays within one row (and within top clamp).
+/// 3. Otherwise it tries the right flank at its clamped natural height.
+/// 4. If right is taken, it pushes down below center blockers up to one row
+///    below the base anchor (and within bottom clamp).
+/// 5. If below is taken, it tries the left flank at its clamped natural height.
+/// 6. Any further simultaneous burst expands symmetrically right and left
+///    around the unit rather than marching off-screen in a rightward train.
 inline const Box* firstBlocker(const Box& box, const std::vector<Box>& placed, size_t count) {
     for (size_t j = 0; j < count; ++j)
         if (overlaps(box, placed[j])) return &placed[j];
     return nullptr;
 }
 
-inline void layout(std::vector<Box>& newestFirst) {
+inline void layout(std::vector<Box>& newestFirst, const Viewport& viewport = {}) {
+    if (newestFirst.empty()) return;
+    const float newestNatTop = clampVertical(newestFirst[0].naturalTop, newestFirst[0], viewport);
+
     for (size_t i = 0; i < newestFirst.size(); ++i) {
         Box& box = newestFirst[i];
-        box.x = box.naturalX;
-        box.top = box.naturalTop;
-        // Each step passes one placed text, so i steps always suffice.
+        const float natX = clampHorizontal(box.naturalX, box, viewport);
+        const float natTop = clampVertical(box.naturalTop, box, viewport);
+        box.x = natX;
+        box.top = natTop;
+        if (i == 0) continue;
+
+        // 1. Lift above center blockers while within one row of clamped natural top.
         for (size_t step = 0; step < i; ++step) {
             const Box* blocker = firstBlocker(box, newestFirst, i);
             if (!blocker) break;
-            box.top = blocker->top + 0.5f * blocker->fontPx
+            const float lifted = blocker->top + 0.5f * blocker->fontPx
                 - 0.5f * (rowHeight(*blocker) + rowHeight(box)) - 0.5f * box.fontPx;
+            const float clamped = clampVertical(lifted, box, viewport);
+            if (std::abs(clamped - box.top) < 1e-4f) break;
+            box.top = clamped;
         }
         if (!firstBlocker(box, newestFirst, i) &&
-            box.naturalTop - box.top <= rowHeight(box) + 0.01f) continue;
-        box.top = box.naturalTop;
-        const auto beside = [&](const Box& blocker) {
+            natTop - box.top <= rowHeight(box) + 0.01f) continue;
+
+        const auto besideRight = [&](const Box& blocker) {
             return blocker.x + 0.5f * (blocker.width + box.width) + 0.5f * (gap(blocker) + gap(box));
         };
+        const auto besideLeft = [&](const Box& blocker) {
+            return blocker.x - 0.5f * (blocker.width + box.width) - 0.5f * (gap(blocker) + gap(box));
+        };
+
+        // 2. Right flank at clamped natural height.
+        box.x = natX;
+        box.top = natTop;
         if (const Box* blocker = firstBlocker(box, newestFirst, i)) {
-            box.x = beside(*blocker);
-            if (!firstBlocker(box, newestFirst, i)) continue;
+            box.x = besideRight(*blocker);
+            if (!firstBlocker(box, newestFirst, i) && fitsHorizontally(box, viewport)) continue;
         }
-        box.x = box.naturalX;
-        box.top = box.naturalTop + rowHeight(box);
-        if (!firstBlocker(box, newestFirst, i)) continue;
-        box.top = box.naturalTop;
+
+        // 3. Push down below center blockers up to one row below the base anchor.
+        const float maxDropTop = clampVertical(std::max(natTop, newestNatTop) + rowHeight(box), box, viewport);
+        box.x = natX;
+        box.top = natTop;
         for (size_t step = 0; step < i; ++step) {
             const Box* blocker = firstBlocker(box, newestFirst, i);
             if (!blocker) break;
-            box.x = beside(*blocker);
+            const float dropped = blocker->top + 0.5f * blocker->fontPx
+                + 0.5f * (rowHeight(*blocker) + rowHeight(box)) - 0.5f * box.fontPx;
+            const float clamped = clampVertical(dropped, box, viewport);
+            if (std::abs(clamped - box.top) < 1e-4f) break;
+            box.top = clamped;
+        }
+        if (!firstBlocker(box, newestFirst, i) && box.top <= maxDropTop + 0.01f) continue;
+
+        // 4. Left flank at clamped natural height.
+        box.x = natX;
+        box.top = natTop;
+        if (const Box* blocker = firstBlocker(box, newestFirst, i)) {
+            box.x = besideLeft(*blocker);
+            if (!firstBlocker(box, newestFirst, i) && fitsHorizontally(box, viewport)) continue;
+        }
+
+        // 5. Symmetric outward horizontal expansion (with upper/lower row fallback if viewport edges hit).
+        const auto trySymmetricRow = [&](float rowTop) -> bool {
+            Box rightCand = box;
+            rightCand.x = natX;
+            rightCand.top = rowTop;
+            for (size_t step = 0; step <= i; ++step) {
+                const Box* blocker = firstBlocker(rightCand, newestFirst, i);
+                if (!blocker) break;
+                rightCand.x = besideRight(*blocker);
+            }
+            const bool rightOk = !firstBlocker(rightCand, newestFirst, i) && fitsHorizontally(rightCand, viewport);
+
+            Box leftCand = box;
+            leftCand.x = natX;
+            leftCand.top = rowTop;
+            for (size_t step = 0; step <= i; ++step) {
+                const Box* blocker = firstBlocker(leftCand, newestFirst, i);
+                if (!blocker) break;
+                leftCand.x = besideLeft(*blocker);
+            }
+            const bool leftOk = !firstBlocker(leftCand, newestFirst, i) && fitsHorizontally(leftCand, viewport);
+
+            if (rightOk && leftOk) {
+                box = (std::abs(leftCand.x - natX) + 0.01f < std::abs(rightCand.x - natX)) ? leftCand : rightCand;
+                return true;
+            }
+            if (rightOk) { box = rightCand; return true; }
+            if (leftOk) { box = leftCand; return true; }
+            return false;
+        };
+
+        if (trySymmetricRow(natTop)) continue;
+        bool placed = false;
+        for (int r = 1; r <= 6 && !placed; ++r) {
+            const float upRow = clampVertical(natTop - static_cast<float>(r) * rowHeight(box), box, viewport);
+            if (trySymmetricRow(upRow)) { placed = true; break; }
+            const float downRow = clampVertical(std::max(natTop, newestNatTop) + static_cast<float>(r) * rowHeight(box), box, viewport);
+            if (trySymmetricRow(downRow)) { placed = true; break; }
+        }
+        if (!placed) {
+            box.x = natX;
+            box.top = natTop;
         }
     }
 }
@@ -273,11 +384,6 @@ inline void layout(std::vector<Box>& newestFirst) {
 /// first visible frame, same convention as the ordinary anchor; pair 7
 /// fcttrack.py). Below the line the anchor is unchanged.
 constexpr float kOffTopDrop = 1.67f;
-
-/// Applied after the layout, in pixels: `uiScale` is pixels per UI unit.
-inline void clampToTop(Box& box, float uiScale) {
-    box.top = std::max(box.top, kTopBaseline * uiScale - box.fontPx);
-}
 
 } // namespace fct
 } // namespace ui
