@@ -36,11 +36,17 @@ enum class PreviewBackgroundMode : uint8_t {
     return {0.0f, 0.0f, 0.0f, 1.0f};
 }
 
-/// Select preview background mode for UnitPortrait framing: circular/micro face
-/// portraits use OpaquePortrait; full-body UI model frames use Transparent.
-[[nodiscard]] constexpr PreviewBackgroundMode portraitBackgroundModeForFraming(bool isFaceFraming) {
-    return isFaceFraming ? PreviewBackgroundMode::OpaquePortrait
-                         : PreviewBackgroundMode::Transparent;
+/// Select preview background mode for UnitPortrait framing: HUD circular/micro
+/// face portraits use OpaquePortrait; dialog portraits backed by panel art
+/// ("npc"/"questnpc" such as BankFrame/MerchantFrame/GossipFrame/QuestFrame)
+/// and full-body UI model frames use Transparent so the panel's painted slate
+/// portrait well shows behind the head.
+[[nodiscard]] constexpr PreviewBackgroundMode portraitBackgroundModeForFraming(
+        bool isFaceFraming, bool hasPanelBackdrop = false) {
+    if (!isFaceFraming || hasPanelBackdrop) {
+        return PreviewBackgroundMode::Transparent;
+    }
+    return PreviewBackgroundMode::OpaquePortrait;
 }
 
 /// Native TBC 2.4.3 never desaturates PlayerPortrait when the player is a ghost

@@ -25,9 +25,35 @@ TEST_CASE("Unit portrait framing selects opaque black portrait disc vs transpare
     const auto fullBodyClear = previewClearColorRGBA(fullBodyMode);
     CHECK(fullBodyClear[3] == 0.0f);
 
+    const auto npcDialogFace = portraitBackgroundModeForFraming(
+        /*isFaceFraming=*/true, /*hasPanelBackdrop=*/true);
+    CHECK(npcDialogFace == PreviewBackgroundMode::Transparent);
+    CHECK(previewClearColorRGBA(npcDialogFace)[3] == 0.0f);
+
     CHECK(previewLoadsRacialBackdrop(PreviewBackgroundMode::RacialScene));
     const auto sceneClear = previewClearColorRGBA(PreviewBackgroundMode::RacialScene);
     CHECK(sceneClear[3] == 1.0f);
+}
+
+TEST_CASE("Unit portrait 2D fallbacks distinguish players, creatures, pets, and 0-vertex stalkers", "[portrait]") {
+    using wowee::ui::resolveUnitPortraitFallback;
+    using wowee::ui::temporaryPortraitPath;
+
+    CHECK(temporaryPortraitPath(1, 0, false, false) ==
+          "Interface\\CharacterFrame\\TemporaryPortrait-Male-Human");
+    CHECK(temporaryPortraitPath(4, 1, false, false) ==
+          "Interface\\CharacterFrame\\TemporaryPortrait-Female-NightElf");
+    CHECK(temporaryPortraitPath(0, 0xFF, true, false) ==
+          "Interface\\CharacterFrame\\TemporaryPortrait-Pet");
+    CHECK(temporaryPortraitPath(4, 0, false, true) ==
+          "Interface\\CharacterFrame\\TemporaryPortrait-Monster");
+
+    CHECK(resolveUnitPortraitFallback(0, "", 0xF1300047FF000001ULL, 4, 0, false, true, true) ==
+          "Interface\\Buttons\\WHITE8X8");
+    CHECK(resolveUnitPortraitFallback(0, "", 0xF1300047FF000001ULL, 4, 0, false, true, false) ==
+          "Interface\\CharacterFrame\\TemporaryPortrait-Monster");
+    CHECK(resolveUnitPortraitFallback(0, "", 0x1AULL, 1, 0, false, false, false) ==
+          "Interface\\CharacterFrame\\TemporaryPortrait-Male-Human");
 }
 
 TEST_CASE("PlayerPortrait is never desaturated in ghost or Night Elf Wisp Spirit form", "[portrait]") {

@@ -31,9 +31,14 @@ namespace ui {
 /// (`Interface\CharacterFrame\TemporaryPortrait-*`) for units without a live
 /// 3D portrait model (e.g. a never-seen out-of-range party member).
 /// `gender`: 0 = Male, 1 = Female, 0xFF = unknown.
-inline std::string temporaryPortraitPath(uint8_t raceId, uint8_t gender, bool isPet = false) {
+inline std::string temporaryPortraitPath(uint8_t raceId, uint8_t gender,
+                                         bool isPet = false,
+                                         bool isCreature = false) {
     if (isPet) {
         return "Interface\\CharacterFrame\\TemporaryPortrait-Pet";
+    }
+    if (isCreature) {
+        return "Interface\\CharacterFrame\\TemporaryPortrait-Monster";
     }
     const char* raceName = nullptr;
     switch (raceId) {
@@ -59,15 +64,23 @@ inline std::string temporaryPortraitPath(uint8_t raceId, uint8_t gender, bool is
 /// Resolve the 2D fallback portrait path for a unit slot when no 3D portrait is
 /// drawn (`drawnTextureId == 0`, e.g. an out-of-visibility party member where
 /// `!UnitIsVisible("party1")`). Matches Native TBC 2.4.3 `SetPortraitTexture`.
+/// Visible 0-vertex helper creatures (such as `InvisibleStalker.m2`, displayId
+/// 16946) render an empty opaque black portrait circle rather than a racial or
+/// monster 2D icon.
 inline std::string resolveUnitPortraitFallback(uint64_t drawnTextureId,
                                                std::string_view customPortrait,
                                                uint64_t guid,
                                                uint8_t raceId,
                                                uint8_t gender,
-                                               bool isPet = false) {
+                                               bool isPet = false,
+                                               bool isCreature = false,
+                                               bool isZeroVertexVisibleCreature = false) {
     if (!customPortrait.empty()) return std::string(customPortrait);
     if (drawnTextureId != 0 || guid == 0) return {};
-    return temporaryPortraitPath(raceId, gender, isPet);
+    if (isZeroVertexVisibleCreature) {
+        return "Interface\\Buttons\\WHITE8X8";
+    }
+    return temporaryPortraitPath(raceId, gender, isPet, isCreature);
 }
 
 /// Resolve `CreatureDisplayInfo.dbc` col 9 (`PortraitTextureName`) to a UI
@@ -164,6 +177,9 @@ public:
     /// Set before the first update, since framing is applied when the model
     /// loads and the model loads once.
     void setFraming(Framing framing) { framing_ = framing; }
+    /// True for NPC/quest panel portraits ("npc"/"questnpc") whose frame art
+    /// paints a circular slate portrait backing behind the portrait texture.
+    void setPanelBackdrop(bool hasPanelBackdrop) { hasPanelBackdrop_ = hasPanelBackdrop; }
 
     /// How big the offscreen image is, in pixels. Set before the first update,
     /// because the view is built once and keeps the size it was built at.
@@ -202,6 +218,8 @@ private:
     std::unique_ptr<rendering::CharacterPreview> preview_;
     bool initialized_ = false;
     Framing framing_ = Framing::Face;
+    bool hasPanelBackdrop_ = false;
+    bool loadedPanelBackdrop_ = false;
     float modelFacing_ = 0.0f;
     float modelCameraScale_ = 1.0f;
     /// A full-body player figure whose model lacks the character-sheet

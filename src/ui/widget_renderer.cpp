@@ -2137,7 +2137,7 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
             // it had and the size it wanted.
             tree.markLayoutDirty();
             const float wantW = w->width, wantH = w->height;
-            tree.resolveWidget(static_cast<uint32_t>(id));
+            tree.resolveSubtree(static_cast<uint32_t>(id));
 
             // What the tooltip asked for against what it got, a few times a
             // second. Four rounds of reasoning about this have each been
@@ -2164,6 +2164,7 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
             // solve pulls a clamped frame back inside. It could not fire
             // before only because the re-place above was being refused.
         }
+        if (sized > 0) tree.refreshDrawOrder();
         // Said even when nothing matched, because "nothing matched" is what
         // the first run of this diagnostic reported by printing no lines at
         // all, and an absent line is indistinguishable from a diagnostic that

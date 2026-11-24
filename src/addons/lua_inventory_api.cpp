@@ -1836,7 +1836,36 @@ uint64_t usedOnUnit(lua_State* L, int index) {
 static int lua_UseItemByName(lua_State* L) {
     auto* gh = getGameHandler(L);
     const uint32_t itemId = carriedItemMatching(gh, L, 1);
-    if (gh && itemId != 0) gh->useItemById(itemId, usedOnUnit(L, 2));
+    if (!gh || itemId == 0) return 0;
+
+    constexpr uint32_t kItemFlagOpenable = 0x00000004u;
+    const auto* info = gh->getItemInfo(itemId);
+    const bool readable = info && info->valid && info->pageTextId != 0;
+    const bool openable = info && info->valid &&
+                          ((info->itemFlags & kItemFlagOpenable) != 0 ||
+                           info->itemClass == 1);
+    if (readable || openable) {
+        const auto& inv = gh->getInventory();
+        for (int i = 0; i < inv.getBackpackSize(); ++i) {
+            const auto& sl = inv.getBackpackSlot(i);
+            if (!sl.empty() && sl.item.itemId == itemId) {
+                if (readable) gh->readItemBySlot(i);
+                else          gh->openItemBySlot(i);
+                return 0;
+            }
+        }
+        for (int bag = 0; bag < game::Inventory::NUM_BAG_SLOTS; ++bag) {
+            for (int i = 0; i < inv.getBagSize(bag); ++i) {
+                const auto& sl = inv.getBagSlot(bag, i);
+                if (!sl.empty() && sl.item.itemId == itemId) {
+                    if (readable) gh->readItemInBag(bag, i);
+                    else          gh->openItemInBag(bag, i);
+                    return 0;
+                }
+            }
+        }
+    }
+    gh->useItemById(itemId, usedOnUnit(L, 2));
     return 0;
 }
 
@@ -5029,10 +5058,12 @@ void registerInventoryLuaAPI(lua_State* L) {
             std::string icon;
             if (lua_isnumber(L, 3)) {
                 const int iconIdx = static_cast<int>(lua_tonumber(L, 3));
-                if (auto* svc = getLuaServices(L); svc && svc->listIconTextures && iconIdx >= 1) {
-                    const auto& icons = svc->listIconTextures();
-                    if (static_cast<size_t>(iconIdx) <= icons.size()) {
-                        icon = icons[static_cast<size_t>(iconIdx - 1)];
+                if (auto* svc = getLuaServices(L); svc && iconIdx >= 1) {
+                    const auto* icons = svc->listItemIconTextures
+                        ? &svc->listItemIconTextures()
+                        : (svc->listIconTextures ? &svc->listIconTextures() : nullptr);
+                    if (icons && static_cast<size_t>(iconIdx) <= icons->size()) {
+                        icon = (*icons)[static_cast<size_t>(iconIdx - 1)];
                     }
                 }
             } else if (lua_isstring(L, 3)) {

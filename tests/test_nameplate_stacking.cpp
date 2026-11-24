@@ -34,6 +34,21 @@ TEST_CASE("Legacy plate artwork clamps with native frame dimensions", "[nameplat
     const float nativeScale = 156.65118408203f / 128.0f;
     const float top = legacyPlateBarTop(0, nativeScale) - 19 * nativeScale;
     CHECK(top == Catch::Approx(768.0f - 709.255859375f).margin(0.0001f));
+
+    const auto idleName = legacyPlateNameRgb(/*hovered=*/false, /*unitInCombat=*/false);
+    CHECK(idleName.r == 255);
+    CHECK(idleName.g == 255);
+    CHECK(idleName.b == 255);
+
+    const auto combatName = legacyPlateNameRgb(/*hovered=*/false, /*unitInCombat=*/true);
+    CHECK(combatName.r == 255);
+    CHECK(combatName.g == 0);
+    CHECK(combatName.b == 0);
+
+    const auto hoverCombatName = legacyPlateNameRgb(/*hovered=*/true, /*unitInCombat=*/true);
+    CHECK(hoverCombatName.r == 255);
+    CHECK(hoverCombatName.g == 255);
+    CHECK(hoverCombatName.b == 0);
 }
 
 TEST_CASE("Creature level colors include the no-XP gray boundary", "[nameplates][difficulty]") {

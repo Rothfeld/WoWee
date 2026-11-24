@@ -817,17 +817,6 @@ void GameScreen::render(game::GameHandler& gameHandler) {
         windowManager_.vendorBagsOpened_ = false;
     }
 
-    // Auto-open bags once when the guild bank first opens, so items can be
-    // right-clicked to deposit into the vault.
-    if (gameHandler.isGuildBankOpen()) {
-        if (!windowManager_.guildBankBagsOpened_) {
-            windowManager_.guildBankBagsOpened_ = true;
-            openBagsForTrading(gameHandler);
-        }
-    } else {
-        windowManager_.guildBankBagsOpened_ = false;
-    }
-
     inventoryScreen.setGameHandler(&gameHandler);
     // Item-target cursor (sharpening stone / oil awaiting the item it applies to)
     inventoryScreen.renderItemTargetCursor();

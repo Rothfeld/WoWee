@@ -2028,19 +2028,25 @@ static int lua_SetPortraitTexture(lua_State* L) {
         auto* gh = getGameHandler(L);
         const uint64_t guid = gh ? resolveUnitGuid(gh, unit) : 0;
         if (guid != 0 && unit != "player") {
+            const bool isPetSlot = (unit == "pet");
+            const bool isPlayerGuid = ((guid >> 48) == 0);
             uint8_t raceId = 0;
             uint8_t gender = 0xFF;
-            if (auto entity = gh->getEntityManager().getEntity(guid)) {
-                const uint16_t b0Idx = game::fieldIndex(game::UF::UNIT_FIELD_BYTES_0);
-                if (b0Idx != 0xFFFF) {
-                    const uint32_t b0 = entity->getField(b0Idx);
-                    raceId = static_cast<uint8_t>(b0 & 0xFF);
-                    gender = static_cast<uint8_t>((b0 >> 16) & 0xFF);
+            if (isPlayerGuid) {
+                if (auto entity = gh->getEntityManager().getEntity(guid)) {
+                    const uint16_t b0Idx = game::fieldIndex(game::UF::UNIT_FIELD_BYTES_0);
+                    if (b0Idx != 0xFFFF) {
+                        const uint32_t b0 = entity->getField(b0Idx);
+                        raceId = static_cast<uint8_t>(b0 & 0xFF);
+                        gender = static_cast<uint8_t>((b0 >> 16) & 0xFF);
+                    }
                 }
+                if (raceId == 0) raceId = gh->lookupPlayerRace(guid);
+                if (gender == 0xFF) gender = gh->lookupPlayerGender(guid);
+                if (raceId == 0) gh->queryPlayerName(guid);
             }
-            if (raceId == 0) raceId = gh->lookupPlayerRace(guid);
-            if (gender == 0xFF) gender = gh->lookupPlayerGender(guid);
-            w->texturePath = ui::temporaryPortraitPath(raceId, gender, unit == "pet");
+            w->texturePath = ui::temporaryPortraitPath(
+                raceId, gender, isPetSlot, !isPlayerGuid && !isPetSlot);
             w->texCoord[0] = 0.0f;
             w->texCoord[1] = 1.0f;
             w->texCoord[2] = 0.0f;

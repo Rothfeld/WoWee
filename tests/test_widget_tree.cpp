@@ -3398,3 +3398,75 @@ TEST_CASE("Disabled SpellButton without DisabledTexture keeps Background and Nor
     CHECK(inDrawOrder(normal));
     CHECK_FALSE(inDrawOrder(highlight));
 }
+
+TEST_CASE("Post-layout tooltip sizing re-places GameTooltipStatusBar below tooltip border and refreshes drawOrder",
+          "[widget][tooltip][statusbar]") {
+    WidgetTree tree;
+    tree.layout(kScreenW, kScreenH);
+
+    const uint32_t tip = tree.create(WidgetKind::Frame, tree.uiParentId(), "GameTooltip");
+    tree.get(tip)->objectType = "GameTooltip";
+    tree.get(tip)->isTooltip = true;
+    tree.get(tip)->hasBackdrop = true;
+    tree.get(tip)->shown = false;
+    Anchor tipAnchor;
+    tipAnchor.point = "BOTTOMRIGHT";
+    tipAnchor.relativePoint = "BOTTOMRIGHT";
+    tipAnchor.x = -13.0f;
+    tipAnchor.y = 75.0f;
+    tree.addPoint(tip, tipAnchor);
+
+    const uint32_t bar = tree.create(WidgetKind::Frame, tip, "GameTooltipStatusBar");
+    tree.get(bar)->objectType = "StatusBar";
+    tree.get(bar)->isStatusBar = true;
+    tree.get(bar)->barTexture = "Interface\\TargetingFrame\\UI-TargetingFrame-BarFill";
+    tree.get(bar)->height = 8.0f;
+    tree.get(bar)->shown = false;
+    Anchor barL;
+    barL.point = "TOPLEFT";
+    barL.relativeTo = tip;
+    barL.relativePoint = "BOTTOMLEFT";
+    barL.x = 2.0f;
+    barL.y = -1.0f;
+    tree.addPoint(bar, barL);
+    Anchor barR;
+    barR.point = "TOPRIGHT";
+    barR.relativeTo = tip;
+    barR.relativePoint = "BOTTOMRIGHT";
+    barR.x = -2.0f;
+    barR.y = -1.0f;
+    tree.addPoint(bar, barR);
+
+    // Frame layout runs while tooltip is still hidden.
+    tree.layout(kScreenW, kScreenH);
+
+    // Between layout() and draw(), world mouseover populates and shows tooltip + bar.
+    tree.get(tip)->tooltipLines.push_back({"Defias Pillager"});
+    tree.get(tip)->width = 160.0f;
+    tree.get(tip)->height = 64.0f;
+    tree.get(tip)->shown = true;
+    tree.get(bar)->shown = true;
+
+    tree.markLayoutDirty();
+    tree.resolveSubtree(tip);
+    tree.refreshDrawOrder();
+
+    const Widget* tipW = tree.get(tip);
+    const Widget* barW = tree.get(bar);
+    REQUIRE(tipW != nullptr);
+    REQUIRE(barW != nullptr);
+    CHECK(tipW->bottom == Catch::Approx(75.0f));
+    CHECK((barW->bottom + barW->rectH) == Catch::Approx(74.0f));
+    CHECK(barW->bottom == Catch::Approx(66.0f));
+    CHECK(barW->rectW == Catch::Approx(156.0f));
+
+    bool sawTip = false;
+    bool sawBar = false;
+    for (const Widget* w : tree.drawOrder()) {
+        if (w->id == tip) sawTip = true;
+        if (w->id == bar) sawBar = true;
+    }
+    CHECK(sawTip);
+    CHECK(sawBar);
+}
+

@@ -1167,6 +1167,9 @@ public:
     /// Widgets to draw, in the order to draw them. Only those that resolved to a
     /// visible, non-empty rect. Valid until the next layout().
     [[nodiscard]] const std::vector<const Widget*>& drawOrder() const { return drawOrder_; }
+    /// Re-collect drawOrder() after post-layout sizing (such as tooltips populated
+    /// or resized between layout() and draw()).
+    void refreshDrawOrder() { collectDrawOrder(); }
 
 private:
     /// Both hit tests, which differ only in whether a frame that took the

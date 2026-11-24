@@ -385,6 +385,16 @@ inline LegacyPlateRgb worldUnitNameRgb(bool isCorpsePlate,
     return {0, 255, 0};
 }
 
+/// TBC 2.4.3 (build 8606) 2D nameplate overhead name RGB:
+/// yellow (255,255,0) when hovered, red (255,0,0) when the unit is affecting
+/// combat (UNIT_FLAG_IN_COMBAT, including friendly party members in combat),
+/// white (255,255,255) otherwise.
+inline LegacyPlateRgb legacyPlateNameRgb(bool hovered, bool unitInCombat) {
+    if (hovered) return {255, 255, 0};
+    if (unitInCombat) return {255, 0, 0};
+    return {255, 255, 255};
+}
+
 /// TBC 2.4.3 (build 8606) nameplate health bar fill RGB:
 /// friendly player = blue (0,0,255), friendly pet/NPC = green (0,255,0),
 /// neutral = yellow (255,255,0), hostile = red (255,0,0), tapped = grey (128,128,128).

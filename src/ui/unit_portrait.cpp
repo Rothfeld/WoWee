@@ -141,7 +141,8 @@ void UnitPortrait::update(game::GameHandler& gameHandler,
                          (loadedFacialFeatures_ != facialFeatures) ||
                          (loadedEquipHash_ != equipHash) ||
                          (loadedGuildTabard_ != activeTabard) ||
-                         (loadedForceGuildTabard_ != forceGuildTabard_);
+                         (loadedForceGuildTabard_ != forceGuildTabard_) ||
+                         (loadedPanelBackdrop_ != hasPanelBackdrop_);
     if (changed) {
         const uint8_t skin      =  appearanceBytes        & 0xFF;
         const uint8_t face      = (appearanceBytes >> 8)  & 0xFF;
@@ -150,9 +151,11 @@ void UnitPortrait::update(game::GameHandler& gameHandler,
 
         // Declared before the model loads, so the racial backdrop is never
         // built in the first place. Face portraits clear to an opaque black
-        // disc (matching native 2.4.3); full-body frames stay transparent.
+        // disc (matching native 2.4.3), except panel-backed "npc"/"questnpc"
+        // portraits and full-body frames which stay transparent.
         preview_->setBackgroundMode(
-            rendering::portraitBackgroundModeForFraming(framing_ == Framing::Face));
+            rendering::portraitBackgroundModeForFraming(
+                framing_ == Framing::Face, hasPanelBackdrop_));
         if (preview_->loadCharacter(self->race, self->gender, skin, face,
                                     hairStyle, hairColor, facialFeatures,
                                     self->useFemaleModel)) {
@@ -177,6 +180,7 @@ void UnitPortrait::update(game::GameHandler& gameHandler,
         loadedEquipHash_ = equipHash;
         loadedGuildTabard_ = activeTabard;
         loadedForceGuildTabard_ = forceGuildTabard_;
+        loadedPanelBackdrop_ = hasPanelBackdrop_;
     }
 
     if (framing_ == Framing::FullBody && !applyModelFrameView()) return;
@@ -233,6 +237,7 @@ bool UnitPortrait::updatePlayer(uint8_t race, uint8_t gender,
                          (loadedEquipHash_ != equipHash) ||
                          (loadedBake_ != pendingBake_) ||
                          (loadedGuildTabard_ != pendingGuildTabard_) ||
+                         (loadedPanelBackdrop_ != hasPanelBackdrop_) ||
                          !loadedCreaturePath_.empty();
     if (changed) {
         const uint8_t skin      =  appearanceBytes        & 0xFF;
@@ -241,7 +246,8 @@ bool UnitPortrait::updatePlayer(uint8_t race, uint8_t gender,
         const uint8_t hairColor = (appearanceBytes >> 24) & 0xFF;
 
         preview_->setBackgroundMode(
-            rendering::portraitBackgroundModeForFraming(framing_ == Framing::Face));
+            rendering::portraitBackgroundModeForFraming(
+                framing_ == Framing::Face, hasPanelBackdrop_));
         if (preview_->loadCharacter(static_cast<game::Race>(race),
                                     static_cast<game::Gender>(gender),
                                     skin, face, hairStyle, hairColor,
@@ -276,6 +282,7 @@ bool UnitPortrait::updatePlayer(uint8_t race, uint8_t gender,
         loadedEquipHash_ = equipHash;
         loadedBake_ = pendingBake_;
         loadedGuildTabard_ = pendingGuildTabard_;
+        loadedPanelBackdrop_ = hasPanelBackdrop_;
     }
 
     if (framing_ == Framing::FullBody && !applyModelFrameView()) return false;
@@ -304,11 +311,12 @@ bool UnitPortrait::updateCreature(const std::string& m2Path,
         registered_ = true;
     }
 
-    if (loadedCreaturePath_ != m2Path) {
+    if (loadedCreaturePath_ != m2Path || loadedPanelBackdrop_ != hasPanelBackdrop_) {
         // Declared before the model loads, so the racial backdrop is never
         // built in the first place - the same order loadCharacter needs.
         preview_->setBackgroundMode(
-            rendering::portraitBackgroundModeForFraming(framing_ == Framing::Face));
+            rendering::portraitBackgroundModeForFraming(
+                framing_ == Framing::Face, hasPanelBackdrop_));
         if (preview_->loadCreature(m2Path, skins)) {
             if (framing_ == Framing::Face) {
                 preview_->setPortraitFraming();
@@ -318,6 +326,7 @@ bool UnitPortrait::updateCreature(const std::string& m2Path,
         }
         LOG_INFO("UnitPortrait: rebuilt for creature ", m2Path);
         loadedCreaturePath_ = m2Path;
+        loadedPanelBackdrop_ = hasPanelBackdrop_;
         // A player and a creature share one preview, so loading either has to
         // forget what the other was, or switching back would find nothing
         // changed and keep drawing the wrong one.

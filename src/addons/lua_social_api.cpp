@@ -1122,6 +1122,14 @@ static const std::vector<std::string>* iconList(lua_State* L) {
     return &services->listIconTextures();
 }
 
+static const std::vector<std::string>* itemIconList(lua_State* L) {
+    auto* services = getLuaServices(L);
+    if (!services) return nullptr;
+    if (services->listItemIconTextures) return &services->listItemIconTextures();
+    if (services->listIconTextures) return &services->listIconTextures();
+    return nullptr;
+}
+
 static int lua_GetNumMacroIcons(lua_State* L) {
     const auto* icons = iconList(L);
     lua_pushnumber(L, icons ? static_cast<double>(icons->size()) : 0.0);
@@ -1131,6 +1139,23 @@ static int lua_GetNumMacroIcons(lua_State* L) {
 // GetMacroIconInfo(index) → a texture path, or nil past the end
 static int lua_GetMacroIconInfo(lua_State* L) {
     const auto* icons = iconList(L);
+    const int index = static_cast<int>(luaL_checknumber(L, 1));
+    if (!icons || index < 1 || index > static_cast<int>(icons->size())) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_pushstring(L, (*icons)[static_cast<size_t>(index - 1)].c_str());
+    return 1;
+}
+
+static int lua_GetNumMacroItemIcons(lua_State* L) {
+    const auto* icons = itemIconList(L);
+    lua_pushnumber(L, icons ? static_cast<double>(icons->size()) : 0.0);
+    return 1;
+}
+
+static int lua_GetMacroItemIconInfo(lua_State* L) {
+    const auto* icons = itemIconList(L);
     const int index = static_cast<int>(luaL_checknumber(L, 1));
     if (!icons || index < 1 || index > static_cast<int>(icons->size())) {
         lua_pushnil(L);
@@ -1611,10 +1636,11 @@ void registerSocialLuaAPI(lua_State* L) {
             if (auto* gh = getGameHandler(L)) gh->closeTabardCreation();
             return 0;
         }},
-                // The guild bank tab dialog picks from the same icons under a
-                // name of its own.
-                {"GetNumMacroItemIcons", lua_GetNumMacroIcons},
-                {"GetMacroItemIconInfo", lua_GetMacroIconInfo},
+                // TBC 2.4.3 GuildBankPopupFrame and item macros pick from the
+                // INV_* item icon list (3106 entries: INV_Misc_QuestionMark + INV_*),
+                // distinct from GetMacroIconInfo's Ability_*/Spell_* list (780).
+                {"GetNumMacroItemIcons", lua_GetNumMacroItemIcons},
+                {"GetMacroItemIconInfo", lua_GetMacroItemIconInfo},
                 {"NewGMTicket",         lua_NewGMTicket},
                 {"DeleteGMTicket",      lua_DeleteGMTicket},
                 // The long-form guild information, which is a different field

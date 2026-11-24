@@ -13,6 +13,7 @@
 #include "ui/edit_caret.hpp"
 #include "ui/plural_escape.hpp"
 #include "ui/widget_tree.hpp"
+#include "ui/font_string_sizing.hpp"
 #include "ui/interface_fonts.hpp"
 #include "ui/ui_colors.hpp"
 #include "ui/framexml_takeover.hpp"
@@ -550,6 +551,15 @@ wowee::ui::Widget* measuredWidgetOf(lua_State* L, int index) {
     auto* tree = wowee::addons::getWidgetTree(L);
     if (!tree) return nullptr;
     const uint32_t id = widgetIdOf(L, index);
+    if (auto* w = tree->get(id); w && w->kind == wowee::ui::WidgetKind::FontString) {
+        const float prevW = w->width;
+        const float prevH = w->height;
+        const float es = w->effScale > 0.0f ? w->effScale : 1.0f;
+        wowee::ui::sizeFontStringLayout(w, tree->uiScale() * es);
+        if (w->width != prevW || w->height != prevH) {
+            tree->markLayoutDirty();
+        }
+    }
     tree->resolveWidget(id);
     return tree->get(id);
 }
@@ -2723,7 +2733,7 @@ std::string stanceNames(game::GameHandler* gh, uint32_t stances) {
 /// spell, as the 2.4.3 spellbook and talent tooltips print them between the
 /// title and the description.
 static void appendSpellCastLines(lua_State* L, wowee::ui::Widget* w, game::GameHandler* gh,
-                                 uint32_t spellId) {
+                                 uint32_t spellId, bool petCaster = false) {
     const auto info = gh->getSpellData(spellId);
     const auto& entry = gh->spellNameCacheRef().at(spellId);
     auto* assets = gh->services().assetManager;
@@ -2753,6 +2763,31 @@ static void appendSpellCastLines(lua_State* L, wowee::ui::Widget* w, game::GameH
     };
     std::string cost, range;
     uint32_t powerCost = info.manaCost;
+    // SPELL_ATTR_SCALES_WITH_CREATURE_LEVEL (0x00080000, e.g. Defias Pillager
+    // Fireball 20793): scale base mana cost by gtNPCManaCostScaler.dbc
+    // [casterLevel - 1] / [spellLevel - 1] when cast by a possessed/pet creature.
+    if (petCaster && powerCost > 0 && (entry.attr & 0x00080000u) != 0 && assets) {
+        const uint64_t cGuid = gh->getPossessedGuid() != 0
+            ? gh->getPossessedGuid()
+            : gh->getPetGuid();
+        const auto casterUnit = std::dynamic_pointer_cast<game::Unit>(
+            gh->getEntityManager().getEntity(cGuid));
+        const uint32_t spellLvl = spellColumn(gh, spellId, "SpellLevel");
+        const uint32_t casterLvl = casterUnit ? casterUnit->getLevel() : 0u;
+        if (spellLvl >= 1 && casterLvl >= 1) {
+            if (const auto gt = assets->loadDBC("gtNPCManaCostScaler.dbc");
+                gt && gt->isLoaded() &&
+                spellLvl <= gt->getRecordCount() &&
+                casterLvl <= gt->getRecordCount()) {
+                const float spellRatio = gt->getFloat(spellLvl - 1, 0);
+                const float casterRatio = gt->getFloat(casterLvl - 1, 0);
+                if (spellRatio > 0.0f && casterRatio > 0.0f) {
+                    powerCost = static_cast<uint32_t>(std::lround(
+                        static_cast<double>(powerCost) * casterRatio / spellRatio));
+                }
+            }
+        }
+    }
     // SPELL_ATTR_EX4_WEAPON_SPEED_COST_SCALING (Shiv): plus off-hand attack
     // time / 100, as Spell::CalculatePowerCost adds it. Native shows Shiv at
     // 40 Energy with no off-hand (2000 ms).
@@ -2881,7 +2916,7 @@ static void appendSpellRequirementLines(lua_State* L, wowee::ui::Widget* w, game
 /// The spell tooltip of the spellbook and action bar: title, cast lines for
 /// castable spells, description in gold.
 static bool fillSpellTooltip(lua_State* L, wowee::ui::Widget* w, game::GameHandler* gh,
-                             uint32_t spellId, bool rankOnTitle = false) {
+                             uint32_t spellId, bool rankOnTitle = false, bool petCaster = false) {
     if (!w || !gh || spellId == 0) return false;
     const std::string& name = gh->getSpellName(spellId);
     if (name.empty()) return false;
@@ -2901,7 +2936,7 @@ static bool fillSpellTooltip(lua_State* L, wowee::ui::Widget* w, game::GameHandl
     const bool tradeSkill = std::any_of(std::begin(entry.effectIds), std::end(entry.effectIds),
         [](uint32_t effect) { return effect == 47; });
     if (!gh->isSpellPassive(spellId) && spellId != 6603 && !tradeSkill)
-        appendSpellCastLines(L, w, gh, spellId);
+        appendSpellCastLines(L, w, gh, spellId, petCaster);
     appendSpellRequirementLines(L, w, gh, spellId);
     const std::string body = gh->formatSpellDescription(spellId, gh->getSpellDescription(spellId));
     // Wrapped: a description is prose and must not set the tooltip's width.
@@ -2922,7 +2957,7 @@ int lua_Tooltip_SetAction(lua_State* L) {
         const auto type = game::pet::petActionType(packed);
         if (type != game::pet::ActionType::Command && type != game::pet::ActionType::Reaction) {
             const uint32_t spell = game::pet::petActionId(packed);
-            lua_pushboolean(L, spell && fillSpellTooltip(L, w, gh, spell, /*rankOnTitle=*/true) ? 1 : 0);
+            lua_pushboolean(L, spell && fillSpellTooltip(L, w, gh, spell, /*rankOnTitle=*/true, /*petCaster=*/true) ? 1 : 0);
             return 1;
         }
         const uint32_t id = game::pet::petActionId(packed);
@@ -3111,8 +3146,10 @@ int lua_Tooltip_SetSpellByID(lua_State* L) {
     auto* gh = wowee::addons::getGameHandler(L);
     const uint32_t id = static_cast<uint32_t>(luaL_optnumber(L, 2, 0));
     // Third argument (WoWee's own SetAction): the action bar title shows the
-    // rank at the right in grey, the spellbook title does not.
-    const bool filled = fillSpellTooltip(L, w, gh, id, lua_toboolean(L, 3) != 0);
+    // rank at the right in grey, the spellbook title does not. Fourth argument
+    // (SetPetAction): scale creature-level spells against the pet/possessed unit.
+    const bool filled = fillSpellTooltip(
+        L, w, gh, id, lua_toboolean(L, 3) != 0, lua_toboolean(L, 4) != 0);
     if (filled) lua_pushinteger(L, id); else lua_pushnil(L);
     lua_setfield(L, 1, "__spellId");
     lua_pushboolean(L, filled);
@@ -3959,12 +3996,11 @@ int lua_Tooltip_SetUnit(lua_State* L) {
         local bar = _G[name]
         if not bar then
             bar = CreateFrame("StatusBar", name, tip)
-            bar:SetPoint("TOPLEFT", tip, "BOTTOMLEFT", 0, -2)
-            bar:SetPoint("TOPRIGHT", tip, "BOTTOMRIGHT", 0, -2)
-            bar:SetHeight(6)
-            bar:SetStatusBarTexture("Interface\\TargetingFrame\\UI-StatusBar")
+            bar:SetPoint("TOPLEFT", tip, "BOTTOMLEFT", 2, -1)
+            bar:SetPoint("TOPRIGHT", tip, "BOTTOMRIGHT", -2, -1)
+            bar:SetHeight(8)
+            bar:SetStatusBarTexture("Interface\\TargetingFrame\\UI-TargetingFrame-BarFill")
             bar:SetStatusBarColor(0, 1, 0)
-            bar:SetBackdrop({bgFile="Interface\\Tooltips\\UI-Tooltip-Background", edgeFile="Interface\\Tooltips\\UI-Tooltip-Border", tile=true, tileSize=16, edgeSize=8, insets={left=2,right=2,top=2,bottom=2}})
             bar:SetScript("OnUpdate", function(self)
                 local _, unit = self:GetParent():GetUnit()
                 if not unit or UnitIsDead(unit) then self:Hide(); return end
@@ -10978,7 +11014,7 @@ void LuaEngine::registerCoreAPI() {
         "    if not isToken then\n"
         "        local spellId = WoweePetActionSpellId and WoweePetActionSpellId(slot) or 0\n"
         "        if spellId and spellId > 0 then\n"
-        "            self:SetSpellByID(spellId, true)\n"
+        "            self:SetSpellByID(spellId, true, true)\n"
         "            if self:NumLines() > 0 then return end\n"
         "        end\n"
         "    else\n"

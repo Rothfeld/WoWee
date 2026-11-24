@@ -16,6 +16,7 @@
 #include "game/summon_title.hpp"
 #include "game/game_object_lock.hpp"
 #include "game/level_difficulty.hpp"
+#include "game/update_field_helpers.hpp"
 #include "rendering/vk_context.hpp"
 #include "core/application.hpp"
 #include "core/appearance_composer.hpp"
@@ -993,6 +994,9 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
     const uint64_t  playerGuid = gameHandler.getPlayerGuid();
     const uint64_t  targetGuid = gameHandler.getTargetGuid();
     const bool legacyPlates = game::isPreWotlk();
+    const float worldLabelDrunk = legacyPlates
+        ? game::decodePlayerBytes3(gameHandler.getPlayerDrunkValue()).intoxication
+        : 0.0f;
     // Build 8606 WorldFrame plate geometry, queried at its 768-unit UI height.
     const float plateArtScale = screenH / 768.0f * (156.651184f / 128.0f)
                              * settingsPanel_.nameplateScale_;
@@ -1654,7 +1658,10 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             isPvpFlagged, isHostile, reaction);
         ImU32 nameColor = IM_COL32(baseNameRgb.r, baseNameRgb.g, baseNameRgb.b, A(255));
         if (showPlate && legacyPlates) {
-            nameColor = (guid == worldHoverGuid_ || plateHovered) ? IM_COL32(255, 255, 0, 255) : IM_COL32(255, 255, 255, 255);
+            const ui::LegacyPlateRgb plateRgb = ui::legacyPlateNameRgb(
+                guid == worldHoverGuid_ || plateHovered,
+                (unit->getUnitFlags() & game::UNIT_FLAG_IN_COMBAT) != 0);
+            nameColor = IM_COL32(plateRgb.r, plateRgb.g, plateRgb.b, 255);
         } else if (!showPlate && gameHandler.isPlayerGhost() &&
                    addons::storedCVarValue("ffxDeath", "1") != "0") {
             const ui::LegacyPlateRgb washed = ui::applyDeathEffectToWorldLabel({
@@ -1718,9 +1725,39 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
                 depth->context->bindWorldLabelDepth(render->CommandBuffer, depth->depth);
             }, &state, sizeof(state));
         }
+        auto drawWorldOrPlateText = [&](ImVec2 pos, ImU32 fgCol, int shadowAlpha, const char* text) {
+            if (!showPlate && worldLabelDrunk > 0.001f) {
+                static constexpr float kGaussW[5] = {0.08f, 0.24f, 0.36f, 0.24f, 0.08f};
+                const float step = 2.6f * (screenH / 720.0f) * worldLabelDrunk;
+                const uint8_t baseA = static_cast<uint8_t>((fgCol >> IM_COL32_A_SHIFT) & 0xFFu);
+                const ImU32 rgbMask = fgCol & ~IM_COL32_A_MASK;
+                for (int gy = -2; gy <= 2; ++gy) {
+                    for (int gx = -2; gx <= 2; ++gx) {
+                        const float weight = kGaussW[gy + 2] * kGaussW[gx + 2];
+                        const ImU32 tapShadowA = static_cast<ImU32>(
+                            std::clamp(static_cast<float>(A(shadowAlpha)) * weight, 0.0f, 255.0f));
+                        const ImU32 tapFgA = static_cast<ImU32>(
+                            std::clamp(static_cast<float>(baseA) * weight, 0.0f, 255.0f));
+                        if (tapFgA == 0) continue;
+                        const ImVec2 tapPos(pos.x + static_cast<float>(gx) * step,
+                                            pos.y + static_cast<float>(gy) * step);
+                        if (tapShadowA > 0) {
+                            drawList->AddText(nameFont, nameFontSize,
+                                              ImVec2(tapPos.x + 1.0f, tapPos.y + 1.0f),
+                                              IM_COL32(0, 0, 0, tapShadowA), text);
+                        }
+                        drawList->AddText(nameFont, nameFontSize, tapPos,
+                                          rgbMask | (tapFgA << IM_COL32_A_SHIFT), text);
+                    }
+                }
+                return;
+            }
+            drawList->AddText(nameFont, nameFontSize, ImVec2(pos.x + 1.0f, pos.y + 1.0f),
+                              IM_COL32(0, 0, 0, A(shadowAlpha)), text);
+            drawList->AddText(nameFont, nameFontSize, pos, fgCol, text);
+        };
         if (showThisName) {
-            drawList->AddText(nameFont, nameFontSize, ImVec2(nameX + 1.0f, nameY + 1.0f), IM_COL32(0, 0, 0, A(160)), labelBuf);
-            drawList->AddText(nameFont, nameFontSize, ImVec2(nameX,         nameY),         nameColor, labelBuf);
+            drawWorldOrPlateText(ImVec2(nameX, nameY), nameColor, 160, labelBuf);
         }
 
         // Sub-label below the name (WoW-style <Guild Name> or <NPC Title> in
@@ -1730,8 +1767,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             ImVec2 subSz = nameFont->CalcTextSizeA(nameFontSize, FLT_MAX, 0.0f, subLabel.c_str());
             float subX = sx - subSz.x * 0.5f;
             float subY = nameY + textSize.y + 1.0f;
-            drawList->AddText(nameFont, nameFontSize, ImVec2(subX + 1.0f, subY + 1.0f), IM_COL32(0, 0, 0, A(120)), subLabel.c_str());
-            drawList->AddText(nameFont, nameFontSize, ImVec2(subX,         subY),         nameColor, subLabel.c_str());
+            drawWorldOrPlateText(ImVec2(subX, subY), nameColor, 120, subLabel.c_str());
         }
 
         {

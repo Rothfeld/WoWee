@@ -327,6 +327,9 @@ struct LuaServices {
     /// manifest rather than a fixed list, so an install carrying different art
     /// offers what it actually has.
     std::function<const std::vector<std::string>&()> listIconTextures;
+    /// Item icon list for TBC 2.4.3 GetNumMacroItemIcons / GetMacroItemIconInfo
+    /// and SetGuildBankTabInfo ("INV_Misc_QuestionMark" + sorted "INV_*").
+    std::function<const std::vector<std::string>&()> listItemIconTextures;
 
     /// Save a screenshot, as the client's own binding and /screenshot do.
     ///

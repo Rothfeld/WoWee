@@ -5592,12 +5592,20 @@ void SpellHandler::handleUpdateAuraDuration(uint8_t slot, uint32_t durationMs) {
     // An empty slot keeps nothing: the aura it is for arrives with the next
     // fields update and takes the pending duration then.
     if (slot >= playerAuras_.size() || playerAuras_[slot].isEmpty()) return;
+    const int32_t prevDuration = playerAuras_[slot].durationMs;
     playerAuras_[slot].durationMs = duration;
     // The full length for a fresh application, not the larger of old and new:
     // a slot taken over by a new aura must not keep the old aura's maximum.
     playerAuras_[slot].maxDurationMs = duration;
     playerAuras_[slot].receivedAtMs = now;
     refreshRestorationFromPlayerAuras();
+    // When SMSG_UPDATE_OBJECT populates an aura slot before SMSG_UPDATE_AURA_DURATION
+    // arrives (e.g. Control Piece 30019), BuffFrame cached untilCancelled = 1 on
+    // the initial PLAYER_AURAS_CHANGED and hides the countdown forever unless
+    // notified once the timed duration arrives.
+    if ((prevDuration <= 0) != (duration <= 0)) {
+        owner_.fireAddonEvent("PLAYER_AURAS_CHANGED", {});
+    }
 }
 
 // ============================================================

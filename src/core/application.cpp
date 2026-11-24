@@ -1014,6 +1014,34 @@ bool Application::initialize() {
             LOG_INFO("Icon picker: ", icons.size(), " icons from the manifest");
             return icons;
         };
+        luaSvc.listItemIconTextures = [am = assetManager.get(), &listMacro = luaSvc.listIconTextures]() -> const std::vector<std::string>& {
+            if (!game::isActiveExpansion("tbc")) return listMacro();
+            static std::vector<std::string> itemIcons;
+            static bool built = false;
+            if (built) return itemIcons;
+            built = true;
+            if (!am) return itemIcons;
+            static const std::string kPrefix = "interface\\icons\\";
+            std::vector<std::string> inv;
+            for (const auto& [path, entry] : am->getManifest().getEntries()) {
+                (void)entry;
+                if (path.compare(0, kPrefix.size(), kPrefix) != 0) continue;
+                const size_t dot = path.rfind('.');
+                const std::string name = path.substr(
+                    kPrefix.size(),
+                    dot == std::string::npos ? std::string::npos : dot - kPrefix.size());
+                if (name.empty() || name == "inv_misc_questionmark") continue;
+                if (name.rfind("inv_", 0) == 0) {
+                    inv.push_back("Interface\\Icons\\" + name);
+                }
+            }
+            std::sort(inv.begin(), inv.end());
+            itemIcons.reserve(1 + inv.size());
+            itemIcons.push_back("Interface\\Icons\\INV_Misc_QuestionMark");
+            itemIcons.insert(itemIcons.end(), inv.begin(), inv.end());
+            LOG_INFO("Item icon picker: ", itemIcons.size(), " icons from the manifest");
+            return itemIcons;
+        };
         // The widget renderer needs the asset manager for Interface\ art and the
         // device to upload it; both exist by now.
         widgetRenderer_.initialize(assetManager.get(),
@@ -6109,7 +6137,9 @@ void Application::render() {
 
                     bool built = false;
                     std::string customPortrait;
+                    std::string modelPath;
                     face.portrait->setFraming(ui::UnitPortrait::Framing::Face);
+                    face.portrait->setPanelBackdrop(std::string_view(face.unit) == "npc");
                     // Sized for the circle it is drawn into rather than for the
                     // paperdoll - the shape as much as the scale, since a
                     // portrait frame is square and the old target was not.
@@ -6300,7 +6330,6 @@ void Application::render() {
                                 nRace, nSex, nBytes, nFacial, npcWorn,
                                 assetManager.get(), renderer.get(), io.DeltaTime);
                         }
-                        std::string modelPath;
                         if (customPortrait.empty() && !built && displayId != 0 && entitySpawner_) {
                             modelPath = entitySpawner_->getModelPathForDisplayId(displayId);
                         }
@@ -6312,9 +6341,16 @@ void Application::render() {
                         }
                     }
                     const uint64_t drawn = (customPortrait.empty() && built) ? face.portrait->textureId() : 0;
+                    const bool isPetSlot = std::string_view(face.unit) == "pet";
+                    const bool isPlayerGuid = (face.guid != 0) && ((face.guid >> 48) == 0);
+                    const bool isCreatureGuid = (face.guid != 0) && !isPlayerGuid && !isPetSlot;
+                    const bool zeroVertexVisibleCreature =
+                        isCreatureGuid && customPortrait.empty() && !built &&
+                        !modelPath.empty() && assetManager &&
+                        assetManager->fileExists(modelPath);
                     uint8_t fbRace = 0;
                     uint8_t fbGender = 0xFF;
-                    if (drawn == 0 && customPortrait.empty() && face.guid != 0) {
+                    if (drawn == 0 && customPortrait.empty() && isPlayerGuid) {
                         if (game::Unit* u = gameHandler->getUnitByGuid(face.guid)) {
                             const uint16_t b0Idx = game::fieldIndex(game::UF::UNIT_FIELD_BYTES_0);
                             if (b0Idx != 0xFFFF) {
@@ -6325,14 +6361,26 @@ void Application::render() {
                         }
                         if (fbRace == 0) fbRace = gameHandler->lookupPlayerRace(face.guid);
                         if (fbGender == 0xFF) fbGender = gameHandler->lookupPlayerGender(face.guid);
+                        if (fbRace == 0) gameHandler->queryPlayerName(face.guid);
                     }
                     const std::string fallbackPortrait = ui::resolveUnitPortraitFallback(
                         drawn, customPortrait, face.guid, fbRace, fbGender,
-                        std::string_view(face.unit) == "pet");
+                        isPetSlot, isCreatureGuid, zeroVertexVisibleCreature);
                     auto applyPortraitWidget = [&](ui::Widget* w) {
                         if (!w) return;
                         w->externalTexture = drawn;
-                        w->isCircularPortrait = !customPortrait.empty();
+                        w->isCircularPortrait = !customPortrait.empty() || zeroVertexVisibleCreature;
+                        if (zeroVertexVisibleCreature) {
+                            w->color[0] = 0.0f;
+                            w->color[1] = 0.0f;
+                            w->color[2] = 0.0f;
+                            w->color[3] = 1.0f;
+                        } else if (w->color[0] == 0.0f &&
+                                   w->color[1] == 0.0f && w->color[2] == 0.0f) {
+                            w->color[0] = 1.0f;
+                            w->color[1] = 1.0f;
+                            w->color[2] = 1.0f;
+                        }
                         if (drawn == 0 && !fallbackPortrait.empty()) {
                             w->texturePath = fallbackPortrait;
                             w->texCoord[0] = 0.0f;
