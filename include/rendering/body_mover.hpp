@@ -618,24 +618,20 @@ inline BodyMove walkBody(glm::vec3 from, const glm::vec3& requestedDelta, float 
             }
         }
         if (across) {
-            // The body lifted the whole step height meets something the body
-            // at its own height does not reach - a wall leaning out over the
-            // floor, a lintel - and the level move met nothing but ground
-            // rising under it. The ground is walked up: the body is lifted by
-            // no more than that ground rises over the move. (Lifted a yard
-            // or not at all, a walker stopped for good a third of a yard
-            // short of a wall leaning 12 degrees out over a Black Temple
-            // floor that rises by a rounding error, 607.25, 110.33.)
-            if (!result.wall) {
-                float lift = 0.0f;
-                for (int pass = 0; pass < 4 && lift <= up.z; ++pass) {
+            // Ground the carried body meets is walked up: the body is raised
+            // by what that ground rises over the rest of the move, from
+            // `lift`, as long as it meets nothing but ground - only its face
+            // when `faceOnly`, not its edge under the bevel - and no higher
+            // than `highest`.
+            const auto upGround = [&](float lift, float highest, bool faceOnly) {
+                for (int pass = 0; pass < 4 && lift <= highest; ++pass) {
                     float rise = 0.0f;
                     bool other = false;
                     for (const auto& triangle : triangles) {
                         const auto contact = sweepBodyTriangle(start + glm::vec3(0.0f, 0.0f, lift), delta,
                                                                radius, height, triangle);
                         if (!contact || contact->standing) continue;
-                        if (contact->face.z < minWalkableNormalZ) { other = true; break; }
+                        if (contact->face.z < minWalkableNormalZ || (faceOnly && !contact->corner)) { other = true; break; }
                         rise = std::max(rise, -glm::dot(delta, contact->face) / contact->face.z * (1.0f - contact->time));
                     }
                     if (other) break;
@@ -645,11 +641,44 @@ inline BodyMove walkBody(glm::vec3 from, const glm::vec3& requestedDelta, float 
                             result.rest = lowerBody(start + glm::vec3(0.0f, 0.0f, lift) + delta, lift,
                                                     radius, height, triangles, true);
                         result.end = result.rest ? result.rest->position : start + delta;
-                        return result;
+                        return true;
                     }
                     lift += rise + kContactSkin * 2.0f;
                 }
-            }
+                return false;
+            };
+            // The body lifted the whole step height meets something the body
+            // at its own height does not reach - a wall leaning out over the
+            // floor, a lintel - and the level move met nothing but ground
+            // rising under it. The ground is walked up: the body is lifted by
+            // no more than that ground rises over the move. (Lifted a yard
+            // or not at all, a walker stopped for good a third of a yard
+            // short of a wall leaning 12 degrees out over a Black Temple
+            // floor that rises by a rounding error, 607.25, 110.33.)
+            if (!result.wall && upGround(0.0f, up.z, false)) return result;
+            // The lifted body carried into the face of ground goes on up it:
+            // what is left of the yard bounds the lift, not how far the
+            // ground then takes the body. Hung by its underside on the nose
+            // of a Karabor Sewers step (337.3, 802.4; a 77 degree riser 0.68
+            // yd high, ground of 43 degrees behind its top edge) 0.77 to 0.80
+            // yd above the ramp its sole last stood on, native takes its
+            // whole move onto that ground and ends 1.006 to 1.019 yd above
+            // the ramp (11 runs of 11; the body lifted to the yard meets the
+            // ground 0.008 to 0.023 yd before the move's end). Refused there,
+            // the step onto the nose did not lead to ground, was not taken,
+            // and the walker crept along the foot of the riser for good (the
+            // user's client, and 15 paired runs of 32 where native went up in
+            // all 32). Hung 0.82 to 0.83 yd above the ramp, where that move
+            // would end 1.023 to 1.033 above it, native fell back down the
+            // riser instead and went up at the next try (6 runs of 6), and
+            // so it did hung 0.73 to 0.76 above the ramp (8 of 8), where the
+            // move would end no higher than those it takes. What decides
+            // either is not found, and this body goes on up.
+            // (_experiments/20261124T120000Z.movement_collision_parity_round19)
+            if (across->corner && !across->standing && across->face.z >= minWalkableNormalZ &&
+                across->normal.z > 0.0f &&
+                upGround(up.z, up.z + travel * std::sqrt(1.0f - minWalkableNormalZ * minWalkableNormalZ) / minWalkableNormalZ, true))
+                return result;
             // The nose of a step under the bevel - the edge a riser shares
             // with the ground above it - is what a step lifts the body over.
             // The step refused by something beyond the nose, that turns the

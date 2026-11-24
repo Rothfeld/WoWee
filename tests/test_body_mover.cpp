@@ -960,3 +960,47 @@ TEST_CASE("What a steep face pushes a falling body aside by is not kept as level
     const BodyMove into = fallBody(from, glm::vec3(0.1f, 0.0f, -0.0512f), kRadius, kHeight, mesh);
     CHECK(glm::length(into.levelKept) < 1e-4f);
 }
+
+TEST_CASE("Ground the lifted body is carried into takes it on up past the yard", "[body_mover]") {
+    // Karabor Sewers (337.3, 802.4), about the pose a walker up the ramp
+    // touches the riser at: a 32 degree ramp, a 77 degree riser 0.68 yd high
+    // whose top edge rises 25 degrees along its length, ground of 43 degrees
+    // behind that edge and a 53 degree face beyond. Native, heading -87.1
+    // degrees, goes up in three frames - onto the riser's top edge by its
+    // underside twice, then onto the ground - and ends the third 1.006 to
+    // 1.019 yd above the ramp its sole last stood on (11 runs).
+    Mesh mesh;
+    mesh.push_back({glm::vec3(3.6440f, 1.0956f, 0.8979f), glm::vec3(-9.5535f, 1.1755f, -4.3347f), glm::vec3(1.6184f, -0.3657f, 0.8158f)});   // ramp
+    mesh.push_back({glm::vec3(1.6184f, -0.3657f, 0.8158f), glm::vec3(-9.5535f, 1.1755f, -4.3347f), glm::vec3(-9.6337f, -0.3010f, -3.6143f)}); // ramp
+    mesh.push_back({glm::vec3(1.6184f, -0.3657f, 0.8158f), glm::vec3(-9.6337f, -0.3010f, -3.6143f), glm::vec3(1.4298f, -0.5485f, 1.5208f)});  // riser
+    mesh.push_back({glm::vec3(-9.6337f, -0.3010f, -3.6143f), glm::vec3(-2.5484f, -2.1289f, 1.0161f), glm::vec3(1.4298f, -0.5485f, 1.5208f)}); // 43 degrees
+    mesh.push_back({glm::vec3(1.4298f, -0.5485f, 1.5208f), glm::vec3(-2.5484f, -2.1289f, 1.0161f), glm::vec3(1.7863f, -0.8756f, 2.1331f)});   // 53 degrees
+    const glm::vec3 heading(std::cos(-1.5202f), std::sin(-1.5202f), 0.0f);
+
+    SECTION("native's three frames of run p19_u28a_6") {
+        // From (+0.0010, +0.0056, -0.0019): +0.4521, +0.3317 and, 0.238 yd long, +0.2338.
+        Walker walker{.position = glm::vec3(0.0010f, 0.0056f, 0.05f)};
+        walker.position.z = lowerBody(walker.position, 0.2f, kRadius, kHeight, mesh)->position.z;
+        walker.baseZ = walker.position.z;
+        const float base = walker.position.z;
+        walker.frame(mesh, heading * 0.2310f, 0.033f);
+        CHECK(walker.position.z - base == Catch::Approx(0.4521f).margin(0.003f));
+        walker.frame(mesh, heading * 0.2310f, 0.033f);
+        CHECK(walker.position.z - base == Catch::Approx(0.7838f).margin(0.003f));
+        walker.frame(mesh, heading * 0.2380f, 0.034f);
+        CHECK(walker.position.z - base == Catch::Approx(1.0176f).margin(0.003f));
+        CHECK(walker.grounded);
+        CHECK(-walker.position.y == Catch::Approx(0.6938f).margin(0.002f));
+    }
+    SECTION("a walker up the ramp gets over the step at any frame length") {
+        // Native 3 s on from (-0.67, 13.55): 15.5 to 19.6 yd, over the step in 40 runs of 40.
+        for (const float dt : {0.031f, 0.033f, 1.0f / 30.0f, 0.0335f, 0.034f, 0.035f, 0.036f}) {
+            Walker walker{.position = glm::vec3(-0.45f, 9.0f, -1.2f)};
+            walker.position.z = lowerBody(walker.position, 2.0f, kRadius, kHeight, mesh)->position.z;
+            walker.baseZ = walker.position.z;
+            for (int i = 0; i < 60; ++i) walker.frame(mesh, heading * (7.0f * dt), dt);
+            INFO("frame of " << dt << " s, at y " << walker.position.y << " z " << walker.position.z);
+            CHECK(walker.position.y < -1.0f);
+        }
+    }
+}
