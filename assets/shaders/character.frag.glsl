@@ -536,7 +536,9 @@ void main() {
             //   and blended with outdoor light on transBatch vertices (MOCV.a).
             // - Authored M2Light point lights add diffColor*diffIntensity*N.L/(0.7*d + 0.03*d^2)
             //   before the [0, 1] clamp.
-            // - Hover and target add 1.0 * Ambient_DBC (c29) after batch tint, clamped to [0, 1].
+            // - Hover and target add 1.0 * Ambient_DBC (c29) after batch tint and
+            //   CharProc 1 kitColor, clamped to [0, 1], so tinted/shadowform units
+            //   brighten on mouseover/target instead of having hoverAdd crushed by kitColor.
             vec3 effAmbient = (unitHasCustomLight != 0
                 ? vec3(interiorLightR, interiorLightG, interiorLightB)
                 : ambientColor.rgb * unitLight.x) * kitLight;
@@ -554,7 +556,7 @@ void main() {
             vec3 shaded = clamp(effAmbient + m2Point, 0.0, 1.0);
             vec3 litFactor = (interiorLit != 0) ? baseLight : mix(shaded, baseLight, shadow);
             vec3 hoverAdd = hoverHighlight * ambientColor.rgb * kitLight;
-            result = rawTexRgb * clamp(batchTint * litFactor + hoverAdd, 0.0, 1.0);
+            result = rawTexRgb * clamp(batchTint * litFactor * vec3(kitColorR, kitColorG, kitColorB) + hoverAdd, 0.0, 1.0);
         } else if (interiorLit != 0) {
             vec3 interiorLight = vec3(interiorLightR, interiorLightG, interiorLightB) * kitLight;
             result = texColor.rgb * interiorLight;
@@ -562,10 +564,11 @@ void main() {
     }
 
     // TBC model2.bls (lightDir.w != 0.0) already accumulates M2 point lights
-    // inside the [0, 1] ADD_SAT clamp above.
+    // and applies kitColor before hoverAdd inside the [0, 1] ADD_SAT clamp above.
     if (unlit == 0 && lightDir.w == 0.0)
         result += localLightContribution(FragPos, (dot(Normal, Normal) > 1e-8) ? (norm * clamp(NormalWeight, 0.0, 1.0)) : vec3(0.0), texColor.rgb) * vec3(kitLightR, kitLightG, kitLightB);
-    result *= vec3(kitColorR, kitColorG, kitColorB);
+    if (unlit != 0 || lightDir.w == 0.0)
+        result *= vec3(kitColorR, kitColorG, kitColorB);
 
     // Without the TBC light, unit highlight doubles the shaded colour. Before
     // fog, as the distance haze still applies to a highlighted unit. Under

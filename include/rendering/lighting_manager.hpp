@@ -425,8 +425,8 @@ inline glm::vec3 tbcModBlendSourceColor(const glm::vec3& rawTexRgb,
                                         float opacity) {
     const glm::vec3 shaded = unlit
         ? (rawTexRgb * batchTint * kitColor)
-        : (rawTexRgb * glm::clamp(batchTint * litFactor + hoverAdd,
-                                  glm::vec3(0.0f), glm::vec3(1.0f)) * kitColor);
+        : (rawTexRgb * glm::clamp(batchTint * litFactor * kitColor + hoverAdd,
+                                  glm::vec3(0.0f), glm::vec3(1.0f)));
     const glm::vec3 neutral(mod2x ? 0.5f : 1.0f);
     const float weight = std::clamp(fogFactor * opacity, 0.0f, 1.0f);
     return glm::mix(neutral, shaded, weight);

@@ -219,6 +219,44 @@ TEST_CASE("tbcModBlendSourceColor attenuates lit Mod2x M2 batches at night while
     CHECK(foggedMod.r == Catch::Approx(1.0f));
 }
 
+TEST_CASE("tbcModBlendSourceColor applies CharProc 1 kitColor before hoverAdd inside [0, 1] clamp", "[lighting][unit][m2]") {
+    // Shadowform (Spell 16592 / 15473, SVK 3129): dark purple CharProc 1 kitColor.
+    // Adding hoverAdd after kitColor lets hovered/targeted Shadowform units brighten
+    // by rawTexRgb * hoverAdd instead of crushing hoverAdd near zero.
+    const glm::vec3 robeTex(0.45f, 0.30f, 0.60f);
+    const glm::vec3 white(1.0f);
+    const glm::vec3 lit(0.80f, 0.75f, 0.70f);
+    const glm::vec3 ambientHover(0.35f, 0.32f, 0.30f);
+    const glm::vec3 shadowformKit(0.11f, 0.01f, 0.18f);
+
+    const glm::vec3 unhovered = wowee::rendering::tbcModBlendSourceColor(
+        robeTex, white, lit, glm::vec3(0.0f), shadowformKit, false, false, 1.0f, 1.0f);
+    const glm::vec3 hovered = wowee::rendering::tbcModBlendSourceColor(
+        robeTex, white, lit, ambientHover, shadowformKit, false, false, 1.0f, 1.0f);
+
+    CHECK(unhovered.r == Catch::Approx(robeTex.r * lit.r * shadowformKit.r));
+    CHECK(unhovered.g == Catch::Approx(robeTex.g * lit.g * shadowformKit.g));
+    CHECK(unhovered.b == Catch::Approx(robeTex.b * lit.b * shadowformKit.b));
+    CHECK(hovered.r == Catch::Approx(robeTex.r * (lit.r * shadowformKit.r + ambientHover.r)));
+    CHECK(hovered.g == Catch::Approx(robeTex.g * (lit.g * shadowformKit.g + ambientHover.g)));
+    CHECK(hovered.b == Catch::Approx(robeTex.b * (lit.b * shadowformKit.b + ambientHover.b)));
+
+    // Red CharProc 1 (e.g. Spell 37112): R saturates at 1.0 while G/B brighten by ambientHover.
+    const glm::vec3 redKit(1.0f, 0.13f, 0.18f);
+    const glm::vec3 redHovered = wowee::rendering::tbcModBlendSourceColor(
+        robeTex, white, lit, ambientHover, redKit, false, false, 1.0f, 1.0f);
+    CHECK(redHovered.r == Catch::Approx(robeTex.r * 1.0f));
+    CHECK(redHovered.g == Catch::Approx(robeTex.g * (lit.g * redKit.g + ambientHover.g)));
+    CHECK(redHovered.b == Catch::Approx(robeTex.b * (lit.b * redKit.b + ambientHover.b)));
+
+    // Normal un-tinted unit (kitColor == white) is unaffected.
+    const glm::vec3 normalHovered = wowee::rendering::tbcModBlendSourceColor(
+        robeTex, white, lit, ambientHover, white, false, false, 1.0f, 1.0f);
+    CHECK(normalHovered.r == Catch::Approx(robeTex.r * 1.0f));
+    CHECK(normalHovered.g == Catch::Approx(robeTex.g * 1.0f));
+    CHECK(normalHovered.b == Catch::Approx(robeTex.b * 1.0f));
+}
+
 TEST_CASE("tbcTerrainLightFactor clamps primary vertex lighting to [0, 1] matching TBC terrain.bls", "[lighting][terrain][tbc]") {
     // Sunstrider Isle (LightParams 379) night (23:36): amb=(0.259, 0.333, 0.596), diff=(0.314, 0.427, 0.541).
     // At N.L = 0.85, unclamped blue is 0.596 + 0.85*0.541 = 1.05585; TBC terrain.bls clamps to 1.0.
