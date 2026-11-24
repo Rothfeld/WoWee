@@ -98,6 +98,38 @@ TEST_CASE("resolveSpellLaunchOrigin picks $CSR/$CSL/$CST event bone and release 
         REQUIRE(origin.attachmentId == kAttachSpellRightHandId);
         REQUIRE(origin.launchDelaySeconds == Catch::Approx(0.200f));
     }
+
+    SECTION("Explicit SpellVisual.dbc MissileAttachment (0..8) overrides cast-hand fallback and preserves release delay") {
+        const M2Model gnome = makeModelWithReleaseEvent(53, 200, 115, {-0.042f, -0.319f, 0.347f}, 'R');
+
+        // 5 -> Breath (17) (Quagmirran Acid Spray 38163, SV 8800)
+        const auto breathNoEv = resolveSpellLaunchOrigin(nullptr, kNoSpellAnimationId, 5, false);
+        CHECK(breathNoEv.source == SpellLaunchOrigin::Source::Attachment);
+        CHECK(breathNoEv.attachmentId == kAttachBreathId);
+        CHECK(breathNoEv.launchDelaySeconds == Catch::Approx(0.0f));
+
+        // When the caster model also has a cast release event, keep its timing while using the authored attachment.
+        const auto breathWithEv = resolveSpellLaunchOrigin(&gnome, 53, 5, false);
+        CHECK(breathWithEv.source == SpellLaunchOrigin::Source::Attachment);
+        CHECK(breathWithEv.attachmentId == kAttachBreathId);
+        CHECK(breathWithEv.launchDelaySeconds == Catch::Approx(0.200f));
+
+        // All TBC MissileAttachment slots 0..8 map through missileAttachmentToM2Id.
+        CHECK(resolveSpellLaunchOrigin(&gnome, 53, 0, false).attachmentId == kAttachHeadId);
+        CHECK(resolveSpellLaunchOrigin(&gnome, 53, 1, false).attachmentId == kAttachChestId);
+        CHECK(resolveSpellLaunchOrigin(&gnome, 53, 2, false).attachmentId == kAttachBaseId);
+        CHECK(resolveSpellLaunchOrigin(&gnome, 53, 3, false).attachmentId == kAttachSpellLeftHandId);
+        CHECK(resolveSpellLaunchOrigin(&gnome, 53, 4, false).attachmentId == kAttachSpellRightHandId);
+        CHECK(resolveSpellLaunchOrigin(&gnome, 53, 6, false).attachmentId == kAttachSpecial1Id);
+        CHECK(resolveSpellLaunchOrigin(&gnome, 53, 7, false).attachmentId == kAttachSpecial2Id);
+        CHECK(resolveSpellLaunchOrigin(&gnome, 53, 8, false).attachmentId == kAttachSpecial3Id);
+
+        // Reflected missiles still originate from reflector ChestBloodFront (15) with zero delay.
+        const auto reflected = resolveSpellLaunchOrigin(&gnome, 53, 5, /*skipReleaseDelay=*/true);
+        CHECK(reflected.source == SpellLaunchOrigin::Source::Attachment);
+        CHECK(reflected.attachmentId == kAttachChestBloodFrontId);
+        CHECK(reflected.launchDelaySeconds == Catch::Approx(0.0f));
+    }
 }
 
 TEST_CASE("resolveBeamStartOrigin respects MissileAttachment and race $CSL/$CSR", "[spell_origin]") {
@@ -301,9 +333,37 @@ TEST_CASE("M2Loader parses TBC 2.4.3 $CSL/$CSR/$CST release events across races 
         REQUIRE(stalkerChest != nullptr);
         CHECK(stalkerChest->position.z == Catch::Approx(1.882534f).margin(1e-3f));
     }
+
+    SECTION("Quagmirran (FungalGiant.m2) Acid Spray MissileAttachment=5 resolves to centered mouth Breath (17), not side HandLeft (2)") {
+        const auto fgBytes = readFileBytes(dataDir / "creature/fungalgiant/fungalgiant.m2");
+        REQUIRE(!fgBytes.empty());
+        const M2Model fungalGiant = M2Loader::load(fgBytes);
+
+        // Acid Spray trigger (38163, SV 8800) authors MissileAttachment=5 (Breath 17).
+        const auto origin = resolveSpellLaunchOrigin(&fungalGiant, 53, 5, false);
+        CHECK(origin.source == SpellLaunchOrigin::Source::Attachment);
+        CHECK(origin.attachmentId == kAttachBreathId);
+        CHECK(origin.launchDelaySeconds == Catch::Approx(0.0f));
+
+        const M2Attachment* breathAtt = nullptr;
+        const M2Attachment* handLeftAtt = nullptr;
+        for (const auto& att : fungalGiant.attachments) {
+            if (att.id == kAttachBreathId) breathAtt = &att;
+            if (att.id == kAttachLaunchHandFallback) handLeftAtt = &att;
+        }
+        REQUIRE(breathAtt != nullptr);
+        REQUIRE(handLeftAtt != nullptr);
+        // Breath (17) is centered in front of his mouth (+1.96, 0.00, +4.17);
+        // old fallback HandLeft (2) sat off to his left side (+0.23, +2.23, +2.64).
+        CHECK(breathAtt->position.x > 1.5f);
+        CHECK(std::abs(breathAtt->position.y) < 0.1f);
+        CHECK(breathAtt->position.z > 4.0f);
+        CHECK(handLeftAtt->position.y > 2.0f);
+        CHECK(breathAtt->position.z - handLeftAtt->position.z > 1.4f);
+    }
 }
 
-TEST_CASE("beamAttachmentFallbacks preserves Base (19) at feet and falls Chest (34) back to ChestBloodFront (15)", "[spell_origin]") {
+TEST_CASE("beamAttachmentFallbacks preserves Base (19) at feet and falls Breath/Hand/Chest back cleanly across TBC corpus", "[spell_origin]") {
     // Base (19) must never climb up to Chest (34) when absent on a model.
     const auto baseFb = beamAttachmentFallbacks(kAttachBaseId);
     REQUIRE(baseFb.count == 1);
@@ -315,6 +375,14 @@ TEST_CASE("beamAttachmentFallbacks preserves Base (19) at feet and falls Chest (
     CHECK(chestFb.ids[0] == kAttachChestId);
     CHECK(chestFb.ids[1] == kAttachChestBloodFrontId);
 
+    // Breath (17, 586/660) falls back to Head (20) before Chest (34/15).
+    const auto breathFb = beamAttachmentFallbacks(kAttachBreathId);
+    REQUIRE(breathFb.count == 4);
+    CHECK(breathFb.ids[0] == kAttachBreathId);
+    CHECK(breathFb.ids[1] == kAttachHeadId);
+    CHECK(breathFb.ids[2] == kAttachChestId);
+    CHECK(breathFb.ids[3] == kAttachChestBloodFrontId);
+
     // Head (20) tries HeadTop (18) before Chest (34) and ChestBloodFront (15).
     const auto headFb = beamAttachmentFallbacks(kAttachHeadId);
     REQUIRE(headFb.count == 4);
@@ -322,4 +390,20 @@ TEST_CASE("beamAttachmentFallbacks preserves Base (19) at feet and falls Chest (
     CHECK(headFb.ids[1] == kAttachHeadTopId);
     CHECK(headFb.ids[2] == kAttachChestId);
     CHECK(headFb.ids[3] == kAttachChestBloodFrontId);
+
+    // Weapon HandLeft/Right (2/1, present on only 369/367 of 660 TBC creature M2s)
+    // fall back to SpellLeftHand/RightHand (21/22) before Chest (34/15).
+    const auto handLeftFb = beamAttachmentFallbacks(kAttachLaunchHandFallback);
+    REQUIRE(handLeftFb.count == 4);
+    CHECK(handLeftFb.ids[0] == kAttachLaunchHandFallback);
+    CHECK(handLeftFb.ids[1] == kAttachSpellLeftHandId);
+    CHECK(handLeftFb.ids[2] == kAttachChestId);
+    CHECK(handLeftFb.ids[3] == kAttachChestBloodFrontId);
+
+    const auto handRightFb = beamAttachmentFallbacks(1u);
+    REQUIRE(handRightFb.count == 4);
+    CHECK(handRightFb.ids[0] == 1u);
+    CHECK(handRightFb.ids[1] == kAttachSpellRightHandId);
+    CHECK(handRightFb.ids[2] == kAttachChestId);
+    CHECK(handRightFb.ids[3] == kAttachChestBloodFrontId);
 }

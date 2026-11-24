@@ -2521,6 +2521,15 @@ void SpellVisualSystem::update(float deltaTime) {
             // Sample live animated launch/target coordinates at the release moment
             // (t = launchAt), not the stale Precast/Stand pose from SMSG_SPELL_GO.
             if (auto* characters = renderer_ ? renderer_->getCharacterRenderer() : nullptr) {
+                auto sampleAttachment = [&](uint32_t inst, uint32_t primaryAtt, glm::mat4& outMat) -> bool {
+                    const auto candidates = beamAttachmentFallbacks(primaryAtt);
+                    for (size_t i = 0; i < candidates.count; ++i) {
+                        if (characters->getAttachmentTransform(inst, candidates.ids[i], outMat)) {
+                            return true;
+                        }
+                    }
+                    return false;
+                };
                 if (it->casterInstanceId != 0) {
                     glm::mat4 mat(1.0f);
                     if (it->launchOrigin.source == SpellLaunchOrigin::Source::EventBone &&
@@ -2533,15 +2542,13 @@ void SpellVisualSystem::update(float deltaTime) {
                                    it->launchOrigin.attachmentId, it->launchOrigin.preferWeaponMuzzle, mat)) {
                         it->start = glm::vec3(mat[3]);
                     } else if (it->launchOrigin.source == SpellLaunchOrigin::Source::Attachment &&
-                               characters->getAttachmentTransform(it->casterInstanceId,
-                                                                  it->launchOrigin.attachmentId, mat)) {
+                               sampleAttachment(it->casterInstanceId, it->launchOrigin.attachmentId, mat)) {
                         it->start = glm::vec3(mat[3]);
                     }
                 }
                 if (!it->targetResolver && it->targetInstanceId != 0) {
                     glm::mat4 mat(1.0f);
-                    if (characters->getAttachmentTransform(it->targetInstanceId,
-                                                           it->destinationAttachment, mat)) {
+                    if (sampleAttachment(it->targetInstanceId, it->destinationAttachment, mat)) {
                         it->end = glm::vec3(mat[3]);
                     }
                 }

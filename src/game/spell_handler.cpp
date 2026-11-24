@@ -825,10 +825,10 @@ bool SpellHandler::launchSpellMissile(uint32_t spellId, uint32_t visualId, uint6
     const uint32_t destAttach = attachments
         ? rendering::missileDestinationAttachmentToM2Id(attachments->destination)
         : rendering::kAttachChestBloodFrontId;
-    if (attachments && (attachments->launch != -1 || (attachments->destination != 1 && attachments->destination != 2))) {
+    if (attachments && (attachments->launch < -1 || attachments->launch > 8 || attachments->destination > 8)) {
         LOG_WARNING("SpellVisual: missile visual ", visualId, " launch attachment ", attachments->launch,
                     " destination ", attachments->destination,
-                    " not verified against the original; using release event / m2 attachment ", destAttach);
+                    " out of range; using fallback m2 attachment ", destAttach);
     }
     const uint32_t casterInstance = owner_.resolveUnitRenderInstance(casterGuid);
     const uint32_t targetInstance = owner_.resolveUnitRenderInstance(targetGuid);
@@ -868,6 +868,7 @@ bool SpellHandler::launchSpellMissile(uint32_t spellId, uint32_t visualId, uint6
     const float launchDelay = launchOrigin.launchDelaySeconds;
 
     if (!skipReleaseDelay &&
+        missileAttachment == -1 &&
         launchOrigin.source != rendering::SpellLaunchOrigin::Source::EventBone &&
         launchOrigin.source != rendering::SpellLaunchOrigin::Source::RangedWeaponShot) {
         static std::unordered_set<uint64_t> said;
@@ -877,6 +878,17 @@ bool SpellHandler::launchSpellMissile(uint32_t spellId, uint32_t visualId, uint6
                         castAnim, " on caster 0x", std::hex, casterGuid, std::dec,
                         casterModel ? "" : " (no caster model)", "; missile leaves at SPELL_GO");
     }
+
+    auto resolveAttachmentWithFallback = [](rendering::CharacterRenderer* chars, uint32_t inst,
+                                            uint32_t primaryAtt, glm::mat4& outTransform) -> bool {
+        const auto candidates = rendering::beamAttachmentFallbacks(primaryAtt);
+        for (size_t i = 0; i < candidates.count; ++i) {
+            if (chars->getAttachmentTransform(inst, candidates.ids[i], outTransform)) {
+                return true;
+            }
+        }
+        return false;
+    };
 
     if (characters) {
         glm::mat4 transform(1.0f);
@@ -890,7 +902,7 @@ bool SpellHandler::launchSpellMissile(uint32_t spellId, uint32_t visualId, uint6
                     casterInstance, launchOrigin.shootAnimationId,
                     launchOrigin.attachmentId, launchOrigin.preferWeaponMuzzle, transform);
             } else if (launchOrigin.source == rendering::SpellLaunchOrigin::Source::Attachment) {
-                placed = characters->getAttachmentTransform(casterInstance, launchOrigin.attachmentId, transform);
+                placed = resolveAttachmentWithFallback(characters, casterInstance, launchOrigin.attachmentId, transform);
             }
             if (placed) {
                 start = glm::vec3(transform[3]);
@@ -899,16 +911,16 @@ bool SpellHandler::launchSpellMissile(uint32_t spellId, uint32_t visualId, uint6
                             std::dec, "; using the unit position");
             }
         }
-        if (targetInstance != 0 && characters->getAttachmentTransform(targetInstance, destAttach, transform)) {
+        if (targetInstance != 0 && resolveAttachmentWithFallback(characters, targetInstance, destAttach, transform)) {
             end = glm::vec3(transform[3]);
         } else if (destAttach != rendering::kAttachBaseId) {
             LOG_WARNING("SpellVisual: missile attachment ", destAttach, " missing on 0x", std::hex, targetGuid,
                         std::dec, "; using the unit position");
         }
     }
-    auto makeTargetResolver = [this](uint64_t guid, uint32_t attachment)
+    auto makeTargetResolver = [this, resolveAttachmentWithFallback](uint64_t guid, uint32_t attachment)
         -> rendering::SpellVisualSystem::MissileTargetResolver {
-        return [this, guid, attachment]() -> std::optional<rendering::MissileTargetSample> {
+        return [this, guid, attachment, resolveAttachmentWithFallback]() -> std::optional<rendering::MissileTargetSample> {
             glm::vec3 pos;
             if (!resolveUnitPosition(guid, pos)) return std::nullopt;
             uint32_t instance = 0;
@@ -916,7 +928,7 @@ bool SpellHandler::launchSpellMissile(uint32_t spellId, uint32_t visualId, uint6
                 if (auto* chars = r->getCharacterRenderer()) {
                     instance = owner_.resolveUnitRenderInstance(guid);
                     glm::mat4 transform(1.0f);
-                    if (instance != 0 && chars->getAttachmentTransform(instance, attachment, transform))
+                    if (instance != 0 && resolveAttachmentWithFallback(chars, instance, attachment, transform))
                         pos = glm::vec3(transform[3]);
                 }
             }
@@ -4412,9 +4424,14 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
                                 if (origin.source == rendering::SpellLaunchOrigin::Source::EventBone &&
                                     characters->getBonePointTransform(casterInst, origin.bone, origin.localOffset, transform)) {
                                     start = glm::vec3(transform[3]);
-                                } else if (origin.source == rendering::SpellLaunchOrigin::Source::Attachment &&
-                                           characters->getAttachmentTransform(casterInst, origin.attachmentId, transform)) {
-                                    start = glm::vec3(transform[3]);
+                                } else if (origin.source == rendering::SpellLaunchOrigin::Source::Attachment) {
+                                    const auto candidates = rendering::beamAttachmentFallbacks(origin.attachmentId);
+                                    for (size_t i = 0; i < candidates.count; ++i) {
+                                        if (characters->getAttachmentTransform(casterInst, candidates.ids[i], transform)) {
+                                            start = glm::vec3(transform[3]);
+                                            break;
+                                        }
+                                    }
                                 }
                             }
                             std::function<void()> onArrive;

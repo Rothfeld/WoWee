@@ -100,13 +100,16 @@ struct BeamAttachmentCandidates {
     size_t count = 0;
 };
 
-// Ordered M2 attachment fallback chain for beam start/end lookup on drawn units
-// and undrawn helper models:
+// Ordered M2 attachment fallback chain for missile/beam start/end lookup on
+// drawn units and undrawn helper models:
 // - Base (19) never climbs up to Chest (34) when absent; it falls back to unit feet.
 // - Chest (34, present on 577/660 TBC creature M2s) falls back to ChestBloodFront
 //   (15, present on 622/660 TBC creature M2s) before falling back to unit position.
+// - Breath (17, present on 586/660 TBC creature M2s) tries Head (20) before Chest (34/15).
 // - Head (20) tries HeadTop (18) before Chest (34/15).
 // - SpellLeftHand/RightHand (21/22) try weapon HandLeft/Right (2/1) before Chest (34/15).
+// - HandLeft/Right (2/1, present on only 369/367 of 660 TBC creature M2s) try
+//   SpellLeftHand/RightHand (21/22) before Chest (34/15).
 inline constexpr BeamAttachmentCandidates beamAttachmentFallbacks(uint32_t primary) {
     switch (primary) {
         case kAttachBaseId:
@@ -115,12 +118,18 @@ inline constexpr BeamAttachmentCandidates beamAttachmentFallbacks(uint32_t prima
             return {{kAttachChestId, kAttachChestBloodFrontId, 0u, 0u}, 2};
         case kAttachChestBloodFrontId:
             return {{kAttachChestBloodFrontId, kAttachChestId, 0u, 0u}, 2};
+        case kAttachBreathId:
+            return {{kAttachBreathId, kAttachHeadId, kAttachChestId, kAttachChestBloodFrontId}, 4};
         case kAttachHeadId:
             return {{kAttachHeadId, kAttachHeadTopId, kAttachChestId, kAttachChestBloodFrontId}, 4};
         case kAttachSpellLeftHandId:
             return {{kAttachSpellLeftHandId, kAttachLaunchHandFallback, kAttachChestId, kAttachChestBloodFrontId}, 4};
         case kAttachSpellRightHandId:
             return {{kAttachSpellRightHandId, 1u, kAttachChestId, kAttachChestBloodFrontId}, 4};
+        case kAttachLaunchHandFallback:
+            return {{kAttachLaunchHandFallback, kAttachSpellLeftHandId, kAttachChestId, kAttachChestBloodFrontId}, 4};
+        case 1u:
+            return {{1u, kAttachSpellRightHandId, kAttachChestId, kAttachChestBloodFrontId}, 4};
         default:
             return {{primary, kAttachChestId, kAttachChestBloodFrontId, 0u}, 3};
     }
@@ -156,7 +165,7 @@ inline const pipeline::M2Model::SpellReleaseEvent* findSequenceSpellReleaseEvent
 //   - Imp SpellCastDirected (53)                                   -> $CST @ 766ms
 inline SpellLaunchOrigin resolveSpellLaunchOrigin(const pipeline::M2Model* model,
                                                   uint32_t castAnimationId,
-                                                  int32_t /*missileAttachment*/,
+                                                  int32_t missileAttachment,
                                                   bool skipReleaseDelay) {
     SpellLaunchOrigin out;
     if (skipReleaseDelay) {
@@ -166,7 +175,20 @@ inline SpellLaunchOrigin resolveSpellLaunchOrigin(const pipeline::M2Model* model
         return out;
     }
 
-    if (const auto* ev = findSequenceSpellReleaseEvent(model, castAnimationId)) {
+    const auto* ev = findSequenceSpellReleaseEvent(model, castAnimationId);
+
+    // Explicit SpellVisual.dbc MissileAttachment (0..8: Head, Chest, Base,
+    // LeftHand, RightHand, Breath, Special1..3) overrides the generic cast-hand
+    // release bone — e.g. Quagmirran Acid Spray (38163, SV 8800) authors
+    // MissileAttachment=5 (Breath 17), Illidan/boss sprays author 0..8.
+    if (missileAttachment != -1) {
+        out.source = SpellLaunchOrigin::Source::Attachment;
+        out.attachmentId = missileAttachmentToM2Id(missileAttachment);
+        out.launchDelaySeconds = ev ? (static_cast<float>(ev->timeMs) / 1000.0f) : 0.0f;
+        return out;
+    }
+
+    if (ev) {
         out.launchDelaySeconds = static_cast<float>(ev->timeMs) / 1000.0f;
         if (ev->bone < model->bones.size()) {
             out.source = SpellLaunchOrigin::Source::EventBone;
