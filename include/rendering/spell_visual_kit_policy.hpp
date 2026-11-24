@@ -263,4 +263,23 @@ inline constexpr float areaImpactSampleDistance(float radius, float unitRandom) 
     return r * u;
 }
 
+/// True when a newly triggered CastKit (`newKitId`) on `newAttachInstanceId`
+/// replaces an already-active CastKit instance on the same unit.
+/// In TBC 2.4.3, periodic/rapidly re-triggered CastKits (e.g. The Lurker Below
+/// Spout 37429/37430 -> 37433 CastKit 7451 WaterLiquidBreath.m2 firing every
+/// 200-250 ms over a 2.333 s M2 duration) do not stack 10+ simultaneous
+/// emitting copies on the caster; retiring the prior instance stops its
+/// emitters while already-emitted particles drift and fade naturally.
+inline constexpr bool castKitReplacesActiveCast(uint32_t existingAttachInstanceId,
+                                                uint32_t existingKitId,
+                                                bool existingIsCast,
+                                                uint32_t newAttachInstanceId,
+                                                uint32_t newKitId) {
+    return existingIsCast &&
+           existingAttachInstanceId != 0 &&
+           existingAttachInstanceId == newAttachInstanceId &&
+           existingKitId != 0 &&
+           existingKitId == newKitId;
+}
+
 } // namespace wowee::rendering

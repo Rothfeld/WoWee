@@ -353,6 +353,7 @@ private:
         bool isCast = false;  // the caster's CastKit (SMSG_SPELL_GO)
         uint32_t precastSpellId = 0;  // spell ID for PrecastKit cancellation matching
         bool decayOnExpire = false;  // one-shot state-effect M2 plays Decay (159) on expiry
+        uint32_t kitId = 0;  // SpellVisualKit ID that spawned this instance
     };
 
     struct PhysicalProjectile {

@@ -631,6 +631,17 @@ float SpellVisualSystem::spawnKitEffects(uint32_t kitId, const glm::vec3& worldP
                                          uint32_t precastSpellId) {
     const auto effects = kitEffects_.find(kitId);
     if (effects == kitEffects_.end()) return 0.0f;
+    if (stage == KitStage::Cast && attachInstanceId != 0 && kitId != 0) {
+        for (auto it = activeSpellVisuals_.begin(); it != activeSpellVisuals_.end(); ) {
+            if (castKitReplacesActiveCast(it->attachInstanceId, it->kitId, it->isCast,
+                                          attachInstanceId, kitId)) {
+                retireEffect(*it);
+                it = activeSpellVisuals_.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
     float longest = 0.0f;
     auto* characters = renderer_ ? renderer_->getCharacterRenderer() : nullptr;
     for (const auto& effect : effects->second) {
@@ -727,7 +738,7 @@ float SpellVisualSystem::spawnKitEffects(uint32_t kitId, const glm::vec3& worldP
             .isPrecast = stage == KitStage::Precast, .attachmentId = attachment, .attachInstanceId = attachInstanceId,
             .orientWithAttachment = breath, .effectScale = effect.scale, .isCast = stage == KitStage::Cast,
             .precastSpellId = stage == KitStage::Precast ? precastSpellId : 0u,
-            .decayOnExpire = decayOnExpire});
+            .decayOnExpire = decayOnExpire, .kitId = kitId});
         if (!breath && attachInstanceId)
             placeOnUnit(activeSpellVisuals_.back(), characters, spawn, attachment ? attachmentScale(attachMat) : 1.0f);
         LOG_INFO("SpellVisual: kit=", kitId, " slot attachment=", effect.attachment, " used=", attachment,

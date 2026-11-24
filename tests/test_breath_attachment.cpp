@@ -361,6 +361,37 @@ TEST_CASE("SpellVisualKit policies for InstantAreaKit destination, CharProc 1 ef
         CHECK_FALSE(channelVisualSuppressesAuraVisual(0u, 8636u));
         CHECK_FALSE(channelVisualSuppressesAuraVisual(8636u, 0u));
     }
+
+    SECTION("Re-triggered CastKit replaces matching active CastKit on same unit") {
+        // The Lurker Below Spout (37429/37430 -> 37433, CastKit 7451, WaterLiquidBreath.m2):
+        // periodic ticks re-trigger CastKit 7451 every 200-250 ms over its 2.333 s M2
+        // duration; retiring the prior CastKit prevents 10+ simultaneous emitting copies.
+        CHECK(castKitReplacesActiveCast(/*existingAttach=*/42u, /*existingKit=*/7451u, /*existingIsCast=*/true,
+                                        /*newAttach=*/42u, /*newKit=*/7451u));
+        // Different kit on the same caster stays active.
+        CHECK_FALSE(castKitReplacesActiveCast(42u, 7451u, true, 42u, 7403u));
+        // Same kit on a different caster stays active.
+        CHECK_FALSE(castKitReplacesActiveCast(42u, 7451u, true, 99u, 7451u));
+        // Non-cast stages (Precast / Impact / State / Channel) are not replaced.
+        CHECK_FALSE(castKitReplacesActiveCast(42u, 7451u, false, 42u, 7451u));
+        // Unattached world effects (attach == 0) or zero kit IDs never replace.
+        CHECK_FALSE(castKitReplacesActiveCast(0u, 7451u, true, 0u, 7451u));
+        CHECK_FALSE(castKitReplacesActiveCast(42u, 0u, true, 42u, 0u));
+    }
+}
+
+TEST_CASE("WaterLiquidBreath.m2 has 6 additive emitters over 2.333s Stand", "[spell-visual][assets]") {
+    const char* root = std::getenv("WOWEE_TBC_DATA_DIR");
+    if (!root || !*root) SKIP("Set WOWEE_TBC_DATA_DIR to client/wowee-data/expansions/tbc");
+    const auto bytes = readBytes(std::filesystem::path(root) / "spells/waterliquidbreath.m2");
+    REQUIRE_FALSE(bytes.empty());
+    const auto model = wowee::pipeline::M2Loader::load(bytes);
+    REQUIRE(model.particleEmitters.size() == 6);
+    for (const auto& em : model.particleEmitters) {
+        CHECK(em.blendingType == 4);  // M2Blend Add
+    }
+    REQUIRE_FALSE(model.sequences.empty());
+    CHECK(model.sequences[0].duration == 2333);
 }
 
 TEST_CASE("One-shot state-effect M2s with disabled Stand (0) start directly in Hold (158)",
