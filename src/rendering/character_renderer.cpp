@@ -21,6 +21,7 @@
  */
 #include <atomic>
 #include "rendering/character_renderer.hpp"
+#include "rendering/body_mover.hpp"
 #include "rendering/character_depth_bias.hpp"
 #include "rendering/m2_foliage_culling.hpp"
 #include "rendering/m2_billboard.hpp"
@@ -6471,7 +6472,8 @@ bool CharacterRenderer::getInstanceNamePosition(uint32_t instanceId, bool mounte
     return true;
 }
 
-bool CharacterRenderer::getInstanceCollisionDimensions(uint32_t instanceId, float& radius, float& height) const {
+bool CharacterRenderer::getInstanceCollisionDimensions(uint32_t instanceId, float& radius, float& height,
+                                                       float& bodyScale) const {
     const auto instance = instances.find(instanceId);
     if (instance == instances.end()) return false;
     const auto model = models.find(instance->second.modelId);
@@ -6479,10 +6481,11 @@ bool CharacterRenderer::getInstanceCollisionDimensions(uint32_t instanceId, floa
     // The M2 collision box is separate from animated/visual bounds. Y is
     // model width, Z is height; character models face along model X.
     const glm::vec3 size = model->second.data.boundMax - model->second.data.boundMin;
-    const float scale = instance->second.scale;
-    assert(size.y > 0.0f && size.z > 0.0f && scale > 0.0f);
-    radius = size.y * 0.5f * scale;
-    height = size.z * scale;
+    assert(size.y > 0.0f && size.z > 0.0f && instance->second.scale > 0.0f);
+    // A character scaled below 1 keeps the body of scale 1 (movement::bodyScale).
+    bodyScale = movement::bodyScale(instance->second.scale);
+    radius = size.y * 0.5f * bodyScale;
+    height = size.z * bodyScale;
     return true;
 }
 

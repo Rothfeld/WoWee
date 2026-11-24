@@ -368,7 +368,9 @@ public:
     /// with its scale applied. The model origin is at the feet.
     bool getInstanceNamePosition(uint32_t instanceId, bool mounted, glm::vec3& outPosition);
     bool getInstanceHeight(uint32_t instanceId, float& outHeight) const;
-    bool getInstanceCollisionDimensions(uint32_t instanceId, float& radius, float& height) const;
+    // `bodyScale`: the factor the body's size and step height take from the
+    // instance's scale (movement::bodyScale).
+    bool getInstanceCollisionDimensions(uint32_t instanceId, float& radius, float& height, float& bodyScale) const;
 
     /// Where one of the skeleton's named bones sits, in model Z with the
     /// instance's scale applied. The key bone ids are WoW's own: 4 is the

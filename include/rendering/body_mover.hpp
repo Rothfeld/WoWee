@@ -135,6 +135,20 @@ namespace wowee::rendering::movement {
 // limit is used for both directions.
 inline constexpr float kMaxStepDown = kMaxStepUp;
 
+// What a character's scale (OBJECT_FIELD_SCALE_X times its model's) does to
+// its body: nothing below 1, and above 1 radius and step height grow with it.
+// Native walking head-on into the Anvilmar post (face along y = 395.17) stops
+// at y = 394.9140 at scale 0.7 and at scale 1, 394.7866 at 1.5 and 394.6592
+// at 2 - the human radius 0.3056 times 1, 1, 1.5 and 2 - and is lifted at the
+// Orgrimmar wall by 1.0000, 1.0000, 1.2500, 1.5000 and 2.0000 yd at scales
+// 0.7, 1, 1.25, 1.5 and 2 (_experiments/20261124T003000Z.movement_collision_parity_scale_step).
+// The body's height at a scale other than 1 is not measured; it is taken to
+// follow the same factor.
+inline float bodyScale(float characterScale) {
+    assert(characterScale > 0.0f);
+    return std::max(1.0f, characterScale);
+}
+
 enum class BodySupport { None, Steep, Walkable };
 
 struct BodyMove {
@@ -300,13 +314,15 @@ inline BodyMove fallBody(const glm::vec3& from, const glm::vec3& delta,
     return move;
 }
 
-// A walking step. `stepBudget` is how far the body may still be lifted: one
-// yard above the last walkable ground, less its present height over it.
-inline BodyMove walkBody(const glm::vec3& from, const glm::vec3& horizontalDelta, float stepBudget,
+// A walking step. `stepBudget` is how far the body may still be lifted:
+// `maxStep` above the last walkable ground, less its present height over it.
+// `maxStep` is a yard for a character of scale 1 or less and the scale in
+// yards above that (bodyScale).
+inline BodyMove walkBody(glm::vec3 from, const glm::vec3& horizontalDelta, float stepBudget,
         float radius, float height, std::span<const BodyTriangle> triangles,
-        float minWalkableNormalZ = kMinWalkableNormalZ) {
+        float minWalkableNormalZ = kMinWalkableNormalZ, float maxStep = kMaxStepUp) {
     assert(std::abs(horizontalDelta.z) < 1e-6f);
-    assert(stepBudget >= 0.0f && stepBudget <= kMaxStepUp + 1e-4f);
+    assert(stepBudget >= 0.0f && stepBudget <= maxStep + 1e-4f);
     BodyMove move{.position = from};
 
     // One lift-across-lower from `start`: where it ends, or what refused it.
@@ -393,7 +409,7 @@ inline BodyMove walkBody(const glm::vec3& from, const glm::vec3& horizontalDelta
             if (!next.rest) {
                 // Carried over the hold with nothing under it down to the
                 // hold's height: ground a step further down, or a pit.
-                const auto below = lowerBody(next.end, kMaxStepDown, radius, height, triangles);
+                const auto below = lowerBody(next.end, maxStep, radius, height, triangles);
                 return below && isBodySoleOnGround(*below, minWalkableNormalZ);
             }
             const float rise = next.end.z - perch.z;
@@ -501,7 +517,7 @@ inline BodyMove walkBody(const glm::vec3& from, const glm::vec3& horizontalDelta
         move.support = BodySupport::Steep;
         return move;
     }
-    const auto rest = lowerBody(move.position, kMaxStepDown, radius, height, triangles);
+    const auto rest = lowerBody(move.position, maxStep, radius, height, triangles);
     if (rest && isBodyGround(*rest, minWalkableNormalZ)) {
         move.support = BodySupport::Walkable;
         move.soleOnGround = isBodySoleOnGround(*rest, minWalkableNormalZ);
@@ -511,7 +527,7 @@ inline BodyMove walkBody(const glm::vec3& from, const glm::vec3& horizontalDelta
     // Held up by a steep face under the bevel, or by nothing: lowered as a
     // fall lowers it, the steep face turning it aside, so a body sliding
     // along the foot of a slope comes down onto the ground beside it.
-    const BodyMove settled = fallBody(move.position, glm::vec3(0.0f, 0.0f, -kMaxStepDown),
+    const BodyMove settled = fallBody(move.position, glm::vec3(0.0f, 0.0f, -maxStep),
                                       radius, height, triangles, minWalkableNormalZ);
     if (settled.support == BodySupport::Walkable) {
         move.support = BodySupport::Walkable;

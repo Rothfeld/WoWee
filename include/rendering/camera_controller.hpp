@@ -918,6 +918,7 @@ private:
     float followedHeight_ = 0.0f;
     float collisionHeight_ = 2.0f; // Free-camera body dimensions until a character is assigned.
     float collisionRadius_ = 0.5f;
+    float collisionBodyScale_ = 1.0f; // movement::bodyScale of the followed character
     /// The followed character's head bone in model Z, zero until measured or
     /// if its skeleton names no head.
     float followedHeadZ_ = 0.0f;

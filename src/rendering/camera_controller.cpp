@@ -492,7 +492,9 @@ glm::vec3 CameraController::moveBodyOnFootOnce(const glm::vec3& start, const glm
     // ground: server and teleport heights are not this client's triangles to
     // the millimetre, and a floor can stream in over a body that has already
     // been set down on the terrain under it.
-    constexpr float kSunkTolerance = movement::kMaxStepUp;
+    // A yard, and the character's scale in yards above scale 1.
+    const float maxStep = movement::kMaxStepUp * collisionBodyScale_;
+    const float kSunkTolerance = maxStep;
 
     thread_local std::vector<movement::BodyTriangle> triangles;
     thread_local std::vector<glm::vec3> terrainCorners;
@@ -500,9 +502,9 @@ glm::vec3 CameraController::moveBodyOnFootOnce(const glm::vec3& start, const glm
     terrainCorners.clear();
     const glm::vec3 reach(radius + 0.25f, radius + 0.25f, 0.0f);
     const glm::vec3 low = glm::min(start, target) - reach -
-        glm::vec3(0.0f, 0.0f, movement::kMaxStepDown + 0.25f);
+        glm::vec3(0.0f, 0.0f, maxStep + 0.25f);
     const glm::vec3 high = glm::max(start, target) + reach +
-        glm::vec3(0.0f, 0.0f, height + movement::kMaxStepUp + kSunkTolerance + 0.25f);
+        glm::vec3(0.0f, 0.0f, height + maxStep + kSunkTolerance + 0.25f);
     if (terrainManager) {
         terrainManager->appendSurfaceTriangles(low, high, terrainCorners);
         for (size_t i = 0; i + 2 < terrainCorners.size(); i += 3)
@@ -531,10 +533,9 @@ glm::vec3 CameraController::moveBodyOnFootOnce(const glm::vec3& start, const glm
     movement::BodyMove move;
     bool walked = false;
     if (supported) {
-        // One yard above where the sole last stood on ground.
-        const float budget = std::clamp(walkableStepBaseZ_ + movement::kMaxStepUp - from.z,
-                                        0.0f, movement::kMaxStepUp);
-        move = movement::walkBody(from, horizontal, budget, radius, height, triangles, minWalkable);
+        // The step height above where the sole last stood on ground.
+        const float budget = std::clamp(walkableStepBaseZ_ + maxStep - from.z, 0.0f, maxStep);
+        move = movement::walkBody(from, horizontal, budget, radius, height, triangles, minWalkable, maxStep);
         // A perch is left by stepping on from it - up, or to where the sole
         // stands on ground - or by falling. A step from a perch that ends
         // hung by the bevel is another perch: native set on the rim of the
@@ -577,7 +578,7 @@ glm::vec3 CameraController::moveBodyOnFootOnce(const glm::vec3& start, const glm
     if (move.support == movement::BodySupport::None &&
         (gravitySuspendTimer_ > 0.0f || groundNotStreamedYet(move.position.x, move.position.y))) {
         // Held in the air until the ground arrives: when it has, stand on it.
-        if (const auto rest = movement::lowerBody(move.position, movement::kMaxStepDown,
+        if (const auto rest = movement::lowerBody(move.position, maxStep,
                                                   radius, height, triangles);
             rest && movement::isBodyGround(*rest, minWalkable)) {
             move.position = rest->position;
@@ -2735,7 +2736,7 @@ void CameraController::updateOrbitCamera(float deltaTime, FrameInput& f,
             }
             followedHeight_ = height;
             if (!characterRenderer->getInstanceCollisionDimensions(
-                    playerInstanceId, collisionRadius_, collisionHeight_)) {
+                    playerInstanceId, collisionRadius_, collisionHeight_, collisionBodyScale_)) {
                 LOG_ERROR("Collision bounds missing after successful character height query");
                 throw std::logic_error("Character collision bounds unavailable");
             }

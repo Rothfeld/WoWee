@@ -429,3 +429,34 @@ TEST_CASE("A wall met before any ground is walked up to, then slid along", "[bod
         CHECK(std::abs(moved.y) < 0.002f);
     }
 }
+
+TEST_CASE("Scale above 1 grows the body and its step; below 1 it does not shrink them", "[body_mover]") {
+    // Native: stopped by the Anvilmar post at the same place at scales 0.7 and
+    // 1, a radius times 1.5 and 2 further out at 1.5 and 2; lifted 1, 1, 1.25,
+    // 1.5 and 2 yd at the Orgrimmar wall at scales 0.7, 1, 1.25, 1.5 and 2.
+    CHECK(bodyScale(0.7f) == 1.0f);
+    CHECK(bodyScale(1.0f) == 1.0f);
+    CHECK(bodyScale(1.5f) == 1.5f);
+    CHECK(bodyScale(2.0f) == 2.0f);
+    // A ledge 1.3 yd up: a step for scale 1.5, a wall for scale 1.
+    Mesh mesh;
+    floorAt(mesh, 0.0f, -20.0f, 2.0f);
+    quad(mesh, {2, -20, 0}, {2, 20, 0}, {2, 20, 1.3f}, {2, -20, 1.3f}, {-1, 0, 0});
+    quad(mesh, {2, -20, 1.3f}, {20, -20, 1.3f}, {20, 20, 1.3f}, {2, 20, 1.3f});
+    const glm::vec3 run(kFrameRun, 0.0f, 0.0f);
+    for (const float scale : {1.0f, 1.5f}) {
+        const float factor = bodyScale(scale);
+        const float radius = kRadius * factor, height = kHeight * factor, maxStep = kMaxStepUp * factor;
+        glm::vec3 position(1.0f, 0.0f, 0.0f);
+        float base = 0.0f;
+        for (int i = 0; i < 12; ++i) {
+            const float budget = std::clamp(base + maxStep - position.z, 0.0f, maxStep);
+            const BodyMove move = walkBody(position, run, budget, radius, height, mesh, kMinWalkableNormalZ, maxStep);
+            position = move.position;
+            if (move.soleOnGround) base = position.z;
+        }
+        INFO("scale " << scale << " ends at " << position.x << ", " << position.z);
+        if (scale > 1.0f) CHECK(position.z == Catch::Approx(1.3f).margin(0.003f));
+        else CHECK(std::abs(position.z) < 0.003f);
+    }
+}
