@@ -1256,6 +1256,16 @@ position) replayed against WoWee's own triangles for the same places:
 - Walking: level when nothing is in the way. Otherwise lift by what is left of
   one yard over where the sole last stood on ground, carry the whole move,
   lower onto what is there. It is a step only if the lifted move meets nothing.
+- A step from ground over a wall that stops the body's box (its upright part,
+  from the lower corners 0.565 yd up) before anything meets the underside
+  lifts by the move over the radius and lowers by no more than the move times
+  the bevel. At run speed that leaves the body in the air above the nose of a
+  step higher than its lower corners: it falls back down the nose and steps
+  again from the floor, on the top eight frames after the first step where a
+  walker lowered onto the nose was there in three (native at Dun Morogh
+  -5164.4, 664.7, a riser of 0.654 yd; at speeds 0.3 and 0.5 the nose is
+  within the lowering and native climbs it). Not for the parts of a move
+  longer than the radius.
 - Ground is a face up to 50 degrees under the body, whether the sole stands
   on it or the bevel hangs on its edge (native rides the nose of the
   Northshire Abbey steps down that way).
@@ -1280,6 +1290,17 @@ position) replayed against WoWee's own triangles for the same places:
   body aside horizontally and leaves the drop alone. Wedged between faces
   that are not ground the body hangs, still falling, and its fall speed
   starts over each frame.
+- Where an edge crosses an edge of the underside (from the sole to a lower
+  corner) the drop pushes the body off along both sides of the underside that
+  meet there: (d / bevel, d / bevel) for a drop of d, 45 degrees from the
+  axes whatever way the edge runs. The level part of the move slides along
+  the edge.
+- A fall that lands part way through a frame walks the rest of the frame with
+  the move the keys ask for on the ground (`bodyGroundVelocity_`), whatever
+  level velocity the fall had left.
+- Turned aside while rising, the body keeps its level velocity whole: a jump
+  pressed against a fence slides along it and goes over once its sole is
+  above it. Falling it keeps what the faces leave.
 
 Gotchas:
 
@@ -1327,11 +1348,23 @@ Gotchas:
   about three quarters of the speed the projection gives.
 - Under a low overhang (leaning trunk at Orgrimmar 1823.7, -4235.4) native
   stops dead; WoWee slides along the underside and gets through.
+- The hop at a step is native's: 0.33 yd up, about 0.2 s in the air, a
+  landing packet. `tests/test_body_mover.cpp`'s `Walker` takes a frame as
+  `moveBodyOnFootOnce` does; a test that drives `walkBody` / `fallBody` with
+  the key's run as the air move of every frame hides what a fall does to
+  its level velocity (it hid a jump that could not get onto a ledge it
+  touched).
+- At a kerb with a wall just beyond it (Stormwind -8774.14, 832.54) native
+  ends at one place from seven arrival phases; WoWee creeps the other way
+  along the kerb in about half of them. Not solved; measurements in
+  `_experiments/20261124T140000Z.movement_collision_parity_round20/`.
 - Native frames longer than 36 ms were not measured (typing into the native
   client at 10 frames per second failed); WoWee splits frames over 50 ms.
 
 Workspace evidence and the replay tool (`sim.cpp`, native frames, triangle
-dumps): `_experiments/20261123T182500Z.movement_collision_parity/`.
+dumps): `_experiments/20261123T182500Z.movement_collision_parity/` and the
+later `*.movement_collision_parity_*` folders beside it (the latest holds the
+current tools and the lists of what still differs).
 `WOWEE_BODY_DUMP=/path/prefix` makes the client write the collision triangles
 around the character to `/path/prefix.tris` whenever `/path/prefix.request`
 (one number, the half-extent in yards) appears.
