@@ -1645,6 +1645,13 @@ public:
     /// magic spells use SPELL_WOUND/SPELL_CRIT_WOUND (flinch + vocalization, no blood).
     [[nodiscard]] static std::optional<HitReaction> spellDamageHitReaction(
         uint32_t damage, bool isCrit, uint32_t schoolMask);
+    /// True when a damage event is lethal to a victim with known health (or carries
+    /// explicit positive overkill). Lethal hits suppress victim CombatWound/CombatCritical
+    /// reactions so the unit transitions straight into Death when health=0 arrives instead
+    /// of playing a wound flinch before Death.
+    [[nodiscard]] static bool isLethalDamage(
+        uint32_t victimHealth, uint32_t victimMaxHealth,
+        int32_t damage, int32_t overkill = -1);
     using HitReactionCallback = std::function<void(uint64_t attackerGuid, uint64_t victimGuid, HitReaction reaction)>;
     void setHitReactionCallback(HitReactionCallback cb) { hitReactionCallback_ = std::move(cb); }
 

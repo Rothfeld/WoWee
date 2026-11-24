@@ -488,3 +488,113 @@ TEST_CASE("direct spell damage triggers hit-flinch while absorbed hits and perio
         CHECK(reactions.empty());
     }
 }
+
+TEST_CASE("lethal melee and spell hits suppress victim hit-flinch while non-lethal hits still flinch",
+          "[replay][combat][hitflinch][death]") {
+    using wowee::game::GameHandler;
+    using HR = GameHandler::HitReaction;
+
+    // Pure classification rules
+    CHECK(GameHandler::isLethalDamage(20958, 20958, 300000, -1));     // TBC one-hit overkill
+    CHECK(GameHandler::isLethalDamage(20958, 20958, 20958, -1));      // exact lethal blow
+    CHECK(GameHandler::isLethalDamage(500, 20958, 500, -1));          // multi-hit final lethal blow
+    CHECK(GameHandler::isLethalDamage(0, 20958, 100, -1));            // already dead
+    CHECK(GameHandler::isLethalDamage(0, 0, 500, 50));                // explicit WotLK/Classic overkill
+    CHECK_FALSE(GameHandler::isLethalDamage(20958, 20958, 100, -1));  // non-lethal hit
+    CHECK_FALSE(GameHandler::isLethalDamage(20958, 20958, 0, -1));    // zero damage (miss/dodge/absorb)
+    CHECK_FALSE(GameHandler::isLethalDamage(0, 0, 100, -1));          // unknown health (maxHealth == 0)
+
+    auto makeTbcMeleeHit = [](uint64_t attacker, uint64_t target, int32_t damage, uint32_t hitInfo = 0x02) {
+        Packet p(wireOpcode(Opcode::SMSG_ATTACKERSTATEUPDATE));
+        p.writeUInt32(hitInfo);
+        p.writePackedGuid(attacker);
+        p.writePackedGuid(target);
+        p.writeUInt32(static_cast<uint32_t>(damage));
+        p.writeUInt8(1);       // subDamageCount
+        p.writeUInt32(1);      // schoolMask (Physical)
+        p.writeFloat(static_cast<float>(damage));
+        p.writeUInt32(static_cast<uint32_t>(damage));
+        p.writeUInt32(0);      // absorbed
+        p.writeUInt32(0);      // resisted
+        p.writeUInt32(1);      // VICTIMSTATE_NORMAL
+        p.writeUInt32(0);      // unknown
+        p.writeUInt32(0);      // spellId
+        p.writeUInt32(0);      // blocked
+        return p;
+    };
+
+    auto makeTbcSpellDamageLog = [](uint64_t target, uint64_t attacker, uint32_t spellId,
+                                    uint32_t damage, uint8_t schoolMask) {
+        Packet p(wireOpcode(Opcode::SMSG_SPELLNONMELEEDAMAGELOG));
+        p.writePackedGuid(target);
+        p.writePackedGuid(attacker);
+        p.writeUInt32(spellId);
+        p.writeUInt32(damage);
+        p.writeUInt8(schoolMask);
+        p.writeUInt32(0);      // absorbed
+        p.writeUInt32(0);      // resisted
+        p.writeUInt8(0);       // physicalLog
+        p.writeUInt8(0);       // unused
+        p.writeUInt32(0);      // blocked
+        p.writeUInt32(0);      // flags
+        p.writeUInt8(0);       // debug
+        return p;
+    };
+
+    auto spawnMobWithHp = [](Session& s, uint64_t guid, uint32_t hp, uint32_t maxHp) {
+        auto unit = std::make_shared<wowee::game::Unit>(guid);
+        unit->setHealth(hp);
+        unit->setMaxHealth(maxHp);
+        s.handler().getEntityManager().addEntity(guid, unit);
+    };
+
+    // 1. One-hit melee kill (300000 dmg on 20958 HP mob) suppresses HitReaction, keeps combat text
+    {
+        Session s("tbc");
+        spawnMobWithHp(s, kMob, 20958, 20958);
+        std::vector<HR> reactions;
+        s.handler().setHitReactionCallback([&](uint64_t, uint64_t victim, HR r) {
+            if (victim == kMob) reactions.push_back(r);
+        });
+        s.receive(makeTbcMeleeHit(kPlayer, kMob, 300000));
+        CHECK(reactions.empty());
+        const auto& texts = s.handler().getCombatText();
+        REQUIRE(!texts.empty());
+        CHECK(texts.back().amount == 300000);
+    }
+
+    // 2. Non-lethal melee hit (100 dmg) still plays WOUND; subsequent lethal hit (20858 dmg) suppresses it
+    {
+        Session s("tbc");
+        spawnMobWithHp(s, kMob, 20958, 20958);
+        std::vector<HR> reactions;
+        s.handler().setHitReactionCallback([&](uint64_t, uint64_t victim, HR r) {
+            if (victim == kMob) reactions.push_back(r);
+        });
+        s.receive(makeTbcMeleeHit(kPlayer, kMob, 100));
+        REQUIRE(reactions.size() == 1);
+        CHECK(reactions[0] == HR::WOUND);
+
+        auto unit = std::static_pointer_cast<wowee::game::Unit>(
+            s.handler().getEntityManager().getEntity(kMob));
+        unit->setHealth(20858);
+        s.receive(makeTbcMeleeHit(kPlayer, kMob, 20858));
+        CHECK(reactions.size() == 1);  // no second wound on lethal blow
+    }
+
+    // 3. One-hit spell kill (300000 dmg Fireball) suppresses SPELL_WOUND; non-lethal spell hit still flinches
+    {
+        Session s("tbc");
+        spawnMobWithHp(s, kMob, 20958, 20958);
+        std::vector<HR> reactions;
+        s.handler().setHitReactionCallback([&](uint64_t, uint64_t victim, HR r) {
+            if (victim == kMob) reactions.push_back(r);
+        });
+        s.receive(makeTbcSpellDamageLog(kMob, kPlayer, 133, 100, 4));
+        REQUIRE(reactions.size() == 1);
+        CHECK(reactions[0] == HR::SPELL_WOUND);
+
+        s.receive(makeTbcSpellDamageLog(kMob, kPlayer, 133, 300000, 4));
+        CHECK(reactions.size() == 1);  // lethal spell hit suppressed
+    }
+}

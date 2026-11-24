@@ -855,7 +855,20 @@ void CombatHandler::handleAttackerStateUpdate(network::Packet& packet) {
     // HITINFO_NOACTION (CMaNGOS sends it for on-next-swing spell results):
     // build 8606 shows the damage and leaves the victim still, no spurt
     // either (_experiments/20261119T1311Z.wound_rule, thugflags).
-    if (owner_.hitReactionCallbackRef() && !data.isNoAction()) {
+    // Lethal blows suppress victim hit reactions: SMSG_ATTACKERSTATEUPDATE arrives
+    // up to one server update tick (~100-400 ms) before SMSG_UPDATE_OBJECT sets
+    // UNIT_FIELD_HEALTH=0, and native 2.4.3 transitions straight into Death without
+    // playing CombatWound first.
+    const bool lethalHit = [&]() {
+        if (data.overkill > 0) return true;
+        if (data.totalDamage <= 0) return false;
+        const auto ent = owner_.getEntityManager().getEntity(data.targetGuid);
+        if (!ent || !ent->isUnit()) return false;
+        const auto unit = std::static_pointer_cast<Unit>(ent);
+        return GameHandler::isLethalDamage(
+            unit->getHealth(), unit->getMaxHealth(), data.totalDamage, data.overkill);
+    }();
+    if (owner_.hitReactionCallbackRef() && !data.isNoAction() && !lethalHit) {
         using HR = GameHandler::HitReaction;
         std::optional<HR> reaction;
         if (data.victimState == VICTIMSTATE_DODGE) reaction = HR::DODGE;
@@ -975,7 +988,7 @@ void CombatHandler::handleAttackerStateUpdate(network::Packet& packet) {
                 data.victimState != VICTIMSTATE_PARRY) {
                 asm_->playAttackGrunt();
             }
-            if (isPlayerTarget && !data.isMiss() && data.victimState != VICTIMSTATE_DODGE &&
+            if (isPlayerTarget && !lethalHit && !data.isMiss() && data.victimState != VICTIMSTATE_DODGE &&
                 data.victimState != VICTIMSTATE_PARRY) {
                 asm_->playWound(data.isCrit());
             }
@@ -1040,6 +1053,14 @@ std::optional<GameHandler::HitReaction> GameHandler::spellDamageHitReaction(
     return isCrit ? HitReaction::SPELL_CRIT_WOUND : HitReaction::SPELL_WOUND;
 }
 
+bool GameHandler::isLethalDamage(
+    uint32_t victimHealth, uint32_t victimMaxHealth, int32_t damage, int32_t overkill) {
+    if (overkill > 0) return true;
+    if (damage <= 0) return false;
+    if (victimMaxHealth == 0) return false;
+    return victimHealth == 0 || static_cast<uint32_t>(damage) >= victimHealth;
+}
+
 void CombatHandler::handleSpellDamageLog(network::Packet& packet) {
     SpellDamageLogData data;
     if (!owner_.getPacketParsers()->parseSpellDamageLog(packet, data)) return;
@@ -1047,11 +1068,23 @@ void CombatHandler::handleSpellDamageLog(network::Packet& packet) {
     bool isPlayerSource = (data.attackerGuid == owner_.getPlayerGuid());
     bool isPlayerTarget = (data.targetGuid == owner_.getPlayerGuid());
 
+    const bool lethalHit = [&]() {
+        const int32_t dmg = static_cast<int32_t>(data.damage);
+        const int32_t ok = static_cast<int32_t>(data.overkill);
+        if (ok > 0) return true;
+        if (dmg <= 0) return false;
+        const auto ent = owner_.getEntityManager().getEntity(data.targetGuid);
+        if (!ent || !ent->isUnit()) return false;
+        const auto unit = std::static_pointer_cast<Unit>(ent);
+        return GameHandler::isLethalDamage(unit->getHealth(), unit->getMaxHealth(), dmg, ok);
+    }();
+
     // Direct spell damage triggers victim hit-flinch (CombatWound 9 / CombatCritical 10)
     // for local player, remote players, and creatures alike — including spells whose
     // SpellVisualKit impact omits startAnimId (Arcane Missiles 7268/29956, Moonfire 8921,
-    // Shadow Bolt 686, Smite 585). Periodic DoT ticks (SMSG_PERIODICAURALOG) do not flinch.
-    if (owner_.hitReactionCallbackRef()) {
+    // Shadow Bolt 686, Smite 585). Periodic DoT ticks (SMSG_PERIODICAURALOG) and lethal
+    // blows do not flinch.
+    if (owner_.hitReactionCallbackRef() && !lethalHit) {
         if (const auto reaction = GameHandler::spellDamageHitReaction(
                 data.damage, data.isCrit, data.schoolMask);
             reaction.has_value()) {
@@ -1075,7 +1108,7 @@ void CombatHandler::handleSpellDamageLog(network::Packet& packet) {
         hostileAttackers_.insert(data.attackerGuid);
         autoTargetAttacker(data.attackerGuid);
     }
-    if (isPlayerTarget && data.damage > 0) {
+    if (isPlayerTarget && !lethalHit && data.damage > 0) {
         if (auto* ac = owner_.services().audioCoordinator) {
             if (auto* asm_ = ac->getActivitySoundManager()) {
                 asm_->playWound(data.isCrit);
