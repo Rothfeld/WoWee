@@ -622,3 +622,93 @@ TEST_CASE("Ground rising under a wall that leans out over it is walked up to the
     CHECK(walker.position.x < 4.36f);
     CHECK(walker.position.z < 0.01f);
 }
+
+TEST_CASE("A move turned along a wall into a leaning ridge stops in the corner", "[body_mover]") {
+    // Orgrimmar (1980.39, -4804.32), WoWee's own triangles: two floors, an
+    // overhanging wall (two triangles) and the pillar beyond it, whose ridge
+    // leans out towards the walker (two faces). Sliding west along the wall
+    // the body's side meets the ridge; the ridge's face the turned move runs
+    // into leads back into the wall, and native stands in the corner at
+    // (1980.388, -4804.323) for the rest of the run. Only the lifted body
+    // meets the ridge within the move; turned by the direction separating
+    // body and ridge, the walker slipped out sideways and went on round the
+    // pillar to (1978.2, -4802.9).
+    const Mesh mesh = {
+        {{{1983.89673f, -4794.22949f, 55.8202591f}, {1980.28589f, -4803.43115f, 55.7883606f}, {1984.03699f, -4804.20898f, 55.8202667f}}},
+        {{{1980.15173f, -4804.46533f, 58.8214149f}, {1979.86194f, -4804.91602f, 56.7403908f}, {1977.52637f, -4802.77637f, 58.8214149f}}},
+        {{{1977.23657f, -4803.22705f, 56.7403908f}, {1977.52637f, -4802.77637f, 58.8214149f}, {1979.86194f, -4804.91602f, 56.7403908f}}},
+        {{{1980.28589f, -4803.43115f, 56.2605858f}, {1976.22595f, -4802.19824f, 56.2924881f}, {1979.81323f, -4804.62891f, 56.2924881f}}},
+        {{{1982.90002f, -4805.54297f, 56.7711754f}, {1979.43823f, -4804.83594f, 56.7711754f}, {1979.52087f, -4804.37891f, 59.0325546f}}},
+        {{{1979.52087f, -4804.37891f, 59.0325546f}, {1982.98267f, -4805.08594f, 59.0325546f}, {1982.90002f, -4805.54297f, 56.7711754f}}},
+        {{{1984.03699f, -4804.20898f, 56.2924881f}, {1979.81323f, -4804.62891f, 56.2924881f}, {1984.05762f, -4805.50146f, 56.2924881f}}},
+        {{{1979.81323f, -4804.62891f, 56.2924881f}, {1984.03699f, -4804.20898f, 56.2924881f}, {1980.28589f, -4803.43115f, 56.2605858f}}},
+        {{{1979.86194f, -4804.91602f, 56.7403908f}, {1980.15173f, -4804.46533f, 58.8214149f}, {1979.43262f, -4805.58301f, 56.7403908f}}},
+    };
+    const float dt = 1.0f / 30.0f;
+    const glm::vec3 run(std::cos(-2.431f) * 7.0f * dt, std::sin(-2.431f) * 7.0f * dt, 0.0f);
+    const BodyMove settled = fallBody(glm::vec3(1983.29f, -4803.32f, 56.1f), glm::vec3(0.0f, 0.0f, -1.5f),
+                                      kRadius, kHeight, mesh);
+    REQUIRE(settled.support == BodySupport::Walkable);
+    Walker walker{.position = settled.position, .baseZ = settled.position.z};
+    for (int i = 0; i < 60; ++i) walker.frame(mesh, run, dt);
+    CHECK(glm::distance(glm::vec2(walker.position), glm::vec2(1980.388f, -4804.323f)) < 0.15f);
+}
+
+TEST_CASE("The nose of a step does not turn aside a move that a wall beyond it stops", "[body_mover]") {
+    // Stormwind (-8774.14, 832.54), WoWee's own triangles: a ramp, the kerb
+    // at the foot of a wall with the strip of ground on top of it, and the
+    // wall. Head-on, the kerb's nose comes under the bevel 0.08 yd on and
+    // the wall is met 0.23 yd on, lifted or not. Native takes its move's
+    // part along the wall's plane and creeps up the ramp, (-0.0049, -0.0026,
+    // +0.0021) a frame for 70 frames; turned along the kerb's riser the
+    // walker crept the other way, down the ramp.
+    const Mesh mesh = {
+        {{{-8782.77051f, 825.299805f, 97.6522751f}, {-8764.28125f, 839.539429f, 88.8507843f}, {-8789.23145f, 833.422852f, 97.6522751f}}},
+        {{{-8776.94922f, 829.864441f, 95.1943359f}, {-8773.17285f, 832.868713f, 93.4031448f}, {-8776.03711f, 830.655701f, 94.3608398f}}},
+        {{{-8776.94922f, 829.864441f, 95.1943359f}, {-8772.97656f, 832.62262f, 93.4264603f}, {-8773.17285f, 832.868713f, 93.4031448f}}},
+        {{{-8776.72656f, 829.639771f, 97.0967255f}, {-8772.97656f, 832.62262f, 97.0967255f}, {-8772.97656f, 832.62262f, 93.4264603f}}},
+    };
+    const float dt = 1.0f / 30.0f;
+    const glm::vec3 run(std::cos(-0.9229f) * 7.0f * dt, std::sin(-0.9229f) * 7.0f * dt, 0.0f);
+    const BodyMove settled = fallBody(glm::vec3(-8774.1426f, 832.5356f, 93.7f), glm::vec3(0.0f, 0.0f, -1.5f),
+                                      kRadius, kHeight, mesh);
+    REQUIRE(settled.support == BodySupport::Walkable);
+    Walker walker{.position = settled.position, .baseZ = settled.position.z};
+    for (int i = 0; i < 30; ++i) walker.frame(mesh, run, dt);
+    CHECK(walker.position.x < settled.position.x - 0.1f);
+    CHECK(walker.position.y < settled.position.y - 0.05f);
+    CHECK(walker.position.z > settled.position.z + 0.04f);
+}
+
+TEST_CASE("A walker on the nose of a step is turned by the box beyond it and gets onto the stairs", "[body_mover]") {
+    // Orgrimmar (1976.75, -4802.29), WoWee's own triangles: a floor, a step
+    // up to the next floor, a box standing on the upper floor 0.20 yd beyond
+    // the step's nose, and the stairs behind it. Native, hung by its bevel
+    // on the nose, creeps (-0.0092, +0.0137) a frame along the box's face,
+    // steps onto the upper floor once clear and walks up the stairs to
+    // (1967.72, -4808.08). Turned along the step's riser the walker crept
+    // the other way and stood at (1976.4, -4801.8) for good.
+    const Mesh mesh = {
+        {{{1983.89673f, -4794.22949f, 55.8202591f}, {1977.11792f, -4801.27734f, 55.7883606f}, {1980.28589f, -4803.43115f, 55.7883606f}}},
+        {{{1983.89673f, -4794.22949f, 55.8202591f}, {1980.28589f, -4803.43115f, 55.7883606f}, {1984.03699f, -4804.20898f, 55.8202667f}}},
+        {{{1976.22595f, -4802.19824f, 56.2924881f}, {1973.84985f, -4798.59814f, 56.7647095f}, {1976.22595f, -4802.19824f, 56.7647095f}}},
+        {{{1977.11792f, -4801.27734f, 56.2605858f}, {1973.84985f, -4798.59814f, 56.2924881f}, {1976.22595f, -4802.19824f, 56.2924881f}}},
+        {{{1977.23657f, -4803.22705f, 56.7403908f}, {1977.52637f, -4802.77637f, 58.8214149f}, {1979.86194f, -4804.91602f, 56.7403908f}}},
+        {{{1976.22595f, -4802.19824f, 56.2924881f}, {1980.28589f, -4803.43115f, 56.2605858f}, {1977.11792f, -4801.27734f, 56.2605858f}}},
+        {{{1976.22595f, -4802.19824f, 56.7647095f}, {1979.81323f, -4804.62891f, 56.2924881f}, {1976.22595f, -4802.19824f, 56.2924881f}}},
+        {{{1970.94885f, -4808.07129f, 56.764698f}, {1979.81323f, -4804.62891f, 56.7647095f}, {1976.22595f, -4802.19824f, 56.7647095f}}},
+        {{{1975.88855f, -4802.46777f, 57.5946693f}, {1976.47571f, -4802.96436f, 57.2474594f}, {1975.98193f, -4802.30908f, 57.2474747f}}},
+        {{{1976.43689f, -4803.73633f, 56.9822273f}, {1975.87903f, -4803.44434f, 58.5333977f}, {1976.35474f, -4803.65918f, 57.7205544f}}},
+        {{{1976.58374f, -4802.81201f, 57.0882187f}, {1976.42407f, -4802.98877f, 57.7317085f}, {1976.52466f, -4802.98389f, 57.0882187f}}},
+        {{{1976.0509f, -4803.12061f, 58.4731941f}, {1976.42407f, -4802.98877f, 57.7317085f}, {1976.58374f, -4802.81201f, 57.0882187f}}},
+    };
+    const float dt = 1.0f / 30.0f;
+    const glm::vec3 run(std::cos(-2.568f) * 7.0f * dt, std::sin(-2.568f) * 7.0f * dt, 0.0f);
+    const BodyMove settled = fallBody(glm::vec3(1982.4f, -4799.42f, 56.1f), glm::vec3(0.0f, 0.0f, -1.5f),
+                                      kRadius, kHeight, mesh);
+    REQUIRE(settled.support == BodySupport::Walkable);
+    Walker walker{.position = settled.position, .baseZ = settled.position.z};
+    for (int i = 0; i < 66; ++i) walker.frame(mesh, run, dt);
+    CHECK(walker.position.x < 1974.5f);
+    CHECK(walker.position.z > 56.7f);
+}

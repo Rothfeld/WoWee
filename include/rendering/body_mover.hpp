@@ -407,27 +407,63 @@ inline BodyMove walkBody(glm::vec3 from, const glm::vec3& requestedDelta, float 
         }
         result.blocker = ahead->normal;
         float wallAt = std::numeric_limits<float>::infinity();
-        {
-            constexpr float kTie = 1e-4f;
-            const float travel = glm::length(delta);
+        constexpr float kTie = 1e-4f;
+        const float travel = glm::length(delta);
+        // The first face that is not ground in the way of the body at `at`.
+        // Of contacts met together, a corner on a face decides; of faces met
+        // together by an edge they share, the one the move runs into most
+        // squarely.
+        static const float kBevelFaceNormalZ = 1.0f / std::sqrt(1.0f + kBodyBevel * kBodyBevel);
+        // An edge met by the body's underside, not by its upright side or
+        // the side's lower edge: the separating direction is then steeper
+        // than the bevel faces' own normal.
+        const auto underBevel = [&](const BodyContact& contact) {
+            return !contact.corner && contact.normal.z >= kBevelFaceNormalZ - 1e-3f;
+        };
+        // A riser: a face that is not ground with an edge that is the edge
+        // of ground - both its ends lie on an edge of a triangle the body
+        // can stand on. Met by the bevel, that edge is the nose of a step.
+        const auto isRiser = [&](const BodyTriangle& riser) {
+            constexpr float kOnEdge = 1e-3f;
+            const auto onSegment = [&](const glm::vec3& point, const glm::vec3& a, const glm::vec3& b) {
+                const glm::vec3 ab = b - a;
+                const float lengthSq = glm::dot(ab, ab);
+                if (lengthSq < 1e-10f) return false;
+                const float along = glm::clamp(glm::dot(point - a, ab) / lengthSq, 0.0f, 1.0f);
+                return glm::distance(point, a + ab * along) <= kOnEdge;
+            };
+            for (const auto& ground : triangles) {
+                const glm::vec3 normal = glm::cross(ground[1] - ground[0], ground[2] - ground[0]);
+                const float area = glm::length(normal);
+                if (area < 1e-5f || normal.z < minWalkableNormalZ * area) continue;
+                for (int edge = 0; edge < 3; ++edge)
+                    for (int side = 0; side < 3; ++side)
+                        if (onSegment(riser[edge], ground[side], ground[(side + 1) % 3]) &&
+                            onSegment(riser[(edge + 1) % 3], ground[side], ground[(side + 1) % 3]))
+                            return true;
+            }
+            return false;
+        };
+        const auto firstWall = [&](const glm::vec3& at, bool pastUnderside = false) {
             std::optional<BodyContact> wall;
             for (const auto& triangle : triangles) {
-                const auto contact = sweepBodyTriangle(start, delta, radius, height, triangle);
+                const auto contact = sweepBodyTriangle(at, delta, radius, height, triangle);
                 if (!contact || contact->standing || contact->face.z >= minWalkableNormalZ) continue;
+                if (pastUnderside && underBevel(*contact)) continue;
                 const float later = wall ? (contact->time - wall->time) * travel : -1.0f;
-                // Of contacts met together, a corner on a face decides; of
-                // faces met together by an edge they share, the one the move
-                // runs into most squarely.
                 if (later < -kTie || (later <= kTie && contact->corner && !wall->corner) ||
                     (later <= kTie && contact->corner == wall->corner &&
                      glm::dot(delta, contact->front) < glm::dot(delta, wall->front)))
                     wall = contact;
             }
+            return wall;
+        };
+        {
+            const auto wall = firstWall(start);
             // An edge against the body's upright side or the side's lower
             // edge: the separating direction is then flatter than the
             // bevel faces' own normal. Under the bevel it is steeper.
-            static const float kBevelFaceNormalZ = 1.0f / std::sqrt(1.0f + kBodyBevel * kBodyBevel);
-            result.edgeMet = wall && !wall->corner && wall->normal.z < kBevelFaceNormalZ - 1e-3f;
+            result.edgeMet = wall && !wall->corner && !underBevel(*wall);
             // What the move is turned aside by is what stops the body where
             // it stands, when that is not ground: the wall it slides along,
             // not a face only the lifted body would meet further on.
@@ -484,7 +520,55 @@ inline BodyMove walkBody(glm::vec3 from, const glm::vec3& requestedDelta, float 
                     lift += rise + kContactSkin * 2.0f;
                 }
             }
-            if (across->time < wallAt) result.blocker = across->normal;
+            // The nose of a step under the bevel - the edge a riser shares
+            // with the ground above it - is what a step lifts the body over.
+            // The step refused by something beyond the nose, that turns the
+            // move aside, not the riser: a wall met by a corner of the body
+            // within the move, at its own height. On the nose of a step at
+            // Orgrimmar (1976.75, -4802.29; a box 0.20 yd on) native creeps
+            // (-0.0092, +0.0137) a frame along the box's face until it can
+            // step up, nine frames, and goes on up the stairs; head-on at a
+            // Stormwind wall with a kerb at its foot (-8774.14, 832.54; the
+            // nose 0.08 yd on, the wall 0.23) it takes its move's part along
+            // the wall's plane, 70 frames of 70. Turned along the riser
+            // WoWee crept the other way in both places and never got onto
+            // the Orgrimmar stairs. With the wall beyond the move (17 ms
+            // frames at Stormwind) native too is turned along the riser.
+            // Where what is beyond is met by an edge two faces share, which
+            // of them native is turned by first is not known (the post on
+            // the Dustwallow plank ramp, -2692.93, -4694.97: first one, then
+            // the other); the riser is kept there.
+            {
+                std::optional<BodyContact> level;
+                const BodyTriangle* met = nullptr;
+                for (const auto& triangle : triangles) {
+                    const auto contact = sweepBodyTriangle(start, delta, radius, height, triangle);
+                    if (!contact || contact->standing || contact->face.z >= minWalkableNormalZ) continue;
+                    if (!level || contact->time < level->time) { level = contact; met = &triangle; }
+                }
+                if (level && underBevel(*level) && isRiser(*met)) {
+                    if (const auto beyond = firstWall(start, true); beyond && beyond->corner) {
+                        result.blocker = beyond->front;
+                        wallAt = beyond->time;
+                    }
+                }
+            }
+            // What the lifted body meets sooner than the body at its own
+            // height meets a wall turns the move aside instead, and by its
+            // face's own plane as well, chosen as above. Sliding west along
+            // an overhanging wall at Orgrimmar (1980.39, -4804.32) into the
+            // leaning ridge of the next pillar, which only the lifted body
+            // meets within the move, native stops in the corner (2.2 s at 33
+            // ms frames and at 17 ms; where the user's client stood on
+            // 2026-11-23): the ridge's face the turned move runs into leads
+            // back into the wall. Turned by the direction separating body
+            // and ridge instead, WoWee slipped out sideways and went on
+            // round the pillar, 3.7 yd past where native stands.
+            if (across->time < wallAt) {
+                const auto liftedWall = firstWall(start + up);
+                result.blocker = liftedWall && liftedWall->time <= across->time + kTie / travel
+                    ? liftedWall->front : across->normal;
+            }
             return result;
         }
         result.taken = true;
