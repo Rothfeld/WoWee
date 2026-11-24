@@ -3299,6 +3299,14 @@ void SocialHandler::handleGuildEvent(network::Packet& packet) {
     if (data.eventType == GuildEvent::TABARD_CHANGED) {
         if (const uint32_t id = ownGuildId()) queryGuildInfo(id);
     }
+    // Refresh tab headers/contents live when another member buys or edits a
+    // tab while the guild bank vault is already open.
+    if (owner_.isGuildBankOpen() &&
+        (data.eventType == GuildEvent::BANK_TAB_PURCHASED ||
+         data.eventType == GuildEvent::BANK_TAB_UPDATED ||
+         data.eventType == GuildEvent::BANK_TAB_AND_MONEY)) {
+        owner_.queryGuildBankTab(owner_.getGuildBankActiveTab());
+    }
 
     if (clientWillRequest) requestGuildRoster();
 }

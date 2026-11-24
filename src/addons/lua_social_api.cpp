@@ -463,10 +463,10 @@ bool npcWithinInteractRange(game::GameHandler* gh, uint64_t npcGuid) {
 /// that position; the wire wants the team's own id, which is what every arena
 /// command is addressed by. The same mapping the roster request uses.
 bool& guildShowOffline() { static bool show = true; return show; }
-// Empty until the first SortGuildRoster: 2.4.3 lists a new guild's roster in
-// the realm's order (pair 11: Gearbefore, Gearoqqt, Edrick, Edrikk - offline
-// members first, not by name).
-std::string& guildSortField() { static std::string field; return field; }
+// TBC 2.4.3 defaults the guild roster to lowest rank first (rankIndex
+// descending, tie-breaking by name ascending): e.g. Initiate -> Member ->
+// Officer -> Guild Master (verified against :91 Social Audit capture).
+std::string& guildSortField() { static std::string field = "rank"; return field; }
 bool& guildSortReverse() { static bool rev = false; return rev; }
 
 std::vector<const game::GuildRosterMember*> guildRosterView(game::GameHandler* gh) {
@@ -486,13 +486,13 @@ std::vector<const game::GuildRosterMember*> guildRosterView(game::GameHandler* g
     auto less = [&](const game::GuildRosterMember* a, const game::GuildRosterMember* b) {
         if (by == "level")  { if (a->level != b->level) return a->level < b->level; }
         else if (by == "class")  { if (a->classId != b->classId) return a->classId < b->classId; }
-        // The lowest rank first: 2.4.3's first Rank click put the Initiates
-        // above the Guild Master (pair 11), and the second click reversed it.
+        // The lowest rank first: 2.4.3 lists Initiates above the Guild Master
+        // by default, and clicking Rank reverses it.
         else if (by == "rank")   { if (a->rankIndex != b->rankIndex) return a->rankIndex > b->rankIndex; }
         else if (by == "note")   { if (a->publicNote != b->publicNote) return a->publicNote < b->publicNote; }
         else if (by == "zone")   {
-            const std::string za = a->online ? gh->getWhoAreaName(a->zoneId) : std::string();
-            const std::string zb = b->online ? gh->getWhoAreaName(b->zoneId) : std::string();
+            const std::string za = a->zoneId != 0 ? gh->getWhoAreaName(a->zoneId) : std::string();
+            const std::string zb = b->zoneId != 0 ? gh->getWhoAreaName(b->zoneId) : std::string();
             if (za != zb) return za < zb;
         } else if (by == "online") {
             // Longest offline last, which is what the "last online" column

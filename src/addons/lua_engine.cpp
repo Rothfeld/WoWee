@@ -5146,6 +5146,12 @@ int lua_Region_Show(lua_State* L) {
         if (!w->shown && w->shownToggles < 200) ++w->shownToggles;
         becameShown = !w->shown;
         w->shown = true;
+        // TBC 2.4.3 raises toplevel="true" frames to the top of their strata
+        // when shown (e.g. GuildBankPopupFrame opening over GuildBankTab1..6
+        // after right-clicking a tab raised GuildBankFrame).
+        if (becameShown && w->topLevel && !w->isTooltip) {
+            if (auto* tree = wowee::addons::getWidgetTree(L)) tree->raise(w->id);
+        }
     }
     lua_pushboolean(L, 1); lua_setfield(L, 1, "__visible");
     // A frame shown to play a model animation has already finished it.
@@ -11165,7 +11171,18 @@ void LuaEngine::registerCoreAPI() {
         "    if c > 0 or r == '' then r = r .. format('%d|TInterface\\\\MoneyFrame\\\\UI-CopperIcon:0:0:2:0|t', c, 0, 0) end\n"
         "    return r\n"
         "end\n"
-        "GetCoinText = GetCoinTextureString\n"
+        "function GetCoinText(copper, separator)\n"
+        "    copper = math.floor(copper or 0)\n"
+        "    separator = separator or ', '\n"
+        "    local g = math.floor(copper / 10000)\n"
+        "    local s = math.floor(math.fmod(copper, 10000) / 100)\n"
+        "    local c = math.fmod(copper, 100)\n"
+        "    local parts = {}\n"
+        "    if g > 0 then table.insert(parts, format(GOLD_AMOUNT or '%d Gold', g)) end\n"
+        "    if s > 0 then table.insert(parts, format(SILVER_AMOUNT or '%d Silver', s)) end\n"
+        "    if c > 0 or #parts == 0 then table.insert(parts, format(COPPER_AMOUNT or '%d Copper', c)) end\n"
+        "    return table.concat(parts, separator)\n"
+        "end\n"
     );
 
     // RAID_CLASS_COLORS, filled from the same table this client colours a name

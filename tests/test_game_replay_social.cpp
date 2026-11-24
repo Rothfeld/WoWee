@@ -15,6 +15,7 @@
 
 #include "game_replay.hpp"
 #include "addons/lua_api_registrations.hpp"
+#include "addons/lua_engine.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -337,4 +338,159 @@ TEST_CASE("First-time faction discovery via 4-byte SMSG_SET_FACTION_VISIBLE anno
     CHECK(lua.run("GetNumFactions()") == "7");
     CHECK(lua.run("(select(1, GetFactionInfo(7))), (select(9, GetFactionInfo(7))), (select(10, GetFactionInfo(7)))") ==
           "Inactive,true,true");
+}
+
+TEST_CASE("Guild roster defaults to rank descending then name ascending, and sorts offline zones",
+          "[replay][social][guild]") {
+    Session s("tbc");
+    wowee::game::GameHandlerTestAccess::setAreaName(s.handler(), 1497, "Undercity");
+    wowee::game::GameHandlerTestAccess::setAreaName(s.handler(), 1519, "Stormwind City");
+
+    // Wire layout matching TBC 2.4.3 SMSG_GUILD_ROSTER (ranks with bank tabs + gender byte).
+    Packet roster = packetFor(Opcode::SMSG_GUILD_ROSTER);
+    roster.writeUInt32(6);
+    roster.writeString("Test MOTD");
+    roster.writeString("Test Info");
+    roster.writeUInt32(5);
+    for (uint32_t r = 0; r < 5; ++r) {
+        roster.writeUInt32(0);  // rights
+        roster.writeUInt32(0);  // goldLimit
+        for (int t = 0; t < 6; ++t) {
+            roster.writeUInt32(0);
+            roster.writeUInt32(0);
+        }
+    }
+    struct MemberSpec {
+        uint64_t guid;
+        bool online;
+        const char* name;
+        uint32_t rank;
+        uint32_t zone;
+    };
+    const MemberSpec specs[] = {
+        {1, true,  "Pertybert",  0, 1497},
+        {2, false, "Edrick",     1, 1519},
+        {3, false, "Edrikk",     1, 1497},
+        {4, true,  "Pertybarry", 1, 1497},
+        {5, false, "Gearoqqt",   4, 1519},
+        {6, false, "Gearbefore", 3, 1497},
+    };
+    for (const auto& m : specs) {
+        roster.writeUInt64(m.guid);
+        roster.writeUInt8(m.online ? 1 : 0);
+        roster.writeString(m.name);
+        roster.writeUInt32(m.rank);
+        roster.writeUInt8(70);  // level
+        roster.writeUInt8(1);   // classId
+        roster.writeUInt8(0);   // gender (TBC)
+        roster.writeUInt32(m.zone);
+        if (!m.online) roster.writeFloat(1.0f);
+        roster.writeString("");
+        roster.writeString("");
+    }
+    s.receive(roster);
+
+    Lua lua(s);
+    lua.exec("SetGuildRosterShowOffline(true)");
+    // Default order matches 2.4.3: lowest rank (highest rankIndex) first, tie-breaking by name ascending.
+    CHECK(lua.run("(select(1, GetGuildRosterInfo(1))),(select(1, GetGuildRosterInfo(2))),"
+                  "(select(1, GetGuildRosterInfo(3))),(select(1, GetGuildRosterInfo(4))),"
+                  "(select(1, GetGuildRosterInfo(5))),(select(1, GetGuildRosterInfo(6)))") ==
+          "Gearoqqt,Gearbefore,Edrick,Edrikk,Pertybarry,Pertybert");
+
+    // Clicking the rank column reverses the default descending rank order to ascending (GM first).
+    lua.exec("SortGuildRoster('rank')");
+    CHECK(lua.run("(select(1, GetGuildRosterInfo(1))),(select(1, GetGuildRosterInfo(6)))") ==
+          "Pertybert,Gearoqqt");
+
+    // Sorting by zone includes offline members' resolved area names (Stormwind City before Undercity).
+    lua.exec("SortGuildRoster('zone')");
+    CHECK(lua.run("(select(1, GetGuildRosterInfo(1))),(select(1, GetGuildRosterInfo(2)))") ==
+          "Edrick,Gearoqqt");
+}
+
+TEST_CASE("Guild bank parity: GetCoinText uses coin words, toplevel Show raises, and bank purchase refreshes tab",
+          "[replay][social][guild]") {
+    wowee::addons::LuaEngine lua;
+    REQUIRE(lua.initialize());
+
+    REQUIRE(lua.executeString(R"lua(
+        __coin_full = GetCoinText(23456, " ")
+        __coin_gold_only = GetCoinText(120000, " ")
+        __coin_zero = GetCoinText(0, " ")
+        __coin_default_sep = GetCoinText(10203)
+        __coin_tex = GetCoinTextureString(23456)
+
+        local bank = CreateFrame("Frame", "TestGuildBankFrame", UIParent)
+        bank:SetToplevel(true)
+        local tab1 = CreateFrame("Frame", "TestGuildBankTab1", bank)
+        local popup = CreateFrame("Frame", "TestGuildBankPopupFrame", UIParent)
+        popup:SetToplevel(true)
+        popup:Hide()
+
+        -- Clicking a tab on GuildBankFrame raises GuildBankFrame (and its children).
+        bank:Raise()
+        -- Opening GuildBankPopupFrame via Show() must raise it above GuildBankFrame and its tab children.
+        popup:Show()
+        __bank_lvl = bank:GetFrameLevel()
+        __tab_lvl = tab1:GetFrameLevel()
+        __popup_lvl = popup:GetFrameLevel()
+    )lua"));
+
+    lua_State* L = lua.getState();
+    auto getStr = [L](const char* name) -> std::string {
+        lua_getglobal(L, name);
+        const char* s = lua_tostring(L, -1);
+        std::string out = s ? s : "";
+        lua_pop(L, 1);
+        return out;
+    };
+    auto getInt = [L](const char* name) -> int {
+        lua_getglobal(L, name);
+        int v = static_cast<int>(lua_tointeger(L, -1));
+        lua_pop(L, 1);
+        return v;
+    };
+
+    CHECK(getStr("__coin_full") == "2 Gold 34 Silver 56 Copper");
+    CHECK(getStr("__coin_gold_only") == "12 Gold");
+    CHECK(getStr("__coin_zero") == "0 Copper");
+    CHECK(getStr("__coin_default_sep") == "1 Gold, 2 Silver, 3 Copper");
+    CHECK(getStr("__coin_tex").find("|TInterface\\MoneyFrame\\UI-GoldIcon") != std::string::npos);
+
+    CHECK(getInt("__popup_lvl") > getInt("__bank_lvl"));
+    CHECK(getInt("__popup_lvl") > getInt("__tab_lvl"));
+
+    // Receiving BANK_TAB_PURCHASED while the guild bank is open re-queries the active tab.
+    Session s("tbc");
+    Packet minRoster = packetFor(Opcode::SMSG_GUILD_ROSTER);
+    minRoster.writeUInt32(0);  // 0 members is enough to set guildRoster_ / isInGuild via guildName
+    minRoster.writeString("");
+    minRoster.writeString("");
+    minRoster.writeUInt32(0);
+    s.receive(minRoster);
+    // Mark player as in guild 1 via SMSG_GUILD_QUERY_RESPONSE so openGuildBank accepts the vault.
+    Packet gq = packetFor(Opcode::SMSG_GUILD_QUERY_RESPONSE);
+    gq.writeUInt32(1);
+    gq.writeString("Test Guild");
+    for (int r = 0; r < 10; ++r) gq.writeString("Rank");
+    gq.writeUInt32(0); gq.writeUInt32(0); gq.writeUInt32(0); gq.writeUInt32(0); gq.writeUInt32(0);
+    s.receive(gq);
+    s.handler().openGuildBank(0xF11000A3B7000001ULL);
+    Packet bankList = packetFor(Opcode::SMSG_GUILD_BANK_LIST);
+    bankList.writeUInt64(0);   // money
+    bankList.writeUInt8(0);    // tabId
+    bankList.writeUInt32(0);   // remainingWithdrawals
+    bankList.writeUInt8(1);    // fullUpdate
+    bankList.writeUInt8(0);    // numTabs
+    bankList.writeUInt8(0);    // numItems
+    s.receive(bankList);
+    REQUIRE(s.handler().isGuildBankOpen());
+
+    const size_t queriesBefore = s.sent().of(Opcode::CMSG_GUILD_BANK_QUERY_TAB).size();
+    Packet evt = packetFor(Opcode::SMSG_GUILD_EVENT);
+    evt.writeUInt8(wowee::game::GuildEvent::BANK_TAB_PURCHASED);
+    evt.writeUInt8(0);
+    s.receive(evt);
+    CHECK(s.sent().of(Opcode::CMSG_GUILD_BANK_QUERY_TAB).size() == queriesBefore + 1);
 }

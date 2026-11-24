@@ -598,22 +598,26 @@ void WidgetTree::raise(uint32_t id) {
         }
         return false;
     };
+    const int curLevel = frameLevel(id);
     int highest = 0;
     for (const Widget& other : widgets_) {
         if (other.id == 0 || other.id == id) continue;
         if (other.effStrata != w->effStrata) continue;
-        if (other.effLevel > highest && !inside(other)) highest = other.effLevel;
+        const int otherLevel = frameLevel(other.id);
+        if (otherLevel > highest && !inside(other)) highest = otherLevel;
     }
     // Already above everything: raising is what was asked for and it is
     // already true, so leave the level alone. Raise has to be idempotent or
     // repeating it is a slow leak.
-    if (w->effLevel > highest) return;
+    if (curLevel > highest) return;
     // Explicit from here on, or the next layout would recompute it from the
     // parent and undo the raise immediately.
     const int newLevel = highest + 1;
-    shiftExplicitLevels(id, newLevel - w->effLevel);
+    shiftExplicitLevels(id, newLevel - curLevel);
     w->level = newLevel;
     w->levelExplicit = true;
+    w->effLevel = newLevel;
+    markLayoutDirty();
 }
 
 void WidgetTree::lower(uint32_t id) {
@@ -623,19 +627,23 @@ void WidgetTree::lower(uint32_t id) {
     // the others: seeded with this frame's own level, a frame already at the
     // bottom went one lower on every call, and level zero is the floor - so
     // this leaked in the other direction until it hit it.
+    const int curLevel = frameLevel(id);
     int lowest = INT_MAX;
     for (const Widget& other : widgets_) {
         if (other.id == 0 || other.id == id) continue;
         if (other.effStrata != w->effStrata) continue;
-        if (other.effLevel < lowest) lowest = other.effLevel;
+        const int otherLevel = frameLevel(other.id);
+        if (otherLevel < lowest) lowest = otherLevel;
     }
-    if (lowest == INT_MAX || w->effLevel < lowest) return;
+    if (lowest == INT_MAX || curLevel < lowest) return;
     // Never below zero: a negative level sorts under the root and the frame
     // stops being drawn at all.
     const int newLevel = (lowest > 0) ? lowest - 1 : 0;
-    shiftExplicitLevels(id, newLevel - w->effLevel);
+    shiftExplicitLevels(id, newLevel - curLevel);
     w->level = newLevel;
     w->levelExplicit = true;
+    w->effLevel = newLevel;
+    markLayoutDirty();
 }
 
 void WidgetTree::addPoint(uint32_t id, const Anchor& anchor) {
