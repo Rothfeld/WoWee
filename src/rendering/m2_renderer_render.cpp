@@ -353,6 +353,11 @@ uint32_t M2Renderer::createExternalPoseInstance(uint32_t modelId, const glm::mat
     instance.scale = 1.0f;
     instance.modelMatrix = modelMatrix;
     instance.invModelMatrix = glm::inverse(modelMatrix);
+    instance.ribbonHasPrevState = true;
+    instance.ribbonPrevSequence = -1;
+    instance.ribbonPrevAnimTime = 0.0f;
+    instance.ribbonPrevGlobalSeqTime = 0.0f;
+    instance.ribbonPrevModelMatrix = modelMatrix;
     instance.worldBoundsMin = instance.worldBoundsMax = instance.position;
     instance.cachedHasParticleEmitters = !mdl.particleEmitters.empty();
     instance.cachedHasEmitters = !mdl.particleEmitters.empty() || !mdl.ribbonEmitters.empty();
@@ -384,6 +389,15 @@ void M2Renderer::setExternalPose(uint32_t instanceId, const ExternalPose& pose) 
     inst.currentSequenceIndex = pose.sequenceIndex;
     inst.animTime = pose.animTimeMs;
     inst.globalSequenceTime = pose.globalSequenceTimeMs;
+    if (inst.cachedModel && pose.sequenceIndex >= 0 &&
+        static_cast<size_t>(pose.sequenceIndex) < inst.cachedModel->sequences.size()) {
+        inst.animDuration = static_cast<float>(inst.cachedModel->sequences[pose.sequenceIndex].duration);
+    } else {
+        inst.animDuration = 0.0f;
+    }
+    if (inst.ribbonHasPrevState && inst.ribbonPrevSequence < 0) {
+        inst.ribbonPrevSequence = pose.sequenceIndex;
+    }
     inst.fade = pose.fade;
     inst.externalClockHeld = pose.clockHeld;
     assert(pose.particleScale > 0.0f && "ExternalPose::particleScale must be set by the owner");

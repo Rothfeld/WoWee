@@ -549,6 +549,10 @@ private:
         glm::vec3 position;
         glm::vec3 rotation;
         float scale;
+        // Model matrix captured at createInstance so fast-moving projectiles
+        // (e.g. ArrowFlight_01) that advance before their first syncEmitters
+        // call still seed their ribbon companion from the launch point.
+        glm::mat4 initialModelMatrix{1.0f};
         // setInstanceTargetScale: size being eased to, the size it started
         // from and the milliseconds since (scaleTransitionMs < 0: none).
         float targetScale = 0.0f;

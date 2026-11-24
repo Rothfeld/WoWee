@@ -477,6 +477,7 @@ void M2Renderer::retireInstance(uint32_t instanceId) {
     }
     inst.retiring = true;
     inst.ribbonEdges.clear();
+    inst.ribbonLiveHeads.clear();
     inst.ribbonEdgeAccumulators.clear();
 }
 

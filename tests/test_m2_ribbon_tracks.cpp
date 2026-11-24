@@ -457,16 +457,18 @@ TEST_CASE("Outdoor entity particle light applies AreaTable AmbientMultiplier gai
     CHECK(entityLight.b == Catch::Approx(1.0f).margin(0.01f));
 }
 
-TEST_CASE("WarpStorm.m2 sub-stepped ribbon bone evaluation and lifetime alpha fade (S6)",
+TEST_CASE("WarpStorm.m2 sub-stepped ribbon bone evaluation and age-based U (S6)",
           "[m2][ribbon][assets]") {
     using wowee::rendering::evaluateRibbonBoneTransform;
     using wowee::rendering::interpolateSequenceTimeMs;
-    using wowee::rendering::ribbonEdgeAgeFade;
+    using wowee::rendering::ribbonEdgeU;
 
-    CHECK(ribbonEdgeAgeFade(0.0f, 0.5f) == Catch::Approx(1.0f));
-    CHECK(ribbonEdgeAgeFade(0.25f, 0.5f) == Catch::Approx(0.5f));
-    CHECK(ribbonEdgeAgeFade(0.5f, 0.5f) == Catch::Approx(0.0f));
-    CHECK(ribbonEdgeAgeFade(0.75f, 0.5f) == Catch::Approx(0.0f));
+    CHECK(ribbonEdgeU(0.0f, 0.5f) == Catch::Approx(0.0f));
+    CHECK(ribbonEdgeU(0.25f, 0.5f) == Catch::Approx(0.5f));
+    CHECK(ribbonEdgeU(0.5f, 0.5f) == Catch::Approx(1.0f));
+    CHECK(ribbonEdgeU(0.75f, 0.5f) == Catch::Approx(1.0f));
+    CHECK(ribbonEdgeU(0.05f, 0.2f) == Catch::Approx(0.25f));
+    CHECK(ribbonEdgeU(0.1f, 0.0f) == Catch::Approx(0.0f));
 
     // Loop wraparound across 3333 ms Stand sequence advances forward across 0, not backward.
     CHECK(interpolateSequenceTimeMs(3300.0f, 33.0f, 3333.0f, 0.5f) == Catch::Approx(0.0f).margin(0.6f));
@@ -509,4 +511,26 @@ TEST_CASE("WarpStorm.m2 sub-stepped ribbon bone evaluation and lifetime alpha fa
     // Midpoint deviates outward along the circular perimeter from the straight chord (p0 + p1) * 0.5.
     const glm::vec3 chordMid = 0.5f * (p0 + p1);
     CHECK(glm::distance(pMid, chordMid) > 0.01f);
+}
+
+TEST_CASE("ArrowFlight_01.m2 ribbon tracks and age-based U mapping", "[m2][ribbon][assets]") {
+    using wowee::rendering::ribbonEdgeU;
+    const char* root = std::getenv("WOWEE_TBC_DATA_DIR");
+    if (!root || !*root) SKIP("Set WOWEE_TBC_DATA_DIR to client/wowee-data/expansions/tbc");
+
+    std::ifstream in(std::string(root) + "/item/objectcomponents/ammo/arrowflight_01.m2", std::ios::binary);
+    const std::vector<uint8_t> data{std::istreambuf_iterator<char>(in), {}};
+    REQUIRE_FALSE(data.empty());
+    const M2Model model = M2Loader::load(data);
+    REQUIRE(model.ribbonEmitters.size() == 1);
+    const auto& rib = model.ribbonEmitters[0];
+    CHECK(rib.bone == 2);
+    CHECK(rib.edgesPerSecond == Catch::Approx(50.0f));
+    CHECK(rib.edgeLifetime == Catch::Approx(0.2f));
+    REQUIRE(rib.materialIndex < model.materials.size());
+    CHECK(model.materials[rib.materialIndex].blendMode == 4);
+    CHECK(ribbonEdgeU(0.0f, rib.edgeLifetime) == Catch::Approx(0.0f));
+    CHECK(ribbonEdgeU(0.05f, rib.edgeLifetime) == Catch::Approx(0.25f));
+    CHECK(ribbonEdgeU(0.10f, rib.edgeLifetime) == Catch::Approx(0.50f));
+    CHECK(ribbonEdgeU(0.20f, rib.edgeLifetime) == Catch::Approx(1.0f));
 }

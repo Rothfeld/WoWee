@@ -392,6 +392,9 @@ void M2Renderer::updateRibbons(M2Instance& inst, const M2ModelGPU& gpu, float dt
     if (inst.ribbonEdges.size() != emitters.size()) {
         inst.ribbonEdges.resize(emitters.size());
     }
+    if (inst.ribbonLiveHeads.size() != emitters.size()) {
+        inst.ribbonLiveHeads.resize(emitters.size());
+    }
     if (inst.ribbonEdgeAccumulators.size() != emitters.size()) {
         inst.ribbonEdgeAccumulators.resize(emitters.size(), 0.0f);
     }
@@ -403,6 +406,7 @@ void M2Renderer::updateRibbons(M2Instance& inst, const M2ModelGPU& gpu, float dt
     for (size_t ri = 0; ri < emitters.size(); ri++) {
         const auto& em = emitters[ri];
         auto& edges    = inst.ribbonEdges[ri];
+        auto& liveHead = inst.ribbonLiveHeads[ri];
         auto& accum    = inst.ribbonEdgeAccumulators[ri];
 
         // The edge is a segment through the emitter point along the emitter
@@ -464,41 +468,12 @@ void M2Renderer::updateRibbons(M2Instance& inst, const M2ModelGPU& gpu, float dt
         // casting hand to the target, also when the bolt crosses the gap in a
         // frame or two (Frostbolt Volley 8398 at 6.8 and 7.8 yd).
         if ((emit || finalEdge) && visibility > 0.5f) {
-            const bool startingFresh = edges.empty();
-            accum += emit ? em.edgesPerSecond * dt : 0.0f;
-            if (startingFresh || finalEdge) accum = std::max(accum, 1.0f);
-            while (accum >= 1.0f) {
-                accum -= 1.0f;
-                float edgeAge = 0.0f;
-                glm::mat4 stepEmitterToWorld = emitterToWorld;
-                if (emit && !startingFresh && !finalEdge && canSubstep && em.edgesPerSecond > 0.0f) {
-                    edgeAge = std::clamp(accum / em.edgesPerSecond, 0.0f, dt);
-                    if (edgeAge >= em.edgeLifetime) continue;
-                    const float subFrac = std::clamp(1.0f - edgeAge / dt, 0.0f, 1.0f);
-                    glm::mat4 stepModel(0.0f);
-                    for (int c = 0; c < 4; ++c) {
-                        stepModel[c] = glm::mix(inst.ribbonPrevModelMatrix[c], inst.modelMatrix[c], subFrac);
-                    }
-                    if (!gpu.bones.empty() && boneIdx < gpu.bones.size()) {
-                        const float stepAnimTime = interpolateSequenceTimeMs(
-                            inst.ribbonPrevAnimTime, inst.animTime, inst.animDuration, subFrac);
-                        const float stepGlobalTime = glm::mix(
-                            inst.ribbonPrevGlobalSeqTime, inst.globalSequenceTime, subFrac);
-                        const glm::mat4 stepInvModel = glm::inverse(stepModel);
-                        const glm::mat4 stepBone = evaluateRibbonBoneTransform(
-                            gpu.bones, gsd, boneIdx, seq, stepAnimTime, stepGlobalTime,
-                            stepInvModel, &cachedCamPos_);
-                        stepEmitterToWorld = stepModel * stepBone;
-                    } else {
-                        stepEmitterToWorld = stepModel;
-                    }
-                }
-
+            auto makeEdge = [&](const glm::mat4& xform, float edgeAge) {
                 M2Instance::RibbonEdge e;
-                e.worldPos = glm::vec3(stepEmitterToWorld * glm::vec4(em.position, 1.0f));
-                e.top = glm::vec3(stepEmitterToWorld *
+                e.worldPos = glm::vec3(xform * glm::vec4(em.position, 1.0f));
+                e.top = glm::vec3(xform *
                     glm::vec4(em.position + glm::vec3(0.0f, heightAbove, 0.0f), 1.0f));
-                e.bottom = glm::vec3(stepEmitterToWorld *
+                e.bottom = glm::vec3(xform *
                     glm::vec4(em.position - glm::vec3(0.0f, heightBelow, 0.0f), 1.0f));
                 if (edgeAge > 0.0f && em.gravity != 0.0f) {
                     const float dz = ribbonGravityStepZ(em.gravity, 0.0f, edgeAge, scaleZ);
@@ -509,6 +484,45 @@ void M2Renderer::updateRibbons(M2Instance& inst, const M2ModelGPU& gpu, float dt
                 e.color = color;
                 e.alpha = alpha;
                 e.age = edgeAge;
+                return e;
+            };
+            auto evalStepTransform = [&](float subFrac) {
+                glm::mat4 stepModel(0.0f);
+                for (int c = 0; c < 4; ++c) {
+                    stepModel[c] = glm::mix(inst.ribbonPrevModelMatrix[c], inst.modelMatrix[c], subFrac);
+                }
+                if (!gpu.bones.empty() && boneIdx < gpu.bones.size()) {
+                    const float stepAnimTime = interpolateSequenceTimeMs(
+                        inst.ribbonPrevAnimTime, inst.animTime, inst.animDuration, subFrac);
+                    const float stepGlobalTime = glm::mix(
+                        inst.ribbonPrevGlobalSeqTime, inst.globalSequenceTime, subFrac);
+                    const glm::mat4 stepInvModel = glm::inverse(stepModel);
+                    const glm::mat4 stepBone = evaluateRibbonBoneTransform(
+                        gpu.bones, gsd, boneIdx, seq, stepAnimTime, stepGlobalTime,
+                        stepInvModel, &cachedCamPos_);
+                    return stepModel * stepBone;
+                }
+                return stepModel;
+            };
+
+            const bool startingFresh = edges.empty();
+            if (emit && !finalEdge && startingFresh && canSubstep && dt < em.edgeLifetime) {
+                edges.push_back(makeEdge(evalStepTransform(0.0f), dt));
+            }
+            accum += emit ? em.edgesPerSecond * dt : 0.0f;
+            if ((startingFresh && !canSubstep) || finalEdge) accum = std::max(accum, 1.0f);
+            while (accum >= 1.0f) {
+                accum -= 1.0f;
+                float edgeAge = 0.0f;
+                glm::mat4 stepEmitterToWorld = emitterToWorld;
+                if (emit && !finalEdge && canSubstep && em.edgesPerSecond > 0.0f) {
+                    edgeAge = std::clamp(accum / em.edgesPerSecond, 0.0f, dt);
+                    if (edgeAge >= em.edgeLifetime) continue;
+                    const float subFrac = std::clamp(1.0f - edgeAge / dt, 0.0f, 1.0f);
+                    stepEmitterToWorld = evalStepTransform(subFrac);
+                }
+
+                M2Instance::RibbonEdge e = makeEdge(stepEmitterToWorld, edgeAge);
                 edges.push_back(e);
 
                 // Diagnostic: log first ribbon edge per spell effect instance+emitter
@@ -520,8 +534,14 @@ void M2Renderer::updateRibbons(M2Instance& inst, const M2ModelGPU& gpu, float dt
                              " edgeLife=", em.edgeLifetime, " bone=", em.bone);
                 }
             }
+            if (emit && !finalEdge) {
+                liveHead = makeEdge(emitterToWorld, 0.0f);
+            } else {
+                liveHead.reset();
+            }
         } else {
             accum = 0.0f;
+            liveHead.reset();
         }
     }
 
@@ -757,7 +777,8 @@ void M2Renderer::renderM2Ribbons(VkCommandBuffer cmd, VkDescriptorSet perFrameSe
         for (size_t ri = 0; ri < gpu.ribbonEmitters.size(); ri++) {
             if (ri >= inst.ribbonEdges.size()) continue;
             const auto& edges = inst.ribbonEdges[ri];
-            if (edges.size() < 2) continue;
+            const bool hasLiveHead = ri < inst.ribbonLiveHeads.size() && inst.ribbonLiveHeads[ri].has_value();
+            if (edges.size() + (hasLiveHead ? 1u : 0u) < 2) continue;
 
             // Alpha-blended ribbons draw BeforeTransparent; additive ribbons draw AfterTransparent.
             const uint16_t blendMode = gpu.ribbonBlendModes.at(ri);
@@ -800,14 +821,10 @@ void M2Renderer::renderM2Ribbons(VkCommandBuffer cmd, VkDescriptorSet perFrameSe
             const float edgeLifetime = gpu.ribbonEmitters[ri].edgeLifetime;
 
             // Emit triangle strip: 2 verts per edge (top + bottom)
-            for (size_t ei = 0; ei < edges.size(); ei++) {
+            auto emitRibbonEdge = [&](const M2Instance::RibbonEdge& e) {
                 assert(written + 2 <= ribbonVertexCapacity_[frame]);
-                const auto& e = edges[ei];
-                // Attenuate vertex alpha by linear lifetime fade (1 - age / edgeLifetime)
-                // so uniform tiling textures (e.g. WarpStorm.m2 LIGHTNING3.BLP) taper
-                // smoothly into wispy tails while head-to-tail ramp textures stay crisp.
-                float a = e.alpha * inst.fade * ribbonEdgeAgeFade(e.age, edgeLifetime);
-                float u = 1.0f - static_cast<float>(ei) / static_cast<float>(edges.size() - 1);
+                float a = e.alpha * inst.fade;
+                float u = ribbonEdgeU(e.age, edgeLifetime);
 
                 // In TBC M2 ribbons, the -heightBelow edge (-localY) carries v=0
                 // (top row of the BLP) and +heightAbove (+localY) carries v=1
@@ -841,7 +858,9 @@ void M2Renderer::renderM2Ribbons(VkCommandBuffer cmd, VkDescriptorSet perFrameSe
                 dst[written * 9 + 7] = u;
                 dst[written * 9 + 8] = 0.0f; // v = -heightBelow (-localY)
                 written++;
-            }
+            };
+            for (const auto& e : edges) emitRibbonEdge(e);
+            if (hasLiveHead) emitRibbonEdge(*inst.ribbonLiveHeads[ri]);
 
             uint32_t vertCount = static_cast<uint32_t>(written) - firstVert;
             if (vertCount >= 4) {

@@ -747,14 +747,17 @@ inline float ribbonGravityStepZ(float gravity, float prevAge, float newAge, floa
     return gravity * (newAge * newAge - prevAge * prevAge) * scaleZ;
 }
 
-/// Linear lifetime alpha fade `[1 -> 0]` for an M2 ribbon edge of `age` seconds
-/// over `edgeLifetime` seconds. TBC 2.4.3 `M2Ribbon` attenuates vertex alpha as
-/// `1 - age / edgeLifetime` so uniform tiling ribbon textures (such as
-/// `WarpStorm.m2` `SPELLS\LIGHTNING3.BLP`, which stays bright at `u = 1`) taper
-/// smoothly into wispy tails instead of ending at a hard full-brightness cutoff.
-inline float ribbonEdgeAgeFade(float age, float edgeLifetime) {
+/// Texture U coordinate `[0 -> 1]` for an M2 ribbon edge of `age` seconds over
+/// `edgeLifetime` seconds. Mapping U from edge age instead of deque index keeps
+/// head-to-tail gradient textures (such as `ArrowFlight_01.m2`
+/// `SPELLS\GRADIENT128.BLP`) at their authored world length during initial
+/// launch ramp-up and fade-out instead of compressing `[0, 1]` into the first
+/// few edges. Native 2.4.3 `M2Ribbon` relies on the ribbon texture's U gradient
+/// (and authored `alphaTrack`) rather than multiplying an extra `1 - age /
+/// edgeLifetime` vertex-alpha fade on top.
+inline float ribbonEdgeU(float age, float edgeLifetime) {
     if (edgeLifetime <= 1e-5f) return 0.0f;
-    return std::clamp(1.0f - age / edgeLifetime, 0.0f, 1.0f);
+    return std::clamp(age / edgeLifetime, 0.0f, 1.0f);
 }
 
 /// Interpolate a looping M2 sequence clock at `fraction` in `[0, 1]` from

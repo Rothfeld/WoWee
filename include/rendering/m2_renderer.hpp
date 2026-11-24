@@ -369,6 +369,10 @@ struct M2Instance {
     };
     // One deque of edges per ribbon emitter on this instance
     std::vector<std::deque<RibbonEdge>> ribbonEdges;
+    // Live head edge at the emitter's current world pose (age = 0), bridging the
+    // fractional `accum / edgesPerSecond` gap between the newest committed edge
+    // and the moving emitter (e.g. fast projectiles like ArrowFlight_01.m2).
+    std::vector<std::optional<RibbonEdge>> ribbonLiveHeads;
     std::vector<float> ribbonEdgeAccumulators; // fractional edge counter per emitter
     bool ribbonHasPrevState = false;
     int ribbonPrevSequence = -1;

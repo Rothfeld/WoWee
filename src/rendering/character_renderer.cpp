@@ -2084,6 +2084,7 @@ uint32_t CharacterRenderer::createInstance(uint32_t modelId, const glm::vec3& po
     instance.position = position;
     instance.rotation = rotation;
     instance.scale = scale;
+    instance.initialModelMatrix = getModelMatrix(instance);
 
     // Initialize bone matrices to identity
     auto& gpuRef = modelIt->second;
@@ -3473,7 +3474,9 @@ void CharacterRenderer::syncEmitters(M2Renderer& m2Renderer) {
                           "' is already taken in the M2 renderer");
                 throw std::runtime_error("Character emitter model id collision: " + model.name);
             }
-            const uint32_t m2InstanceId = m2Renderer.createExternalPoseInstance(emitterModelId, modelMatrix);
+            const glm::mat4 initMatrix = instance.hasOverrideModelMatrix
+                ? modelMatrix : instance.initialModelMatrix;
+            const uint32_t m2InstanceId = m2Renderer.createExternalPoseInstance(emitterModelId, initMatrix);
             if (!m2InstanceId) {
                 LOG_ERROR("Character emitters: cannot create instance for '", model.name, "'");
                 throw std::runtime_error("Cannot create character emitter instance: " + model.name);
