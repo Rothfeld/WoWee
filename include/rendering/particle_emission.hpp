@@ -82,17 +82,25 @@ inline float particleRotation(float spin, float ageSeconds) {
 inline constexpr uint32_t kParticleOwnColor = 0x1;
 
 /// Effective RGB color for an M2 particle emitter.
-/// Emitters with `kParticleOwnColor` (0x1) keep their authored color, ignoring
-/// both scene/MODD placement lighting and instance-level color tint (such as
-/// SpellVisualKit CharProc 1 on 39383 Fury of Medivh / Archimonde_Fire, 348
-/// Immolate / Immolate_State_Base, and 35409 Brain Damage /
-/// ArcanePower_State_Chest #0, whose meshes still take the kit tint while its
-/// 0x409 particles stay untinted). Emitters without 0x1 take both.
+/// Emitters with `kParticleOwnColor` (0x1) or additive blend modes (`M2Blend`
+/// 3 NoAlphaAdd / 4 AddAlpha) keep their authored color, ignoring both
+/// scene/MODD placement lighting and instance-level color tint:
+/// - `kParticleOwnColor` (0x1): `Torch.m2` (0x21), `candle01.m2` (0x39), and
+///   SpellVisualKit CharProc 1 (`39383` Fury of Medivh / `Archimonde_Fire`,
+///   `348` Immolate, `35409` Brain Damage / `ArcanePower_State_Chest` #0).
+/// - Additive `M2Blend` 3/4 without 0x1 (303 TBC emitters, including
+///   `Etherial.m2` #0-#24 `0x238`/`0x28`, `HHGroundMount.m2` `0x8`, Shaman
+///   totems `0x400`, and Hyjal/ZA raid shoulders `0x230`): emissive additive
+///   glows stay full-bright authored color rather than being darkened by
+///   ambient/MODD lighting.
+/// Non-additive emitters without 0x1 (alpha smoke/waterfalls/dust, `M2Blend` 2)
+/// take both `placementLight` and `instanceTint`.
 inline glm::vec3 particleEffectiveColor(uint32_t flags,
                                         const glm::vec3& authoredColor,
                                         const glm::vec3& placementLight,
-                                        const glm::vec3& instanceTint) {
-    if (flags & kParticleOwnColor) return authoredColor;
+                                        const glm::vec3& instanceTint,
+                                        uint8_t blendType = 2) {
+    if ((flags & kParticleOwnColor) || blendType == 3 || blendType == 4) return authoredColor;
     return authoredColor * placementLight * instanceTint;
 }
 

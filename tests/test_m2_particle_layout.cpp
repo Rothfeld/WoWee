@@ -1339,9 +1339,52 @@ TEST_CASE("kParticleOwnColor (0x1) preserves authored particle color against Spe
     CHECK(ownZap.g == Catch::Approx(1.0f));
     CHECK(ownZap.b == Catch::Approx(1.0f));
 
-    // Emitters without kParticleOwnColor (0x1) take both placementLight and instanceTint.
+    // Emitters without kParticleOwnColor (0x1) and non-additive blend (M2Blend 2 Alpha)
+    // take both placementLight and instanceTint.
     const glm::vec3 tinted = particleEffectiveColor(0x228u, fireMid, light, kitRed);
     CHECK(tinted.r == Catch::Approx(fireMid.r * light.r * kitRed.r));
     CHECK(tinted.g == Catch::Approx(fireMid.g * light.g * kitRed.g));
     CHECK(tinted.b == Catch::Approx(fireMid.b * light.b * kitRed.b));
+
+    const glm::vec3 alphaWater = particleEffectiveColor(0x420u, white, light, glm::vec3(1.0f), 2u);
+    CHECK(alphaWater.r == Catch::Approx(light.r));
+    CHECK(alphaWater.g == Catch::Approx(light.g));
+    CHECK(alphaWater.b == Catch::Approx(light.b));
+
+    // Additive emitters (M2Blend 3 NoAlphaAdd / 4 AddAlpha) without 0x1 keep
+    // their authored emissive color rather than darkening under ambient/MODD
+    // lighting: Creature\Etherial\Etherial.m2 #0-#16 (flags 0x238/0x28, blend 4)
+    // glow bright white-cyan in Mana-Tombs (ambient 45,90,135) and outdoors.
+    const glm::vec3 manaTombsLight(45.0f / 255.0f, 90.0f / 255.0f, 135.0f / 255.0f);
+    const glm::vec3 ethWhite(253.0f / 255.0f, 1.0f, 253.0f / 255.0f);
+    const glm::vec3 ethAddAlpha = particleEffectiveColor(0x238u, ethWhite, manaTombsLight, glm::vec3(1.0f), 4u);
+    CHECK(ethAddAlpha.r == Catch::Approx(ethWhite.r));
+    CHECK(ethAddAlpha.g == Catch::Approx(ethWhite.g));
+    CHECK(ethAddAlpha.b == Catch::Approx(ethWhite.b));
+
+    const glm::vec3 noAlphaAdd = particleEffectiveColor(0x008u, fireMid, manaTombsLight, kitRed, 3u);
+    CHECK(noAlphaAdd.r == Catch::Approx(fireMid.r));
+    CHECK(noAlphaAdd.g == Catch::Approx(fireMid.g));
+    CHECK(noAlphaAdd.b == Catch::Approx(fireMid.b));
+}
+
+TEST_CASE("Shipped TBC Etherial.m2 additive emitters stay unlit without kParticleOwnColor",
+          "[m2][particle][tbc]") {
+    const auto model = wowee::pipeline::M2Loader::load(
+        wowee::test::readTbcData("creature/etherial/etherial.m2"));
+    REQUIRE(model.particleEmitters.size() == 25);
+
+    const glm::vec3 darkLight(45.0f / 255.0f, 90.0f / 255.0f, 135.0f / 255.0f);
+    for (size_t i = 0; i < 17; ++i) {
+        const auto& em = model.particleEmitters[i];
+        CHECK((em.flags & wowee::rendering::kParticleOwnColor) == 0u);
+        CHECK(em.blendingType == 4u);
+        REQUIRE(em.particleColor.vec3Values.size() == 3);
+        const glm::vec3 mid = em.particleColor.vec3Values[1];
+        const glm::vec3 eff = wowee::rendering::particleEffectiveColor(
+            em.flags, mid, darkLight, glm::vec3(1.0f), em.blendingType);
+        CHECK(eff.r == Catch::Approx(mid.r));
+        CHECK(eff.g == Catch::Approx(mid.g));
+        CHECK(eff.b == Catch::Approx(mid.b));
+    }
 }

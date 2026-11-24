@@ -637,7 +637,7 @@ void M2Renderer::renderParticleMeshes(VkCommandBuffer cmd, VkDescriptorSet perFr
             if (twinkle <= 0.0f) continue;
             const glm::vec3 color = particleEffectiveColor(
                 em.flags, interpFBlockVec3(em.particleColor, lifeRatio),
-                glm::vec3(1.0f), inst.instanceTint);
+                glm::vec3(1.0f), inst.instanceTint, mesh.blendMode);
             const float alpha = std::min(interpFBlockFloat(em.particleAlpha, lifeRatio), 1.0f) * inst.fade;
             const float scale = interpFBlockFloat(em.particleScale, lifeRatio) * twinkle;
             const uint8_t blendMode = mesh.blendMode;
@@ -1239,7 +1239,7 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
                 float lifeRatio = p.life / std::max(p.maxLife, 0.001f);
                 const glm::vec3 color = particleEffectiveColor(
                     em.flags, interpFBlockVec3(em.particleColor, lifeRatio),
-                    placementLight, inst.instanceTint);
+                    placementLight, inst.instanceTint, static_cast<uint8_t>(cachedBlendType));
                 // Scaled by the instance fade, as its mesh is: an owner fading
                 // out (a creature's death, a hidden player) takes its particles
                 // with it.
