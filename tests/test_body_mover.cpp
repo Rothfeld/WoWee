@@ -597,3 +597,28 @@ TEST_CASE("An edge two walls share is not stepped over where the move can go on 
     CHECK(walker.position.x < 1818.4f);
     CHECK(highest < settled.position.z + 0.01f);
 }
+
+TEST_CASE("Ground rising under a wall that leans out over it is walked up to the wall", "[body_mover]") {
+    // A floor rising a thousandth and a wall leaning 9.5 degrees out over
+    // it: the head meets the wall with the sole at x = 4.356, and lifted a
+    // whole yard with the sole at 4.19. A walker that takes its move either
+    // level or lifted a yard stopped within a frame's move of 4.19 for good,
+    // here at 3.967 (Black Temple, 607.25, 110.33; under the leaning trunk
+    // at Orgrimmar native walks on, 70 frames of `org_rock_d`). Walking the
+    // floor it stops within a frame's move of where its head meets the wall.
+    const Mesh mesh = {
+        {{{-10.0f, -10.0f, -0.01f}, {10.0f, -10.0f, 0.01f}, {10.0f, 10.0f, 0.01f}}},
+        {{{-10.0f, -10.0f, -0.01f}, {10.0f, 10.0f, 0.01f}, {-10.0f, 10.0f, -0.01f}}},
+        {{{5.0f, -5.0f, 0.0f}, {4.5f, -5.0f, 3.0f}, {5.0f, 5.0f, 0.0f}}},
+        {{{5.0f, 5.0f, 0.0f}, {4.5f, -5.0f, 3.0f}, {4.5f, 5.0f, 3.0f}}},
+    };
+    const float dt = 1.0f / 30.0f;
+    const glm::vec3 run(7.0f * dt, 0.0f, 0.0f);
+    const BodyMove settled = fallBody(glm::vec3(3.5f, 0.0f, 0.3f), glm::vec3(0.0f, 0.0f, -1.5f), kRadius, kHeight, mesh);
+    REQUIRE(settled.support == BodySupport::Walkable);
+    Walker walker{.position = settled.position, .baseZ = settled.position.z};
+    for (int i = 0; i < 30; ++i) walker.frame(mesh, run, dt);
+    CHECK(walker.position.x > 4.356f - 7.0f * dt);
+    CHECK(walker.position.x < 4.36f);
+    CHECK(walker.position.z < 0.01f);
+}

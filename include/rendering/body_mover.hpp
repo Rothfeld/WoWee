@@ -452,6 +452,38 @@ inline BodyMove walkBody(glm::vec3 from, const glm::vec3& requestedDelta, float 
                 up.z = std::max(0.0f, up.z * ceiling->time - kContactSkin);
         if (up.z <= 1e-4f) return result;
         if (const auto across = firstBodyContact(start + up, delta, radius, height, triangles)) {
+            // The body lifted the whole step height meets something the body
+            // at its own height does not reach - a wall leaning out over the
+            // floor, a lintel - and the level move met nothing but ground
+            // rising under it. The ground is walked up: the body is lifted by
+            // no more than that ground rises over the move. (Lifted a yard
+            // or not at all, a walker stopped for good a third of a yard
+            // short of a wall leaning 12 degrees out over a Black Temple
+            // floor that rises by a rounding error, 607.25, 110.33.)
+            if (!result.wall) {
+                float lift = 0.0f;
+                for (int pass = 0; pass < 4 && lift <= up.z; ++pass) {
+                    float rise = 0.0f;
+                    bool other = false;
+                    for (const auto& triangle : triangles) {
+                        const auto contact = sweepBodyTriangle(start + glm::vec3(0.0f, 0.0f, lift), delta,
+                                                               radius, height, triangle);
+                        if (!contact || contact->standing) continue;
+                        if (contact->face.z < minWalkableNormalZ) { other = true; break; }
+                        rise = std::max(rise, -glm::dot(delta, contact->face) / contact->face.z * (1.0f - contact->time));
+                    }
+                    if (other) break;
+                    if (rise <= 0.0f) {
+                        result.taken = true;
+                        if (lift > 0.0f)
+                            result.rest = lowerBody(start + glm::vec3(0.0f, 0.0f, lift) + delta, lift,
+                                                    radius, height, triangles, true);
+                        result.end = result.rest ? result.rest->position : start + delta;
+                        return result;
+                    }
+                    lift += rise + kContactSkin * 2.0f;
+                }
+            }
             if (across->time < wallAt) result.blocker = across->normal;
             return result;
         }
