@@ -48,6 +48,7 @@ struct Walker {
     glm::vec3 position;
     bool grounded = true;   // held: on ground, or perched
     bool perched = false;
+    bool onSlope = false;   // held by a slope the sole itself rests on: no perch
     float verticalVelocity = 0.0f;
     float baseZ = 0.0f;
     size_t terrain = 0;     // how many of the mesh's first triangles are the terrain's
@@ -72,7 +73,9 @@ struct Walker {
                 (move.soleOnGround || move.position.z > position.z + 1e-3f);
             if (perched && steppedOn && !move.soleOnGround && move.support == BodySupport::Walkable)
                 move.support = BodySupport::Steep;
-            walked = !perched || steppedOn;
+            const glm::vec2 taken(move.position.x - position.x, move.position.y - position.y);
+            const bool carried = glm::dot(taken, taken) > kContactSkin * kContactSkin;
+            walked = perched ? steppedOn : (!onSlope || steppedOn || carried);
         }
         if (!walked) {
             const float drop = verticalVelocity * dt - 0.5f * kGravity * dt * dt;
@@ -86,7 +89,8 @@ struct Walker {
         }
         position = move.position;
         grounded = move.support != BodySupport::None;
-        perched = move.support == BodySupport::Steep;
+        onSlope = move.support == BodySupport::Steep && move.soleOnSlope;
+        perched = move.support == BodySupport::Steep && !onSlope;
         walkedOntoSlope = walked ? move.walkedOntoSlope : glm::vec3(0.0f);
         if (grounded) verticalVelocity = 0.0f;
         const bool landed = !walked && move.support == BodySupport::Walkable;
@@ -1138,6 +1142,45 @@ TEST_CASE("A jump pressed against a wall is caught by the bevel on the edge of g
     for (int i = 0; i < 40; ++i) blocked.frame(sill, {kFrameRun, 0.0f, 0.0f});
     REQUIRE(blocked.grounded);
     REQUIRE(blocked.position.z == Catch::Approx(0.0f).margin(0.003));
+}
+
+TEST_CASE("A body walks on down a slope its sole rests on", "[body_mover]") {
+    // Undercity, 1578.2, 183.0: off a barrel's top onto the 52.7 degree side
+    // of the next one, native takes its whole move in each following frame
+    // and is set down on the slope again (7 runs of 8); it does not fall.
+    Mesh mesh;
+    floorAt(mesh, 2.0f, -20.0f, 0.0f);
+    const float tall = 1.6f, run = tall / std::tan(glm::radians(52.7f));
+    quad(mesh, {0, -20, 2.0f}, {run, -20, 2.0f - tall}, {run, 20, 2.0f - tall}, {0, 20, 2.0f});
+    floorAt(mesh, 2.0f - tall, run, 20.0f);
+    Walker walker{.position = {-0.5f, 0.0f, 2.0f}, .baseZ = 2.0f};
+    int onSlope = 0;
+    for (int i = 0; i < 12; ++i) {
+        const glm::vec3 before = walker.position;
+        const BodyMove move = walker.frame(mesh, {kFrameRun, 0.0f, 0.0f});
+        REQUIRE(walker.grounded);
+        if (move.support == BodySupport::Steep) {
+            // On the slope every frame takes its whole move and is set down on the slope again.
+            ++onSlope;
+            CHECK(move.soleOnSlope);
+            CHECK(walker.position.x - before.x == Catch::Approx(kFrameRun).margin(1e-4));
+            CHECK(walker.position.z == Catch::Approx(2.0f - walker.position.x * std::tan(glm::radians(52.7f))).margin(0.004));
+        }
+    }
+    REQUIRE(onSlope >= 3);
+    REQUIRE(walker.position.z == Catch::Approx(2.0f - tall).margin(0.003));
+
+    // With no move asked for the body falls from the slope, as from a perch.
+    Walker idle{.position = {-0.1f, 0.0f, 2.0f}, .baseZ = 2.0f};
+    idle.frame(mesh, {kFrameRun, 0.0f, 0.0f});
+    REQUIRE(idle.onSlope);
+    const float left = idle.position.z;
+    idle.frame(mesh, {0.0f, 0.0f, 0.0f});
+    REQUIRE_FALSE(idle.grounded);
+    for (int i = 0; i < 40; ++i) idle.frame(mesh, {0.0f, 0.0f, 0.0f});
+    REQUIRE(idle.grounded);
+    REQUIRE(idle.position.z < left - 0.5f);
+    REQUIRE(idle.position.z == Catch::Approx(2.0f - tall).margin(0.003));
 }
 
 TEST_CASE("A fall stopped between faces that are not ground is stepped out of", "[body_mover]") {

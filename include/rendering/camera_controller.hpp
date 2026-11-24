@@ -958,6 +958,10 @@ private:
     // On foot: resting on a face too steep to stand on, reached by a step
     // that leads on to ground (rendering/body_mover.hpp).
     bool bodyPerched_ = false;
+    // Held by a slope the sole itself rests on - a face that is not ground,
+    // flatter than the body's underside (movement::BodyMove::soleOnSlope) -
+    // which is no perch: the body walks on from it.
+    bool bodyOnSlope_ = false;
     // Up-facing normal of the building's slope the last walk carried the sole
     // onto from ground; zero when there is none (movement::walkBody).
     glm::vec3 bodyWalkedOntoSlope_{0.0f};

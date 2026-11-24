@@ -548,7 +548,24 @@ glm::vec3 CameraController::moveBodyOnFootOnce(const glm::vec3& start, const glm
         if (bodyPerched_ && steppedOn && !move.soleOnGround &&
             move.support == movement::BodySupport::Walkable)
             move.support = movement::BodySupport::Steep;
-        walked = !bodyPerched_ || steppedOn;
+        // A slope the sole itself rests on - a face that is not ground,
+        // flatter than the body's underside - is no perch: the body walks
+        // on from it wherever its move carries it, down the slope or along
+        // it, and falls from it only where it is carried nowhere (no move
+        // asked for, or all of it refused). Native come down from a
+        // barrel's top onto the 52.7 degree side of the next one in the
+        // Undercity (1578.2, 183.0) takes its whole move in the following
+        // frame and is set down on that side again, 1.196 times the move
+        // lower (the side's slope along the heading), then rides the edge
+        // of the next barrel's top by its bevel, up and down, onto the
+        // ledge beyond (7 runs of 8, the replay within 2 mm in every
+        // frame); with the key let go on that side it falls from it in the
+        // next frame. Dropped into a fall with the key held, WoWee was
+        // turned into the gap between barrel and wall beyond and hung in it.
+        // (_experiments/20261124T160500Z.movement_collision_parity_round22)
+        const glm::vec2 taken(move.position.x - from.x, move.position.y - from.y);
+        const bool carried = glm::dot(taken, taken) > movement::kContactSkin * movement::kContactSkin;
+        walked = bodyPerched_ ? steppedOn : (!bodyOnSlope_ || steppedOn || carried);
     }
     if (!walked) {
         move = movement::fallBody(from, glm::vec3(horizontal.x, horizontal.y, delta.z),
@@ -619,7 +636,8 @@ glm::vec3 CameraController::moveBodyOnFootOnce(const glm::vec3& start, const glm
     // Perched counts as on the ground for everything but the step budget: the
     // body is held, mid-step, as on the nose of a stair.
     grounded = move.support != movement::BodySupport::None;
-    bodyPerched_ = move.support == movement::BodySupport::Steep;
+    bodyOnSlope_ = move.support == movement::BodySupport::Steep && move.soleOnSlope;
+    bodyPerched_ = move.support == movement::BodySupport::Steep && !bodyOnSlope_;
     // The slope a walk has carried the sole onto is where the next walk may step on from.
     bodyWalkedOntoSlope_ = walked ? move.walkedOntoSlope : glm::vec3(0.0f);
     if (grounded) verticalVelocity = 0.0f;
@@ -1262,6 +1280,7 @@ glm::vec3 CameraController::moveFollowedCharacter(float /*deltaTime*/, FrameInpu
         return targetPos;
     }
     bodyPerched_ = false;
+    bodyOnSlope_ = false;
     bodyWalkedOntoSlope_ = glm::vec3(0.0f);
     bodyStepBaseKnown_ = false;
 

@@ -31,7 +31,10 @@
 //  or under its bevel at the face's edge. The yard a step may rise is counted
 //  from where the sole last stood. A step may end short of ground under the
 //  sole - on a steeper face, where the body is only perched and next frame
-//  steps on or falls, or hung by the bevel on an edge.
+//  steps on or falls, or hung by the bevel on an edge. On a slope the sole
+//  itself rests on (a face that is not ground, flatter than the underside)
+//  the body is not perched: it walks on wherever its move carries it, and
+//  falls from it only where it is carried nowhere.
 //
 //  Falling. Horizontal move and drop are swept together. Ground ends the
 //  fall - under the sole, or its edge under the bevel where the sole is
@@ -246,6 +249,9 @@ struct BodyMove {
     bool deflected = false;  // the horizontal move was turned aside or stopped
     bool ceiling = false;    // an upward move was stopped
     bool held = false;       // a fall was stopped by faces that are not ground
+    // Steep, and the sole itself rests on the face: a slope flatter than the
+    // body's underside (walkBody).
+    bool soleOnSlope = false;
     // The up-facing normal of a slope - a face of a building that is not
     // ground - a walk begun on ground has carried the sole onto; zero when
     // there is none (walkBody).
@@ -1351,7 +1357,8 @@ inline BodyMove walkBody(glm::vec3 from, const glm::vec3& requestedDelta, float 
     // The sole has come down on a slope of a building, off the ground the
     // walk began on: told to the caller for the next walk (ontoNextSlope
     // above). The body itself is lowered as before.
-    if (isBodySoleOnSlope(*rest, radius, minWalkableNormalZ) && rest->triangle >= heightfieldTriangles) {
+    const bool soleOnSlope = isBodySoleOnSlope(*rest, radius, minWalkableNormalZ);
+    if (soleOnSlope && rest->triangle >= heightfieldTriangles) {
         const auto before = lowerBody(origin, kContactSkin * 4.0f, radius, height, triangles);
         if (before && isBodyGround(*before, minWalkableNormalZ)) move.walkedOntoSlope = rest->face;
     }
@@ -1367,6 +1374,7 @@ inline BodyMove walkBody(glm::vec3 from, const glm::vec3& requestedDelta, float 
     } else {
         move.support = BodySupport::Steep;
         move.position = rest->position;
+        move.soleOnSlope = soleOnSlope;
     }
     return move;
 }
