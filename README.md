@@ -1278,6 +1278,17 @@ position) replayed against WoWee's own triangles for the same places:
   wherever its move carries it - native walks down the 52.7 degree side of an
   Undercity barrel a whole move a frame - and falls from it only where it is
   carried nowhere (no key, or the whole move refused).
+- Up ground of the terrain between its steep faces (a gully) the move itself
+  is stopped by such a face only where a lower corner of the box meets it
+  within the move, that corner is the foremost one along the move, and the
+  sole stands within the body's radius of the face's plane; and the move may
+  end hung by the bevel on an edge of the terrain's ground, from where it is
+  turned by the face a corner meets as for a body on its sole. Native walks
+  8.1 to 8.8 yd up an Eastern Plaguelands gully (2679.98, -4976.53) at speeds
+  0.5 to 1.25, a whole move and one or two moves along the 65 degree face on
+  its right in turn; WoWee stood still or bobbed 2.2 yd in. Faces of
+  buildings and objects stop a walk up as before: any corner, at any distance
+  within the move, and no hold on a ledge's nose that leads nowhere.
 - A step refused, the move is replaced by its part along the refusing face
   and tried from the same place, without first closing the gap to the face;
   refused again, by its part along both faces; in a corner the body stays.
@@ -1385,6 +1396,12 @@ Gotchas:
   takes that step only standing by its sole, and keeps its slide along the
   ledge's edge as it falls. Not solved; measurements in
   `_experiments/20261124T160500Z.movement_collision_parity_round22/`.
+- In that gully 4 native frames of 16 runs take the whole move with the
+  sole 0.19 to 0.25 yd from a steep face the foremost corner meets (WoWee
+  turns); and a body a teleport sets inside objects (Orgrimmar 1979.69,
+  -4805.06, 56.85, between two leaning beams) walks out along three headings
+  of twelve on native and along none on WoWee. Not solved; measurements in
+  `_experiments/20261124T183500Z.movement_collision_parity_round23/`.
 - Native frames longer than 36 ms were not measured (typing into the native
   client at 10 frames per second failed); WoWee splits frames over 50 ms.
 
