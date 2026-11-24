@@ -277,3 +277,66 @@ TEST_CASE("kneel-loot animation callback fires for corpse loot and UNIT_FLAG_LOO
         CHECK(lootAnimEvents == std::vector<bool>{true, false});
     }
 }
+
+TEST_CASE("moving or turning closes world corpse and chest loot immediately, but keeps bag container loot open", "[replay][loot]") {
+    Session s("tbc");
+    std::vector<std::string> events;
+    s.handler().setAddonEventCallback(
+        [&](const std::string& e, const std::vector<std::string>&) { events.push_back(e); });
+    spawnCorpses(s);
+    constexpr uint64_t kChest = 0xF110000123456789ull;
+    s.receive(UpdateObject().tbc().create(kChest, ObjectType::GAMEOBJECT, {}));
+
+    // Corpse loot closes immediately on translation, jump, and keyboard turn opcodes,
+    // sending CMSG_LOOT_RELEASE, clearing selection, and firing LOOT_CLOSED.
+    for (Opcode moveOp : {Opcode::MSG_MOVE_START_FORWARD,
+                          Opcode::MSG_MOVE_START_BACKWARD,
+                          Opcode::MSG_MOVE_START_STRAFE_LEFT,
+                          Opcode::MSG_MOVE_START_STRAFE_RIGHT,
+                          Opcode::MSG_MOVE_START_TURN_LEFT,
+                          Opcode::MSG_MOVE_START_TURN_RIGHT,
+                          Opcode::MSG_MOVE_JUMP}) {
+        rightClick(s, kCorpseA);
+        s.receive(lootResponse(kCorpseA, 12));
+        REQUIRE(s.handler().isLootWindowOpen());
+
+        // Stop/heartbeat packets sent while standing still do not close loot.
+        s.handler().sendMovement(Opcode::MSG_MOVE_STOP);
+        s.handler().sendMovement(Opcode::MSG_MOVE_HEARTBEAT);
+        REQUIRE(s.handler().isLootWindowOpen());
+
+        const size_t mark = s.sent().all().size();
+        events.clear();
+        s.handler().sendMovement(moveOp);
+        CHECK_FALSE(s.handler().isLootWindowOpen());
+        CHECK(since(s, mark) == std::vector<Sent>{sent(Opcode::CMSG_LOOT_RELEASE, kCorpseA),
+                                                  sent(Opcode::CMSG_SET_SELECTION, 0)});
+        CHECK(std::find(events.begin(), events.end(), "LOOT_CLOSED") != events.end());
+    }
+
+    // World GameObject chest loot also closes immediately on movement.
+    {
+        s.receive(lootResponse(kChest, 25));
+        REQUIRE(s.handler().isLootWindowOpen());
+        const size_t mark = s.sent().all().size();
+        events.clear();
+        s.handler().sendMovement(Opcode::MSG_MOVE_START_FORWARD);
+        CHECK_FALSE(s.handler().isLootWindowOpen());
+        CHECK(since(s, mark) == std::vector<Sent>{sent(Opcode::CMSG_LOOT_RELEASE, kChest)});
+        CHECK(std::find(events.begin(), events.end(), "LOOT_CLOSED") != events.end());
+    }
+
+    // Inventory container loot (e.g. Small Barnacled Clam, HIGHGUID_ITEM) stays open
+    // across turns, forward movement, and jumps, matching Native 2.4.3.
+    {
+        s.receive(lootResponse(kClam, 5));
+        REQUIRE(s.handler().isLootWindowOpen());
+        events.clear();
+        s.handler().sendMovement(Opcode::MSG_MOVE_START_TURN_LEFT);
+        s.handler().sendMovement(Opcode::MSG_MOVE_START_FORWARD);
+        s.handler().sendMovement(Opcode::MSG_MOVE_JUMP);
+        CHECK(s.handler().isLootWindowOpen());
+        CHECK(std::find(events.begin(), events.end(), "LOOT_CLOSED") == events.end());
+        s.handler().closeLoot();
+    }
+}

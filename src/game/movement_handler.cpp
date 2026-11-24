@@ -816,15 +816,38 @@ void MovementHandler::sendMovement(Opcode opcode) {
 
     // Cancel any timed non-channel cast, plus food/water restoration, the moment
     // the player starts moving. Other channels retain their normal behavior.
+    const bool isPositionalMove =
+        opcode == Opcode::MSG_MOVE_START_FORWARD  ||
+        opcode == Opcode::MSG_MOVE_START_BACKWARD ||
+        opcode == Opcode::MSG_MOVE_START_STRAFE_LEFT  ||
+        opcode == Opcode::MSG_MOVE_START_STRAFE_RIGHT ||
+        opcode == Opcode::MSG_MOVE_JUMP;
     if (owner_.isRestoring() || (owner_.isCasting() && !owner_.isChanneling())) {
-        const bool isPositionalMove =
-            opcode == Opcode::MSG_MOVE_START_FORWARD  ||
-            opcode == Opcode::MSG_MOVE_START_BACKWARD ||
-            opcode == Opcode::MSG_MOVE_START_STRAFE_LEFT  ||
-            opcode == Opcode::MSG_MOVE_START_STRAFE_RIGHT ||
-            opcode == Opcode::MSG_MOVE_JUMP;
         if (isPositionalMove) {
             owner_.cancelCast();
+        }
+    }
+
+    // Native 2.4.3 closes world loot (corpses, chests, gather nodes) the instant
+    // the player starts any translation, jump, or keyboard turn, while keeping
+    // inventory-container loot (clams, lockboxes, quest bags) open while moving.
+    if (owner_.isLootWindowOpen()) {
+        const bool isLootClosingMove =
+            isPositionalMove ||
+            opcode == Opcode::MSG_MOVE_START_TURN_LEFT  ||
+            opcode == Opcode::MSG_MOVE_START_TURN_RIGHT ||
+            opcode == Opcode::MSG_MOVE_START_ASCEND     ||
+            opcode == Opcode::MSG_MOVE_START_DESCEND;
+        if (isLootClosingMove) {
+            const uint64_t lootGuid = owner_.getCurrentLoot().lootGuid;
+            if (lootGuid != 0) {
+                const auto lootEntity = owner_.getEntityManager().getEntity(lootGuid);
+                if (lootEntity && (lootEntity->getType() == ObjectType::UNIT ||
+                                   lootEntity->getType() == ObjectType::CORPSE ||
+                                   lootEntity->getType() == ObjectType::GAMEOBJECT)) {
+                    owner_.closeLoot();
+                }
+            }
         }
     }
 
