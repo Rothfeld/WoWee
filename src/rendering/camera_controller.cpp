@@ -584,6 +584,20 @@ glm::vec3 CameraController::moveBodyOnFootOnce(const glm::vec3& start, const glm
             move.position = rest->position;
             move.support = movement::BodySupport::Walkable;
             move.soleOnGround = movement::isBodySoleOnGround(*rest, minWalkable);
+        } else if (gravitySuspendTimer_ > 0.0f && !groundNotStreamedYet(move.position.x, move.position.y)) {
+            // The ground has arrived further down than a step: the tile under
+            // the body is in, with its buildings, and there is a floor below
+            // the feet. The hold ends and the body falls to it. Native set
+            // 2.36 yd over the Orgrimmar ramp by a teleport (1816.0, -4241.3,
+            // 44.0) stands on the ramp before the first key; held for the
+            // whole ten seconds, WoWee walked on air at 43.99.
+            const float feet = move.position.z + 0.05f;
+            const auto terrain = terrainManager ? terrainManager->getHeightAt(move.position.x, move.position.y)
+                                                : std::nullopt;
+            const bool below = (terrain && *terrain <= feet) ||
+                (wmoRenderer && wmoRenderer->getFloorHeight(move.position.x, move.position.y, feet)) ||
+                (m2Renderer && m2Renderer->getFloorHeight(move.position.x, move.position.y, feet));
+            if (below) gravitySuspendTimer_ = 0.0f;
         }
     }
     if (move.support == movement::BodySupport::Walkable && gravitySuspendTimer_ > 0.0f)
