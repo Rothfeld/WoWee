@@ -184,4 +184,19 @@ inline constexpr bool shouldPreserveUpperBodyStanceOnShuffle(const ShuffleUpperB
     return isStationaryUpperBodyStance(in.previousAnimId);
 }
 
+// When a looping base-animation change preserves an active non-looping
+// upper-body swing and its queued follow-up swing (e.g. a creature's
+// MonsterMove ends mid-swing: Run -> ReadyUnarmed/Stand, or changes gait
+// Run -> Walk), retarget the queued swing's return animation to the new
+// looping base so completing the follow-up never resurrects a stale
+// locomotion animation (Run/Walk/Swim) while stationary with locomotionSpeed 0.
+inline constexpr uint32_t retargetPendingMeleeReturnOnBaseChange(
+    uint32_t pendingReturnAnim, uint32_t incomingAnimId, bool incomingLoop,
+    bool upperBodyOneShotActive, bool riding) {
+    if (riding || !incomingLoop || !upperBodyOneShotActive || isTurnShuffleAnimation(incomingAnimId)) {
+        return pendingReturnAnim;
+    }
+    return incomingAnimId;
+}
+
 } // namespace wowee::rendering

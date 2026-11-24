@@ -217,3 +217,42 @@ TEST_CASE("Turn shuffle preserves stationary upper-body stance above SpineLow", 
     playIn.incomingHoldFinalPose = false;
     CHECK(shouldPlayOnUpperBodyOverLocomotion(playIn));
 }
+
+TEST_CASE("Queued follow-up swing retargets stale locomotion return when MonsterMove ends",
+          "[animation][upper-body]") {
+    // Morogrim Tidewalker (SeaGiant.m2) swings twice just before MonsterMove
+    // ends: the queued second swing captured returnAnim = RUN while moving.
+    // When arrival switches the looping base Run -> ReadyUnarmed (or Stand /
+    // SwimIdle / FlyIdle) while the first upper-body swing is still in flight,
+    // the queued follow-up must return to the new idle base instead of
+    // resurrecting RUN at locomotionSpeed == 0 (which freezes the lower body).
+    CHECK(retargetPendingMeleeReturnOnBaseChange(
+        anim::RUN, anim::READY_UNARMED, /*incomingLoop=*/true,
+        /*upperBodyOneShotActive=*/true, /*riding=*/false) == anim::READY_UNARMED);
+    CHECK(retargetPendingMeleeReturnOnBaseChange(
+        anim::RUN, anim::STAND, /*incomingLoop=*/true,
+        /*upperBodyOneShotActive=*/true, /*riding=*/false) == anim::STAND);
+    CHECK(retargetPendingMeleeReturnOnBaseChange(
+        anim::SWIM, anim::SWIM_IDLE, /*incomingLoop=*/true,
+        /*upperBodyOneShotActive=*/true, /*riding=*/false) == anim::SWIM_IDLE);
+
+    // Gait change while moving (Run -> Walk) updates returnAnim to the new gait.
+    CHECK(retargetPendingMeleeReturnOnBaseChange(
+        anim::RUN, anim::WALK, /*incomingLoop=*/true,
+        /*upperBodyOneShotActive=*/true, /*riding=*/false) == anim::WALK);
+
+    // Non-looping incoming animations, inactive upper-body one-shots, mounted
+    // riders, and in-place turn shuffles leave pendingReturnAnim untouched.
+    CHECK(retargetPendingMeleeReturnOnBaseChange(
+        anim::RUN, anim::ATTACK_UNARMED, /*incomingLoop=*/false,
+        /*upperBodyOneShotActive=*/true, /*riding=*/false) == anim::RUN);
+    CHECK(retargetPendingMeleeReturnOnBaseChange(
+        anim::READY_UNARMED, anim::STAND, /*incomingLoop=*/true,
+        /*upperBodyOneShotActive=*/false, /*riding=*/false) == anim::READY_UNARMED);
+    CHECK(retargetPendingMeleeReturnOnBaseChange(
+        anim::READY_1H, anim::MOUNT, /*incomingLoop=*/true,
+        /*upperBodyOneShotActive=*/true, /*riding=*/true) == anim::READY_1H);
+    CHECK(retargetPendingMeleeReturnOnBaseChange(
+        anim::STAND, anim::SHUFFLE_LEFT, /*incomingLoop=*/true,
+        /*upperBodyOneShotActive=*/true, /*riding=*/false) == anim::STAND);
+}

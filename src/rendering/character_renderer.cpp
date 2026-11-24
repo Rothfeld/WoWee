@@ -2405,6 +2405,11 @@ void CharacterRenderer::playAnimation(uint32_t instanceId, uint32_t animationId,
     if (!isMeleeSwingAnimation(animationId) &&
         !(instance.upperBodySequenceIndex >= 0 && !instance.upperBodyAnimationLoop)) {
         instance.pendingMeleeSwing.clear();
+    } else if (instance.pendingMeleeSwing.valid()) {
+        instance.pendingMeleeSwing.returnAnim = retargetPendingMeleeReturnOnBaseChange(
+            instance.pendingMeleeSwing.returnAnim, animationId, loop,
+            instance.upperBodySequenceIndex >= 0 && !instance.upperBodyAnimationLoop,
+            instance.riding);
     }
 
     instance.oneShotReturnAnim = loop ? 0 : oneShotReturnAnim;
