@@ -139,5 +139,18 @@ bool isWeaponTrailChannelDead(const WeaponTrailChannel& channel) {
     return true;
 }
 
+float resolveChannelWeaponTrailDuration(float kitDurationSec, float channelRemainingSec) {
+    assert(std::isfinite(kitDurationSec) && kitDurationSec >= 0.0f);
+    assert(std::isfinite(channelRemainingSec));
+    if (channelRemainingSec > 0.0f) {
+        return std::min(kitDurationSec, channelRemainingSec);
+    }
+    return kitDurationSec;
+}
+
+void stopWeaponTrailEmission(ActiveUnitWeaponTrail& trail) {
+    trail.spec.durationSec = std::min(trail.spec.durationSec, trail.elapsed);
+}
+
 }  // namespace rendering
 }  // namespace wowee

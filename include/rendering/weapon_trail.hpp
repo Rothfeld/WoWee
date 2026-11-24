@@ -62,8 +62,21 @@ struct ActiveUnitWeaponTrail {
     uint32_t ownerInstanceId = 0;
     WeaponTrailSpec spec;
     float elapsed = 0.0f;
+    bool fromChannel = false;
+    uint32_t sourceAuraVisualId = 0;
     std::vector<WeaponTrailChannel> channels;
 };
+
+/// Cap a ChannelKit CharProc == 8 weapon trail duration (e.g. kit 370 at 10s)
+/// to the active channel's remaining duration (e.g. 2s for Cabal Executioner
+/// Whirlwind 33500) so the trail never outlives the channel onto subsequent
+/// normal melee swings.
+[[nodiscard]] float resolveChannelWeaponTrailDuration(float kitDurationSec,
+                                                      float channelRemainingSec);
+
+/// Halt new edge emission on an active trail immediately (e.g. when a channel
+/// or aura ends) while letting already-emitted quads fade out smoothly.
+void stopWeaponTrailEmission(ActiveUnitWeaponTrail& trail);
 
 /// Sampling cadence and movement thresholds for weapon trail ribbon edges.
 inline constexpr float kWeaponTrailSampleIntervalSec = 0.020f;

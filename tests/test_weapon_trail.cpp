@@ -242,3 +242,43 @@ TEST_CASE("TBC 2.4.3 Spell/SpellVisual/SpellVisualKit CharProc == 8 matches nati
     REQUIRE(parsed.count(370) == 1);
     CHECK(parsed.at(370).durationSec == Approx(10.0f));
 }
+
+TEST_CASE("Channel weapon trails cap duration to active channel and stop emitting on channel end",
+          "[weapon_trail][channel]") {
+    // Kit 370 (Whirlwind channel, SpellVisual 7591 / spell 33500) authors 10000ms (10s),
+    // but Cabal Executioner channels 33500 for 2000ms (2s). Capping prevents the trail
+    // from persisting onto subsequent normal melee swings for 8 extra seconds.
+    CHECK(resolveChannelWeaponTrailDuration(10.0f, 2.0f) == Approx(2.0f));
+    CHECK(resolveChannelWeaponTrailDuration(1.0f, 5.0f) == Approx(1.0f));
+    CHECK(resolveChannelWeaponTrailDuration(10.0f, 0.0f) == Approx(10.0f));
+
+    auto spec = parseWeaponTrailCharProc(0xFB8713, 20.0f, 10000.0f, 100.0f);
+    REQUIRE(spec.has_value());
+
+    ActiveUnitWeaponTrail trail;
+    trail.ownerInstanceId = 2814;
+    trail.spec = *spec;
+    trail.spec.durationSec = resolveChannelWeaponTrailDuration(spec->durationSec, 2.0f);
+    trail.fromChannel = true;
+    trail.elapsed = 0.8f;
+
+    WeaponTrailChannel ch;
+    ch.weaponInstanceId = 99;
+    stepWeaponTrailChannel(ch, trail.spec, 0.025f, true,
+                           std::make_pair(glm::vec3(0.0f), glm::vec3(1.0f, 0.0f, 0.0f)));
+    stepWeaponTrailChannel(ch, trail.spec, 0.025f, true,
+                           std::make_pair(glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f)));
+    REQUIRE(ch.edges.size() == 2);
+    CHECK_FALSE(isWeaponTrailChannelDead(ch));
+
+    // Channel ends early at 0.8s (MSG_CHANNEL_UPDATE 0)
+    stopWeaponTrailEmission(trail);
+    CHECK(trail.spec.durationSec == Approx(0.8f));
+    CHECK_FALSE(trail.elapsed < trail.spec.durationSec);
+
+    // Subsequent swings after channel end emit no new edges and decay cleanly to dead
+    for (int i = 0; i < 15; ++i) {
+        stepWeaponTrailChannel(ch, trail.spec, 0.025f, /*emitting=*/false, std::nullopt);
+    }
+    CHECK(isWeaponTrailChannelDead(ch));
+}

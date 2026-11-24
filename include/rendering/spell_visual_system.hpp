@@ -529,7 +529,10 @@ private:
     /// Start the kit's CharProc 15 timed opacity fade on the unit, where the kit has one.
     void startKitOpacityFade(uint32_t kitId, uint32_t attachInstanceId);
     /// Start the kit's CharProc 8 weapon swing trail on the unit, where the kit has one.
-    void startKitWeaponTrail(uint32_t kitId, uint32_t attachInstanceId);
+    void startKitWeaponTrail(uint32_t kitId, uint32_t attachInstanceId,
+                             bool fromChannel = false, float channelRemainingSec = 0.0f,
+                             uint32_t sourceAuraVisualId = 0);
+    void stopChannelWeaponTrails(uint32_t attachInstanceId);
     void updateWeaponTrails(float deltaTime);
     void applyCharacterProcedures(uint32_t attachInstanceId, bool immediateOpacity = false);
     void suppressAuraVisual(uint32_t attachInstanceId, uint32_t visualId);
