@@ -145,3 +145,39 @@ TEST_CASE("character pipelines default to LESS_OR_EQUAL depth compare matching D
     CHECK(src.find("VkCompareOp depthCompare = VK_COMPARE_OP_LESS,") == std::string::npos);
     CHECK(src.find("VkCompareOp depthCompare = VK_COMPARE_OP_LESS)") == std::string::npos);
 }
+
+TEST_CASE("weapon texture replacement preserves hardcoded type-0 textures and fills replaceable slots", "[character][m2]") {
+    struct FakeTex {
+        uint32_t type;
+        std::string filename;
+    };
+    using wowee::rendering::collectReplaceableItemTextureSlots;
+
+    // Exarch Maladaar's Sword_1H_Stratholme_D_03.m2: both slots are hardcoded
+    // type-0 filenames (1Hswd_03.blp, WeaponSpec_tan.blp); must NOT be replaced
+    // by ItemDisplayInfo's leftover Sword_1H_Blackwing_A_02 texture.
+    const std::vector<FakeTex> maladaarSword{
+        {0u, "Item\\ObjectComponents\\Weapon\\1Hswd_03.blp"},
+        {0u, "Item\\ObjectComponents\\Weapon\\WeaponSpec_tan.blp"},
+    };
+    CHECK(collectReplaceableItemTextureSlots(maladaarSword).empty());
+
+    // Standard replaceable weapon (e.g. Sword_1H_Blackwing_A_02.m2): type-2 at slot 0.
+    const std::vector<FakeTex> replaceableAt0{
+        {2u, ""},
+        {0u, "ITEM\\OBJECTCOMPONENTS\\WEAPON\\ARMORREFLECT4.BLP"},
+    };
+    CHECK(collectReplaceableItemTextureSlots(replaceableAt0) == std::vector<uint32_t>{0u});
+
+    // Multi-material weapon with hardcoded hilt at slot 0 and replaceable blade/handle at 1/2.
+    const std::vector<FakeTex> multiSlot{
+        {0u, "Item\\ObjectComponents\\Weapon\\Hilt.blp"},
+        {3u, ""},
+        {4u, ""},
+    };
+    CHECK(collectReplaceableItemTextureSlots(multiSlot) == std::vector<uint32_t>{1u, 2u});
+
+    // Legacy single-slot unnamed model (e.g. helm_mail_c_01_bem.m2 type-1 empty filename).
+    const std::vector<FakeTex> legacyUnnamed{{1u, ""}};
+    CHECK(collectReplaceableItemTextureSlots(legacyUnnamed) == std::vector<uint32_t>{0u});
+}

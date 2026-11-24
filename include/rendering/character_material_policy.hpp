@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <vector>
 
 namespace wowee::rendering {
 
@@ -64,6 +65,30 @@ inline bool characterBatchDrawsBefore(int8_t prioA, uint16_t submeshA, uint16_t 
     if (prioA != prioB) return prioA < prioB;
     if (submeshA != submeshB) return submeshA < submeshB;
     return layerA < layerB;
+}
+
+// Select the M2 texture slot indices that should receive an ItemDisplayInfo
+// texture override for an attached weapon/item model.
+// - Explicitly replaceable item slots (2 = object skin, 3 = weapon blade,
+//   4 = weapon handle) always receive the DBC texture.
+// - Only fall back to slot 0 when no replaceable slot exists AND slot 0 has
+//   no hardcoded filename (legacy single-slot unnamed models).
+// - Never overwrite a hardcoded type-0 filename (354 TBC item M2s including
+//   Sword_1H_Stratholme_D_03.m2 on Exarch Maladaar, whose slot 0 is hardcoded
+//   to 1Hswd_03.blp while ItemDisplayInfo.dbc carries Sword_1H_Blackwing_A_02).
+template <typename TextureRange>
+inline std::vector<uint32_t> collectReplaceableItemTextureSlots(const TextureRange& textures) {
+    std::vector<uint32_t> slots;
+    for (uint32_t slot = 0; slot < textures.size(); ++slot) {
+        const uint32_t type = textures[slot].type;
+        if (type == 2 || type == 3 || type == 4) {
+            slots.push_back(slot);
+        }
+    }
+    if (slots.empty() && !textures.empty() && textures[0].filename.empty()) {
+        slots.push_back(0);
+    }
+    return slots;
 }
 
 } // namespace wowee::rendering
