@@ -68,6 +68,13 @@ TEST_CASE("character yaw and canonical yaw convert back to each other") {
     CHECK(canonicalToCharacterYawDeg(0.0f) == Catch::Approx(90.0f).margin(1e-4));
     CHECK(characterYawDegToCanonical(90.0f) == Catch::Approx(0.0f).margin(1e-5));
 
+    // Wrapped negative render yaw (e.g. Serpentshrine Cavern fishing cast at
+    // facingYawDeg = -646.041 == +73.959 deg) maps directly to server yaw 1.29083 rad
+    // rather than mirroring across 45 deg (0.279967 rad = pi/2 - 1.29083).
+    const float fishCanon = characterYawDegToCanonical(-646.041f);
+    const float fishServer = canonicalToServerYaw(fishCanon);
+    CHECK(fishServer == Catch::Approx(73.959f * (PI / 180.0f)).margin(1e-3));
+
     // And it must agree with taking the angle of the render direction directly,
     // which is how the combat auto-turn and the camera both produce it.
     for (float canon = -3.0f; canon <= 3.0f; canon += 0.25f) {

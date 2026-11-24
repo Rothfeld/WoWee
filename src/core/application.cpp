@@ -2664,30 +2664,14 @@ void Application::setState(AppState newState) {
             }
             if (gameHandler) {
                 gameHandler->setFaceCameraProvider([this]() -> float {
-                    // Turn the character to the camera's look direction and report it in
-                    // canonical space (same camera-yaw→canonical mapping as the per-frame
-                    // orientation sync). Lets a fishing cast drop the bobber in front of
-                    // where the player is aiming even while standing still.
+                    // Report the character's current facing in canonical space using the
+                    // shared render-yaw -> canonical conversion so a fishing cast pushes the
+                    // exact live heading to the server before CMSG_CAST_SPELL.
                     if (!renderer || !renderer->getCameraController())
                         return gameHandler ? gameHandler->getMovementInfo().orientation : 0.0f;
-                    // Use the CAMERA's live look yaw (getYaw), not getFacingYaw: the latter is
-                    // the character's facing, which is NOT updated by left-mouse orbit, so while
-                    // aiming at the water standing still it is stale. Turn the character to the
-                    // camera aim and use the same yaw→canonical mapping the (working) melee
-                    // facing uses, so the bobber lands where the player is looking.
-                    float camYawDeg = renderer->getCameraController()->getYaw();
-                    renderer->setCharacterYaw(camYawDeg);
-                    renderer->getCameraController()->setFacingYaw(camYawDeg);
-                    // "Face land to fish" ⇒ the bobber landed 180° opposite the aim, so the
-                    // canonical is a half-turn off here (getYaw's zero is opposite the look
-                    // vector). Add the half-turn so the bobber lands where the camera looks.
-                    float canon = core::coords::normalizeAngleRad(glm::radians(360.0f - camYawDeg));
-                    LOG_WARNING("[FISH-AIM] getYaw=", camYawDeg,
-                                " getFacingYaw=", renderer->getCameraController()->getFacingYaw(),
-                                " charYaw=", renderer->getCharacterYaw(),
-                                " canonicalDeg=", canon * 57.29578f,
-                                " serverYawDeg=", core::coords::canonicalToServerYaw(canon) * 57.29578f);
-                    return canon;
+                    const float facingYawDeg = renderer->getCameraController()->getFacingYaw();
+                    renderer->setCharacterYaw(facingYawDeg);
+                    return core::coords::characterYawDegToCanonical(facingYawDeg);
                 });
 
                 gameHandler->setMeleeSwingCallback([this](uint32_t spellId, bool offHand) {
