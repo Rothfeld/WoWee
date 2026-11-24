@@ -104,10 +104,12 @@ inline glm::vec3 particleEffectiveColor(uint32_t flags,
     return authoredColor * placementLight * instanceTint;
 }
 
-// Flag 0x40 (`InheritVelocity` / `UseBurstMultiplier`, 240 TBC emitters:
-// Gyrocopter, RocketMount, PhoenixPet, WaterElemental #2/#3, WellOfSoulsPain,
-// Firework_RomanCandle): newly spawned detached particles inherit the emitter's
-// frame velocity scaled by `burstMultiplier` (`+0x190`).
+// Flag 0x40 (`InheritVelocity` / `UseBurstMultiplier`, 240 TBC emitters, 0 with
+// child models): in TBC 2.4.3 parent/root emitters (e.g. WaterElemental #2/#3/#6/#7/#23/#24
+// with 0xc49 and burstMultiplier 2.0, Ice_Precast_Med_Hand 0x79/0x169 with 2.0-3.0,
+// ShamanisticRage_State_Hand 0x69 with 3.0) do NOT add `(delta / dt) * burstMultiplier`
+// to detached particle velocity; doing so launched WaterElemental arm/death splashes
+// 10-20 yd into the sky on swings, runs, and death bone motion.
 inline constexpr uint32_t kParticleInheritVelocity = 0x40;
 
 // Twinkle size of a pre-264 emitter's particle (+0x180 speed, +0x184 percent,
@@ -136,26 +138,6 @@ inline float particleTwinkleScale(uint32_t seed, float age, float speed,
     }
     if (scaleMin == scaleMax) return scaleMin;
     return scaleMin + (scaleMax - scaleMin) * (static_cast<float>(h >> 8) / 16777215.0f);
-}
-
-/// Inherited emitter velocity for emitters with flag 0x40 (`burstMultiplier`
-/// at pre-264 +0x190). Detached particles inherit
-/// `((currPos - prevPos) / dt) * burstMultiplier`. NoTrail emitters and
-/// teleport steps (> 10 yd in one step) return zero.
-inline glm::vec3 particleInheritedVelocity(uint32_t flags,
-                                           const glm::mat4& previous,
-                                           const glm::mat4& current,
-                                           const glm::vec3& localPos,
-                                           float dt,
-                                           float burstMultiplier) {
-    if (!(flags & kParticleInheritVelocity) || (flags & kParticleBoneFrame)) return glm::vec3(0.0f);
-    if (dt <= 1e-5f || burstMultiplier == 0.0f) return glm::vec3(0.0f);
-    const glm::vec3 prevPos = glm::vec3(previous * glm::vec4(localPos, 1.0f));
-    const glm::vec3 currPos = glm::vec3(current * glm::vec4(localPos, 1.0f));
-    const glm::vec3 delta = currPos - prevPos;
-    constexpr float kMaxStepDisplacementSq = 100.0f;  // 10 yd teleport guard
-    if (glm::dot(delta, delta) > kMaxStepDisplacementSq) return glm::vec3(0.0f);
-    return (delta / dt) * burstMultiplier;
 }
 
 /// Static wind integration for pre-264 `windVector` (+0x1B4, yards/s) over

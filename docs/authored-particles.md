@@ -186,11 +186,13 @@ Twinkle percent (`+0x184`, 72 TBC emitters `< 1.0`): each twinkle period
 blinks off (`0.0`) otherwise, even when `twinkleScaleMin == twinkleScaleMax`
 (`Archimonde_Fire #1` authors `speed 11, percent 0.9, scale 1.0-1.0`).
 
-Inherited emitter velocity (`0x40` + `burstMultiplier` at `+0x190`, 240 TBC
-`0x40` emitters: `Gyrocopter`, `RocketMount`, `PhoenixPet`, `WaterElemental
-#2/#3` `2.0`, `WellOfSoulsPain` `0.8`, `Firework_RomanCandle` `5.0`): detached
-particles inherit `((currPos - prevPos) / dt) * burstMultiplier` on birth
-(guarded against > 10 yd teleport steps).
+Flag `0x40` (`InheritVelocity`, 240 TBC emitters, 0 with child models) does not
+add `((currPos - prevPos) / dt) * burstMultiplier` to parent emitter particle
+velocity: in native TBC 2.4.3, `WaterElemental.m2` `#2/#3/#6/#7/#23/#24`
+(`0xc49`, `burstMultiplier = 2.0`) keep arm and death water splashes tight
+around the elemental (`~2.5-3.5 yd`) during swings, runs, and death (`Bone 164`
+translating `+2.19 yd` over `667 ms`), whereas adding inherited bone velocity
+launched splashes `10-20 yd` into the sky.
 
 Static wind (`windVector` at `+0x1B4` in yards/s, `windTime` at `+0x1C0` in
 seconds; 14 TBC emitters: `Blacksmith_Smoke` / `Smokestack` `6.3886 s`,

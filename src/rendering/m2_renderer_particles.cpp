@@ -218,8 +218,6 @@ void M2Renderer::emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt
             const glm::mat3 rotMat = particleWorldVelocityBasis(
                 em.flags, birthTransform, velocityScalesWithPlacement, velocityScaleOverride);
             p.velocity = rotMat * (em.emitterType == 2 ? sphereDirection : dir) * speed;
-            p.velocity += particleInheritedVelocity(
-                em.flags, previousBirth, birthTransform, localPos, dt, em.burstMultiplier);
             p.windVector = rotMat * em.windVector;
 
             const float gravity = interpFloat(em.gravity, sampleAnimTime,

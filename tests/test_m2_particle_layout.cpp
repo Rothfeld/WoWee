@@ -883,32 +883,22 @@ TEST_CASE("Twinkle size stays within the authored range", "[m2][particle]") {
     CHECK(particleTwinkleScale(7, 0.3f, 10.0f, 1.0f, 1.0f, 0.0f) == 0.0f);
 }
 
-TEST_CASE("Particle inherited velocity applies burstMultiplier only with flag 0x40", "[m2][particle]") {
+TEST_CASE("WaterElemental 0xc49 splash emitters use authored speed and zSource without inherited bone velocity", "[m2][particle]") {
     using wowee::rendering::kParticleInheritVelocity;
-    using wowee::rendering::kParticleNoTrail;
-    using wowee::rendering::particleInheritedVelocity;
+    using wowee::rendering::particleMovesInYards;
+    using wowee::rendering::sphericalParticleEmission;
 
-    const glm::mat4 prev(1.0f);
-    const glm::mat4 curr = glm::translate(glm::mat4(1.0f), glm::vec3(1.0f, 0.0f, 0.0f));
-    const glm::vec3 localPos(0.0f);
+    // WaterElemental.m2 PE[2,3,6,7,23] author flags=0x00c49 (0x40 set, burstMultiplier=2.0,
+    // 0x8 travels in yards, no 0x20). On Steam Surger / Tidal Surger swings, runs, and death
+    // (Bone 164 translates +2.19 yd over 667 ms), native 2.4.3 keeps splashes within authored
+    // speed/zSource range (~2.5-3.5 yd) and does not add (delta/dt)*burstMultiplier.
+    constexpr uint32_t kWaterSplashFlags = 0x00c49u;
+    CHECK((kWaterSplashFlags & kParticleInheritVelocity) != 0);
+    CHECK(particleMovesInYards(kWaterSplashFlags, /*scalesWithPlacement=*/false));
 
-    // Without flag 0x40 (e.g. Fireball_Missile_Low): no velocity inherited.
-    CHECK(particleInheritedVelocity(0x29u, prev, curr, localPos, 0.1f, 2.0f) == glm::vec3(0.0f));
-    // With NoTrail (0x10): particles stay in bone space, no velocity inherited.
-    CHECK(particleInheritedVelocity(kParticleInheritVelocity | kParticleNoTrail, prev, curr, localPos, 0.1f, 2.0f)
-          == glm::vec3(0.0f));
-    // WaterElemental #2 (0xc49, burstMultiplier 2.0): 1 yd in 0.1 s -> 10 yd/s * 2 = 20 yd/s.
-    const glm::vec3 vWater = particleInheritedVelocity(0xc49u, prev, curr, localPos, 0.1f, 2.0f);
-    CHECK(vWater.x == Catch::Approx(20.0f));
-    CHECK(vWater.y == Catch::Approx(0.0f));
-    CHECK(vWater.z == Catch::Approx(0.0f));
-    // WellOfSoulsPain #0 (0x249, burstMultiplier 0.8): 10 * 0.8 = 8 yd/s.
-    CHECK(particleInheritedVelocity(0x249u, prev, curr, localPos, 0.1f, 0.8f).x == Catch::Approx(8.0f));
-    // Firework_RomanCandle_Missle_01 #2 (0x269, burstMultiplier 5.0): 10 * 5 = 50 yd/s.
-    CHECK(particleInheritedVelocity(0x269u, prev, curr, localPos, 0.1f, 5.0f).x == Catch::Approx(50.0f));
-    // Teleport guard (> 10 yd in one step) returns zero.
-    const glm::mat4 teleported = glm::translate(glm::mat4(1.0f), glm::vec3(50.0f, 0.0f, 0.0f));
-    CHECK(particleInheritedVelocity(0xc49u, prev, teleported, localPos, 0.1f, 2.0f) == glm::vec3(0.0f));
+    const auto em = sphericalParticleEmission(0.139f, 0.222f, 0.0f, 0.0f, 0.5f, kWaterSplashFlags, -0.417f);
+    CHECK(glm::length(em.direction) == Catch::Approx(1.0f).margin(1e-4f));
+    CHECK(em.direction.z > 0.85f);
 }
 
 TEST_CASE("Particle static wind accelerates over windTime and stops afterward", "[m2][particle]") {
