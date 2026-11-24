@@ -851,3 +851,21 @@ TEST_CASE("A steep face the sole would meet stops the walk only where the walk d
         CHECK(ahead > kFrameRun - 0.1f - kFrameRun * (1.0f - rampTop / std::tan(glm::radians(54.0f))) - 1e-3f);
     }
 }
+
+TEST_CASE("The near edge of a top a hair over a yard up is got over when the top falls away behind it", "[body_mover]") {
+    // Astranaar (2770.2, -428.2): a box whose top is 1.006 yd above the floor
+    // at its near edge and slopes down behind it. Native hangs on the edge by
+    // its bevel for two frames (+0.6514, +0.3301) and walks on over the top
+    // with its whole move; its sole, lifted to the yard, passes under the
+    // edge for 0.04 yd of the move. The user's client stood in front of it.
+    Mesh mesh;
+    floorAt(mesh, 0.0f, -20.0f, 1.0f);
+    quad(mesh, {1.0f, -20.0f, 0.0f}, {1.0f, 20.0f, 0.0f}, {1.0f, 20.0f, 1.006f}, {1.0f, -20.0f, 1.006f}, {-1.0f, 0.0f, 0.0f});
+    quad(mesh, {1.0f, -20.0f, 1.006f}, {5.0f, -20.0f, 0.406f}, {5.0f, 20.0f, 0.406f}, {1.0f, 20.0f, 1.006f});
+    const glm::vec3 run(kFrameRun, 0.0f, 0.0f);
+    Walker walker{.position = {-0.5f, 0.0f, 0.0f}};
+    for (int i = 0; i < 14; ++i) walker.frame(mesh, run);
+    CHECK(walker.position.x > 2.0f);
+    CHECK(walker.grounded);
+    CHECK(walker.position.z == Catch::Approx(1.006f - 0.15f * (walker.position.x - 1.0f)).margin(0.01f));
+}

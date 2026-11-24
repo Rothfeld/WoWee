@@ -180,9 +180,7 @@
 //  - Not built in: native steps onto steep faces with its whole move in
 //    places this mover turns aside (Valley of Trials -520.9, -4254.6, 0.48
 //    yd up a 75 degree face; Karabor Sewers 346.8, 814.4, 0.38 yd up a 61
-//    degree face after creeping down a 54 degree bank for five frames), and
-//    gets over the near edge of a box top 1.006 yd above the floor in three
-//    frames (Astranaar 2770.2, -428.2: +0.6514, +0.3301, then onto the top).
+//    degree face after creeping down a 54 degree bank for five frames).
 namespace wowee::rendering::movement {
 
 // What a character's scale (OBJECT_FIELD_SCALE_X times its model's) does to
@@ -198,6 +196,11 @@ inline float bodyScale(float characterScale) {
     assert(characterScale > 0.0f);
     return std::max(1.0f, characterScale);
 }
+
+// How far along a move the sole may be beyond the plane of a steep face it
+// would meet, or the underside over an edge, without the move being stopped
+// (walkBody; measured 0.096 to 0.100 yd in the Valley of Trials).
+inline constexpr float kSoleEntry = 0.1f;
 
 enum class BodySupport { None, Steep, Walkable };
 
@@ -539,7 +542,36 @@ inline BodyMove walkBody(glm::vec3 from, const glm::vec3& requestedDelta, float 
             if (const auto ceiling = firstBodyContact(start, up, radius, height, triangles))
                 up.z = std::max(0.0f, up.z * ceiling->time - kContactSkin);
         if (up.z <= 1e-4f) return result;
-        if (const auto across = firstBodyContact(start + up, delta, radius, height, triangles)) {
+        auto across = firstBodyContact(start + up, delta, radius, height, triangles);
+        // An edge of ground the lifted body's underside meets does not stop
+        // the carry when the underside is over it for no more than
+        // kSoleEntry of the move: the body, put that far past where it met
+        // the edge, is clear of everything and stays so to the move's end.
+        // Native gets over the near edge of a box top 1.006 yd above the
+        // floor (Astranaar, 2770.2, -428.2; the top slopes down behind its
+        // edge): +0.6514 and +0.3301 hung on the edge by its bevel, then on
+        // with its whole move onto the top, its sole lifted to the yard
+        // passing 0.006 yd under the edge for 0.04 yd of the move.
+        if (across && underBevel(*across)) {
+            // The edge is ground's when the face met at it is ground or a
+            // riser: one that shares that edge with ground.
+            bool ofGround = false;
+            for (const auto& triangle : triangles) {
+                const auto contact = sweepBodyTriangle(start + up, delta, radius, height, triangle);
+                if (contact && !contact->standing && underBevel(*contact) &&
+                    std::abs(contact->time - across->time) * travel <= kTie &&
+                    (contact->face.z >= minWalkableNormalZ || isRiser(triangle))) { ofGround = true; break; }
+            }
+            const float past = across->time + kSoleEntry / travel;
+            if (ofGround && past < 1.0f) {
+                const glm::vec3 beyond = start + up + delta * past;
+                bool clear = true;
+                for (const auto& triangle : triangles)
+                    if (bodyDepthInTriangle(beyond, radius, height, triangle) > kContactSkin) { clear = false; break; }
+                if (clear && !firstBodyContact(beyond, delta * (1.0f - past), radius, height, triangles)) across.reset();
+            }
+        }
+        if (across) {
             // The body lifted the whole step height meets something the body
             // at its own height does not reach - a wall leaning out over the
             // floor, a lintel - and the level move met nothing but ground
@@ -736,7 +768,6 @@ inline BodyMove walkBody(glm::vec3 from, const glm::vec3& requestedDelta, float 
         // pillar corner (-4181, -11468) native is turned by the one a box
         // corner meets first, frame by frame, back and forth (14 runs).
         {
-            constexpr float kSoleEntry = 0.1f;
             constexpr float kSameSlope = 1e-3f;
             const float travel = glm::length(delta);
             const glm::vec3 heading = delta / travel;
