@@ -155,6 +155,34 @@
 //    to 0.70 yd ahead and not at 0.56 to 0.64; at 17 ms from 0.085 yd. Both
 //    go along the foot of the steep face in a zigzag; native takes 5 moves
 //    forward in 14 frames.
+//
+// What stops a walk up rising ground
+// (_experiments/20261124T071000Z.movement_collision_parity_round17, solescan.py,
+// boxscan.cpp, boxmeet.cpp; built in, walkBody):
+//  - Ground that rises ahead is walked up - the whole move, the body set down
+//    on it - unless a face that is not ground stops the move as the body
+//    meets it moving level from where it stands; then the whole move is
+//    turned along that face, also where the body set down at the move's end
+//    would rest clear of it. A face steeper than the underside is met by a
+//    lower corner of the body's box and stops the move when met within it. A
+//    flatter one is met by the sole and stops the move when the sole, moved
+//    level, would be more than 0.1 yd beyond the face's plane (Valley of
+//    Trials 0.096 to 0.100, Tanaris 0.098 to 0.151), and only where the walk
+//    does not lead over the face to ground again.
+//  - Of several such faces the flattest turns the move first, of equally
+//    steep ones the first met (Eastern Plaguelands gully, Exodar pillar
+//    corner).
+//  - With moves longer than the body's radius (speeds 1.5 to 3 at 33 ms
+//    frames) native in the Valley of Trials takes the whole move when the
+//    plane is 0.186 yd or more ahead of the sole and slides at 0.159 or
+//    less, whatever the move's length. Not built in: this mover takes such
+//    moves in equal parts.
+//  - Not built in: native steps onto steep faces with its whole move in
+//    places this mover turns aside (Valley of Trials -520.9, -4254.6, 0.48
+//    yd up a 75 degree face; Karabor Sewers 346.8, 814.4, 0.38 yd up a 61
+//    degree face after creeping down a 54 degree bank for five frames), and
+//    gets over the near edge of a box top 1.006 yd above the floor in three
+//    frames (Astranaar 2770.2, -428.2: +0.6514, +0.3301, then onto the top).
 namespace wowee::rendering::movement {
 
 // What a character's scale (OBJECT_FIELD_SCALE_X times its model's) does to
@@ -659,6 +687,134 @@ inline BodyMove walkBody(glm::vec3 from, const glm::vec3& requestedDelta, float 
             !first.edgeMet && !first.leads) {
             first.taken = false;
             if (!first.wall) first.blocker = first.rest->normal;
+        }
+        // Faces that are not ground and stop a move over ground that rises
+        // ahead - a move walked up: lifted, carried and set down with the
+        // sole on ground. They are taken as the body meets them moving level
+        // from where it stands, and the whole move is turned along such a
+        // face from there, also where the body set down at the move's end
+        // would rest clear of it.
+        //
+        // A face steeper than the body's underside toward it is met by a
+        // lower corner of the box (sweepBodyBoxTriangle), and stops the move
+        // when the corner meets it within the move. An edge or corner of a
+        // face against the box's side does not count: native passes a corner
+        // of the Exodar table that the box's side overlaps by its last 0.02
+        // yd without turning (2 frames).
+        //
+        // A face flatter than the underside toward it is met by the sole, and
+        // stops the move when the sole, moved level, would be more than
+        // kSoleEntry beyond the face's plane: native takes a move of L yd
+        // toward such a face when the plane is L - 0.096 yd or more ahead of
+        // its sole and slides along the face when it is L - 0.100 or less -
+        // Valley of Trials (-521.9, -4255.5), 42 degree terrain toward a 52
+        // degree face, moves of 0.105 to 0.289 yd at speeds 0.5 to 1.25 and
+        // 17 and 33 ms frames, 95 frames - and at L - 0.098 against L -
+        // 0.151 on 47 degree terrain toward a 55 degree face in Tanaris
+        // (-7042.8, -3544.2). Measured by where a corner of the box, the
+        // underside or the lifted body meets the face, the frames of the two
+        // places do not separate at one value
+        // (_experiments/20261124T071000Z.movement_collision_parity_round17).
+        // Such a face stops the move only where the walk does not lead over
+        // it to ground again: native walks up a Karabor Sewers ramp (341.8,
+        // 815.1) onto and over a 54 degree bank a third of a yard wide with
+        // whole moves, its plane 0.12 and 0.05 yd ahead of the sole in the
+        // frames before.
+        //
+        // Of several such faces the flattest turns the move first, and of
+        // equally steep ones the first met; a face the turned move then
+        // meets turns it again. In an Eastern Plaguelands gully (2679.4,
+        // -4975.1; terrain of 57, 67, 68 and 75 degrees around one vertex)
+        // native is turned by the 57 degree face in every frame a corner of
+        // the box meets it within the move - also when the 67 degree face is
+        // met 0.002 to 0.05 yd sooner, or the 68 or 75 degree one is touched
+        // already - and by the 75 degree face in the frame the 57 degree one
+        // is out of reach (3 s, 85 frames; turned by the first met, the most
+        // deeply entered or the one run into most squarely the replay leaves
+        // native in 14 to 55 of them, and the free run went up and down 50
+        // times where native does 7). Between two upright walls of an Exodar
+        // pillar corner (-4181, -11468) native is turned by the one a box
+        // corner meets first, frame by frame, back and forth (14 runs).
+        {
+            constexpr float kSoleEntry = 0.1f;
+            constexpr float kSameSlope = 1e-3f;
+            const float travel = glm::length(delta);
+            const glm::vec3 heading = delta / travel;
+            struct Stop { bool met = false; float at = 0.0f; glm::vec3 front{0.0f}; };
+            const auto consider = [&](Stop& stop, float at, const glm::vec3& front) {
+                if (!stop.met || front.z > stop.front.z + kSameSlope ||
+                    (front.z >= stop.front.z - kSameSlope && at < stop.at))
+                    stop = Stop{true, at, front};
+            };
+            // byCorner: faces steeper than the underside, met by a corner
+            // of the box; bySole: flatter ones, by the sole; anyCorner: any
+            // face a corner of the box meets, which is what turns a move
+            // refused for another reason.
+            Stop byCorner, bySole, anyCorner;
+            for (const auto& triangle : triangles) {
+                const glm::vec3 normal = glm::cross(triangle[1] - triangle[0], triangle[2] - triangle[0]);
+                const float area = glm::length(normal);
+                if (area < 1e-5f || normal.z >= minWalkableNormalZ * area) continue;
+                const glm::vec3 front = normal / area;
+                const float into = -glm::dot(front, heading);
+                if (into <= 1e-6f) continue;
+                // How much nearer the face's plane the sole is than the
+                // nearest lower corner of the box.
+                const float soleNearer = radius * kBodyBevel * front.z - radius * (std::abs(front.x) + std::abs(front.y));
+                if (const auto contact = sweepBodyBoxTriangle(from, delta, radius, height, triangle);
+                    contact && contact->corner && contact->time < 1.0f - kContactSkin / travel) {
+                    consider(anyCorner, contact->time, front);
+                    if (soleNearer <= 0.0f) consider(byCorner, contact->time, front);
+                }
+                if (soleNearer <= 0.0f) continue;
+                if (!first.taken || first.level || !first.rest || !isBodySoleOnGround(*first.rest, minWalkableNormalZ)) continue;
+                // The face is there for the body: its underside, moved level, meets it within the move.
+                const auto reached = sweepBodyTriangle(from, delta, radius, height, triangle);
+                if (!reached || reached->standing) continue;
+                const float ahead = glm::dot(front, from - triangle[0]) / into;
+                if (ahead >= -kContactSkin && ahead < travel - kSoleEntry) consider(bySole, ahead / travel, front);
+            }
+            if (bySole.met) {
+                // Whether the walk leads over the face to ground again: the
+                // move repeated from where it ends, set down each time, until
+                // the body rests on something that is not ground. A walk
+                // that stays on ground is past the face already.
+                bool crossed = true;
+                glm::vec3 at = first.end;
+                for (int repeat = 0; repeat < 8; ++repeat) {
+                    const auto rest = lowerBody(at + delta + glm::vec3(0.0f, 0.0f, maxStep), 2.0f * maxStep,
+                                                radius, height, triangles, true);
+                    if (!rest) { crossed = false; break; }
+                    if (!isBodySoleOnGround(*rest, minWalkableNormalZ)) {
+                        const float rise = std::max(0.0f, rest->position.z - at.z);
+                        crossed = rise <= maxStep && leadsToGround(rest->position, delta, maxStep - rise);
+                        break;
+                    }
+                    at = rest->position;
+                }
+                if (crossed) bySole.met = false;
+            }
+            const bool walkedUp = first.taken && !first.level && first.rest &&
+                                  isBodySoleOnGround(*first.rest, minWalkableNormalZ);
+            Stop stop = bySole;
+            if (byCorner.met) consider(stop, byCorner.at, byCorner.front);
+            // A move refused for another reason is turned by the face a
+            // corner of the box meets only for a body that stands on ground:
+            // on a steep face it is on its way down, and what it does there
+            // is the perch's. (Native standing on the 54 degree bank beside
+            // the Karabor Sewers ramp, 346.8, 814.4, creeps down it for five
+            // frames and then steps up onto the 61 degree face ahead; turned
+            // along the 71 degree face its box meets there, the walker crept
+            // along that face for good.)
+            const auto standsOnGround = [&] {
+                const auto under = lowerBody(from, kContactSkin * 4.0f, radius, height, triangles);
+                return under && isBodySoleOnGround(*under, minWalkableNormalZ);
+            };
+            if (walkedUp ? stop.met : (!first.taken && anyCorner.met && standsOnGround())) {
+                first.blocker = walkedUp ? stop.front : anyCorner.front;
+                first.taken = false;
+                first.wall = true;
+            }
         }
         // An edge two faces share is stepped over onto a hold only when the
         // move cannot go on along one of them. Its part along the face it

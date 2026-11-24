@@ -745,3 +745,109 @@ TEST_CASE("A ceiling the lifted body comes up against does not turn the move asi
     CHECK(walker.position.x > -519.7f);
     CHECK(std::abs(walker.position.y + 4254.63f) < 0.1f);
 }
+
+TEST_CASE("Ground rising beside a steep face is walked up only where the body's box clears the face", "[body_mover]") {
+    // Valley of Trials (-521.9, -4255.5), WoWee's own terrain triangles: a
+    // 42 degree face to stand on and the 52 degree face it meets along a
+    // line ahead and to the left. Native at 33 ms frames slides (+0.1021,
+    // +0.0156) along the steep face from (-521.941, -4255.646), the line
+    // 0.565 yd ahead of its sole, and takes its whole move (+0.0687,
+    // +0.2207) from (-521.839, -4255.630), the line 0.696 yd ahead; set down
+    // at the move's end the body rests clear of the steep face from both.
+    const Mesh mesh = {
+        upFacing({-522.916626f, -4256.25f, 47.3643684f}, {-520.833313f, -4258.33301f, 45.8596802f}, {-520.833313f, -4254.1665f, 49.5732269f}),
+        upFacing({-522.916626f, -4256.25f, 47.3643684f}, {-520.833313f, -4254.1665f, 49.5732269f}, {-525.0f, -4254.1665f, 50.4329987f}),
+    };
+    const float dt = 0.033f;
+    const glm::vec3 run(std::cos(1.269f) * 7.0f * dt, std::sin(1.269f) * 7.0f * dt, 0.0f);
+    SECTION("the steep face within the box's reach: the move is turned along it") {
+        const auto rest = lowerBody(glm::vec3(-521.941f, -4255.646f, 48.2f), 1.0f, kRadius, kHeight, mesh);
+        REQUIRE(rest);
+        const BodyMove move = walkBody(rest->position, run, kMaxStepUp, kRadius, kHeight, mesh);
+        CHECK(move.support == BodySupport::Walkable);
+        CHECK(move.position.x - rest->position.x == Catch::Approx(0.1021f).margin(0.003f));
+        CHECK(move.position.y - rest->position.y == Catch::Approx(0.0156f).margin(0.003f));
+    }
+    SECTION("the steep face beyond the box's reach: the whole move is taken") {
+        const auto rest = lowerBody(glm::vec3(-521.839f, -4255.630f, 48.2f), 1.0f, kRadius, kHeight, mesh);
+        REQUIRE(rest);
+        const BodyMove move = walkBody(rest->position, run, kMaxStepUp, kRadius, kHeight, mesh);
+        CHECK(move.support == BodySupport::Walkable);
+        CHECK(move.position.x - rest->position.x == Catch::Approx(0.0687f).margin(0.003f));
+        CHECK(move.position.y - rest->position.y == Catch::Approx(0.2207f).margin(0.003f));
+    }
+}
+
+TEST_CASE("Of the steep faces around a corner the flattest turns the move first", "[body_mover]") {
+    // Eastern Plaguelands gully (2679.4, -4975.1), WoWee's own terrain
+    // triangles around one vertex: floors of 23 and 35 degrees, faces of 57,
+    // 63, 67, 68 and 75 degrees. Native walking west into it slides along the
+    // 57 degree face, creeps back along the foot of the 68 degree one, hops
+    // onto the floor along the 75 degree one and comes round again: 7
+    // reversals of height in 3 s, ending at (2679.434, -4975.101). Turned by
+    // the face met first the walker took the hop every other frame: 43 to 50
+    // reversals.
+    const Mesh mesh = {
+        upFacing({2677.08325f, -4977.08301f, 103.9505f}, {2679.1665f, -4979.1665f, 101.874603f}, {2679.1665f, -4975.0f, 99.8784561f}),
+        upFacing({2677.08325f, -4977.08301f, 103.9505f}, {2679.1665f, -4975.0f, 99.8784561f}, {2675.0f, -4975.0f, 108.133789f}),
+        upFacing({2677.08325f, -4972.9165f, 106.778526f}, {2679.1665f, -4975.0f, 99.8784561f}, {2679.1665f, -4970.83301f, 109.388268f}),
+        upFacing({2677.08325f, -4972.9165f, 106.778526f}, {2675.0f, -4975.0f, 108.133789f}, {2679.1665f, -4975.0f, 99.8784561f}),
+        upFacing({2681.25f, -4977.08301f, 99.788559f}, {2679.1665f, -4975.0f, 99.8784561f}, {2679.1665f, -4979.1665f, 101.874603f}),
+        upFacing({2681.25f, -4977.08301f, 99.788559f}, {2683.33325f, -4975.0f, 98.5081635f}, {2679.1665f, -4975.0f, 99.8784561f}),
+        upFacing({2681.25f, -4972.9165f, 98.6271591f}, {2679.1665f, -4975.0f, 99.8784561f}, {2683.33325f, -4975.0f, 98.5081635f}),
+        upFacing({2681.25f, -4972.9165f, 98.6271591f}, {2679.1665f, -4970.83301f, 109.388268f}, {2679.1665f, -4975.0f, 99.8784561f}),
+    };
+    const float dt = 1.0f / 30.0f;
+    const glm::vec3 run(std::cos(-3.04f) * 7.0f * dt, std::sin(-3.04f) * 7.0f * dt, 0.0f);
+    const BodyMove settled = fallBody(glm::vec3(2681.6f, -4975.35f, 100.0f), glm::vec3(0.0f, 0.0f, -1.5f),
+                                      kRadius, kHeight, mesh);
+    REQUIRE(settled.support == BodySupport::Walkable);
+    Walker walker{.position = settled.position, .baseZ = settled.position.z};
+    int reversals = 0;
+    float last = 0.0f;
+    for (int i = 0; i < 90; ++i) {
+        const float before = walker.position.z;
+        walker.frame(mesh, run, dt);
+        const float dz = walker.position.z - before;
+        if (std::abs(dz) > 0.005f) {
+            if (last * dz < 0.0f) ++reversals;
+            last = dz;
+        }
+    }
+    CHECK(reversals <= 10);
+    CHECK(glm::distance(glm::vec2(walker.position), glm::vec2(2679.434f, -4975.101f)) < 0.1f);
+}
+
+TEST_CASE("A steep face the sole would meet stops the walk only where the walk does not lead over it", "[body_mover]") {
+    // In the proportions of the Karabor Sewers ramp (341.8, 815.1): a 40
+    // degree ramp, a 54 degree bank across it, and ground again behind the
+    // bank. Native walks onto and over a bank a third of a yard wide with
+    // whole moves, and slides along a face of that slope that goes on up
+    // (Valley of Trials, Tanaris) from where its plane is less than the
+    // move less 0.1 yd ahead of the sole.
+    const float rampTop = std::tan(glm::radians(40.0f));
+    Mesh low, tall;
+    for (Mesh* mesh : {&low, &tall}) {
+        floorAt(*mesh, 0.0f, -20.0f, 0.0f);
+        slope(*mesh, 0.0f, 0.0f, 40.0f, rampTop);
+    }
+    const float bankRise = 0.2f * std::tan(glm::radians(54.0f));
+    slope(low, 1.0f, rampTop, 54.0f, bankRise);
+    slope(low, 1.2f, rampTop + bankRise, 20.0f, 3.0f);
+    slope(tall, 1.0f, rampTop, 54.0f, 4.0f);
+    const glm::vec3 run(kFrameRun, 0.0f, 0.0f);
+    SECTION("a bank with ground behind it is walked over") {
+        Walker walker{.position = {-0.5f, 0.0f, 0.0f}};
+        for (int i = 0; i < 12; ++i) walker.frame(low, run);
+        CHECK(walker.position.x > 2.0f);
+    }
+    SECTION("a face that goes on up is not walked up to") {
+        Walker walker{.position = {-0.5f, 0.0f, 0.0f}};
+        for (int i = 0; i < 12; ++i) walker.frame(tall, run);
+        // The plane is level with the sole (1 - x) (1 - tan 40 / tan 54) yd ahead on the ramp.
+        const float ahead = (1.0f - walker.position.x) * (1.0f - rampTop / std::tan(glm::radians(54.0f)));
+        CHECK(walker.position.x < 1.0f);
+        CHECK(ahead < kFrameRun - 0.1f + 1e-3f);
+        CHECK(ahead > kFrameRun - 0.1f - kFrameRun * (1.0f - rampTop / std::tan(glm::radians(54.0f))) - 1e-3f);
+    }
+}

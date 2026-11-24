@@ -151,6 +151,67 @@ inline std::optional<BodyContact> sweepBodyTriangle(const glm::vec3& from,
     return BodyContact{std::max(0.0f,enter),normal,face,false,corner,front};
 }
 
+// The body's box alone - its upright part, from the lower corners at bevel
+// height to the head, without the underside that tapers to the sole - swept
+// by `delta` against the front of one triangle: the time of first contact in
+// [0, 1], or nothing when it misses or already overlaps the triangle.
+//
+// A face steeper than the underside is met by a lower corner of this box
+// before the underside reaches it; such a face stops a walk up rising ground
+// where the box meets it (body_mover.hpp, walkBody).
+struct BodyBoxContact {
+    float time;
+    // A corner of the box met the triangle's face (flat on, an edge or a
+    // side of it): the face's own axis is the one entered last. Otherwise an
+    // edge or corner of the triangle met the box.
+    bool corner;
+};
+inline std::optional<BodyBoxContact> sweepBodyBoxTriangle(const glm::vec3& from, const glm::vec3& delta,
+        float radius, float height, const BodyTriangle& triangle) {
+    assert(radius > 0.0f && height >= radius * kBodyBevel);
+    const float low = radius * kBodyBevel;
+    const glm::vec3 a = triangle[0] - from;
+    const glm::vec3 b = triangle[1] - from;
+    const glm::vec3 c = triangle[2] - from;
+    const std::array edges = {b-a, c-b, a-c};
+    const glm::vec3 triangleNormal = glm::cross(edges[0], edges[1]);
+    if (glm::dot(triangleNormal, triangleNormal) < 1e-10f) return std::nullopt;
+    if (glm::dot(delta, triangleNormal) > 0.0f) return std::nullopt;
+    float enter = -std::numeric_limits<float>::infinity();
+    float leave = std::numeric_limits<float>::infinity();
+    float enterSpeed = 0.0f;
+    float faceEnter = -std::numeric_limits<float>::infinity();
+    const auto axisOverlap = [&](glm::vec3 axis, bool faceAxis = false) {
+        const float lengthSq = glm::dot(axis, axis);
+        if (lengthSq < 1e-10f) return true;
+        axis /= std::sqrt(lengthSq);
+        const float extent = radius * (std::abs(axis.x) + std::abs(axis.y));
+        const float shapeLow = std::min(low*axis.z, height*axis.z) - extent;
+        const float shapeHigh = std::max(low*axis.z, height*axis.z) + extent;
+        const float lowest = std::min({glm::dot(a,axis),glm::dot(b,axis),glm::dot(c,axis)}) - shapeHigh;
+        const float highest = std::max({glm::dot(a,axis),glm::dot(b,axis),glm::dot(c,axis)}) - shapeLow;
+        const float speed = glm::dot(delta,axis);
+        if (std::abs(speed) < 1e-8f) return lowest <= 0.0f && highest >= 0.0f;
+        const float first = std::min(lowest/speed,highest/speed);
+        const float last = std::max(lowest/speed,highest/speed);
+        if (first > enter) { enter=first; enterSpeed=std::abs(speed); }
+        if (faceAxis) faceEnter = first;
+        leave = std::min(leave,last);
+        return enter <= leave;
+    };
+    if (!axisOverlap(triangleNormal, true)) return std::nullopt;
+    for (const glm::vec3& axis : {glm::vec3{1,0,0}, {0,1,0}, {0,0,1}})
+        if (!axisOverlap(axis)) return std::nullopt;
+    for (const auto& edge : edges)
+        for (const glm::vec3& boxEdge : {glm::vec3{1,0,0}, {0,1,0}, {0,0,1}})
+            if (!axisOverlap(glm::cross(edge, boxEdge))) return std::nullopt;
+    if (enter > 1.0f || leave < 0.0f) return std::nullopt;
+    // In the triangle before the move began, deeper than the contact skin:
+    // an overlap, which the move leaves or slides along.
+    if (enter < 0.0f && -enter * enterSpeed > kContactSkin) return std::nullopt;
+    return BodyBoxContact{std::max(0.0f, enter), (enter - faceEnter) * glm::length(delta) <= 1e-4f};
+}
+
 // How deep the body at `from` is inside a triangle: the least distance it
 // would have to move to be clear of it, over the axes sweepBodyTriangle
 // separates on. Zero or less when they are apart.
