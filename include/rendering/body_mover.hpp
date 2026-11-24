@@ -686,6 +686,10 @@ inline BodyMove walkBody(glm::vec3 from, const glm::vec3& requestedDelta, float 
         // Where the step leaves the body in the air above what it would
         // rest on: the height it ends at (at the end of `step`).
         std::optional<float> air;
+        // The move itself, refused because it would end on a hold that
+        // leads nowhere - hung by the bevel on an edge, or on a steep face -
+        // with no wall met by the box.
+        bool hung = false;
     };
     const auto step = [&](const glm::vec3& start, const glm::vec3& delta, float budget) {
         Step result;
@@ -1093,6 +1097,7 @@ inline BodyMove walkBody(glm::vec3 from, const glm::vec3& requestedDelta, float 
             !first.edgeMet && !first.leads && !ontoNextSlope && !ontoGroundsEdge) {
             first.taken = false;
             if (!first.wall) first.blocker = first.rest->normal;
+            first.hung = ownMove;
         }
         // Faces that are not ground and stop a move over ground that rises
         // ahead - a move walked up: lifted, carried and set down with the
@@ -1266,6 +1271,7 @@ inline BodyMove walkBody(glm::vec3 from, const glm::vec3& requestedDelta, float 
                 first.blocker = walkedUp ? stop.front : anyCorner.front;
                 first.taken = false;
                 first.wall = true;
+                first.hung = false;
             }
         }
         // An edge two faces share is stepped over onto a hold only when the
@@ -1355,6 +1361,86 @@ inline BodyMove walkBody(glm::vec3 from, const glm::vec3& requestedDelta, float 
                     // Up to the contact skin short of the face.
                     const float reach = std::max(0.0f, ahead->time - kContactSkin * levelLength / into);
                     from += horizontalDelta * reach;
+                    intent *= 1.0f - reach;
+                    move.position = from;
+                }
+            } else if (taken.hung) {
+                // A step refused because it would end on a hold that leads
+                // nowhere - the lifted body was carried the whole move free,
+                // so no wall is in the way of the body's box within the move
+                // - is walked over the ground up to what the body meets
+                // there that is not ground, when that belongs to a building
+                // or an object; the rest of the move is turned aside from
+                // there.
+                //
+                // Walking along a Stormwind ramp of 20.7 degrees toward the
+                // kerb at the foot of the wall beside it (-8774.14, 832.54;
+                // the kerb's riser leans 7.6 degrees, its nose is 0.39 yd
+                // above the ramp, the wall stands 0.15 yd beyond where the
+                // body's underside meets the nose) native takes the part of
+                // its move up to the nose in every run a whole move would
+                // pass it with the wall still beyond that move: 0.109 to
+                // 0.219 yd of 0.231 from 0.107 to 0.218 yd short of the nose
+                // (6 runs at 33 ms frames), 0.081 and 0.096 of 0.112 and
+                // 0.119 (2 runs at 17 ms), ending 1.0 to 2.7 mm past where
+                // this body's underside touches the nose, lifted by it as
+                // much as its bevel rides up there. In the frames after it
+                // is turned from there - along the wall where its box would
+                // meet the wall within the move, along the riser where it
+                // would not (17 ms). With the wall within the move, 0.013 to
+                // 0.086 yd short of the nose, it is turned along the wall
+                // from where it stands (16 runs of 16; the step above, where
+                // the lifted body meets the wall). Turned along the riser
+                // from where it stood the walker never reached the nose and
+                // crept the other way, down the ramp: 0.28 to 0.89 yd from
+                // native after 3 s in half of the arrival phases.
+                //
+                // Sliding along the foot of the Orgrimmar wall, 0.19 yd off
+                // its 53 degree skirt, past the end of the 77 degree section
+                // above (1817.29, -4242.30): in the frame the lifted body is
+                // carried free native goes 0.186 yd up to the skirt and
+                // slides on along it from there (9 recorded runs the replay
+                // left at that frame).
+                //
+                // Not at a face of the terrain: on 42 degree terrain along
+                // the foot of a 52 degree face in the Valley of Trials
+                // (-522.1, -4255.6) native turns the whole move along that
+                // face from where it stands, 0.07 yd short of it (5 recorded
+                // runs the walk up to it got wrong).
+                // (_experiments/20261124T202000Z.movement_collision_parity_round24, kerbscan.py)
+                float lift = 0.0f, reach = 0.0f;
+                std::optional<BodyRest> under;
+                // Twice: the second time with the body at the height its
+                // ground has there.
+                for (int pass = 0; pass < 2; ++pass) {
+                    std::optional<BodyContact> met;
+                    size_t metIndex = 0;
+                    for (size_t index = 0; index < triangles.size(); ++index) {
+                        const auto contact = sweepBodyTriangle(from + glm::vec3(0.0f, 0.0f, lift), horizontalDelta,
+                                                               radius, height, triangles[index]);
+                        if (!contact || contact->standing || contact->face.z >= minWalkableNormalZ) continue;
+                        if (!met || contact->time < met->time) { met = contact; metIndex = index; }
+                    }
+                    under.reset();
+                    if (!met || metIndex < heightfieldTriangles) break;
+                    const float into = -glm::dot(horizontalDelta, met->normal);
+                    if (into <= 1e-6f) break;
+                    // Up to the contact skin short of it.
+                    reach = std::clamp(met->time - kContactSkin / into, 0.0f, 1.0f);
+                    // Set down on the ground there, no higher than ground
+                    // can rise over that way.
+                    const float way = travel * reach;
+                    const float rise = way * std::sqrt(1.0f - minWalkableNormalZ * minWalkableNormalZ) / minWalkableNormalZ +
+                                       kContactSkin * 2.0f;
+                    under = lowerBody(from + horizontalDelta * reach + glm::vec3(0.0f, 0.0f, rise),
+                                      rise + way * kBodyBevel, radius, height, triangles, true);
+                    if (under && !isBodySoleOnGround(*under, minWalkableNormalZ)) under.reset();
+                    if (!under) break;
+                    lift = under->position.z - from.z;
+                }
+                WOWEE_BODY_TRACE("  hung: walked up to what is met, %.4f of the move, %d\n", reach, under.has_value());
+                if (under) {
+                    from = under->position;
                     intent *= 1.0f - reach;
                     move.position = from;
                 }

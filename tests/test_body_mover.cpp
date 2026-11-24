@@ -702,6 +702,56 @@ TEST_CASE("The nose of a step does not turn aside a move that a wall beyond it s
     CHECK(walker.position.z > settled.position.z + 0.04f);
 }
 
+TEST_CASE("A walk toward the nose of a step goes up to the nose where the wall beyond is out of the move's reach", "[body_mover]") {
+    // The same Stormwind kerb. Native 0.2175 yd short of where its underside
+    // meets the kerb's nose, the wall 0.37 yd on and its move 0.245: it takes
+    // 0.2188 yd of the move, (+0.1318, -0.1746), and creeps up the ramp along
+    // the wall from there, (-0.0043, -0.0033, +0.0021) a frame for 71
+    // frames. Turned along the riser from where it stood, the walker crept
+    // down the ramp and never came to the nose.
+    const Mesh mesh = {
+        {{{-8782.77051f, 825.299805f, 97.6522751f}, {-8764.28125f, 839.539429f, 88.8507843f}, {-8789.23145f, 833.422852f, 97.6522751f}}},
+        {{{-8776.94922f, 829.864441f, 95.1943359f}, {-8773.17285f, 832.868713f, 93.4031448f}, {-8776.03711f, 830.655701f, 94.3608398f}}},
+        {{{-8776.94922f, 829.864441f, 95.1943359f}, {-8772.97656f, 832.62262f, 93.4264603f}, {-8773.17285f, 832.868713f, 93.4031448f}}},
+        {{{-8776.72656f, 829.639771f, 97.0967255f}, {-8772.97656f, 832.62262f, 97.0967255f}, {-8772.97656f, 832.62262f, 93.4264603f}}},
+    };
+    const float heading = -0.9229f;
+    const BodyMove settled = fallBody(glm::vec3(-8774.2266f, 832.6461f, 93.7f), glm::vec3(0.0f, 0.0f, -1.5f),
+                                      kRadius, kHeight, mesh);
+    REQUIRE(settled.support == BodySupport::Walkable);
+    {
+        const float dt = 0.035f;
+        const glm::vec3 run(std::cos(heading) * 7.0f * dt, std::sin(heading) * 7.0f * dt, 0.0f);
+        Walker walker{.position = settled.position, .baseZ = settled.position.z};
+        walker.frame(mesh, run, dt);
+        CHECK(glm::distance(glm::vec2(walker.position), glm::vec2(-8774.0947f, 832.4715f)) < 0.006f);
+        CHECK(walker.grounded);
+        const glm::vec3 arrived = walker.position;
+        const float dt33 = 0.0337f;
+        const glm::vec3 run33(std::cos(heading) * 7.0f * dt33, std::sin(heading) * 7.0f * dt33, 0.0f);
+        for (int i = 0; i < 71; ++i) walker.frame(mesh, run33, dt33);
+        // Native: (-0.311, -0.242, +0.147) from there.
+        CHECK(walker.position.x - arrived.x == Catch::Approx(-0.311f).margin(0.06f));
+        CHECK(walker.position.y - arrived.y == Catch::Approx(-0.242f).margin(0.06f));
+        CHECK(walker.position.z - arrived.z == Catch::Approx(0.147f).margin(0.03f));
+    }
+    {
+        // At 17 ms frames the wall stays out of reach at the nose as well:
+        // native creeps down the ramp along the riser from there,
+        // (+0.0016, +0.0011, -0.0005) a frame.
+        const float dt = 0.017f;
+        const glm::vec3 run(std::cos(heading) * 7.0f * dt, std::sin(heading) * 7.0f * dt, 0.0f);
+        Walker walker{.position = settled.position, .baseZ = settled.position.z};
+        for (int i = 0; i < 3; ++i) walker.frame(mesh, run, dt);
+        CHECK(glm::distance(glm::vec2(walker.position), glm::vec2(-8774.0947f, 832.4715f)) < 0.01f);
+        const glm::vec3 arrived = walker.position;
+        for (int i = 0; i < 60; ++i) walker.frame(mesh, run, dt);
+        CHECK(walker.position.x > arrived.x + 0.05f);
+        CHECK(walker.position.y > arrived.y + 0.03f);
+        CHECK(walker.position.z < arrived.z - 0.01f);
+    }
+}
+
 TEST_CASE("A walker on the nose of a step is turned by the box beyond it and gets onto the stairs", "[body_mover]") {
     // Orgrimmar (1976.75, -4802.29), WoWee's own triangles: a floor, a step
     // up to the next floor, a box standing on the upper floor 0.20 yd beyond
