@@ -95,3 +95,51 @@ TEST_CASE("heightfield above the swimmer is not a liquid's bed", "[swim]") {
     CHECK(liquidBedTerrain(-106.6f, -97.6f) == std::optional<float>(-106.6f));
     CHECK_FALSE(liquidBedTerrain(std::nullopt, -97.6f).has_value());
 }
+
+TEST_CASE("falling into deep water waits until feet reach swim entry depth", "[swim]") {
+    using wowee::rendering::shouldBeInWater;
+    constexpr float waterH = 8.199f;       // Slave Pens pool surface
+    constexpr float poolFloor = 3.135f;    // ~5 yd deep pool
+    constexpr float enterDepth = 1.523f;   // Human Male swimSurfaceOffset_
+    constexpr float exitDepth = 0.85f;
+
+    // Toes barely below water surface while falling: still falling, not swimming yet.
+    CHECK_FALSE(shouldBeInWater(false, waterH, waterH - 0.05f, poolFloor, enterDepth, exitDepth));
+    CHECK_FALSE(shouldBeInWater(false, waterH, waterH - 1.00f, poolFloor, enterDepth, exitDepth));
+    // Once feet cross waterH - enterDepth: enter swimming.
+    CHECK(shouldBeInWater(false, waterH, waterH - enterDepth - 0.001f, poolFloor, enterDepth, exitDepth));
+    CHECK(shouldBeInWater(false, waterH, waterH - 2.03f, poolFloor, enterDepth, exitDepth));
+
+    // Grounded beach walk-in (feet == floor): enters at exact enterDepth.
+    CHECK_FALSE(shouldBeInWater(false, waterH, waterH - 1.20f, waterH - 1.20f, enterDepth, exitDepth));
+    CHECK(shouldBeInWater(false, waterH, waterH - enterDepth - 0.001f, waterH - enterDepth - 0.001f, enterDepth, exitDepth));
+
+    // Shallow puddle (< enterDepth): never enters swimming.
+    CHECK_FALSE(shouldBeInWater(false, waterH, waterH - 1.60f, waterH - 0.50f, enterDepth, exitDepth));
+
+    // Already swimming: uses exitDepth hysteresis for shore exit.
+    CHECK(shouldBeInWater(true, waterH, waterH - 1.00f, waterH - 1.00f, enterDepth, exitDepth));
+    CHECK_FALSE(shouldBeInWater(true, waterH, waterH - 0.70f, waterH - 0.70f, enterDepth, exitDepth));
+}
+
+TEST_CASE("water entry velocity retains downward plunge proportional to impact speed", "[swim]") {
+    using wowee::rendering::waterEntryVerticalVelocity;
+    // Gentle walk-in or upward velocity produces zero plunge.
+    CHECK(waterEntryVerticalVelocity(0.0f) == 0.0f);
+    CHECK(waterEntryVerticalVelocity(5.0f) == 0.0f);
+
+    // Downward impact retains 20% velocity -> under 6/s damping, plunges ~|v|/30 yd.
+    CHECK(waterEntryVerticalVelocity(-15.0f) == Catch::Approx(-3.0f));
+    CHECK(waterEntryVerticalVelocity(-22.5f) == Catch::Approx(-4.5f));
+    // Simulate damping loop at 60 Hz for 0.5 s: total plunge matches ~|v|/30 yd.
+    float vz = waterEntryVerticalVelocity(-20.5f);
+    float dz = 0.0f;
+    constexpr float dt = 1.0f / 60.0f;
+    for (int i = 0; i < 30; ++i) {
+        vz *= std::max(0.0f, 1.0f - 6.0f * dt);
+        if (std::abs(vz) < 0.05f) vz = 0.0f;
+        dz += vz * dt;
+    }
+    CHECK(dz < -0.50f);
+    CHECK(dz > -0.80f);
+}

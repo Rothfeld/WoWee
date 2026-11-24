@@ -685,8 +685,6 @@ glm::vec3 CameraController::moveFollowedCharacter(float /*deltaTime*/, FrameInpu
         // (_experiments/20261117T174000Z.bfd_liquid_pair7). Exit is unmeasured.
         const float SWIM_ENTER_WATER_DEPTH = swimSurfaceOffset_;
         constexpr float SWIM_EXIT_WATER_DEPTH  = 0.85f;
-        const float MIN_SWIM_WATER_DEPTH =
-            swimming ? SWIM_EXIT_WATER_DEPTH : SWIM_ENTER_WATER_DEPTH;
         bool inWater = false;
         // Water Walk: treat water surface as ground - player walks on top, not through.
         if (waterWalkActive_ && waterH && targetPos.z >= *waterH - 0.5f) {
@@ -721,11 +719,13 @@ glm::vec3 CameraController::moveFollowedCharacter(float /*deltaTime*/, FrameInpu
                 if (m2Renderer) m2H = m2Renderer->getFloorHeight(targetPos.x, targetPos.y, targetPos.z + 1.0f);
                 auto floorH = selectHighestFloor(terrainH, wmoH, m2H);
 
-                // Prefer measured depth from floor; if floor sample is missing,
-                // fall back to feet-to-surface depth.
+                // Entering swim requires both the character's feet and the water
+                // column over the floor to reach SWIM_ENTER_WATER_DEPTH so a
+                // falling character plunges through the surface instead of
+                // snapping into swim the instant their toes touch waterH.
                 float depthFromFeet = (*waterH - targetPos.z);
-                inWater = (floorH && ((*waterH - *floorH) >= MIN_SWIM_WATER_DEPTH)) ||
-                          (!floorH && (depthFromFeet >= MIN_SWIM_WATER_DEPTH));
+                inWater = shouldBeInWater(swimming, *waterH, targetPos.z, floorH,
+                                          SWIM_ENTER_WATER_DEPTH, SWIM_EXIT_WATER_DEPTH);
 
                 // Ramp exit assist: when swimming forward near the surface toward a
                 // reachable floor (dock/shore ramp), switch to walking sooner.
@@ -831,22 +831,20 @@ glm::vec3 CameraController::moveFollowedCharacter(float /*deltaTime*/, FrameInpu
         if (waterJumpAirborne_) inWater = false;
 
         if (inWater) {
-        // Falling into water: native stops at the depth a swimmer floats at,
-        // in the frame it gets there, and does not sink on. Off the
-        // Dustwallow plank ramp (-2692, -4692) it enters at 19 yd/s and
-        // swims at z -1.82 from that frame; in the Undercity canal at -66.06.
-        // WoWee carried the fall on to -3.44 and swam at that depth.
+        // Falling into water: native 2.4.3 keeps falling until feet reach
+        // `waterH - swimSurfaceOffset_` and carries the downward plunge below
+        // float depth (e.g. Dustwallow bay 1..40 yd drops settle 0.2..0.9 yd
+        // below float depth; Slave Pens 12 yd drop puts the character under
+        // water rather than clamping shoulders above the waterline).
         const bool fellIn = !swimming && !grounded && verticalVelocity < 0.0f && waterH.has_value();
         swimming = true;
         if (fellIn) {
-            verticalVelocity = 0.0f;
-            targetPos.z = std::max(targetPos.z, *waterH - swimSurfaceOffset_);
+            verticalVelocity = waterEntryVerticalVelocity(verticalVelocity);
         }
         // Swim movement follows look pitch (f.forward/back), while strafe stays
         // lateral for stable control.
         float swimSpeed = (swimSpeedOverride_ > 0.0f && swimSpeedOverride_ < 500.0f && !std::isnan(swimSpeedOverride_))
                               ? swimSpeedOverride_ : f.speed * SWIM_SPEED_FACTOR;
-        float waterSurfaceZ = waterH ? (*waterH - swimSurfaceOffset_) : targetPos.z;
         // Where the swimmer stood before this step; the surface clamp below can
         // lower the feet under a shallow floor they were resting on.
         const float swimStartZ = targetPos.z;
@@ -879,31 +877,16 @@ glm::vec3 CameraController::moveFollowedCharacter(float /*deltaTime*/, FrameInpu
         // Space's upward impulse is handled above. X swims down continuously
         // at the server's swim speed, rather than an unrelated buoyancy speed.
         bool diveKey = f.xDown;
-        bool diveIntent = diveKey || (f.nowForward && (swimForward.z < -0.28f));
         if (diveKey) {
             verticalVelocity = -swimSpeed;
         } else {
-            // No vertical key held. Retail holds depth here rather than
-            // pulling the swimmer back to the surface: a character can idle
-            // underwater and drown doing it, which a surface spring would
-            // make impossible. The old behaviour yanked you up unless you
-            // were actively diving, so a dive only held while a key was
-            // down. Bleed off whatever vertical momentum was carried in and
-            // then hover.
+            // No vertical key held. Native 2.4.3 holds depth at every depth
+            // below `waterH - swimSurfaceOffset_` (measured at -1.6, -2.0,
+            // -2.5, -4.0 yd under Dustwallow water and after falls into the
+            // Slave Pens pool): bleed off any vertical momentum carried in
+            // and then hover without pulling a submerged swimmer back up.
             verticalVelocity *= std::max(0.0f, 1.0f - SWIM_VERTICAL_DAMPING * f.physicsDeltaTime);
             if (std::abs(verticalVelocity) < 0.05f) verticalVelocity = 0.0f;
-
-            // Near the surface a body does float up to it, which is what
-            // keeps a swimmer's head out of the water instead of drifting
-            // just below. Only within a short band, and not while the look
-            // direction says the player is diving.
-            const float surfaceErr = waterSurfaceZ - targetPos.z;
-            if (!diveIntent && surfaceErr > 0.0f && surfaceErr < SWIM_FLOAT_BAND) {
-                verticalVelocity += surfaceErr * 6.0f * f.physicsDeltaTime;
-                if (surfaceErr < 0.06f && std::abs(verticalVelocity) < 0.35f) {
-                    verticalVelocity = 0.0f;
-                }
-            }
         }
 
         targetPos.z += verticalVelocity * f.physicsDeltaTime;
@@ -2984,9 +2967,8 @@ void CameraController::updateFreeFlyCamera(float /*deltaTime*/, FrameInput& f) {
         // (_experiments/20261117T174000Z.bfd_liquid_pair7). Exit is unmeasured.
         const float SWIM_ENTER_WATER_DEPTH = swimSurfaceOffset_;
         constexpr float SWIM_EXIT_WATER_DEPTH  = 0.85f;
-        const float MIN_SWIM_WATER_DEPTH =
-            swimming ? SWIM_EXIT_WATER_DEPTH : SWIM_ENTER_WATER_DEPTH;
-        inWater = (floorH && ((*waterH - *floorH) >= MIN_SWIM_WATER_DEPTH)) || (isOcean && !floorH);
+        inWater = shouldBeInWater(swimming, *waterH, newPos.z - eyeHeight, floorH,
+                                  SWIM_ENTER_WATER_DEPTH, SWIM_EXIT_WATER_DEPTH);
         }
     }
 

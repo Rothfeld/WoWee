@@ -55,4 +55,46 @@ inline std::optional<float> liquidBedTerrain(const std::optional<float>& terrain
     return terrain && *terrain <= probeZ ? terrain : std::nullopt;
 }
 
+/// Whether a character at `feetZ` in water with surface `waterH` and optional
+/// floor `floorH` is in swimming state.
+///
+/// Entering swim (`!alreadySwimming`) requires the character's own feet to be
+/// at least `enterDepth` (`swimSurfaceOffset_`) below `waterH` AND the water
+/// column over `floorH` (when present) to be at least `enterDepth`. Checking
+/// only `waterH - floorH` triggered swimming the instant a falling character's
+/// toes touched `waterH` (stopping them at the surface instead of plunging into
+/// the water column as native 2.4.3 does in Slave Pens and Dustwallow bay).
+/// Grounded walk-in has `feetZ == *floorH`, so it enters at the exact same depth.
+///
+/// While already swimming, `exitDepth` hysteresis keeps the existing floor/feet
+/// depth test so shore exits remain smooth.
+inline bool shouldBeInWater(bool alreadySwimming, float waterH, float feetZ,
+                            const std::optional<float>& floorH,
+                            float enterDepth, float exitDepth) {
+    const float depthFromFeet = waterH - feetZ;
+    if (!alreadySwimming) {
+        if (depthFromFeet < enterDepth) return false;
+        return !floorH || (waterH - *floorH) >= enterDepth;
+    }
+    return (floorH && (waterH - *floorH) >= exitDepth) ||
+           (!floorH && depthFromFeet >= exitDepth);
+}
+
+/// Retained downward vertical velocity on the frame a falling character enters
+/// swimming (`feetZ <= waterH - swimSurfaceOffset_`).
+///
+/// Native 2.4.3 carries a falling character past float depth and holds them
+/// underwater (Dustwallow bay `waterH = 0.0`: 1 yd drop -> -1.84 yd, 6 yd ->
+/// -1.80 yd, 15 yd -> -2.22 yd, 20 yd 5-trial mean -> -2.11 yd, 40 yd -> -2.42 yd;
+/// Slave Pens `waterH = 8.20`: 12 yd drop -> ~6.17 yd underwater). Retaining 20%
+/// of downward entry speed into the existing `SWIM_VERTICAL_DAMPING = 6.0 /s`
+/// deceleration yields frame-rate-independent plunge depth `|v| / 30` (~0.23 yd
+/// at 1 yd drop up to ~0.95 yd at 40 yd drop), stopping smoothly in ~0.1 s.
+inline constexpr float kWaterEntryVelocityRetention = 0.20f;
+inline float waterEntryVerticalVelocity(float impactVerticalVelocity) {
+    return impactVerticalVelocity < 0.0f
+        ? impactVerticalVelocity * kWaterEntryVelocityRetention
+        : 0.0f;
+}
+
 }  // namespace wowee::rendering
