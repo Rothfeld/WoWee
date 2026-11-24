@@ -3467,7 +3467,12 @@ public:
     /// A string global of the loaded interface (FrameXML GlobalStrings.lua),
     /// empty when the interface has none by that name or is not loaded.
     using GlobalStringLookup = std::function<std::string(const char* name)>;
+    using GlobalStringsReadyLookup = std::function<bool()>;
     void setGlobalStringLookup(GlobalStringLookup lookup) { globalStringLookup_ = std::move(lookup); }
+    void setGlobalStringsReadyLookup(GlobalStringsReadyLookup lookup) { globalStringsReadyLookup_ = std::move(lookup); }
+    [[nodiscard]] bool hasGlobalStrings() const {
+        return globalStringsReadyLookup_ ? globalStringsReadyLookup_() : static_cast<bool>(globalStringLookup_);
+    }
     [[nodiscard]] std::string globalString(const char* name) const {
         return globalStringLookup_ ? globalStringLookup_(name) : std::string{};
     }
@@ -6035,6 +6040,7 @@ private:
     // ---- UI error frame callback ----
     UIErrorCallback uiErrorCallback_;
     GlobalStringLookup globalStringLookup_;
+    GlobalStringsReadyLookup globalStringsReadyLookup_;
 
     uint32_t watchedFactionId_ = 0; // server-authoritative via PLAYER_FIELD_WATCHED_FACTION_INDEX
 

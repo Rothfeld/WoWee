@@ -614,7 +614,7 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
         const char* name = inventoryResultGlobalName(error);
         if (!name) {
             LOG_ERROR("SMSG_INVENTORY_CHANGE_FAILURE: no GlobalStrings line for result ", (int)error);
-        } else {
+        } else if (owner_.hasGlobalStrings()) {
             std::string msg = owner_.globalString(name);
             if (error == 1) msg = formatGlobalString(msg, {std::to_string(requiredLevel)});
             if (msg.empty()) {

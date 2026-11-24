@@ -404,9 +404,13 @@ std::string castFailureText(GameHandler& owner, uint32_t spellId, uint8_t result
         ? noPowerGlobalName(owner.getSpellData(spellId).powerType)
         : castResultGlobalName(result, tbc);
     if (!name) {
-        if (result != 27 && result != 0)  // DONT_REPORT, SUCCESS: nothing to say
+        if (!isSilentCastResult(result, tbc))
             LOG_ERROR("Cast failure text: no GlobalStrings name for result ", static_cast<int>(result),
                       " of spell ", spellId);
+        return {};
+    }
+    if (!owner.hasGlobalStrings()) {
+        LOG_DEBUG("Cast failure text: skipping ", name, " (spell ", spellId, ") before GlobalStrings loaded");
         return {};
     }
     const std::string pattern = owner.globalString(name);

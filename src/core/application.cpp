@@ -1102,6 +1102,9 @@ bool Application::initialize() {
                 if (!addonManager_ || !addonsLoaded_) return std::string{};
                 return addonManager_->getLuaEngine()->globalString(name);
             });
+            gameHandler->setGlobalStringsReadyLookup([this]() {
+                return addonManager_ && addonsLoaded_;
+            });
             // The same route, for a question rather than an instruction.
             gameHandler->setInterfaceQueryCallback([this](const std::string& expr) {
                 if (!addonManager_ || !addonsLoaded_) return false;

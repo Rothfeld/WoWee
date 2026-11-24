@@ -2,7 +2,14 @@
 #include "game/tbc_cast_results.hpp"
 #include "game/cast_result_text.hpp"
 #include "game/inventory_result_text.hpp"
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <regex>
+#include <sstream>
+#include <string>
 #include <string_view>
+#include <unordered_set>
 
 using namespace wowee::game;
 
@@ -52,11 +59,82 @@ TEST_CASE("Cast results name their GlobalStrings line", "[tbc][spells]") {
     CHECK(std::string_view(powerTypeGlobalName(2)) == "FOCUS");
     CHECK(std::string_view(powerTypeGlobalName(3)) == "ENERGY");
     CHECK(powerTypeGlobalName(4) == nullptr);
-    // Every TBC wire value but DONT_REPORT has a name; the TBC enum comment
-    // beside each table entry is that name.
+    // Every non-silent TBC wire value has a name; silent codes (DONT_REPORT,
+    // plus AUTOTRACK_INTERRUPTED/HUNGER_SATIATED/THIRST_SATIATED which are
+    // absent from TBC GlobalStrings.lua) return nullptr.
     for (size_t raw = 0; raw < kTbcCastResults.size(); ++raw) {
-        if (raw == 0x19) continue;
-        CHECK(castResultGlobalName(kTbcCastResults[raw], true) != nullptr);
+        const uint8_t norm = kTbcCastResults[raw];
+        if (isSilentCastResult(norm, true)) {
+            CHECK(castResultGlobalName(norm, true) == nullptr);
+        } else {
+            CHECK(castResultGlobalName(norm, true) != nullptr);
+        }
+    }
+}
+
+TEST_CASE("Every TBC cast, inventory, mail, and power GlobalStrings key exists in TBC GlobalStrings.lua", "[tbc][spells][inventory][data]") {
+    namespace fs = std::filesystem;
+    fs::path gsPath;
+    if (const char* env = std::getenv("WOWEE_TBC_GLOBALSTRINGS"); env && *env) {
+        gsPath = env;
+    } else if (fs::exists("/workspace/azerothcore/client/wowee-data/expansions/tbc/interface/framexml/globalstrings.lua")) {
+        gsPath = "/workspace/azerothcore/client/wowee-data/expansions/tbc/interface/framexml/globalstrings.lua";
+    } else {
+        SKIP("TBC globalstrings.lua not available (set WOWEE_TBC_GLOBALSTRINGS)");
+    }
+
+    std::ifstream in(gsPath);
+    REQUIRE(in.good());
+    std::stringstream ss;
+    ss << in.rdbuf();
+    const std::string lua = ss.str();
+
+    std::unordered_set<std::string> keys;
+    const std::regex keyRe(R"((?:^|\n)([A-Z0-9_]+)\s*=\s*"[^"]*"\s*;)");
+    for (auto it = std::sregex_iterator(lua.begin(), lua.end(), keyRe);
+         it != std::sregex_iterator(); ++it) {
+        keys.insert((*it)[1].str());
+    }
+    REQUIRE(keys.size() > 5000);
+
+    // 1. All 169 TBC SpellCastResult wire values (0x00..0xA8).
+    for (size_t raw = 0; raw < kTbcCastResults.size(); ++raw) {
+        const uint8_t norm = kTbcCastResults[raw];
+        if (isSilentCastResult(norm, true) || norm == 85 /* NO_POWER */) continue;
+        const char* name = castResultGlobalName(norm, true);
+        INFO("raw=" << raw << " norm=" << static_cast<int>(norm) << " key=" << (name ? name : "<null>"));
+        REQUIRE(name != nullptr);
+        CHECK(keys.count(name) == 1);
+    }
+
+    // 2. NO_POWER resource keys and powerTypeGlobalName keys.
+    for (uint8_t pt : {uint8_t{0}, uint8_t{1}, uint8_t{2}, uint8_t{3}, uint8_t{254}}) {
+        const char* name = noPowerGlobalName(pt);
+        REQUIRE(name != nullptr);
+        INFO("noPower pt=" << static_cast<int>(pt) << " key=" << name);
+        CHECK(keys.count(name) == 1);
+    }
+    for (uint8_t pt : {uint8_t{0}, uint8_t{1}, uint8_t{2}, uint8_t{3}}) {
+        const char* name = powerTypeGlobalName(pt);
+        REQUIRE(name != nullptr);
+        INFO("powerType pt=" << static_cast<int>(pt) << " key=" << name);
+        CHECK(keys.count(name) == 1);
+    }
+
+    // 3. All 82 TBC InventoryResult entries (0..81).
+    for (uint32_t res = 0; res < kInventoryResultGlobalNames.size(); ++res) {
+        const char* name = inventoryResultGlobalName(res);
+        if (!name) continue;
+        INFO("inventoryResult=" << res << " key=" << name);
+        CHECK(keys.count(name) == 1);
+    }
+
+    // 4. All mailResultGlobalName entries.
+    for (uint32_t res = 0; res < 32; ++res) {
+        const char* name = mailResultGlobalName(res);
+        if (!name) continue;
+        INFO("mailResult=" << res << " key=" << name);
+        CHECK(keys.count(name) == 1);
     }
 }
 

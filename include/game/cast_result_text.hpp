@@ -216,19 +216,32 @@ inline constexpr std::array<const char*, 192> kCastResultGlobalNames = {
     "SPELL_FAILED_TOO_MANY_SKILLS",
 };
 
+/// Whether a normalised SpellCastResult intentionally displays no error text.
+/// Besides SUCCESS (0) and DONT_REPORT (27), three TBC 2.4.3 enum values
+/// (0x09 AUTOTRACK_INTERRUPTED -> 10, 0x23 HUNGER_SATIATED -> 37,
+/// 0x79 THIRST_SATIATED -> 127) have no entry in TBC GlobalStrings.lua.
+inline constexpr bool isSilentCastResult(uint8_t result, bool tbc) {
+    if (result == 0 || result == 27) return true;
+    if (tbc && (result == 10 || result == 37 || result == 127)) return true;
+    return false;
+}
+
 /// GlobalStrings key for a normalised SpellCastResult, nullptr for none.
 ///
-/// TBC's GlobalStrings names three lines differently from the shared enum:
-/// the full-health/full-mana refusals carry an ERR_ prefix and the
-/// prospecting shortfall is PROSPECT_NEED_MORE ("Requires %d %s."), the only
-/// line in the file for that failure. Not yet observed on the original.
+/// TBC's GlobalStrings names five lines differently from the shared enum
+/// (full-health/full-mana/full-power, prospecting shortfall, play-time
+/// exceeded) and omits AUTOTRACK_INTERRUPTED, HUNGER_SATIATED, and
+/// THIRST_SATIATED entirely.
 inline const char* castResultGlobalName(uint8_t result, bool tbc) {
     if (tbc) {
         switch (result) {
             case 2:   return "ERR_SPELL_FAILED_ALREADY_AT_FULL_HEALTH";
             case 3:   return "ERR_SPELL_FAILED_ALREADY_AT_FULL_MANA";
             case 4:   return "ERR_SPELL_FAILED_ALREADY_AT_FULL_POWER_S";
+            case 10:  return nullptr; // SPELL_FAILED_AUTOTRACK_INTERRUPTED (not in TBC GlobalStrings.lua)
+            case 37:  return nullptr; // SPELL_FAILED_HUNGER_SATIATED (not in TBC GlobalStrings.lua)
             case 55:  return "SPELL_FAILED_PROSPECT_NEED_MORE";
+            case 127: return nullptr; // SPELL_FAILED_THIRST_SATIATED (not in TBC GlobalStrings.lua)
             case 148: return "ERR_PLAY_TIME_EXCEEDED";
             default:  break;
         }
