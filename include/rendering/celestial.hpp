@@ -111,7 +111,7 @@ private:
                    const glm::vec3* sunDir, const glm::vec3* sunColor,
                    float sunVisibility);
     void renderMoon(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, float timeOfDay,
-                    float nightFactor);
+                    const glm::vec3* sunColor, float nightFactor);
     void renderBlueChild(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, float timeOfDay,
                          float nightFactor);
 

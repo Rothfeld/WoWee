@@ -155,11 +155,16 @@ TEST_CASE("moon trajectory, angular scale, and visibility match Native TBC 2.4.3
     CHECK(angularDeg == Catch::Approx(10.4f).margin(0.3f));
 }
 
-TEST_CASE("skyParamsFromLighting forwards cloudEmissiveColor from LightingParams", "[sky][night][clouds]") {
+TEST_CASE("skyParamsFromLighting forwards cloudEmissiveColor and LightIntBand[9] sunColor from LightingParams", "[sky][night][clouds][celestial]") {
     LightingParams lp;
+    lp.diffuseColor = glm::vec3(0.40f, 0.35f, 0.30f);
+    lp.specularColor = glm::vec3(1.0f, 142.0f / 255.0f, 0.0f);  // Blackwing Lair LP 85 LightIntBand[9]
     lp.cloudColor = glm::vec3(50.0f / 255.0f, 97.0f / 255.0f, 132.0f / 255.0f);
     lp.cloudEmissiveColor = glm::vec3(18.0f / 255.0f, 56.0f / 255.0f, 81.0f / 255.0f);
-    const SkyParams sp = skyParamsFromLighting(0.03f, 0.03f, 0.0f, &lp, false);
+    const SkyParams sp = skyParamsFromLighting(22.5f, 22.5f, 0.0f, &lp, false);
+    CHECK(sp.sunColor.r == Catch::Approx(1.0f));
+    CHECK(sp.sunColor.g == Catch::Approx(142.0f / 255.0f));
+    CHECK(sp.sunColor.b == Catch::Approx(0.0f));
     CHECK(sp.cloudColor.b == Catch::Approx(132.0f / 255.0f));
     CHECK(sp.cloudEmissiveColor.b == Catch::Approx(81.0f / 255.0f));
 }
@@ -196,12 +201,33 @@ TEST_CASE("TBC 2.4.3 DBC skybox and cloud bands match Azeroth night sky expectat
     wowee::pipeline::DBCFile intBandDbc;
     REQUIRE(intBandDbc.load(intBandBytes));
 
+    const uint32_t lp192SunColorBlock = (192u - 1u) * 18u + 9u + 1u;
+    const uint32_t lp85SunColorBlock = (85u - 1u) * 18u + 9u + 1u;
     const uint32_t lp192CloudSunBlock = (192u - 1u) * 18u + 10u + 1u;
     const uint32_t lp192CloudEmissiveBlock = (192u - 1u) * 18u + 11u + 1u;
     bool foundSun = false, foundEmissive = false;
+    bool foundLp192Celestial = false, foundLp85Celestial = false;
     for (uint32_t i = 0; i < intBandDbc.getRecordCount(); ++i) {
         const uint32_t blk = intBandDbc.getUInt32(i, 0);
-        if (blk == lp192CloudSunBlock) {
+        if (blk == lp192SunColorBlock) {
+            const uint32_t rgb = intBandDbc.getUInt32(i, 18); // midnight keyframe
+            const uint32_t b = rgb & 0xFFu;
+            const uint32_t g = (rgb >> 8) & 0xFFu;
+            const uint32_t r = (rgb >> 16) & 0xFFu;
+            CHECK(r > 200u);
+            CHECK(g > 200u);
+            CHECK(b > 200u); // Azeroth default night celestial tint is pale blue-white (232, 241, 255)
+            foundLp192Celestial = true;
+        } else if (blk == lp85SunColorBlock) {
+            const uint32_t rgb = intBandDbc.getUInt32(i, 18); // Blackwing Lair LP 85
+            const uint32_t b = rgb & 0xFFu;
+            const uint32_t g = (rgb >> 8) & 0xFFu;
+            const uint32_t r = (rgb >> 16) & 0xFFu;
+            CHECK(r == 255u);
+            CHECK(g == 142u);
+            CHECK(b == 0u); // Blackwing Lair celestial tint is fiery orange (255, 142, 0)
+            foundLp85Celestial = true;
+        } else if (blk == lp192CloudSunBlock) {
             const uint32_t rgb = intBandDbc.getUInt32(i, 18); // first keyframe (t=0, midnight)
             const uint32_t b = rgb & 0xFFu;
             const uint32_t r = (rgb >> 16) & 0xFFu;
@@ -215,6 +241,8 @@ TEST_CASE("TBC 2.4.3 DBC skybox and cloud bands match Azeroth night sky expectat
             foundEmissive = true;
         }
     }
+    CHECK(foundLp192Celestial);
+    CHECK(foundLp85Celestial);
     CHECK(foundSun);
     CHECK(foundEmissive);
 }

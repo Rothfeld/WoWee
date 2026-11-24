@@ -5055,7 +5055,7 @@ void Renderer::renderReflectionPass() {
             if (lightingManager) {
                 const auto& lp = lightingManager->getLightingParams();
                 skyParams.directionalDir = lp.directionalDir;
-                skyParams.sunColor = lp.diffuseColor;
+                skyParams.sunColor = lp.specularColor;
                 skyParams.skyTopColor = lp.skyTopColor;
                 skyParams.skyMiddleColor = lp.skyMiddleColor;
                 skyParams.skyBand1Color = lp.skyBand1Color;

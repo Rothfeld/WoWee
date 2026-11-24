@@ -144,7 +144,7 @@ void Celestial::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
 
     // Draw sun, then moon(s) - each call pushes different constants
     renderSun(cmd, perFrameSet, timeOfDay, sunDir, sunColor, sunVisibility);
-    renderMoon(cmd, perFrameSet, timeOfDay, nightFactor);
+    renderMoon(cmd, perFrameSet, timeOfDay, sunColor, nightFactor);
     if (dualMoonMode_ && !game::isActiveExpansion("tbc")) {
         renderBlueChild(cmd, perFrameSet, timeOfDay, nightFactor);
     }
@@ -177,9 +177,9 @@ void Celestial::renderSun(VkCommandBuffer cmd, VkDescriptorSet /*perFrameSet*/,
     model = glm::translate(model, sunPos);
     model = glm::scale(model, glm::vec3(150.0f, 150.0f, 1.0f));
 
-    glm::vec3 color = sunColor ? *sunColor : getSunColor(timeOfDay);
-    const glm::vec3 warmSun(1.0f, 0.88f, 0.55f);
-    color = glm::mix(color, warmSun, 0.52f);
+    // Preserve authored LightIntBand[9] (SUN_COLOR) when available; only fall
+    // back to time-of-day ramp when no lighting manager colour is supplied.
+    const glm::vec3 color = sunColor ? *sunColor : getSunColor(timeOfDay);
     float intensity = getSunIntensity(timeOfDay) * 0.92f * glm::clamp(sunVisibility, 0.0f, 1.0f);
 
     CelestialPush push{};
@@ -197,7 +197,8 @@ void Celestial::renderSun(VkCommandBuffer cmd, VkDescriptorSet /*perFrameSet*/,
 }
 
 void Celestial::renderMoon(VkCommandBuffer cmd, VkDescriptorSet /*perFrameSet*/,
-                            float timeOfDay, float nightFactor) {
+                            float timeOfDay, const glm::vec3* sunColor,
+                            float nightFactor) {
     if (nightFactor < 0.01f) {
         return;
     }
@@ -212,8 +213,10 @@ void Celestial::renderMoon(VkCommandBuffer cmd, VkDescriptorSet /*perFrameSet*/,
     model = glm::translate(model, moonPos);
     model = glm::scale(model, glm::vec3(moonScale, moonScale, 1.0f));
 
-    // Native TBC 2.4.3 Textures\Moon.blp is a luminous pale-white/lavender full disc.
-    const glm::vec3 color = glm::vec3(0.95f, 0.94f, 1.0f);
+    // Native TBC 2.4.3 tints both sun and moon by LightIntBand[9] (SUN_COLOR):
+    // Azeroth night defaults to pale blue-white (232, 241, 255), while custom
+    // zones such as Blackwing Lair (LP 85) author fiery orange (255, 142, 0).
+    const glm::vec3 color = sunColor ? *sunColor : glm::vec3(0.95f, 0.94f, 1.0f);
 
     CelestialPush push{};
     push.model          = model;

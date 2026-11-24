@@ -31,7 +31,9 @@ inline SkyParams skyParamsFromLighting(float timeOfDay, float gameTime,
     params.gameTime = gameTime;
     if (lighting) {
         params.directionalDir = lighting->directionalDir;
-        params.sunColor = lighting->diffuseColor;
+        // LightIntBand[9] (SUN_COLOR) is stored in LightingParams::specularColor
+        // and tints both the sun and moon discs in Native TBC 2.4.3.
+        params.sunColor = lighting->specularColor;
         params.skyTopColor = lighting->skyTopColor;
         params.skyMiddleColor = lighting->skyMiddleColor;
         params.skyBand1Color = lighting->skyBand1Color;

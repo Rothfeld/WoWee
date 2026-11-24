@@ -44,8 +44,9 @@ void main() {
 
         alpha = clamp(max(core, innerGlow) + outerGlow, 0.0, 1.0) * push.intensity;
 
-        // Subtle warm-white core brightening
-        color = mix(color, vec3(1.0, 0.99, 0.94), core * 0.75);
+        // Brighten the solar core while preserving the authored LightIntBand[9] hue
+        // (e.g. Blackwing Lair B=0 stays fiery yellow/orange instead of turning white).
+        color = min(color * (1.0 + core * 0.85), vec3(1.0));
     } else {
         // ---------------- Moon ----------------
         const float r = 0.35;              // moon disc radius in UV space (70% of quad)
