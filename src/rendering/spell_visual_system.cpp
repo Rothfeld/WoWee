@@ -943,10 +943,30 @@ void SpellVisualSystem::startChannelVisual(uint32_t visualId, const glm::vec3& p
                                           uint32_t durationMs, uint32_t attachInstanceId) {
     if (!m2Renderer_ || !attachInstanceId) return;
     if (!spellVisualDbcLoaded_) loadSpellVisualDbc();
-    updateChannelVisual(attachInstanceId, 0);
     const auto kit = channelKits_.find(visualId);
-    if (kit == channelKits_.end() || !kit->second) return;
+    if (kit == channelKits_.end() || !kit->second) {
+        stopChannelVisualImmediate(attachInstanceId);
+        return;
+    }
     const float remaining = channelDurationSeconds(durationMs);
+    if (const auto existing = unitChannelVisuals_.find(attachInstanceId);
+        existing != unitChannelVisuals_.end() && existing->second.visualId == visualId) {
+        const bool expectsEffects = kitEffects_.find(kit->second) != kitEffects_.end();
+        bool refreshedAnyEffect = false;
+        for (auto& sv : activeSpellVisuals_) {
+            if (sv.isChannel && sv.attachInstanceId == attachInstanceId && !sv.decaying) {
+                sv.duration = sv.elapsed + remaining;
+                refreshedAnyEffect = true;
+            }
+        }
+        if (!expectsEffects || refreshedAnyEffect) {
+            existing->second.remaining = remaining;
+            suppressAuraVisual(attachInstanceId, visualId);
+            applyCharacterProcedures(attachInstanceId);
+            return;
+        }
+    }
+    stopChannelVisualImmediate(attachInstanceId);
     unitChannelVisuals_[attachInstanceId] = {visualId, remaining};
     suppressAuraVisual(attachInstanceId, visualId);
     startKitLight(kit->second, attachInstanceId);
@@ -1279,31 +1299,58 @@ void SpellVisualSystem::applyCharacterProcedures(uint32_t attachInstanceId, bool
     }
 }
 
-void SpellVisualSystem::updateChannelVisual(uint32_t attachInstanceId, uint32_t remainingMs) {
+void SpellVisualSystem::stopChannelVisualImmediate(uint32_t attachInstanceId) {
     for (auto it = activeSpellVisuals_.begin(); it != activeSpellVisuals_.end();) {
         if (it->isChannel && it->attachInstanceId == attachInstanceId) {
-            if (!remainingMs) {
-                retireEffect(*it);
-                it = activeSpellVisuals_.erase(it);
-                continue;
-            }
-            it->duration = it->elapsed + remainingMs / 1000.0f;
+            retireEffect(*it);
+            it = activeSpellVisuals_.erase(it);
+            continue;
         }
         ++it;
     }
+    stopChannelSound(attachInstanceId);
+    fieldChannels_.erase(attachInstanceId);
+    heldChannelKits_.erase(attachInstanceId);
+    if (const auto chan = unitChannelVisuals_.find(attachInstanceId);
+        chan != unitChannelVisuals_.end()) {
+        const uint32_t stoppedVisualId = chan->second.visualId;
+        unitChannelVisuals_.erase(chan);
+        suppressAuraVisual(attachInstanceId, stoppedVisualId);
+        applyCharacterProcedures(attachInstanceId);
+    }
+}
+
+void SpellVisualSystem::updateChannelVisual(uint32_t attachInstanceId, uint32_t remainingMs) {
     if (!remainingMs) {
-        stopChannelSound(attachInstanceId);
+        auto* characters = renderer_ ? renderer_->getCharacterRenderer() : nullptr;
+        if (!characters || !characters->hasInstance(attachInstanceId)) {
+            stopChannelVisualImmediate(attachInstanceId);
+            return;
+        }
+        // Defer retiring channel M2 instances until the next SpellVisualSystem::update
+        // tick so back-to-back MSG_CHANNEL_UPDATE(0) + MSG_CHANNEL_START for the same
+        // visual (e.g. Ashtongue Channeler 40401 re-ticking every ~100 ms) seamlessly
+        // continues the existing effect instead of stacking draining particle copies.
+        for (auto& sv : activeSpellVisuals_) {
+            if (sv.isChannel && sv.attachInstanceId == attachInstanceId) {
+                sv.duration = sv.elapsed;
+            }
+        }
         fieldChannels_.erase(attachInstanceId);
         heldChannelKits_.erase(attachInstanceId);
         if (const auto chan = unitChannelVisuals_.find(attachInstanceId);
             chan != unitChannelVisuals_.end()) {
-            const uint32_t stoppedVisualId = chan->second.visualId;
-            unitChannelVisuals_.erase(chan);
-            suppressAuraVisual(attachInstanceId, stoppedVisualId);
-            applyCharacterProcedures(attachInstanceId);
+            chan->second.remaining = 0.0f;
         }
-    } else if (const auto chan = unitChannelVisuals_.find(attachInstanceId);
-               chan != unitChannelVisuals_.end()) {
+        return;
+    }
+    for (auto& sv : activeSpellVisuals_) {
+        if (sv.isChannel && sv.attachInstanceId == attachInstanceId) {
+            sv.duration = sv.elapsed + remainingMs / 1000.0f;
+        }
+    }
+    if (const auto chan = unitChannelVisuals_.find(attachInstanceId);
+        chan != unitChannelVisuals_.end()) {
         chan->second.remaining = remainingMs / 1000.0f;
     }
 }
@@ -1561,7 +1608,7 @@ void SpellVisualSystem::syncChannels(const std::vector<UnitChannel>& fieldChanne
         fieldChannels_, heldChannelKits_, endedChannels_);
 
     for (const uint32_t inst : plan.instancesToStop) {
-        updateChannelVisual(inst, 0);
+        stopChannelVisualImmediate(inst);
     }
     for (const size_t idx : plan.channelsToStart) {
         const auto& channel = fieldChannels[idx];

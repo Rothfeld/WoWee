@@ -418,6 +418,7 @@ private:
     void loadCameraShakes();
     void stopPrecastSound(uint32_t attachInstanceId);
     void stopChannelSound(uint32_t attachInstanceId);
+    void stopChannelVisualImmediate(uint32_t attachInstanceId);
     std::unordered_map<uint32_t, uint32_t> kitAnimations_;
     std::unordered_map<uint32_t, uint32_t> kitSounds_;       // SpellVisualKit col 15 -> SoundEntries ID
     std::unordered_map<uint32_t, uint32_t> kitShakes_;       // SpellVisualKit col 16 -> SpellEffectCameraShakes ID
