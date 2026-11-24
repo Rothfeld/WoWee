@@ -5596,6 +5596,23 @@ void CharacterRenderer::setInstanceAuraStateAnimation(uint32_t instanceId, uint3
     }
 }
 
+void CharacterRenderer::resetToPrimaryStandPose(uint32_t instanceId) {
+    auto it = instances.find(instanceId);
+    if (it == instances.end() || !it->second.cachedModel) return;
+    auto& instance = it->second;
+    const auto& model = instance.cachedModel->data;
+    if (model.sequences.empty()) return;
+    instance.currentSequenceIndex = pipeline::standSequenceIndex(model.sequences, model.playableAnimations);
+    instance.currentAnimationId = model.sequences[instance.currentSequenceIndex].id;
+    instance.animationTime = 0.0f;
+    instance.animationLoop = true;
+    instance.sequenceRepeatsRemaining = 0;
+    instance.blendSequenceIndex = -1;
+    instance.upperBodySequenceIndex = -1;
+    instance.upperBodyBlendSequence = -1;
+    syncAttachedWeaponAnimations(instanceId, instance.currentAnimationId);
+}
+
 void CharacterRenderer::startInstanceKitOpacityFade(uint32_t instanceId, float startAlpha, float endAlpha,
                                                     float durationSec) {
     auto it = instances.find(instanceId);

@@ -246,6 +246,9 @@ public:
     /// Active non-Stand, non-Stun aura StateKit animation (e.g. 42696 Drunken
     /// Master Whirlwind 126) that overrides generic Stun (14) while active; 0 = none.
     void setInstanceAuraStateAnimation(uint32_t instanceId, uint32_t animationId);
+    /// Snap an instance to frame 0 of its primary Stand sequence without rolling
+    /// fidget variations (used by static 2D SetPortraitTexture snapshots).
+    void resetToPrimaryStandPose(uint32_t instanceId);
     /// SpellVisualKit CharProc 15: timed opacity fade from startAlpha to endAlpha
     /// over durationSec seconds (e.g. Teleport Test 6795, Materialize 7032/7467).
     void startInstanceKitOpacityFade(uint32_t instanceId, float startAlpha, float endAlpha,

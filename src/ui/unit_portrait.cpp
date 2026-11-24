@@ -180,7 +180,7 @@ void UnitPortrait::update(game::GameHandler& gameHandler,
     }
 
     if (framing_ == Framing::FullBody && !applyModelFrameView()) return;
-    preview_->update(deltaTime);
+    preview_->update(framing_ == Framing::Face ? 0.0f : deltaTime);
     preview_->render();
     preview_->requestComposite();
 }
@@ -279,7 +279,7 @@ bool UnitPortrait::updatePlayer(uint8_t race, uint8_t gender,
     }
 
     if (framing_ == Framing::FullBody && !applyModelFrameView()) return false;
-    preview_->update(deltaTime);
+    preview_->update(framing_ == Framing::Face ? 0.0f : deltaTime);
     preview_->render();
     preview_->requestComposite();
     return preview_->isModelLoaded();
@@ -327,7 +327,7 @@ bool UnitPortrait::updateCreature(const std::string& m2Path,
         loadedEquipHash_ = 0;
     }
 
-    preview_->update(deltaTime);
+    preview_->update(framing_ == Framing::Face ? 0.0f : deltaTime);
     preview_->render();
     preview_->requestComposite();
     return preview_->isModelLoaded();

@@ -822,7 +822,7 @@ bool CharacterPreview::loadCharacter(game::Race race, game::Gender gender,
     // Create instance at origin with current yaw
     instanceId_ = charRenderer_->createInstance(modelId_,
         glm::vec3(0.0f, 0.0f, 0.0f),
-        glm::vec3(0.0f, 0.0f, modelYaw_),
+        glm::vec3(0.0f, 0.0f, glm::radians(modelYaw_)),
         1.0f);
 
     if (instanceId_ == 0) {
@@ -1178,7 +1178,7 @@ bool CharacterPreview::loadCreature(
 
     instanceId_ = charRenderer_->createInstance(modelId_,
         glm::vec3(0.0f, 0.0f, 0.0f),
-        glm::vec3(0.0f, 0.0f, modelYaw_),
+        glm::vec3(0.0f, 0.0f, glm::radians(modelYaw_)),
         1.0f);
     if (instanceId_ == 0) {
         LOG_WARNING("CharacterPreview: failed to create creature instance");
@@ -1521,10 +1521,15 @@ void CharacterPreview::compositePass(VkCommandBuffer cmd, uint32_t frameIndex) {
     ubo.view = camera_->getViewMatrix();
     ubo.projection = camera_->getProjectionMatrix();
     ubo.lightSpaceMatrix = glm::mat4(1.0f);
-    // Studio lighting: key light from upper-right-front
-    ubo.lightDir = glm::vec4(glm::normalize(glm::vec3(0.5f, -0.7f, 0.5f)), 0.0f);
-    ubo.lightColor = glm::vec4(1.0f, 0.95f, 0.9f, 0.0f);
-    ubo.ambientColor = glm::vec4(0.35f, 0.35f, 0.4f, 0.0f);
+    // Studio lighting relative to the active preview camera so key light always
+    // illuminates the front/upper-right of the face and attached helmets regardless
+    // of whether an authored M2 portrait camera (+X) or fallback camera (+Y) is active.
+    const glm::vec3 camFwd = camera_->getForward();
+    const glm::vec3 camRight = camera_->getRight();
+    const glm::vec3 camUp = camera_->getUp();
+    ubo.lightDir = glm::vec4(glm::normalize(camFwd - 0.35f * camRight - 0.45f * camUp), 0.0f);
+    ubo.lightColor = glm::vec4(1.0f, 0.96f, 0.90f, 0.0f);
+    ubo.ambientColor = glm::vec4(0.45f, 0.45f, 0.48f, 0.0f);
     ubo.viewPos = glm::vec4(camera_->getPosition(), 0.0f);
     // No fog in preview
     ubo.fogColor = glm::vec4(0.05f, 0.05f, 0.1f, 0.0f);
@@ -1570,7 +1575,7 @@ void CharacterPreview::compositePass(VkCommandBuffer cmd, uint32_t frameIndex) {
 void CharacterPreview::rotate(float yawDelta) {
     modelYaw_ += yawDelta;
     if (instanceId_ > 0 && charRenderer_) {
-        charRenderer_->setInstanceRotation(instanceId_, glm::vec3(0.0f, 0.0f, modelYaw_));
+        charRenderer_->setInstanceRotation(instanceId_, glm::vec3(0.0f, 0.0f, glm::radians(modelYaw_)));
     }
 }
 
@@ -1598,6 +1603,9 @@ void CharacterPreview::setPortraitFraming() {
     previewViewDirection_ = glm::vec3(0.0f, 1.0f, 0.0f);
     modelYaw_ = glm::degrees(std::atan2(previewViewDirection_.y,
                                         previewViewDirection_.x));
+    if (instanceId_ > 0 && charRenderer_) {
+        charRenderer_->resetToPrimaryStandPose(instanceId_);
+    }
     applyPreviewView();
 }
 
@@ -1692,7 +1700,7 @@ void CharacterPreview::applyPreviewView() {
 
     if (instanceId_ > 0 && charRenderer_) {
         charRenderer_->setInstancePosition(instanceId_, previewStandPosition_);
-        charRenderer_->setInstanceRotation(instanceId_, glm::vec3(0.0f, 0.0f, modelYaw_));
+        charRenderer_->setInstanceRotation(instanceId_, glm::vec3(0.0f, 0.0f, glm::radians(modelYaw_)));
     }
 }
 

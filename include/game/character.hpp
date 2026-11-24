@@ -22,7 +22,12 @@ enum class Race : uint8_t {
     TROLL = 8,
     GOBLIN = 9,
     BLOOD_ELF = 10,
-    DRAENEI = 11
+    DRAENEI = 11,
+    FEL_ORC = 12,
+    NAGA = 13,
+    BROKEN = 14,
+    SKELETON = 15,
+    FOREST_TROLL = 18
 };
 
 /**

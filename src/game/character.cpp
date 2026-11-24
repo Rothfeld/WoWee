@@ -53,18 +53,23 @@ uint8_t getMaxFacialFeature(Race /*race*/, Gender /*gender*/) { return 8; }
 
 const char* getRaceName(Race race) {
     switch (race) {
-        case Race::HUMAN:       return "Human";
-        case Race::ORC:         return "Orc";
-        case Race::DWARF:       return "Dwarf";
-        case Race::NIGHT_ELF:   return "Night Elf";
-        case Race::UNDEAD:      return "Undead";
-        case Race::TAUREN:      return "Tauren";
-        case Race::GNOME:       return "Gnome";
-        case Race::TROLL:       return "Troll";
-        case Race::GOBLIN:      return "Goblin";
-        case Race::BLOOD_ELF:   return "Blood Elf";
-        case Race::DRAENEI:     return "Draenei";
-        default:                return "Unknown";
+        case Race::HUMAN:        return "Human";
+        case Race::ORC:          return "Orc";
+        case Race::DWARF:        return "Dwarf";
+        case Race::NIGHT_ELF:    return "Night Elf";
+        case Race::UNDEAD:       return "Undead";
+        case Race::TAUREN:       return "Tauren";
+        case Race::GNOME:        return "Gnome";
+        case Race::TROLL:        return "Troll";
+        case Race::GOBLIN:       return "Goblin";
+        case Race::BLOOD_ELF:    return "Blood Elf";
+        case Race::DRAENEI:      return "Draenei";
+        case Race::FEL_ORC:      return "Fel Orc";
+        case Race::NAGA:         return "Naga";
+        case Race::BROKEN:       return "Broken";
+        case Race::SKELETON:     return "Skeleton";
+        case Race::FOREST_TROLL: return "Forest Troll";
+        default:                 return "Unknown";
     }
 }
 
@@ -133,6 +138,10 @@ std::string getPlayerModelPath(Race race, Gender gender, bool useFemaleModel) {
             return useFemale
                 ? "Character\\Troll\\Female\\TrollFemale.m2"
                 : "Character\\Troll\\Male\\TrollMale.m2";
+        case Race::GOBLIN:
+            return useFemale
+                ? "Character\\Goblin\\Female\\GoblinFemale.m2"
+                : "Character\\Goblin\\Male\\GoblinMale.m2";
         case Race::BLOOD_ELF:
             return useFemale
                 ? "Character\\BloodElf\\Female\\BloodElfFemale.m2"
@@ -141,6 +150,27 @@ std::string getPlayerModelPath(Race race, Gender gender, bool useFemaleModel) {
             return useFemale
                 ? "Character\\Draenei\\Female\\DraeneiFemale.m2"
                 : "Character\\Draenei\\Male\\DraeneiMale.m2";
+        case Race::FEL_ORC:
+            return useFemale
+                ? "Character\\FelOrc\\Female\\FelOrcFemale.m2"
+                : "Character\\FelOrc\\Male\\FelOrcMale.m2";
+        case Race::NAGA:
+            return useFemale
+                ? "Character\\Naga_\\Female\\Naga_Female.m2"
+                : "Character\\Naga_\\Male\\Naga_Male.m2";
+        case Race::BROKEN:
+            return useFemale
+                ? "Character\\Broken\\Female\\BrokenFemale.m2"
+                : "Character\\Broken\\Male\\BrokenMale.m2";
+        case Race::SKELETON:
+            return useFemale
+                ? "Character\\Skeleton\\Female\\SkeletonFemale.m2"
+                : "Character\\Skeleton\\Male\\SkeletonMale.m2";
+        case Race::FOREST_TROLL:
+            // TBC ChrRaces.dbc race 18 FemaleDisplayID (21964) shares TrollFemale.m2.
+            return useFemale
+                ? "Character\\Troll\\Female\\TrollFemale.m2"
+                : "Character\\ForestTroll\\Male\\ForestTrollMale.m2";
         default:
             return "Character\\Human\\Male\\HumanMale.m2";
     }
@@ -150,11 +180,11 @@ bool hasPlayerModel(Race race) {
     switch (race) {
         case Race::HUMAN: case Race::ORC: case Race::DWARF:
         case Race::NIGHT_ELF: case Race::UNDEAD: case Race::TAUREN:
-        case Race::GNOME: case Race::TROLL:
+        case Race::GNOME: case Race::TROLL: case Race::GOBLIN:
         case Race::BLOOD_ELF: case Race::DRAENEI:
+        case Race::FEL_ORC: case Race::NAGA: case Race::BROKEN:
+        case Race::SKELETON: case Race::FOREST_TROLL:
             return true;
-        // Goblin is playable in a later expansion than any this client speaks,
-        // and the switch above has no case for it either.
         default:
             return false;
     }
@@ -198,8 +228,14 @@ bool inferRaceSexFromCharacterModelPath(std::string_view m2Path,
     else if (raceToken == "tauren") race = Race::TAUREN;
     else if (raceToken == "gnome") race = Race::GNOME;
     else if (raceToken == "troll") race = Race::TROLL;
+    else if (raceToken == "goblin") race = Race::GOBLIN;
     else if (raceToken == "bloodelf") race = Race::BLOOD_ELF;
     else if (raceToken == "draenei") race = Race::DRAENEI;
+    else if (raceToken == "felorc") race = Race::FEL_ORC;
+    else if (raceToken == "naga_") race = Race::NAGA;
+    else if (raceToken == "broken") race = Race::BROKEN;
+    else if (raceToken == "skeleton") race = Race::SKELETON;
+    else if (raceToken == "foresttroll") race = Race::FOREST_TROLL;
     else return false;
 
     outRaceId = static_cast<uint8_t>(race);

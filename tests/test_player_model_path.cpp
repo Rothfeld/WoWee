@@ -76,3 +76,34 @@ TEST_CASE("a character carries its own answer", "[model-path]") {
     ch.useFemaleModel = false;
     CHECK_FALSE(isFemalePath(getPlayerModelPath(ch)));
 }
+
+TEST_CASE("TBC non-playable humanoid ChrRaces resolve character models for portraits and morphs", "[model-path][dbc]") {
+    using wowee::game::hasPlayerModel;
+    using wowee::game::inferRaceSexFromCharacterModelPath;
+
+    CHECK(hasPlayerModel(Race::GOBLIN));
+    CHECK(hasPlayerModel(Race::FEL_ORC));
+    CHECK(hasPlayerModel(Race::NAGA));
+    CHECK(hasPlayerModel(Race::BROKEN));
+    CHECK(hasPlayerModel(Race::SKELETON));
+    CHECK(hasPlayerModel(Race::FOREST_TROLL));
+
+    CHECK(getPlayerModelPath(Race::FEL_ORC, Gender::MALE) ==
+          "Character\\FelOrc\\Male\\FelOrcMale.m2");
+    CHECK(getPlayerModelPath(Race::NAGA, Gender::FEMALE) ==
+          "Character\\Naga_\\Female\\Naga_Female.m2");
+    CHECK(getPlayerModelPath(Race::BROKEN, Gender::MALE) ==
+          "Character\\Broken\\Male\\BrokenMale.m2");
+    CHECK(getPlayerModelPath(Race::FOREST_TROLL, Gender::MALE) ==
+          "Character\\ForestTroll\\Male\\ForestTrollMale.m2");
+    CHECK(getPlayerModelPath(Race::FOREST_TROLL, Gender::FEMALE) ==
+          "Character\\Troll\\Female\\TrollFemale.m2");
+
+    uint8_t raceId = 0, sexId = 0xFF;
+    REQUIRE(inferRaceSexFromCharacterModelPath("Character\\FelOrc\\Male\\FelOrcMale.m2", raceId, sexId));
+    CHECK(raceId == static_cast<uint8_t>(Race::FEL_ORC));
+    CHECK(sexId == 0);
+    REQUIRE(inferRaceSexFromCharacterModelPath("CHARACTER/Naga_/Female/Naga_Female.m2", raceId, sexId));
+    CHECK(raceId == static_cast<uint8_t>(Race::NAGA));
+    CHECK(sexId == 1);
+}
