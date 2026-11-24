@@ -329,8 +329,9 @@ void main() {
         vec2 envUV = (reflM > 1e-4) ? (refl.xy / reflM + 0.5) : (viewNorm.xy * 0.5 + 0.5);
         vec3 envColor = texture(uEnvMap, envUV).rgb;
         if (isMetal != 0) {
-            // MOMT shader 5 (EnvMetal): metallic reflection tinted by diffuse and masked by alpha
-            result += envColor * texColor.rgb * texColor.a * 2.0;
+            // MOMT shader 5 (EnvMetal): metallic reflection modulated by lit base color and masked by alpha
+            // (so dark interior surfaces like Steamvault Coilfang pipes do not glow neon unlit).
+            result += envColor * result * texColor.a;
         } else {
             // MOMT shader 3 (Env): glossy reflection added on top, masked by alpha
             result += envColor * texColor.a;

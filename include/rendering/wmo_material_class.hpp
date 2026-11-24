@@ -65,4 +65,12 @@ inline bool wmoMaterialIsNightGlow(uint32_t materialFlags) {
     return (materialFlags & WMO_MAT_SIDN) != 0;
 }
 
+/// MOMT shader 5 (EnvMetal) reflection term: metallic environment map modulated
+/// by the lit base color (not unlit diffuse albedo) and masked by diffuse alpha.
+/// Matches Native TBC 2.4.3 in both dark interiors (Steamvault EBCFMARSH_CLINDER)
+/// and bright interiors (Exodar crystal walls).
+constexpr float wmoEnvMetalChannel(float litBase, float envColor, float diffuseAlpha) {
+    return litBase + envColor * litBase * diffuseAlpha;
+}
+
 }  // namespace wowee::rendering

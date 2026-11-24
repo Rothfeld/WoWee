@@ -100,3 +100,21 @@ TEST_CASE("WMO MOMT clamp flags 0x40 and 0x80 control S and T wrap modes indepen
     CHECK(wmoMaterialClampS(0xd0));
     CHECK(wmoMaterialClampT(0xd0));
 }
+
+TEST_CASE("WMO MOMT shader 5 EnvMetal modulates reflection by lit base color", "[wmo-material]") {
+    using wowee::rendering::wmoEnvMetalChannel;
+
+    // Dark interior (Steamvault EBCFMARSH_CLINDER.BLP + KKG_CFANG_ENVMAPTEST01.BLP):
+    // diffuse = 0.51, interior lighting = 0.30 -> litBase = 0.153, env = 0.96, alpha = 1.0.
+    // Modulated by litBase gives ~0.30 instead of saturating to >1.0 unlit neon cyan.
+    const float darkOval = wmoEnvMetalChannel(0.51f * 0.30f, 0.96f, 1.0f);
+    CHECK(darkOval == Catch::Approx(0.153f + 0.96f * 0.153f));
+    CHECK(darkOval < 0.35f);
+
+    // Zero alpha masks out environment reflection completely.
+    CHECK(wmoEnvMetalChannel(0.25f, 1.0f, 0.0f) == Catch::Approx(0.25f));
+
+    // Bright interior (Exodar crystal wall): lighting ~0.85, alpha ~0.24 stays proportional.
+    const float brightCrystal = wmoEnvMetalChannel(0.60f * 0.85f, 0.50f, 0.24f);
+    CHECK(brightCrystal == Catch::Approx(0.51f + 0.50f * 0.51f * 0.24f));
+}
