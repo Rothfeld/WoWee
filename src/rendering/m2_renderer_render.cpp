@@ -483,15 +483,17 @@ void M2Renderer::update(float deltaTime, const glm::vec3& cameraPos, const glm::
             if (instance.interiorLightAge < 1.0f && glm::dot(moved, moved) <= 0.0625f) continue;
             instance.interiorLightAge = 0.0f;
             instance.interiorLightQueriedAt = instance.position;
+            const glm::vec3 lightPos = objectFloorLightQueryPosition(
+                instance.position, instance.worldBoundsMin, instance.worldBoundsMax);
             if (roomAtQuery_ && !instance.wmoDoodadPlaced) {
-                const auto room = roomAtQuery_(instance.position);
+                const auto room = roomAtQuery_(lightPos);
                 instance.wmoRoomInstance = room ? room->first : 0;
                 if (room) instance.wmoRooms = std::move(room->second);
                 else instance.wmoRooms.clear();
             }
             if (objectLightQuery_) {
                 const float sampleHeight = std::max(0.5f * (instance.worldBoundsMax.z - instance.worldBoundsMin.z), 0.5f);
-                const auto res = objectLightQuery_(instance.position, sampleHeight);
+                const auto res = objectLightQuery_(lightPos, sampleHeight);
                 instance.outdoorShadowed = res.outdoorShadowed;
                 instance.interiorFog = res.interiorFog;
                 instance.customLightRig = res.customRig;
@@ -502,7 +504,7 @@ void M2Renderer::update(float deltaTime, const glm::vec3& cameraPos, const glm::
                     instance.indoorLighting = 0;
                 }
             } else if (interiorLightQuery_) {
-                if (const auto light = interiorLightQuery_(instance.position)) {
+                if (const auto light = interiorLightQuery_(lightPos)) {
                     const auto rgb = glm::uvec3(glm::round(glm::clamp(*light, 0.0f, 1.0f) * 255.0f));
                     instance.indoorLighting = 2u | (rgb.r << 8) | (rgb.g << 16) | (rgb.b << 24);
                     instance.interiorFog = true;

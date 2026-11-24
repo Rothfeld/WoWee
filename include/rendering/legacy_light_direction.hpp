@@ -123,4 +123,22 @@ inline DirectionalLightRig blendIndoorWithOutdoorRig(const DirectionalLightRig& 
     return merged;
 }
 
+// Floor-light query origin for a world M2 GameObject / transport whose mesh
+// bottom (`worldBoundsMin.z`) sits above its local pivot (`position.z`), e.g.
+// Serpentshrine Cavern's small elevator (`CF_ElevatorPlatform_Small.m2`, local
+// z in [0.94, 4.88]): at its lowest point `position.z = -52.934` sits 1.0 yd
+// below the shaft floor (`z = -51.94`), so raycasting from `position.z + 0.5`
+// missed the cyan-green shaft floor and hit the dark red shell at `z = -68.65`.
+// Lifting Z to `worldBoundsMin.z` when bounds are valid keeps the query at the
+// mesh's resting base without shifting objects whose mesh extends below their
+// pivot (e.g. `GnomeElevatorCar01.m2` cable `z = -110.49`).
+inline glm::vec3 objectFloorLightQueryPosition(const glm::vec3& position,
+                                               const glm::vec3& worldBoundsMin,
+                                               const glm::vec3& worldBoundsMax) {
+    if (worldBoundsMax.z > worldBoundsMin.z && worldBoundsMin.z > position.z) {
+        return {position.x, position.y, worldBoundsMin.z};
+    }
+    return position;
+}
+
 } // namespace wowee::rendering

@@ -320,3 +320,28 @@ TEST_CASE("tbcTerrainLightFactor clamps primary vertex lighting to [0, 1] matchi
     CHECK(clamped.b == Catch::Approx(1.0f));
     CHECK(unclamped.b > 1.05f);
 }
+
+TEST_CASE("objectFloorLightQueryPosition lifts Z to worldBoundsMin.z when mesh sits above pivot", "[lighting][wmo][m2]") {
+    using wowee::rendering::objectFloorLightQueryPosition;
+
+    // Serpentshrine Cavern small elevator (CF_ElevatorPlatform_Small.m2, local z in [0.94, 4.88]):
+    // at lowest stop pos.z = -52.9342, mesh rests at z = -51.9942 on the z = -51.94 shaft floor.
+    const glm::vec3 elevPos(-98.7966f, -59.135f, -52.9342f);
+    const glm::vec3 elevMin(-102.0f, -62.0f, -51.9942f);
+    const glm::vec3 elevMax(-95.0f, -56.0f, -48.0542f);
+    const glm::vec3 qElev = objectFloorLightQueryPosition(elevPos, elevMin, elevMax);
+    CHECK(qElev.x == Catch::Approx(elevPos.x));
+    CHECK(qElev.y == Catch::Approx(elevPos.y));
+    CHECK(qElev.z == Catch::Approx(-51.9942f));
+    // sampleFloorLight raycast origin (qElev.z + 0.5 = -51.4942) stays above the -51.94 shaft floor.
+    CHECK(qElev.z + 0.5f > -51.94f);
+
+    // Objects extending below their pivot (e.g. GnomeElevatorCar01 cable z = -110.49) keep pivot Z.
+    const glm::vec3 cablePos(10.0f, 20.0f, 5.0f);
+    const glm::vec3 qCable = objectFloorLightQueryPosition(
+        cablePos, glm::vec3(8.0f, 18.0f, -105.49f), glm::vec3(12.0f, 22.0f, 5.85f));
+    CHECK(qCable == cablePos);
+
+    // Degenerate/uninitialized bounds keep pivot Z.
+    CHECK(objectFloorLightQueryPosition(cablePos, glm::vec3(0.0f), glm::vec3(0.0f)) == cablePos);
+}
