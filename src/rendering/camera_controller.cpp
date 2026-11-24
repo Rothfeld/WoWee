@@ -549,7 +549,7 @@ glm::vec3 CameraController::moveBodyOnFootOnce(const glm::vec3& start, const glm
     }
     if (!walked) {
         move = movement::fallBody(from, glm::vec3(horizontal.x, horizontal.y, delta.z),
-                                  radius, height, triangles, minWalkable);
+                                  radius, height, triangles, minWalkable, maxStep);
     }
     if (move.deflected) {
         if (wmoCount > 0 || terrainCount > 0) ++movementTraceWmoContacts_;

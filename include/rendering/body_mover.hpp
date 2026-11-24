@@ -12,7 +12,9 @@
 // Per frame, with the whole frame's horizontal move (native takes it in one
 // piece at 16 to 36 ms frames):
 //
-//  Walking. The move is taken level when nothing is in its way. Otherwise the
+//  Walking. The move is taken level when nothing is in its way, and the body
+//  then lowered onto what is under it, by no more than the move times the
+//  slope of its own bevel (walkBody, at its end). Otherwise the
 //  body is lifted by what is left of one yard above the last ground it could
 //  stand on, carried the whole move, and lowered onto whatever is there. That
 //  is a step only when the lifted move meets nothing. A step refused, the
@@ -128,12 +130,6 @@
 //    before the ground meets it. What sets that height is not known; this
 //    body rests on its ground and does not advance there.
 namespace wowee::rendering::movement {
-
-// Furthest a walking body is lowered onto ground in one frame. Native lowers
-// 0.44 yd within one frame at the Anvilmar railing and 0.31 yd on the
-// plank ramp; larger single-frame drops are not measured, and the step-up
-// limit is used for both directions.
-inline constexpr float kMaxStepDown = kMaxStepUp;
 
 // What a character's scale (OBJECT_FIELD_SCALE_X times its model's) does to
 // its body: nothing below 1, and above 1 radius and step height grow with it.
@@ -266,10 +262,15 @@ inline glm::vec3 turnedByOverlappedWalls(const glm::vec3& from, glm::vec3 delta,
     return delta;
 }
 
+inline BodyMove walkBody(glm::vec3 from, const glm::vec3& requestedDelta, float stepBudget,
+        float radius, float height, std::span<const BodyTriangle> triangles,
+        float minWalkableNormalZ, float maxStep);
+
 // A falling (or rising) step: `delta` is the whole displacement of the frame.
+// `maxStep` is the step height of the walk that follows a landing.
 inline BodyMove fallBody(const glm::vec3& from, const glm::vec3& delta,
         float radius, float height, std::span<const BodyTriangle> triangles,
-        float minWalkableNormalZ = kMinWalkableNormalZ) {
+        float minWalkableNormalZ = kMinWalkableNormalZ, float maxStep = kMaxStepUp) {
     BodyMove move{.position = from};
     bool turned = false;
     glm::vec3 remaining = turnedByOverlappedWalls(from, delta, radius, height, triangles, minWalkableNormalZ, turned);
@@ -281,10 +282,24 @@ inline BodyMove fallBody(const glm::vec3& from, const glm::vec3& delta,
         remaining *= 1.0f - contact->time;
         const glm::vec3 n = contact->normal;
         if (n.z >= minWalkableNormalZ && remaining.z <= 0.0f && contact->face.z >= minWalkableNormalZ) {
-            // Ground under the sole ends the fall.
+            // Ground under the sole ends the fall, and what is left of the
+            // frame's level move is walked from there: native coming down on
+            // the floor beyond the Anvilmar railing (-6080.5, 389.5) 0.67 of
+            // the way through a frame ends that frame its whole 0.2305 yd on
+            // (11 runs of 11), not where it touched down.
             move.position += n * kContactSkin;
             move.support = BodySupport::Walkable;
             move.soleOnGround = true;
+            const glm::vec3 rest(remaining.x, remaining.y, 0.0f);
+            if (delta.x * delta.x + delta.y * delta.y > 1e-10f && rest.x * rest.x + rest.y * rest.y > 1e-10f) {
+                BodyMove walked = walkBody(move.position, rest, maxStep, radius, height, triangles,
+                                           minWalkableNormalZ, maxStep);
+                // Only a walk that stays on ground: a landing does not end in a perch or a second fall.
+                if (walked.support == BodySupport::Walkable) {
+                    walked.deflected = walked.deflected || move.deflected;
+                    return walked;
+                }
+            }
             return move;
         }
         if (n.z > 0.0f && remaining.z <= 0.0f && contact->face.z >= minWalkableNormalZ) {
@@ -360,6 +375,7 @@ inline BodyMove walkBody(glm::vec3 from, const glm::vec3& requestedDelta, float 
     assert(std::abs(requestedDelta.z) < 1e-6f);
     assert(stepBudget >= 0.0f && stepBudget <= maxStep + 1e-4f);
     BodyMove move{.position = from};
+    const glm::vec3 origin = from;
 
     // One lift-across-lower from `start`: where it ends, or what refused it.
     struct Step {
@@ -539,6 +555,15 @@ inline BodyMove walkBody(glm::vec3 from, const glm::vec3& requestedDelta, float 
             if (glm::dot(intent, intent) <= 1e-12f) break;
             if (slide == 1 && glm::dot(intent, firstWall) < -1e-6f) break;
             firstWall = wall;
+            // A move turned along a face runs along it and is not stopped by
+            // it. Rounding leaves the turned move a hair to one side of the
+            // face's plane or the other; a hair into it, a body resting
+            // within the contact skin of that face was stopped by it again
+            // and stayed where it was for good (Orgrimmar, the 53 degree
+            // skirt under the wall at 1816.17, -4242.35, at 7 ms frames).
+            // Leaning out of the plane by a hundred-thousandth of the move
+            // settles the side.
+            intent += wall * (1e-5f * glm::length(intent));
             taken = attempt(glm::vec3(intent, 0.0f), false);
         }
         if (taken.taken) {
@@ -558,22 +583,39 @@ inline BodyMove walkBody(glm::vec3 from, const glm::vec3& requestedDelta, float 
         move.support = BodySupport::Steep;
         return move;
     }
-    const auto rest = lowerBody(move.position, maxStep, radius, height, triangles);
+    // The walking body follows what is under it down no steeper than its own
+    // bevel: by the level move times kBodyBevel in one frame. Native's last
+    // walking frame before a fall goes down by exactly that when nothing is
+    // under it within that reach (0.4271 yd for 0.2310 at the Anvilmar
+    // railing, the Anvilmar post and in the Karabor Sewers, 16 frames of 16;
+    // no walking frame of 425 runs goes down steeper) and starts to fall in
+    // the next frame from there. What it meets within the reach it is set
+    // on: ground, to walk on; anything else - a steep face, or an edge not
+    // of ground - as a perch.
+    const float reach = std::max(glm::length(glm::vec2(move.position - origin)) * kBodyBevel, kContactSkin * 4.0f);
+    const auto rest = lowerBody(move.position, reach, radius, height, triangles);
     if (rest && isBodyGround(*rest, minWalkableNormalZ)) {
         move.support = BodySupport::Walkable;
         move.soleOnGround = isBodySoleOnGround(*rest, minWalkableNormalZ);
         move.position = rest->position;
         return move;
     }
-    // Held up by a steep face under the bevel, or by nothing: lowered as a
-    // fall lowers it, the steep face turning it aside, so a body sliding
-    // along the foot of a slope comes down onto the ground beside it.
-    const BodyMove settled = fallBody(move.position, glm::vec3(0.0f, 0.0f, -maxStep),
+    if (!rest) {
+        move.position.z -= reach;
+        return move;
+    }
+    // Held up by a steep face under the bevel: lowered as a fall lowers it,
+    // the steep face turning it aside, so a body sliding along the foot of a
+    // slope comes down onto the ground beside it.
+    const BodyMove settled = fallBody(move.position, glm::vec3(0.0f, 0.0f, -reach),
                                       radius, height, triangles, minWalkableNormalZ);
     if (settled.support == BodySupport::Walkable) {
         move.support = BodySupport::Walkable;
         move.soleOnGround = settled.soleOnGround;
         move.position = settled.position;
+    } else {
+        move.support = BodySupport::Steep;
+        move.position = rest->position;
     }
     return move;
 }

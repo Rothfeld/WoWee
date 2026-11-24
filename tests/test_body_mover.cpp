@@ -486,3 +486,78 @@ TEST_CASE("A wall the body is already inside of turns aside a move deeper into i
         CHECK(move.position.x == Catch::Approx(from.x - run.x).margin(0.002f));
     }
 }
+
+TEST_CASE("Walking off ground lowers the body by its bevel's slope, then it falls", "[body_mover]") {
+    // Anvilmar railing (-6083.3, 389.5), the Anvilmar post, Karabor Sewers:
+    // native's last walking frame before a fall goes down 0.4271 yd for a
+    // 0.2310 yd move with nothing under it, 16 frames of 16, and the fall
+    // starts from there in the next frame.
+    Mesh mesh;
+    floorAt(mesh, 0.0f, -20.0f, 0.0f);
+    floorAt(mesh, -5.0f, 0.0f, 20.0f);
+    const glm::vec3 run(kFrameRun, 0.0f, 0.0f);
+    SECTION("nothing within reach") {
+        // The body's trailing bevel is already clear of the ledge's edge.
+        const glm::vec3 from(kRadius + 0.05f, 0.0f, 0.0f);
+        const BodyMove move = walkBody(from, run, kMaxStepUp, kRadius, kHeight, mesh);
+        CHECK(move.support == BodySupport::None);
+        CHECK(move.position.x == Catch::Approx(from.x + kFrameRun).margin(1e-4f));
+        CHECK(move.position.z == Catch::Approx(-kFrameRun * kBodyBevel).margin(1e-4f));
+    }
+    SECTION("ground a step below is not snapped to from beyond that reach") {
+        Mesh steps;
+        floorAt(steps, 0.0f, -20.0f, 0.0f);
+        floorAt(steps, -0.8f, 0.0f, 20.0f);
+        const glm::vec3 from(kRadius + 0.05f, 0.0f, 0.0f);
+        const BodyMove move = walkBody(from, run, kMaxStepUp, kRadius, kHeight, steps);
+        CHECK(move.support == BodySupport::None);
+        CHECK(move.position.z == Catch::Approx(-kFrameRun * kBodyBevel).margin(1e-4f));
+    }
+    SECTION("ground within reach is stood on") {
+        Mesh steps;
+        floorAt(steps, 0.0f, -20.0f, 0.0f);
+        floorAt(steps, -0.3f, 0.0f, 20.0f);
+        const glm::vec3 from(kRadius + 0.05f, 0.0f, 0.0f);
+        const BodyMove move = walkBody(from, run, kMaxStepUp, kRadius, kHeight, steps);
+        CHECK(move.support == BodySupport::Walkable);
+        CHECK(move.soleOnGround);
+        CHECK(move.position.z == Catch::Approx(-0.3f).margin(0.003f));
+    }
+}
+
+TEST_CASE("A fall that ends on ground walks the rest of the frame's move", "[body_mover]") {
+    // Beyond the Anvilmar railing (-6080.5, 389.5) native touches down 0.67
+    // of the way through a frame and ends the frame its whole 0.2305 yd on.
+    Mesh mesh;
+    floorAt(mesh, 0.0f);
+    const glm::vec3 from(0.0f, 0.0f, 0.1f);
+    const glm::vec3 delta(kFrameRun, 0.0f, -0.2f);
+    const BodyMove move = fallBody(from, delta, kRadius, kHeight, mesh);
+    CHECK(move.support == BodySupport::Walkable);
+    CHECK(move.soleOnGround);
+    CHECK(move.position.x == Catch::Approx(kFrameRun).margin(1e-3f));
+    CHECK(std::abs(move.position.z) < 0.003f);
+}
+
+TEST_CASE("A move turned along a face is not stopped by that face", "[body_mover]") {
+    // Orgrimmar, where the ramp meets the 53 degree skirt under the wall
+    // (1816.17, -4242.35), WoWee's own triangles: ramp, ramp, wall, skirt.
+    // At 7 ms frames the body, lowered into the crease between the ramp's
+    // edge and the skirt, had its move turned along the skirt stopped by the
+    // skirt, and stayed there for good.
+    const Mesh mesh = {
+        {{{1819.59204f, -4242.74365f, 42.0026093f}, {1819.35718f, -4240.5415f, 41.4806137f}, {1812.26331f, -4238.63721f, 40.9909668f}}},
+        {{{1819.59204f, -4242.74365f, 42.0026093f}, {1812.26331f, -4238.63721f, 40.9909668f}, {1810.82983f, -4241.74561f, 41.7339783f}}},
+        {{{1819.59204f, -4242.74365f, 42.0026093f}, {1810.06311f, -4243.84814f, 44.6516876f}, {1819.42627f, -4244.56152f, 50.1003723f}}},
+        {{{1810.06311f, -4243.84814f, 44.6516876f}, {1819.59204f, -4242.74365f, 42.0026093f}, {1810.82983f, -4241.74561f, 41.7339783f}}},
+    };
+    const float dt = 0.00694f;
+    const glm::vec3 run(std::cos(-2.578f) * 7.0f * dt, std::sin(-2.578f) * 7.0f * dt, 0.0f);
+    const BodyMove settled = fallBody(glm::vec3(1816.8987f, -4242.4370f, 42.3f), glm::vec3(0.0f, 0.0f, -1.5f),
+                                      kRadius, kHeight, mesh);
+    REQUIRE(settled.support == BodySupport::Walkable);
+    Walker walker{.position = settled.position, .baseZ = settled.position.z};
+    for (int i = 0; i < 36; ++i) walker.frame(mesh, run, dt);
+    // A quarter of a second along the skirt: 1.43 yd; stopped, 0.73.
+    CHECK(glm::distance(glm::vec2(walker.position), glm::vec2(settled.position)) > 1.3f);
+}
