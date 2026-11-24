@@ -335,7 +335,8 @@ TEST_CASE("A fall wedged between steep faces hangs and does not gather speed", "
         if (last.held) walker.verticalVelocity = std::max(walker.verticalVelocity, 0.0f);
         fastest = std::min(fastest, walker.verticalVelocity);
     }
-    REQUIRE(last.support == BodySupport::None);
+    // Held there as on a perch, its fall starting over every frame.
+    REQUIRE(last.support == BodySupport::Steep);
     REQUIRE(last.held);
     REQUIRE(walker.position.z > 0.0f);
     REQUIRE(fastest > -12.0f);   // the 3 yd drop into the V, no more
@@ -374,7 +375,8 @@ TEST_CASE("A face the body stands in still carries it", "[body_mover]") {
         if (last.held) hung.verticalVelocity = std::max(hung.verticalVelocity, 0.0f);
     }
     REQUIRE(last.held);
-    REQUIRE_FALSE(hung.grounded);
+    REQUIRE(hung.grounded);
+    REQUIRE(hung.perched);
     REQUIRE(hung.position.z > -1.0f);
 }
 
@@ -1136,4 +1138,36 @@ TEST_CASE("A jump pressed against a wall is caught by the bevel on the edge of g
     for (int i = 0; i < 40; ++i) blocked.frame(sill, {kFrameRun, 0.0f, 0.0f});
     REQUIRE(blocked.grounded);
     REQUIRE(blocked.position.z == Catch::Approx(0.0f).margin(0.003));
+}
+
+TEST_CASE("A fall stopped between faces that are not ground is stepped out of", "[body_mover]") {
+    // Undercity, 1578.67, 182.30: fallen into the gap between a wall and a
+    // barrel, native is stopped with its bevel on the edge of the barrel's
+    // top and the wall at its back, and in the same frame steps up onto the
+    // barrel with the move the forward key asks for.
+    // Two 70 degree faces meeting in a V over a pit, as above.
+    Mesh mesh;
+    const float run = 4.0f / std::tan(glm::radians(70.0f));
+    quad(mesh, {0, -20, 0}, {-run, -20, 4}, {-run, 20, 4}, {0, 20, 0}, {1.0f, 0.0f, 0.3f});
+    quad(mesh, {0, -20, 0}, {run, -20, 4}, {run, 20, 4}, {0, 20, 0}, {-1.0f, 0.0f, 0.3f});
+    Walker walker{.position = {0.0f, 0.0f, 3.0f}, .grounded = false};
+    for (int i = 0; i < 90; ++i) walker.frame(mesh, {0.0f, 0.0f, 0.0f});
+    // With no key it hangs there, held as on a perch.
+    REQUIRE(walker.grounded);
+    REQUIRE(walker.perched);
+    const float hung = walker.position.z;
+    REQUIRE(hung > 0.0f);
+    // Along the V nothing is stepped onto: the forward key leaves it hanging.
+    for (int i = 0; i < 30; ++i) walker.frame(mesh, {0.0f, kFrameRun, 0.0f});
+    REQUIRE(walker.position.z == Catch::Approx(hung).margin(0.01));
+    REQUIRE(walker.position.y == Catch::Approx(0.0f).margin(0.01));
+    // A block across the V half a yard above the sole, its near side 0.4 yd
+    // ahead: the forward key steps the body onto it.
+    quad(mesh, {-20, 0.4f, -5}, {20, 0.4f, -5}, {20, 0.4f, hung + 0.5f}, {-20, 0.4f, hung + 0.5f}, {0.0f, -1.0f, 0.0f});
+    quad(mesh, {-20, 0.4f, hung + 0.5f}, {20, 0.4f, hung + 0.5f}, {20, 20, hung + 0.5f}, {-20, 20, hung + 0.5f});
+    for (int i = 0; i < 10; ++i) walker.frame(mesh, {0.0f, kFrameRun, 0.0f});
+    REQUIRE(walker.grounded);
+    REQUIRE_FALSE(walker.perched);
+    REQUIRE(walker.position.z == Catch::Approx(hung + 0.5f).margin(0.003));
+    REQUIRE(walker.position.y > 0.4f);
 }

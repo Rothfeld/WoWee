@@ -40,7 +40,8 @@
 //  drop alone, so a steep face is slid down at free-fall speed; where an
 //  edge crosses an edge of the underside the drop pushes the body off along
 //  both sides of the underside that meet there. Wedged between such faces
-//  the body hangs and its fall starts over each frame.
+//  the body is held as on a perch: its fall starts over each frame, and the
+//  move the keys ask for is taken from there when it steps on.
 //
 //  Triangles are solid from their front only (body_collision.hpp).
 //
@@ -579,7 +580,8 @@ inline BodyMove fallBody(const glm::vec3& from, const glm::vec3& delta,
     // Turned aside five times with drop still left: wedged between faces
     // that are not ground. The body hangs there and its fall starts over
     // (native in such a spot drops 0.0105 yd, a first frame of fall, frame
-    // after frame).
+    // after frame, and then walks on: the Karabor Sewers rock, 346.3, 816.6).
+    const float left = delta.z < -1e-6f ? std::clamp(remaining.z / delta.z, 0.0f, 1.0f) : 0.0f;
     if (remaining.z < -1e-6f) move.held = true;
     if (delta.z <= 0.0f) {
         if (const auto rest = lowerBody(move.position, kContactSkin * 2.0f, radius, height, triangles)) {
@@ -587,6 +589,36 @@ inline BodyMove fallBody(const glm::vec3& from, const glm::vec3& delta,
                 move.support = BodySupport::Walkable;
                 move.soleOnGround = true;
                 move.position = rest->position;
+            }
+        }
+    }
+    // A fall stopped by faces that are not ground holds the body as a perch
+    // does: the move the keys ask for is walked from there - in what is left
+    // of this frame and in the frames after - when it steps on, up or onto
+    // ground, and otherwise the fall starts over. Native fallen into the
+    // gap between an Undercity wall and a barrel beside it (1578.67,
+    // 182.30), its bevel on the edge of the barrel's top 0.39 yd before its
+    // sole and the wall at its back, is stopped there a tenth of the way
+    // through a frame and ends that frame 0.215 yd on along its heading and
+    // 0.571 yd up, on the barrel, and walks on; fallen back onto that
+    // barrel's edge from the ledge beyond, it ends the frame it is stopped
+    // in 0.21 to 0.24 yd on and 0.36 to 0.40 yd up (3 runs). Left in the
+    // air there with what the fall had kept of its level velocity, WoWee
+    // hung in that gap, its fall starting over every frame, for as long as
+    // the user's client stood there (46 s, forward and backward keys held).
+    // (_experiments/20261124T160500Z.movement_collision_parity_round22)
+    if (move.held && move.support == BodySupport::None) {
+        move.support = BodySupport::Steep;
+        if (groundMove) {
+            const glm::vec3 rest = glm::vec3(groundMove->x, groundMove->y, 0.0f) * left;
+            if (rest.x * rest.x + rest.y * rest.y > 1e-10f) {
+                BodyMove walked = walkBody(move.position, rest, maxStep, radius, height, triangles,
+                                           minWalkableNormalZ, maxStep, heightfieldTriangles, glm::vec3(0.0f), true);
+                if (walked.stepped && (walked.soleOnGround || walked.position.z > move.position.z + 1e-3f)) {
+                    if (!walked.soleOnGround && walked.support == BodySupport::Walkable) walked.support = BodySupport::Steep;
+                    walked.deflected = walked.deflected || move.deflected;
+                    return walked;
+                }
             }
         }
     }
