@@ -200,3 +200,25 @@ TEST_CASE("Brutallus.m2 AttackUnarmedOff (117) stands in as AttackOff (87) and d
     CHECK_FALSE(rendering::standInAllowsVariationDraw({A::WALK, true, false}));
     CHECK_FALSE(rendering::standInAllowsVariationDraw({A::DEATH, false, true}));
 }
+
+TEST_CASE("Krakken.m2 DEATH (1) transitions to authored looping DEAD (6) on completion",
+          "[animation][assets][lurker]") {
+    const auto krakken = pipeline::M2Loader::load(test::readTbcData("creature/krakken/krakken.m2"));
+    CHECK(rendering::deathTransitionsToAuthoredDeadLoop(A::DEATH, krakken.sequences));
+    CHECK_FALSE(rendering::deathTransitionsToAuthoredDeadLoop(A::STAND, krakken.sequences));
+    CHECK_FALSE(rendering::deathTransitionsToAuthoredDeadLoop(A::DEAD, krakken.sequences));
+
+    // Models without an authored DEAD (6) sequence hold the final frame of DEATH.
+    const auto dragon = pipeline::M2Loader::load(test::readTbcData("creature/dragon/dragonazurgoz.m2"));
+    CHECK_FALSE(rendering::deathTransitionsToAuthoredDeadLoop(A::DEATH, dragon.sequences));
+    const auto human = pipeline::M2Loader::load(test::readTbcData("character/human/male/humanmale.m2"));
+    CHECK_FALSE(rendering::deathTransitionsToAuthoredDeadLoop(A::DEATH, human.sequences));
+
+    // Zero-duration DEAD sequence must not trigger a loop transition.
+    pipeline::M2Model zeroDead = withSequences({A::DEATH});
+    pipeline::M2Sequence emptyDead{};
+    emptyDead.id = A::DEAD;
+    emptyDead.duration = 0;
+    zeroDead.sequences.push_back(emptyDead);
+    CHECK_FALSE(rendering::deathTransitionsToAuthoredDeadLoop(A::DEATH, zeroDead.sequences));
+}

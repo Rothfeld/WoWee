@@ -80,4 +80,17 @@ inline constexpr bool standInAllowsVariationDraw(const PlayableStandIn& standIn)
     return !standIn.frozenAtEnd && !standIn.reversed && standIn.animationId != anim::STAND;
 }
 
+/// True when a completed non-looping `DEATH` (1) sequence should transition
+/// into an authored looping `DEAD` (6) sequence (e.g. `Krakken.m2`, The Lurker
+/// Below's 3000 ms corpse-bobbing loop). Models without `DEAD` hold the final
+/// frame of `DEATH` statically.
+inline bool deathTransitionsToAuthoredDeadLoop(
+        uint32_t completedAnimId,
+        const std::vector<pipeline::M2Sequence>& sequences) {
+    if (completedAnimId != anim::DEATH) return false;
+    return std::any_of(sequences.begin(), sequences.end(), [](const auto& seq) {
+        return seq.id == anim::DEAD && seq.duration > 0;
+    });
+}
+
 } // namespace wowee::rendering

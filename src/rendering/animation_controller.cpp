@@ -1361,7 +1361,8 @@ void AnimationController::updateCharacterAnimation() {
     // playAnimation call).  One-shot animations must NOT be re-asserted after the
     // animation reaches its end - the FSM consumes the completed duration and
     // chooses its successor while the renderer holds the final pose.
-    const bool drifted = haveState && currentAnimId != animId && (loop || dead);
+    const bool deathCompletedToDead = (animId == anim::DEATH && currentAnimId == anim::DEAD);
+    const bool drifted = haveState && currentAnimId != animId && !deathCompletedToDead && (loop || dead);
     const bool shouldPlay = requestChanged || drifted;
 
     // Debug: log animation decisions (only when animation changes or replays)

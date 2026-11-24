@@ -3077,6 +3077,12 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos,
                                 inst.oneShotReturnAnim != 0 ? inst.oneShotReturnAnim : anim::STAND;
                             playAnimation(pair.first, resumeAnim, true);
                         }
+                    } else if (deathTransitionsToAuthoredDeadLoop(
+                                   inst.currentAnimationId, inst.cachedModel->data.sequences)) {
+                        // Models that author their own DEAD (6) loop (e.g. Krakken.m2)
+                        // transition from DEATH's final pose into looping DEAD.
+                        inst.animationTime = static_cast<float>(seq.duration);
+                        playAnimation(pair.first, anim::DEAD, true);
                     } else {
                         // Hold until the owning state machine consumes completion.
                         // An automatic Stand here flashes between chained poses.
