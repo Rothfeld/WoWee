@@ -1064,6 +1064,7 @@ void QuestHandler::registerOpcodes(DispatchTable& table) {
             currentQuestOfferReward_ = QuestOfferRewardData{};
             removed = true;
         }
+        releaseDialogGameObjectIfIdle();
         if (removed) {
             owner_.setQuestTracked(questId, false);
                 // No line: abandoning prints nothing on 2.4.3 (pair 6).
@@ -1546,10 +1547,17 @@ void QuestHandler::acceptQuest() {
     dismissQuestDetails();
 }
 
+void QuestHandler::releaseDialogGameObjectIfIdle() {
+    if (!gossipWindowOpen_ && !questDetailsOpen_ && !questRequestItemsOpen_ && !questOfferRewardOpen_) {
+        owner_.setDialogGameObject(0);
+    }
+}
+
 void QuestHandler::dismissQuestDetails(bool announce) {
     questDetailsOpen_ = false;
     questDetailsOpenTime_ = std::chrono::steady_clock::time_point{};
     currentQuestDetails_ = QuestDetailsData{};
+    releaseDialogGameObjectIfIdle();
     // The interface's quest frame opens on QUEST_DETAIL and closes on this and
     // nothing else, so an accept that only reset the state left FrameXML's
     // window open over the world while this client's own window - which reads
@@ -1583,6 +1591,7 @@ void QuestHandler::closeGossip() {
     currentGossip_ = GossipMessageData{};
     questGreeting_.clear();
     questGreetingOpen_ = false;
+    releaseDialogGameObjectIfIdle();
 }
 
 void QuestHandler::offerQuestFromItem(uint64_t itemGuid, uint32_t questId) {
@@ -1622,6 +1631,7 @@ void QuestHandler::closeQuestRequestItems(bool announce) {
     pendingTurnInRewardRequest_ = false;
     questRequestItemsOpen_ = false;
     currentQuestRequestItems_ = QuestRequestItemsData{};
+    releaseDialogGameObjectIfIdle();
     // What closes the quest frame. It opens on QUEST_DETAIL, QUEST_PROGRESS or
     // QUEST_COMPLETE and hides on this, so without it the window would open and
     // stay open over whatever came next - unless the interface is the one
@@ -1653,6 +1663,7 @@ void QuestHandler::closeQuestOfferReward(bool announce) {
     pendingTurnInRewardRequest_ = false;
     questOfferRewardOpen_ = false;
     currentQuestOfferReward_ = QuestOfferRewardData{};
+    releaseDialogGameObjectIfIdle();
     if (announce && owner_.addonEventCallbackRef()) {
         owner_.addonEventCallbackRef()("QUEST_FINISHED", {});
     }
@@ -2380,7 +2391,10 @@ void QuestHandler::handleGossipMessage(network::Packet& packet) {
         if (owner_.addonEventCallbackRef()) owner_.addonEventCallbackRef()("GOSSIP_SHOW", {});
         // Auto-selected service gossip never opens a panel. Preserve the current
         // merchant until its refreshed inventory arrives; real gossip closes it.
-        if (gossipWindowOpen_) owner_.closeVendor();
+        if (gossipWindowOpen_) {
+            owner_.closeVendor();
+            owner_.setDialogGameObject(currentGossip_.npcGuid);
+        }
     }
 
     // Classify gossip quests and update quest log + overhead NPC markers.
@@ -2459,6 +2473,7 @@ void QuestHandler::handleQuestgiverQuestList(network::Packet& packet) {
     // two.
     if (owner_.addonEventCallbackRef()) owner_.addonEventCallbackRef()("QUEST_GREETING", {});
     owner_.closeVendor();
+    owner_.setDialogGameObject(currentGossip_.npcGuid);
 
     classifyGossipQuests(false);
 
@@ -2568,6 +2583,7 @@ void QuestHandler::handleGossipComplete(network::Packet& packet) {
     currentGossip_ = GossipMessageData{};
     questGreeting_.clear();
     questGreetingOpen_ = false;
+    releaseDialogGameObjectIfIdle();
 }
 
 void QuestHandler::handleNpcTextUpdate(network::Packet& packet) {
@@ -2616,6 +2632,7 @@ void QuestHandler::handleNpcTextUpdate(network::Packet& packet) {
         }
         if (wasDeferred && gossipWindowOpen_) {
             owner_.closeVendor();
+            owner_.setDialogGameObject(currentGossip_.npcGuid);
         }
     }
     // First visit: the gossip message arrived before its text, so its emotes
@@ -2759,6 +2776,7 @@ void QuestHandler::handleQuestDetails(network::Packet& packet) {
     questDetailsOpen_ = true;
     questDetailsOpenTime_ = std::chrono::steady_clock::now() + std::chrono::milliseconds(100);
     gossipWindowOpen_ = false;
+    owner_.setDialogGameObject(data.npcGuid);
     if (owner_.addonEventCallbackRef()) owner_.addonEventCallbackRef()("QUEST_DETAIL", {});
 }
 
@@ -2785,6 +2803,7 @@ void QuestHandler::handleQuestRequestItems(network::Packet& packet) {
     gossipWindowOpen_ = false;
     questDetailsOpen_ = false;
     questDetailsOpenTime_ = std::chrono::steady_clock::time_point{};
+    owner_.setDialogGameObject(data.npcGuid);
 
     // The panel shown when a quest is handed back before it is finished, or
     // when it asks for something in return. Its siblings QUEST_DETAIL and
@@ -2847,6 +2866,7 @@ void QuestHandler::handleQuestOfferReward(network::Packet& packet) {
     gossipWindowOpen_ = false;
     questDetailsOpen_ = false;
     questDetailsOpenTime_ = std::chrono::steady_clock::time_point{};
+    owner_.setDialogGameObject(data.npcGuid);
     if (owner_.addonEventCallbackRef()) owner_.addonEventCallbackRef()("QUEST_COMPLETE", {});
 
     // Query item names for reward items

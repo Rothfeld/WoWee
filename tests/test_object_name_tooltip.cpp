@@ -230,3 +230,36 @@ TEST_CASE("TBC 2.4.3 game object hover highlight follows type and template highl
     captureData[19] = 1;
     CHECK(gameObjectHighlights(29, captureData));
 }
+
+using wowee::game::resolveGameObjectDialogTransition;
+
+TEST_CASE("GameObject client-local dialog open/close transitions avoid duplicate replays", "[gameobject][dialog]") {
+    constexpr uint64_t kCodexGuid = 0xf11002caa354afdaULL;
+    constexpr uint64_t kOtherBookGuid = 0xf11002c72e59447fULL;
+
+    // Opening a dialog on a closed GameObject opens it locally (state 0).
+    const auto openTr = resolveGameObjectDialogTransition(0, kCodexGuid);
+    CHECK(openTr.closeGuid == 0);
+    CHECK(openTr.openGuid == kCodexGuid);
+
+    // Turning pages (<Read on, if you dare...>) or transitioning Gossip -> QuestDetails
+    // on the same GameObject is a no-op so Open/Close animations do not replay.
+    const auto sameTr = resolveGameObjectDialogTransition(kCodexGuid, kCodexGuid);
+    CHECK(sameTr.closeGuid == 0);
+    CHECK(sameTr.openGuid == 0);
+
+    // Switching directly to another GameObject closes the first and opens the second.
+    const auto switchTr = resolveGameObjectDialogTransition(kCodexGuid, kOtherBookGuid);
+    CHECK(switchTr.closeGuid == kCodexGuid);
+    CHECK(switchTr.openGuid == kOtherBookGuid);
+
+    // Closing the dialog restores the GameObject to its server state.
+    const auto closeTr = resolveGameObjectDialogTransition(kOtherBookGuid, 0);
+    CHECK(closeTr.closeGuid == kOtherBookGuid);
+    CHECK(closeTr.openGuid == 0);
+
+    // Already idle -> idle is a no-op.
+    const auto idleTr = resolveGameObjectDialogTransition(0, 0);
+    CHECK(idleTr.closeGuid == 0);
+    CHECK(idleTr.openGuid == 0);
+}

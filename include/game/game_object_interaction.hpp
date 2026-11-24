@@ -164,4 +164,25 @@ inline std::optional<uint32_t> gameObjectCustomAnimation(uint32_t index) {
     return kCustom0 + index;
 }
 
+/// Client-local GameObject open/close transition when a reader, gossip, or
+/// questgiver dialog opens on `newGuid` (0 when no dialog is open).
+///
+/// Native 2.4.3 opens interactive GameObjects locally (GO_STATE_ACTIVE = 0,
+/// playing Open 148 -> Opened 149) while the dialog is shown even though the
+/// server keeps GAMEOBJECT_STATE = READY (1) (e.g. The Codex of Blood 182947,
+/// type 2 QUESTGIVER, displayId 6892). Page turns or Gossip -> QuestDetails
+/// transitions on the same GameObject keep it open without replaying Open/Close.
+/// Closing the dialog (or switching to another object) restores the previous
+/// GameObject to its server state (playing Close 146 -> Closed 147 when READY).
+struct GameObjectDialogTransition {
+    uint64_t closeGuid = 0;  ///< Previous GameObject to restore to server state (0 = none)
+    uint64_t openGuid = 0;   ///< New GameObject to open locally to state 0 (0 = none)
+};
+
+inline GameObjectDialogTransition resolveGameObjectDialogTransition(uint64_t currentGuid,
+                                                                    uint64_t newGuid) {
+    if (currentGuid == newGuid) return {};
+    return {currentGuid, newGuid};
+}
+
 } // namespace wowee::game

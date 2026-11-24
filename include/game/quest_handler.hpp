@@ -349,6 +349,7 @@ private:
     void handleQuestRequestItems(network::Packet& packet);
     void handleQuestOfferReward(network::Packet& packet);
     void handleQuestConfirmAccept(network::Packet& packet);
+    void releaseDialogGameObjectIfIdle();
 
     GameHandler& owner_;
 

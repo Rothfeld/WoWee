@@ -3080,6 +3080,7 @@ public:
     bool hasBookOpen() const { return !bookPages_.empty(); }
     void clearBook();
     void setReadingGameObject(uint64_t guid);
+    void setDialogGameObject(uint64_t guid);
 
     /// What is being read, for the heading over the page. Known at every point
     /// a book is opened - the game object's name from its query cache, or the
@@ -5922,6 +5923,8 @@ private:
     std::vector<TempEnchantTimer> tempEnchantTimers_;
     std::vector<BookPage> bookPages_;            // pages collected for the current readable item
     uint64_t readingGameObjectGuid_ = 0;
+    uint64_t dialogGameObjectGuid_ = 0;
+    void applyLocalGameObjectDialogState(uint64_t& activeGuid, uint64_t newGuid);
     std::string bookTitle_;                      // name of the object or item those pages belong to
     uint32_t bookMaterial_ = 0;                  // PageTextMaterial.dbc id, 0 for unknown
     /// PageTextMaterial.dbc is seven rows and is read once on the first ask,
