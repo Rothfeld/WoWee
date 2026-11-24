@@ -535,7 +535,8 @@ glm::vec3 CameraController::moveBodyOnFootOnce(const glm::vec3& start, const glm
     if (supported) {
         // The step height above where the sole last stood on ground.
         const float budget = std::clamp(walkableStepBaseZ_ + maxStep - from.z, 0.0f, maxStep);
-        move = movement::walkBody(from, horizontal, budget, radius, height, triangles, minWalkable, maxStep);
+        move = movement::walkBody(from, horizontal, budget, radius, height, triangles, minWalkable, maxStep,
+                                  terrainCount);
         // A perch is left by stepping on from it - up, or to where the sole
         // stands on ground - or by falling. A step from a perch that ends
         // hung by the bevel is another perch: native set on the rim of the
@@ -549,7 +550,7 @@ glm::vec3 CameraController::moveBodyOnFootOnce(const glm::vec3& start, const glm
     }
     if (!walked) {
         move = movement::fallBody(from, glm::vec3(horizontal.x, horizontal.y, delta.z),
-                                  radius, height, triangles, minWalkable, maxStep);
+                                  radius, height, triangles, minWalkable, maxStep, terrainCount);
     }
     if (move.deflected) {
         if (wmoCount > 0 || terrainCount > 0) ++movementTraceWmoContacts_;

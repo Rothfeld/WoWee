@@ -165,10 +165,12 @@
 //    turned along that face, also where the body set down at the move's end
 //    would rest clear of it. A face steeper than the underside is met by a
 //    lower corner of the body's box and stops the move when met within it. A
-//    flatter one is met by the sole and stops the move when the sole, moved
-//    level, would be more than 0.1 yd beyond the face's plane (Valley of
-//    Trials 0.096 to 0.100, Tanaris 0.098 to 0.151), and only where the walk
-//    does not lead over the face to ground again.
+//    flatter one of the terrain is met by the sole and stops the move when
+//    the sole, moved level, would be more than 0.1 yd beyond the face's plane
+//    (Valley of Trials 0.096 to 0.100, Tanaris 0.098 to 0.151), and only
+//    where the walk does not lead over the face to ground again. Such a face
+//    of a building does not: native walks onto the 54 degree bank beside a
+//    Karabor Sewers ramp from 0.05 to 0.12 yd before its plane (3 frames).
 //  - Of several such faces the flattest turns the move first, of equally
 //    steep ones the first met (Eastern Plaguelands gully, Exodar pillar
 //    corner).
@@ -321,13 +323,15 @@ inline glm::vec3 turnedByOverlappedWalls(const glm::vec3& from, glm::vec3 delta,
 
 inline BodyMove walkBody(glm::vec3 from, const glm::vec3& requestedDelta, float stepBudget,
         float radius, float height, std::span<const BodyTriangle> triangles,
-        float minWalkableNormalZ, float maxStep);
+        float minWalkableNormalZ, float maxStep, size_t heightfieldTriangles);
 
 // A falling (or rising) step: `delta` is the whole displacement of the frame.
-// `maxStep` is the step height of the walk that follows a landing.
+// `maxStep` is the step height of the walk that follows a landing;
+// `heightfieldTriangles` as for walkBody.
 inline BodyMove fallBody(const glm::vec3& from, const glm::vec3& delta,
         float radius, float height, std::span<const BodyTriangle> triangles,
-        float minWalkableNormalZ = kMinWalkableNormalZ, float maxStep = kMaxStepUp) {
+        float minWalkableNormalZ = kMinWalkableNormalZ, float maxStep = kMaxStepUp,
+        size_t heightfieldTriangles = 0) {
     BodyMove move{.position = from};
     bool turned = false;
     glm::vec3 remaining = turnedByOverlappedWalls(from, delta, radius, height, triangles, minWalkableNormalZ, turned);
@@ -350,7 +354,7 @@ inline BodyMove fallBody(const glm::vec3& from, const glm::vec3& delta,
             const glm::vec3 rest(remaining.x, remaining.y, 0.0f);
             if (delta.x * delta.x + delta.y * delta.y > 1e-10f && rest.x * rest.x + rest.y * rest.y > 1e-10f) {
                 BodyMove walked = walkBody(move.position, rest, maxStep, radius, height, triangles,
-                                           minWalkableNormalZ, maxStep);
+                                           minWalkableNormalZ, maxStep, heightfieldTriangles);
                 // Only a walk that stays on ground: a landing does not end in a perch or a second fall.
                 if (walked.support == BodySupport::Walkable) {
                     walked.deflected = walked.deflected || move.deflected;
@@ -425,10 +429,13 @@ inline BodyMove fallBody(const glm::vec3& from, const glm::vec3& delta,
 // A walking step. `stepBudget` is how far the body may still be lifted:
 // `maxStep` above the last walkable ground, less its present height over it.
 // `maxStep` is a yard for a character of scale 1 or less and the scale in
-// yards above that (bodyScale).
+// yards above that (bodyScale). The first `heightfieldTriangles` of
+// `triangles` are the terrain's; the rest belong to buildings and objects.
 inline BodyMove walkBody(glm::vec3 from, const glm::vec3& requestedDelta, float stepBudget,
         float radius, float height, std::span<const BodyTriangle> triangles,
-        float minWalkableNormalZ = kMinWalkableNormalZ, float maxStep = kMaxStepUp) {
+        float minWalkableNormalZ = kMinWalkableNormalZ, float maxStep = kMaxStepUp,
+        size_t heightfieldTriangles = 0) {
+    assert(heightfieldTriangles <= triangles.size());
     assert(std::abs(requestedDelta.z) < 1e-6f);
     assert(stepBudget >= 0.0f && stepBudget <= maxStep + 1e-4f);
     BodyMove move{.position = from};
@@ -747,11 +754,13 @@ inline BodyMove walkBody(glm::vec3 from, const glm::vec3& requestedDelta, float 
         // underside or the lifted body meets the face, the frames of the two
         // places do not separate at one value
         // (_experiments/20261124T071000Z.movement_collision_parity_round17).
-        // Such a face stops the move only where the walk does not lead over
-        // it to ground again: native walks up a Karabor Sewers ramp (341.8,
-        // 815.1) onto and over a 54 degree bank a third of a yard wide with
-        // whole moves, its plane 0.12 and 0.05 yd ahead of the sole in the
-        // frames before.
+        // This is the terrain's: native walks up a Karabor Sewers ramp
+        // onto a 54 degree bank of the building beside it with whole moves,
+        // the bank's plane 0.12 and 0.05 yd ahead of its sole (341.8, 815.1,
+        // where it goes on over the bank, a third of a yard wide) and 0.06
+        // yd ahead (346.7, 814.4, where steeper faces follow). And such a
+        // face stops the move only where the walk does not lead over it to
+        // ground again, as a step onto anything that is not ground.
         //
         // Of several such faces the flattest turns the move first, and of
         // equally steep ones the first met; a face the turned move then
@@ -782,7 +791,8 @@ inline BodyMove walkBody(glm::vec3 from, const glm::vec3& requestedDelta, float 
             // face a corner of the box meets, which is what turns a move
             // refused for another reason.
             Stop byCorner, bySole, anyCorner;
-            for (const auto& triangle : triangles) {
+            for (size_t index = 0; index < triangles.size(); ++index) {
+                const BodyTriangle& triangle = triangles[index];
                 const glm::vec3 normal = glm::cross(triangle[1] - triangle[0], triangle[2] - triangle[0]);
                 const float area = glm::length(normal);
                 if (area < 1e-5f || normal.z >= minWalkableNormalZ * area) continue;
@@ -798,6 +808,7 @@ inline BodyMove walkBody(glm::vec3 from, const glm::vec3& requestedDelta, float 
                     if (soleNearer <= 0.0f) consider(byCorner, contact->time, front);
                 }
                 if (soleNearer <= 0.0f) continue;
+                if (index >= heightfieldTriangles) continue;
                 if (!first.taken || first.level || !first.rest || !isBodySoleOnGround(*first.rest, minWalkableNormalZ)) continue;
                 // The face is there for the body: its underside, moved level, meets it within the move.
                 const auto reached = sweepBodyTriangle(from, delta, radius, height, triangle);
@@ -1002,7 +1013,7 @@ inline BodyMove walkBody(glm::vec3 from, const glm::vec3& requestedDelta, float 
     // the steep face turning it aside, so a body sliding along the foot of a
     // slope comes down onto the ground beside it.
     const BodyMove settled = fallBody(move.position, glm::vec3(0.0f, 0.0f, -reach),
-                                      radius, height, triangles, minWalkableNormalZ);
+                                      radius, height, triangles, minWalkableNormalZ, maxStep, heightfieldTriangles);
     if (settled.support == BodySupport::Walkable) {
         move.support = BodySupport::Walkable;
         move.soleOnGround = settled.soleOnGround;
