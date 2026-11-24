@@ -151,6 +151,42 @@ inline std::optional<BodyContact> sweepBodyTriangle(const glm::vec3& from,
     return BodyContact{std::max(0.0f,enter),normal,face,false,corner,front};
 }
 
+// How deep the body at `from` is inside a triangle: the least distance it
+// would have to move to be clear of it, over the axes sweepBodyTriangle
+// separates on. Zero or less when they are apart.
+inline float bodyDepthInTriangle(const glm::vec3& from, float radius, float height,
+        const BodyTriangle& triangle) {
+    assert(radius > 0.0f && height >= radius * kBodyBevel);
+    const float bevel = radius * kBodyBevel;
+    const glm::vec3 a = triangle[0] - from;
+    const glm::vec3 b = triangle[1] - from;
+    const glm::vec3 c = triangle[2] - from;
+    const std::array edges = {b-a, c-b, a-c};
+    const glm::vec3 triangleNormal = glm::cross(edges[0], edges[1]);
+    if (glm::dot(triangleNormal, triangleNormal) < 1e-10f) return 0.0f;
+    float depth = std::numeric_limits<float>::infinity();
+    const auto overlap = [&](glm::vec3 axis) {
+        const float lengthSq = glm::dot(axis, axis);
+        if (lengthSq < 1e-10f) return;
+        axis /= std::sqrt(lengthSq);
+        const float extent = radius * (std::abs(axis.x) + std::abs(axis.y));
+        const float shapeLow = std::min({0.0f, bevel*axis.z-extent, height*axis.z-extent});
+        const float shapeHigh = std::max({0.0f, bevel*axis.z+extent, height*axis.z+extent});
+        const float low = std::min({glm::dot(a,axis),glm::dot(b,axis),glm::dot(c,axis)}) - shapeHigh;
+        const float high = std::max({glm::dot(a,axis),glm::dot(b,axis),glm::dot(c,axis)}) - shapeLow;
+        depth = std::min(depth, std::min(-low, high));
+    };
+    overlap(triangleNormal);
+    for (const glm::vec3& axis : {glm::vec3{1,0,0}, {0,1,0}, {0,0,1},
+                                  {kBodyBevel,0,-1}, {-kBodyBevel,0,-1}, {0,kBodyBevel,-1}, {0,-kBodyBevel,-1}})
+        overlap(axis);
+    for (const auto& edge : edges)
+        for (const glm::vec3& bodyEdge : {glm::vec3{1,0,0}, {0,1,0}, {0,0,1},
+                                          {1,1,kBodyBevel}, {-1,1,kBodyBevel}, {1,-1,kBodyBevel}, {-1,-1,kBodyBevel}})
+            overlap(glm::cross(edge, bodyEdge));
+    return depth;
+}
+
 inline bool moveBody(const glm::vec3& from, const glm::vec3& to,
         float radius, float height, std::span<const BodyTriangle> triangles,
         glm::vec3& result, bool allowHorizontalRise = true) {

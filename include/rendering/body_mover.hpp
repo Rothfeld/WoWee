@@ -232,12 +232,48 @@ inline bool isBodySoleOnGround(const BodyRest& rest, float minWalkableNormalZ) {
     return rest.face.z >= minWalkableNormalZ && rest.normal.z >= minWalkableNormalZ;
 }
 
+// A face too steep to stand on that the body is already inside of - it grew
+// into a wall it stood at, or was set down astride one - is not met by any
+// sweep: sweeps pass what the body overlaps, so that it can leave. It still
+// turns aside the level part of a move that goes deeper into it, along its
+// plane. Native at the Orgrimmar wall (1826.75, -4245.98), its radius grown
+// by half with .modify scale 1.5 where it stood against the wall, slides along
+// it as at scale 1; passing what it overlapped, WoWee walked through the
+// wall and fell out of the world.
+inline glm::vec3 turnedByOverlappedWalls(const glm::vec3& from, glm::vec3 delta,
+        float radius, float height, std::span<const BodyTriangle> triangles,
+        float minWalkableNormalZ, bool& turned) {
+    turned = false;
+    if (delta.x * delta.x + delta.y * delta.y <= 1e-12f) return delta;
+    // Twice over: turned along one wall the move may head into another.
+    for (int pass = 0; pass < 2; ++pass) {
+        for (const auto& triangle : triangles) {
+            const glm::vec3 front = glm::cross(triangle[1] - triangle[0], triangle[2] - triangle[0]);
+            const float area = glm::length(front);
+            if (area < 1e-5f || std::abs(front.z) >= minWalkableNormalZ * area) continue;
+            const glm::vec2 level(front.x, front.y);
+            const float into = glm::dot(glm::vec2(delta), level);
+            if (into >= 0.0f) continue;
+            const float levelSq = glm::dot(level, level);
+            if (levelSq < 1e-10f) continue;
+            if (bodyDepthInTriangle(from, radius, height, triangle) <= kContactSkin) continue;
+            const glm::vec2 along = glm::vec2(delta) - level * (into / levelSq);
+            delta.x = along.x;
+            delta.y = along.y;
+            turned = true;
+        }
+    }
+    return delta;
+}
+
 // A falling (or rising) step: `delta` is the whole displacement of the frame.
 inline BodyMove fallBody(const glm::vec3& from, const glm::vec3& delta,
         float radius, float height, std::span<const BodyTriangle> triangles,
         float minWalkableNormalZ = kMinWalkableNormalZ) {
     BodyMove move{.position = from};
-    glm::vec3 remaining = delta;
+    bool turned = false;
+    glm::vec3 remaining = turnedByOverlappedWalls(from, delta, radius, height, triangles, minWalkableNormalZ, turned);
+    if (turned) move.deflected = true;
     for (int iteration = 0; iteration < 5 && glm::dot(remaining, remaining) > 1e-12f; ++iteration) {
         const auto contact = firstBodyContact(move.position, remaining, radius, height, triangles);
         if (!contact) { move.position += remaining; remaining = glm::vec3(0.0f); break; }
@@ -318,10 +354,10 @@ inline BodyMove fallBody(const glm::vec3& from, const glm::vec3& delta,
 // `maxStep` above the last walkable ground, less its present height over it.
 // `maxStep` is a yard for a character of scale 1 or less and the scale in
 // yards above that (bodyScale).
-inline BodyMove walkBody(glm::vec3 from, const glm::vec3& horizontalDelta, float stepBudget,
+inline BodyMove walkBody(glm::vec3 from, const glm::vec3& requestedDelta, float stepBudget,
         float radius, float height, std::span<const BodyTriangle> triangles,
         float minWalkableNormalZ = kMinWalkableNormalZ, float maxStep = kMaxStepUp) {
-    assert(std::abs(horizontalDelta.z) < 1e-6f);
+    assert(std::abs(requestedDelta.z) < 1e-6f);
     assert(stepBudget >= 0.0f && stepBudget <= maxStep + 1e-4f);
     BodyMove move{.position = from};
 
@@ -442,6 +478,11 @@ inline BodyMove walkBody(glm::vec3 from, const glm::vec3& horizontalDelta, float
         }
         return first;
     };
+
+    bool turned = false;
+    const glm::vec3 horizontalDelta = turnedByOverlappedWalls(from, requestedDelta, radius, height,
+                                                              triangles, minWalkableNormalZ, turned);
+    if (turned) move.deflected = true;
 
     bool perched = false;
     if (glm::dot(horizontalDelta, horizontalDelta) > 1e-12f) {

@@ -460,3 +460,29 @@ TEST_CASE("Scale above 1 grows the body and its step; below 1 it does not shrink
         else CHECK(std::abs(position.z) < 0.003f);
     }
 }
+
+TEST_CASE("A wall the body is already inside of turns aside a move deeper into it", "[body_mover]") {
+    // Orgrimmar wall (1826.75, -4245.98): native, grown by half where it
+    // stood against the wall, slides along it; sweeps pass what the body
+    // overlaps, and WoWee walked through the wall.
+    Mesh mesh;
+    floorAt(mesh, 0.0f);
+    slope(mesh, 2.0f, 0.0f, 84.0f, 9.0f);
+    // The body's side 0.15 yd inside the wall's foot.
+    const glm::vec3 from(2.0f - kRadius + 0.15f, 0.0f, 0.0f);
+    const glm::vec3 run(glm::normalize(glm::vec2(1.0f, 1.0f)) * kFrameRun, 0.0f);
+    SECTION("walking") {
+        const BodyMove move = walkBody(from, run, kMaxStepUp, kRadius, kHeight, mesh);
+        CHECK(move.position.x == Catch::Approx(from.x).margin(0.002f));
+        CHECK(move.position.y == Catch::Approx(from.y + run.y).margin(0.002f));
+    }
+    SECTION("falling") {
+        const BodyMove move = fallBody(from + glm::vec3(0, 0, 0.5f), run + glm::vec3(0, 0, -0.01f), kRadius, kHeight, mesh);
+        CHECK(move.position.x == Catch::Approx(from.x).margin(0.002f));
+        CHECK(move.position.y == Catch::Approx(from.y + run.y).margin(0.002f));
+    }
+    SECTION("leaving") {
+        const BodyMove move = walkBody(from, -run, kMaxStepUp, kRadius, kHeight, mesh);
+        CHECK(move.position.x == Catch::Approx(from.x - run.x).margin(0.002f));
+    }
+}
