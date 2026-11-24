@@ -324,7 +324,12 @@ bool M2Renderer::buildMainPassPipelines(VkDescriptorSetLayout perFrameLayout) {
         return false;
     }
 
-    VkRenderPass mainPass = vkCtx_->getImGuiRenderPass();
+    VkRenderPass mainPass = renderPassOverride_ != VK_NULL_HANDLE
+        ? renderPassOverride_
+        : vkCtx_->getImGuiRenderPass();
+    const VkSampleCountFlagBits msaaSamples = msaaSamplesOverride_ != VK_SAMPLE_COUNT_FLAG_BITS_MAX_ENUM
+        ? msaaSamplesOverride_
+        : vkCtx_->getMsaaSamples();
 
     // --- Build M2 model pipelines ---
     // Vertex input: 18 floats = 72 bytes stride
@@ -362,7 +367,7 @@ bool M2Renderer::buildMainPassPipelines(VkDescriptorSetLayout perFrameLayout) {
             // everything drawn after.
             .setDepthTest(true, skyMode_ ? false : depthWrite, VK_COMPARE_OP_LESS_OR_EQUAL)
             .setColorBlendAttachment(blendState)
-            .setMultisample(vkCtx_->getMsaaSamples());
+            .setMultisample(msaaSamples);
         // MSAA alpha-to-coverage dithers the shader's sharpened cutout alpha
         // across samples for smooth foliage/leaf silhouettes.
         if (alphaToCoverage) builder.setAlphaToCoverage(true);
@@ -481,7 +486,7 @@ bool M2Renderer::buildMainPassPipelines(VkDescriptorSetLayout perFrameLayout) {
                 .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE)
                 .setDepthTest(true, false, VK_COMPARE_OP_LESS_OR_EQUAL)
                 .setColorBlendAttachment(blend)
-                .setMultisample(vkCtx_->getMsaaSamples())
+                .setMultisample(msaaSamples)
                 .setLayout(particlePipelineLayout_)
                 .setRenderPass(mainPass)
                 .setDynamicStates(viewportAndScissorDynamic())
@@ -489,7 +494,12 @@ bool M2Renderer::buildMainPassPipelines(VkDescriptorSetLayout perFrameLayout) {
         };
 
         particlePipeline_ = buildParticlePipeline(PipelineBuilder::blendAlpha());
-        particleAdditivePipeline_ = buildParticlePipeline(PipelineBuilder::blendAdditive());
+        VkPipelineColorBlendAttachmentState particleAdd = PipelineBuilder::blendAdditive();
+        // m2_particle.frag premultiplies RGB by alpha for modes 3/4 and outputs peak
+        // luminance in alpha so NoAlphaAdd black sprite corners stay transparent on
+        // off-screen CharacterPreview FBOs while world additive color stays identical.
+        particleAdd.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+        particleAdditivePipeline_ = buildParticlePipeline(particleAdd);
         // M2Blend Mod (dst * src) and Mod2x (dst * src * 2).
         VkPipelineColorBlendAttachmentState mod = PipelineBuilder::blendAlpha();
         mod.srcColorBlendFactor = VK_BLEND_FACTOR_DST_COLOR;
@@ -545,7 +555,7 @@ bool M2Renderer::buildMainPassPipelines(VkDescriptorSetLayout perFrameLayout) {
                     .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE)
                     .setDepthTest(true, false, VK_COMPARE_OP_LESS_OR_EQUAL)
                     .setColorBlendAttachment(blend)
-                    .setMultisample(vkCtx_->getMsaaSamples())
+                    .setMultisample(msaaSamples)
                     .setLayout(ribbonPipelineLayout_)
                     .setRenderPass(mainPass)
                     .setDynamicStates(viewportAndScissorDynamic())
@@ -585,7 +595,7 @@ bool M2Renderer::buildMainPassPipelines(VkDescriptorSetLayout perFrameLayout) {
                         .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE)
                         .setDepthTest(true, false, VK_COMPARE_OP_LESS_OR_EQUAL)
                         .setColorBlendAttachment(blend)
-                        .setMultisample(vkCtx_->getMsaaSamples())
+                        .setMultisample(msaaSamples)
                         .setLayout(particleMeshPipelineLayout_)
                         .setRenderPass(mainPass)
                         .setDynamicStates(viewportAndScissorDynamic())
@@ -635,14 +645,16 @@ bool M2Renderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout
     // each doubling reallocates the whole thing mid-frame: measured at 8.9ms
     // crossing 32k and 18.5ms crossing 64k, doubling again each time. Take that
     // allocation up front, where a stall is invisible.
-    instances.reserve(65536);
+    instances.reserve(renderPassOverride_ != VK_NULL_HANDLE ? 64 : 65536);
 
     const unsigned hc = std::thread::hardware_concurrency();
     const size_t availableCores = (hc > 1u) ? static_cast<size_t>(hc - 1u) : 1ull;
     // Keep headroom for other frame tasks: M2 gets about half of non-main cores by default.
     const size_t defaultAnimThreads = std::max<size_t>(1, availableCores / 2);
-    numAnimThreads_ = static_cast<uint32_t>(std::max<size_t>(
-        1, envSizeOrDefault("WOWEE_M2_ANIM_THREADS", defaultAnimThreads)));
+    numAnimThreads_ = renderPassOverride_ != VK_NULL_HANDLE
+        ? 1u
+        : static_cast<uint32_t>(std::max<size_t>(
+              1, envSizeOrDefault("WOWEE_M2_ANIM_THREADS", defaultAnimThreads)));
     LOG_INFO("Initializing M2 renderer (Vulkan, ", numAnimThreads_, " anim threads)...");
 
     VkDevice device = vkCtx_->getDevice();

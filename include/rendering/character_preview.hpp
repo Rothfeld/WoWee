@@ -21,6 +21,7 @@ namespace pipeline { class AssetManager; struct M2Model; }
 namespace rendering {
 
 class CharacterRenderer;
+class M2Renderer;
 class Camera;
 class VkContext;
 class VkTexture;
@@ -148,10 +149,13 @@ private:
     void applyPreviewView();
     void queryHeadBoneZ();
     void releasePreviewInstances();
+    void ensurePreviewM2Renderer();
+    void shutdownPreviewM2Renderer();
 
     pipeline::AssetManager* assetManager_ = nullptr;
     VkContext* vkCtx_ = nullptr;
     std::shared_ptr<CharacterRenderer> charRenderer_;
+    std::unique_ptr<M2Renderer> previewM2Renderer_;
     std::unique_ptr<Camera> camera_;
 
     // Off-screen render target (color + depth)

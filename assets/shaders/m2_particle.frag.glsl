@@ -35,7 +35,14 @@ void main() {
     // pipelines use SRC_ALPHA, so RGB is not premultiplied here.
     float alpha = texColor.a * vColor.a * vFogVisibility;
     vec3 rgb = texColor.rgb * vColor.rgb;
-    if (push.blendMode == 5) {
+    if (push.blendMode == 3 || push.blendMode == 4) {
+        // Additive modes (NoAlphaAdd / Add): premultiply RGB by alpha and derive
+        // coverage alpha from peak channel luminance so black corners of NoAlphaAdd
+        // sprites (e.g. Thunderfury glow) stay transparent on off-screen preview FBOs
+        // while world additive blending (ONE, ONE) remains identical to (SRC_ALPHA, ONE).
+        vec3 premul = rgb * alpha;
+        outColor = vec4(premul, max(max(premul.r, premul.g), premul.b));
+    } else if (push.blendMode == 5) {
         // Mod (dst * src): fade toward white, which leaves dst unchanged.
         outColor = vec4(mix(vec3(1.0), rgb, alpha), 1.0);
     } else if (push.blendMode == 6) {

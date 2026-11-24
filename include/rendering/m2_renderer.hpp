@@ -513,6 +513,13 @@ public:
                     pipeline::AssetManager* assets);
     /** Configure this renderer for camera-centered sky M2s before initialize(). */
     void setSkyMode(bool enabled) { skyMode_ = enabled; }
+    /** Configure this renderer for an off-screen preview render pass before initialize(). */
+    void setRenderTargetOverride(VkRenderPass renderPass, VkSampleCountFlagBits msaaSamples) {
+        renderPassOverride_ = renderPass;
+        msaaSamplesOverride_ = msaaSamples;
+    }
+    /** Update cached camera position for off-screen preview particle/ribbon sorting and billboarding. */
+    void setPreviewCameraPosition(const glm::vec3& cameraPos) { cachedCamPos_ = cameraPos; }
     void shutdown();
 
     [[nodiscard]] bool hasModel(uint32_t modelId) const;
@@ -1493,6 +1500,8 @@ private:
     static constexpr size_t MAX_M2_PARTICLES = 4000;
     std::mt19937 particleRng_{123};
     bool skyMode_ = false;
+    VkRenderPass renderPassOverride_ = VK_NULL_HANDLE;
+    VkSampleCountFlagBits msaaSamplesOverride_ = VK_SAMPLE_COUNT_FLAG_BITS_MAX_ENUM;
     // What the sky-model clock diagnostic last reported, so it prints on a
     // restart or once a second rather than every frame. See M2Renderer::update.
     uint32_t skyDiagInstanceId_ = 0;

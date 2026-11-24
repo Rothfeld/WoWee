@@ -3424,12 +3424,66 @@ uint32_t CharacterRenderer::gatherAuthoredM2Lights(const glm::vec3& centerPos,
     }
     return count;
 }
-void CharacterRenderer::syncEmitters(M2Renderer& m2Renderer) {
+bool CharacterRenderer::hasEmittersForRoots(uint32_t rootA, uint32_t rootB) const {
+    auto checkRoot = [&](uint32_t rootId) -> bool {
+        if (rootId == 0) return false;
+        const auto rootIt = instances.find(rootId);
+        if (rootIt == instances.end()) return false;
+        auto checkInst = [&](const CharacterInstance& inst) -> bool {
+            const auto modelIt = models.find(inst.modelId);
+            return modelIt != models.end() && hasEffectEmitters(modelIt->second.data);
+        };
+        if (checkInst(rootIt->second)) return true;
+        for (const auto& wa : rootIt->second.weaponAttachments) {
+            if (const auto wIt = instances.find(wa.weaponInstanceId);
+                wIt != instances.end() && checkInst(wIt->second)) {
+                return true;
+            }
+            for (const auto& fx : wa.effects) {
+                if (const auto fxIt = instances.find(fx.effectInstanceId);
+                    fxIt != instances.end() && checkInst(fxIt->second)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    };
+    return checkRoot(rootA) || checkRoot(rootB);
+}
+
+void CharacterRenderer::clearEmittersForTarget(M2Renderer* m2Renderer) {
+    if (!m2Renderer) return;
+    emitterTargets_.erase(m2Renderer);
+}
+
+void CharacterRenderer::syncEmitters(M2Renderer& m2Renderer, uint32_t onlyRootA, uint32_t onlyRootB) {
+    auto& targetState = emitterTargets_[&m2Renderer];
+    auto& companions = targetState.companions;
+    auto& modelsLoaded = targetState.modelsLoaded;
+
+    std::unordered_set<uint32_t> scopedIds;
+    const bool scoped = (onlyRootA != 0 || onlyRootB != 0);
+    if (scoped) {
+        auto collectRoot = [&](uint32_t rootId) {
+            if (rootId == 0) return;
+            const auto rootIt = instances.find(rootId);
+            if (rootIt == instances.end()) return;
+            scopedIds.insert(rootId);
+            for (const auto& wa : rootIt->second.weaponAttachments) {
+                scopedIds.insert(wa.weaponInstanceId);
+                for (const auto& fx : wa.effects) scopedIds.insert(fx.effectInstanceId);
+            }
+        };
+        collectRoot(onlyRootA);
+        collectRoot(onlyRootB);
+    }
+
     // Drop emitters whose owner is gone, no longer drawn, replaced by another
     // model, or whose M2 instance a renderer-wide clear removed.
-    for (auto it = emitterCompanions_.begin(); it != emitterCompanions_.end();) {
+    for (auto it = companions.begin(); it != companions.end();) {
         const auto owner = instances.find(it->first);
-        const bool keep = owner != instances.end() &&
+        const bool inScope = !scoped || scopedIds.count(it->first) != 0;
+        const bool keep = inScope && owner != instances.end() &&
             owner->second.modelId == it->second.characterModelId &&
             displayParticleColorId(owner->second.displayId) == it->second.particleColorId &&
             characterEmitterFade(owner->second.visible && !owner->second.replaced, owner->second.opacity,
@@ -3438,10 +3492,11 @@ void CharacterRenderer::syncEmitters(M2Renderer& m2Renderer) {
         if (keep) { ++it; continue; }
         if (m2Renderer.hasInstance(it->second.m2InstanceId))
             m2Renderer.removeInstance(it->second.m2InstanceId);
-        it = emitterCompanions_.erase(it);
+        it = companions.erase(it);
     }
 
     for (const auto& [id, instance] : instances) {
+        if (scoped && scopedIds.count(id) == 0) continue;
         const float fade = characterEmitterFade(instance.visible && !instance.replaced && !instance.roomHidden,
                                                 instance.opacity, instance.cameraOpacity, instance.kitOpacity);
         if (fade <= 0.0f) continue;
@@ -3452,8 +3507,8 @@ void CharacterRenderer::syncEmitters(M2Renderer& m2Renderer) {
 
         const glm::mat4 modelMatrix = instance.hasOverrideModelMatrix
             ? instance.overrideModelMatrix : getModelMatrix(instance);
-        auto companion = emitterCompanions_.find(id);
-        if (companion == emitterCompanions_.end()) {
+        auto companion = companions.find(id);
+        if (companion == companions.end()) {
             const uint32_t particleColorId = displayParticleColorId(instance.displayId);
             const uint32_t emitterModelId = characterEmitterModelId(model.name, instance.modelId,
                                                                     particleColorId);
@@ -3468,8 +3523,8 @@ void CharacterRenderer::syncEmitters(M2Renderer& m2Renderer) {
                     LOG_ERROR("Character emitters: cannot load '", model.name, "' into the M2 renderer");
                     throw std::runtime_error("Cannot load character emitters: " + model.name);
                 }
-                emitterModelsLoaded_.insert(emitterModelId);
-            } else if (!emitterModelsLoaded_.count(emitterModelId)) {
+                modelsLoaded.insert(emitterModelId);
+            } else if (!modelsLoaded.count(emitterModelId)) {
                 LOG_ERROR("Character emitters: model id ", emitterModelId, " for '", model.name,
                           "' is already taken in the M2 renderer");
                 throw std::runtime_error("Character emitter model id collision: " + model.name);
@@ -3481,8 +3536,8 @@ void CharacterRenderer::syncEmitters(M2Renderer& m2Renderer) {
                 LOG_ERROR("Character emitters: cannot create instance for '", model.name, "'");
                 throw std::runtime_error("Cannot create character emitter instance: " + model.name);
             }
-            companion = emitterCompanions_.emplace(id, EmitterCompanion{instance.modelId, m2InstanceId,
-                                                                        particleColorId}).first;
+            companion = companions.emplace(id, EmitterCompanion{instance.modelId, m2InstanceId,
+                                                                particleColorId}).first;
             LOG_INFO("Character emitters: '", model.name, "' character instance=", id,
                      " particles=", model.particleEmitters.size(),
                      " ribbons=", model.ribbonEmitters.size());

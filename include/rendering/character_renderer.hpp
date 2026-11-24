@@ -111,7 +111,14 @@ public:
     /// Drive the particle and ribbon emitters of every drawn instance through
     /// the M2 renderer (rendering/character_emitters.hpp). Main thread, after
     /// this frame's update() and after M2Renderer::update has returned.
-    void syncEmitters(M2Renderer& m2Renderer);
+    /// When onlyRootA or onlyRootB is non-zero, only those root instances and
+    /// their attached weapons/effects are synced (for isolated CharacterPreview targets).
+    void syncEmitters(M2Renderer& m2Renderer, uint32_t onlyRootA = 0, uint32_t onlyRootB = 0);
+    /// True when either root instance (or any of its attached weapons/effects) carries
+    /// M2 particle or ribbon emitters.
+    [[nodiscard]] bool hasEmittersForRoots(uint32_t rootA, uint32_t rootB = 0) const;
+    /// Drop emitter companion bookkeeping for a preview M2Renderer being shut down.
+    void clearEmittersForTarget(M2Renderer* m2Renderer);
 
     void setAssetManager(pipeline::AssetManager* am) { assetManager = am; }
 
@@ -908,8 +915,11 @@ private:
     std::unordered_map<uint32_t, uint32_t> displayParticleColor_;
     std::unordered_map<uint32_t, std::array<uint32_t, 9>> particleColorRows_;
     bool particleColorsLoaded_ = false;
-    std::unordered_map<uint32_t, EmitterCompanion> emitterCompanions_;
-    std::unordered_set<uint32_t> emitterModelsLoaded_;
+    struct EmitterTargetState {
+        std::unordered_map<uint32_t, EmitterCompanion> companions;
+        std::unordered_set<uint32_t> modelsLoaded;
+    };
+    std::unordered_map<M2Renderer*, EmitterTargetState> emitterTargets_;
 
     uint32_t nextInstanceId = 1;
 

@@ -3,6 +3,7 @@
 #include <cassert>
 #include "rendering/imgui_texture.hpp"
 #include "rendering/character_renderer.hpp"
+#include "rendering/m2_renderer.hpp"
 #include "rendering/animation/animation_ids.hpp"
 #include "rendering/vk_render_target.hpp"
 #include "rendering/vk_texture.hpp"
@@ -242,7 +243,34 @@ void CharacterPreview::queryHeadBoneZ() {
     }
 }
 
+void CharacterPreview::ensurePreviewM2Renderer() {
+    if (previewM2Renderer_ || !vkCtx_ || !renderTarget_ || !renderTarget_->isValid()) return;
+    auto* appRenderer = core::Application::hasInstance()
+        ? core::Application::getInstance().getRenderer()
+        : nullptr;
+    VkDescriptorSetLayout perFrameLayout = appRenderer ? appRenderer->getPerFrameSetLayout() : VK_NULL_HANDLE;
+    if (perFrameLayout == VK_NULL_HANDLE) return;
+
+    auto m2 = std::make_unique<M2Renderer>();
+    m2->setRenderTargetOverride(renderTarget_->getRenderPass(), renderTarget_->getSampleCount());
+    if (!m2->initialize(vkCtx_, perFrameLayout, assetManager_)) {
+        LOG_ERROR("CharacterPreview: failed to initialize preview M2Renderer for particle/ribbon emitters");
+        return;
+    }
+    previewM2Renderer_ = std::move(m2);
+}
+
+void CharacterPreview::shutdownPreviewM2Renderer() {
+    if (!previewM2Renderer_) return;
+    if (charRenderer_) {
+        charRenderer_->clearEmittersForTarget(previewM2Renderer_.get());
+    }
+    previewM2Renderer_->shutdown();
+    previewM2Renderer_.reset();
+}
+
 void CharacterPreview::releasePreviewInstances() {
+    shutdownPreviewM2Renderer();
     if (charRenderer_ && charRenderer_->isInitialized()) {
         if (instanceId_ > 0) charRenderer_->removeInstance(instanceId_);
         if (backdropInstanceId_ > 0) charRenderer_->removeInstance(backdropInstanceId_);
@@ -1497,6 +1525,15 @@ void CharacterPreview::update(float deltaTime) {
         if (instanceId_ != 0) {
             charRenderer_->update(deltaTime, cameraPos, instanceId_);
         }
+        if (previewM2Renderer_ ||
+            charRenderer_->hasEmittersForRoots(instanceId_, backdropInstanceId_)) {
+            ensurePreviewM2Renderer();
+            if (previewM2Renderer_) {
+                previewM2Renderer_->setPreviewCameraPosition(cameraPos);
+                charRenderer_->syncEmitters(*previewM2Renderer_, instanceId_, backdropInstanceId_);
+                previewM2Renderer_->updateExternalPoseEffects(deltaTime);
+            }
+        }
     }
 }
 
@@ -1555,14 +1592,38 @@ void CharacterPreview::compositePass(VkCommandBuffer cmd, uint32_t frameIndex) {
     charRenderer_->prepareRender(fi);
 
     // Render only this preview's racial backdrop (when present) and character
-    // instance (+ attached weapons/helm/shoulders/effects).
+    // instance (+ attached weapons/helm/shoulders/effects), interleaved with
+    // M2 particle/ribbon emitters (e.g. Spellfire Longsword, Thunderfury, weapon
+    // enchants, glowing armor, elemental portraits) in BeforeTransparent and
+    // AfterTransparent order matching the world pass.
     if (backdropInstanceId_ != 0) {
         charRenderer_->render(cmd, previewPerFrameSet_[fi], *camera_,
-                              CharacterRenderer::RenderPhase::All, backdropInstanceId_);
+                              CharacterRenderer::RenderPhase::Solid, backdropInstanceId_);
     }
     if (instanceId_ != 0) {
         charRenderer_->render(cmd, previewPerFrameSet_[fi], *camera_,
-                              CharacterRenderer::RenderPhase::All, instanceId_);
+                              CharacterRenderer::RenderPhase::Solid, instanceId_);
+    }
+    if (previewM2Renderer_) {
+        previewM2Renderer_->setPreviewCameraPosition(camera_->getPosition());
+        previewM2Renderer_->renderM2Ribbons(cmd, previewPerFrameSet_[fi],
+                                            M2Renderer::ParticlePhase::BeforeTransparent);
+        previewM2Renderer_->renderM2Particles(cmd, previewPerFrameSet_[fi],
+                                              M2Renderer::ParticlePhase::BeforeTransparent);
+    }
+    if (backdropInstanceId_ != 0) {
+        charRenderer_->render(cmd, previewPerFrameSet_[fi], *camera_,
+                              CharacterRenderer::RenderPhase::Blended, backdropInstanceId_);
+    }
+    if (instanceId_ != 0) {
+        charRenderer_->render(cmd, previewPerFrameSet_[fi], *camera_,
+                              CharacterRenderer::RenderPhase::Blended, instanceId_);
+    }
+    if (previewM2Renderer_) {
+        previewM2Renderer_->renderM2Ribbons(cmd, previewPerFrameSet_[fi],
+                                            M2Renderer::ParticlePhase::AfterTransparent);
+        previewM2Renderer_->renderM2Particles(cmd, previewPerFrameSet_[fi],
+                                              M2Renderer::ParticlePhase::AfterTransparent);
     }
     vkCtx_->checkpoint(cmd, "character preview draws recorded");
 
