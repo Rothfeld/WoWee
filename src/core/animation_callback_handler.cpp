@@ -315,11 +315,10 @@ void AnimationCallbackHandler::setupCallbacks() {
         cr->playAnimation(instanceId, animId, false, entitySpawner_.remoteResumeAnimation(victimGuid));
     });
 
-    // Stun state callback - enters/exits STUNNED animation on local player
-    gameHandler_.setStunStateCallback([this](bool stunned) {
-        auto* ac = renderer_.getAnimationController();
-        if (ac) ac->setStunned(stunned);
-    });
+    // Stun animation is driven by active aura StateKit.AnimID == STUN (14) in
+    // Application::syncRenderInstancesToEntities, not raw UNIT_FLAG_STUNNED
+    // (TBC 2.4.3 Phase In 33422 and Tidal Charm 835 set UNIT_FLAG_STUNNED with
+    // StateKit.AnimID == -1 and keep the unit upright in Stand).
 
     // Stealth state callback - switches to stealth animation variants
     gameHandler_.setStealthStateCallback([this](bool stealthed) {

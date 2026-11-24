@@ -229,7 +229,7 @@ TEST_CASE("Active cast/channel hold takes priority over UNIT_FLAG_STUNNED for se
     CHECK_FALSE(state.hold.has_value());
 }
 
-TEST_CASE("Aura StateKit animation takes priority over UNIT_FLAG_STUNNED for boss phase/defeat spells",
+TEST_CASE("Remote overlay idle resolves from cast/channel hold and aura StateKit AnimID only",
           "[spell_cast_anim][stun][illidan]") {
     constexpr uint32_t kCustomSpell02 = 214; // Illidan Demon Transform 1 (40511)
     constexpr uint32_t kCustomSpell03 = 215; // Illidan Demon Transform 2 (40398) & Caged (40695)
@@ -238,26 +238,31 @@ TEST_CASE("Aura StateKit animation takes priority over UNIT_FLAG_STUNNED for bos
     constexpr uint32_t kCustomSpell07 = 219; // Illidan Death kneel loop (41220)
 
     for (uint32_t auraAnim : {kCustomSpell02, kCustomSpell03, kCustomSpell04, kCustomSpell06, kCustomSpell07}) {
-        const auto chosen = remoteOverlayIdle(0, auraAnim, kNoAnim, /*stunned=*/true);
+        const auto chosen = remoteOverlayIdle(0, auraAnim, kNoAnim);
         REQUIRE(chosen.has_value());
         CHECK(*chosen == auraAnim);
     }
 
     // Active cast/channel hold still outranks aura StateKit animation.
-    const auto castWins = remoteOverlayIdle(anim::CHANNEL_CAST_DIRECTED, kCustomSpell03, kNoAnim, /*stunned=*/true);
+    const auto castWins = remoteOverlayIdle(anim::CHANNEL_CAST_DIRECTED, kCustomSpell03, kNoAnim);
     REQUIRE(castWins.has_value());
     CHECK(*castWins == anim::CHANNEL_CAST_DIRECTED);
 
-    // Explicit AnimID = 0 (Stand) on an aura StateKit also outranks generic STUN.
-    const auto explicitStand = remoteOverlayIdle(0, anim::STAND, kNoAnim, /*stunned=*/true);
+    // Explicit AnimID = 0 (Stand) on an aura StateKit resolves to Stand.
+    const auto explicitStand = remoteOverlayIdle(0, anim::STAND, kNoAnim);
     REQUIRE(explicitStand.has_value());
     CHECK(*explicitStand == anim::STAND);
 
-    // Without cast hold or aura StateKit animation, UNIT_FLAG_STUNNED resolves to STUN (14).
-    const auto plainStun = remoteOverlayIdle(0, kNoAnim, kNoAnim, /*stunned=*/true);
-    REQUIRE(plainStun.has_value());
-    CHECK(*plainStun == anim::STUN);
-    CHECK_FALSE(remoteOverlayIdle(0, kNoAnim, kNoAnim, /*stunned=*/false).has_value());
+    // Stun spells that author StateKit.AnimID = 14 (Hammer of Justice 853 kit 349,
+    // Cheap Shot 1833 kit 33, Kidney Shot 408 kit 349) resolve to STUN (14).
+    const auto stateKitStun = remoteOverlayIdle(0, anim::STUN, kNoAnim);
+    REQUIRE(stateKitStun.has_value());
+    CHECK(*stateKitStun == anim::STUN);
+
+    // Stun auras without an authored StateKit.AnimID (e.g. Phase In 33422 kit 6887
+    // on Auchenai Crypts Unliving minions, Tidal Charm 835, Banish 710) yield no
+    // overlay so the unit stays in its normal Stand idle rather than STUN (14).
+    CHECK_FALSE(remoteOverlayIdle(0, kNoAnim, kNoAnim).has_value());
 }
 
 TEST_CASE("Non-looping PRECAST animation finishes its authored clip when CAST has no animation",

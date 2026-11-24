@@ -895,9 +895,8 @@ uint32_t EntitySpawner::remoteIdleAnimation(uint64_t guid) const {
     }
     const uint32_t castHold = remoteCastHold(guid);
     const uint32_t aura = remoteAuraStateAnimation(guid);
-    const bool stunned = unit && (unit->getUnitFlags() & game::UNIT_FLAG_STUNNED) != 0 && unit->getHealth() > 0;
     if (const auto overlay = rendering::remoteOverlayIdle(
-            castHold, aura, rendering::SpellVisualSystem::kNoAnimation, stunned))
+            castHold, aura, rendering::SpellVisualSystem::kNoAnimation))
         return *overlay;
     if (remoteIdlesInHover(guid)) return rendering::anim::FLY_IDLE;
     // A unit meleeing holds its ready stance between swings; the original

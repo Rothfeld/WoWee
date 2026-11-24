@@ -3792,9 +3792,11 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                 const auto* visuals = renderer->getSpellVisualSystem();
                 const uint32_t aura = visuals ? visuals->auraStateAnimation(auraOwner)
                                               : rendering::SpellVisualSystem::kNoAnimation;
-                if (auto* ac = renderer->getAnimationController())
+                if (auto* ac = renderer->getAnimationController()) {
                     ac->setAuraHoldAnimation(aura == rendering::SpellVisualSystem::kNoAnimation ||
                                              aura == rendering::anim::STAND ? 0 : aura);
+                    ac->setStunned(aura == rendering::anim::STUN);
+                }
             }
         }
         static float npcWeaponRetryTimer = 0.0f;

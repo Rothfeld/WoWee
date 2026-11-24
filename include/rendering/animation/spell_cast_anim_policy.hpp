@@ -106,22 +106,22 @@ inline constexpr uint32_t remoteCastOrStunIdle(uint32_t castHoldAnim, bool stunn
     return 0;
 }
 
-/// Choose between an active cast/channel hold, an aura StateKit animation, and
-/// generic UNIT_FLAG_STUNNED for a living standing remote unit.
+/// Choose between an active cast/channel hold and an aura StateKit animation
+/// for a living standing remote unit.
 ///
-/// Boss phase/cinematic spells (e.g. Illidan Demon Transform 40511/40398/40510 ->
-/// CustomSpell02/03/04 214/215/216, Illidan Death 41218/41220 -> CustomSpell06/07
-/// 218/219, Caged 40695 -> CustomSpell03 215) self-apply SPELL_AURA_MOD_STUN
-/// (UNIT_FLAG_STUNNED) while authoring a StateKit AnimID; the StateKit animation
-/// takes priority over generic STUN (14).
+/// In TBC 2.4.3 (verified on Pair 10: Tidal Charm 835, Phase In 33422 on
+/// Auchenai Crypts Unliving minions, and Hammer of Justice 853),
+/// UNIT_FLAG_STUNNED alone does not play STUN (14): stuns that play STUN (14)
+/// explicitly author StateKit.AnimID = 14 (e.g. Hammer of Justice 853 kit 349,
+/// Cheap Shot 1833 kit 33, Kidney Shot 408 kit 349), while stuns with
+/// StateKit.AnimID = -1 (e.g. Phase In 33422 kit 6887, Tidal Charm 835,
+/// Banish 710, Freezing Trap 3355) leave the unit in its normal idle pose.
 inline constexpr std::optional<uint32_t> remoteOverlayIdle(
     uint32_t castHoldAnim,
     uint32_t auraStateAnim,
-    uint32_t noAnimationSentinel,
-    bool stunned) {
+    uint32_t noAnimationSentinel) {
     if (castHoldAnim != 0) return castHoldAnim;
     if (auraStateAnim != noAnimationSentinel) return auraStateAnim;
-    if (stunned) return anim::STUN;
     return std::nullopt;
 }
 
