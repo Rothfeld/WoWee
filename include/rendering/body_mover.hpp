@@ -3,6 +3,8 @@
 #include "rendering/body_collision.hpp"
 #include "rendering/movement_limits.hpp"
 
+#include <vector>
+
 // One movement step of the upright beveled body among collision triangles
 // (terrain, WMO and doodad alike), after build 8606's walking and falling.
 // Derived from native per-frame positions read at 200 Hz, replayed against
@@ -391,6 +393,9 @@ inline BodyMove walkBody(glm::vec3 from, const glm::vec3& requestedDelta, float 
         bool leads = false;
         // `blocker` is a face that is not ground, met by the level move.
         bool wall = false;
+        // The other faces that are not ground met together with it (at an
+        // edge they share), as wound.
+        std::vector<glm::vec3> besideWall;
     };
     const auto step = [&](const glm::vec3& start, const glm::vec3& delta, float budget) {
         Step result;
@@ -432,6 +437,13 @@ inline BodyMove walkBody(glm::vec3 from, const glm::vec3& requestedDelta, float 
                 result.blocker = wall->front;
                 result.wall = true;
                 wallAt = wall->time;
+                for (const auto& triangle : triangles) {
+                    const auto contact = sweepBodyTriangle(start, delta, radius, height, triangle);
+                    if (!contact || contact->standing || contact->face.z >= minWalkableNormalZ) continue;
+                    if (std::abs(contact->time - wall->time) * travel <= kTie &&
+                        glm::dot(contact->front, wall->front) < 1.0f - 1e-6f)
+                        result.besideWall.push_back(contact->front);
+                }
             }
         }
         glm::vec3 up(0.0f, 0.0f, budget);
@@ -491,6 +503,45 @@ inline BodyMove walkBody(glm::vec3 from, const glm::vec3& requestedDelta, float 
             !first.edgeMet && !first.leads) {
             first.taken = false;
             if (!first.wall) first.blocker = first.rest->normal;
+        }
+        // An edge two faces share is stepped over onto a hold only when the
+        // move cannot go on along one of them. Its part along the face it
+        // runs into most squarely is taken instead when that leads away from
+        // the other face and does not rise into the ground the body stands
+        // on. Sliding west along the Orgrimmar wall (1819.6, -4242.7) the
+        // body is carried past the end of the face it slides along, and its
+        // side meets the ridge that face shares with the next one: native
+        // goes on along the first face's plane, down the ramp, for two more
+        // frames and is free in the third (8 runs of 8). At the ridge between
+        // two sides of the Exodar table the same part of the move leads up
+        // the floor (0.6 degrees, by 0.2 % of its length), and native is
+        // lifted onto the ridge (67 frames of 70).
+        if (ownMove && first.taken && first.edgeMet && first.wall && first.rest &&
+            !isBodySoleOnGround(*first.rest, minWalkableNormalZ) && !first.leads) {
+            const glm::vec2 level(first.blocker.x, first.blocker.y);
+            const float levelSq = glm::dot(level, level);
+            if (levelSq > 1e-8f) {
+                const glm::vec2 wall = level / std::sqrt(levelSq);
+                const glm::vec3 along(glm::vec2(delta) - wall * glm::dot(glm::vec2(delta), wall), 0.0f);
+                // A part shorter than the contact skin takes the body nowhere.
+                bool open = glm::length(along) > kContactSkin;
+                for (const glm::vec3& other : first.besideWall)
+                    if (glm::dot(along, other) < 0.0f) open = false;
+                // Only a body standing on ground: from a hold the next step
+                // on, or the fall, is the perch's (below).
+                bool standing = false;
+                if (open) {
+                    const glm::vec3 above = from + glm::vec3(0.0f, 0.0f, kContactSkin * 2.0f);
+                    const glm::vec3 down(0.0f, 0.0f, -kContactSkin * 4.0f);
+                    for (const auto& triangle : triangles) {
+                        const auto under = sweepBodyTriangle(above, down, radius, height, triangle);
+                        if (!under || under->face.z < minWalkableNormalZ) continue;
+                        standing = true;
+                        if (glm::dot(along, under->front) < 0.0f) open = false;
+                    }
+                }
+                if (open && standing) first.taken = false;
+            }
         }
         return first;
     };

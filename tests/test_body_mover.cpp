@@ -561,3 +561,39 @@ TEST_CASE("A move turned along a face is not stopped by that face", "[body_mover
     // A quarter of a second along the skirt: 1.43 yd; stopped, 0.73.
     CHECK(glm::distance(glm::vec2(walker.position), glm::vec2(settled.position)) > 1.3f);
 }
+
+TEST_CASE("An edge two walls share is not stepped over where the move can go on along one of them", "[body_mover]") {
+    // Orgrimmar (1819.59, -4242.74), WoWee's own triangles: four of the ramp,
+    // the 84 degree wall, the 77.7 degree face above its diagonal, the 77.4
+    // degree wall beyond the fold and the 53 degree skirt under that.
+    // Sliding west along the first face the body is carried past its end and
+    // its side meets the ridge the two upper faces share. Native goes on
+    // along the first face ((-0.1434, +0.0542) and (-0.1240, +0.0454) a
+    // frame), is free for a frame ((-0.2012, -0.1270, +0.0289)) and slides
+    // along the second wall ((-0.2015, -0.0098, +0.0011)). Stepping over the
+    // ridge lifted the body 0.34 and 0.55 yd in two frames, and it fell.
+    const Mesh mesh = {
+        {{{1819.59204f, -4242.74365f, 42.0026093f}, {1819.35718f, -4240.5415f, 41.4806137f}, {1812.26331f, -4238.63721f, 40.9909668f}}},
+        {{{1819.59204f, -4242.74365f, 42.0026093f}, {1812.26331f, -4238.63721f, 40.9909668f}, {1810.82983f, -4241.74561f, 41.7339783f}}},
+        {{{1819.35718f, -4240.5415f, 41.4806137f}, {1819.59204f, -4242.74365f, 42.0026093f}, {1827.95215f, -4247.01074f, 42.8044586f}}},
+        {{{1827.85083f, -4243.28467f, 41.6829758f}, {1819.35718f, -4240.5415f, 41.4806137f}, {1827.95215f, -4247.01074f, 42.8044586f}}},
+        {{{1827.71411f, -4247.9126f, 51.3634529f}, {1827.95215f, -4247.01074f, 42.8044586f}, {1819.59204f, -4242.74365f, 42.0026093f}}},
+        {{{1819.59204f, -4242.74365f, 42.0026093f}, {1819.42627f, -4244.56152f, 50.1003723f}, {1827.71411f, -4247.9126f, 51.3634529f}}},
+        {{{1819.59204f, -4242.74365f, 42.0026093f}, {1810.06311f, -4243.84814f, 44.6516876f}, {1819.42627f, -4244.56152f, 50.1003723f}}},
+        {{{1810.06311f, -4243.84814f, 44.6516876f}, {1819.59204f, -4242.74365f, 42.0026093f}, {1810.82983f, -4241.74561f, 41.7339783f}}},
+    };
+    const float dt = 1.0f / 30.0f;
+    const glm::vec3 run(std::cos(-2.578f) * 7.0f * dt, std::sin(-2.578f) * 7.0f * dt, 0.0f);
+    const BodyMove settled = fallBody(glm::vec3(1820.296875f, -4242.701171875f, 42.3f), glm::vec3(0.0f, 0.0f, -1.5f),
+                                      kRadius, kHeight, mesh);
+    REQUIRE(settled.support == BodySupport::Walkable);
+    Walker walker{.position = settled.position, .baseZ = settled.position.z};
+    float highest = settled.position.z;
+    for (int i = 0; i < 12; ++i) {
+        walker.frame(mesh, run, dt);
+        highest = std::max(highest, walker.position.z);
+    }
+    // Past the fold, on the ramp all the way.
+    CHECK(walker.position.x < 1818.4f);
+    CHECK(highest < settled.position.z + 0.01f);
+}
