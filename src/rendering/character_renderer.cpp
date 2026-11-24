@@ -2933,6 +2933,21 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos,
             continue;
         }
 
+        // Snapshot pre-step animation & placement state for sub-stepped weapon
+        // trail sampling before advancing timers this frame.
+        if (!inst.weaponAttachments.empty() && inst.cachedModel &&
+            inst.currentSequenceIndex >= 0 &&
+            static_cast<size_t>(inst.currentSequenceIndex) < inst.cachedModel->data.sequences.size()) {
+            inst.prevTrailHasState = true;
+            inst.prevTrailSequenceIndex = inst.currentSequenceIndex;
+            inst.prevTrailAnimationTime = inst.animationTime;
+            inst.prevTrailUpperSequenceIndex = inst.upperBodySequenceIndex;
+            inst.prevTrailUpperAnimationTime = inst.upperBodyAnimationTime;
+            inst.prevTrailGlobalSequenceTime = inst.globalSequenceTime;
+            inst.prevTrailModelMatrix = inst.hasOverrideModelMatrix
+                ? inst.overrideModelMatrix : getModelMatrix(inst);
+        }
+
         // Advance global sequence timer (accumulates independently of animation wrapping)
         inst.globalSequenceTime += deltaTime * 1000.0f;
 
@@ -3374,6 +3389,127 @@ CharacterRenderer::getDrawnMeleeWeaponSpans(uint32_t charInstanceId) const {
         result.push_back({wa.weaponInstanceId, baseWorld, tipWorld});
     }
     return result;
+}
+
+std::vector<CharacterRenderer::DrawnWeaponSpanSample>
+CharacterRenderer::getDrawnMeleeWeaponSpansSubstepped(
+    uint32_t charInstanceId, float deltaTime, float maxStepSec) {
+    const int steps = weaponTrailSubstepCount(deltaTime, maxStepSec);
+    std::vector<DrawnWeaponSpan> endSpans = getDrawnMeleeWeaponSpans(charInstanceId);
+    if (steps <= 1 || endSpans.empty()) {
+        return {{deltaTime, std::move(endSpans)}};
+    }
+
+    const auto it = instances.find(charInstanceId);
+    if (it == instances.end()) return {{deltaTime, std::move(endSpans)}};
+    const auto& inst = it->second;
+    if (!inst.prevTrailHasState || !inst.cachedModel ||
+        inst.currentSequenceIndex < 0 ||
+        inst.prevTrailSequenceIndex != inst.currentSequenceIndex ||
+        static_cast<size_t>(inst.currentSequenceIndex) >= inst.cachedModel->data.sequences.size()) {
+        return {{deltaTime, std::move(endSpans)}};
+    }
+
+    const auto& model = inst.cachedModel->data;
+    const size_t numBones = model.bones.size();
+    const auto& gsd = model.globalSequenceDurations;
+    const float lowerDur = static_cast<float>(model.sequences[inst.currentSequenceIndex].duration);
+    const bool sameUpper = inst.upperBodySequenceIndex >= 0 &&
+                           inst.prevTrailUpperSequenceIndex == inst.upperBodySequenceIndex &&
+                           static_cast<size_t>(inst.upperBodySequenceIndex) < model.sequences.size();
+    const float upperDur = sameUpper
+        ? static_cast<float>(model.sequences[inst.upperBodySequenceIndex].duration) : 0.0f;
+    const glm::mat4 curCharModel = inst.hasOverrideModelMatrix
+        ? inst.overrideModelMatrix : getModelMatrix(inst);
+
+    struct ActiveWeaponInfo {
+        const WeaponAttachment* wa;
+        glm::vec3 baseLocal;
+        glm::vec3 tipLocal;
+        std::vector<uint16_t> boneChain;  // root -> leaf
+    };
+    std::vector<ActiveWeaponInfo> activeWeapons;
+    for (const auto& wa : inst.weaponAttachments) {
+        if (wa.attachmentId != 1 && wa.attachmentId != 2) continue;
+        if (wa.heldSheathState == 2) continue;
+        if (weaponSheathed(inst, wa)) continue;
+        const auto weapIt = instances.find(wa.weaponInstanceId);
+        if (weapIt == instances.end() || !weapIt->second.visible || !weapIt->second.hasOverrideModelMatrix) continue;
+        const auto modelIt = models.find(weapIt->second.modelId);
+        if (modelIt == models.end()) continue;
+        ActiveWeaponInfo info;
+        info.wa = &wa;
+        const auto [bLoc, tLoc] = weaponBladeLocalSpan(modelIt->second.visualBoundMin, modelIt->second.visualBoundMax);
+        info.baseLocal = bLoc;
+        info.tipLocal = tLoc;
+        int curBone = static_cast<int>(wa.boneIndex);
+        for (int depth = 0; depth < 32 && curBone >= 0 && static_cast<size_t>(curBone) < numBones; ++depth) {
+            info.boneChain.push_back(static_cast<uint16_t>(curBone));
+            curBone = model.bones[curBone].parentBone;
+        }
+        std::reverse(info.boneChain.begin(), info.boneChain.end());
+        activeWeapons.push_back(std::move(info));
+    }
+    if (activeWeapons.empty()) {
+        return {{deltaTime, std::move(endSpans)}};
+    }
+
+    const float stepDt = deltaTime / static_cast<float>(steps);
+    std::vector<DrawnWeaponSpanSample> samples;
+    samples.reserve(static_cast<size_t>(steps));
+
+    for (int s = 1; s < steps; ++s) {
+        const float subFrac = static_cast<float>(s) / static_cast<float>(steps);
+        glm::mat4 stepCharModel(0.0f);
+        for (int c = 0; c < 4; ++c) {
+            stepCharModel[c] = glm::mix(inst.prevTrailModelMatrix[c], curCharModel[c], subFrac);
+        }
+        const float stepLowerTime = interpolateSequenceTimeMs(
+            inst.prevTrailAnimationTime, inst.animationTime, lowerDur, subFrac);
+        const float stepUpperTime = sameUpper
+            ? interpolateSequenceTimeMs(inst.prevTrailUpperAnimationTime, inst.upperBodyAnimationTime, upperDur, subFrac)
+            : inst.upperBodyAnimationTime;
+        const float stepGlobalTime = glm::mix(inst.prevTrailGlobalSequenceTime, inst.globalSequenceTime, subFrac);
+
+        DrawnWeaponSpanSample sample;
+        sample.stepDt = stepDt;
+        sample.spans.reserve(activeWeapons.size());
+        for (const auto& info : activeWeapons) {
+            glm::mat4 boneMat(1.0f);
+            for (const uint16_t bIdx : info.boneChain) {
+                const auto& bone = model.bones[bIdx];
+                int seq = inst.currentSequenceIndex;
+                float time = animationSampleTime(inst.currentAnimationId,
+                                                 model.sequences[seq], stepLowerTime, inst.playReversed);
+                if (inst.upperBodySequenceIndex >= 0 &&
+                    bIdx < inst.upperBodyBones.size() && inst.upperBodyBones[bIdx]) {
+                    seq = inst.upperBodySequenceIndex;
+                    time = animationSampleTime(model.sequences[seq].id,
+                                               model.sequences[seq], stepUpperTime, false);
+                }
+                glm::mat4 localTransform = getBoneTransform(bone, time, stepGlobalTime, seq, gsd, -1, 0.0f, 0.0f);
+                if (bone.keyBoneId == kKeyBoneSpineLow && inst.torsoYawOverrideRad != 0.0f) {
+                    glm::mat4 extraYaw = glm::translate(glm::mat4(1.0f), bone.pivot)
+                                       * glm::rotate(glm::mat4(1.0f), inst.torsoYawOverrideRad, glm::vec3(0.0f, 0.0f, 1.0f))
+                                       * glm::translate(glm::mat4(1.0f), -bone.pivot);
+                    localTransform = extraYaw * localTransform;
+                }
+                boneMat = boneMat * localTransform;
+            }
+            const glm::mat4 weaponMat =
+                stepCharModel * boneMat * glm::translate(glm::mat4(1.0f), info.wa->offset) *
+                info.wa->localTransform;
+            sample.spans.push_back({
+                info.wa->weaponInstanceId,
+                glm::vec3(weaponMat * glm::vec4(info.baseLocal, 1.0f)),
+                glm::vec3(weaponMat * glm::vec4(info.tipLocal, 1.0f)),
+            });
+        }
+        samples.push_back(std::move(sample));
+    }
+
+    samples.push_back({stepDt, std::move(endSpans)});
+    return samples;
 }
 uint32_t CharacterRenderer::gatherAuthoredM2Lights(const glm::vec3& centerPos,
                                                    glm::vec4* outPosRadius,

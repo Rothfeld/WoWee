@@ -152,5 +152,13 @@ void stopWeaponTrailEmission(ActiveUnitWeaponTrail& trail) {
     trail.spec.durationSec = std::min(trail.spec.durationSec, trail.elapsed);
 }
 
+int weaponTrailSubstepCount(float deltaTime, float maxStepSec) {
+    assert(std::isfinite(deltaTime) && deltaTime >= 0.0f);
+    assert(std::isfinite(maxStepSec) && maxStepSec > 0.0f);
+    if (deltaTime <= maxStepSec) return 1;
+    const int steps = static_cast<int>(std::ceil(deltaTime / maxStepSec));
+    return std::clamp(steps, 1, kWeaponTrailMaxSubsteps);
+}
+
 }  // namespace rendering
 }  // namespace wowee

@@ -495,9 +495,19 @@ public:
         glm::vec3 baseWorld{0.0f};
         glm::vec3 tipWorld{0.0f};
     };
+    /// One sub-stepped frame sample of drawn melee weapon blade spans.
+    struct DrawnWeaponSpanSample {
+        float stepDt = 0.0f;
+        std::vector<DrawnWeaponSpan> spans;
+    };
     /// Returns world-space blade spans for all visible, drawn melee weapons
     /// currently held by charInstanceId (main-hand and/or off-hand).
     std::vector<DrawnWeaponSpan> getDrawnMeleeWeaponSpans(uint32_t charInstanceId) const;
+    /// Returns evenly spaced sub-stepped world-space blade spans across the
+    /// current frame (deltaTime) by evaluating each weapon's bone chain between
+    /// the previous and current animation pose.
+    std::vector<DrawnWeaponSpanSample> getDrawnMeleeWeaponSpansSubstepped(
+        uint32_t charInstanceId, float deltaTime, float maxStepSec = 0.020f);
 
     [[nodiscard]] size_t getInstanceCount() const { return instances.size(); }
 
@@ -604,6 +614,15 @@ private:
         int upperBodySequenceIndex = -1;
         float upperBodyAnimationTime = 0.0f;
         bool upperBodyAnimationLoop = true;
+        // Previous-frame animation & placement snapshot for sub-stepping fast
+        // weapon swing trails (CharProc == 8, e.g. Whirlwind) at low FPS.
+        bool prevTrailHasState = false;
+        int prevTrailSequenceIndex = -1;
+        float prevTrailAnimationTime = 0.0f;
+        int prevTrailUpperSequenceIndex = -1;
+        float prevTrailUpperAnimationTime = 0.0f;
+        float prevTrailGlobalSequenceTime = 0.0f;
+        glm::mat4 prevTrailModelMatrix{1.0f};
         bool upperBodyFromTurnShuffle = false;
         float upperBodyOneShotMaxDurationMs = 0.0f;
         std::vector<bool> upperBodyBones;

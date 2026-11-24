@@ -223,6 +223,7 @@ struct M2ModelGPU {
         std::vector<glm::vec2> uvs;
         std::vector<uint16_t> indices;
         uint8_t blendMode = 2;
+        float opacity = 1.0f;
     };
     std::vector<ParticleGeometry> particleGeometry;
 

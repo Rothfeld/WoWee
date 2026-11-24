@@ -82,6 +82,13 @@ void stopWeaponTrailEmission(ActiveUnitWeaponTrail& trail);
 inline constexpr float kWeaponTrailSampleIntervalSec = 0.020f;
 inline constexpr float kWeaponTrailMinMoveSq = 0.02f * 0.02f;
 inline constexpr size_t kWeaponTrailMaxEdges = 64;
+inline constexpr int kWeaponTrailMaxSubsteps = 16;
+
+/// Number of evenly spaced weapon pose substeps to sample across a single frame
+/// so fast spins (e.g. Whirlwind at ~720 deg/s) produce smooth circular arcs
+/// instead of coarse straight-edged chords at low frame rates.
+[[nodiscard]] int weaponTrailSubstepCount(float deltaTime,
+                                          float maxStepSec = kWeaponTrailSampleIntervalSec);
 
 /// Advance one weapon trail channel by dt seconds, decaying existing edges and
 /// optionally recording the weapon's current [base, tip] world blade segment

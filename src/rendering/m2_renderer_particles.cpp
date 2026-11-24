@@ -113,7 +113,7 @@ void M2Renderer::emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt
         // scale detached velocity by their placement/particle scale; 0x8
         // gravity stays in world yards/s^2 on units and GameObjects.
         const bool velocityScalesWithPlacement = particleScalesWithPlacement(
-            inst.isGameObject, inst.externalPose, em.flags);
+            inst.isGameObject, inst.externalPose, em.flags, !em.geometryModel.empty());
         const bool gravityScalesWithPlacement = particleGravityScalesWithPlacement(
             inst.isGameObject, inst.externalPose);
         const float velocityScaleOverride = inst.externalPose ? inst.externalParticleScale : -1.0f;
@@ -636,7 +636,8 @@ void M2Renderer::renderParticleMeshes(VkCommandBuffer cmd, VkDescriptorSet perFr
             const glm::vec3 color = particleEffectiveColor(
                 em.flags, interpFBlockVec3(em.particleColor, lifeRatio),
                 glm::vec3(1.0f), inst.instanceTint, mesh.blendMode);
-            const float alpha = std::min(interpFBlockFloat(em.particleAlpha, lifeRatio), 1.0f) * inst.fade;
+            const float alpha = std::min(interpFBlockFloat(em.particleAlpha, lifeRatio), 1.0f) *
+                                mesh.opacity * inst.fade;
             const float scale = interpFBlockFloat(em.particleScale, lifeRatio) * twinkle;
             const uint8_t blendMode = mesh.blendMode;
             VkPipeline pipeline = particleMeshPipeline_;

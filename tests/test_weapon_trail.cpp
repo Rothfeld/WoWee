@@ -282,3 +282,27 @@ TEST_CASE("Channel weapon trails cap duration to active channel and stop emittin
     }
     CHECK(isWeaponTrailChannelDead(ch));
 }
+
+TEST_CASE("weaponTrailSubstepCount subdivides coarse frames into smooth circular swing arcs",
+          "[weapon_trail][substep]") {
+    CHECK(weaponTrailSubstepCount(0.016f, 0.020f) == 1);
+    CHECK(weaponTrailSubstepCount(0.020f, 0.020f) == 1);
+    CHECK(weaponTrailSubstepCount(0.060f, 0.020f) == 3);
+    CHECK(weaponTrailSubstepCount(0.120f, 0.020f) == 6);
+    CHECK(weaponTrailSubstepCount(1.000f, 0.020f) == kWeaponTrailMaxSubsteps);
+
+    // Stepping a 120ms Whirlwind frame (90-degree sweep on a 2.25x-scaled glaive)
+    // in 6 substeps produces 6 smooth arc edges instead of 1 giant straight chord.
+    const auto spec = *parseWeaponTrailCharProc(static_cast<float>(0xF71717u), 20.0f, 2000.0f, 100.0f);
+    WeaponTrailChannel ch;
+    const int steps = weaponTrailSubstepCount(0.120f, kWeaponTrailSampleIntervalSec);
+    const float stepDt = 0.120f / static_cast<float>(steps);
+    for (int s = 0; s <= steps; ++s) {
+        const float angle = (static_cast<float>(s) / static_cast<float>(steps)) * 1.5707963f;
+        const glm::vec3 dir(std::cos(angle), std::sin(angle), 0.0f);
+        stepWeaponTrailChannel(ch, spec, s == 0 ? 0.0f : stepDt, true,
+                               std::make_pair(dir * 0.5f, dir * 2.5f));
+    }
+    REQUIRE(ch.edges.size() == 7);
+    CHECK(ch.edges.back().alpha == Approx(spec.alpha));
+}

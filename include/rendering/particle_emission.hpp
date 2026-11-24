@@ -302,7 +302,9 @@ inline glm::vec3 particleBirthPosition(const glm::mat4& previous, const glm::mat
 }
 
 inline bool particleScalesWithPlacement(bool isGameObject, bool externalPose,
-                                        uint32_t flags = 0) {
+                                        uint32_t flags = 0,
+                                        bool isGeometryParticle = false) {
+    if (isGeometryParticle) return particleScaleAppliesToSize(flags);
     if (!isGameObject && !externalPose) return true;
     // GameObject and CharacterRenderer (unit / attached-item) emitters with
     // flag 0x20 (kParticleScaledSprite) scale detached particle velocity by

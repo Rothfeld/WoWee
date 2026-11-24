@@ -343,6 +343,23 @@ TEST_CASE("Emitters with flag 0x20 or NoTrail+0x200 size their sprites by placem
     CHECK(glm::length(scaledBasis[0]) == Catch::Approx(3.25f));
     CHECK(glm::length(scaledBasis[1]) == Catch::Approx(3.25f));
     CHECK(glm::length(scaledBasis[2]) == Catch::Approx(3.25f));
+    // Geometry-model particle velocity follows the same 0x20 rule as particleMeshBasis:
+    // Whirlwind_State_Base.m2 (0x0d, no 0x20) keeps authored 1.389 yd/s upward velocity
+    // on 2.25x-scaled Leotheras the Blind instead of rising 4.7 yd above his head,
+    // while SandVortex (0x28) and BoneArmor_Head (0x629) with 0x20 still scale.
+    CHECK_FALSE(wowee::rendering::particleScalesWithPlacement(/*isGameObject=*/false, /*externalPose=*/false,
+                                                              0x0du, /*isGeometryParticle=*/true));
+    CHECK(wowee::rendering::particleScalesWithPlacement(/*isGameObject=*/false, /*externalPose=*/false,
+                                                        0x28u, /*isGeometryParticle=*/true));
+    CHECK(wowee::rendering::particleScalesWithPlacement(/*isGameObject=*/false, /*externalPose=*/false,
+                                                        0x629u, /*isGeometryParticle=*/true));
+    const std::filesystem::path wwGeoPath =
+        "/workspace/azerothcore/client/wowee-data/expansions/tbc/spells/whirlwindgeowhite.m2";
+    if (std::filesystem::exists(wwGeoPath)) {
+        const auto wwGeo = wowee::pipeline::M2Loader::load(wowee::test::readTbcData("spells/whirlwindgeowhite.m2"));
+        REQUIRE_FALSE(wwGeo.textureWeights.empty());
+        CHECK(wwGeo.textureWeights[0] == Catch::Approx(0.7f).margin(0.01f));
+    }
 }
 
 TEST_CASE("XYQuad sprites span their emitter bone's placed X and Y", "[m2][particle]") {

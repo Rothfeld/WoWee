@@ -2005,33 +2005,40 @@ void SpellVisualSystem::updateWeaponTrails(float deltaTime) {
         it->elapsed += deltaTime;
         const bool emitting = it->elapsed < it->spec.durationSec;
 
-        std::vector<CharacterRenderer::DrawnWeaponSpan> spans;
+        std::vector<CharacterRenderer::DrawnWeaponSpanSample> samples;
         if (emitting && characters) {
-            spans = characters->getDrawnMeleeWeaponSpans(it->ownerInstanceId);
-            for (const auto& span : spans) {
-                const bool known = std::any_of(it->channels.begin(), it->channels.end(),
-                                               [&](const WeaponTrailChannel& ch) {
-                                                   return ch.weaponInstanceId == span.weaponInstanceId;
-                                               });
-                if (!known) {
-                    WeaponTrailChannel ch;
-                    ch.weaponInstanceId = span.weaponInstanceId;
-                    it->channels.push_back(std::move(ch));
+            samples = characters->getDrawnMeleeWeaponSpansSubstepped(
+                it->ownerInstanceId, deltaTime, kWeaponTrailSampleIntervalSec);
+            for (const auto& sample : samples) {
+                for (const auto& span : sample.spans) {
+                    const bool known = std::any_of(it->channels.begin(), it->channels.end(),
+                                                   [&](const WeaponTrailChannel& ch) {
+                                                       return ch.weaponInstanceId == span.weaponInstanceId;
+                                                   });
+                    if (!known) {
+                        WeaponTrailChannel ch;
+                        ch.weaponInstanceId = span.weaponInstanceId;
+                        it->channels.push_back(std::move(ch));
+                    }
                 }
             }
         }
 
         for (auto chIt = it->channels.begin(); chIt != it->channels.end();) {
-            std::optional<std::pair<glm::vec3, glm::vec3>> bladeWorld;
-            if (emitting) {
-                for (const auto& span : spans) {
-                    if (span.weaponInstanceId == chIt->weaponInstanceId) {
-                        bladeWorld = std::make_pair(span.baseWorld, span.tipWorld);
-                        break;
+            if (emitting && !samples.empty()) {
+                for (const auto& sample : samples) {
+                    std::optional<std::pair<glm::vec3, glm::vec3>> bladeWorld;
+                    for (const auto& span : sample.spans) {
+                        if (span.weaponInstanceId == chIt->weaponInstanceId) {
+                            bladeWorld = std::make_pair(span.baseWorld, span.tipWorld);
+                            break;
+                        }
                     }
+                    stepWeaponTrailChannel(*chIt, it->spec, sample.stepDt, /*emitting=*/true, bladeWorld);
                 }
+            } else {
+                stepWeaponTrailChannel(*chIt, it->spec, deltaTime, emitting, std::nullopt);
             }
-            stepWeaponTrailChannel(*chIt, it->spec, deltaTime, emitting, bladeWorld);
 
             if (!emitting && isWeaponTrailChannelDead(*chIt)) {
                 chIt = it->channels.erase(chIt);

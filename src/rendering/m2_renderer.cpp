@@ -1816,6 +1816,18 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId, boo
         mesh.blendMode = !geometry.materials.empty()
             ? static_cast<uint8_t>(geometry.materials[0].blendMode)
             : model.particleEmitters[ei].blendingType;
+        mesh.opacity = 1.0f;
+        if (!geometry.batches.empty() && !geometry.textureWeights.empty()) {
+            const uint16_t tIdx = geometry.batches[0].transparencyIndex;
+            if (tIdx < geometry.textureWeightLookup.size()) {
+                const uint16_t wIdx = geometry.textureWeightLookup[tIdx];
+                if (wIdx < geometry.textureWeights.size()) {
+                    mesh.opacity = std::clamp(geometry.textureWeights[wIdx], 0.0f, 1.0f);
+                }
+            }
+        } else if (!geometry.textureWeights.empty()) {
+            mesh.opacity = std::clamp(geometry.textureWeights[0], 0.0f, 1.0f);
+        }
         if (!geometry.textures.empty() && !geometry.textures[0].filename.empty() &&
             ei < gpuModel.particleTextures.size()) {
             VkTexture* geoTex = loadTexture(geometry.textures[0].filename, geometry.textures[0].flags);
