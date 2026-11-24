@@ -897,6 +897,9 @@ void GameScreen::render(game::GameHandler& gameHandler) {
     auto* renderer = services_.renderer;
     if (renderer) {
         const uint32_t autoRepeatSpellId = gameHandler.getAutoRepeatSpellId();
+        const uint32_t stanceAutoRepeatSpellId = autoRepeatSpellId != 0
+            ? autoRepeatSpellId
+            : gameHandler.getStunSuspendedAutoRepeatSpellId();
         auto target = gameHandler.hasTarget() ? gameHandler.getTarget() : nullptr;
         bool targetUnitAttackable = false;
         if (target && target->getGuid() != gameHandler.getPlayerGuid() &&
@@ -906,9 +909,9 @@ void GameScreen::render(game::GameHandler& gameHandler) {
             const bool alive = !(unit->getHealth() == 0 && unit->getMaxHealth() > 0);
             targetUnitAttackable = alive && gameHandler.canPlayerAttackUnit(*unit);
         }
-        const bool autoRepeatAttacksTarget = (autoRepeatSpellId != 0) && targetUnitAttackable;
+        const bool autoRepeatAttacksTarget = (stanceAutoRepeatSpellId != 0) && targetUnitAttackable;
         bool rangedAutoShootInRange = false;
-        if (autoRepeatAttacksTarget && autoRepeatSpellId == 75 && target) {
+        if (autoRepeatAttacksTarget && stanceAutoRepeatSpellId == 75 && target) {
             const auto rng = gameHandler.unitSpellRange(75, target->getGuid());
             rangedAutoShootInRange =
                 !rng.has_value() || *rng == game::spellclass::SpellRangeCheck::InRange;
@@ -926,9 +929,9 @@ void GameScreen::render(game::GameHandler& gameHandler) {
         // sheathed, and holds ReadyBow (29) if the ranged weapon is already drawn.
         const bool combatStanceActive =
             gameHandler.hasAutoAttackIntent() ||
-            autoRepeatSpellId == 5019 ||
+            stanceAutoRepeatSpellId == 5019 ||
             rangedAutoShootInRange ||
-            (autoRepeatSpellId != 0 && composer && composer->isShowingRanged());
+            (stanceAutoRepeatSpellId != 0 && composer && composer->isShowingRanged());
         if (ac) {
             ac->setRangedAiming(rangedAutoShootInRange && playerAlive);
             ac->setInCombat(combatStanceActive && playerAlive);

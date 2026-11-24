@@ -1605,6 +1605,16 @@ target_link_libraries(test_spell_cast_anim_policy PRIVATE catch2_main)
 add_test(NAME spell_cast_anim_policy COMMAND test_spell_cast_anim_policy)
 register_test_target(test_spell_cast_anim_policy)
 
+# ── test_auto_repeat_stun_policy ─────────────────────────────
+add_executable(test_auto_repeat_stun_policy
+    test_auto_repeat_stun_policy.cpp
+)
+target_include_directories(test_auto_repeat_stun_policy PRIVATE ${TEST_INCLUDE_DIRS})
+target_include_directories(test_auto_repeat_stun_policy SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
+target_link_libraries(test_auto_repeat_stun_policy PRIVATE catch2_main)
+add_test(NAME auto_repeat_stun_policy COMMAND test_auto_repeat_stun_policy)
+register_test_target(test_auto_repeat_stun_policy)
+
 # ── test_activity_fsm ────────────────────────────────────────
 add_executable(test_activity_fsm
     test_activity_fsm.cpp

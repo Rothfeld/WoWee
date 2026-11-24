@@ -1409,6 +1409,9 @@ void GameHandler::registerCoreOpcodes() {
         if (spellHandler_) {
             stoppedSpell = spellHandler_->getAutoRepeatSpellId();
             spellHandler_->clearAutoRepeat();
+            if (stoppedSpell != 0) {
+                spellHandler_->onServerCancelAutoRepeat(stoppedSpell);
+            }
         }
         if (stoppedSpell != 0 && spellCastAnimCallbackRef()) {
             spellCastAnimCallbackRef()(playerGuid, SpellAnimPhase::STOP, stoppedSpell);

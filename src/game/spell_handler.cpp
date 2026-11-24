@@ -2633,6 +2633,7 @@ void SpellHandler::cancelCraftQueue() {
 }
 
 void SpellHandler::cancelAutoRepeatSpell() {
+    autoRepeatStunTracker_.clear();
     if (autoRepeatSpellId_ == 0) return;
     const uint32_t stoppedSpell = autoRepeatSpellId_;
     autoRepeatSpellId_ = 0;
@@ -2645,6 +2646,42 @@ void SpellHandler::cancelAutoRepeatSpell() {
     if (owner_.addonEventCallbackRef()) {
         owner_.addonEventCallbackRef()("STOP_AUTOREPEAT_SPELL", {});
     }
+}
+
+uint32_t SpellHandler::getStunSuspendedAutoRepeatSpellId() const {
+    return autoRepeatStunTracker_.activeSuspendedSpellId(owner_.getTargetGuid());
+}
+
+void SpellHandler::onServerCancelAutoRepeat(uint32_t stoppedSpell) {
+    autoRepeatStunTracker_.onServerCancel(stoppedSpell, owner_.getTargetGuid());
+}
+
+void SpellHandler::onPlayerStunChanged(bool nowStunned) {
+    uint64_t resumeTarget = 0;
+    const uint32_t resumeSpell = autoRepeatStunTracker_.onStunChanged(
+        nowStunned, owner_.getTargetGuid(), resumeTarget);
+    if (resumeSpell != 0 && resumeTarget != 0 &&
+        owner_.isInWorld() && !owner_.isPlayerDead() && !owner_.isPlayerGhost() &&
+        !owner_.isMounted() && !casting_ && autoRepeatSpellId_ == 0) {
+        auto target = owner_.getEntityManager().getEntity(resumeTarget);
+        if (target && target->isUnit()) {
+            const auto unit = std::static_pointer_cast<Unit>(target);
+            const bool alive = !(unit->getHealth() == 0 && unit->getMaxHealth() > 0);
+            if (alive && owner_.canPlayerAttackUnit(*unit)) {
+                LOG_DEBUG("Resuming auto-repeat spell ", resumeSpell,
+                          " after stun on target 0x", std::hex, resumeTarget, std::dec);
+                castSpell(resumeSpell, resumeTarget);
+            }
+        }
+    }
+}
+
+void SpellHandler::onTargetChanged(uint64_t newTargetGuid) {
+    autoRepeatStunTracker_.onTargetChanged(newTargetGuid);
+}
+
+void SpellHandler::clearStunSuspendedAutoRepeat() {
+    autoRepeatStunTracker_.clear();
 }
 
 void SpellHandler::cancelShapeshiftForm() {
@@ -3428,6 +3465,7 @@ void SpellHandler::syncPreWotlkTalentsFromKnownSpells() {
 }
 
 void SpellHandler::updateTimers(float dt) {
+    autoRepeatStunTracker_.tick(dt);
     // Tick down cast bar
     if (casting_ && castTimeRemaining_ > 0.0f) {
         castTimeRemaining_ -= dt;
@@ -5473,6 +5511,7 @@ void SpellHandler::resetCastState() {
 
 void SpellHandler::resetAllState() {
     autoRepeatSpellId_ = 0;
+    autoRepeatStunTracker_.resetAll();
     knownSpells_.clear();
     supercededSpells_.clear();
     cooldowns_.clearAll();

@@ -386,8 +386,11 @@ void CombatHandler::startAutoAttack(uint64_t targetGuid, bool forceMelee) {
         }
     }
 
-    if (auto* sh = owner_.getSpellHandler(); sh && sh->getAutoRepeatSpellId() == 75u) {
-        sh->cancelAutoRepeatSpell();
+    if (auto* sh = owner_.getSpellHandler()) {
+        sh->clearStunSuspendedAutoRepeat();
+        if (sh->getAutoRepeatSpellId() == 75u) {
+            sh->cancelAutoRepeatSpell();
+        }
     }
 
     if (autoAttackRequested_ && autoAttackTarget_ == targetGuid) return;
@@ -459,8 +462,11 @@ void CombatHandler::stopMeleeAutoAttackOnly() {
 
 void CombatHandler::stopAutoAttack() {
     stopMeleeAutoAttackOnly();
-    if (auto* sh = owner_.getSpellHandler(); sh && sh->getAutoRepeatSpellId() == 75u) {
-        sh->cancelAutoRepeatSpell();
+    if (auto* sh = owner_.getSpellHandler()) {
+        sh->clearStunSuspendedAutoRepeat();
+        if (sh->getAutoRepeatSpellId() == 75u) {
+            sh->cancelAutoRepeatSpell();
+        }
     }
 }
 
@@ -1725,6 +1731,7 @@ void CombatHandler::setTarget(uint64_t guid) {
     }
 
     owner_.setTargetGuidRaw(guid);
+    if (owner_.getSpellHandler()) owner_.getSpellHandler()->onTargetChanged(guid);
 
     // TBC sends visible auras in object fields, before selection. Preserve
     // that authoritative cache instead of waiting for a WotLK-only update.

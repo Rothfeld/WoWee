@@ -1,5 +1,6 @@
 #pragma once
 
+#include "game/auto_repeat_stun_policy.hpp"
 #include "game/world_packets.hpp"
 #include "game/opcode_table.hpp"
 #include "game/spell_defines.hpp"
@@ -134,7 +135,12 @@ public:
     [[nodiscard]] bool isRestoring() const { return restorationActive_; }
     /// Auto Shot or Shoot while it repeats, otherwise 0.
     [[nodiscard]] uint32_t getAutoRepeatSpellId() const { return autoRepeatSpellId_; }
+    [[nodiscard]] uint32_t getStunSuspendedAutoRepeatSpellId() const;
     void clearAutoRepeat() { autoRepeatSpellId_ = 0; }
+    void onServerCancelAutoRepeat(uint32_t stoppedSpell);
+    void onPlayerStunChanged(bool nowStunned);
+    void onTargetChanged(uint64_t newTargetGuid);
+    void clearStunSuspendedAutoRepeat();
     void cancelAutoRepeatSpell();
     [[nodiscard]] bool isGameObjectInteractionCasting() const;
     // The cast or channel in progress, else a cast sent and not yet answered,
@@ -597,6 +603,7 @@ private:
     uint32_t castBarCaptionSpellId_ = 0;
     uint32_t autoRepeatSpellId_ = 0;
     uint8_t autoRepeatCastCount_ = 0;
+    AutoRepeatStunTracker autoRepeatStunTracker_;
     // An on-next-swing ability between its SMSG_SPELL_START and the swing.
     uint32_t nextSwingSpellId_ = 0;
     /// The spell of the last CMSG_CAST_SPELL until the server answers it

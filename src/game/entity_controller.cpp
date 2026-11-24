@@ -1468,7 +1468,7 @@ EntityController::UnitFieldUpdateResult EntityController::applyUnitFieldsOnUpdat
             }
             // Detect stun state change on local player
             constexpr uint32_t UNIT_FLAG_STUNNED = 0x00040000;
-            if (block.guid == owner_.getPlayerGuid() && owner_.stunStateCallbackRef()) {
+            if (block.guid == owner_.getPlayerGuid()) {
                 bool wasStunned = (oldFlags & UNIT_FLAG_STUNNED) != 0;
                 bool nowStunned = (val & UNIT_FLAG_STUNNED) != 0;
                 // The server stuns the player for the logout countdown, to root them
@@ -1480,7 +1480,12 @@ EntityController::UnitFieldUpdateResult EntityController::applyUnitFieldsOnUpdat
                     nowStunned = false;
                 }
                 if (wasStunned != nowStunned) {
-                    owner_.stunStateCallbackRef()(nowStunned);
+                    if (owner_.getSpellHandler()) {
+                        owner_.getSpellHandler()->onPlayerStunChanged(nowStunned);
+                    }
+                    if (owner_.stunStateCallbackRef()) {
+                        owner_.stunStateCallbackRef()(nowStunned);
+                    }
                 }
             }
             // Server-authoritative kneel-loot flag (corpse / chest looting).
