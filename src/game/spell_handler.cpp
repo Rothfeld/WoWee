@@ -1055,7 +1055,7 @@ void SpellHandler::triggerCastVisual(uint32_t spellId, uint64_t casterGuid, uint
     if (!resolveUnitPosition(casterGuid, casterPos)) { LOG_DEBUG("SpellVisual: triggerCastVisual - cannot resolve caster position for guid=0x", std::hex, casterGuid, std::dec); return; }
     LOG_INFO("SpellVisual: triggerCastVisual visualId=", visualId, " pos=(", casterPos.x, ",", casterPos.y, ",", casterPos.z, ") castTimeMs=", castTimeMs);
     svs->playSpellVisualPrecast(visualId, casterPos, castTimeMs,
-                                owner_.resolveUnitRenderInstance(casterGuid));
+                                owner_.resolveUnitRenderInstance(casterGuid), spellId);
 }
 
 void SpellHandler::triggerImpactVisual(uint32_t spellId, uint64_t targetGuid) {
@@ -4269,10 +4269,17 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
         }
     }
     unitCastStates_.erase(data.casterUnit);
-    if (casterFinishedTimedCast) {
-        if (auto* renderer = owner_.services().renderer) {
-            if (auto* svs = renderer->getSpellVisualSystem()) {
-                svs->cancelPrecastVisuals(owner_.resolveUnitRenderInstance(data.casterUnit));
+    if (auto* renderer = owner_.services().renderer) {
+        if (auto* svs = renderer->getSpellVisualSystem()) {
+            const uint32_t casterInstance = owner_.resolveUnitRenderInstance(data.casterUnit);
+            if (casterFinishedTimedCast) {
+                svs->cancelPrecastVisuals(casterInstance);
+            } else {
+                // Remote unitCastStates_ expires at t == castTime while precast visuals
+                // carry kPrecastGraceSec for network/server-tick jitter. If SMSG_SPELL_GO
+                // arrives after the client timer hit 0, still retire the matching precast
+                // immediately instead of letting it burn through the 2s grace window.
+                svs->cancelPrecastVisuals(casterInstance, data.spellId);
             }
         }
     }

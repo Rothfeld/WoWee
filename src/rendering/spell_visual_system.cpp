@@ -530,10 +530,11 @@ void SpellVisualSystem::loadChainEffects() {
 }
 
 void SpellVisualSystem::playSpellVisualPrecast(uint32_t visualId, const glm::vec3& worldPosition,
-                                                uint32_t castTimeMs, uint32_t attachInstanceId) {
+                                                uint32_t castTimeMs, uint32_t attachInstanceId,
+                                                uint32_t spellId) {
     LOG_INFO("SpellVisual: playSpellVisualPrecast visualId=", visualId,
              " pos=(", worldPosition.x, ",", worldPosition.y, ",", worldPosition.z,
-             ") castTimeMs=", castTimeMs);
+             ") castTimeMs=", castTimeMs, " spellId=", spellId);
     if (!m2Renderer_ || visualId == 0) return;
     if (!cachedAssetManager_)
         cachedAssetManager_ = core::Application::getInstance().getAssetManager();
@@ -553,7 +554,7 @@ void SpellVisualSystem::playSpellVisualPrecast(uint32_t visualId, const glm::vec
         activePrecastSounds_[attachInstanceId] = snd;
     }
     playKitShake(kit->second, worldPosition);
-    spawnKitEffects(kit->second, worldPosition, attachInstanceId, duration, KitStage::Precast);
+    spawnKitEffects(kit->second, worldPosition, attachInstanceId, duration, KitStage::Precast, spellId);
     startKitWeaponTrail(kit->second, attachInstanceId);
 }
 
@@ -623,7 +624,8 @@ void SpellVisualSystem::stopChannelSound(uint32_t attachInstanceId) {
 // Base 19, Special 23-25 (17, 21-22, and 23-25 oriented by their bone); World
 // at the unit's position.
 float SpellVisualSystem::spawnKitEffects(uint32_t kitId, const glm::vec3& worldPosition,
-                                         uint32_t attachInstanceId, float duration, KitStage stage) {
+                                         uint32_t attachInstanceId, float duration, KitStage stage,
+                                         uint32_t precastSpellId) {
     const auto effects = kitEffects_.find(kitId);
     if (effects == kitEffects_.end()) return 0.0f;
     float longest = 0.0f;
@@ -643,9 +645,12 @@ float SpellVisualSystem::spawnKitEffects(uint32_t kitId, const glm::vec3& worldP
         // the Essence of Anger (WellofSoulsPain.m2, no 17) is not drawn by
         // build 8606; at the unit's feet it was a blue fire on the ground
         // (_experiments/20261118T124000Z.astromancer_glow scream-pairs.jpg).
-        if (slotSkippedWhenAbsent(attachment) &&
-            (!characters || !characters->getAttachmentTransform(attachInstanceId, attachment, attachMat))) {
-            LOG_DEBUG("SpellVisual: kit=", kitId, " attachment ", attachment, " absent on instance ",
+        // Also skip when attachInstanceId == 0 (unit not yet spawned in renderer),
+        // so hand/breath slots are never dumped unattached at the unit's feet.
+        if (slotSkippedWhenAbsent(effect.attachment) &&
+            (!attachInstanceId || !characters ||
+             !characters->getAttachmentTransform(attachInstanceId, effect.attachment, attachMat))) {
+            LOG_DEBUG("SpellVisual: kit=", kitId, " attachment ", effect.attachment, " absent on instance ",
                       attachInstanceId, "; not shown: ", effect.path);
             continue;
         }
@@ -701,7 +706,8 @@ float SpellVisualSystem::spawnKitEffects(uint32_t kitId, const glm::vec3& worldP
         longest = std::max(longest, lifetime);
         activeSpellVisuals_.push_back({.instanceId = instanceId, .elapsed = 0.0f, .duration = lifetime,
             .isPrecast = stage == KitStage::Precast, .attachmentId = attachment, .attachInstanceId = attachInstanceId,
-            .orientWithAttachment = breath, .effectScale = effect.scale, .isCast = stage == KitStage::Cast});
+            .orientWithAttachment = breath, .effectScale = effect.scale, .isCast = stage == KitStage::Cast,
+            .precastSpellId = stage == KitStage::Precast ? precastSpellId : 0u});
         if (!breath && attachInstanceId)
             placeOnUnit(activeSpellVisuals_.back(), characters, spawn, attachment ? attachmentScale(attachMat) : 1.0f);
         LOG_INFO("SpellVisual: kit=", kitId, " slot attachment=", effect.attachment, " used=", attachment,
@@ -2907,16 +2913,24 @@ void SpellVisualSystem::retireEffect(const SpellVisualInstance& effect) {
 // SummonPet_Impact_Base circle): hand glows gone the next frame, circle and
 // sparks fade within 0.3 s; WoWee played the 10 s precast out
 // (_experiments/20261119T1300Z.channel_end, die1_kill.jpg).
-void SpellVisualSystem::cancelPrecastVisuals(uint32_t attachInstanceId) {
+void SpellVisualSystem::cancelPrecastVisuals(uint32_t attachInstanceId, uint32_t spellId) {
     if (!m2Renderer_ || !attachInstanceId) return;
-    stopPrecastSound(attachInstanceId);
+    bool retiredAny = false;
+    bool anyPrecastRemaining = false;
     for (auto it = activeSpellVisuals_.begin(); it != activeSpellVisuals_.end(); ) {
         if (it->isPrecast && it->attachInstanceId == attachInstanceId) {
-            retireEffect(*it);
-            it = activeSpellVisuals_.erase(it);
-        } else {
-            ++it;
+            if (precastMatchesCancellation(it->precastSpellId, spellId)) {
+                retireEffect(*it);
+                it = activeSpellVisuals_.erase(it);
+                retiredAny = true;
+                continue;
+            }
+            anyPrecastRemaining = true;
         }
+        ++it;
+    }
+    if (spellId == 0 || (retiredAny && !anyPrecastRemaining)) {
+        stopPrecastSound(attachInstanceId);
     }
 }
 

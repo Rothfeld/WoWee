@@ -7,6 +7,7 @@
 #include "game_replay.hpp"
 #include "rendering/animation/animation_ids.hpp"
 #include "rendering/animation/spell_cast_anim_policy.hpp"
+#include "rendering/spell_visual_system.hpp"
 
 #include <string>
 #include <utility>
@@ -336,4 +337,40 @@ TEST_CASE("TBC back-to-back remote SMSG_SPELL_START / SMSG_SPELL_GO preserves CA
     // instead of cutting SpellCastOmni short:
     CHECK(actions[2].kind == SpellCastAnimAction::Kind::RETARGET_ONESHOT_RETURN);
     CHECK(actions[2].returnAnimation == anim::READY_SPELL_DIRECTED);
+}
+
+TEST_CASE("Precast spell cancellation matching retires late SMSG_SPELL_GO without disturbing unrelated precasts",
+          "[replay][castguid][precast]") {
+    using wowee::rendering::SpellVisualSystem;
+    constexpr uint32_t kImmolate = 17883;
+    constexpr uint32_t kTriggeredProc = 34672;
+
+    // Explicit wildcard cancel (cancelSpellId == 0) always retires any precast.
+    CHECK(SpellVisualSystem::precastMatchesCancellation(kImmolate, 0));
+    CHECK(SpellVisualSystem::precastMatchesCancellation(0, 0));
+    // Untagged legacy precast (precastSpellId == 0) is retired by any spell cancel.
+    CHECK(SpellVisualSystem::precastMatchesCancellation(0, kImmolate));
+    // Matching spell ID retires the precast (late SMSG_SPELL_GO after unitCastStates_ expiry).
+    CHECK(SpellVisualSystem::precastMatchesCancellation(kImmolate, kImmolate));
+    // Unrelated triggered instant spell arriving mid-cast must NOT retire an active precast.
+    CHECK_FALSE(SpellVisualSystem::precastMatchesCancellation(kImmolate, kTriggeredProc));
+}
+
+TEST_CASE("TBC remote SMSG_SPELL_GO arriving after client cast timer expiry completes cleanly",
+          "[replay][castguid][precast]") {
+    constexpr uint32_t kImmolate = 17883;  // Coilfang Observer 2000ms cast
+    Session s("tbc");
+    s.handler().setTargetGuidRaw(kMob);
+
+    s.receive(tbcSpellStart(kMob, kImmolate, 2000, Session::kPlayerGuid));
+    REQUIRE(s.handler().getUnitCastState(kMob) != nullptr);
+    CHECK(s.handler().getUnitCastState(kMob)->spellId == kImmolate);
+
+    // Client ticks past 2.0s before server SMSG_SPELL_GO arrives (routine tick/latency jitter).
+    s.handler().updateTimers(2.05f);
+    CHECK(s.handler().getUnitCastState(kMob) == nullptr);
+
+    // Late SMSG_SPELL_GO arrives after unitCastStates_ already expired.
+    s.receive(tbcSpellGo(kMob, kImmolate, Session::kPlayerGuid));
+    CHECK(s.handler().getUnitCastState(kMob) == nullptr);
 }

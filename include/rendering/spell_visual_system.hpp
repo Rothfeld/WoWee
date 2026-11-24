@@ -180,8 +180,11 @@ public:
     // Spawn a precast visual effect at a world position.
     // castTimeMs: server cast time in milliseconds (0 = use anim duration).
     // attachInstanceId: see playSpellVisual.
+    // spellId: spell that started this precast (used to match late SMSG_SPELL_GO
+    // after client-side unitCastStates_ timer expiry without cancelling unrelated precasts).
     void playSpellVisualPrecast(uint32_t visualId, const glm::vec3& worldPosition,
-                                uint32_t castTimeMs = 0, uint32_t attachInstanceId = 0);
+                                uint32_t castTimeMs = 0, uint32_t attachInstanceId = 0,
+                                uint32_t spellId = 0);
 
     /// Extend active precast visuals on attachInstanceId by delayMs when
     /// SMSG_SPELL_DELAYED pushes a cast back (local or remote caster).
@@ -268,10 +271,18 @@ public:
     /// Visual 32395 / kit 6374 after unit death clears caster/non-persistent lights).
     void reapplyAuraKitLights(uint32_t attachInstanceId);
 
+    /// True if a precast tagged with `precastSpellId` should be retired by a
+    /// cancellation request for `cancelSpellId` (0 = cancel all precasts on unit).
+    static constexpr bool precastMatchesCancellation(uint32_t precastSpellId, uint32_t cancelSpellId) {
+        return cancelSpellId == 0 || precastSpellId == 0 || precastSpellId == cancelSpellId;
+    }
+
     /// The precast kit of the unit drawn by attachInstanceId ends: its cast
-    /// was interrupted or failed (SMSG_SPELL_FAILURE), its caster died
-    /// mid-cast included. Other units' precasts go on.
-    void cancelPrecastVisuals(uint32_t attachInstanceId);
+    /// completed (SMSG_SPELL_GO), was interrupted, or failed (SMSG_SPELL_FAILURE),
+    /// its caster died mid-cast included. When spellId != 0, only precasts started
+    /// for that spell (or untagged precasts) are retired so unrelated triggered
+    /// instant spells arriving mid-cast leave an active precast intact.
+    void cancelPrecastVisuals(uint32_t attachInstanceId, uint32_t spellId = 0);
 
     /// Re-bind active spell visuals, aura visuals, channel visuals, and beams
     /// when a unit swaps render instance (e.g. player/creature morph IN/OUT).
@@ -337,6 +348,7 @@ private:
         // SpellVisualEffectName.Scale, times whatever the placement scales by.
         float effectScale = 1.0f;
         bool isCast = false;  // the caster's CastKit (SMSG_SPELL_GO)
+        uint32_t precastSpellId = 0;  // spell ID for PrecastKit cancellation matching
     };
 
     struct PhysicalProjectile {
@@ -417,7 +429,7 @@ private:
     };
     std::vector<DrainingEffect> drainingCasterEffects_;
     float spawnKitEffects(uint32_t kitId, const glm::vec3& worldPosition, uint32_t attachInstanceId,
-                          float duration, KitStage stage);
+                          float duration, KitStage stage, uint32_t precastSpellId = 0);
     uint32_t playKitSound(uint32_t kitId, const glm::vec3& worldPosition, uint32_t attachInstanceId,
                           bool stoppable);
     void playKitShake(uint32_t kitId, const glm::vec3& worldPosition);
