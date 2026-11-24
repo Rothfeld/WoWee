@@ -686,7 +686,7 @@ float SpellVisualSystem::spawnKitEffects(uint32_t kitId, const glm::vec3& worldP
         if (stage == KitStage::Precast) {
             m2Renderer_->startInstanceStateEffect(instanceId);
         } else {
-            m2Renderer_->restartInstanceAnimation(instanceId);
+            m2Renderer_->startInstanceOneShotEffect(instanceId);
         }
         // Without a stage length (cast time, aura, channel) the effect lives
         // one play of the sequence it shows. Authored lengths run from 0.33 s
@@ -703,11 +703,14 @@ float SpellVisualSystem::spawnKitEffects(uint32_t kitId, const glm::vec3& worldP
             }
             lifetime = animDurMs / 1000.0f;
         }
+        const bool decayOnExpire =
+            (stage != KitStage::Precast && duration <= 0.0f && m2Renderer_->hasAnimation(instanceId, 159));
         longest = std::max(longest, lifetime);
         activeSpellVisuals_.push_back({.instanceId = instanceId, .elapsed = 0.0f, .duration = lifetime,
             .isPrecast = stage == KitStage::Precast, .attachmentId = attachment, .attachInstanceId = attachInstanceId,
             .orientWithAttachment = breath, .effectScale = effect.scale, .isCast = stage == KitStage::Cast,
-            .precastSpellId = stage == KitStage::Precast ? precastSpellId : 0u});
+            .precastSpellId = stage == KitStage::Precast ? precastSpellId : 0u,
+            .decayOnExpire = decayOnExpire});
         if (!breath && attachInstanceId)
             placeOnUnit(activeSpellVisuals_.back(), characters, spawn, attachment ? attachmentScale(attachMat) : 1.0f);
         LOG_INFO("SpellVisual: kit=", kitId, " slot attachment=", effect.attachment, " used=", attachment,
@@ -2685,6 +2688,16 @@ void SpellVisualSystem::update(float deltaTime) {
         }
         it->elapsed += deltaTime;
         if (it->elapsed >= it->duration) {
+            if (!it->decaying && it->decayOnExpire) {
+                const float decay = m2Renderer_->finishInstanceStateEffect(it->instanceId);
+                if (decay > 0.0f) {
+                    it->decaying = true;
+                    it->elapsed = 0.0f;
+                    it->duration = decay;
+                    ++it;
+                    continue;
+                }
+            }
             retireEffect(*it);
             it = activeSpellVisuals_.erase(it);
         } else {

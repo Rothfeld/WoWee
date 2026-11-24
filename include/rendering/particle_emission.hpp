@@ -844,4 +844,50 @@ inline constexpr bool ribbonDrawsBeforeTransparent(uint16_t blendMode) {
     return blendMode <= 2u;
 }
 
+/// For a one-shot CastKit/ImpactKit M2 that authors both Stand (0) and Hold (158)
+/// state sequences (e.g. Spells\BeastRageState.m2 in Enrage 15716, impact kit 373):
+/// if the model has no mesh vertices or ribbons and every particle emitter has
+/// enabledIn == 0 throughout Stand (0) (only turning on at Hold 158 / Decay 159),
+/// return the Hold (158) sequence index so the one-shot visual actually emits
+/// immediately instead of spending its entire Stand lifetime invisible.
+/// Returns -1 when normal Stand (0) playback should be used.
+inline int oneShotStateEffectStartSequence(
+    uint32_t vertexCount,
+    size_t ribbonCount,
+    const std::vector<pipeline::M2Sequence>& sequences,
+    const std::vector<pipeline::M2ParticleEmitter>& emitters,
+    const std::vector<uint32_t>& globalSequenceDurations) {
+    if (vertexCount != 0 || ribbonCount != 0 || emitters.empty() || sequences.empty())
+        return -1;
+    int standIdx = -1;
+    int holdIdx = -1;
+    for (int i = 0; i < static_cast<int>(sequences.size()); ++i) {
+        if (sequences[i].id == 0 && standIdx < 0) standIdx = i;
+        if (sequences[i].id == 158 && holdIdx < 0) holdIdx = i;
+    }
+    if (standIdx < 0 || holdIdx < 0) return -1;
+
+    const float standDurMs = static_cast<float>(sequences[standIdx].duration);
+    for (const auto& em : emitters) {
+        // An emitter with no enabledIn track is always enabled during Stand.
+        if (!em.enabledIn.hasData()) return -1;
+        if (m2_track::sampleFloat(em.enabledIn, standIdx, 0.0f, 0.0f,
+                                  globalSequenceDurations, 1.0f) > 0.0f) {
+            return -1;
+        }
+        const int keySeq = (em.enabledIn.globalSequence >= 0) ? 0 : standIdx;
+        if (keySeq >= 0 && keySeq < static_cast<int>(em.enabledIn.sequences.size())) {
+            const auto& sk = em.enabledIn.sequences[keySeq];
+            const size_t n = std::min(sk.timestamps.size(), sk.floatValues.size());
+            for (size_t k = 0; k < n; ++k) {
+                const float tLocal = static_cast<float>(sk.timestamps[k]) - static_cast<float>(sk.timeOffset);
+                if (tLocal >= 0.0f && tLocal < standDurMs && sk.floatValues[k] > 0.0f) {
+                    return -1;
+                }
+            }
+        }
+    }
+    return holdIdx;
+}
+
 } // namespace wowee::rendering

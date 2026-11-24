@@ -706,6 +706,10 @@ public:
     /// in lockstep, and take their first bones from a sibling that is already
     /// mid-animation. A spell cast has to start at its beginning instead.
     void restartInstanceAnimation(uint32_t instanceId);
+    /// Start a one-shot CastKit/ImpactKit spell effect from its first active
+    /// sequence: skips an empty particle-disabled Stand (0) intro into Hold (158)
+    /// when a state-effect model (e.g. BeastRageState.m2) is played as a one-shot.
+    void startInstanceOneShotEffect(uint32_t instanceId);
     void startInstanceStateEffect(uint32_t instanceId);
     /// Returns authored Decay duration in seconds, or zero when absent.
     float finishInstanceStateEffect(uint32_t instanceId);

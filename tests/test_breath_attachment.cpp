@@ -9,6 +9,7 @@
 
 #include "pipeline/m2_loader.hpp"
 #include "rendering/m2_track_sampler.hpp"
+#include "rendering/particle_emission.hpp"
 #include "rendering/spell_visual_kit_policy.hpp"
 #include "rendering/spell_visual_system.hpp"
 
@@ -359,5 +360,46 @@ TEST_CASE("SpellVisualKit policies for InstantAreaKit destination, CharProc 1 ef
         CHECK_FALSE(channelVisualSuppressesAuraVisual(0u, 0u));
         CHECK_FALSE(channelVisualSuppressesAuraVisual(0u, 8636u));
         CHECK_FALSE(channelVisualSuppressesAuraVisual(8636u, 0u));
+    }
+}
+
+TEST_CASE("One-shot state-effect M2s with disabled Stand (0) start directly in Hold (158)",
+          "[spell-visual][assets]") {
+    const char* root = std::getenv("WOWEE_TBC_DATA_DIR");
+    if (!root || !*root) SKIP("Set WOWEE_TBC_DATA_DIR to client/wowee-data/expansions/tbc");
+
+    // Enrage (15716, SV 870, impact kit 373) plays Spells\BeastRageState.m2 as a
+    // one-shot impact. Its Stand (0, 1000ms) has all 4 red emitters enabledIn=0;
+    // Hold (158, 1000ms) and Decay (159, 1000ms) have enabledIn=1.
+    {
+        const auto bytes = readBytes(std::filesystem::path(root) / "spells/beastragestate.m2");
+        REQUIRE_FALSE(bytes.empty());
+        const auto model = wowee::pipeline::M2Loader::load(bytes);
+        const int startIdx = wowee::rendering::oneShotStateEffectStartSequence(
+            static_cast<uint32_t>(model.vertices.size()), model.ribbonEmitters.size(),
+            model.sequences, model.particleEmitters, model.globalSequenceDurations);
+        REQUIRE(startIdx >= 0);
+        CHECK(model.sequences[startIdx].id == 158u);
+    }
+
+    // BeastRageCaster.m2 (cast kit 81) has mesh vertices and no Hold (158) -> stays on Stand (0).
+    {
+        const auto bytes = readBytes(std::filesystem::path(root) / "spells/beastragecaster.m2");
+        REQUIRE_FALSE(bytes.empty());
+        const auto model = wowee::pipeline::M2Loader::load(bytes);
+        CHECK(wowee::rendering::oneShotStateEffectStartSequence(
+                  static_cast<uint32_t>(model.vertices.size()), model.ribbonEmitters.size(),
+                  model.sequences, model.particleEmitters, model.globalSequenceDurations) == -1);
+    }
+
+    // BloodyExplosionGreen.m2 (Acid Spit 34290, impact kit 813) has Stand (0) + Hold (158)
+    // but emits during Stand (0) -> stays on Stand (0).
+    {
+        const auto bytes = readBytes(std::filesystem::path(root) / "spells/bloodyexplosiongreen.m2");
+        REQUIRE_FALSE(bytes.empty());
+        const auto model = wowee::pipeline::M2Loader::load(bytes);
+        CHECK(wowee::rendering::oneShotStateEffectStartSequence(
+                  static_cast<uint32_t>(model.vertices.size()), model.ribbonEmitters.size(),
+                  model.sequences, model.particleEmitters, model.globalSequenceDurations) == -1);
     }
 }

@@ -2,6 +2,7 @@
 #include "rendering/m2_renderer.hpp"
 #include "rendering/m2_renderer_internal.h"
 #include "rendering/m2_model_classifier.hpp"
+#include "rendering/particle_emission.hpp"
 #include "rendering/wmo_doodad_rooms.hpp"
 #include "rendering/vk_context.hpp"
 #include "rendering/vk_buffer.hpp"
@@ -186,6 +187,37 @@ void M2Renderer::restartInstanceAnimation(uint32_t instanceId) {
     inst.shakePrevSequence = -1;
     inst.shakePrevAnimTime = 0.0f;
     if (inst.cachedModel) computeBoneMatrices(*inst.cachedModel, inst, &cachedCamPos_);
+}
+
+void M2Renderer::startInstanceOneShotEffect(uint32_t instanceId) {
+    auto idxIt = instanceIndexById.find(instanceId);
+    if (idxIt == instanceIndexById.end()) return;
+    auto& inst = instances[idxIt->second];
+    if (inst.cachedModel) {
+        const auto& model = *inst.cachedModel;
+        const int holdIdx = oneShotStateEffectStartSequence(
+            model.vertexCount, model.ribbonEmitters.size(), model.sequences,
+            model.particleEmitters, model.globalSequenceDurations);
+        if (holdIdx >= 0) {
+            inst.stateEffectAnimation = true;
+            inst.currentSequenceIndex = holdIdx;
+            inst.idleSequenceIndex = holdIdx;
+            inst.playingVariation = false;
+            inst.holdAtEnd = false;
+            inst.animDuration = static_cast<float>(model.sequences[holdIdx].duration);
+            inst.animTime = 0.0f;
+            inst.animSpeed = 1.0f;
+            inst.emitterAccumulators.clear();
+            inst.emitterPrevSequence = -1;
+            inst.emitterPrevAnimTime = 0.0f;
+            inst.ribbonHasPrevState = false;
+            inst.shakePrevSequence = -1;
+            inst.shakePrevAnimTime = 0.0f;
+            computeBoneMatrices(model, inst, &cachedCamPos_);
+            return;
+        }
+    }
+    restartInstanceAnimation(instanceId);
 }
 
 void M2Renderer::startInstanceStateEffect(uint32_t instanceId) {
