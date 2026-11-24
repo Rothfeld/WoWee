@@ -221,4 +221,46 @@ inline constexpr bool spellHasInstantAreaDestination(
     return false;
 }
 
+/// True when a PersistentAreaKit BaseEffect names the exact same M2 asset
+/// (case-insensitive, slash-normalized) that the kit's CharProc 9 area-impact
+/// procedure already drops randomly across the area. Native 2.4.3 does not
+/// spawn a duplicate looping center copy for Volley (kit 9356 ArcaneShot_Area),
+/// Blizzard (kit 9350 Blizzard_Impact_Base), or Rain of Fire (kit 9352
+/// RainOfFire_Impact_Base), while keeping distinct center/cloud models such as
+/// Hurricane (kit 9354 LightningStorm_Cloud_State) and Cave In (kit 9373
+/// Smash_Impact_Chest).
+inline bool persistentAreaSkipsDuplicateBaseEffect(std::string_view effectPath,
+                                                   std::string_view areaImpactPath) {
+    if (effectPath.empty() || areaImpactPath.empty() || effectPath.size() != areaImpactPath.size())
+        return false;
+    auto norm = [](char c) -> char {
+        if (c == '/') return '\\';
+        if (c >= 'A' && c <= 'Z') return static_cast<char>(c - 'A' + 'a');
+        return c;
+    };
+    for (size_t i = 0; i < effectPath.size(); ++i) {
+        if (norm(effectPath[i]) != norm(areaImpactPath[i])) return false;
+    }
+    return true;
+}
+
+/// Effective CharProc 9 area-impact spawn rate (impacts/s) from SpellVisualKit
+/// CharParamOne. Measured on Native 2.4.3 (build 8606, default spellEffectLevel 6,
+/// particleDensity 1.0): Volley (kit 9356, CharParamOne 5), Blizzard (kit 9350, 5),
+/// and Rain of Fire (kit 9352, 5) drop ~2.2-2.5 impacts/s (6-8 live 3.3s instances),
+/// half the raw CharParamOne count.
+inline constexpr float areaImpactEffectiveRate(float dbcPerSecond) {
+    return (dbcPerSecond > 0.0f) ? (dbcPerSecond * 0.5f) : 0.0f;
+}
+
+/// Radial offset for a CharProc 9 area impact within `radius` yards from a
+/// uniform [0, 1] draw. Uniform radial sampling concentrates drops around the
+/// AoE center (90% of horizontal projections within +-0.625 * radius = +-5 yd
+/// on an 8 yd Volley), matching Native 2.4.3 instead of pushing 75% to the rim.
+inline constexpr float areaImpactSampleDistance(float radius, float unitRandom) {
+    const float r = (radius > 0.0f) ? radius : 0.0f;
+    const float u = (unitRandom < 0.0f) ? 0.0f : ((unitRandom > 1.0f) ? 1.0f : unitRandom);
+    return r * u;
+}
+
 } // namespace wowee::rendering

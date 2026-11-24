@@ -4265,6 +4265,7 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
 
     // Trigger spell visual effects: cast kit at caster + impact kit at each hit target.
     // Driven by Spell.dbc SpellVisualID for all non-ranged-auto spells (including racials).
+    bool launchedGroundMissile = false;
     if (!rangedWeaponAttack) {
         uint32_t visualId = resolveSpellVisualId(data.spellId);
         if (visualId != 0) {
@@ -4341,7 +4342,6 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
                     }
                 }
             }
-            bool launchedGroundMissile = false;
             if (data.destination) {
                 if (auto* renderer = owner_.services().renderer) {
                     if (auto* svs = renderer->getSpellVisualSystem()) {
@@ -4434,7 +4434,7 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
         for (const auto& miss : data.missTargets) {
             if (miss.targetGuid == 0) continue;
             bool missileLaunched = false;
-            if (visualId != 0) {
+            if (visualId != 0 && !launchedGroundMissile) {
                 const bool resistFx = spellMissShowsResistEffect(miss.missType);
                 const auto missileReaction = GameHandler::spellMissHitReaction(miss.missType, /*hasMissile=*/true);
                 const uint32_t spellId = data.spellId;

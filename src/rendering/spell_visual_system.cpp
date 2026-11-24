@@ -1962,11 +1962,14 @@ void SpellVisualSystem::playPersistentArea(uint64_t key, uint32_t visualId, cons
     }
     // Cave In 36240 (kit 9373): Smash_Impact_Chest glows at the centre, a
     // 1 s loop, while HellfireRaid_Dust_Impact_Base rock falls land around it
-    // (original 2.4.3, pair 8). Rain of Fire 5740 (kit 9352, 5 a second)
-    // drops about five fireballs a second across its 8 yards.
+    // (original 2.4.3, pair 8). Volley (kit 9356), Blizzard (kit 9350), and
+    // Rain of Fire (kit 9352) name the impact model itself as BaseEffect and
+    // do not spawn an extra looping center copy.
+    std::string_view droppedImpactPath;
     if (const auto impacts = kitAreaImpacts_.find(kit->second); impacts != kitAreaImpacts_.end()) {
         if (radius > 0.0f) {
             activeAreaImpacts_[key] = {.impacts = impacts->second, .center = worldPosition, .radius = radius};
+            droppedImpactPath = impacts->second.path;
         } else {
             LOG_WARNING("SpellVisual: persistent area 0x", std::hex, key, std::dec, " kit ", kit->second,
                         " drops area impacts but its spell names no area radius; none drawn");
@@ -1979,6 +1982,10 @@ void SpellVisualSystem::playPersistentArea(uint64_t key, uint32_t visualId, cons
     }
     auto& instances = persistentAreas_[key];
     for (const auto& effect : effects->second) {
+        if (!droppedImpactPath.empty() &&
+            persistentAreaSkipsDuplicateBaseEffect(effect.path, droppedImpactPath)) {
+            continue;
+        }
         const uint32_t modelId = loadSpellModel(effect.path);
         if (modelId == 0) continue;
         const uint32_t instanceId = m2Renderer_->createInstance(modelId, worldPosition, glm::vec3(0.0f), effect.scale,
@@ -2338,13 +2345,13 @@ void SpellVisualSystem::dropAreaImpacts(float deltaTime) {
     auto* terrain = renderer_ ? renderer_->getTerrainManager() : nullptr;
     auto* wmo = renderer_ ? renderer_->getWMORenderer() : nullptr;
     for (auto& [key, area] : activeAreaImpacts_) {
-        area.due += deltaTime * area.impacts.perSecond;
+        area.due += deltaTime * areaImpactEffectiveRate(area.impacts.perSecond);
         const float reach = area.radius * 2.0f;
         while (area.due >= 1.0f) {
             area.due -= 1.0f;
             const uint32_t modelId = loadSpellModel(area.impacts.path);
             if (modelId == 0) continue;
-            const float distance = area.radius * std::sqrt(unit(random));
+            const float distance = areaImpactSampleDistance(area.radius, unit(random));
             const float angle = glm::two_pi<float>() * unit(random);
             glm::vec3 at = area.center + glm::vec3(distance * std::cos(angle), distance * std::sin(angle), 0.0f);
             const auto terH = terrain ? terrain->getHeightAt(at.x, at.y) : std::nullopt;

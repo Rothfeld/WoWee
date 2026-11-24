@@ -331,6 +331,25 @@ TEST_CASE("SpellVisualKit policies for InstantAreaKit destination, CharProc 1 ef
         CHECK_FALSE(auraStateSuppressesOneShotKitAnim(chosenStun, kNoAnim, kStand, kStun));
     }
 
+    SECTION("CharProc 9 persistent area policy skips duplicate center BaseEffect and scales rate/radius") {
+        // Volley (kit 9356), Blizzard (kit 9350), Rain of Fire (kit 9352): BaseEffect matches CharProc 9 model.
+        CHECK(persistentAreaSkipsDuplicateBaseEffect("spells\\arcaneshot_area.m2", "Spells\\ArcaneShot_Area.m2"));
+        CHECK(persistentAreaSkipsDuplicateBaseEffect("Spells/Blizzard_Impact_Base.m2", "Spells\\Blizzard_Impact_Base.m2"));
+        CHECK(persistentAreaSkipsDuplicateBaseEffect("Spells\\RainOfFire_Impact_Base.m2", "Spells\\RainOfFire_Impact_Base.m2"));
+        // Hurricane (kit 9354) and Cave In (kit 9373): distinct center/cloud BaseEffect stays enabled.
+        CHECK_FALSE(persistentAreaSkipsDuplicateBaseEffect("Spells\\LightningStorm_Cloud_State.m2", "Spells\\CallLightning_Impact.m2"));
+        CHECK_FALSE(persistentAreaSkipsDuplicateBaseEffect("Spells\\Smash_Impact_Chest.m2", "Spells\\HellfireRaid_Dust_Impact_Base.m2"));
+
+        // Effective spawn rate matches Native 2.4.3 (~2.5/s for CharParamOne = 5.0).
+        CHECK(areaImpactEffectiveRate(5.0f) == Catch::Approx(2.5f));
+        CHECK(areaImpactEffectiveRate(0.0f) == Catch::Approx(0.0f));
+
+        // Uniform radial sampling concentrates impacts around the AoE center.
+        CHECK(areaImpactSampleDistance(8.0f, 0.0f) == Catch::Approx(0.0f));
+        CHECK(areaImpactSampleDistance(8.0f, 0.5f) == Catch::Approx(4.0f));
+        CHECK(areaImpactSampleDistance(8.0f, 1.0f) == Catch::Approx(8.0f));
+    }
+
     SECTION("Mutual channel/aura SpellVisual collision suppresses matching StateKit visualId only") {
         // Tempest-Smith 37112 Power Up (SV 8636: ChannelKit 7371 + StateKit 7373).
         CHECK(channelVisualSuppressesAuraVisual(8636u, 8636u));
