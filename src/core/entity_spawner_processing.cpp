@@ -2181,9 +2181,28 @@ bool EntitySpawner::applyGameObjectDestroyPose(uint32_t instanceId, uint32_t goT
 }
 
 void EntitySpawner::onGameObjectInfoReceived(uint32_t entry) {
-    if (const auto* info = gameHandler_ ? gameHandler_->getCachedGameObjectInfo(entry) : nullptr;
-        info && info->type == 31u) {
-        applyDungeonDifficulty();
+    if (const auto* info = gameHandler_ ? gameHandler_->getCachedGameObjectInfo(entry) : nullptr) {
+        if (info->type == 31u) {
+            applyDungeonDifficulty();
+        }
+        std::vector<uint64_t> markersToDespawn;
+        for (const auto& [guid, spawn] : serverGameObjectSpawns_) {
+            if (spawn.entry != entry || !gameObjectInstances_.count(guid)) continue;
+            uint32_t goFlags = 0u;
+            if (const auto ent = gameHandler_->getEntityManager().getEntity(guid)) {
+                const uint16_t flagsIdx = game::fieldIndex(game::UF::GAMEOBJECT_FLAGS);
+                if (flagsIdx != 0xFFFFu) goFlags = ent->getField(flagsIdx);
+            }
+            const std::string modelPath = getGameObjectModelPathForDisplayId(spawn.displayId);
+            if (game::isHiddenDesignerMarkerGameObject(info->type, goFlags, modelPath)) {
+                markersToDespawn.push_back(guid);
+            }
+        }
+        for (uint64_t guid : markersToDespawn) {
+            despawnGameObject(guid);
+            LOG_INFO("GO designer marker removed after query: guid=0x", std::hex, guid, std::dec,
+                     " entry=", entry, " type=", info->type);
+        }
     }
     // A door's open state can arrive before its query response (BRS
     // portcullises: state 0 at 22:01:01.8, type at 22:01:02.7), when

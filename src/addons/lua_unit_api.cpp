@@ -2,6 +2,7 @@
 // Extracted from lua_engine.cpp as part of §5.1 (Tame LuaEngine).
 #include "game/shapeshift_forms.hpp"
 #include "game/spell_prerequisites.hpp"
+#include "game/update_field_helpers.hpp"
 #include <bit>
 #include <optional>
 #include "game/game_utils.hpp"
@@ -201,7 +202,12 @@ static int lua_UnitLevel(lua_State* L) {
             lua_pushnumber(L, -1);
             return 1;
         }
-        lua_pushnumber(L, unit->getLevel());
+        const bool friendOrSelf = !gh || unit->getGuid() == gh->getPlayerGuid() ||
+                                  gh->playerIsFriendOf(*unit);
+        lua_pushnumber(L, game::drunkPerceivedUnitLevel(
+            static_cast<int>(unit->getLevel()),
+            gh ? gh->getPlayerDrunkValue() : 0u,
+            friendOrSelf));
     } else {
         auto* gh = getGameHandler(L);
         std::string uidStr(uid);

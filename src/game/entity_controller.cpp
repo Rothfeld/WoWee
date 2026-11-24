@@ -1860,11 +1860,15 @@ bool EntityController::applyPlayerStatFields(const FlatFieldMap& fields,
             }
         }
         else if (pfi.pBytes3 != 0xFFFF && key == pfi.pBytes3) {
+            const uint16_t prevDrunk = owner_.getPlayerDrunkValue();
             const auto pb3 = decodePlayerBytes3(val);
             owner_.playerDrunkValueRef() = pb3.drunkValue;
             owner_.playerDrunkStateRef() = pb3.drunkState;
             owner_.playerArenaFactionRef() = pb3.arenaFaction;
             owner_.applyIntoxication(pb3.intoxication);
+            if (!isCreate && prevDrunk != pb3.drunkValue && owner_.getTargetGuid() != 0) {
+                owner_.fireAddonEvent("UNIT_LEVEL", {"target"});
+            }
             LOG_DEBUG("PLAYER_BYTES_3 ", isCreate ? "(CREATE): " : "(VALUES): ",
                       "raw=0x", std::hex, val, std::dec,
                       " gender=", static_cast<int>(pb3.gender),

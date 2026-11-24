@@ -3737,12 +3737,21 @@ std::optional<int> GameHandler::forcedReactionRank(uint32_t factionTemplateId) c
 int GameHandler::unitReactionToPlayer(const Unit& unit) const {
     if (isDuelOpponent(unit)) return 2;
     const uint32_t ft = unit.getFactionTemplate();
+    if (unit.getType() == ObjectType::UNIT && !isFriendlyFaction(ft)) {
+        const uint64_t playerGuid = getPlayerGuid();
+        if ((combatHandler_ && combatHandler_->isAggressiveTowardPlayer(unit.getGuid())) ||
+            ((unit.getUnitFlags() & UNIT_FLAG_IN_COMBAT) != 0 && playerGuid != 0 &&
+             unitTargetGuid(unit) == playerGuid)) {
+            return 2;
+        }
+    }
     // UnitReaction numbers ranks from 1 (hated); ReputationRank from 0.
     if (const auto forced = forcedReactionRank(ft)) return *forced + 1;
     if (auto it = factionTemplateRepList_.find(ft);
         it != factionTemplateRepList_.end() && it->second < initialFactions_.size()) {
         const auto& standing = initialFactions_[it->second];
         int rank = reputationStandingFor(standing.standing).id;
+        if (standing.flags & FACTION_FLAG_PEACE_FORCED) rank = std::max(rank, 5);
         if (standing.flags & FACTION_FLAG_AT_WAR) rank = std::min(rank, 4);
         return rank;
     }
@@ -3767,6 +3776,7 @@ int GameHandler::gameObjectReactionToPlayer(const GameObject& object) const {
         it != factionTemplateRepList_.end() && it->second < initialFactions_.size()) {
         const auto& standing = initialFactions_[it->second];
         int rank = reputationStandingFor(standing.standing).id;
+        if (standing.flags & FACTION_FLAG_PEACE_FORCED) rank = std::max(rank, 5);
         if (standing.flags & FACTION_FLAG_AT_WAR) rank = std::min(rank, 4);
         return rank;
     }

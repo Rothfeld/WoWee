@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <string_view>
 #include <unordered_set>
 
 namespace wowee {
@@ -111,6 +112,43 @@ inline bool syncKnownTitleBitsWord(std::unordered_set<uint32_t>& knownBits,
 /// Normalize server GAMEOBJECT_ANIMPROGRESS (0..255) to [0.0f, 1.0f].
 inline float normalizeGameObjectAnimProgress(uint32_t rawProgress) {
     return static_cast<float>(std::min(rawProgress, 255u)) / 255.0f;
+}
+
+/// TBC 2.4.3 perceived enemy level when the local player is intoxicated:
+/// non-friendly units appear up to 5 levels lower (`(drunkByte * 5) / 255`,
+/// clamped to >= 1), while self, friendly units, and skull/-1 bosses are unchanged.
+inline int drunkPerceivedUnitLevel(int actualLevel, uint16_t playerDrunkValue, bool unitIsFriendOrSelf) {
+    if (actualLevel <= 0 || playerDrunkValue == 0u || unitIsFriendOrSelf) {
+        return actualLevel;
+    }
+    const int drunkByte = static_cast<int>((playerDrunkValue >> 8) & 0xFFu);
+    const int reduction = (drunkByte * 5) / 255;
+    return std::max(1, actualLevel - reduction);
+}
+
+/// TBC 2.4.3 hides placeholder designer-marker jewel models (`World\Goober\G_Jewel*.m2`,
+/// GameObjectDisplayInfo 327/2770/5811) on non-interactive server helper objects:
+/// TRAP (6), SPELL_FOCUS (8, e.g. 181958 Master's Terrace Focus), and GOOBER (10)
+/// carrying GO_FLAG_NOT_SELECTABLE / GO_FLAG_INTERACT_COND (0x04, e.g. 184850
+/// Sunhawk Portal Controller), while keeping world crystal CHEST (3), GENERIC (5,
+/// e.g. 177414 Gem of Elune), selectable quest GOOBERs (flags == 0), and real
+/// SPELL_FOCUS models (Anvil, Potbelly Stove, Forge, Campfire) visible.
+inline bool isHiddenDesignerMarkerGameObject(uint32_t goType, uint32_t goFlags, std::string_view modelPath) {
+    constexpr std::string_view kJewelPrefix = "world/goober/g_jewel";
+    if (modelPath.size() < kJewelPrefix.size()) return false;
+    for (size_t i = 0; i < kJewelPrefix.size(); ++i) {
+        char c = modelPath[i];
+        if (c == '\\') c = '/';
+        else if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+        if (c != kJewelPrefix[i]) return false;
+    }
+    constexpr uint32_t kTypeTrap = 6u;
+    constexpr uint32_t kTypeSpellFocus = 8u;
+    constexpr uint32_t kTypeGoober = 10u;
+    constexpr uint32_t kGoFlagController = 0x04u;
+    return goType == kTypeTrap ||
+           goType == kTypeSpellFocus ||
+           (goType == kTypeGoober && (goFlags & kGoFlagController) != 0u);
 }
 
 } // namespace game

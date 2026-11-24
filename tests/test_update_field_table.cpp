@@ -166,6 +166,23 @@ TEST_CASE("H10 update field helpers match TBC server semantics", "[updatefields]
     CHECK(normalizeGameObjectAnimProgress(128u) == Catch::Approx(128.0f / 255.0f));
     CHECK(normalizeGameObjectAnimProgress(255u) == Catch::Approx(1.0f));
     CHECK(normalizeGameObjectAnimProgress(300u) == Catch::Approx(1.0f));
+
+    // 6. Drunk perceived enemy level reduction (TBC 2.4.3: up to -5 on non-friends)
+    CHECK(drunkPerceivedUnitLevel(70, 0u, false) == 70);
+    CHECK(drunkPerceivedUnitLevel(70, 65534u, false) == 65);     // .modify drunk 100 -> -5
+    CHECK(drunkPerceivedUnitLevel(70, 32768u, false) == 68);     // ~50% drunk -> -2
+    CHECK(drunkPerceivedUnitLevel(3, 65534u, false) == 1);       // clamped at level 1
+    CHECK(drunkPerceivedUnitLevel(70, 65534u, true) == 70);      // friendly/self unchanged
+    CHECK(drunkPerceivedUnitLevel(-1, 65534u, false) == -1);     // skull worldboss unchanged
+
+    // 7. Placeholder G_Jewel* designer marker visibility by GameObject type/flags
+    CHECK(isHiddenDesignerMarkerGameObject(8u, 0u, "World\\Goober\\G_JewelBlue.m2"));       // 181958 Master's Terrace Focus
+    CHECK(isHiddenDesignerMarkerGameObject(6u, 0u, "World/Goober/G_JewelRed.m2"));         // 180391 Heart of Hakkar Spell Emitter
+    CHECK(isHiddenDesignerMarkerGameObject(10u, 0x04u, "world\\goober\\g_jewelblack.m2")); // 184850 Sunhawk Portal Controller
+    CHECK_FALSE(isHiddenDesignerMarkerGameObject(3u, 0x04u, "World\\Goober\\G_JewelRed.m2"));  // CHEST crystal stays visible
+    CHECK_FALSE(isHiddenDesignerMarkerGameObject(5u, 0u, "World\\Goober\\G_JewelBlue.m2"));    // 177414 Gem of Elune stays visible
+    CHECK_FALSE(isHiddenDesignerMarkerGameObject(10u, 0u, "World\\Goober\\G_JewelBlue.m2"));   // 20351 Blue Soulgem stays visible
+    CHECK_FALSE(isHiddenDesignerMarkerGameObject(8u, 0u, "World\\Generic\\Human\\Passive Doodads\\Stoves\\PotbellyStove.m2"));
 }
 
 TEST_CASE("GameObject rotation update fields resolve per expansion", "[updatefields]") {

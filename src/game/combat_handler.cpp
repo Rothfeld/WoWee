@@ -151,10 +151,16 @@ void CombatHandler::registerOpcodes(DispatchTable& table) {
         if (!packet.hasRemaining(12)) return;
         uint64_t guid = packet.readUInt64();
         uint32_t reaction = packet.readUInt32();
-        if (reaction == 2 && owner_.npcAggroCallbackRef()) {
-            auto entity = owner_.getEntityManager().getEntity(guid);
-            if (entity)
-                owner_.npcAggroCallbackRef()(guid, glm::vec3(entity->getX(), entity->getY(), entity->getZ()));
+        if (reaction == 2 && guid != 0) {
+            if (hostileAttackers_.insert(guid).second) {
+                const std::string uid = owner_.guidToUnitId(guid);
+                if (!uid.empty()) owner_.fireAddonEvent("UNIT_FACTION", {uid});
+            }
+            if (owner_.npcAggroCallbackRef()) {
+                auto entity = owner_.getEntityManager().getEntity(guid);
+                if (entity)
+                    owner_.npcAggroCallbackRef()(guid, glm::vec3(entity->getX(), entity->getY(), entity->getZ()));
+            }
         }
     };
     table[Opcode::SMSG_SPELLNONMELEEDAMAGELOG] = [this](network::Packet& packet) { handleSpellDamageLog(packet); };
@@ -767,7 +773,10 @@ void CombatHandler::handleAttackStart(network::Packet& packet) {
             owner_.fireAddonEvent("PLAYER_ENTER_COMBAT", {});
         }
     } else if (data.victimGuid == owner_.getPlayerGuid() && data.attackerGuid != 0) {
-        hostileAttackers_.insert(data.attackerGuid);
+        if (hostileAttackers_.insert(data.attackerGuid).second) {
+            const std::string uid = owner_.guidToUnitId(data.attackerGuid);
+            if (!uid.empty()) owner_.fireAddonEvent("UNIT_FACTION", {uid});
+        }
         autoTargetAttacker(data.attackerGuid);
 
         // Play aggro sound when NPC attacks player
@@ -803,7 +812,10 @@ void CombatHandler::handleAttackStop(network::Packet& packet) {
         announceLeaveCombat();
         LOG_DEBUG("SMSG_ATTACKSTOP cleared auto-attack intent");
     } else if (data.victimGuid == owner_.getPlayerGuid()) {
-        hostileAttackers_.erase(data.attackerGuid);
+        if (hostileAttackers_.erase(data.attackerGuid) > 0) {
+            const std::string uid = owner_.guidToUnitId(data.attackerGuid);
+            if (!uid.empty()) owner_.fireAddonEvent("UNIT_FACTION", {uid});
+        }
     }
 }
 

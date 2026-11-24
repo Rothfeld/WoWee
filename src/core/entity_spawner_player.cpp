@@ -37,6 +37,7 @@
 #include "pipeline/item_textures.hpp"
 #include "pipeline/m2_asset_loader.hpp"
 #include "game/game_handler.hpp"
+#include "game/update_field_helpers.hpp"
 #include "game/inventory.hpp"
 #include "game/game_services.hpp"
 #include "game/transport_manager.hpp"
@@ -1621,6 +1622,22 @@ void EntitySpawner::spawnOnlineGameObject(uint64_t guid, uint32_t entry, uint32_
     if (modelPath.empty()) {
         LOG_WARNING("No model path for gameobject displayId ", displayId, " (guid 0x", std::hex, guid, std::dec, ")");
         return;
+    }
+
+    if (gameHandler_) {
+        if (const auto* info = gameHandler_->getCachedGameObjectInfo(entry)) {
+            uint32_t goFlags = 0u;
+            if (const auto ent = gameHandler_->getEntityManager().getEntity(guid)) {
+                const uint16_t flagsIdx = game::fieldIndex(game::UF::GAMEOBJECT_FLAGS);
+                if (flagsIdx != 0xFFFFu) goFlags = ent->getField(flagsIdx);
+            }
+            if (game::isHiddenDesignerMarkerGameObject(info->type, goFlags, modelPath)) {
+                despawnGameObject(guid);
+                LOG_DEBUG("GO designer marker hidden: guid=0x", std::hex, guid, std::dec,
+                          " entry=", entry, " type=", info->type, " model=", modelPath);
+                return;
+            }
+        }
     }
 
     // Log spawns to help debug duplicate objects (e.g., cathedral issue)
