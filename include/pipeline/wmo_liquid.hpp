@@ -72,4 +72,12 @@ constexpr bool wmoLiquidHasDepth(uint32_t liquidType) {
     return liquidType == 1 || liquidType == 2;
 }
 
+/// TBC 2.4.3 WMO MLIQ vertex alpha (wow.exe build 8606 @ 0x6f9080, 0x6f89fe, 0x6f8c72).
+/// Linear interpolation from riverShallowAlpha to riverDeepAlpha by depthByte / 255.0,
+/// independent of camera viewing angle (no 1 / NdotV scaling).
+constexpr float wmoLiquidAlpha(float shallowAlpha, float deepAlpha, uint8_t depthByte) {
+    const float t = static_cast<float>(depthByte) / 255.0f;
+    return shallowAlpha + (deepAlpha - shallowAlpha) * t;
+}
+
 }  // namespace wowee::pipeline

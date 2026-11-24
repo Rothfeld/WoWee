@@ -50,3 +50,14 @@ TEST_CASE("Legacy nonzero groupLiquid overrides the tiles", "[wmo][liquid]") {
     CHECK(resolveWmoLiquidType(0, 0, 2, water) == 3);   // entry 3 -> magma
     CHECK(resolveWmoLiquidType(0, 0, 15, water) == 1);  // 15 -> tiles
 }
+
+TEST_CASE("TBC WMO liquid alpha interpolates linearly by MLIQ depth byte without NdotV saturation", "[wmo][liquid]") {
+    using wowee::pipeline::wmoLiquidAlpha;
+    // Default TBC LightParams riverAlpha = (0.5, 1.0) (wow.exe 8606 @ 0x71767d, 0x6f9080).
+    CHECK(wmoLiquidAlpha(0.5f, 1.0f, 0) == Catch::Approx(0.5f));
+    CHECK(wmoLiquidAlpha(0.5f, 1.0f, 255) == Catch::Approx(1.0f));
+    // Coilfang_Raid_010.wmo Lurker pool depths (b0 = 153..209) stay translucent (< 0.92),
+    // never saturating to 1.0 at grazing angles.
+    CHECK(wmoLiquidAlpha(0.5f, 1.0f, 153) == Catch::Approx(0.80f).margin(0.005f));
+    CHECK(wmoLiquidAlpha(0.5f, 1.0f, 200) == Catch::Approx(0.892f).margin(0.005f));
+}

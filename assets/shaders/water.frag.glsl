@@ -334,7 +334,12 @@ void main() {
             // vertex lighting and texture-masked sun sheen.
             color = riverDeepColor.rgb * VertexLighting + texel.rgb + (VertexSpecular + 0.25) * texel.a;
         }
-        float alpha = mix(liquidParams.x, liquidParams.y, clamp(LiquidDepth / ndotv, 0.0, 1.0));
+        // TBC 2.4.3 WMO liquid (wow.exe 8606 @ 0x6f9080, 0x6f89fe, 0x6f8c72)
+        // looks up vertex alpha directly from a 256-entry linear ramp
+        // mix(riverShallowAlpha, riverDeepAlpha, depth / 255.0) without
+        // dividing by NdotV; dividing by NdotV saturated Serpentshrine Cavern
+        // and other WMO pools to alpha = 1.0 (opaque) at normal camera pitches.
+        float alpha = mix(liquidParams.x, liquidParams.y, clamp(LiquidDepth, 0.0, 1.0));
         if (push.legacyWmoMode > 2.5) {
             // MCLQ depth bytes are normalized to [0, 1] by 255.
             // Ocean uses the authored [0, 1] depth ramp directly: coastal depths
