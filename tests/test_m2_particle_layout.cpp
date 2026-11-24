@@ -232,11 +232,14 @@ TEST_CASE("Sphere emitters: elevation above the horizontal plane, no negative ra
         CHECK(std::abs(nova.direction.z) < 1e-5f);
         CHECK(glm::dot(nova.direction, nova.offset) > 0);
     }
-    // Etherial.m2 Death #20 (radius -1.11 to -0.83): no offset, no velocity;
-    // its gravity alone draws the falling lines.
+    // Etherial.m2 Death #20 / EtherialRobe.m2 Death #15 (radius -1.111 to -0.833):
+    // negative radius places birth on the opposite side of the ring while keeping
+    // velocity along +direction so positive speed implodes inward across the cylinder.
     const auto death = sphericalParticleEmission(-1.111f, -0.833f, 0, 2.0f, 0.3f, 0x400);
-    CHECK(death.offset == glm::vec3(0));
-    CHECK(death.direction == glm::vec3(0));
+    const float expectedRadius = glm::mix(-1.111f, -0.833f, 0.3f);
+    CHECK(glm::length(death.offset) == Catch::Approx(-expectedRadius).margin(1e-5f));
+    CHECK(glm::length(death.direction) == Catch::Approx(1.0f).margin(1e-5f));
+    CHECK(glm::dot(death.offset, death.direction) == Catch::Approx(expectedRadius).margin(1e-5f));
     // Etherial.m2 Death #21 (radius 0, 0x100): straight up.
     CHECK(sphericalParticleEmission(0, 0, 3.0f, 0, 0.5f, 0x100).direction == glm::vec3(0, 0, 1));
     // Etherial.m2 Death #17/#19 (radius 0, vertical 0, horizontal pi, zSource -1.111):
@@ -527,37 +530,45 @@ TEST_CASE("Legacy emitters read geometry model and tumble range", "[m2][particle
     CHECK(model.particleEmitters[0].tumbleMax == glm::vec3(0.0f, 0.0f, 8.0f));
 }
 
-TEST_CASE("Pinned particle tails end at the birth point", "[m2][particle]") {
+TEST_CASE("Pinned particle tails clamp tail span to particle age", "[m2][particle]") {
     using namespace wowee::rendering;
-    // Bloodlust hand ring (0x479): 0.28 yd/s, tailLength 10 s, 0.1 yd from birth.
+    // Bloodlust hand ring (0x479, grav=0): 0.28 yd/s, tailLength 10 s, age = 0.1/0.28 s -> 0.1 yd.
     const glm::vec3 velocity(0.28f, 0.0f, 0.0f);
-    const glm::vec3 toBirth(-0.1f, 0.0f, 0.0f);
-    const glm::vec3 pinned = particleTailVector(0x479, velocity, 10.0f, toBirth);
+    const float bloodlustAge = 0.1f / 0.28f;
+    const glm::vec3 pinned = particleTailVector(0x479, velocity, 10.0f, bloodlustAge);
     CHECK(pinned.x == Catch::Approx(-0.1f));
     // Without 0x400 the tail keeps its full authored length.
-    CHECK(particleTailVector(0x79, velocity, 10.0f, toBirth).x == Catch::Approx(-2.8f));
-    // Acid breath drop (0x429) far from its birth: velocity tail.
-    const glm::vec3 drop = particleTailVector(0x429, glm::vec3(0, 4.44f, 0), 0.1f, glm::vec3(0, -3.0f, 0));
+    CHECK(particleTailVector(0x79, velocity, 10.0f, bloodlustAge).x == Catch::Approx(-2.8f));
+    // Acid breath drop (0x429) past tailLength (age = 3.0 / 4.44 > 0.1 s): velocity tail.
+    const glm::vec3 drop = particleTailVector(0x429, glm::vec3(0, 4.44f, 0), 0.1f, 3.0f / 4.44f);
     CHECK(drop.y == Catch::Approx(-0.444f));
+    // Etherial.m2 #20 / EtherialRobe.m2 #15 (0x400/0x401, gravity +69.444, tailLength 0.8 s,
+    // life 0.5 s): at age 0.25 s, v_z = -g * age and tail.z = +g * age^2, so the top of the
+    // quad reaches z_birth + 0.5 * g * age^2 above the emitter instead of clamping at z_birth.
+    const float g = 69.444f;
+    const float age = 0.25f;
+    const glm::vec3 ethTail = particleTailVector(0x401, glm::vec3(0.0f, 0.0f, -g * age), 0.8f, age);
+    CHECK(ethTail.z == Catch::Approx(g * age * age).margin(1e-4f));
+    const float pZ = -0.5f * g * age * age;
+    CHECK(pZ + ethTail.z == Catch::Approx(0.5f * g * age * age).margin(1e-4f));
     // Purge_Impact_Chest #1 (0x19, non-pinned): speed 0.556, drag 30, tailLength 4.75 s.
     // Drag-integrated tail span (1 - exp(-30*4.75))/30 = 0.0333 s keeps newborn tails tiny (< 0.02 yd).
-    for (float age : {0.0f, 0.002f, 0.01f, 0.033f, 0.1f, 0.25f}) {
-        const float v = 0.556f * std::exp(-30.0f * age);
-        const float dist = 0.556f * particleDragTravel(30.0f, age);
+    for (float sampleAge : {0.0f, 0.002f, 0.01f, 0.033f, 0.1f, 0.25f}) {
+        const float v = 0.556f * std::exp(-30.0f * sampleAge);
         const glm::vec3 t = particleTailVector(0x19, glm::vec3(v, 0.0f, 0.0f), 4.75f,
-                                               glm::vec3(-dist, 0.0f, 0.0f), 30.0f);
+                                               sampleAge, 30.0f);
         CHECK(glm::length(t) < 0.02f);
     }
     // Holy_Precast_High_Base #0/#2 (Chain Heal precast ground sunburst, flags 0xb9, non-pinned):
     // #0 peaks at age=0 (drag 0.5, tailLength 0.40 s) and #2 peaks at age=0.12 s (drag 0.8, tailLength 0.35 s).
     // Both preserve their full drag-integrated radial streaks (> 0.45 yd) instead of collapsing at birth.
     const glm::vec3 ch0 = particleTailVector(0xb9, glm::vec3(-1.667f, 0.0f, 0.0f), 0.40f,
-                                             glm::vec3(0.0f), 0.50f);
+                                             0.0f, 0.50f);
     CHECK(glm::length(ch0) == Catch::Approx(1.667f * particleDragTravel(0.50f, 0.40f)));
     CHECK(glm::length(ch0) > 0.55f);
     const float v2 = 1.667f * std::exp(-0.80f * 0.12f);
     const glm::vec3 ch2 = particleTailVector(0xb9, glm::vec3(-v2, 0.0f, 0.0f), 0.35f,
-                                             glm::vec3(0.19f, 0.0f, 0.0f), 0.80f);
+                                             0.12f, 0.80f);
     CHECK(glm::length(ch2) == Catch::Approx(v2 * particleDragTravel(0.80f, 0.35f)));
     CHECK(glm::length(ch2) > 0.45f);
 }
@@ -577,14 +588,14 @@ TEST_CASE("Shipped TBC Holy_Precast_High_Base.m2 ground sunburst emitters preser
         CHECK(em.tailLength == Catch::Approx(idx == 0 ? 0.40f : 0.35f));
         CHECK(em.drag == Catch::Approx(idx == 0 ? 0.50f : 0.80f));
         const glm::vec3 tail = particleTailVector(em.flags, glm::vec3(-1.667f, 0.0f, 0.0f),
-                                                  em.tailLength, glm::vec3(0.0f), em.drag);
+                                                  em.tailLength, 0.0f, em.drag);
         CHECK(glm::length(tail) > 0.50f);
     }
     // Shaman Water/Air/Earth totem top flame (flags 0x9, unpinned, drag 0):
     // keeps full authored -velocity * tailLength so the flame streak reaches
     // down into the totem bowl instead of floating above the horns.
     const glm::vec3 totemTail = particleTailVector(0x9, glm::vec3(0.0f, 0.0f, 0.908f), 1.2f,
-                                                   glm::vec3(0.0f, 0.0f, -0.1f), 0.0f);
+                                                   0.1f, 0.0f);
     CHECK(totemTail.z == Catch::Approx(-0.908f * 1.2f));
 }
 

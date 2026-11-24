@@ -193,27 +193,35 @@ inline float particleDragTravel(float drag, float dt) {
 }
 
 // A tail quad runs from the particle back along -velocity * span, where span
-// integrates drag over tailLength (particleDragTravel(drag, tailLength) when
-// drag > 0, else tailLength):
+// integrates drag over rawSpan (particleDragTravel(drag, rawSpan) when
+// drag > 0, else rawSpan):
 // - Purge_Impact_Chest.m2 #1 (flags 0x19, speed 0.556 yd/s, drag 30, tailLength
 //   4.75 s) decays over 1/30 s = 0.033 s, keeping newborn tails ~0.018 yd rather
 //   than 2.6 yd spikes.
 // - Holy_Precast_High_Base.m2 #0/#2 (Chain Heal precast ground sunburst, flags
 //   0xb9, drag 0.5/0.8, tailLength 0.40/0.35 s, peak alpha at age 0.0/0.12 s)
 //   keeps its full authored radial streaks at birth and peak alpha (clamping
-//   tailLength to particle age erased #0 at birth and truncated #2 by 3x).
-// Pinned tails (0x400) end at the particle's birth point at most. 2204 of
+//   unpinned tailLength to particle age erased #0 at birth and truncated #2 by 3x).
+// Pinned tails (0x400) clamp their time span to min(tailLength, age). 2204 of
 // the 3522 TBC tail emitters are pinned, many authoring tailLength 10 s:
-// Bloodlust/Summon hand rings (0x479, 0.28 yd/s, 10 s) and the fire precast
-// hand sparks (0x439, -1.67 yd/s inward, 5.45 s) otherwise draw 3-9 yd spokes
-// the original client does not show. Acid breath drops (0x429, 4.44 yd/s,
-// 0.1 s) keep their short velocity tail once past their birth point.
+// - At zero gravity, -velocity * min(tailLength, age) ends at the particle's
+//   birth point at most, so Bloodlust/Summon hand rings (0x479, 0.28 yd/s, 10 s)
+//   and fire precast hand sparks (0x439, -1.67 yd/s inward, 5.45 s) stay inside
+//   the hand instead of drawing 3-9 yd spokes, while Acid breath drops (0x429,
+//   4.44 yd/s, 0.1 s) keep their short velocity tail once age > 0.1 s.
+// - Under acceleration (gravity != 0), -velocity * min(tailLength, age) still
+//   uses instantaneous velocity rather than clamping to the birth point:
+//   Etherial.m2 #20 (0x400) and EtherialRobe.m2 #15 (0x401, gravity +69.444,
+//   tailLength 0.8 s, life 0.5 s) stretch their tail upward to
+//   z_birth + 0.5 * g * age^2 above the rising wrappings, forming the tall
+//   magenta/crimson death flame pillar seen in native TBC 2.4.3.
 inline glm::vec3 particleTailVector(uint32_t flags, const glm::vec3& velocity, float tailLength,
-                                    const glm::vec3& toBirth, float drag = 0.0f) {
-    const float span = drag > 0.0f ? particleDragTravel(drag, tailLength) : tailLength;
-    const glm::vec3 tail = -velocity * span;
-    if (!(flags & kParticlePinned)) return tail;
-    return glm::dot(tail, tail) > glm::dot(toBirth, toBirth) ? toBirth : tail;
+                                    float age, float drag = 0.0f) {
+    const float rawSpan = (flags & kParticlePinned)
+        ? std::min(tailLength, std::max(age, 0.0f))
+        : tailLength;
+    const float span = drag > 0.0f ? particleDragTravel(drag, rawSpan) : rawSpan;
+    return -velocity * span;
 }
 
 // M2/WMO placements carry uniform scale in their transform. Matrix-created
@@ -423,23 +431,24 @@ struct ParticleEmission {
 // The area length / width tracks are the minimum / maximum radius; a birth
 // takes a radius between them. The vertical range is an elevation above the
 // model's horizontal plane, the horizontal range an azimuth about +Z.
-// Particles travel away from the emitter centre along the sampled radial
-// direction (including at zero radius, e.g. Strike_Impact_Chest.m2 #1 on
-// Flurry 12970 / melee impacts, 546 TBC sphere emitters), or up +Z with flag
-// 0x100; at negative radius without 0x100 they have no velocity.
-// Native evidence (pair 23, _experiments/20261118T143000Z.sphere_emission):
+// Birth offset is `direction * sampledRadius` (including negative radii: a
+// negative radius places the birth on the opposite side of the sphere while
+// keeping velocity along `+direction`, so positive speed implodes inward across
+// the cylinder — e.g. Etherial.m2 Death #20 and EtherialRobe.m2 Death #15 with
+// radius -1.111..-0.833 and speed +2.778 form a ~2.5-3.0 yd wide tapering
+// vertical flame pillar in native TBC 2.4.3).
+// Particles travel along `direction` (including at zero radius, e.g.
+// Strike_Impact_Chest.m2 #1 on Flurry 12970 / melee impacts, 546 TBC sphere
+// emitters), or up +Z with flag 0x100.
+// Native evidence:
 // - Shadow Nova 30852 (shadow_nova_area.m2 #0, vertical 0, horizontal pi,
 //   radius to 9.7, 0x2209, kit scale 1): a smoke band spreading flat over
-//   the ground round the caster. Elevation taken as tilt from +Z (eb6f678,
-//   reverted) made it one rising column.
+//   the ground round the caster.
 // - Meeting Stone Summoning Portal 179944 (Summon_Ritual.m2, vertical pi,
 //   horizontal 0): a ring standing in the model's YZ plane.
-// - A negative radius is no radius. Etherial.m2 Death #20 (radius -1.11 to
-//   -0.83, vertical 0, gravity 69) falls as thin lines under the rising
-//   wrappings in the original; taken at its magnitude it spread a ring of
-//   streaks 4 yd across that drew a white curtain at the Ethereal's waist.
-//   11 TBC sphere emitters author negative radii (Etherial/EtherialRobe
-//   Death, Illidan's glaive, shadow_nova_area's first 90 ms, IceNuke).
+// - Etherial.m2 Death #20 / EtherialRobe.m2 Death #15 (radius -1.111..-0.833,
+//   vertical 0, horizontal pi, speed 2.778, gravity +69.444, flags 0x400/0x401):
+//   wide magenta/crimson vertical flame pillar engulfing the rising wrappings.
 /// M2 particle `zSource` (track #9, parsed into `em.deceleration`): when non-zero,
 /// particles travel away from `(0, 0, zSource)` through their local spawn offset
 /// instead of using the default sphere/plane angular direction (465 TBC emitters,
@@ -460,12 +469,11 @@ inline ParticleEmission sphericalParticleEmission(float length, float width,
     const glm::vec3 direction(std::cos(elevation) * std::sin(azimuth),
                               std::cos(elevation) * std::cos(azimuth), std::sin(elevation));
     const float sampledRadius = glm::mix(length, width, radius);
-    const glm::vec3 offset = direction * std::fmax(sampledRadius, 0.0f);
+    const glm::vec3 offset = direction * sampledRadius;
     if ((flags & 0x100u) != 0) {
         return {offset, glm::vec3(0, 0, 1)};
     }
-    const glm::vec3 fallback = sampledRadius >= 0.0f ? direction : glm::vec3(0);
-    return {offset, zSourceParticleDirection(offset, zSource, fallback)};
+    return {offset, zSourceParticleDirection(offset, zSource, direction)};
 }
 
 // Plane emitter (type 1) birth offset in the emitter bone's XY plane.
