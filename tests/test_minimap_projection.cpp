@@ -203,27 +203,80 @@ TEST_CASE("Outdoor minimap terrain tint follows Light.dbc ambient and top-down d
           "[minimap][lighting]") {
     using wowee::ui::computeMinimapTerrainTint;
 
-    // Coldridge Valley daytime (LightParams 34): near-full snow brightness (~0.84, 0.90, 0.95).
+    // Coldridge Valley daytime (LightParams 34): crisp snow brightness (~0.79, 0.82, 0.85).
     const glm::vec3 coldridge = computeMinimapTerrainTint(
         glm::vec3(0.116f, 0.323f, 0.492f), glm::vec3(0.799f, 0.636f, 0.512f));
-    CHECK(coldridge.r == Catch::Approx(0.8351f).margin(1e-3f));
-    CHECK(coldridge.g == Catch::Approx(0.8954f).margin(1e-3f));
-    CHECK(coldridge.b == Catch::Approx(0.9528f).margin(1e-3f));
+    CHECK(coldridge.r == Catch::Approx(0.7932f).margin(2e-3f));
+    CHECK(coldridge.g == Catch::Approx(0.8223f).margin(2e-3f));
+    CHECK(coldridge.b == Catch::Approx(0.8489f).margin(2e-3f));
 
-    // Mirage Raceway at 23:12 night (LightParams 239): cool blue-grey cast (B > G > R)
-    // instead of unlit daytime tan (1, 1, 1).
+    // Mirage Raceway night (LightParams 239): cool desaturated slate cast (~0.38, 0.47, 0.61)
+    // matching Native 2.4.3 (~0.41, 0.48, 0.61) rather than deep cobalt (0.28, 0.54, 0.94).
     const glm::vec3 mirageNight = computeMinimapTerrainTint(
         glm::vec3(0.0f, 0.118f, 0.235f), glm::vec3(0.310f, 0.468f, 0.788f));
-    CHECK(mirageNight.r == Catch::Approx(0.279f).margin(1e-3f));
-    CHECK(mirageNight.g == Catch::Approx(0.5392f).margin(1e-3f));
-    CHECK(mirageNight.b == Catch::Approx(0.9442f).margin(1e-3f));
+    CHECK(mirageNight.r == Catch::Approx(0.3806f).margin(2e-3f));
+    CHECK(mirageNight.g == Catch::Approx(0.4735f).margin(2e-3f));
+    CHECK(mirageNight.b == Catch::Approx(0.6152f).margin(2e-3f));
     CHECK(mirageNight.b > mirageNight.g);
     CHECK(mirageNight.g > mirageNight.r);
 
-    // Sunstrider Isle at 22:47 night (LightParams 379): clamps blue highlight cleanly at 1.0.
+    // Sunstrider Isle night (LightParams 379): soft cool moonlight within [0, 1].
     const glm::vec3 sunstriderNight = computeMinimapTerrainTint(
         glm::vec3(0.243f, 0.307f, 0.556f), glm::vec3(0.314f, 0.427f, 0.541f));
-    CHECK(sunstriderNight.r == Catch::Approx(0.5256f).margin(1e-3f));
-    CHECK(sunstriderNight.g == Catch::Approx(0.6913f).margin(1e-3f));
-    CHECK(sunstriderNight.b == Catch::Approx(1.0f).margin(1e-5f));
+    CHECK(sunstriderNight.r == Catch::Approx(0.5835f).margin(2e-3f));
+    CHECK(sunstriderNight.g == Catch::Approx(0.6440f).margin(2e-3f));
+    CHECK(sunstriderNight.b == Catch::Approx(0.7733f).margin(2e-3f));
+}
+
+TEST_CASE("Interior WMO minimap ordering draws enclosed rooms over exterior-lit shells and shafts",
+          "[minimap][wmo]") {
+    using wowee::ui::InteriorMinimapGroupCandidate;
+    using wowee::ui::orderInteriorMinimapGroups;
+
+    // 1. Karazhan Gamesman's Hall: player in g027 (Gamesman's Hall, flags 0x2005)
+    // adjacent to g026 (ChessRoom, flags 0x2005), both enclosed by huge exterior-lit
+    // shell g055 (gatehouse01, flags 0x2041, spanZ = 691.3). Both g026 and g027 must
+    // paint AFTER g055 so the chessboard is never cropped by gatehouse01's tiles.
+    {
+        std::vector<InteriorMinimapGroupCandidate> kara = {
+            {26, {-140.0f, -210.0f, 158.0f}, {-80.0f, -150.0f, 195.0f}, 0x2005u},
+            {27, {-95.0f, -205.0f, 158.0f}, {-65.0f, -165.0f, 168.5f}, 0x2005u},
+            {55, {-250.0f, -320.0f, -40.0f}, {120.0f, 80.0f, 651.3f}, 0x2041u},
+        };
+        orderInteriorMinimapGroups(kara, 162.0f, 27u, 158.0f);
+        REQUIRE(kara.size() == 3);
+        CHECK(kara[0].authoredIndex == 55u);
+        CHECK(kara[1].authoredIndex == 26u);
+        CHECK(kara[2].authoredIndex == 27u);
+    }
+
+    // 2. Stormwind Trade District Bank: canal401 (g106, 0xba41) and bazaar01 (g285, 0xaa41)
+    // must draw UNDERNEATH banklobby (g085, 0x2805) and vault (g172, 0x2005).
+    {
+        std::vector<InteriorMinimapGroupCandidate> swBank = {
+            {85, {-8940.0f, 595.0f, 95.0f}, {-8895.0f, 645.0f, 118.0f}, 0x2805u},
+            {106, {-8980.0f, 540.0f, 82.0f}, {-8850.0f, 700.0f, 130.0f}, 0xba41u},
+            {172, {-8955.0f, 600.0f, 95.0f}, {-8930.0f, 635.0f, 112.0f}, 0x2005u},
+            {285, {-8990.0f, 550.0f, 88.0f}, {-8860.0f, 690.0f, 128.0f}, 0xaa41u},
+        };
+        orderInteriorMinimapGroups(swBank, 99.5f, 85u, 95.0f);
+        REQUIRE(swBank.size() == 4);
+        CHECK((swBank[0].authoredIndex == 106u || swBank[0].authoredIndex == 285u));
+        CHECK((swBank[1].authoredIndex == 106u || swBank[1].authoredIndex == 285u));
+        CHECK(swBank[2].authoredIndex == 172u);
+        CHECK(swBank[3].authoredIndex == 85u);
+    }
+
+    // 3. Stormwind Dwarven Bank: deep stairwell shaft GnomeSpiralHall01 (g290, min.z=-17.3)
+    // draws before coplanar banklobby01 (g236, min.z=-2.4).
+    {
+        std::vector<InteriorMinimapGroupCandidate> dwBank = {
+            {236, {-8360.0f, 590.0f, -2.4f}, {-8315.0f, 635.0f, 16.0f}, 0x2005u},
+            {290, {-8355.0f, 600.0f, -17.3f}, {-8320.0f, 630.0f, 18.0f}, 0x2005u},
+        };
+        orderInteriorMinimapGroups(dwBank, 0.5f, 236u, -2.4f);
+        REQUIRE(dwBank.size() == 2);
+        CHECK(dwBank[0].authoredIndex == 290u);
+        CHECK(dwBank[1].authoredIndex == 236u);
+    }
 }

@@ -30,6 +30,7 @@
 #include "pipeline/wmo_loader.hpp"
 #include "pipeline/wmo_group_path.hpp"
 #include "pipeline/terrain_mesh.hpp"
+#include "game/game_utils.hpp"
 #include "core/logger.hpp"
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
@@ -933,12 +934,28 @@ std::shared_ptr<PendingTile> TerrainManager::prepareTile(int x, int y) {
 
     // Pre-load terrain texture BLP data on background thread so finalizeTile
     // doesn't block the main thread with file I/O.
+    const bool preloadSpecVariants = game::isActiveExpansion("tbc");
     for (const auto& texPath : pending->terrain.textures) {
-        if (pending->preloadedTextures.find(texPath) != pending->preloadedTextures.end()) continue;
-        // Terrain tilesets and M2 skins stay in their blocks - both are only
-        // sampled, and M2's transparency now comes from the blocks too. The
-        // normal-map source below still decodes: it reads the pixels.
-        pending->preloadedTextures[texPath] = assetManager->loadTexture(texPath, true);
+        if (pending->preloadedTextures.find(texPath) == pending->preloadedTextures.end()) {
+            // Terrain tilesets and M2 skins stay in their blocks - both are only
+            // sampled, and M2's transparency now comes from the blocks too. The
+            // normal-map source below still decodes: it reads the pixels.
+            pending->preloadedTextures[texPath] = assetManager->loadTexture(texPath, true);
+        }
+        if (preloadSpecVariants && texPath.size() > 4) {
+            std::string lower = texPath;
+            std::transform(lower.begin(), lower.end(), lower.begin(),
+                           [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            if (lower.ends_with(".blp") && !lower.ends_with("_s.blp")) {
+                std::string specPath = texPath.substr(0, texPath.size() - 4) + "_s.blp";
+                if (pending->preloadedTextures.find(specPath) == pending->preloadedTextures.end()) {
+                    auto specBlp = assetManager->loadTexture(specPath, true);
+                    if (specBlp.isValid()) {
+                        pending->preloadedTextures[specPath] = std::move(specBlp);
+                    }
+                }
+            }
+        }
     }
 
     LOG_DEBUG("Prepared tile [", x, ",", y, "]: ",

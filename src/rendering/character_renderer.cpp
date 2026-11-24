@@ -3387,12 +3387,14 @@ uint32_t CharacterRenderer::gatherAuthoredM2Lights(const glm::vec3& centerPos,
         const auto* gpuModel = instance.cachedModel;
         if (!gpuModel || gpuModel->data.lights.empty()) continue;
 
-        const glm::vec3 instDelta = instance.position - centerPos;
-        if (glm::dot(instDelta, instDelta) > 250.0f * 250.0f) continue;
-
         const glm::mat4 modelMat = instance.hasOverrideModelMatrix
             ? instance.overrideModelMatrix
             : getModelMatrix(instance);
+        const glm::vec3 instOrigin = instance.hasOverrideModelMatrix
+            ? glm::vec3(modelMat[3])
+            : instance.position;
+        const glm::vec3 instDelta = instOrigin - centerPos;
+        if (glm::dot(instDelta, instDelta) > 250.0f * 250.0f) continue;
         const float scale = std::max(instance.scale, 1e-4f);
         for (const auto& light : gpuModel->data.lights) {
             if (light.type != 1 || !light.visible || light.attenuationEnd <= 0.0f ||

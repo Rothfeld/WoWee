@@ -7,6 +7,7 @@
 #include "rendering/wmo_vertex.hpp"
 #include "rendering/shadow_params.hpp"
 #include "rendering/wmo_renderer.hpp"
+#include "ui/minimap_projection.hpp"
 #include "rendering/wmo_portal_visibility.hpp"
 #include "rendering/visual_mesh_pick.hpp"
 #include "rendering/rt_bvh.hpp"
@@ -2017,15 +2018,40 @@ bool WMORenderer::createGroupResources(const pipeline::WMOGroup& group, GroupRes
         resources.geometryMax = geomMax;
     }
 
+    size_t transVertexEnd = 0;
+    size_t extVertexStart = group.vertices.size();
+    const bool hasMocv = (group.flags & 0x4u) != 0;
+    const bool localLitGroup = pipeline::wmoUsesLocalLighting(group.flags);
+    if (hasMocv) {
+        if (group.transBatchCount > 0) {
+            transVertexEnd = (group.transBatchCount < group.batches.size())
+                ? static_cast<size_t>(group.batches[group.transBatchCount].startVertex)
+                : group.vertices.size();
+        }
+        const size_t extBatchStart = static_cast<size_t>(group.transBatchCount) + group.intBatchCount;
+        if (group.extBatchCount > 0 && extBatchStart < group.batches.size()) {
+            extVertexStart = static_cast<size_t>(group.batches[extBatchStart].startVertex);
+        }
+    }
+
     std::vector<WMOVertex> vertices;
     vertices.reserve(group.vertices.size());
 
-    for (const auto& v : group.vertices) {
+    for (size_t vi = 0; vi < group.vertices.size(); ++vi) {
+        const auto& v = group.vertices[vi];
         WMOVertex vd;
         vd.position = v.position;
         vd.normal = v.normal;
         vd.texCoord = v.texCoord;
-        vd.color = v.color;
+        // TBC FixColorVertexAlpha + pixel/mapobjoverbright.bls: only interior-batch
+        // vertices of locally-lit MOCV groups carry wall/floor overbright in alpha
+        // (1 + 4 * MOCV.a). Transition/exterior batches and groups without MOCV
+        // must supply 0.0 overbright alpha.
+        const float overbrightAlpha =
+            (hasMocv && localLitGroup && vi >= transVertexEnd && vi < extVertexStart)
+                ? v.color.a
+                : 0.0f;
+        vd.color = glm::vec4(glm::vec3(v.color), overbrightAlpha);
         vd.tangent = glm::vec4(0.0f);
         vertices.push_back(vd);
     }
@@ -4839,23 +4865,31 @@ std::vector<WMORenderer::InteriorMapGroup> WMORenderer::getInteriorMapGroups(con
         [&](const auto& value) { return value.id == location.instanceId; });
     assert(instance != instances.end());
     const auto& model = loadedModels.at(instance->modelId);
-    std::vector<InteriorMapGroup> groups;
+    std::vector<ui::InteriorMinimapGroupCandidate> candidates;
+    candidates.reserve(model.groups.size());
     for (size_t index = 0; index < model.groups.size(); ++index) {
         const auto& group = model.groups[index];
         if (!(group.groupFlags & kWMOGroupIndoor)) continue;
-        groups.push_back({group.authoredIndex, group.authoredMin, group.authoredMax});
+        candidates.push_back({
+            group.authoredIndex,
+            group.authoredMin,
+            group.authoredMax,
+            group.groupFlags,
+        });
     }
-    // Height controls overlap order, not whether a room exists on the map.
-    // Stairs can place the player above every corridor/cell ceiling nearby.
-    // Draw distant vertical layers first so the occupied layer wins where
-    // authored room textures overlap, without deleting nonoverlapping rooms.
-    const auto verticalDistance = [&](const InteriorMapGroup& group) {
-        return std::max({group.min.z - location.localPosition.z,
-                         location.localPosition.z - group.max.z, 0.0f});
-    };
-    std::stable_sort(groups.begin(), groups.end(), [&](const auto& a, const auto& b) {
-        return verticalDistance(a) > verticalDistance(b);
-    });
+    const uint32_t occupiedAuthoredIndex = location.groupIndex < model.groups.size()
+        ? model.groups[location.groupIndex].authoredIndex
+        : UINT32_MAX;
+    const float occupiedMinZ = location.groupIndex < model.groups.size()
+        ? model.groups[location.groupIndex].authoredMin.z
+        : location.boundsMin.z;
+    ui::orderInteriorMinimapGroups(
+        candidates, location.localPosition.z, occupiedAuthoredIndex, occupiedMinZ);
+    std::vector<InteriorMapGroup> groups;
+    groups.reserve(candidates.size());
+    for (const auto& c : candidates) {
+        groups.push_back({c.authoredIndex, c.min, c.max});
+    }
     return groups;
 }
 

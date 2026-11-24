@@ -1,8 +1,11 @@
 #pragma once
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <string>
+#include <tuple>
+#include <vector>
 #include <glm/glm.hpp>
 
 namespace wowee::ui {
@@ -112,14 +115,54 @@ inline bool shouldShowAreaPoiRimArrow(uint32_t poiAreaId,
 }
 
 /// Top-down Light.dbc terrain colour multiplier for outdoor minimap tiles in
-/// TBC 2.4.3 (normal = +Z against canonical top-down light z = -0.9, clamped
-/// to [0, 1] so baked daytime BLP tiles darken and cool at night without
-/// over-blowing daytime highlights).
+/// TBC 2.4.3. Calibrated against synced Native 2.4.3 captures (e.g. Mirage
+/// Raceway night LightParams 239 measures ~[0.41, 0.48, 0.61] over baked
+/// daytime map39_43.blp rather than raw cobalt [0.28, 0.54, 0.94]): top-down
+/// diffuse plus ambient is clamped to [0, 1] and blended toward its luminance
+/// so nighttime and Outland minimaps cool/darken naturally without deep blue
+/// or violet oversaturation, while bright daytime zones stay near [1, 1, 1].
 inline glm::vec3 computeMinimapTerrainTint(const glm::vec3& ambientColor,
                                            const glm::vec3& diffuseColor) {
-    constexpr float kTopDownNdotL = 0.9f;
-    return glm::clamp(ambientColor + kTopDownNdotL * diffuseColor,
+    constexpr float kTopDownNdotL = 0.80f;
+    constexpr float kChromaRetention = 0.38f;
+    const glm::vec3 raw = glm::clamp(ambientColor + kTopDownNdotL * diffuseColor,
+                                     glm::vec3(0.0f), glm::vec3(1.0f));
+    const float luma = glm::dot(raw, glm::vec3(0.299f, 0.587f, 0.114f));
+    return glm::clamp(glm::mix(glm::vec3(luma), raw, kChromaRetention),
                       glm::vec3(0.0f), glm::vec3(1.0f));
+}
+
+/// Candidate indoor WMO group for painter's-algorithm minimap compositing.
+struct InteriorMinimapGroupCandidate {
+    uint32_t authoredIndex = 0;
+    glm::vec3 min{0.0f};
+    glm::vec3 max{0.0f};
+    uint32_t groupFlags = 0;
+};
+
+/// Order indoor WMO minimap groups back-to-front so the occupied room and its
+/// coplanar locally-lit sibling rooms paint on top of exterior-lit wrapper
+/// shells (e.g. Karazhan gatehouse01 0x2041, Stormwind canal401/bazaar01
+/// 0xba41/0xaa41) and multi-story stairwell shafts (e.g. GnomeSpiralHall01).
+inline void orderInteriorMinimapGroups(std::vector<InteriorMinimapGroupCandidate>& groups,
+                                       float playerLocalZ,
+                                       uint32_t occupiedAuthoredIndex,
+                                       float occupiedMinZ) {
+    const auto drawKey = [&](const InteriorMinimapGroupCandidate& g) {
+        const float vdist = std::max({g.min.z - playerLocalZ, playerLocalZ - g.max.z, 0.0f});
+        const int64_t vdistBucket = static_cast<int64_t>(std::llround(vdist * 100.0f));
+        // Locally-lit enclosed rooms (MOGP 0x2000 without 0x8 exterior or 0x40 exterior-lit)
+        // draw after exterior-lit indoor shells when both contain playerLocalZ.
+        const int localLit = ((g.groupFlags & 0x2000u) != 0u && (g.groupFlags & 0x48u) == 0u) ? 1 : 0;
+        const int coplanar = (std::abs(g.min.z - occupiedMinZ) <= 2.0f) ? 1 : 0;
+        const int64_t negSpanBucket = -static_cast<int64_t>(std::llround((g.max.z - g.min.z) * 2.0f));
+        const int isOccupied = (g.authoredIndex == occupiedAuthoredIndex) ? 1 : 0;
+        return std::tuple<int64_t, int, int, int, int64_t>{
+            -vdistBucket, localLit, coplanar, isOccupied, negSpanBucket};
+    };
+    std::stable_sort(groups.begin(), groups.end(), [&](const auto& a, const auto& b) {
+        return drawKey(a) < drawKey(b);
+    });
 }
 
 }  // namespace wowee::ui

@@ -308,8 +308,12 @@ void main() {
     float time = fogParams.z;
     float basicType = push.liquidBasicType;
     if (push.legacyWmoMode > 3.5) {
-        // TBC psLiquidMagma: vertex colour times the animated texture, opaque,
-        // unlit, fogged. The vertex colour is waterColor (see updateMaterialUBO).
+        // TBC psLiquidMagma: one-sided surface (culled from underneath when
+        // submerged so the fogged canal/cavern ceiling above remains visible),
+        // vertex colour times the animated texture, opaque, unlit, fogged.
+        if (viewPos.z < FragPos.z) {
+            discard;
+        }
         vec3 color = waterColor.rgb * texture(LakeTexture, TexCoord + vec2(push.textureX, push.textureY)).rgb;
         outColor = vec4(applyFog(color, FragPos, length(viewPos.xyz - FragPos)), 1.0);
         return;

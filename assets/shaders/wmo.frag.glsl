@@ -89,6 +89,18 @@ vec3 localLightContribution(vec3 pos, vec3 normal, vec3 albedo) {
         sum += albedo * localLightColorIntensity[i].rgb *
                (localLightColorIntensity[i].w * attenuation * wrappedDiffuse);
     }
+    for (int i = 0; i < min(localLightMeta.y, 64); ++i) {
+        vec3 toLight = localLightPosRadius[i].xyz - pos;
+        float radius = localLightPosRadius[i].w;
+        float distSq = dot(toLight, toLight);
+        if (radius <= 0.0 || distSq >= radius * radius) continue;
+        float dist = sqrt(distSq);
+        float atten = 1.0 / max(1.0 + 0.7 * dist + 0.03 * distSq, 1e-4);
+        float edgeFade = 1.0 - dist / radius;
+        atten *= edgeFade * edgeFade;
+        float ndotl = max(dot(normal, toLight / max(dist, 0.001)), 0.0);
+        sum += albedo * localLightColorIntensity[i].rgb * (atten * ndotl);
+    }
     return sum;
 }
 
@@ -263,20 +275,22 @@ void main() {
     shadow = rtShadow(rt, shadow);
 
     if (isInterior != 0) {
-        // WMO interior: vertex colors (MOCV) are pre-baked lighting from the artist.
-        // The MOHD ambient color floors the vertex colors so dark spots don't go
-        // completely black.  Full shadow strength is applied but clamped so
-        // interiors never go darker than a minimum brightness.
-        // The floor is the map's own MOHD ambient, which is what the artists
-        // set as the darkest an interior gets. It used to be raised to 0.35
-        // regardless, which lifted every dark corner in every building to
-        // the same grey. A small safety floor stays for the few roots that
-        // carry no ambient at all.
+        // WMO interior: vertex colors (MOCV) are pre-baked lighting from the artist,
+        // and indoor groups are shielded from outdoor directional sun shadows.
+        // In TBC 2.4.3 (pixel/mapobjoverbright.bls), intBatch MOCV alpha scales
+        // interior vertex color by (1 + 4 * VertColor.a), while groups without
+        // MOCV use MOHD ambient directly.
         vec3 wmoAmbient = vec3(wmoAmbientR, wmoAmbientG, wmoAmbientB);
-        wmoAmbient = max(wmoAmbient, vec3(0.15));
-        vec3 mocv = max(VertColor.rgb, wmoAmbient);
-        float clampedShadow = max(shadow, 0.45);
-        result = texColor.rgb * mocv * clampedShadow;
+        if (lightDir.w != 0.0) {
+            vec3 mocv = hasVertexColors != 0
+                ? VertColor.rgb * (1.0 + 4.0 * VertColor.a)
+                : wmoAmbient;
+            result = texColor.rgb * mocv;
+        } else {
+            wmoAmbient = max(wmoAmbient, vec3(0.15));
+            vec3 mocv = max(VertColor.rgb, wmoAmbient);
+            result = texColor.rgb * mocv;
+        }
     } else if (unlit != 0) {
         // Outdoor unlit surface - still receives directional shadows
         result = texColor.rgb * shadow;

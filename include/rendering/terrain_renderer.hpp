@@ -54,6 +54,7 @@ struct TerrainChunkGPU {
     int layerCount = 0;
     bool bigAlpha = false;
     uint32_t layerFlags[4] = {0, 0, 0, 0};
+    float layerSpecMask[4] = {0.0f, 0.0f, 0.0f, 0.0f};
 
     // World position for culling
     float worldX = 0.0f;
@@ -172,7 +173,7 @@ public:
 
 private:
     TerrainChunkGPU uploadChunk(const pipeline::ChunkMesh& chunk);
-    VkTexture* loadTexture(const std::string& path);
+    VkTexture* loadTexture(const std::string& path, bool* outHasSpecAlpha = nullptr);
     VkTexture* createAlphaTexture(const std::vector<uint8_t>& alphaData);
     VkTexture* createShadowTexture(const std::array<uint8_t, 512>& shadowMap);
     bool isChunkVisible(const TerrainChunkGPU& chunk, const Frustum& frustum);
@@ -235,6 +236,7 @@ private:
         std::unique_ptr<VkTexture> texture;
         size_t approxBytes = 0;
         uint64_t lastUse = 0;
+        bool hasSpecularAlpha = false;
     };
     std::unordered_map<std::string, TextureCacheEntry> textureCache;
     size_t textureCacheBytes_ = 0;

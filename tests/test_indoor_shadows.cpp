@@ -127,3 +127,33 @@ TEST_CASE("Ambient color is NOT modified globally for indoor state", "[indoor_sh
     REQUIRE(fd.ambientColor.y == Catch::Approx(0.3f));
     REQUIRE(fd.ambientColor.z == Catch::Approx(0.3f));
 }
+
+TEST_CASE("TBC mapobjoverbright MOCV alpha scales intBatch vertices by 1 + 4*alpha", "[indoor_shadows][wmo]") {
+    auto tbcInteriorShade = [](glm::vec3 texRgb, glm::vec4 vertColor, glm::vec3 wmoAmbient, bool hasMocv) {
+        const glm::vec3 mocv = hasMocv
+            ? glm::vec3(vertColor) * (1.0f + 4.0f * vertColor.a)
+            : wmoAmbient;
+        return texRgb * mocv;
+    };
+
+    // Shadow Labyrinth Refectory brazier pool (MOCV = (121, 221, 255, 39) / 255):
+    // 1 + 4 * (39/255) = 1.6118x overbright, matching Native 2.4.3 (~1.594x).
+    const glm::vec3 floorTex(107.6f / 255.0f, 107.1f / 255.0f, 99.0f / 255.0f);
+    const glm::vec4 slPool(121.0f / 255.0f, 221.0f / 255.0f, 1.0f, 39.0f / 255.0f);
+    const glm::vec3 litPool = tbcInteriorShade(floorTex, slPool, glm::vec3(0.0f), true) * 255.0f;
+    CHECK(litPool.b == Catch::Approx(159.56f).margin(0.5f));
+
+    // Stormwind Bank lobby (MOCV.a == 0): exact 1.0x vertex color with zero overbright.
+    const glm::vec4 swBank(0.75f, 0.72f, 0.68f, 0.0f);
+    const glm::vec3 bankLit = tbcInteriorShade(glm::vec3(1.0f), swBank, glm::vec3(0.2f), true);
+    CHECK(bankLit.r == Catch::Approx(0.75f).margin(1e-5f));
+    CHECK(bankLit.g == Catch::Approx(0.72f).margin(1e-5f));
+    CHECK(bankLit.b == Catch::Approx(0.68f).margin(1e-5f));
+
+    // Group without MOCV falls back to MOHD ambient directly.
+    const glm::vec3 noMocv = tbcInteriorShade(glm::vec3(0.8f), glm::vec4(1.0f, 1.0f, 1.0f, 0.0f),
+                                              glm::vec3(0.25f, 0.30f, 0.35f), false);
+    CHECK(noMocv.r == Catch::Approx(0.20f).margin(1e-5f));
+    CHECK(noMocv.g == Catch::Approx(0.24f).margin(1e-5f));
+    CHECK(noMocv.b == Catch::Approx(0.28f).margin(1e-5f));
+}

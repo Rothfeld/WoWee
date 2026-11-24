@@ -626,15 +626,16 @@ void Renderer::updatePerFrameUBO() {
         }
     }
 
+    const glm::vec3 eyePosition = camera->getPosition();
+    uint16_t eyeLiquidType = 0;
+    const auto eyeWaterHeight = waterRenderer
+        ? waterRenderer->getNearestWaterHeightAt(eyePosition.x, eyePosition.y, eyePosition.z, 400.0f, &eyeLiquidType)
+        : std::optional<float>{};
+    const SubmergedLiquid submerged = (eyeWaterHeight && eyePosition.z < *eyeWaterHeight)
+        ? classifySubmergedLiquid(eyeLiquidType)
+        : SubmergedLiquid::None;
+
     if (wmoRenderer) {
-        const glm::vec3 position = camera->getPosition();
-        uint16_t eyeLiquidType = 0;
-        const auto waterHeight = waterRenderer
-            ? waterRenderer->getNearestWaterHeightAt(position.x, position.y, position.z, 400.0f, &eyeLiquidType)
-            : std::optional<float>{};
-        const SubmergedLiquid submerged = (waterHeight && position.z < *waterHeight)
-            ? classifySubmergedLiquid(eyeLiquidType)
-            : SubmergedLiquid::None;
         // Authored WMO fog is the fog of the interior only. From Echo Ridge
         // Mine's entrance (md_goldmine.wmo, MFOG 69 and 200 yards) build 8606
         // shows Northshire's trees outside in their own colours, and from the
@@ -651,7 +652,7 @@ void Renderer::updatePerFrameUBO() {
                 currentFrameData.outdoorFogParams.y,
             };
             const auto fog = wmoRenderer->getFog(
-                position, submerged == SubmergedLiquid::Water, outdoorFallback);
+                eyePosition, submerged == SubmergedLiquid::Water, outdoorFallback);
             if (fog) {
                 currentFrameData.fogColor = glm::vec4(fog->color, 1);
                 currentFrameData.fogParams.x = fog->start;
@@ -674,7 +675,10 @@ void Renderer::updatePerFrameUBO() {
     // Whether this frame builds the fog volume. Decided here, beside the
     // switch in the block the shaders read, and the frame graph dispatches by
     // the same flag - so no shader reads a volume its frame did not build.
-    volumetricThisFrame_ = volumetricFog_ && volumetricFog_->isOn() &&
+    // Disabled while submerged so air-froxel transmittance does not dim
+    // underwater/slime/magma LightParams fog.
+    volumetricThisFrame_ = submerged == SubmergedLiquid::None &&
+                           volumetricFog_ && volumetricFog_->isOn() &&
                            volumetricFogDensity_ > 0.0f &&
                            !(passAblation_ && passAblation_->skip(AblationPass::VolumetricFog));
     currentFrameData.volumetricParams = volumetricThisFrame_ ? volumetricFog_->frameParams()
@@ -5181,12 +5185,17 @@ void Renderer::renderShadowPass() {
     vkCmdSetScissor(currentCmd, 0, 1, &sc);
 
     // Phase 7/8: render shadow casters
+    // In TBC 2.4.3, static terrain and WMO shadows are baked into ADT MCSH + WMO MOCV;
+    // casting orthographic shadow maps from terrain cliffs/WMOs along the fixed
+    // 225-degree legacy light direction projects unauthored cliff bands across
+    // basins (e.g. Mirage Raceway / Shimmering Flats) and masks authored MCSH.
     const float shadowCullRadius = shadowDistance_ * 1.35f;
+    const bool staticWorldShadowCasters = !game::isActiveExpansion("tbc");
     {
-    if (terrainRenderer) {
+    if (terrainRenderer && staticWorldShadowCasters) {
         terrainRenderer->renderShadow(currentCmd, lightSpaceMatrix, shadowCenter, shadowCullRadius);
     }
-    if (wmoRenderer) {
+    if (wmoRenderer && staticWorldShadowCasters) {
         wmoRenderer->renderShadow(currentCmd, lightSpaceMatrix, shadowCenter, shadowCullRadius);
     }
     if (m2Renderer) {

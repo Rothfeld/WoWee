@@ -11,6 +11,16 @@ layout(set = 0, binding = 0) uniform PerFrame {
     vec4 fogColor;
     vec4 fogParams;
     vec4 shadowParams;
+    vec4 playerPos;
+    vec4 playerWake;
+    vec4 localLightPosRadius[64];
+    vec4 localLightColorIntensity[64];
+    ivec4 localLightMeta;
+    vec4 volumetricParams;
+    mat4 rtViewProj;
+    vec4 rtCameraPos;
+    vec4 rtParams;
+    vec4 specularColor;
 };
 
 layout(push_constant) uniform Push {
@@ -26,6 +36,7 @@ layout(location = 0) out vec3 FragPos;
 layout(location = 1) out vec3 Normal;
 layout(location = 2) out vec2 TexCoord;
 layout(location = 3) out vec2 LayerUV;
+layout(location = 4) out vec3 VertexSpecular;
 
 void main() {
     vec4 worldPos = push.model * vec4(aPosition, 1.0);
@@ -33,5 +44,8 @@ void main() {
     Normal = aNormal;
     TexCoord = aTexCoord;
     LayerUV = aLayerUV;
+    vec3 viewDir = normalize(viewPos.xyz - FragPos);
+    vec3 halfDir = normalize(normalize(-lightDir.xyz) + viewDir);
+    VertexSpecular = specularColor.rgb * pow(max(dot(normalize(aNormal), halfDir), 0.0), 16.0);
     gl_Position = projection * (view * worldPos);
 }

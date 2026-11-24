@@ -15,6 +15,7 @@
 #include "pipeline/asset_manager.hpp"
 #include "pipeline/adt_mcsh.hpp"
 #include "pipeline/blp_loader.hpp"
+#include "game/game_utils.hpp"
 #include "core/logger.hpp"
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -40,8 +41,9 @@ struct alignas(16) TerrainParamsUBO {
     glm::vec4 layerUvVel01{0.0f};    // xy = layer 0 UV vel, zw = layer 1 UV vel
     glm::vec4 layerUvVel23{0.0f};    // xy = layer 2 UV vel, zw = layer 3 UV vel
     glm::vec4 layerOverbright{0.0f}; // x..w = 1.0 if layer 0..3 has MCLY 0x80
+    glm::vec4 layerSpecMask{0.0f};   // x..w = 1.0 if layer 0..3 loaded *_s.blp gloss alpha
 };
-static_assert(sizeof(TerrainParamsUBO) == 80);
+static_assert(sizeof(TerrainParamsUBO) == 96);
 
 TerrainRenderer::TerrainRenderer() = default;
 
@@ -524,9 +526,12 @@ void TerrainRenderer::bindChunkTextures(TerrainChunkGPU& gpuChunk,
     }
 
     gpuChunk.layerFlags[0] = chunk.layers[0].flags;
+    gpuChunk.layerSpecMask[0] = 0.0f;
     uint32_t baseTexId = chunk.layers[0].textureId;
     if (baseTexId < texturePaths.size()) {
-        gpuChunk.baseTexture = loadTexture(texturePaths[baseTexId]);
+        bool hasSpec = false;
+        gpuChunk.baseTexture = loadTexture(texturePaths[baseTexId], &hasSpec);
+        gpuChunk.layerSpecMask[0] = hasSpec ? 1.0f : 0.0f;
     } else {
         LOG_WARNING("Terrain[", tileX, ",", tileY, "] chunk[", chunkX, ",", chunkY,
                     "] base textureId ", baseTexId, " >= texturePaths size ",
@@ -539,10 +544,13 @@ void TerrainRenderer::bindChunkTextures(TerrainChunkGPU& gpuChunk,
         const auto& layer = chunk.layers[i];
         int li = static_cast<int>(i) - 1;
         gpuChunk.layerFlags[i] = layer.flags;
+        gpuChunk.layerSpecMask[i] = 0.0f;
 
         VkTexture* layerTex = whiteTexture.get();
         if (layer.textureId < texturePaths.size()) {
-            layerTex = loadTexture(texturePaths[layer.textureId]);
+            bool hasSpec = false;
+            layerTex = loadTexture(texturePaths[layer.textureId], &hasSpec);
+            gpuChunk.layerSpecMask[i] = hasSpec ? 1.0f : 0.0f;
         } else {
             LOG_WARNING("Terrain[", tileX, ",", tileY, "] chunk[", chunkX, ",", chunkY,
                         "] layer[", i, "] textureId ", layer.textureId,
@@ -579,6 +587,11 @@ bool TerrainRenderer::createChunkParamsUBO(TerrainChunkGPU& gpuChunk) {
         l1.overbright ? 1.0f : 0.0f,
         l2.overbright ? 1.0f : 0.0f,
         l3.overbright ? 1.0f : 0.0f);
+    params.layerSpecMask = glm::vec4(
+        gpuChunk.layerSpecMask[0],
+        gpuChunk.layerSpecMask[1],
+        gpuChunk.layerSpecMask[2],
+        gpuChunk.layerSpecMask[3]);
 
     VkBufferCreateInfo bufCI{};
     bufCI.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -714,7 +727,8 @@ bool TerrainRenderer::evictTexturesFor(size_t needBytes) {
     return textureCacheBytes_ + needBytes <= textureCacheBudgetBytes_;
 }
 
-VkTexture* TerrainRenderer::loadTexture(const std::string& path) {
+VkTexture* TerrainRenderer::loadTexture(const std::string& path, bool* outHasSpecAlpha) {
+    if (outHasSpecAlpha) *outHasSpecAlpha = false;
     auto normalizeKey = [](std::string key) {
         std::replace(key.begin(), key.end(), '/', '\\');
         std::transform(key.begin(), key.end(), key.begin(),
@@ -726,11 +740,29 @@ VkTexture* TerrainRenderer::loadTexture(const std::string& path) {
     auto it = textureCache.find(key);
     if (it != textureCache.end()) {
         it->second.lastUse = ++textureCacheCounter_;
+        if (outHasSpecAlpha) *outHasSpecAlpha = it->second.hasSpecularAlpha;
         return it->second.texture.get();
     }
-    // Terrain tileset textures are sampled and never read back, so they go
-    // up as blocks with the file's own mip levels.
-    pipeline::BLPImage blp = assetManager->loadTexture(key, true);
+
+    // In TBC 2.4.3 (terrain1_s..terrain3_s.bls), tileset textures that ship a
+    // companion <stem>_s.blp store identical diffuse RGB plus an 8-bit specular
+    // gloss mask in alpha. Tilesets without <stem>_s.blp fall back to <stem>.blp
+    // with layerSpecMask = 0 so opaque DXT1 alpha (1.0) is never read as gloss.
+    bool loadedSpecVariant = false;
+    pipeline::BLPImage blp;
+    if (game::isActiveExpansion("tbc") && key.size() > 4 &&
+        key.ends_with(".blp") && !key.ends_with("_s.blp")) {
+        const std::string specKey = key.substr(0, key.size() - 4) + "_s.blp";
+        blp = assetManager->loadTexture(specKey, true);
+        if (blp.isValid()) {
+            loadedSpecVariant = true;
+        }
+    }
+    if (!blp.isValid()) {
+        // Terrain tileset textures are sampled and never read back, so they go
+        // up as blocks with the file's own mip levels.
+        blp = assetManager->loadTexture(key, true);
+    }
     if (!blp.isValid()) {
         // Return white fallback but don't cache the failure - allow retry
         // on next tile load in case the asset becomes available.
@@ -769,6 +801,8 @@ VkTexture* TerrainRenderer::loadTexture(const std::string& path) {
     e.texture = std::move(tex);
     e.approxBytes = approxBytes;
     e.lastUse = ++textureCacheCounter_;
+    e.hasSpecularAlpha = loadedSpecVariant;
+    if (outHasSpecAlpha) *outHasSpecAlpha = loadedSpecVariant;
     textureCacheBytes_ += e.approxBytes;
     textureCache[key] = std::move(e);
 
@@ -783,29 +817,53 @@ void TerrainRenderer::uploadPreloadedTextures(
                        [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
         return key;
     };
+    const bool useSpecVariants = game::isActiveExpansion("tbc");
+    std::unordered_map<std::string, const pipeline::BLPImage*> specVariants;
+    if (useSpecVariants) {
+        for (const auto& [path, blp] : textures) {
+            if (!blp.isValid()) continue;
+            std::string key = normalizeKey(path);
+            if (key.ends_with("_s.blp")) {
+                specVariants[key] = &blp;
+            }
+        }
+    }
+
     // Batch all texture uploads into a single command buffer submission
     evictProtectFrom_ = textureCacheCounter_ + 1;
     vkCtx->beginUploadBatch();
 
-    for (const auto& [path, blp] : textures) {
+    for (const auto& [path, baseBlp] : textures) {
         std::string key = normalizeKey(path);
+        if (useSpecVariants && key.ends_with("_s.blp")) continue;
         if (textureCache.find(key) != textureCache.end()) continue;
-        if (!blp.isValid()) continue;
+
+        const pipeline::BLPImage* chosen = &baseBlp;
+        bool hasSpec = false;
+        if (useSpecVariants && key.size() > 4 && key.ends_with(".blp")) {
+            auto specIt = specVariants.find(key.substr(0, key.size() - 4) + "_s.blp");
+            if (specIt != specVariants.end() && specIt->second->isValid()) {
+                chosen = specIt->second;
+                hasSpec = true;
+            }
+        }
+        if (!chosen->isValid()) continue;
 
         // This path added to the cache without consulting the budget at all,
         // so the preload for one tile could carry it past the limit and the
         // next loadTexture would find no room.
-        if (!evictTexturesFor(blp.approxUploadBytes())) continue;
+        if (!evictTexturesFor(chosen->approxUploadBytes())) continue;
 
         auto tex = std::make_unique<VkTexture>();
-        if (!tex->uploadBLP(*vkCtx, blp)) continue;
+        if (!tex->uploadBLP(*vkCtx, *chosen)) continue;
         tex->createSampler(vkCtx->getDevice(), VK_FILTER_LINEAR, VK_FILTER_LINEAR,
                             VK_SAMPLER_ADDRESS_MODE_REPEAT);
 
         TextureCacheEntry e;
         e.texture = std::move(tex);
-        e.approxBytes = blp.approxUploadBytes();
+        e.approxBytes = chosen->approxUploadBytes();
         e.lastUse = ++textureCacheCounter_;
+        e.hasSpecularAlpha = hasSpec;
         textureCacheBytes_ += e.approxBytes;
         textureCache[key] = std::move(e);
     }
