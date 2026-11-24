@@ -152,7 +152,8 @@ public:
     // kit 6858 0.25, Ghost 0.5). The most recently applied aura's kit wins for
     // each, and removing it returns the previous one (original 2.4.3, pair 0,
     // _experiments/20261117T181105Z.pair0_ghost_names_gossip).
-    void syncAuraVisuals(uint32_t attachInstanceId, const std::vector<uint32_t>& visualIds,
+    // Returns true when the unit's active aura visual set or observer concealment changed.
+    bool syncAuraVisuals(uint32_t attachInstanceId, const std::vector<uint32_t>& visualIds,
                          bool observerConcealed);
     // The animation the unit holds while its auras last: the StateKit
     // animation (column 2) of its most recently applied aura that has one,
@@ -261,6 +262,11 @@ public:
 
     /// Clear any active SpellVisualKit CharProc 13 light tint on attachInstanceId.
     void clearUnitKitLight(uint32_t attachInstanceId);
+
+    /// Clear attachInstanceId's CharProc 13 kit light and re-apply kit lights from
+    /// any surviving aura visuals (e.g. death-persistent auras such as Stolen Soul
+    /// Visual 32395 / kit 6374 after unit death clears caster/non-persistent lights).
+    void reapplyAuraKitLights(uint32_t attachInstanceId);
 
     /// The precast kit of the unit drawn by attachInstanceId ends: its cast
     /// was interrupted or failed (SMSG_SPELL_FAILURE), its caster died

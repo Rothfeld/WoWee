@@ -94,6 +94,7 @@ TEST_CASE("TBC Spell.dbc confirms Sathrovarr Demonic Visual 44800 is not death-p
     bool foundDemonic = false;
     bool foundShadowImage = false;
     bool foundGhost = false;
+    bool foundStolenSoulVisual = false;
     for (uint32_t i = 0; i < dbc.getRecordCount(); ++i) {
         const uint32_t id = dbc.getUInt32(i, idCol);
         const uint32_t attrEx3 = dbc.getUInt32(i, attrEx3Col);
@@ -109,9 +110,16 @@ TEST_CASE("TBC Spell.dbc confirms Sathrovarr Demonic Visual 44800 is not death-p
         } else if (id == 8326u) {
             foundGhost = true;
             CHECK(auraVisualPersistsOnCorpse(attrEx3));
+        } else if (id == 32395u) {
+            // Stolen Soul Visual (Exarch Maladaar): has SPELL_ATTR_EX3_DEATH_PERSISTENT
+            // so its CharProc 13 black kitLight (kit 6374) must survive unit death.
+            foundStolenSoulVisual = true;
+            CHECK(vis == 7264u);
+            CHECK(auraVisualPersistsOnCorpse(attrEx3));
         }
     }
     CHECK(foundDemonic);
     CHECK(foundShadowImage);
     CHECK(foundGhost);
+    CHECK(foundStolenSoulVisual);
 }

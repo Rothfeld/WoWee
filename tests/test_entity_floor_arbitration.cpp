@@ -129,3 +129,38 @@ TEST_CASE("corpse resting on low M2 stone ledge snaps onto ledge even after appr
     REQUIRE(chosen.has_value());
     CHECK(*chosen == Catch::Approx(19.94f));
 }
+
+TEST_CASE("grounded creature spawned above WMO dungeon floor drops onto floor within 3 yd",
+          "[collision][floor][tbc]") {
+    // Auchenai Crypts (WMO-only interior, no ADT terrain): Exarch Maladaar's Stolen Soul
+    // can spawn at serverZ = 28.6193 (+2.03 yd above the WMO floor at 26.5893).
+    const glm::vec3 spawnedPos(63.1268f, -381.365f, 28.6193f);
+
+    // First frame (no previousRenderPos): must ground onto the WMO floor below it.
+    const auto firstFrame = arbitrateEntityFloor(
+        spawnedPos, std::nullopt, /*isSplineOrMoving=*/false,
+        /*terrainHeight=*/std::nullopt, /*wmoHeight=*/26.5893f, /*m2Height=*/std::nullopt);
+    REQUIRE(firstFrame.has_value());
+    CHECK(*firstFrame == Catch::Approx(26.5893f));
+
+    // Subsequent frame if WMO collision arrived after the first frame: must still ground.
+    const auto lateWmoFrame = arbitrateEntityFloor(
+        spawnedPos, spawnedPos, /*isSplineOrMoving=*/false,
+        /*terrainHeight=*/std::nullopt, /*wmoHeight=*/26.5893f, /*m2Height=*/std::nullopt);
+    REQUIRE(lateWmoFrame.has_value());
+    CHECK(*lateWmoFrame == Catch::Approx(26.5893f));
+
+    // Spawns more than kEntityFloorMaxDrop (3.0 yd) above the WMO floor preserve server Z.
+    const glm::vec3 tooHigh(63.1268f, -381.365f, 30.0f);
+    const auto preserved = arbitrateEntityFloor(
+        tooHigh, std::nullopt, /*isSplineOrMoving=*/false,
+        /*terrainHeight=*/std::nullopt, /*wmoHeight=*/26.5893f, /*m2Height=*/std::nullopt);
+    CHECK_FALSE(preserved.has_value());
+
+    // Overhead WMO ceiling above the unit must never pull the unit upward.
+    const glm::vec3 underCeiling(63.1268f, -381.365f, 26.5893f);
+    const auto ceilingRejected = arbitrateEntityFloor(
+        underCeiling, std::nullopt, /*isSplineOrMoving=*/false,
+        /*terrainHeight=*/std::nullopt, /*wmoHeight=*/27.8f, /*m2Height=*/std::nullopt);
+    CHECK_FALSE(ceilingRejected.has_value());
+}

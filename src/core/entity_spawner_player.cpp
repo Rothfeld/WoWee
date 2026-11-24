@@ -1318,9 +1318,9 @@ void EntitySpawner::syncUnitAuraVisuals(const game::Entity& entity, uint32_t ins
     std::sort(transformAuraVisuals.begin(), transformAuraVisuals.end());
     transformAuraVisuals.erase(std::unique(transformAuraVisuals.begin(), transformAuraVisuals.end()),
                                transformAuraVisuals.end());
-    visuals->syncAuraVisuals(instanceId, auraVisuals, observerConcealed);
-    if (unitDead && auraVisuals.empty()) {
-        visuals->clearUnitKitLight(instanceId);
+    const bool auraSetChanged = visuals->syncAuraVisuals(instanceId, auraVisuals, observerConcealed);
+    if (unitDead && auraSetChanged) {
+        visuals->reapplyAuraKitLights(instanceId);
     }
 
     const uint64_t guid = entity.getGuid();

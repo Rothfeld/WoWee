@@ -1041,18 +1041,18 @@ void SpellVisualSystem::startChannelVisual(uint32_t visualId, const glm::vec3& p
     }
 }
 
-void SpellVisualSystem::syncAuraVisuals(uint32_t attachInstanceId,
-                                       const std::vector<uint32_t>& visualIds,
-                                       bool observerConcealed) {
-    if (!m2Renderer_ || !attachInstanceId) return;
+bool SpellVisualSystem::syncAuraVisuals(uint32_t attachInstanceId,
+                                        const std::vector<uint32_t>& visualIds,
+                                        bool observerConcealed) {
+    if (!m2Renderer_ || !attachInstanceId) return false;
     auto* characters = renderer_ ? renderer_->getCharacterRenderer() : nullptr;
     glm::vec3 position;
-    if (!characters || !characters->getInstancePosition(attachInstanceId, position)) return;
+    if (!characters || !characters->getInstancePosition(attachInstanceId, position)) return false;
     const bool initialSync = syncedAuraInstances_.insert(attachInstanceId).second;
     auto found = unitAuraVisuals_.find(attachInstanceId);
     if (found != unitAuraVisuals_.end() && found->second.ids == visualIds &&
-        found->second.observerConcealed == observerConcealed) return;
-    if (found == unitAuraVisuals_.end() && visualIds.empty()) return;
+        found->second.observerConcealed == observerConcealed) return false;
+    if (found == unitAuraVisuals_.end() && visualIds.empty()) return false;
     if (!spellVisualDbcLoaded_) loadSpellVisualDbc();
 
     for (auto it = activeSpellVisuals_.begin(); it != activeSpellVisuals_.end();) {
@@ -1159,6 +1159,7 @@ void SpellVisualSystem::syncAuraVisuals(uint32_t attachInstanceId,
     if (visualIds.empty()) unitAuraVisuals_.erase(attachInstanceId);
     else unitAuraVisuals_[attachInstanceId] = {visualIds, observerConcealed, std::move(applied)};
     applyCharacterProcedures(attachInstanceId, initialSync);
+    return true;
 }
 
 bool SpellVisualSystem::isAuraVisualSuppressed(uint32_t attachInstanceId, uint32_t visualId) const {
@@ -2849,7 +2850,7 @@ void SpellVisualSystem::removeCasterStages(uint32_t attachInstanceId) {
     heldChannelKits_.erase(attachInstanceId);
     if (unitChannelVisuals_.erase(attachInstanceId))
         applyCharacterProcedures(attachInstanceId);
-    clearUnitKitLight(attachInstanceId);
+    reapplyAuraKitLights(attachInstanceId);
     std::erase_if(activeWeaponTrails_, [&](const ActiveUnitWeaponTrail& trail) {
         return trail.ownerInstanceId == attachInstanceId;
     });
@@ -2859,6 +2860,19 @@ void SpellVisualSystem::clearUnitKitLight(uint32_t attachInstanceId) {
     if (!attachInstanceId) return;
     if (auto* characters = renderer_ ? renderer_->getCharacterRenderer() : nullptr) {
         characters->clearInstanceKitLight(attachInstanceId);
+    }
+}
+
+void SpellVisualSystem::reapplyAuraKitLights(uint32_t attachInstanceId) {
+    if (!attachInstanceId) return;
+    clearUnitKitLight(attachInstanceId);
+    const auto auras = unitAuraVisuals_.find(attachInstanceId);
+    if (auras == unitAuraVisuals_.end()) return;
+    for (uint32_t visual : auras->second.applied) {
+        if (isAuraVisualSuppressed(attachInstanceId, visual)) continue;
+        if (const auto kit = stateKits_.find(visual); kit != stateKits_.end() && kit->second) {
+            startKitLight(kit->second, attachInstanceId);
+        }
     }
 }
 

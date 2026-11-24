@@ -65,9 +65,16 @@ inline std::optional<float> arbitrateEntityFloor(
         if (!isSplineOrMoving && serverDelta <= kEntityFloorStructureSnapTolerance) {
             return best;
         }
+        // A grounded unit spawned or placed above a WMO floor within kEntityFloorMaxDrop
+        // (e.g. Stolen Soul summoned +2.03 yd above Auchenai Crypts WMO floor, where no
+        // ADT terrain exists) must ground onto the WMO floor below it, matching outdoor
+        // terrain grounding. Never snap UP to an overhead WMO ceiling/arch (*wmoFloor > renderPos.z).
+        const bool wmoFloorBelow =
+            wmoFloor && *wmoFloor <= renderPos.z &&
+            (!terrainFloor || *wmoFloor >= *terrainFloor);
         if (!previousRenderPos) {
             if (serverDelta > kEntityFloorStructureSnapTolerance) {
-                return terrainFloor;
+                return wmoFloorBelow ? wmoFloor : terrainFloor;
             }
         } else {
             const glm::vec2 planarDelta = glm::vec2(renderPos) - glm::vec2(*previousRenderPos);
@@ -81,6 +88,7 @@ inline std::optional<float> arbitrateEntityFloor(
                 !isContinuous(best)) {
                 if (isContinuous(wmoFloor)) return wmoFloor;
                 if (isContinuous(terrainFloor)) return terrainFloor;
+                if (wmoFloorBelow) return wmoFloor;
                 return terrainFloor;
             }
         }
