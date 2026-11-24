@@ -445,6 +445,18 @@ inline BodyMove fallBody(const glm::vec3& from, const glm::vec3& delta,
         }
         const float into = glm::dot(remaining, n);
         if (into < 0.0f) remaining -= glm::vec3(level, 0.0f) * (into / levelSq);
+        // A rising body keeps its level velocity whole whatever turns it:
+        // native jumping while it slides along the Northshire fence
+        // (-8942.5, -106.4; the fence 1.6 yd tall) goes on along the fence
+        // as it rises, 0.058 yd a frame, and takes its whole 0.231 yd
+        // forward again from the frame its sole is above the fence (2 runs
+        // of 2), where a body left with the part of its velocity along the
+        // fence went on along it and came down on the near side. Falling it
+        // keeps what the faces leave: off the Dustwallow plank ramp
+        // (-2692.0, -4695.0) native slides along a rail in the air and keeps
+        // those 3.44 yd/s along the rail's direction after it has passed it.
+        // (_experiments/20261124T140000Z.movement_collision_parity_round20)
+        if (delta.z > 0.0f) continue;
         if (const float keptInto = glm::dot(move.levelKept, level); keptInto < 0.0f)
             move.levelKept -= level * (keptInto / levelSq);
     }
