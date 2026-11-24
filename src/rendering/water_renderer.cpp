@@ -290,7 +290,7 @@ bool WaterRenderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLay
         .setVertexInput({ vertBinding }, vertAttribs)
         .setTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
         .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE)
-        .setDepthTest(true, true, VK_COMPARE_OP_LESS_OR_EQUAL)   // depth test + write so submerged blended M2s clip at waterline
+        .setDepthTest(true, false, VK_COMPARE_OP_LESS_OR_EQUAL)  // translucent water defers depth write to waterDepthOnlyPipeline
         .setColorBlendAttachment(PipelineBuilder::blendAlpha())
         .setMultisample(vkCtx->getMsaaSamples())
         .setLayout(pipelineLayout)
@@ -312,10 +312,26 @@ bool WaterRenderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLay
         .setDynamicStates(viewportAndScissorDynamic())
         .build(device, vkCtx->getPipelineCache());
 
+    VkPipelineColorBlendAttachmentState depthOnlyBlend{};
+    depthOnlyBlend.colorWriteMask = 0;
+    waterDepthOnlyPipeline = PipelineBuilder()
+        .setShaders(vertShader.stageInfo(VK_SHADER_STAGE_VERTEX_BIT),
+                    fragShader.stageInfo(VK_SHADER_STAGE_FRAGMENT_BIT))
+        .setVertexInput({ vertBinding }, vertAttribs)
+        .setTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
+        .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE)
+        .setDepthTest(true, true, VK_COMPARE_OP_LESS_OR_EQUAL)   // depth-only waterline clip for blended M2 meshes
+        .setColorBlendAttachment(depthOnlyBlend)
+        .setMultisample(vkCtx->getMsaaSamples())
+        .setLayout(pipelineLayout)
+        .setRenderPass(mainPass)
+        .setDynamicStates(viewportAndScissorDynamic())
+        .build(device, vkCtx->getPipelineCache());
+
     vertShader.destroy();
     fragShader.destroy();
 
-    if (!waterPipeline || !waterOpaquePipeline) {
+    if (!waterPipeline || !waterOpaquePipeline || !waterDepthOnlyPipeline) {
         LOG_ERROR("WaterRenderer: failed to create pipeline");
         return false;
     }
@@ -337,6 +353,7 @@ void WaterRenderer::recreatePipelines() {
     // Destroy old pipelines (keep layout)
     destroy(device, waterPipeline);
     destroy(device, waterOpaquePipeline);
+    destroy(device, waterDepthOnlyPipeline);
 
     // Load shaders
     VkShaderModule vertShader, fragShader;
@@ -370,7 +387,7 @@ void WaterRenderer::recreatePipelines() {
         .setVertexInput({ vertBinding }, vertAttribs)
         .setTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
         .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE)
-        .setDepthTest(true, true, VK_COMPARE_OP_LESS_OR_EQUAL)
+        .setDepthTest(true, false, VK_COMPARE_OP_LESS_OR_EQUAL)
         .setColorBlendAttachment(PipelineBuilder::blendAlpha())
         .setMultisample(vkCtx->getMsaaSamples())
         .setLayout(pipelineLayout)
@@ -392,10 +409,26 @@ void WaterRenderer::recreatePipelines() {
         .setDynamicStates(viewportAndScissorDynamic())
         .build(device, vkCtx->getPipelineCache());
 
+    VkPipelineColorBlendAttachmentState depthOnlyBlend{};
+    depthOnlyBlend.colorWriteMask = 0;
+    waterDepthOnlyPipeline = PipelineBuilder()
+        .setShaders(vertShader.stageInfo(VK_SHADER_STAGE_VERTEX_BIT),
+                    fragShader.stageInfo(VK_SHADER_STAGE_FRAGMENT_BIT))
+        .setVertexInput({ vertBinding }, vertAttribs)
+        .setTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
+        .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE)
+        .setDepthTest(true, true, VK_COMPARE_OP_LESS_OR_EQUAL)
+        .setColorBlendAttachment(depthOnlyBlend)
+        .setMultisample(vkCtx->getMsaaSamples())
+        .setLayout(pipelineLayout)
+        .setRenderPass(mainPass)
+        .setDynamicStates(viewportAndScissorDynamic())
+        .build(device, vkCtx->getPipelineCache());
+
     vertShader.destroy();
     fragShader.destroy();
 
-    if (!waterPipeline || !waterOpaquePipeline) {
+    if (!waterPipeline || !waterOpaquePipeline || !waterDepthOnlyPipeline) {
         LOG_ERROR("WaterRenderer::recreatePipelines: failed to create pipeline");
     }
 }
@@ -466,6 +499,7 @@ void WaterRenderer::shutdown() {
     destroySceneHistoryResources();
     destroy(device, waterPipeline);
     destroy(device, waterOpaquePipeline);
+    destroy(device, waterDepthOnlyPipeline);
     destroy(device, pipelineLayout);
     destroy(device, sceneDescPool);
     destroy(device, sceneSetLayout);
@@ -1339,6 +1373,77 @@ void WaterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
         vkCmdBindVertexBuffers(cmd, 0, 1, &surface.vertexBuffer, &offset);
         vkCmdBindIndexBuffer(cmd, surface.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
 
+        vkCmdDrawIndexed(cmd, static_cast<uint32_t>(surface.indexCount), 1, 0, 0, 0);
+    }
+}
+
+void WaterRenderer::renderDepthOnly(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
+                                    const Camera& camera, float time) {
+    if (!renderingEnabled || surfaces.empty() || !waterDepthOnlyPipeline) return;
+    VkDescriptorSet activeSceneSet = sceneHistory[0].sceneSet;
+    if (!activeSceneSet || liquidSets.empty()) return;
+
+    Frustum frustum;
+    frustum.extractFromMatrix(camera.getViewProjectionMatrix());
+
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, waterDepthOnlyPipeline);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout,
+                            0, 1, &perFrameSet, 0, nullptr);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout,
+                            2, 1, &activeSceneSet, 0, nullptr);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout,
+                            3, 1, &liquidSets[0], 0, nullptr);
+
+    std::vector<uint16_t> wmoGroup(1);
+    for (const auto& surface : surfaces) {
+        if (surface.vertexBuffer == VK_NULL_HANDLE || surface.indexCount == 0) continue;
+        if (!surface.materialSet) continue;
+        const uint8_t basicType = (surface.liquidType == 0) ? 0 : ((surface.liquidType - 1) % 4);
+        if (liquidIsOpaque(basicType)) continue; // already wrote depth in render()
+        if (surface.wmoId != 0 && wmoGroupDrawn_) {
+            wmoGroup[0] = surface.wmoGroup;
+            if (!wmoGroupDrawn_(surface.wmoId, wmoGroup)) continue;
+        }
+        {
+            const glm::vec3 extentX = surface.stepX * static_cast<float>(surface.width);
+            const glm::vec3 extentY = surface.stepY * static_cast<float>(surface.height);
+            const glm::vec3 c0 = surface.origin;
+            const glm::vec3 c1 = surface.origin + extentX;
+            const glm::vec3 c2 = surface.origin + extentY;
+            const glm::vec3 c3 = surface.origin + extentX + extentY;
+            const glm::vec3 aabbMin(
+                std::min({c0.x, c1.x, c2.x, c3.x}),
+                std::min({c0.y, c1.y, c2.y, c3.y}),
+                surface.minHeight);
+            const glm::vec3 aabbMax(
+                std::max({c0.x, c1.x, c2.x, c3.x}),
+                std::max({c0.y, c1.y, c2.y, c3.y}),
+                surface.maxHeight);
+            if (!frustum.intersectsAABB(aabbMin, aabbMax)) continue;
+        }
+
+        const bool isWmoWater = (surface.wmoId != 0);
+        const bool canalProfile = isWmoWater || (surface.liquidType == 5);
+        WaterPushConstants push{};
+        push.model = glm::mat4(1.0f);
+        push.waveAmp = isWmoWater ? 0.0f : (basicType == 1 ? 0.35f : 0.08f);
+        push.waveFreq = canalProfile ? 0.35f : (basicType == 1 ? 0.20f : 0.30f);
+        push.waveSpeed = canalProfile ? 1.00f : (basicType == 1 ? 1.20f : 1.40f);
+        push.liquidBasicType = static_cast<float>(basicType);
+        push.screenSize = glm::vec2(static_cast<float>(renderExtent_.width),
+                                    static_cast<float>(renderExtent_.height));
+        push.depthRange = glm::vec2(camera.getNearPlane(), camera.getFarPlane());
+        push.legacyWmoMode = legacyWater ? 1.0f : 0.0f;
+        (void)time;
+
+        vkCmdPushConstants(cmd, pipelineLayout,
+                           VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                           0, sizeof(WaterPushConstants), &push);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout,
+                                1, 1, &surface.materialSet, 0, nullptr);
+        VkDeviceSize offset = 0;
+        vkCmdBindVertexBuffers(cmd, 0, 1, &surface.vertexBuffer, &offset);
+        vkCmdBindIndexBuffer(cmd, surface.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
         vkCmdDrawIndexed(cmd, static_cast<uint32_t>(surface.indexCount), 1, 0, 0, 0);
     }
 }

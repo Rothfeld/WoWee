@@ -3463,6 +3463,20 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
                 M2Renderer::ParticlePhase::BeforeTransparent);
             m2Renderer->renderM2Ribbons(blended, perFrameSet,
                 M2Renderer::ParticlePhase::BeforeTransparent);
+            if (waterWithWorldModels) {
+                // Draw M2 particles/ribbons before translucent water writes
+                // depth so underwater/surface particle effects (e.g. Strange
+                // Pool Tradeskill_FishSchool_ElementalWater.m2, fishing pools)
+                // shine through translucent water while opaque geometry still
+                // occludes them; then write translucent water depth so
+                // submerged blended M2 meshes (e.g. Bloodvenom Falls waterfall
+                // curtains) still clip cleanly at the waterline.
+                m2Renderer->renderM2Particles(blended, perFrameSet,
+                    M2Renderer::ParticlePhase::AfterTransparent);
+                m2Renderer->renderM2Ribbons(blended, perFrameSet,
+                    M2Renderer::ParticlePhase::AfterTransparent);
+                waterRenderer->renderDepthOnly(blended, perFrameSet, *camera, globalTime);
+            }
         };
         const auto drawCharactersBefore = [&](float depth) {
             const size_t first = next;
@@ -3593,11 +3607,15 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
                 recordWorldModels(opaqueCmd, cmd);
                 vkEndCommandBuffer(opaqueCmd);
                 const auto tModels = std::chrono::steady_clock::now();
-                m2Renderer->renderM2Particles(cmd, perFrameSet,
-                    M2Renderer::ParticlePhase::AfterTransparent);
+                if (!waterWithWorldModels) {
+                    m2Renderer->renderM2Particles(cmd, perFrameSet,
+                        M2Renderer::ParticlePhase::AfterTransparent);
+                }
                 const auto tParts = std::chrono::steady_clock::now();
-                m2Renderer->renderM2Ribbons(cmd, perFrameSet,
-                    M2Renderer::ParticlePhase::AfterTransparent);
+                if (!waterWithWorldModels) {
+                    m2Renderer->renderM2Ribbons(cmd, perFrameSet,
+                        M2Renderer::ParticlePhase::AfterTransparent);
+                }
                 const auto tParticles = std::chrono::steady_clock::now();
                 vkEndCommandBuffer(cmd);
 
@@ -3883,10 +3901,12 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
             if (characterRenderer && !skipChars) characterRenderer->prepareRender(frameIdx);
             auto m2Start = std::chrono::steady_clock::now();
             recordWorldModels(currentCmd, currentCmd);
-            m2Renderer->renderM2Particles(currentCmd, perFrameSet,
+            if (!waterWithWorldModels) {
+                m2Renderer->renderM2Particles(currentCmd, perFrameSet,
+                        M2Renderer::ParticlePhase::AfterTransparent);
+                m2Renderer->renderM2Ribbons(currentCmd, perFrameSet,
                     M2Renderer::ParticlePhase::AfterTransparent);
-            m2Renderer->renderM2Ribbons(currentCmd, perFrameSet,
-                M2Renderer::ParticlePhase::AfterTransparent);
+            }
             if (vkCtx) vkCtx->gpuMark(currentCmd, "m2");
             lastM2RenderMs = std::chrono::duration<double, std::milli>(
                 std::chrono::steady_clock::now() - m2Start).count();

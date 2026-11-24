@@ -140,6 +140,11 @@ public:
     }
 
     void render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const Camera& camera, float time, bool use1x = false, uint32_t frameIndex = 0);
+    /// Writes translucent water (basicType < 2) depth into the depth buffer
+    /// without touching color. Run after M2 particles and before blended M2
+    /// meshes so underwater particle effects remain visible through translucent
+    /// water while submerged blended M2 meshes still clip at the waterline.
+    void renderDepthOnly(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const Camera& camera, float time);
     void captureSceneHistory(VkCommandBuffer cmd,
                              VkImage srcColorImage,
                              VkImage srcDepthImage,
@@ -263,6 +268,7 @@ private:
     // Pipeline
     VkPipeline waterPipeline = VK_NULL_HANDLE;
     VkPipeline waterOpaquePipeline = VK_NULL_HANDLE;  // Depth-writing opaque magma/slime (basicType >= 2)
+    VkPipeline waterDepthOnlyPipeline = VK_NULL_HANDLE; // Depth-only translucent water (basicType < 2)
     VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
     VkDescriptorSetLayout materialSetLayout = VK_NULL_HANDLE;
     VkDescriptorPool materialDescPool = VK_NULL_HANDLE;

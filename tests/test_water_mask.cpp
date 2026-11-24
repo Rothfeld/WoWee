@@ -177,10 +177,14 @@ TEST_CASE("a cell past the end of the mask is water") {
 }
 
 TEST_CASE("Liquid surfaces write depth and magma/slime render opaque", "[water]") {
+    using wowee::rendering::liquidDepthClipsParticles;
     using wowee::rendering::liquidIsOpaque;
     using wowee::rendering::liquidWritesDepth;
-    // 0=river, 1=ocean, 2=magma, 3=slime: all write depth so submerged waterfall
-    // tails clip cleanly at the waterline while above-water sheets composite over.
+    // 0=river, 1=ocean, 2=magma, 3=slime: all write depth before blended M2
+    // meshes so submerged waterfall tails clip at the waterline, while only
+    // opaque magma/slime clip M2 particles (translucent water defers its depth
+    // write until after M2 particles so underwater/surface effects like Strange
+    // Pool shine through).
     for (uint8_t basicType = 0; basicType < 4; ++basicType) {
         CHECK(liquidWritesDepth(basicType));
     }
@@ -188,6 +192,10 @@ TEST_CASE("Liquid surfaces write depth and magma/slime render opaque", "[water]"
     CHECK_FALSE(liquidIsOpaque(1));  // ocean
     CHECK(liquidIsOpaque(2));        // magma
     CHECK(liquidIsOpaque(3));        // slime
+    CHECK_FALSE(liquidDepthClipsParticles(0)); // river
+    CHECK_FALSE(liquidDepthClipsParticles(1)); // ocean
+    CHECK(liquidDepthClipsParticles(2));       // magma
+    CHECK(liquidDepthClipsParticles(3));       // slime
 }
 
 }  // namespace
