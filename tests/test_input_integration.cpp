@@ -4898,6 +4898,51 @@ TEST_CASE_METHOD(Integration, "Uncached gossip pages defer GOSSIP_SHOW until NPC
     CHECK(shownTexts.size() == 4);
 }
 
+TEST_CASE_METHOD(Integration, "OnUpdate runs on frame 0 after Show() before layout, hiding cast-bar flash", "[castbar-flash]") {
+    run(R"lua(
+        local bar = CreateFrame("StatusBar", "TestCastBarFlash", UIParent)
+        bar:SetWidth(195)
+        bar:SetHeight(13)
+        bar:Hide()
+        local flash = bar:CreateTexture("TestCastBarFlashTex", "OVERLAY")
+        flash:Show()
+        __cast_updates = 0
+        bar:SetScript("OnUpdate", function(self, elapsed)
+            __cast_updates = __cast_updates + 1
+            flash:Hide()
+        end)
+    )lua");
+    // Lay out once while hidden so visibleChain == false.
+    lua.widgets().layout(1280.0f, 720.0f);
+    lua.dispatchOnUpdate(0.016f);
+    truth("__cast_updates == 0");
+    truth("TestCastBarFlashTex:IsShown() == 1");
+
+    // Show() during packet handling before the next layout() pass (frame 0):
+    // dispatchOnUpdate must run immediately so Flash is hidden before frame 0 renders.
+    run("TestCastBarFlash:Show()");
+    lua.dispatchOnUpdate(0.016f);
+    truth("__cast_updates == 1");
+    truth("not TestCastBarFlashTex:IsShown()");
+
+    // Hide() before layout() must stop OnUpdate immediately on the same frame.
+    run("TestCastBarFlash:Hide()");
+    lua.dispatchOnUpdate(0.016f);
+    truth("__cast_updates == 1");
+
+    // Hidden ancestor still blocks OnUpdate even if child is shown.
+    run(R"lua(
+        local parent = CreateFrame("Frame", "TestHiddenParent", UIParent)
+        parent:Hide()
+        local child = CreateFrame("Frame", "TestShownChild", parent)
+        child:Show()
+        __child_updates = 0
+        child:SetScript("OnUpdate", function() __child_updates = __child_updates + 1 end)
+    )lua");
+    lua.dispatchOnUpdate(0.016f);
+    truth("__child_updates == 0");
+}
+
 TEST_CASE("Panel emotes run in order, each after the previous animation", "[npc-panel-emote]") {
     wowee::core::NpcPanelEmotes emotes;
     std::vector<uint32_t> started;

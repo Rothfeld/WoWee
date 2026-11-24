@@ -14693,13 +14693,22 @@ void LuaEngine::dispatchOnUpdate(float elapsed) {
         // silently still.
         bool visible;
         if (const auto* uw = widgetOf(L_, lua_gettop(L_))) {
-            // The chain, not `visible`: an unanchored frame is not drawn and is
-            // still running, which is exactly what FrameXML's driver frames
-            // are. frameFadeManager, frameFlashManager and AnimUpdateFrame are
-            // each a CreateFrame that is never positioned and carries nothing
-            // but an OnUpdate - asking whether they would be drawn stops every
-            // fade, flash and animation in the interface.
-            visible = uw->visibleChain;
+            // Walk the live shown ancestor chain rather than reading cached
+            // uw->visibleChain, which is only refreshed during WidgetTree::layout()
+            // in the render pass. A frame shown during gameHandler->update() (such
+            // as CastingBarFrame:Show() on UNIT_SPELLCAST_START) must run its first
+            // OnUpdate before the initial render so CastingBarFrame_OnUpdate hides
+            // CastingBarFrameFlash before frame 0 is drawn; likewise a just-hidden
+            // frame stops running OnUpdate immediately.
+            visible = uw->shown;
+            if (visible) {
+                for (uint32_t pid = uw->parent; pid != 0;) {
+                    const auto* p = widgets_.get(pid);
+                    if (!p) break;
+                    if (!p->shown) { visible = false; break; }
+                    pid = p->parent;
+                }
+            }
         } else {
             lua_getfield(L_, -1, "__visible");
             visible = lua_toboolean(L_, -1);
