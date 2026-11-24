@@ -1086,3 +1086,54 @@ TEST_CASE("A step over a wall the box meets lifts by the move over the radius an
         CHECK(rose < 0.21f);
     }
 }
+
+TEST_CASE("A jump pressed against a wall is caught by the bevel on the edge of ground above it and walks on", "[body_mover]") {
+    // Undercity, 1552.6, 227.5: a wall 1.76 yd high whose top edge is the
+    // foot of a 22.9 degree slope, 0.12 yd above the top of a jump (1.64 yd).
+    // Native pressed against it rises along it, comes down with its bevel
+    // on that edge in the frame that passes the jump's top, and walks the
+    // frame's move from there, onto the slope (26 runs of 27).
+    for (const float turn : {0.0f, 0.2755f}) {
+        // The wall square to the body's side, and 15.8 degrees off it as there.
+        const glm::vec3 into(std::cos(turn), std::sin(turn), 0.0f);
+        const glm::vec3 along(-std::sin(turn), std::cos(turn), 0.0f);
+        const auto at = [&](float ahead, float aside, float z) { return into * ahead + along * aside + glm::vec3(0, 0, z); };
+        Mesh mesh;
+        floorAt(mesh, 0.0f);
+        quad(mesh, at(3, -20, 0), at(3, -20, 1.76f), at(3, 20, 1.76f), at(3, 20, 0), -into);
+        quad(mesh, at(3, -20, 1.76f), at(4.3f, -20, 2.309f), at(4.3f, 20, 2.309f), at(3, 20, 1.76f));
+        quad(mesh, at(4.3f, -20, 2.309f), at(20, -20, 2.309f), at(20, 20, 2.309f), at(4.3f, 20, 2.309f));
+        const glm::vec3 run = into * kFrameRun;
+        Walker walker{.position = at(2.0f, 0.0f, 0.0f)};
+        for (int i = 0; i < 20; ++i) walker.frame(mesh, run);
+        REQUIRE(walker.grounded);
+        REQUIRE(walker.position.z == Catch::Approx(0.0f).margin(0.003));
+        walker.grounded = false;
+        walker.verticalVelocity = 7.9565f;
+        float highestInAir = 0.0f;
+        for (int i = 0; i < 40; ++i) {
+            walker.frame(mesh, run);
+            if (!walker.grounded) highestInAir = std::max(highestInAir, walker.position.z);
+        }
+        INFO("turn " << turn << " ends at " << walker.position.x << ", " << walker.position.y << ", " << walker.position.z);
+        REQUIRE(walker.grounded);
+        REQUIRE(walker.position.z == Catch::Approx(2.309f).margin(0.003));
+        // The sole never came up to the wall's top in the air.
+        REQUIRE(highestInAir < 1.70f);
+    }
+
+    // With no ground behind the edge within the frame's move - the wall's top
+    // a narrow sill, a wall on it - the body comes back down.
+    Mesh sill;
+    floorAt(sill, 0.0f);
+    quad(sill, {3, -20, 0}, {3, -20, 1.76f}, {3, 20, 1.76f}, {3, 20, 0}, {-1.0f, 0.0f, 0.0f});
+    quad(sill, {3, -20, 1.76f}, {3.05f, -20, 1.76f}, {3.05f, 20, 1.76f}, {3, 20, 1.76f});
+    quad(sill, {3.05f, -20, 1.76f}, {3.05f, -20, 6}, {3.05f, 20, 6}, {3.05f, 20, 1.76f}, {-1.0f, 0.0f, 0.0f});
+    Walker blocked{.position = {2.0f, 0.0f, 0.0f}};
+    for (int i = 0; i < 20; ++i) blocked.frame(sill, {kFrameRun, 0.0f, 0.0f});
+    blocked.grounded = false;
+    blocked.verticalVelocity = 7.9565f;
+    for (int i = 0; i < 40; ++i) blocked.frame(sill, {kFrameRun, 0.0f, 0.0f});
+    REQUIRE(blocked.grounded);
+    REQUIRE(blocked.position.z == Catch::Approx(0.0f).margin(0.003));
+}

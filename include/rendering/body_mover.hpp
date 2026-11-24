@@ -34,7 +34,8 @@
 //  steps on or falls, or hung by the bevel on an edge.
 //
 //  Falling. Horizontal move and drop are swept together. Ground ends the
-//  fall, under the sole or caught by the bevel, and the rest of the frame is
+//  fall - under the sole, or its edge under the bevel where the sole is
+//  within kEdgeCatch of standing over it - and the rest of the frame is
 //  walked. Any other face turns the body aside horizontally and leaves the
 //  drop alone, so a steep face is slid down at free-fall speed; where an
 //  edge crosses an edge of the underside the drop pushes the body off along
@@ -227,6 +228,13 @@ inline float bodyScale(float characterScale) {
 // (walkBody; measured 0.096 to 0.100 yd in the Valley of Trials).
 inline constexpr float kSoleEntry = 0.1f;
 
+// How near the sole of a falling body has to be to standing over ground for
+// the bevel, come down on that ground's edge, to catch the body there: the
+// level distance from the sole point to the ground's triangle (fallBody;
+// native is caught at 0.0788 to 0.0829 yd, 41 frames, and is not at 0.0834
+// to 0.0925, 21 frames, nor further).
+inline constexpr float kEdgeCatch = 0.0832f;
+
 enum class BodySupport { None, Steep, Walkable };
 
 struct BodyMove {
@@ -246,15 +254,41 @@ struct BodyMove {
     glm::vec2 levelKept{0.0f};
 };
 
+// `met`, when given, receives the triangle of the contact.
 inline std::optional<BodyContact> firstBodyContact(const glm::vec3& from, const glm::vec3& delta,
-        float radius, float height, std::span<const BodyTriangle> triangles) {
+        float radius, float height, std::span<const BodyTriangle> triangles,
+        const BodyTriangle** met = nullptr) {
     const float travel = glm::length(delta);
     std::optional<BodyContact> first;
     for (const auto& triangle : triangles) {
         const auto contact = sweepBodyTriangle(from, delta, radius, height, triangle);
-        if (contact && (!first || preferSupportContact(*contact, *first, travel))) first = contact;
+        if (contact && (!first || preferSupportContact(*contact, *first, travel))) {
+            first = contact;
+            if (met) *met = &triangle;
+        }
     }
     return first;
+}
+
+// The level distance from a point to a triangle: zero where the point is
+// over or under it.
+inline float levelDistanceToTriangle(const glm::vec3& point, const BodyTriangle& triangle) {
+    const glm::vec2 p(point);
+    const std::array<glm::vec2, 3> corner = {glm::vec2(triangle[0]), glm::vec2(triangle[1]), glm::vec2(triangle[2])};
+    const auto side = [&](int i) {
+        const glm::vec2 edge = corner[(i + 1) % 3] - corner[i];
+        return edge.x * (p.y - corner[i].y) - edge.y * (p.x - corner[i].x);
+    };
+    const float a = side(0), b = side(1), c = side(2);
+    if ((a >= 0.0f && b >= 0.0f && c >= 0.0f) || (a <= 0.0f && b <= 0.0f && c <= 0.0f)) return 0.0f;
+    float nearest = std::numeric_limits<float>::infinity();
+    for (int i = 0; i < 3; ++i) {
+        const glm::vec2 edge = corner[(i + 1) % 3] - corner[i];
+        const float lengthSq = glm::dot(edge, edge);
+        const float along = lengthSq > 1e-12f ? glm::clamp(glm::dot(p - corner[i], edge) / lengthSq, 0.0f, 1.0f) : 0.0f;
+        nearest = std::min(nearest, glm::distance(p, corner[i] + edge * along));
+    }
+    return nearest;
 }
 
 struct BodyRest {
@@ -380,7 +414,8 @@ inline BodyMove fallBody(const glm::vec3& from, const glm::vec3& delta,
     if (turned) move.deflected = true;
     move.levelKept = glm::vec2(remaining);
     for (int iteration = 0; iteration < 5 && glm::dot(remaining, remaining) > 1e-12f; ++iteration) {
-        const auto contact = firstBodyContact(move.position, remaining, radius, height, triangles);
+        const BodyTriangle* met = nullptr;
+        const auto contact = firstBodyContact(move.position, remaining, radius, height, triangles, &met);
         if (!contact) { move.position += remaining; remaining = glm::vec3(0.0f); break; }
         move.position += remaining * contact->time;
         remaining *= 1.0f - contact->time;
@@ -418,26 +453,54 @@ inline BodyMove fallBody(const glm::vec3& from, const glm::vec3& delta,
             return move;
         }
         if (n.z > 0.0f && remaining.z <= 0.0f && contact->face.z >= minWalkableNormalZ) {
-            // The edge of walkable ground under the bevel. The rest of the
-            // move goes along the contact, up the bevel; the fall ends if
-            // that stands the sole on the ground. Native coming down on the
-            // near edge of the Northshire fence hull's top (-8941.81, -106.28,
-            // its bevel 0.21 yd over the edge) ends that frame 0.146 yd on
-            // and 0.0055 yd higher with its sole on the top, and walks on.
-            // Where it does not - hung by the bevel on the rim of the Exodar
-            // table, the top half a yard further up - native keeps falling,
-            // turned aside by the rim as by any other face (7 of 7).
+            // The edge of walkable ground under the bevel catches the body
+            // when its sole is within kEdgeCatch of standing over that
+            // ground: the fall ends there, and what is left of the frame's
+            // level move is walked from there - onto the ground, or on up
+            // its edge. Native coming down on the near edge of the
+            // Northshire fence hull's top (-8941.81, -106.28) ends that
+            // frame 0.146 yd on and 0.0055 yd higher with its sole on the
+            // top, and walks on. Pressed against an Undercity wall (1552.6,
+            // 227.5; 1.76 yd high, its top edge the foot of a 22.9 degree
+            // slope, 0.12 yd above the top of a jump) it rises along the
+            // wall with its bevel over that edge, and in the first frame
+            // whose move goes down, 0.079 to 0.082 yd from the edge, takes
+            // that frame's move forward and ends it with its sole on the
+            // slope (38 runs of 39). So it does from touching the edge at
+            // the start of a frame that begins falling, 0.0826 to 0.0829 yd
+            // from it (4 runs), and met by the edge part way through a
+            // frame (1 run: it ends that frame hung on the edge and walks
+            // on up). 0.0834 yd from the edge and further it is not caught
+            // (21 frames at 0.0834 to 0.0925: come upon the edge in the air
+            // a frame later; touching it at a frame's start 0.0872 yd from
+            // it; at the next section of that wall, which runs at another
+            // angle to the body's sides, 0.091 to 0.093 yd from it with the
+            // edge no higher above the sole, 10 runs; and at 0.10 to 0.18,
+            // also at a wall 1.88 yd high, 1574.5, 185.9): the edge turns
+            // it aside as any other face does and the drop pushes it back
+            // off, also with a frame's whole move left. So do the rim of
+            // the Exodar table, half a yard under its top, and the nose of
+            // a step the body was left in the air over (walkBody). The move
+            // is the fall's own, with what it has kept of its level
+            // velocity. Taken along the contact, up the bevel, the rest of
+            // the move left the sole short of the Undercity slope, and
+            // WoWee came back down in 25 runs of 27.
+            // (_experiments/20261124T160500Z.movement_collision_parity_round22)
+            // The distance is taken where the body touches the edge, before
+            // it is set back from it by the contact skin.
             const glm::vec3 held = move.position + n * kContactSkin;
-            const float into = glm::dot(remaining, n);
-            const glm::vec3 along = into < 0.0f ? remaining - n * into : remaining;
-            const auto stop = firstBodyContact(held, along, radius, height, triangles);
-            const glm::vec3 end = held + along * (stop ? stop->time : 1.0f);
-            const float rise = std::max(end.z - held.z, 0.0f);
-            if (const auto rest = lowerBody(end, rise + kContactSkin * 2.0f, radius, height, triangles);
-                rest && isBodySoleOnGround(*rest, minWalkableNormalZ)) {
-                move.position = rest->position;
+            if (levelDistanceToTriangle(move.position, *met) <= kEdgeCatch) {
+                move.position = held;
                 move.support = BodySupport::Walkable;
-                move.soleOnGround = true;
+                const glm::vec3 rest(remaining.x, remaining.y, 0.0f);
+                if (rest.x * rest.x + rest.y * rest.y > 1e-10f) {
+                    BodyMove walked = walkBody(held, rest, maxStep, radius, height, triangles,
+                                               minWalkableNormalZ, maxStep, heightfieldTriangles, glm::vec3(0.0f), true);
+                    if (walked.support == BodySupport::Walkable) {
+                        walked.deflected = walked.deflected || move.deflected;
+                        return walked;
+                    }
+                }
                 return move;
             }
         }
