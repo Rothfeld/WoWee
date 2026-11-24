@@ -1292,6 +1292,21 @@ position) replayed against WoWee's own triangles for the same places:
 - A step refused, the move is replaced by its part along the refusing face
   and tried from the same place, without first closing the gap to the face;
   refused again, by its part along both faces; in a corner the body stays.
+- A step refused because it would end on a hold that leads nowhere (hung on
+  an edge, or on a steep face), with no wall in the way of the body's box
+  within the move, is walked over the ground up to what the body meets there
+  that is not ground - when that belongs to a building or an object - and the
+  rest of the move is turned from there. At a kerb with a wall 0.15 yd behind
+  its nose (Stormwind -8774.14, 832.54) native takes the part of its move up
+  to the nose (8 runs of 8, the wall beyond the move) and is turned along the
+  wall from where it stands once the wall is within the move (16 runs of 16);
+  WoWee, turned along the kerb's riser from where it stood, crept the other
+  way in half of the arrival phases. Sliding 0.19 yd off the 53 degree skirt
+  of the Orgrimmar wall past the end of its 77 degree section native goes up
+  to the skirt in that frame (9 recorded runs). Toward a steep face of the
+  terrain it is turned from where it stands (Valley of Trials, 5 recorded
+  runs). `kerbscan.py` in
+  `_experiments/20261124T202000Z.movement_collision_parity_round24/`.
 - After a level move the body is lowered up to a yard onto ground; held up by
   a steep face instead, it is lowered as a fall would, turned aside by it.
   With no ground there it falls, at the velocity it actually had that frame.
@@ -1384,10 +1399,6 @@ Gotchas:
   the key's run as the air move of every frame hides what a fall does to
   its level velocity (it hid a jump that could not get onto a ledge it
   touched).
-- At a kerb with a wall just beyond it (Stormwind -8774.14, 832.54) native
-  ends at one place from seven arrival phases; WoWee creeps the other way
-  along the kerb in about half of them. Not solved; measurements in
-  `_experiments/20261124T140000Z.movement_collision_parity_round20/`.
 - Over the Undercity barrels (1578, 183) WoWee still ends on the floor where
   its two frames on a barrel's side take it more than a yard under the ledge
   (about 1 run in 10): native steps over the ledge's wall from the edge of
@@ -1443,6 +1454,36 @@ MSG_MOVE_SET_WALK_MODE / SET_RUN_MODE (flag 0x100) when they happen, moving or
 not. Keyboard turning starts from the character's facing, not the camera yaw,
 and no SET_FACING follows STOP_TURN. `stream_stats.py` in
 `_experiments/20261118T0800.movesend/` prints rates from a debug log.
+
+Knockback, root and control (native 2.4.3 on a private pair, `kb.py` in
+`_experiments/20261124T202000Z.movement_collision_parity_round24/`):
+
+- A knockback (SMSG_MOVE_KNOCK_BACK) is airborne momentum like a running
+  jump's: its level speed is kept whole to the landing (native: 20.0 and 15.0
+  yd/s over flights of 2.0 to 2.6 s), keys do not steer it, and its packets
+  say 0x5001 - falling, forward, pending stop - until MSG_MOVE_FALL_LAND with
+  flags 0. The landing is reported however short the flight.
+- Knockback orders are taken up after every packet that arrived with them. If
+  the server took control meanwhile (SMSG_CLIENT_CONTROL_UPDATE allow=0 in the
+  same tick: Fear, Blind, a charm) the knockback is acknowledged with the
+  flags the body had and is not flown; native stays on the ground and walks
+  the server's splines (3 runs of 3).
+- Losing control ends a fall of the body's own. When control comes back and
+  the server's last spline has ended, the body falls and lands: a heartbeat
+  with the falling flag (MSG_MOVE_STOP instead where control came back while
+  a spline was moving it), then MSG_MOVE_FALL_LAND with flags 0 right behind
+  it (native: the same millisecond, 6 runs of 6). An unroot is answered the
+  same way: the acknowledgement says falling, the landing follows (native: 22
+  of 22). In the air the landing comes when the body lands.
+- A remote mover's MSG_MOVE_KNOCK_BACK is flown only when its flags say
+  falling.
+- Not measured on native: a knockback with control lost by a charm that
+  sends no spline (the user's case, Blackheart the Inciter: the pair's
+  characters could not be charmed alone), a knockback with level speed 0,
+  what a native observer draws for a knockback acknowledged without the
+  falling flag, and the same while swimming, flying or mounted. The
+  acknowledgement of a knockback that is not flown carries fall time 0 in
+  some runs where native's carries its last fall's.
 
 Water-jump packets use the ballistic clock, excluding time spent swimming.
 Takeoff resets that clock; heartbeat position and fallTime describe the same
