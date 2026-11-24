@@ -2063,7 +2063,14 @@ if (gameHandler_) {
     if (auto entity = gameHandler_->getEntityManager().getEntity(guid);
         entity && entity->getType() == game::ObjectType::UNIT) {
         const auto* unit = static_cast<const game::Unit*>(entity.get());
-        newlySpawned = !displayChanged && unit->isNewlySpawned();
+        // Spell-summoned guardians/minions (e.g. Summon Unliving Soldier 32853)
+        // whose spawn-tick self-cast clears CMaNGOS m_itsNewObject before
+        // WriteViewChanges still carry UNIT_FIELD_CREATEDBY or UNIT_CREATED_BY_SPELL
+        // and fade in over kUnitSpawnFadeInSeconds (2.0 s) on TBC 2.4.3.
+        newlySpawned = !displayChanged &&
+                       (unit->isNewlySpawned() ||
+                        game::unitCreatedByGuid(*unit) != 0 ||
+                        game::unitCreatedBySpell(*unit) != 0);
         targetOpacity = creatureDisplayAlpha(unit->getDisplayId());
     }
 }

@@ -341,6 +341,17 @@ TEST_CASE("Spline gait follows speed against the model's unscaled Walk movingSpe
 
     // Models lacking Walk animation return nullopt (always run).
     CHECK_FALSE(splineWalkStride(std::nullopt, false, 2.5f, 1.0f).has_value());
+
+    // Mirage Raceway Gnome Racer 4252 & Gnome Drag Car 4946 (display 2490,
+    // GnomeRocketCar.m2, Walk movingSpeed == 0, creature_template.SpeedWalk = 4.0
+    // -> unitGroundWalkSpeed = 10.0 yd/s) use kDefaultWalkMoveSpeed (2.5) * serverScale
+    // rather than unitGroundWalkSpeed, so racing at 10.0 yd/s selects Run (5)
+    // and emits the car's rocket flame/smoke emitters.
+    const auto dragCar = splineWalkStride(std::nullopt, true, 10.0f, 1.0f);
+    REQUIRE(dragCar.has_value());
+    CHECK(*dragCar == Catch::Approx(2.5f));
+    CHECK_FALSE(splineGroundGaitWalks(10.0f, *dragCar));
+    CHECK(splineGroundGaitWalks(4.0f, *dragCar));
 }
 
 TEST_CASE("Aquatic creature surface limit preserves submerged server coordinates", "[creature-locomotion]") {

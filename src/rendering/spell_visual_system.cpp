@@ -1,6 +1,7 @@
 #include "rendering/spell_visual_system.hpp"
 #include "rendering/corpse_aura_policy.hpp"
 #include "rendering/aura_marker_visibility.hpp"
+#include "rendering/unit_fade.hpp"
 #include "rendering/m2_renderer.hpp"
 #include "rendering/renderer.hpp"
 #include "rendering/animation_controller.hpp"
@@ -685,8 +686,22 @@ float SpellVisualSystem::spawnKitEffects(uint32_t kitId, const glm::vec3& worldP
         }
         if (stage == KitStage::Precast) {
             m2Renderer_->startInstanceStateEffect(instanceId);
+            if (attachInstanceId && characters) {
+                m2Renderer_->setInstanceFade(
+                    instanceId,
+                    attachedSpellVisualFade(/*sustainedUnitVisual=*/true,
+                                            characters->isInstanceRoomHidden(attachInstanceId),
+                                            characters->getInstanceEffectiveOpacity(attachInstanceId)));
+            }
         } else {
             m2Renderer_->startInstanceOneShotEffect(instanceId);
+            if (attachInstanceId && characters) {
+                m2Renderer_->setInstanceFade(
+                    instanceId,
+                    attachedSpellVisualFade(/*sustainedUnitVisual=*/false,
+                                            characters->isInstanceRoomHidden(attachInstanceId),
+                                            1.0f));
+            }
         }
         // Without a stage length (cast time, aura, channel) the effect lives
         // one play of the sequence it shows. Authored lengths run from 0.33 s
@@ -1039,6 +1054,13 @@ void SpellVisualSystem::startChannelVisual(uint32_t visualId, const glm::vec3& p
         // with faint rings in the original; looping Stand drew a burst of
         // black spikes round him.
         m2Renderer_->startInstanceStateEffect(instance);
+        if (attachInstanceId && characters) {
+            m2Renderer_->setInstanceFade(
+                instance,
+                attachedSpellVisualFade(/*sustainedUnitVisual=*/true,
+                                        characters->isInstanceRoomHidden(attachInstanceId),
+                                        characters->getInstanceEffectiveOpacity(attachInstanceId)));
+        }
         activeSpellVisuals_.push_back({.instanceId = instance, .elapsed = 0.0f,
             .duration = remaining, .isPrecast = false, .attachmentId = attachment,
             .attachInstanceId = attachInstanceId, .isChannel = true, .orientWithAttachment = breath,
@@ -1281,11 +1303,16 @@ void SpellVisualSystem::applyCharacterProcedures(uint32_t attachInstanceId, bool
     if (m2Renderer_) {
         const glm::vec3 fxTint = (colored && kitCharProcTintsAttachedEffects(color))
             ? color : glm::vec3(1.0f);
+        const bool roomHidden = characters->isInstanceRoomHidden(attachInstanceId);
+        const float ownerOpacity = characters->getInstanceEffectiveOpacity(attachInstanceId);
         for (const auto& sv : activeSpellVisuals_) {
-            if (sv.attachInstanceId == attachInstanceId && !sv.decaying &&
-                (sv.auraVisualId != 0 || sv.isChannel)) {
+            if (sv.attachInstanceId != attachInstanceId) continue;
+            if (!sv.decaying && (sv.auraVisualId != 0 || sv.isChannel)) {
                 m2Renderer_->setInstanceTint(sv.instanceId, fxTint);
             }
+            const bool sustained = (sv.auraVisualId != 0 || sv.isPrecast || sv.isChannel);
+            m2Renderer_->setInstanceFade(
+                sv.instanceId, attachedSpellVisualFade(sustained, roomHidden, ownerOpacity));
         }
     }
 
@@ -2662,9 +2689,16 @@ void SpellVisualSystem::update(float deltaTime) {
     std::erase_if(drainingCasterEffects_,
                   [&](const DrainingEffect& effect) { return !m2Renderer_->hasInstance(effect.instanceId); });
     for (auto it = activeSpellVisuals_.begin(); it != activeSpellVisuals_.end(); ) {
-        // Effects on a unit hidden in an unseen WMO room are hidden with it.
-        if (it->attachInstanceId && charRenderer)
-            m2Renderer_->setInstanceFade(it->instanceId, charRenderer->isInstanceRoomHidden(it->attachInstanceId) ? 0.0f : 1.0f);
+        // Sustained unit visuals inherit their owner's effective opacity;
+        // effects on a unit hidden in an unseen WMO room are hidden with it.
+        if (it->attachInstanceId && charRenderer) {
+            const bool sustained = (it->auraVisualId != 0 || it->isPrecast || it->isChannel);
+            m2Renderer_->setInstanceFade(
+                it->instanceId,
+                attachedSpellVisualFade(sustained,
+                                        charRenderer->isInstanceRoomHidden(it->attachInstanceId),
+                                        charRenderer->getInstanceEffectiveOpacity(it->attachInstanceId)));
+        }
         if (it->auraVisualId) {
             glm::vec3 position;
             if (!charRenderer || !charRenderer->getInstancePosition(it->attachInstanceId, position)) {
@@ -2887,7 +2921,6 @@ void SpellVisualSystem::removeCasterStages(uint32_t attachInstanceId) {
     heldChannelKits_.erase(attachInstanceId);
     if (unitChannelVisuals_.erase(attachInstanceId))
         applyCharacterProcedures(attachInstanceId);
-    reapplyAuraKitLights(attachInstanceId);
     std::erase_if(activeWeaponTrails_, [&](const ActiveUnitWeaponTrail& trail) {
         return trail.ownerInstanceId == attachInstanceId;
     });
@@ -3036,6 +3069,9 @@ void SpellVisualSystem::transferUnitVisuals(uint32_t fromInstanceId, uint32_t to
     syncedAuraInstances_.insert(toInstanceId);
     if (characters && characters->hasInstance(fromInstanceId)) {
         characters->setInstanceAuraStateAnimation(fromInstanceId, 0u);
+    }
+    if (characters) {
+        characters->transferInstanceKitLight(fromInstanceId, toInstanceId);
     }
     applyCharacterProcedures(toInstanceId, /*immediateOpacity=*/true);
 }

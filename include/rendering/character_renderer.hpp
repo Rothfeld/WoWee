@@ -283,9 +283,12 @@ public:
     /// The latest kit replaces an earlier one. Carried to weapons and effects.
     void startInstanceKitLight(uint32_t instanceId, const glm::vec3& color, float seconds);
     /// Clear any active SpellVisualKit CharProc 13 light tint on the unit,
-    /// its weapons, and weapon effects (used on unit death so long-duration
-    /// shadow/darkness kits like 7441 do not remain stuck on corpses).
+    /// its weapons, and weapon effects.
     void clearInstanceKitLight(uint32_t instanceId);
+    /// Move any active SpellVisualKit CharProc 13 light tint (preserving its
+    /// remaining duration) from `fromInstanceId` to `toInstanceId` and its
+    /// attachments across runtime display morphs and model swaps.
+    void transferInstanceKitLight(uint32_t fromInstanceId, uint32_t toInstanceId);
     /// Light of a model standing at a world position in a WMO interior, or
     /// nothing outdoors (WMORenderer::interiorObjectLight).
     using InteriorLightQuery = std::function<std::optional<glm::vec3>(const glm::vec3&)>;
@@ -336,6 +339,9 @@ public:
     /// with its weapons, effects and emitters (WMORenderer::roomHides).
     void setInstanceRoomHidden(uint32_t instanceId, bool hidden);
     [[nodiscard]] bool isInstanceRoomHidden(uint32_t instanceId) const;
+    /// Combined drawn opacity (`opacity * cameraOpacity * kitOpacity`), or 0 when
+    /// hidden, replaced, or in an unseen WMO room.
+    [[nodiscard]] float getInstanceEffectiveOpacity(uint32_t instanceId) const;
     void removeInstance(uint32_t instanceId);
     bool getAnimationState(uint32_t instanceId, uint32_t& animationId, float& animationTimeMs, float& animationDurationMs) const;
     /// Footfall ($FSD) event times in ms for the sequence the instance is

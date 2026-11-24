@@ -43,15 +43,33 @@ inline constexpr bool isCorpseAuraSuppressed(bool trackedDead,
 }
 
 /// Pure state mirror for CharacterInstance's SpellVisualKit CharProc 13 light
-/// tint (used for unit-level death/expiry verification).
+/// tint (`kitLight` + `kitLightRemaining`).
+///
+/// Empirical TBC 2.4.3 behavior:
+/// - Already-dead corpses entering view suppress non-death-persistent aura
+///   `StateKit`s via `isCorpseAuraSuppressed()`, so `startKitLight` never runs
+///   for them.
+/// - Once `startKitLight` has started on a living unit in view (e.g. `44800`
+///   Demonic Visual, `45263` Shadow Image Visual, `32395` Stolen Soul Visual,
+///   or timed `0.5 s` impact flashes), `kitLight` runs on its own
+///   `kitLightRemaining` timer — neither `.unaura` nor unit death clears it.
+/// - Runtime display swaps/morphs transfer active `kitLight` and remaining time
+///   onto the replacement instance.
 struct KitLightState {
     glm::vec3 color{1.0f};
     float remaining = 0.0f;
 };
 
-inline void resetKitLightOnDeath(KitLightState& state) {
-    state.color = glm::vec3(1.0f);
-    state.remaining = 0.0f;
+inline void transferKitLight(KitLightState& from, KitLightState& to) {
+    if (from.remaining > 0.0f) {
+        to.color = from.color;
+        to.remaining = from.remaining;
+    } else {
+        to.color = glm::vec3(1.0f);
+        to.remaining = 0.0f;
+    }
+    from.color = glm::vec3(1.0f);
+    from.remaining = 0.0f;
 }
 
 inline void tickKitLight(KitLightState& state, float deltaTime) {

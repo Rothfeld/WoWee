@@ -4,6 +4,7 @@
 #include "rendering/unit_fade.hpp"
 
 using wowee::rendering::appendUnitRenderSteps;
+using wowee::rendering::attachedSpellVisualFade;
 using wowee::rendering::creatureSpawnFadeDuration;
 using wowee::rendering::effectiveUnitOpacity;
 using wowee::rendering::fadeInOpacity;
@@ -123,4 +124,27 @@ TEST_CASE("faded unit schedules whole-unit depth prepass before color across bod
         CHECK(blendedSteps[i] == std::pair<int, uint32_t>{-1, unit[i]});
         CHECK(blendedSteps[unit.size() + i] == std::pair<int, uint32_t>{1, unit[i]});
     }
+}
+
+TEST_CASE("sustained unit-attached spell visuals inherit owner effective opacity", "[unit-fade][spell-visual]") {
+    // Unliving Soldier (18498, display 17920 CreatureModelAlpha = 160/255) with
+    // Phase In (33422, StateKit 6887 CharProc 14 = 0.50): Ritual_Arcane_PreCast_Base.m2
+    // fades in from 0 -> 0.3137 over kUnitSpawnFadeInSeconds (2.0 s).
+    const float displayAlpha = 160.0f / 255.0f;
+    const float kitOpacity = 0.5f;
+    const float effEarly = effectiveUnitOpacity(fadeInOpacity(displayAlpha, 0.5f, kUnitSpawnFadeInSeconds), 1.0f, kitOpacity);
+    const float effSteady = effectiveUnitOpacity(fadeInOpacity(displayAlpha, 2.0f, kUnitSpawnFadeInSeconds), 1.0f, kitOpacity);
+    CHECK(attachedSpellVisualFade(/*sustainedUnitVisual=*/true, /*ownerRoomHidden=*/false, effEarly) ==
+          Catch::Approx(displayAlpha * 0.0625f * kitOpacity));
+    CHECK(attachedSpellVisualFade(/*sustainedUnitVisual=*/true, /*ownerRoomHidden=*/false, effSteady) ==
+          Catch::Approx(displayAlpha * kitOpacity));
+
+    // Shadowform (16592, StateKit 3129 CharProc 14 = 0.65): Shadow_Precast_Med_Base.m2 scales by 0.65.
+    CHECK(attachedSpellVisualFade(/*sustainedUnitVisual=*/true, /*ownerRoomHidden=*/false, 0.65f) ==
+          Catch::Approx(0.65f));
+
+    // One-shot Cast/Impact effects stay at full alpha unless room-hidden.
+    CHECK(attachedSpellVisualFade(/*sustainedUnitVisual=*/false, /*ownerRoomHidden=*/false, 0.3f) == 1.0f);
+    CHECK(attachedSpellVisualFade(/*sustainedUnitVisual=*/false, /*ownerRoomHidden=*/true, 0.3f) == 0.0f);
+    CHECK(attachedSpellVisualFade(/*sustainedUnitVisual=*/true, /*ownerRoomHidden=*/true, 0.65f) == 0.0f);
 }

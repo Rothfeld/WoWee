@@ -15,9 +15,9 @@ using wowee::rendering::auraVisualPersistsOnCorpse;
 using wowee::rendering::isCorpseAuraSuppressed;
 using wowee::rendering::KitLightState;
 using wowee::rendering::kSpellAttrEx3DeathPersistent;
-using wowee::rendering::resetKitLightOnDeath;
 using wowee::rendering::shouldPlayAuraDecayOnRemoval;
 using wowee::rendering::tickKitLight;
+using wowee::rendering::transferKitLight;
 
 TEST_CASE("corpse aura persistence respects SPELL_ATTR_EX3_DEATH_PERSISTENT", "[corpse-aura]") {
     CHECK(kSpellAttrEx3DeathPersistent == 0x00100000u);
@@ -49,18 +49,22 @@ TEST_CASE("corpse aura suppression distinguishes corpses from living and feignin
     CHECK(isCorpseAuraSuppressed(true, 0, 0, 0, kDead, kLoot));
 }
 
-TEST_CASE("CharProc 13 kitLight clears immediately on unit death and expires normally while alive", "[corpse-aura]") {
-    // Sathrovarr's Demonic Visual (44800) / Shadow Image Visual (45263) kit 7441:
-    // CharProc 13 sets kitLight = (0, 0, 0) for 1e11 seconds.
+TEST_CASE("CharProc 13 kitLight persists across death and display morphs until timer expiry", "[corpse-aura]") {
+    // Demonic Visual (44800) / Shadow Image Visual (45263) kit 7441 and Stolen Soul Visual (32395) kit 6374:
+    // once started on a living unit in view, CharProc 13 sets kitLight = (0, 0, 0) for 1e11 seconds and
+    // persists across aura removal, unit death, and runtime display morphs.
     KitLightState light{glm::vec3(0.0f, 0.0f, 0.0f), 1e11f};
     tickKitLight(light, 10.0f);
     CHECK(light.color == glm::vec3(0.0f, 0.0f, 0.0f));
     CHECK(light.remaining > 1e10f);
 
-    // On unit death, kitLight must reset immediately to white (1, 1, 1) with 0 remaining.
-    resetKitLightOnDeath(light);
+    // Runtime display morph (e.g. Stolen Soul 15476 -> 50) transfers kitLight and remaining duration.
+    KitLightState morphed;
+    transferKitLight(light, morphed);
     CHECK(light.color == glm::vec3(1.0f, 1.0f, 1.0f));
     CHECK(light.remaining == 0.0f);
+    CHECK(morphed.color == glm::vec3(0.0f, 0.0f, 0.0f));
+    CHECK(morphed.remaining > 1e10f);
 
     // Short-duration impact kit (Chain Lightning kit 282: 0x6C6CFF for 0.5 s) expires on tick.
     KitLightState impact{glm::vec3(0x6C / 255.0f, 0x6C / 255.0f, 1.0f), 0.5f};

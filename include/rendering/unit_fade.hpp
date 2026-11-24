@@ -89,6 +89,20 @@ inline float effectiveUnitOpacity(float opacity, float cameraOpacity, float kitO
     return std::clamp(opacity * cameraOpacity * kitOpacity, 0.0f, 1.0f);
 }
 
+/// Fade factor for an M2 spell visual instance attached to a unit.
+/// Sustained unit visuals (aura state kits, precast loops, and channel kits)
+/// inherit their owner unit's effective opacity (spawn/display alpha, camera
+/// fade, and CharProc 14 kitOpacity, e.g. Phase In 33422 on Unliving Soldier
+/// 18498 fading 0 -> 0.314 over 2.0 s, and Shadowform 16592 at 0.65), while
+/// one-shot Cast/Impact visuals stay at full alpha unless the owner's WMO room
+/// is culled.
+inline float attachedSpellVisualFade(bool sustainedUnitVisual,
+                                     bool ownerRoomHidden,
+                                     float ownerEffectiveOpacity) {
+    if (ownerRoomHidden) return 0.0f;
+    return sustainedUnitVisual ? std::clamp(ownerEffectiveOpacity, 0.0f, 1.0f) : 1.0f;
+}
+
 /// Schedule CharacterRenderer draw passes for one unit group (the root unit
 /// plus its attached helms, shoulders, weapons, and enchant effects).
 ///

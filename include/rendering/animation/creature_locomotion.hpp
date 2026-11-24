@@ -81,16 +81,23 @@ inline constexpr float kDefaultRunMoveSpeed = 250.0f / 36.0f;
 
 // Walk or Run for a server-driven (SMSG_MONSTER_MOVE spline) ground unit.
 // Build 8606 decides from the spline's speed against the model's authored Walk
-// movingSpeed (or the unit's groundWalkSpeed when the M2 authors Walk
-// movingSpeed == 0, e.g. DoomGuard.m2, HumanFemale.m2) multiplied by
-// OBJECT_FIELD_SCALE_X (not CreatureDisplayInfo.CreatureModelScale), not from
-// the retained WALK_MODE flag or the spline's Runmode flag (CMaNGOS sets it on
-// every move): it walks while speed < kSplineRunWalkRate * walkStride.
+// movingSpeed (or kDefaultWalkMoveSpeed = 2.5 when the M2 authors Walk
+// movingSpeed == 0, e.g. DoomGuard.m2, HumanFemale.m2, GnomeRocketCar.m2)
+// multiplied by OBJECT_FIELD_SCALE_X (not CreatureDisplayInfo.CreatureModelScale
+// or creature_template.SpeedWalk), not from the retained WALK_MODE flag or the
+// spline's Runmode flag (CMaNGOS sets it on every move): it walks while
+// speed < kSplineRunWalkRate * walkStride.
 // Measured natively:
-// - Unchained Doombringer 20900 (display 19945, DoomGuard.m2, Walk 0 ->
-//   groundWalkSpeed 2.5, cdi_scale 2.5): at serverScale 1.0 (threshold 5.0),
-//   2.5/3.6 walk and 6.0/10.0 run; at serverScale 2.0 (threshold 10.0), 6.0
-//   walks (_experiments/20261122T223300Z.doombringer_gait_parity).
+// - Mirage Raceway Gnome Racer 4252 & Gnome Drag Car 4946 (display 2490,
+//   GnomeRocketCar.m2, Walk 0 -> default 2.5, creature_template.SpeedWalk = 4.0
+//   -> 10.0 yd/s, matching GoblinRocketCar.m2's explicit Walk 2.5): at 10.0 yd/s
+//   (>= threshold 5.0), plays Run (5) and emits its 150/s exhaust flames and
+//   100/s smoke trail (using unitGroundWalkSpeed = 10.0 gave threshold 20.0 and
+//   stuck the racer in Walk (4) with 0 particles).
+// - Unchained Doombringer 20900 (display 19945, DoomGuard.m2, Walk 0 -> 2.5,
+//   cdi_scale 2.5): at serverScale 1.0 (threshold 5.0), 2.5/3.6 walk and
+//   6.0/10.0 run; at serverScale 2.0 (threshold 10.0), 6.0 walks
+//   (_experiments/20261122T223300Z.doombringer_gait_parity).
 // - Phantom Guardsman (display 16457, HumanFemale.m2, Walk 0 -> 2.5, cdi 1.15):
 //   at serverScale 1.0 (threshold 5.0), 2.5/4.0 walk and 5.6/8.0 run; at
 //   serverScale 2.0 (threshold 10.0), 5.6 walks
@@ -106,12 +113,13 @@ inline std::optional<float> splineWalkStride(std::optional<float> modelWalkMoveS
                                              bool hasWalkAnimation,
                                              float unitGroundWalkSpeed,
                                              float serverScale) {
+    (void)unitGroundWalkSpeed;
     const float scale = serverScale > 0.0f ? serverScale : 1.0f;
     if (modelWalkMoveSpeed && *modelWalkMoveSpeed > 0.0f) {
         return *modelWalkMoveSpeed * scale;
     }
-    if (hasWalkAnimation && unitGroundWalkSpeed > 0.0f) {
-        return unitGroundWalkSpeed * scale;
+    if (hasWalkAnimation) {
+        return kDefaultWalkMoveSpeed * scale;
     }
     return std::nullopt;
 }

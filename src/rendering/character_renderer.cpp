@@ -5613,6 +5613,22 @@ void CharacterRenderer::clearInstanceKitLight(uint32_t instanceId) {
     }
 }
 
+void CharacterRenderer::transferInstanceKitLight(uint32_t fromInstanceId, uint32_t toInstanceId) {
+    if (!fromInstanceId || !toInstanceId || fromInstanceId == toInstanceId) return;
+    auto fromIt = instances.find(fromInstanceId);
+    if (fromIt == instances.end()) return;
+    const glm::vec3 color = fromIt->second.kitLight;
+    const float remaining = fromIt->second.kitLightRemaining;
+    clearInstanceKitLight(fromInstanceId);
+    if (remaining > 0.0f) {
+        if (instances.find(toInstanceId) != instances.end()) {
+            startInstanceKitLight(toInstanceId, color, remaining);
+        }
+    } else {
+        clearInstanceKitLight(toInstanceId);
+    }
+}
+
 void CharacterRenderer::setInstanceKitAppearance(uint32_t instanceId, const glm::vec3& color, float opacity,
                                                  bool freezeAnimation, bool immediateOpacity) {
     assert(opacity >= 0.0f && opacity <= 1.0f);
@@ -5815,6 +5831,14 @@ void CharacterRenderer::setInstanceRoomHidden(uint32_t instanceId, bool hidden) 
 bool CharacterRenderer::isInstanceRoomHidden(uint32_t instanceId) const {
     const auto it = instances.find(instanceId);
     return it != instances.end() && it->second.roomHidden;
+}
+
+float CharacterRenderer::getInstanceEffectiveOpacity(uint32_t instanceId) const {
+    const auto it = instances.find(instanceId);
+    if (it == instances.end()) return 0.0f;
+    const auto& inst = it->second;
+    return characterEmitterFade(inst.visible && !inst.replaced && !inst.roomHidden,
+                                inst.opacity, inst.cameraOpacity, inst.kitOpacity);
 }
 
 void CharacterRenderer::setInstanceVisible(uint32_t instanceId, bool visible) {
