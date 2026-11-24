@@ -712,3 +712,36 @@ TEST_CASE("A walker on the nose of a step is turned by the box beyond it and get
     CHECK(walker.position.x < 1974.5f);
     CHECK(walker.position.z > 56.7f);
 }
+
+TEST_CASE("A ceiling the lifted body comes up against does not turn the move aside", "[body_mover]") {
+    // Valley of Trials (-520.4, -4254.4), WoWee's own triangles: two terrain
+    // faces to stand on (47 and 45 degrees), the 75 degree terrain face
+    // ahead, and the underside of a rock that hangs over them, a yard above
+    // the walker's head. Native slides (+0.0353, -0.0063) a frame along the
+    // steep terrain face for as long as the key is held, from (-520.64,
+    // -4254.47) past (-519.2, -4254.5) in four runs. Turned every other
+    // frame by the rock's underside (45 degrees from level), which only the
+    // lifted body meets, the walker went back and forth around (-520.4,
+    // -4254.43).
+    const Mesh mesh = {
+        upFacing({-518.75f, -4256.25f, 48.9323769f}, {-520.833313f, -4254.1665f, 49.5732269f}, {-520.833313f, -4258.33301f, 45.8596802f}),
+        upFacing({-518.75f, -4256.25f, 48.9323769f}, {-516.666626f, -4254.1665f, 51.7840157f}, {-520.833313f, -4254.1665f, 49.5732269f}),
+        upFacing({-518.75f, -4252.08301f, 58.2001762f}, {-520.833313f, -4254.1665f, 49.5732269f}, {-516.666626f, -4254.1665f, 51.7840157f}),
+        {{{-518.098511f, -4256.19141f, 53.6731033f}, {-522.537903f, -4254.6333f, 54.0844193f}, {-519.735535f, -4252.41797f, 50.8644028f}}},
+    };
+    const float dt = 1.0f / 30.0f;
+    const glm::vec3 run(std::cos(1.269f) * 7.0f * dt, std::sin(1.269f) * 7.0f * dt, 0.0f);
+    const BodyMove settled = fallBody(glm::vec3(-520.6385f, -4254.4678f, 49.72f), glm::vec3(0.0f, 0.0f, -1.5f),
+                                      kRadius, kHeight, mesh);
+    REQUIRE(settled.support == BodySupport::Walkable);
+    Walker walker{.position = settled.position, .baseZ = settled.position.z};
+    float back = 0.0f;
+    for (int i = 0; i < 30; ++i) {
+        const float before = walker.position.x;
+        walker.frame(mesh, run, dt);
+        back = std::max(back, before - walker.position.x);
+    }
+    CHECK(back < 0.005f);
+    CHECK(walker.position.x > -519.7f);
+    CHECK(std::abs(walker.position.y + 4254.63f) < 0.1f);
+}

@@ -131,6 +131,30 @@
 //    0.134): as far as a body resting 0.03 to 1.3 mm over the ground gets
 //    before the ground meets it. What sets that height is not known; this
 //    body rests on its ground and does not advance there.
+//
+// How far native lifts the body
+// (_experiments/20261124T052000Z.movement_collision_parity_round15, liftscan.py,
+// feat2.cpp; measured, not built in - this mover lifts by all that is left of
+// the yard):
+//  - Where the lifted body is stopped by something and native stays up there,
+//    it has risen by the frame's move divided by the body's radius, no more
+//    than what is left of the yard: 0.5962, 0.6414, 0.6637, 0.7100, 0.7560,
+//    0.7789 and 0.8023 yd in frames of 26, 28, 29, 31, 33, 34 and 35 ms at
+//    run speed, where move / radius is 0.5956, 0.6415, 0.6644, 0.7102,
+//    0.7560, 0.7789 and 0.8018 (23 frames at the Anvilmar post, the
+//    Northshire Abbey doorway pillar, the Northshire fence, the Karabor
+//    Sewers and the Exodar table), and the rest of the yard in the next
+//    frame. With moves longer than the radius
+//    (speed 1.5 and up) that is the whole yard at once, as measured before.
+//    Which blocked lifts native keeps and which it gives up for a slide is
+//    still not known.
+//  - Climbing 42 degree terrain beside a 52 degree face (Valley of Trials,
+//    -521.9, -4255.5) native takes its whole move forward only when the
+//    steep face is further ahead than this mover asks for, and slides along
+//    it from further back: at 33 ms frames with the steep face's foot 0.62
+//    to 0.70 yd ahead and not at 0.56 to 0.64; at 17 ms from 0.085 yd. Both
+//    go along the foot of the steep face in a zigzag; native takes 5 moves
+//    forward in 14 frames.
 namespace wowee::rendering::movement {
 
 // What a character's scale (OBJECT_FIELD_SCALE_X times its model's) does to
@@ -564,7 +588,23 @@ inline BodyMove walkBody(glm::vec3 from, const glm::vec3& requestedDelta, float 
             // back into the wall. Turned by the direction separating body
             // and ridge instead, WoWee slipped out sideways and went on
             // round the pillar, 3.7 yd past where native stands.
-            if (across->time < wallAt) {
+            // A ceiling does not turn it: a face that fronts down as
+            // steeply as ground fronts up, which the lifted head comes up
+            // against. Under a rock overhanging steep terrain in the Valley
+            // of Trials (-520.4, -4254.4; where the user's client stood on
+            // 2026-11-19), its underside 45 degrees from level, native
+            // slides (+0.0353, -0.0063) a frame along the terrain face ahead
+            // of its feet for as long as the key is held (four runs, 34 to
+            // 60 frames each, at 33 and at 17 ms), through frames where
+            // the body lifted 0.76 yd or a yard meets the underside sooner
+            // (0.018 yd on) than the body at its own height meets the
+            // terrain face (0.142 yd on). Turned by the
+            // underside every other frame, WoWee went back and forth there
+            // and came 1.3 yd less far. An upright face met sooner by the
+            // lifted body does turn native (a Northshire fence post, -8944.9,
+            // -118.2: five frames along the post's face, the fence met 0.011
+            // yd later at the body's own height).
+            if (across->time < wallAt && across->front.z > -minWalkableNormalZ) {
                 const auto liftedWall = firstWall(start + up);
                 result.blocker = liftedWall && liftedWall->time <= across->time + kTie / travel
                     ? liftedWall->front : across->normal;
