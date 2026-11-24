@@ -72,6 +72,14 @@ void restoreMovementSpline(const UpdateBlock& block, Entity& entity, const Entit
         const auto p = core::coords::serverToCanonical({point[0], point[1], point[2]});
         path.push_back({p.x, p.y, p.z});
     }
+    float initialOrientation = entity.getOrientation();
+    {
+        const float dx = path[1][0] - path[0][0];
+        const float dy = path[1][1] - path[0][1];
+        if (std::abs(dx) > 0.01f || std::abs(dy) > 0.01f) {
+            initialOrientation = std::atan2(-dy, dx);
+        }
+    }
     std::optional<float> finalOrientation;
     uint64_t facingTargetGuid = 0;
     if (block.splineHasFinalAngle) {
@@ -87,6 +95,11 @@ void restoreMovementSpline(const UpdateBlock& block, Entity& entity, const Entit
     } else if (block.splineHasFinalTarget && block.splineFinalTarget != 0) {
         facingTargetGuid = block.splineFinalTarget;
         if (auto target = entities.getEntity(facingTargetGuid)) {
+            const float startDx = target->getX() - path.front()[0];
+            const float startDy = target->getY() - path.front()[1];
+            if (std::abs(startDx) > 0.01f || std::abs(startDy) > 0.01f) {
+                initialOrientation = std::atan2(-startDy, startDx);
+            }
             const float dx = target->getX() - path.back()[0];
             const float dy = target->getY() - path.back()[1];
             if (dx * dx + dy * dy > 0.0001f) {
@@ -103,10 +116,9 @@ void restoreMovementSpline(const UpdateBlock& block, Entity& entity, const Entit
         ? (block.splineFlags & SplineFlagWotlk::CATMULLROM) != 0
         : (block.splineFlags & SplineFlag::FLYING_TBC) != 0) &&
         (cyclic || path.size() >= 3);
-    entity.startMoveAlongPath(path, entity.getOrientation(), block.splineDurationMs / 1000.0f,
-                              smooth,
-                              facingTargetGuid == 0, cyclic, finalOrientation, facingTargetGuid,
-                              enterCycle);
+    entity.startServerSpline(path, initialOrientation, block.splineDurationMs / 1000.0f,
+                             smooth, facingTargetGuid == 0, block.splineFlags,
+                             facingTargetGuid, finalOrientation, cyclic, enterCycle);
     entity.updateMovement(std::min(block.splineElapsedMs, block.splineDurationMs) / 1000.0f);
     LOG_DEBUG("Restored movement spline: guid=0x", std::hex, block.guid, std::dec,
               " elapsed=", block.splineElapsedMs, " duration=", block.splineDurationMs,

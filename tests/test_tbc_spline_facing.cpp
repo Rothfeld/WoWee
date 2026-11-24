@@ -306,6 +306,24 @@ TEST_CASE("TBC MOVEMENTBLOCK create-block spline parses FINAL_ANGLE, FINAL_POINT
         CHECK_FALSE(block.splineHasFinalPoint);
         CHECK(block.splineFinalTarget == kTarget);
         CHECK_FALSE(pkt.hasData());
+
+        // Restoring a CREATE_OBJECT FINAL_TARGET spline (e.g. Vorpil Void Traveler
+        // spawned mid-MoveChase at elapsed=0 with a sideways spawn orientation) must
+        // activate serverSpline_ so syncPlayerServerSpline tracks facingTargetGuid
+        // and immediately face the target instead of locking to spawn orientation.
+        const glm::vec3 startCan = serverToCanonical(nodes[1]);
+        const glm::vec3 endCan = serverToCanonical(nodes[2]);
+        const float targetYaw = std::atan2(-(endCan.y - startCan.y), endCan.x - startCan.x);
+        Unit traveler(0xf130004b1a596f08ull);
+        traveler.setPosition(startCan.x, startCan.y, startCan.z, /*sidewaysSpawn=*/1.23f);
+        traveler.startServerSpline({{startCan.x, startCan.y, startCan.z},
+                                    {endCan.x, endCan.y, endCan.z}},
+                                   targetYaw, 4.0f, false, false,
+                                   block.splineFlags, block.splineFinalTarget, targetYaw);
+        traveler.updateMovement(0.0f);
+        CHECK(traveler.isServerSplineActive());
+        CHECK(traveler.splineFacingTargetGuid() == kTarget);
+        CHECK(std::abs(normalizeAngleRad(traveler.getOrientation() - targetYaw)) < 0.001f);
     }
 }
 
