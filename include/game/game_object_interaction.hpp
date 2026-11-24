@@ -198,4 +198,17 @@ inline GameObjectDialogTransition resolveGameObjectDialogTransition(uint64_t cur
     return {currentGuid, newGuid};
 }
 
+/// Whether a GameObject state update (`newState`) should trigger a state
+/// animation and sound transition given the last applied/known state.
+///
+/// Native 2.4.3 ignores redundant state publications where the state byte did
+/// not change (e.g. CMaNGOS `Player::SetGameMaster` re-sending
+/// `UPDATETYPE_VALUES` with `GAMEOBJECT_STATE = 1` for every visible door on
+/// `.gm on`/`.gm off`, or `GAMEOBJECT_BYTES_1` updates where only `artKit` or
+/// `animProgress` changed). Initial spawn (`!appliedState`) always applies.
+inline constexpr bool shouldApplyGameObjectState(std::optional<uint8_t> appliedState,
+                                                 uint8_t newState) {
+    return !appliedState.has_value() || *appliedState != newState;
+}
+
 } // namespace wowee::game

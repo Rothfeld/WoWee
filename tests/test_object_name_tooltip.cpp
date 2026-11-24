@@ -284,3 +284,24 @@ TEST_CASE("Fishing bobber SMSG_GAMEOBJECT_CUSTOM_ANIM normalizes to Custom0 (slo
     CHECK(gameObjectCustomAnimation(normalizeGameObjectCustomAnimSlot(kGooberType, 2u)) == 155u);
     CHECK_FALSE(gameObjectCustomAnimation(153u).has_value());
 }
+
+TEST_CASE("Redundant GameObject state updates (e.g. .gm on/off visibility refresh) do not replay state animations",
+          "[gameobject][state]") {
+    using wowee::game::shouldApplyGameObjectState;
+
+    // Initial spawn (no applied state yet) always applies.
+    CHECK(shouldApplyGameObjectState(std::nullopt, 0u));
+    CHECK(shouldApplyGameObjectState(std::nullopt, 1u));
+    CHECK(shouldApplyGameObjectState(std::nullopt, 2u));
+
+    // Redundant same-state updates (1 -> 1 shut gate on .gm on/.gm off, 0 -> 0 open gate) are suppressed.
+    CHECK_FALSE(shouldApplyGameObjectState(uint8_t{1}, 1u));
+    CHECK_FALSE(shouldApplyGameObjectState(uint8_t{0}, 0u));
+    CHECK_FALSE(shouldApplyGameObjectState(uint8_t{2}, 2u));
+
+    // Genuine state transitions always apply (Open, Close, Destroy, Rebuild).
+    CHECK(shouldApplyGameObjectState(uint8_t{1}, 0u));
+    CHECK(shouldApplyGameObjectState(uint8_t{0}, 1u));
+    CHECK(shouldApplyGameObjectState(uint8_t{1}, 2u));
+    CHECK(shouldApplyGameObjectState(uint8_t{2}, 1u));
+}

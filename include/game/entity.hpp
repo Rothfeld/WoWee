@@ -973,6 +973,12 @@ public:
     [[nodiscard]] bool isNewlySpawned() const { return newlySpawned_; }
     void setNewlySpawned(bool v) { newlySpawned_ = v; }
 
+    // Last GOState byte (0=ACTIVE, 1=READY, 2=ACTIVE_ALTERNATIVE) received from
+    // the server via CREATE or VALUES updates, so redundant VALUES updates
+    // (such as .gm on/.gm off visibility refreshes) do not replay transitions.
+    [[nodiscard]] std::optional<uint8_t> getServerState() const { return serverState_; }
+    void setServerState(uint8_t s) { serverState_ = s; }
+
     /// Full 3D world-space orientation quaternion (x, y, z, w in server/render
     /// coordinates) from GAMEOBJECT_ROTATION / GAMEOBJECT_PARENTROTATION /
     /// UPDATEFLAG_ROTATION.
@@ -998,6 +1004,7 @@ protected:
     glm::quat rotation_{1.0f, 0.0f, 0.0f, 0.0f};
     bool hasRotation_ = false;
     bool newlySpawned_ = false;
+    std::optional<uint8_t> serverState_;
 };
 
 /// What to call this entity on screen, whatever kind it turns out to be.

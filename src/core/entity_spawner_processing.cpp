@@ -5,6 +5,7 @@
 #include <set>
 #include "rendering/m2_model_classifier.hpp"
 #include "game/transport_path_repository.hpp"
+#include "game/game_object_interaction.hpp"
 #include "game/update_field_helpers.hpp"
 #include "core/coordinates.hpp"
 #include "core/logger.hpp"
@@ -2047,6 +2048,15 @@ void EntitySpawner::applyGameObjectState(uint64_t guid, uint8_t goState) {
     if (!m2) return;
 
     const uint32_t instanceId = it->second.instanceId;
+    const auto appliedIt = gameObjectAppliedState_.find(guid);
+    const std::optional<uint8_t> prevApplied =
+        (appliedIt != gameObjectAppliedState_.end())
+            ? std::optional<uint8_t>(appliedIt->second)
+            : std::nullopt;
+    if (!game::shouldApplyGameObjectState(prevApplied, goState)) {
+        gameObjectPendingState_.erase(guid);
+        return;
+    }
     gameObjectAppliedState_[guid] = goState;
     // Canonical GOState: 0 ACTIVE (open), 1 READY (closed), 2 ACTIVE_ALTERNATIVE
     // (destroyed). The animation ids are the game's own: OPEN, CLOSE, DESTROY.

@@ -5,6 +5,7 @@
 #include "game/spline_packet.hpp"
 #include "core/env_flag.hpp"
 #include "game/game_handler.hpp"
+#include "game/game_object_interaction.hpp"
 #include "game/protocol_constants.hpp"
 #include "game/game_utils.hpp"
 #include "game/packet_parsers.hpp"
@@ -2847,10 +2848,11 @@ void EntityController::onCreateGameObject(const UpdateBlock& block, std::shared_
     const uint16_t ufBytes1 = gameObjectStateField();
     if (ufBytes1 != 0xFFFF) {
         auto itBytes = block.fields.find(ufBytes1);
+        const uint8_t initialState = static_cast<uint8_t>(
+            itBytes == block.fields.end() ? 0 : itBytes->second & 0xFF);
+        go->setServerState(initialState);
         if (owner_.gameObjectStateCallbackRef()) {
-            owner_.gameObjectStateCallbackRef()(
-                block.guid, static_cast<uint8_t>(
-                    itBytes == block.fields.end() ? 0 : itBytes->second & 0xFF));
+            owner_.gameObjectStateCallbackRef()(block.guid, initialState);
         }
     }
     const uint16_t ufAnimProg = fieldIndex(UF::GAMEOBJECT_ANIMPROGRESS);
@@ -3286,8 +3288,11 @@ void EntityController::onValuesUpdateGameObject(const UpdateBlock& block, std::s
         if (itB != block.fields.end()) {
             stateUpdated = true;
             uint8_t goState = static_cast<uint8_t>(itB->second & 0xFF);
-            if (owner_.gameObjectStateCallbackRef())
-                owner_.gameObjectStateCallbackRef()(block.guid, goState);
+            if (shouldApplyGameObjectState(go->getServerState(), goState)) {
+                go->setServerState(goState);
+                if (owner_.gameObjectStateCallbackRef())
+                    owner_.gameObjectStateCallbackRef()(block.guid, goState);
+            }
         }
     }
     const uint16_t ufGoAnimProg = fieldIndex(UF::GAMEOBJECT_ANIMPROGRESS);
