@@ -302,6 +302,7 @@ public:
     static constexpr int MAX_WEAPON_ATTACHES_PER_TICK = 2;
 
     // Dead creature tracking (spawn in corpse/death pose)
+    bool isCreatureDead(uint64_t guid) const { return deadCreatureGuids_.contains(guid); }
     void markCreatureDead(uint64_t guid) { deadCreatureGuids_.insert(guid); }
     void unmarkCreatureDead(uint64_t guid) { deadCreatureGuids_.erase(guid); dyingCreatureGuids_.erase(guid); }
     void clearDeadCreatureGuids() { deadCreatureGuids_.clear(); dyingCreatureGuids_.clear(); }

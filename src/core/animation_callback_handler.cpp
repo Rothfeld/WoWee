@@ -346,9 +346,18 @@ void AnimationCallbackHandler::setupCallbacks() {
         uint32_t instanceId = entitySpawner_.getPlayerInstanceId(guid);
         if (instanceId == 0) instanceId = entitySpawner_.getCreatureInstanceId(guid);
         if (instanceId == 0) return;
-        // Don't override Death animation
-        uint32_t curAnim = 0; float curT = 0.0f, curDur = 0.0f;
-        if (cr->getAnimationState(instanceId, curAnim, curT, curDur) && rendering::anim::isCorpsePose(curAnim)) return;
+        // Don't override Death animation while the unit is in a server dead/corpse pose.
+        const auto ent = gameHandler_.getEntityManager().getEntity(guid);
+        const auto unit = std::dynamic_pointer_cast<game::Unit>(ent);
+        const auto standState = ent
+            ? static_cast<uint8_t>(ent->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_1)))
+            : uint8_t{0};
+        if (entitySpawner_.isCreatureDead(guid) ||
+            (unit && game::isUnitDeadPose(unit->getHealth(), unit->getMaxHealth(),
+                                          unit->getDynamicFlags(), standState,
+                                          unit->getNpcEmoteState()))) {
+            return;
+        }
         const bool takeoff = animId == rendering::anim::JUMP_START;
         cr->playAnimation(instanceId, animId, !takeoff,
                           takeoff ? rendering::anim::JUMP : 0);

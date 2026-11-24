@@ -3921,10 +3921,11 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
             const auto creatureUnitPtr = std::static_pointer_cast<game::Unit>(entity);
             const auto creatureStandState = static_cast<uint8_t>(
                 entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_1)));
-            const bool creatureDeadOrCorpse = game::isUnitDeadPose(
-                creatureUnitPtr->getHealth(), creatureUnitPtr->getMaxHealth(),
-                creatureUnitPtr->getDynamicFlags(), creatureStandState,
-                creatureUnitPtr->getNpcEmoteState());
+            const bool creatureDeadOrCorpse = entitySpawner_->isCreatureDead(guid) ||
+                game::isUnitDeadPose(
+                    creatureUnitPtr->getHealth(), creatureUnitPtr->getMaxHealth(),
+                    creatureUnitPtr->getDynamicFlags(), creatureStandState,
+                    creatureUnitPtr->getNpcEmoteState());
 
             // Locally possessed/charmed unit (Power of the Blue Flight, Mind Control, etc.):
             // driven directly by CameraController physics (including parabolic jump height)
@@ -4097,15 +4098,23 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                 // switches the animation.
                 const uint32_t auraLocomotion = creatureMount ? 0 : entitySpawner_->remoteAuraLocomotion(guid);
                 uint32_t& prevAuraLocomotion = entitySpawner_->getRemoteWasAuraLocomotion()[guid];
+                uint32_t curAnimId = 0; float curT = 0.0f, curDur = 0.0f;
+                const bool gotState = charRenderer->getAnimationState(instanceId, curAnimId, curT, curDur);
+                const bool leaveCorpsePose = game::shouldLeaveCorpsePoseForMovement(
+                    deadOrCorpse, isMovingNow,
+                    gotState && rendering::anim::isCorpsePose(curAnimId),
+                    rendering::anim::isCorpsePose(auraLocomotion));
                 // Trigger animation update on any locomotion-state transition, not just
-                // moving/idle - e.g. creature lands while still moving → FlyForward→Run,
-                // or server changes WALKING flag while creature is already running → Walk.
+                // moving/idle - e.g. creature lands while still moving -> FlyForward->Run,
+                // or server changes WALKING flag while creature is already running -> Walk,
+                // or server clears UNIT_STAND_STATE_DEAD (7) while already moving -> Run.
                 const bool stateChanged = (isMovingNow  != prevMoving)   ||
                                           (isSwimmingNow != prevSwimming) ||
                                           (isFlyingNow   != prevFlying)   ||
                                           (isWalkingNow  != prevWalking && isMovingNow) ||
                                           (isStealthedNow != prevStealthed && isMovingNow) ||
-                                          (auraLocomotion != prevAuraLocomotion && isMovingNow);
+                                          (auraLocomotion != prevAuraLocomotion && isMovingNow) ||
+                                          leaveCorpsePose;
                 if (stateChanged) {
                     _creatureWasMoving[guid]   = isMovingNow;
                     _creatureWasSwimming[guid] = isSwimmingNow;
@@ -4113,9 +4122,7 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                     _creatureWasWalking[guid]  = isWalkingNow;
                     prevStealthed = isStealthedNow;
                     prevAuraLocomotion = auraLocomotion;
-                    uint32_t curAnimId = 0; float curT = 0.0f, curDur = 0.0f;
-                    bool gotState = charRenderer->getAnimationState(instanceId, curAnimId, curT, curDur);
-                    if (!gotState || !rendering::anim::isCorpsePose(curAnimId)) {
+                    if (!deadOrCorpse) {
                         if (creatureMount) {
                             // Mounts only play locomotion and neutral idle poses; rider
                             // cast holds, combat ready stances, emotes, and auras stay
@@ -4400,10 +4407,11 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                 auto unitPtr = std::static_pointer_cast<game::Unit>(entity);
                 const auto remoteStandState = static_cast<uint8_t>(
                     entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_1)));
-                const bool deadOrCorpse = game::isUnitDeadPose(
-                    unitPtr->getHealth(), unitPtr->getMaxHealth(),
-                    unitPtr->getDynamicFlags(), remoteStandState,
-                    unitPtr->getNpcEmoteState());
+                const bool deadOrCorpse = entitySpawner_->isCreatureDead(guid) ||
+                    game::isUnitDeadPose(
+                        unitPtr->getHealth(), unitPtr->getMaxHealth(),
+                        unitPtr->getDynamicFlags(), remoteStandState,
+                        unitPtr->getNpcEmoteState());
                 const bool largeCorrection = (planarDistSq > 36.0f) || (dz > 3.0f);
                 const bool entityIsMoving = entity->isActivelyMoving();
                 constexpr float kMoveThreshSq2 = 0.03f * 0.03f;
@@ -4492,6 +4500,10 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                     curAnimId == rendering::anim::STEALTH_RUN;
                 const bool gaitChanged = groundForwardGait != 0 && gotState &&
                     isGroundForwardLocoAnim && curAnimId != groundForwardGait;
+                const bool leaveCorpsePose = game::shouldLeaveCorpsePoseForMovement(
+                    deadOrCorpse, isMovingNow,
+                    gotState && rendering::anim::isCorpsePose(curAnimId),
+                    rendering::anim::isCorpsePose(auraLocomotion));
                 const bool stateChanged = (isMovingNow  != prevMoving)   ||
                                           (isSwimmingNow != prevSwimming) ||
                                           (isFlyingNow   != prevFlying)   ||
@@ -4499,7 +4511,7 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                                           (isStealthedNow != prevStealthed && isMovingNow) ||
                                           (movingBackward != prevBackward) || (airborne != wasAirborne) || jumpFinished ||
                                           (auraLocomotion != prevAuraLocomotion && (isMovingNow || airborne)) ||
-                                          gaitChanged;
+                                          gaitChanged || leaveCorpsePose;
                 if (stateChanged) {
                     prevAuraLocomotion = auraLocomotion;
                     _pCreatureWasMoving[guid]   = isMovingNow;
@@ -4509,7 +4521,7 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                     prevStealthed = isStealthedNow;
                     entitySpawner_->getRemoteWasMovingBackward()[guid] = movingBackward;
                     entitySpawner_->getRemoteWasAirborne()[guid] = airborne;
-                    if (!gotState || !rendering::anim::isCorpsePose(curAnimId)) {
+                    if (!deadOrCorpse) {
                         uint32_t targetAnim;
                         if (auraLocomotion && (airborne || isMovingNow)) {
                             charRenderer->playAnimation(instanceId, auraLocomotion, true);
@@ -4576,7 +4588,7 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                     const bool haveRiderState = charRenderer->getAnimationState(
                         instanceId, riderAnim, riderTime, riderDuration);
                     if ((!haveRiderState || riderAnim != mountedRiderAnim) &&
-                        !rendering::anim::isCorpsePose(riderAnim)) {
+                        !deadOrCorpse) {
                         charRenderer->playAnimation(instanceId, mountedRiderAnim,
                                                     /*loop=*/true);
                     }

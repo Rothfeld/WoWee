@@ -220,17 +220,32 @@ void EntitySpawnCallbackHandler::setupCallbacks() {
                     // Mutating wasMoving here would consume its transition and
                     // leave the rider walking instead of seated on the mount.
                     if (entitySpawner_.getRemotePlayerMount(guid)) return;
+                    const auto unit = std::dynamic_pointer_cast<game::Unit>(ent);
+                    const auto standState = ent
+                        ? static_cast<uint8_t>(ent->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_1)))
+                        : uint8_t{0};
+                    const bool deadOrCorpse = entitySpawner_.isCreatureDead(guid) ||
+                        (unit && game::isUnitDeadPose(unit->getHealth(), unit->getMaxHealth(),
+                                                      unit->getDynamicFlags(), standState,
+                                                      unit->getNpcEmoteState()));
+                    // Do not play locomotion or mark wasMoving while the server still
+                    // holds the unit in a dead/corpse pose; once the server clears
+                    // UNIT_STAND_STATE_DEAD / UNIT_DYNFLAG_DEAD, the render sync loop
+                    // will see the false->true moving transition and start locomotion.
+                    if (deadOrCorpse) return;
                     uint32_t curAnimId = 0; float curT = 0.0f, curDur = 0.0f;
                     auto* cr = renderer_.getCharacterRenderer();
                     bool gotState = cr->getAnimationState(instanceId, curAnimId, curT, curDur);
                     const bool walking = entitySpawner_.remoteGaitWalks(guid, instanceId);
                     const bool swimming = entitySpawner_.getCreatureSwimmingState().count(guid) > 0;
                     const bool flying = entitySpawner_.getCreatureFlyingState().count(guid) > 0;
-                    const auto unit = std::dynamic_pointer_cast<game::Unit>(ent);
                     const bool stealthed = unit && unit->hasCreepVisibility();
-                    const uint32_t targetAnim = rendering::creatureMovingAnimation(flying, swimming, walking, stealthed);
+                    const uint32_t auraLocomotion = entitySpawner_.remoteAuraLocomotion(guid);
+                    const uint32_t targetAnim = auraLocomotion != 0
+                        ? auraLocomotion
+                        : rendering::creatureMovingAnimation(flying, swimming, walking, stealthed);
                     // Only restart when the selected locomotion animation changed.
-                    if (!gotState || (!rendering::anim::isCorpsePose(curAnimId) && curAnimId != targetAnim)) {
+                    if (!gotState || curAnimId != targetAnim) {
                         cr->playAnimation(instanceId, targetAnim, /*loop=*/true);
                     }
                     uint32_t actualAnim = 0; float actualTime = 0.0f, actualDuration = 0.0f;

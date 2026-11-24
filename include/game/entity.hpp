@@ -121,6 +121,17 @@ inline bool isUnitDeadPose(uint32_t health, uint32_t maxHealth, uint32_t dynamic
            npcEmoteState == EMOTE_STATE_DEAD;
 }
 
+/// True when a moving living unit's renderer is still holding a corpse pose
+/// (e.g. UNIT_STAND_STATE_DEAD cleared by the server after aggro MonsterMove)
+/// and must transition to locomotion, while preserving genuine corpses and
+/// deliberate dead-pose auras (e.g. Impaling Spine).
+inline bool shouldLeaveCorpsePoseForMovement(bool serverDeadPose, bool isMovingNow,
+                                             bool currentAnimIsCorpsePose,
+                                             bool auraLocomotionIsCorpsePose) {
+    return !serverDeadPose && isMovingNow && currentAnimIsCorpsePose &&
+           !auraLocomotionIsCorpsePose;
+}
+
 /// True when clearing UNIT_DYNFLAG_DEAD transitions the unit back to a living,
 /// standing state (e.g. resurrection or cancelling Feign Death while alive).
 /// False when the unit is still dead (health == 0 or still carries corpse flags),

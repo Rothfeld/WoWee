@@ -236,6 +236,21 @@ TEST_CASE("Dead pose state covers corpse, feign death, stand-state dead, and emo
     REQUIRE_FALSE(isUnitDeadPose(100, 100, UNIT_DYNFLAG_TAPPED, 1, 0));
 }
 
+TEST_CASE("Moving living unit leaves stale corpse pose without regressing corpses or dead-pose auras", "[entity][corpse]") {
+    // Tortured Skeleton / Cabal Familiar: UNIT_STAND_STATE_DEAD cleared to 0 while moving.
+    REQUIRE(shouldLeaveCorpsePoseForMovement(/*serverDeadPose=*/false, /*isMovingNow=*/true,
+                                             /*currentAnimIsCorpsePose=*/true,
+                                             /*auraLocomotionIsCorpsePose=*/false));
+    // Genuine corpse or still-prone standState=7 / Feign Death must keep corpse pose.
+    REQUIRE_FALSE(shouldLeaveCorpsePoseForMovement(true, true, true, false));
+    // Stationary living unit (e.g. idle) is handled by stand-state / idle transitions, not movement recovery.
+    REQUIRE_FALSE(shouldLeaveCorpsePoseForMovement(false, false, true, false));
+    // Already playing locomotion or non-corpse anim needs no recovery.
+    REQUIRE_FALSE(shouldLeaveCorpsePoseForMovement(false, true, false, false));
+    // Deliberate dead-pose aura (e.g. Impaling Spine 39837) keeps its corpse pose.
+    REQUIRE_FALSE(shouldLeaveCorpsePoseForMovement(false, true, true, true));
+}
+
 TEST_CASE("Clearing UNIT_DYNFLAG_DEAD only respawns living units", "[entity][corpse]") {
     // Killing a feigning NPC (e.g. Warder Corpse with aura 29266) drops health to 0
     // and strips UNIT_DYNFLAG_DEAD in the same update: must NOT trigger respawn.
