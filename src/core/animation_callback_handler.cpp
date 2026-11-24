@@ -222,10 +222,17 @@ void AnimationCallbackHandler::setupCallbacks() {
         if (!isLocalPlayer && cr->isInstanceDead(instanceId)) return;
         auto* ac = renderer_.getAnimationController();
 
+        const bool inCombatReadyStance = isLocalPlayer
+            ? (ac && ac->isInCombat())
+            : rendering::isCombatReadyStance(entitySpawner_.remoteIdleAnimation(victimGuid));
+
         uint32_t animId = 0;
         switch (reaction) {
             case game::GameHandler::HitReaction::WOUND:
-            case game::GameHandler::HitReaction::SPELL_WOUND:      animId = rendering::anim::COMBAT_WOUND; break;
+            case game::GameHandler::HitReaction::SPELL_WOUND:
+                animId = rendering::woundAnimationForStance(
+                    inCombatReadyStance, cr->hasAnimation(instanceId, rendering::anim::STAND_WOUND));
+                break;
             case game::GameHandler::HitReaction::CRIT_WOUND:
             case game::GameHandler::HitReaction::SPELL_CRIT_WOUND: animId = rendering::anim::COMBAT_CRITICAL; break;
             case game::GameHandler::HitReaction::DODGE:            animId = rendering::anim::DODGE; break;

@@ -29,10 +29,40 @@ inline constexpr uint32_t kCreatureModelNoWound = 0x2;
 ///   (_experiments/20261119T1311Z.wound_rule).
 inline constexpr bool unitPlaysWound(uint32_t reactionAnimation, bool isCreature, uint32_t creatureTypeFlags,
                                      uint32_t creatureModelFlags) {
-    const bool wound = reactionAnimation == anim::COMBAT_WOUND || reactionAnimation == anim::COMBAT_CRITICAL;
+    const bool wound = reactionAnimation == anim::STAND_WOUND ||
+                       reactionAnimation == anim::COMBAT_WOUND ||
+                       reactionAnimation == anim::COMBAT_CRITICAL;
     if (!wound) return true;
     if (creatureModelFlags & kCreatureModelNoWound) return false;
     return !(isCreature && (creatureTypeFlags & kCreatureTypeDoNotPlayWoundAnim));
+}
+
+/// True when `idleAnimation` is a melee or ranged combat-ready stance.
+/// Units in a combat-ready stance react to normal hits with CombatWound (9);
+/// units standing upright out of combat stance (weapons sheathed, not attacking)
+/// react with StandWound (8) when authored on the model.
+inline constexpr bool isCombatReadyStance(uint32_t idleAnimation) {
+    return idleAnimation == anim::READY_UNARMED ||
+           idleAnimation == anim::READY_1H ||
+           idleAnimation == anim::READY_2H ||
+           idleAnimation == anim::READY_2H_LOOSE ||
+           idleAnimation == anim::READY_BOW ||
+           idleAnimation == anim::READY_RIFLE ||
+           idleAnimation == anim::READY_THROWN ||
+           idleAnimation == anim::READY_ABILITY ||
+           idleAnimation == anim::HOLD_BOW ||
+           idleAnimation == anim::HOLD_RIFLE ||
+           idleAnimation == anim::HOLD_THROWN;
+}
+
+/// Select the wound hit-reaction animation for a non-critical incoming hit.
+/// Observed on Native TBC 2.4.3 (BloodElfMale 15476 hit by Avian Ripper 21891):
+/// standing idle (not auto-attacking) plays StandWound (8), whereas active
+/// combat-ready stance plays CombatWound (9). Models lacking StandWound (8)
+/// fall back to CombatWound (9).
+inline constexpr uint32_t woundAnimationForStance(bool inCombatReadyStance, bool hasStandWound) {
+    if (!inCombatReadyStance && hasStandWound) return anim::STAND_WOUND;
+    return anim::COMBAT_WOUND;
 }
 
 /// Stunned units (UNIT_FLAG_STUNNED = 0x00040000) hold their Stun (14) pose

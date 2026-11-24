@@ -551,15 +551,41 @@ TEST_CASE("IDs above 145 follow 3.3.5's AnimationData.dbc", "[animation]") {
 TEST_CASE("Type flag 0x8 creatures and model flag 0x2 units do not flinch from hits", "[hit-reaction]") {
     using namespace wowee::rendering;
     CHECK_FALSE(unitPlaysWound(anim::COMBAT_WOUND, true, 0x8, 0x0));      // Qiraji Gladiator
+    CHECK_FALSE(unitPlaysWound(anim::STAND_WOUND, true, 0x8, 0x0));       // Qiraji Gladiator standing
     CHECK_FALSE(unitPlaysWound(anim::COMBAT_CRITICAL, true, 0x848, 0x0)); // Amani'shi Warbringer
     CHECK_FALSE(unitPlaysWound(anim::COMBAT_WOUND, true, 0x4c, 0x0));     // Hex Lord Malacrass
     CHECK(unitPlaysWound(anim::COMBAT_WOUND, true, 0, 0x4));              // Defias Thug, HumanMale.mdx
+    CHECK(unitPlaysWound(anim::STAND_WOUND, true, 0, 0x4));               // Defias Thug standing
     CHECK(unitPlaysWound(anim::COMBAT_WOUND, true, 0, 0x0));              // Defias Thug as a gnoll
     CHECK_FALSE(unitPlaysWound(anim::COMBAT_WOUND, true, 0, 0x3));        // Ras Frostwhisper, Lich.mdx
+    CHECK_FALSE(unitPlaysWound(anim::STAND_WOUND, true, 0, 0x3));         // Ras Frostwhisper standing
     CHECK_FALSE(unitPlaysWound(anim::COMBAT_CRITICAL, true, 0, 0x2));     // Skeleton.mdx, Ghoul.mdx
     CHECK_FALSE(unitPlaysWound(anim::COMBAT_WOUND, false, 0, 0x2));       // a player morphed into one
     CHECK(unitPlaysWound(anim::DODGE, true, 0x8, 0x2));
     CHECK(unitPlaysWound(anim::COMBAT_WOUND, false, 0x8, 0x4));           // players have no type flags
+}
+
+TEST_CASE("Wound hit reaction chooses StandWound when standing idle and CombatWound in combat stance",
+          "[hit-reaction]") {
+    using namespace wowee::rendering;
+    CHECK_FALSE(isCombatReadyStance(anim::STAND));
+    CHECK_FALSE(isCombatReadyStance(anim::RUN));
+    CHECK_FALSE(isCombatReadyStance(anim::WALK));
+    CHECK(isCombatReadyStance(anim::READY_UNARMED));
+    CHECK(isCombatReadyStance(anim::READY_1H));
+    CHECK(isCombatReadyStance(anim::READY_2H));
+    CHECK(isCombatReadyStance(anim::READY_2H_LOOSE));
+    CHECK(isCombatReadyStance(anim::READY_BOW));
+    CHECK(isCombatReadyStance(anim::READY_RIFLE));
+    CHECK(isCombatReadyStance(anim::HOLD_BOW));
+
+    // Standing idle with StandWound authored (e.g. BloodElfMale 15476) plays StandWound (8).
+    CHECK(woundAnimationForStance(/*inCombatReadyStance=*/false, /*hasStandWound=*/true) == anim::STAND_WOUND);
+    // Models without StandWound fall back to CombatWound (9).
+    CHECK(woundAnimationForStance(/*inCombatReadyStance=*/false, /*hasStandWound=*/false) == anim::COMBAT_WOUND);
+    // Combat-ready stance always plays CombatWound (9).
+    CHECK(woundAnimationForStance(/*inCombatReadyStance=*/true, /*hasStandWound=*/true) == anim::COMBAT_WOUND);
+    CHECK(woundAnimationForStance(/*inCombatReadyStance=*/true, /*hasStandWound=*/false) == anim::COMBAT_WOUND);
 }
 
 TEST_CASE("SpellVisualKit CharProc 11 freezes animation in place once a sequence is bound", "[freeze-anim]") {
