@@ -107,6 +107,26 @@
 //  - Not built in: at the foot of that folded wall (1819.8, -4242.5) the edge
 //    between its upper faces meets the body's side and native slides on along
 //    the face it was sliding along; WoWee steps 0.14 yd up it, twice a run.
+//
+// Whether a blocked frame first goes up to the wall
+// (_experiments/20261124T010000Z.movement_collision_parity_round11, decomp.py):
+//  - A native frame stopped by a face is either the whole move turned along
+//    the face from where the body stood, or the way to the face and the rest
+//    of the move turned along it. Of frames where a corner of the body meets
+//    the face 0.03 yd or more on: the level move meets ground before the
+//    face (a floor rising ahead: the Orgrimmar ramp, terrain, the Exodar
+//    floor's 0.6 degrees) in about 3,400, all but 17 of them without the
+//    advance; it meets the face first in 29 (Anvilmar post on its level
+//    floor, Northshire steps going down, tree and rock on falling ground),
+//    all 29 with it. Built in (walkBody).
+//  - Where the face is met by its edge there is no advance: the Northshire
+//    Abbey doorway pillar met on the way down the steps (-8916.57, -141.20),
+//    0.056 yd on, 10 runs.
+//  - On ground rising 2.3 mm a frame along a Northshire tree native advanced
+//    part of the way in some frames (0.003 to 0.13 yd of gaps of 0.014 to
+//    0.134): as far as a body resting 0.03 to 1.3 mm over the ground gets
+//    before the ground meets it. What sets that height is not known; this
+//    body rests on its ground and does not advance there.
 namespace wowee::rendering::movement {
 
 // Furthest a walking body is lowered onto ground in one frame. Native lowers
@@ -415,6 +435,42 @@ inline BodyMove walkBody(const glm::vec3& from, const glm::vec3& horizontalDelta
         // it). In a corner nothing is left and the body stays.
         Step taken = attempt(horizontalDelta, true);
         glm::vec2 intent(horizontalDelta.x, horizontalDelta.y);
+        if (!taken.taken) {
+            // A face that is not ground, met by a corner of the body before
+            // anything else: the body goes up to it first, and the rest of
+            // the move is turned aside from there. Where ground comes first
+            // - any floor that rises ahead - or the face is met by its edge,
+            // the whole move is turned aside from where the body stands, and
+            // it is left standing off the wall by whatever the last free
+            // frame left (header comment).
+            // Ground is in the way where it rises into the move: a level
+            // floor touches the resting body all along. Rising by less than
+            // a tenth of a millimetre over the move it is level: native goes
+            // up to the wall on Anvilmar's floor (0.037 degrees, 0.03 mm a
+            // frame) and does not on terrain rising 1.05 mm a frame.
+            constexpr float kLevelRise = 1e-4f;
+            const float travel = glm::length(horizontalDelta);
+            std::optional<BodyContact> ahead;
+            for (const auto& triangle : triangles) {
+                const auto contact = sweepBodyTriangle(from, horizontalDelta, radius, height, triangle);
+                if (!contact || contact->standing) continue;
+                if (contact->face.z >= minWalkableNormalZ &&
+                    -glm::dot(horizontalDelta, contact->front) <= kLevelRise) continue;
+                if (!ahead || preferSupportContact(*contact, *ahead, travel)) ahead = contact;
+            }
+            if (ahead && ahead->corner && ahead->face.z < minWalkableNormalZ) {
+                const glm::vec2 level(ahead->normal.x, ahead->normal.y);
+                const float levelLength = glm::length(level);
+                const float into = -glm::dot(intent, level);
+                if (levelLength > 1e-3f && into > 1e-6f) {
+                    // Up to the contact skin short of the face.
+                    const float reach = std::max(0.0f, ahead->time - kContactSkin * levelLength / into);
+                    from += horizontalDelta * reach;
+                    intent *= 1.0f - reach;
+                    move.position = from;
+                }
+            }
+        }
         glm::vec2 firstWall(0.0f);
         for (int slide = 0; slide < 2 && !taken.taken; ++slide) {
             move.deflected = true;

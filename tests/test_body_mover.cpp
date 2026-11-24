@@ -388,3 +388,44 @@ TEST_CASE("Sliding along a wall is not turned by a face only the lifted body wou
     CHECK(moved.y == Catch::Approx(0.0542f).margin(0.003f));
     CHECK(moved.z == Catch::Approx(-0.0103f).margin(0.003f));
 }
+
+TEST_CASE("A wall met before any ground is walked up to, then slid along", "[body_mover]") {
+    // Anvilmar, a post leaning 85 degrees on a level floor (-6065.74, 394.82,
+    // 392.76; its face along y = 395.17 at the floor). Native, 10 degrees off
+    // head-on with 0.097 yd of free run left, ends that frame against the
+    // face: (+0.0400, +0.0936, 0), the whole sideways part of the move and
+    // the way to the wall. Where the floor rises toward a wall the level move
+    // meets ground first, and native slides from where it stands instead
+    // (the Orgrimmar wall on its ramp, 3,400 frames).
+    const float lean = std::tan(glm::radians(85.0f));
+    const glm::vec3 run = glm::vec3(std::cos(1.396f), std::sin(1.396f), 0.0f) * 0.231f;
+    const auto wallAt = [&](Mesh& mesh, float y, float base) {
+        quad(mesh, {-5, y, base}, {5, y, base}, {5, y + 4.0f / lean, base + 4}, {-5, y + 4.0f / lean, base + 4}, {0, -1, 0});
+    };
+    SECTION("level floor") {
+        Mesh mesh;
+        floorAt(mesh, 0.0f);
+        wallAt(mesh, 0.3515f, 0.0f);
+        const auto rest = lowerBody({0, 0, 0.05f}, 0.1f, kRadius, kHeight, mesh);
+        REQUIRE(rest);
+        const BodyMove move = walkBody(rest->position, run, kMaxStepUp, kRadius, kHeight, mesh);
+        const glm::vec3 moved = move.position - rest->position;
+        CHECK(move.support == BodySupport::Walkable);
+        CHECK(moved.x == Catch::Approx(0.0400f).margin(0.002f));
+        CHECK(moved.y == Catch::Approx(0.0936f).margin(0.003f));
+        CHECK(std::abs(moved.z) < 0.002f);
+    }
+    SECTION("floor rising toward the wall") {
+        Mesh mesh;
+        const float rise = std::tan(glm::radians(17.0f));
+        quad(mesh, {-5, -5, -5 * rise}, {5, -5, -5 * rise}, {5, 5, 5 * rise}, {-5, 5, 5 * rise});
+        wallAt(mesh, 0.3515f, 0.3515f * rise);
+        const auto rest = lowerBody({0, 0, 0.05f}, 0.1f, kRadius, kHeight, mesh);
+        REQUIRE(rest);
+        const BodyMove move = walkBody(rest->position, run, kMaxStepUp, kRadius, kHeight, mesh);
+        const glm::vec3 moved = move.position - rest->position;
+        CHECK(move.support == BodySupport::Walkable);
+        CHECK(moved.x == Catch::Approx(0.0400f).margin(0.002f));
+        CHECK(std::abs(moved.y) < 0.002f);
+    }
+}
