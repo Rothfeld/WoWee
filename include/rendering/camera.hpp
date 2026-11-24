@@ -1,5 +1,8 @@
 #pragma once
 
+#include <algorithm>
+#include <cmath>
+#include <string_view>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <cmath>
@@ -85,6 +88,60 @@ private:
     glm::mat4 projectionMatrix = glm::mat4(1.0f);
     glm::mat4 unjitteredProjectionMatrix = glm::mat4(1.0f);
     glm::vec2 jitterOffset = glm::vec2(0.0f);  // NDC jitter (applied to projection)
+};
+
+/// Continuous scripted camera orbit/zoom state driven by TBC Lua bindings:
+/// MoveView{Right,Left,Up,Down,In,Out}{Start,Stop} and FlipCameraYaw.
+struct ScriptedViewMotion {
+    float rightSpeed = 0.0f;
+    float leftSpeed = 0.0f;
+    float upSpeed = 0.0f;
+    float downSpeed = 0.0f;
+    float inSpeed = 0.0f;
+    float outSpeed = 0.0f;
+
+    [[nodiscard]] bool active() const {
+        return rightSpeed != 0.0f || leftSpeed != 0.0f ||
+               upSpeed != 0.0f || downSpeed != 0.0f ||
+               inSpeed != 0.0f || outSpeed != 0.0f;
+    }
+
+    bool apply(std::string_view op, float value, float& ioYawDegrees) {
+        if (!std::isfinite(value)) return false;
+        if (op == "right") { rightSpeed = value; return false; }
+        if (op == "left")  { leftSpeed = value; return false; }
+        if (op == "up")    { upSpeed = value; return false; }
+        if (op == "down")  { downSpeed = value; return false; }
+        if (op == "in")    { inSpeed = value; return false; }
+        if (op == "out")   { outSpeed = value; return false; }
+        if (op == "flip_yaw") {
+            ioYawDegrees += value;
+            return true;
+        }
+        return false;
+    }
+
+    void advance(float deltaTime,
+                 float yawMoveSpeed, float pitchMoveSpeed, float distanceMoveSpeed,
+                 float minPitch, float maxPitch, float maxDistance,
+                 float& ioYaw, float& ioPitch, float& ioDistance,
+                 bool& outAnglesChanged, bool& outDistanceChanged) const {
+        outAnglesChanged = false;
+        outDistanceChanged = false;
+        if (deltaTime <= 0.0f || !active()) return;
+        const float yawRate = (rightSpeed - leftSpeed) * yawMoveSpeed;
+        const float pitchRate = (upSpeed - downSpeed) * pitchMoveSpeed;
+        const float zoomRate = (outSpeed - inSpeed) * distanceMoveSpeed;
+        if (yawRate != 0.0f || pitchRate != 0.0f) {
+            ioYaw -= yawRate * deltaTime;
+            ioPitch = std::clamp(ioPitch + pitchRate * deltaTime, minPitch, maxPitch);
+            outAnglesChanged = true;
+        }
+        if (zoomRate != 0.0f) {
+            ioDistance = std::clamp(ioDistance + zoomRate * deltaTime, 0.0f, maxDistance);
+            outDistanceChanged = true;
+        }
+    }
 };
 
 } // namespace rendering

@@ -1488,6 +1488,39 @@ static int lua_ResetView(lua_State* L) { return cameraViewOp(L, "reset", true); 
 static int lua_NextView(lua_State* L) { return cameraViewOp(L, "next", false); }
 static int lua_PrevView(lua_State* L) { return cameraViewOp(L, "prev", false); }
 
+static int cameraMoveViewStartOp(lua_State* L, const char* op) {
+    const float speed = static_cast<float>(luaL_optnumber(L, 1, 1.0));
+    if (auto* svc = getLuaServices(L); svc && svc->cameraMoveView && std::isfinite(speed)) {
+        svc->cameraMoveView(op, speed);
+    }
+    return 0;
+}
+static int cameraMoveViewStopOp(lua_State* L, const char* op) {
+    if (auto* svc = getLuaServices(L); svc && svc->cameraMoveView) {
+        svc->cameraMoveView(op, 0.0f);
+    }
+    return 0;
+}
+static int lua_MoveViewRightStart(lua_State* L) { return cameraMoveViewStartOp(L, "right"); }
+static int lua_MoveViewRightStop(lua_State* L)  { return cameraMoveViewStopOp(L, "right"); }
+static int lua_MoveViewLeftStart(lua_State* L)  { return cameraMoveViewStartOp(L, "left"); }
+static int lua_MoveViewLeftStop(lua_State* L)   { return cameraMoveViewStopOp(L, "left"); }
+static int lua_MoveViewUpStart(lua_State* L)    { return cameraMoveViewStartOp(L, "up"); }
+static int lua_MoveViewUpStop(lua_State* L)     { return cameraMoveViewStopOp(L, "up"); }
+static int lua_MoveViewDownStart(lua_State* L)  { return cameraMoveViewStartOp(L, "down"); }
+static int lua_MoveViewDownStop(lua_State* L)   { return cameraMoveViewStopOp(L, "down"); }
+static int lua_MoveViewInStart(lua_State* L)    { return cameraMoveViewStartOp(L, "in"); }
+static int lua_MoveViewInStop(lua_State* L)     { return cameraMoveViewStopOp(L, "in"); }
+static int lua_MoveViewOutStart(lua_State* L)   { return cameraMoveViewStartOp(L, "out"); }
+static int lua_MoveViewOutStop(lua_State* L)    { return cameraMoveViewStopOp(L, "out"); }
+static int lua_FlipCameraYaw(lua_State* L) {
+    const float degrees = static_cast<float>(luaL_checknumber(L, 1));
+    if (auto* svc = getLuaServices(L); svc && svc->cameraMoveView && std::isfinite(degrees)) {
+        svc->cameraMoveView("flip_yaw", degrees);
+    }
+    return 0;
+}
+
 static int lua_GetCVar(lua_State* L) {
     const char* name = luaL_checkstring(L, 1);
     // Folded to lower case, because the client's CVar names are not
@@ -7775,6 +7808,19 @@ void registerSystemLuaAPI(lua_State* L) {
                 {"ResetView",           lua_ResetView},
                 {"NextView",            lua_NextView},
                 {"PrevView",            lua_PrevView},
+                {"MoveViewRightStart",  lua_MoveViewRightStart},
+                {"MoveViewRightStop",   lua_MoveViewRightStop},
+                {"MoveViewLeftStart",   lua_MoveViewLeftStart},
+                {"MoveViewLeftStop",    lua_MoveViewLeftStop},
+                {"MoveViewUpStart",     lua_MoveViewUpStart},
+                {"MoveViewUpStop",      lua_MoveViewUpStop},
+                {"MoveViewDownStart",   lua_MoveViewDownStart},
+                {"MoveViewDownStop",    lua_MoveViewDownStop},
+                {"MoveViewInStart",     lua_MoveViewInStart},
+                {"MoveViewInStop",      lua_MoveViewInStop},
+                {"MoveViewOutStart",    lua_MoveViewOutStart},
+                {"MoveViewOutStop",     lua_MoveViewOutStop},
+                {"FlipCameraYaw",       lua_FlipCameraYaw},
                 {"GetCVarBool",         lua_GetCVarBool},
                 {"ShowNameplates", [](lua_State* L) -> int {
             lua_settop(L, 0); lua_pushstring(L, "nameplateShowEnemies"); lua_pushstring(L, "1"); return lua_SetCVar(L);

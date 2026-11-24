@@ -671,6 +671,10 @@ bool Application::initialize() {
             else if (op == "prev") cam->prevView();
             else assert(false && "unknown camera view op");
         };
+        luaSvc.cameraMoveView = [this](const std::string& op, float value) {
+            if (!renderer || !renderer->getCameraController()) return;
+            renderer->getCameraController()->applyScriptedViewMotion(op, value);
+        };
         luaSvc.setCameraDistanceMoveSpeed = [this](float yardsPerSecond) {
             if (renderer && renderer->getCameraController())
                 renderer->getCameraController()->setDistanceMoveSpeed(yardsPerSecond);

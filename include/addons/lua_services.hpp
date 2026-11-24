@@ -275,6 +275,8 @@ struct LuaServices {
     /// SetView/SaveView/ResetView/NextView/PrevView: op "set", "save",
     /// "reset", "next" or "prev"; view 1-5 for the first three.
     std::function<void(const std::string& op, int view)> cameraView;
+    /// MoveView{Right,Left,Up,Down,In,Out}{Start,Stop} and FlipCameraYaw.
+    std::function<void(const std::string& op, float value)> cameraMoveView;
 
     /// Whether the camera is inside a WMO, for IsIndoors and IsOutdoors.
     ///

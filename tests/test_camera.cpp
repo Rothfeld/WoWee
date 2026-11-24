@@ -272,3 +272,40 @@ TEST_CASE("Camera near plane matches Native TBC 2.4.3 (~0.22 yd) with D32_SFLOAT
     const float z500b = projectZ(500.5f);
     CHECK(z500b > z500a);
 }
+
+TEST_CASE("Scripted MoveView orbit/zoom and FlipCameraYaw advance and stop cleanly", "[camera][lua]") {
+    ScriptedViewMotion motion;
+    float yaw = 180.0f;
+    float pitch = -20.0f;
+    float dist = 5.55f;
+    bool anglesChanged = false;
+    bool distChanged = false;
+
+    CHECK_FALSE(motion.active());
+    CHECK_FALSE(motion.apply("right", 1.0f, yaw));
+    CHECK_FALSE(motion.apply("up", 0.5f, yaw));
+    CHECK_FALSE(motion.apply("out", 1.0f, yaw));
+    CHECK(motion.active());
+
+    motion.advance(0.5f, 180.0f, 90.0f, 10.0f, -89.0f, 89.0f, 20.0f,
+                   yaw, pitch, dist, anglesChanged, distChanged);
+    CHECK(anglesChanged);
+    CHECK(distChanged);
+    CHECK(yaw == Catch::Approx(90.0f));
+    CHECK(pitch == Catch::Approx(2.5f));
+    CHECK(dist == Catch::Approx(10.55f));
+
+    CHECK_FALSE(motion.apply("right", 0.0f, yaw));
+    CHECK_FALSE(motion.apply("up", 0.0f, yaw));
+    CHECK_FALSE(motion.apply("out", 0.0f, yaw));
+    CHECK_FALSE(motion.active());
+
+    motion.advance(0.5f, 180.0f, 90.0f, 10.0f, -89.0f, 89.0f, 20.0f,
+                   yaw, pitch, dist, anglesChanged, distChanged);
+    CHECK_FALSE(anglesChanged);
+    CHECK_FALSE(distChanged);
+    CHECK(yaw == Catch::Approx(90.0f));
+
+    CHECK(motion.apply("flip_yaw", 180.0f, yaw));
+    CHECK(yaw == Catch::Approx(270.0f));
+}

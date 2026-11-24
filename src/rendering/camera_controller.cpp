@@ -3100,6 +3100,7 @@ void CameraController::update(float deltaTime) {
         idleOrbit_ = false;
         idleTimer_ = 0.0f;
 
+        advanceScriptedViewMotion(deltaTime);
         camera->setRotation(yaw, pitch);
         advanceZoom(deltaTime);
         collisionDistance = currentDistance;
@@ -3205,7 +3206,9 @@ void CameraController::update(float deltaTime) {
     bool spaceHeld = !uiWantsKeyboard && !sitting && !movementSuppressed && bindings.isCommandDown("JUMP");
 
     // Idle camera: any input resets the timer; timeout triggers a slow orbit pan
-    bool anyInput = leftMouseDown || rightMouseDown || keyW || keyS || keyA || keyD || keyQ || keyE || nowJump;
+    bool anyInput = leftMouseDown || rightMouseDown || keyW || keyS || keyA || keyD ||
+                    keyQ || keyE || nowJump || hasScriptedViewMotion();
+    advanceScriptedViewMotion(deltaTime);
     if (anyInput) {
         idleTimer_ = 0.0f;
     } else if (!introActive && idleOrbitEnabled_) {
@@ -3918,6 +3921,25 @@ void CameraController::resetView(int view) {
     views_[view] = kDefaultViews[view];
     if (viewSavedCallback_ && view >= 2) viewSavedCallback_(view, views_[view].distance, views_[view].pitch);
     if (view == currentView_) setView(view);
+}
+
+void CameraController::applyScriptedViewMotion(const std::string& op, float value) {
+    if (scriptedView_.apply(op, value, yaw) && camera) {
+        camera->setRotation(yaw, pitch);
+    }
+}
+
+void CameraController::advanceScriptedViewMotion(float deltaTime) {
+    bool anglesChanged = false;
+    bool distChanged = false;
+    scriptedView_.advance(deltaTime, yawMoveSpeed_, pitchMoveSpeed_, distanceMoveSpeed_,
+                          MIN_PITCH, MAX_PITCH, maxZoomDistance(),
+                          yaw, pitch, userTargetDistance, anglesChanged, distChanged);
+    if (anglesChanged && camera) camera->setRotation(yaw, pitch);
+    if (distChanged) {
+        currentDistance = userTargetDistance;
+        zoomPending_ = 0.0f;
+    }
 }
 
 void CameraController::resetAngles() {

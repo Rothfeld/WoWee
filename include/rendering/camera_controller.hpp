@@ -67,6 +67,9 @@ public:
     void resetView(int view);
     void nextView() { setView(std::min(currentView_ + 1, kViewCount)); }
     void prevView() { setView(std::max(currentView_ - 1, 1)); }
+    /// Scripted camera motion from MoveView{Right,Left,Up,Down,In,Out}{Start,Stop}
+    /// and FlipCameraYaw(degrees).
+    void applyScriptedViewMotion(const std::string& op, float value);
     [[nodiscard]] int currentView() const { return currentView_; }
     /// Saved views 2-5 persist as native's Config.wtf CVars cameraDistanceA-D,
     /// cameraPitchA-D (positive = looking down) and cameraYawA-D. Told on every
@@ -555,6 +558,8 @@ private:
     /// Where the camera sits relative to the character it follows: pivot, zoom,
     /// the pullback that keeps it out of walls, and the first-person threshold.
     void updateOrbitCamera(float deltaTime, FrameInput& f, const glm::vec3& targetPos);
+    void advanceScriptedViewMotion(float deltaTime);
+    [[nodiscard]] bool hasScriptedViewMotion() const { return scriptedView_.active(); }
 
     /// Move from `from` to `to` in small steps, letting the walls push back.
     ///
@@ -604,6 +609,7 @@ private:
     // Mouse settings
     float yawMoveSpeed_ = kDefaultYawMoveSpeed;
     float pitchMoveSpeed_ = kDefaultPitchMoveSpeed;
+    ScriptedViewMotion scriptedView_;
     static constexpr float kYawMoveSpeedPerDegree = 800.0f;
     static constexpr float kPitchMoveSpeedPerDegree = 600.0f;
     bool invertMouse = false;
