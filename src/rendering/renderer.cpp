@@ -582,15 +582,17 @@ void Renderer::updatePerFrameUBO() {
         // Thousand Needles (0.5) 2.0 at 09:00 and at 21:45, while the terrain
         // around them matches without it. Evidence:
         // _experiments/20261119T0840Z.creature_light in the workspace.
+        const uint32_t lightAreaId = getCurrentAreaId() != 0 ? getCurrentAreaId() : getCurrentZoneId();
         const float ambientMultiplier =
-            zoneManager ? zoneManager->getAreaAmbientMultiplier(getCurrentAreaId()) : 0.0f;
+            zoneManager ? zoneManager->getAreaAmbientMultiplier(lightAreaId) : 0.0f;
         const float unitAmbGain = 1.0f + 2.0f * ambientMultiplier;
         currentFrameData.unitLight = glm::vec4(unitAmbGain, 0.0f, 0.0f, 0.0f);
         if (characterRenderer) {
             characterRenderer->setOutdoorUnitLight(lp.ambientColor * unitAmbGain,
                                                    lp.diffuseColor,
                                                    glm::vec3(currentFrameData.lightDir),
-                                                   lp.ambientColor);
+                                                   lp.ambientColor,
+                                                   unitAmbGain);
         }
         if (m2Renderer) {
             m2Renderer->setLighting(&currentFrameData.lightDir.x,

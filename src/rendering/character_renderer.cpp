@@ -4596,7 +4596,8 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
                             instance.floorLight.indoorRig,
                             instance.doodadLighting ? outdoorAmbientBase_ : outdoorUnitAmbient_,
                             outdoorDiffuseBase_,
-                            outdoorLightDir_, instance.floorLight.exteriorBlend, !instance.doodadLighting);
+                            outdoorLightDir_, instance.floorLight.exteriorBlend, !instance.doodadLighting,
+                            unitAmbGain_);
                         matData.interiorLit = (instance.floorLight.exteriorBlend < 1.0f) ? 1 : 0;
                     } else {
                         const float diffScale = instance.floorLight.terrainShadowed
@@ -4824,7 +4825,8 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
                         instance.floorLight.indoorRig,
                         instance.doodadLighting ? outdoorAmbientBase_ : outdoorUnitAmbient_,
                         outdoorDiffuseBase_,
-                        outdoorLightDir_, instance.floorLight.exteriorBlend, !instance.doodadLighting);
+                        outdoorLightDir_, instance.floorLight.exteriorBlend, !instance.doodadLighting,
+                        unitAmbGain_);
                     matData.interiorLit = (instance.floorLight.exteriorBlend < 1.0f) ? 1 : 0;
                 } else {
                     const float diffScale = instance.floorLight.terrainShadowed

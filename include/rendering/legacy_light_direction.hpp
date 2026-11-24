@@ -91,9 +91,16 @@ inline DirectionalLightRig blendIndoorWithOutdoorRig(const DirectionalLightRig& 
                                                      const glm::vec3& outdoorDiffuseBase,
                                                      const glm::vec3& outdoorDir,
                                                      float exteriorBlend,
-                                                     bool isUnit) {
+                                                     bool isUnit,
+                                                     float unitAmbGain = 1.0f) {
     const float a = std::clamp(exteriorBlend, 0.0f, 1.0f);
-    if (a <= 0.0f) return indoor;
+    const float indoorGain = isUnit ? std::max(unitAmbGain, 0.0f) : 1.0f;
+    const DirectionalLightRig gainedIndoor{
+        .ambient = indoor.ambient * indoorGain,
+        .diffuse = indoor.diffuse * indoorGain,
+        .dir = indoor.dir,
+    };
+    if (a <= 0.0f) return gainedIndoor;
     if (a >= 1.0f) {
         return {
             .ambient = outdoorAmbient,
@@ -102,9 +109,9 @@ inline DirectionalLightRig blendIndoorWithOutdoorRig(const DirectionalLightRig& 
         };
     }
     const DirectionalLightRig scaledIn{
-        .ambient = indoor.ambient * (1.0f - a),
-        .diffuse = indoor.diffuse * (1.0f - a),
-        .dir = indoor.dir,
+        .ambient = gainedIndoor.ambient * (1.0f - a),
+        .diffuse = gainedIndoor.diffuse * (1.0f - a),
+        .dir = gainedIndoor.dir,
     };
     const DirectionalLightRig scaledOut{
         .ambient = outdoorAmbient * a,

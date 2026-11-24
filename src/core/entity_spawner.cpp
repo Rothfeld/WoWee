@@ -86,7 +86,9 @@ void EntitySpawner::update() {
     if (renderer_) {
         if (auto* m2 = renderer_->getM2Renderer()) {
             const auto* zm = renderer_->getZoneManager();
-            const float ambMult = zm ? zm->getAreaAmbientMultiplier(renderer_->getCurrentAreaId()) : 0.0f;
+            const uint32_t lightAreaId = renderer_->getCurrentAreaId() != 0
+                ? renderer_->getCurrentAreaId() : renderer_->getCurrentZoneId();
+            const float ambMult = zm ? zm->getAreaAmbientMultiplier(lightAreaId) : 0.0f;
             m2->setOutdoorEntityLightGain(1.0f + 2.0f * ambMult);
         }
     }

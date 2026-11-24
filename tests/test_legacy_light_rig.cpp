@@ -83,6 +83,39 @@ TEST_CASE("blendIndoorWithOutdoorRig applies 2.5x diffuse for units at exteriorB
     CHECK(fullyOutDoodad.diffuse.r == Catch::Approx(outDiff.r));
 }
 
+TEST_CASE("blendIndoorWithOutdoorRig applies AreaTable AmbientMultiplier gain to indoor units only", "[lighting][unit]") {
+    // Sethekk Halls (AreaTable 3791): AmbientMultiplier = 0.75 -> unitAmbGain = 1 + 2*0.75 = 2.5.
+    // Floor MOCV under Sethekk Guard in demon_wing_000.wmo is cyan-heavy (96, 176, 255)/255.
+    const glm::vec3 mocv(96.0f / 255.0f, 176.0f / 255.0f, 1.0f);
+    const DirectionalLightRig indoor = indoorUnitRig(mocv);
+    const glm::vec3 outAmb(45.0f / 255.0f, 90.0f / 255.0f, 135.0f / 255.0f);
+    const glm::vec3 outDiff(242.0f / 255.0f, 164.0f / 255.0f, 113.0f / 255.0f);
+    const glm::vec3 outDir(0.0f, 0.0f, -1.0f);
+    const float sethekkGain = 1.0f + 2.0f * 0.75f;
+
+    // Indoor unit gets unitAmbGain on both ambient and diffuse (saturated in shader).
+    const DirectionalLightRig unitIn = blendIndoorWithOutdoorRig(
+        indoor, outAmb * sethekkGain, outDiff, outDir, 0.0f, true, sethekkGain);
+    CHECK(unitIn.ambient.r == Catch::Approx(indoor.ambient.r * sethekkGain));
+    CHECK(unitIn.ambient.g == Catch::Approx(indoor.ambient.g * sethekkGain));
+    CHECK(unitIn.ambient.b == Catch::Approx(indoor.ambient.b * sethekkGain));
+    CHECK(unitIn.diffuse.r == Catch::Approx(indoor.diffuse.r * sethekkGain));
+    CHECK(unitIn.diffuse.g == Catch::Approx(indoor.diffuse.g * sethekkGain));
+    CHECK(unitIn.diffuse.b == Catch::Approx(indoor.diffuse.b * sethekkGain));
+
+    // Indoor WMO doodad / gameobject stays at 1.0x regardless of unitAmbGain.
+    const DirectionalLightRig doodadIn = blendIndoorWithOutdoorRig(
+        indoor, outAmb, outDiff, outDir, 0.0f, false, sethekkGain);
+    CHECK(doodadIn.ambient == indoor.ambient);
+    CHECK(doodadIn.diffuse == indoor.diffuse);
+
+    // Classic indoor areas (SFK/Scholomance/Elwynn: AmbientMultiplier = 0.0 -> gain 1.0) are unchanged.
+    const DirectionalLightRig classicIn = blendIndoorWithOutdoorRig(
+        indoor, outAmb, outDiff, outDir, 0.0f, true, 1.0f);
+    CHECK(classicIn.ambient == indoor.ambient);
+    CHECK(classicIn.diffuse == indoor.diffuse);
+}
+
 TEST_CASE("MapChunk::isShadowed reads 64x64 1-bit MCSH bit order", "[adt][lighting]") {
     MapChunk chunk{};
     CHECK_FALSE(chunk.isShadowed(0.0f, 0.0f));

@@ -293,11 +293,13 @@ public:
     using UnitFloorLightQuery = std::function<UnitFloorLight(const glm::vec3& pos, float sampleHeight)>;
     void setUnitFloorLightQuery(UnitFloorLightQuery query) { unitFloorLightQuery_ = std::move(query); }
     void setOutdoorUnitLight(const glm::vec3& unitAmbient, const glm::vec3& diffuseBase,
-                             const glm::vec3& lightDir, const glm::vec3& ambientBase) {
+                             const glm::vec3& lightDir, const glm::vec3& ambientBase,
+                             float unitAmbGain = 1.0f) {
         outdoorUnitAmbient_ = unitAmbient;
         outdoorAmbientBase_ = ambientBase;
         outdoorDiffuseBase_ = diffuseBase;
         outdoorLightDir_ = lightDir;
+        unitAmbGain_ = unitAmbGain;
     }
     uint32_t gatherAuthoredM2Lights(const glm::vec3& centerPos,
                                     glm::vec4* outPosRadius,
@@ -947,6 +949,7 @@ private:
     glm::vec3 outdoorAmbientBase_{0.5f};
     glm::vec3 outdoorDiffuseBase_{1.0f};
     glm::vec3 outdoorLightDir_{0.3f, -0.7f, 0.6f};
+    float unitAmbGain_ = 1.0f;
 
     // Normal mapping / POM settings
     bool normalMappingEnabled_ = true;
