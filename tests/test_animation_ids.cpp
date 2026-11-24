@@ -674,3 +674,27 @@ TEST_CASE("Shapeshift and transform aura transitions play ImpactKit on server ap
     CHECK(addedTransformAuraVisuals(ghostWolf, ghostWolf).empty());
     CHECK(removedTransformAuraVisuals(ghostWolf, ghostWolf).empty());
 }
+
+TEST_CASE("Low dry island over water clears stale MOVEFLAG_SWIMMING and swimming Z clamps to floor", "[creature-locomotion]") {
+    using wowee::rendering::creatureSwimmingZ;
+    using wowee::rendering::effectiveCreatureSwimming;
+
+    // Serpentshrine Cavern Coilfang Ambusher (21865) on outer wooden island at z=-19.7935
+    // above WMO water plane z=-19.8813 while retaining MOVEFLAG_SWIMMING|ROOT (0x200800).
+    CHECK_FALSE(effectiveCreatureSwimming(/*serverSwimFlag=*/true, /*worldLoaded=*/true,
+                                          /*unitZ=*/-19.7935f, /*waterSurface=*/-19.8813f,
+                                          /*floorZ=*/-19.79f));
+
+    // Swimming in the SSC pool (pool floor -38.5 below water -19.8813) stays swimming.
+    CHECK(effectiveCreatureSwimming(/*serverSwimFlag=*/true, /*worldLoaded=*/true,
+                                    /*unitZ=*/-21.05f, /*waterSurface=*/-19.8813f,
+                                    /*floorZ=*/-38.5f));
+
+    // Shallow water: creatureSwimmingZ must not push the creature below the solid pool floor.
+    const float nagaDepth = 0.75f * 2.03f * 1.7f;
+    CHECK(creatureSwimmingZ(-19.8813f, false, true, -19.8813f, nagaDepth, -20.5f) ==
+          Catch::Approx(-20.5f));
+    // Deep water: pool bottom is below surface - authoredDepth, so authored depth applies.
+    CHECK(creatureSwimmingZ(-19.8813f, false, true, -19.8813f, nagaDepth, -38.5f) ==
+          Catch::Approx(-19.8813f - nagaDepth));
+}

@@ -157,10 +157,15 @@ inline constexpr uint32_t selectGroundForwardGaitAnimation(
 }
 
 inline float creatureSwimmingZ(float serverZ, bool flying, bool swimming,
-                               std::optional<float> surface, float authoredDepth) {
+                               std::optional<float> surface, float authoredDepth,
+                               std::optional<float> floorZ = std::nullopt) {
     if (flying || !swimming || !surface) return serverZ;
     assert(authoredDepth > 0.0f);
-    return std::min(serverZ, *surface - authoredDepth);
+    float z = std::min(serverZ, *surface - authoredDepth);
+    if (floorZ) {
+        z = std::max(z, *floorZ);
+    }
+    return z;
 }
 
 // Tolerance above a liquid surface within which a creature carrying
@@ -172,20 +177,28 @@ inline constexpr float kCreatureSwimSurfaceTolerance = 0.25f;
 // carry MOVEFLAG_SWIMMING (0x200000).
 //
 // CMaNGOS sets MOVEFLAG_SWIMMING when an INHABIT_WATER creature spawns in water
-// (Creature.cpp:458), and does not always send SMSG_SPLINE_MOVE_STOP_SWIM when
-// a scripted waypoint path walks the creature onto dry land (e.g. Ghaz'an 18105
-// in The Underbog walking up the dry ramp from water z=50.61 to platform z=81.37
-// while retaining 0x8200101). Native TBC 2.4.3 plays ground Walk (4) / Run (5) /
-// Stand (0) once the creature is out of water and Swim (42) / SwimIdle (41) only
-// while actually submerged.
+// (Creature.cpp:458) or via script (e.g. boss_the_lurker_below JustSummoned),
+// and does not always clear it when a scripted waypoint path moves the creature
+// onto dry land or a low wooden island just above water (e.g. Ghaz'an 18105 in
+// The Underbog walking up to z=81.37 over water z=50.61; Coilfang Ambusher
+// 21865 in Serpentshrine Cavern standing on outer islands at z=-19.79 over WMO
+// water z=-19.88 while retaining 0x200800). When world geometry at the creature
+// is loaded, a solid floor above the water surface under the creature's feet
+// (floorZ > waterSurface && unitZ >= floorZ - 0.5f) or a position above
+// waterSurface + kCreatureSwimSurfaceTolerance means the creature is on dry
+// ground, not swimming.
 inline bool effectiveCreatureSwimming(bool serverSwimFlag,
                                       bool worldLoaded,
                                       float unitZ,
-                                      std::optional<float> waterSurface) {
+                                      std::optional<float> waterSurface,
+                                      std::optional<float> floorZ = std::nullopt) {
     if (!serverSwimFlag) return false;
     if (!worldLoaded) return true;
-    return waterSurface.has_value() &&
-           unitZ <= (*waterSurface + kCreatureSwimSurfaceTolerance);
+    if (!waterSurface.has_value()) return false;
+    if (floorZ.has_value() && *floorZ > *waterSurface && unitZ >= (*floorZ - 0.5f)) {
+        return false;
+    }
+    return unitZ <= (*waterSurface + kCreatureSwimSurfaceTolerance);
 }
 
 // Minimum non-jump airborne duration (seconds) before local locomotion switches

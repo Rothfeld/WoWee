@@ -993,7 +993,28 @@ bool EntitySpawner::isCreatureEffectivelySwimming(uint64_t guid, const glm::vec3
         ? renderer_->getWaterRenderer()->getNearestWaterHeightAt(
               renderPos.x, renderPos.y, renderPos.z, 100.0f)
         : std::nullopt;
-    return rendering::effectiveCreatureSwimming(true, worldLoaded, renderPos.z, surface);
+    std::optional<float> floorZ;
+    if (worldLoaded && surface) {
+        const float probeZ = renderPos.z + 1.5f;
+        if (terrain) {
+            if (auto th = terrain->getHeightAt(renderPos.x, renderPos.y); th && *th <= probeZ) {
+                floorZ = *th;
+            }
+        }
+        if (wmo) {
+            if (auto wh = wmo->getFloorHeight(renderPos.x, renderPos.y, probeZ, nullptr, renderPos.z);
+                wh && *wh <= probeZ && (!floorZ || *wh > *floorZ)) {
+                floorZ = *wh;
+            }
+        }
+        if (const auto* m2 = renderer_->getM2Renderer()) {
+            if (auto mh = m2->getFloorHeight(renderPos.x, renderPos.y, probeZ);
+                mh && *mh <= probeZ && (!floorZ || *mh > *floorZ)) {
+                floorZ = *mh;
+            }
+        }
+    }
+    return rendering::effectiveCreatureSwimming(true, worldLoaded, renderPos.z, surface, floorZ);
 }
 
 uint32_t EntitySpawner::remoteResumeAnimation(uint64_t guid) const {

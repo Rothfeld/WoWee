@@ -3900,8 +3900,10 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                 const auto surface = renderer->getWaterRenderer()->getNearestWaterHeightAt(
                     renderPos.x, renderPos.y, renderPos.z, 100.0f);
                 if (surface) {
+                    const auto swimFloorZ = movingEntityFloor(renderer.get(), renderPos,
+                                                              previousRenderPos, false);
                     renderPos.z = rendering::creatureSwimmingZ(renderPos.z, false, true, surface,
-                        entitySpawner_->getUnitSwimmingDepth(guid, instanceId));
+                        entitySpawner_->getUnitSwimmingDepth(guid, instanceId), swimFloorZ);
                 }
             }
             const auto creatureUnitPtr = std::static_pointer_cast<game::Unit>(entity);
