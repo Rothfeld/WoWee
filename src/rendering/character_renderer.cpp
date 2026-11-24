@@ -23,6 +23,7 @@
 #include "rendering/character_renderer.hpp"
 #include "rendering/body_mover.hpp"
 #include "rendering/character_depth_bias.hpp"
+#include "rendering/m2_blend_mode.hpp"
 #include "rendering/m2_foliage_culling.hpp"
 #include "rendering/m2_billboard.hpp"
 #include <glm/gtx/string_cast.hpp>
@@ -4739,10 +4740,11 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
                     // the original rule for those models is not established.
                     if (!md.textureCombinerCombos.empty()) {
                         assert(!(batch.shader & 0x8000));
-                        assert(size_t(batch.shader) + matData.textureCount <= md.textureCombinerCombos.size());
-                        matData.combiner0 = md.textureCombinerCombos[batch.shader];
-                        matData.combiner1 = matData.textureCount == 2
-                            ? md.textureCombinerCombos[batch.shader + 1] : 1;
+                        const auto comb = m2ResolveStageCombiners(
+                            md.version, md.textureCombinerCombos,
+                            batch.shader, static_cast<uint16_t>(matData.textureCount));
+                        matData.combiner0 = comb.stage0;
+                        matData.combiner1 = comb.stage1;
                     } else {
                         matData.combiner0 = 1;
                         matData.combiner1 = 1;

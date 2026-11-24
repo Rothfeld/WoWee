@@ -2032,10 +2032,11 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId, boo
                 LOG_DEBUG("M2 '", model.name, "' batch shader ", batch.shader,
                           " is a special shader id; stages modulate");
             } else if (!model.textureCombinerCombos.empty()) {
-                assert(size_t(batch.shader) + batch.textureCount <= model.textureCombinerCombos.size());
-                bgpu.combiner0 = model.textureCombinerCombos[batch.shader];
-                bgpu.combiner1 = batch.textureCount == 2
-                    ? model.textureCombinerCombos[batch.shader + 1] : 1;
+                const auto comb = m2ResolveStageCombiners(
+                    model.version, model.textureCombinerCombos,
+                    batch.shader, batch.textureCount);
+                bgpu.combiner0 = comb.stage0;
+                bgpu.combiner1 = comb.stage1;
             }
             const auto tcls = classifyBatchTexture(batchTexKeyLower);
             bgpu.starLayer = tcls.starPointLayer;

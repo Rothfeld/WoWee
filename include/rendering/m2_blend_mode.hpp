@@ -19,7 +19,9 @@
 /// texel passed the test and the flame rendered as a flat opaque grey disc
 /// sitting behind the logs.
 
+#include <cstddef>
 #include <cstdint>
+#include <vector>
 
 namespace wowee::rendering {
 
@@ -86,6 +88,44 @@ inline bool m2BatchNeedsAlphaTest(uint8_t blendMode, bool hasAlpha) {
     if (blendMode == M2_BLEND_ALPHA_KEY) return hasAlpha;
     if (m2BlendIsAdditive(blendMode)) return false;
     return blendMode >= M2_BLEND_ALPHA && !hasAlpha;
+}
+
+/// Resolved texture stage combiner modes (0 Opaque, 1 Mod, 2 Decal, 3 Add, 4 Mod2x).
+struct M2StageCombiners {
+    int32_t stage0 = 1;
+    int32_t stage1 = 1;
+};
+
+/// Resolve M2 per-stage texture combiners from model.textureCombinerCombos.
+///
+/// In TBC 2.4.3 (M2 v260-263, wow.exe build 8606 @ 0x744718), when header
+/// globalFlags & 0x08 is set, the stage setup loop reads combinerCombos[stage]
+/// directly (0, 1) without adding batch.shader. Coilfang_Marsh_Waterfall.m2
+/// (v260, globalFlags 0x18) has combinerCombos = [1, 1, 4, 4, ...] with pool
+/// batches b[39] (shader=2) and b[40]/b[61] (shader=1): native 2.4.3 renders
+/// them as (1, 1) Mod/Mod (translucent cyan mist), whereas indexing by
+/// batch.shader selects Mod2x (4) and blows out the pool to solid white.
+/// Sunwell_Fire_Barrier_Ext.m2 (v263, combinerCombos = [1, 4], shader=0) still
+/// resolves to (1, 4) Mod/Mod2x. WotLK+ (v264+) indexes combinerCombos[shader + stage].
+/// Special shader IDs with bit 0x8000 keep modulating both stages.
+inline M2StageCombiners m2ResolveStageCombiners(uint32_t modelVersion,
+                                                const std::vector<uint16_t>& combinerCombos,
+                                                uint16_t batchShader,
+                                                uint16_t textureCount) {
+    M2StageCombiners out{};
+    if (combinerCombos.empty() || (batchShader & 0x8000u) != 0u) {
+        return out;
+    }
+    const size_t base = (modelVersion < 264u) ? 0u : static_cast<size_t>(batchShader);
+    const size_t stages = (textureCount >= 2u) ? 2u : 1u;
+    if (base + stages > combinerCombos.size()) {
+        return out;
+    }
+    out.stage0 = static_cast<int32_t>(combinerCombos[base]);
+    if (textureCount >= 2u) {
+        out.stage1 = static_cast<int32_t>(combinerCombos[base + 1u]);
+    }
+    return out;
 }
 
 }  // namespace wowee::rendering

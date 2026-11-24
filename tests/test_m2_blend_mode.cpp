@@ -109,3 +109,44 @@ TEST_CASE("the modulate modes keep the old fallback", "[m2]") {
     CHECK_FALSE(m2BatchNeedsAlphaTest(5, true));
     CHECK_FALSE(m2BatchNeedsAlphaTest(6, true));
 }
+
+TEST_CASE("M2 stage combiners match TBC 2.4.3 direct stage indexing and WotLK shader-offset indexing", "[m2]") {
+    using wowee::rendering::m2ResolveStageCombiners;
+
+    // Coilfang_Marsh_Waterfall.m2 (v260, globalFlags 0x18): combos = [1, 1, 4, 4, ...]
+    // Pool batches b[39] (shader=2) and b[40]/b[61] (shader=1) use combos[0..1] = (1, 1) in TBC 2.4.3.
+    const std::vector<uint16_t> waterfallCombos = {1, 1, 4, 4, 4, 1};
+    {
+        const auto b39 = m2ResolveStageCombiners(260, waterfallCombos, 2, 2);
+        CHECK(b39.stage0 == 1);
+        CHECK(b39.stage1 == 1);
+        const auto b40 = m2ResolveStageCombiners(260, waterfallCombos, 1, 2);
+        CHECK(b40.stage0 == 1);
+        CHECK(b40.stage1 == 1);
+    }
+
+    // Sunwell_Fire_Barrier_Ext.m2 (v263, globalFlags 0x18): combos = [1, 4], shader=0 -> (1, 4) Mod/Mod2x.
+    const std::vector<uint16_t> sunwellCombos = {1, 4};
+    {
+        const auto sw = m2ResolveStageCombiners(263, sunwellCombos, 0, 2);
+        CHECK(sw.stage0 == 1);
+        CHECK(sw.stage1 == 4);
+    }
+
+    // WotLK+ (v264+): indexes combinerCombos[batch.shader + stage].
+    {
+        const auto wotlk = m2ResolveStageCombiners(264, waterfallCombos, 2, 2);
+        CHECK(wotlk.stage0 == 4);
+        CHECK(wotlk.stage1 == 4);
+    }
+
+    // Special shader IDs (0x8000 bit) and empty combos keep (1, 1) Mod/Mod.
+    {
+        const auto special = m2ResolveStageCombiners(260, sunwellCombos, 0xFFFE, 2);
+        CHECK(special.stage0 == 1);
+        CHECK(special.stage1 == 1);
+        const auto empty = m2ResolveStageCombiners(260, {}, 0, 2);
+        CHECK(empty.stage0 == 1);
+        CHECK(empty.stage1 == 1);
+    }
+}

@@ -190,6 +190,9 @@ void main() {
         } else {
             texColor *= t1;
         }
+        // D3D9 texture combiners (D3DTOP_MODULATE2X / D3DTOP_ADD) saturate to [0, 1].
+        // Unclamped values > 1.0 blow out HDR bloom and invert (1 - srcAlpha) blending.
+        texColor = clamp(texColor, 0.0, 1.0);
     }
     // The batch's authored colour (per-instance when its M2Color RGB track
     // animates, e.g. Flamestrike_Impact_Base's outer flame sheets). A glow
@@ -507,6 +510,6 @@ void main() {
 
     // Authored batch opacity is independent of per-instance distance fading.
     // For example TalkToMeGrey uses a 0.4-alpha additive highlight layer.
-    outAlpha *= fadeAlpha;
+    outAlpha = clamp(outAlpha * fadeAlpha, 0.0, 1.0);
     outColor = vec4(result, outAlpha);
 }
