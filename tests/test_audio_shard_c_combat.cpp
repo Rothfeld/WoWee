@@ -279,6 +279,11 @@ TEST_CASE("All 20 WeaponImpactSounds.dbc columns, CreatureImpactType, and Armor 
              IT::PARRY_METAL_METAL, IT::PARRY_METAL_WOOD, IT::WOOD, IT::STONE, IT::ETHEREAL}) {
         for (bool crit : {false, true}) {
             INFO("ImpactType=" << int(cat) << " crit=" << crit);
+            // Reset headless mixer each iteration so Shard A's TBC 2.4.3 kCombatImpact
+            // concurrency cap (4 active channels, 0x897018) does not throttle rapid test probes.
+            resetHeadlessEngine(&tbc.assets);
+            audio::AudioEngine::instance().setPlaybackObserver(
+                [&](const audio::AudioEngine::PlaybackEvent& ev) { events.push_back(ev); });
             events.clear();
             REQUIRE(csm.playWeaponImpact3D(8u, true, cat, crit, glm::vec3(6.0f, 0.0f, -3.0f), false));
             REQUIRE(events.size() == 1u);
@@ -459,6 +464,9 @@ TEST_CASE("3D local and remote combat queue dispatches on $CSS/$CAH keyframes an
 
         for (CO outcome : {CO::MISS, CO::DODGE, CO::PARRY, CO::BLOCK, CO::EVADE_DEFLECT}) {
             INFO("Testing outcome=" << int(outcome));
+            resetHeadlessEngine(&tbc.assets);
+            audio::AudioEngine::instance().setPlaybackObserver(
+                [&](const audio::AudioEngine::PlaybackEvent& ev) { events.push_back(ev); });
             audio::CombatSoundManager::QueuedCombatEvent q;
             q.attackerGuid = atk;
             q.victimGuid = 0xF1300200ull;
