@@ -66,6 +66,18 @@ public:
     };
     [[nodiscard]] LastWorldInfo loadLastWorldInfo() const;
 
+    static constexpr uint32_t kNoLoadedMapId = 0xFFFFFFFFu;
+
+    // Only tear down an active map and its pending entity queues when
+    // transitioning directly from a previously loaded map (cross-map teleport).
+    // On first login and after performLeaveWorld() (which resets loadedMapId_
+    // to kNoLoadedMapId after tearing down the old world), any pending spawns
+    // in EntitySpawner belong to the incoming session's initial
+    // SMSG_UPDATE_OBJECT burst and must not be discarded.
+    [[nodiscard]] static bool shouldCleanUpPreviousMap(uint32_t loadedMapId) {
+        return loadedMapId != kNoLoadedMapId;
+    }
+
     // State accessors
     [[nodiscard]] uint32_t getLoadedMapId() const { return loadedMapId_; }
     [[nodiscard]] bool isLoadingWorld() const { return loadingWorld_; }
@@ -83,7 +95,7 @@ public:
     }
 
     // Reset methods (for logout / character switch)
-    void resetLoadedMap() { loadedMapId_ = 0xFFFFFFFF; }
+    void resetLoadedMap() { loadedMapId_ = kNoLoadedMapId; }
     void resetMapNameCache() { mapNameCacheLoaded_ = false; mapNameById_.clear(); }
 
 private:
@@ -124,7 +136,7 @@ private:
     game::World* world_;
     addons::AddonManager* addonManager_;
 
-    uint32_t loadedMapId_ = 0xFFFFFFFF;  // Map ID of currently loaded terrain (0xFFFFFFFF = none)
+    uint32_t loadedMapId_ = kNoLoadedMapId;  // Map ID of currently loaded terrain (kNoLoadedMapId = none)
     bool loadingWorld_ = false;          // True while loadOnlineWorldTerrain is running
 
     struct PendingWorldEntry {

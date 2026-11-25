@@ -902,9 +902,16 @@ void WorldLoader::loadOnlineWorldTerrain(uint32_t mapId, float x, float y, float
 
     // --- Clean up previous map's state on map change ---
     // (Same cleanup as logout, but preserves player identity and renderer objects.)
+    // Only run this when leaving a currently loaded map (cross-map teleport /
+    // deferred transfer, where CMSG_MOVE_WORLDPORT_ACK is sent below after
+    // cleanup). After logout/disconnect, performLeaveWorld() has already torn
+    // down the old world and reset loadedMapId_ to kNoLoadedMapId; on the next
+    // login, SMSG_UPDATE_OBJECT arrives in the same tick as
+    // SMSG_LOGIN_VERIFY_WORLD before loadOnlineWorldTerrain() runs, so
+    // clearing queues here would wipe every initial GameObject (doors, gates,
+    // meeting stones), remote player, and creature queued for the new session.
     LOG_DEBUG("loadOnlineWorldTerrain: mapId=", mapId, " loadedMapId_=", loadedMapId_);
-    bool hasRendererData = renderer_ && (renderer_->getWMORenderer() || renderer_->getM2Renderer());
-    if (loadedMapId_ != 0xFFFFFFFF || hasRendererData) {
+    if (shouldCleanUpPreviousMap(loadedMapId_)) {
         LOG_WARNING("Map change: cleaning up old map ", loadedMapId_, " before loading map ", mapId);
 
         // Clear pending queues first (these don't touch GPU resources)

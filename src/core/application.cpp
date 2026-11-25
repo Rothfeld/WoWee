@@ -3030,9 +3030,15 @@ void Application::performLeaveWorld(LeaveWorldTo destination) {
     // event is for.
     unloadInterface();
 
-    // Disconnect TransportManager from WMORenderer before tearing down
-    if (gameHandler && gameHandler->getTransportManager()) {
-        gameHandler->getTransportManager()->setWMORenderer(nullptr);
+    // Disconnect TransportManager from WMORenderer and clear map-local transport
+    // and equipment tracking before tearing down the world.
+    if (gameHandler) {
+        gameHandler->clearPlayerTransport();
+        if (auto* tm = gameHandler->getTransportManager()) {
+            tm->setWMORenderer(nullptr);
+            tm->clearTransports();
+        }
+        gameHandler->resetEquipmentDirtyTracking();
     }
 
     if (gameHandler) {
@@ -3070,13 +3076,15 @@ void Application::performLeaveWorld(LeaveWorldTo destination) {
 
     if (renderer) {
         renderer->resetCombatVisualState();
-        // Remove old player model so it doesn't persist into next session
+        // Full clear of character and world geometry renderers (instances,
+        // models, textures, and descriptor pools), matching cross-map teardown
+        // in WorldLoader::loadOnlineWorldTerrain so relogging starts clean
+        // without needing a destructive cleanup pass after initial spawns arrive.
         if (auto* charRenderer = renderer->getCharacterRenderer()) {
-            charRenderer->removeInstance(1);
+            charRenderer->clear();
         }
-        // Clear all world geometry renderers
         if (auto* wmo = renderer->getWMORenderer()) {
-            wmo->clearInstances();
+            wmo->clearAll();
         }
         if (auto* m2 = renderer->getM2Renderer()) {
             m2->clear();

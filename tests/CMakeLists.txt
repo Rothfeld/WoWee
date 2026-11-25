@@ -284,6 +284,12 @@ wowee_add_test(test_shared_rules
             ${CMAKE_SOURCE_DIR}/src/ui/settings_schema.cpp
             ${TEST_COMMON_SOURCES})
 
+# ── test_world_loader_relog ─────────────────────────────────
+# Relogging after logout/disconnect must not run cross-map cleanup and wipe
+# newly queued initial GameObject/player/creature spawns.
+wowee_add_test(test_world_loader_relog
+    SOURCES test_world_loader_relog.cpp)
+
 # ── test_geoset_rules ────────────────────────────────────────
 # Choosing a geoset when the model lacks the one asked for, plus player
 # equipment geoset parity against shipped TBC ItemDisplayInfo.dbc and race M2s.
