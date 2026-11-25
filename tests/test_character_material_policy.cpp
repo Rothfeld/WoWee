@@ -181,3 +181,14 @@ TEST_CASE("weapon texture replacement preserves hardcoded type-0 textures and fi
     const std::vector<FakeTex> legacyUnnamed{{1u, ""}};
     CHECK(collectReplaceableItemTextureSlots(legacyUnnamed) == std::vector<uint32_t>{0u});
 }
+
+TEST_CASE("character fragment shader writes surface opacity for opaque batches instead of raw texture alpha", "[character][m2]") {
+    // Opaque M2 batches (blendMode == 0, alphaTest == 0, colorKeyBlack == 0)
+    // such as hand_1h_naxxramas_d_01.m2 (Claw of the Frost Wyrm) store a
+    // reflection/overlay mask in texture alpha (0 across the blade). Writing
+    // texColor.a with blendDisabled() punches a transparent hole into the
+    // off-screen CharacterPreview FBO over both the weapon and character body.
+    const std::string frag = readRepoText("assets/shaders/character.frag.glsl");
+    CHECK(frag.find("float outAlpha = (colorKeyBlack == 0 && (blendMode == 0 || alphaTest != 0))") != std::string::npos);
+    CHECK(frag.find("float outAlpha = (blendMode == 0 && alphaTest == 0 && colorKeyBlack == 0)") != std::string::npos);
+}
