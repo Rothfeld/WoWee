@@ -1053,6 +1053,8 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         addons::storedCVarValue("nameplateAllowOverlap", "0") != "0";
     static thread_local std::vector<ui::PlateBox> placedPlates;
     placedPlates.clear();
+    core::FrameStagePhases passPhases;
+    passPhases.phase("uiManager->render/nameplates/sort by distance");
     if (!allowPlateOverlap) {
         std::sort(nameplateEntities.begin(), nameplateEntities.end(),
                   [&](const std::shared_ptr<game::Entity>& a,
@@ -1076,6 +1078,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
     static thread_local std::unordered_set<uint64_t> drawnGuids;
     spreadPlates.clear();
     drawnGuids.clear();
+    passPhases.phase(nullptr);
     for (int pass = spreadLegacyPlates ? 0 : 1; pass < 2; ++pass) {
     if (pass == 1 && !spreadPlates.empty()) {
         spreadOrder.clear();
@@ -1084,6 +1087,9 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
     }
     for (const auto& entityPtr : nameplateEntities) {
         if (!entityPtr) continue;
+        // What one unit costs, phase by phase (WOWEE_FRAME_PROFILE only).
+        core::FrameStagePhases unitPhases;
+        unitPhases.phase("uiManager->render/nameplates/unit checks");
         const uint64_t guid = entityPtr->getGuid();
         if (pass == 1 && !drawnGuids.insert(guid).second) continue;
         const bool hideOwnName = guid == playerGuid && addons::storedCVarValue("unitNameOwn", "0") == "0";
@@ -1104,6 +1110,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         const bool isCorpse = (unit->getHealth() == 0);
         if (isCorpse && !legacyPlates && !isTarget) continue;
 
+        unitPhases.phase("uiManager->render/nameplates/model position");
         // Prefer the renderer's actual instance position so the nameplate tracks the
         // rendered model exactly (avoids drift from the parallel entity interpolator).
         glm::vec3 renderPos;
@@ -1125,8 +1132,10 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         // Nor over a unit hidden in a room the camera does not see.
         if (characters->isInstanceRoomHidden(instanceId)) continue;
 
+        unitPhases.phase("uiManager->render/nameplates/label visibility");
         const auto labelVisibility = unitLabelVisibility(gameHandler, guid, unitPosition, renderPos, *camera);
         const bool showPlate = labelVisibility.plate;
+        unitPhases.phase("uiManager->render/nameplates/placement");
         if (pass == 0 && !showPlate) continue;
 
         // Build 8606 draws the raid atlas on a one-yard camera-facing quad,
@@ -1177,11 +1186,13 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         // entire label at its anchor hides visible text when a beam crosses
         // only the anchor. Screen-space nameplates still need a sight query.
         static SightCache sight;
+        unitPhases.phase("uiManager->render/nameplates/plate sight");
         if (showPlate && sight.blocked(
                 services_.renderer ? services_.renderer->getWMORenderer() : nullptr,
                 guid, camPos, renderPos)) {
             continue;
         }
+        unitPhases.phase("uiManager->render/nameplates/placement");
 
         // Project to clip space
         glm::vec4 clipPos = viewProj * glm::vec4(renderPos, 1.0f);
@@ -1293,6 +1304,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             ? std::clamp(static_cast<float>(unit->getHealth()) / static_cast<float>(unit->getMaxHealth()), 0.0f, 1.0f)
             : 0.0f;
 
+        unitPhases.phase("uiManager->render/nameplates/plate art");
         const int plateVertexStart = drawList->VtxBuffer.Size;
         if (showPlate) {
         if (legacyPlates) {
@@ -1595,6 +1607,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         // which is what these settings mean. The current target keeps its
         // name whatever is set, as it keeps its plate.
         const bool showThisName = labelVisibility.name;
+        unitPhases.phase("uiManager->render/nameplates/name text");
 
         uint32_t level = unit->getLevel();
         const std::string& unitName = unit->getName();
@@ -1714,6 +1727,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         }
         if (showPlate && legacyPlates) subLabel.clear();
         if (!subLabel.empty()) nameY -= nameFontSize;  // shift name up for sub-label line
+        unitPhases.phase("uiManager->render/nameplates/name draw");
 
         if (showPlate && legacyPlates && (guid == worldHoverGuid_ || plateHovered)) {
             drawList->AddCallback([](const ImDrawList*, const ImDrawCmd* command) {
@@ -1847,6 +1861,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
     }
     }
 
+    passPhases.phase("uiManager->render/nameplates/mouseover and tooltip");
     if (frameXmlOwnsMouse() || ImGui::GetIO().WantCaptureMouse) mouseoverGuid = 0;
     gameHandler.setMouseoverGuid(mouseoverGuid);
     const uint64_t objectTooltipGuid = frameXmlOwnsMouse() || ImGui::GetIO().WantCaptureMouse

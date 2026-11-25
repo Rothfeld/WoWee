@@ -241,6 +241,10 @@ private:
     /// that answers "where does the frame go" was never in the logs it was
     /// built for. With the flag set it is reported at warning instead.
     bool frameProfileEnabled_ = false;
+    /// Summed over the report window: the stages updateInGame times, and the
+    /// stages render times that are not part of another stage.
+    double updateStagesMs_ = 0.0;
+    double renderStagesMs_ = 0.0;
     std::map<std::string, StageStat> stageStats_;
     std::chrono::steady_clock::time_point stageStatsSince_{};
     /// What assets were found at startup, so the login screen can say so

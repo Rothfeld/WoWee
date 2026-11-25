@@ -1616,6 +1616,16 @@ void Application::run() {
     std::array<int, 4> lastPacing{-1, -1, -1, -1};
     while (running && !window->shouldClose()) {
         const auto frameStart = std::chrono::steady_clock::now();
+        // The iteration cut into consecutive parts, each noted under
+        // "loop/...": together they are the whole frame, so the report can
+        // say how much of it lies outside update() and render(), and how
+        // much of those two lies outside the stages they time themselves.
+        auto lapStart = frameStart;
+        const auto lap = [&lapStart](const char* stage) {
+            const auto now = std::chrono::steady_clock::now();
+            core::noteFrameStage(stage, std::chrono::duration<double, std::milli>(now - lapStart).count());
+            lapStart = now;
+        };
         beatWatchdog();
         // What a burst of warnings left in the buffer. A warning no longer
         // writes itself to disk one line at a time - see Logger::flushIfStale -
@@ -1671,6 +1681,7 @@ void Application::run() {
             }
             pacer.waitForCap(cap);
         }
+        lap("loop/cap wait");
 
         // Delta, and the start of the frame the cap above will pace. Taken
         // together from one clock reading so the two cannot disagree about
@@ -2257,6 +2268,7 @@ void Application::run() {
                 ui::noteInterfaceConsumedKey(static_cast<ImGuiKey>(key));
         ui::KeybindingManager::getInstance().updateInput();
 
+        lap("loop/events and input");
         // Update application state
         try {
             FrameMark;
@@ -2270,6 +2282,7 @@ void Application::run() {
                       ", dt=", deltaTime, "): ", e.what());
             throw;
         }
+        lap("loop/update");
         if (window->shouldClose()) {
             break;
         }
@@ -2283,6 +2296,7 @@ void Application::run() {
             LOG_ERROR("Exception during Application::render (state=", static_cast<int>(state), "): ", e.what());
             throw;
         }
+        lap("loop/render");
         // Swap buffers
         try {
             window->swapBuffers();
@@ -2312,9 +2326,11 @@ void Application::run() {
             : std::chrono::microseconds(4167);
         const auto deadline = frameStart + targetFrame;
         const auto now = std::chrono::steady_clock::now();
+        lap("loop/after render");
         if (now < deadline) {
             std::this_thread::sleep_until(deadline);
         }
+        lap("loop/pace to refresh");
     }
 
     LOG_INFO("Main loop ended");
@@ -4923,6 +4939,7 @@ void Application::updateInGame(float deltaTime, const char*& updateCheckpoint) {
         auto stageEnd = std::chrono::steady_clock::now();
         float stageMs = std::chrono::duration<float, std::milli>(stageEnd - stageStart).count();
         noteStageTime(stageName, stageMs);
+        updateStagesMs_ += stageMs;
         if (stageMs > 50.0f) {
             LOG_WARNING("SLOW update stage '", stageName, "': ", stageMs, "ms");
         }
@@ -5423,6 +5440,8 @@ void Application::render() {
         float stageMs = std::chrono::duration<float, std::milli>(
             std::chrono::steady_clock::now() - stageStart).count();
         noteStageTime(stageName, stageMs);
+        // Stages named "a/b" run inside stage "a" and are already counted.
+        if (std::strchr(stageName, '/') == nullptr) renderStagesMs_ += stageMs;
         if (stageMs > 50.0f) {
             LOG_WARNING("SLOW render stage '", stageName, "': ", stageMs, "ms");
         }
@@ -6701,6 +6720,15 @@ void Application::render() {
         noteStageTime("endFrame/interface", t.interface);
         noteStageTime("endFrame/submit", t.submit);
         noteStageTime("endFrame/present", t.present);
+        // Processor time of this thread inside the present: a present that
+        // waits has little, one that copies or spins in the driver has as
+        // much as it took (core/thread_cpu_time.hpp).
+        if (t.presentUserCpu >= 0.0f) {
+            noteStageTime("endFrame/present/cpu in user code", t.presentUserCpu);
+            noteStageTime("endFrame/present/cpu in kernel", t.presentSystemCpu);
+        }
+        noteStageTime("beginFrame/wait for frame slot", t.frameWait);
+        noteStageTime("beginFrame/acquire image", t.acquire);
     }
 
     // A picture of the client, written once and then done with.
@@ -6808,6 +6836,29 @@ void Application::reportStageTimes() {
             }
             if (loud) LOG_WARNING(line.str()); else LOG_INFO(line.str());
         }
+        // What the loop's parts leave unaccounted: the frame outside every
+        // part (the reporting itself), and update() and render() outside the
+        // stages they time. A large number here is a stage missing a timer.
+        {
+            double loopMs = 0.0;
+            for (const auto& [name, stat] : stageStats_) {
+                if (name.rfind("loop/", 0) == 0) loopMs += stat.totalMs;
+            }
+            const auto total = [&](const char* name) {
+                const auto it = stageStats_.find(name);
+                return it == stageStats_.end() ? 0.0 : it->second.totalMs;
+            };
+            const auto say = [&](const char* what, double ms) {
+                std::ostringstream line;
+                line << "  " << what << ": " << static_cast<float>(ms / stageStatFrames_)
+                     << "ms/frame avg, " << static_cast<int>(100.0 * ms / windowMs)
+                     << "% of the window";
+                if (loud) LOG_WARNING(line.str()); else LOG_INFO(line.str());
+            };
+            say("outside the loop's parts", windowMs - loopMs);
+            say("loop/update outside its stages", total("loop/update") - updateStagesMs_);
+            say("loop/render outside its stages", total("loop/render") - renderStagesMs_);
+        }
         auto& notes = core::frameStageNotes();
         for (auto& [name, count] : notes.counts) {
             std::ostringstream line;
@@ -6884,6 +6935,8 @@ void Application::reportStageTimes() {
     }
 
     stageStats_.clear();
+    updateStagesMs_ = 0.0;
+    renderStagesMs_ = 0.0;
     stageStatFrames_ = 0;
     stageStatsSince_ = now;
 }

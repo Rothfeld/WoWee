@@ -95,4 +95,37 @@ private:
     std::chrono::steady_clock::time_point start_;
 };
 
+/// Cuts a stretch of code into consecutive phases and notes each one's time.
+///
+/// For a loop body with many early exits (`continue`): `phase("a/b")` ends the
+/// phase before it and starts "a/b"; leaving the scope ends the last one, so
+/// an exit anywhere is charged to the phase it happened in. Does nothing
+/// unless detail is on (WOWEE_FRAME_PROFILE), so it can stay in a loop that
+/// runs for every unit around the player.
+///
+/// Example, from the nameplate pass: "uiManager->render/nameplates/model
+/// position", ".../label visibility", ".../name text".
+class FrameStagePhases {
+public:
+    FrameStagePhases() : enabled_(frameStageDetailEnabled()) {}
+    FrameStagePhases(const FrameStagePhases&) = delete;
+    FrameStagePhases& operator=(const FrameStagePhases&) = delete;
+    ~FrameStagePhases() { phase(nullptr); }
+
+    void phase(const char* next) {
+        if (!enabled_) return;
+        const auto now = std::chrono::steady_clock::now();
+        if (current_) {
+            noteFrameStage(current_, std::chrono::duration<double, std::milli>(now - start_).count());
+        }
+        current_ = next;
+        start_ = now;
+    }
+
+private:
+    bool enabled_;
+    const char* current_ = nullptr;
+    std::chrono::steady_clock::time_point start_{};
+};
+
 } // namespace wowee::core

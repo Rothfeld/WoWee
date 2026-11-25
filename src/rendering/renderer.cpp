@@ -1650,6 +1650,10 @@ void Renderer::endFrame() {
     vkCtx->endFrame(currentCmd, currentImageIndex);
     endFrameTimes_.submit = vkCtx->lastSubmitMs();
     endFrameTimes_.present = vkCtx->lastPresentMs();
+    endFrameTimes_.presentUserCpu = vkCtx->lastPresentUserCpuMs();
+    endFrameTimes_.presentSystemCpu = vkCtx->lastPresentSystemCpuMs();
+    endFrameTimes_.frameWait = vkCtx->lastFrameWaitMs();
+    endFrameTimes_.acquire = vkCtx->lastAcquireMs();
     currentCmd = VK_NULL_HANDLE;
 }
 

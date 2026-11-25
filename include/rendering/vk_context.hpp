@@ -92,6 +92,15 @@ public:
     /// vkQueuePresentKHR (every swapchain presented that frame).
     [[nodiscard]] float lastSubmitMs() const { return lastSubmitMs_; }
     [[nodiscard]] float lastPresentMs() const { return lastPresentMs_; }
+    /// Processor time of the calling thread inside that present, in the
+    /// program and its libraries (user) and in the kernel (system); see
+    /// core/thread_cpu_time.hpp. Negative where the platform cannot say.
+    [[nodiscard]] float lastPresentUserCpuMs() const { return lastPresentUserCpuMs_; }
+    [[nodiscard]] float lastPresentSystemCpuMs() const { return lastPresentSystemCpuMs_; }
+    /// Milliseconds the last beginFrame waited for its frame slot's earlier
+    /// submission to finish on the GPU, and spent in vkAcquireNextImageKHR.
+    [[nodiscard]] float lastFrameWaitMs() const { return lastFrameWaitMs_; }
+    [[nodiscard]] float lastAcquireMs() const { return lastAcquireMs_; }
 
     /// A second window presented by this frame, recorded into its command buffer.
     ///
@@ -436,6 +445,10 @@ private:
     bool vsync_ = true;
     float lastSubmitMs_ = 0.0f;
     float lastPresentMs_ = 0.0f;
+    float lastPresentUserCpuMs_ = -1.0f;
+    float lastPresentSystemCpuMs_ = -1.0f;
+    float lastFrameWaitMs_ = 0.0f;
+    float lastAcquireMs_ = 0.0f;
     /// The vsync state the present-mode line last reported, so a rebuild
     /// that changes nothing says nothing. -1 until the first swapchain.
     int loggedPresentVsync_ = -1;

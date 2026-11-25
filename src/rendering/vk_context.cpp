@@ -6,6 +6,7 @@
 #include "rendering/vk_context.hpp"
 #include "rendering/vk_pipeline.hpp"
 #include "rendering/vk_shader.hpp"
+#include "core/thread_cpu_time.hpp"
 #include <imgui.h>
 #include <stdexcept>
 
@@ -3034,6 +3035,7 @@ VkCommandBuffer VkContext::beginFrame(uint32_t& imageIndex) {
     // Wait for this frame's fence (with timeout to detect GPU hangs)
     static int beginFrameCounter = 0;
     beginFrameCounter++;
+    const auto frameWaitStart = std::chrono::steady_clock::now();
     VkResult fenceResult;
     if (frameTimeline_ != VK_NULL_HANDLE) {
         VkSemaphoreWaitInfo waitInfo{};
@@ -3056,6 +3058,9 @@ VkCommandBuffer VkContext::beginFrame(uint32_t& imageIndex) {
         return VK_NULL_HANDLE;
     }
 
+    lastFrameWaitMs_ = std::chrono::duration<float, std::milli>(
+        std::chrono::steady_clock::now() - frameWaitStart).count();
+
     // Any work queued for this frame slot is now guaranteed to be unused by the GPU.
     runDeferredCleanup(currentFrame);
 
@@ -3066,8 +3071,11 @@ VkCommandBuffer VkContext::beginFrame(uint32_t& imageIndex) {
     // Acquire next swapchain image using the free semaphore.
     // After acquiring we swap it into the per-image slot so the old per-image
     // semaphore (now released by the presentation engine) becomes the free one.
+    const auto acquireStart = std::chrono::steady_clock::now();
     VkResult result = vkAcquireNextImageKHR(device, swapchain, UINT64_MAX,
         nextAcquireSemaphore_, VK_NULL_HANDLE, &imageIndex);
+    lastAcquireMs_ = std::chrono::duration<float, std::milli>(
+        std::chrono::steady_clock::now() - acquireStart).count();
 
     if (result == VK_ERROR_OUT_OF_DATE_KHR) {
         swapchainDirty = true;
@@ -3194,8 +3202,11 @@ void VkContext::endFrame(VkCommandBuffer cmd, uint32_t imageIndex) {
                                           frameTimeline_ != VK_NULL_HANDLE ? VK_NULL_HANDLE
                                                                            : frame.inFlightFence);
     const auto presentStart = std::chrono::steady_clock::now();
+    const core::ThreadCpuTime presentCpuStart = core::threadCpuTime();
     lastSubmitMs_ = std::chrono::duration<float, std::milli>(presentStart - submitStart).count();
     lastPresentMs_ = 0.0f;
+    lastPresentUserCpuMs_ = -1.0f;
+    lastPresentSystemCpuMs_ = -1.0f;
     if (submitResult == VK_SUCCESS && frameTimeline_ != VK_NULL_HANDLE) {
         // Only once the submit is in: on failure the timeline is never
         // signalled, and a slot left waiting on an unreachable value would
@@ -3279,6 +3290,11 @@ void VkContext::endFrame(VkCommandBuffer cmd, uint32_t imageIndex) {
     }
     lastPresentMs_ = std::chrono::duration<float, std::milli>(
         std::chrono::steady_clock::now() - presentStart).count();
+    if (const core::ThreadCpuTime presentCpuEnd = core::threadCpuTime();
+        presentCpuStart.available && presentCpuEnd.available) {
+        lastPresentUserCpuMs_ = static_cast<float>(presentCpuEnd.userMs - presentCpuStart.userMs);
+        lastPresentSystemCpuMs_ = static_cast<float>(presentCpuEnd.systemMs - presentCpuStart.systemMs);
+    }
 
     currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 }

@@ -96,7 +96,14 @@ public:
     /// Where the last endFrame spent its time, in milliseconds, for the frame
     /// budget report: recording the post-process and interface passes, the
     /// queue submit, and the present.
-    struct EndFrameTimes { float postProcess = 0, interface = 0, submit = 0, present = 0; };
+    /// presentUserCpu / presentSystemCpu: the main thread's processor time
+    /// inside the present (negative where the platform cannot say); frameWait
+    /// and acquire belong to the beginFrame of the same frame.
+    struct EndFrameTimes {
+        float postProcess = 0, interface = 0, submit = 0, present = 0;
+        float presentUserCpu = -1, presentSystemCpu = -1;
+        float frameWait = 0, acquire = 0;
+    };
     [[nodiscard]] const EndFrameTimes& lastEndFrameTimes() const { return endFrameTimes_; }
 
     /// Recorded after the interface is drawn and before the frame is submitted,
