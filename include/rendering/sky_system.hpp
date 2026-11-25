@@ -72,15 +72,20 @@ inline float effectiveSkyCloudDensity(bool useOriginalSkybox,
                                       float dbcCloudDensity,
                                       float timeOfDayHours,
                                       float weatherIntensity,
-                                      const glm::vec3& skyTopColor = glm::vec3(0.0f)) {
+                                      const glm::vec3& skyTopColor = glm::vec3(0.0f),
+                                      float cloudLayer2Weight = 0.0f) {
     if (useOriginalSkybox) return 0.0f;
     const float clampedDensity = std::clamp(dbcCloudDensity, 0.0f, 1.0f);
     const float darkSky = 1.0f - skySmoothstep(0.14f, 0.30f, skyColorLuminance(skyTopColor));
-    // Clear-night Azeroth zones author LightFloatBand[3] <= 0.50 and show only
-    // stars at night; permanent-overcast zones (Karazhan 386 / Deadwind Pass 19
-    // / Duskwood 57 at 0.70, Plaguelands 0.68, Blasted Lands 0.85, Storm 0.95)
-    // keep their authored cloud deck at all hours.
-    const float overcastPersistence = skySmoothstep(0.55f, 0.65f, clampedDensity);
+    // Clear-night Azeroth zones author LightFloatBand[3] <= 0.50 with no
+    // secondary cloud layer (IntBand[12] == black) and show only stars at night.
+    // Overcast zones — either high density (Karazhan 386 / Deadwind Pass 19 at
+    // 0.70, Plaguelands 0.68, Blasted Lands 0.85, Storm 0.95) or an authored
+    // IntBand[12] night cloud deck (Hinterlands 51 / Jintha'Alor 72 at 0.50,
+    // Duskwood 57 at 0.60) — keep their cloud deck at all hours.
+    const float overcastPersistence = std::max(
+        skySmoothstep(0.55f, 0.65f, clampedDensity),
+        std::clamp(cloudLayer2Weight, 0.0f, 1.0f) * skySmoothstep(0.30f, 0.48f, clampedDensity));
     const float clearNightSuppression =
         starFieldTimeVisibility(timeOfDayHours) * darkSky * (1.0f - overcastPersistence);
     const float daylightFactor = 1.0f - clearNightSuppression;

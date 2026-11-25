@@ -137,9 +137,11 @@ void SkySystem::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
 
     const float effectiveCloudDensity = effectiveSkyCloudDensity(
         params.useOriginalSkybox, params.cloudDensity,
-        params.timeOfDay, params.weatherIntensity, params.skyTopColor);
+        params.timeOfDay, params.weatherIntensity, params.skyTopColor,
+        params.cloudLayer2Weight);
     const float effectiveOvercast = std::max(
-        params.weatherIntensity, overcastCloudCover(effectiveCloudDensity));
+        params.weatherIntensity,
+        overcastCloudCover(effectiveCloudDensity, params.cloudLayer2Weight));
 
     if (starField_) {
         starField_->setEnabled(renderProceduralStars);

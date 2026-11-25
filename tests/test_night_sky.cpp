@@ -119,6 +119,18 @@ TEST_CASE("effectiveSkyCloudDensity suppresses clear-night procedural clouds and
     CHECK(overcastCloudCover(0.70f) == Catch::Approx(1.0f));
     CHECK(starFieldEffectiveIntensity(22.2f, overcastCloudCover(0.70f), 1.0f, karaNightTop) == Catch::Approx(0.0f));
 
+    // Zones with FloatBand[3] = 0.50 AND an authored IntBand[12] secondary cloud
+    // layer (e.g. Hinterlands LP 51 / Jintha'Alor LP 72: cldDrk = (38, 41, 37),
+    // cloudLayer2Weight = 1.0) keep their night cloud deck and hide stars/moon,
+    // while clear-night 0.50 zones with black IntBand[12] (Mirage Raceway LP 239)
+    // remain cloudless starry skies.
+    CHECK(effectiveSkyCloudDensity(false, 0.50f, 22.22f, 0.0f, glm::vec3(0.0f), 1.0f) == Catch::Approx(0.50f));
+    CHECK(effectiveSkyCloudDensity(false, 0.50f, 22.22f, 0.0f, glm::vec3(0.0f), 0.0f) == Catch::Approx(0.0f));
+    CHECK(overcastCloudCover(0.50f, 1.0f) == Catch::Approx(1.0f));
+    CHECK(overcastCloudCover(0.50f, 0.0f) == Catch::Approx(0.0f));
+    CHECK(starFieldEffectiveIntensity(22.22f, overcastCloudCover(0.50f, 1.0f), 1.0f, glm::vec3(0.0f)) == Catch::Approx(0.0f));
+    CHECK(moonNightVisibility(22.22f, glm::vec3(0.0f), overcastCloudCover(0.50f, 1.0f), 1.0f) == Catch::Approx(0.0f));
+
     // Custom M2 skyboxes (Outland) never receive procedural dome clouds.
     CHECK(effectiveSkyCloudDensity(true, 0.5f, 12.0f, 0.8f) == Catch::Approx(0.0f));
     CHECK(effectiveSkyCloudDensity(true, 0.5f, 19.75f, 0.0f, orgDuskTop) == Catch::Approx(0.0f));

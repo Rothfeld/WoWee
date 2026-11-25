@@ -32,14 +32,21 @@ inline float starFieldTimeVisibility(float timeOfDayHours) {
     return 0.0f;
 }
 
-/// Overcast cloud-deck cover in [0, 1] from effective DBC cloud density.
-/// Clear-night Azeroth zones (Elwynn, Orgrimmar, Westfall, Barrens) author
-/// LightFloatBand[3] <= 0.50 -> 0.0 (stars and moon stay unattenuated).
-/// Permanent-overcast zones (Karazhan 386 / Deadwind Pass 19 / Duskwood 57 at
-/// 0.70, Plaguelands at 0.68, Storm at 0.95) ramp to 1.0 so thick overcast
-/// cloud cover hides stars and moon just like storm weather.
-inline float overcastCloudCover(float effectiveCloudDensity) {
-    return skySmoothstep(0.55f, 0.68f, effectiveCloudDensity);
+/// Overcast cloud-deck cover in [0, 1] from effective DBC cloud density and
+/// secondary cloud-layer presence (`LightIntBand[12]` non-black).
+/// Clear-night Azeroth zones (Mirage Raceway 239, Kalimdor 192, EK 12,
+/// Westfall, Barrens) author LightFloatBand[3] <= 0.50 with IntBand[12] = black
+/// (`cloudLayer2Weight == 0`) -> 0.0 (stars and moon stay unattenuated).
+/// Overcast zones — either high density (Karazhan 386 / Deadwind Pass 19 at
+/// 0.70, Plaguelands at 0.68, Storm at 0.95) or an authored IntBand[12] night
+/// cloud deck (Hinterlands 51 / Jintha'Alor 72 at 0.50, Duskwood 57 at 0.60) —
+/// ramp to 1.0 so thick cloud cover hides stars and moon just like storm weather.
+inline float overcastCloudCover(float effectiveCloudDensity,
+                                float cloudLayer2Weight = 0.0f) {
+    const float densityOvercast = skySmoothstep(0.55f, 0.68f, effectiveCloudDensity);
+    const float layer2Overcast = std::clamp(cloudLayer2Weight, 0.0f, 1.0f) *
+                                 skySmoothstep(0.30f, 0.48f, effectiveCloudDensity);
+    return std::max(densityOvercast, layer2Overcast);
 }
 
 /// Atmospheric attenuation for stars in [0, 1].

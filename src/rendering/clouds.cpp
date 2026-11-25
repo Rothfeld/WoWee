@@ -133,7 +133,7 @@ void Clouds::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const SkyP
     // are already authored per hour (warm/white by day, luminous cyan-blue at night).
     // Overcast zones (e.g. Karazhan 386 / Deadwind Pass 19, FloatBand[3]=0.70)
     // author bright IntBand[10]/[11] overcast sky with dark IntBand[12] storm clouds.
-    const float overcast = overcastCloudCover(density_);
+    const float overcast = overcastCloudCover(density_, params.cloudLayer2Weight);
     const float layer2Mix = overcast * glm::clamp(params.cloudLayer2Weight, 0.0f, 1.0f);
     glm::vec3 cloudLitColor = params.cloudColor;
     glm::vec3 cloudShadeColor = glm::mix(params.cloudEmissiveColor, params.cloudLayer2Color, layer2Mix);
