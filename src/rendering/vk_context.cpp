@@ -7,6 +7,8 @@
 #include "rendering/vk_pipeline.hpp"
 #include "rendering/vk_shader.hpp"
 #include "core/thread_cpu_time.hpp"
+#include "core/frame_stage_times.hpp"
+#include "rendering/x11_shm_presenter.hpp"
 #include <imgui.h>
 #include <stdexcept>
 
@@ -91,6 +93,9 @@ bool VkContext::initialize(SDL_Window* window) {
     if (!createInstance(window)) return false;
     if (!createSurface(window)) return false;
     if (!selectPhysicalDevice()) return false;
+    // Before the device: the path needs a device extension, enabled only
+    // where the window qualifies.
+    if (!probeSharedMemoryPresent(window)) return false;
     if (!createLogicalDevice()) return false;
     if (!createAllocator()) return false;
 
@@ -225,6 +230,8 @@ void VkContext::shutdown() {
     sInstance_ = nullptr;
 
     LOG_DEBUG("VkContext::shutdown - destroySwapchain...");
+    destroyPresentReadback();
+    x11Window_.reset();
     destroySwapchain();
 
     // Normally skip vmaDestroyAllocator: it walks every allocation to free it,
@@ -409,6 +416,17 @@ bool VkContext::createInstance([[maybe_unused]] SDL_Window* window) {
     for (auto ext : sdlExts) {
         builder.enable_extension(ext);
     }
+#if defined(WOWEE_X11_SHM_PRESENT)
+    // What VK_EXT_swapchain_maintenance1 requires of the instance; see
+    // "Presenting through shared memory" below.
+    if (const auto system = vkb::SystemInfo::get_system_info();
+        system && system->is_extension_available(VK_EXT_SURFACE_MAINTENANCE_1_EXTENSION_NAME) &&
+        system->is_extension_available(VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME)) {
+        builder.enable_extension(VK_EXT_SURFACE_MAINTENANCE_1_EXTENSION_NAME);
+        builder.enable_extension(VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME);
+        surfaceMaintenanceEnabled_ = true;
+    }
+#endif
 
     // Allow turning validation on in a release build via env var, so the
     // Khronos validation layer's messages (e.g. the exact VK error behind an
@@ -697,6 +715,19 @@ bool VkContext::createLogicalDevice() {
                                 instanceApiVersion_ >= VK_API_VERSION_1_3;
     const bool amdCoherentAvailable = vkbPhysicalDevice_.enable_extension_if_present(
         VK_AMD_DEVICE_COHERENT_MEMORY_EXTENSION_NAME);
+    // Only for a window that will be presented through shared memory: giving
+    // an acquired image back without presenting it.
+    bool swapchainMaintenanceAvailable = false;
+    if (x11Window_ && surfaceMaintenanceEnabled_) {
+        VkPhysicalDeviceSwapchainMaintenance1FeaturesEXT supported{};
+        supported.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SWAPCHAIN_MAINTENANCE_1_FEATURES_EXT;
+        VkPhysicalDeviceFeatures2 probe{};
+        probe.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+        probe.pNext = &supported;
+        vkGetPhysicalDeviceFeatures2(physicalDevice, &probe);
+        swapchainMaintenanceAvailable = supported.swapchainMaintenance1 &&
+            vkbPhysicalDevice_.enable_extension_if_present(VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME);
+    }
     // VK_EXT_host_image_copy. Lets pixels go straight into an image from host
     // memory, so a texture upload needs no staging buffer, no transfer
     // submission and no layout barriers around it. Worth most where the two
@@ -931,6 +962,13 @@ bool VkContext::createLogicalDevice() {
     (void)deviceFaultAvailable;
 #endif
 
+    VkPhysicalDeviceSwapchainMaintenance1FeaturesEXT swapchainMaintenanceFeatures{};
+    swapchainMaintenanceFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SWAPCHAIN_MAINTENANCE_1_FEATURES_EXT;
+    if (swapchainMaintenanceAvailable) {
+        swapchainMaintenanceFeatures.swapchainMaintenance1 = VK_TRUE;
+        deviceBuilder.add_pNext(&swapchainMaintenanceFeatures);
+    }
+
     // Enable AMD device coherent memory feature if the extension was enabled
     // (prevents validation errors when VMA selects memory types with DEVICE_COHERENT_BIT_AMD)
     VkPhysicalDeviceCoherentMemoryFeaturesAMD coherentFeatures{};
@@ -1011,6 +1049,12 @@ bool VkContext::createLogicalDevice() {
                         "resolve - textures keep the staging buffer path");
         }
     }
+
+    if (swapchainMaintenanceAvailable) {
+        releaseSwapchainImages_ = reinterpret_cast<PFN_vkReleaseSwapchainImagesEXT>(
+            vkGetDeviceProcAddr(device, "vkReleaseSwapchainImagesEXT"));
+    }
+    if (!finishSharedMemoryPresentChoice()) return false;
 
 #if defined(VK_EXT_device_fault)
     if (deviceFaultSupported_) {
@@ -1303,6 +1347,7 @@ bool VkContext::createSwapchain(int width, int height) {
 
     LOG_INFO("Vulkan swapchain created: ", swapchainExtent.width, "x", swapchainExtent.height,
              " (", swapchainImages.size(), " images)");
+    if (!createPresentReadback()) return false;
     swapchainDirty = false;
     return true;
 }
@@ -2912,6 +2957,7 @@ bool VkContext::recreateSwapchain(int width, int height) {
 
     if (!createOverlayRenderPass()) return false;
     if (!createSceneContinueRenderPass()) return false;
+    if (!createPresentReadback()) return false;
 
     swapchainDirty = false;
     LOG_INFO("Swapchain recreated: ", swapchainExtent.width, "x", swapchainExtent.height);
@@ -3024,6 +3070,259 @@ void VkContext::resetFrameSyncState() {
     currentFrame = 0;
     LOG_WARNING("Frame synchronisation reset after a rebuild: fences signalled, "
                 "command buffers reset, back to slot 0");
+}
+
+// ---------------------------------------------------------------------------
+// Presenting through shared memory
+//
+// vkQueuePresentKHR on an X server that draws in main memory (Xvfb, Xvnc,
+// Xephyr) makes the driver read the frame back and write every pixel into the
+// X socket; with this driver that was 13 ms of the main thread at 1280x720
+// and 4.7 ms at 640x360, most of it in the kernel. Such a server offers
+// MIT-SHM, which moves the same bytes without the socket.
+//
+// The rule (probeSharedMemoryPresent, finishSharedMemoryPresentChoice): the
+// window qualifies (X11ShmPresenter::create lists the requirements), the
+// device has VK_EXT_swapchain_maintenance1, and the swapchain's format is
+// B8G8R8A8. WOWEE_X11_SHM_PRESENT=0 keeps vkQueuePresentKHR, =1 requires the
+// shared-memory path and fails start-up with the reason when it is not
+// available; unset means "when the rule holds". The choice is logged.
+//
+// A frame's path (endFrame):
+//   1. the swapchain image is copied into a host-visible buffer at the end
+//      of the frame's command buffer (recordPresentReadback);
+//   2. after the submit, wait for the GPU to finish it - the driver's own
+//      present waited for the same thing before reading back;
+//   3. copy the buffer into the shared segment and ask the server to put it
+//      into the window (X11ShmPresenter::put);
+//   4. give the image back to the swapchain without presenting it
+//      (vkReleaseSwapchainImagesEXT), so the next acquire returns it.
+// The swapchain, its images, render passes and the frame's readers (the
+// screenshot, the recorder) are what they were; only the last step differs.
+// A second window (addExtraPresent) is still presented by the driver.
+//
+// WOWEE_PRESENT_CHECK=1 reads the window back every 30th frame, on either
+// path, and counts the bytes that differ from the frame presented, into the
+// frame budget report.
+// ---------------------------------------------------------------------------
+
+namespace {
+/// 0, 1, or -1 for unset.
+int envSwitch(const char* name) {
+    const char* value = std::getenv(name);
+    if (!value || !*value) return -1;
+    return *value == '0' ? 0 : 1;
+}
+} // namespace
+
+bool VkContext::probeSharedMemoryPresent(SDL_Window* window) {
+    const int wanted = envSwitch("WOWEE_X11_SHM_PRESENT");
+    presentCheck_ = envSwitch("WOWEE_PRESENT_CHECK") == 1;
+    std::string reason;
+    x11Window_ = X11ShmPresenter::create(window, reason);
+    if (!x11Window_) {
+        if (wanted == 1 || presentCheck_) {
+            LOG_ERROR("Presenting through shared memory was required (WOWEE_X11_SHM_PRESENT=1 or "
+                      "WOWEE_PRESENT_CHECK=1) and is not available: ", reason);
+            return false;
+        }
+        LOG_INFO("Frames are presented by the driver: ", reason);
+        return true;
+    }
+    if (wanted == 0 && !presentCheck_) {
+        LOG_WARNING("Frames are presented by the driver: WOWEE_X11_SHM_PRESENT=0, "
+                    "though the window qualifies for shared memory");
+        x11Window_.reset();
+    }
+    return true;
+}
+
+bool VkContext::finishSharedMemoryPresentChoice() {
+    if (!x11Window_) return true;
+    const int wanted = envSwitch("WOWEE_X11_SHM_PRESENT");
+    if (wanted == 0) {
+        // Kept only for WOWEE_PRESENT_CHECK's readback of the window.
+        LOG_WARNING("Frames are presented by the driver: WOWEE_X11_SHM_PRESENT=0, "
+                    "though the window qualifies for shared memory");
+        return true;
+    }
+    if (releaseSwapchainImages_ == nullptr) {
+        const char* reason = "the device has no VK_EXT_swapchain_maintenance1, "
+                             "which gives an acquired image back without presenting it";
+        if (wanted == 1) {
+            LOG_ERROR("Presenting through shared memory was required (WOWEE_X11_SHM_PRESENT=1) "
+                      "and is not available: ", reason);
+            return false;
+        }
+        LOG_INFO("Frames are presented by the driver: ", reason);
+        if (!presentCheck_) x11Window_.reset();
+        return true;
+    }
+    presentThroughShm_ = true;
+    LOG_WARNING("Frames are presented through shared memory (MIT-SHM): the X server "
+                "draws in main memory, and the driver's present would send every "
+                "pixel through the X socket. WOWEE_X11_SHM_PRESENT=0 turns this off.");
+    return true;
+}
+
+bool VkContext::createPresentReadback() {
+    destroyPresentReadback();
+    if (!x11Window_) return true;
+    if (swapchainFormat != VK_FORMAT_B8G8R8A8_UNORM && swapchainFormat != VK_FORMAT_B8G8R8A8_SRGB) {
+        LOG_ERROR("Presenting through shared memory: the swapchain's format (",
+                  static_cast<int>(swapchainFormat), ") is not B8G8R8A8");
+        return false;
+    }
+    if (!x11Window_->resize(swapchainExtent.width, swapchainExtent.height)) return false;
+
+    VkBufferCreateInfo bufferInfo{};
+    bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bufferInfo.size = static_cast<VkDeviceSize>(swapchainExtent.width) * swapchainExtent.height * 4;
+    bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    VmaAllocationCreateInfo allocInfo{};
+    allocInfo.usage = VMA_MEMORY_USAGE_GPU_TO_CPU;
+    allocInfo.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT;
+    VmaAllocationInfo info{};
+    if (vmaCreateBuffer(allocator, &bufferInfo, &allocInfo, &presentReadback_,
+                        &presentReadbackAlloc_, &info) != VK_SUCCESS || !info.pMappedData) {
+        LOG_ERROR("Presenting through shared memory: no readback buffer of ", bufferInfo.size, " bytes");
+        return false;
+    }
+    presentReadbackMapped_ = static_cast<const uint8_t*>(info.pMappedData);
+    return true;
+}
+
+void VkContext::destroyPresentReadback() {
+    if (presentReadback_ != VK_NULL_HANDLE) {
+        vmaDestroyBuffer(allocator, presentReadback_, presentReadbackAlloc_);
+        presentReadback_ = VK_NULL_HANDLE;
+        presentReadbackAlloc_ = VK_NULL_HANDLE;
+        presentReadbackMapped_ = nullptr;
+    }
+}
+
+void VkContext::recordPresentReadback(VkCommandBuffer cmd, uint32_t imageIndex) {
+    const VkImage image = swapchainImages[imageIndex];
+    auto imageBarrier = [&](VkImageLayout from, VkImageLayout to,
+                            VkPipelineStageFlags2 srcStage, VkAccessFlags2 srcAccess,
+                            VkPipelineStageFlags2 dstStage, VkAccessFlags2 dstAccess) {
+        VkImageMemoryBarrier2 b{.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
+        b.srcStageMask = srcStage;
+        b.srcAccessMask = srcAccess;
+        b.dstStageMask = dstStage;
+        b.dstAccessMask = dstAccess;
+        b.oldLayout = from;
+        b.newLayout = to;
+        b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        b.image = image;
+        b.subresourceRange = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1};
+        VkDependencyInfo dep{.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+        dep.imageMemoryBarrierCount = 1;
+        dep.pImageMemoryBarriers = &b;
+        cmdPipelineBarrier2(cmd, dep);
+    };
+    // The frame leaves its image in the layout presenting expects, and it is
+    // returned to that layout: the screenshot and the next frame rely on it.
+    imageBarrier(VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                 VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                 VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_READ_BIT);
+    VkBufferImageCopy region{};
+    region.imageSubresource = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .mipLevel = 0, .baseArrayLayer = 0, .layerCount = 1};
+    region.imageExtent = {.width = swapchainExtent.width, .height = swapchainExtent.height, .depth = 1};
+    vkCmdCopyImageToBuffer(cmd, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, presentReadback_, 1, &region);
+    imageBarrier(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+                 VK_PIPELINE_STAGE_2_TRANSFER_BIT, 0,
+                 VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                 VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+    VkBufferMemoryBarrier2 toHost{.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2};
+    toHost.srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
+    toHost.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+    toHost.dstStageMask = VK_PIPELINE_STAGE_2_HOST_BIT;
+    toHost.dstAccessMask = VK_ACCESS_2_HOST_READ_BIT;
+    toHost.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    toHost.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    toHost.buffer = presentReadback_;
+    toHost.size = VK_WHOLE_SIZE;
+    VkDependencyInfo dep{.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+    dep.bufferMemoryBarrierCount = 1;
+    dep.pBufferMemoryBarriers = &toHost;
+    cmdPipelineBarrier2(cmd, dep);
+}
+
+bool VkContext::waitForSubmittedFrame(uint64_t timelineValue, VkFence fence) {
+    VkResult waited;
+    if (frameTimeline_ != VK_NULL_HANDLE) {
+        VkSemaphoreWaitInfo waitInfo{};
+        waitInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO;
+        waitInfo.semaphoreCount = 1;
+        waitInfo.pSemaphores = &frameTimeline_;
+        waitInfo.pValues = &timelineValue;
+        waited = vkWaitSemaphores(device, &waitInfo, 5000000000ULL);
+    } else {
+        waited = vkWaitForFences(device, 1, &fence, VK_TRUE, 5000000000ULL);
+    }
+    if (waited != VK_SUCCESS) {
+        LOG_ERROR("Waiting for the submitted frame failed: ", static_cast<int>(waited));
+        noteDeviceLost("present wait for the frame", waited);
+        return false;
+    }
+    return true;
+}
+
+void VkContext::presentThroughSharedMemory(uint32_t imageIndex) {
+    const auto copyStart = std::chrono::steady_clock::now();
+    const size_t bytes = static_cast<size_t>(swapchainExtent.width) * swapchainExtent.height * 4;
+    vmaInvalidateAllocation(allocator, presentReadbackAlloc_, 0, VK_WHOLE_SIZE);
+    std::memcpy(x11Window_->pixels(), presentReadbackMapped_, bytes);
+    const auto putStart = std::chrono::steady_clock::now();
+    x11Window_->put();
+
+    VkReleaseSwapchainImagesInfoEXT release{};
+    release.sType = VK_STRUCTURE_TYPE_RELEASE_SWAPCHAIN_IMAGES_INFO_EXT;
+    release.swapchain = swapchain;
+    release.imageIndexCount = 1;
+    release.pImageIndices = &imageIndex;
+    const VkResult released = releaseSwapchainImages_(device, &release);
+    if (released != VK_SUCCESS) {
+        LOG_ERROR("vkReleaseSwapchainImagesEXT failed: ", static_cast<int>(released));
+        swapchainDirty = true;
+    }
+    const auto end = std::chrono::steady_clock::now();
+    lastPresentCopyMs_ = std::chrono::duration<float, std::milli>(putStart - copyStart).count();
+    lastPresentPutMs_ = std::chrono::duration<float, std::milli>(end - putStart).count();
+}
+
+void VkContext::checkPresentedFrame() {
+    // The driver's present reaches the server on the driver's own connection,
+    // so the window may still hold the frame before for a moment: read again
+    // for up to 200 ms before calling a difference a difference.
+    const size_t bytes = static_cast<size_t>(swapchainExtent.width) * swapchainExtent.height * 4;
+    vmaInvalidateAllocation(allocator, presentReadbackAlloc_, 0, VK_WHOLE_SIZE);
+    size_t colourBytes = 0, spareBytes = 0;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(200);
+    do {
+        if (!x11Window_->readWindow(presentCheckPixels_) || presentCheckPixels_.size() != bytes) {
+            LOG_ERROR("Present check: the window could not be read");
+            return;
+        }
+        colourBytes = 0;
+        spareBytes = 0;
+        for (size_t i = 0; i < bytes; ++i) {
+            if (presentCheckPixels_[i] != presentReadbackMapped_[i]) ++((i & 3) == 3 ? spareBytes : colourBytes);
+        }
+        if (colourBytes == 0 && spareBytes == 0) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    } while (std::chrono::steady_clock::now() < deadline);
+    core::noteFrameCount("present check: frames compared with the window", 1);
+    core::noteFrameCount("present check: frames differing", (colourBytes || spareBytes) ? 1 : 0);
+    core::noteFrameCount("present check: colour bytes differing", colourBytes);
+    core::noteFrameCount("present check: spare (fourth) bytes differing", spareBytes);
+    if (colourBytes || spareBytes) {
+        LOG_WARNING("Present check: the window differs from the frame presented in ",
+                    colourBytes, " colour bytes and ", spareBytes, " spare bytes of ", bytes);
+    }
 }
 
 VkCommandBuffer VkContext::beginFrame(uint32_t& imageIndex) {
@@ -3142,6 +3441,12 @@ void VkContext::endFrame(VkCommandBuffer cmd, uint32_t imageIndex) {
     static int endFrameCounter = 0;
     endFrameCounter++;
 
+    // See "Presenting through shared memory" above.
+    const bool checkThisFrame = presentCheck_ && x11Window_ && (presentCheckCounter_++ % 30) == 29;
+    if ((presentThroughShm_ || checkThisFrame) && presentReadback_ != VK_NULL_HANDLE) {
+        recordPresentReadback(cmd, imageIndex);
+    }
+
     VkResult endResult = vkEndCommandBuffer(cmd);
     if (endResult != VK_SUCCESS) {
         LOG_ERROR("endFrame[", endFrameCounter, "] vkEndCommandBuffer FAILED: ", static_cast<int>(endResult));
@@ -3160,7 +3465,11 @@ void VkContext::endFrame(VkCommandBuffer cmd, uint32_t imageIndex) {
     extras.swap(extraPresents_);
     std::vector<VkSemaphore> waitSemaphores{acquireSem};
     std::vector<VkPipelineStageFlags> waitStages{VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
-    std::vector<VkSemaphore> signalSemaphores{renderSem};
+    // renderSem is what vkQueuePresentKHR waits on. Without that present
+    // nothing would consume it, and a binary semaphore signalled twice is
+    // invalid, so it is left out.
+    std::vector<VkSemaphore> signalSemaphores;
+    if (!presentThroughShm_) signalSemaphores.push_back(renderSem);
     for (const ExtraPresent& extra : extras) {
         waitSemaphores.push_back(extra.acquired);
         waitStages.push_back(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
@@ -3207,6 +3516,9 @@ void VkContext::endFrame(VkCommandBuffer cmd, uint32_t imageIndex) {
     lastPresentMs_ = 0.0f;
     lastPresentUserCpuMs_ = -1.0f;
     lastPresentSystemCpuMs_ = -1.0f;
+    lastPresentGpuWaitMs_ = -1.0f;
+    lastPresentCopyMs_ = -1.0f;
+    lastPresentPutMs_ = -1.0f;
     if (submitResult == VK_SUCCESS && frameTimeline_ != VK_NULL_HANDLE) {
         // Only once the submit is in: on failure the timeline is never
         // signalled, and a slot left waiting on an unreachable value would
@@ -3255,23 +3567,36 @@ void VkContext::endFrame(VkCommandBuffer cmd, uint32_t imageIndex) {
         return;
     }
 
-    VkPresentInfoKHR presentInfo{};
-    presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
-    presentInfo.waitSemaphoreCount = 1;
-    presentInfo.pWaitSemaphores = &renderSem;
-    presentInfo.swapchainCount = 1;
-    presentInfo.pSwapchains = &swapchain;
-    presentInfo.pImageIndices = &imageIndex;
+    if (presentThroughShm_) {
+        const bool finished = waitForSubmittedFrame(frame.timelineValue, frame.inFlightFence);
+        lastPresentGpuWaitMs_ = std::chrono::duration<float, std::milli>(
+            std::chrono::steady_clock::now() - presentStart).count();
+        if (finished) {
+            presentThroughSharedMemory(imageIndex);
+            if (checkThisFrame) checkPresentedFrame();
+        }
+    } else {
+        VkPresentInfoKHR presentInfo{};
+        presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+        presentInfo.waitSemaphoreCount = 1;
+        presentInfo.pWaitSemaphores = &renderSem;
+        presentInfo.swapchainCount = 1;
+        presentInfo.pSwapchains = &swapchain;
+        presentInfo.pImageIndices = &imageIndex;
 
-    VkResult result = vkQueuePresentKHR(presentQueue, &presentInfo);
-    // Presenting unrotated onto a rotated surface is suboptimal by definition,
-    // and says so on every frame for as long as the swapchain lives. Rebuilding
-    // on that answer rebuilds every frame, which is what stopped the client
-    // dead on the login screen rather than merely making it slow.
-    const bool suboptimalIsExpected = presentsOffNativeTransform_;
-    if (result == VK_ERROR_OUT_OF_DATE_KHR ||
-        (result == VK_SUBOPTIMAL_KHR && !suboptimalIsExpected)) {
-        swapchainDirty = true;
+        VkResult result = vkQueuePresentKHR(presentQueue, &presentInfo);
+        // Presenting unrotated onto a rotated surface is suboptimal by definition,
+        // and says so on every frame for as long as the swapchain lives. Rebuilding
+        // on that answer rebuilds every frame, which is what stopped the client
+        // dead on the login screen rather than merely making it slow.
+        const bool suboptimalIsExpected = presentsOffNativeTransform_;
+        if (result == VK_ERROR_OUT_OF_DATE_KHR ||
+            (result == VK_SUBOPTIMAL_KHR && !suboptimalIsExpected)) {
+            swapchainDirty = true;
+        }
+        if (checkThisFrame && waitForSubmittedFrame(frame.timelineValue, frame.inFlightFence)) {
+            checkPresentedFrame();
+        }
     }
 
     // Each on its own, after the main image: one call for several swapchains

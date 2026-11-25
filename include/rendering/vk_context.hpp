@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include "rendering/vk_utils.hpp"
+#include "rendering/x11_shm_presenter.hpp"
 #include <vulkan/vulkan.h>
 #include <vk_mem_alloc.h>
 #include <VkBootstrap.h>
@@ -12,6 +13,7 @@
 #include <cstdint>
 #include <unordered_map>
 #include <mutex>
+#include <memory>
 
 namespace wowee {
 namespace rendering {
@@ -97,6 +99,16 @@ public:
     /// core/thread_cpu_time.hpp. Negative where the platform cannot say.
     [[nodiscard]] float lastPresentUserCpuMs() const { return lastPresentUserCpuMs_; }
     [[nodiscard]] float lastPresentSystemCpuMs() const { return lastPresentSystemCpuMs_; }
+    /// Presenting through shared memory only: the present's three parts -
+    /// waiting for the GPU to finish the frame, copying it into the shared
+    /// segment, and the put request with the image's release. Negative when
+    /// the frame went through vkQueuePresentKHR.
+    [[nodiscard]] float lastPresentGpuWaitMs() const { return lastPresentGpuWaitMs_; }
+    [[nodiscard]] float lastPresentCopyMs() const { return lastPresentCopyMs_; }
+    [[nodiscard]] float lastPresentPutMs() const { return lastPresentPutMs_; }
+    /// True when frames reach the window through shared memory
+    /// (x11_shm_presenter.hpp) and not through vkQueuePresentKHR.
+    [[nodiscard]] bool presentsThroughSharedMemory() const { return presentThroughShm_; }
     /// Milliseconds the last beginFrame waited for its frame slot's earlier
     /// submission to finish on the GPU, and spent in vkAcquireNextImageKHR.
     [[nodiscard]] float lastFrameWaitMs() const { return lastFrameWaitMs_; }
@@ -449,6 +461,35 @@ private:
     float lastPresentSystemCpuMs_ = -1.0f;
     float lastFrameWaitMs_ = 0.0f;
     float lastAcquireMs_ = 0.0f;
+    float lastPresentGpuWaitMs_ = -1.0f;
+    float lastPresentCopyMs_ = -1.0f;
+    float lastPresentPutMs_ = -1.0f;
+
+    // Presenting through shared memory (x11_shm_presenter.hpp; the rule and
+    // the frame's path are at "Presenting through shared memory" in
+    // vk_context.cpp). x11Window_ exists when the window qualifies;
+    // presentThroughShm_ says whether frames take that path.
+    std::unique_ptr<X11ShmPresenter> x11Window_;
+    bool presentThroughShm_ = false;
+    /// WOWEE_PRESENT_CHECK: compare the window with the frame presented.
+    bool presentCheck_ = false;
+    uint64_t presentCheckCounter_ = 0;
+    bool surfaceMaintenanceEnabled_ = false;
+    PFN_vkReleaseSwapchainImagesEXT releaseSwapchainImages_ = nullptr;
+    /// The frame's pixels read back from the swapchain image, swapchain sized.
+    ::VkBuffer presentReadback_ = VK_NULL_HANDLE;
+    VmaAllocation presentReadbackAlloc_ = VK_NULL_HANDLE;
+    const uint8_t* presentReadbackMapped_ = nullptr;
+    std::vector<uint8_t> presentCheckPixels_;
+
+    bool probeSharedMemoryPresent(SDL_Window* window);
+    bool finishSharedMemoryPresentChoice();
+    bool createPresentReadback();
+    void destroyPresentReadback();
+    void recordPresentReadback(VkCommandBuffer cmd, uint32_t imageIndex);
+    bool waitForSubmittedFrame(uint64_t timelineValue, VkFence fence);
+    void presentThroughSharedMemory(uint32_t imageIndex);
+    void checkPresentedFrame();
     /// The vsync state the present-mode line last reported, so a rebuild
     /// that changes nothing says nothing. -1 until the first swapchain.
     int loggedPresentVsync_ = -1;

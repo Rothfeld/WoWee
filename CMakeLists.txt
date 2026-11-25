@@ -763,6 +763,7 @@ set(WOWEE_SOURCES
     # Rendering (Vulkan infrastructure)
     src/rendering/pass_ablation.cpp
     src/rendering/vk_context.cpp
+    src/rendering/x11_shm_presenter.cpp
     src/rendering/vk_utils.cpp
     src/rendering/polygon_triangulate.cpp
     src/rendering/vk_shader.cpp
@@ -1287,6 +1288,13 @@ endif()
 # compiled out there, so there is nothing to link.
 if(UNIX AND NOT APPLE AND NOT ANDROID)
     target_link_libraries(wowee PRIVATE X11)
+    # Xext: MIT-SHM, for presenting to X servers that draw in main memory
+    # (src/rendering/x11_shm_presenter.cpp). Without it that path is compiled out.
+    find_package(X11 QUIET)
+    if(X11_FOUND AND X11_Xext_FOUND AND X11_XShm_FOUND)
+        target_compile_definitions(wowee PRIVATE WOWEE_X11_SHM_PRESENT)
+        target_link_libraries(wowee PRIVATE ${X11_Xext_LIB})
+    endif()
 endif()
 if(APPLE)
     target_link_libraries(wowee PRIVATE "-framework Foundation")
@@ -2317,6 +2325,7 @@ add_executable(wowee_editor
 
     # Rendering core
     src/rendering/vk_context.cpp
+    src/rendering/x11_shm_presenter.cpp
     src/rendering/vk_utils.cpp
     src/rendering/polygon_triangulate.cpp
     src/rendering/vk_shader.cpp

@@ -6739,6 +6739,11 @@ void Application::render() {
             noteStageTime("endFrame/present/cpu in user code", t.presentUserCpu);
             noteStageTime("endFrame/present/cpu in kernel", t.presentSystemCpu);
         }
+        if (t.presentGpuWait >= 0.0f) {
+            noteStageTime("endFrame/present/wait for the GPU", t.presentGpuWait);
+            noteStageTime("endFrame/present/copy to shared memory", t.presentCopy);
+            noteStageTime("endFrame/present/put and release", t.presentPut);
+        }
         noteStageTime("beginFrame/wait for frame slot", t.frameWait);
         noteStageTime("beginFrame/acquire image", t.acquire);
     }

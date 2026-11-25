@@ -103,6 +103,8 @@ public:
         float postProcess = 0, interface = 0, submit = 0, present = 0;
         float presentUserCpu = -1, presentSystemCpu = -1;
         float frameWait = 0, acquire = 0;
+        /// Presenting through shared memory only, else negative.
+        float presentGpuWait = -1, presentCopy = -1, presentPut = -1;
     };
     [[nodiscard]] const EndFrameTimes& lastEndFrameTimes() const { return endFrameTimes_; }
 

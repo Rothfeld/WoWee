@@ -1655,6 +1655,9 @@ void Renderer::endFrame() {
     endFrameTimes_.presentSystemCpu = vkCtx->lastPresentSystemCpuMs();
     endFrameTimes_.frameWait = vkCtx->lastFrameWaitMs();
     endFrameTimes_.acquire = vkCtx->lastAcquireMs();
+    endFrameTimes_.presentGpuWait = vkCtx->lastPresentGpuWaitMs();
+    endFrameTimes_.presentCopy = vkCtx->lastPresentCopyMs();
+    endFrameTimes_.presentPut = vkCtx->lastPresentPutMs();
     currentCmd = VK_NULL_HANDLE;
 }
 
