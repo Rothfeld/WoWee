@@ -43,9 +43,11 @@ public:
     // attach to the local player unconditionally, so every nearby unit's cast
     // kit landed on the player's hands.
     void playSpellVisual(uint32_t visualId, const glm::vec3& worldPosition,
-                         bool useImpactKit = false, uint32_t attachInstanceId = 0);
+                         bool useImpactKit = false, uint32_t attachInstanceId = 0,
+                         bool deathPersistent = false);
 
-    void playSpellVisualKit(uint32_t kitId, const glm::vec3& worldPosition, uint32_t attachInstanceId);
+    void playSpellVisualKit(uint32_t kitId, const glm::vec3& worldPosition, uint32_t attachInstanceId,
+                            bool deathPersistent = false);
     /// One end of a cast kit's beam: a unit (its render instance, chest 34,
     /// followed while the beam lasts) or, with instanceId 0, a fixed point.
     struct ChainEnd {
@@ -366,6 +368,7 @@ private:
         uint32_t precastSpellId = 0;  // spell ID for PrecastKit cancellation matching
         bool decayOnExpire = false;  // one-shot state-effect M2 plays Decay (159) on expiry
         uint32_t kitId = 0;  // SpellVisualKit ID that spawned this instance
+        bool deathPersistent = false;  // Spell.dbc AttributesEx3 & SPELL_ATTR_EX3_DEATH_PERSISTENT
     };
 
     struct PhysicalProjectile {
@@ -449,7 +452,8 @@ private:
     };
     std::vector<DrainingEffect> drainingCasterEffects_;
     float spawnKitEffects(uint32_t kitId, const glm::vec3& worldPosition, uint32_t attachInstanceId,
-                          float duration, KitStage stage, uint32_t precastSpellId = 0);
+                          float duration, KitStage stage, uint32_t precastSpellId = 0,
+                          bool deathPersistent = false);
     uint32_t playSoundEntry(uint32_t soundId, const glm::vec3& worldPosition, uint32_t attachInstanceId,
                             bool stoppable);
     uint32_t playKitSound(uint32_t kitId, const glm::vec3& worldPosition, uint32_t attachInstanceId,

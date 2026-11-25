@@ -974,8 +974,13 @@ void SpellHandler::triggerImpactVisual(uint32_t spellId, uint64_t targetGuid) {
     if (!resolveUnitPosition(targetGuid, targetPos)) return;
     LOG_INFO("SpellVisual: triggerImpactVisual visualId=", visualId, " pos=(", targetPos.x, ",", targetPos.y, ",", targetPos.z, ")");
     // Impact kit slots (Chest, Head, ...) attach to the target.
+    owner_.loadSpellNameCache();
+    const auto spellIt = owner_.spellNameCacheRef().find(spellId);
+    const bool deathPersistent =
+        spellIt != owner_.spellNameCacheRef().end() &&
+        (spellIt->second.attrEx3 & 0x00100000u) != 0u;
     svs->playSpellVisual(visualId, targetPos, /*useImpactKit=*/true,
-                         owner_.resolveUnitRenderInstance(targetGuid));
+                         owner_.resolveUnitRenderInstance(targetGuid), deathPersistent);
 }
 
 bool SpellHandler::spellHasTargetImpactVisual(uint32_t spellId) {

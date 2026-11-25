@@ -17,6 +17,20 @@ inline constexpr bool auraVisualPersistsOnCorpse(uint32_t attrEx3) {
     return (attrEx3 & kSpellAttrEx3DeathPersistent) != 0u;
 }
 
+/// True when an attached unit spell visual (Precast, Cast, Channel, Impact, or
+/// decaying Aura) is removed immediately on unit death in TBC 2.4.3. Effects
+/// from spells carrying `SPELL_ATTR_EX3_DEATH_PERSISTENT (0x00100000)` survive
+/// unit death; active non-decaying aura state visuals are reconciled separately
+/// via `auraVisualPersistsOnCorpse` on `UNIT_FIELD_AURAS` updates.
+inline constexpr bool shouldRemoveAttachedSpellVisualOnDeath(
+    bool isAuraState,
+    bool isDecaying,
+    bool deathPersistent) {
+    if (deathPersistent) return false;
+    if (isAuraState && !isDecaying) return false;
+    return true;
+}
+
 /// Whether removing a non-death-persistent aura state visual plays its M2
 /// Decay (159) outro animation. In TBC 2.4.3, removing an aura from a living
 /// unit (.unaura / dispel / expiry) plays Decay (159) (e.g. ArcanePower_State_Chest

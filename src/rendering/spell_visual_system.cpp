@@ -727,7 +727,7 @@ void SpellVisualSystem::stopAnimEventLoop(uint32_t attachInstanceId, bool fromCh
 // at the unit's position.
 float SpellVisualSystem::spawnKitEffects(uint32_t kitId, const glm::vec3& worldPosition,
                                          uint32_t attachInstanceId, float duration, KitStage stage,
-                                         uint32_t precastSpellId) {
+                                         uint32_t precastSpellId, bool deathPersistent) {
     if (!m2Renderer_) return 0.0f;
     const auto effects = kitEffects_.find(kitId);
     if (effects == kitEffects_.end()) return 0.0f;
@@ -838,7 +838,7 @@ float SpellVisualSystem::spawnKitEffects(uint32_t kitId, const glm::vec3& worldP
             .isPrecast = stage == KitStage::Precast, .attachmentId = attachment, .attachInstanceId = attachInstanceId,
             .orientWithAttachment = breath, .effectScale = effect.scale, .isCast = stage == KitStage::Cast,
             .precastSpellId = stage == KitStage::Precast ? precastSpellId : 0u,
-            .decayOnExpire = decayOnExpire, .kitId = kitId});
+            .decayOnExpire = decayOnExpire, .kitId = kitId, .deathPersistent = deathPersistent});
         if (!breath && attachInstanceId)
             placeOnUnit(activeSpellVisuals_.back(), characters, spawn, attachment ? attachmentScale(attachMat) : 1.0f);
         LOG_INFO("SpellVisual: kit=", kitId, " slot attachment=", effect.attachment, " used=", attachment,
@@ -998,7 +998,8 @@ uint32_t SpellVisualSystem::loadSpellModel(const std::string& modelPath) {
 }
 
 void SpellVisualSystem::playSpellVisual(uint32_t visualId, const glm::vec3& worldPosition,
-                                         bool useImpactKit, uint32_t attachInstanceId) {
+                                         bool useImpactKit, uint32_t attachInstanceId,
+                                         bool deathPersistent) {
     LOG_INFO("SpellVisual: playSpellVisual visualId=", visualId, " impact=", useImpactKit,
              " pos=(", worldPosition.x, ",", worldPosition.y, ",", worldPosition.z, ")");
     if (visualId == 0) return;
@@ -1023,7 +1024,7 @@ void SpellVisualSystem::playSpellVisual(uint32_t visualId, const glm::vec3& worl
         for (const auto* kits : {&impactKits_, &targetImpactKits_}) {
             const auto kit = kits->find(visualId);
             if (kit != kits->end() && kit->second)
-                playSpellVisualKit(kit->second, worldPosition, attachInstanceId);
+                playSpellVisualKit(kit->second, worldPosition, attachInstanceId, deathPersistent);
         }
         return;
     }
@@ -1038,7 +1039,7 @@ void SpellVisualSystem::playSpellVisual(uint32_t visualId, const glm::vec3& worl
     if (!m2Renderer_) return;
     playKitShake(kit->second, worldPosition);
     startKitOpacityFade(kit->second, attachInstanceId);
-    spawnKitEffects(kit->second, worldPosition, attachInstanceId, -1.0f, KitStage::Cast);
+    spawnKitEffects(kit->second, worldPosition, attachInstanceId, -1.0f, KitStage::Cast, 0u, deathPersistent);
     startKitWeaponTrail(kit->second, attachInstanceId);
 }
 
@@ -2092,7 +2093,7 @@ void SpellVisualSystem::playImpactAreaKit(uint32_t visualId, const glm::vec3& de
 }
 
 void SpellVisualSystem::playSpellVisualKit(uint32_t kitId, const glm::vec3& worldPosition,
-                                            uint32_t attachInstanceId) {
+                                            uint32_t attachInstanceId, bool deathPersistent) {
     if (!spellVisualDbcLoaded_) loadSpellVisualDbc();
     auto animation = kitAnimations_.find(kitId);
     if (animation == kitAnimations_.end()) {
@@ -2125,7 +2126,7 @@ void SpellVisualSystem::playSpellVisualKit(uint32_t kitId, const glm::vec3& worl
     startKitWeaponTrail(kitId, attachInstanceId);
     playKitSound(kitId, worldPosition, attachInstanceId, /*stoppable=*/false);
     playKitShake(kitId, worldPosition);
-    spawnKitEffects(kitId, worldPosition, attachInstanceId, -1.0f, KitStage::Other);
+    spawnKitEffects(kitId, worldPosition, attachInstanceId, -1.0f, KitStage::Other, 0u, deathPersistent);
 }
 
 void SpellVisualSystem::startKitLight(uint32_t kitId, uint32_t attachInstanceId) {
@@ -3242,8 +3243,8 @@ void SpellVisualSystem::removeCasterStages(uint32_t attachInstanceId) {
     }
     for (auto it = activeSpellVisuals_.begin(); it != activeSpellVisuals_.end();) {
         if (it->attachInstanceId == attachInstanceId &&
-            (it->isPrecast || it->isCast || it->isChannel || (it->auraVisualId && it->decaying))) {
-            LOG_DEBUG("SpellVisual: caster died, effect instance ", it->instanceId, " removed");
+            shouldRemoveAttachedSpellVisualOnDeath(it->auraVisualId != 0, it->decaying, it->deathPersistent)) {
+            LOG_DEBUG("SpellVisual: unit died, effect instance ", it->instanceId, " removed");
             m2Renderer_->removeInstance(it->instanceId);
             it = activeSpellVisuals_.erase(it);
         } else {
@@ -3287,7 +3288,8 @@ void SpellVisualSystem::reapplyAuraKitLights(uint32_t attachInstanceId) {
 
 void SpellVisualSystem::retireEffect(const SpellVisualInstance& effect) {
     m2Renderer_->retireInstance(effect.instanceId);
-    if (effect.attachInstanceId && (effect.isPrecast || effect.isCast || effect.isChannel) &&
+    if (effect.attachInstanceId &&
+        shouldRemoveAttachedSpellVisualOnDeath(effect.auraVisualId != 0, effect.decaying, effect.deathPersistent) &&
         m2Renderer_->hasInstance(effect.instanceId))
         drainingCasterEffects_.push_back({effect.attachInstanceId, effect.instanceId});
 }

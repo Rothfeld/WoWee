@@ -16,6 +16,7 @@ using wowee::rendering::isCorpseAuraSuppressed;
 using wowee::rendering::KitLightState;
 using wowee::rendering::kSpellAttrEx3DeathPersistent;
 using wowee::rendering::shouldPlayAuraDecayOnRemoval;
+using wowee::rendering::shouldRemoveAttachedSpellVisualOnDeath;
 using wowee::rendering::tickKitLight;
 using wowee::rendering::transferKitLight;
 
@@ -29,6 +30,15 @@ TEST_CASE("corpse aura persistence respects SPELL_ATTR_EX3_DEATH_PERSISTENT", "[
     // Living aura removal plays Decay (159); unit death removes dropped aura visuals immediately.
     CHECK(shouldPlayAuraDecayOnRemoval(false));
     CHECK_FALSE(shouldPlayAuraDecayOnRemoval(true));
+
+    // Unit death immediately removes attached non-death-persistent effects
+    // (including ImpactKit such as Dark Blast 28457 Shadow_Snare_High_base.m2
+    // on dying Soldier of the Frozen Wastes).
+    CHECK(shouldRemoveAttachedSpellVisualOnDeath(/*isAuraState=*/false, /*isDecaying=*/false, /*deathPersistent=*/false));
+    CHECK(shouldRemoveAttachedSpellVisualOnDeath(/*isAuraState=*/true, /*isDecaying=*/true, /*deathPersistent=*/false));
+    CHECK_FALSE(shouldRemoveAttachedSpellVisualOnDeath(/*isAuraState=*/false, /*isDecaying=*/false, /*deathPersistent=*/true));
+    CHECK_FALSE(shouldRemoveAttachedSpellVisualOnDeath(/*isAuraState=*/true, /*isDecaying=*/false, /*deathPersistent=*/false));
+    CHECK_FALSE(shouldRemoveAttachedSpellVisualOnDeath(/*isAuraState=*/true, /*isDecaying=*/false, /*deathPersistent=*/true));
 }
 
 TEST_CASE("corpse aura suppression distinguishes corpses from living and feigning units", "[corpse-aura]") {
@@ -130,6 +140,12 @@ TEST_CASE("TBC Spell.dbc confirms Sathrovarr Demonic Visual 44800 is not death-p
             foundEtherealBeacon = true;
             CHECK(vis == 7943u);
             CHECK_FALSE(auraVisualPersistsOnCorpse(attrEx3));
+        } else if (id == 28457u) {
+            // Dark Blast (Soldier of the Frozen Wastes): SpellVisual 7601 (Shadow_Snare_High_base.m2)
+            // lacks SPELL_ATTR_EX3_DEATH_PERSISTENT and is cleared immediately when the skeleton dies.
+            CHECK(vis == 7601u);
+            CHECK_FALSE(auraVisualPersistsOnCorpse(attrEx3));
+            CHECK(shouldRemoveAttachedSpellVisualOnDeath(false, false, auraVisualPersistsOnCorpse(attrEx3)));
         }
     }
     CHECK(foundDemonic);
