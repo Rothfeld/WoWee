@@ -447,10 +447,16 @@ void MovementHandler::handleClientControlUpdate(network::Packet& packet) {
             movementInfo.jumpCosAngle = 0.0f;
             movementInfo.jumpXYSpeed = 0.0f;
             releasePending_ = false;
-            owner_.sendMovement(Opcode::MSG_MOVE_STOP);
-            owner_.sendMovement(Opcode::MSG_MOVE_STOP_STRAFE);
-            owner_.sendMovement(Opcode::MSG_MOVE_STOP_TURN);
-            owner_.sendMovement(Opcode::MSG_MOVE_STOP_SWIM);
+            // No stop is sent from here. Build 8606, standing when Incite
+            // Chaos' charm (33684) took it, sends no movement packet at all:
+            // its knockback acknowledgement of the same instant was relayed by
+            // the server and no stop with it (3 runs), nor any in the 0.2 s
+            // before the boss' first spline (1 run). A key that was held is
+            // stopped by the controller, which the server's control takes the
+            // keys from (one MSG_MOVE_STOP); what build 8606 sends then is not
+            // visible from outside, the server drops a held body's packets
+            // once its spline has begun.
+            // _experiments/20261124T231500Z.movement_collision_parity_round25 (kb.py).
             // No chat line: the original client prints nothing when control
             // is taken or given back (paired confuse capture,
             // _experiments/20261117T2245Z.player_control_loss).
@@ -804,9 +810,11 @@ void MovementHandler::sendMovement(Opcode opcode) {
     const uint32_t prevLastMovementTimestampMs = lastMovementTimestampMs_;
     const PhysicsSample* sample = currentPhysicsSample();
     const uint32_t movementTime =
-        packetTimeMs_ ? reserveMovementTimestampMs(*packetTimeMs_)
+        sameInstantAsLastPacket_ ? lastMovementTimestampMs_
+        : packetTimeMs_ ? reserveMovementTimestampMs(*packetTimeMs_)
         : sample ? reserveMovementTimestampMs(sample->timeMs)
                  : nextMovementTimestampMs();
+    sameInstantAsLastPacket_ = false;
     bool packetSent = false;
     struct TimestampRollbackGuard {
         uint32_t& slot;
@@ -1698,8 +1706,20 @@ void MovementHandler::handleForceMoveRootState(network::Packet& packet, bool roo
     if (released != ReleasedFall::None) {
         fallStartMs_ = lastMovementTimestampMs_;
         fallStartsWithNextPacket_ = false;
-        if (released == ReleasedFall::OnGround) owner_.sendMovement(Opcode::MSG_MOVE_FALL_LAND);
+        if (released == ReleasedFall::OnGround) sendLandingOfSameInstant();
     }
+}
+
+// The landing of a fall that begins and ends where the body stands carries the
+// time of the packet that announced the fall, and fall time 0: build 8606's
+// unroot acknowledgement and its MSG_MOVE_FALL_LAND, and its heartbeat and
+// landing when control comes back, have one timestamp (time=871589 twice,
+// time=1959663 twice, time=2182998 twice; every pair recorded in
+// _experiments/20261124T231500Z.movement_collision_parity_round25/kb).
+void MovementHandler::sendLandingOfSameInstant() {
+    sameInstantAsLastPacket_ = true;
+    owner_.sendMovement(Opcode::MSG_MOVE_FALL_LAND);
+    sameInstantAsLastPacket_ = false;
 }
 
 // The server let go of the player's body (root lifted, control given back):
@@ -1746,7 +1766,7 @@ void MovementHandler::releaseHeldBody() {
     const ReleasedFall released = beginReleasedFall();
     if (released == ReleasedFall::None) return;
     owner_.sendMovement(releaseCutsSpline_ ? Opcode::MSG_MOVE_STOP : Opcode::MSG_MOVE_HEARTBEAT);
-    if (released == ReleasedFall::OnGround) owner_.sendMovement(Opcode::MSG_MOVE_FALL_LAND);
+    if (released == ReleasedFall::OnGround) sendLandingOfSameInstant();
 }
 
 void MovementHandler::handleForceMoveFlagChange(network::Packet& packet, const char* name,
@@ -1935,6 +1955,13 @@ void MovementHandler::applyKnockBack(const PendingKnockBack& order) {
     if (wireOpcode(Opcode::CMSG_MOVE_KNOCK_BACK_ACK) == 0xFFFF) return;
     auto ack = buildForceAck(Opcode::CMSG_MOVE_KNOCK_BACK_ACK, counter);
     fallStartMs_ = lastMovementTimestampMs_;
+    // The acknowledgement is the flight's first movement packet: build 8606's
+    // heartbeats follow it 500, 1000, 1500 ms on (acknowledged at 1638255,
+    // heartbeats at 1638755, 1639255, 1639755, 1640255; 5 flights of 8 in
+    // rounds 24 and 25 - in the other 3, in the Shadow Labyrinth, one
+    // interval is 73, 122 and 203 ms longer and the later ones 500 again,
+    // as after a movement packet the server does not relay).
+    lastPacketTimeMs_ = lastMovementTimestampMs_;
     owner_.getSocket()->send(ack);
 }
 

@@ -448,6 +448,22 @@ TEST_CASE("TBC SMSG_MOVE_KNOCK_BACK echoes exact knockback velocity in ACK witho
         CHECK(ack.getRemainingSize() == 0u);
     }
 
+    // The acknowledgement starts the heartbeat period: none one frame later,
+    // one 500 ms after it.
+    mh->recordPhysicsSample(tKnock2 + 33u);
+    mh->sendDueHeartbeats();
+    CHECK(s.sent().of(Opcode::MSG_MOVE_HEARTBEAT).empty());
+    mh->recordPhysicsSample(tKnock2 + 520u);
+    mh->sendDueHeartbeats();
+    {
+        const auto beats = s.sent().of(Opcode::MSG_MOVE_HEARTBEAT);
+        REQUIRE(beats.size() == 1u);
+        auto beat = beats[0];
+        const auto move = readTbcAckMovementInfo(beat);
+        CHECK(move.time == tKnock2 + 500u);
+        CHECK(move.fallTime == 500u);
+    }
+
     // Subsequent landing packet reports exact fallTime elapsed from the second knockback ACK timestamp.
     mh->recordPhysicsSample(tKnock2 + 640u);
     gh.sendMovement(Opcode::MSG_MOVE_FALL_LAND);
@@ -511,10 +527,11 @@ TEST_CASE("TBC knockback arriving with loss of control is acknowledged, not flow
         CHECK_FALSE(move.hasJump);
     }
     CHECK(mh->getMovementInfo().flags == 0u);
-    for (const Opcode stop : {Opcode::MSG_MOVE_STOP, Opcode::MSG_MOVE_STOP_STRAFE, Opcode::MSG_MOVE_STOP_TURN}) {
-        for (auto packet : s.sent().of(stop)) {
-            CHECK(readTbcAckMovementInfo(packet).flags == 0u);
-        }
+    // A body that stood sends no stop when control is taken (round 25: the
+    // server relayed native's acknowledgement and nothing else).
+    for (const Opcode stop : {Opcode::MSG_MOVE_STOP, Opcode::MSG_MOVE_STOP_STRAFE, Opcode::MSG_MOVE_STOP_TURN,
+                              Opcode::MSG_MOVE_STOP_SWIM}) {
+        CHECK(s.sent().of(stop).empty());
     }
 
     const size_t sentWhileHeld = s.sent().all().size();
@@ -529,22 +546,49 @@ TEST_CASE("TBC knockback arriving with loss of control is acknowledged, not flow
     CHECK(releases == 1);
     const auto beats = s.sent().of(Opcode::MSG_MOVE_HEARTBEAT);
     REQUIRE(beats.size() == 1u);
+    uint32_t beatTime = 0;
     {
         auto beat = beats[0];
         const auto move = readTbcAckMovementInfo(beat);
         CHECK(move.flags == static_cast<uint32_t>(MovementFlags::FALLING));
         CHECK(move.fallTime == 0u);
+        beatTime = move.time;
     }
     const auto lands = s.sent().of(Opcode::MSG_MOVE_FALL_LAND);
     REQUIRE(lands.size() == 1u);
     {
+        // The landing of the same instant: one timestamp, fall time 0.
         auto land = lands[0];
         const auto move = readTbcAckMovementInfo(land);
         CHECK(move.flags == 0u);
-        CHECK(move.fallTime <= 1u);
+        CHECK(move.time == beatTime);
+        CHECK(move.fallTime == 0u);
     }
     mh->releaseHeldBody();
     CHECK(releases == 1);
+}
+
+// Build 8606 running when control is taken: what it sends is not visible from
+// outside (round 25). The movement handler sends nothing of its own; the
+// controller, losing the keys, stops what they were doing.
+TEST_CASE("TBC loss of control clears the movement in progress without a packet of its own",
+          "[replay][movement][tbc][knockback]") {
+    Session s("tbc");
+    spawnTbcPlayerAt(s, -7035.27f, -3539.36f, 10.6f, 0.05f);
+    auto& gh = s.handler();
+    gh.sendMovement(Opcode::MSG_MOVE_START_FORWARD);
+    const size_t sentBefore = s.sent().all().size();
+    wowee::network::Packet lost(wowee::game::wireOpcode(Opcode::SMSG_CLIENT_CONTROL_UPDATE));
+    lost.writePackedGuid(Session::kPlayerGuid);
+    lost.writeUInt8(0u);
+    s.receive(lost);
+    CHECK(s.sent().all().size() == sentBefore);
+    CHECK(gh.getMovementHandler()->getMovementInfo().flags == 0u);
+    gh.sendMovement(Opcode::MSG_MOVE_STOP);
+    const auto stops = s.sent().of(Opcode::MSG_MOVE_STOP);
+    REQUIRE(stops.size() == 1u);
+    auto stop = stops[0];
+    CHECK(readTbcAckMovementInfo(stop).flags == 0u);
 }
 
 TEST_CASE("TBC unroot is acknowledged as a body let go: falling, then the landing is owed",
@@ -578,6 +622,7 @@ TEST_CASE("TBC unroot is acknowledged as a body let go: falling, then the landin
     s.receive(unroot);
     const auto unrootAcks = s.sent().of(Opcode::CMSG_FORCE_MOVE_UNROOT_ACK);
     REQUIRE(unrootAcks.size() == 1u);
+    uint32_t unrootTime = 0;
     {
         auto ack = unrootAcks[0];
         ack.readUInt64();
@@ -585,6 +630,7 @@ TEST_CASE("TBC unroot is acknowledged as a body let go: falling, then the landin
         const auto move = readTbcAckMovementInfo(ack);
         CHECK(move.flags == static_cast<uint32_t>(MovementFlags::FALLING));
         CHECK(move.fallTime == 0u);
+        unrootTime = move.time;
     }
     CHECK(releases == 1);
     const auto lands = s.sent().of(Opcode::MSG_MOVE_FALL_LAND);
@@ -593,7 +639,8 @@ TEST_CASE("TBC unroot is acknowledged as a body let go: falling, then the landin
         auto land = lands[0];
         const auto move = readTbcAckMovementInfo(land);
         CHECK(move.flags == 0u);
-        CHECK(move.fallTime <= 1u);
+        CHECK(move.time == unrootTime);
+        CHECK(move.fallTime == 0u);
     }
     CHECK(mh->getMovementInfo().flags == 0u);
     CHECK(s.sent().of(Opcode::MSG_MOVE_HEARTBEAT).empty());

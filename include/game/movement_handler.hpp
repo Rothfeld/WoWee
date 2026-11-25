@@ -284,6 +284,12 @@ public:
     /// Knockback orders received since the last call, each flown or - with
     /// control taken by the server meanwhile - only acknowledged.
     void applyPendingKnockBacks();
+    /// The frame loop takes the orders up itself, once the body's latest
+    /// physics state has been recorded (Application::applyServerMovementState):
+    /// the flight starts from that state at its instant. Without a frame loop
+    /// (replay tests) they are taken up when the packets have been handled.
+    void setKnockBacksTakenUpByFrame(bool byFrame) { knockBacksTakenUpByFrame_ = byFrame; }
+    [[nodiscard]] bool knockBacksTakenUpByFrame() const { return knockBacksTakenUpByFrame_; }
     /// Sends what follows control being given back, once the server's last
     /// spline for the player has ended.
     void releaseHeldBody();
@@ -336,6 +342,7 @@ private:
     void applyKnockBack(const PendingKnockBack& order);
     enum class ReleasedFall { None, InAir, OnGround };
     ReleasedFall beginReleasedFall();
+    void sendLandingOfSameInstant();
     void handleTeleportAck(network::Packet& packet);
     void handleNewWorld(network::Packet& packet);
     void handleTransferPending(network::Packet& packet);
@@ -410,6 +417,9 @@ private:
     uint32_t lastPacketTimeMs_ = 0;
     /// Time for the packet being sent, set by sendDueHeartbeats.
     std::optional<uint32_t> packetTimeMs_;
+    // The next packet carries the time of the one before it (sendLandingOfSameInstant).
+    bool sameInstantAsLastPacket_ = false;
+    bool knockBacksTakenUpByFrame_ = false;
 
     // Heartbeat timing
     int heartbeatLogCount_ = 0;  // periodic position audit counter

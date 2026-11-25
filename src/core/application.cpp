@@ -2758,6 +2758,9 @@ void Application::setState(AppState newState) {
                         renderer->getCameraController()->applyKnockBack(vcos, vsin, hspeed, vspeed);
                     }
                 });
+                // Knockback orders wait for applyServerMovementState.
+                assert(gameHandler->getMovementHandler());
+                gameHandler->getMovementHandler()->setKnockBacksTakenUpByFrame(true);
                 gameHandler->setReleasedFallCallback([this]() {
                     assert(renderer && renderer->getCameraController());
                     return renderer->getCameraController()->releaseToFall();
@@ -3789,6 +3792,16 @@ void Application::applyServerMovementState(float deltaTime) {
             gameHandler->updateM2TransportBoarding(playerCanonical);
         }
     }
+    }
+
+    // Knockback orders of this frame's packets: flown from the body's state as
+    // just recorded, so that the acknowledgement carries the position and the
+    // instant the flight starts from. Build 8606's heartbeats lie on the arc
+    // counted from its acknowledgement: 9.99 yd along at fall time 500 with
+    // 20 yd/s (-7035.27 to -7025.28), 19.98 at 1000 (4 flights;
+    // _experiments/20261124T231500Z.movement_collision_parity_round25).
+    if (auto* movement = gameHandler ? gameHandler->getMovementHandler() : nullptr) {
+        movement->applyPendingKnockBacks();
     }
 }
 

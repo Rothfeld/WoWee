@@ -1456,34 +1456,52 @@ and no SET_FACING follows STOP_TURN. `stream_stats.py` in
 `_experiments/20261118T0800.movesend/` prints rates from a debug log.
 
 Knockback, root and control (native 2.4.3 on a private pair, `kb.py` in
-`_experiments/20261124T202000Z.movement_collision_parity_round24/`):
+`_experiments/20261124T202000Z.movement_collision_parity_round24/` and
+`_experiments/20261124T231500Z.movement_collision_parity_round25/`):
 
 - A knockback (SMSG_MOVE_KNOCK_BACK) is airborne momentum like a running
   jump's: its level speed is kept whole to the landing (native: 20.0 and 15.0
   yd/s over flights of 2.0 to 2.6 s), keys do not steer it, and its packets
   say 0x5001 - falling, forward, pending stop - until MSG_MOVE_FALL_LAND with
   flags 0. The landing is reported however short the flight.
-- Knockback orders are taken up after every packet that arrived with them. If
-  the server took control meanwhile (SMSG_CLIENT_CONTROL_UPDATE allow=0 in the
-  same tick: Fear, Blind, a charm) the knockback is acknowledged with the
-  flags the body had and is not flown; native stays on the ground and walks
-  the server's splines (3 runs of 3).
-- Losing control ends a fall of the body's own. When control comes back and
-  the server's last spline has ended, the body falls and lands: a heartbeat
-  with the falling flag (MSG_MOVE_STOP instead where control came back while
-  a spline was moving it), then MSG_MOVE_FALL_LAND with flags 0 right behind
-  it (native: the same millisecond, 6 runs of 6). An unroot is answered the
-  same way: the acknowledgement says falling, the landing follows (native: 22
-  of 22). In the air the landing comes when the body lands.
+- The flight is counted from the acknowledgement: it carries the position and
+  the instant the flight starts from, the heartbeats follow it 500, 1000,
+  1500 ms on and lie on the arc for those fall times (native: 9.99 yd along at
+  fall time 500 with 20 yd/s). Orders are therefore taken up by the frame
+  loop after it has recorded the body's physics state
+  (`Application::applyServerMovementState`), not while packets are handled:
+  at that point the recorded state is still the frame before's.
+- A landing packet names the instant and the place the fall met the ground,
+  not the end of the frame: native's standing jump lands with fall time 825
+  (2 x 7.9555 / 19.2911 s) whatever the frames, and a knockback lands on its
+  arc. `fallBody` says when in the frame it touched down
+  (`BodyMove::landedAfter`, `landedAt`). From the touchdown on the body moves
+  as the keys ask; the flight's level velocity ends there (native knocked back
+  at 20 yd/s stops where it comes down, part way through its last frame).
+- If the server took control in the tick of the knockback
+  (SMSG_CLIENT_CONTROL_UPDATE allow=0: Fear, Blind, a charm) the knockback is
+  acknowledged with the flags the body had and is not flown; native stays on
+  the ground and walks the server's splines (Fear and Blind 3 runs of 3;
+  Incite Chaos' charm 33684, the user's case, 5 of 5).
+- Losing control ends a fall of the body's own. No stop is sent for a body
+  that stood (native sends no movement packet then); a held key is stopped by
+  the controller. When control comes back and the server's last spline has
+  ended, the body falls and lands: a heartbeat with the falling flag
+  (MSG_MOVE_STOP instead where control came back while a spline was moving
+  it), then MSG_MOVE_FALL_LAND with flags 0, the same timestamp and fall time
+  0 (native: 10 runs of 10). An unroot is answered the same way: the
+  acknowledgement says falling, the landing of the same instant follows
+  (native: 22 of 22). In the air the landing comes when the body lands.
 - A remote mover's MSG_MOVE_KNOCK_BACK is flown only when its flags say
   falling.
-- Not measured on native: a knockback with control lost by a charm that
-  sends no spline (the user's case, Blackheart the Inciter: the pair's
-  characters could not be charmed alone), a knockback with level speed 0,
-  what a native observer draws for a knockback acknowledged without the
-  falling flag, and the same while swimming, flying or mounted. The
-  acknowledgement of a knockback that is not flown carries fall time 0 in
-  some runs where native's carries its last fall's.
+- CMaNGOS drops a held player's movement packets while its server spline runs
+  (`WorldSession::ProcessMovementInfo`: `movespline->Finalized()`), so what a
+  client sends at the loss of control, or when control returns mid-spline, is
+  mostly not relayed to observers.
+- Not measured on native: what it sends at the loss of control while a key is
+  held, a knockback with level speed 0, what a native observer draws for a
+  knockback acknowledged without the falling flag, and the same while
+  swimming, flying or mounted.
 
 Water-jump packets use the ballistic clock, excluding time spent swimming.
 Takeoff resets that clock; heartbeat position and fallTime describe the same
