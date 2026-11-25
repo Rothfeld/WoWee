@@ -21,6 +21,7 @@
  */
 #include <atomic>
 #include "rendering/character_renderer.hpp"
+#include "rendering/m2_attachment_lookup.hpp"
 #include "rendering/body_mover.hpp"
 #include "rendering/character_depth_bias.hpp"
 #include "rendering/m2_blend_mode.hpp"
@@ -6432,59 +6433,7 @@ bool CharacterRenderer::findAttachmentBone(uint32_t modelId, uint32_t attachment
                                           uint16_t& outBoneIndex, glm::vec3& outOffset) const {
     auto modelIt = models.find(modelId);
     if (modelIt == models.end()) return false;
-    const auto& model = modelIt->second.data;
-
-    outBoneIndex = 0;
-    outOffset = glm::vec3(0.0f);
-    bool found = false;
-
-    // Try attachment lookup first
-    if (attachmentId < model.attachmentLookup.size()) {
-        uint16_t attIdx = model.attachmentLookup[attachmentId];
-        if (attIdx < model.attachments.size()) {
-            outBoneIndex = model.attachments[attIdx].bone;
-            outOffset = model.attachments[attIdx].position;
-            found = true;
-        }
-    }
-
-    // Fallback: scan attachments by id
-    if (!found) {
-        for (const auto& att : model.attachments) {
-            if (att.id == attachmentId) {
-                outBoneIndex = att.bone;
-                outOffset = att.position;
-                found = true;
-                break;
-            }
-        }
-    }
-
-    // Fallback: key-bone lookup for weapon hand attachment IDs (ID 1 = right hand, ID 2 = left hand)
-    if (!found && (attachmentId == 1 || attachmentId == 2)) {
-        int32_t targetKeyBone = (attachmentId == 1) ? 26 : 27;
-        for (size_t i = 0; i < model.bones.size(); i++) {
-            if (model.bones[i].keyBoneId == targetKeyBone) {
-                outBoneIndex = static_cast<uint16_t>(i);
-                outOffset = glm::vec3(0.0f);
-                found = true;
-                break;
-            }
-        }
-    }
-
-    // Fallback for head attachment (ID 11): use bone 0 if attachment not defined
-    if (!found && attachmentId == 11 && !model.bones.empty()) {
-        outBoneIndex = 0;
-        found = true;
-    }
-
-    // Validate bone index
-    if (found && outBoneIndex >= model.bones.size()) {
-        found = false;
-    }
-
-    return found;
+    return resolveModelAttachmentBone(modelIt->second.data, attachmentId, outBoneIndex, outOffset);
 }
 
 bool CharacterRenderer::attachWeapon(uint32_t charInstanceId, uint32_t attachmentId,

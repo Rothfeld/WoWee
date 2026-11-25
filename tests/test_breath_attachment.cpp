@@ -8,6 +8,7 @@
 #include <catch_amalgamated.hpp>
 
 #include "pipeline/m2_loader.hpp"
+#include "rendering/m2_attachment_lookup.hpp"
 #include "rendering/m2_track_sampler.hpp"
 #include "rendering/particle_emission.hpp"
 #include "rendering/spell_visual_kit_policy.hpp"
@@ -432,5 +433,53 @@ TEST_CASE("One-shot state-effect M2s with disabled Stand (0) start directly in H
         CHECK(wowee::rendering::oneShotStateEffectStartSequence(
                   static_cast<uint32_t>(model.vertices.size()), model.ribbonEmitters.size(),
                   model.sequences, model.particleEmitters, model.globalSequenceDurations) == -1);
+    }
+}
+
+TEST_CASE("resolveModelAttachmentBone does not map keyBoneId 26 ($ROOT) to HandRight (1)",
+          "[attachment][weapon]") {
+    wowee::pipeline::M2Model model;
+    wowee::pipeline::M2Bone rootBone;
+    rootBone.keyBoneId = 26; // $ROOT in M2 KeyBoneLookup, NOT a hand bone
+    model.bones.push_back(rootBone);
+
+    uint16_t bone = 0xFFFF;
+    glm::vec3 offset(99.0f);
+    CHECK_FALSE(wowee::rendering::resolveModelAttachmentBone(model, 1u, bone, offset));
+    CHECK_FALSE(wowee::rendering::resolveModelAttachmentBone(model, 2u, bone, offset));
+    CHECK(wowee::rendering::resolveModelAttachmentBone(model, 11u, bone, offset));
+    CHECK(bone == 0u);
+}
+
+TEST_CASE("Gargoyle.m2 (Kirtonos) has no hand attachments while ScourgeMale.m2 authors them",
+          "[attachment][weapon][assets]") {
+    const char* root = std::getenv("WOWEE_TBC_DATA_DIR");
+    if (!root || !*root) SKIP("Set WOWEE_TBC_DATA_DIR to client/wowee-data/expansions/tbc");
+
+    {
+        const auto bytes = readBytes(std::filesystem::path(root) / "creature/gargoyle/gargoyle.m2");
+        REQUIRE_FALSE(bytes.empty());
+        const auto model = wowee::pipeline::M2Loader::load(bytes);
+        REQUIRE_FALSE(model.bones.empty());
+        CHECK(model.bones[0].keyBoneId == 26);
+
+        uint16_t bone = 0;
+        glm::vec3 offset(0.0f);
+        CHECK_FALSE(wowee::rendering::resolveModelAttachmentBone(model, 1u, bone, offset));
+        CHECK_FALSE(wowee::rendering::resolveModelAttachmentBone(model, 2u, bone, offset));
+        CHECK(wowee::rendering::resolveModelAttachmentBone(model, 34u, bone, offset));
+    }
+
+    {
+        const auto bytes = readBytes(std::filesystem::path(root) / "character/scourge/male/scourgemale.m2");
+        REQUIRE_FALSE(bytes.empty());
+        const auto model = wowee::pipeline::M2Loader::load(bytes);
+
+        uint16_t bone = 0;
+        glm::vec3 offset(0.0f);
+        CHECK(wowee::rendering::resolveModelAttachmentBone(model, 1u, bone, offset));
+        CHECK(bone > 0u);
+        CHECK(wowee::rendering::resolveModelAttachmentBone(model, 2u, bone, offset));
+        CHECK(wowee::rendering::resolveModelAttachmentBone(model, 30u, bone, offset));
     }
 }
