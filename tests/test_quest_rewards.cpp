@@ -354,21 +354,33 @@ TEST_CASE("Quest details: TBC layout (cmangos-tbc)", "[quest_rewards]") {
     putU32(b, 25407); putU32(b, 1); putU32(b, 8001);
     putU32(b, 0);               // reward item count
     putU32(b, 7700);            // money
-    putU32(b, 0);               // honor
-    putU32(b, 0);               // rewSpell
-    putU32(b, 0);               // rewSpellCast
-    putU32(b, 0);               // charTitleBitIndex
+    putU32(b, 4200);            // honor (x10 on wire -> 420)
+    putU32(b, 34091);           // rewSpell
+    putU32(b, 34092);           // rewSpellCast
+    putU32(b, 36);              // charTitleBitIndex (Champion of the Naaru)
     putU32(b, 4);
-    for (int i = 0; i < 4; ++i) { putU32(b, 0); putU32(b, 0); }
+    putU32(b, 1); putU32(b, 250); // emote=1 (ONESHOT_TALK), delay=250ms
+    putU32(b, 5); putU32(b, 900); // emote=5 (ONESHOT_EXCLAMATION), delay=900ms
+    putU32(b, 0); putU32(b, 0);
+    putU32(b, 0); putU32(b, 0);
 
     network::Packet pkt(0, b);
     QuestDetailsData d;
     REQUIRE(TbcPacketParsers::parseQuestDetailsPreWotlk(pkt, d, /*hasSuggestedPlayers=*/true));
+    CHECK(d.activateAccept);
     CHECK(d.suggestedPlayers == 3);
     REQUIRE(d.rewardChoiceItems.size() == 1);
     CHECK(d.rewardChoiceItems[0].itemId == 25407);
     CHECK(d.rewardItems.empty());
     CHECK(d.rewardMoney == 7700);
+    CHECK(d.rewardHonor == 420);
+    CHECK(d.rewardSpellId == 34091);
+    CHECK(d.rewardSpellCastId == 34092);
+    CHECK(d.rewardTitleId == 36);
+    CHECK(d.rewardTitleIsBitIndex);
+    REQUIRE(d.emotes.size() == 2);
+    CHECK(d.emotes[0] == std::make_pair(250u, 1u));
+    CHECK(d.emotes[1] == std::make_pair(900u, 5u));
 }
 
 TEST_CASE("Quest details: WotLK layout (AzerothCore)", "[quest_rewards]") {
@@ -459,29 +471,41 @@ TEST_CASE("Offer reward: TBC layout (cmangos-tbc)", "[quest_rewards]") {
     putU32(b, 200);
     putStr(b, "TBC Quest");
     putStr(b, "Reward text");
-    putU32(b, 1);               // autoFinish
-    putU32(b, 0);               // suggestedPlayers - 8-byte prefix
-    putU32(b, 0);               // emote count
+    putU32(b, 1);               // autoFinish (EnableNext)
+    putU32(b, 5);               // suggestedPlayers - 8-byte prefix
+    putU32(b, 2);               // emote count
+    putU32(b, 100); putU32(b, 4); // delay=100ms, emote=4 (ONESHOT_CHEER)
+    putU32(b, 600); putU32(b, 2); // delay=600ms, emote=2 (ONESHOT_BOW)
     putU32(b, 1);               // choice count
     putU32(b, 25407); putU32(b, 1); putU32(b, 8001);
     putU32(b, 1);               // reward count
     putU32(b, 25406); putU32(b, 1); putU32(b, 8002);
     putU32(b, 7700);            // money
-    putU32(b, 0);               // honor (trailing)
+    putU32(b, 3150);            // honor (x10 on wire -> 315)
     putU32(b, 0x08);            // unused (trailing)
-    putU32(b, 0);               // rewSpell (trailing)
-    putU32(b, 0);               // rewSpellCast (trailing)
-    putU32(b, 0);               // charTitle (trailing)
+    putU32(b, 28100);           // rewSpell (trailing)
+    putU32(b, 28101);           // rewSpellCast (trailing)
+    putU32(b, 39);              // charTitleBitIndex (Hand of A'dal)
 
     network::Packet pkt(0, b);
     QuestOfferRewardData d;
     REQUIRE(QuestOfferRewardParser::parse(pkt, d, QuestPacketEra::TBC));
+    CHECK(d.enableNext);
+    CHECK(d.suggestedPlayers == 5);
+    REQUIRE(d.emotes.size() == 2);
+    CHECK(d.emotes[0] == std::make_pair(100u, 4u));
+    CHECK(d.emotes[1] == std::make_pair(600u, 2u));
     REQUIRE(d.choiceRewards.size() == 1);
     CHECK(d.choiceRewards[0].itemId == 25407);
     REQUIRE(d.fixedRewards.size() == 1);
     CHECK(d.fixedRewards[0].itemId == 25406);
     CHECK(d.rewardMoney == 7700);
     CHECK(d.rewardXp == 0);
+    CHECK(d.rewardHonor == 315);
+    CHECK(d.rewardSpellId == 28100);
+    CHECK(d.rewardSpellCastId == 28101);
+    CHECK(d.rewardTitleId == 39);
+    CHECK(d.rewardTitleIsBitIndex);
 }
 
 TEST_CASE("Offer reward: WotLK layout (AzerothCore)", "[quest_rewards]") {
@@ -587,14 +611,45 @@ TEST_CASE("Request items: WotLK prefix (azerothcore)", "[quest_rewards]") {
 }
 
 TEST_CASE("Request items: shorter pre-WotLK prefix", "[quest_rewards]") {
-    // unknown, emote, closeOnCancel - no questFlags or suggestedPlayers
-    Bytes b = buildRequestItems({0, 1, 0}, 0, {{{24494u, 20u, 40195u}}}, 3);
+    // Classic: emoteDelay, emote, closeOnCancel - no questFlags or suggestedPlayers
+    Bytes b = buildRequestItems({350, 6, 1}, 0, {{{24494u, 20u, 40195u}}}, 3);
     network::Packet p(0, b);
     QuestRequestItemsData d;
     REQUIRE(QuestRequestItemsParser::parse(p, d));
+    CHECK(d.emoteDelay == 350);
+    CHECK(d.emote == 6);
+    CHECK(d.closeOnCancel);
     REQUIRE(d.requiredItems.size() == 1);
     CHECK(d.requiredItems[0].itemId == 24494);
     CHECK(d.requiredItems[0].count == 20);
+}
+
+TEST_CASE("Request items: TBC 4-word prefix preserves emote, closeOnCancel, suggestedPlayers", "[quest_rewards]") {
+    // CMaNGOS TBC GossipDef.cpp:564-579: emoteDelay, emote, CloseOnCancel, SuggestedPlayers
+    Bytes b = buildRequestItems({500, 1, 1, 4}, 2500, {{{24494u, 10u, 40195u}}}, 3);
+    network::Packet p(0, b);
+    QuestRequestItemsData d;
+    REQUIRE(QuestRequestItemsParser::parse(p, d));
+    CHECK(d.emoteDelay == 500);
+    CHECK(d.emote == 1);
+    CHECK(d.closeOnCancel);
+    CHECK(d.suggestedPlayers == 4);
+    CHECK(d.requiredMoney == 2500);
+    CHECK(d.isCompletable());
+    REQUIRE(d.requiredItems.size() == 1);
+    CHECK(d.requiredItems[0].itemId == 24494);
+    CHECK(d.requiredItems[0].count == 10);
+
+    // Zero-item TBC group quest with CloseOnCancel=1 must not hallucinate an item
+    Bytes bZero = buildRequestItems({200, 6, 1, 5}, 0, {}, 3);
+    network::Packet pZero(0, bZero);
+    QuestRequestItemsData dZero;
+    REQUIRE(QuestRequestItemsParser::parse(pZero, dZero));
+    CHECK(dZero.emoteDelay == 200);
+    CHECK(dZero.emote == 6);
+    CHECK(dZero.closeOnCancel);
+    CHECK(dZero.suggestedPlayers == 5);
+    CHECK(dZero.requiredItems.empty());
 }
 
 TEST_CASE("Request items: money and several items", "[quest_rewards]") {

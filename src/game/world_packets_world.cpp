@@ -868,10 +868,30 @@ bool QuestDetailsParser::parse(network::Packet& packet, QuestDetailsData& data) 
     // rather than taking a value out of the next packet, and a realm whose
     // layout differs here yields an id no spell answers to, which reads as
     // no reward spell - the same as before.
-    if (packet.hasRemaining(4)) /*honor*/            packet.readUInt32();
-    if (packet.hasRemaining(4)) /*honorMultiplier*/  packet.readFloat();
-    if (packet.hasRemaining(4))
-        data.rewardSpellId = packet.readUInt32();
+    if (packet.hasRemaining(4)) data.rewardHonor = packet.readUInt32() / 10u;
+    if (packet.hasRemaining(4)) /*honorMultiplier*/ packet.readFloat();
+    if (packet.hasRemaining(4)) data.rewardSpellId = packet.readUInt32();
+    if (packet.hasRemaining(4)) data.rewardSpellCastId = packet.readUInt32();
+    if (packet.hasRemaining(4)) {
+        data.rewardTitleId = packet.readUInt32();
+        data.rewardTitleIsBitIndex = false;
+    }
+    if (packet.hasRemaining(12)) {
+        packet.readUInt32(); // bonusTalents
+        packet.readUInt32(); // arenaPoints
+        packet.readUInt32(); // unk
+    }
+    if (packet.hasRemaining(60)) {
+        for (int i = 0; i < 15; ++i) packet.readUInt32(); // reputation arrays
+    }
+    if (packet.hasRemaining(4)) {
+        const uint32_t emoteCount = std::min(packet.readUInt32(), 32u);
+        for (uint32_t i = 0; i < emoteCount && packet.hasRemaining(8); ++i) {
+            const uint32_t emote = packet.readUInt32();
+            const uint32_t delay = packet.readUInt32();
+            if (emote != 0) data.emotes.emplace_back(delay, emote);
+        }
+    }
 
     LOG_DEBUG("Quest details: id=", data.questId, " title='", data.title,
               "' rewardSpell=", data.rewardSpellId);
@@ -986,12 +1006,14 @@ bool QuestRequestItemsParser::parse(network::Packet& packet, QuestRequestItemsDa
         uint32_t requiredMoney = 0;
         uint32_t completableFlags = 0;
         std::vector<QuestRewardItem> requiredItems;
+        size_t prefixSkip = 0;
         bool ok = false;
         int score = -1;
     };
 
     auto parseTail = [&](size_t startPos, size_t prefixSkip) -> ParsedTail {
         ParsedTail out;
+        out.prefixSkip = prefixSkip;
         packet.setReadPos(startPos);
 
         if (!packet.hasRemaining(prefixSkip)) return out;
@@ -1009,6 +1031,10 @@ bool QuestRequestItemsParser::parse(network::Packet& packet, QuestRequestItemsDa
             item.itemId = packet.readUInt32();
             item.count = packet.readUInt32();
             item.displayInfoId = packet.readUInt32();
+            // Server serializers only emit required items with count > 0; a zero
+            // count indicates a misaligned prefix skip mistaking CloseOnCancel=1
+            // + SuggestedPlayers + RequiredMoney(0) + ReqItemsCount(0) for an item.
+            if (item.itemId != 0 && item.count == 0) return out;
             if (item.itemId != 0) out.requiredItems.push_back(item);
         }
 
@@ -1016,15 +1042,6 @@ bool QuestRequestItemsParser::parse(network::Packet& packet, QuestRequestItemsDa
         out.completableFlags = packet.readUInt32();
         out.ok = true;
 
-        // The one part of this packet that is not a guess.
-        //
-        // Every server build ends this message with the three constants 0x04,
-        // 0x08 and 0x10 after the completable flags, and nothing else follows
-        // them. So an alignment that lands exactly on those, with the packet
-        // ending there, is not merely the most plausible reading - it is the
-        // right one. Scoring shapes alone chose a reading whose item count was
-        // 128 and whose item id was nothing, which drew a required item as an
-        // empty square with no name.
         constexpr size_t kTrailerBytes = 12;
         bool trailerMatches = false;
         if (packet.getRemainingSize() == kTrailerBytes) {
@@ -1036,9 +1053,16 @@ bool QuestRequestItemsParser::parse(network::Packet& packet, QuestRequestItemsDa
             packet.setReadPos(save);
         }
 
+        const size_t expectedPrefix = isActiveExpansion("tbc") ? 16u
+            : isActiveExpansion("wotlk") ? 20u
+            : isClassicLikeExpansion() ? 12u : 0u;
+
         // Prefer layouts that produce plausible quest-requirement shapes.
         out.score = 0;
         if (trailerMatches) out.score += 100;
+        if (expectedPrefix != 0 && prefixSkip == expectedPrefix) out.score += 15;
+        if (prefixSkip == 12 || prefixSkip == 16 || prefixSkip == 20) out.score += 6;
+        else if ((prefixSkip % 4) != 0) out.score -= 5;
         if (requiredItemCount <= 6) out.score += 4;
         if (out.requiredItems.size() == requiredItemCount) out.score += 3;
         if ((out.completableFlags & ~0x3u) == 0) out.score += 5;
@@ -1050,8 +1074,6 @@ bool QuestRequestItemsParser::parse(network::Packet& packet, QuestRequestItemsDa
         if (remaining <= 16) out.score += 3;
         else if (remaining <= 32) out.score += 2;
         else if (remaining <= 64) out.score += 1;
-        if (prefixSkip == 0) out.score += 1;
-        else if (prefixSkip <= 12) out.score += 1;
         return out;
     };
 
@@ -1069,6 +1091,21 @@ bool QuestRequestItemsParser::parse(network::Packet& packet, QuestRequestItemsDa
     }
     if (!chosen) {
         return true;
+    }
+
+    if (chosen->prefixSkip >= 12) {
+        packet.setReadPos(tailStart);
+        data.emoteDelay = packet.readUInt32();
+        data.emote = packet.readUInt32();
+        data.closeOnCancel = (packet.readUInt32() != 0);
+        if (chosen->prefixSkip == 16) {
+            // TBC 2.4.3 (GossipDef.cpp:564-579): emoteDelay, emote, CloseOnCancel, SuggestedPlayers
+            data.suggestedPlayers = packet.readUInt32();
+        } else if (chosen->prefixSkip >= 20) {
+            // WotLK 3.3.5a: emoteDelay, emote, CloseOnCancel, questFlags, SuggestedPlayers
+            data.questFlags = packet.readUInt32();
+            data.suggestedPlayers = packet.readUInt32();
+        }
     }
 
     data.requiredMoney = chosen->requiredMoney;
@@ -1107,17 +1144,18 @@ bool QuestOfferRewardParser::parse(network::Packet& packet, QuestOfferRewardData
     // No portrait strings - those are 4.x+.
     if (era == QuestPacketEra::WOTLK) {
         if (!packet.hasRemaining(9)) return true;
-        packet.readUInt8();  // autoFinish
-        packet.readUInt32(); // questFlags
-        packet.readUInt32(); // suggestedPlayers
+        data.enableNext = (packet.readUInt8() != 0); // autoFinish
+        packet.readUInt32();                         // questFlags
+        data.suggestedPlayers = packet.readUInt32();
 
         if (!packet.hasRemaining(4)) return true;
         uint32_t emoteCount = packet.readUInt32();
         if (emoteCount > 32) return true;
         for (uint32_t i = 0; i < emoteCount; ++i) {
             if (!packet.hasRemaining(8)) return true;
-            packet.readUInt32(); // delay
-            packet.readUInt32(); // emote
+            const uint32_t delay = packet.readUInt32();
+            const uint32_t emote = packet.readUInt32();
+            if (emote != 0) data.emotes.emplace_back(delay, emote);
         }
 
         if (!packet.hasRemaining(4)) return true;
@@ -1151,24 +1189,17 @@ bool QuestOfferRewardParser::parse(network::Packet& packet, QuestOfferRewardData
             data.rewardMoney = packet.readUInt32();
         if (packet.hasRemaining(4))
             data.rewardXp = packet.readUInt32();
-        // The trailing block, in the wire's order (GossipDef.cpp): honour,
-        // an honour-multiplier float, an unused word, the reward spell and its
-        // cast id, the title id, then bonus talents and arena points. The
-        // honour is sent multiplied by ten and the panel shows honour points,
-        // so unscale it. Everything between is stepped over; each read is
-        // guarded so a short/older packet leaves the fields at zero rather than
-        // reading into the next packet.
         if (packet.hasRemaining(4)) data.rewardHonor = packet.readUInt32() / 10u;
         if (packet.hasRemaining(4)) packet.readFloat();   // honour multiplier
         if (packet.hasRemaining(4)) packet.readUInt32();  // unused
-        if (packet.hasRemaining(4)) packet.readUInt32();  // reward spell
-        if (packet.hasRemaining(4)) packet.readUInt32();  // reward spell cast
-        if (packet.hasRemaining(4)) data.rewardTitleId = packet.readUInt32();
+        if (packet.hasRemaining(4)) data.rewardSpellId = packet.readUInt32();
+        if (packet.hasRemaining(4)) data.rewardSpellCastId = packet.readUInt32();
+        if (packet.hasRemaining(4)) {
+            data.rewardTitleId = packet.readUInt32();
+            data.rewardTitleIsBitIndex = false;
+        }
         if (packet.hasRemaining(4)) data.rewardTalents = packet.readUInt32();
         if (packet.hasRemaining(4)) data.rewardArenaPoints = packet.readUInt32();
-        // An unused word, then the three reputation arrays as in the query
-        // response: five faction ids, five value indices, five overrides. Read
-        // as a block so a short packet leaves them all zero.
         if (packet.hasRemaining(4)) packet.readUInt32();  // unused
         if (packet.hasRemaining(60)) {  // 15 × uint32
             for (auto& fr : data.factionRewards) fr.factionId = packet.readUInt32();
@@ -1188,20 +1219,12 @@ bool QuestOfferRewardParser::parse(network::Packet& packet, QuestOfferRewardData
         return true;
     }
 
-    // Classic/TBC - verified against vmangos / cmangos-tbc GossipDef.cpp:
-    //   Classic 1.12 : u32 autoFinish                          (4-byte prefix)
-    //   TBC 2.4.3    : u32 autoFinish + u32 suggestedPlayers   (8-byte prefix)
-    // then emoteCount + count×(delay,emote), choiceCount + count×(id,count,display),
-    // rewardCount + count×(id,count,display), money, and a small trailing block
-    // (Classic: flags+spell = 8 bytes; TBC: honor+0x08+spell+spellCast+title = 20).
-    // Parse that layout deterministically; fall back to the prefix scanner only
-    // if it doesn't validate (custom vanilla-family servers alter the prefix).
-
     struct ParsedTail {
         uint32_t rewardMoney = 0;
-        uint32_t rewardXp = 0;
         std::vector<QuestRewardItem> choiceRewards;
         std::vector<QuestRewardItem> fixedRewards;
+        std::vector<std::pair<uint32_t, uint32_t>> emotes;
+        size_t postMoneyPos = 0;
         bool ok = false;
         int score = -1000;
         size_t prefixSkip = 0;
@@ -1222,8 +1245,9 @@ bool QuestOfferRewardParser::parse(network::Packet& packet, QuestOfferRewardData
         if (emoteCount > 32) return out;
         for (uint32_t i = 0; i < emoteCount; ++i) {
             if (!packet.hasRemaining(8)) return out;
-            packet.readUInt32(); // delay
-            packet.readUInt32(); // emote type
+            const uint32_t delay = packet.readUInt32();
+            const uint32_t emote = packet.readUInt32();
+            if (emote != 0) out.emotes.emplace_back(delay, emote);
         }
 
         if (!packet.hasRemaining(4)) return out;
@@ -1265,8 +1289,7 @@ bool QuestOfferRewardParser::parse(network::Packet& packet, QuestOfferRewardData
 
         if (packet.hasRemaining(4))
             out.rewardMoney = packet.readUInt32();
-        if (packet.hasRemaining(4))
-            out.rewardXp = packet.readUInt32();
+        out.postMoneyPos = packet.getReadPos();
 
         out.ok = true;
         out.score = 0;
@@ -1289,13 +1312,11 @@ bool QuestOfferRewardParser::parse(network::Packet& packet, QuestOfferRewardData
                 out.score -= 2;
         }
         size_t remaining = packet.getRemainingSize();
-        if (remaining == 0) out.score += 5;
+        if (remaining == 0 || remaining == 8 || remaining == 20) out.score += 5;
         else if (remaining <= 4) out.score += 3;
-        else if (remaining <= 8) out.score += 2;
         else if (remaining <= 16) out.score += 1;
         else out.score -= static_cast<int>(remaining / 4);
         if (out.rewardMoney < 5000000u) out.score += 1;
-        if (out.rewardXp < 200000u) out.score += 1;
         return out;
     };
 
@@ -1304,7 +1325,7 @@ bool QuestOfferRewardParser::parse(network::Packet& packet, QuestOfferRewardData
     // Deterministic first: the documented layout for the active expansion.
     const size_t knownPrefix = (era == QuestPacketEra::CLASSIC) ? 4u : 8u;
     ParsedTail direct = parseTail(tailStart, knownPrefix, false);
-    size_t directRemaining = packet.getRemainingSize(); // pos is at end of the direct parse
+    size_t directRemaining = packet.getRemainingSize();
     bool directValid = direct.ok && directRemaining <= 24;
     if (directValid) {
         for (const auto& ri : direct.choiceRewards)
@@ -1330,12 +1351,36 @@ bool QuestOfferRewardParser::parse(network::Packet& packet, QuestOfferRewardData
     }
 
     if (best) {
+        if (best->prefixSkip >= 4) {
+            packet.setReadPos(tailStart);
+            data.enableNext = (packet.readUInt32() != 0);
+            if (best->prefixSkip >= 8) {
+                data.suggestedPlayers = packet.readUInt32();
+            }
+        }
         data.choiceRewards = best->choiceRewards;
         data.fixedRewards  = best->fixedRewards;
+        data.emotes        = best->emotes;
         data.rewardMoney   = best->rewardMoney;
-        // Pre-WotLK servers do not send an XP field here; parseTail's trailing
-        // read lands on flags (Classic) or honor (TBC). Never surface it as XP.
         data.rewardXp      = 0;
+
+        packet.setReadPos(best->postMoneyPos);
+        if (era == QuestPacketEra::TBC) {
+            // CMaNGOS TBC GossipDef.cpp:522-526:
+            //   rewardedHonor(x10), 0x08, RewSpell, RewSpellCast, CharTitleBitIndex
+            if (packet.hasRemaining(4)) data.rewardHonor = packet.readUInt32() / 10u;
+            if (packet.hasRemaining(4)) packet.readUInt32(); // 0x08 unused
+            if (packet.hasRemaining(4)) data.rewardSpellId = packet.readUInt32();
+            if (packet.hasRemaining(4)) data.rewardSpellCastId = packet.readUInt32();
+            if (packet.hasRemaining(4)) {
+                data.rewardTitleId = packet.readUInt32();
+                data.rewardTitleIsBitIndex = true;
+            }
+        } else if (era == QuestPacketEra::CLASSIC) {
+            // Classic vmangos: questFlags(4) + rewSpell(4)
+            if (packet.hasRemaining(4)) packet.readUInt32();
+            if (packet.hasRemaining(4)) data.rewardSpellId = packet.readUInt32();
+        }
     }
 
     LOG_INFO("Quest offer reward: id=", data.questId, " title='", data.title,
@@ -1830,7 +1875,7 @@ bool BattlefieldStatusPacket::parse(network::Packet& packet, BattlefieldStatusDa
                 data.autoLeaveMs = packet.readUInt32();
                 data.inviteTimeoutMs = data.autoLeaveMs;
                 data.runTimeMs = packet.readUInt32();
-                packet.readUInt8(); // Arena team.
+                data.arenaTeam = packet.readUInt8();
                 break;
             default:
                 return false;

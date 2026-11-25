@@ -2903,13 +2903,14 @@ struct QuestRewardItem {
     uint32_t choiceSlot = 0;  // Original reward slot index from server payload
 };
 
-/** SMSG_QUESTGIVER_QUEST_DETAILS data (simplified) */
+/** SMSG_QUESTGIVER_QUEST_DETAILS data */
 struct QuestDetailsData {
     uint64_t npcGuid = 0;
     uint32_t questId = 0;
     std::string title;
     std::string details;      // Quest description text
     std::string objectives;   // Objectives text
+    bool activateAccept = true;
     uint32_t suggestedPlayers = 0;
     /// QUEST_FLAGS_* as AzerothCore defines them. Only 3.x carries this - the
     /// TBC and Classic offers have no flags field at all, so it stays zero
@@ -2917,15 +2918,14 @@ struct QuestDetailsData {
     uint32_t questFlags = 0;
     uint32_t rewardMoney = 0;
     uint32_t rewardXp = 0;
+    uint32_t rewardHonor = 0;   // unscaled honor points (wire sends x10)
     std::vector<QuestRewardItem> rewardChoiceItems;  // Player picks one of these
     std::vector<QuestRewardItem> rewardItems;         // These are always given
-    /// The spell shown under "You will learn:" on the offer. Sent three fields
-    /// past the XP - honor, an unused float, then this.
-    ///
-    /// The cast id and the title id follow it on the wire and are deliberately
-    /// not kept: nothing reads them, and a field stored for nobody is a claim
-    /// that something uses it.
     uint32_t rewardSpellId = 0;
+    uint32_t rewardSpellCastId = 0;
+    uint32_t rewardTitleId = 0;       // CharTitles.dbc id on WotLK; bit_index on TBC
+    bool rewardTitleIsBitIndex = false;
+    std::vector<std::pair<uint32_t, uint32_t>> emotes; // (delayMs, emoteId)
 };
 
 /** SMSG_QUESTGIVER_QUEST_DETAILS parser */
@@ -2940,6 +2940,11 @@ struct QuestRequestItemsData {
     uint32_t questId = 0;
     std::string title;
     std::string completionText;
+    uint32_t emoteDelay = 0;
+    uint32_t emote = 0;
+    bool closeOnCancel = false;
+    uint32_t questFlags = 0;
+    uint32_t suggestedPlayers = 0;
     uint32_t requiredMoney = 0;
     uint32_t completableFlags = 0;  // 0x03 = completable
     std::vector<QuestRewardItem> requiredItems;
@@ -2959,16 +2964,22 @@ struct QuestOfferRewardData {
     uint32_t questId = 0;
     std::string title;
     std::string rewardText;
+    bool enableNext = true;
+    uint32_t suggestedPlayers = 0;
     uint32_t rewardMoney = 0;
     uint32_t rewardXp = 0;
     uint32_t rewardHonor = 0;   // honor points (the packet's ×10 value, unscaled)
+    uint32_t rewardSpellId = 0;
+    uint32_t rewardSpellCastId = 0;
     uint32_t rewardTalents = 0;
     uint32_t rewardArenaPoints = 0;
-    uint32_t rewardTitleId = 0;  // CharTitles.dbc id of an awarded title, 0 = none
+    uint32_t rewardTitleId = 0;  // CharTitles.dbc id on WotLK; bit_index on TBC
+    bool rewardTitleIsBitIndex = false;
     struct FactionReward { uint32_t factionId = 0; int32_t valueId = 0; int32_t override = 0; };
     std::array<FactionReward, 5> factionRewards{};
     std::vector<QuestRewardItem> choiceRewards;  // Pick one
     std::vector<QuestRewardItem> fixedRewards;   // Always given
+    std::vector<std::pair<uint32_t, uint32_t>> emotes; // (delayMs, emoteId)
 };
 
 /** Protocol era for quest packets whose layout differs per expansion. */
@@ -3231,6 +3242,8 @@ struct BattlefieldStatusData {
     /// ended) and milliseconds since it started.
     uint32_t autoLeaveMs = 0;
     uint32_t runTimeMs = 0;
+    /// Status 3 trailing faction byte on TBC (1 = Alliance, 0 = Horde/Gold).
+    uint8_t  arenaTeam = 0;
 };
 
 /**

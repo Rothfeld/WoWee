@@ -4946,6 +4946,18 @@ void GameHandler::clearPetitionDialog() {
     if (socialHandler_) socialHandler_->clearPetitionDialog();
 }
 
+const GameHandler::ArenaTeamRoster* GameHandler::getArenaTeamRoster(uint32_t teamId) const {
+    if (socialHandler_) return socialHandler_->getArenaTeamRoster(teamId);
+    for (const auto& r : arenaTeamRosters_) {
+        if (r.teamId == teamId) return &r;
+    }
+    return nullptr;
+}
+
+void GameHandler::queryArenaTeam(uint32_t teamId, bool force) {
+    if (socialHandler_) socialHandler_->queryArenaTeam(teamId, force);
+}
+
 void GameHandler::sortArenaTeamRosters(const std::string& key) {
     if (key.empty()) return;
     // The same column twice reverses. A different one starts again in the
@@ -4968,7 +4980,8 @@ void GameHandler::sortArenaTeamRosters(const std::string& key) {
         return 0;
     };
 
-    for (auto& roster : arenaTeamRosters_) {
+    auto& rosters = socialHandler_ ? socialHandler_->mutableArenaTeamRosters() : arenaTeamRosters_;
+    for (auto& roster : rosters) {
         std::stable_sort(roster.members.begin(), roster.members.end(),
             [&](const ArenaTeamMember& a, const ArenaTeamMember& b) {
                 if (key == "name") {
@@ -4979,6 +4992,7 @@ void GameHandler::sortArenaTeamRosters(const std::string& key) {
                 return asc ? (va < vb) : (vb < va);
             });
     }
+    fireAddonEvent("ARENA_TEAM_ROSTER_UPDATE", {});
 }
 
 void GameHandler::requestItemRefundInfo(uint64_t itemGuid) {

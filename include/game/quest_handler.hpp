@@ -120,6 +120,7 @@ public:
         std::string completionText;
         /// The spell the quest offers as a reward, or zero.
         uint32_t rewardSpellId = 0;
+        uint32_t rewardSpellCastId = 0;
         uint32_t rewardXPId = 0;  // QuestXP.dbc column; reward XP = that column at this quest's level
         uint32_t rewardHonor = 0;
         uint32_t rewardTalents = 0;
@@ -127,6 +128,7 @@ public:
         uint32_t rewardTitleId = 0;  // CharTitles.dbc id of an awarded title, 0 = none
         struct FactionReward { uint32_t factionId = 0; int32_t valueId = 0; int32_t override = 0; };
         std::array<FactionReward, 5> factionRewards{};
+        uint32_t method = 0;
         int32_t level = 0;   // quest level from query response; 0 = unknown, -1 = player-scaling
         // ZoneOrSort from query response: >0 = AreaTable zone id, <0 = QuestSort.dbc
         // category (negated), 0 = unknown
@@ -137,6 +139,14 @@ public:
         uint32_t type = 0;
         uint32_t suggestedPlayers = 0;
         uint32_t flags = 0;
+        uint32_t repObjectiveFaction = 0;
+        uint32_t repObjectiveValue = 0;
+        uint32_t nextQuestInChain = 0;
+        uint32_t pointMapId = 0;
+        float pointX = 0.0f;
+        float pointY = 0.0f;
+        uint32_t pointOpt = 0;
+        uint64_t lastKillCreditGuid = 0;
         /// Money added to the reward at the level cap.
         uint32_t rewardMoneyMaxLevel = 0;
         /// The quest's own wording for kill objectives, empty for the
@@ -419,10 +429,24 @@ private:
     std::string sharedQuestSharerName_;
     uint64_t    sharedQuestSharerGuid_    = 0;
 public:
+    struct CompletedQuestReward {
+        uint32_t questId = 0;
+        uint32_t unkFlags = 0;
+        uint32_t xp = 0;
+        int32_t  money = 0;
+        uint32_t honor = 0;
+        std::vector<QuestRewardItem> items;
+    };
+    [[nodiscard]] const CompletedQuestReward& getLastCompletedQuestReward() const {
+        return lastCompletedQuestReward_;
+    }
+
     /// Quest ids in the log slots at the last update; a new one is an accept.
     std::unordered_set<uint32_t> seenSlotQuests_;
     bool questSlotsSeen_ = false;
 private:
+    void sendQuestPushResult(uint8_t result);
+    CompletedQuestReward lastCompletedQuestReward_;
     /// Accepted quests whose "Quest accepted: X" waits for the title.
     std::unordered_set<uint32_t> pendingAcceptedLines_;
     void announceAcceptedIfTitled(uint32_t questId);

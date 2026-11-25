@@ -1865,6 +1865,72 @@ void GameHandler::registerRemainingOpcodes() {
     };
     // WotLK: uint64 playerGuid + uint8 teamCount + per-team fields
     dispatchTable_[Opcode::MSG_INSPECT_ARENA_TEAMS] = [this](network::Packet& packet) {
+        if (isPreWotlk()) {
+            // TBC 2.4.3 (CMaNGOS ArenaTeam::InspectStats, ArenaTeam.cpp:423-432):
+            // One 33-byte packet per occupied slot (0..2):
+            //   uint64 guid, uint8 slot, uint32 teamId, uint32 rating,
+            //   uint32 teamSeasonGames, uint32 teamSeasonWins,
+            //   uint32 memberSeasonGames, uint32 personalRating
+            if (!packet.hasRemaining(33)) {
+                packet.skipAll();
+                return;
+            }
+            const uint64_t inspGuid = packet.readUInt64();
+            const uint8_t  slot     = packet.readUInt8();
+            if (slot >= 3) {
+                packet.skipAll();
+                return;
+            }
+            static constexpr uint8_t kSlotSizes[3] = {2, 3, 5};
+            SocialHandler::InspectArenaTeam team;
+            team.slot              = slot;
+            team.type              = kSlotSizes[slot];
+            team.teamId            = packet.readUInt32();
+            team.teamRating        = packet.readUInt32();
+            team.seasonGames       = packet.readUInt32();
+            team.seasonWins        = packet.readUInt32();
+            team.memberSeasonGames = packet.readUInt32();
+            team.personalRating    = packet.readUInt32();
+            if (socialHandler_) {
+                for (const auto& cached : socialHandler_->getArenaTeamStats()) {
+                    if (cached.teamId == team.teamId) {
+                        team.name            = cached.teamName;
+                        team.hasEmblem       = cached.hasEmblem;
+                        team.backgroundColor = cached.backgroundColor;
+                        team.emblemStyle     = cached.emblemStyle;
+                        team.emblemColor     = cached.emblemColor;
+                        team.borderStyle     = cached.borderStyle;
+                        team.borderColor     = cached.borderColor;
+                        break;
+                    }
+                }
+                if (team.teamId != 0 && (team.name.empty() || !team.hasEmblem)) {
+                    socialHandler_->queryArenaTeam(team.teamId);
+                }
+                auto& ir = socialHandler_->mutableInspectResult();
+                if (ir.guid != inspGuid) {
+                    ir.guid = inspGuid;
+                    ir.arenaTeams.clear();
+                }
+                bool replaced = false;
+                for (auto& existing : ir.arenaTeams) {
+                    if (existing.slot == slot) {
+                        existing = std::move(team);
+                        replaced = true;
+                        break;
+                    }
+                }
+                if (!replaced) {
+                    ir.arenaTeams.push_back(std::move(team));
+                    std::sort(ir.arenaTeams.begin(), ir.arenaTeams.end(),
+                              [](const auto& a, const auto& b) { return a.slot < b.slot; });
+                }
+            }
+            fireAddonEvent("INSPECT_HONOR_UPDATE", {});
+            LOG_DEBUG("MSG_INSPECT_ARENA_TEAMS (TBC): guid=0x", std::hex, inspGuid, std::dec,
+                      " slot=", static_cast<int>(slot));
+            return;
+        }
         // WotLK: uint64 playerGuid + uint8 teamCount + per-team fields
         if (!packet.hasRemaining(9)) {
             packet.skipAll();
@@ -1881,6 +1947,7 @@ void GameHandler::registerRemainingOpcodes() {
                 for (uint8_t t = 0; t < teamCount; ++t) {
                     if (!packet.hasRemaining(21)) break;
                     SocialHandler::InspectArenaTeam team;
+                    team.slot           = t;
                     team.teamId         = packet.readUInt32();
                     team.type           = packet.readUInt8();
                     team.weekGames      = packet.readUInt32();
@@ -1890,10 +1957,12 @@ void GameHandler::registerRemainingOpcodes() {
                     team.name           = packet.readString();
                     if (!packet.hasRemaining(4)) break;
                     team.personalRating = packet.readUInt32();
+                    team.teamRating     = team.personalRating;
                     ir.arenaTeams.push_back(std::move(team));
                 }
             }
         }
+        fireAddonEvent("INSPECT_HONOR_UPDATE", {});
         LOG_DEBUG("MSG_INSPECT_ARENA_TEAMS: guid=0x", std::hex, inspGuid, std::dec,
                   " teams=", static_cast<int>(teamCount));
     };

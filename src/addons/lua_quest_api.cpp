@@ -169,7 +169,12 @@ static int lua_IsCurrentQuestFailed(lua_State* L) {
 static int lua_GetQuestRewardSpell(lua_State* L) {
     auto* gh = getGameHandler(L);
     if (!gh) return luaReturnNil(L);
-    const uint32_t spellId = gh->getQuestDetails().rewardSpellId;
+    uint32_t spellId = 0;
+    if (gh->isQuestOfferRewardOpen()) {
+        spellId = gh->getQuestOfferReward().rewardSpellId;
+    } else if (gh->isQuestDetailsOpen()) {
+        spellId = gh->getQuestDetails().rewardSpellId;
+    }
     if (spellId == 0) return luaReturnNil(L);
     const std::string name = gh->getSpellName(spellId);
     if (name.empty()) return luaReturnNil(L);
@@ -181,24 +186,24 @@ static int lua_GetQuestRewardSpell(lua_State* L) {
     lua_pushboolean(L, gh->getKnownSpells().count(spellId) > 0 ? 1 : 0);
     return 4;
 }
-// GetQuestLogRewardTitle() → the title a quest awards, formatted with the
-// player's name, or nil for the many quests that award none. The CharTitleId is
-// in the query response (field 19) and the name in CharTitles.dbc, both of
-// which this now reads; the old answer was a flat nil.
+
 static int lua_GetQuestRewardTitle(lua_State* L) {
     auto* gh = getGameHandler(L);
     if (!gh) { return luaReturnNil(L); }
-    // The offer panel (GetRewardTitle) and the log panel (GetQuestLogRewardTitle)
-    // share this; read whichever is open, the offer's own title id when it is,
-    // else the selected log quest's - the log selection is not the offer's.
     uint32_t titleId = 0;
+    bool isBitIndex = false;
     if (gh->isQuestOfferRewardOpen()) {
         titleId = gh->getQuestOfferReward().rewardTitleId;
+        isBitIndex = gh->getQuestOfferReward().rewardTitleIsBitIndex;
+    } else if (gh->isQuestDetailsOpen()) {
+        titleId = gh->getQuestDetails().rewardTitleId;
+        isBitIndex = gh->getQuestDetails().rewardTitleIsBitIndex;
     } else {
         if (const auto* selected = selectedLogEntry(gh)) titleId = selected->rewardTitleId;
     }
     if (titleId == 0) { return luaReturnNil(L); }
-    const std::string name = gh->getFormattedTitleById(titleId);
+    const std::string name = isBitIndex ? gh->getFormattedTitle(titleId)
+                                        : gh->getFormattedTitleById(titleId);
     if (name.empty()) { return luaReturnNil(L); }
     lua_pushstring(L, name.c_str());
     return 1;
@@ -3111,8 +3116,13 @@ static int lua_GetMaxDailyQuests(lua_State* L) {
 
 static int lua_GetSuggestedGroupNum(lua_State* L) {
     auto* gh = getGameHandler(L);
-    const bool open = gh && gh->isQuestDetailsOpen();
-    lua_pushnumber(L, open ? gh->getQuestDetails().suggestedPlayers : 0);
+    uint32_t groupNum = 0;
+    if (gh) {
+        if (gh->isQuestOfferRewardOpen())       groupNum = gh->getQuestOfferReward().suggestedPlayers;
+        else if (gh->isQuestRequestItemsOpen()) groupNum = gh->getQuestRequestItems().suggestedPlayers;
+        else if (gh->isQuestDetailsOpen())      groupNum = gh->getQuestDetails().suggestedPlayers;
+    }
+    lua_pushnumber(L, groupNum);
     return 1;
 }
 
@@ -3186,7 +3196,15 @@ static int lua_GetQuestLogItemLink(lua_State* L) {
 // Nil for the same reason GetQuestSpellLink is: nothing this client parses
 // says a quest gives a spell, so there is no spell to name.
 static int lua_GetQuestLogSpellLink(lua_State* L) {
-    return luaReturnNil(L);
+    auto* gh = getGameHandler(L);
+    const auto* q = selectedLogEntry(gh);
+    if (!gh || !q || q->rewardSpellId == 0) return luaReturnNil(L);
+    const std::string name = gh->getSpellName(q->rewardSpellId);
+    if (name.empty()) return luaReturnNil(L);
+    const std::string link = "|cff71d5ff|Hspell:" + std::to_string(q->rewardSpellId) +
+                             "|h[" + name + "]|h|r";
+    lua_pushstring(L, link.c_str());
+    return 1;
 }
 
 // The server sends one field for both, and its sign says which: AzerothCore's
@@ -3262,7 +3280,8 @@ QuestSource currentQuestSource(game::GameHandler* gh) {
         s.title = &d.title;
     } else if (gh->isQuestDetailsOpen()) {
         const auto& d = gh->getQuestDetails();
-        s = {&d.title, &d.rewardItems, &d.rewardChoiceItems, d.rewardMoney, d.rewardXp};
+        s = {&d.title, &d.rewardItems, &d.rewardChoiceItems, d.rewardMoney, d.rewardXp,
+             d.rewardHonor, 0, 0};
     }
     return s;
 }
@@ -3471,7 +3490,18 @@ static int lua_GetQuestItemLink(lua_State* L) {
 // made-up link would put a spell in someone's chat that the quest does not
 // give.
 static int lua_GetQuestSpellLink(lua_State* L) {
-    return luaReturnNil(L);
+    auto* gh = getGameHandler(L);
+    if (!gh) return luaReturnNil(L);
+    uint32_t spellId = 0;
+    if (gh->isQuestOfferRewardOpen())       spellId = gh->getQuestOfferReward().rewardSpellId;
+    else if (gh->isQuestDetailsOpen())      spellId = gh->getQuestDetails().rewardSpellId;
+    if (spellId == 0) return luaReturnNil(L);
+    const std::string name = gh->getSpellName(spellId);
+    if (name.empty()) return luaReturnNil(L);
+    const std::string link = "|cff71d5ff|Hspell:" + std::to_string(spellId) +
+                             "|h[" + name + "]|h|r";
+    lua_pushstring(L, link.c_str());
+    return 1;
 }
 
 void registerQuestLuaAPI(lua_State* L) {

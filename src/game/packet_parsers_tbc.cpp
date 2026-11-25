@@ -744,7 +744,7 @@ bool TbcPacketParsers::parseQuestDetailsPreWotlk(network::Packet& packet, QuestD
         return !data.title.empty() || data.questId != 0;
     }
 
-    /*activateAccept*/ packet.readUInt32();
+    data.activateAccept = (packet.readUInt32() != 0);
     if (hasSuggestedPlayers && packet.hasRemaining(4))
         data.suggestedPlayers = packet.readUInt32();
 
@@ -783,12 +783,36 @@ bool TbcPacketParsers::parseQuestDetailsPreWotlk(network::Packet& packet, QuestD
 
     if (packet.hasRemaining(4))
         data.rewardMoney = packet.readUInt32();
-    // Remaining bytes are spell/honor/title trailing fields plus the emote
-    // block - no XP field exists pre-WotLK.
     data.rewardXp = 0;
 
+    if (hasSuggestedPlayers) {
+        // CMaNGOS TBC GossipDef.cpp:429-432:
+        //   rewardedHonor(x10), RewSpell, RewSpellCast, CharTitleBitIndex
+        if (packet.hasRemaining(4)) data.rewardHonor = packet.readUInt32() / 10u;
+        if (packet.hasRemaining(4)) data.rewardSpellId = packet.readUInt32();
+        if (packet.hasRemaining(4)) data.rewardSpellCastId = packet.readUInt32();
+        if (packet.hasRemaining(4)) {
+            data.rewardTitleId = packet.readUInt32();
+            data.rewardTitleIsBitIndex = true;
+        }
+    } else {
+        // Classic vmangos: RewSpell
+        if (packet.hasRemaining(4)) data.rewardSpellId = packet.readUInt32();
+    }
+
+    // Emote block LAST (GossipDef.cpp:434-441: DetailsEmote, DetailsEmoteDelay)
+    if (packet.hasRemaining(4)) {
+        const uint32_t emoteCount = std::min(packet.readUInt32(), 32u);
+        for (uint32_t i = 0; i < emoteCount && packet.hasRemaining(8); ++i) {
+            const uint32_t emote = packet.readUInt32();
+            const uint32_t delay = packet.readUInt32();
+            if (emote != 0) data.emotes.emplace_back(delay, emote);
+        }
+    }
+
     LOG_DEBUG("Quest details tbc/classic: id=", data.questId, " title='", data.title,
-              "' choices=", data.rewardChoiceItems.size(), " fixed=", data.rewardItems.size());
+              "' choices=", data.rewardChoiceItems.size(), " fixed=", data.rewardItems.size(),
+              " rewardSpell=", data.rewardSpellId);
     return true;
 }
 

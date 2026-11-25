@@ -1365,15 +1365,84 @@ void CombatHandler::handleUpdateComboPoints(network::Packet& packet) {
 }
 
 void CombatHandler::handlePvpCredit(network::Packet& packet) {
-    if (packet.hasRemaining(16)) {
-        uint32_t honor      = packet.readUInt32();
-        uint64_t victimGuid = packet.readUInt64();
-        uint32_t rank       = packet.readUInt32();
-        LOG_INFO("SMSG_PVP_CREDIT: honor=", honor, " victim=0x", std::hex, victimGuid, std::dec, " rank=", rank);
-        std::string msg = "You gain " + std::to_string(honor) + " honor points.";
-        owner_.addLocalChatLine(ChatType::COMBAT_HONOR_GAIN, msg);
-        if (honor > 0) addCombatText(CombatTextEntry::HONOR_GAIN, static_cast<int32_t>(honor), 0, true);
+    if (!packet.hasRemaining(16)) return;
+    const uint32_t honor      = packet.readUInt32();
+    const uint64_t victimGuid = packet.readUInt64();
+    const uint32_t rank       = packet.readUInt32();
+    LOG_INFO("SMSG_PVP_CREDIT: honor=", honor, " victim=0x", std::hex, victimGuid, std::dec, " rank=", rank);
+
+    auto resolvePvpRankTitle = [&](uint32_t r, bool alliance, bool female) -> std::string {
+        const uint32_t clamped = std::min(r, 19u);
+        const std::string key = "PVP_RANK_" + std::to_string(clamped) + "_" +
+                                (alliance ? "1" : "0") + (female ? "_FEMALE" : "");
+        if (std::string gs = owner_.globalString(key.c_str()); !gs.empty()) {
+            return gs;
+        }
+        static constexpr const char* kHordeRanks[20] = {
+            "Scout", "Pariah", "Outlaw", "Exiled", "Dishonored",
+            "Scout", "Grunt", "Sergeant", "Senior Sergeant", "First Sergeant",
+            "Stone Guard", "Blood Guard", "Legionnaire", "Centurion", "Champion",
+            "Lieutenant General", "General", "Warlord", "High Warlord", "Leader"
+        };
+        static constexpr const char* kAllianceRanks[20] = {
+            "Private", "Pariah", "Outlaw", "Exiled", "Dishonored",
+            "Private", "Corporal", "Sergeant", "Master Sergeant", "Sergeant Major",
+            "Knight", "Knight-Lieutenant", "Knight-Captain", "Knight-Champion", "Lieutenant Commander",
+            "Commander", "Marshal", "Field Marshal", "Grand Marshal", "Leader"
+        };
+        return alliance ? kAllianceRanks[clamped] : kHordeRanks[clamped];
+    };
+
+    std::string msg;
+    if (victimGuid == 0) {
+        if (std::string line = owner_.globalString("COMBATLOG_HONORAWARD"); !line.empty()) {
+            char buf[256];
+            std::snprintf(buf, sizeof(buf), line.c_str(), static_cast<int>(honor));
+            msg = buf;
+        } else {
+            msg = "You have been awarded " + std::to_string(honor) + " honor points.";
+        }
+    } else {
+        std::string victimName = owner_.lookupName(victimGuid);
+        uint8_t race = owner_.lookupPlayerRace(victimGuid);
+        uint8_t gender = owner_.lookupPlayerGender(victimGuid);
+        if (auto entity = owner_.getEntityManager().getEntity(victimGuid)) {
+            if (victimName.empty()) {
+                if (auto* unit = dynamic_cast<Unit*>(entity.get())) {
+                    victimName = unit->getName();
+                }
+            }
+            const uint16_t bytes0Idx = fieldIndex(UF::UNIT_FIELD_BYTES_0);
+            if (bytes0Idx != 0xFFFF) {
+                const uint32_t bytes0 = entity->getField(bytes0Idx);
+                if (race == 0) race = static_cast<uint8_t>(bytes0 & 0xFFu);
+                if (gender == 0xFF) gender = static_cast<uint8_t>((bytes0 >> 16) & 0xFFu);
+            }
+        }
+        if (victimName.empty()) {
+            if (((victimGuid >> 48) & 0xFFFFu) == 0) {
+                owner_.queryPlayerName(victimGuid);
+            }
+            victimName = "Unknown";
+        }
+        bool victimAlliance = !owner_.isPlayerAlliance();
+        if (race != 0) {
+            victimAlliance = (race == 1 || race == 3 || race == 4 || race == 7 || race == 11);
+        }
+        const std::string rankTitle = resolvePvpRankTitle(rank, victimAlliance, gender == 1);
+        char buf[320];
+        if (std::string pat = owner_.globalString("COMBATLOG_HONORGAIN"); !pat.empty()) {
+            std::snprintf(buf, sizeof(buf), pat.c_str(), victimName.c_str(), rankTitle.c_str(),
+                          static_cast<int>(honor));
+        } else {
+            std::snprintf(buf, sizeof(buf), "%s dies, honorable kill Rank: %s (%u Honor Points)",
+                          victimName.c_str(), rankTitle.c_str(), honor);
+        }
+        msg = buf;
     }
+
+    owner_.addLocalChatLine(ChatType::COMBAT_HONOR_GAIN, msg);
+    if (honor > 0) addCombatText(CombatTextEntry::HONOR_GAIN, static_cast<int32_t>(honor), 0, true);
 }
 
 void CombatHandler::handleProcResist(network::Packet& packet) {

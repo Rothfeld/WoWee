@@ -762,14 +762,24 @@ void QuestHandler::registerOpcodes(DispatchTable& table) {
                 case 12: line = "ERR_QUEST_ONLY_ONE_TIMED"; break;
                 case 13: case 18: line = "ERR_QUEST_ALREADY_ON"; break;
                 case 16: line = "ERR_QUEST_FAILED_EXPANSION"; break;
+                case 17: line = "ERR_QUEST_FAILED_MAX_COUNT_S"; break;
                 case 21: line = "ERR_QUEST_FAILED_MISSING_ITEMS"; break;
                 case 23: line = "ERR_QUEST_FAILED_NOT_ENOUGH_MONEY"; break;
                 case 26: line = "ERR_QUEST_FAILED_TOO_MANY_DAILY_QUESTS_I"; break;
                 case 27: line = "ERR_QUEST_FAILED_CAIS"; break;
                 default: line = "ERR_QUEST_NEED_PREREQS"; break;
             }
-            if (failReason == 26) owner_.systemGlobal(line, {"10"});
-            else owner_.systemGlobal(line);
+            if (failReason == 17) {
+                std::string title = !currentQuestDetails_.title.empty() ? currentQuestDetails_.title
+                    : !currentQuestOfferReward_.title.empty() ? currentQuestOfferReward_.title
+                    : !currentQuestRequestItems_.title.empty() ? currentQuestRequestItems_.title
+                    : std::string("Quest");
+                owner_.systemGlobal(line, {title});
+            } else if (failReason == 26) {
+                owner_.systemGlobal(line, {"10"});
+            } else {
+                owner_.systemGlobal(line);
+            }
         }
     };
 
@@ -777,7 +787,30 @@ void QuestHandler::registerOpcodes(DispatchTable& table) {
     table[Opcode::SMSG_QUESTGIVER_QUEST_COMPLETE] = [this](network::Packet& packet) {
         if (packet.hasRemaining(4)) {
             uint32_t questId = packet.readUInt32();
-            LOG_INFO("Quest completed: questId=", questId);
+            CompletedQuestReward reward;
+            reward.questId = questId;
+            if (packet.hasRemaining(12)) {
+                reward.unkFlags = packet.readUInt32();
+                reward.xp       = packet.readUInt32();
+                reward.money    = static_cast<int32_t>(packet.readUInt32());
+                // TBC 2.3+ and WotLK insert uint32 honor before rewItemsCount (max 5).
+                if (!isClassicLikeExpansion() && packet.hasRemaining(8)) {
+                    reward.honor = packet.readUInt32();
+                }
+                if (packet.hasRemaining(4)) {
+                    const uint32_t itemCount = std::min(packet.readUInt32(), 16u);
+                    for (uint32_t i = 0; i < itemCount && packet.hasRemaining(8); ++i) {
+                        QuestRewardItem ri;
+                        ri.itemId = packet.readUInt32();
+                        ri.count  = packet.readUInt32();
+                        if (ri.itemId != 0) reward.items.push_back(ri);
+                    }
+                }
+            }
+            lastCompletedQuestReward_ = reward;
+            LOG_INFO("Quest completed: questId=", questId, " xp=", reward.xp,
+                     " money=", reward.money, " honor=", reward.honor,
+                     " items=", reward.items.size());
             if (pendingTurnInQuestId_ == questId) {
                 pendingTurnInQuestId_ = 0;
                 pendingTurnInNpcGuid_ = 0;
@@ -785,10 +818,15 @@ void QuestHandler::registerOpcodes(DispatchTable& table) {
             }
             for (auto it = questLog_.begin(); it != questLog_.end(); ++it) {
                 if (it->questId == questId) {
-                    // The turn-in's line in chat, which every one of the
-                    // supported clients writes there and nowhere else.
                     if (!it->title.empty()) {
                         owner_.systemGlobal("ERR_QUEST_COMPLETE_S", {it->title});
+                    }
+                    if (reward.xp > 0) {
+                        owner_.systemGlobal("ERR_QUEST_REWARD_EXP_I", {std::to_string(reward.xp)});
+                    }
+                    if (reward.money > 0) {
+                        owner_.systemGlobal("ERR_QUEST_REWARD_MONEY_S",
+                                            {lootMoneyText(static_cast<uint32_t>(reward.money))});
                     }
                     // Play quest-complete sound
                     if (auto* ac = owner_.services().audioCoordinator) {
@@ -799,7 +837,9 @@ void QuestHandler::registerOpcodes(DispatchTable& table) {
                     owner_.setQuestTracked(questId, false);
                     LOG_INFO("  Removed quest ", questId, " from quest log");
                     if (owner_.addonEventCallbackRef())
-                        owner_.addonEventCallbackRef()("QUEST_TURNED_IN", {std::to_string(questId)});
+                        owner_.addonEventCallbackRef()("QUEST_TURNED_IN",
+                            {std::to_string(questId), std::to_string(reward.xp),
+                             std::to_string(std::max<int32_t>(0, reward.money))});
                     break;
                 }
             }
@@ -824,17 +864,18 @@ void QuestHandler::registerOpcodes(DispatchTable& table) {
             if (packet.hasRemaining(4)) {
                 reqCount = packet.readUInt32();
             }
+            uint64_t creditGuid = 0;
+            if (packet.hasRemaining(8)) {
+                creditGuid = packet.readUInt64();
+            }
 
             LOG_INFO("Quest kill update: questId=", questId, " entry=", entry,
-                     " count=", count, "/", reqCount);
+                     " count=", count, "/", reqCount, " guid=0x", std::hex, creditGuid, std::dec);
 
-            // ERR_QUEST_ADD_KILL_SII / _FOUND_SII on the yellow info line,
-            // from the packet alone: ".quest complete 7" showed "Kobold
-            // Vermin slain: 1/10" ... "10/10" (pair 6) whether or not the
-            // quest had reached this client's log yet.
             bool shown = false;
             for (auto& quest : questLog_) {
                 if (quest.questId == questId) {
+                    if (creditGuid != 0) quest.lastKillCreditGuid = creditGuid;
                     if (reqCount == 0) {
                         auto it = quest.killCounts.find(entry);
                         if (it != quest.killCounts.end()) reqCount = it->second.second;
@@ -1198,11 +1239,20 @@ void QuestHandler::registerOpcodes(DispatchTable& table) {
 
             if (isExact) {
                 // Every field is the server's own: nothing to weigh up.
+                q.method = exact.method;
                 q.level = questLevel;
                 q.zoneOrSort = zoneOrSort;
                 q.type = exact.type;
                 q.suggestedPlayers = exact.suggestedPlayers;
                 q.flags = exact.flags;
+                q.repObjectiveFaction = exact.repObjectiveFaction;
+                q.repObjectiveValue = exact.repObjectiveValue;
+                q.nextQuestInChain = exact.nextQuestInChain;
+                q.rewardSpellCastId = exact.rewardSpellCast;
+                q.pointMapId = exact.pointMapId;
+                q.pointX = exact.pointX;
+                q.pointY = exact.pointY;
+                q.pointOpt = exact.pointOpt;
                 q.rewardMoneyMaxLevel = exact.rewardMoneyMaxLevel;
                 for (size_t i = 0; i < 4; ++i)
                     q.objectiveTexts[i] = normalizeQuestText(exact.objectiveTexts[i], true);
@@ -1212,6 +1262,24 @@ void QuestHandler::registerOpcodes(DispatchTable& table) {
                 q.objectives = parsed.objectives;
                 q.description = parsed.description;
                 q.completionText = parsed.completionText;
+
+                if ((exact.pointX != 0.0f || exact.pointY != 0.0f) &&
+                    exact.pointMapId == owner_.currentMapIdRef()) {
+                    const glm::vec3 canonical = core::coords::serverToCanonical(
+                        {exact.pointX, exact.pointY, 0.0f});
+                    std::erase_if(gossipPois_, [questId](const GossipPoi& p) {
+                        return p.data == questId && p.questObjectiveIndex == -1;
+                    });
+                    GossipPoi poi;
+                    poi.mapId = exact.pointMapId;
+                    poi.x = canonical.x;
+                    poi.y = canonical.y;
+                    poi.icon = 6;
+                    poi.data = questId;
+                    poi.questObjectiveIndex = -1;
+                    poi.name = q.title.empty() ? "Quest objective" : q.title;
+                    gossipPois_.push_back(std::move(poi));
+                }
             }
             if (questLevel != 0) q.level = questLevel;
             if (zoneOrSort != 0) q.zoneOrSort = zoneOrSort;
@@ -1324,7 +1392,9 @@ void QuestHandler::registerOpcodes(DispatchTable& table) {
             // that just landed - without it a queried quest keeps its empty
             // description until the log is closed and reopened, which is the
             // "only after a relog" shape reported for the description panel.
-            owner_.addonEventCallbackRef()("QUEST_LOG_UPDATE", {});
+            if (owner_.addonEventCallbackRef()) {
+                owner_.addonEventCallbackRef()("QUEST_LOG_UPDATE", {});
+            }
             break;
         }
 
@@ -1577,9 +1647,27 @@ void QuestHandler::dismissQuestDetails(bool announce) {
     }
 }
 
+void QuestHandler::sendQuestPushResult(uint8_t result) {
+    if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
+    const uint32_t wire = wireOpcode(Opcode::MSG_QUEST_PUSH_RESULT);
+    if (wire == 0xFFFF) return;
+    // CMaNGOS QuestHandler::HandleQuestPushResult reads (ObjectGuid receiverGuid, uint8 msg),
+    // forwards both to the sharer (_player->GetDividerGuid()), and clears DividerGuid.
+    network::Packet pkt(static_cast<uint16_t>(wire));
+    pkt.writeUInt64(owner_.getPlayerGuid());
+    pkt.writeUInt8(result);
+    owner_.getSocket()->send(pkt);
+}
+
 void QuestHandler::declineQuest(bool announce) {
-    // Declining and dismissing leave the client in the same state and always
-    // did, character for character.
+    // When declining a quest pushed by a party member (CMSG_PUSHQUESTTOPARTY sends
+    // SMSG_QUESTGIVER_QUEST_DETAILS with the sharer's player GUID as npcGuid and sets
+    // DividerGuid on the server), notify the server with QUEST_PARTY_MSG_DECLINE_QUEST (3).
+    if (questDetailsOpen_ && currentQuestDetails_.npcGuid != 0 &&
+        ((currentQuestDetails_.npcGuid >> 48) & 0xFFFFu) == 0 &&
+        currentQuestDetails_.npcGuid != owner_.getPlayerGuid()) {
+        sendQuestPushResult(3);
+    }
     dismissQuestDetails(announce);
 }
 
@@ -1741,8 +1829,10 @@ void QuestHandler::acceptSharedQuest() {
 }
 
 void QuestHandler::declineSharedQuest() {
-    pendingSharedQuest_ = false;
-    // No response packet needed - just dismiss the UI
+    if (pendingSharedQuest_) {
+        pendingSharedQuest_ = false;
+        sendQuestPushResult(3); // QUEST_PARTY_MSG_DECLINE_QUEST
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2787,6 +2877,7 @@ void QuestHandler::handleQuestDetails(network::Packet& packet) {
     gossipOptionPending_ = false;
     owner_.setDialogGameObject(data.npcGuid);
     if (owner_.addonEventCallbackRef()) owner_.addonEventCallbackRef()("QUEST_DETAIL", {});
+    if (!data.emotes.empty()) playPanelEmotes(data.npcGuid, data.emotes);
 }
 
 void QuestHandler::handleQuestRequestItems(network::Packet& packet) {
@@ -2815,11 +2906,8 @@ void QuestHandler::handleQuestRequestItems(network::Packet& packet) {
     questDetailsOpenTime_ = std::chrono::steady_clock::time_point{};
     owner_.setDialogGameObject(data.npcGuid);
 
-    // The panel shown when a quest is handed back before it is finished, or
-    // when it asks for something in return. Its siblings QUEST_DETAIL and
-    // QUEST_COMPLETE were both fired and this one was not, so the original
-    // interface had the text for this step and no event to draw it on.
     if (owner_.addonEventCallbackRef()) owner_.addonEventCallbackRef()("QUEST_PROGRESS", {});
+    if (data.emote != 0) playPanelEmotes(data.npcGuid, {{data.emoteDelay, data.emote}});
 
     // Query item names for required items
     for (const auto& item : data.requiredItems) {
@@ -2879,6 +2967,7 @@ void QuestHandler::handleQuestOfferReward(network::Packet& packet) {
     questDetailsOpenTime_ = std::chrono::steady_clock::time_point{};
     owner_.setDialogGameObject(data.npcGuid);
     if (owner_.addonEventCallbackRef()) owner_.addonEventCallbackRef()("QUEST_COMPLETE", {});
+    if (!data.emotes.empty()) playPanelEmotes(data.npcGuid, data.emotes);
 
     // Query item names for reward items
     for (const auto& item : data.choiceRewards)

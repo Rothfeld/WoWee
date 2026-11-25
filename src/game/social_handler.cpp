@@ -1249,10 +1249,19 @@ void SocialHandler::requestInspectHonorData(uint64_t guid) {
     if (guid == 0) return;
     if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
     const uint32_t wire = wireOpcode(Opcode::MSG_INSPECT_HONOR_STATS);
-    if (wire == 0xFFFF) return;
-    network::Packet pkt(static_cast<uint16_t>(wire));
-    pkt.writeUInt64(guid);
-    owner_.getSocket()->send(pkt);
+    if (wire != 0xFFFF) {
+        network::Packet pkt(static_cast<uint16_t>(wire));
+        pkt.writeUInt64(guid);
+        owner_.getSocket()->send(pkt);
+    }
+    if (!isClassicLikeExpansion() && inspectResult_.arenaTeams.empty()) {
+        const uint32_t arenaWire = wireOpcode(Opcode::MSG_INSPECT_ARENA_TEAMS);
+        if (arenaWire != 0xFFFF) {
+            network::Packet arenaPkt(static_cast<uint16_t>(arenaWire));
+            arenaPkt.writeUInt64(guid);
+            owner_.getSocket()->send(arenaPkt);
+        }
+    }
 }
 
 void SocialHandler::inspectUnit(uint64_t guid) {
@@ -1269,8 +1278,22 @@ void SocialHandler::inspectUnit(uint64_t guid) {
         owner_.addSystemChatMessage("You can only inspect players.");
         return;
     }
+    if (inspectResult_.guid != guid) {
+        inspectResult_ = InspectResult{};
+        inspectResult_.guid = guid;
+    } else {
+        inspectResult_.arenaTeams.clear();
+    }
     auto packet = InspectPacket::build(guid);
     owner_.getSocket()->send(packet);
+    if (!isClassicLikeExpansion()) {
+        const uint32_t arenaWire = wireOpcode(Opcode::MSG_INSPECT_ARENA_TEAMS);
+        if (arenaWire != 0xFFFF) {
+            network::Packet arenaPkt(static_cast<uint16_t>(arenaWire));
+            arenaPkt.writeUInt64(guid);
+            owner_.getSocket()->send(arenaPkt);
+        }
+    }
     if (isActiveExpansion("wotlk")) {
         auto achPkt = QueryInspectAchievementsPacket::build(guid);
         owner_.getSocket()->send(achPkt);
@@ -5253,59 +5276,174 @@ void SocialHandler::handleArenaTeamCommandResult(network::Packet& packet) {
     else LOG_WARNING("SMSG_ARENA_TEAM_COMMAND_RESULT: error ", error, " (", teamName, "/", playerName, ")");
 }
 
+void SocialHandler::queryArenaTeam(uint32_t teamId, bool force) {
+    if (teamId == 0 || !owner_.getSocket()) return;
+    if (!force && !queriedArenaTeamIds_.insert(teamId).second) return;
+    const uint32_t wire = wireOpcode(Opcode::CMSG_ARENA_TEAM_QUERY);
+    if (wire == 0xFFFF) return;
+    network::Packet pkt(static_cast<uint16_t>(wire));
+    pkt.writeUInt32(teamId);
+    owner_.getSocket()->send(pkt);
+}
+
+void SocialHandler::syncPlayerArenaTeamsFromFields(const FlatFieldMap& fields) {
+    if (isClassicLikeExpansion()) return;
+    const uint16_t base = fieldIndex(UF::PLAYER_FIELD_ARENA_TEAM_INFO_1_1);
+    if (base == 0xFFFF) return;
+    const uint16_t stride = isActiveExpansion("wotlk") ? 7u : 6u;
+    static constexpr uint32_t kSlotTypes[3] = {2u, 3u, 5u};
+    bool changed = false;
+    for (uint16_t slot = 0; slot < 3; ++slot) {
+        const uint16_t teamField = static_cast<uint16_t>(base + slot * stride);
+        auto it = fields.find(teamField);
+        if (it == fields.end()) continue;
+        const uint32_t teamId = it->second;
+        if (teamId == 0) continue;
+        bool exists = false;
+        for (auto& s : arenaTeamStats_) {
+            if (s.teamId == teamId) {
+                if (s.teamType == 0) s.teamType = kSlotTypes[slot];
+                exists = true;
+                break;
+            }
+        }
+        if (!exists) {
+            ArenaTeamStats stub;
+            stub.teamId = teamId;
+            stub.teamType = kSlotTypes[slot];
+            arenaTeamStats_.push_back(std::move(stub));
+            changed = true;
+        }
+        queryArenaTeam(teamId);
+    }
+    if (changed && owner_.addonEventCallbackRef()) {
+        owner_.addonEventCallbackRef()("ARENA_TEAM_UPDATE", {});
+    }
+}
+
+void SocialHandler::setArenaTeamRosterSelection(uint32_t teamId, uint32_t memberIndex) {
+    for (auto& r : arenaTeamRosters_) {
+        if (r.teamId == teamId) {
+            r.selectedMember = memberIndex;
+            return;
+        }
+    }
+}
+
+uint32_t SocialHandler::getArenaTeamRosterSelection(uint32_t teamId) const {
+    if (const auto* r = getArenaTeamRoster(teamId)) return r->selectedMember;
+    return 0;
+}
+
 void SocialHandler::handleArenaTeamQueryResponse(network::Packet& packet) {
     if (!packet.hasRemaining(4)) return;
     uint32_t teamId = packet.readUInt32();
     std::string teamName = packet.readString();
     uint32_t teamType = 0;
     if (packet.hasRemaining(4)) teamType = packet.readUInt32();
+    bool hasEmblem = false;
+    uint32_t backgroundColor = 0;
+    uint32_t emblemStyle = 0xFFFFFFFFu;
+    uint32_t emblemColor = 0;
+    uint32_t borderStyle = 0xFFFFFFFFu;
+    uint32_t borderColor = 0;
+    if (packet.hasRemaining(20)) {
+        backgroundColor = packet.readUInt32();
+        emblemStyle     = packet.readUInt32();
+        emblemColor     = packet.readUInt32();
+        borderStyle     = packet.readUInt32();
+        borderColor     = packet.readUInt32();
+        hasEmblem       = true;
+    }
+    queriedArenaTeamIds_.insert(teamId);
     bool known = false;
-    for (auto& s : arenaTeamStats_) { if (s.teamId == teamId) { s.teamName = teamName; s.teamType = teamType; known = true; break; } }
+    for (auto& s : arenaTeamStats_) {
+        if (s.teamId == teamId) {
+            s.teamName = teamName;
+            if (teamType != 0) s.teamType = teamType;
+            if (hasEmblem) {
+                s.hasEmblem       = true;
+                s.backgroundColor = backgroundColor;
+                s.emblemStyle     = emblemStyle;
+                s.emblemColor     = emblemColor;
+                s.borderStyle     = borderStyle;
+                s.borderColor     = borderColor;
+            }
+            known = true;
+            break;
+        }
+    }
     if (!known) {
-        ArenaTeamStats stub; stub.teamId = teamId; stub.teamName = teamName; stub.teamType = teamType;
+        ArenaTeamStats stub;
+        stub.teamId = teamId;
+        stub.teamName = teamName;
+        stub.teamType = teamType;
+        if (hasEmblem) {
+            stub.hasEmblem       = true;
+            stub.backgroundColor = backgroundColor;
+            stub.emblemStyle     = emblemStyle;
+            stub.emblemColor     = emblemColor;
+            stub.borderStyle     = borderStyle;
+            stub.borderColor     = borderColor;
+        }
         arenaTeamStats_.push_back(std::move(stub));
+    }
+    bool updatedInspect = false;
+    for (auto& insp : inspectResult_.arenaTeams) {
+        if (insp.teamId == teamId) {
+            insp.name = teamName;
+            if (teamType != 0) insp.type = static_cast<uint8_t>(teamType);
+            if (hasEmblem) {
+                insp.hasEmblem       = true;
+                insp.backgroundColor = backgroundColor;
+                insp.emblemStyle     = emblemStyle;
+                insp.emblemColor     = emblemColor;
+                insp.borderStyle     = borderStyle;
+                insp.borderColor     = borderColor;
+            }
+            updatedInspect = true;
+        }
     }
     // A team's name arriving is what the PvP panel redraws on. Without this the
     // arena tabs kept whatever they were built with, so a team queried after
     // the panel opened stayed nameless until it was closed and opened again.
     if (owner_.addonEventCallbackRef()) {
         owner_.addonEventCallbackRef()("ARENA_TEAM_UPDATE", {});
+        if (updatedInspect) {
+            owner_.addonEventCallbackRef()("INSPECT_HONOR_UPDATE", {});
+        }
     }
 }
 
 void SocialHandler::handleArenaTeamRoster(network::Packet& packet) {
-    // teamId(4) + unk308(1) + memberCount(4) + teamType(4), then the members.
-    //
-    // The team type was never read, so the first member's guid was taken from
-    // four bytes earlier - the type plus the guid's low half - and every
-    // member after it followed from there. The roster was wrong from its first
-    // row, and nothing about it looked like a length fault: the packet is long
-    // enough either way.
-    if (!packet.hasRemaining(13)) return;
+    // TBC 2.4.3 (CMaNGOS ArenaTeam::Roster):
+    //   teamId(4) + memberCount(4) + teamType(4) + members
+    // WotLK 3.0.8+:
+    //   teamId(4) + unk308(1) + memberCount(4) + teamType(4) + members (+ 2 floats if unk308 != 0)
+    const bool isWotlk = !isPreWotlk();
+    if (!packet.hasRemaining(isWotlk ? 13 : 12)) return;
     const uint32_t teamId = packet.readUInt32();
-    // 3.0.8 added this, and it does more than mark a version: the server writes
-    // the two trailing floats per member only when it is set.
-    const bool hasTrailingFloats = packet.readUInt8() != 0;
+    const bool hasTrailingFloats = isWotlk && (packet.readUInt8() != 0);
     const uint32_t memberCount = std::min(packet.readUInt32(), 100u);
-    /*uint32_t teamType =*/ packet.readUInt32();
-    ArenaTeamRoster roster; roster.teamId = teamId; roster.members.reserve(memberCount);
+    const uint32_t teamType = packet.readUInt32();
+    ArenaTeamRoster roster;
+    roster.teamId = teamId;
+    roster.teamType = teamType;
+    roster.members.reserve(memberCount);
     for (uint32_t i = 0; i < memberCount; ++i) {
-        if (!packet.hasRemaining(12)) break;
+        if (!packet.hasRemaining(10)) break;
         ArenaTeamMember m;
-        m.guid = packet.readUInt64(); m.online = (packet.readUInt8() != 0); m.name = packet.readString();
-        // Captain flag, level and class sit between the name and the record -
-        // six bytes this went straight past, so the games played were the
-        // captain flag, the wins were the level and class with two bytes of the
-        // real figure behind them, and so on down the row.
+        m.guid = packet.readUInt64();
+        m.online = (packet.readUInt8() != 0);
+        m.name = packet.readString();
         if (!packet.hasRemaining(6)) break;
-        m.isCaptain = (packet.readUInt32() == 0);   // 0 captain, 1 member
+        // CMaNGOS ArenaTeam.cpp:362 writes uint32(guid == GetCaptainGuid() ? 1 : 0).
+        m.isCaptain = (packet.readUInt32() != 0);
         m.level     = packet.readUInt8();
         m.classId   = packet.readUInt8();
         if (!packet.hasRemaining(20)) break;
         m.weekGames = packet.readUInt32(); m.weekWins = packet.readUInt32();
         m.seasonGames = packet.readUInt32(); m.seasonWins = packet.readUInt32(); m.personalRating = packet.readUInt32();
-        // Only when the header said so. Taking them whenever eight bytes were
-        // left ate the next member's guid on every roster of more than one.
         if (hasTrailingFloats) {
             if (!packet.hasRemaining(8)) break;
             packet.readFloat(); packet.readFloat();
@@ -5313,19 +5451,16 @@ void SocialHandler::handleArenaTeamRoster(network::Packet& packet) {
         roster.members.push_back(std::move(m));
     }
     bool replaced = false;
-    for (auto& r : arenaTeamRosters_) { if (r.teamId == teamId) { r = std::move(roster); replaced = true; break; } }
+    for (auto& r : arenaTeamRosters_) {
+        if (r.teamId == teamId) {
+            roster.selectedMember = r.selectedMember;
+            r = std::move(roster);
+            replaced = true;
+            break;
+        }
+    }
     if (!replaced) arenaTeamRosters_.push_back(std::move(roster));
 
-    // The roster is stored and the arena panel is told, which it was not: the
-    // team detail window redraws on this event and on nothing else, so a
-    // roster that arrived after the window opened was held here and never
-    // shown.
-    //
-    // Fired with no arguments, and that is the whole contract. pvpframe reads
-    // arg1 as "the roster you hold is stale, ask for it again" and only
-    // redraws from what arrived when arg1 is absent - so any argument at all
-    // would answer this roster by requesting another one, forever. A zero
-    // would do it too, zero being true in Lua.
     if (owner_.addonEventCallbackRef()) {
         owner_.addonEventCallbackRef()("ARENA_TEAM_ROSTER_UPDATE", {});
     }
@@ -5339,7 +5474,7 @@ void SocialHandler::handleArenaTeamInvite(network::Packet& packet) {
 }
 
 // ArenaTeamEvents (CMaNGOS ArenaTeam.h) are the GlobalStrings names, the
-// strings in their order (not observed natively).
+// strings in their order. Join and leave events also append an 8-byte ObjectGuid.
 void SocialHandler::handleArenaTeamEvent(network::Packet& packet) {
     if (!packet.hasRemaining(1)) return;
     const uint8_t event = packet.readUInt8();
@@ -5347,6 +5482,11 @@ void SocialHandler::handleArenaTeamEvent(network::Packet& packet) {
     std::vector<std::string> strings;
     for (uint8_t i = 0; i < strCount && packet.getSize() > packet.getReadPos(); ++i)
         strings.push_back(packet.readString());
+    if (packet.hasRemaining(8)) {
+        lastArenaTeamEventGuid_ = packet.readUInt64();
+    } else {
+        lastArenaTeamEventGuid_ = 0;
+    }
     const char* name = nullptr;
     switch (event) {
         case 3: name = "ERR_ARENA_TEAM_JOIN_SS"; break;
@@ -5359,6 +5499,12 @@ void SocialHandler::handleArenaTeamEvent(network::Packet& packet) {
     }
     if (name) owner_.systemGlobal(name, strings);
     else LOG_WARNING("SMSG_ARENA_TEAM_EVENT ", int(event), " with ", strings.size(), " string(s)");
+    if (owner_.addonEventCallbackRef()) {
+        owner_.addonEventCallbackRef()("ARENA_TEAM_UPDATE", {});
+        if (event >= 3 && event <= 7) {
+            owner_.addonEventCallbackRef()("ARENA_TEAM_ROSTER_UPDATE", {"1"});
+        }
+    }
 }
 
 void SocialHandler::handleArenaTeamStats(network::Packet& packet) {
@@ -5369,9 +5515,29 @@ void SocialHandler::handleArenaTeamStats(network::Packet& packet) {
     stats.seasonGames = packet.readUInt32(); stats.seasonWins = packet.readUInt32();
     stats.rank = packet.readUInt32();
     for (auto& s : arenaTeamStats_) {
-        if (s.teamId == stats.teamId) { stats.teamName = std::move(s.teamName); stats.teamType = s.teamType; s = std::move(stats); return; }
+        if (s.teamId == stats.teamId) {
+            stats.teamName        = std::move(s.teamName);
+            stats.teamType        = s.teamType;
+            stats.hasEmblem       = s.hasEmblem;
+            stats.backgroundColor = s.backgroundColor;
+            stats.emblemStyle     = s.emblemStyle;
+            stats.emblemColor     = s.emblemColor;
+            stats.borderStyle     = s.borderStyle;
+            stats.borderColor     = s.borderColor;
+            s = std::move(stats);
+            if (s.teamName.empty() || !s.hasEmblem) queryArenaTeam(s.teamId);
+            if (owner_.addonEventCallbackRef()) {
+                owner_.addonEventCallbackRef()("ARENA_TEAM_UPDATE", {});
+            }
+            return;
+        }
     }
+    const uint32_t newTeamId = stats.teamId;
     arenaTeamStats_.push_back(std::move(stats));
+    queryArenaTeam(newTeamId);
+    if (owner_.addonEventCallbackRef()) {
+        owner_.addonEventCallbackRef()("ARENA_TEAM_UPDATE", {});
+    }
 }
 
 void SocialHandler::requestArenaTeamRoster(uint32_t teamId) {
@@ -5383,7 +5549,28 @@ void SocialHandler::requestArenaTeamRoster(uint32_t teamId) {
 
 void SocialHandler::handleArenaError(network::Packet& packet) {
     if (!packet.hasRemaining(4)) return;
-    uint32_t error = packet.readUInt32();
+    const uint32_t error = packet.readUInt32();
+    // CMaNGOS TBC ArenaTeamHandler.cpp:353-361 sends uint32 unk (0 = ERR_ARENA_NO_TEAM_II)
+    // followed by conditional uint8 arenaType (2, 3, or 5) when unk == 0.
+    if (error == 0) {
+        const uint8_t arenaType = packet.hasRemaining(1) ? packet.readUInt8() : 0;
+        const std::string sz = std::to_string(arenaType);
+        if (!owner_.globalString("ERR_ARENA_NO_TEAM_II").empty()) {
+            owner_.systemGlobal("ERR_ARENA_NO_TEAM_II", {sz, sz});
+        } else {
+            owner_.addSystemChatMessage("You are not in a " + sz + "v" + sz + " arena team.");
+        }
+        return;
+    }
+    if (error == 1 && isPreWotlk()) {
+        if (!owner_.globalString("ERR_ARENA_EXPIRED_CAIS").empty()) {
+            owner_.systemGlobal("ERR_ARENA_EXPIRED_CAIS");
+        } else {
+            owner_.addSystemChatMessage(
+                "You may not queue while one or more of your team members is under the effect of restricted play.");
+        }
+        return;
+    }
     std::string msg;
     switch (error) {
         case 1: msg = "The other team is not big enough."; break;

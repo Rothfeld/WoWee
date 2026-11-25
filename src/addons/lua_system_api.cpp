@@ -32,6 +32,7 @@
 #include "addons/lua_handler_globals.hpp"
 #include "addons/chat_window_background.hpp"
 #include "game/chat_handler.hpp"
+#include "game/social_handler.hpp"
 #include "ui/display_modes.hpp"
 #include "ui/widget_tree.hpp"
 #include "rendering/camera_controller.hpp"
@@ -4678,11 +4679,6 @@ static int lua_ArenaTeamRoster(lua_State* L) {
 
 // GetArenaTeamRosterInfo(teamIndex, memberIndex) →
 //   name, rank, level, class, online, played, win, seasonPlayed, seasonWin, rating
-//
-// The six counts are numbers rather than nil: the panel subtracts them the line
-// after - `loss = played - win` - so a nil raises there. Class stays nil, which
-// the panel does test before using, and rank and level are zero because the
-// roster carries neither.
 static int lua_GetArenaTeamRosterInfo(lua_State* L) {
     auto* gh = getGameHandler(L);
     const uint32_t teamId = arenaTeamIdAtIndex(gh, static_cast<int>(luaL_optnumber(L, 1, 0)));
@@ -4692,28 +4688,80 @@ static int lua_GetArenaTeamRosterInfo(lua_State* L) {
     if (!roster || member > static_cast<int>(roster->members.size())) return luaReturnNil(L);
     const auto& m = roster->members[static_cast<size_t>(member) - 1];
 
-    lua_pushstring(L, m.name.c_str());       // 1: name
-    lua_pushnumber(L, 0);                    // 2: rank
-    lua_pushnumber(L, 0);                    // 3: level
-    lua_pushnil(L);                          // 4: class
-    lua_pushboolean(L, m.online ? 1 : 0);    // 5: online
-    lua_pushnumber(L, m.weekGames);          // 6: played
-    lua_pushnumber(L, m.weekWins);           // 7: win
-    lua_pushnumber(L, m.seasonGames);        // 8: seasonPlayed
-    lua_pushnumber(L, m.seasonWins);         // 9: seasonWin
-    lua_pushnumber(L, m.personalRating);     // 10: rating
+    lua_pushstring(L, m.name.c_str());                  // 1: name
+    // PVPFrame.lua:370 tests `if ( rank > 0 )` for non-captains (white) and
+    // draws rank == 0 in captain gold (1.0, 0.82, 0.0).
+    lua_pushnumber(L, m.isCaptain ? 0 : 1);             // 2: rank (0 captain, 1 member)
+    lua_pushnumber(L, m.level);                         // 3: level
+    const char* cls = m.classId != 0
+        ? game::getClassName(static_cast<game::Class>(m.classId))
+        : nullptr;
+    if (cls && *cls && std::string(cls) != "Unknown") {
+        lua_pushstring(L, cls);                         // 4: localized class
+    } else {
+        lua_pushnil(L);
+    }
+    lua_pushboolean(L, m.online ? 1 : 0);               // 5: online
+    lua_pushnumber(L, m.weekGames);                     // 6: played
+    lua_pushnumber(L, m.weekWins);                      // 7: win
+    lua_pushnumber(L, m.seasonGames);                   // 8: seasonPlayed
+    lua_pushnumber(L, m.seasonWins);                    // 9: seasonWin
+    lua_pushnumber(L, m.personalRating);                // 10: rating
     return 10;
 }
 
-// Which roster row is selected, and closing the roster. Both are the panel's
-// own state - nothing is sent for either.
-static int lua_GetArenaTeamRosterSelection(lua_State* L) { lua_pushnumber(L, 0); return 1; }
-static int lua_SetArenaTeamRosterSelection(lua_State* L) { (void)L; return 0; }
+static int lua_GetArenaTeamRosterSelection(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    const uint32_t teamId = arenaTeamIdAtIndex(gh, static_cast<int>(luaL_optnumber(L, 1, 0)));
+    uint32_t sel = 0;
+    if (gh && teamId != 0 && gh->getSocialHandler()) {
+        sel = gh->getSocialHandler()->getArenaTeamRosterSelection(teamId);
+    }
+    lua_pushnumber(L, sel);
+    return 1;
+}
+static int lua_SetArenaTeamRosterSelection(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    const uint32_t teamId = arenaTeamIdAtIndex(gh, static_cast<int>(luaL_optnumber(L, 1, 0)));
+    const auto member = static_cast<uint32_t>(std::max(0, static_cast<int>(luaL_optnumber(L, 2, 0))));
+    if (gh && teamId != 0 && gh->getSocialHandler()) {
+        gh->getSocialHandler()->setArenaTeamRosterSelection(teamId, member);
+    }
+    return 0;
+}
 static int lua_CloseArenaTeamRoster(lua_State* L) { (void)L; return 0; }
 
-// Team captaincy is not reported by anything this client parses, so no team
-// reads as the player's to run.
-static int lua_IsArenaTeamCaptain(lua_State* L) { lua_pushboolean(L, 0); return 1; }
+static int lua_IsArenaTeamCaptain(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    const uint32_t teamId = arenaTeamIdAtIndex(gh, static_cast<int>(luaL_optnumber(L, 1, 0)));
+    if (!gh || teamId == 0) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+    if (const auto* roster = gh->getArenaTeamRoster(teamId)) {
+        const uint64_t selfGuid = gh->getPlayerGuid();
+        for (const auto& m : roster->members) {
+            if (m.guid == selfGuid) {
+                lua_pushboolean(L, m.isCaptain ? 1 : 0);
+                return 1;
+            }
+        }
+    }
+    const uint16_t base = game::fieldIndex(game::UF::PLAYER_FIELD_ARENA_TEAM_INFO_1_1);
+    const auto player = gh->getEntityManager().getEntity(gh->getPlayerGuid());
+    if (base != 0xFFFF && player) {
+        const uint16_t stride = game::isActiveExpansion("wotlk") ? 7u : 6u;
+        for (uint16_t slot = 0; slot < 3; ++slot) {
+            if (player->getField(base + slot * stride) == teamId) {
+                // Player.h ArenaTeamInfoType: ARENA_TEAM_MEMBER == 0 is captain, 1 is member.
+                lua_pushboolean(L, player->getField(base + slot * stride + 1) == 0 ? 1 : 0);
+                return 1;
+            }
+        }
+    }
+    lua_pushboolean(L, 0);
+    return 1;
+}
 
 // Closing the battlemaster's window, which is a client-side dismissal.
 static int lua_CloseBattlefield(lua_State* L) {
@@ -4763,6 +4811,32 @@ static int lua_HasKey(lua_State* L) {
 // The tabard is not tracked: SMSG_ARENA_TEAM_QUERY_RESPONSE carries the emblem
 // style and colours and nothing here reads them. Those eight answer zero rather
 // than nil, so the tabard draws black instead of raising mid-arithmetic.
+static void pushArenaBannerTuple(lua_State* L, bool hasEmblem,
+                                 uint32_t backgroundColor, uint32_t emblemStyle,
+                                 uint32_t emblemColor, uint32_t borderStyle,
+                                 uint32_t borderColor) {
+    auto pushRgb = [&](uint32_t argb) {
+        if (!hasEmblem) {
+            lua_pushnumber(L, 0.0);
+            lua_pushnumber(L, 0.0);
+            lua_pushnumber(L, 0.0);
+            return;
+        }
+        lua_pushnumber(L, static_cast<double>((argb >> 16) & 0xFFu) / 255.0);
+        lua_pushnumber(L, static_cast<double>((argb >> 8) & 0xFFu) / 255.0);
+        lua_pushnumber(L, static_cast<double>(argb & 0xFFu) / 255.0);
+    };
+    pushRgb(backgroundColor); // 1-3: background R, G, B
+    const int32_t emblem = (hasEmblem && emblemStyle != 0 && emblemStyle != 0xFFFFFFFFu)
+        ? static_cast<int32_t>(emblemStyle) : -1;
+    lua_pushnumber(L, emblem); // 4: emblem style (-1 = none)
+    pushRgb(emblemColor);      // 5-7: emblem R, G, B
+    const int32_t border = (hasEmblem && borderStyle != 0 && borderStyle != 0xFFFFFFFFu)
+        ? static_cast<int32_t>(borderStyle) : -1;
+    lua_pushnumber(L, border); // 8: border style (-1 = none)
+    pushRgb(borderColor);      // 9-11: border R, G, B
+}
+
 static int lua_GetArenaTeam(lua_State* L) {
     auto* gh = getGameHandler(L);
     const int idx = static_cast<int>(luaL_optnumber(L, 1, 0));
@@ -4771,19 +4845,51 @@ static int lua_GetArenaTeam(lua_State* L) {
     if (idx > static_cast<int>(teams.size())) return luaReturnNil(L);
     const auto& t = teams[static_cast<size_t>(idx) - 1];
 
-    lua_pushstring(L, t.teamName.c_str());  // 1: teamName
-    lua_pushnumber(L, t.teamType);          // 2: teamSize (2, 3 or 5)
-    lua_pushnumber(L, t.rating);            // 3: teamRating
-    lua_pushnumber(L, t.weekGames);         // 4: teamPlayed
-    lua_pushnumber(L, t.weekWins);          // 5: teamWins
-    lua_pushnumber(L, t.seasonGames);       // 6: seasonTeamPlayed
-    lua_pushnumber(L, t.seasonWins);        // 7: seasonTeamWins
-    // Per-player totals come with the roster, not the team summary.
-    lua_pushnumber(L, 0);                   // 8: playerPlayed
-    lua_pushnumber(L, 0);                   // 9: seasonPlayerPlayed
-    lua_pushnumber(L, t.rank);              // 10: teamRank
-    lua_pushnumber(L, 0);                   // 11: playerRating
-    for (int i = 0; i < 11; ++i) lua_pushnumber(L, 0);  // 12-22: tabard
+    uint32_t playerWeekPlayed = 0;
+    uint32_t playerSeasonPlayed = 0;
+    uint32_t playerRating = 0;
+    bool havePlayerStats = false;
+    if (const auto* roster = gh->getArenaTeamRoster(t.teamId)) {
+        const uint64_t selfGuid = gh->getPlayerGuid();
+        for (const auto& m : roster->members) {
+            if (m.guid == selfGuid) {
+                playerWeekPlayed   = m.weekGames;
+                playerSeasonPlayed = m.seasonGames;
+                playerRating       = m.personalRating;
+                havePlayerStats    = true;
+                break;
+            }
+        }
+    }
+    if (!havePlayerStats) {
+        const uint16_t base = game::fieldIndex(game::UF::PLAYER_FIELD_ARENA_TEAM_INFO_1_1);
+        const auto player = gh->getEntityManager().getEntity(gh->getPlayerGuid());
+        if (base != 0xFFFF && player) {
+            const uint16_t stride = game::isActiveExpansion("wotlk") ? 7u : 6u;
+            for (uint16_t slot = 0; slot < 3; ++slot) {
+                if (player->getField(base + slot * stride) == t.teamId) {
+                    playerWeekPlayed   = player->getField(base + slot * stride + 2);
+                    playerSeasonPlayed = player->getField(base + slot * stride + 3);
+                    playerRating       = player->getField(base + slot * stride + 5);
+                    break;
+                }
+            }
+        }
+    }
+
+    lua_pushstring(L, t.teamName.c_str());      // 1: teamName
+    lua_pushnumber(L, t.teamType);              // 2: teamSize (2, 3 or 5)
+    lua_pushnumber(L, t.rating);                // 3: teamRating
+    lua_pushnumber(L, t.weekGames);             // 4: teamPlayed
+    lua_pushnumber(L, t.weekWins);              // 5: teamWins
+    lua_pushnumber(L, t.seasonGames);           // 6: seasonTeamPlayed
+    lua_pushnumber(L, t.seasonWins);            // 7: seasonTeamWins
+    lua_pushnumber(L, playerWeekPlayed);        // 8: playerPlayed
+    lua_pushnumber(L, playerSeasonPlayed);      // 9: seasonPlayerPlayed
+    lua_pushnumber(L, t.rank);                  // 10: teamRank
+    lua_pushnumber(L, playerRating);            // 11: playerRating
+    pushArenaBannerTuple(L, t.hasEmblem, t.backgroundColor, t.emblemStyle,
+                         t.emblemColor, t.borderStyle, t.borderColor); // 12-22: banner
     return 22;
 }
 
@@ -8460,10 +8566,25 @@ void registerSystemLuaAPI(lua_State* L) {
                 return 0;   // nothing, which is how WoW says "no team here"
             }
             const auto& t = ir->arenaTeams[index - 1];
-            // The type is the team size: 2, 3 or 5.
+            if (game::isPreWotlk()) {
+                // TBC 2.4.3 InspectPVPFrame.lua:75 unpacks 18 values:
+                //   teamName, teamSize, teamRating, teamPlayed, teamWins,
+                //   playerPlayed, playerRating,
+                //   bgR, bgG, bgB, emblem, emR, emG, emB, border, bdR, bdG, bdB
+                lua_pushstring(L, t.name.c_str());
+                lua_pushnumber(L, t.type);
+                lua_pushnumber(L, t.teamRating);
+                lua_pushnumber(L, t.seasonGames);
+                lua_pushnumber(L, t.seasonWins);
+                lua_pushnumber(L, t.memberSeasonGames);
+                lua_pushnumber(L, t.personalRating);
+                pushArenaBannerTuple(L, t.hasEmblem, t.backgroundColor, t.emblemStyle,
+                                     t.emblemColor, t.borderStyle, t.borderColor);
+                return 18;
+            }
             lua_pushstring(L, t.name.c_str());
             lua_pushnumber(L, t.type);
-            lua_pushnumber(L, t.personalRating);
+            lua_pushnumber(L, t.teamRating ? t.teamRating : t.personalRating);
             lua_pushnumber(L, t.weekGames);
             lua_pushnumber(L, t.weekWins);
             lua_pushnumber(L, t.seasonGames);

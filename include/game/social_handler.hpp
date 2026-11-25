@@ -556,12 +556,18 @@ public:
 
     // Arena
     [[nodiscard]] const std::vector<ArenaTeamStats>& getArenaTeamStats() const { return arenaTeamStats_; }
+    void queryArenaTeam(uint32_t teamId, bool force = false);
+    void syncPlayerArenaTeamsFromFields(const FlatFieldMap& fields);
     void requestArenaTeamRoster(uint32_t teamId);
     [[nodiscard]] const ArenaTeamRoster* getArenaTeamRoster(uint32_t teamId) const {
         for (const auto& r : arenaTeamRosters_)
             if (r.teamId == teamId) return &r;
         return nullptr;
     }
+    std::vector<ArenaTeamRoster>& mutableArenaTeamRosters() { return arenaTeamRosters_; }
+    void setArenaTeamRosterSelection(uint32_t teamId, uint32_t memberIndex);
+    [[nodiscard]] uint32_t getArenaTeamRosterSelection(uint32_t teamId) const;
+    [[nodiscard]] uint64_t getLastArenaTeamEventGuid() const { return lastArenaTeamEventGuid_; }
 
 private:
     // ---- Packet handlers ----
@@ -759,6 +765,8 @@ private:
     // Arena
     std::vector<ArenaTeamStats>  arenaTeamStats_;
     std::vector<ArenaTeamRoster> arenaTeamRosters_;
+    std::unordered_set<uint32_t> queriedArenaTeamIds_;
+    uint64_t lastArenaTeamEventGuid_ = 0;
 
     // Battleground
     std::array<BgQueueSlot, 3> bgQueues_{};

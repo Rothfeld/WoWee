@@ -4344,6 +4344,7 @@ bool GameHandler::resyncQuestLogFromServerSlots(bool forceQueryMetadata) {
 // complete on login) get quest.complete=true without waiting for SMSG_QUESTUPDATE_COMPLETE.
 void GameHandler::applyQuestStateFromFields(const FlatFieldMap& fields) {
     if (questHandler_) questHandler_->applyQuestStateFromFields(fields);
+    if (socialHandler_) socialHandler_->syncPlayerArenaTeamsFromFields(fields);
 }
 
 // Extract expansion-specific kill/objective counters from quest-log update fields

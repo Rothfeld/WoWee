@@ -378,3 +378,37 @@ TEST_CASE("resolveBattlefieldFlagTexture maps carrier faction and worldstate fal
     CHECK(std::string(resolveBattlefieldFlagTexture(566, 1, 0, 0, 1)) == "AllianceFlag");
     CHECK(std::string(resolveBattlefieldFlagTexture(566, 2, 0, 0, 1)) == "HordeFlag");
 }
+
+TEST_CASE("TBC SMSG_BATTLEFIELD_STATUS STATUS_IN_PROGRESS retains trailing arenaTeam byte",
+          "[battleground][packet]") {
+    // CMaNGOS TBC BattleGroundMgr::BuildBattleGroundStatusPacket (statusId == 3):
+    // queueSlot(4) + id(8: arenaType=2, 0x0E, bgTypeId=6, 0x1F90) + instanceId(4)
+    // + isRated(1) + statusId=3(4) + mapId(4) + autoLeaveMs(4) + runTimeMs(4) + arenaTeam(1)
+    std::vector<uint8_t> b;
+    auto u32 = [&](uint32_t v) {
+        b.push_back(uint8_t(v)); b.push_back(uint8_t(v >> 8));
+        b.push_back(uint8_t(v >> 16)); b.push_back(uint8_t(v >> 24));
+    };
+    u32(0); // queueSlot
+    b.push_back(2); b.push_back(0x0E); u32(6); b.push_back(0x90); b.push_back(0x1F); // identifier
+    u32(17); // instanceId
+    b.push_back(1); // isRated
+    u32(3); // STATUS_IN_PROGRESS
+    u32(559); // Nagrand Arena
+    u32(120000); // autoLeaveMs
+    u32(45000);  // runTimeMs
+    b.push_back(1); // Alliance / Gold team
+
+    auto pkt = packetOf(b);
+    BattlefieldStatusData d;
+    REQUIRE(BattlefieldStatusPacket::parse(pkt, d, /*classicFormat=*/false, /*wotlkFormat=*/false));
+    CHECK(d.arenaType == 2);
+    CHECK(d.bgTypeId == 6u);
+    CHECK(d.instanceId == 17u);
+    CHECK(d.isRated);
+    CHECK(d.statusId == 3u);
+    CHECK(d.mapId == 559u);
+    CHECK(d.autoLeaveMs == 120000u);
+    CHECK(d.runTimeMs == 45000u);
+    CHECK(d.arenaTeam == 1u);
+}

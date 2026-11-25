@@ -2485,6 +2485,7 @@ public:
     // Arena team stats (aliased from handler_types.hpp)
     using ArenaTeamStats = game::ArenaTeamStats;
     const std::vector<ArenaTeamStats>& getArenaTeamStats() const override;
+    void queryArenaTeam(uint32_t teamId, bool force = false);
     void requestArenaTeamRoster(uint32_t teamId);
 
     // Arena team roster (aliased from handler_types.hpp)
@@ -2500,12 +2501,7 @@ public:
     /// ever shows one at a time.
     void sortArenaTeamRosters(const std::string& key);
 
-    const ArenaTeamRoster* getArenaTeamRoster(uint32_t teamId) const {
-        for (const auto& r : arenaTeamRosters_) {
-            if (r.teamId == teamId) return &r;
-        }
-        return nullptr;
-    }
+    const ArenaTeamRoster* getArenaTeamRoster(uint32_t teamId) const;
 
     // ---- Loot ----
     void prepareLoot(uint64_t guid, bool modifier);

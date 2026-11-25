@@ -78,14 +78,23 @@ struct EquipmentSetInfo {
 // ---- Inspection ----
 
 struct InspectArenaTeam {
-    uint32_t    teamId         = 0;
-    uint8_t     type           = 0;
-    uint32_t    weekGames      = 0;
-    uint32_t    weekWins       = 0;
-    uint32_t    seasonGames    = 0;
-    uint32_t    seasonWins     = 0;
+    uint32_t    teamId            = 0;
+    uint8_t     slot              = 0;
+    uint8_t     type              = 0;
+    uint32_t    teamRating        = 0;
+    uint32_t    weekGames         = 0;
+    uint32_t    weekWins          = 0;
+    uint32_t    seasonGames       = 0;
+    uint32_t    seasonWins        = 0;
+    uint32_t    memberSeasonGames = 0;
     std::string name;
-    uint32_t    personalRating = 0;
+    uint32_t    personalRating    = 0;
+    bool        hasEmblem         = false;
+    uint32_t    backgroundColor   = 0;
+    uint32_t    emblemStyle       = 0xFFFFFFFFu;
+    uint32_t    emblemColor       = 0;
+    uint32_t    borderStyle       = 0xFFFFFFFFu;
+    uint32_t    borderColor       = 0;
 };
 
 struct InspectResult {
@@ -482,15 +491,21 @@ enum class LfgState : uint8_t {
 // ---- Arena teams ----
 
 struct ArenaTeamStats {
-    uint32_t teamId       = 0;
-    uint32_t rating       = 0;
-    uint32_t weekGames    = 0;
-    uint32_t weekWins     = 0;
-    uint32_t seasonGames  = 0;
-    uint32_t seasonWins   = 0;
-    uint32_t rank         = 0;
+    uint32_t teamId          = 0;
+    uint32_t rating          = 0;
+    uint32_t weekGames       = 0;
+    uint32_t weekWins        = 0;
+    uint32_t seasonGames     = 0;
+    uint32_t seasonWins      = 0;
+    uint32_t rank            = 0;
     std::string teamName;
-    uint32_t teamType     = 0;
+    uint32_t teamType        = 0;
+    bool     hasEmblem       = false;
+    uint32_t backgroundColor = 0;
+    uint32_t emblemStyle     = 0xFFFFFFFFu;
+    uint32_t emblemColor     = 0;
+    uint32_t borderStyle     = 0xFFFFFFFFu;
+    uint32_t borderColor     = 0;
 };
 
 struct ArenaTeamMember {
@@ -511,6 +526,8 @@ struct ArenaTeamMember {
 
 struct ArenaTeamRoster {
     uint32_t teamId = 0;
+    uint32_t teamType = 0;
+    uint32_t selectedMember = 0;
     std::vector<ArenaTeamMember> members;
 };
 
