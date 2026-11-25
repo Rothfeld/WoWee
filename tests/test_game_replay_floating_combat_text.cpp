@@ -316,16 +316,19 @@ TEST_CASE("Blizzard_CombatText receives spell power gains without melee swing or
     CHECK_FALSE(sawUnitPower);
 }
 
-TEST_CASE("Blizzard_CombatText receives helpful & harmful aura start/fade via ExtraAuraInfo and field updates", "[fct][framexml]") {
+TEST_CASE("Blizzard_CombatText receives helpful & harmful aura start/fade via UNIT_FIELD_AURAS without refresh spam", "[fct][framexml]") {
     FctHarness h;
     h.session.handler().spellNameCacheRef()[21562].name = "Prayer of Fortitude";
     h.session.handler().spellNameCacheRef()[6788].name  = "Weakened Soul";
+    h.session.handler().spellNameCacheRef()[35099].name = "Rapid Killing";
 
-    // Helpful aura in slot 0 via SMSG_SET_EXTRA_AURA_INFO
+    // Helpful aura in slot 0 and harmful debuff in slot 40: SMSG_SET_EXTRA_AURA_INFO
+    // provides caster duration metadata only; COMBAT_TEXT_UPDATE fires once when
+    // UNIT_FIELD_AURAS VALUES confirms the aura is present.
     h.session.receive(buildSetExtraAuraInfo(Session::kPlayerGuid, 0, 21562, 1800000, 1800000));
-    // Harmful debuff in slot 40 via SMSG_SET_EXTRA_AURA_INFO
     h.session.receive(buildSetExtraAuraInfo(Session::kPlayerGuid, 40, 6788, 15000, 15000));
-    // Subsequent UNIT_FIELD_AURAS update with same slots must NOT duplicate SPELL_AURA_START
+    CHECK(h.recorded().empty());
+
     const uint16_t auraBase = wowee::game::fieldIndex(UF::UNIT_FIELD_AURAS);
     h.session.receive(UpdateObject().tbc().valuesAt(
         Session::kPlayerGuid,
@@ -340,16 +343,44 @@ TEST_CASE("Blizzard_CombatText receives helpful & harmful aura start/fade via Ex
     CHECK(msgs[1].r == Catch::Approx(1.0));
     CHECK(msgs[1].g == Catch::Approx(0.1));
 
-    // Fade both via SMSG_CLEAR_EXTRA_AURA_INFO (before UNIT_FIELD_AURAS clears them)
+    // Same-tick refresh (CMaNGOS AURA_REMOVE_BY_STACK: SMSG_CLEAR_EXTRA_AURA_INFO +
+    // SMSG_SET_EXTRA_AURA_INFO while UNIT_FIELD_AURAS keeps the aura active, e.g.
+    // Hunter Rapid Killing on back-to-back kills) must NOT emit fade + gain spam.
+    h.clearRecorded();
+    h.session.receive(buildSetExtraAuraInfo(Session::kPlayerGuid, 1, 35099, 20000, 20000));
+    h.session.receive(UpdateObject().tbc().valuesAt(
+        Session::kPlayerGuid, {{static_cast<uint16_t>(auraBase + 1), 35099}}));
+    REQUIRE(h.recorded().size() == 1);
+    CHECK(h.recorded()[0].text == "<Rapid Killing>");
+
+    h.clearRecorded();
+    for (int kill = 0; kill < 5; ++kill) {
+        h.session.receive(buildClearExtraAuraInfo(Session::kPlayerGuid, 35099));
+        h.session.receive(buildSetExtraAuraInfo(Session::kPlayerGuid, 1, 35099, 20000, 20000));
+        h.session.receive(UpdateObject().tbc().valuesAt(
+            Session::kPlayerGuid, {{static_cast<uint16_t>(auraBase + 1), 35099}}));
+    }
+    CHECK(h.recorded().empty());
+
+    // Actual fade occurs when UNIT_FIELD_AURAS clears the slots.
     h.clearRecorded();
     h.session.receive(buildClearExtraAuraInfo(Session::kPlayerGuid, 21562));
     h.session.receive(buildClearExtraAuraInfo(Session::kPlayerGuid, 6788));
+    h.session.receive(buildClearExtraAuraInfo(Session::kPlayerGuid, 35099));
+    CHECK(h.recorded().empty());
+    h.session.receive(UpdateObject().tbc().valuesAt(
+        Session::kPlayerGuid,
+        {{auraBase, 0},
+         {static_cast<uint16_t>(auraBase + 1), 0},
+         {static_cast<uint16_t>(auraBase + 40), 0}}));
     msgs = h.recorded();
-    REQUIRE(msgs.size() == 2);
+    REQUIRE(msgs.size() == 3);
     CHECK(msgs[0].text == "<Prayer of Fortitude> fades");
     CHECK(msgs[0].g == Catch::Approx(1.0));
-    CHECK(msgs[1].text == "<Weakened Soul> fades");
-    CHECK(msgs[1].r == Catch::Approx(1.0));
+    CHECK(msgs[1].text == "<Rapid Killing> fades");
+    CHECK(msgs[1].g == Catch::Approx(1.0));
+    CHECK(msgs[2].text == "<Weakened Soul> fades");
+    CHECK(msgs[2].r == Catch::Approx(1.0));
 }
 
 TEST_CASE("Blizzard_CombatText suppresses DO_NOT_DISPLAY and DO_NOT_LOG auras across all TBC update paths", "[fct][framexml]") {

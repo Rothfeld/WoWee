@@ -5422,6 +5422,7 @@ void SpellHandler::resetAllState() {
     cooldowns_.clearAll();
     petCooldowns_.clearAll();
     playerAuras_.clear();
+    lastFieldPlayerAuras_.clear();
     targetAuras_.clear();
     unitAurasCache_.clear();
     unitCastStates_.clear();
@@ -7225,7 +7226,6 @@ void SpellHandler::handleExtraAuraInfo(network::Packet& packet, bool isInit) {
     // visible aura table or BuffFrame/UnitBuff will display racial/class passives.
     const uint8_t maxVisibleSlots = isActiveExpansion("tbc") ? 56u : 48u;
     bool updatedVisibleSlot = false;
-    std::vector<std::pair<std::string, std::string>> auraCombatText;
     while (packet.hasRemaining(13)) {
         const uint8_t slot = packet.readUInt8();
         const uint32_t spellId = packet.readUInt32();
@@ -7233,14 +7233,6 @@ void SpellHandler::handleExtraAuraInfo(network::Packet& packet, bool isInit) {
         const uint32_t remaining = packet.readUInt32();
         if (slot >= maxVisibleSlots) continue;
         if (auraList) {
-            const bool isPlayerLive = (!isInit && auraTargetGuid == owner_.getPlayerGuid());
-            const auto hasSpell = [&](uint32_t id) {
-                return id != 0 && std::any_of(auraList->begin(), auraList->end(),
-                                              [&](const AuraSlot& a) { return a.spellId == id; });
-            };
-            const bool hadNewSpell = isPlayerLive && hasSpell(spellId);
-            const uint32_t oldSpellId = (slot < auraList->size()) ? (*auraList)[slot].spellId : 0u;
-            const uint8_t oldFlags = (slot < auraList->size()) ? (*auraList)[slot].flags : 0u;
             if (auraList->size() <= slot) auraList->resize(slot + 1);
             auto& aura = (*auraList)[slot];
             aura.spellId = spellId;
@@ -7251,22 +7243,6 @@ void SpellHandler::handleExtraAuraInfo(network::Packet& packet, bool isInit) {
             aura.playerCast = true;
             aura.casterGuid = owner_.getPlayerGuid();
             updatedVisibleSlot = true;
-            if (isPlayerLive) {
-                if (oldSpellId != 0 && oldSpellId != spellId && !hasSpell(oldSpellId)) {
-                    const std::string& oldName = owner_.auraCombatTextName(oldSpellId);
-                    if (!oldName.empty()) {
-                        auraCombatText.emplace_back(
-                            (oldFlags & 0x80u) ? "SPELL_AURA_END_HARMFUL" : "SPELL_AURA_END", oldName);
-                    }
-                }
-                if (spellId != 0 && !hadNewSpell) {
-                    const std::string& name = owner_.auraCombatTextName(spellId);
-                    if (!name.empty()) {
-                        auraCombatText.emplace_back(
-                            (aura.flags & 0x80u) ? "SPELL_AURA_START_HARMFUL" : "SPELL_AURA_START", name);
-                    }
-                }
-            }
         }
     }
     if (!updatedVisibleSlot) {
@@ -7275,8 +7251,6 @@ void SpellHandler::handleExtraAuraInfo(network::Packet& packet, bool isInit) {
     }
     if (auraList) mirrorAurasByGuid(auraTargetGuid, *auraList);
     if (auraList && owner_.addonEventCallbackRef()) {
-        for (const auto& [type, name] : auraCombatText)
-            owner_.addonEventCallbackRef()("COMBAT_TEXT_UPDATE", {type, name});
         std::string unitId;
         if (auraTargetGuid == owner_.getPlayerGuid()) unitId = "player";
         else if (auraTargetGuid == owner_.getTargetGuid()) unitId = "target";
@@ -7860,14 +7834,10 @@ void SpellHandler::handleClearExtraAuraInfo(network::Packet& packet) {
                 }
             }
             if (matchIdx < auraList->size()) {
-                if (clearGuid == owner_.getPlayerGuid() && owner_.addonEventCallbackRef()) {
-                    const auto& dying = (*auraList)[matchIdx];
-                    const std::string& name = owner_.auraCombatTextName(dying.spellId);
-                    if (!name.empty()) {
-                        const std::string type = (dying.flags & 0x80u) ? "SPELL_AURA_END_HARMFUL" : "SPELL_AURA_END";
-                        owner_.addonEventCallbackRef()("COMBAT_TEXT_UPDATE", {type, name});
-                    }
-                }
+                // Do not emit COMBAT_TEXT_UPDATE SPELL_AURA_END here: CMaNGOS sends
+                // SMSG_CLEAR_EXTRA_AURA_INFO on same-tick AURA_REMOVE_BY_STACK refreshes
+                // (e.g. Hunter Rapid Killing) as well as caster handoffs; authoritative
+                // aura fade combat text is emitted from UNIT_FIELD_AURAS VALUES updates.
                 (*auraList)[matchIdx] = AuraSlot{};
                 clearedAny = true;
             }

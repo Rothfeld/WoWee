@@ -257,9 +257,17 @@ public:
     void restoreTargetAuras(uint64_t guid);
 
     // Player aura mutation (formerly accessed via friend)
-    void resetPlayerAuras(size_t capacity) { playerAuras_.clear(); playerAuras_.resize(capacity); }
+    void resetPlayerAuras(size_t capacity) {
+        playerAuras_.clear();
+        playerAuras_.resize(capacity);
+        lastFieldPlayerAuras_.clear();
+    }
     AuraSlot& getPlayerAuraSlotRef(size_t slot) { return playerAuras_[slot]; }
     std::vector<AuraSlot>& getPlayerAurasMut() { return playerAuras_; }
+    /// Authoritative player aura snapshot from the last UNIT_FIELD_AURAS update,
+    /// used to diff COMBAT_TEXT_UPDATE SPELL_AURA_START / _END without spurious
+    /// fade+gain pairs from same-tick SMSG_CLEAR_EXTRA_AURA_INFO + SET_EXTRA_AURA_INFO refreshes.
+    std::vector<AuraSlot>& lastFieldPlayerAurasMut() { return lastFieldPlayerAuras_; }
     /// The last SMSG_UPDATE_AURA_DURATION for a player aura slot, kept until
     /// the update fields say which spell the slot holds. CMaNGOS sends the
     /// duration when the aura is applied and the UNIT_FIELD_AURA change only
@@ -708,6 +716,7 @@ private:
 
     // Auras
     std::vector<AuraSlot> playerAuras_;
+    std::vector<AuraSlot> lastFieldPlayerAuras_;
     std::unordered_map<uint8_t, PendingAuraDuration> pendingPlayerAuraDurations_;
     std::vector<AuraSlot> targetAuras_;
     std::unordered_map<uint64_t, std::vector<AuraSlot>> unitAurasCache_;

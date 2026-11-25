@@ -711,6 +711,35 @@ void EntityController::syncPreWotlkAurasFromFields(const std::shared_ptr<Entity>
     // aura whose duration the server never sends (Fixate 41294 carries
     // SPELL_ATTR_EX5_DO_NOT_DISPLAY_DURATION).
     if (localPlayer) owner_.getSpellHandler()->pendingPlayerAuraDurations().clear();
+    // COMBAT_TEXT_UPDATE SPELL_AURA_START / SPELL_AURA_END, _HARMFUL for the
+    // negative slots, with the spell's name (build 8606: Power Word: Fortitude,
+    // Rejuvenation, Weakened Soul, Rapid Killing). Driven exclusively by live
+    // UNIT_FIELD_AURAS VALUES updates (`changed != nullptr`) against the last
+    // UNIT_FIELD_AURAS snapshot — never by SMSG_SET_EXTRA_AURA_INFO /
+    // SMSG_CLEAR_EXTRA_AURA_INFO, which CMaNGOS sends on every same-tick
+    // AURA_REMOVE_BY_STACK refresh even though UNIT_FIELD_AURAS stays unchanged.
+    // Evaluated before the `same` early-return so a prior SMSG_SET_EXTRA_AURA_INFO
+    // populating playerAuras_ never suppresses the first SPELL_AURA_START.
+    if (localPlayer) {
+        auto& lastField = owner_.getSpellHandler()->lastFieldPlayerAurasMut();
+        if (changed != nullptr) {
+            const auto has = [](const std::vector<AuraSlot>& list, uint32_t spellId) {
+                return std::any_of(list.begin(), list.end(),
+                                   [&](const AuraSlot& a) { return a.spellId == spellId; });
+            };
+            const auto announce = [&](const AuraSlot& a, const char* change) {
+                const std::string& name = owner_.auraCombatTextName(a.spellId);
+                if (name.empty()) return;
+                const std::string type = std::string("SPELL_AURA_") + change + ((a.flags & 0x80u) ? "_HARMFUL" : "");
+                pendingEvents_.emit("COMBAT_TEXT_UPDATE", {type, name});
+            };
+            for (const auto& a : rebuilt)
+                if (!a.isEmpty() && !has(lastField, a.spellId)) announce(a, "START");
+            for (const auto& a : lastField)
+                if (!a.isEmpty() && !has(rebuilt, a.spellId)) announce(a, "END");
+        }
+        lastField = rebuilt;
+    }
     // Every values update of the unit lands here, a mana tick every two
     // seconds among them. UNIT_AURA is news of a change: native 2.4.3 fires
     // none while the auras stay as they are.
@@ -739,27 +768,6 @@ void EntityController::syncPreWotlkAurasFromFields(const std::shared_ptr<Entity>
         if (entity->getGuid() == owner_.getFocusGuid() && entity->getGuid() == owner_.getTargetGuid())
             pendingEvents_.emit("UNIT_AURA", {"focus"});
         return;
-    }
-    // COMBAT_TEXT_UPDATE SPELL_AURA_START / SPELL_AURA_END, _HARMFUL for the
-    // negative slots, with the spell's name (build 8606, pair 7: Power Word:
-    // Fortitude, Rejuvenation, Weakened Soul). Only live VALUES updates
-    // (`changed != nullptr`) announce changes; CREATE_OBJECT (`changed == nullptr`)
-    // is the state the player arrived with.
-    if (changed != nullptr) {
-        const auto has = [](const std::vector<AuraSlot>& list, uint32_t spellId) {
-            return std::any_of(list.begin(), list.end(),
-                               [&](const AuraSlot& a) { return a.spellId == spellId; });
-        };
-        const auto announce = [&](const AuraSlot& a, const char* change) {
-            const std::string& name = owner_.auraCombatTextName(a.spellId);
-            if (name.empty()) return;
-            const std::string type = std::string("SPELL_AURA_") + change + ((a.flags & 0x80u) ? "_HARMFUL" : "");
-            pendingEvents_.emit("COMBAT_TEXT_UPDATE", {type, name});
-        };
-        for (const auto& a : rebuilt)
-            if (!a.isEmpty() && !has(previousAuras, a.spellId)) announce(a, "START");
-        for (const auto& a : previousAuras)
-            if (!a.isEmpty() && !has(rebuilt, a.spellId)) announce(a, "END");
     }
     owner_.getSpellHandler()->getPlayerAurasMut() = std::move(rebuilt);
     if (entity->getGuid() == owner_.getTargetGuid()) {
