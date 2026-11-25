@@ -709,56 +709,6 @@ static CombatTextEntry::Type combatTextTypeFromSpellMissInfo(uint8_t missInfo) {
     }
 }
 
-static audio::SpellSoundManager::MagicSchool schoolMaskToMagicSchool(uint32_t mask) {
-    if (mask & 0x04) return audio::SpellSoundManager::MagicSchool::FIRE;
-    if (mask & 0x10) return audio::SpellSoundManager::MagicSchool::FROST;
-    if (mask & 0x02) return audio::SpellSoundManager::MagicSchool::HOLY;
-    if (mask & 0x08) return audio::SpellSoundManager::MagicSchool::NATURE;
-    if (mask & 0x20) return audio::SpellSoundManager::MagicSchool::SHADOW;
-    if (mask & 0x40) return audio::SpellSoundManager::MagicSchool::ARCANE;
-    return audio::SpellSoundManager::MagicSchool::ARCANE;
-}
-
-// ---- Extracted helpers to reduce nesting in handleSpellGo ----
-
-audio::SpellSoundManager::MagicSchool SpellHandler::resolveSpellSchool(uint32_t spellId) {
-    owner_.loadSpellNameCache();
-    auto it = owner_.spellNameCacheRef().find(spellId);
-    if (it != owner_.spellNameCacheRef().end() && it->second.schoolMask)
-        return schoolMaskToMagicSchool(it->second.schoolMask);
-    return audio::SpellSoundManager::MagicSchool::ARCANE;
-}
-
-void SpellHandler::playSpellCastSound(uint32_t spellId) {
-    auto* ac = owner_.services().audioCoordinator;
-    if (!ac) return;
-    auto* ssm = ac->getSpellSoundManager();
-    if (!ssm) return;
-    if (auto* renderer = owner_.services().renderer) {
-        if (auto* svs = renderer->getSpellVisualSystem();
-            svs && svs->hasCastSound(resolveSpellVisualId(spellId))) {
-            ssm->stopPrecast();
-            return;
-        }
-    }
-    ssm->playCast(resolveSpellSchool(spellId));
-}
-
-void SpellHandler::playSpellImpactSound(uint32_t spellId) {
-    auto* ac = owner_.services().audioCoordinator;
-    if (!ac) return;
-    auto* ssm = ac->getSpellSoundManager();
-    if (!ssm) return;
-    if (auto* renderer = owner_.services().renderer) {
-        if (auto* svs = renderer->getSpellVisualSystem();
-            svs && svs->hasImpactSound(resolveSpellVisualId(spellId))) {
-            return;
-        }
-    }
-    ssm->playImpact(resolveSpellSchool(spellId),
-                    audio::SpellSoundManager::SpellPower::MEDIUM);
-}
-
 // ---- Spell visual effect helpers ----
 
 uint32_t SpellHandler::resolveSpellVisualId(uint32_t spellId) {
@@ -1027,9 +977,11 @@ void SpellHandler::launchAmmoProjectile(const SpellGoData& data) {
             return rendering::MissileTargetSample{pos, instance};
         };
         const bool stickOnHit = rendering::shouldStickPhysicalProjectile(fullModelPath, thrown, isHit);
+        const uint32_t rawVis = resolveSpellVisualId(data.spellId);
+        const uint32_t ammoVisualId = visuals->hasSpellMissile(rawVis) ? 0u : rawVis;
         visuals->playPhysicalProjectile(fullModelPath, fullTexturePath,
                                         start, end, glm::length(end - start) / speed, thrown,
-                                        std::move(targetResolver), speed, stickOnHit);
+                                        std::move(targetResolver), speed, stickOnHit, ammoVisualId);
     }
 }
 
@@ -1229,8 +1181,10 @@ void SpellHandler::launchRangedWeaponProjectile(uint32_t spellId, uint64_t targe
         return rendering::MissileTargetSample{pos, instance};
     };
     const bool stickOnHit = rendering::shouldStickPhysicalProjectile(modelPath, spin, /*hitTarget=*/true);
+    const uint32_t rawVis = resolveSpellVisualId(spellId);
+    const uint32_t rangedVisualId = visuals->hasSpellMissile(rawVis) ? 0u : rawVis;
     visuals->playPhysicalProjectile(modelPath, texturePath, start, end, duration, spin,
-                                    std::move(targetResolver), speed, stickOnHit);
+                                    std::move(targetResolver), speed, stickOnHit, rangedVisualId);
 }
 
 
@@ -3816,20 +3770,13 @@ void SpellHandler::handleCastFailed(network::Packet& packet) {
     owner_.pendingGameObjectInteractGuidRef() = 0;
     craftQueueSpellId_ = 0;
     craftQueueRemaining_ = 0;
-    // Remove lingering precast visual effects
+    // Remove lingering precast visual effects and precast audio
     if (auto* renderer = owner_.services().renderer) {
         if (auto* svs = renderer->getSpellVisualSystem())
             svs->cancelPrecastVisuals(owner_.resolveUnitRenderInstance(owner_.getPlayerGuid()));
     }
     queuedSpellId_ = 0;
     queuedSpellTarget_ = 0;
-
-    // Stop precast sound
-    if (auto* ac = owner_.services().audioCoordinator) {
-        if (auto* ssm = ac->getSpellSoundManager()) {
-            ssm->stopPrecast();
-        }
-    }
 
     // Show failure reason
     int powerType = -1;
@@ -3953,25 +3900,6 @@ void SpellHandler::handleSpellStart(network::Packet& packet) {
             }
         }
         castBarCaptionSpellId_ = data.spellId;
-
-        // Play precast sound - skip profession/tradeskill spells and spells whose PrecastKit authors SoundID
-        bool visualHasPrecastSound = false;
-        if (auto* renderer = owner_.services().renderer) {
-            if (auto* svs = renderer->getSpellVisualSystem())
-                visualHasPrecastSound = svs->hasPrecastSound(resolveSpellVisualId(data.spellId));
-        }
-        if (!owner_.isProfessionSpell(data.spellId) && !visualHasPrecastSound) {
-            if (auto* ac = owner_.services().audioCoordinator) {
-                if (auto* ssm = ac->getSpellSoundManager()) {
-                    owner_.loadSpellNameCache();
-                    auto it = owner_.spellNameCacheRef().find(data.spellId);
-                    auto school = (it != owner_.spellNameCacheRef().end() && it->second.schoolMask)
-                        ? schoolMaskToMagicSchool(it->second.schoolMask)
-                        : audio::SpellSoundManager::MagicSchool::ARCANE;
-                    ssm->playPrecast(school, audio::SpellSoundManager::SpellPower::MEDIUM);
-                }
-            }
-        }
 
         if (owner_.spellCastAnimCallbackRef())
             owner_.spellCastAnimCallbackRef()(owner_.getPlayerGuid(), SpellAnimPhase::PRECAST, data.spellId);
@@ -4097,10 +4025,6 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
             seedCooldownFromSpellInfo(data.spellId);
         }
 
-        // Play cast-complete sound
-        if (!owner_.isProfessionSpell(data.spellId) && !rangedWeaponAttack)
-            playSpellCastSound(data.spellId);
-
         // Ranged auto-attack spells (Auto Shot, Shoot, Throw) complete as timed
         // casts and are NOT classified as instant melee abilities, so trigger the
         // ranged shot animation explicitly here. Instant ranged weapon shots
@@ -4135,30 +4059,6 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
                 if (projectileTarget == 0 && !data.missTargets.empty())
                     projectileTarget = data.missTargets.front().targetGuid;
                 launchRangedWeaponProjectile(sid, projectileTarget);
-            }
-        }
-
-        // Instant melee abilities → trigger attack animation. Range decides this, not
-        // school: physical abilities cast at range (Steady Shot, Taunt) would otherwise
-        // play a melee swing. Channeled spells (e.g. Uldaman Boss Object Visual 11206,
-        // RangeIndex 12 = 5 yd, AttributesEx 0x10000004) are never melee swings.
-        constexpr uint32_t kAttrExChanneled = 0x00000004u | 0x00000040u;
-        const bool isChanneledSpell = cast != owner_.spellNameCacheRef().end() &&
-            (cast->second.attrEx & kAttrExChanneled) != 0;
-        bool isMeleeAbility = false;
-        if (!owner_.isProfessionSpell(sid) && !spellclass::isRangedWeaponAutoAttack(sid) &&
-            !isChanneledSpell) {
-            if (spellclass::isMeleeRange(getSpellMaxRange(sid))) {
-                isMeleeAbility = (currentCastSpellId_ != sid);
-            }
-        }
-        if (isMeleeAbility) {
-            if (auto* ac = owner_.services().audioCoordinator) {
-                if (auto* csm = ac->getCombatSoundManager()) {
-                    csm->playWeaponSwing(audio::CombatSoundManager::WeaponSize::MEDIUM, false);
-                    csm->playImpact(audio::CombatSoundManager::WeaponSize::MEDIUM,
-                                    audio::CombatSoundManager::ImpactType::FLESH, false);
-                }
             }
         }
 
@@ -4256,12 +4156,6 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
         // Other casters, timed or instant (including Auto Shot): the cast animation, once.
         if (owner_.spellCastAnimCallbackRef())
             owner_.spellCastAnimCallbackRef()(data.casterUnit, SpellAnimPhase::CAST, data.spellId);
-        bool targetsPlayer = false;
-        for (const auto& tgt : data.hitTargets) {
-            if (tgt == owner_.getPlayerGuid()) { targetsPlayer = true; break; }
-        }
-        if (targetsPlayer && !rangedWeaponAttack)
-            playSpellCastSound(data.spellId);
     }
 
     // Launch physical ammo projectiles from SMSG_SPELL_GO CAST_FLAG_AMMO AFTER
@@ -4313,23 +4207,12 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
         }
     }
 
-    // Impact sound
-    bool playerIsHit = false;
-    bool playerHitEnemy = false;
-    for (const auto& tgt : data.hitTargets) {
-        if (tgt == owner_.getPlayerGuid()) { playerIsHit = true; }
-        if (data.casterUnit == owner_.getPlayerGuid() && tgt != owner_.getPlayerGuid() && tgt != 0) { playerHitEnemy = true; }
-    }
-
     // Fire UNIT_SPELLCAST_SUCCEEDED (the player's own went out above)
     if (owner_.addonEventCallbackRef() && data.casterUnit != owner_.getPlayerGuid()) {
         std::string unitId = owner_.guidToUnitId(data.casterUnit);
         if (!unitId.empty())
             owner_.addonEventCallbackRef()("UNIT_SPELLCAST_SUCCEEDED", spellcastArgs(unitId, data.spellId));
     }
-
-    if ((playerIsHit || playerHitEnemy) && !rangedWeaponAttack)
-        playSpellImpactSound(data.spellId);
 
     // Trigger spell visual effects: cast kit at caster + impact kit at each hit target.
     // Driven by Spell.dbc SpellVisualID for all non-ranged-auto spells (including racials).
@@ -6707,7 +6590,11 @@ void SpellHandler::handleCastResult(network::Packet& packet) {
             const bool gatherCast = gatherGoGuid != 0 && isGatherSpellId(castResultSpellId);
             const bool started = casting_ && !castIsChannel_ && currentCastSpellId_ == castResultSpellId;
             casting_ = false; castIsChannel_ = false; currentCastSpellId_ = 0;
-        clearPendingCast(); castTimeRemaining_ = 0.0f;
+            clearPendingCast(); castTimeRemaining_ = 0.0f;
+            if (auto* renderer = owner_.services().renderer) {
+                if (auto* svs = renderer->getSpellVisualSystem())
+                    svs->cancelPrecastVisuals(owner_.resolveUnitRenderInstance(owner_.getPlayerGuid()));
+            }
             owner_.lastInteractedGoGuidRef() = 0;
             owner_.pendingGameObjectInteractGuidRef() = 0;
             craftQueueSpellId_ = 0; craftQueueRemaining_ = 0;
@@ -7016,11 +6903,6 @@ void SpellHandler::handleSpellFailure(network::Packet& packet) {
         craftQueueRemaining_ = 0;
         queuedSpellId_ = 0;
         queuedSpellTarget_ = 0;
-        if (auto* ac = owner_.services().audioCoordinator) {
-            if (auto* ssm = ac->getSpellSoundManager()) {
-                ssm->stopPrecast();
-            }
-        }
         if (owner_.spellCastAnimCallbackRef())
             owner_.spellCastAnimCallbackRef()(owner_.getPlayerGuid(), SpellAnimPhase::STOP, failSpellId);
     } else {

@@ -3380,6 +3380,31 @@ add_test(NAME tbc_audio_coverage COMMAND test_tbc_audio_coverage)
 set_tests_properties(tbc_audio_coverage PROPERTIES SKIP_RETURN_CODE 4)
 register_test_target(test_tbc_audio_coverage)
 
+# TBC 2.4.3 Audio Parity Shard B: SpellVisual MissileSound/AnimEventSoundID,
+# stoppable StateKit/ChannelKit handles, and zero SpellSoundManager fallback pollution
+if(TARGET wowee)
+    add_executable(test_audio_shard_b_spells
+        test_audio_shard_b_spells.cpp
+        "$<FILTER:$<TARGET_OBJECTS:wowee>,EXCLUDE,/main([.]cpp)?[.]o(bj)?$>")
+    target_include_directories(test_audio_shard_b_spells PRIVATE ${TEST_INCLUDE_DIRS}
+        $<TARGET_PROPERTY:wowee,INCLUDE_DIRECTORIES>)
+    target_include_directories(test_audio_shard_b_spells SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
+    target_compile_definitions(test_audio_shard_b_spells PRIVATE
+        WOWEE_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+        $<TARGET_PROPERTY:wowee,COMPILE_DEFINITIONS>)
+    target_link_libraries(test_audio_shard_b_spells PRIVATE catch2_main
+        $<TARGET_PROPERTY:wowee,LINK_LIBRARIES>)
+    wowee_test_link_glm(test_audio_shard_b_spells)
+    target_link_directories(test_audio_shard_b_spells PRIVATE
+        $<TARGET_PROPERTY:wowee,LINK_DIRECTORIES>)
+    target_link_options(test_audio_shard_b_spells PRIVATE
+        $<TARGET_PROPERTY:wowee,LINK_OPTIONS>)
+    add_dependencies(test_audio_shard_b_spells wowee)
+    add_test(NAME audio_shard_b_spells COMMAND test_audio_shard_b_spells)
+    set_tests_properties(audio_shard_b_spells PROPERTIES SKIP_RETURN_CODE 4)
+    register_test_target(test_audio_shard_b_spells)
+endif()
+
 # -- test_audio_shard_a_engine ---------------------------------
 add_executable(test_audio_shard_a_engine
     test_audio_shard_a_engine.cpp

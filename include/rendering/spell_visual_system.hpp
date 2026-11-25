@@ -33,6 +33,7 @@ public:
 
     // Initialize with references to the M2 renderer and parent renderer
     void initialize(M2Renderer* m2Renderer, Renderer* renderer);
+    void setAssetManager(pipeline::AssetManager* assets) { cachedAssetManager_ = assets; }
     void shutdown();
 
     // Spawn a spell visual at a world position.
@@ -146,6 +147,12 @@ public:
     [[nodiscard]] bool hasPrecastSound(uint32_t visualId);
     [[nodiscard]] bool hasCastSound(uint32_t visualId);
     [[nodiscard]] bool hasImpactSound(uint32_t visualId);
+    [[nodiscard]] uint32_t missileSoundId(uint32_t visualId);
+    [[nodiscard]] uint32_t animEventSoundId(uint32_t visualId);
+    [[nodiscard]] uint32_t playMissileSound(uint32_t visualId, const glm::vec3& worldPosition);
+    bool playAnimEventSound(uint32_t visualId, const glm::vec3& worldPosition, uint32_t attachInstanceId = 0);
+    [[nodiscard]] size_t loadedMissileSoundCount() { if (!spellVisualDbcLoaded_) loadSpellVisualDbc(); return missileSounds_.size(); }
+    [[nodiscard]] size_t loadedAnimEventSoundCount() { if (!spellVisualDbcLoaded_) loadSpellVisualDbc(); return animEventSounds_.size(); }
     // Persistent StateKit effects follow the unit's current aura set, and so
     // do the kits' character procedures that change the unit's own model:
     // SpellVisualKit CharProc 1 multiplies the model's colour by CharParamZero
@@ -255,7 +262,8 @@ public:
                                 bool spin,
                                 MissileTargetResolver targetResolver = {},
                                 float speed = 0.0f,
-                                bool stickOnHit = false);
+                                bool stickOnHit = false,
+                                uint32_t visualId = 0);
 
     // Advance lifetime timers and remove expired instances.
     void update(float deltaTime);
@@ -375,6 +383,7 @@ private:
         uint32_t targetAttachmentId = kAttachChestBloodFrontId;
         StuckArrowLocalPose stuckLocal;
         MissileTargetResolver targetResolver;
+        uint32_t soundHandle = 0;
     };
 
     struct SpellMissile {
@@ -416,6 +425,8 @@ private:
         float progress = 0.0f;
         glm::vec3 prevWorldPos{0.0f};
         bool hasPrevWorldPos = false;
+        uint32_t soundHandle = 0;
+        bool isPrimary = true;
     };
 
     void loadSpellVisualDbc();
@@ -435,21 +446,41 @@ private:
     std::vector<DrainingEffect> drainingCasterEffects_;
     float spawnKitEffects(uint32_t kitId, const glm::vec3& worldPosition, uint32_t attachInstanceId,
                           float duration, KitStage stage, uint32_t precastSpellId = 0);
+    uint32_t playSoundEntry(uint32_t soundId, const glm::vec3& worldPosition, uint32_t attachInstanceId,
+                            bool stoppable);
     uint32_t playKitSound(uint32_t kitId, const glm::vec3& worldPosition, uint32_t attachInstanceId,
                           bool stoppable);
     void playKitShake(uint32_t kitId, const glm::vec3& worldPosition);
     void loadCameraShakes();
     void stopPrecastSound(uint32_t attachInstanceId);
     void stopChannelSound(uint32_t attachInstanceId);
+    void stopAuraSound(uint32_t attachInstanceId, uint32_t visualId);
+    void stopAllAuraSounds(uint32_t attachInstanceId);
+    void startAnimEventLoop(uint32_t attachInstanceId, uint32_t visualId, const glm::vec3& worldPosition,
+                            bool fromChannel, uint32_t precastSpellId = 0);
+    void stopAnimEventLoop(uint32_t attachInstanceId, bool fromChannel);
     void stopChannelVisualImmediate(uint32_t attachInstanceId);
     std::unordered_map<uint32_t, uint32_t> kitAnimations_;
     std::unordered_map<uint32_t, uint32_t> kitSounds_;       // SpellVisualKit col 15 -> SoundEntries ID
     std::unordered_map<uint32_t, uint32_t> kitShakes_;       // SpellVisualKit col 16 -> SpellEffectCameraShakes ID
     std::unordered_map<uint32_t, uint32_t> kitFlags_;        // SpellVisualKit col 37 -> Flags
+    std::unordered_map<uint32_t, uint32_t> missileSounds_;   // SpellVisual col 10 -> SoundEntries ID
+    std::unordered_map<uint32_t, uint32_t> animEventSounds_; // SpellVisual col 11 -> SoundEntries ID
     CameraShakeTable cameraShakeTable_;
     std::unordered_map<uint32_t, uint32_t> activePrecastSounds_;  // attachInstanceId -> AudioEngine soundId
+    std::unordered_map<uint32_t, uint32_t> activePrecastSpellIds_;// attachInstanceId -> spellId
     std::unordered_map<uint32_t, uint32_t> activeChannelSounds_;  // attachInstanceId -> AudioEngine soundId
+    std::unordered_map<uint32_t, std::unordered_map<uint32_t, uint32_t>> activeAuraSounds_; // attachInstanceId -> (visualId -> soundId)
     std::unordered_map<uint64_t, uint32_t> activeAreaSounds_;     // persistentArea key -> AudioEngine soundId
+    struct ActiveAnimEventLoop {
+        uint32_t visualId = 0;
+        glm::vec3 position{0.0f};
+        float periodSec = 1.33f;
+        float timerSec = 0.65f;
+        bool fromChannel = false;
+        uint32_t precastSpellId = 0;
+    };
+    std::unordered_map<uint32_t, ActiveAnimEventLoop> activeAnimEventLoops_;
     // scale: SpellVisualEffectName.Scale, the size the effect is drawn at.
     struct KitEffect { std::string path; uint32_t attachment; float scale = 1.0f; };
     std::unordered_map<uint32_t, std::vector<KitEffect>> kitEffects_;
