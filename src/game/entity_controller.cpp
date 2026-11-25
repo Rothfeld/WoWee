@@ -2709,27 +2709,43 @@ void EntityController::onCreatePlayer(const UpdateBlock& block, std::shared_ptr<
         }
     }
     if (block.guid == owner_.getPlayerGuid()) {
+        constexpr uint32_t PLAYER_FLAGS_GHOST = 0x00000010;
+        const auto pfIt = block.fields.find(fieldIndex(UF::PLAYER_FLAGS));
+        const bool isGhostOnCreate = (pfIt != block.fields.end() && (pfIt->second & PLAYER_FLAGS_GHOST) != 0);
         const bool deadFlag = (unit->getDynamicFlags() & UNIT_DYNFLAG_DEAD) != 0;
         playerFeigningDeath_ = deadFlag && isFeigningDeath(*entity, *unit);
         if (unitInitiallyDead && !playerFeigningDeath_) {
             owner_.playerDeadRef() = true;
             LOG_INFO("Player logged in dead (initial corpse state)");
             owner_.latchReleaseTimer("initial corpse state");
-        }
-    }
-    // Detect ghost state on login via PLAYER_FLAGS
-    if (block.guid == owner_.getPlayerGuid()) {
-        constexpr uint32_t PLAYER_FLAGS_GHOST = 0x00000010;
-        auto pfIt = block.fields.find(fieldIndex(UF::PLAYER_FLAGS));
-        if (pfIt != block.fields.end() && (pfIt->second & PLAYER_FLAGS_GHOST) != 0) {
+        } else if (isGhostOnCreate) {
             owner_.releasedSpiritRef() = true;
             owner_.playerDeadRef() = true;
+            owner_.clearReleaseTimer();
             LOG_INFO("Player logged in as ghost (PLAYER_FLAGS)");
             // Query corpse position so minimap marker is accurate on reconnect
             if (owner_.getSocket()) {
                 network::Packet cq(wireOpcode(Opcode::MSG_CORPSE_QUERY));
                 owner_.getSocket()->send(cq);
             }
+        } else if (owner_.playerDeadRef() || owner_.releasedSpiritRef()) {
+            // The server revived the character while its object was out of
+            // the client's view (e.g. died, then teleported to another map and
+            // healed): no health 0 -> N values update arrives, the object is
+            // created alive on the new map.
+            owner_.playerDeadRef() = false;
+            owner_.releasedSpiritRef() = false;
+            owner_.clearReleaseTimer();
+            owner_.repopPendingRef() = false;
+            owner_.resurrectPendingRef() = false;
+            owner_.selfResAvailableRef() = false;
+            owner_.selfResSpellIdRef() = 0;
+            owner_.corpseMapIdRef() = 0;
+            owner_.corpsePositionValidRef() = false;
+            owner_.corpseGuidRef() = 0;
+            owner_.corpseReclaimAvailableMsRef() = 0;
+            LOG_INFO("Player resurrected (object created alive)");
+            pendingEvents_.emit("PLAYER_ALIVE", {});
         }
     }
     // Pre-WotLK aura sync on initial object create

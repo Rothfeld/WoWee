@@ -596,3 +596,86 @@ TEST_CASE("SMSG_CORPSE_RECLAIM_DELAY, SMSG_RESURRECT_REQUEST, and SMSG_SPIRIT_HE
         CHECK(events.back().first == "CONFIRM_XP_LOSS");
     }
 }
+
+TEST_CASE("creating player alive after cross-map revive clears dead/ghost state and emits PLAYER_ALIVE once",
+          "[replay][death][revive]") {
+    constexpr uint32_t kPlayerFlagsGhost = 0x00000010u;
+
+    auto sendNewWorld = [](Session& s, uint32_t mapId) {
+        wowee::network::Packet p(wowee::game::wireOpcode(wowee::game::Opcode::SMSG_NEW_WORLD));
+        p.writeUInt32(mapId);
+        p.writeFloat(100.0f);
+        p.writeFloat(200.0f);
+        p.writeFloat(30.0f);
+        p.writeFloat(0.0f);
+        s.receive(p);
+    };
+
+    SECTION("dead corpse teleported to new map and revived before CREATE_OBJECT2") {
+        Session s("tbc");
+        spawnAlivePlayer(s);
+        kill(s, 0x08);
+        REQUIRE(s.handler().isPlayerDead());
+        REQUIRE(s.handler().getReleaseTimeRemainingSec() > 0.0);
+
+        Events events(s);
+        sendNewWorld(s, 0);
+        s.receive(UpdateObject().tbc().create(
+            Session::kPlayerGuid, ObjectType::PLAYER,
+            {{UF::UNIT_FIELD_HEALTH, 100},
+             {UF::UNIT_FIELD_MAXHEALTH, 100},
+             {UF::PLAYER_FLAGS, 0u}},
+            true));
+
+        CHECK_FALSE(s.handler().isPlayerDead());
+        CHECK_FALSE(s.handler().isPlayerGhost());
+        CHECK(s.handler().getReleaseTimeRemainingSec() == 0.0);
+        CHECK(std::count(events.names.begin(), events.names.end(), "PLAYER_ALIVE") == 1);
+    }
+
+    SECTION("dead corpse released cross-map to graveyard as ghost does not emit spurious PLAYER_ALIVE") {
+        Session s("tbc");
+        spawnAlivePlayer(s);
+        kill(s, 0x08);
+        REQUIRE(s.handler().isPlayerDead());
+
+        Events events(s);
+        sendNewWorld(s, 0);
+        s.receive(UpdateObject().tbc().create(
+            Session::kPlayerGuid, ObjectType::PLAYER,
+            {{UF::UNIT_FIELD_HEALTH, 1},
+             {UF::UNIT_FIELD_MAXHEALTH, 100},
+             {UF::PLAYER_FLAGS, kPlayerFlagsGhost}},
+            true));
+
+        CHECK(s.handler().isPlayerDead());
+        CHECK(s.handler().isPlayerGhost());
+        CHECK(s.handler().getReleaseTimeRemainingSec() == 0.0);
+        CHECK(std::count(events.names.begin(), events.names.end(), "PLAYER_ALIVE") == 0);
+    }
+
+    SECTION("ghost teleported to new map and revived before CREATE_OBJECT2 emits PLAYER_ALIVE once") {
+        Session s("tbc");
+        s.receive(UpdateObject().tbc().create(
+            Session::kPlayerGuid, ObjectType::PLAYER,
+            {{UF::UNIT_FIELD_HEALTH, 1},
+             {UF::UNIT_FIELD_MAXHEALTH, 100},
+             {UF::PLAYER_FLAGS, kPlayerFlagsGhost}},
+            true));
+        REQUIRE(s.handler().isPlayerDead());
+        REQUIRE(s.handler().isPlayerGhost());
+
+        Events events(s);
+        sendNewWorld(s, 1);
+        s.receive(UpdateObject().tbc().create(
+            Session::kPlayerGuid, ObjectType::PLAYER,
+            {{UF::UNIT_FIELD_HEALTH, 100},
+             {UF::UNIT_FIELD_MAXHEALTH, 100},
+             {UF::PLAYER_FLAGS, 0u}},
+            true));
+
+        CHECK_FALSE(s.handler().isPlayerDead());
+        CHECK_FALSE(s.handler().isPlayerGhost());
+        CHECK(std::count(events.names.begin(), events.names.end(), "PLAYER_ALIVE") == 1);
+    }
+}
