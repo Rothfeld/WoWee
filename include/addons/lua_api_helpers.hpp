@@ -1054,6 +1054,15 @@ inline const game::GroupMember* findPartyMember(game::GameHandler* gh, uint64_t 
     return nullptr;
 }
 
+// Find GroupMember data owning an out-of-range party/raid pet GUID
+inline const game::GroupMember* findPartyMemberByPet(game::GameHandler* gh, uint64_t petGuid) {
+    if (!gh || petGuid == 0) return nullptr;
+    for (const auto& m : gh->getPartyData().members) {
+        if (m.petGuid != 0 && m.petGuid == petGuid) return &m;
+    }
+    return nullptr;
+}
+
 /// Whether a living unit carrying UNIT_DYNFLAG_DEAD (Feign Death / Permanent
 /// Feign Death 29266, e.g. Warder Corpse 21304) reports as dead (0 health) to
 /// UnitHealth, UnitIsDead, and UnitIsDeadOrGhost in TBC 2.4.3.

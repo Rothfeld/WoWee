@@ -328,11 +328,24 @@ std::vector<const game::ContactEntry*> ignoresView(game::GameHandler* gh) {
     return view;
 }
 
+std::vector<const game::ContactEntry*> mutesView(game::GameHandler* gh) {
+    std::vector<const game::ContactEntry*> view;
+    if (!gh) return view;
+    for (const auto& c : gh->getContacts())
+        if ((c.flags & 0x4u) != 0) view.push_back(&c);
+    std::stable_sort(view.begin(), view.end(), [](const auto* a, const auto* b) {
+        if (a->name.empty() != b->name.empty()) return b->name.empty();
+        return a->name < b->name;
+    });
+    return view;
+}
+
 /// The selected friend and ignored player, held by guid: the selection stays
 /// on the same player when the order changes (native kept Edrick selected
 /// as he moved from row 1 to row 2), and is gone with them.
 uint64_t& selectedFriendGuid() { static uint64_t v = 0; return v; }
 uint64_t& selectedIgnoreGuid() { static uint64_t v = 0; return v; }
+uint64_t& selectedMuteGuid()   { static uint64_t v = 0; return v; }
 
 int rowOf(const std::vector<const game::ContactEntry*>& view, uint64_t guid) {
     for (size_t i = 0; i < view.size(); ++i)
@@ -1747,11 +1760,28 @@ void registerSocialLuaAPI(lua_State* L) {
                 // Recruit-a-Friend summoning, which needs a linked account.
                 {"CanSummonFriend", luaReturnFalse},
                 {"SummonFriend",    [](lua_State* L) -> int { (void)L; return 0; }},
-                // The voice mute list, which cannot have entries without voice.
-                // 0 with nothing selected, as 2.4.3 answers.
-                {"GetSelectedMute", [](lua_State* L) -> int { lua_pushnumber(L, 0); return 1; }},
-                {"SetSelectedMute", [](lua_State* L) -> int { (void)L; return 0; }},
-                {"GetMuteName",     [](lua_State* L) -> int { return luaReturnNil(L); }},
+                {"GetNumMutes",     [](lua_State* L) -> int {
+            lua_pushnumber(L, mutesView(getGameHandler(L)).size());
+            return 1;
+        }},
+                {"GetSelectedMute", [](lua_State* L) -> int {
+            lua_pushnumber(L, rowOf(mutesView(getGameHandler(L)), selectedMuteGuid()));
+            return 1;
+        }},
+                {"SetSelectedMute", [](lua_State* L) -> int {
+            selectedMuteGuid() = guidAtRow(mutesView(getGameHandler(L)), static_cast<int>(luaL_optnumber(L, 1, 0)));
+            return 0;
+        }},
+                {"GetMuteName",     [](lua_State* L) -> int {
+            const auto view = mutesView(getGameHandler(L));
+            const int index = static_cast<int>(luaL_optnumber(L, 1, 0));
+            if (index < 1 || index > static_cast<int>(view.size())) {
+                lua_pushstring(L, "Unknown");
+                return 1;
+            }
+            lua_pushstring(L, view[static_cast<size_t>(index) - 1]->name.c_str());
+            return 1;
+        }},
                 {"DelMute",         [](lua_State* L) -> int { (void)L; return 0; }},
                 // GetGuildBankTabPermissions(tab) → canView, canDeposit,
                 //   canUpdateText, withdrawPerDay
@@ -2403,7 +2433,22 @@ void registerSocialLuaAPI(lua_State* L) {
         }},
                 // Voice chat again: there is none, so nobody is muted or
                 // silenced and asking to mute them does nothing.
-                {"IsMuted",             luaReturnFalse},
+                {"IsMuted", [](lua_State* L) -> int {
+            auto* gh = getGameHandler(L);
+            const char* who = lua_tostring(L, 1);
+            if (!gh || !who || !*who) return luaReturnFalse(L);
+            std::string target(who);
+            std::string lower(target);
+            toLowerInPlace(lower);
+            const uint64_t unitGuid = resolveUnitGuid(gh, lower);
+            for (const auto* c : mutesView(gh)) {
+                if ((unitGuid != 0 && c->guid == unitGuid) || c->name == target) {
+                    lua_pushboolean(L, 1);
+                    return 1;
+                }
+            }
+            return luaReturnFalse(L);
+        }},
                 {"UnitIsSilenced",      luaReturnFalse},
                 {"AddOrDelMute",        [](lua_State* L) -> int { (void)L; return 0; }},
                 {"ChannelSilenceVoice", [](lua_State* L) -> int { (void)L; return 0; }},

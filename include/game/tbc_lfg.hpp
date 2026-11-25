@@ -25,6 +25,7 @@ struct TbcLfgState {
     std::string comment;
     bool queued = false, lfg = false, lfm = false, autofill = false;
     uint32_t queryType = 0, queryEntry = 0, total = 0;
+    uint32_t pendingInviteEntry = 0, pendingMatchEntry = 0;
     std::vector<TbcLfgResult> results;
     std::chrono::steady_clock::time_point nextQuery{};
 };

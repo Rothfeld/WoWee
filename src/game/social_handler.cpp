@@ -2344,27 +2344,37 @@ void SocialHandler::leaveParty() {
 void SocialHandler::setMainTank(uint64_t targetGuid) {
     if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
     if (targetGuid == 0) { owner_.raiseUiError("You must have a target selected."); return; }
-    auto packet = RaidTargetUpdatePacket::build(0, targetGuid);
-    owner_.getSocket()->send(packet);
+    setPartyAssignment(0, targetGuid, true);
 }
 
 void SocialHandler::setMainAssist(uint64_t targetGuid) {
     if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
     if (targetGuid == 0) { owner_.raiseUiError("You must have a target selected."); return; }
-    auto packet = RaidTargetUpdatePacket::build(1, targetGuid);
-    owner_.getSocket()->send(packet);
+    setPartyAssignment(1, targetGuid, true);
 }
 
 void SocialHandler::clearMainTank() {
     if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
-    auto packet = RaidTargetUpdatePacket::build(0, 0);
-    owner_.getSocket()->send(packet);
+    uint64_t guid = owner_.getTargetGuid();
+    if (guid == 0) {
+        for (const auto& m : partyData.members) {
+            if (m.flags & 0x02u) { guid = m.guid; break; }
+        }
+    }
+    if (guid == 0 && (partyData.flags & 0x02u)) guid = owner_.getPlayerGuid();
+    if (guid != 0) setPartyAssignment(0, guid, false);
 }
 
 void SocialHandler::clearMainAssist() {
     if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
-    auto packet = RaidTargetUpdatePacket::build(1, 0);
-    owner_.getSocket()->send(packet);
+    uint64_t guid = owner_.getTargetGuid();
+    if (guid == 0) {
+        for (const auto& m : partyData.members) {
+            if (m.flags & 0x04u) { guid = m.guid; break; }
+        }
+    }
+    if (guid == 0 && (partyData.flags & 0x04u)) guid = owner_.getPlayerGuid();
+    if (guid != 0) setPartyAssignment(1, guid, false);
 }
 
 void SocialHandler::setRaidMarkLocally(uint64_t guid, uint8_t icon) {
@@ -2858,25 +2868,73 @@ void SocialHandler::handlePartyMemberStats(network::Packet& packet, bool isFull)
             }
         }
     }
-    // The pet's guid (0 without one) is what partyNpet names; its other fields
-    // are skipped, the pet being an ordinary unit while it is in sight.
-    if (updateFlags & 0x0400) { if (remaining() >= 8) member->petGuid = packet.readUInt64(); }
-    if (updateFlags & 0x0800) { if (remaining() > 0) packet.readString(); }
-    if (updateFlags & 0x1000) { if (remaining() >= 2) packet.readUInt16(); }
-    if (updateFlags & 0x2000) { if (isWotLK) { if (remaining() >= 4) packet.readUInt32(); } else { if (remaining() >= 2) packet.readUInt16(); } }
-    if (updateFlags & 0x4000) { if (isWotLK) { if (remaining() >= 4) packet.readUInt32(); } else { if (remaining() >= 2) packet.readUInt16(); } }
-    if (updateFlags & 0x8000) { if (remaining() >= 1) packet.readUInt8(); }
-    if (updateFlags & 0x10000) { if (remaining() >= 2) packet.readUInt16(); }
-    if (updateFlags & 0x20000) { if (remaining() >= 2) packet.readUInt16(); }
+    if (updateFlags & 0x0400) {
+        if (remaining() >= 8) {
+            member->petGuid = packet.readUInt64();
+            if (member->petGuid == 0) {
+                if (before.petGuid != 0 && owner_.getSpellHandler()) {
+                    owner_.getSpellHandler()->mirrorAurasByGuid(before.petGuid, {});
+                }
+                member->petName.clear();
+                member->petDisplayId = 0;
+                member->petCurHealth = 0;
+                member->petMaxHealth = 0;
+                member->petPowerType = 0;
+                member->petCurPower = 0;
+                member->petMaxPower = 0;
+            }
+        }
+    }
+    if (updateFlags & 0x0800) { if (remaining() > 0) member->petName = packet.readString(); }
+    if (updateFlags & 0x1000) { if (remaining() >= 2) member->petDisplayId = packet.readUInt16(); }
+    if (updateFlags & 0x2000) {
+        if (isWotLK) { if (remaining() >= 4) member->petCurHealth = packet.readUInt32(); }
+        else { if (remaining() >= 2) member->petCurHealth = packet.readUInt16(); }
+    }
+    if (updateFlags & 0x4000) {
+        if (isWotLK) { if (remaining() >= 4) member->petMaxHealth = packet.readUInt32(); }
+        else { if (remaining() >= 2) member->petMaxHealth = packet.readUInt16(); }
+    }
+    if (updateFlags & 0x8000) { if (remaining() >= 1) member->petPowerType = packet.readUInt8(); }
+    if (updateFlags & 0x10000) { if (remaining() >= 2) member->petCurPower = packet.readUInt16(); }
+    if (updateFlags & 0x20000) { if (remaining() >= 2) member->petMaxPower = packet.readUInt16(); }
     if (updateFlags & 0x40000) {
         if (remaining() >= 8) {
             uint64_t petAuraMask = packet.readUInt64();
-            for (int i = 0; i < 64; ++i) {
-                if (petAuraMask & (uint64_t(1) << i)) {
-                    if (isWotLK) { if (remaining() < 5) break; packet.readUInt32(); packet.readUInt8(); }
-                    else if (isActiveExpansion("tbc")) { if (remaining() < 3) break; packet.readUInt16(); packet.readUInt8(); }
-                    else { if (remaining() < 2) break; packet.readUInt16(); }
+            const bool tbc = isActiveExpansion("tbc");
+            const bool petCacheable = member->petGuid != 0 && owner_.getSpellHandler() != nullptr;
+            if (isWotLK) {
+                std::vector<AuraSlot> petAuras;
+                for (int i = 0; i < 64; ++i) {
+                    if (!(petAuraMask & (uint64_t(1) << i))) continue;
+                    if (remaining() < 5) break;
+                    AuraSlot a;
+                    a.level = static_cast<uint8_t>(i);
+                    a.spellId = packet.readUInt32();
+                    a.flags = packet.readUInt8();
+                    if (a.spellId != 0) petAuras.push_back(a);
                 }
+                if (petCacheable) owner_.getSpellHandler()->mirrorAurasByGuid(member->petGuid, petAuras);
+            } else {
+                const int positiveSlots = tbc ? 40 : 32;
+                std::vector<AuraSlot> petSlots;
+                if (!isFull && member->petGuid == before.petGuid) {
+                    if (const auto* known = owner_.getUnitAuras(member->petGuid)) petSlots = *known;
+                }
+                petSlots.resize(64);
+                for (int i = 0; i < 64; ++i) {
+                    if (!(petAuraMask & (uint64_t(1) << i))) continue;
+                    if (remaining() < (tbc ? 3u : 2u)) break;
+                    const uint32_t spellId = packet.readUInt16();
+                    const uint8_t auraFlags = tbc ? packet.readUInt8() : 0;
+                    AuraSlot& slot = petSlots[static_cast<size_t>(i)];
+                    if (spellId == 0) { slot = AuraSlot{}; continue; }
+                    if (slot.spellId != spellId) slot = AuraSlot{};
+                    slot.spellId = spellId;
+                    slot.level = static_cast<uint8_t>(i);
+                    slot.flags = static_cast<uint8_t>((auraFlags & ~0x80u) | (i >= positiveSlots ? 0x80u : 0u));
+                }
+                if (petCacheable) owner_.getSpellHandler()->mirrorAurasByGuid(member->petGuid, petSlots);
             }
         }
     }
@@ -2918,6 +2976,25 @@ void SocialHandler::handlePartyMemberStats(network::Packet& packet, bool isFull)
             if (updateFlags & 0x0200) owner_.addonEventCallbackRef()("UNIT_AURA", {unitId});
             if (pvpChanged) owner_.addonEventCallbackRef()("UNIT_FACTION", {unitId});
             if (petChanged) owner_.addonEventCallbackRef()("UNIT_PET", {unitId});
+        }
+        if (member->petGuid != 0) {
+            const bool petPowerKnown = member->petPowerType < 5;
+            for (const auto& petUnitId : groupPetUnitTokens(partyData, owner_.getPlayerGuid(), memberGuid)) {
+                if (petChanged || member->petName != before.petName)
+                    owner_.addonEventCallbackRef()("UNIT_NAME_UPDATE", {petUnitId});
+                if (petChanged || member->petCurHealth != before.petCurHealth ||
+                    member->petMaxHealth != before.petMaxHealth)
+                    owner_.addonEventCallbackRef()("UNIT_HEALTH", {petUnitId});
+                if (petChanged || member->petMaxHealth != before.petMaxHealth)
+                    owner_.addonEventCallbackRef()("UNIT_MAXHEALTH", {petUnitId});
+                if (petChanged || member->petPowerType != before.petPowerType)
+                    owner_.addonEventCallbackRef()("UNIT_DISPLAYPOWER", {petUnitId});
+                if (petPowerKnown && (petChanged || member->petCurPower != before.petCurPower))
+                    owner_.addonEventCallbackRef()(kPowerEvents[member->petPowerType], {petUnitId});
+                if (petPowerKnown && (petChanged || member->petMaxPower != before.petMaxPower))
+                    owner_.addonEventCallbackRef()(kMaxPowerEvents[member->petPowerType], {petUnitId});
+                if (updateFlags & 0x40000) owner_.addonEventCallbackRef()("UNIT_AURA", {petUnitId});
+            }
         }
         // Fired without arguments, as the retail client does - the interface
         // re-reads the whole roster rather than acting on one member. Not
@@ -3849,6 +3926,7 @@ void SocialHandler::handleContactList(network::Packet& packet) {
         owner_.addonEventCallbackRef()("FRIENDLIST_UPDATE", {});
         owner_.addonEventCallbackRef()("FRIENDLIST_SHOW", {});
         if (owner_.lastContactListMaskRef() & 0x2) owner_.addonEventCallbackRef()("IGNORELIST_UPDATE", {});
+        if (owner_.lastContactListMaskRef() & 0x4) owner_.addonEventCallbackRef()("MUTELIST_UPDATE", {});
     }
 }
 
@@ -3869,11 +3947,21 @@ void SocialHandler::handleFriendStatus(network::Packet& packet) {
         if (it != owner_.getPlayerNameCache().end()) playerName = it->second;
     }
 
+    enum : uint8_t {
+        kDbError = 0, kListFull = 1, kOnline = 2, kOffline = 3, kNotFound = 4,
+        kRemoved = 5, kAddedOnline = 6, kAddedOffline = 7, kAlready = 8,
+        kSelf = 9, kEnemy = 10, kIgnoreAdded = 0x0F, kIgnoreRemoved = 0x10,
+        kMuteFull = 0x12, kMuteSelf = 0x13, kMuteNotFound = 0x14,
+        kMuteAlready = 0x15, kMuteAdded = 0x16, kMuteRemoved = 0x17,
+        kMuteAmbiguous = 0x18,
+    };
+
     // Adding someone answers with their guid alone; until the name query comes
     // back, the name is the one this client asked for. The entry is created
     // below and kept the empty name it was given otherwise, and the friends
     // list drew a nameless offline row (pair 11).
-    const bool adding = data.status == 6 || data.status == 7 || data.status == 0x0F;
+    const bool adding = data.status == kAddedOnline || data.status == kAddedOffline ||
+                        data.status == kIgnoreAdded || data.status == kMuteAdded;
     if (playerName.empty() && adding) {
         playerName = lastSocialRequestName_;
         owner_.queryPlayerName(data.guid);
@@ -3882,26 +3970,19 @@ void SocialHandler::handleFriendStatus(network::Packet& packet) {
     // Only update friendsCache when we have a resolved name - inserting an empty
     // key creates a phantom entry that masks the real one when the name arrives.
     if (!playerName.empty()) {
-        if (data.status == 1 || data.status == 2) owner_.friendsCacheRef()[playerName] = data.guid;
-        else if (data.status == 0) owner_.friendsCacheRef().erase(playerName);
+        if (data.status == kOnline || data.status == kOffline ||
+            data.status == kAddedOnline || data.status == kAddedOffline) {
+            owner_.friendsCacheRef()[playerName] = data.guid;
+        } else if (data.status == kRemoved) {
+            owner_.friendsCacheRef().erase(playerName);
+        }
     }
 
-    // AzerothCore's FriendsResult, read off SocialMgr.h rather than guessed.
-    // The numbering here was five places out: zero is a database error and not
-    // a removal, one is a full list and not an addition, and the three results
-    // that matter most - removed, added-online, added-offline - are 5, 6 and 7
-    // where this had "already in your list", "list is full" and "is ignoring
-    // you". So adding a friend announced that the list was full, and a
-    // database error deleted them from it.
-    enum : uint8_t {
-        kDbError = 0, kListFull = 1, kOnline = 2, kOffline = 3, kNotFound = 4,
-        kRemoved = 5, kAddedOnline = 6, kAddedOffline = 7, kAlready = 8,
-        kSelf = 9, kEnemy = 10, kIgnoreAdded = 0x0F, kIgnoreRemoved = 0x10,
-    };
     // Which list changed, for the event 2.4.3 fires before its chat line
     // (pair 11: FRIENDLIST_UPDATE or IGNORELIST_UPDATE, then CHAT_MSG_SYSTEM).
     const char* listEvent = "FRIENDLIST_UPDATE";
     if (data.status == kRemoved) {
+        owner_.friendGuidsRef().erase(data.guid);
         if (cit != owner_.contactsRef().end()) {
             cit->flags &= ~0x1u;
             if (cit->flags == 0) owner_.contactsRef().erase(cit);
@@ -3925,8 +4006,27 @@ void SocialHandler::handleFriendStatus(network::Packet& packet) {
             cit->flags &= ~0x2u;
             if (cit->flags == 0) owner_.contactsRef().erase(cit);
         }
+    } else if (data.status == kMuteAdded) {
+        listEvent = "MUTELIST_UPDATE";
+        if (cit != owner_.contactsRef().end()) {
+            if (!playerName.empty() && playerName != "Unknown") cit->name = playerName;
+            cit->flags |= 0x4;
+        } else {
+            ContactEntry entry;
+            entry.guid = data.guid; entry.name = playerName; entry.flags = 0x4;
+            owner_.contactsRef().push_back(std::move(entry));
+        }
+    } else if (data.status == kMuteRemoved) {
+        listEvent = "MUTELIST_UPDATE";
+        if (cit != owner_.contactsRef().end()) {
+            cit->flags &= ~0x4u;
+            if (cit->flags == 0) owner_.contactsRef().erase(cit);
+        }
+    } else if (data.status >= kMuteFull && data.status <= kMuteAmbiguous) {
+        listEvent = "MUTELIST_UPDATE";
     } else if (data.status == kOnline || data.status == kOffline ||
                data.status == kAddedOnline || data.status == kAddedOffline) {
+        owner_.friendGuidsRef().insert(data.guid);
         const bool nowOnline =
             (data.status == kOnline || data.status == kAddedOnline);
         // chatFlag is the FriendStatus bitmask the packet carries, and it is
@@ -3981,6 +4081,13 @@ void SocialHandler::handleFriendStatus(network::Packet& packet) {
         case 0x0F:          line = "ERR_IGNORE_ADDED_S"; named = true; break;
         case 0x10:          line = "ERR_IGNORE_REMOVED_S"; named = true; break;
         case 0x11:          line = "ERR_IGNORE_AMBIGUOUS"; break;
+        case kMuteFull:     line = "ERR_VOICE_IGNORE_FULL"; break;
+        case kMuteSelf:     line = "ERR_VOICE_IGNORE_SELF"; break;
+        case kMuteNotFound: line = "ERR_VOICE_IGNORE_NOT_FOUND"; break;
+        case kMuteAlready:  line = "ERR_VOICE_IGNORE_ALREADY_S"; named = true; break;
+        case kMuteAdded:    line = "ERR_VOICE_IGNORE_ADDED_S"; named = true; break;
+        case kMuteRemoved:  line = "ERR_VOICE_IGNORE_REMOVED_S"; named = true; break;
+        case kMuteAmbiguous: line = "ERR_VOICE_IGNORE_AMBIGUOUS"; break;
         default:
             LOG_WARNING("SMSG_FRIEND_STATUS: no line for result ", static_cast<int>(data.status));
             break;

@@ -259,8 +259,13 @@ void ChatHandler::registerOpcodes(DispatchTable& table) {
     table[Opcode::SMSG_CHAT_NOT_IN_PARTY] = [this](network::Packet& /*packet*/) {
         owner_.systemGlobal("ERR_NOT_IN_GROUP");
     };
-    table[Opcode::SMSG_CHAT_RESTRICTED] = [this](network::Packet& /*packet*/) {
-        owner_.systemGlobal("ERR_CHAT_RESTRICTED");
+    table[Opcode::SMSG_CHAT_RESTRICTED] = [this](network::Packet& packet) {
+        const uint8_t restriction = packet.hasRemaining(1) ? packet.readUInt8() : 0;
+        switch (restriction) {
+            case 1:  owner_.systemGlobal("ERR_CHAT_THROTTLED"); break;
+            case 2:  owner_.systemGlobal("ERR_USER_SQUELCHED"); break;
+            default: owner_.systemGlobal("ERR_CHAT_RESTRICTED"); break;
+        }
     };
 
     // ---- Channel list ----
@@ -1344,12 +1349,14 @@ namespace {
 // The notice's name as FrameXML reads it: ChatFrame prints
 // format(CHAT_<name>_NOTICE, ...) for CHAT_MSG_CHANNEL_NOTICE(_USER).
 // nullptr: no line (JOINED/LEFT of others, MODE_CHANGE, voice in TBC).
-struct ChannelNotice { const char* name; bool user; };
-ChannelNotice channelNotice(ChannelNotifyType type) {
+struct ChannelNotice { const char* name; bool user; bool joinLeave = false; };
+ChannelNotice channelNotice(const ChannelNotifyData& data) {
     using T = ChannelNotifyType;
-    switch (type) {
+    switch (data.notifyType) {
+        case T::PLAYER_JOINED:         return {"CHAT_MSG_CHANNEL_JOIN", true, true};
+        case T::PLAYER_LEFT:           return {"CHAT_MSG_CHANNEL_LEAVE", true, true};
         case T::YOU_JOINED:            return {"YOU_JOINED", false};
-        case T::YOU_LEFT:              return {"YOU_LEFT", false};
+        case T::YOU_LEFT:              return {data.suspended ? "SUSPENDED" : "YOU_LEFT", false};
         case T::WRONG_PASSWORD:        return {"WRONG_PASSWORD", false};
         case T::NOT_MEMBER:            return {"NOT_MEMBER", false};
         case T::NOT_MODERATOR:         return {"NOT_MODERATOR", false};
@@ -1358,6 +1365,14 @@ ChannelNotice channelNotice(ChannelNotifyType type) {
         case T::PLAYER_NOT_FOUND:      return {"PLAYER_NOT_FOUND", true};
         case T::NOT_OWNER:             return {"NOT_OWNER", false};
         case T::CHANNEL_OWNER:         return {"CHANNEL_OWNER", true};
+        case T::MODE_CHANGE: {
+            const uint8_t diff = static_cast<uint8_t>(data.oldFlags ^ data.newFlags);
+            if (diff & 0x02u) return {(data.newFlags & 0x02u) ? "SET_MODERATOR" : "UNSET_MODERATOR", true};
+            if (diff & 0x08u) return {(data.newFlags & 0x08u) ? "UNSET_VOICE" : "SET_VOICE", true};
+            if (diff & 0x04u) return {(data.newFlags & 0x04u) ? "SET_SPEAK" : "UNSET_SPEAK", true};
+            if (diff & 0x20u) return {(data.newFlags & 0x20u) ? "UNSET_SPEAK" : "SET_SPEAK", true};
+            return {nullptr, false};
+        }
         case T::ANNOUNCEMENTS_ON:      return {"ANNOUNCEMENTS_ON", true};
         case T::ANNOUNCEMENTS_OFF:     return {"ANNOUNCEMENTS_OFF", true};
         case T::MODERATION_ON:         return {"MODERATION_ON", true};
@@ -1379,6 +1394,8 @@ ChannelNotice channelNotice(ChannelNotifyType type) {
         case T::THROTTLED:             return {"THROTTLED", false};
         case T::NOT_IN_AREA:           return {"NOT_IN_AREA", false};
         case T::NOT_IN_LFG:            return {"NOT_IN_LFG", false};
+        case T::VOICE_ON:              return {"VOICE_ON", true};
+        case T::VOICE_OFF:             return {"VOICE_OFF", true};
         default:                       return {nullptr, false};
     }
 }
@@ -1394,7 +1411,7 @@ ChannelNotice channelNotice(ChannelNotifyType type) {
 // Tanaris", pair 15); ChatFrame keeps the line when arg7 is one of the
 // window's zone channel ids or arg9 one of its channel names.
 void ChatHandler::fireChannelNotice(const ChannelNotifyData& data, int number, bool waited, bool changed) {
-    ChannelNotice notice = channelNotice(data.notifyType);
+    ChannelNotice notice = channelNotice(data);
     if (changed) notice.name = "YOU_CHANGED";
     if (!notice.name) {
         LOG_DEBUG("Channel notify type ", static_cast<int>(data.notifyType), " for channel ", data.channelName);
@@ -1422,6 +1439,15 @@ void ChatHandler::fireChannelNotice(const ChannelNotifyData& data, int number, b
     // The realm names the id only in YOU_JOINED and YOU_LEFT; any other
     // notice is about a channel the client holds, with the id it joined under.
     const uint32_t channelId = data.channelId != 0 ? data.channelId : joinedChannelId(data.channelName);
+    if (notice.joinLeave) {
+        char guidBuf[32];
+        std::snprintf(guidBuf, sizeof(guidBuf), "0x%016llX", static_cast<unsigned long long>(data.senderGuid));
+        owner_.addonEventCallbackRef()(notice.name, {
+            "", player, "", shown, "", "", std::to_string(channelId),
+            std::to_string(number), data.channelName, "0", "0", guidBuf
+        });
+        return;
+    }
     owner_.addonEventCallbackRef()(notice.user ? "CHAT_MSG_CHANNEL_NOTICE_USER" : "CHAT_MSG_CHANNEL_NOTICE", {
         notice.name, player, "", shown, second, "", std::to_string(channelId),
         std::to_string(number), data.channelName, "0", "0", "0x0000000000000000"
@@ -1497,6 +1523,12 @@ void ChatHandler::handleChannelNotify(network::Packet& packet) {
                 ownedChannels_.insert(data.channelName);
             } else {
                 ownedChannels_.erase(data.channelName);
+            }
+            fireChannelNotice(data, getChannelIndex(data.channelName));
+            break;
+        case ChannelNotifyType::MODE_CHANGE:
+            if (data.senderGuid != 0) {
+                applyUserlistChange(data.channelName, data.senderGuid, data.newFlags, /*removing=*/false);
             }
             fireChannelNotice(data, getChannelIndex(data.channelName));
             break;
@@ -2048,7 +2080,9 @@ void ChatHandler::submitGmTicket(const std::string& text) {
     pkt.writeFloat(owner_.movementInfoRef().z);
     pkt.writeString(text);
     pkt.writeUInt32(1);  // needResponse = yes
-    pkt.writeUInt8(0);   // needMoreHelp = no
+    if (!isPreWotlk()) {
+        pkt.writeUInt8(0);   // needMoreHelp = no (WotLK 3.x only; TBC reads chatDataLineCount next)
+    }
     pkt.writeUInt32(0);  // no chat-log timestamps
     pkt.writeUInt32(0);  // and so no compressed chat log
     owner_.getSocket()->send(pkt);

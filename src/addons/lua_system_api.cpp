@@ -6194,7 +6194,17 @@ void registerSystemLuaAPI(lua_State* L) {
                 // Voice mutes, which this client has no voice chat to keep.
                 // Read while the ignore list is drawn, so a nil global took
                 // the whole ignore tab with it.
-                {"GetNumMutes",              lua_ReturnZero},
+                {"GetNumMutes",              [](lua_State* L) -> int {
+                    auto* gh = getGameHandler(L);
+                    size_t count = 0;
+                    if (gh) {
+                        for (const auto& c : gh->getContacts()) {
+                            if ((c.flags & 0x4u) != 0) ++count;
+                        }
+                    }
+                    lua_pushnumber(L, count);
+                    return 1;
+                }},
                 {"IsInLFGDungeon",           lua_IsInLFGDungeon},
                 {"LFGTeleport",              lua_LFGTeleport},
                 {"IsBattlefieldArena",       lua_IsBattlefieldArena},
@@ -6930,6 +6940,69 @@ void registerSystemLuaAPI(lua_State* L) {
             return 0;
         }},
                 {"GMSurveySubmit", [](lua_State* L) -> int {
+            if (auto* gh = getGameHandler(L); gh && gh->getSocket()) {
+                uint32_t surveyId = 0;
+                auto* svc = getLuaServices(L);
+                auto* am = gh->services().assetManager;
+                const auto* profile = svc && svc->expansionRegistry ? svc->expansionRegistry->getActive() : nullptr;
+                std::array<uint32_t, 10> questionIds{};
+                if (am && profile) {
+                    static const std::pair<const char*, uint32_t> kLangIds[] = {
+                        {"enUS", 0}, {"enGB", 0}, {"koKR", 1}, {"frFR", 2}, {"deDE", 3},
+                        {"zhCN", 4}, {"zhTW", 5}, {"esES", 6}, {"esMX", 7}};
+                    const auto lang = std::find_if(std::begin(kLangIds), std::end(kLangIds),
+                        [&](const auto& l) { return profile->locale == l.first; });
+                    const auto current = am->loadDBC("GMSurveyCurrentSurvey.dbc");
+                    const auto surveys = am->loadDBC("GMSurveySurveys.dbc");
+                    if (lang != std::end(kLangIds) && current && current->isLoaded() &&
+                        surveys && surveys->isLoaded()) {
+                        const int32_t langRow = current->findRecordById(lang->second);
+                        if (langRow >= 0) {
+                            surveyId = current->getUInt32(langRow, 1);
+                            const int32_t surveyRow = surveys->findRecordById(surveyId);
+                            if (surveyRow >= 0) {
+                                for (uint32_t q = 0; q < 10 && q + 1 < surveys->getFieldCount(); ++q) {
+                                    questionIds[q] = surveys->getUInt32(surveyRow, q + 1);
+                                }
+                            }
+                        }
+                    }
+                }
+                network::Packet pkt(game::wireOpcode(game::Opcode::CMSG_GMSURVEY_SUBMIT));
+                pkt.writeUInt32(surveyId);
+                uint32_t written = 0;
+                lua_getfield(L, LUA_REGISTRYINDEX, "wowee_gm_survey_answers");
+                if (lua_istable(L, -1)) {
+                    for (int i = 1; i <= 10; ++i) {
+                        lua_rawgeti(L, -1, i);
+                        if (lua_istable(L, -1)) {
+                            const uint32_t qid = questionIds[static_cast<size_t>(i - 1)]
+                                ? questionIds[static_cast<size_t>(i - 1)]
+                                : static_cast<uint32_t>(i);
+                            lua_getfield(L, -1, "rank");
+                            const uint8_t rank = static_cast<uint8_t>(luaL_optinteger(L, -1, 0));
+                            lua_pop(L, 1);
+                            lua_getfield(L, -1, "comment");
+                            const char* ansComment = luaL_optstring(L, -1, "");
+                            pkt.writeUInt32(qid);
+                            pkt.writeUInt8(rank);
+                            pkt.writeString(ansComment ? ansComment : "");
+                            lua_pop(L, 1);
+                            ++written;
+                        }
+                        lua_pop(L, 1);
+                    }
+                }
+                lua_pop(L, 1);
+                if (written < 10) {
+                    pkt.writeUInt32(0); // end-of-questions sentinel
+                }
+                lua_getfield(L, LUA_REGISTRYINDEX, "wowee_gm_survey_comment");
+                const char* surveyComment = lua_isstring(L, -1) ? lua_tostring(L, -1) : "";
+                pkt.writeString(surveyComment ? surveyComment : "");
+                lua_pop(L, 1);
+                gh->getSocket()->send(pkt);
+            }
             lua_pushnil(L);
             lua_setfield(L, LUA_REGISTRYINDEX, "wowee_gm_survey_answers");
             lua_pushnil(L);

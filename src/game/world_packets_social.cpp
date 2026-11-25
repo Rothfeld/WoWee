@@ -376,6 +376,16 @@ bool ChannelNotifyParser::parse(network::Packet& packet, ChannelNotifyData& data
             break;
         case T::YOU_LEFT:
             if (packet.hasRemaining(4)) data.channelId = packet.readUInt32();
+            if (packet.hasRemaining(1)) data.suspended = packet.readUInt8();
+            break;
+        case T::MODE_CHANGE:
+            if (packet.hasRemaining(10)) {
+                data.senderGuid = packet.readUInt64();
+                data.oldFlags = packet.readUInt8();
+                data.newFlags = packet.readUInt8();
+            } else if (packet.hasRemaining(8)) {
+                data.senderGuid = packet.readUInt64();
+            }
             break;
         case T::PLAYER_KICKED: case T::PLAYER_BANNED: case T::PLAYER_UNBANNED:
             if (packet.hasRemaining(16)) {

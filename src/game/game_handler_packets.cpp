@@ -2027,26 +2027,59 @@ void GameHandler::registerRemainingOpcodes() {
         addSystemChatMessage("Your party leader is currently Looking for More.");
         packet.skipAll();
     };
-    // uint32 zoneId + uint8 level_min + uint8 level_max - player queued for meeting stone
     dispatchTable_[Opcode::SMSG_MEETINGSTONE_SETQUEUE] = [this](network::Packet& packet) {
-        // uint32 zoneId + uint8 level_min + uint8 level_max - player queued for meeting stone
-        if (packet.hasRemaining(6)) {
-            uint32_t zoneId   = packet.readUInt32();
-            uint8_t  levelMin = packet.readUInt8();
-            uint8_t  levelMax = packet.readUInt8();
-            char buf[128];
-            std::string zoneName = getAreaName(zoneId);
-            if (!zoneName.empty())
-                std::snprintf(buf, sizeof(buf),
-                    "You are now in the Meeting Stone queue for %s (levels %u-%u).",
-                    zoneName.c_str(), levelMin, levelMax);
-            else
-                std::snprintf(buf, sizeof(buf),
-                    "You are now in the Meeting Stone queue for zone %u (levels %u-%u).",
-                    zoneId, levelMin, levelMax);
-            addSystemChatMessage(buf);
-            LOG_INFO("SMSG_MEETINGSTONE_SETQUEUE: zone=", zoneId,
-                     " levels=", static_cast<int>(levelMin), "-", static_cast<int>(levelMax));
+        if (isActiveExpansion("classic")) {
+            if (packet.hasRemaining(6)) {
+                uint32_t zoneId   = packet.readUInt32();
+                uint8_t  levelMin = packet.readUInt8();
+                uint8_t  levelMax = packet.readUInt8();
+                char buf[128];
+                std::string zoneName = getAreaName(zoneId);
+                if (!zoneName.empty())
+                    std::snprintf(buf, sizeof(buf),
+                        "You are now in the Meeting Stone queue for %s (levels %u-%u).",
+                        zoneName.c_str(), levelMin, levelMax);
+                else
+                    std::snprintf(buf, sizeof(buf),
+                        "You are now in the Meeting Stone queue for zone %u (levels %u-%u).",
+                        zoneId, levelMin, levelMax);
+                addSystemChatMessage(buf);
+            }
+            packet.skipAll();
+            return;
+        }
+        // TBC 2.4.3 (CMaNGOS LFGQueue::GroupMakeMeetingStoneQueue*):
+        //   uint32 entry, uint8 status (0=LEFT_QUEUE, 1=IN_QUEUE, 3=OTHER_MEMBER_LEFT,
+        //   4=KICKED_FROM_QUEUE, 5=JOINED_GROUP), [uint8 asLeader on JOINED_GROUP].
+        if (packet.hasRemaining(5)) {
+            const uint32_t entry = packet.readUInt32();
+            const uint8_t status = packet.readUInt8();
+            const uint8_t asLeader = packet.hasRemaining(1) ? packet.readUInt8() : 0;
+            (void)asLeader;
+            std::string name = getLfgDungeonName(entry);
+            if (name.empty()) name = getAreaName(entry);
+            if (name.empty() && entry != 0) name = "Dungeon " + std::to_string(entry);
+            switch (status) {
+                case 0: // LEFT_QUEUE
+                case 4: // KICKED_FROM_QUEUE
+                    if (entry != 0) systemGlobal("ERR_MEETING_STONE_LEFT_QUEUE_S", {name});
+                    break;
+                case 1: // IN_QUEUE
+                    if (!name.empty()) systemGlobal("ERR_MEETING_STONE_IN_QUEUE_S", {name});
+                    break;
+                case 3: // OTHER_MEMBER_LEFT
+                    systemGlobal("ERR_MEETING_STONE_OTHER_MEMBER_LEFT");
+                    break;
+                case 2:
+                case 5: // JOINED_GROUP
+                    systemGlobal("ERR_MEETING_STONE_SUCCESS");
+                    break;
+                default:
+                    break;
+            }
+            fireAddonEvent("MEETINGSTONE_CHANGED", {});
+            LOG_INFO("SMSG_MEETINGSTONE_SETQUEUE: entry=", entry,
+                     " status=", static_cast<int>(status));
         }
         packet.skipAll();
     };
@@ -2079,25 +2112,28 @@ void GameHandler::registerRemainingOpcodes() {
             LOG_INFO("SMSG_MEETINGSTONE_MEMBER_ADDED: guid=0x", std::hex, memberGuid, std::dec);
         }
     };
-    // uint8 reason - failed to join group via meeting stone
-    // 0=target_not_in_lfg, 1=target_in_party, 2=target_invalid_map, 3=target_not_available
     dispatchTable_[Opcode::SMSG_MEETINGSTONE_JOINFAILED] = [this](network::Packet& packet) {
-        // uint8 reason - failed to join group via meeting stone
-        // 0=target_not_in_lfg, 1=target_in_party, 2=target_invalid_map, 3=target_not_available
-        static const char* kMeetingstoneErrors[] = {
-            "Target player is not using the Meeting Stone.",
-            "Target player is already in a group.",
-            "You are not in a valid zone for that Meeting Stone.",
-            "Target player is not available.",
-        };
         if (packet.hasRemaining(1)) {
             uint8_t reason = packet.readUInt8();
             LOG_INFO("SMSG_MEETINGSTONE_JOINFAILED: reason=", static_cast<int>(reason));
             // CMaNGOS answers every CMSG_LFM_SET_AUTOFILL / CMSG_LFG_SET_AUTOJOIN
             // with reason 0 (MEETINGSTONE_FAIL_NONE), including the ones
             // LFMFrame sends at login; 2.4.3 prints nothing for it.
-            // The texts below for 1-3 are not checked against 2.4.3.
             if (reason == 0) return;
+            if (!isActiveExpansion("classic")) {
+                switch (reason) {
+                    case 1: systemGlobal("ERR_MEETING_STONE_MUST_BE_LEADER"); return;
+                    case 2: systemGlobal("ERR_MEETING_STONE_GROUP_FULL"); return;
+                    case 3: systemGlobal("ERR_MEETING_STONE_NO_RAID_GROUP"); return;
+                    default: break;
+                }
+            }
+            static const char* kMeetingstoneErrors[] = {
+                "Target player is not using the Meeting Stone.",
+                "Target player is already in a group.",
+                "You are not in a valid zone for that Meeting Stone.",
+                "Target player is not available.",
+            };
             const char* msg = (reason < 4) ? kMeetingstoneErrors[reason]
                                            : "Meeting Stone: Could not join group.";
             addSystemChatMessage(msg);
@@ -2148,6 +2184,47 @@ void GameHandler::registerRemainingOpcodes() {
     //   uint32  daysUntilOld    (days remaining before escalation)
     //   float   waitTimeHours   (estimated GM wait time)
     dispatchTable_[Opcode::SMSG_GMTICKET_GETTICKET] = [this](network::Packet& packet) {
+        auto days = [](double v) {
+            char out[32];
+            std::snprintf(out, sizeof(out), "%.6f", v);
+            return std::string(out);
+        };
+        if (isPreWotlk()) {
+            // TBC 2.4.3 (CMaNGOS WorldSession::SendGMTicket / SendGMTicketResult):
+            //   uint32 status (6 = GMTICKET_STATUS_HASTEXT, 10 = GMTICKET_STATUS_DEFAULT)
+            //   if status == 6:
+            //     cstring text, uint8 category, float daysTicketAge,
+            //     float daysOldestTicketAge, float daysLastUpdated,
+            //     uint8 escalatedStatus (assignedToGM), uint8 isSeen (openedByGM)
+            if (!packet.hasRemaining(4)) { packet.skipAll(); return; }
+            const uint32_t gmStatus = packet.readUInt32();
+            if (gmStatus == 6 && packet.hasRemaining(1)) {
+                gmTicketText_ = packet.readString();
+                const uint8_t category = packet.hasRemaining(1) ? packet.readUInt8() : 0;
+                const float daysTicketAge = packet.hasRemaining(4) ? packet.readFloat() : 0.0f;
+                const float daysOldestTicketAge = packet.hasRemaining(4) ? packet.readFloat() : 0.0f;
+                const float daysLastUpdated = packet.hasRemaining(4) ? packet.readFloat() : 0.0f;
+                const uint8_t assignedToGM = packet.hasRemaining(1) ? packet.readUInt8() : 0;
+                const uint8_t openedByGM = packet.hasRemaining(1) ? packet.readUInt8() : 0;
+                gmTicketWaitHours_ = std::max(0.0f, (daysOldestTicketAge - daysTicketAge) * 24.0f);
+                gmTicketActive_ = true;
+                fireAddonEvent("UPDATE_TICKET", {
+                    std::to_string(category ? category : 1),
+                    gmTicketText_,
+                    days(daysTicketAge),
+                    days(daysOldestTicketAge),
+                    days(daysLastUpdated),
+                    std::to_string(assignedToGM),
+                    std::to_string(openedByGM),
+                });
+            } else {
+                gmTicketActive_ = false;
+                gmTicketText_.clear();
+                fireAddonEvent("UPDATE_TICKET", {});
+            }
+            packet.skipAll();
+            return;
+        }
         // WotLK 3.3.5a format:
         //   uint8  status  - 6=has open ticket, 3=closed, anything else none
         // If status == 6 (GMTICKET_STATUS_HASTEXT):
@@ -2180,20 +2257,7 @@ void GameHandler::registerRemainingOpcodes() {
             LOG_INFO("SMSG_GMTICKET_GETTICKET: open ticket age=", ageSec,
                      "s wait=", gmTicketWaitHours_, "h");
 
-            // The interface measures all of this in days and works the wait out
-            // itself, as (oldestTicketTime - ticketAge). This packet gives the
-            // wait directly, so the oldest time is the age plus it - which
-            // arrives at the same number the server meant.
-            //
-            // updateTime says how stale the estimate is; anything over an hour
-            // is treated as no estimate at all, and this one was computed from
-            // the packet that just arrived.
             const double ageDays = static_cast<double>(ageSec) / 86400.0;
-            auto days = [](double v) {
-                char out[32];
-                std::snprintf(out, sizeof(out), "%.6f", v);
-                return std::string(out);
-            };
             fireAddonEvent("UPDATE_TICKET", {
                 "1",                                            // category: has one
                 gmTicketText_,
@@ -2208,18 +2272,8 @@ void GameHandler::registerRemainingOpcodes() {
             gmTicketText_.clear();
             addSystemChatMessage("Your GM ticket has been closed.");
             LOG_INFO("SMSG_GMTICKET_GETTICKET: ticket closed");
-            // No arguments at all is how the interface is told there is no
-            // ticket: it reads the first one and stops if it is absent.
             fireAddonEvent("UPDATE_TICKET", {});
         } else {
-            // Everything else is "no ticket", including 10.
-            //
-            // 10 was read as "suspended" and announced in chat, and this is
-            // asked on every login - so an account that had never filed a
-            // ticket was told at each one that the one it did not have had
-            // been suspended. 0x0A is GMTICKET_STATUS_DEFAULT, the answer a
-            // server gives when the player has no ticket at all, which is why
-            // it arrived every time and why nothing else ever followed it.
             gmTicketActive_ = false;
             gmTicketText_.clear();
             LOG_DEBUG("SMSG_GMTICKET_GETTICKET: no open ticket (status=", static_cast<int>(gmStatus), ")");
@@ -3432,8 +3486,24 @@ void GameHandler::registerRemainingOpcodes() {
                       " status=", static_cast<int>(status));
         }
     };
-    // GM ticket status (new/updated); no ticket UI yet
-    registerSkipHandler(Opcode::SMSG_GM_TICKET_STATUS_UPDATE);
+    // SMSG_GM_TICKET_STATUS_UPDATE: uint32 status (1=UPDATED, 2=CLOSED, 3=SURVEY)
+    dispatchTable_[Opcode::SMSG_GM_TICKET_STATUS_UPDATE] = [this](network::Packet& packet) {
+        if (!packet.hasRemaining(4)) { packet.skipAll(); return; }
+        const uint32_t status = packet.readUInt32();
+        if (status == 1) {
+            requestGmTicket();
+        } else if (status == 2) {
+            gmTicketActive_ = false;
+            gmTicketText_.clear();
+            fireAddonEvent("UPDATE_TICKET", {});
+        } else if (status == 3) {
+            gmTicketActive_ = false;
+            gmTicketText_.clear();
+            fireAddonEvent("UPDATE_TICKET", {});
+            fireAddonEvent("GMSURVEY_DISPLAY", {});
+        }
+        packet.skipAll();
+    };
     // Broadcast of another player's collision height change - cosmetic only.
     registerSkipHandler(Opcode::MSG_MOVE_SET_COLLISION_HGT);
     // Client uses this outbound; treat inbound variant as no-op for robustness.
@@ -3556,9 +3626,6 @@ void GameHandler::registerRemainingOpcodes() {
         Opcode::SMSG_IGNORE_DIMINISHING_RETURNS_CHEAT,
         Opcode::SMSG_IGNORE_REQUIREMENTS_CHEAT,
         Opcode::SMSG_INVALIDATE_DANCE,
-        Opcode::SMSG_LFG_PENDING_INVITE,
-        Opcode::SMSG_LFG_PENDING_MATCH,
-        Opcode::SMSG_LFG_PENDING_MATCH_DONE,
         Opcode::SMSG_MOVE_CHARACTER_CHEAT,
         Opcode::SMSG_NOTIFY_DANCE,
         Opcode::SMSG_NOTIFY_DEST_LOC_SPELL_CAST,
@@ -3599,6 +3666,37 @@ void GameHandler::registerRemainingOpcodes() {
         if (!addonEventCallback_) return;
         if (meetingStone) addonEventCallback_("MEETINGSTONE_CHANGED", {});
         addonEventCallback_("LFG_UPDATE", {});
+    };
+    dispatchTable_[Opcode::SMSG_LFG_PENDING_INVITE] = [this](network::Packet& packet) {
+        if (packet.hasRemaining(4)) {
+            tbcLfg_.pendingInviteEntry = packet.readUInt32();
+            fireAddonEvent("LFG_PENDING_REQUEST", {});
+        } else {
+            tbcLfg_.pendingInviteEntry = 0;
+            fireAddonEvent("LFG_PENDING_CANCEL", {});
+        }
+        packet.skipAll();
+    };
+    dispatchTable_[Opcode::SMSG_LFG_PENDING_MATCH] = [this](network::Packet& packet) {
+        if (packet.hasRemaining(4)) {
+            const uint32_t entry = packet.readUInt32();
+            tbcLfg_.pendingMatchEntry = entry;
+            std::string name = getLfgDungeonName(entry);
+            if (name.empty()) name = getAreaName(entry);
+            if (name.empty() && entry != 0) name = "Dungeon " + std::to_string(entry);
+            fireAddonEvent("LFG_MATCH_REQUEST", {name});
+        } else {
+            tbcLfg_.pendingMatchEntry = 0;
+            fireAddonEvent("LFG_MATCH_CANCEL", {});
+        }
+        packet.skipAll();
+    };
+    dispatchTable_[Opcode::SMSG_LFG_PENDING_MATCH_DONE] = [this](network::Packet& packet) {
+        tbcLfg_.pendingInviteEntry = 0;
+        tbcLfg_.pendingMatchEntry = 0;
+        fireAddonEvent("LFG_PENDING_CANCEL", {});
+        fireAddonEvent("LFG_MATCH_CANCEL", {});
+        packet.skipAll();
     };
     dispatchTable_[Opcode::SMSG_LFG_UPDATE] = [this, lfgChanged](network::Packet& packet) {
         requireLfgBytes(packet, 3);

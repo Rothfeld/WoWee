@@ -358,7 +358,9 @@ bool GroupListParser::parse(network::Packet& packet, GroupListData& data,
     if (rem() < (hasBattleGroupFlag ? 4u : 3u)) return false;
     data.groupType = packet.readUInt8();
     if (hasBattleGroupFlag) {
-        packet.readUInt8(); // isBattleGroup, sent by CMaNGOS TBC before subgroup.
+        data.isBattleGroup = (packet.readUInt8() != 0); // isBattleGroup, sent by CMaNGOS TBC before subgroup.
+    } else {
+        data.isBattleGroup = (data.groupType & 0x01) != 0;
     }
     data.subGroup = packet.readUInt8();
     data.flags    = packet.readUInt8();
@@ -396,7 +398,7 @@ bool GroupListParser::parse(network::Packet& packet, GroupListData& data,
     }
 
     if (rem() < 8) return false;
-    packet.readUInt64(); // group GUID
+    data.groupGuid = packet.readUInt64(); // group GUID
     if (hasRoles) {
         if (rem() < 4) return false;
         packet.readUInt32(); // update counter (WotLK)

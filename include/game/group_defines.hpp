@@ -31,6 +31,13 @@ struct GroupMember {
     uint16_t onlineStatus = 0;   // GROUP_UPDATE_FLAG_STATUS bitmask
     bool hasPartyStats = false;  // true once we've received stats
     uint64_t petGuid = 0;        // GROUP_UPDATE_FLAG_PET_GUID, 0 for no pet
+    std::string petName;         // GROUP_UPDATE_FLAG_PET_NAME (0x0800)
+    uint16_t petDisplayId = 0;   // GROUP_UPDATE_FLAG_PET_MODEL_ID (0x1000)
+    uint32_t petCurHealth = 0;   // GROUP_UPDATE_FLAG_PET_CUR_HP (0x2000)
+    uint32_t petMaxHealth = 0;   // GROUP_UPDATE_FLAG_PET_MAX_HP (0x4000)
+    uint8_t petPowerType = 0;    // GROUP_UPDATE_FLAG_PET_POWER_TYPE (0x8000)
+    uint16_t petCurPower = 0;    // GROUP_UPDATE_FLAG_PET_CUR_POWER (0x10000)
+    uint16_t petMaxPower = 0;    // GROUP_UPDATE_FLAG_PET_MAX_POWER (0x20000)
 };
 
 /**
@@ -103,9 +110,11 @@ inline bool groupIsRaid(uint8_t groupType) {
 
 struct GroupListData {
     uint8_t groupType = 0;       // 0 = party, 1 = raid
+    bool isBattleGroup = false;  // TBC CMaNGOS battleground raid flag
     uint8_t subGroup = 0;
     uint8_t flags = 0;
     uint8_t roles = 0;
+    uint64_t groupGuid = 0;      // Group GUID on wire
     uint8_t lootMethod = 0;      ///< 0..4; see lootMethodName
     uint64_t looterGuid = 0;
     uint8_t lootThreshold = 0;
@@ -171,6 +180,29 @@ inline std::vector<std::string> groupUnitTokens(const GroupListData& group, uint
         ++found;
         if (m.guid == guid) {
             if (found <= 4) tokens.push_back("party" + std::to_string(found));
+            break;
+        }
+    }
+    return tokens;
+}
+
+/// Pet unit tokens for a group member's pet ("partypetN" / "raidpetN").
+inline std::vector<std::string> groupPetUnitTokens(const GroupListData& group, uint64_t playerGuid,
+                                                   uint64_t guid) {
+    std::vector<std::string> tokens;
+    if (guid == 0 || guid == playerGuid) return tokens;
+    const bool raid = groupIsRaid(group.groupType);
+    if (raid) {
+        if (const int index = raidRosterIndex(group, playerGuid, guid))
+            tokens.push_back("raidpet" + std::to_string(index));
+    }
+    int found = 0;
+    for (const auto& m : group.members) {
+        if (m.guid == playerGuid) continue;
+        if (raid && m.subGroup != group.subGroup) continue;
+        ++found;
+        if (m.guid == guid) {
+            if (found <= 4) tokens.push_back("partypet" + std::to_string(found));
             break;
         }
     }

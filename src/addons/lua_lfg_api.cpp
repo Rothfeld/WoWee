@@ -251,6 +251,33 @@ void registerLfgLuaAPI(lua_State* L) {
         }
         return 0;
     }},
+    {"AcceptLFGMatch", [](lua_State* L) -> int {
+        if (auto* gh = getGameHandler(L); gh && gh->getSocket()) {
+            gh->tbcLfg().pendingMatchEntry = 0;
+            network::Packet packet(game::wireOpcode(game::Opcode::CMSG_ACCEPT_LFG_MATCH));
+            gh->getSocket()->send(packet);
+            gh->fireAddonEvent("LFG_MATCH_CANCEL", {});
+        }
+        return 0;
+    }},
+    {"DeclineLFGMatch", [](lua_State* L) -> int {
+        if (auto* gh = getGameHandler(L); gh && gh->getSocket()) {
+            gh->tbcLfg().pendingMatchEntry = 0;
+            network::Packet packet(game::wireOpcode(game::Opcode::CMSG_DECLINE_LFG_MATCH));
+            gh->getSocket()->send(packet);
+            gh->fireAddonEvent("LFG_MATCH_CANCEL", {});
+        }
+        return 0;
+    }},
+    {"CancelPendingLFG", [](lua_State* L) -> int {
+        if (auto* gh = getGameHandler(L); gh && gh->getSocket()) {
+            gh->tbcLfg().pendingInviteEntry = 0;
+            network::Packet packet(game::wireOpcode(game::Opcode::CMSG_CANCEL_PENDING_LFG));
+            gh->getSocket()->send(packet);
+            gh->fireAddonEvent("LFG_PENDING_CANCEL", {});
+        }
+        return 0;
+    }},
     {"GetLFGTypes", [](lua_State* L) -> int {
         for (const char* name : {"LFG_TYPE_NONE", "LFG_TYPE_DUNGEON", "LFG_TYPE_RAID",
                                  "LFG_TYPE_QUEST", "LFG_TYPE_ZONE", "LFG_TYPE_HEROIC_DUNGEON"})

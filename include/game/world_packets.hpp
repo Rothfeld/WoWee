@@ -913,6 +913,8 @@ enum class ChannelNotifyType : uint8_t {
     THROTTLED = 0x1F,
     NOT_IN_AREA = 0x20,
     NOT_IN_LFG = 0x21,
+    VOICE_ON = 0x22,
+    VOICE_OFF = 0x23,
 };
 
 /**
@@ -931,6 +933,11 @@ struct ChannelNotifyData {
     /// YOU_JOINED/YOU_LEFT: the ChatChannels.dbc id, zero for a custom channel.
     uint32_t channelId = 0;
     uint8_t channelFlags = 0;
+    /// MODE_CHANGE: previous and new ChannelMemberFlags.
+    uint8_t oldFlags = 0;
+    uint8_t newFlags = 0;
+    /// YOU_LEFT: 0 = left normally, non-zero = suspended.
+    uint8_t suspended = 0;
 
     [[nodiscard]] bool isValid() const { return !channelName.empty(); }
 };

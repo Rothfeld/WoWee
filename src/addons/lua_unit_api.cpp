@@ -36,11 +36,16 @@ static int lua_UnitName(lua_State* L) {
         toLowerInPlace(uidStr);
         uint64_t guid = gh ? resolveUnitGuid(gh, uidStr) : 0;
         const auto* pm = findPartyMember(gh, guid);
+        const auto* pmPet = pm ? nullptr : findPartyMemberByPet(gh, guid);
         const auto object = (gh && guid != 0 && (uidStr == "npc" || uidStr == "questnpc"))
             ? gh->getEntityManager().getEntity(guid) : nullptr;
         if (pm && !pm->name.empty()) {
             lua_pushstring(L, pm->name.c_str());
             lua_pushstring(L, "");
+            return 2;
+        } else if (pmPet && !pmPet->petName.empty()) {
+            lua_pushstring(L, pmPet->petName.c_str());
+            lua_pushnil(L);
             return 2;
         } else if (object && object->getType() == game::ObjectType::GAMEOBJECT) {
             // The object whose gossip or quest window is open. GossipFrame
@@ -98,12 +103,13 @@ static int lua_UnitHealth(lua_State* L) {
     if (unit) {
         lua_pushnumber(L, unitAppearsDeadByDynFlags(gh, unit) ? 0 : unit->getHealth());
     } else {
-        // Fallback: party member stats for out-of-range members
+        // Fallback: party member stats for out-of-range members and their pets
         std::string uidStr(uid);
         toLowerInPlace(uidStr);
         uint64_t guid = gh ? resolveUnitGuid(gh, uidStr) : 0;
         const auto* pm = findPartyMember(gh, guid);
-        lua_pushnumber(L, pm ? pm->curHealth : 0);
+        const auto* pmPet = pm ? nullptr : findPartyMemberByPet(gh, guid);
+        lua_pushnumber(L, pm ? pm->curHealth : (pmPet ? pmPet->petCurHealth : 0));
     }
     return 1;
 }
@@ -119,7 +125,8 @@ static int lua_UnitHealthMax(lua_State* L) {
         toLowerInPlace(uidStr);
         uint64_t guid = gh ? resolveUnitGuid(gh, uidStr) : 0;
         const auto* pm = findPartyMember(gh, guid);
-        lua_pushnumber(L, pm ? pm->maxHealth : 0);
+        const auto* pmPet = pm ? nullptr : findPartyMemberByPet(gh, guid);
+        lua_pushnumber(L, pm ? pm->maxHealth : (pmPet ? pmPet->petMaxHealth : 0));
     }
     return 1;
 }
@@ -157,10 +164,16 @@ static int lua_UnitPower(lua_State* L) {
         toLowerInPlace(uidStr);
         uint64_t guid = gh ? resolveUnitGuid(gh, uidStr) : 0;
         const auto* pm = findPartyMember(gh, guid);
-        // Party stats carry one power and say which it is, so a request for a
-        // different one is answered with nothing rather than with that.
-        const bool same = pm && (!byType || pm->powerType == want);
-        lua_pushnumber(L, same ? interfacePower(pm->powerType, pm->curPower) : 0);
+        const auto* pmPet = pm ? nullptr : findPartyMemberByPet(gh, guid);
+        if (pm) {
+            const bool same = (!byType || pm->powerType == want);
+            lua_pushnumber(L, same ? interfacePower(pm->powerType, pm->curPower) : 0);
+        } else if (pmPet) {
+            const bool same = (!byType || pmPet->petPowerType == want);
+            lua_pushnumber(L, same ? interfacePower(pmPet->petPowerType, pmPet->petCurPower) : 0);
+        } else {
+            lua_pushnumber(L, 0);
+        }
     }
     return 1;
 }
@@ -182,8 +195,16 @@ static int lua_UnitPowerMax(lua_State* L) {
         toLowerInPlace(uidStr);
         uint64_t guid = gh ? resolveUnitGuid(gh, uidStr) : 0;
         const auto* pm = findPartyMember(gh, guid);
-        const bool same = pm && (!byType || pm->powerType == want);
-        lua_pushnumber(L, same ? interfacePower(pm->powerType, pm->maxPower) : 0);
+        const auto* pmPet = pm ? nullptr : findPartyMemberByPet(gh, guid);
+        if (pm) {
+            const bool same = (!byType || pm->powerType == want);
+            lua_pushnumber(L, same ? interfacePower(pm->powerType, pm->maxPower) : 0);
+        } else if (pmPet) {
+            const bool same = (!byType || pmPet->petPowerType == want);
+            lua_pushnumber(L, same ? interfacePower(pmPet->petPowerType, pmPet->petMaxPower) : 0);
+        } else {
+            lua_pushnumber(L, 0);
+        }
     }
     return 1;
 }
@@ -235,12 +256,13 @@ static int lua_UnitExists(lua_State* L) {
     if (unit) {
         lua_pushboolean(L, 1);
     } else {
-        // Party members in other zones don't have entities but still "exist"
+        // Party members and their pets in other zones don't have entities but still "exist"
         auto* gh = getGameHandler(L);
         std::string uidStr(uid);
         toLowerInPlace(uidStr);
         uint64_t guid = gh ? resolveUnitGuid(gh, uidStr) : 0;
-        lua_pushboolean(L, guid != 0 && findPartyMember(gh, guid) != nullptr);
+        lua_pushboolean(L, guid != 0 &&
+                        (findPartyMember(gh, guid) != nullptr || findPartyMemberByPet(gh, guid) != nullptr));
     }
     return 1;
 }
@@ -252,13 +274,16 @@ static int lua_UnitIsDead(lua_State* L) {
     if (unit) {
         lua_pushboolean(L, unit->getHealth() == 0 || unitAppearsDeadByDynFlags(gh, unit));
     } else {
-        // Fallback: party member stats for out-of-range members
+        // Fallback: party member stats for out-of-range members and their pets
         std::string uidStr(uid);
         toLowerInPlace(uidStr);
         uint64_t guid = gh ? resolveUnitGuid(gh, uidStr) : 0;
         const auto* pm = findPartyMember(gh, guid);
+        const auto* pmPet = pm ? nullptr : findPartyMemberByPet(gh, guid);
         // MEMBER_STATUS_DEAD (CMaNGOS GroupMemberStatus); a ghost is not dead.
-        lua_pushboolean(L, pm ? (pm->onlineStatus & 0x04) != 0 : 0);
+        const bool dead = pm ? ((pm->onlineStatus & 0x04) != 0)
+                             : (pmPet ? (pmPet->petMaxHealth > 0 && pmPet->petCurHealth == 0) : false);
+        lua_pushboolean(L, dead);
     }
     return 1;
 }
@@ -1155,6 +1180,12 @@ static int lua_UnitPowerType(lua_State* L) {
         lua_pushstring(L, (pt < 7) ? kLuaPowerNames[pt] : "MANA");
         return 2;
     }
+    if (const auto* pmPet = findPartyMemberByPet(gh, guid)) {
+        uint8_t pt = pmPet->petPowerType;
+        lua_pushnumber(L, pt);
+        lua_pushstring(L, (pt < 7) ? kLuaPowerNames[pt] : "MANA");
+        return 2;
+    }
     lua_pushnumber(L, 0);
     lua_pushstring(L, "MANA");
     return 2;
@@ -1324,7 +1355,27 @@ static int lua_UnitIsPVPSanctuary(lua_State* L) {
     return 1;
 }
 static int lua_UnitIsTalking(lua_State* L) { return luaReturnFalse(L); }
-static int lua_UnitInBattleground(lua_State* L) { return luaReturnNil(L); }
+static int lua_UnitInBattleground(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    if (!gh) return luaReturnNil(L);
+    const char* uid = luaL_optstring(L, 1, "player");
+    std::string uidStr(uid);
+    toLowerInPlace(uidStr);
+    const uint64_t guid = (uidStr == "player") ? gh->getPlayerGuid() : resolveUnitGuid(gh, uidStr);
+    if (guid == 0) return luaReturnNil(L);
+    const auto& party = gh->getPartyData();
+    const bool inBg = party.isBattleGroup || gh->isBattlegroundMap(gh->getCurrentMapId());
+    if (!inBg) return luaReturnNil(L);
+    if (const int idx = game::raidRosterIndex(party, gh->getPlayerGuid(), guid); idx > 0) {
+        lua_pushinteger(L, idx);
+        return 1;
+    }
+    if (guid == gh->getPlayerGuid()) {
+        lua_pushinteger(L, 1);
+        return 1;
+    }
+    return luaReturnNil(L);
+}
 
 /// True for a unit in the player's own group, and for its pet. The party
 /// frames use this to decide whether a unit is one of ours at all.
