@@ -1399,6 +1399,11 @@ Gotchas:
   the key's run as the air move of every frame hides what a fall does to
   its level velocity (it hid a jump that could not get onto a ledge it
   touched).
+- Let go on a slope the sole rests on (a face that is not ground), the body
+  falls with the velocity it had, as one that walks off an edge: native on the
+  52.7 degree side of an Undercity barrel goes on its run a frame and drops
+  0.0111, 0.0322, 0.0532 yd (15 runs of 16;
+  `CameraController::moveFollowedCharacter`).
 - Over the Undercity barrels (1578, 183) WoWee still ends on the floor where
   its two frames on a barrel's side take it more than a yard under the ledge
   (about 1 run in 10): native steps over the ledge's wall from the edge of

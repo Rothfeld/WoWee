@@ -1128,7 +1128,22 @@ glm::vec3 CameraController::moveFollowedCharacter(float /*deltaTime*/, FrameInpu
 
         const float moveLenSq = glm::dot(f.movement, f.movement);
         if (moveLenSq > 1e-6f) f.movement *= glm::inversesqrt(moveLenSq);
-        if (grounded) {
+        if (grounded && bodyOnSlope_ && moveLenSq <= 1e-6f && preserveAirborneMomentum_) {
+            // Let go on a slope the sole rests on - a face that is not
+            // ground - the body falls from it with the velocity it had, as
+            // one that walks off an edge does. Build 8606 come down onto the
+            // 52.7 degree side of a barrel in the Undercity (1578.2, 183.0)
+            // with the forward key released in that frame goes on
+            // (+0.161, -0.166) a frame, its run, and drops 0.0111, 0.0322
+            // and 0.0532 yd in the next three: a free fall from rest with
+            // the level velocity whole (15 runs of 16, in the other it is
+            // turned by the next barrel as it falls;
+            // _experiments/20261124T160500Z.movement_collision_parity_round22
+            // runs_base2/uc_barrel_stop9*, and round 25's runs_c4, runs_c5).
+            // airborneHorizontalVelocity_ is still the velocity of the frame
+            // before, set when it walked.
+            grounded = false;
+        } else if (grounded) {
             // Running jumps retain takeoff velocity even when facing, input,
             // or movement speed changes in flight. Stationary jumps have a
             // distinct drift mode and do not acquire running-jump momentum.

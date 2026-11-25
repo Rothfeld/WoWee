@@ -61,7 +61,9 @@ struct Walker {
     BodyMove frame(const Mesh& mesh, glm::vec3 run, float dt = 1.0f / 30.0f) {
         BodyMove move;
         bool walked = false;
-        if (grounded || !airborneBefore) airMove = run;
+        // Let go on a slope the body falls with the velocity it had (CameraController::moveFollowedCharacter).
+        if (grounded && onSlope && glm::dot(run, run) < 1e-12f) grounded = false;
+        else if (grounded || !airborneBefore) airMove = run;
         airborneBefore = true;
         if (position.z < baseZ) baseZ = position.z;
         const glm::vec3 from = position;
@@ -1251,13 +1253,18 @@ TEST_CASE("A body walks on down a slope its sole rests on", "[body_mover]") {
     REQUIRE(onSlope >= 3);
     REQUIRE(walker.position.z == Catch::Approx(2.0f - tall).margin(0.003));
 
-    // With no move asked for the body falls from the slope, as from a perch.
+    // With no move asked for the body falls from the slope with the velocity
+    // it had: native goes on its run a frame and drops 0.0111 yd in the first
+    // (Undercity barrel, 15 runs of 16).
     Walker idle{.position = {-0.1f, 0.0f, 2.0f}, .baseZ = 2.0f};
     idle.frame(mesh, {kFrameRun, 0.0f, 0.0f});
     REQUIRE(idle.onSlope);
+    const glm::vec3 letGo = idle.position;
     const float left = idle.position.z;
     idle.frame(mesh, {0.0f, 0.0f, 0.0f});
     REQUIRE_FALSE(idle.grounded);
+    CHECK(idle.position.x - letGo.x == Catch::Approx(kFrameRun).margin(1e-3));
+    CHECK(idle.position.z - letGo.z == Catch::Approx(-0.5f * kGravity / 900.0f).margin(2e-3));
     for (int i = 0; i < 40; ++i) idle.frame(mesh, {0.0f, 0.0f, 0.0f});
     REQUIRE(idle.grounded);
     REQUIRE(idle.position.z < left - 0.5f);
