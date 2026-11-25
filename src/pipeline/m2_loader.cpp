@@ -809,6 +809,54 @@ void parseFBlock(const std::vector<uint8_t>& data, uint32_t offset,
 
 } // anonymous namespace
 
+M2AudioEventType parseM2AudioEventTag(const char ident[4]) noexcept {
+    if (!ident || ident[0] != '$') return M2AudioEventType::None;
+    if (std::memcmp(ident, "$SND", 4) == 0) return M2AudioEventType::Sound;
+    if (std::memcmp(ident, "$DTH", 4) == 0) return M2AudioEventType::DeathThud;
+    if (std::memcmp(ident, "$FSD", 4) == 0) return M2AudioEventType::Footstep;
+    if (std::memcmp(ident, "$TRD", 4) == 0) return M2AudioEventType::ArmorFoley;
+    if (std::memcmp(ident, "$CSD", 4) == 0) return M2AudioEventType::CustomSound;
+    if (std::memcmp(ident, "$SCD", 4) == 0) return M2AudioEventType::SpellCastDirected;
+    if (std::memcmp(ident, "$SMG", 4) == 0) return M2AudioEventType::Submerge;
+    if (std::memcmp(ident, "$SMD", 4) == 0) return M2AudioEventType::Submerged;
+    if (std::memcmp(ident, "$DSL", 4) == 0) return M2AudioEventType::DoodadSoundLoop;
+    if (std::memcmp(ident, "$DSO", 4) == 0) return M2AudioEventType::DoodadSoundOneShot;
+    if (std::memcmp(ident, "$CSS", 4) == 0) return M2AudioEventType::CombatSwing;
+    if (std::memcmp(ident, "$CAH", 4) == 0) return M2AudioEventType::CombatAttackHit;
+    if (std::memcmp(ident, "$BWP", 4) == 0) return M2AudioEventType::BowPull;
+    if (std::memcmp(ident, "$BWR", 4) == 0) return M2AudioEventType::BowRelease;
+    if (std::memcmp(ident, "$SHL", 4) == 0) return M2AudioEventType::SheatheLeft;
+    if (std::memcmp(ident, "$SHR", 4) == 0) return M2AudioEventType::SheatheRight;
+    if (std::memcmp(ident, "$ESD", 4) == 0) return M2AudioEventType::EmoteSound;
+    if (ident[1] == 'G' && ident[2] == 'O' && ident[3] >= '0' && ident[3] <= '5') {
+        switch (ident[3]) {
+            case '0': return M2AudioEventType::GameObject0;
+            case '1': return M2AudioEventType::GameObject1;
+            case '2': return M2AudioEventType::GameObject2;
+            case '3': return M2AudioEventType::GameObject3;
+            case '4': return M2AudioEventType::GameObject4;
+            case '5': return M2AudioEventType::GameObject5;
+        }
+    }
+    if (ident[1] == 'G' && ident[2] == 'C' && ident[3] >= '0' && ident[3] <= '3') {
+        switch (ident[3]) {
+            case '0': return M2AudioEventType::GameObjectCustom0;
+            case '1': return M2AudioEventType::GameObjectCustom1;
+            case '2': return M2AudioEventType::GameObjectCustom2;
+            case '3': return M2AudioEventType::GameObjectCustom3;
+        }
+    }
+    if (ident[1] == 'A' && ident[2] == 'H' && ident[3] >= '0' && ident[3] <= '3') {
+        switch (ident[3]) {
+            case '0': return M2AudioEventType::ArmorHit0;
+            case '1': return M2AudioEventType::ArmorHit1;
+            case '2': return M2AudioEventType::ArmorHit2;
+            case '3': return M2AudioEventType::ArmorHit3;
+        }
+    }
+    return M2AudioEventType::None;
+}
+
 int standSequenceIndex(const std::vector<M2Sequence>& sequences,
                        const std::vector<M2Model::PlayableAnimation>& playableLookup) {
     const auto find = [&](uint32_t id) {
@@ -1239,6 +1287,42 @@ M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
                     model.cameraShakeEvents.push_back(std::move(event));
                 }
                 continue;
+            }
+            if (const M2AudioEventType audioType = parseM2AudioEventTag(ident);
+                audioType != M2AudioEventType::None) {
+                M2Model::AudioEvent audioEv;
+                audioEv.type = audioType;
+                std::memcpy(audioEv.tag, ident, 4);
+                audioEv.tag[4] = '\0';
+                audioEv.data = rd32(base + 4);
+                audioEv.bone = static_cast<uint16_t>(rd32(base + 8));
+                std::memcpy(&audioEv.position, m2Data.data() + base + 12, sizeof(glm::vec3));
+                audioEv.times.resize(model.sequences.size());
+                if (wotlkEvents) {
+                    const uint32_t nArrays = rd32(base + trackOfs + 4);
+                    const uint32_t ofsArrays = rd32(base + trackOfs + 8);
+                    for (uint32_t s = 0; s < std::min<uint32_t>(nArrays, model.sequences.size()); s++) {
+                        const uint32_t nTs = rd32(ofsArrays + s * 8);
+                        const uint32_t ofsTs = rd32(ofsArrays + s * 8 + 4);
+                        if (nTs == 0 || nTs > 1024 || ofsTs + nTs * sizeof(uint32_t) > m2Data.size()) continue;
+                        audioEv.times[s] = readArray<uint32_t>(m2Data, ofsTs, nTs);
+                    }
+                } else {
+                    const uint32_t nTs = rd32(base + trackOfs + 12);
+                    const uint32_t ofsTs = rd32(base + trackOfs + 16);
+                    if (nTs > 0 && nTs <= 100000 && ofsTs + nTs * sizeof(uint32_t) <= m2Data.size()) {
+                        for (uint32_t ts : readArray<uint32_t>(m2Data, ofsTs, nTs)) {
+                            for (size_t s = 0; s < vanillaSeqWindows.size() && s < audioEv.times.size(); s++) {
+                                const auto [start, end] = vanillaSeqWindows[s];
+                                if (start < end && ts >= start && ts < end) {
+                                    audioEv.times[s].push_back(ts - start);
+                                }
+                            }
+                        }
+                    }
+                }
+                for (auto& list : audioEv.times) std::sort(list.begin(), list.end());
+                model.audioEvents.push_back(std::move(audioEv));
             }
             const bool isFootstep = std::memcmp(m2Data.data() + base, "$FSD", 4) == 0;
             const bool isWingFlap = std::memcmp(m2Data.data() + base, "$WNG", 4) == 0;

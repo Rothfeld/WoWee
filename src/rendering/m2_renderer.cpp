@@ -27,6 +27,7 @@
 #include "rendering/camera_shake.hpp"
 #include "rendering/footfall_window.hpp"
 #include "rendering/frustum.hpp"
+#include "audio/footstep_manager.hpp"
 #include "pipeline/asset_manager.hpp"
 #include "pipeline/blp_loader.hpp"
 #include "core/logger.hpp"
@@ -1154,6 +1155,7 @@ void M2Renderer::shutdown() {
     destroy(device, shadowPipelineLayout_);
     for (auto& pool : shadowTexPool_) { if (pool) { vkDestroyDescriptorPool(device, pool, nullptr); pool = VK_NULL_HANDLE; } }
     destroyShadowParamsSet(device, alloc, shadowParams_);
+    trackedAudioInstances_.clear();
 
     initialized_ = false;
 }
@@ -1331,10 +1333,11 @@ void M2Renderer::markModelAsSpellEffect(uint32_t modelId) {
     if (it != models.end()) {
         it->second.isSpellEffect = true;
         it->second.isRuntimeSpellVisual = true;
-        // Spell effects MUST have bone animation for ribbons/particles to work.
+        // Spell effects MUST have bone/sequence animation for ribbons/particles/$SND to work.
         // The classifier may have set disableAnimation=true based on name tokens
         // (e.g. "chest" in HolySmite_Low_Chest.m2) - override that for spell effects.
-        if (it->second.disableAnimation && it->second.hasAnimation) {
+        if (it->second.disableAnimation &&
+            (it->second.hasAnimation || !it->second.audioEvents.empty())) {
             it->second.disableAnimation = false;
             LOG_INFO("SpellEffect: re-enabled animation for '", it->second.name, "'");
         }
@@ -1343,7 +1346,7 @@ void M2Renderer::markModelAsSpellEffect(uint32_t modelId) {
 
 void M2Renderer::markModelAsGameObject(uint32_t modelId) {
     auto& model = models.at(modelId);
-    if (model.disableAnimation && model.hasAnimation) {
+    if (model.disableAnimation && (model.hasAnimation || !model.audioEvents.empty())) {
         model.disableAnimation = false;
         LOG_DEBUG("GO model animates: '", model.name, "'");
     }
@@ -1422,7 +1425,8 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId, boo
     bool hasParticles = !model.particleEmitters.empty();
     bool hasRibbons   = !model.ribbonEmitters.empty();
     bool hasLights    = !model.lights.empty();
-    if (!hasGeometry && !hasParticles && !hasRibbons && !hasLights) {
+    bool hasAudio     = !model.audioEvents.empty();
+    if (!hasGeometry && !hasParticles && !hasRibbons && !hasLights && !hasAudio) {
         LOG_WARNING("M2 model has no renderable content: id=", modelId,
                     " name=", model.name.empty() ? "<unnamed>" : model.name);
         return false;
@@ -1562,6 +1566,10 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId, boo
     gpuModel.standSequenceIndex = pipeline::standSequenceIndex(model.sequences, model.playableAnimations);
     gpuModel.globalSequenceDurations = model.globalSequenceDurations;
     gpuModel.cameraShakeEvents = model.cameraShakeEvents;
+    gpuModel.audioEvents = model.audioEvents;
+    if (!gpuModel.audioEvents.empty()) {
+        gpuModel.disableAnimation = false;
+    }
     gpuModel.hasAnimation = false;
     for (const auto& bone : model.bones) {
         // Billboard bones depend on the camera even without animation tracks.
@@ -2617,6 +2625,59 @@ void M2Renderer::emitCameraShakes(const CameraShakeTable& shakes,
                 break;
             }
         }
+    }
+}
+
+void M2Renderer::emitAudioEvents(audio::FootstepManager& footstepManager) {
+    // Stop any $DSL / $GO2 looping handles on instances that were removed or retired.
+    for (auto it = trackedAudioInstances_.begin(); it != trackedAudioInstances_.end();) {
+        const auto idxIt = instanceIndexById.find(*it);
+        if (idxIt == instanceIndexById.end() || idxIt->second >= instances.size() ||
+            instances[idxIt->second].retiring) {
+            footstepManager.stopModelAudioInstance(*it);
+            it = trackedAudioInstances_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+    for (auto& inst : instances) {
+        if (inst.externalPose || inst.retiring || inst.cachedDisableAnimation || !inst.cachedModel) {
+            continue;
+        }
+        const auto& events = inst.cachedModel->audioEvents;
+        if (events.empty()) continue;
+
+        const int sequence = inst.currentSequenceIndex;
+        if (sequence < 0 || static_cast<size_t>(sequence) >= inst.cachedModel->sequences.size()) {
+            footstepManager.stopModelAudioInstance(inst.id);
+            trackedAudioInstances_.erase(inst.id);
+            continue;
+        }
+
+        trackedAudioInstances_.insert(inst.id);
+        const bool heldAtEnd = inst.holdAtEnd && inst.animDuration > 0.0f &&
+                               inst.animTime >= inst.animDuration && inst.animSpeed == 0.0f;
+
+        auto boneWorldPos = [&](uint16_t bone, const glm::vec3& localOffset) -> glm::vec3 {
+            glm::vec3 p = localOffset;
+            if (bone < inst.boneMatrices.size()) {
+                p = glm::vec3(inst.boneMatrices[bone] * glm::vec4(p, 1.0f));
+            }
+            return glm::vec3(inst.modelMatrix * glm::vec4(p, 1.0f));
+        };
+
+        std::function<uint32_t(uint32_t)> goSlotResolver;
+        if (inst.isGameObject && gameObjectSoundResolver_) {
+            const uint32_t instId = inst.id;
+            goSlotResolver = [this, instId](uint32_t slot) {
+                return gameObjectSoundResolver_(instId, slot);
+            };
+        }
+
+        footstepManager.stepModelAudioEvents(
+            inst.id, events, sequence, inst.animTime, inst.animDuration,
+            heldAtEnd, boneWorldPos, goSlotResolver);
     }
 }
 

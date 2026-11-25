@@ -1,4 +1,5 @@
 #include "core/audio_callback_handler.hpp"
+#include "addons/lua_api_registrations.hpp"
 #include "core/coordinates.hpp"
 #include "core/logger.hpp"
 #include "rendering/renderer.hpp"
@@ -8,6 +9,7 @@
 #include "game/game_handler.hpp"
 #include "audio/audio_coordinator.hpp"
 #include "audio/creature_sound_index.hpp"
+#include "audio/footstep_manager.hpp"
 #include "audio/music_manager.hpp"
 #include "audio/audio_engine.hpp"
 #include "audio/sound_entries.hpp"
@@ -15,6 +17,14 @@
 #include "ui/ui_manager.hpp"
 
 namespace wowee { namespace core {
+
+namespace {
+
+bool isPetSoundsEnabled() {
+    return addons::storedCVarValue("Sound_EnablePetSounds", "1") != "0";
+}
+
+} // namespace
 
 AudioCallbackHandler::AudioCallbackHandler(
     pipeline::AssetManager& assetManager,
@@ -43,17 +53,22 @@ void AudioCallbackHandler::setupCallbacks() {
         }
     });
 
-    // Reputation standing tier-up callback - play ReputationLevelUp sound + 3D M2 effect
+    // Reputation standing tier-up callback - 3D M2 ReputationLevelUp.m2 plays 8473 via $SND;
+    // fall back to 2D only when no renderer/animation controller is active.
     gameHandler_.setReputationLevelUpCallback([this]() {
-        const float sfxScale = audioCoordinator_ ? audioCoordinator_->getSfxVolumeScale() : 1.0f;
-        if (sfxScale > 0.0f) {
-            if (const auto* entry = audio::SoundEntryTable::instance().findByName(&assetManager_, "ReputationLevelUp")) {
-                audio::SoundEntryTable::instance().play2D(&assetManager_, entry->id, sfxScale);
-            }
-        }
+        bool triggeredVisual = false;
         if (renderer_) {
             if (auto* ac = renderer_->getAnimationController()) {
                 ac->triggerReputationLevelUpEffect(renderer_->getCharacterPosition());
+                triggeredVisual = true;
+            }
+        }
+        if (!triggeredVisual) {
+            const float sfxScale = audioCoordinator_ ? audioCoordinator_->getSfxVolumeScale() : 1.0f;
+            if (sfxScale > 0.0f) {
+                if (const auto* entry = audio::SoundEntryTable::instance().findByName(&assetManager_, "ReputationLevelUp")) {
+                    audio::SoundEntryTable::instance().play2D(&assetManager_, entry->id, sfxScale);
+                }
             }
         }
     });
@@ -98,7 +113,23 @@ void AudioCallbackHandler::setupCallbacks() {
             glm::vec3 pos = core::coords::canonicalToRender(canonical);
             audio::SoundEntryTable::instance().play3D(&assetManager_, soundId, pos, sfxScale);
         } else {
-            audio::SoundEntryTable::instance().play2D(&assetManager_, soundId, sfxScale);
+            const bool listenerAtChar = !audioCoordinator_ || audioCoordinator_->isListenerAtCharacter();
+            if (listenerAtChar) {
+                audio::SoundEntryTable::instance().play2D(
+                    &assetManager_, soundId, sfxScale * audio::FootstepManager::kLocalSelf2DGain);
+            } else {
+                glm::vec3 pos{0.0f};
+                if (renderer_) {
+                    pos = renderer_->getCharacterPosition();
+                } else if (entity) {
+                    pos = core::coords::canonicalToRender(
+                        glm::vec3{entity->getLatestX(), entity->getLatestY(), entity->getLatestZ()});
+                }
+                audio::SoundEntryTable::instance().play3D(
+                    &assetManager_, soundId,
+                    pos + glm::vec3(0.0f, 0.0f, audio::FootstepManager::kLocalListenerZOffset),
+                    sfxScale);
+            }
         }
     });
 
@@ -144,6 +175,7 @@ void AudioCallbackHandler::setupCallbacks() {
         };
 
         ch->setPetActionSoundCallback([this, ensureCreatureSounds](uint64_t petGuid, uint32_t petTalk) {
+            if (!isPetSoundsEnabled()) return;
             const float sfxScale = audioCoordinator_ ? audioCoordinator_->getSfxVolumeScale() : 1.0f;
             if (sfxScale <= 0.0f) return;
             const auto* idx = ensureCreatureSounds();
@@ -164,6 +196,7 @@ void AudioCallbackHandler::setupCallbacks() {
 
         ch->setPetDismissSoundCallback([this, ensureCreatureSounds](uint32_t creatureSoundDataId,
                                                                      const glm::vec3& serverPos) {
+            if (!isPetSoundsEnabled()) return;
             const float sfxScale = audioCoordinator_ ? audioCoordinator_->getSfxVolumeScale() : 1.0f;
             if (sfxScale <= 0.0f) return;
             const auto* idx = ensureCreatureSounds();

@@ -22,6 +22,43 @@ namespace pipeline {
  */
 
 // Animation sequence data
+enum class M2AudioEventType : uint8_t {
+    None = 0,
+    Sound,              // $SND: event.data = SoundEntries.dbc ID
+    DeathThud,          // $DTH: DeathThudLookups.dbc (SizeClass x TerrainType x inWater)
+    Footstep,           // $FSD: FootstepTerrainLookup.dbc
+    ArmorFoley,         // $TRD: Material.dbc col 2 chest/leg foley
+    CustomSound,        // $CSD: CreatureSoundData CustomAttack[0..3] or direct SoundEntries ID (>= 5)
+    SpellCastDirected,  // $SCD: CreatureSoundData col 34
+    Submerge,           // $SMG: CreatureSoundData col 35
+    Submerged,          // $SMD: CreatureSoundData col 36
+    GameObject0,        // $GO0: GameObjectDisplayInfo Stand (col 2)
+    GameObject1,        // $GO1: GameObjectDisplayInfo Open (col 3)
+    GameObject2,        // $GO2: GameObjectDisplayInfo Loop (col 4)
+    GameObject3,        // $GO3: GameObjectDisplayInfo Close (col 5)
+    GameObject4,        // $GO4: GameObjectDisplayInfo Destroy (col 6)
+    GameObject5,        // $GO5: GameObjectDisplayInfo Opened (col 7)
+    GameObjectCustom0,  // $GC0: GameObjectDisplayInfo Custom0 (col 8)
+    GameObjectCustom1,  // $GC1: GameObjectDisplayInfo Custom1 (col 9)
+    GameObjectCustom2,  // $GC2: GameObjectDisplayInfo Custom2 (col 10)
+    GameObjectCustom3,  // $GC3: GameObjectDisplayInfo Custom3 (col 11)
+    DoodadSoundLoop,    // $DSL: looping SoundEntries.dbc ID in event.data
+    DoodadSoundOneShot, // $DSO: one-shot SoundEntries.dbc ID in event.data
+    CombatSwing,        // $CSS: WeaponSwingSounds2.dbc
+    CombatAttackHit,    // $CAH: WeaponImpactSounds.dbc
+    ArmorHit0,          // $AH0: armor hit slot 0
+    ArmorHit1,          // $AH1: armor hit slot 1
+    ArmorHit2,          // $AH2: armor hit slot 2
+    ArmorHit3,          // $AH3: armor hit slot 3
+    BowPull,            // $BWP: bow/crossbow pull
+    BowRelease,         // $BWR: bow/crossbow release
+    SheatheLeft,        // $SHL: left weapon sheathe/unsheathe
+    SheatheRight,       // $SHR: right weapon sheathe/unsheathe
+    EmoteSound,         // $ESD: Emotes.dbc EmoteSoundID
+};
+
+[[nodiscard]] M2AudioEventType parseM2AudioEventTag(const char ident[4]) noexcept;
+
 struct M2Sequence {
     uint32_t id;                    // Animation ID
     uint32_t variationIndex;        // Sub-animation index
@@ -340,6 +377,20 @@ struct M2Model {
     };
     std::vector<CameraShakeEvent> cameraShakeEvents;
 
+    // Authored M2 audio animation events ($SND, $DTH, $FSD, $TRD, $CSD, $SCD,
+    // $SMG, $SMD, $GO0..5, $GC0..3, $DSL, $DSO, $CSS, $CAH, $AH0..3, $BWP,
+    // $BWR, $SHL, $SHR, $ESD) with event.data, bone anchor, and per-sequence
+    // sorted timestamps in ms from sequence start.
+    struct AudioEvent {
+        M2AudioEventType type = M2AudioEventType::None;
+        char tag[5] = {0, 0, 0, 0, 0};
+        uint32_t data = 0;
+        uint16_t bone = 0;
+        glm::vec3 position{0.0f};
+        std::vector<std::vector<uint32_t>> times;  // per sequence, ms from its start
+    };
+    std::vector<AudioEvent> audioEvents;
+
     // Per-foot ground contacts: events named '$' + F/R/B/S + L/R + digit,
     // authored at z = 0 under each foot and timed in Walk (F), Run (R),
     // WalkBackwards (B) and stop/shuffle (S) sequences. Bear.m2 has $FL0
@@ -439,7 +490,7 @@ struct M2Model {
     // stays the test for code that needs triangles (collision, picking).
     [[nodiscard]] bool hasRenderableContent() const {
         return isValid() || !particleEmitters.empty() || !ribbonEmitters.empty() ||
-               !lights.empty() || !cameraShakeEvents.empty();
+               !lights.empty() || !cameraShakeEvents.empty() || !audioEvents.empty();
     }
 };
 

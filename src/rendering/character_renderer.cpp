@@ -6057,6 +6057,35 @@ void CharacterRenderer::removeInstance(uint32_t instanceId) {
     }
 }
 
+namespace {
+struct LastQueriedCharAudioAnim {
+    const CharacterRenderer* renderer = nullptr;
+    uint32_t instanceId = 0;
+    int baseSeqIndex = -1;
+    float baseTimeMs = 0.0f;
+    bool playReversed = false;
+    int upperSeqIndex = -1;
+    float upperTimeMs = 0.0f;
+};
+thread_local LastQueriedCharAudioAnim tl_lastQueriedCharAudioAnim{};
+} // namespace
+
+bool getLastQueriedCharacterAudioAnim(const CharacterRenderer* renderer, uint32_t instanceId,
+                                      int& outBaseSeqIndex, float& outBaseTimeMs,
+                                      bool& outPlayReversed, int& outUpperSeqIndex,
+                                      float& outUpperTimeMs) {
+    if (!renderer || tl_lastQueriedCharAudioAnim.renderer != renderer ||
+        tl_lastQueriedCharAudioAnim.instanceId != instanceId) {
+        return false;
+    }
+    outBaseSeqIndex = tl_lastQueriedCharAudioAnim.baseSeqIndex;
+    outBaseTimeMs = tl_lastQueriedCharAudioAnim.baseTimeMs;
+    outPlayReversed = tl_lastQueriedCharAudioAnim.playReversed;
+    outUpperSeqIndex = tl_lastQueriedCharAudioAnim.upperSeqIndex;
+    outUpperTimeMs = tl_lastQueriedCharAudioAnim.upperTimeMs;
+    return true;
+}
+
 bool CharacterRenderer::getAnimationState(uint32_t instanceId, uint32_t& animationId,
                                           float& animationTimeMs, float& animationDurationMs) const {
     auto it = instances.find(instanceId);
@@ -6078,6 +6107,15 @@ bool CharacterRenderer::getAnimationState(uint32_t instanceId, uint32_t& animati
     animationId = instance.currentAnimationId;
     animationTimeMs = instance.animationTime;
     animationDurationMs = static_cast<float>(sequences[instance.currentSequenceIndex].duration);
+    tl_lastQueriedCharAudioAnim = LastQueriedCharAudioAnim{
+        this,
+        instanceId,
+        instance.currentSequenceIndex,
+        instance.animationTime,
+        instance.playReversed,
+        instance.upperBodySequenceIndex,
+        instance.upperBodyAnimationTime,
+    };
     return true;
 }
 

@@ -39,6 +39,10 @@ namespace pipeline {
     class AssetManager;
 }
 
+namespace audio {
+    class FootstepManager;
+}
+
 namespace rendering {
 
 class Camera;
@@ -231,6 +235,7 @@ struct M2ModelGPU {
     std::vector<pipeline::M2RibbonEmitter> ribbonEmitters;
     std::vector<pipeline::M2Light> lights;
     std::vector<pipeline::M2Model::CameraShakeEvent> cameraShakeEvents;
+    std::vector<pipeline::M2Model::AudioEvent> audioEvents;
     std::vector<VkTexture*> ribbonTextures;       // Resolved texture per ribbon emitter
     std::vector<VkDescriptorSet> ribbonTexSets;   // Descriptor sets per ribbon emitter
     // M2 material blend mode and render flags the ribbon's materialIndex names
@@ -580,6 +585,17 @@ public:
     /// crossed since the previous frame, attenuated by 3D distance to `cameraPosition`.
     void emitCameraShakes(const CameraShakeTable& shakes, CameraController& cameraController,
                           const glm::vec3& cameraPosition);
+
+    /// Resolves a GameObject M2 instance's GameObjectDisplayInfo sound slot
+    /// (0..5 = $GO0..5 Stand/Open/Loop/Close/Destroy/Opened; 6..9 = $GC0..3 Custom0..3).
+    using GameObjectSoundResolver = std::function<uint32_t(uint32_t instanceId, uint32_t goSlotIndex)>;
+    void setGameObjectSoundResolver(GameObjectSoundResolver resolver) {
+        gameObjectSoundResolver_ = std::move(resolver);
+    }
+
+    /// Trigger authored M2 audio events ($SND, $DSO, $DSL, $GO0..5, $GC0..3)
+    /// crossed since the previous frame in 3D at each event bone's world position.
+    void emitAudioEvents(audio::FootstepManager& footstepManager);
 
     /// Height of the floor a projected texture lands on at (x, y), within
     /// [planeZ - reach, planeZ + reach]. See projected_texture.hpp.
@@ -1374,6 +1390,8 @@ private:
     InteriorLightQuery interiorLightQuery_;
     ObjectLightQuery objectLightQuery_;
     RoomAtQuery roomAtQuery_;
+    GameObjectSoundResolver gameObjectSoundResolver_;
+    std::unordered_set<uint32_t> trackedAudioInstances_;
     std::vector<VisibleEntry> sortedVisible_;  // Reused each frame
     std::vector<VisibleEntry> transparentVisible_; // Only models needing pass 2
     struct TransparentBatchDraw {

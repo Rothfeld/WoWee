@@ -1256,6 +1256,42 @@ wowee_add_test(test_creature_sound_index
             ${CMAKE_SOURCE_DIR}/src/pipeline/dbc_loader.cpp)
 set_tests_properties(creature_sound_index PROPERTIES SKIP_RETURN_CODE 4)
 
+# ── test_audio_shard_e_m2events_loops ────────────────────────
+# TBC 2.4.3 Audio Parity Shard E: M2 audio event tags ($SND, $DTH, $FSD, $TRD,
+# $CSD, $SCD, $SMG, $SMD, $GO0..5, $GC0..3, $DSL, $DSO), DeathThudLookups.dbc,
+# Material.dbc armor foley, drowning loop (3353/5736), and CreatureSoundData col 24 loops
+add_executable(test_audio_shard_e_m2events_loops
+    test_audio_shard_e_m2events_loops.cpp
+    ${TEST_COMMON_SOURCES}
+    ${CMAKE_SOURCE_DIR}/src/audio/audio_engine.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/sound_entries.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/footstep_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/creature_sound_index.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/creature_sound_index_assets.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/asset_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/asset_manifest.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/loose_file_reader.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/dbc_loader.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/dbc_layout.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/blp_loader.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/dds_loader.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/m2_loader.cpp
+    ${CMAKE_SOURCE_DIR}/src/core/memory_monitor.cpp
+)
+target_include_directories(test_audio_shard_e_m2events_loops PRIVATE ${TEST_INCLUDE_DIRS})
+target_include_directories(test_audio_shard_e_m2events_loops SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
+target_compile_definitions(test_audio_shard_e_m2events_loops PRIVATE
+    WOWEE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+target_link_libraries(test_audio_shard_e_m2events_loops PRIVATE
+    catch2_main ZLIB::ZLIB Threads::Threads ${CMAKE_DL_LIBS})
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_audio_shard_e_m2events_loops PRIVATE m)
+endif()
+wowee_test_link_glm(test_audio_shard_e_m2events_loops)
+add_test(NAME audio_shard_e_m2events_loops COMMAND test_audio_shard_e_m2events_loops)
+set_tests_properties(audio_shard_e_m2events_loops PROPERTIES SKIP_RETURN_CODE 4)
+register_test_target(test_audio_shard_e_m2events_loops)
+
 # ── test_ready_stance_data ───────────────────────────────────
 # AnimationData fallback and Bear.m2 sequences behind the melee idle.
 wowee_add_test(test_ready_stance_data

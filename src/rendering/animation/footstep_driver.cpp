@@ -108,6 +108,9 @@ void FootstepDriver::update(float deltaTime, Renderer* renderer,
     uint32_t characterInstanceId = renderer->getCharacterInstanceId();
 
     footstepManager->update(deltaTime);
+    if (auto* m2 = renderer->getM2Renderer()) {
+        m2->emitAudioEvents(*footstepManager);
+    }
 
     if (characterRenderer && mounted && mountInstanceId > 0) {
         uint32_t wingAnimId = 0;
@@ -212,8 +215,12 @@ void FootstepDriver::playStep(Renderer* renderer, uint32_t instanceId) {
         }
         return;
     }
-    footstepManager->playFootstep(renderer->getCharacterRenderer()->getInstanceDisplayId(instanceId),
-                                  *terrainType, wading);
+    const bool bareFeet = (instanceId == renderer->getCharacterInstanceId()) &&
+                          footstepManager->isLocalPlayerBarefoot();
+    const bool listenerAtChar = renderer->getAudioCoordinator()->isListenerAtCharacter();
+    footstepManager->playFootstepAt(
+        renderer->getCharacterRenderer()->getInstanceDisplayId(instanceId),
+        *terrainType, wading, bareFeet, position, /*isLocalPlayer=*/true, listenerAtChar);
 }
 
 bool FootstepDriver::isWading(Renderer* renderer) const {
