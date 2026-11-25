@@ -4988,14 +4988,18 @@ bool WMORenderer::isDisplacedByTransportHull(const glm::vec3& position) const {
     return false;
 }
 
-float WMORenderer::raycastCamera(const glm::vec3& origin, const glm::vec3& direction, float maxDistance) const {
-    return raycastTriangles(origin, direction, maxDistance, true, false);
+float WMORenderer::raycastCamera(const glm::vec3& origin, const glm::vec3& direction, float maxDistance,
+                                 glm::vec3* outWorldNormal) const {
+    return raycastTriangles(origin, direction, maxDistance, true, false, outWorldNormal);
 }
 
 float WMORenderer::raycastTriangles(const glm::vec3& origin, const glm::vec3& direction, float maxDistance,
-                                    bool camera, bool skipTransports) const {
+                                    bool camera, bool skipTransports,
+                                    glm::vec3* outWorldNormal) const {
     QueryTimer timer(&queryTimeMs, &queryCallCount);
     float closestHit = maxDistance;
+    bool foundHit = false;
+    glm::vec3 bestWorldNormal(0.0f, 0.0f, 1.0f);
     // The camera is a solid sphere and every solid surface stops it: floors and
     // ceilings as much as walls. This used to consider the wall list alone,
     // which is pre-filtered to |normal.z| <= 0.65, and then narrowed that to
@@ -5095,9 +5099,10 @@ float WMORenderer::raycastTriangles(const glm::vec3& origin, const glm::vec3& di
                 const glm::vec3& v2 = verts[indices[triStart + 2]];
                 glm::vec3 triNormal = group.triNormals[triStart / 3];
                 if (glm::dot(triNormal, triNormal) < 0.5f) continue;  // degenerate
-                // Ignore near-grazing intersections that tend to come from ramps/arches
-                // and cause camera pull-in even when no meaningful wall is behind the player.
-                if (std::abs(glm::dot(triNormal, localDir)) < MIN_SURFACE_ALIGNMENT) {
+                // Non-camera occlusion rays ignore near-grazing intersections;
+                // camera rays must collide with shallow floors/ramps down to
+                // grazing angles (e.g. 2.1 deg at 48 yd zoom in build 8606).
+                if (!camera && std::abs(glm::dot(triNormal, localDir)) < MIN_SURFACE_ALIGNMENT) {
                     continue;
                 }
 
@@ -5125,11 +5130,24 @@ float WMORenderer::raycastTriangles(const glm::vec3& origin, const glm::vec3& di
                 if (worldDist < MIN_HIT_DISTANCE) continue;
                 if (worldDist < closestHit && worldDist <= maxDistance) {
                     closestHit = worldDist;
+                    foundHit = true;
+                    if (outWorldNormal) {
+                        glm::vec3 wn = glm::transpose(glm::mat3(instance.invModelMatrix)) * triNormal;
+                        const float wnLenSq = glm::dot(wn, wn);
+                        if (wnLenSq > 1e-12f) {
+                            wn *= 1.0f / std::sqrt(wnLenSq);
+                            if (glm::dot(wn, direction) > 0.0f) wn = -wn;
+                            bestWorldNormal = wn;
+                        }
+                    }
                 }
             }
         }
     }
 
+    if (foundHit && outWorldNormal) {
+        *outWorldNormal = bestWorldNormal;
+    }
     return closestHit;
 }
 

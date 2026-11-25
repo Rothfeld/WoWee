@@ -1690,9 +1690,12 @@ float M2Renderer::raycastVisibleGeometry(const glm::vec3& origin, const glm::vec
     return closest;
 }
 
-float M2Renderer::raycastBoundingBoxes(const glm::vec3& origin, const glm::vec3& direction, float maxDistance, uint32_t excludedInstanceId) const {
+float M2Renderer::raycastBoundingBoxes(const glm::vec3& origin, const glm::vec3& direction, float maxDistance, uint32_t excludedInstanceId, glm::vec3* outWorldNormal) const {
     QueryTimer timer(&queryTimeMs, &queryCallCount);
     float closestHit = maxDistance;
+    bool foundHit = false;
+    glm::vec3 bestWorldNormal(0.0f, 0.0f, 1.0f);
+    constexpr float MIN_CAMERA_HIT_DISTANCE = 0.20f;
 
     glm::vec3 rayEnd = origin + direction * maxDistance;
     glm::vec3 queryMin = glm::min(origin, rayEnd) - glm::vec3(1.0f);
@@ -1748,18 +1751,36 @@ float M2Renderer::raycastBoundingBoxes(const glm::vec3& origin, const glm::vec3&
             mesh.gatherTrisInRange(*cells, rangeMin.x, rangeMin.y,
                                   rangeMax.x, rangeMax.y, tl_m2_collisionTriScratch);
             for (uint32_t ti : tl_m2_collisionTriScratch) {
-                const float t = rayTriangleIntersect(localOrigin, localDir,
-                    mesh.vertices[mesh.indices[ti * 3]],
-                    mesh.vertices[mesh.indices[ti * 3 + 1]],
-                    mesh.vertices[mesh.indices[ti * 3 + 2]]);
+                const glm::vec3& v0 = mesh.vertices[mesh.indices[ti * 3]];
+                const glm::vec3& v1 = mesh.vertices[mesh.indices[ti * 3 + 1]];
+                const glm::vec3& v2 = mesh.vertices[mesh.indices[ti * 3 + 2]];
+                const float t = rayTriangleIntersect(localOrigin, localDir, v0, v1, v2);
                 if (t < 0.0f) continue;
                 const glm::vec3 worldHit = glm::vec3(instance.modelMatrix *
                     glm::vec4(localOrigin + localDir * t, 1.0f));
-                closestHit = std::min(closestHit, glm::length(worldHit - origin));
+                const float worldDist = glm::length(worldHit - origin);
+                if (outWorldNormal && worldDist < MIN_CAMERA_HIT_DISTANCE) continue;
+                if (worldDist < closestHit && worldDist <= maxDistance) {
+                    closestHit = worldDist;
+                    foundHit = true;
+                    if (outWorldNormal) {
+                        const glm::vec3 localN = glm::cross(v1 - v0, v2 - v0);
+                        glm::vec3 wn = glm::transpose(glm::mat3(instance.invModelMatrix)) * localN;
+                        const float wnLenSq = glm::dot(wn, wn);
+                        if (wnLenSq > 1e-12f) {
+                            wn *= 1.0f / std::sqrt(wnLenSq);
+                            if (glm::dot(wn, direction) > 0.0f) wn = -wn;
+                            bestWorldNormal = wn;
+                        }
+                    }
+                }
             }
         }
     }
 
+    if (foundHit && outWorldNormal) {
+        *outWorldNormal = bestWorldNormal;
+    }
     return closestHit;
 }
 

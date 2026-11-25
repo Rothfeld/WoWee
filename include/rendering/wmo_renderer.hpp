@@ -556,7 +556,8 @@ public:
     [[nodiscard]] float raycastVisibleGeometry(const glm::vec3& origin, const glm::vec3& direction, float maxDistance) const;
     /// The same ray for the orbit camera: triangles marked MOPY 0x02 (no
     /// camera collision) do not stop it. See wmoTriangleStopsCamera.
-    float raycastCamera(const glm::vec3& origin, const glm::vec3& direction, float maxDistance) const;
+    float raycastCamera(const glm::vec3& origin, const glm::vec3& direction, float maxDistance,
+                        glm::vec3* outWorldNormal = nullptr) const;
 
     /**
      * Limit expensive collision/raycast queries to objects near a focus point.
@@ -603,7 +604,8 @@ public:
 
 private:
     float raycastTriangles(const glm::vec3& origin, const glm::vec3& direction, float maxDistance,
-                           bool camera, bool skipTransports = false) const;
+                           bool camera, bool skipTransports = false,
+                           glm::vec3* outWorldNormal = nullptr) const;
 
     // WMO material UBO - matches WMOMaterial in wmo.frag.glsl
     struct WMOMaterialUBO {

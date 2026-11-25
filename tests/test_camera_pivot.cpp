@@ -339,3 +339,126 @@ TEST_CASE("Terrain holes do not block the camera ray", "[camera][slope]") {
     CHECK(CameraController::raymarchTerrainLimit(pivot, camDir, 10.0f, holedGround)
           == Catch::Approx(10.0f));
 }
+
+TEST_CASE("cameraRayStandoff preserves 0.111 yd wall standoff and keeps near plane above floors", "[camera][floor]") {
+    constexpr float nearPlane = 0.22f;
+    constexpr float vfovDeg = 45.0f;
+    constexpr float aspect = 16.0f / 9.0f;
+    const float hNear = nearPlane * std::tan(glm::radians(vfovDeg) * 0.5f);
+    const float wNear = hNear * aspect;
+
+    auto basisFor = [](float yawDeg, float pitchDeg) {
+        const float ry = glm::radians(yawDeg);
+        const float rp = glm::radians(pitchDeg);
+        const glm::vec3 fwd(std::cos(ry) * std::cos(rp),
+                            std::sin(ry) * std::cos(rp),
+                            std::sin(rp));
+        const glm::vec3 right(std::sin(ry), -std::cos(ry), 0.0f);
+        const glm::vec3 up(-std::cos(ry) * std::sin(rp),
+                           -std::sin(ry) * std::sin(rp),
+                           std::cos(rp));
+        return std::tuple{fwd, right, up};
+    };
+
+    SECTION("Perpendicular wall keeps exact 0.111 yd build-8606 standoff") {
+        const auto [fwd, right, up] = basisFor(0.0f, 0.0f);
+        const glm::vec3 rayDir = -fwd;
+        const glm::vec3 wallNormal(1.0f, 0.0f, 0.0f);
+        CHECK(CameraController::cameraRayStandoff(
+                  rayDir, wallNormal, fwd, right, up, nearPlane, vfovDeg, aspect)
+              == Catch::Approx(CameraController::kCameraWallStandoff));
+    }
+
+    SECTION("Grazing side wall keeps 16:9 near-plane corners outside the wall plane") {
+        const auto [fwd, right, up] = basisFor(0.0f, 0.0f);
+        const glm::vec3 rayDir = -fwd;
+        // Side wall angled 15 deg to the camera ray (cosInc = sin(15 deg) = 0.2588).
+        const glm::vec3 wallNormal = glm::normalize(glm::vec3(std::sin(glm::radians(15.0f)),
+                                                               std::cos(glm::radians(15.0f)),
+                                                               0.0f));
+        const float standoff = CameraController::cameraRayStandoff(
+            rayDir, wallNormal, fwd, right, up, nearPlane, vfovDeg, aspect);
+        // Check all 4 near-plane corners stay outside the wall plane (hit at origin).
+        const glm::vec3 eyePos = -rayDir * standoff;
+        for (float sx : {-1.0f, 1.0f}) {
+            for (float sy : {-1.0f, 1.0f}) {
+                const glm::vec3 corner = eyePos + fwd * nearPlane + right * (sx * wNear) + up * (sy * hNear);
+                CHECK(glm::dot(corner, wallNormal) > 0.0f);
+            }
+        }
+    }
+
+    SECTION("Flat and sloped WMO/M2 floors keep all 4 near-plane corners strictly above floor") {
+        // Sapphiron's Lair reproduction: flat floor at Z = 137.598, pivot 1.44 yd above floor.
+        constexpr float floorZ = 137.598f;
+        const glm::vec3 pivot(3502.25f, -5213.45f, floorZ + 1.44f);
+        const glm::vec3 floorNormal(0.0f, 0.0f, 1.0f);
+        const float verticalFeelerOffset = std::max(CameraController::kCameraSphereClearance,
+                                                    hNear + CameraController::kCameraNearMargin);
+
+        for (float pitchDeg : {2.1f, 5.85f, 12.3f, 20.0f, 35.0f}) {
+            const auto [fwd, right, up] = basisFor(0.0f, pitchDeg);
+            const glm::vec3 rayDir = -fwd;
+            // Center ray + lower vertical feeler ray against z = floorZ.
+            const float centerHit = (pivot.z - floorZ) / (-rayDir.z);
+            const float standoff = CameraController::cameraRayStandoff(
+                rayDir, floorNormal, fwd, right, up, nearPlane, vfovDeg, aspect);
+            const float lowHit = ((pivot.z - verticalFeelerOffset) - floorZ) / (-rayDir.z);
+            const float dist = std::min(centerHit - standoff, lowHit);
+
+            const glm::vec3 eyePos = pivot + rayDir * dist;
+            CHECK(eyePos.z > floorZ + 0.09f);
+            for (float sx : {-1.0f, 1.0f}) {
+                for (float sy : {-1.0f, 1.0f}) {
+                    const glm::vec3 corner = eyePos + fwd * nearPlane + right * (sx * wNear) + up * (sy * hNear);
+                    CHECK(corner.z > floorZ);
+                }
+            }
+        }
+    }
+
+    SECTION("Near-parallel doorway edge stays bounded and never collapses zoom to zero") {
+        const auto [fwd, right, up] = basisFor(0.0f, 0.0f);
+        const glm::vec3 rayDir = -fwd;
+        // 0.2 deg grazing normal on a doorway pillar 5 yd behind the player.
+        const glm::vec3 edgeNormal = glm::normalize(glm::vec3(std::sin(glm::radians(0.2f)), 1.0f, 0.0f));
+        const float standoff = CameraController::cameraRayStandoff(
+            rayDir, edgeNormal, fwd, right, up, nearPlane, vfovDeg, aspect);
+        CHECK(standoff < 1.5f);
+        CHECK(5.0f - standoff > 3.5f);
+    }
+}
+
+TEST_CASE("Stepped snowbank ledge catches lower vertical feeler before near plane slices lip", "[camera][floor]") {
+    // Reproduces Sapphiron's Lair Spot A: player stands on snowbank Z = 138.70
+    // extending out to x = -13.8 yd behind pivot, dropping to grating Z = 137.41.
+    constexpr float snowZ = 138.70f;
+    constexpr float gratingZ = 137.41f;
+    constexpr float cliffX = -13.8f;
+    const glm::vec3 pivot(0.0f, 0.0f, snowZ + 1.864f);
+    constexpr float nearPlane = 0.22f;
+    constexpr float vfovDeg = 45.0f;
+    const float hNear = nearPlane * std::tan(glm::radians(vfovDeg) * 0.5f);
+    const float feelerDrop = std::max(CameraController::kCameraSphereClearance,
+                                      hNear + CameraController::kCameraNearMargin);
+
+    // At pitch = +7.6 deg, the center ray passes ~0.04 yd OVER the snowbank lip at x = -13.8
+    // and would hit the lower grating, leaving the snowbank lip inside the 0.091 yd near plane.
+    const float pitchRad = glm::radians(7.6f);
+    const glm::vec3 rayDir(-std::cos(pitchRad), 0.0f, -std::sin(pitchRad));
+    const float tAtCliff = cliffX / rayDir.x;
+    const float centerZAtCliff = pivot.z + rayDir.z * tAtCliff;
+    REQUIRE(centerZAtCliff > snowZ);  // center ray misses snowbank top!
+
+    // Lower vertical feeler ray intersects the snowbank top before reaching cliffX.
+    const float feelerHitT = ((pivot.z - feelerDrop) - snowZ) / (-rayDir.z);
+    const float feelerHitX = rayDir.x * feelerHitT;
+    REQUIRE(feelerHitX > cliffX);  // hits finite snowbank slab before cliff drop-off!
+
+    const glm::vec3 eyePos = pivot + rayDir * feelerHitT;
+    const glm::vec3 viewFwd(std::cos(pitchRad), 0.0f, std::sin(pitchRad));
+    const glm::vec3 viewUp(-std::sin(pitchRad), 0.0f, std::cos(pitchRad));
+    const glm::vec3 nearBot = eyePos + viewFwd * nearPlane - viewUp * hNear;
+    CHECK(nearBot.z > snowZ);
+    CHECK(nearBot.z > gratingZ);
+}

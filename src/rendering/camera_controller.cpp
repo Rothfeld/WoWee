@@ -2533,6 +2533,7 @@ void CameraController::groundFollowedCharacter(float deltaTime, FrameInput& f,
 // tunnel roof, and the first-person threshold where the character is hidden.
 void CameraController::updateOrbitCamera(float deltaTime, FrameInput& f,
                                          const glm::vec3& targetPos) {
+    minAllowedCameraZ_ = -std::numeric_limits<float>::infinity();
     // ===== WoW-style orbit camera =====
     // Native 2.4.3 keeps the pivot at a constant height over the feet across
     // flat ground and slopes (no terrain pivot lift).
@@ -2582,11 +2583,94 @@ void CameraController::updateOrbitCamera(float deltaTime, FrameInput& f,
     glm::vec3 camDir = -f.forward3D;  // Camera looks at pivot, so it's behind
 
     if ((wmoRenderer || m2Renderer || terrainManager) && currentDistance > MIN_DISTANCE) {
+        if (!externalFollow_ && currentDistance > COLLISION_FOCUS_RADIUS_THIRD_PERSON - 2.0f) {
+            const float camFocusRadius = currentDistance + 2.0f;
+            if (wmoRenderer) wmoRenderer->setCollisionFocus(targetPos, camFocusRadius);
+            if (m2Renderer) m2Renderer->setCollisionFocus(targetPos, camFocusRadius);
+        }
+
+        const float nearPlane = camera ? camera->getNearPlane() : 0.22f;
+        const float vfovDeg = camera ? camera->getFovDegrees() : 45.0f;
+        const float aspect = camera ? camera->getAspectRatio() : (16.0f / 9.0f);
+        const float hNear = nearPlane * std::tan(glm::radians(vfovDeg) * 0.5f);
+        const float ry = glm::radians(yaw);
+        const float rp = glm::radians(pitch);
+        const glm::vec3 viewFwd(std::cos(ry) * std::cos(rp),
+                                std::sin(ry) * std::cos(rp),
+                                std::sin(rp));
+        const glm::vec3 viewRight(std::sin(ry), -std::cos(ry), 0.0f);
+        const glm::vec3 viewUp(-std::cos(ry) * std::sin(rp),
+                               -std::sin(ry) * std::sin(rp),
+                               std::cos(rp));
+        const float verticalFeelerOffset = std::min(
+            std::max(kCameraSphereClearance, hNear + kCameraNearMargin),
+            std::max(0.0f, (pivot.z - targetPos.z) * 0.5f));
+
         auto limitAlongDir = [&](const glm::vec3& dir) -> float {
-            traceWmoHit_ = wmoRenderer ? wmoRenderer->raycastCamera(pivot, dir, currentDistance) : currentDistance;
-            traceM2Hit_ = m2Renderer ? m2Renderer->raycastBoundingBoxes(pivot, dir, currentDistance) : currentDistance;
-            const float hit = std::min(traceWmoHit_, traceM2Hit_);
-            float lim = (hit >= currentDistance) ? currentDistance : std::max(MIN_DISTANCE, hit - CAMERA_WALL_STANDOFF);
+            const float maxProbeDist = currentDistance + CAMERA_WALL_STANDOFF;
+            glm::vec3 wmoNormal(0.0f, 0.0f, 1.0f);
+            glm::vec3 m2Normal(0.0f, 0.0f, 1.0f);
+            traceWmoHit_ = wmoRenderer
+                ? wmoRenderer->raycastCamera(pivot, dir, maxProbeDist, &wmoNormal)
+                : maxProbeDist;
+            traceM2Hit_ = m2Renderer
+                ? m2Renderer->raycastBoundingBoxes(pivot, dir, maxProbeDist, 0, &m2Normal)
+                : maxProbeDist;
+            const bool useWmo = traceWmoHit_ <= traceM2Hit_;
+            const float hit = useWmo ? traceWmoHit_ : traceM2Hit_;
+            const glm::vec3 hitNormal = useWmo ? wmoNormal : m2Normal;
+
+            float lim = currentDistance;
+            if (hit < maxProbeDist) {
+                const float standoff = cameraRayStandoff(
+                    dir, hitNormal, viewFwd, viewRight, viewUp, nearPlane, vfovDeg, aspect);
+                lim = std::min(lim, std::max(MIN_DISTANCE, hit - standoff));
+            }
+
+            // Parallel vertical sphere/frustum feeler rays catch shallow/grazing
+            // floors (down to < 1 deg at 48 yd zoom), floors right in front of
+            // wall corners, uphill stairs, and finite step/snowbank drop-offs
+            // where the center ray skims centimetres above the lip while the
+            // near-plane bottom would slice into the surface underneath.
+            auto applyVerticalFeeler = [&](float zSign) {
+                const glm::vec3 feelerOrigin = pivot + glm::vec3(0.0f, 0.0f, zSign * verticalFeelerOffset);
+                glm::vec3 fWmoNormal(0.0f, 0.0f, 1.0f);
+                glm::vec3 fM2Normal(0.0f, 0.0f, 1.0f);
+                const float fWmoHit = wmoRenderer
+                    ? wmoRenderer->raycastCamera(feelerOrigin, dir, maxProbeDist, &fWmoNormal)
+                    : maxProbeDist;
+                const float fM2Hit = m2Renderer
+                    ? m2Renderer->raycastBoundingBoxes(feelerOrigin, dir, maxProbeDist, 0, &fM2Normal)
+                    : maxProbeDist;
+                const bool fUseWmo = fWmoHit <= fM2Hit;
+                const float fHit = fUseWmo ? fWmoHit : fM2Hit;
+                if (fHit < maxProbeDist) {
+                    glm::vec3 n = fUseWmo ? fWmoNormal : fM2Normal;
+                    const float nLenSq = glm::dot(n, n);
+                    if (nLenSq > 1e-8f) {
+                        n *= 1.0f / std::sqrt(nLenSq);
+                        if (glm::dot(n, dir) > 0.0f) n = -n;
+                    } else {
+                        n = -dir;
+                    }
+                    // When feelerOrigin is shifted toward the surface normal
+                    // (e.g. zSign = -1 against a floor n.z ~ +1), stopping at
+                    // fHit already places the camera eye at verticalFeelerOffset
+                    // perpendicular clearance with zero step jump. Against
+                    // vertical walls (n.z ~ 0), preserve CAMERA_WALL_STANDOFF.
+                    const float alignedCover = std::max(0.0f, -zSign * n.z);
+                    const float wallWeight = std::clamp(1.0f - alignedCover, 0.0f, 1.0f);
+                    lim = std::min(lim, std::max(MIN_DISTANCE, fHit - CAMERA_WALL_STANDOFF * wallWeight));
+                }
+            };
+
+            if (!swimming && verticalFeelerOffset > 0.01f) {
+                applyVerticalFeeler(-1.0f);
+                if (dir.z > 0.0f) {
+                    applyVerticalFeeler(1.0f);
+                }
+            }
+
             if (!cachedInsideInteriorWMO) {
                 const float terrainLimit = raymarchTerrainCameraLimit(pivot, dir, currentDistance);
                 traceTerrainLimit_ = terrainLimit;
@@ -2699,11 +2783,10 @@ void CameraController::updateOrbitCamera(float deltaTime, FrameInput& f,
     smoothedCamPos = actualCam;
 
     // ===== Final floor clearance check =====
-    // Use WMO-aware floor so the camera doesn't pop above tunnels/caves.
-    // Skipped in indoor groups (MOGP 0x2000) only. The box of an outdoor
-    // group is open ground: Orgrimmar's valleys and the Sunwell Plateau
-    // entrance lie inside such boxes, and the camera kept above the ground
-    // everywhere else could sink into it there.
+    // Outdoor heightfield clamping runs only outside indoor WMO groups
+    // (MOGP 0x2000), so underground crypts/dungeons are never pushed up to
+    // terrain overhead. Orgrimmar's valleys and the Sunwell Plateau entrance
+    // lie inside exterior WMO boxes and still enforce terrain clearance here.
     if (!cachedInsideInteriorWMO) {
         const std::optional<float> camTerrainH = getTerrainFloorAt(smoothedCamPos.x, smoothedCamPos.y);
         std::optional<float> camWmoH;
@@ -2711,8 +2794,9 @@ void CameraController::updateOrbitCamera(float deltaTime, FrameInput& f,
             // Skip expensive WMO floor query if camera barely moved
             float cdx = smoothedCamPos.x - lastCamFloorQueryPos.x;
             float cdy = smoothedCamPos.y - lastCamFloorQueryPos.y;
+            float cdz = smoothedCamPos.z - lastCamFloorQueryPos.z;
             float camDeltaSq = cdx * cdx + cdy * cdy;
-            if (camDeltaSq < 0.09f && hasCachedCamFloor) {
+            if (camDeltaSq < 0.09f && std::abs(cdz) < 0.05f && hasCachedCamFloor) {
                 camWmoH = cachedCamWmoFloor;
             } else {
                 camWmoH = wmoRenderer->getFloorHeight(
@@ -2734,6 +2818,65 @@ void CameraController::updateOrbitCamera(float deltaTime, FrameInput& f,
         auto groundH = cameraTerrainFloor(smoothedCamPos.x, smoothedCamPos.y, targetPos);
         if (groundH && (!camFloorH || *groundH > *camFloorH)) camFloorH = groundH;
         smoothedCamPos = clampCameraAboveFloor(smoothedCamPos, camFloorH);
+        if (camFloorH) {
+            minAllowedCameraZ_ = std::max(minAllowedCameraZ_, *camFloorH + kTerrainCameraClearance);
+        }
+    }
+
+    // Both indoors and outdoors, keep the camera eye and near-plane bottom
+    // clear of walkable WMO/M2 floors within a tight local band around the
+    // camera (catches stepped ledges 0.22 yd ahead of the eye and indoor
+    // dungeon/raid floors without ever snapping onto overhead ceilings,
+    // bridges, or M2 props above the camera).
+    if (!swimming && actualDist >= FIRST_PERSON_DISTANCE && (wmoRenderer || m2Renderer)) {
+        const float nearPlane = camera ? camera->getNearPlane() : 0.22f;
+        const float vfovDeg = camera ? camera->getFovDegrees() : 45.0f;
+        const float hNear = nearPlane * std::tan(glm::radians(vfovDeg) * 0.5f);
+        const float ry = glm::radians(yaw);
+        const float rp = glm::radians(pitch);
+        const glm::vec3 viewFwd(std::cos(ry) * std::cos(rp),
+                                std::sin(ry) * std::cos(rp),
+                                std::sin(rp));
+        const glm::vec3 viewUp(-std::cos(ry) * std::sin(rp),
+                               -std::sin(ry) * std::sin(rp),
+                               std::cos(rp));
+        const glm::vec3 nearBot = smoothedCamPos + viewFwd * nearPlane - viewUp * hNear;
+        const float nearBotRelZ = std::min(0.0f, nearPlane * viewFwd.z - hNear * viewUp.z);
+        const float reqStructClearance = std::max(kCameraSphereClearance, -nearBotRelZ + kCameraNearMargin);
+        const float probeTopZ = std::min(pivot.z - 0.05f, smoothedCamPos.z + 0.18f);
+        const float probeMinZ = smoothedCamPos.z - 0.35f;
+
+        if (probeTopZ > probeMinZ) {
+            std::optional<float> bestStructFloor;
+            auto probePoint = [&](float qx, float qy) {
+                if (wmoRenderer) {
+                    float nz = 0.0f;
+                    const auto wh = wmoRenderer->getFloorHeight(qx, qy, probeTopZ, &nz, smoothedCamPos.z);
+                    if (wh && *wh <= probeTopZ && *wh >= probeMinZ && nz >= 0.5f) {
+                        if (!bestStructFloor || *wh > *bestStructFloor) bestStructFloor = *wh;
+                    }
+                }
+                if (m2Renderer) {
+                    float nz = 0.0f;
+                    // M2Renderer::getFloorHeight accepts hits up to glZ + 3.0f, so
+                    // strictly filter *mh <= probeTopZ here to reject overhead props.
+                    const auto mh = m2Renderer->getFloorHeight(qx, qy, probeTopZ, &nz);
+                    if (mh && *mh <= probeTopZ && *mh >= probeMinZ && nz >= 0.5f) {
+                        if (!bestStructFloor || *mh > *bestStructFloor) bestStructFloor = *mh;
+                    }
+                }
+            };
+            probePoint(smoothedCamPos.x, smoothedCamPos.y);
+            probePoint(nearBot.x, nearBot.y);
+
+            if (bestStructFloor) {
+                const float minZ = *bestStructFloor + reqStructClearance;
+                if (smoothedCamPos.z < minZ) {
+                    smoothedCamPos.z = minZ;
+                }
+                minAllowedCameraZ_ = std::max(minAllowedCameraZ_, minZ);
+            }
+        }
     }
 
     if (waterCameraBoundary) {
@@ -3831,7 +3974,11 @@ void CameraController::update(float deltaTime) {
     }
     lastShakeOffset_ = totalShakeOffset;
     if (camera && (totalShakeOffset.x != 0.0f || totalShakeOffset.y != 0.0f || totalShakeOffset.z != 0.0f)) {
-        camera->setPosition(camera->getPosition() + totalShakeOffset);
+        glm::vec3 shakenPos = camera->getPosition() + totalShakeOffset;
+        if (followTarget && std::isfinite(minAllowedCameraZ_) && shakenPos.z < minAllowedCameraZ_) {
+            shakenPos.z = minAllowedCameraZ_;
+        }
+        camera->setPosition(shakenPos);
     }
 
     // Scaled by the same setting as the shake above, because it is the same

@@ -857,6 +857,51 @@ public:
         return camPos;
     }
 
+    /// Minimum perpendicular eye clearance (yards) kept from WMO/M2 surfaces
+    /// hit by the orbit camera ray, plus extra near-plane corner margin.
+    static constexpr float kCameraSphereClearance = 0.095f;
+    static constexpr float kCameraNearMargin = 0.015f;
+    static constexpr float kCameraWallStandoff = 0.111f;
+
+    /// Ray-direction standoff distance to subtract from a WMO/M2 hit along
+    /// `rayDir` (unit vector from pivot toward camera) against a surface with
+    /// normal `hitNormal`, keeping both the camera sphere (`kCameraSphereClearance`)
+    /// and all four corners of the rendered near plane (`nearPlane`, `vfovDeg`,
+    /// `aspect` along `viewFwd`/`viewRight`/`viewUp`) outside the hit plane.
+    ///
+    /// Against steep walls (`viewFwd · n > 0`), the near plane sits in front of
+    /// the eye away from the wall, so this reduces to `kCameraWallStandoff`
+    /// (`0.111 yd`, matching build 8606 Shattrath wall probes). Against floors,
+    /// ramps, and grazing side walls, it scales perpendicular clearance by
+    /// `1 / cos(incidence)` (bounded at `cos >= 0.15` so grazing doorway edges
+    /// never collapse zoom to zero).
+    [[nodiscard]] static float cameraRayStandoff(const glm::vec3& rayDir,
+                                                 const glm::vec3& hitNormal,
+                                                 const glm::vec3& viewFwd,
+                                                 const glm::vec3& viewRight,
+                                                 const glm::vec3& viewUp,
+                                                 float nearPlane,
+                                                 float vfovDeg,
+                                                 float aspect) {
+        const float nLenSq = glm::dot(hitNormal, hitNormal);
+        if (nLenSq < 1e-8f) {
+            return kCameraWallStandoff;
+        }
+        glm::vec3 n = hitNormal * (1.0f / std::sqrt(nLenSq));
+        if (glm::dot(n, rayDir) > 0.0f) {
+            n = -n;
+        }
+        const float cosInc = std::max(glm::dot(n, -rayDir), 0.15f);
+        const float hNear = nearPlane * std::tan(glm::radians(vfovDeg) * 0.5f);
+        const float wNear = hNear * aspect;
+        const float frustumPerp = wNear * std::abs(glm::dot(viewRight, n)) +
+                                  hNear * std::abs(glm::dot(viewUp, n)) -
+                                  nearPlane * glm::dot(viewFwd, n) +
+                                  kCameraNearMargin;
+        const float perp = std::max(kCameraSphereClearance, frustumPerp);
+        return std::max(kCameraWallStandoff, perp / cosInc);
+    }
+
     struct OrbitPitchContactResult {
         float orbitPitch = 0.0f;
         glm::vec3 camDir{0.0f};
@@ -1258,6 +1303,7 @@ private:
     float shakeScale_     = 1.0f;  ///< the player's Camera shake setting
     CameraShakeState dbcShakeState_;
     glm::vec3 lastShakeOffset_{0.0f};
+    float minAllowedCameraZ_ = -std::numeric_limits<float>::infinity();
 
     // Server-authored drunkenness (0 sober, 1 smashed).
     float intoxication_ = 0.0f;
