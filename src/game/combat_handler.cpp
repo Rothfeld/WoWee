@@ -1009,8 +1009,8 @@ void CombatHandler::handleAttackerStateUpdate(network::Packet& packet) {
 }
 
 std::optional<GameHandler::HitReaction> GameHandler::spellDamageHitReaction(
-    uint32_t damage, bool isCrit, uint32_t schoolMask) {
-    if (damage == 0) return std::nullopt;
+    uint32_t damage, bool isCrit, uint32_t schoolMask, bool hasImpactVisual) {
+    if (damage == 0 || !hasImpactVisual) return std::nullopt;
     // Physical spells (SPELL_SCHOOL_MASK_NORMAL = 0x1) trigger melee-style wound + blood spurt;
     // magic school spells (Arcane, Fire, Frost, Shadow, Nature, Holy) trigger wound flinch without blood.
     if (schoolMask == 1u) {
@@ -1045,14 +1045,19 @@ void CombatHandler::handleSpellDamageLog(network::Packet& packet) {
         return GameHandler::isLethalDamage(unit->getHealth(), unit->getMaxHealth(), dmg, ok);
     }();
 
-    // Direct spell damage triggers victim hit-flinch (CombatWound 9 / CombatCritical 10)
-    // for local player, remote players, and creatures alike — including spells whose
-    // SpellVisualKit impact omits startAnimId (Arcane Missiles 7268/29956, Moonfire 8921,
-    // Shadow Bolt 686, Smite 585). Periodic DoT ticks (SMSG_PERIODICAURALOG) and lethal
-    // blows do not flinch.
+    // Direct spell damage with a per-target SpellVisual impact kit triggers victim
+    // hit-flinch (StandWound 8 / CombatWound 9 / CombatCritical 10) for local player,
+    // remote players, and creatures alike — including spells whose impact kit omits
+    // startAnimId (Arcane Missiles 7268/29956, Moonfire 8921, Shadow Bolt 686, Smite 585).
+    // Spells without a per-target impact kit (Void Zone Consumption 28865, Four Horsemen
+    // Mark 28836, Meteor 28884, periodic ground pulses), periodic DoT ticks
+    // (SMSG_PERIODICAURALOG), and lethal blows do not flinch in TBC 2.4.3.
+    const bool hasImpactVisual = owner_.getSpellHandler()
+        ? owner_.getSpellHandler()->spellHasTargetImpactVisual(data.spellId)
+        : (data.spellId != 0);
     if (owner_.hitReactionCallbackRef() && !lethalHit) {
         if (const auto reaction = GameHandler::spellDamageHitReaction(
-                data.damage, data.isCrit, data.schoolMask);
+                data.damage, data.isCrit, data.schoolMask, hasImpactVisual);
             reaction.has_value()) {
             owner_.hitReactionCallbackRef()(data.attackerGuid, data.targetGuid, *reaction);
         }

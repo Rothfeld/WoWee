@@ -265,6 +265,9 @@ public:
     [[nodiscard]] float getTargetCastProgress() const;
     [[nodiscard]] float getTargetCastTimeRemaining() const;
     [[nodiscard]] bool isTargetCastInterruptible() const;
+    /// True when the spell's SpellVisual authors a per-target ImpactKit or
+    /// TargetImpactKit (returns true when running headless without a renderer).
+    [[nodiscard]] bool spellHasTargetImpactVisual(uint32_t spellId);
 
     // Talents
     [[nodiscard]] uint8_t getActiveTalentSpec() const { return activeTalentSpec_; }

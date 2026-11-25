@@ -1119,6 +1119,16 @@ bool SpellVisualSystem::playAnimEventSound(uint32_t visualId, const glm::vec3& w
     return playSoundEntry(sndId, worldPosition, attachInstanceId, /*stoppable=*/false) != 0;
 }
 
+bool SpellVisualSystem::hasTargetImpactKit(uint32_t visualId) {
+    if (visualId == 0) return false;
+    if (!spellVisualDbcLoaded_) loadSpellVisualDbc();
+    auto check = [&](const std::unordered_map<uint32_t, uint32_t>& kits) {
+        const auto it = kits.find(visualId);
+        return it != kits.end() && it->second != 0;
+    };
+    return check(impactKits_) || check(targetImpactKits_);
+}
+
 void SpellVisualSystem::startChannelVisual(uint32_t visualId, const glm::vec3& position,
                                           uint32_t durationMs, uint32_t attachInstanceId) {
     if (!attachInstanceId) return;

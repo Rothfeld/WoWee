@@ -1031,6 +1031,15 @@ void SpellHandler::triggerImpactVisual(uint32_t spellId, uint64_t targetGuid) {
                          owner_.resolveUnitRenderInstance(targetGuid));
 }
 
+bool SpellHandler::spellHasTargetImpactVisual(uint32_t spellId) {
+    if (spellId == 0) return false;
+    auto* renderer = owner_.services().renderer;
+    auto* svs = renderer ? renderer->getSpellVisualSystem() : nullptr;
+    if (!svs) return true;
+    const uint32_t visualId = resolveSpellVisualId(spellId);
+    return visualId != 0 && svs->hasTargetImpactKit(visualId);
+}
+
 void SpellHandler::showPersistentArea(uint64_t guid, uint32_t spellId, const glm::vec3& canonicalPosition,
                                       float wireRadius) {
     auto* renderer = owner_.services().renderer;

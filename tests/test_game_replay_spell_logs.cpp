@@ -413,6 +413,11 @@ TEST_CASE("direct spell damage triggers hit-flinch while absorbed hits and perio
     CHECK(GameHandler::spellDamageHitReaction(500, false, 1) == HR::WOUND);              // Physical spell
     CHECK(GameHandler::spellDamageHitReaction(900, true, 1) == HR::CRIT_WOUND);          // Physical spell crit
     CHECK_FALSE(GameHandler::spellDamageHitReaction(0, false, 64).has_value());          // Fully absorbed/resisted
+    // Spells without a per-target SpellVisual ImpactKit/TargetImpactKit (Void Zone Consumption 28865,
+    // Four Horsemen Mark 28836, Meteor 28884, periodic ground pulses) do not flinch in TBC 2.4.3.
+    CHECK_FALSE(GameHandler::spellDamageHitReaction(901, false, 32, false).has_value());
+    CHECK_FALSE(GameHandler::spellDamageHitReaction(95040, true, 32, false).has_value());
+    CHECK_FALSE(GameHandler::spellDamageHitReaction(500, false, 1, false).has_value());
 
     auto makeTbcSpellDamageLog = [](uint64_t target, uint64_t attacker, uint32_t spellId,
                                     uint32_t damage, uint8_t schoolMask, uint32_t absorbed,
@@ -491,6 +496,48 @@ TEST_CASE("direct spell damage triggers hit-flinch while absorbed hits and perio
         p.writeUInt32(0);    // resisted
         s.receive(p);
         CHECK(reactions.empty());
+    }
+
+    // 5. Real TBC Spell.dbc + SpellVisual.dbc per-target impact-kit classification:
+    //    periodic/ground/mark spells (Consumption 28865, Mark 28836, Meteor 28884,
+    //    Hellfire 1949, Flamestrike 2120, Rain of Fire 5740) author neither ImpactKit
+    //    nor TargetImpactKit, whereas direct-impact spells do.
+    {
+        const std::filesystem::path dbcDir = "/workspace/azerothcore/client/wowee-data/expansions/tbc/dbfilesclient";
+        if (std::filesystem::exists(dbcDir / "spell.dbc") &&
+            std::filesystem::exists(dbcDir / "spellvisual.dbc")) {
+            auto loadDbc = [&](const char* name) {
+                wowee::pipeline::DBCFile f;
+                std::ifstream in(dbcDir / name, std::ios::binary);
+                std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)),
+                                           std::istreambuf_iterator<char>());
+                REQUIRE(f.load(bytes));
+                return f;
+            };
+            const auto spells = loadDbc("spell.dbc");
+            const auto visuals = loadDbc("spellvisual.dbc");
+            auto spellHasImpactKit = [&](uint32_t spellId) -> bool {
+                const int32_t sRow = spells.findRecordById(spellId);
+                REQUIRE(sRow >= 0);
+                const uint32_t visId = spells.getUInt32(static_cast<uint32_t>(sRow), 122);
+                if (visId == 0) return false;
+                const int32_t vRow = visuals.findRecordById(visId);
+                if (vRow < 0) return false;
+                const uint32_t impKit = visuals.getUInt32(static_cast<uint32_t>(vRow), 3);
+                const uint32_t targetImpKit = visuals.getUInt32(static_cast<uint32_t>(vRow), 14);
+                return impKit != 0 || targetImpKit != 0;
+            };
+            // No per-target impact kit -> no hit-flinch on SMSG_SPELLNONMELEEDAMAGELOG
+            for (uint32_t id : {28865u, 28836u, 28884u, 1949u, 2120u, 5740u, 27220u, 122u}) {
+                CAPTURE(id);
+                CHECK_FALSE(spellHasImpactKit(id));
+            }
+            // Per-target ImpactKit or TargetImpactKit authored -> flinch preserved
+            for (uint32_t id : {133u, 8921u, 686u, 29956u, 7268u, 585u, 26573u, 28882u, 28883u, 30451u, 5308u}) {
+                CAPTURE(id);
+                CHECK(spellHasImpactKit(id));
+            }
+        }
     }
 }
 

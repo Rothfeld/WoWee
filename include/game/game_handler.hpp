@@ -1652,8 +1652,10 @@ public:
     /// Victim HitReaction for an SMSG_SPELLNONMELEEDAMAGELOG direct hit, if any.
     /// Physical spells (schoolMask == 1) use WOUND/CRIT_WOUND (with blood spurt);
     /// magic spells use SPELL_WOUND/SPELL_CRIT_WOUND (flinch + vocalization, no blood).
+    /// Spells without a per-target SpellVisual impact kit (e.g. Void Zone Consumption
+    /// 28865, Four Horsemen Mark 28836, Meteor 28884, Hellfire 1949) do not flinch.
     [[nodiscard]] static std::optional<HitReaction> spellDamageHitReaction(
-        uint32_t damage, bool isCrit, uint32_t schoolMask);
+        uint32_t damage, bool isCrit, uint32_t schoolMask, bool hasImpactVisual = true);
     /// True when a damage event is lethal to a victim with known health (or carries
     /// explicit positive overkill). Lethal hits suppress victim CombatWound/CombatCritical
     /// reactions so the unit transitions straight into Death when health=0 arrives instead

@@ -153,6 +153,10 @@ public:
     bool playAnimEventSound(uint32_t visualId, const glm::vec3& worldPosition, uint32_t attachInstanceId = 0);
     [[nodiscard]] size_t loadedMissileSoundCount() { if (!spellVisualDbcLoaded_) loadSpellVisualDbc(); return missileSounds_.size(); }
     [[nodiscard]] size_t loadedAnimEventSoundCount() { if (!spellVisualDbcLoaded_) loadSpellVisualDbc(); return animEventSounds_.size(); }
+    /// True when the visual authors a per-target ImpactKit or TargetImpactKit
+    /// (distinguishing direct-impact spells from periodic/area/mark damage ticks
+    /// such as Void Zone Consumption 28865 or Four Horsemen Mark 28836).
+    [[nodiscard]] bool hasTargetImpactKit(uint32_t visualId);
     // Persistent StateKit effects follow the unit's current aura set, and so
     // do the kits' character procedures that change the unit's own model:
     // SpellVisualKit CharProc 1 multiplies the model's colour by CharParamZero
