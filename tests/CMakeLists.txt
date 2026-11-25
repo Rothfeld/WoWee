@@ -3510,6 +3510,10 @@ add_executable(test_audio_shard_c_combat
     ${CMAKE_SOURCE_DIR}/src/audio/audio_engine.cpp
     ${CMAKE_SOURCE_DIR}/src/audio/sound_entries.cpp
     ${CMAKE_SOURCE_DIR}/src/audio/combat_sound_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/footstep_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/creature_sound_index.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/creature_sound_index_assets.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/player_voice_manager.cpp
     ${CMAKE_SOURCE_DIR}/src/pipeline/asset_manager.cpp
     ${CMAKE_SOURCE_DIR}/src/pipeline/asset_manifest.cpp
     ${CMAKE_SOURCE_DIR}/src/pipeline/loose_file_reader.cpp
@@ -3517,6 +3521,7 @@ add_executable(test_audio_shard_c_combat
     ${CMAKE_SOURCE_DIR}/src/pipeline/dbc_layout.cpp
     ${CMAKE_SOURCE_DIR}/src/pipeline/blp_loader.cpp
     ${CMAKE_SOURCE_DIR}/src/pipeline/dds_loader.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/m2_loader.cpp
     ${CMAKE_SOURCE_DIR}/src/core/memory_monitor.cpp
 )
 target_include_directories(test_audio_shard_c_combat PRIVATE ${TEST_INCLUDE_DIRS})

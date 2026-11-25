@@ -19,10 +19,13 @@
 
 #include "audio/audio_engine.hpp"
 #include "audio/combat_sound_manager.hpp"
+#include "audio/footstep_manager.hpp"
+#include "audio/player_voice_manager.hpp"
 #include "audio/sound_entries.hpp"
 #include "pipeline/asset_manager.hpp"
 #include "pipeline/dbc_layout.hpp"
 #include "pipeline/dbc_loader.hpp"
+#include "pipeline/m2_loader.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -529,4 +532,156 @@ TEST_CASE("3D local and remote combat queue dispatches on $CSS/$CAH keyframes an
     }
 
     audio::AudioEngine::instance().setPlaybackObserver({});
+}
+
+TEST_CASE("M2 audio bridge dispatches HumanMale.m2 combat ($CSS/$CAH/$BWP/$BWR/$SHL/$SHR) and $ESD emote keyframes",
+          "[audio][shard_c][m2_bridge]") {
+    auto& tbc = env();
+    resetHeadlessEngine(&tbc.assets);
+
+    audio::FootstepManager fm;
+    audio::CombatSoundManager csm;
+    audio::PlayerVoiceManager pvm;
+    REQUIRE(fm.initialize(&tbc.assets));
+    REQUIRE(csm.initialize(&tbc.assets));
+    REQUIRE(pvm.initialize(&tbc.assets));
+
+    const auto m2Bytes = tbc.assets.readFile("Character\\Human\\Male\\HumanMale.m2");
+    REQUIRE_FALSE(m2Bytes.empty());
+    const pipeline::M2Model model = pipeline::M2Loader::load(m2Bytes);
+    REQUIRE_FALSE(model.sequences.empty());
+    REQUIRE_FALSE(model.audioEvents.empty());
+
+    using T = pipeline::M2AudioEventType;
+    auto findSeqWithEvent = [&](T want) -> std::pair<int, uint32_t> {
+        for (const auto& ev : model.audioEvents) {
+            if (ev.type != want) continue;
+            for (size_t s = 0; s < ev.times.size() && s < model.sequences.size(); ++s) {
+                if (!ev.times[s].empty()) {
+                    return {static_cast<int>(s), ev.times[s].front()};
+                }
+            }
+        }
+        return {-1, 0u};
+    };
+
+    std::vector<audio::AudioEngine::PlaybackEvent> events;
+    auto rebindObserver = [&]() {
+        resetHeadlessEngine(&tbc.assets);
+        audio::AudioEngine::instance().setPlaybackObserver(
+            [&](const audio::AudioEngine::PlaybackEvent& ev) { events.push_back(ev); });
+        events.clear();
+    };
+
+    // 1. Real HumanMale.m2 $CSS + $CAH combat swing & hit bridge
+    const auto [cssSeq, cssTime] = findSeqWithEvent(T::CombatSwing);
+    const auto [cahSeq, cahTime] = findSeqWithEvent(T::CombatAttackHit);
+    REQUIRE(cssSeq >= 0);
+    REQUIRE(cahSeq >= 0);
+
+    const uint64_t unitGuid = 0xF130ABCDull;
+    const glm::vec3 unitPos(7.0f, 0.0f, 2.0f);
+    csm.setUnitHasKeyframeDriver(unitGuid, true);
+
+    audio::CombatSoundManager::QueuedCombatEvent q;
+    q.attackerGuid = unitGuid;
+    q.victimGuid = 0xF130DCBAull;
+    q.attackerRenderPos = unitPos;
+    q.victimRenderPos = glm::vec3(8.0f, 0.0f, 2.0f);
+    q.attackerWeaponSubClass = 7u; // 1H Sword
+    q.attackerWeaponIsMetal = true;
+    q.victimImpactType = audio::CombatSoundManager::ImpactType::PLATE;
+    q.outcome = audio::CombatSoundManager::CombatOutcome::CRIT;
+    csm.queueCombatEvent(q);
+
+    int swingFired = 0;
+    int hitFired = 0;
+    int bowPullFired = 0;
+    int bowReleaseFired = 0;
+    int sheatheFired = 0;
+    int emoteFired = 0;
+
+    audio::FootstepManager::CharacterAudioStepContext ctx;
+    ctx.displayId = 49u;
+    ctx.isLocalPlayer = false;
+    ctx.skipFootstep = true;
+    ctx.onCustomUnitEvent = [&](T evType, uint32_t eventData, uint32_t animId, const glm::vec3& pos) -> bool {
+        switch (evType) {
+            case T::CombatSwing:
+                ++swingFired;
+                return csm.onUnitSwingEvent(unitGuid, pos, false, false, false, 7u);
+            case T::CombatAttackHit:
+            case T::ArmorHit0:
+            case T::ArmorHit1:
+            case T::ArmorHit2:
+            case T::ArmorHit3:
+                ++hitFired;
+                return csm.onUnitHitEvent(unitGuid, pos, false);
+            case T::BowPull:
+                ++bowPullFired;
+                return csm.onUnitBowPullEvent(unitGuid, pos, false, 2u);
+            case T::BowRelease:
+                ++bowReleaseFired;
+                return csm.onUnitBowReleaseEvent(unitGuid, pos, false, 2u);
+            case T::SheatheLeft:
+            case T::SheatheRight:
+                ++sheatheFired;
+                return csm.onUnitSheatheEvent(unitGuid, pos, false, 2u, 7u, 1, false, true);
+            case T::EmoteSound:
+                ++emoteFired;
+                return pvm.playEmoteAnimSoundForEvent(eventData, 233u, animId, false, pos);
+            default:
+                return false;
+        }
+    };
+
+    auto bonePos = [&](uint16_t, const glm::vec3&) { return unitPos; };
+
+    rebindObserver();
+    fm.stepCharacterAudioEvents(101u, model, cssSeq, 0.0f, false, -1, 0.0f, ctx, bonePos);
+    fm.stepCharacterAudioEvents(101u, model, cssSeq, static_cast<float>(cssTime + 5u), false, -1, 0.0f, ctx, bonePos);
+    CHECK(swingFired >= 1);
+    REQUIRE_FALSE(events.empty());
+    CHECK(events.back().spatial);
+    CHECK(renderRms(1024).total > 1e-5);
+
+    rebindObserver();
+    fm.removeCharacterAudioInstance(101u);
+    fm.stepCharacterAudioEvents(101u, model, cahSeq, 0.0f, false, -1, 0.0f, ctx, bonePos);
+    fm.stepCharacterAudioEvents(101u, model, cahSeq, static_cast<float>(cahTime + 5u), false, -1, 0.0f, ctx, bonePos);
+    CHECK(hitFired >= 1);
+    CHECK(csm.pendingCombatEventCount(unitGuid) == 0u);
+    REQUIRE_FALSE(events.empty());
+    CHECK(events.back().spatial);
+    CHECK(renderRms(1024).total > 1e-5);
+
+    // 2. Real HumanMale.m2 $BWP, $BWR, $SHR/$SHL, and $ESD events
+    for (auto [evType, counterPtr, label] : {
+             std::tuple{T::BowPull, &bowPullFired, "$BWP"},
+             std::tuple{T::BowRelease, &bowReleaseFired, "$BWR"},
+             std::tuple{T::SheatheRight, &sheatheFired, "$SHR"},
+             std::tuple{T::EmoteSound, &emoteFired, "$ESD"},
+         }) {
+        INFO("M2 bridge event " << label);
+        const auto [seqIdx, tsMs] = findSeqWithEvent(evType);
+        REQUIRE(seqIdx >= 0);
+        rebindObserver();
+        fm.removeCharacterAudioInstance(102u);
+        fm.stepCharacterAudioEvents(102u, model, seqIdx, 0.0f, false, -1, 0.0f, ctx, bonePos);
+        fm.stepCharacterAudioEvents(102u, model, seqIdx, static_cast<float>(tsMs + 5u), false, -1, 0.0f, ctx, bonePos);
+        CHECK(*counterPtr >= 1);
+        REQUIRE_FALSE(events.empty());
+        CHECK(events.back().spatial);
+        CHECK(renderRms(1024).total > 1e-5);
+    }
+
+    // 3. PlayerVoiceManager Emotes.dbc col 2 AnimID -> col 6 EmoteSoundID lookup
+    CHECK(pvm.getEmoteSoundId(233u) == 3782u);
+    CHECK(pvm.getEmoteSoundId(234u) == 3202u);
+    CHECK(pvm.getEmoteSoundId(380u) == 3354u);
+
+    audio::AudioEngine::instance().setPlaybackObserver({});
+    fm.shutdown();
+    pvm.shutdown();
+    csm.shutdown();
 }

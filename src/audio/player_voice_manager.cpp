@@ -427,9 +427,13 @@ void PlayerVoiceManager::ensureEmoteAnimSoundsLoaded() {
     emoteAnimSoundsLoaded_ = true;
     for (uint32_t r = 0; r < dbc->getRecordCount(); ++r) {
         const uint32_t emoteId = dbc->getUInt32(r, 0);
+        const uint32_t animId = dbc->getUInt32(r, 2);
         const uint32_t soundId = sanitizeDbcSoundId(dbc->getUInt32(r, 6));
         if (emoteId != 0 && soundId != 0) {
             emoteAnimSounds_[emoteId] = soundId;
+            if (animId != 0) {
+                emoteAnimSoundByAnimId_.emplace(animId, soundId);
+            }
         }
     }
 }
@@ -439,6 +443,13 @@ uint32_t PlayerVoiceManager::getEmoteSoundId(uint32_t emoteId) {
     ensureEmoteAnimSoundsLoaded();
     const auto it = emoteAnimSounds_.find(emoteId);
     return (it != emoteAnimSounds_.end()) ? it->second : 0u;
+}
+
+uint32_t PlayerVoiceManager::getEmoteSoundIdForAnim(uint32_t animId) {
+    if (animId == 0) return 0;
+    ensureEmoteAnimSoundsLoaded();
+    const auto it = emoteAnimSoundByAnimId_.find(animId);
+    return (it != emoteAnimSoundByAnimId_.end()) ? it->second : 0u;
 }
 
 bool PlayerVoiceManager::playEmoteAnimSound(uint32_t emoteId) {
@@ -452,6 +463,20 @@ bool PlayerVoiceManager::playEmoteAnimSound3D(uint32_t emoteId, const glm::vec3&
     if (!assetManager_ || volumeScale_ <= 0.0f) return false;
     const uint32_t soundId = getEmoteSoundId(emoteId);
     if (soundId == 0) return false;
+    return SoundEntryTable::instance().play3D(assetManager_, soundId, position, volumeScale_);
+}
+
+bool PlayerVoiceManager::playEmoteAnimSoundForEvent(
+        uint32_t eventData, uint32_t npcEmoteState, uint32_t animId,
+        bool isLocalPlayer, const glm::vec3& position) {
+    if (!assetManager_ || volumeScale_ <= 0.0f) return false;
+    uint32_t soundId = getEmoteSoundId(eventData);
+    if (soundId == 0u) soundId = getEmoteSoundId(npcEmoteState);
+    if (soundId == 0u) soundId = getEmoteSoundIdForAnim(animId);
+    if (soundId == 0u) return false;
+    if (isLocalPlayer) {
+        return SoundEntryTable::instance().play2D(assetManager_, soundId, volumeScale_);
+    }
     return SoundEntryTable::instance().play3D(assetManager_, soundId, position, volumeScale_);
 }
 

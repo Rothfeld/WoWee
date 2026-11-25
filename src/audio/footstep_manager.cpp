@@ -34,6 +34,26 @@ bool isCharacterDispatchedEvent(pipeline::M2AudioEventType type) noexcept {
     }
 }
 
+bool isCharacterBridgeEvent(pipeline::M2AudioEventType type) noexcept {
+    using T = pipeline::M2AudioEventType;
+    switch (type) {
+        case T::CombatSwing:
+        case T::CombatAttackHit:
+        case T::ArmorHit0:
+        case T::ArmorHit1:
+        case T::ArmorHit2:
+        case T::ArmorHit3:
+        case T::BowPull:
+        case T::BowRelease:
+        case T::SheatheLeft:
+        case T::SheatheRight:
+        case T::EmoteSound:
+            return true;
+        default:
+            return false;
+    }
+}
+
 } // namespace
 
 FootstepManager::FootstepManager() : rng(std::random_device{}()) {}
@@ -391,7 +411,9 @@ uint32_t FootstepManager::stepCharacterAudioEvents(
         };
 
         for (const auto& ev : model.audioEvents) {
-            if (!isCharacterDispatchedEvent(ev.type)) continue;
+            const bool bridgeEv = isCharacterBridgeEvent(ev.type);
+            if (!bridgeEv && !isCharacterDispatchedEvent(ev.type)) continue;
+            if (bridgeEv && !ctx.onCustomUnitEvent) continue;
             // Upper-body overlay (emotes/casts while running) must not duplicate footstep/tread events.
             if (isUpperLayer &&
                 (ev.type == pipeline::M2AudioEventType::Footstep ||
@@ -421,6 +443,12 @@ uint32_t FootstepManager::stepCharacterAudioEvents(
             if (!crossed) continue;
 
             const glm::vec3 worldPos = boneWorldPos ? boneWorldPos(ev.bone, ev.position) : ev.position;
+            if (bridgeEv) {
+                if (ctx.onCustomUnitEvent(ev.type, ev.data, model.sequences[seqIdx].id, worldPos)) {
+                    ++firedCount;
+                }
+                continue;
+            }
             const bool waterState = (ev.type == pipeline::M2AudioEventType::DeathThud)
                 ? ctx.inWater
                 : ctx.wading;

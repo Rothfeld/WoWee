@@ -135,8 +135,12 @@ public:
 
     /// Resolve Emotes.dbc col 6 (EmoteSoundID) for M2 $ESD animation events.
     [[nodiscard]] uint32_t getEmoteSoundId(uint32_t emoteId);
+    [[nodiscard]] uint32_t getEmoteSoundIdForAnim(uint32_t animId);
     bool playEmoteAnimSound(uint32_t emoteId);
     bool playEmoteAnimSound3D(uint32_t emoteId, const glm::vec3& position);
+    bool playEmoteAnimSoundForEvent(uint32_t eventData, uint32_t npcEmoteState,
+                                    uint32_t animId, bool isLocalPlayer,
+                                    const glm::vec3& position);
 
 private:
     struct VocalUIRecord {
@@ -164,8 +168,9 @@ private:
     // EmotesTextSound.dbc: (emotesTextId << 16 | raceId << 8 | sexId) -> SoundEntries ID
     std::unordered_map<uint32_t, uint32_t> emoteSounds_;
 
-    // Emotes.dbc col 6: emoteId -> EmoteSoundID (SoundEntries ID for $ESD)
+    // Emotes.dbc col 6: emoteId -> EmoteSoundID, and col 2 AnimID -> EmoteSoundID for $ESD
     std::unordered_map<uint32_t, uint32_t> emoteAnimSounds_;
+    std::unordered_map<uint32_t, uint32_t> emoteAnimSoundByAnimId_;
 
     // Active error speech handle tracking (mirrors Wow.exe s_hErrorSpeechSound at 0xe2a710)
     mutable uint32_t errorSpeechHandle_ = 0;

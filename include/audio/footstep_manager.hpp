@@ -88,6 +88,10 @@ public:
         bool listenerAtCharacter = true;
         bool skipFootstep = false;
         bool muteEvents = false; // e.g. beyond max audible range: advance cursor without playing
+        /// Optional bridge callback for combat & emote M2 keyframe events
+        /// ($CSS, $CAH, $AH0..3, $BWP, $BWR, $SHL, $SHR, $ESD).
+        std::function<bool(pipeline::M2AudioEventType type, uint32_t eventData,
+                           uint32_t animId, const glm::vec3& worldPos)> onCustomUnitEvent;
     };
 
     /// Step CharacterRenderer instance audio events (base sequence + optional upper-body sequence).

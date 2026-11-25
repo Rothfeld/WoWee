@@ -26,9 +26,11 @@
 #include "rendering/wmo_renderer.hpp"
 #include "rendering/m2_renderer.hpp"
 #include "audio/audio_coordinator.hpp"
+#include "audio/combat_sound_manager.hpp"
 #include "audio/creature_sound_index.hpp"
 #include "audio/footstep_manager.hpp"
 #include "audio/npc_voice_manager.hpp"
+#include "audio/player_voice_manager.hpp"
 #include "pipeline/m2_loader.hpp"
 #include "pipeline/wmo_loader.hpp"
 #include "rendering/animation/animation_ids.hpp"
@@ -248,7 +250,10 @@ void EntitySpawner::update() {
             }
 
             std::unordered_set<uint32_t> seenCharInstances;
-            auto stepCharUnit = [&](uint32_t instId, uint32_t displayId, bool isLocal,
+            auto* csm = ac->getCombatSoundManager();
+            auto* pvm = ac->getPlayerVoiceManager();
+            auto* combatHandler = gameHandler_->getCombatHandler();
+            auto stepCharUnit = [&](uint64_t unitGuid, uint32_t instId, uint32_t displayId, bool isLocal,
                                     bool bareFeet, uint32_t armorMat, bool skipFootstep) {
                 if (instId == 0 || !cr->hasInstance(instId)) return;
                 const auto* model = cr->getInstanceModelData(instId);
@@ -285,6 +290,80 @@ void EntitySpawner::update() {
                     querySurface(unitPos, ctx.terrainTypeId, ctx.hasTerrainType, ctx.wading, ctx.inWater);
                 }
 
+                if (csm && unitGuid != 0) {
+                    const bool underwater = ctx.inWater || (isLocal && gameHandler_->isSwimming());
+                    csm->setUnitUnderwater(unitGuid, underwater);
+                    if (!csm->unitHasKeyframeDriver(unitGuid)) {
+                        for (const auto& ev : model->audioEvents) {
+                            using T = pipeline::M2AudioEventType;
+                            if (ev.type == T::CombatSwing || ev.type == T::CombatAttackHit ||
+                                ev.type == T::ArmorHit0 || ev.type == T::ArmorHit1 ||
+                                ev.type == T::ArmorHit2 || ev.type == T::ArmorHit3) {
+                                csm->setUnitHasKeyframeDriver(unitGuid, true);
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if (unitGuid != 0 && (combatHandler || pvm)) {
+                    ctx.onCustomUnitEvent = [&](pipeline::M2AudioEventType evType, uint32_t eventData,
+                                                uint32_t seqAnimId, const glm::vec3& worldPos) -> bool {
+                        using T = pipeline::M2AudioEventType;
+                        switch (evType) {
+                            case T::CombatSwing: {
+                                if (!combatHandler) return false;
+                                const bool offHand =
+                                    seqAnimId == rendering::anim::ATTACK_OFF ||
+                                    seqAnimId == rendering::anim::ATTACK_OFF_PIERCE ||
+                                    seqAnimId == rendering::anim::FLY_ATTACK_OFF ||
+                                    seqAnimId == rendering::anim::FLY_ATTACK_OFF_PIERCE;
+                                return combatHandler->onUnitSwingEvent(unitGuid, offHand);
+                            }
+                            case T::CombatAttackHit:
+                            case T::ArmorHit0:
+                            case T::ArmorHit1:
+                            case T::ArmorHit2:
+                            case T::ArmorHit3:
+                                return combatHandler && combatHandler->onUnitHitEvent(unitGuid);
+                            case T::BowPull:
+                                return combatHandler && combatHandler->onUnitBowPullEvent(unitGuid);
+                            case T::BowRelease:
+                                return combatHandler && combatHandler->onUnitBowReleaseEvent(unitGuid);
+                            case T::SheatheLeft:
+                            case T::SheatheRight: {
+                                if (!combatHandler) return false;
+                                const bool offHandSlot = (evType == T::SheatheLeft);
+                                bool unsheathe = true;
+                                if (auto ent = gameHandler_->getEntityManager().getEntity(unitGuid);
+                                    ent && ent->isUnit()) {
+                                    const auto* unit = static_cast<const game::Unit*>(ent.get());
+                                    const uint16_t b2 = game::fieldIndex(game::UF::UNIT_FIELD_BYTES_2);
+                                    if (b2 != 0xFFFF) {
+                                        const uint8_t sheath = game::effectiveUnitSheathState(
+                                            static_cast<uint8_t>(unit->getField(b2) & 0xFFu),
+                                            unit->getUnitFlags());
+                                        unsheathe = (sheath != 0u);
+                                    }
+                                }
+                                return combatHandler->onUnitSheatheEvent(unitGuid, offHandSlot, unsheathe);
+                            }
+                            case T::EmoteSound: {
+                                if (!pvm) return false;
+                                uint32_t npcEmoteState = 0u;
+                                if (auto ent = gameHandler_->getEntityManager().getEntity(unitGuid);
+                                    ent && ent->isUnit()) {
+                                    npcEmoteState = static_cast<const game::Unit*>(ent.get())->getNpcEmoteState();
+                                }
+                                return pvm->playEmoteAnimSoundForEvent(
+                                    eventData, npcEmoteState, seqAnimId, isLocal, worldPos);
+                            }
+                            default:
+                                return false;
+                        }
+                    };
+                }
+
                 auto boneWorldPos = [&](uint16_t bone, const glm::vec3& localOffset) -> glm::vec3 {
                     glm::mat4 xf(1.0f);
                     if (cr->getBonePointTransform(instId, bone, localOffset, xf)) {
@@ -298,11 +377,11 @@ void EntitySpawner::update() {
                     upperSeq, upperTime, ctx, boneWorldPos);
             };
 
-            // Step local player ($DTH, $TRD, $CSD, $SCD, $SMG, $SMD; FootstepDriver owns local $FSD)
+            // Step local player ($DTH, $TRD, $CSD, $SCD, $SMG, $SMD, combat & emote events; FootstepDriver owns local $FSD)
             const uint32_t localDrawnInst = localGuid != 0 ? drawnInstanceIdForGuid(localGuid) : 0;
             uint32_t localDisplayId = localDrawnInst != 0 ? cr->getInstanceDisplayId(localDrawnInst) : 0;
             if (localDrawnInst != 0) {
-                stepCharUnit(localDrawnInst, localDisplayId, /*isLocal=*/true,
+                stepCharUnit(localGuid, localDrawnInst, localDisplayId, /*isLocal=*/true,
                              localBareFeet, localArmorMat, /*skipFootstep=*/true);
 
                 // Drowning loop (3353) + DAMAGE_DROWNING tick (5736 + Injury on anim::DROWN 131)
@@ -354,14 +433,14 @@ void EntitySpawner::update() {
                 const uint32_t moveFlags = remoteMovementFlags_.count(guid) ? remoteMovementFlags_.at(guid) : 0u;
                 const bool swimmingOrFlying = (moveFlags & (0x00200000u | 0x02000000u)) != 0u;
                 if (mounted) {
-                    stepCharUnit(mountIt->second.instanceId, mountIt->second.displayId,
+                    stepCharUnit(0u, mountIt->second.instanceId, mountIt->second.displayId,
                                  /*isLocal=*/false, /*bareFeet=*/false, /*armorMat=*/0,
                                  /*skipFootstep=*/swimmingOrFlying);
-                    stepCharUnit(drawnInst, cr->getInstanceDisplayId(drawnInst),
+                    stepCharUnit(guid, drawnInst, cr->getInstanceDisplayId(drawnInst),
                                  /*isLocal=*/false, remoteBareFeet, remoteArmorMat,
                                  /*skipFootstep=*/true);
                 } else {
-                    stepCharUnit(drawnInst, cr->getInstanceDisplayId(drawnInst),
+                    stepCharUnit(guid, drawnInst, cr->getInstanceDisplayId(drawnInst),
                                  /*isLocal=*/false, remoteBareFeet, remoteArmorMat,
                                  /*skipFootstep=*/swimmingOrFlying);
                 }
@@ -421,7 +500,7 @@ void EntitySpawner::update() {
 
                 const bool swimming = creatureSwimmingState_.count(guid) && creatureSwimmingState_.at(guid);
                 const bool flying = creatureFlyingState_.count(guid) && creatureFlyingState_.at(guid);
-                stepCharUnit(instId, dispId, /*isLocal=*/false, /*bareFeet=*/false,
+                stepCharUnit(guid, instId, dispId, /*isLocal=*/false, /*bareFeet=*/false,
                              npcArmorMat, /*skipFootstep=*/swimming || flying);
             }
 
