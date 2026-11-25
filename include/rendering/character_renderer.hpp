@@ -351,6 +351,11 @@ public:
     [[nodiscard]] const std::vector<uint32_t>* getWingFlapEventTimes(uint32_t instanceId) const;
     [[nodiscard]] const std::vector<uint32_t>* getWingGlideEventTimes(uint32_t instanceId) const;
     [[nodiscard]] bool hasAnimation(uint32_t instanceId, uint32_t animationId) const;
+    /// True when `animationId` resolves to an authored sequence or a non-STAND
+    /// playable stand-in on the instance's model (false when a non-STAND spell/
+    /// channel animation collapses to STAND 0 on models lacking cast/channel
+    /// sequences such as EyeStalkOfKathune.m2).
+    [[nodiscard]] bool resolvesToNonStandAnimation(uint32_t instanceId, uint32_t animationId);
     /// True when the model's authored M2 sequence for `animationId` carries the
     /// non-looping flag (M2Sequence::flags & 0x01), e.g. CustomSpell02/04/06
     /// (214/216/218) and DragonSpitHover (183).

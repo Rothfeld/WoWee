@@ -147,11 +147,20 @@ TEST_CASE("resolveBeamStartOrigin respects MissileAttachment and race $CSL/$CSR"
     REQUIRE(leftHandBeam.attachmentId == kAttachSpellLeftHandId);
 
     // When the caster model lacks a release event for the cast/channel animation
-    // (e.g. TitanFemale / Maiden of Virtue lacking SpellCastDirected 53), fall back
-    // to Chest (34) matching Native 2.4.3 rather than HandLeft (2).
+    // and has no model-level $CST event, fall back to Chest (34).
     const auto missingAnimBeam = resolveBeamStartOrigin(&undead, 53, -1);
     REQUIRE(missingAnimBeam.source == SpellLaunchOrigin::Source::Attachment);
     REQUIRE(missingAnimBeam.attachmentId == kAttachChestId);
+
+    // When the caster model lacks a release event for the cast/channel animation
+    // but authors a model-level $CST ("Cast Spell Target") event (e.g.
+    // EyeStalkOfKathune eyeball at Z=5.87, TitanFemale chest at Z=4.44), use $CST.
+    M2Model stalk = makeModelWithReleaseEvent(127, 0, 18, {1.42f, 0.0f, 5.87f}, 'T', 24);
+    stalk.defaultSpellTargetEvent = M2Model::SpellReleaseEvent{0u, 18, {1.42f, 0.0f, 5.87f}, 'T'};
+    const auto cstFallbackBeam = resolveBeamStartOrigin(&stalk, 124, -1);
+    REQUIRE(cstFallbackBeam.source == SpellLaunchOrigin::Source::EventBone);
+    REQUIRE(cstFallbackBeam.bone == 18);
+    REQUIRE(cstFallbackBeam.localOffset.z == Catch::Approx(5.87f));
 
     const auto nullModelBeam = resolveBeamStartOrigin(nullptr, 53, -1);
     REQUIRE(nullModelBeam.source == SpellLaunchOrigin::Source::Attachment);
@@ -273,15 +282,29 @@ TEST_CASE("M2Loader parses TBC 2.4.3 $CSL/$CSR/$CST release events across races 
         CHECK(humanBowLeft[3].z > 1.45f);
     }
 
-    SECTION("Cast beam origin resolves $CSL/$CSR on SpellCastDirected (53) and falls back to Chest (34) on TitanFemale") {
+    SECTION("Cast/channel beam origin resolves $CSL/$CSR on sequence, $CST on TitanFemale chest and EyeStalkOfKathune eyeball") {
         // TitanFemale (Maiden of Virtue, displayId 16198) lacks SpellCastDirected (53);
-        // Holy Wrath (32445) / Chain Lightning (421) beams originate from Chest (34), not HandLeft (2).
+        // authors $CST at centered chest (bone 77, z=4.44), not HandLeft (2, y=+1.47, z=3.64).
         const auto tfBytes = readFileBytes(dataDir / "creature/titanfemale/titanfemale.m2");
         REQUIRE(!tfBytes.empty());
         const M2Model titanFemale = M2Loader::load(tfBytes);
         const auto tfBeam = resolveBeamStartOrigin(&titanFemale, 53, -1);
-        CHECK(tfBeam.source == SpellLaunchOrigin::Source::Attachment);
-        CHECK(tfBeam.attachmentId == kAttachChestId);
+        CHECK(tfBeam.source == SpellLaunchOrigin::Source::EventBone);
+        CHECK(tfBeam.bone == 77);
+        CHECK(std::abs(tfBeam.localOffset.y) < 0.05f);
+        CHECK(tfBeam.localOffset.z == Catch::Approx(4.44f).margin(0.05f));
+
+        // EyeStalkOfKathune (Naxxramas Eye Stalk, displayId 15788) lacks ChannelCastDirected (124);
+        // Mind Flay (29407, SV 277, MissileAttachment=-1) originates from its eyeball $CST
+        // (bone 18, z=5.87), not Chest attachment 34 at the trunk base (z=1.89).
+        const auto stalkBytes = readFileBytes(dataDir / "creature/eyestalkofkathune/eyestalkofkathune.m2");
+        REQUIRE(!stalkBytes.empty());
+        const M2Model eyeStalk = M2Loader::load(stalkBytes);
+        const auto stalkBeam = resolveBeamStartOrigin(&eyeStalk, 124, -1);
+        CHECK(stalkBeam.source == SpellLaunchOrigin::Source::EventBone);
+        CHECK(stalkBeam.bone == 18);
+        CHECK(stalkBeam.localOffset.x > 1.2f);
+        CHECK(stalkBeam.localOffset.z == Catch::Approx(5.87f).margin(0.05f));
 
         // ScourgeMale authors $CSR (right hand, -Y) on SpellCastDirected (53).
         const auto smBytes = readFileBytes(dataDir / "character/scourge/male/scourgemale.m2");

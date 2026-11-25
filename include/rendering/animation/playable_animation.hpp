@@ -80,6 +80,23 @@ inline constexpr bool standInAllowsVariationDraw(const PlayableStandIn& standIn)
     return !standIn.frozenAtEnd && !standIn.reversed && standIn.animationId != anim::STAND;
 }
 
+/// True when `requested` resolves to an authored sequence or a non-STAND
+/// playable stand-in on `model`. Returns false when a non-STAND spell/channel
+/// animation (e.g. ChannelCastDirected 124 on EyeStalkOfKathune.m2) is absent
+/// and its fallback collapses to STAND (0), so callers do not clobber an active
+/// combat stance (ReadyUnarmed 25) with static Stand (0).
+inline bool animationResolvesPastStand(
+        uint32_t requested,
+        const std::vector<pipeline::M2Model::PlayableAnimation>& lookup,
+        const std::function<bool(uint32_t)>& hasSequence,
+        const std::function<std::optional<uint32_t>(uint32_t)>& dbcFallback,
+        const std::function<uint32_t(uint32_t)>& dbcFlags) {
+    if (requested == anim::STAND) return true;
+    if (hasSequence(requested)) return true;
+    const auto standIn = resolvePlayableStandIn(requested, lookup, hasSequence, dbcFallback, dbcFlags);
+    return standIn.has_value() && standIn->animationId != anim::STAND;
+}
+
 /// True when a completed non-looping `DEATH` (1) sequence should transition
 /// into an authored looping `DEAD` (6) sequence (e.g. `Krakken.m2`, The Lurker
 /// Below's 3000 ms corpse-bobbing loop). Models without `DEAD` hold the final

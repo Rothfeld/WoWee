@@ -211,9 +211,10 @@ inline SpellLaunchOrigin resolveSpellLaunchOrigin(const pipeline::M2Model* model
 // When SpellVisual.dbc MissileAttachment == -1 (Drain Life, Drain Soul, Mind Flay,
 // Chain Lightning, Holy Wrath), prefer the model's $CSL/$CSR/$CST event on the
 // channel/cast animation (e.g. $CSL on Gnome/Human, $CSR on ScourgeMale/DwarfFemale/
-// TrollMale). When the model has no release event for that animation (e.g.
-// TitanFemale / Maiden of Virtue, which lacks SpellCastDirected 53), fall back to
-// Chest (34) matching Native 2.4.3. Non-(-1) MissileAttachment maps via
+// TrollMale). When the model has no release event on that sequence, prefer the
+// model's authored $CST ("Cast Spell Target") event bone (e.g. EyeStalkOfKathune
+// eyeball at Z=5.87, BodyOfKathune eye, FelCannon barrel, TitanFemale chest at
+// Z=4.44) before falling back to Chest (34). Non-(-1) MissileAttachment maps via
 // missileAttachmentToM2Id.
 inline SpellLaunchOrigin resolveBeamStartOrigin(const pipeline::M2Model* model,
                                                 uint32_t animationId,
@@ -234,6 +235,15 @@ inline SpellLaunchOrigin resolveBeamStartOrigin(const pipeline::M2Model* model,
         out.source = SpellLaunchOrigin::Source::Attachment;
         out.attachmentId = fallbackAttachmentForReleaseSide(ev->side);
         return out;
+    }
+    if (model && model->defaultSpellTargetEvent.has_value()) {
+        const auto& ev = *model->defaultSpellTargetEvent;
+        if (ev.bone < model->bones.size()) {
+            out.source = SpellLaunchOrigin::Source::EventBone;
+            out.bone = ev.bone;
+            out.localOffset = ev.position;
+            return out;
+        }
     }
     out.source = SpellLaunchOrigin::Source::Attachment;
     out.attachmentId = kAttachChestId;

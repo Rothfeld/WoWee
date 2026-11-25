@@ -6369,6 +6369,22 @@ bool CharacterRenderer::hasAnimation(uint32_t instanceId, uint32_t animationId) 
     return false;
 }
 
+bool CharacterRenderer::resolvesToNonStandAnimation(uint32_t instanceId, uint32_t animationId) {
+    auto it = instances.find(instanceId);
+    if (it == instances.end()) return false;
+    auto modelIt = models.find(it->second.modelId);
+    if (modelIt == models.end()) return false;
+    const auto& model = modelIt->second.data;
+    return animationResolvesPastStand(
+        animationId, model.playableAnimations,
+        [&](uint32_t id) {
+            return std::any_of(model.sequences.begin(), model.sequences.end(),
+                               [id](const auto& seq) { return seq.id == id && seq.duration > 0; });
+        },
+        [this](uint32_t id) { return animationFallback(id); },
+        [this](uint32_t id) { return animationFlags(id); });
+}
+
 bool CharacterRenderer::isAnimationNonLooping(uint32_t instanceId, uint32_t animationId) const {
     auto it = instances.find(instanceId);
     if (it == instances.end()) return false;

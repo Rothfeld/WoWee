@@ -1251,6 +1251,9 @@ M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
                 glm::vec3 evPos(0.0f);
                 std::memcpy(&evPos, m2Data.data() + base + 12, sizeof(glm::vec3));
                 const char evSide = ident[3];
+                if (evSide == 'T' && !model.defaultSpellTargetEvent.has_value()) {
+                    model.defaultSpellTargetEvent = M2Model::SpellReleaseEvent{0u, evBone, evPos, evSide};
+                }
                 if (wotlkEvents) {
                     const uint32_t nArrays = rd32(base + trackOfs + 4);
                     const uint32_t ofsArrays = rd32(base + trackOfs + 8);

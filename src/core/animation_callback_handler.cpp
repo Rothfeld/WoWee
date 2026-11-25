@@ -706,7 +706,7 @@ void AnimationCallbackHandler::setupCallbacks() {
 
         switch (phase) {
         case game::SpellAnimPhase::PRECAST: {
-            const uint32_t animation = visuals->precastAnimation(visual);
+            uint32_t animation = visuals->precastAnimation(visual);
             LOG_DEBUG("Cast animation: precast guid=0x", std::hex, guid, std::dec,
                       " spell=", spellId, " visual=", visual, " animation=", animation);
             if (animation == none) return;
@@ -717,6 +717,7 @@ void AnimationCallbackHandler::setupCallbacks() {
                 if (game::isMiningRank(spellId)) appearanceComposer_.showMiningPick(true);
                 ac->startSpellCast(0, animation, true, 0);
             } else {
+                if (!cr->resolvesToNonStandAnimation(instanceId, animation)) return;
                 uint32_t playingAnim = 0;
                 const bool playingOneShot = cr->isPlayingOneShot(instanceId, &playingAnim);
                 const bool nonLooping = cr->isAnimationNonLooping(instanceId, animation);
@@ -744,6 +745,9 @@ void AnimationCallbackHandler::setupCallbacks() {
                       " spell=", spellId, " visual=", visual,
                       " rawAnim=", rawAnimation, " animation=", animation);
             if (!isLocalPlayer) {
+                if (animation != none && !cr->resolvesToNonStandAnimation(instanceId, animation)) {
+                    animation = none;
+                }
                 uint32_t playingAnim = 0;
                 const bool playingOneShot = cr->isPlayingOneShot(instanceId, &playingAnim);
                 const bool nonLooping = cr->isAnimationNonLooping(instanceId, animation);
@@ -805,6 +809,7 @@ void AnimationCallbackHandler::setupCallbacks() {
                 castState.hold = rendering::SpellCastHold{spellId, animation, true};
                 ac->startSpellCast(first, animation, true, 0);
             } else {
+                if (!cr->resolvesToNonStandAnimation(instanceId, animation)) return;
                 uint32_t playingAnim = 0;
                 const bool playingOneShot = cr->isPlayingOneShot(instanceId, &playingAnim);
                 const bool nonLooping = cr->isAnimationNonLooping(instanceId, animation);

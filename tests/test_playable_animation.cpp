@@ -222,3 +222,36 @@ TEST_CASE("Krakken.m2 DEATH (1) transitions to authored looping DEAD (6) on comp
     zeroDead.sequences.push_back(emptyDead);
     CHECK_FALSE(rendering::deathTransitionsToAuthoredDeadLoop(A::DEATH, zeroDead.sequences));
 }
+
+TEST_CASE("EyeStalkOfKathune.m2 ChannelCastDirected (124) collapses to STAND (0) while TitanFemale SpellCastDirected (53) resolves to SpellCast (32)",
+          "[animation][assets][eyestalk]") {
+    const auto data = loadAnimationData();
+    auto resolvesPastStand = [&](const pipeline::M2Model& model, uint32_t animId) {
+        return rendering::animationResolvesPastStand(
+            animId, model.playableAnimations,
+            [&](uint32_t id) {
+                return std::any_of(model.sequences.begin(), model.sequences.end(),
+                                   [id](const auto& s) { return s.id == id && s.duration > 0; });
+            },
+            [&](uint32_t id) -> std::optional<uint32_t> {
+                const auto it = data.fallback.find(id);
+                if (it == data.fallback.end()) return std::nullopt;
+                return it->second;
+            },
+            [&](uint32_t id) -> uint32_t {
+                const auto it = data.flags.find(id);
+                return it == data.flags.end() ? 0u : it->second;
+            });
+    };
+
+    const auto eyeStalk = pipeline::M2Loader::load(test::readTbcData("creature/eyestalkofkathune/eyestalkofkathune.m2"));
+    // ChannelCastDirected (124) is absent and falls back to STAND (0); do not
+    // override ReadyUnarmed (25) combat sway with static Stand (0).
+    CHECK_FALSE(resolvesPastStand(eyeStalk, A::CHANNEL_CAST_DIRECTED));
+    CHECK(resolvesPastStand(eyeStalk, A::READY_UNARMED));
+    CHECK(resolvesPastStand(eyeStalk, A::STAND));
+
+    // TitanFemale lacks SpellCastDirected (53) but resolves it to SpellCast (32), not STAND (0).
+    const auto titanFemale = pipeline::M2Loader::load(test::readTbcData("creature/titanfemale/titanfemale.m2"));
+    CHECK(resolvesPastStand(titanFemale, A::SPELL_CAST_DIRECTED));
+}

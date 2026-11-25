@@ -415,6 +415,12 @@ struct M2Model {
         char side = 'T';          // 'L' ($CSL), 'R' ($CSR), 'T' ($CST)
     };
     std::vector<std::vector<SpellReleaseEvent>> spellReleaseEvents;
+    // Model-level $CST ("Cast Spell Target") event bone + offset regardless of
+    // which sequences carry timestamps for it. Creatures lacking SpellCastDirected
+    // (53) or ChannelCastDirected (124) (e.g. EyeStalkOfKathune, BodyOfKathune,
+    // FelCannon_02, TitanFemale) author $CST at their canonical beam/spell origin
+    // (eyeball, cannon barrel, chest).
+    std::optional<SpellReleaseEvent> defaultSpellTargetEvent;
 
     // Weapon trail anchors ($WTB base / $WTT tip) authored on melee weapon M2s.
     // Native TBC 2.4.3 (0x6d3e7a..0x6d3ff4) emits CharProc == 8 weapon trails

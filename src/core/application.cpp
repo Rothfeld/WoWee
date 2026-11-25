@@ -4898,6 +4898,7 @@ void Application::syncChannelVisuals() {
             if (visuals->channelEnded(channel.casterGuid)) continue;
             const uint32_t animation = visuals->channelAnimation(channel.visualId);
             if (animation == rendering::SpellVisualSystem::kNoAnimation) continue;
+            if (!characters->resolvesToNonStandAnimation(channel.casterInstanceId, animation)) continue;
             still.insert(channel.casterGuid);
             const uint32_t held = entitySpawner_->remoteCastHold(channel.casterGuid);
             if (held == animation) continue;
