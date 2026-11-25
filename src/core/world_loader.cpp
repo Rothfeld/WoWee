@@ -1141,41 +1141,9 @@ void WorldLoader::loadOnlineWorldTerrain(uint32_t mapId, float x, float y, float
                    " m2R=", (renderer_->getM2Renderer() ? "yes" : "NULL"));
     }
 
-    // Set up NPC animation callbacks (for online creatures)
+    // NPC death (including NpcVoiceManager::playDeath / ActivitySoundManager::playDeath)
+    // and respawn (anim::RISE) callbacks are owned by AnimationCallbackHandler::setupCallbacks().
     showProgress("Preparing creatures...", 0.97f);
-    if (gameHandler_ && renderer_ && renderer_->getCharacterRenderer()) {
-        auto* cr = renderer_->getCharacterRenderer();
-        auto* spawner = entitySpawner_;
-
-        gameHandler_->setNpcDeathCallback([this, cr, spawner](uint64_t guid, bool alreadyDead) {
-            spawner->markCreatureDead(guid);
-            uint32_t instanceId = spawner->getCreatureInstanceId(guid);
-            if (instanceId == 0) instanceId = spawner->getPlayerInstanceId(guid);
-            if (guid == gameHandler_->getPlayerGuid()) instanceId = renderer_->getCharacterInstanceId();
-            // A corpse already dead when it came into view lies as Dead (6);
-            // one dying in view plays Death (1) and holds its last frame.
-            if (instanceId != 0 && cr) {
-                cr->playAnimation(instanceId, alreadyDead ? rendering::anim::DEAD : rendering::anim::DEATH,
-                                  alreadyDead);
-                // Its casting effects and CharProc 13 kit light die with it (SpellVisualSystem::removeCasterStages).
-                if (auto* visuals = renderer_->getSpellVisualSystem()) {
-                    visuals->removeCasterStages(instanceId);
-                    const uint32_t drawn = spawner->drawnInstanceIdForGuid(guid);
-                    if (drawn != 0 && drawn != instanceId) visuals->removeCasterStages(drawn);
-                }
-            }
-        });
-
-        gameHandler_->setNpcRespawnCallback([this, cr, spawner](uint64_t guid) {
-            spawner->unmarkCreatureDead(guid);
-            uint32_t instanceId = spawner->getCreatureInstanceId(guid);
-            if (instanceId == 0) instanceId = spawner->getPlayerInstanceId(guid);
-            if (guid == gameHandler_->getPlayerGuid()) instanceId = renderer_->getCharacterInstanceId();
-            if (instanceId != 0 && cr) {
-                cr->playAnimation(instanceId, rendering::anim::STAND, true);
-            }
-        });
-    }
 
     // The destination's terrain is in: now tell the server we arrived, so it
     // adds the player to the map and sends the objects the warmup below waits

@@ -266,39 +266,46 @@ void UiSoundManager::playSound(const std::vector<UISample>& library) {
     if (!initialized_ || library.empty() || !library[0].loaded) return;
 
     float volume = 0.7f * volumeScale_;
-    AudioEngine::instance().playSound2D(library[0].data, volume, 1.0f, library[0].path);
+    uint32_t soundEntryId = 0;
+    if (assets_) {
+        if (const SoundEntryRecord* rec = SoundEntryTable::instance().findByPath(assets_, library[0].path)) {
+            volume = rec->volume * volumeScale_;
+            soundEntryId = rec->id;
+        }
+    }
+    AudioEngine::instance().playSound2D(library[0].data, volume, 1.0f, library[0].path, soundEntryId);
 }
 
 void UiSoundManager::setVolumeScale(float scale) {
     volumeScale_ = std::max(0.0f, std::min(1.0f, scale));
 }
 
-// Window sounds
-void UiSoundManager::playBagOpen() { playSound(bagOpenSounds_); }
-void UiSoundManager::playBagClose() { playSound(bagCloseSounds_); }
-void UiSoundManager::playQuestLogOpen() { playSound(questLogOpenSounds_); }
-void UiSoundManager::playQuestLogClose() { playSound(questLogCloseSounds_); }
-void UiSoundManager::playCharacterSheetOpen() { playSound(characterSheetOpenSounds_); }
-void UiSoundManager::playCharacterSheetClose() { playSound(characterSheetCloseSounds_); }
-void UiSoundManager::playGuildBankOpen() { playSound(guildBankOpenSounds_); }
-void UiSoundManager::playGuildBankClose() { playSound(guildBankCloseSounds_); }
-void UiSoundManager::playAuctionHouseOpen() { playSound(auctionOpenSounds_); }
-void UiSoundManager::playAuctionHouseClose() { playSound(auctionCloseSounds_); }
+// Window sounds (prefer SoundEntries.dbc rows so authored VolumeFloat is honored uniformly)
+void UiSoundManager::playBagOpen() { if (!playByName("igBackPackOpen")) playSound(bagOpenSounds_); }
+void UiSoundManager::playBagClose() { if (!playByName("igBackPackClose")) playSound(bagCloseSounds_); }
+void UiSoundManager::playQuestLogOpen() { if (!playByName("igQuestLogOpen")) playSound(questLogOpenSounds_); }
+void UiSoundManager::playQuestLogClose() { if (!playByName("igQuestLogClose")) playSound(questLogCloseSounds_); }
+void UiSoundManager::playCharacterSheetOpen() { if (!playByName("igCharacterInfoOpen")) playSound(characterSheetOpenSounds_); }
+void UiSoundManager::playCharacterSheetClose() { if (!playByName("igCharacterInfoClose")) playSound(characterSheetCloseSounds_); }
+void UiSoundManager::playGuildBankOpen() { if (!playByName("GuildVaultOpen")) playSound(guildBankOpenSounds_); }
+void UiSoundManager::playGuildBankClose() { if (!playByName("GuildVaultClose")) playSound(guildBankCloseSounds_); }
+void UiSoundManager::playAuctionHouseOpen() { if (!playByName("AuctionWindowOpen")) playSound(auctionOpenSounds_); }
+void UiSoundManager::playAuctionHouseClose() { if (!playByName("AuctionWindowClose")) playSound(auctionCloseSounds_); }
 // Button sounds
-void UiSoundManager::playButtonClick() { playSound(buttonClickSounds_); }
-void UiSoundManager::playMenuButtonClick() { playSound(menuButtonSounds_); }
+void UiSoundManager::playButtonClick() { if (!playByName("igMainMenuOptionCheckBoxOn")) playSound(buttonClickSounds_); }
+void UiSoundManager::playMenuButtonClick() { if (!playByName("igMainMenuOpen")) playSound(menuButtonSounds_); }
 
 // Quest sounds
-void UiSoundManager::playQuestActivate() { playSound(questActivateSounds_); }
-void UiSoundManager::playQuestComplete() { playSound(questCompleteSounds_); }
-void UiSoundManager::playQuestFailed() { playSound(questFailedSounds_); }
-void UiSoundManager::playQuestUpdate() { playSound(questUpdateSounds_); }
+void UiSoundManager::playQuestActivate() { if (!playByName("igQuestListOpen")) playSound(questActivateSounds_); }
+void UiSoundManager::playQuestComplete() { if (!playByName("igQuestListComplete")) playSound(questCompleteSounds_); }
+void UiSoundManager::playQuestFailed() { if (!playByName("igQuestFailed")) playSound(questFailedSounds_); }
+void UiSoundManager::playQuestUpdate() { if (!playByName("WriteQuest")) playSound(questUpdateSounds_); }
 void UiSoundManager::playFishingBite() { playSound(fishingBiteSounds_); }
 
 // Loot sounds
-void UiSoundManager::playLootCoinSmall() { playSound(lootCoinSmallSounds_); }
-void UiSoundManager::playLootCoinLarge() { playSound(lootCoinLargeSounds_); }
-void UiSoundManager::playLootItem() { playSound(lootItemSounds_); }
+void UiSoundManager::playLootCoinSmall() { if (!playByName("LootWindowCoinSound")) playSound(lootCoinSmallSounds_); }
+void UiSoundManager::playLootCoinLarge() { if (!playByName("LootWindowCoinSound")) playSound(lootCoinLargeSounds_); }
+void UiSoundManager::playLootItem() { if (!playByName("igLootCreature")) playSound(lootItemSounds_); }
 
 // Item sounds
 void UiSoundManager::playDropOnGround() { playSound(dropSounds_); }
@@ -309,22 +316,22 @@ void UiSoundManager::playEating() { playSound(eatingSounds_); }
 void UiSoundManager::playDrinking() { playSound(drinkingSounds_); }
 
 // Level up
-void UiSoundManager::playLevelUp() { playSound(levelUpSounds_); }
+void UiSoundManager::playLevelUp() { if (!playByName("LevelUp")) playSound(levelUpSounds_); }
 
 // Achievement
 void UiSoundManager::playAchievementAlert() { playSound(achievementSounds_); }
 
 // Error/feedback
 void UiSoundManager::playError() { playSound(errorSounds_); }
-void UiSoundManager::playTargetSelect() { playSound(selectTargetSounds_); }
-void UiSoundManager::playTargetDeselect() { playSound(deselectTargetSounds_); }
+void UiSoundManager::playTargetSelect() { if (!playByName("igCharacterNPCSelect")) playSound(selectTargetSounds_); }
+void UiSoundManager::playTargetDeselect() { if (!playByName("INTERFACESOUND_LOSTTARGETUNIT")) playSound(deselectTargetSounds_); }
 
 // Chat notifications
-void UiSoundManager::playWhisperReceived() { playSound(whisperSounds_); }
-void UiSoundManager::playMailReceived() { playSound(mailSounds_); }
+void UiSoundManager::playWhisperReceived() { if (!playByName("TellMessage")) playSound(whisperSounds_); }
+void UiSoundManager::playMailReceived() { if (!playByName("TellMessage")) playSound(mailSounds_); }
 
 // Minimap ping
-void UiSoundManager::playMinimapPing() { playSound(minimapPingSounds_); }
+void UiSoundManager::playMinimapPing() { if (!playByName("MapPing")) playSound(minimapPingSounds_); }
 
 } // namespace audio
 } // namespace wowee

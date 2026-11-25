@@ -143,7 +143,9 @@ bool SoundEntryTable::ensureLoaded(pipeline::AssetManager* assets) {
 
         if (!rec.variants.empty()) {
             if (!rec.name.empty()) {
-                byName_.emplace(upperAscii(rec.name), id);
+                // Later rows in SoundEntries.dbc supersede earlier entries with the same name
+                // (e.g. INTERFACESOUND_LOSTTARGETUNIT: row 900 @ 0.75 supersedes row 684 @ 1.0).
+                byName_[upperAscii(rec.name)] = id;
             }
             for (const SoundVariant& v : rec.variants) {
                 if (!v.path.empty()) {
@@ -160,7 +162,7 @@ bool SoundEntryTable::ensureLoaded(pipeline::AssetManager* assets) {
             const uint32_t soundId = uiLookup->getUInt32(row, 1);
             const std::string alias = uiLookup->getString(row, 2);
             if (soundId != 0 && !alias.empty() && byId_.contains(soundId)) {
-                byName_.emplace(upperAscii(alias), soundId);
+                byName_[upperAscii(alias)] = soundId;
             }
         }
     }

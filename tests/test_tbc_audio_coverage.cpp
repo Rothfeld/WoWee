@@ -920,3 +920,47 @@ TEST_CASE("3D stereo pan ILD matches Native FMOD 9.54 dB and local emotes obey S
     engine.setPlaybackObserver({});
     pvm.shutdown();
 }
+
+TEST_CASE("SoundEntries duplicate UI names honor later VolumeFloat (0.75) and Kobold death vocal resolves SE:314",
+          "[audio][tbc][ui][death]") {
+    auto& tbc = env();
+    auto& engine = audio::AudioEngine::instance();
+    auto& table = audio::SoundEntryTable::instance();
+
+    engine.shutdown();
+    REQUIRE(engine.initializeHeadless(48000, 2));
+    engine.setAssetManager(&tbc.assets);
+    engine.setMasterVolume(1.0f);
+    engine.setSuspended(false);
+    engine.setListenerPosition(glm::vec3(0.0f, 0.0f, 0.0f));
+
+    // INTERFACESOUND_LOSTTARGETUNIT has row 684 (1.0) and later row 900 (0.75) in TBC SoundEntries.dbc.
+    const auto* lostTarget = table.findByName(&tbc.assets, "INTERFACESOUND_LOSTTARGETUNIT");
+    REQUIRE(lostTarget != nullptr);
+    CHECK(lostTarget->id == 900u);
+    CHECK(lostTarget->volume == Catch::Approx(0.75f).margin(0.001f));
+
+    std::vector<audio::AudioEngine::PlaybackEvent> evs;
+    engine.setPlaybackObserver([&](const audio::AudioEngine::PlaybackEvent& ev) { evs.push_back(ev); });
+
+    audio::UiSoundManager ui;
+    REQUIRE(ui.initialize(&tbc.assets));
+    ui.playTargetDeselect();
+    REQUIRE_FALSE(evs.empty());
+    CHECK(evs.back().soundEntryId == 900u);
+    CHECK(evs.back().volume == Catch::Approx(0.75f).margin(0.001f));
+    ui.shutdown();
+
+    // Kobold Vermin (entry 6, displayId 10913 -> CSD 26 -> SE:314 KoboldDeath @ 0.70)
+    audio::NpcVoiceManager npc;
+    REQUIRE(npc.initialize(&tbc.assets));
+    evs.clear();
+    npc.playDeath(0xF1300000065948D2ull, 10913u, glm::vec3(2.0f, 0.0f, 0.0f));
+    REQUIRE_FALSE(evs.empty());
+    CHECK(evs.back().soundEntryId == 314u);
+    CHECK(evs.back().spatial);
+    CHECK(evs.back().volume == Catch::Approx(0.70f).margin(0.01f));
+    npc.shutdown();
+
+    engine.setPlaybackObserver({});
+}

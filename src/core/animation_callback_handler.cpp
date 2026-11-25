@@ -131,14 +131,23 @@ void AnimationCallbackHandler::setupCallbacks() {
             auto* ac = renderer_.getAudioCoordinator();
             if (guid == gameHandler_.getPlayerGuid()) {
                 if (auto* act = ac->getActivitySoundManager()) act->playDeath();
-            } else if (auto* nvm = ac->getNpcVoiceManager()) {
-                if (auto ent = gameHandler_.getEntityManager().getEntity(guid);
-                    ent && ent->getType() == game::ObjectType::UNIT) {
-                    const uint32_t dispId = std::static_pointer_cast<game::Unit>(ent)->getDisplayId();
-                    glm::vec3 pos = core::coords::canonicalToRender(
-                        glm::vec3(ent->getX(), ent->getY(), ent->getZ()));
-                    entitySpawner_.getRenderPositionForGuid(guid, pos);
-                    nvm->playDeath(guid, dispId, pos);
+            } else if (auto ent = gameHandler_.getEntityManager().getEntity(guid)) {
+                glm::vec3 pos = core::coords::canonicalToRender(
+                    glm::vec3(ent->getX(), ent->getY(), ent->getZ()));
+                entitySpawner_.getRenderPositionForGuid(guid, pos);
+                if (ent->getType() == game::ObjectType::UNIT) {
+                    if (auto* nvm = ac->getNpcVoiceManager()) {
+                        const uint32_t dispId = std::static_pointer_cast<game::Unit>(ent)->getDisplayId();
+                        nvm->playDeath(guid, dispId, pos);
+                    }
+                } else if (ent->getType() == game::ObjectType::PLAYER) {
+                    if (auto* act = ac->getActivitySoundManager()) {
+                        const auto unit = std::static_pointer_cast<game::Unit>(ent);
+                        const uint32_t bytes0 = ent->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_0));
+                        const uint8_t raceId = static_cast<uint8_t>(bytes0 & 0xFFu);
+                        const uint8_t gender = static_cast<uint8_t>((bytes0 >> 16u) & 0xFFu);
+                        act->playPlayerDeath3D(raceId, gender, unit->getDisplayId(), pos);
+                    }
                 }
             }
         }
