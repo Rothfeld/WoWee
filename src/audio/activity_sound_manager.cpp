@@ -661,7 +661,8 @@ bool ActivitySoundManager::playExertion(bool isCrit) {
         ? profile.exertionCritId
         : profile.exertionId;
     if (soundId == 0) return false;
-    return SoundEntryTable::instance().play2D(assetManager, soundId, volumeScale);
+    return SoundEntryTable::instance().play2D(
+        assetManager, soundId, volumeScale * SoundEntryTable::kLocalPlayer2DGain);
 }
 
 void ActivitySoundManager::playAttackGrunt() {
@@ -685,7 +686,8 @@ void ActivitySoundManager::playWound(bool isCrit) {
         ? profile.injuryCritId
         : profile.injuryId;
     if (soundId == 0) return;
-    (void)SoundEntryTable::instance().play2D(assetManager, soundId, volumeScale);
+    (void)SoundEntryTable::instance().play2D(
+        assetManager, soundId, volumeScale * SoundEntryTable::kLocalPlayer2DGain);
 }
 
 bool ActivitySoundManager::playCrushingWound() {
@@ -695,14 +697,16 @@ bool ActivitySoundManager::playCrushingWound() {
     if (soundId == 0) soundId = profile.injuryCritId;
     if (soundId == 0) soundId = profile.injuryId;
     if (soundId == 0) return false;
-    return SoundEntryTable::instance().play2D(assetManager, soundId, volumeScale);
+    return SoundEntryTable::instance().play2D(
+        assetManager, soundId, volumeScale * SoundEntryTable::kLocalPlayer2DGain);
 }
 
 void ActivitySoundManager::playDeath() {
     if (!assetManager || volumeScale <= 0.0f || !AudioEngine::instance().isInitialized()) return;
     const CreatureVocalProfile profile = getActiveVocalProfile();
     if (profile.deathId == 0) return;
-    (void)SoundEntryTable::instance().play2D(assetManager, profile.deathId, volumeScale);
+    (void)SoundEntryTable::instance().play2D(
+        assetManager, profile.deathId, volumeScale * SoundEntryTable::kLocalPlayer2DGain);
 }
 
 bool ActivitySoundManager::playUnitExertion3D(uint32_t displayId, bool isCrit, const glm::vec3& position) {

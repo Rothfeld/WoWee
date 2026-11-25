@@ -3736,9 +3736,13 @@ void SpellHandler::handleCastFailed(network::Packet& packet) {
 
     // Show failure reason
     int powerType = -1;
-    auto playerEntity = owner_.getEntityManager().getEntity(owner_.getPlayerGuid());
-    if (auto playerUnit = std::dynamic_pointer_cast<Unit>(playerEntity)) {
-        powerType = playerUnit->getPowerType();
+    if (const auto sd = owner_.getSpellData(data.spellId);
+        sd.powerType != 0 || sd.manaCost != 0 || sd.manaCostPct != 0 || sd.manaPerSecond != 0) {
+        powerType = static_cast<int>(sd.powerType);
+    } else if (auto playerEntity = owner_.getEntityManager().getEntity(owner_.getPlayerGuid())) {
+        if (auto playerUnit = std::dynamic_pointer_cast<Unit>(playerEntity)) {
+            powerType = playerUnit->getPowerType();
+        }
     }
     if (data.result == kSpellFailedNotReady) {
         seedCooldownFromSpellInfo(data.spellId);
@@ -3769,7 +3773,7 @@ void SpellHandler::handleCastFailed(network::Packet& packet) {
         }
     }
 
-    // Character speech response ("Not enough mana", "I'm out of range", "Spell is not ready yet", ...)
+    // Character speech response ("Not enough mana", "Not enough rage", "Spell is not ready yet", ...)
     // Overlap is gated by PlayerVoiceManager::isErrorSpeechPlaying() matching Wow.exe 0x7b8100.
     if (!gatherCast) {
         if (auto speech = errorSpeechForCastResult(data.spellId, data.result, powerType))

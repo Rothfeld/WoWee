@@ -278,7 +278,8 @@ private:
 
     void ensureWeaponDbcLoaded() const;
     bool playCombatSound(uint32_t soundId, const glm::vec3& renderPos,
-                         bool isLocal, float pitch = 1.0f) const;
+                         bool isLocal, float pitch = 1.0f,
+                         float overrideEntryVolume = -1.0f) const;
     bool executeSwingForEvent(QueuedCombatEvent& ev, const glm::vec3* overridePos,
                               bool hasUnderwaterOverride, bool underwaterOverride);
     bool executeHitForEvent(QueuedCombatEvent& ev);

@@ -300,13 +300,13 @@ void ChatPanel::sendChatMessage(game::GameHandler& gameHandler) {
                         audioCoord && audioCoord->areEmoteSoundsEnabled() && audioCoord->getPlayerVoiceManager()) {
                         uint8_t raceId = gameHandler.getPlayerRace();
                         uint8_t gender = 0;
-                        if (const auto player = gameHandler.getEntityManager().getEntity(gameHandler.getPlayerGuid())) {
+                        if (const auto* ch = gameHandler.getActiveCharacter()) {
+                            if (raceId == 0) raceId = static_cast<uint8_t>(ch->race);
+                            gender = static_cast<uint8_t>(game::toServerGender(ch->gender));
+                        } else if (const auto player = gameHandler.getEntityManager().getEntity(gameHandler.getPlayerGuid())) {
                             const uint32_t bytes0 = player->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_0));
                             if (raceId == 0) raceId = static_cast<uint8_t>(bytes0 & 0xFFu);
                             gender = static_cast<uint8_t>((bytes0 >> 16u) & 0xFFu);
-                        } else if (const auto* ch = gameHandler.getActiveCharacter()) {
-                            if (raceId == 0) raceId = static_cast<uint8_t>(ch->race);
-                            gender = static_cast<uint8_t>(game::toServerGender(ch->gender));
                         }
                         const glm::vec3 playerPos = renderer
                             ? renderer->getCharacterPosition()

@@ -821,7 +821,8 @@ void AppearanceComposer::setSheathState(uint8_t sheathState) {
     sheathState_ = sheathState;
     showingRanged_ = sheathState_ == kSheathStateRanged;
     if (gameHandler_ && renderer_ && renderer_->getAudioCoordinator()) {
-        if (auto* csm = renderer_->getAudioCoordinator()->getCombatSoundManager()) {
+        if (auto* csm = renderer_->getAudioCoordinator()->getCombatSoundManager();
+            csm && !csm->unitHasKeyframeDriver(gameHandler_->getPlayerGuid())) {
             const bool unsheathe = (sheathState != kSheathStateUnarmed);
             const bool rangedChange = (sheathState == kSheathStateRanged || prevState == kSheathStateRanged);
             const auto& inv = gameHandler_->getInventory();

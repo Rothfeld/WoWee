@@ -717,13 +717,24 @@ bool CombatSoundManager::unitHasKeyframeDriver(uint64_t unitGuid) const {
 }
 
 bool CombatSoundManager::playCombatSound(
-        uint32_t soundId, const glm::vec3& renderPos, bool isLocal, float pitch) const {
+        uint32_t soundId, const glm::vec3& renderPos, bool isLocal, float pitch,
+        float overrideEntryVolume) const {
     if (soundId == 0u || !assets_ || volumeScale_ <= 0.0f) return false;
     auto& se = SoundEntryTable::instance();
-    if (isLocal) {
-        return se.play2D(assets_, soundId, volumeScale_, pitch);
+    float effScale = volumeScale_;
+    if (overrideEntryVolume > 0.0f) {
+        if (const auto* rec = se.findById(assets_, soundId); rec && rec->volume > 0.0f) {
+            effScale = volumeScale_ * (overrideEntryVolume / rec->volume);
+        }
     }
-    return se.play3D(assets_, soundId, renderPos, volumeScale_, pitch);
+    // Native Wow.exe plays unit melee swings, hits, misses, bow pull/release, and
+    // sheathe/unsheathe as 3D positional sounds even for the local player. Keep 2D
+    // only for unit-less legacy callers passing a zero position.
+    const bool hasWorldPos = (renderPos.x != 0.0f || renderPos.y != 0.0f || renderPos.z != 0.0f);
+    if (isLocal && !hasWorldPos) {
+        return se.play2D(assets_, soundId, effScale, pitch);
+    }
+    return se.play3D(assets_, soundId, renderPos, effScale, pitch);
 }
 
 bool CombatSoundManager::executeSwingForEvent(
@@ -742,7 +753,9 @@ bool CombatSoundManager::executeSwingForEvent(
     const glm::vec3 pos = overridePos ? *overridePos : ev.attackerRenderPos;
     const bool isLocalParticipant = ev.attackerIsLocal || ev.victimIsLocal;
 
-    const bool played = playCombatSound(sid, pos, isLocalParticipant, pitch);
+    // Wow.exe 0x00467000 sets SEPlayParams.flags=0x0A, volume=1.0f (0.5f when dampened)
+    // for WeaponSwingSounds2.dbc rows, overriding SoundEntries.dbc VolumeFloat (0.70/0.75).
+    const bool played = playCombatSound(sid, pos, isLocalParticipant, pitch, /*overrideEntryVolume=*/1.0f);
 
     if (attackerExertionCallback_ &&
         ev.outcome != CombatOutcome::MISS &&
@@ -983,7 +996,7 @@ bool CombatSoundManager::playWeaponSwing3D(
         WeaponSize size, bool isCrit, const glm::vec3& renderPos, bool isLocal, bool underwater) {
     const uint32_t sid = getWeaponSwingSoundId(size, isCrit);
     const float pitch = underwater ? kUnderwaterSwingPitch : 1.0f;
-    return playCombatSound(sid, renderPos, isLocal, pitch);
+    return playCombatSound(sid, renderPos, isLocal, pitch, /*overrideEntryVolume=*/1.0f);
 }
 
 void CombatSoundManager::playWeaponMiss(bool twoHanded) {

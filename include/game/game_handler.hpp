@@ -810,6 +810,8 @@ public:
 
     // Stand state
     void sendSetSheathed(uint8_t sheathState);
+    bool hasLocalSheathState() const { return hasLocalSheathState_; }
+    uint8_t getLocalSheathState() const { return localSheathState_; }
     void setStandState(uint8_t state);  // 0=stand, 1=sit, 2=sit_chair, 3=sleep, 4=sit_low_chair, 5=sit_medium_chair, 6=sit_high_chair, 7=dead, 8=kneel, 9=submerged
     uint8_t getStandState() const { return standState_; }
     bool isSitting() const { return standState_ >= 1 && standState_ <= 6; }
@@ -5259,6 +5261,8 @@ private:
     bool helmVisible_ = true;
     bool cloakVisible_ = true;
     uint8_t standState_ = 0;  // 0=stand, 1=sit, ..., 7=dead, 8=kneel (server-confirmed)
+    uint8_t localSheathState_ = 0;
+    bool hasLocalSheathState_ = false;
 
     // ---- Follow state ----
     uint64_t followTargetGuid_ = 0;

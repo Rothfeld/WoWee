@@ -1958,6 +1958,8 @@ void GameHandler::sendSetDifficulty(uint32_t difficulty, bool raid) {
 
 void GameHandler::sendSetSheathed(uint8_t sheathState) {
     assert(sheathState <= 2);
+    localSheathState_ = sheathState;
+    hasLocalSheathState_ = true;
     if (!isInWorld()) return;
     auto packet = SetSheathedPacket::build(sheathState);
     getSocket()->send(packet);

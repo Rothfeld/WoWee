@@ -335,8 +335,10 @@ void EntitySpawner::update() {
                                 if (!combatHandler) return false;
                                 const bool offHandSlot = (evType == T::SheatheLeft);
                                 bool unsheathe = true;
-                                if (auto ent = gameHandler_->getEntityManager().getEntity(unitGuid);
-                                    ent && ent->isUnit()) {
+                                if (isLocal && gameHandler_->hasLocalSheathState()) {
+                                    unsheathe = (gameHandler_->getLocalSheathState() != 0u);
+                                } else if (auto ent = gameHandler_->getEntityManager().getEntity(unitGuid);
+                                           ent && ent->isUnit()) {
                                     const auto* unit = static_cast<const game::Unit*>(ent.get());
                                     const uint16_t b2 = game::fieldIndex(game::UF::UNIT_FIELD_BYTES_2);
                                     if (b2 != 0xFFFF) {

@@ -680,6 +680,36 @@ TEST_CASE("M2 audio bridge dispatches HumanMale.m2 combat ($CSS/$CAH/$BWP/$BWR/$
     CHECK(pvm.getEmoteSoundId(234u) == 3202u);
     CHECK(pvm.getEmoteSoundId(380u) == 3354u);
 
+    // 4. Local-player combat & sheathe events at a real world position play 3D (matching Native Wow.exe)
+    //    and local-player 2D emotes apply kLocalPlayer2DGain (0.65f).
+    rebindObserver();
+    REQUIRE(csm.onUnitSheatheEvent(0x9001ull, glm::vec3(10.0f, 5.0f, 1.0f),
+                                   /*isLocalPlayer=*/true, 2u, 7u, 1, false, true));
+    REQUIRE_FALSE(events.empty());
+    CHECK(events.back().spatial);
+
+    // Wow.exe 0x00467000 overrides WeaponSwingSounds2.dbc volume to 1.0f (over DBC 0.70/0.75)
+    rebindObserver();
+    REQUIRE(csm.playWeaponSwing3D(audio::CombatSoundManager::WeaponSize::MEDIUM, false,
+                                  glm::vec3(10.0f, 5.0f, 1.0f), /*isLocal=*/true, false));
+    REQUIRE_FALSE(events.empty());
+    CHECK(events.back().spatial);
+    CHECK(events.back().volume == Catch::Approx(1.0f).margin(0.02f));
+
+    rebindObserver();
+    uint32_t helloEmoteTextId = 0u;
+    for (uint32_t eid = 1u; eid < 512u; ++eid) {
+        if (pvm.getEmoteTextSoundId(eid, 1u, 0u) == 6162u) {
+            helloEmoteTextId = eid;
+            break;
+        }
+    }
+    REQUIRE(helloEmoteTextId != 0u);
+    REQUIRE(pvm.playEmote(helloEmoteTextId, 1u, 0u)); // Human Male /hello (SE:6162, dbc vol=1.0 -> 0.65)
+    REQUIRE_FALSE(events.empty());
+    CHECK_FALSE(events.back().spatial);
+    CHECK(events.back().volume == Catch::Approx(0.65f).margin(0.02f));
+
     audio::AudioEngine::instance().setPlaybackObserver({});
     fm.shutdown();
     pvm.shutdown();

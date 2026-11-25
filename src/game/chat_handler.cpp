@@ -1054,13 +1054,13 @@ void ChatHandler::handleTextEmote(network::Packet& packet) {
             if (!pvm->wasLocalEmoteRecentlyPlayed(data.textEmoteId, 0.5f)) {
                 uint8_t raceId = owner_.getPlayerRace();
                 uint8_t gender = 0;
-                if (const auto self = owner_.getEntityManager().getEntity(data.senderGuid)) {
+                if (const Character* ch = owner_.getActiveCharacter()) {
+                    if (raceId == 0) raceId = static_cast<uint8_t>(ch->race);
+                    gender = static_cast<uint8_t>(toServerGender(ch->gender));
+                } else if (const auto self = owner_.getEntityManager().getEntity(data.senderGuid)) {
                     const uint32_t bytes0 = self->getField(fieldIndex(UF::UNIT_FIELD_BYTES_0));
                     if (raceId == 0) raceId = static_cast<uint8_t>(bytes0 & 0xFFu);
                     gender = static_cast<uint8_t>((bytes0 >> 16u) & 0xFFu);
-                } else if (const Character* ch = owner_.getActiveCharacter()) {
-                    if (raceId == 0) raceId = static_cast<uint8_t>(ch->race);
-                    gender = static_cast<uint8_t>(toServerGender(ch->gender));
                 }
                 if (raceId != 0) {
                     glm::vec3 renderPos = audio::AudioEngine::instance().getListenerPosition();

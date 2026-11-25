@@ -472,7 +472,8 @@ bool PlayerVoiceManager::playEmoteAnimSound(uint32_t emoteId) {
     if (!assetManager_ || volumeScale_ <= 0.0f) return false;
     const uint32_t soundId = getEmoteSoundId(emoteId);
     if (soundId == 0) return false;
-    return SoundEntryTable::instance().play2D(assetManager_, soundId, volumeScale_);
+    return SoundEntryTable::instance().play2D(
+        assetManager_, soundId, volumeScale_ * SoundEntryTable::kLocalPlayer2DGain);
 }
 
 bool PlayerVoiceManager::playEmoteAnimSound3D(uint32_t emoteId, const glm::vec3& position) {
@@ -491,7 +492,8 @@ bool PlayerVoiceManager::playEmoteAnimSoundForEvent(
     if (soundId == 0u) soundId = getEmoteSoundIdForAnim(animId);
     if (soundId == 0u) return false;
     if (isLocalPlayer) {
-        return SoundEntryTable::instance().play2D(assetManager_, soundId, volumeScale_);
+        return SoundEntryTable::instance().play2D(
+            assetManager_, soundId, volumeScale_ * SoundEntryTable::kLocalPlayer2DGain);
     }
     return SoundEntryTable::instance().play3D(assetManager_, soundId, position, volumeScale_);
 }
