@@ -68,6 +68,19 @@ TEST_CASE("emitters fade and hide with their owner", "[character-emitters]") {
     CHECK(rendering::characterEmitterFade(true, 0.0f, 1.0f) == 0.0f);
 }
 
+TEST_CASE("temporarily hidden weapon and enchant emitters stay alive at zero fade", "[character-emitters]") {
+    // Visible owner keeps emitters alive regardless of preserve flag.
+    CHECK(rendering::characterEmitterKeepAlive(1.0f, false));
+    CHECK(rendering::characterEmitterKeepAlive(0.25f, false));
+    // Genuinely hidden/faded owner drops its emitter companion.
+    CHECK_FALSE(rendering::characterEmitterKeepAlive(0.0f, false));
+    // Temporarily hidden weapon/ItemVisual (e.g. SpellCastDirected on a
+    // holdable weapon without a sheath attachment, like Deathknight Cavalier's
+    // BlackFlame_Low sword) stays alive at fade=0 so particles reappear at full
+    // steady-state density on the first frame the weapon returns.
+    CHECK(rendering::characterEmitterKeepAlive(0.0f, true));
+}
+
 TEST_CASE("each character model gets its own stable emitter model id", "[character-emitters]") {
     const auto a = rendering::characterEmitterModelId("Creature\\Wisp\\Wisp.m2", 7, 0);
     CHECK(a == rendering::characterEmitterModelId("Creature\\Wisp\\Wisp.m2", 7, 0));

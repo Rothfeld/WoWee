@@ -95,12 +95,23 @@ inline void applyParticleColors(pipeline::M2Model& model, const ParticleColorRow
     }
 }
 
-/// The alpha the emitters are drawn at; 0 means the owner is not drawn and
-/// its emitters are dropped. Combines display/spawn opacity, close-camera
-/// fade, and SpellVisualKit CharProc 14 opacity (Stealth, Ghost, etc.).
+/// The alpha the emitters are drawn at; 0 means the owner is not drawn.
+/// Combines display/spawn opacity, close-camera fade, and SpellVisualKit
+/// CharProc 14 opacity (Stealth, Ghost, etc.).
 inline float characterEmitterFade(bool visible, float opacity, float cameraOpacity,
                                   float kitOpacity = 1.0f) {
     return visible ? std::clamp(opacity * cameraOpacity * kitOpacity, 0.0f, 1.0f) : 0.0f;
+}
+
+/// Whether an emitter companion should stay alive (continuing pose and
+/// particle simulation at `fade == 0` when hidden) instead of being destroyed.
+/// Temporarily hidden weapon attachments and their ItemVisual effects (e.g.
+/// during a cast/emote pose on a model without a sheath attachment, or while
+/// `animateAttached` is 0) keep their emitters alive while their parent
+/// character remains active, so live particles reappear at full density on the
+/// first frame the weapon returns rather than restarting from zero (build 8606).
+inline bool characterEmitterKeepAlive(float drawFade, bool preserveWhileHidden) {
+    return drawFade > 0.0f || preserveWhileHidden;
 }
 
 /// Whether the owner holds a finished one-shot sequence on its last frame

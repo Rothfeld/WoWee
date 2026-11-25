@@ -3298,13 +3298,19 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos,
                         m2Data.globalSequenceDurations, 1.0f) > 0.0f;
                 }
             }
-            weapIt->second.visible = instance.visible && !instance.replaced && !hiddenHoldable && attachmentVisible;
+            const bool tempHidden = hiddenHoldable || !attachmentVisible;
+            const bool parentActive = instance.visible && !instance.replaced && !instance.roomHidden &&
+                characterEmitterFade(true, instance.opacity, instance.cameraOpacity, instance.kitOpacity) > 0.0f;
+            weapIt->second.visible = instance.visible && !instance.replaced && !tempHidden;
             weapIt->second.roomHidden = instance.roomHidden;
+            weapIt->second.preserveEmittersWhileHidden = parentActive && tempHidden;
             for (const auto& effect : wa.effects) {
-                instances.at(effect.effectInstanceId).visible = weapIt->second.visible;
-                instances.at(effect.effectInstanceId).roomHidden = instance.roomHidden;
+                auto& fxInst = instances.at(effect.effectInstanceId);
+                fxInst.visible = weapIt->second.visible;
+                fxInst.roomHidden = instance.roomHidden;
+                fxInst.preserveEmittersWhileHidden = parentActive && tempHidden;
             }
-            if (hiddenHoldable || !attachmentVisible) continue;
+            if (tempHidden && !parentActive) continue;
 
             // Get the bone matrix for the attachment bone
             glm::mat4 boneMat(1.0f);
@@ -3317,7 +3323,7 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos,
             glm::mat4 weaponMat =
                 charModelMat * boneMat * glm::translate(glm::mat4(1.0f), wa.offset) *
                 wa.localTransform;
-            if (sheathed) {
+            if (sheathed && !hiddenHoldable) {
                 // The item model sits at the sheath point as authored, like
                 // in the hand: the attachment's bone carries its orientation.
                 if (!getAttachmentTransform(pair.first, wa.sheathAttachmentId, weaponMat))
@@ -3638,8 +3644,10 @@ void CharacterRenderer::syncEmitters(M2Renderer& m2Renderer, uint32_t onlyRootA,
         const bool keep = inScope && owner != instances.end() &&
             owner->second.modelId == it->second.characterModelId &&
             displayParticleColorId(owner->second.displayId) == it->second.particleColorId &&
-            characterEmitterFade(owner->second.visible && !owner->second.replaced, owner->second.opacity,
-                                 owner->second.cameraOpacity, owner->second.kitOpacity) > 0.0f &&
+            characterEmitterKeepAlive(
+                characterEmitterFade(owner->second.visible && !owner->second.replaced, owner->second.opacity,
+                                     owner->second.cameraOpacity, owner->second.kitOpacity),
+                owner->second.preserveEmittersWhileHidden) &&
             m2Renderer.hasInstance(it->second.m2InstanceId);
         if (keep) { ++it; continue; }
         if (m2Renderer.hasInstance(it->second.m2InstanceId))
@@ -3651,7 +3659,7 @@ void CharacterRenderer::syncEmitters(M2Renderer& m2Renderer, uint32_t onlyRootA,
         if (scoped && scopedIds.count(id) == 0) continue;
         const float fade = characterEmitterFade(instance.visible && !instance.replaced && !instance.roomHidden,
                                                 instance.opacity, instance.cameraOpacity, instance.kitOpacity);
-        if (fade <= 0.0f) continue;
+        if (!characterEmitterKeepAlive(fade, instance.preserveEmittersWhileHidden)) continue;
         const auto modelIt = models.find(instance.modelId);
         if (modelIt == models.end()) continue;
         const auto& model = modelIt->second.data;

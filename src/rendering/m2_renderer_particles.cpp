@@ -569,7 +569,7 @@ void M2Renderer::renderParticleMeshes(VkCommandBuffer cmd, VkDescriptorSet perFr
     for (size_t idx : particleInstanceIndices_) {
         if (idx >= instances.size()) continue;
         const auto& inst = instances[idx];
-        if (!inst.cachedModel || inst.particles.empty()) continue;
+        if (!inst.cachedModel || inst.particles.empty() || inst.fade <= 0.0f) continue;
         const auto& geometry = inst.cachedModel->particleGeometry;
         for (const auto& p : inst.particles)
             if (p.emitterIndex >= 0 && static_cast<size_t>(p.emitterIndex) < geometry.size())
@@ -612,7 +612,7 @@ void M2Renderer::renderParticleMeshes(VkCommandBuffer cmd, VkDescriptorSet perFr
     for (size_t idx : particleInstanceIndices_) {
         if (idx >= instances.size()) continue;
         const auto& inst = instances[idx];
-        if (!inst.cachedModel || inst.particles.empty()) continue;
+        if (!inst.cachedModel || inst.particles.empty() || inst.fade <= 0.0f) continue;
         const auto& gpu = *inst.cachedModel;
         const glm::vec3 distance = inst.position - cachedCamPos_;
         if (glm::dot(distance, distance) > particleMaxDistSq(inst)) continue;
@@ -768,7 +768,7 @@ void M2Renderer::renderM2Ribbons(VkCommandBuffer cmd, VkDescriptorSet perFrameSe
     auto& draws = ribbonDraws_;
 
     for (const auto& inst : instances) {
-        if (!inst.cachedModel) continue;
+        if (!inst.cachedModel || inst.fade <= 0.0f) continue;
         if (outsideVisibleRegion(inst.position) || exteriorCulled(inst) || roomCulled(inst)) continue;
         const auto& gpu = *inst.cachedModel;
         if (gpu.ribbonEmitters.empty()) continue;
@@ -1098,7 +1098,7 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
     for (size_t idx : particleInstanceIndices_) {
         if (idx >= instances.size()) continue;
         const auto& inst = instances[idx];
-        if (!inst.cachedModel) continue;
+        if (!inst.cachedModel || inst.fade <= 0.0f) continue;
         const glm::vec3 distance = inst.position - cachedCamPos_;
         if (glm::dot(distance, distance) > particleMaxDistSq(inst)) continue;
         if (outsideVisibleRegion(inst.position) || exteriorCulled(inst) || roomCulled(inst)) continue;
@@ -1162,7 +1162,7 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
     for (size_t idx : particleInstanceIndices_) {
         if (idx >= instances.size()) continue;
         auto& inst = instances[idx];
-        if (inst.particles.empty()) continue;
+        if (inst.particles.empty() || inst.fade <= 0.0f) continue;
         if (!inst.cachedModel) continue;
         const auto& gpu = *inst.cachedModel;
         const glm::vec3 distance = inst.position - cachedCamPos_;

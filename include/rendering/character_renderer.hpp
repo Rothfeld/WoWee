@@ -591,6 +591,12 @@ private:
         bool replaced = false;
         // Standing in a WMO room the camera does not see (setInstanceRoomHidden).
         bool roomHidden = false;
+        // True on a weapon attachment or its ItemVisual effect while
+        // temporarily hidden by a pose/gesture (hiddenHoldable) or attachment
+        // visibility track while its parent character remains active. Keeps
+        // the M2Renderer emitter companion simulating at fade=0 so particles
+        // reappear immediately at full density when the weapon returns.
+        bool preserveEmittersWhileHidden = false;
         float torsoYawOverrideRad = 0.0f;
 
         // Animation state
