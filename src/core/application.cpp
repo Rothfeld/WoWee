@@ -5235,7 +5235,7 @@ void Application::updateInGame(float deltaTime, const char*& updateCheckpoint) {
     // creature models remain at stale spawn positions.
     inGameStep = "creature render sync";
     updateCheckpoint = "in_game: creature render sync";
-    syncRenderInstancesToEntities(deltaTime);
+    runInGameStage("creature render sync", [&] { syncRenderInstancesToEntities(deltaTime); });
     // Movement heartbeat is sent from GameHandler::update() to avoid
     // duplicate packets from multiple update loops.
 
@@ -5369,17 +5369,25 @@ void Application::update(float deltaTime) {
             LOG_ERROR("Exception during Application::update stage 'renderer->update': ", e.what());
             throw;
         }
-        // Units have been placed for this frame: their ground shadows.
-        if (entitySpawner_) renderer->setUnitShadows(entitySpawner_->collectUnitShadows());
         float ruMs = std::chrono::duration<float, std::milli>(
             std::chrono::steady_clock::now() - rendererUpdateStart).count();
-        if (ruMs > 50.0f) {
-            LOG_WARNING("SLOW update stage 'renderer->update': ", ruMs, "ms");
+        noteStageTime("renderer->update", ruMs);
+        updateStagesMs_ += ruMs;
+        // Units have been placed for this frame: their ground shadows.
+        const auto shadowsStart = std::chrono::steady_clock::now();
+        if (entitySpawner_) renderer->setUnitShadows(entitySpawner_->collectUnitShadows());
+        const float shadowsMs = std::chrono::duration<float, std::milli>(
+            std::chrono::steady_clock::now() - shadowsStart).count();
+        noteStageTime("unit shadows", shadowsMs);
+        updateStagesMs_ += shadowsMs;
+        if (ruMs + shadowsMs > 50.0f) {
+            LOG_WARNING("SLOW update stage 'renderer->update': ", ruMs + shadowsMs, "ms");
         }
     }
     // Update UI
     updateCheckpoint = "ui update";
     if (uiManager) {
+        const auto uiUpdateStart = std::chrono::steady_clock::now();
         try {
             uiManager->update(deltaTime);
         } catch (const std::bad_alloc& e) {
@@ -5389,6 +5397,10 @@ void Application::update(float deltaTime) {
             LOG_ERROR("Exception during Application::update stage 'uiManager->update': ", e.what());
             throw;
         }
+        const float uiUpdateMs = std::chrono::duration<float, std::milli>(
+            std::chrono::steady_clock::now() - uiUpdateStart).count();
+        noteStageTime("uiManager->update", uiUpdateMs);
+        updateStagesMs_ += uiUpdateMs;
     }
     } catch (const std::bad_alloc& e) {
         LOG_ERROR("OOM in Application::update checkpoint '", updateCheckpoint, "': ", e.what());

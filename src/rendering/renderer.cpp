@@ -1,5 +1,6 @@
 #include "rendering/view_sync.hpp"
 #include "rendering/renderer.hpp"
+#include "core/frame_stage_times.hpp"
 #include "rendering/sun_direction.hpp"
 
 #include <fstream>
@@ -2137,6 +2138,9 @@ void Renderer::update(float deltaTime) {
     if (wmoRenderer) wmoRenderer->resetQueryStats();
     if (m2Renderer) m2Renderer->resetQueryStats();
 
+    // This function's parts in the frame budget report (WOWEE_FRAME_PROFILE).
+    core::FrameStagePhases phases;
+    phases.phase("renderer->update/camera");
     if (cameraController) {
         auto cameraStart = std::chrono::steady_clock::now();
         cameraController->update(deltaTime);
@@ -2158,6 +2162,7 @@ void Renderer::update(float deltaTime) {
             LOG_WARNING("SLOW cameraController->update: ", lastCameraUpdateMs, "ms");
         }
 
+        phases.phase("renderer->update/zone, light, animation state");
         // Update 3D audio listener position/orientation to match camera.
         // getUp() internally calls getRight() which calls getForward() again,
         // and we ask for getForward() once more on the same line - that's 3
@@ -2419,6 +2424,7 @@ void Renderer::update(float deltaTime) {
     }
 
     // Update terrain streaming
+    phases.phase("renderer->update/terrain");
     if (terrainManager && camera) {
         auto terrStart = std::chrono::steady_clock::now();
         terrainManager->update(*camera, deltaTime);
@@ -2430,6 +2436,7 @@ void Renderer::update(float deltaTime) {
     }
 
     // Update sky system (skybox time, star twinkle, clouds, celestial moon phases)
+    phases.phase("renderer->update/sky, weather, effects");
     if (skySystem) {
         skySystem->update(deltaTime);
     }
@@ -2582,10 +2589,12 @@ void Renderer::update(float deltaTime) {
             }
             return res;
         });
+        phases.phase("renderer->update/characters");
         characterRenderer->update(deltaTime, camera->getPosition());
     }
 
     // Update transient spell visual instances (delegated to SpellVisualSystem §4.4)
+    phases.phase("renderer->update/spell visuals, doodad launch");
     if (spellVisualSystem_) spellVisualSystem_->update(deltaTime);
 
     // Launch M2 doodad and spell-visual animation on background thread (overlaps with audio)
@@ -2638,7 +2647,9 @@ void Renderer::update(float deltaTime) {
     }
 
     // Update AudioEngine (cleanup finished sounds, etc.)
+    phases.phase("renderer->update/audio engine");
     audio::AudioEngine::instance().update(deltaTime);
+    phases.phase("renderer->update/doodad wait, footprints, zone audio");
 
     // M2Renderer::update may rebuild the instance spatial index when streaming
     // marked it dirty. Footprint spawning below performs an M2 floor query and
