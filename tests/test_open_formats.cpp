@@ -227,6 +227,58 @@ TEST_CASE("WMO fog resolves local MFOG spheres when record zero is unauthored st
     CHECK_FALSE(wowee::rendering::sampleWMOFog(
         fogs, {2, 0, 0, 0}, upperTunnel.position + glm::vec3(180.0f, 0.0f, 0.0f),
         false, barrensNight));
+
+    // Amani Catacombs (woodtroll_temple.wmo): MFOG[1] at the north entrance
+    // carries flags=0x01 with smallRadius=0.0 and finite largeRadius=10.1.
+    // Walking into corridor group 002 (fogs=[1,0,0,0]) 86 yd away must stay on
+    // base MFOG[0] instead of popping instantaneously to doorway MFOG[1], then
+    // blend smoothly across the 10.1 yd shell at the doorway.
+    WMOFog amaniBase{};
+    amaniBase.flags = 0;
+    amaniBase.position = glm::vec3(-100.8f, 209.3f, 52.8f);
+    amaniBase.smallRadius = 4.7f;
+    amaniBase.largeRadius = 10.1f;
+    amaniBase.endDist = 166.7f;
+    amaniBase.startFactor = 0.20f;
+    amaniBase.color1 = glm::vec4(81.0f / 255.0f, 148.0f / 255.0f, 119.0f / 255.0f, 1.0f);
+
+    WMOFog amaniDoor{};
+    amaniDoor.flags = 0x01;
+    amaniDoor.position = glm::vec3(-74.1f, 260.5f, 52.8f);
+    amaniDoor.smallRadius = 0.0f;
+    amaniDoor.largeRadius = 10.1f;
+    amaniDoor.endDist = 83.3f;
+    amaniDoor.startFactor = 0.25f;
+    amaniDoor.color1 = glm::vec4(79.0f / 255.0f, 179.0f / 255.0f, 133.0f / 255.0f, 1.0f);
+
+    const std::vector<WMOFog> amaniFogs{amaniBase, amaniDoor};
+    const auto corridorEntry = wowee::rendering::sampleWMOFog(
+        amaniFogs, {1, 0, 0, 0}, glm::vec3(-74.1f, 174.0f, 52.8f), false);
+    REQUIRE(corridorEntry);
+    CHECK(corridorEntry->end == Catch::Approx(166.7f));
+    CHECK(corridorEntry->color.g == Catch::Approx(148.0f / 255.0f));
+
+    const auto doorMid = wowee::rendering::sampleWMOFog(
+        amaniFogs, {1, 0, 0, 0}, glm::vec3(-74.1f, 260.5f - 5.05f, 52.8f), false);
+    REQUIRE(doorMid);
+    CHECK(doorMid->end == Catch::Approx(0.5f * (166.7f + 83.3f)));
+    CHECK(doorMid->color.g == Catch::Approx(0.5f * (148.0f + 179.0f) / 255.0f));
+
+    const auto doorCenter = wowee::rendering::sampleWMOFog(
+        amaniFogs, {1, 0, 0, 0}, amaniDoor.position, false);
+    REQUIRE(doorCenter);
+    CHECK(doorCenter->end == Catch::Approx(83.3f));
+    CHECK(doorCenter->color.g == Catch::Approx(179.0f / 255.0f));
+
+    // A flags=0x01 record with no finite largeRadius (largeRadius == 0) still
+    // applies at infinite radius.
+    WMOFog trueInfinite = amaniDoor;
+    trueInfinite.largeRadius = 0.0f;
+    const std::vector<WMOFog> infFogs{amaniBase, trueInfinite};
+    const auto infFar = wowee::rendering::sampleWMOFog(
+        infFogs, {1, 0, 0, 0}, glm::vec3(-74.1f, 174.0f, 52.8f), false);
+    REQUIRE(infFar);
+    CHECK(infFar->end == Catch::Approx(83.3f));
 }
 
 static const std::string TEST_DIR = "test_output_formats";

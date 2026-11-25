@@ -45,7 +45,13 @@ inline std::optional<WMOFogSample> sampleWMOFog(
     // inside the Coilfang Reservoir entrance pipe.
     constexpr uint32_t kWmoFogBoundedBase = 0x10;
     const auto sphereWeight = [&position](const pipeline::WMOFog& fog) {
-        if (fog.flags & kWmoFogInfiniteRadius) return 1.0f;
+        // 153 TBC local MFOG[1..N] records (e.g. woodtroll_temple.wmo doorway
+        // spheres MFOG[1..2] largeR=10.1, undercity.wmo MFOG[2] largeR=22.2)
+        // set flag 0x01 alongside smallRadius=0 and a finite largeRadius > 0.
+        // Treating flag 0x01 as infinite when largeRadius > 0 snaps the entire
+        // corridor group to the doorway fog 90 yd away; only treat it as
+        // infinite when no finite largeRadius was authored.
+        if ((fog.flags & kWmoFogInfiniteRadius) && fog.largeRadius <= 0.0f) return 1.0f;
         const float distance = glm::distance(position, fog.position);
         if (distance <= fog.smallRadius) return 1.0f;
         if (fog.largeRadius > fog.smallRadius) {
