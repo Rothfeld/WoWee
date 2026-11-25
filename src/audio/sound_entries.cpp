@@ -21,6 +21,15 @@ std::string upperAscii(const std::string& s) {
     return out;
 }
 
+std::string normalizeSoundPathKey(const std::string& s) {
+    std::string out = s;
+    for (char& ch : out) {
+        if (ch == '/') ch = '\\';
+        else ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+    }
+    return out;
+}
+
 std::string joinSoundPath(const std::string& dir, const std::string& file) {
     if (dir.empty()) return file;
     if (dir.back() == '\\' || dir.back() == '/') return dir + file;
@@ -69,6 +78,7 @@ void SoundEntryTable::reset() {
     loaded_ = false;
     byId_.clear();
     byName_.clear();
+    byPath_.clear();
 }
 
 bool SoundEntryTable::ensureLoaded(pipeline::AssetManager* assets) {
@@ -82,6 +92,7 @@ bool SoundEntryTable::ensureLoaded(pipeline::AssetManager* assets) {
 
     byId_.clear();
     byName_.clear();
+    byPath_.clear();
     loadedAssets_ = assets;
     loaded_ = true;
 
@@ -134,6 +145,11 @@ bool SoundEntryTable::ensureLoaded(pipeline::AssetManager* assets) {
             if (!rec.name.empty()) {
                 byName_.emplace(upperAscii(rec.name), id);
             }
+            for (const SoundVariant& v : rec.variants) {
+                if (!v.path.empty()) {
+                    byPath_.try_emplace(normalizeSoundPathKey(v.path), id);
+                }
+            }
             byId_.emplace(id, std::move(rec));
         }
     }
@@ -165,6 +181,25 @@ const SoundEntryRecord* SoundEntryTable::findByName(pipeline::AssetManager* asse
     const auto nit = byName_.find(upperAscii(name));
     if (nit == byName_.end()) return nullptr;
     const auto it = byId_.find(nit->second);
+    return (it != byId_.end()) ? &it->second : nullptr;
+}
+
+const SoundEntryRecord* SoundEntryTable::findByPath(pipeline::AssetManager* assets, const std::string& path) {
+    if (path.empty() || !ensureLoaded(assets)) return nullptr;
+    return findLoadedByPath(path);
+}
+
+const SoundEntryRecord* SoundEntryTable::findLoadedById(uint32_t soundId) const {
+    if (!loaded_ || soundId == 0) return nullptr;
+    const auto it = byId_.find(soundId);
+    return (it != byId_.end()) ? &it->second : nullptr;
+}
+
+const SoundEntryRecord* SoundEntryTable::findLoadedByPath(const std::string& path) const {
+    if (!loaded_ || path.empty()) return nullptr;
+    const auto pit = byPath_.find(normalizeSoundPathKey(path));
+    if (pit == byPath_.end()) return nullptr;
+    const auto it = byId_.find(pit->second);
     return (it != byId_.end()) ? &it->second : nullptr;
 }
 

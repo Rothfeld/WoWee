@@ -77,7 +77,7 @@ void MovementSoundManager::playSound(const std::vector<MovementSample>& library,
     if (!initialized_ || library.empty() || !library[0].loaded) return;
 
     float volume = 0.7f * volumeScale_ * volumeMultiplier;
-    AudioEngine::instance().playSound2D(library[0].data, volume, 1.0f);
+    AudioEngine::instance().playSound2D(library[0].data, volume, 1.0f, library[0].path);
 }
 
 void MovementSoundManager::playRandomSound(const std::vector<MovementSample>& library, float volumeMultiplier) {
@@ -87,7 +87,7 @@ void MovementSoundManager::playRandomSound(const std::vector<MovementSample>& li
     const MovementSample* chosen = pickLoadedSample(library, gen);
     if (!chosen) return;
     const float volume = 0.7f * volumeScale_ * volumeMultiplier;
-    AudioEngine::instance().playSound2D(chosen->data, volume, 1.0f);
+    AudioEngine::instance().playSound2D(chosen->data, volume, 1.0f, chosen->path);
 }
 
 void MovementSoundManager::setVolumeScale(float scale) {

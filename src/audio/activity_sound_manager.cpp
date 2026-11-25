@@ -268,7 +268,7 @@ void ActivitySoundManager::update([[maybe_unused]] float deltaTime) {
             std::uniform_int_distribution<size_t> clipDist(0, swimLoopClips.size() - 1);
             const Sample& sample = swimLoopClips[clipDist(rng)];
             float volume = 0.6f * volumeScale;
-            AudioEngine::instance().playSound2D(sample.data, volume, 1.0f);
+            AudioEngine::instance().playSound2D(sample.data, volume, 1.0f, sample.path);
             lastSwimStrokeAt = now;
         }
     } else if (!swimmingActive) {
@@ -464,7 +464,7 @@ void ActivitySoundManager::playLanding(bool hardLanding) {
         const Sample& sample = hardLandClips[dist(rng)];
         std::uniform_real_distribution<float> volumeDist(0.80f, 0.88f);
         std::uniform_real_distribution<float> pitchDist(0.97f, 1.03f);
-        AudioEngine::instance().playSound2D(sample.data, volumeDist(rng) * volumeScale, pitchDist(rng));
+        AudioEngine::instance().playSound2D(sample.data, volumeDist(rng) * volumeScale, pitchDist(rng), sample.path);
     }
 }
 
@@ -488,7 +488,7 @@ void ActivitySoundManager::playMeleeSwing() {
     std::uniform_real_distribution<float> volumeDist(0.76f, 0.84f);
     std::uniform_real_distribution<float> pitchDist(0.96f, 1.04f);
 
-    if (AudioEngine::instance().playSound2D(sample.data, volumeDist(rng) * volumeScale, pitchDist(rng))) {
+    if (AudioEngine::instance().playSound2D(sample.data, volumeDist(rng) * volumeScale, pitchDist(rng), sample.path)) {
         lastMeleeSwingAt = now;
     }
 }
@@ -617,7 +617,7 @@ bool ActivitySoundManager::playSplash(const std::vector<Sample>& clips) {
     std::uniform_int_distribution<size_t> clipDist(0, clips.size() - 1);
     const Sample& sample = clips[clipDist(rng)];
     std::uniform_real_distribution<float> pitchDist(0.95f, 1.05f);
-    return AudioEngine::instance().playSound2D(sample.data, 0.95f * volumeScale, pitchDist(rng));
+    return AudioEngine::instance().playSound2D(sample.data, 0.95f * volumeScale, pitchDist(rng), sample.path);
 }
 
 void ActivitySoundManager::playWaterEnter() {

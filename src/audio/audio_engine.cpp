@@ -8,13 +8,17 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <cstdlib>
+#include <ctime>
 #include <iterator>
 #include <limits>
 #include <memory>
 #include <shared_mutex>
+#include <sstream>
+#include <iomanip>
 #include <unordered_map>
 
 namespace wowee {
@@ -179,6 +183,62 @@ constexpr std::array<uint32_t, SESoundCategory::kCount> kSESoundCategoryCaps = {
     4u,          // 17: FOOTSTEP_SELF
 };
 
+double monotonicSecondsNow() {
+    struct timespec ts{};
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return static_cast<double>(ts.tv_sec) + static_cast<double>(ts.tv_nsec) * 1e-9;
+}
+
+int64_t realtimeNsNow() {
+    struct timespec ts{};
+    clock_gettime(CLOCK_REALTIME, &ts);
+    return static_cast<int64_t>(ts.tv_sec) * 1000000000ll + static_cast<int64_t>(ts.tv_nsec);
+}
+
+std::string jsonEscape(const std::string& s) {
+    std::string out;
+    out.reserve(s.size() + 8);
+    for (unsigned char c : s) {
+        switch (c) {
+            case '\\': out += "\\\\"; break;
+            case '"':  out += "\\\""; break;
+            case '\n': out += "\\n"; break;
+            case '\r': out += "\\r"; break;
+            case '\t': out += "\\t"; break;
+            default:
+                if (c < 0x20) {
+                    char buf[8];
+                    std::snprintf(buf, sizeof(buf), "\\u%04x", static_cast<unsigned int>(c));
+                    out += buf;
+                } else {
+                    out.push_back(static_cast<char>(c));
+                }
+                break;
+        }
+    }
+    return out;
+}
+
+float safeJsonFloat(float v) {
+    return std::isfinite(v) ? v : 0.0f;
+}
+
+void resolveSoundMetadata(uint32_t& ioSoundId, std::string& outName, const std::string& path) {
+    const auto& table = SoundEntryTable::instance();
+    if (ioSoundId != 0) {
+        if (const SoundEntryRecord* rec = table.findLoadedById(ioSoundId)) {
+            outName = rec->name;
+            return;
+        }
+    }
+    if (!path.empty()) {
+        if (const SoundEntryRecord* rec = table.findLoadedByPath(path)) {
+            ioSoundId = rec->id;
+            outName = rec->name;
+        }
+    }
+}
+
 } // namespace
 
 float AudioEngine::computeDistanceAttenuation(float minDistance, float maxDistance, float distance) {
@@ -224,6 +284,7 @@ AudioEngine::AudioEngine() = default;
 
 AudioEngine::~AudioEngine() {
     shutdown();
+    closeAudioTrace();
 }
 
 void AudioEngine::refreshEngineMasterGain() {
@@ -245,6 +306,13 @@ void AudioEngine::reapFinishedSounds() {
     if (!initialized_ || !engine_) return;
     for (size_t i = 0; i < activeSounds_.size(); ) {
         if (!ma_sound_is_playing(activeSounds_[i].sound)) {
+            const double monoNow = monotonicSecondsNow();
+            const double elapsed = std::max(0.0, monoNow - activeSounds_[i].startMonoSec);
+            const uint64_t seq = activeSounds_[i].traceSeq;
+            const uint32_t hid = activeSounds_[i].id;
+            const uint32_t sid = activeSounds_[i].soundEntryId;
+            const std::string sname = activeSounds_[i].soundEntryName;
+            const std::string spath = activeSounds_[i].path;
             ma_sound_uninit(activeSounds_[i].sound);
             std::free(activeSounds_[i].sound);
             ma_audio_buffer* buffer = static_cast<ma_audio_buffer*>(activeSounds_[i].buffer);
@@ -252,6 +320,25 @@ void AudioEngine::reapFinishedSounds() {
             std::free(buffer);
             activeSounds_[i] = std::move(activeSounds_.back());
             activeSounds_.pop_back();
+            {
+                std::lock_guard<std::mutex> lock(traceMutex_);
+                if (traceFile_) {
+                    std::ostringstream os;
+                    os << std::fixed << std::setprecision(6);
+                    os << "{\"event\":\"end\",\"client\":\"wowee\""
+                       << ",\"seq\":" << seq
+                       << ",\"handle_id\":" << hid
+                       << ",\"mono_s\":" << monoNow
+                       << ",\"ts_ns\":" << realtimeNsNow()
+                       << ",\"sound_id\":" << sid
+                       << ",\"sound_name\":\"" << jsonEscape(sname) << "\""
+                       << ",\"path\":\"" << jsonEscape(spath) << "\""
+                       << ",\"reason\":\"natural_end\""
+                       << ",\"elapsed_s\":" << elapsed
+                       << "}";
+                    writeTraceLineUnlocked(os.str());
+                }
+            }
         } else {
             ++i;
         }
@@ -301,6 +388,16 @@ bool AudioEngine::initialize() {
 
     initialized_ = true;
     headless_ = false;
+    {
+        std::lock_guard<std::mutex> lock(traceMutex_);
+        if (!traceFile_) {
+            if (const char* envPath = std::getenv("WOWEE_AUDIO_TRACE"); envPath && *envPath) {
+                traceFile_ = std::fopen(envPath, "a");
+                if (traceFile_) traceFilePath_ = envPath;
+            }
+        }
+    }
+    emitInitTrace(backendName);
     LOG_INFO("AudioEngine initialized (miniaudio, backend: ", backendName, ")");
     return true;
 }
@@ -326,9 +423,69 @@ bool AudioEngine::initializeHeadless(uint32_t sampleRate, uint32_t channels) {
     refreshEngineMasterGain();
     initialized_ = true;
     headless_ = true;
+    {
+        std::lock_guard<std::mutex> lock(traceMutex_);
+        if (!traceFile_) {
+            if (const char* envPath = std::getenv("WOWEE_AUDIO_TRACE"); envPath && *envPath) {
+                traceFile_ = std::fopen(envPath, "a");
+                if (traceFile_) traceFilePath_ = envPath;
+            }
+        }
+    }
+    emitInitTrace("Headless");
     LOG_INFO("AudioEngine initialized in headless test mode (", engineConfig.sampleRate, " Hz, ",
              engineConfig.channels, " ch)");
     return true;
+}
+
+bool AudioEngine::setAudioTracePath(const std::string& jsonlPath) {
+    std::lock_guard<std::mutex> lock(traceMutex_);
+    if (traceFile_) {
+        std::fflush(traceFile_);
+        std::fclose(traceFile_);
+        traceFile_ = nullptr;
+        traceFilePath_.clear();
+    }
+    if (jsonlPath.empty()) return true;
+    traceFile_ = std::fopen(jsonlPath.c_str(), "w");
+    if (!traceFile_) return false;
+    traceFilePath_ = jsonlPath;
+    return true;
+}
+
+void AudioEngine::closeAudioTrace() {
+    std::lock_guard<std::mutex> lock(traceMutex_);
+    if (traceFile_) {
+        std::fflush(traceFile_);
+        std::fclose(traceFile_);
+        traceFile_ = nullptr;
+        traceFilePath_.clear();
+    }
+}
+
+void AudioEngine::writeTraceLineUnlocked(const std::string& jsonLine) {
+    if (!traceFile_) return;
+    std::fwrite(jsonLine.data(), 1, jsonLine.size(), traceFile_);
+    std::fputc('\n', traceFile_);
+    std::fflush(traceFile_);
+}
+
+void AudioEngine::emitInitTrace(const char* backendName) {
+    std::lock_guard<std::mutex> lock(traceMutex_);
+    if (!traceFile_) return;
+    std::ostringstream os;
+    os << std::fixed << std::setprecision(6);
+    os << "{\"event\":\"init\",\"client\":\"wowee\""
+       << ",\"mono_s\":" << monotonicSecondsNow()
+       << ",\"ts_ns\":" << realtimeNsNow()
+       << ",\"backend\":\"" << jsonEscape(backendName ? backendName : "") << "\""
+       << ",\"device\":\"" << jsonEscape(getOutputDeviceName()) << "\""
+       << ",\"sample_rate\":" << getOutputSampleRate()
+       << ",\"channels\":" << getOutputChannels()
+       << ",\"master_volume\":" << safeJsonFloat(masterVolume_)
+       << ",\"suspended\":" << (suspended_ ? "true" : "false")
+       << "}";
+    writeTraceLineUnlocked(os.str());
 }
 
 std::string AudioEngine::getOutputDeviceName() const {
@@ -489,24 +646,65 @@ uint32_t AudioEngine::startSound2DInternal(const std::vector<uint8_t>& wavData, 
                                            const std::string& debugPath) {
     LOG_INFO("sfx2d: bytes=", wavData.size(), " vol=", volume);
     const float clampedPitch = glm::clamp(pitch, 0.25f, 4.0f);
-    auto notify = [&](bool started, const DecodedWavCacheEntry& dec) {
-        if (!playbackObserver_) return;
-        PlaybackEvent ev;
-        ev.path = debugPath;
-        ev.byteSize = wavData.size();
-        ev.decodedFrames = dec.frames;
-        ev.sampleRate = dec.sampleRate;
-        ev.volume = volume;
-        ev.pitch = clampedPitch;
-        ev.spatial = false;
-        ev.music = false;
-        ev.started = started;
-        playbackObserver_(ev);
+    const bool loopEnabled = stoppable && options.loop;
+    uint32_t resolvedId = options.soundEntryId;
+    std::string resolvedName;
+    resolveSoundMetadata(resolvedId, resolvedName, debugPath);
+
+    auto notify = [&](bool started, uint32_t handleId, uint64_t traceSeq,
+                      double monoNow, const DecodedWavCacheEntry& dec) {
+        if (playbackObserver_) {
+            PlaybackEvent ev;
+            ev.soundEntryId = resolvedId;
+            ev.soundEntryName = resolvedName;
+            ev.path = debugPath;
+            ev.byteSize = wavData.size();
+            ev.decodedFrames = dec.frames;
+            ev.sampleRate = dec.sampleRate;
+            ev.volume = volume;
+            ev.pitch = clampedPitch;
+            ev.spatial = false;
+            ev.music = false;
+            ev.started = started;
+            playbackObserver_(ev);
+        }
+        std::lock_guard<std::mutex> lock(traceMutex_);
+        if (!traceFile_) return;
+        const double dur = (dec.sampleRate > 0)
+            ? (static_cast<double>(dec.frames) / static_cast<double>(dec.sampleRate)) / static_cast<double>(clampedPitch)
+            : 0.0;
+        std::ostringstream os;
+        os << std::fixed << std::setprecision(6);
+        os << "{\"event\":\"start\",\"client\":\"wowee\""
+           << ",\"seq\":" << traceSeq
+           << ",\"handle_id\":" << handleId
+           << ",\"mono_s\":" << monoNow
+           << ",\"ts_ns\":" << realtimeNsNow()
+           << ",\"sound_id\":" << resolvedId
+           << ",\"sound_name\":\"" << jsonEscape(resolvedName) << "\""
+           << ",\"path\":\"" << jsonEscape(debugPath) << "\""
+           << ",\"spatial\":false,\"loop\":" << (loopEnabled ? "true" : "false") << ",\"music\":false"
+           << ",\"volume\":" << safeJsonFloat(volume)
+           << ",\"master_volume\":" << safeJsonFloat(masterVolume_)
+           << ",\"suspended\":" << (suspended_ ? "true" : "false")
+           << ",\"pitch\":" << safeJsonFloat(clampedPitch)
+           << ",\"min_dist\":0.0,\"max_dist\":0.0"
+           << ",\"source_pos\":[0.0,0.0,0.0]"
+           << ",\"listener_pos\":[" << safeJsonFloat(listenerPosition_.x) << ","
+           << safeJsonFloat(listenerPosition_.y) << "," << safeJsonFloat(listenerPosition_.z) << "]"
+           << ",\"listener_fwd\":[" << safeJsonFloat(listenerForward_.x) << ","
+           << safeJsonFloat(listenerForward_.y) << "," << safeJsonFloat(listenerForward_.z) << "]"
+           << ",\"sample_rate\":" << dec.sampleRate
+           << ",\"decoded_frames\":" << dec.frames
+           << ",\"duration_s\":" << dur
+           << ",\"started\":" << (started ? "true" : "false")
+           << "}";
+        writeTraceLineUnlocked(os.str());
     };
 
     DecodedWavCacheEntry emptyDec;
     if (!initialized_ || !engine_ || wavData.empty() || masterVolume_ <= 0.0f || volume <= 0.0f) {
-        notify(false, emptyDec);
+        notify(false, 0, nextTraceSeq_++, monotonicSecondsNow(), emptyDec);
         return 0;
     }
 
@@ -514,26 +712,26 @@ uint32_t AudioEngine::startSound2DInternal(const std::vector<uint8_t>& wavData, 
 
     // Wow.exe 0x4621ef -> 0x4664b0: suppress fire-and-forget one-shots while muted in background
     if (isMutedInBackground() && !stoppable && !options.loop) {
-        notify(false, emptyDec);
+        notify(false, 0, nextTraceSeq_++, monotonicSecondsNow(), emptyDec);
         return 0;
     }
 
     // Wow.exe 0x4620c0..0x4620da: per-category concurrency cap (0x897018)
     if (!canStartCategory(options.category)) {
-        notify(false, emptyDec);
+        notify(false, 0, nextTraceSeq_++, monotonicSecondsNow(), emptyDec);
         return 0;
     }
 
     // Wow.exe 0x46224c..0x4622a4: Flags & 0x020 (NO_DUPLICATES)
     if ((options.soundEntryFlags & SoundEntryFlags::kNoDuplicates) != 0u &&
         options.soundEntryId != 0 && isSoundEntryPlaying(options.soundEntryId)) {
-        notify(false, emptyDec);
+        notify(false, 0, nextTraceSeq_++, monotonicSecondsNow(), emptyDec);
         return 0;
     }
 
     DecodedWavCacheEntry decoded;
     if (!decodeWavCached(wavData, decoded) || !decoded.pcmData || decoded.frames == 0) {
-        notify(false, emptyDec);
+        notify(false, 0, nextTraceSeq_++, monotonicSecondsNow(), emptyDec);
         return 0;
     }
 
@@ -548,7 +746,7 @@ uint32_t AudioEngine::startSound2DInternal(const std::vector<uint8_t>& wavData, 
 
     AudioBufferStorage audioBuffer;
     if (!audioBuffer || ma_audio_buffer_init(&bufferConfig, audioBuffer.get()) != MA_SUCCESS) {
-        notify(false, decoded);
+        notify(false, 0, nextTraceSeq_++, monotonicSecondsNow(), decoded);
         return 0;
     }
     audioBuffer.markInitialised();
@@ -562,7 +760,7 @@ uint32_t AudioEngine::startSound2DInternal(const std::vector<uint8_t>& wavData, 
     SoundStorage sound;
     if (!sound ||
         ma_sound_init_from_data_source(engine_, audioBuffer.get(), flags, nullptr, sound.get()) != MA_SUCCESS) {
-        notify(false, decoded);
+        notify(false, 0, nextTraceSeq_++, monotonicSecondsNow(), decoded);
         return 0;
     }
     sound.markInitialised();
@@ -571,12 +769,11 @@ uint32_t AudioEngine::startSound2DInternal(const std::vector<uint8_t>& wavData, 
     if (customPitch) {
         ma_sound_set_pitch(sound.get(), clampedPitch);
     }
-    const bool loopEnabled = stoppable && options.loop;
     if (loopEnabled) {
         ma_sound_set_looping(sound.get(), MA_TRUE);
     }
     if (ma_sound_start(sound.get()) != MA_SUCCESS) {
-        notify(false, decoded);
+        notify(false, 0, nextTraceSeq_++, monotonicSecondsNow(), decoded);
         return 0;
     }
 
@@ -585,23 +782,32 @@ uint32_t AudioEngine::startSound2DInternal(const std::vector<uint8_t>& wavData, 
         id = nextSoundId_++;
         if (nextSoundId_ == 0) nextSoundId_ = 1;
     }
+    const uint64_t traceSeq = nextTraceSeq_++;
+    const double monoNow = monotonicSecondsNow();
     ActiveSound active;
     active.sound = sound.release();
     active.buffer = audioBuffer.release();
     active.pcmDataRef = decoded.pcmData;
     active.id = id;
-    active.soundEntryId = options.soundEntryId;
+    active.soundEntryId = resolvedId;
     active.category = options.category;
     active.looping = loopEnabled;
     active.spatial = false;
     active.baseVolume = volume;
+    active.traceSeq = traceSeq;
+    active.soundEntryName = resolvedName;
+    active.path = debugPath;
+    active.startMonoSec = monoNow;
     activeSounds_.push_back(std::move(active));
-    notify(true, decoded);
+    notify(true, id, traceSeq, monoNow, decoded);
     return stoppable ? id : 1u;
 }
 
-bool AudioEngine::playSound2D(const std::vector<uint8_t>& wavData, float volume, float pitch) {
-    return startSound2DInternal(wavData, volume, pitch, false, SfxPlayOptions{}, {}) != 0;
+bool AudioEngine::playSound2D(const std::vector<uint8_t>& wavData, float volume, float pitch,
+                              const std::string& debugPath, uint32_t soundEntryId) {
+    SfxPlayOptions opts;
+    opts.soundEntryId = soundEntryId;
+    return startSound2DInternal(wavData, volume, pitch, false, opts, debugPath) != 0;
 }
 
 bool AudioEngine::playSound2D(const std::vector<uint8_t>& wavData, float volume, float pitch,
@@ -609,8 +815,11 @@ bool AudioEngine::playSound2D(const std::vector<uint8_t>& wavData, float volume,
     return startSound2DInternal(wavData, volume, pitch, false, options, debugPath) != 0;
 }
 
-uint32_t AudioEngine::playSound2DStoppable(const std::vector<uint8_t>& wavData, float volume, float pitch) {
-    return startSound2DInternal(wavData, volume, pitch, true, SfxPlayOptions{}, {});
+uint32_t AudioEngine::playSound2DStoppable(const std::vector<uint8_t>& wavData, float volume, float pitch,
+                                           const std::string& debugPath, uint32_t soundEntryId) {
+    SfxPlayOptions opts;
+    opts.soundEntryId = soundEntryId;
+    return startSound2DInternal(wavData, volume, pitch, true, opts, debugPath);
 }
 
 uint32_t AudioEngine::playSound2DStoppable(const std::vector<uint8_t>& wavData, float volume, float pitch,
@@ -636,6 +845,12 @@ void AudioEngine::stopSound(uint32_t id) {
     if (id == 0) return;
     for (auto it = activeSounds_.begin(); it != activeSounds_.end(); ++it) {
         if (it->id == id) {
+            const double monoNow = monotonicSecondsNow();
+            const double elapsed = std::max(0.0, monoNow - it->startMonoSec);
+            const uint64_t seq = it->traceSeq;
+            const uint32_t sid = it->soundEntryId;
+            const std::string sname = it->soundEntryName;
+            const std::string spath = it->path;
             ma_sound_stop(it->sound);
             ma_sound_uninit(it->sound);
             std::free(it->sound);
@@ -643,6 +858,25 @@ void AudioEngine::stopSound(uint32_t id) {
             ma_audio_buffer_uninit(buffer);
             std::free(buffer);
             activeSounds_.erase(it);
+            {
+                std::lock_guard<std::mutex> lock(traceMutex_);
+                if (traceFile_) {
+                    std::ostringstream os;
+                    os << std::fixed << std::setprecision(6);
+                    os << "{\"event\":\"stop\",\"client\":\"wowee\""
+                       << ",\"seq\":" << seq
+                       << ",\"handle_id\":" << id
+                       << ",\"mono_s\":" << monoNow
+                       << ",\"ts_ns\":" << realtimeNsNow()
+                       << ",\"sound_id\":" << sid
+                       << ",\"sound_name\":\"" << jsonEscape(sname) << "\""
+                       << ",\"path\":\"" << jsonEscape(spath) << "\""
+                       << ",\"reason\":\"explicit_stop\""
+                       << ",\"elapsed_s\":" << elapsed
+                       << "}";
+                    writeTraceLineUnlocked(os.str());
+                }
+            }
             return;
         }
     }
@@ -670,27 +904,70 @@ uint32_t AudioEngine::startSound3DInternal(const std::vector<uint8_t>& wavData, 
     const float clampedPitch = glm::clamp(pitch, 0.25f, 4.0f);
     const float safeMinDist = std::max(0.1f, minDistance);
     const float safeMaxDist = std::max(safeMinDist, maxDistance);
-    auto notify = [&](bool started, const DecodedWavCacheEntry& dec) {
-        if (!playbackObserver_) return;
-        PlaybackEvent ev;
-        ev.path = debugPath;
-        ev.byteSize = wavData.size();
-        ev.decodedFrames = dec.frames;
-        ev.sampleRate = dec.sampleRate;
-        ev.volume = volume;
-        ev.pitch = clampedPitch;
-        ev.spatial = true;
-        ev.music = false;
-        ev.position = position;
-        ev.minDistance = safeMinDist;
-        ev.maxDistance = safeMaxDist;
-        ev.started = started;
-        playbackObserver_(ev);
+    const bool loopEnabled = stoppable && options.loop;
+    uint32_t resolvedId = options.soundEntryId;
+    std::string resolvedName;
+    resolveSoundMetadata(resolvedId, resolvedName, debugPath);
+
+    auto notify = [&](bool started, uint32_t handleId, uint64_t traceSeq,
+                      double monoNow, const DecodedWavCacheEntry& dec) {
+        if (playbackObserver_) {
+            PlaybackEvent ev;
+            ev.soundEntryId = resolvedId;
+            ev.soundEntryName = resolvedName;
+            ev.path = debugPath;
+            ev.byteSize = wavData.size();
+            ev.decodedFrames = dec.frames;
+            ev.sampleRate = dec.sampleRate;
+            ev.volume = volume;
+            ev.pitch = clampedPitch;
+            ev.spatial = true;
+            ev.music = false;
+            ev.position = position;
+            ev.minDistance = safeMinDist;
+            ev.maxDistance = safeMaxDist;
+            ev.started = started;
+            playbackObserver_(ev);
+        }
+        std::lock_guard<std::mutex> lock(traceMutex_);
+        if (!traceFile_) return;
+        const double dur = (dec.sampleRate > 0)
+            ? (static_cast<double>(dec.frames) / static_cast<double>(dec.sampleRate)) / static_cast<double>(clampedPitch)
+            : 0.0;
+        std::ostringstream os;
+        os << std::fixed << std::setprecision(6);
+        os << "{\"event\":\"start\",\"client\":\"wowee\""
+           << ",\"seq\":" << traceSeq
+           << ",\"handle_id\":" << handleId
+           << ",\"mono_s\":" << monoNow
+           << ",\"ts_ns\":" << realtimeNsNow()
+           << ",\"sound_id\":" << resolvedId
+           << ",\"sound_name\":\"" << jsonEscape(resolvedName) << "\""
+           << ",\"path\":\"" << jsonEscape(debugPath) << "\""
+           << ",\"spatial\":true,\"loop\":" << (loopEnabled ? "true" : "false") << ",\"music\":false"
+           << ",\"volume\":" << safeJsonFloat(volume)
+           << ",\"master_volume\":" << safeJsonFloat(masterVolume_)
+           << ",\"suspended\":" << (suspended_ ? "true" : "false")
+           << ",\"pitch\":" << safeJsonFloat(clampedPitch)
+           << ",\"min_dist\":" << safeJsonFloat(safeMinDist)
+           << ",\"max_dist\":" << safeJsonFloat(safeMaxDist)
+           << ",\"source_pos\":[" << safeJsonFloat(position.x) << ","
+           << safeJsonFloat(position.y) << "," << safeJsonFloat(position.z) << "]"
+           << ",\"listener_pos\":[" << safeJsonFloat(listenerPosition_.x) << ","
+           << safeJsonFloat(listenerPosition_.y) << "," << safeJsonFloat(listenerPosition_.z) << "]"
+           << ",\"listener_fwd\":[" << safeJsonFloat(listenerForward_.x) << ","
+           << safeJsonFloat(listenerForward_.y) << "," << safeJsonFloat(listenerForward_.z) << "]"
+           << ",\"sample_rate\":" << dec.sampleRate
+           << ",\"decoded_frames\":" << dec.frames
+           << ",\"duration_s\":" << dur
+           << ",\"started\":" << (started ? "true" : "false")
+           << "}";
+        writeTraceLineUnlocked(os.str());
     };
 
     DecodedWavCacheEntry emptyDec;
     if (!initialized_ || !engine_ || wavData.empty() || masterVolume_ <= 0.0f || volume <= 0.0f) {
-        notify(false, emptyDec);
+        notify(false, 0, nextTraceSeq_++, monotonicSecondsNow(), emptyDec);
         return 0;
     }
 
@@ -698,20 +975,20 @@ uint32_t AudioEngine::startSound3DInternal(const std::vector<uint8_t>& wavData, 
 
     // Wow.exe 0x4621ef -> 0x4664b0: suppress fire-and-forget one-shots while muted in background
     if (isMutedInBackground() && !stoppable && !options.loop) {
-        notify(false, emptyDec);
+        notify(false, 0, nextTraceSeq_++, monotonicSecondsNow(), emptyDec);
         return 0;
     }
 
     // Wow.exe 0x4620c0..0x4620da: per-category concurrency cap (0x897018)
     if (!canStartCategory(options.category)) {
-        notify(false, emptyDec);
+        notify(false, 0, nextTraceSeq_++, monotonicSecondsNow(), emptyDec);
         return 0;
     }
 
     // Wow.exe 0x46224c..0x4622a4: Flags & 0x020 (NO_DUPLICATES)
     if ((options.soundEntryFlags & SoundEntryFlags::kNoDuplicates) != 0u &&
         options.soundEntryId != 0 && isSoundEntryPlaying(options.soundEntryId)) {
-        notify(false, emptyDec);
+        notify(false, 0, nextTraceSeq_++, monotonicSecondsNow(), emptyDec);
         return 0;
     }
 
@@ -719,19 +996,19 @@ uint32_t AudioEngine::startSound3DInternal(const std::vector<uint8_t>& wavData, 
     const glm::vec3 rel = position - listenerPosition_;
     const float distSq = glm::dot(rel, rel);
     if (distSq >= safeMaxDist * safeMaxDist) {
-        notify(false, emptyDec);
+        notify(false, 0, nextTraceSeq_++, monotonicSecondsNow(), emptyDec);
         return 0;
     }
     const float dist = std::sqrt(distSq);
     const float atten = computeDistanceAttenuation(safeMinDist, safeMaxDist, dist);
     if (atten <= 0.0f) {
-        notify(false, emptyDec);
+        notify(false, 0, nextTraceSeq_++, monotonicSecondsNow(), emptyDec);
         return 0;
     }
 
     DecodedWavCacheEntry decoded;
     if (!decodeWavCached(wavData, decoded) || !decoded.pcmData || decoded.frames == 0) {
-        notify(false, emptyDec);
+        notify(false, 0, nextTraceSeq_++, monotonicSecondsNow(), emptyDec);
         return 0;
     }
 
@@ -746,7 +1023,7 @@ uint32_t AudioEngine::startSound3DInternal(const std::vector<uint8_t>& wavData, 
 
     AudioBufferStorage audioBuffer;
     if (!audioBuffer || ma_audio_buffer_init(&bufferConfig, audioBuffer.get()) != MA_SUCCESS) {
-        notify(false, decoded);
+        notify(false, 0, nextTraceSeq_++, monotonicSecondsNow(), decoded);
         return 0;
     }
     audioBuffer.markInitialised();
@@ -756,7 +1033,7 @@ uint32_t AudioEngine::startSound3DInternal(const std::vector<uint8_t>& wavData, 
         ma_sound_init_from_data_source(engine_, audioBuffer.get(),
                                        MA_SOUND_FLAG_DECODE | MA_SOUND_FLAG_ASYNC,
                                        nullptr, sound.get()) != MA_SUCCESS) {
-        notify(false, decoded);
+        notify(false, 0, nextTraceSeq_++, monotonicSecondsNow(), decoded);
         return 0;
     }
     sound.markInitialised();
@@ -773,13 +1050,12 @@ uint32_t AudioEngine::startSound3DInternal(const std::vector<uint8_t>& wavData, 
     ma_sound_set_max_distance(sound.get(), safeMaxDist);
     ma_sound_set_rolloff(sound.get(), 0.0f);
 
-    const bool loopEnabled = stoppable && options.loop;
     if (loopEnabled) {
         ma_sound_set_looping(sound.get(), MA_TRUE);
     }
 
     if (ma_sound_start(sound.get()) != MA_SUCCESS) {
-        notify(false, decoded);
+        notify(false, 0, nextTraceSeq_++, monotonicSecondsNow(), decoded);
         return 0;
     }
 
@@ -788,12 +1064,14 @@ uint32_t AudioEngine::startSound3DInternal(const std::vector<uint8_t>& wavData, 
         id = nextSoundId_++;
         if (nextSoundId_ == 0) nextSoundId_ = 1;
     }
+    const uint64_t traceSeq = nextTraceSeq_++;
+    const double monoNow = monotonicSecondsNow();
     ActiveSound active;
     active.sound = sound.release();
     active.buffer = audioBuffer.release();
     active.pcmDataRef = decoded.pcmData;
     active.id = id;
-    active.soundEntryId = options.soundEntryId;
+    active.soundEntryId = resolvedId;
     active.category = options.category;
     active.looping = loopEnabled;
     active.spatial = true;
@@ -801,15 +1079,22 @@ uint32_t AudioEngine::startSound3DInternal(const std::vector<uint8_t>& wavData, 
     active.position = position;
     active.minDistance = safeMinDist;
     active.maxDistance = safeMaxDist;
+    active.traceSeq = traceSeq;
+    active.soundEntryName = resolvedName;
+    active.path = debugPath;
+    active.startMonoSec = monoNow;
     activeSounds_.push_back(std::move(active));
-    notify(true, decoded);
+    notify(true, id, traceSeq, monoNow, decoded);
     return stoppable ? id : 1u;
 }
 
 bool AudioEngine::playSound3D(const std::vector<uint8_t>& wavData, const glm::vec3& position,
-                              float volume, float pitch, float maxDistance, float minDistance) {
+                              float volume, float pitch, float maxDistance, float minDistance,
+                              const std::string& debugPath, uint32_t soundEntryId) {
+    SfxPlayOptions opts;
+    opts.soundEntryId = soundEntryId;
     return startSound3DInternal(wavData, position, volume, pitch, maxDistance, minDistance,
-                                false, SfxPlayOptions{}, {}) != 0;
+                                false, opts, debugPath) != 0;
 }
 
 bool AudioEngine::playSound3D(const std::vector<uint8_t>& wavData, const glm::vec3& position,
@@ -835,9 +1120,12 @@ bool AudioEngine::playSound3D(const std::string& mpqPath, const glm::vec3& posit
 }
 
 uint32_t AudioEngine::playSound3DStoppable(const std::vector<uint8_t>& wavData, const glm::vec3& position,
-                                           float volume, float pitch, float maxDistance, float minDistance) {
+                                           float volume, float pitch, float maxDistance, float minDistance,
+                                           const std::string& debugPath, uint32_t soundEntryId) {
+    SfxPlayOptions opts;
+    opts.soundEntryId = soundEntryId;
     return startSound3DInternal(wavData, position, volume, pitch, maxDistance, minDistance,
-                                true, SfxPlayOptions{}, {});
+                                true, opts, debugPath);
 }
 
 uint32_t AudioEngine::playSound3DStoppable(const std::vector<uint8_t>& wavData, const glm::vec3& position,
@@ -863,7 +1151,7 @@ uint32_t AudioEngine::playSound3DStoppable(const std::string& mpqPath, const glm
 }
 
 bool AudioEngine::playMusic(std::shared_ptr<const std::vector<uint8_t>> musicData,
-                            float volume, bool loop) {
+                            float volume, bool loop, const std::string& debugPath) {
     if (!initialized_ || !engine_ || !musicData || musicData->empty()) {
         return false;
     }
@@ -943,8 +1231,12 @@ bool AudioEngine::playMusic(std::shared_ptr<const std::vector<uint8_t>> musicDat
     LOG_INFO("Music playback started successfully - volume: ", volume,
              ", loop: ", loop,
              ", is_playing: ", ma_sound_is_playing(musicSound_));
+    musicTraceSeq_ = nextTraceSeq_++;
+    musicTracePath_ = debugPath;
+    musicStartMonoSec_ = monotonicSecondsNow();
     if (playbackObserver_) {
         PlaybackEvent ev;
+        ev.path = debugPath;
         ev.byteSize = musicData_ ? musicData_->size() : 0;
         ev.sampleRate = decoder->outputSampleRate;
         ev.volume = volume;
@@ -952,11 +1244,42 @@ bool AudioEngine::playMusic(std::shared_ptr<const std::vector<uint8_t>> musicDat
         ev.started = true;
         playbackObserver_(ev);
     }
+    {
+        std::lock_guard<std::mutex> lock(traceMutex_);
+        if (traceFile_) {
+            std::ostringstream os;
+            os << std::fixed << std::setprecision(6);
+            os << "{\"event\":\"start\",\"client\":\"wowee\""
+               << ",\"seq\":" << musicTraceSeq_
+               << ",\"handle_id\":0"
+               << ",\"mono_s\":" << musicStartMonoSec_
+               << ",\"ts_ns\":" << realtimeNsNow()
+               << ",\"sound_id\":0,\"sound_name\":\"\""
+               << ",\"path\":\"" << jsonEscape(debugPath) << "\""
+               << ",\"spatial\":false,\"loop\":" << (loop ? "true" : "false") << ",\"music\":true"
+               << ",\"volume\":" << safeJsonFloat(volume)
+               << ",\"master_volume\":" << safeJsonFloat(masterVolume_)
+               << ",\"suspended\":" << (suspended_ ? "true" : "false")
+               << ",\"pitch\":1.0,\"min_dist\":0.0,\"max_dist\":0.0"
+               << ",\"source_pos\":[0.0,0.0,0.0]"
+               << ",\"listener_pos\":[" << safeJsonFloat(listenerPosition_.x) << ","
+               << safeJsonFloat(listenerPosition_.y) << "," << safeJsonFloat(listenerPosition_.z) << "]"
+               << ",\"listener_fwd\":[" << safeJsonFloat(listenerForward_.x) << ","
+               << safeJsonFloat(listenerForward_.y) << "," << safeJsonFloat(listenerForward_.z) << "]"
+               << ",\"sample_rate\":" << decoder->outputSampleRate
+               << ",\"decoded_frames\":0,\"duration_s\":0.0,\"started\":true}";
+            writeTraceLineUnlocked(os.str());
+        }
+    }
 
     return true;
 }
 
 void AudioEngine::stopMusic() {
+    const bool wasPlaying = (musicSound_ != nullptr);
+    const uint64_t seq = musicTraceSeq_;
+    const std::string spath = musicTracePath_;
+    const double startMono = musicStartMonoSec_;
     if (musicSound_) {
         ma_sound_uninit(musicSound_);
         std::free(musicSound_);
@@ -969,6 +1292,27 @@ void AudioEngine::stopMusic() {
         musicDecoder_ = nullptr;
     }
     musicData_.reset();
+    musicTraceSeq_ = 0;
+    musicTracePath_.clear();
+    if (wasPlaying) {
+        const double monoNow = monotonicSecondsNow();
+        std::lock_guard<std::mutex> lock(traceMutex_);
+        if (traceFile_) {
+            std::ostringstream os;
+            os << std::fixed << std::setprecision(6);
+            os << "{\"event\":\"stop\",\"client\":\"wowee\""
+               << ",\"seq\":" << seq
+               << ",\"handle_id\":0"
+               << ",\"mono_s\":" << monoNow
+               << ",\"ts_ns\":" << realtimeNsNow()
+               << ",\"sound_id\":0,\"sound_name\":\"\""
+               << ",\"path\":\"" << jsonEscape(spath) << "\""
+               << ",\"reason\":\"explicit_stop\""
+               << ",\"elapsed_s\":" << std::max(0.0, monoNow - startMono)
+               << "}";
+            writeTraceLineUnlocked(os.str());
+        }
+    }
 }
 
 bool AudioEngine::isMusicPlaying() const {

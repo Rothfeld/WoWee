@@ -2,8 +2,10 @@
 
 #include <glm/glm.hpp>
 #include <atomic>
+#include <cstdio>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 #include <cstdint>
@@ -101,13 +103,15 @@ public:
     [[nodiscard]] const glm::vec3& getListenerPosition() const { return listenerPosition_; }
 
     // Simple 2D sound playback (non-blocking)
-    bool playSound2D(const std::vector<uint8_t>& wavData, float volume = 1.0f, float pitch = 1.0f);
+    bool playSound2D(const std::vector<uint8_t>& wavData, float volume = 1.0f, float pitch = 1.0f,
+                     const std::string& debugPath = {}, uint32_t soundEntryId = 0);
     bool playSound2D(const std::vector<uint8_t>& wavData, float volume, float pitch,
                      const SfxPlayOptions& options, const std::string& debugPath = {});
     bool playSound2D(const std::string& mpqPath, float volume = 1.0f, float pitch = 1.0f);
 
     // Stoppable 2D sound - returns a non-zero handle, or 0 on failure
-    uint32_t playSound2DStoppable(const std::vector<uint8_t>& wavData, float volume = 1.0f, float pitch = 1.0f);
+    uint32_t playSound2DStoppable(const std::vector<uint8_t>& wavData, float volume = 1.0f, float pitch = 1.0f,
+                                  const std::string& debugPath = {}, uint32_t soundEntryId = 0);
     uint32_t playSound2DStoppable(const std::vector<uint8_t>& wavData, float volume, float pitch,
                                   const SfxPlayOptions& options, const std::string& debugPath = {});
     uint32_t playSound2DStoppable(const std::string& mpqPath, float volume = 1.0f, float pitch = 1.0f);
@@ -123,7 +127,8 @@ public:
     // 3D positional sound playback
     bool playSound3D(const std::vector<uint8_t>& wavData, const glm::vec3& position,
                      float volume = 1.0f, float pitch = 1.0f, float maxDistance = 100.0f,
-                     float minDistance = 1.0f);
+                     float minDistance = 1.0f, const std::string& debugPath = {},
+                     uint32_t soundEntryId = 0);
     bool playSound3D(const std::vector<uint8_t>& wavData, const glm::vec3& position,
                      float volume, float pitch, float maxDistance, float minDistance,
                      const SfxPlayOptions& options, const std::string& debugPath = {});
@@ -132,7 +137,8 @@ public:
                      float minDistance = 1.0f);
     uint32_t playSound3DStoppable(const std::vector<uint8_t>& wavData, const glm::vec3& position,
                                   float volume = 1.0f, float pitch = 1.0f, float maxDistance = 100.0f,
-                                  float minDistance = 1.0f);
+                                  float minDistance = 1.0f, const std::string& debugPath = {},
+                                  uint32_t soundEntryId = 0);
     uint32_t playSound3DStoppable(const std::vector<uint8_t>& wavData, const glm::vec3& position,
                                   float volume, float pitch, float maxDistance, float minDistance,
                                   const SfxPlayOptions& options, const std::string& debugPath = {});
@@ -142,7 +148,8 @@ public:
 
     // Music streaming (for background music)
     bool playMusic(std::shared_ptr<const std::vector<uint8_t>> musicData,
-                   float volume = 1.0f, bool loop = true);
+                   float volume = 1.0f, bool loop = true,
+                   const std::string& debugPath = {});
     void stopMusic();
     [[nodiscard]] bool isMusicPlaying() const;
     void setMusicVolume(float volume);
@@ -163,6 +170,8 @@ public:
     uint32_t renderMixFrames(float* dstInterleaved, uint32_t frameCount);
 
     struct PlaybackEvent {
+        uint32_t soundEntryId = 0;
+        std::string soundEntryName;
         std::string path;
         size_t byteSize = 0;
         uint64_t decodedFrames = 0;
@@ -179,6 +188,10 @@ public:
     using PlaybackObserver = std::function<void(const PlaybackEvent&)>;
     void setPlaybackObserver(PlaybackObserver observer) { playbackObserver_ = std::move(observer); }
 
+    /// Structured JSONL trace output (auto-opened when WOWEE_AUDIO_TRACE is set).
+    bool setAudioTracePath(const std::string& jsonlPath);
+    void closeAudioTrace();
+
 private:
     void reapFinishedSounds();
     void refreshEngineMasterGain();
@@ -190,6 +203,9 @@ private:
                                   float volume, float pitch, float maxDistance, float minDistance,
                                   bool stoppable, const SfxPlayOptions& options,
                                   const std::string& debugPath);
+    void writeTraceLineUnlocked(const std::string& jsonLine);
+    void emitInitTrace(const char* backendName);
+
     AudioEngine();
     AudioEngine(const AudioEngine&) = delete;
     AudioEngine& operator=(const AudioEngine&) = delete;
@@ -208,6 +224,10 @@ private:
         glm::vec3 position{0.0f};
         float minDistance = 1.0f;
         float maxDistance = 100.0f;
+        uint64_t traceSeq = 0;
+        std::string soundEntryName;
+        std::string path;
+        double startMonoSec = 0.0;
     };
     std::vector<ActiveSound> activeSounds_;
     uint32_t nextSoundId_ = 1;
@@ -217,6 +237,9 @@ private:
     void* musicDecoder_ = nullptr;  // ma_decoder* - Keep decoder alive for streaming
     std::shared_ptr<const std::vector<uint8_t>> musicData_;  // Keep encoded music data alive
     float musicVolume_ = 1.0f;
+    uint64_t musicTraceSeq_ = 0;
+    std::string musicTracePath_;
+    double musicStartMonoSec_ = 0.0;
 
     bool initialized_ = false;
     float masterVolume_ = 1.0f;
@@ -237,6 +260,10 @@ private:
     std::atomic<bool> capturing_{false};
     bool headless_ = false;
     PlaybackObserver playbackObserver_;
+    mutable std::mutex traceMutex_;
+    std::FILE* traceFile_ = nullptr;
+    std::string traceFilePath_;
+    uint64_t nextTraceSeq_ = 1;
 };
 
 } // namespace audio

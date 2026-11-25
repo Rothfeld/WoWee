@@ -58,6 +58,9 @@ public:
 
     [[nodiscard]] const SoundEntryRecord* findById(pipeline::AssetManager* assets, uint32_t soundId);
     [[nodiscard]] const SoundEntryRecord* findByName(pipeline::AssetManager* assets, const std::string& name);
+    [[nodiscard]] const SoundEntryRecord* findByPath(pipeline::AssetManager* assets, const std::string& path);
+    [[nodiscard]] const SoundEntryRecord* findLoadedById(uint32_t soundId) const;
+    [[nodiscard]] const SoundEntryRecord* findLoadedByPath(const std::string& path) const;
 
     /// Choose one existing archive path from a SoundEntryRecord using authored weights.
     std::string pickExistingPath(pipeline::AssetManager* assets, const SoundEntryRecord& entry);
@@ -104,6 +107,7 @@ private:
     bool loaded_ = false;
     std::unordered_map<uint32_t, SoundEntryRecord> byId_;
     std::unordered_map<std::string, uint32_t> byName_;
+    std::unordered_map<std::string, uint32_t> byPath_;
     std::mt19937 rng_;
 };
 

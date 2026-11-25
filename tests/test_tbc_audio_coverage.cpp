@@ -41,6 +41,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <string>
 #include <thread>
 #include <vector>
@@ -525,6 +526,12 @@ TEST_CASE("Movement, M2 $WNG/$WGG wing events, Mount, Combat, SpellVisualKit, Ga
     engine.setPlaybackObserver([&](const audio::AudioEngine::PlaybackEvent& ev) {
         events.push_back(ev);
     });
+    auto resetHeadless = [&]() {
+        engine.shutdown();
+        REQUIRE(engine.initializeHeadless(48000, 2));
+        engine.setAssetManager(&tbc.assets);
+        events.clear();
+    };
 
     SECTION("MovementSoundManager water splash and wading steps") {
         audio::MovementSoundManager move;
@@ -573,7 +580,7 @@ TEST_CASE("Movement, M2 $WNG/$WGG wing events, Mount, Combat, SpellVisualKit, Ga
 
         for (uint32_t subClass : {0u, 1u, 4u, 7u, 10u, 13u, 15u}) {
             INFO("Weapon subclass: " << subClass);
-            events.clear();
+            resetHeadless();
             combat.playWeaponImpactBySubclass(subClass, /*metalWeapon=*/true,
                                               audio::CombatSoundManager::ImpactType::FLESH, false);
             CHECK_FALSE(events.empty());
@@ -590,7 +597,7 @@ TEST_CASE("Movement, M2 $WNG/$WGG wing events, Mount, Combat, SpellVisualKit, Ga
         }
 
         // Parry weapon clash (1H Sword = subclass 7, metal = true)
-        events.clear();
+        resetHeadless();
         combat.playWeaponImpactBySubclass(7u, /*metalWeapon=*/true,
                                           audio::CombatSoundManager::ImpactType::METAL_WEAPON, false);
         CHECK_FALSE(events.empty());
@@ -731,8 +738,8 @@ TEST_CASE("Movement, M2 $WNG/$WGG wing events, Mount, Combat, SpellVisualKit, Ga
                  "Character\\Draenei\\Female\\DraeneiFemale.m2",
              }) {
             INFO("Character model: " << model);
+            resetHeadless();
             act.setCharacterVoiceProfile(model);
-            events.clear();
             act.playWound(/*isCrit=*/true);
             CHECK_FALSE(events.empty());
             events.clear();
@@ -748,4 +755,78 @@ TEST_CASE("Movement, M2 $WNG/$WGG wing events, Mount, Combat, SpellVisualKit, Ga
     }
 
     engine.setPlaybackObserver({});
+}
+
+TEST_CASE("WOWEE_AUDIO_TRACE writes structured JSONL start, stop, and end events", "[audio][tbc][trace]") {
+    auto& tbc = env();
+    auto& engine = audio::AudioEngine::instance();
+    auto& table = audio::SoundEntryTable::instance();
+
+    const std::filesystem::path tracePath =
+        std::filesystem::temp_directory_path() / "wowee_audio_trace_unit_test.jsonl";
+    std::filesystem::remove(tracePath);
+
+    engine.shutdown();
+    REQUIRE(engine.setAudioTracePath(tracePath.string()));
+    REQUIRE(engine.initializeHeadless(48000, 2));
+    engine.setAssetManager(&tbc.assets);
+    engine.setMasterVolume(1.0f);
+    engine.setSuspended(false);
+    engine.setListenerPosition(glm::vec3(10.0f, 20.0f, 30.0f));
+    engine.setListenerOrientation(glm::vec3(1.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+
+    REQUIRE(table.ensureLoaded(&tbc.assets));
+
+    // 1. Stoppable 3D SoundEntryTable playback + explicit stopSound() (1146 = BowShoot)
+    const uint32_t handle = table.play3DStoppable(
+        &tbc.assets, 1146u, glm::vec3(15.0f, 20.0f, 30.0f), 0.9f, 1.0f);
+    REQUIRE(handle != 0);
+    renderRms(2400);  // 50 ms
+    engine.stopSound(handle);
+
+    // 2. Short 2D playback that finishes naturally via renderMixFrames()
+    REQUIRE(engine.playSound2D("Sound\\Interface\\uEscapeScreenOpen.wav", 0.8f, 1.0f));
+    renderRms(48000 * 2);  // 2.0 s -> sample completes naturally
+
+    engine.closeAudioTrace();
+
+    std::ifstream in(tracePath);
+    REQUIRE(in.is_open());
+    std::string line;
+    std::vector<std::string> lines;
+    while (std::getline(in, line)) {
+        if (!line.empty()) lines.push_back(line);
+    }
+    in.close();
+    std::filesystem::remove(tracePath);
+
+    REQUIRE(lines.size() >= 4u);
+    CHECK(lines[0].find("\"event\":\"init\"") != std::string::npos);
+    CHECK(lines[0].find("\"sample_rate\":48000") != std::string::npos);
+
+    bool saw3dStart = false;
+    bool sawExplicitStop = false;
+    bool sawNaturalEnd = false;
+    for (const std::string& l : lines) {
+        if (l.find("\"event\":\"start\"") != std::string::npos &&
+            l.find("\"sound_id\":1146") != std::string::npos) {
+            CHECK(l.find("\"spatial\":true") != std::string::npos);
+            CHECK(l.find("\"source_pos\":[15.000000,20.000000,30.000000]") != std::string::npos);
+            CHECK(l.find("\"listener_pos\":[10.000000,20.000000,30.000000]") != std::string::npos);
+            saw3dStart = true;
+        }
+        if (l.find("\"event\":\"stop\"") != std::string::npos &&
+            l.find("\"reason\":\"explicit_stop\"") != std::string::npos &&
+            l.find("\"sound_id\":1146") != std::string::npos) {
+            sawExplicitStop = true;
+        }
+        if (l.find("\"event\":\"end\"") != std::string::npos &&
+            l.find("\"reason\":\"natural_end\"") != std::string::npos &&
+            l.find("uEscapeScreenOpen.wav") != std::string::npos) {
+            sawNaturalEnd = true;
+        }
+    }
+    CHECK(saw3dStart);
+    CHECK(sawExplicitStop);
+    CHECK(sawNaturalEnd);
 }

@@ -258,14 +258,15 @@ bool UiSoundManager::playFile(const std::string& path) {
     }
     if (!cached->second.loaded) return false;
     return AudioEngine::instance().playSound2D(cached->second.data,
-                                               0.7f * volumeScale_, 1.0f);
+                                               0.7f * volumeScale_, 1.0f,
+                                               cached->second.path);
 }
 
 void UiSoundManager::playSound(const std::vector<UISample>& library) {
     if (!initialized_ || library.empty() || !library[0].loaded) return;
 
     float volume = 0.7f * volumeScale_;
-    AudioEngine::instance().playSound2D(library[0].data, volume, 1.0f);
+    AudioEngine::instance().playSound2D(library[0].data, volume, 1.0f, library[0].path);
 }
 
 void UiSoundManager::setVolumeScale(float scale) {

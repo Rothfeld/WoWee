@@ -89,7 +89,7 @@ void MusicManager::playMusic(const std::string& mpqPath, bool loop, float fadeIn
     // Play with AudioEngine (non-blocking, streams from memory)
     float targetVolume = effectiveMusicVolume();
     float startVolume = (fadeInMs > 0.0f) ? 0.0f : targetVolume;
-    if (AudioEngine::instance().playMusic(cacheIt->second, startVolume, loop)) {
+    if (AudioEngine::instance().playMusic(cacheIt->second, startVolume, loop, mpqPath)) {
         playing = true;
         fadingIn = false;
         if (fadeInMs > 0.0f) {
@@ -174,7 +174,7 @@ void MusicManager::pollPendingFileLoad() {
     // Play with AudioEngine
     float targetVolume = effectiveMusicVolume();
     float startVolume = (fadeInMs > 0.0f) ? 0.0f : targetVolume;
-    if (AudioEngine::instance().playMusic(std::move(data), startVolume, loop)) {
+    if (AudioEngine::instance().playMusic(std::move(data), startVolume, loop, filePath)) {
         playing = true;
         fadingIn = false;
         if (fadeInMs > 0.0f) {

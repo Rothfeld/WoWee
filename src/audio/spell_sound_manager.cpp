@@ -145,7 +145,7 @@ void SpellSoundManager::playSound(const std::vector<SpellSample>& library, float
     if (!initialized_ || library.empty() || !library[0].loaded) return;
 
     float volume = 0.75f * volumeScale_ * volumeMultiplier;
-    AudioEngine::instance().playSound2D(library[0].data, volume, 1.0f);
+    AudioEngine::instance().playSound2D(library[0].data, volume, 1.0f, library[0].path);
 }
 
 void SpellSoundManager::playRandomSound(const std::vector<SpellSample>& library, float volumeMultiplier) {
@@ -155,7 +155,7 @@ void SpellSoundManager::playRandomSound(const std::vector<SpellSample>& library,
     const SpellSample* chosen = pickLoadedSample(library, gen);
     if (!chosen) return;
     const float volume = 0.75f * volumeScale_ * volumeMultiplier;
-    AudioEngine::instance().playSound2D(chosen->data, volume, 1.0f);
+    AudioEngine::instance().playSound2D(chosen->data, volume, 1.0f, chosen->path);
 }
 
 void SpellSoundManager::setVolumeScale(float scale) {
@@ -201,7 +201,8 @@ void SpellSoundManager::playPrecast(MagicSchool school, SpellPower power) {
     if (library && !library->empty() && (*library)[0].loaded) {
         stopPrecast();  // Stop any previous precast still playing
         float volume = 0.75f * volumeScale_;
-        activePrecastId_ = AudioEngine::instance().playSound2DStoppable((*library)[0].data, volume);
+        activePrecastId_ = AudioEngine::instance().playSound2DStoppable(
+            (*library)[0].data, volume, 1.0f, (*library)[0].path);
     }
 }
 
