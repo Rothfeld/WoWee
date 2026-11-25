@@ -1453,6 +1453,12 @@ EntityController::UnitFieldUpdateResult EntityController::applyUnitFieldsOnUpdat
                 if ((oldFlags ^ val) & 0x00001000u)
                     pendingEvents_.emit("UNIT_FACTION", {uid});
             }
+            if (block.guid == owner_.getTargetGuid() &&
+                block.guid != owner_.getPlayerGuid() &&
+                (oldFlags & UNIT_FLAG_NOT_SELECTABLE) == 0 &&
+                (val & UNIT_FLAG_NOT_SELECTABLE) != 0) {
+                owner_.clearTarget();
+            }
             // UNIT_FIELD_FLAGS is the server's authoritative combat state. Spell-only
             // attackers do not necessarily produce SMSG_ATTACKSTOP, so retaining them
             // after this bit clears leaves the client permanently "in combat".

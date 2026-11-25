@@ -34,6 +34,7 @@ uint64_t findNearestByName(game::GameHandler& gh, const std::string& targetArgLo
         if (entity->getType() == game::ObjectType::PLAYER ||
             entity->getType() == game::ObjectType::UNIT) {
             auto unit = std::static_pointer_cast<game::Unit>(entity);
+            if ((unit->getUnitFlags() & game::UNIT_FLAG_NOT_SELECTABLE) != 0) continue;
             name = unit->getName();
         }
         if (name.empty()) continue;

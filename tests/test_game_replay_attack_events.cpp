@@ -273,3 +273,78 @@ TEST_CASE("remote melee stance clears on lethal swing and dead/despawned victim"
     s.receive(tbcSwing(kRemotePlayer, kMobB, 100));
     CHECK(remote->getMeleeVictimGuid() == 0);
 }
+
+TEST_CASE("UNIT_FLAG_NOT_SELECTABLE units (e.g. Void Zone 16697) cannot be auto-targeted, targeted, or focused",
+          "[replay][combat][selectable]") {
+    constexpr uint64_t kVoidZone = 0xF130004139000001ull;
+    constexpr uint64_t kBoss     = 0xF130003EBD000002ull;
+
+    Session s("tbc");
+    auto& gh = s.handler();
+
+    auto voidZone = std::make_shared<wowee::game::Unit>(kVoidZone);
+    voidZone->setName("Void Zone");
+    voidZone->setHealth(10000);
+    voidZone->setMaxHealth(10000);
+    voidZone->setUnitFlags(wowee::game::UNIT_FLAG_NOT_SELECTABLE);
+    gh.getEntityManager().addEntity(kVoidZone, voidZone);
+
+    auto boss = std::make_shared<wowee::game::Unit>(kBoss);
+    boss->setName("Lady Blaumeux");
+    boss->setHealth(500000);
+    boss->setMaxHealth(500000);
+    boss->setUnitFlags(0);
+    gh.getEntityManager().addEntity(kBoss, boss);
+
+    auto tbcSpellDmg = [](uint64_t target, uint64_t attacker, uint32_t spellId, uint32_t damage) {
+        wowee::network::Packet p(wowee::game::wireOpcode(Opcode::SMSG_SPELLNONMELEEDAMAGELOG));
+        p.writePackedGuid(target);
+        p.writePackedGuid(attacker);
+        p.writeUInt32(spellId);
+        p.writeUInt32(damage);
+        p.writeUInt8(0x20u);  // shadow school
+        p.writeUInt32(0u);    // absorbed
+        p.writeUInt32(0u);    // resisted
+        p.writeUInt8(0u);     // periodicLog
+        p.writeUInt8(0u);     // unused
+        p.writeUInt32(0u);    // blocked
+        p.writeUInt32(0u);    // flags
+        p.writeUInt8(0u);     // debug/padding
+        return p;
+    };
+
+    // 1. Direct setTarget / setFocus on UNIT_FLAG_NOT_SELECTABLE unit is refused.
+    gh.clearTarget();
+    gh.setTarget(kVoidZone);
+    CHECK(gh.getTargetGuid() == 0);
+    gh.setFocus(kVoidZone);
+    CHECK(gh.getFocusGuid() == 0);
+
+    // 2. Spell damage or melee attack start from Void Zone must NOT auto-select Void Zone.
+    s.receive(tbcSpellDmg(Session::kPlayerGuid, kVoidZone, 28865u, 987u));
+    CHECK(gh.getTargetGuid() == 0);
+    s.receive(attackStart(kVoidZone, Session::kPlayerGuid));
+    CHECK(gh.getTargetGuid() == 0);
+
+    // 3. Spell damage from a selectable boss (Lady Blaumeux) auto-selects it when untargeted.
+    s.receive(tbcSpellDmg(Session::kPlayerGuid, kBoss, 28833u, 576u));
+    CHECK(gh.getTargetGuid() == kBoss);
+
+    // 4. If the currently targeted unit gains UNIT_FLAG_NOT_SELECTABLE via VALUES update, target clears.
+    const uint16_t flagsIdx = wowee::game::fieldIndex(wowee::game::UF::UNIT_FIELD_FLAGS);
+    REQUIRE(flagsIdx != 0xFFFF);
+    wowee::network::Packet upd(wowee::game::wireOpcode(Opcode::SMSG_UPDATE_OBJECT));
+    upd.writeUInt32(1u);  // blockCount
+    upd.writeUInt8(0u);   // hasTransport
+    upd.writeUInt8(static_cast<uint8_t>(wowee::game::UpdateType::VALUES));
+    upd.writePackedGuid(kBoss);
+    const uint8_t maskBlocks = static_cast<uint8_t>((flagsIdx / 32) + 1);
+    upd.writeUInt8(maskBlocks);
+    for (uint8_t b = 0; b < maskBlocks; ++b) {
+        uint32_t mask = (b == flagsIdx / 32) ? (1u << (flagsIdx % 32)) : 0u;
+        upd.writeUInt32(mask);
+    }
+    upd.writeUInt32(wowee::game::UNIT_FLAG_NOT_SELECTABLE);
+    s.receive(upd);
+    CHECK(gh.getTargetGuid() == 0);
+}

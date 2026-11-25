@@ -1725,6 +1725,12 @@ bool CombatHandler::isSelectableUnit(uint64_t guid) const {
         if (type == ObjectType::GAMEOBJECT || type == ObjectType::DYNAMICOBJECT) {
             return false;
         }
+        if (entity->isUnit()) {
+            const auto* unit = static_cast<const Unit*>(entity.get());
+            if ((unit->getUnitFlags() & UNIT_FLAG_NOT_SELECTABLE) != 0) {
+                return false;
+            }
+        }
     }
 
     // Everything the player clicks is selectable; the server arbitrates whether a
@@ -1876,6 +1882,7 @@ std::shared_ptr<Entity> CombatHandler::getTarget() const {
 }
 
 void CombatHandler::setFocus(uint64_t guid) {
+    if (guid != 0 && !isSelectableUnit(guid)) return;
     owner_.focusGuidRef() = guid;
     owner_.fireAddonEvent("PLAYER_FOCUS_CHANGED", {});
     if (guid != 0) {
