@@ -62,10 +62,25 @@ struct ActiveUnitWeaponTrail {
     uint32_t ownerInstanceId = 0;
     WeaponTrailSpec spec;
     float elapsed = 0.0f;
+    float headAlpha = 0.0f;
     bool fromChannel = false;
     uint32_t sourceAuraVisualId = 0;
     std::vector<WeaponTrailChannel> channels;
 };
+
+/// Native TBC 2.4.3 CWeaponTrail fade time constant (Wow.exe 0x8d0df0 = 300.0 ms).
+inline constexpr float kWeaponTrailFadeTauSec = 0.300f;
+
+/// Step the active weapon trail head alpha matching native TBC 2.4.3
+/// CWeaponTrail::UpdateAndRender (0x6d3c40..0x6d3d6f): holds full alpha until
+/// half duration (`elapsedSec <= durationSec * 0.5f`), then decays headAlpha
+/// exponentially with tau = 300 ms (minimum 1/255 step) and terminates once
+/// headAlpha drops below 1/255 so post-Whirlwind swings/movement do not emit
+/// full-opacity broad trails.
+[[nodiscard]] float stepWeaponTrailHeadAlpha(float currentHeadAlpha,
+                                             float elapsedSec,
+                                             float durationSec,
+                                             float dt);
 
 /// Cap a ChannelKit CharProc == 8 weapon trail duration (e.g. kit 370 at 10s)
 /// to the active channel's remaining duration (e.g. 2s for Cabal Executioner
@@ -92,10 +107,12 @@ inline constexpr int kWeaponTrailMaxSubsteps = 16;
 
 /// Advance one weapon trail channel by dt seconds, decaying existing edges and
 /// optionally recording the weapon's current [base, tip] world blade segment
-/// while emitting is true.
+/// while emitting is true. When `headAlphaOverride >= 0.0f`, newly emitted
+/// edges use that alpha instead of `spec.alpha`.
 void stepWeaponTrailChannel(WeaponTrailChannel& channel, const WeaponTrailSpec& spec,
                             float dt, bool emitting,
-                            const std::optional<std::pair<glm::vec3, glm::vec3>>& bladeWorld);
+                            const std::optional<std::pair<glm::vec3, glm::vec3>>& bladeWorld,
+                            float headAlphaOverride = -1.0f);
 
 /// True when the channel has no visible ribbon left to draw (fewer than 2 edges
 /// or all remaining edges have faded to zero).

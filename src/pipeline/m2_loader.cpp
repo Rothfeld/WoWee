@@ -1159,6 +1159,30 @@ M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
         core::Logger::getInstance().debug("  Global sequences: ", model.globalSequenceDurations.size());
     }
 
+    // Parse static $WTB (Weapon Trail Base) and $WTT (Weapon Trail Tip) anchors
+    // even on weapon M2s without animation sequences.
+    if (header.nEvents > 0 && header.nEvents < 512 && header.ofsEvents > 0) {
+        const bool wotlkEvents = header.version >= 264;
+        const size_t eventSize = wotlkEvents ? 36 : 44;
+        for (uint32_t e = 0; e < header.nEvents; e++) {
+            const size_t base = header.ofsEvents + e * eventSize;
+            if (base + 24 > m2Data.size()) break;
+            const char* ident = reinterpret_cast<const char*>(m2Data.data() + base);
+            if (std::memcmp(ident, "$WTB", 4) == 0 || std::memcmp(ident, "$WTT", 4) == 0) {
+                uint32_t boneRaw = 0;
+                std::memcpy(&boneRaw, m2Data.data() + base + 8, 4);
+                M2Model::WeaponTrailAnchor anchor;
+                anchor.bone = static_cast<uint16_t>(boneRaw);
+                std::memcpy(&anchor.position, m2Data.data() + base + 12, sizeof(glm::vec3));
+                if (ident[3] == 'B') {
+                    model.weaponTrailBase = anchor;
+                } else {
+                    model.weaponTrailTip = anchor;
+                }
+            }
+        }
+    }
+
     // Read animation events, keeping the $FSD (footfall) timestamps that sync
     // footstep audio to the frames where feet actually strike the ground.
     // WotLK events are 36 bytes with per-sequence timestamp arrays; vanilla/TBC

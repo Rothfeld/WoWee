@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <vector>
 #include <string>
 #include <glm/glm.hpp>
@@ -414,6 +415,16 @@ struct M2Model {
         char side = 'T';          // 'L' ($CSL), 'R' ($CSR), 'T' ($CST)
     };
     std::vector<std::vector<SpellReleaseEvent>> spellReleaseEvents;
+
+    // Weapon trail anchors ($WTB base / $WTT tip) authored on melee weapon M2s.
+    // Native TBC 2.4.3 (0x6d3e7a..0x6d3ff4) emits CharProc == 8 weapon trails
+    // only on weapons that author both $WTB and $WTT, sampling their positions.
+    struct WeaponTrailAnchor {
+        uint16_t bone = 0;
+        glm::vec3 position{0.0f};
+    };
+    std::optional<WeaponTrailAnchor> weaponTrailBase;
+    std::optional<WeaponTrailAnchor> weaponTrailTip;
 
     // Bone lookup table (vertex bone indices reference this to get global bone index)
     std::vector<uint16_t> boneLookupTable;

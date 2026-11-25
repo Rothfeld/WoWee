@@ -3387,8 +3387,11 @@ CharacterRenderer::getDrawnMeleeWeaponSpans(uint32_t charInstanceId) const {
         if (!weap.visible || !weap.hasOverrideModelMatrix) continue;
         const auto modelIt = models.find(weap.modelId);
         if (modelIt == models.end()) continue;
-        const auto [baseLocal, tipLocal] =
-            weaponBladeLocalSpan(modelIt->second.visualBoundMin, modelIt->second.visualBoundMax);
+        // Native TBC 2.4.3 (0x6d3e7a..0x6d3ff4) emits CharProc == 8 trails only
+        // on weapon M2s that author both $WTB (base) and $WTT (tip) events.
+        if (!modelIt->second.data.weaponTrailBase || !modelIt->second.data.weaponTrailTip) continue;
+        const glm::vec3 baseLocal = modelIt->second.data.weaponTrailBase->position;
+        const glm::vec3 tipLocal = modelIt->second.data.weaponTrailTip->position;
         const glm::vec3 baseWorld = glm::vec3(weap.overrideModelMatrix * glm::vec4(baseLocal, 1.0f));
         const glm::vec3 tipWorld = glm::vec3(weap.overrideModelMatrix * glm::vec4(tipLocal, 1.0f));
         result.push_back({wa.weaponInstanceId, baseWorld, tipWorld});
@@ -3401,18 +3404,17 @@ CharacterRenderer::getDrawnMeleeWeaponSpansSubstepped(
     uint32_t charInstanceId, float deltaTime, float maxStepSec) {
     const int steps = weaponTrailSubstepCount(deltaTime, maxStepSec);
     std::vector<DrawnWeaponSpan> endSpans = getDrawnMeleeWeaponSpans(charInstanceId);
-    if (steps <= 1 || endSpans.empty()) {
-        return {{deltaTime, std::move(endSpans)}};
-    }
-
     const auto it = instances.find(charInstanceId);
-    if (it == instances.end()) return {{deltaTime, std::move(endSpans)}};
+    if (it == instances.end()) return {{deltaTime, false, std::move(endSpans)}};
     const auto& inst = it->second;
-    if (!inst.prevTrailHasState || !inst.cachedModel ||
+    const bool seqChanged = inst.prevTrailHasState &&
+                            (inst.prevTrailSequenceIndex != inst.currentSequenceIndex ||
+                             inst.prevTrailUpperSequenceIndex != inst.upperBodySequenceIndex);
+    if (steps <= 1 || endSpans.empty() || seqChanged ||
+        !inst.prevTrailHasState || !inst.cachedModel ||
         inst.currentSequenceIndex < 0 ||
-        inst.prevTrailSequenceIndex != inst.currentSequenceIndex ||
         static_cast<size_t>(inst.currentSequenceIndex) >= inst.cachedModel->data.sequences.size()) {
-        return {{deltaTime, std::move(endSpans)}};
+        return {{deltaTime, seqChanged, std::move(endSpans)}};
     }
 
     const auto& model = inst.cachedModel->data;
@@ -3442,11 +3444,11 @@ CharacterRenderer::getDrawnMeleeWeaponSpansSubstepped(
         if (weapIt == instances.end() || !weapIt->second.visible || !weapIt->second.hasOverrideModelMatrix) continue;
         const auto modelIt = models.find(weapIt->second.modelId);
         if (modelIt == models.end()) continue;
+        if (!modelIt->second.data.weaponTrailBase || !modelIt->second.data.weaponTrailTip) continue;
         ActiveWeaponInfo info;
         info.wa = &wa;
-        const auto [bLoc, tLoc] = weaponBladeLocalSpan(modelIt->second.visualBoundMin, modelIt->second.visualBoundMax);
-        info.baseLocal = bLoc;
-        info.tipLocal = tLoc;
+        info.baseLocal = modelIt->second.data.weaponTrailBase->position;
+        info.tipLocal = modelIt->second.data.weaponTrailTip->position;
         int curBone = static_cast<int>(wa.boneIndex);
         for (int depth = 0; depth < 32 && curBone >= 0 && static_cast<size_t>(curBone) < numBones; ++depth) {
             info.boneChain.push_back(static_cast<uint16_t>(curBone));
@@ -3456,7 +3458,7 @@ CharacterRenderer::getDrawnMeleeWeaponSpansSubstepped(
         activeWeapons.push_back(std::move(info));
     }
     if (activeWeapons.empty()) {
-        return {{deltaTime, std::move(endSpans)}};
+        return {{deltaTime, false, std::move(endSpans)}};
     }
 
     const float stepDt = deltaTime / static_cast<float>(steps);
@@ -3513,7 +3515,7 @@ CharacterRenderer::getDrawnMeleeWeaponSpansSubstepped(
         samples.push_back(std::move(sample));
     }
 
-    samples.push_back({stepDt, std::move(endSpans)});
+    samples.push_back({stepDt, false, std::move(endSpans)});
     return samples;
 }
 uint32_t CharacterRenderer::gatherAuthoredM2Lights(const glm::vec3& centerPos,

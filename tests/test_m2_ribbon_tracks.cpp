@@ -534,3 +534,41 @@ TEST_CASE("ArrowFlight_01.m2 ribbon tracks and age-based U mapping", "[m2][ribbo
     CHECK(ribbonEdgeU(0.10f, rib.edgeLifetime) == Catch::Approx(0.50f));
     CHECK(ribbonEdgeU(0.20f, rib.edgeLifetime) == Catch::Approx(1.0f));
 }
+
+TEST_CASE("M2Loader parses $WTB/$WTT weapon trail anchors on TBC melee weapons and omits them on non-blade items",
+          "[m2][weapon_trail][assets]") {
+    const char* root = std::getenv("WOWEE_TBC_DATA_DIR");
+    if (!root || !*root) SKIP("Set WOWEE_TBC_DATA_DIR to client/wowee-data/expansions/tbc");
+
+    auto loadM2 = [&](const char* rel) -> M2Model {
+        std::ifstream in(std::string(root) + rel, std::ios::binary);
+        const std::vector<uint8_t> data{std::istreambuf_iterator<char>(in), {}};
+        REQUIRE_FALSE(data.empty());
+        return M2Loader::load(data);
+    };
+
+    // Claymore (2H sword): authors $WTB (0.287) -> $WTT (1.317)
+    {
+        const M2Model claymore = loadM2("/item/objectcomponents/weapon/sword_2h_claymore_a_01.m2");
+        REQUIRE(claymore.weaponTrailBase.has_value());
+        REQUIRE(claymore.weaponTrailTip.has_value());
+        CHECK(claymore.weaponTrailBase->position.x == Catch::Approx(0.287f).margin(0.01f));
+        CHECK(claymore.weaponTrailTip->position.x == Catch::Approx(1.317f).margin(0.01f));
+    }
+
+    // Leotheras double-bladed glaive: authors full double-blade span (-1.154 -> +1.152)
+    {
+        const M2Model glaive = loadM2("/item/objectcomponents/weapon/glave_1h_dualblade_d_01.m2");
+        REQUIRE(glaive.weaponTrailBase.has_value());
+        REQUIRE(glaive.weaponTrailTip.has_value());
+        CHECK(glaive.weaponTrailBase->position.x == Catch::Approx(-1.154f).margin(0.01f));
+        CHECK(glaive.weaponTrailTip->position.x == Catch::Approx(1.152f).margin(0.01f));
+    }
+
+    // Fishing pole: no $WTB / $WTT -> Native 2.4.3 emits no weapon trail
+    {
+        const M2Model pole = loadM2("/item/objectcomponents/weapon/misc_2h_fishingpole_a_01.m2");
+        CHECK_FALSE(pole.weaponTrailBase.has_value());
+        CHECK_FALSE(pole.weaponTrailTip.has_value());
+    }
+}

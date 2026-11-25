@@ -306,3 +306,42 @@ TEST_CASE("weaponTrailSubstepCount subdivides coarse frames into smooth circular
     REQUIRE(ch.edges.size() == 7);
     CHECK(ch.edges.back().alpha == Approx(spec.alpha));
 }
+
+TEST_CASE("stepWeaponTrailHeadAlpha holds full alpha until half duration then decays with 300ms tau",
+          "[weapon_trail][whirlwind]") {
+    const auto spec = *parseWeaponTrailCharProc(static_cast<float>(0xF71717u), 20.0f, 2000.0f, 100.0f);
+    float headAlpha = spec.alpha;
+    const float dt = 1.0f / 60.0f;
+
+    // First half of Whirlwind (0.0s .. 1.0s): headAlpha remains unchanged
+    float elapsed = 0.0f;
+    for (int i = 0; i < 60; ++i) {
+        elapsed += dt;
+        headAlpha = stepWeaponTrailHeadAlpha(headAlpha, elapsed, spec.durationSec, dt);
+    }
+    CHECK(headAlpha == Approx(spec.alpha));
+
+    // Past half duration (1.0s .. 1.9s): headAlpha decays monotonically to 0
+    // well before the full 2.0s kit duration expires so post-Whirlwind swings
+    // and movement do not emit full-opacity broad trails.
+    float prevAlpha = headAlpha;
+    for (int i = 0; i < 20; ++i) {
+        elapsed += dt;
+        headAlpha = stepWeaponTrailHeadAlpha(headAlpha, elapsed, spec.durationSec, dt);
+        CHECK(headAlpha < prevAlpha);
+        prevAlpha = headAlpha;
+    }
+    // Continue to 1.85s: must be completely dead (0.0f)
+    while (elapsed < 1.85f) {
+        elapsed += dt;
+        headAlpha = stepWeaponTrailHeadAlpha(headAlpha, elapsed, spec.durationSec, dt);
+    }
+    CHECK(headAlpha == 0.0f);
+
+    // Passing headAlphaOverride into stepWeaponTrailChannel scales newly emitted edge alpha
+    WeaponTrailChannel ch;
+    stepWeaponTrailChannel(ch, spec, 0.020f, true,
+                           std::make_pair(glm::vec3(0.0f), glm::vec3(1.0f, 0.0f, 0.0f)), 0.10f);
+    REQUIRE(ch.edges.size() == 1);
+    CHECK(ch.edges.back().alpha == Approx(0.10f));
+}

@@ -2141,6 +2141,7 @@ void SpellVisualSystem::startKitWeaponTrail(uint32_t kitId, uint32_t attachInsta
         entry.spec.durationSec = resolveChannelWeaponTrailDuration(spec.durationSec, channelRemainingSec);
     }
     entry.elapsed = 0.0f;
+    entry.headAlpha = entry.spec.alpha;
     entry.fromChannel = fromChannel;
     entry.sourceAuraVisualId = sourceAuraVisualId;
 
@@ -2149,7 +2150,9 @@ void SpellVisualSystem::startKitWeaponTrail(uint32_t kitId, uint32_t attachInsta
         for (const auto& span : spans) {
             WeaponTrailChannel ch;
             ch.weaponInstanceId = span.weaponInstanceId;
-            ch.edges.push_back({span.baseWorld, span.tipWorld, spec.alpha});
+            // Do not pre-seed ch.edges with the pre-cast Stand/Ready weapon pose:
+            // let updateWeaponTrails record the first edge once the cast animation
+            // is live so Stand -> Whirlwind does not bridge a cross-body chord.
             entry.channels.push_back(std::move(ch));
         }
     }
@@ -2189,7 +2192,8 @@ void SpellVisualSystem::updateWeaponTrails(float deltaTime) {
 
     for (auto it = activeWeaponTrails_.begin(); it != activeWeaponTrails_.end();) {
         it->elapsed += deltaTime;
-        const bool emitting = it->elapsed < it->spec.durationSec;
+        it->headAlpha = stepWeaponTrailHeadAlpha(it->headAlpha, it->elapsed, it->spec.durationSec, deltaTime);
+        const bool emitting = it->elapsed < it->spec.durationSec && it->headAlpha > 0.0f;
 
         std::vector<CharacterRenderer::DrawnWeaponSpanSample> samples;
         if (emitting && characters) {
@@ -2213,6 +2217,13 @@ void SpellVisualSystem::updateWeaponTrails(float deltaTime) {
         for (auto chIt = it->channels.begin(); chIt != it->channels.end();) {
             if (emitting && !samples.empty()) {
                 for (const auto& sample : samples) {
+                    if (sample.sequenceChanged) {
+                        // Break the strip across an instantaneous animation
+                        // sequence snap (e.g. Whirlwind -> Run/Attack2H) so the
+                        // ribbon never bridges a giant cross-body triangle.
+                        chIt->edges.clear();
+                        chIt->sampleAccum = 0.0f;
+                    }
                     std::optional<std::pair<glm::vec3, glm::vec3>> bladeWorld;
                     for (const auto& span : sample.spans) {
                         if (span.weaponInstanceId == chIt->weaponInstanceId) {
@@ -2220,10 +2231,11 @@ void SpellVisualSystem::updateWeaponTrails(float deltaTime) {
                             break;
                         }
                     }
-                    stepWeaponTrailChannel(*chIt, it->spec, sample.stepDt, /*emitting=*/true, bladeWorld);
+                    stepWeaponTrailChannel(*chIt, it->spec, sample.stepDt, /*emitting=*/true,
+                                           bladeWorld, it->headAlpha);
                 }
             } else {
-                stepWeaponTrailChannel(*chIt, it->spec, deltaTime, emitting, std::nullopt);
+                stepWeaponTrailChannel(*chIt, it->spec, deltaTime, emitting, std::nullopt, it->headAlpha);
             }
 
             if (!emitting && isWeaponTrailChannelDead(*chIt)) {

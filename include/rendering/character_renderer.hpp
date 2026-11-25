@@ -499,6 +499,7 @@ public:
     /// One sub-stepped frame sample of drawn melee weapon blade spans.
     struct DrawnWeaponSpanSample {
         float stepDt = 0.0f;
+        bool sequenceChanged = false;
         std::vector<DrawnWeaponSpan> spans;
     };
     /// Returns world-space blade spans for all visible, drawn melee weapons

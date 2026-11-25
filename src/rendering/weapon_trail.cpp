@@ -54,8 +54,10 @@ std::pair<glm::vec3, glm::vec3> weaponBladeLocalSpan(const glm::vec3& visualBoun
 
 void stepWeaponTrailChannel(WeaponTrailChannel& channel, const WeaponTrailSpec& spec,
                             float dt, bool emitting,
-                            const std::optional<std::pair<glm::vec3, glm::vec3>>& bladeWorld) {
+                            const std::optional<std::pair<glm::vec3, glm::vec3>>& bladeWorld,
+                            float headAlphaOverride) {
     assert(std::isfinite(dt) && dt >= 0.0f);
+    const float emitAlpha = headAlphaOverride >= 0.0f ? headAlphaOverride : spec.alpha;
 
     // CharParamOne (fadeOutRate) is alpha units (0..255) decayed per 50ms tick (20 Hz).
     // Example: Heroic Strike / Whirlwind (fadeOutRate=20, alpha=100) decays over
@@ -94,7 +96,7 @@ void stepWeaponTrailChannel(WeaponTrailChannel& channel, const WeaponTrailSpec& 
     channel.sampleAccum += dt;
 
     if (channel.edges.empty()) {
-        channel.edges.push_back({basePos, tipPos, spec.alpha});
+        channel.edges.push_back({basePos, tipPos, emitAlpha});
         channel.sampleAccum = 0.0f;
         return;
     }
@@ -111,13 +113,13 @@ void stepWeaponTrailChannel(WeaponTrailChannel& channel, const WeaponTrailSpec& 
         if (channel.edges.size() == 1) {
             channel.edges.back().base = basePos;
             channel.edges.back().tip = tipPos;
-            channel.edges.back().alpha = spec.alpha;
+            channel.edges.back().alpha = emitAlpha;
         }
         return;
     }
 
     if (channel.sampleAccum >= kWeaponTrailSampleIntervalSec || channel.edges.size() == 1) {
-        channel.edges.push_back({basePos, tipPos, spec.alpha});
+        channel.edges.push_back({basePos, tipPos, emitAlpha});
         channel.sampleAccum = 0.0f;
         if (channel.edges.size() > kWeaponTrailMaxEdges) {
             channel.edges.erase(channel.edges.begin());
@@ -127,8 +129,32 @@ void stepWeaponTrailChannel(WeaponTrailChannel& channel, const WeaponTrailSpec& 
         // tip continuously without lag.
         channel.edges.back().base = basePos;
         channel.edges.back().tip = tipPos;
-        channel.edges.back().alpha = spec.alpha;
+        channel.edges.back().alpha = emitAlpha;
     }
+}
+
+float stepWeaponTrailHeadAlpha(float currentHeadAlpha,
+                               float elapsedSec,
+                               float durationSec,
+                               float dt) {
+    assert(std::isfinite(currentHeadAlpha) && currentHeadAlpha >= 0.0f);
+    assert(std::isfinite(elapsedSec) && elapsedSec >= 0.0f);
+    assert(std::isfinite(durationSec) && durationSec >= 0.0f);
+    assert(std::isfinite(dt) && dt >= 0.0f);
+    if (currentHeadAlpha <= 0.0f) return 0.0f;
+    if (elapsedSec <= durationSec * 0.5f || dt <= 0.0f) {
+        return currentHeadAlpha;
+    }
+    // Native TBC 2.4.3 (0x6d3c40..0x6d3d6f): after elapsedMs > durationMs / 2,
+    // headAlpha decays by max(1, round(headAlpha * dtMs / 300.0)) each tick
+    // and terminates once headAlpha / alphaStep <= 1.
+    constexpr float kMinByteAlpha = 1.0f / 255.0f;
+    const float decayed = currentHeadAlpha * std::exp(-dt / kWeaponTrailFadeTauSec);
+    // Enforce the native >= 1/255 per-tick floor (at 60 Hz equivalent) so low
+    // alpha tails reach zero cleanly instead of lingering asymptotically.
+    const float minDrop = (dt * 60.0f) * kMinByteAlpha;
+    const float next = std::min(decayed, currentHeadAlpha - minDrop);
+    return next <= kMinByteAlpha ? 0.0f : next;
 }
 
 bool isWeaponTrailChannelDead(const WeaponTrailChannel& channel) {
