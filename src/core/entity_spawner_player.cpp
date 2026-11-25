@@ -879,9 +879,12 @@ void EntitySpawner::applyPlayerEquipmentToInstance(uint64_t guid,
         }
     }
     if (const auto entity = gameHandler_ ? gameHandler_->getEntityManager().getEntity(guid) : nullptr) {
+        const auto* unit = dynamic_cast<const game::Unit*>(entity.get());
         charRenderer->setLatchWeaponsDrawnByAnimation(st.instanceId, false);
         charRenderer->setSheathState(st.instanceId,
-            entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_2)) & 0xFF);
+            game::effectiveUnitSheathState(
+                static_cast<uint8_t>(entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_2)) & 0xFFu),
+                unit ? unit->getUnitFlags() : 0u));
     }
 }
 
@@ -1161,8 +1164,12 @@ void EntitySpawner::setCreatureRangedDrawn(uint64_t guid, bool drawn) {
     const uint32_t instanceId = getCreatureInstanceId(guid);
     const auto entity = gameHandler_->getEntityManager().getEntity(guid);
     if (instanceId == 0 || !entity) return;
+    const auto* unit = dynamic_cast<const game::Unit*>(entity.get());
     renderer_->getCharacterRenderer()->setSheathState(instanceId,
-        drawn ? 2 : entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_2)) & 0xFF);
+        drawn ? 2
+              : game::effectiveUnitSheathState(
+                    static_cast<uint8_t>(entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_2)) & 0xFFu),
+                    unit ? unit->getUnitFlags() : 0u));
 }
 
 uint32_t EntitySpawner::offHandAttackAnimation(const game::Unit& unit) const {

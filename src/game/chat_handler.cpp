@@ -1,5 +1,6 @@
 #include <cassert>
 #include "game/chat_handler.hpp"
+#include "game/session_flag_rules.hpp"
 #include "game/bg_score_defs.hpp"
 #include "game/group_defines.hpp"
 #include "game/cast_result_text.hpp"
@@ -272,27 +273,24 @@ void ChatHandler::registerOpcodes(DispatchTable& table) {
 
     // ---- Server / defense / area-trigger messages (moved from GameHandler) ----
     table[Opcode::SMSG_DEFENSE_MESSAGE] = [this](network::Packet& packet) {
-        if (packet.hasRemaining(5)) {
-            /*uint32_t zoneId =*/ packet.readUInt32();
-            std::string defMsg = packet.readString();
-            if (!defMsg.empty()) addSystemChatMessage("[Defense] " + defMsg);
+        DefenseMessageData def;
+        if (DefenseMessageParser::parse(packet, def)) {
+            const std::string zoneName = owner_.getAreaName(def.zoneId);
+            const std::string line = formatDefenseMessage(zoneName, def.message);
+            if (!line.empty()) addSystemChatMessage(line);
         }
     };
     // Server messages
     table[Opcode::SMSG_SERVER_MESSAGE] = [this](network::Packet& packet) {
         if (packet.hasRemaining(4)) {
             uint32_t msgType = packet.readUInt32();
-            std::string msg = packet.readString();
-            if (!msg.empty()) {
-                std::string prefix;
-                switch (msgType) {
-                    case 1: prefix = "[Shutdown] ";   owner_.addUIError("Server shutdown: " + msg);  break;
-                    case 2: prefix = "[Restart] ";    owner_.addUIError("Server restart: " + msg);   break;
-                    case 4: prefix = "[Shutdown cancelled] "; break;
-                    case 5: prefix = "[Restart cancelled] ";  break;
-                    default: prefix = "[Server] "; break;
-                }
-                addSystemChatMessage(prefix + msg);
+            std::string msg = packet.hasData() ? packet.readString() : std::string{};
+            const auto formatted = formatServerMessage(msgType, msg);
+            if (!formatted.uiError.empty()) {
+                owner_.addUIError(formatted.uiError);
+            }
+            if (!formatted.chatLine.empty()) {
+                addSystemChatMessage(formatted.chatLine);
             }
         }
     };

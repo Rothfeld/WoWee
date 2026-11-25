@@ -332,6 +332,8 @@ public:
     void setTextureSlotOverride(uint32_t instanceId, uint16_t textureSlot, VkTexture* texture);
     void clearTextureSlotOverride(uint32_t instanceId, uint16_t textureSlot);
     void setInstanceVisible(uint32_t instanceId, bool visible);
+    void setUnitFlagPreventAnim(uint32_t instanceId, bool prevent);
+    void setHideBody(uint32_t instanceId, bool hide);
     void setInstanceReplaced(uint32_t instanceId, bool replaced);
     /// The instance's own visibility (first-person, taxi) and camera opacity.
     bool isInstanceDrawnVisible(uint32_t instanceId, float& cameraOpacity) const;
@@ -709,6 +711,10 @@ private:
         // SpellVisualKit CharProc 11: holds the instance's animation clock and
         // current pose motionless until cleared.
         bool kitAnimationFrozen = false;
+        // UNIT_FLAG_PREVENT_ANIM (0x20000000): holds animation clock frozen.
+        bool unitFlagPreventAnim = false;
+        // UNIT_FLAG2_HIDE_BODY (0x02): hides root body mesh while keeping weapons/helms/shoulders visible.
+        bool hideBody = false;
         uint32_t auraStateAnimId = 0;
         bool doodadLighting = false;
         float fadeInTime = 0.0f;          // elapsed fade time (seconds)

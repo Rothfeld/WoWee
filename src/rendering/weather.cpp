@@ -316,10 +316,14 @@ void Weather::setEnabled(bool on) {
     enabled = on;
 }
 
-void Weather::setIntensity(float value) {
-    intensity = glm::clamp(value, 0.0f, 1.0f);
+void Weather::setIntensity(float value, bool abrupt) {
+    const float clamped = glm::clamp(value, 0.0f, 1.0f);
+    targetIntensity_ = clamped;
+    if (abrupt || clamped <= 0.0f) {
+        intensity = clamped;
+    }
     // Rain that stops is gone at once (2.4.3: within a second of the packet).
-    if (intensity <= 0.0f) clearParticles();
+    if (clamped <= 0.0f) clearParticles();
 }
 
 void Weather::setDensityLevel(int level) {
@@ -390,6 +394,11 @@ void Weather::spawnFlake(const glm::vec3& camera, bool anyHeight) {
 
 void Weather::update(const Camera& camera, float deltaTime) {
     if (!vkCtx_) return;
+    if (intensity != targetIntensity_) {
+        constexpr float kSmoothWeatherRatePerSec = 0.25f;
+        const float step = kSmoothWeatherRatePerSec * deltaTime;
+        intensity += glm::clamp(targetIntensity_ - intensity, -step, step);
+    }
     const bool raining = weatherType == Type::RAIN || weatherType == Type::STORM;
     float amount = (enabled && weatherType != Type::NONE) ? intensity * densityScale_ : 0.0f;
     // Ground lookups search down from the top of the box.

@@ -1197,7 +1197,11 @@ bool GameScreen::drawVendorCursor(game::GameHandler& gameHandler,
     const auto harvesting = ui::corpseHarvestPresentation(gameHandler, *unit);
     const bool alive = !game::isUnitCorpseState(
         unit->getHealth(), unit->getMaxHealth(), unit->getDynamicFlags());
-    const bool inReach = alive
+    const auto& cCache = gameHandler.getCreatureInfoCache();
+    const auto cIt = cCache.find(unit->getEntry());
+    const bool interactWhileDead = cIt != cCache.end() &&
+                                   game::creatureInteractableWhileDead(cIt->second.typeFlags);
+    const bool inReach = (alive || (interactWhileDead && unit->getNpcFlags() != 0))
         ? gameHandler.unitWithinInteractionReach(*unit)
         : gameHandler.unitWithinLootReach(*unit);
     const std::string path = ui::unitCursorPath(
@@ -1205,7 +1209,7 @@ bool GameScreen::drawVendorCursor(game::GameHandler& gameHandler,
         unit->getDynamicFlags(), gameHandler.unitReactionToPlayer(*unit),
         unit->getNpcFlags(), questStatus, iconName, gameHandler.canPlayerAttackUnit(*unit), unit->getUnitFlags(),
         harvesting && harvesting->difficulty != game::HarvestDifficulty::Unavailable,
-        harvesting && harvesting->knowsProfession, inReach);
+        harvesting && harvesting->knowsProfession, inReach, interactWhileDead, game::isPreWotlk());
     const auto texture = cursorTexture(services_.assetManager, services_.window, path.c_str());
     if (!texture) return false;
     selectCursorTexture(texture);

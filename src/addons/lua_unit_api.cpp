@@ -2311,7 +2311,20 @@ static int lua_GetPetSpellBonusDamage(lua_State* L) {
 }
 
 static int lua_HasFullControl(lua_State* L) {
-    lua_pushboolean(L, 1);
+    auto* gh = getGameHandler(L);
+    if (!gh) {
+        lua_pushboolean(L, 1);
+        return 1;
+    }
+    const uint64_t playerGuid = gh->getPlayerGuid();
+    const auto entity = playerGuid != 0 ? gh->getEntityManager().getEntity(playerGuid) : nullptr;
+    const auto* unit = entity ? dynamic_cast<const game::Unit*>(entity.get()) : nullptr;
+    if (!unit) {
+        lua_pushboolean(L, 1);
+        return 1;
+    }
+    const bool full = game::playerHasFullControl(unit->getUnitFlags(), game::unitCharmedByGuid(*unit));
+    lua_pushboolean(L, full ? 1 : 0);
     return 1;
 }
 

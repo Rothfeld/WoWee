@@ -78,8 +78,9 @@ public:
     void setWeatherType(Type type);
     [[nodiscard]] Type getWeatherType() const { return weatherType; }
 
-    /// SMSG_WEATHER's grade (0..1).
-    void setIntensity(float intensity);
+    /// SMSG_WEATHER's grade (0..1). When `abrupt` is false, rendered intensity
+    /// ramps smoothly toward `intensity`; when `abrupt` is true, it snaps at once.
+    void setIntensity(float intensity, bool abrupt = true);
     [[nodiscard]] float getIntensity() const { return intensity; }
 
     /// The game's Weather Detail setting (CVar weatherDensity, 0 to 3; 2 when

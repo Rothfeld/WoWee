@@ -8,6 +8,7 @@
 #include "game/game_handler.hpp"
 #include "game/entity.hpp"
 #include "game/game_object_interaction.hpp"
+#include "game/session_flag_rules.hpp"
 #include <cassert>
 #include "rendering/camera.hpp"
 #include "rendering/renderer.hpp"
@@ -26,20 +27,30 @@ namespace {
 /// CGUnit_C 0x60e870: a dead unit the player can neither loot
 /// (UNIT_DYNFLAG_LOOTABLE, which the server sets for the looter) nor skin
 /// (UNIT_FLAG_SKINNABLE) is picked only when nothing else is under the cursor.
-bool deferredCorpse(const std::shared_ptr<game::Entity>& entity) {
+bool deferredCorpse(const game::GameHandler& gameHandler, const std::shared_ptr<game::Entity>& entity) {
     auto unit = std::dynamic_pointer_cast<game::Unit>(entity);
     if (!unit || unit->getHealth() != 0 || unit->getMaxHealth() == 0) return false;
     const bool lootable = (unit->getDynamicFlags() & game::UNIT_DYNFLAG_LOOTABLE) != 0;
     const bool skinnable = (unit->getUnitFlags() & game::UNIT_FLAG_SKINNABLE) != 0;
-    return !lootable && !skinnable;
+    const auto& cache = gameHandler.getCreatureInfoCache();
+    const auto it = cache.find(unit->getEntry());
+    const bool interactDead = it != cache.end() &&
+                              game::creatureInteractableWhileDead(it->second.typeFlags) &&
+                              unit->getNpcFlags() != 0;
+    return !lootable && !skinnable && !interactDead;
 }
 
-bool interactiveCorpse(const std::shared_ptr<game::Entity>& entity) {
+bool interactiveCorpse(const game::GameHandler& gameHandler, const std::shared_ptr<game::Entity>& entity) {
     auto unit = std::dynamic_pointer_cast<game::Unit>(entity);
     if (!unit || unit->getHealth() != 0 || unit->getMaxHealth() == 0) return false;
     const bool lootable = (unit->getDynamicFlags() & game::UNIT_DYNFLAG_LOOTABLE) != 0;
     const bool skinnable = (unit->getUnitFlags() & game::UNIT_FLAG_SKINNABLE) != 0;
-    return lootable || skinnable;
+    const auto& cache = gameHandler.getCreatureInfoCache();
+    const auto it = cache.find(unit->getEntry());
+    const bool interactDead = it != cache.end() &&
+                              game::creatureInteractableWhileDead(it->second.typeFlags) &&
+                              unit->getNpcFlags() != 0;
+    return lootable || skinnable || interactDead;
 }
 
 } // namespace
@@ -160,8 +171,8 @@ ScenePick pickScene(game::GameHandler& gameHandler,
                 // living units (priority 3) outranking lootable/skinnable
                 // corpses (priority 2). Deferred non-lootable corpses have no
                 // Pass-2 fallback.
-                if (!deferredCorpse(entity)) {
-                    const bool isCorpse = (type == game::ObjectType::UNIT && interactiveCorpse(entity));
+                if (!deferredCorpse(gameHandler, entity)) {
+                    const bool isCorpse = (type == game::ObjectType::UNIT && interactiveCorpse(gameHandler, entity));
                     const int priority = isCorpse ? kPass2PriorityLootableCorpse
                                                   : kPass2PriorityLivingUnit;
                     glm::vec3 unitOrigin = core::coords::canonicalToRender(
@@ -275,7 +286,7 @@ ScenePick pickScene(game::GameHandler& gameHandler,
         const float centerT = glm::dot(hitCenter - ray.origin, ray.direction);
 
         if (type == game::ObjectType::UNIT || type == game::ObjectType::PLAYER) {
-            if (deferredCorpse(entity)) {
+            if (deferredCorpse(gameHandler, entity)) {
                 if (hitT < pick.deferredT) {
                     pick.deferredT = hitT;
                     pick.deferredGuid = guid;

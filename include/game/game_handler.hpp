@@ -6,6 +6,7 @@
 #include "game/calendar_data.hpp"
 #include "game/game_interfaces.hpp"
 #include "game/world_packets.hpp"
+#include "game/session_flag_rules.hpp"
 #include "game/packed_time.hpp"
 #include "game/character.hpp"
 #include "game/macro_store.hpp"
@@ -1750,6 +1751,54 @@ public:
     uint32_t getWeatherType() const { return weatherType_; }
     WeatherKind getWeatherKind() const { return weatherKind(weatherType_); }
     float getWeatherIntensity() const { return weatherIntensity_; }
+    bool isWeatherAbrupt() const { return weatherAbrupt_; }
+    bool consumeWeatherAbrupt() {
+        const bool v = weatherAbrupt_;
+        weatherAbrupt_ = false;
+        return v;
+    }
+
+    // Auth response metadata (SMSG_AUTH_RESPONSE)
+    uint8_t getAccountExpansion() const { return accountExpansion_; }
+    uint32_t getBillingTimeRemaining() const { return billingTimeRemaining_; }
+    uint8_t getBillingPlanFlags() const { return billingPlanFlags_; }
+    uint32_t getBillingTimeRested() const { return billingTimeRested_; }
+    uint32_t getAuthQueuePosition() const { return authQueuePosition_; }
+    bool isInAuthQueue() const { return authQueued_; }
+
+    // Account data cache state (SMSG_ACCOUNT_DATA_TIMES)
+    const AccountDataTimesData& getAccountDataTimes() const { return accountDataTimes_; }
+    uint32_t getAccountDataMask() const { return accountDataTimes_.mask; }
+
+    // Tutorial flags (SMSG_TUTORIAL_FLAGS / CMSG_TUTORIAL_FLAG / CLEAR / RESET)
+    bool hasTutorialFlags() const { return tutorialFlagsLoaded_; }
+    const std::array<uint32_t, 8>& getTutorialFlags() const { return tutorialFlags_; }
+    bool isTutorialFlagged(int tutorialId) const;
+    void flagTutorial(int tutorialId);
+    void clearTutorials();
+    void resetTutorials();
+
+    // Local player unit-flag state queries (UNIT_FIELD_FLAGS)
+    bool isPlayerDisarmed() const {
+        const auto e = playerGuid != 0 ? entityController_->getEntityManager().getEntity(playerGuid) : nullptr;
+        const auto* u = e ? dynamic_cast<const Unit*>(e.get()) : nullptr;
+        return u && unitIsDisarmed(u->getUnitFlags());
+    }
+    bool isPlayerSilenced() const {
+        const auto e = playerGuid != 0 ? entityController_->getEntityManager().getEntity(playerGuid) : nullptr;
+        const auto* u = e ? dynamic_cast<const Unit*>(e.get()) : nullptr;
+        return u && unitIsSilenced(u->getUnitFlags());
+    }
+    bool isPlayerPacified() const {
+        const auto e = playerGuid != 0 ? entityController_->getEntityManager().getEntity(playerGuid) : nullptr;
+        const auto* u = e ? dynamic_cast<const Unit*>(e.get()) : nullptr;
+        return u && unitIsPacified(u->getUnitFlags());
+    }
+    bool hasPlayerFullControl() const {
+        const auto e = playerGuid != 0 ? entityController_->getEntityManager().getEntity(playerGuid) : nullptr;
+        const auto* u = e ? dynamic_cast<const Unit*>(e.get()) : nullptr;
+        return !u || playerHasFullControl(u->getUnitFlags(), unitCharmedByGuid(*u));
+    }
     bool isRaining() const {
         const WeatherKind kind = getWeatherKind();
         return (kind == WeatherKind::RAIN || kind == WeatherKind::THUNDERSTORM) &&
@@ -5913,7 +5962,19 @@ private:
     // ---- Weather state (SMSG_WEATHER) ----
     uint32_t weatherType_ = 0;       // WeatherState, 0 = fine
     float weatherIntensity_ = 0.0f;  // 0.0 to 1.0
-    void applyWeather(uint32_t state, float intensity);
+    bool weatherAbrupt_ = false;     // 1 = instant change, 0 = smooth change
+    void applyWeather(uint32_t state, float intensity, bool isAbrupt = false);
+
+    // ---- Auth / account-data / tutorial state ----
+    uint8_t accountExpansion_ = 0;
+    uint32_t billingTimeRemaining_ = 0;
+    uint8_t billingPlanFlags_ = 0;
+    uint32_t billingTimeRested_ = 0;
+    uint32_t authQueuePosition_ = 0;
+    bool authQueued_ = false;
+    AccountDataTimesData accountDataTimes_{};
+    std::array<uint32_t, 8> tutorialFlags_{};
+    bool tutorialFlagsLoaded_ = false;
 
     // ---- Light override (SMSG_OVERRIDE_LIGHT) ----
     uint32_t overrideLightId_ = 0;      // 0 = no override

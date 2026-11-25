@@ -104,6 +104,7 @@ struct GameHandlerTestAccess {
         REQUIRE_FALSE(pending());
     }
     static void enterWorld(GameHandler& gh) { gh.setState(WorldState::IN_WORLD); }
+    static void setWorldState(GameHandler& gh, WorldState st) { gh.setState(st); }
     // The thirty seconds of a running ready check, over.
     static void expireReadyCheck(GameHandler& gh) {
         gh.socialHandler_->readyCheckDeadline_ = std::chrono::steady_clock::now();

@@ -4347,9 +4347,20 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
         // when the server's value changes (login: other clients already see
         // that state, sheathed for a fresh session).
         if (appearanceComposer_ && gameHandler->getPlayerGuid() != 0) {
-            if (auto self = gameHandler->getEntityManager().getEntity(gameHandler->getPlayerGuid()))
+            if (auto self = gameHandler->getEntityManager().getEntity(gameHandler->getPlayerGuid())) {
+                const auto* selfUnit = dynamic_cast<const game::Unit*>(self.get());
                 appearanceComposer_->syncServerSheathState(
-                    self->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_2)) & 0xFF);
+                    game::effectiveUnitSheathState(
+                        static_cast<uint8_t>(self->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_2)) & 0xFFu),
+                        selfUnit ? selfUnit->getUnitFlags() : 0u));
+                const uint32_t selfInstId = renderer->getCharacterInstanceId();
+                if (selfUnit && selfInstId != 0) {
+                    charRenderer->setUnitFlagPreventAnim(selfInstId,
+                        game::unitPreventsAnim(selfUnit->getUnitFlags()));
+                    charRenderer->setHideBody(selfInstId,
+                        game::unitHidesBody(selfUnit->getUnitFlags2()));
+                }
+            }
         }
 
         auto& _playerInstances = entitySpawner_->getPlayerInstances();
@@ -4367,11 +4378,15 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
         for (const auto& [guid, instanceId] : _playerInstances) {
             auto entity = gameHandler->getEntityManager().getEntity(guid);
             if (!entity || entity->getType() != game::ObjectType::PLAYER) continue;
-            // Weapons follow the player's sheath state (UNIT_FIELD_BYTES_2 byte 0).
-            const uint8_t remoteSheath =
-                entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_2)) & 0xFF;
+            const auto* remoteUnit = static_cast<const game::Unit*>(entity.get());
+            // Weapons follow the player's sheath state (UNIT_FIELD_BYTES_2 byte 0), overridden by UNIT_FLAG_SHEATHE.
+            const uint8_t remoteSheath = game::effectiveUnitSheathState(
+                static_cast<uint8_t>(entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_2)) & 0xFFu),
+                remoteUnit->getUnitFlags());
             charRenderer->setLatchWeaponsDrawnByAnimation(instanceId, false);
             charRenderer->setSheathState(instanceId, remoteSheath);
+            charRenderer->setUnitFlagPreventAnim(instanceId, game::unitPreventsAnim(remoteUnit->getUnitFlags()));
+            charRenderer->setHideBody(instanceId, game::unitHidesBody(remoteUnit->getUnitFlags2()));
 
             // Distance cull
             if (havePPos) {

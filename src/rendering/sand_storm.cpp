@@ -201,11 +201,15 @@ void SandStorm::spawnGrain(const glm::vec3& forward, const glm::vec3& right) {
     grains_.push_back({start, time_, -forward * kSpeed, time_ + life});
 }
 
-void SandStorm::update(const Camera& camera, float deltaTime, float targetIntensity) {
+void SandStorm::update(const Camera& camera, float deltaTime, float targetIntensity, bool abrupt) {
     if (!vkCtx_) return;
     time_ += deltaTime;
-    const float step = kRampPerSecond * deltaTime;
-    intensity_ += glm::clamp(targetIntensity - intensity_, -step, step);
+    if (abrupt) {
+        intensity_ = glm::clamp(targetIntensity, 0.0f, 1.0f);
+    } else {
+        const float step = kRampPerSecond * deltaTime;
+        intensity_ += glm::clamp(targetIntensity - intensity_, -step, step);
+    }
 
     std::erase_if(grains_, [this](const Grain& g) { return g.death <= time_; });
 

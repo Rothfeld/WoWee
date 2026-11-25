@@ -6,6 +6,7 @@
 #include "game/achievement_criteria.hpp"
 #include "game/packed_time.hpp"
 #include "game/protocol_constants.hpp"
+#include "game/session_flag_rules.hpp"
 #include "game/game_utils.hpp"
 #include "game/chat_handler.hpp"
 #include "game/movement_handler.hpp"
@@ -1822,9 +1823,8 @@ void GameHandler::registerRemainingOpcodes() {
         if (packet.hasRemaining(8)) {
             uint32_t wType = packet.readUInt32();
             float wIntensity = packet.readFloat();
-            if (packet.hasRemaining(1))
-                /*uint8_t isAbrupt =*/ packet.readUInt8();
-            applyWeather(wType, wIntensity);
+            const bool isAbrupt = packet.hasRemaining(1) ? (packet.readUInt8() != 0) : false;
+            applyWeather(wType, wIntensity, isAbrupt);
         }
     };
     // Server-script text message - display in system chat
@@ -3414,29 +3414,30 @@ void GameHandler::registerRemainingOpcodes() {
     // uint64 kickerGuid + uint32 kickReasonType + null-terminated reason string
     // kickReasonType: 0=other, 1=afk, 2=vote kick
     dispatchTable_[Opcode::SMSG_KICK_REASON] = [this](network::Packet& packet) {
-        // uint64 kickerGuid + uint32 kickReasonType + null-terminated reason string
-        // kickReasonType: 0=other, 1=afk, 2=vote kick
-        if (!packet.hasRemaining(12)) {
-            packet.skipAll();
+        // TBC 2.4.3 (CMaNGOS WorldSession::SendKickReason): uint8 reason + cstring text.
+        // WotLK custom group-kick fallback: uint64 kickerGuid + uint32 reasonType + cstring text.
+        KickReasonData kick;
+        if (!KickReasonParser::parse(packet, kick, isPreWotlk())) {
             return;
         }
-        uint64_t kickerGuid   = packet.readUInt64();
-        uint32_t reasonType   = packet.readUInt32();
-        std::string reason;
-        if (packet.hasData())
-            reason = packet.readString();
-        (void)kickerGuid;  // not displayed; reasonType IS used below
-        std::string msg = "You have been removed from the group.";
-        if (!reason.empty())
-            msg = "You have been removed from the group: " + reason;
-        else if (reasonType == 1)
-            msg = "You have been removed from the group for being AFK.";
-        else if (reasonType == 2)
-            msg = "You have been removed from the group by vote.";
+        std::string msg;
+        if (kick.isTbcFormat) {
+            msg = formatTbcKickReason(kick.reason, kick.text);
+            LOG_INFO("SMSG_KICK_REASON: reason=", static_cast<int>(kick.reason),
+                     " text='", kick.text, "'");
+        } else {
+            msg = "You have been removed from the group.";
+            if (!kick.text.empty())
+                msg = "You have been removed from the group: " + kick.text;
+            else if (kick.reasonType == 1)
+                msg = "You have been removed from the group for being AFK.";
+            else if (kick.reasonType == 2)
+                msg = "You have been removed from the group by vote.";
+            LOG_INFO("SMSG_KICK_REASON: reasonType=", kick.reasonType,
+                     " reason='", kick.text, "'");
+        }
         addSystemChatMessage(msg);
         addUIError(msg);
-        LOG_INFO("SMSG_KICK_REASON: reasonType=", reasonType,
-                 " reason='", reason, "'");
     };
     // uint32 throttleMs - rate-limited group action; notify the player
     dispatchTable_[Opcode::SMSG_GROUPACTION_THROTTLED] = [this](network::Packet& packet) {

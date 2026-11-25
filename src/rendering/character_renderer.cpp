@@ -2933,7 +2933,7 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos,
             inst.currentAnimationId = inst.cachedModel->data.sequences[inst.currentSequenceIndex].id;
         }
 
-        if (inst.kitAnimationFrozen) {
+        if (inst.kitAnimationFrozen || inst.unitFlagPreventAnim) {
             toUpdate_.push_back(std::ref(inst));
             continue;
         }
@@ -4197,7 +4197,9 @@ std::vector<std::pair<float, uint32_t>> CharacterRenderer::drawOrderForInstance(
             ? glm::vec3(instance.overrideModelMatrix[3]) : instance.position;
         order.emplace_back((view * glm::vec4(position, 1.0f)).z, id);
     };
-    appendIfVisible(onlyInstance);
+    if (!rootIt->second.hideBody) {
+        appendIfVisible(onlyInstance);
+    }
     for (const auto& wa : rootIt->second.weaponAttachments) {
         appendIfVisible(wa.weaponInstanceId);
         for (const auto& fx : wa.effects) appendIfVisible(fx.effectInstanceId);
@@ -4350,8 +4352,9 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
         const bool surfaceFade = renderOpacity < 0.999f && !instance.isEffectModel;
         if (pass == -1 && !surfaceFade) continue;
 
-        // Skip invisible instances (e.g., player in first-person mode)
+        // Skip invisible instances (e.g., player in first-person mode) or UNIT_FLAG2_HIDE_BODY roots
         if (!instance.visible || instance.replaced || instance.roomHidden) continue;
+        if (instance.hideBody && !instance.hasOverrideModelMatrix) continue;
 
         // Character instance culling: view distance and frustum. No unit
         // distance of its own (setViewDistance): Archimonde (scale 12) 137 yd
@@ -5256,6 +5259,7 @@ void CharacterRenderer::renderShadow(VkCommandBuffer cmd, const glm::mat4& light
     for (auto& pair : instances) {
         auto& inst = pair.second;
         if (!inst.visible || inst.replaced || inst.roomHidden) continue;
+        if (inst.hideBody && !inst.hasOverrideModelMatrix) continue;
         if (effectiveUnitOpacity(inst.opacity, inst.cameraOpacity, inst.kitOpacity) <= 0.01f) continue;
 
         // Distance cull against shadow frustum
@@ -6003,6 +6007,20 @@ void CharacterRenderer::setInstanceVisible(uint32_t instanceId, bool visible) {
                 }
             }
         }
+    }
+}
+
+void CharacterRenderer::setUnitFlagPreventAnim(uint32_t instanceId, bool prevent) {
+    auto it = instances.find(instanceId);
+    if (it != instances.end()) {
+        it->second.unitFlagPreventAnim = prevent;
+    }
+}
+
+void CharacterRenderer::setHideBody(uint32_t instanceId, bool hide) {
+    auto it = instances.find(instanceId);
+    if (it != instances.end()) {
+        it->second.hideBody = hide;
     }
 }
 

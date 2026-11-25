@@ -3878,7 +3878,10 @@ int lua_Tooltip_SetUnit(lua_State* L) {
 
     // The faction a standing is kept with, corpses included: a dead Quinn
     // still reads "Gadgetzan" under "Level 35 Corpse" on native.
-    if (!isPlayer && !isCompanion && entity) {
+    const auto& creatureCache = gh->getCreatureInfoCache();
+    const auto creatureInfoIt = unit ? creatureCache.find(unit->getEntry()) : creatureCache.end();
+    const uint32_t creatureTypeFlags = creatureInfoIt != creatureCache.end() ? creatureInfoIt->second.typeFlags : 0u;
+    if (!isPlayer && !isCompanion && entity && game::creatureShowsFactionTooltip(creatureTypeFlags)) {
         auto* assets = gh->services().assetManager;
         const auto* layouts = wowee::pipeline::getActiveDBCLayout();
         const auto* layout = layouts ? layouts->getLayout("FactionTemplate") : nullptr;
@@ -3906,15 +3909,17 @@ int lua_Tooltip_SetUnit(lua_State* L) {
     if (!isPlayer && unit && gh->isCreatureRacialLeader(unit->getEntry()))
         addLine(global("PVP_RANK_LEADER"), 1.0f, 1.0f, 1.0f);
 
-    // Beast Lore (spell 1462 / SPELL_AURA_EMPATHY): appends Damage, Armor,
-    // Health, Diet, and Tameable / Cannot be Tamed lines to the unit tooltip.
+    // Beast Lore (spell 1462 / SPELL_AURA_EMPATHY / UNIT_DYNFLAG_SPECIALINFO):
+    // appends Damage, Armor, Health, Diet, and Tameable / Cannot be Tamed lines to the unit tooltip.
     if (!isPlayer && unit && !isCorpse) {
-        bool hasBeastLore = false;
-        if (const auto* auras = gh->getUnitAuras(guid)) {
-            for (const auto& aura : *auras) {
-                if (!aura.isEmpty() && aura.spellId == game::pet::kSpellBeastLore) {
-                    hasBeastLore = true;
-                    break;
+        bool hasBeastLore = game::unitExposesSpecialInfo(unit->getDynamicFlags());
+        if (!hasBeastLore) {
+            if (const auto* auras = gh->getUnitAuras(guid)) {
+                for (const auto& aura : *auras) {
+                    if (!aura.isEmpty() && aura.spellId == game::pet::kSpellBeastLore) {
+                        hasBeastLore = true;
+                        break;
+                    }
                 }
             }
         }

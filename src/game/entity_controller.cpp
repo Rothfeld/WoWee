@@ -1238,7 +1238,7 @@ bool EntityController::applyUnitFieldsOnCreate(const UpdateBlock& block,
             emitForUnit("UNIT_FACTION");
         }
         else if (ufi.flags2 != 0xFFFF && key == ufi.flags2) {
-            unit->setMirrorImage((val & Unit::kUnitFlag2MirrorImage) != 0);
+            unit->setUnitFlags2(val);
         }
         else if (ufi.auraState != 0xFFFF && key == ufi.auraState) {
             unit->setAuraState(val);
@@ -1620,7 +1620,7 @@ EntityController::UnitFieldUpdateResult EntityController::applyUnitFieldsOnUpdat
             const bool nowMirror = (val & Unit::kUnitFlag2MirrorImage) != 0;
             if (!wasMirror && nowMirror) result.mirrorImageGained = true;
             else if (wasMirror && !nowMirror) result.mirrorImageLost = true;
-            unit->setMirrorImage(nowMirror);
+            unit->setUnitFlags2(val);
         } else if (key == ufi.level) {
             uint32_t oldLvl = unit->getLevel();
             unit->setLevel(val);

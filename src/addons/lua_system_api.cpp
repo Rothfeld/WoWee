@@ -6839,7 +6839,11 @@ void registerSystemLuaAPI(lua_State* L) {
                 // shown, IsTutorialFlagged from TutorialFrame_NewTutorial
                 // before one is queued.
                 {"FlagTutorial", [](lua_State* L) -> int {
-            flagTutorial(static_cast<int>(luaL_optnumber(L, 1, 0)));
+            const int id = static_cast<int>(luaL_optnumber(L, 1, 0));
+            flagTutorial(id);
+            if (auto* gh = getGameHandler(L)) {
+                gh->flagTutorial(id);
+            }
             return 0;
         }},
                 // Walking the tutorials already seen. Both answer an id or
@@ -6848,22 +6852,33 @@ void registerSystemLuaAPI(lua_State* L) {
                 // not move.
                 {"GetNextCompleatedTutorial", [](lua_State* L) -> int {
             const int from = static_cast<int>(luaL_optnumber(L, 1, 0));
-            for (int id : tutorialIds()) {
+            auto* gh = getGameHandler(L);
+            const auto ids = (gh && gh->hasTutorialFlags())
+                ? game::flaggedTutorialIds(gh->getTutorialFlags())
+                : tutorialIds();
+            for (int id : ids) {
                 if (id > from) { lua_pushnumber(L, id); return 1; }
             }
             return 0;
         }},
                 {"GetPrevCompleatedTutorial", [](lua_State* L) -> int {
             const int from = static_cast<int>(luaL_optnumber(L, 1, 0));
-            const auto ids = tutorialIds();
+            auto* gh = getGameHandler(L);
+            const auto ids = (gh && gh->hasTutorialFlags())
+                ? game::flaggedTutorialIds(gh->getTutorialFlags())
+                : tutorialIds();
             for (int id : std::views::reverse(ids)) {
                 if (id < from) { lua_pushnumber(L, id); return 1; }
             }
             return 0;
         }},
                 {"IsTutorialFlagged", [](lua_State* L) -> int {
-            lua_pushboolean(L, tutorialFlagged(
-                static_cast<int>(luaL_optnumber(L, 1, 0))) ? 1 : 0);
+            const int id = static_cast<int>(luaL_optnumber(L, 1, 0));
+            auto* gh = getGameHandler(L);
+            const bool flagged = (gh && gh->hasTutorialFlags())
+                ? gh->isTutorialFlagged(id)
+                : tutorialFlagged(id);
+            lua_pushboolean(L, flagged ? 1 : 0);
             return 1;
         }},
                 // GetDebugStats() fills the debug stats overlay, which is one
@@ -8163,15 +8178,19 @@ void registerSystemLuaAPI(lua_State* L) {
             return 1;
         }},
                 {"ClearTutorials", [](lua_State* L) -> int {
-            (void)L;
             setStoredCVar("showtutorials", "0");
+            if (auto* gh = getGameHandler(L)) {
+                gh->clearTutorials();
+            }
             return 0;
         }},
                 {"ResetTutorials", [](lua_State* L) -> int {
-            (void)L;
             cvarStore()[kTutorialCVar].clear();
             cvarStore()["showtutorials"] = "1";
             saveStoredCVars();
+            if (auto* gh = getGameHandler(L)) {
+                gh->resetTutorials();
+            }
             return 0;
         }},
                 // A Mac-only mouse this build does not look for.

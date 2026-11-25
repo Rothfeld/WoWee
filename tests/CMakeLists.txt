@@ -3251,6 +3251,7 @@ if(NOT ANDROID)
     target_sources(test_game_replay PRIVATE test_game_replay_move_acks.cpp)
     target_sources(test_game_replay PRIVATE test_game_replay_tbc_framexml_lod.cpp)
     target_sources(test_game_replay PRIVATE test_game_replay_economy_sweep.cpp)
+    target_sources(test_game_replay PRIVATE test_game_replay_session_flags.cpp)
 
     # Same complete client objects as game_replay: never replace client classes
     # with test implementations or copy an input-routing branch into a seam.
@@ -3476,6 +3477,13 @@ target_include_directories(test_unit_portrait SYSTEM PRIVATE ${TEST_SYSTEM_INCLU
 target_link_libraries(test_unit_portrait PRIVATE catch2_main)
 add_test(NAME unit_portrait COMMAND test_unit_portrait)
 register_test_target(test_unit_portrait)
+
+# TBC 2.4.3 Network Sweep Shard 6: world/session/auth/tutorial/weather packets,
+# UpdateFields.h indices, and bitflag policies
+wowee_add_packet_test(test_net_sweep_shard6_session_flags
+    SOURCES ${CMAKE_SOURCE_DIR}/src/game/update_field_table.cpp)
+target_compile_definitions(test_net_sweep_shard6_session_flags PRIVATE
+    WOWEE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
 get_property(ALL_TEST_TARGETS GLOBAL PROPERTY WOWEE_ALL_TEST_TARGETS)
 list(LENGTH ALL_TEST_TARGETS _wowee_test_target_count)

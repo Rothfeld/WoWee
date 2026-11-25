@@ -18,9 +18,15 @@ constexpr uint32_t COPPER_PER_SILVER = 100;
 // Unit flags (UNIT_FIELD_FLAGS - index 59 in UnitFields for 3.3.5a;
 // 46 in Classic/TBC/Turtle. Bitmask values below are stable across expansions.)
 // ---------------------------------------------------------------------------
+constexpr uint32_t UNIT_FLAG_CLIENT_CONTROL_LOST = 0x00000004;
 constexpr uint32_t UNIT_FLAG_TAXI_FLIGHT = 0x00100000;
+constexpr uint32_t UNIT_FLAG_DISARMED    = 0x00200000;
+constexpr uint32_t UNIT_FLAG_CONFUSED    = 0x00400000;
+constexpr uint32_t UNIT_FLAG_FLEEING     = 0x00800000;
 constexpr uint32_t UNIT_FLAG_IN_COMBAT   = 0x00080000;
 constexpr uint32_t UNIT_FLAG_STUNNED     = 0x00040000;
+constexpr uint32_t UNIT_FLAG_PACIFIED    = 0x00020000;
+constexpr uint32_t UNIT_FLAG_SILENCED    = 0x00002000;
 /// Set by the server on UNIT_FIELD_FLAGS while the unit is kneeling to loot a
 /// corpse or chest gameobject (CMaNGOS Loot::SetPlayerIsLooting). Not set for
 /// Pick Pocket, Skinning, Fishing, Disenchanting, Prospecting, or bag items.
@@ -37,9 +43,28 @@ constexpr uint32_t UNIT_FLAG_PLAYER_CONTROLLED = 0x00000008;
 constexpr uint32_t UNIT_FLAG_PVP = 0x00001000;
 constexpr uint32_t UNIT_FLAG_NOT_SELECTABLE = 0x02000000;
 constexpr uint32_t UNIT_FLAG_SKINNABLE = 0x04000000;
+constexpr uint32_t UNIT_FLAG_PREVENT_ANIM = 0x20000000;
+constexpr uint32_t UNIT_FLAG_SHEATHE      = 0x40000000;
 constexpr uint32_t UNIT_FLAG_NON_ATTACKABLE = 0x00000002;
 constexpr uint32_t UNIT_FLAG_IMMUNE_TO_PC   = 0x00000100;
 constexpr uint32_t UNIT_FLAG_IMMUNE_TO_NPC  = 0x00000200;
+
+// Unit flags 2 (UNIT_FIELD_FLAGS_2 - index 47 in TBC UnitFields).
+constexpr uint32_t UNIT_FLAG2_FEIGN_DEATH    = 0x00000001;
+constexpr uint32_t UNIT_FLAG2_HIDE_BODY      = 0x00000002;
+constexpr uint32_t UNIT_FLAG2_CLONED         = 0x00000010;
+constexpr uint32_t UNIT_FLAG2_DO_NOT_FADE_IN = 0x00000020;
+
+// CreatureTypeFlags (SMSG_CREATURE_QUERY_RESPONSE.typeFlags, CMaNGOS CreatureDefines.h).
+constexpr uint32_t CREATURE_TYPEFLAG_TAMEABLE                  = 0x00000001;
+constexpr uint32_t CREATURE_TYPEFLAG_VISIBLE_TO_GHOSTS         = 0x00000002;
+constexpr uint32_t CREATURE_TYPEFLAG_BOSS_MOB                  = 0x00000004;
+constexpr uint32_t CREATURE_TYPEFLAG_DO_NOT_PLAY_WOUND_ANIM    = 0x00000008;
+constexpr uint32_t CREATURE_TYPEFLAG_NO_FACTION_TOOLTIP        = 0x00000010;
+constexpr uint32_t CREATURE_TYPEFLAG_INTERACT_WHILE_DEAD       = 0x00000080;
+constexpr uint32_t CREATURE_TYPEFLAG_NO_NAME_PLATE             = 0x00100000;
+constexpr uint32_t CREATURE_TYPEFLAG_HAS_NO_SHADOW_BLOB        = 0x02000000;
+constexpr uint32_t CREATURE_TYPEFLAG_DO_NOT_RENDER_OBJECT_NAME = 0x40000000;
 
 // Unit visibility flags (byte 2 of UNIT_FIELD_BYTES_1).
 // CREEP marks a unit using the client-side stealth presentation. The server
@@ -57,6 +82,10 @@ constexpr uint8_t UNIT_VIS_FLAG_CREEP = 0x02;
 constexpr uint32_t NPC_FLAG_GOSSIP         = 0x00000001;
 constexpr uint32_t NPC_FLAG_QUESTGIVER     = 0x00000002;
 constexpr uint32_t NPC_FLAG_TRAINER        = 0x00000010;
+constexpr uint32_t NPC_FLAG_TRAINER_CLASS      = 0x00000020;
+constexpr uint32_t NPC_FLAG_TRAINER_PROFESSION = 0x00000040;
+constexpr uint32_t NPC_FLAG_ANY_TRAINER =
+    NPC_FLAG_TRAINER | NPC_FLAG_TRAINER_CLASS | NPC_FLAG_TRAINER_PROFESSION;
 constexpr uint32_t NPC_FLAG_VENDOR         = 0x00000080;
 constexpr uint32_t NPC_FLAG_VENDOR_AMMO    = 0x00000100;
 constexpr uint32_t NPC_FLAG_VENDOR_FOOD    = 0x00000200;
@@ -76,8 +105,13 @@ constexpr uint32_t NPC_FLAG_SPIRIT_HEALER  = 0x00004000;
 constexpr uint32_t NPC_FLAG_SPIRIT_GUIDE   = 0x00008000;
 constexpr uint32_t NPC_FLAG_INNKEEPER      = 0x00010000;
 constexpr uint32_t NPC_FLAG_BANKER         = 0x00020000;
+constexpr uint32_t NPC_FLAG_PETITIONER     = 0x00040000;
+constexpr uint32_t NPC_FLAG_TABARDDESIGNER = 0x00080000;
 constexpr uint32_t NPC_FLAG_BATTLEMASTER   = 0x00100000;
 constexpr uint32_t NPC_FLAG_AUCTIONEER     = 0x00200000;
+constexpr uint32_t NPC_FLAG_STABLEMASTER   = 0x00400000;
+constexpr uint32_t NPC_FLAG_GUILD_BANKER   = 0x00800000;
+constexpr uint32_t NPC_FLAG_SPELLCLICK     = 0x01000000;
 
 // ---------------------------------------------------------------------------
 // Default action-bar spell IDs

@@ -1105,6 +1105,14 @@ void GameScreen::renderMinimapResources(const MinimapFrame& frame, const EntityL
     const auto service = std::stoul(addons::storedCVarValue("wowee_trackingservice", "0"));
     if (service > game::tbcTrackingServices.size())
         throw std::runtime_error("Invalid TBC tracking service");
+    // Units explicitly marked with UNIT_DYNFLAG_TRACK_UNIT (e.g. Hunter's Mark,
+    // Mind Vision) always render a tracking blip while alive.
+    for (const auto& entity : units) {
+        const auto unit = std::static_pointer_cast<game::Unit>(entity);
+        if (unit->getHealth() > 0 && game::unitTrackedOnMinimap(unit->getDynamicFlags())) {
+            drawGold(*unit, unit->getName());
+        }
+    }
     if (service != 0) {
         const auto& entry = game::tbcTrackingServices[service - 1];
         if (entry.npcMask != 0) {

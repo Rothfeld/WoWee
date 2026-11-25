@@ -52,8 +52,8 @@ public:
 
     /// `targetIntensity` is the server's grade (SMSG_WEATHER's float) while a
     /// sandstorm is reported and the camera is outdoors, else 0. The drawn
-    /// intensity moves toward it at a fixed rate.
-    void update(const Camera& camera, float deltaTime, float targetIntensity);
+    /// intensity moves toward it at a fixed rate unless `abrupt` snaps it.
+    void update(const Camera& camera, float deltaTime, float targetIntensity, bool abrupt = false);
     void render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
                 bool includeMist = true, const WeatherMist::DepthContext& mistDepth = {});
     void renderMist(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,

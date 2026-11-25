@@ -341,7 +341,9 @@ void EntitySpawner::syncPlayerMorphs() {
             }
             const uint16_t b2Idx = game::fieldIndex(game::UF::UNIT_FIELD_BYTES_2);
             if (b2Idx != 0xFFFF) {
-                const uint8_t sheath = static_cast<uint8_t>(unit->getField(b2Idx) & 0xFFu);
+                const uint8_t sheath = game::effectiveUnitSheathState(
+                    static_cast<uint8_t>(unit->getField(b2Idx) & 0xFFu),
+                    unit->getUnitFlags());
                 if (sheath != morph.sheathState) {
                     cr->setSheathState(morph.instanceId, sheath);
                     morph.sheathState = sheath;
@@ -418,6 +420,17 @@ void EntitySpawner::syncCreatureVisualState() {
                 characterRenderer->setInstanceScale(instanceId, rendered);
             }
         }
+
+        const auto& cCache = gameHandler_->getCreatureInfoCache();
+        const auto cIt = cCache.find(unit->getEntry());
+        const bool ghostVisible = game::creatureVisibleToPlayer(
+            gameHandler_->isPlayerGhost(),
+            cIt != cCache.end(),
+            unit->getNpcFlags(),
+            cIt != cCache.end() ? cIt->second.typeFlags : 0u);
+        characterRenderer->setInstanceVisible(instanceId, ghostVisible);
+        characterRenderer->setUnitFlagPreventAnim(instanceId, game::unitPreventsAnim(unit->getUnitFlags()));
+        characterRenderer->setHideBody(instanceId, game::unitHidesBody(unit->getUnitFlags2()));
 
         // CreatureDisplayInfo's model alpha (the Boar Spirit's display 4716
         // is 128). Stealth fades a unit through its aura's SpellVisualKit
@@ -780,7 +793,10 @@ bool EntitySpawner::tryAttachCreatureVirtualWeapons(uint64_t guid, uint32_t inst
     assert(slots != 0xFFFF);
     const bool displayIds = info != 0xFFFF;
     const uint8_t sheathState = creatureRangedDrawn_.count(guid)
-        ? 2 : unit->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_2)) & 0xFF;
+        ? 2
+        : game::effectiveUnitSheathState(
+              static_cast<uint8_t>(unit->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_2)) & 0xFFu),
+              unit->getUnitFlags());
     auto itemDisplayDbc = assetManager_->loadDBC("ItemDisplayInfo.dbc");
     if (!itemDisplayDbc) return false;
     auto itemDbc = displayIds ? nullptr : assetManager_->loadDBC("Item.dbc");
@@ -877,7 +893,10 @@ bool EntitySpawner::retryCreatureVirtualWeapons(uint64_t guid, uint32_t instance
     for (uint16_t i = 0; i < 3; ++i) state[i] = entity->getField(slots + i);
     if (info != 0xFFFF)
         for (uint16_t i = 0; i < 6; ++i) state[3 + i] = entity->getField(info + i);
-    state[9] = entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_2)) & 0xFF;
+    const auto* asUnit = dynamic_cast<const game::Unit*>(entity.get());
+    state[9] = game::effectiveUnitSheathState(
+        static_cast<uint8_t>(entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_2)) & 0xFFu),
+        asUnit ? asUnit->getUnitFlags() : 0u);
     const auto previous = creatureWeaponStates_.find(guid);
     if (previous == creatureWeaponStates_.end() || previous->second != state) {
         creatureWeaponStates_[guid] = state;
@@ -1623,6 +1642,15 @@ std::vector<rendering::UnitShadowBlob> EntitySpawner::collectUnitShadows() const
     for (const auto& [guid, instance] : playerInstances_) guids.push_back(guid);
     if (!playerInstances_.count(gameHandler_->getPlayerGuid())) guids.push_back(gameHandler_->getPlayerGuid());
     for (const uint64_t guid : guids) {
+        if (const auto ent = gameHandler_->getEntityManager().getEntity(guid);
+            ent && ent->getType() == game::ObjectType::UNIT) {
+            const auto* unit = static_cast<const game::Unit*>(ent.get());
+            const auto& cCache = gameHandler_->getCreatureInfoCache();
+            if (const auto cIt = cCache.find(unit->getEntry());
+                cIt != cCache.end() && !game::creatureCastsShadowBlob(cIt->second.typeFlags)) {
+                continue;
+            }
+        }
         // The drawn unit stands where its ground instance (its mount, when
         // riding) stands; a hidden or culled-by-room unit casts nothing.
         const uint32_t drawn = drawnInstanceIdForGuid(guid);
@@ -2060,6 +2088,7 @@ if (deadCreatureGuids_.count(guid)) {
     }
 }
 bool newlySpawned = false;
+bool skipSpawnFadeIn = false;
 float targetOpacity = 1.0f;
 if (gameHandler_) {
     if (auto entity = gameHandler_->getEntityManager().getEntity(guid);
@@ -2073,13 +2102,16 @@ if (gameHandler_) {
                        (unit->isNewlySpawned() ||
                         game::unitCreatedByGuid(*unit) != 0 ||
                         game::unitCreatedBySpell(*unit) != 0);
+        skipSpawnFadeIn = game::unitSkipsSpawnFadeIn(unit->getUnitFlags2());
         targetOpacity = creatureDisplayAlpha(unit->getDisplayId());
     }
 }
 // Seed applied display opacity before the periodic sync in EntitySpawner::update()
 // runs; otherwise its first tick calls setInstanceOpacity() and cancels fade-in.
 creatureAppliedOpacity_[guid] = targetOpacity;
-const float fadeDuration = rendering::creatureSpawnFadeDuration(displayChanged, newlySpawned);
+const float fadeDuration = skipSpawnFadeIn
+    ? 0.0f
+    : rendering::creatureSpawnFadeDuration(displayChanged, newlySpawned);
 charRenderer->startFadeIn(instanceId, fadeDuration, targetOpacity);
 }
 

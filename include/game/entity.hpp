@@ -62,9 +62,11 @@ enum class TypeMask : uint16_t {
 // The DEAD bit is 0x20 everywhere; confusing it with 0x08 leaves pre-existing
 // corpses standing after login.
 inline constexpr uint32_t UNIT_DYNFLAG_LOOTABLE         = 0x00000001;
+inline constexpr uint32_t UNIT_DYNFLAG_TRACK_UNIT       = 0x00000002;
 inline constexpr uint32_t UNIT_DYNFLAG_TAPPED           = 0x00000004;
 inline constexpr uint32_t UNIT_DYNFLAG_ROOTED_LEGACY    = 0x00000008;  ///< classic/TBC
 inline constexpr uint32_t UNIT_DYNFLAG_TAPPED_BY_PLAYER = 0x00000008;  ///< WotLK
+inline constexpr uint32_t UNIT_DYNFLAG_SPECIALINFO      = 0x00000010;  ///< Beast Lore / Empathy
 inline constexpr uint32_t UNIT_DYNFLAG_DEAD             = 0x00000020;
 inline constexpr uint32_t UNIT_DYNFLAG_TAPPED_BY_ALL_THREAT_LIST = 0x00000080;  ///< WotLK
 
@@ -878,6 +880,13 @@ public:
     [[nodiscard]] uint32_t getUnitFlags() const { return unitFlags; }
     void setUnitFlags(uint32_t f) { unitFlags = f; }
 
+    // Unit flags 2 (UNIT_FIELD_FLAGS_2, index 47 in TBC)
+    [[nodiscard]] uint32_t getUnitFlags2() const { return unitFlags2_; }
+    void setUnitFlags2(uint32_t f) {
+        unitFlags2_ = f;
+        mirrorImage_ = (f & kUnitFlag2MirrorImage) != 0u;
+    }
+
     // Client presentation flags (byte 2 of UNIT_FIELD_BYTES_1).
     [[nodiscard]] uint8_t getVisibilityFlags() const { return visibilityFlags; }
     void setVisibilityFlags(uint8_t f) { visibilityFlags = f; }
@@ -941,6 +950,7 @@ protected:
     float boundingRadius = 0.0f;
     uint32_t mountDisplayId = 0;
     uint32_t unitFlags = 0;
+    uint32_t unitFlags2_ = 0;
     uint8_t visibilityFlags = 0;
     uint64_t meleeVictimGuid = 0;
     uint32_t dynamicFlags = 0;

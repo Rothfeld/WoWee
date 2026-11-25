@@ -304,10 +304,21 @@ bool AuthChallengeParser::parse(network::Packet& packet, AuthChallengeData& data
 }
 
 bool AuthResponseParser::parse(network::Packet& packet, AuthResponseData& response) {
-    // SMSG_AUTH_RESPONSE format:
-    // uint8 result
+    // SMSG_AUTH_RESPONSE formats (CMaNGOS TBC WorldSession.cpp:940-956, 1240-1262; WotLK):
+    //   Failure / SendAuthWaitQue(0):
+    //     uint8 result                                             (1 byte)
+    //   SendAuthWaitQue(pos > 0):
+    //     uint8(AUTH_WAIT_QUEUE) + uint32 queuePosition            (5 bytes)
+    //   SendAuthOk():
+    //     uint8(AUTH_OK) + uint32 billingTimeRemaining + uint8 billingFlags
+    //     + uint32 billingTimeRested + uint8 expansion             (11 bytes)
+    //   SendAuthQueued():
+    //     uint8(AUTH_WAIT_QUEUE) + uint32 billingTimeRemaining + uint8 billingFlags
+    //     + uint32 billingTimeRested + uint8 expansion + uint32 queuePosition
+    //     [+ uint8 realmHasFreeCharMigration on WotLK]             (15-16 bytes)
 
-    if (packet.getSize() < 1) {
+    response = AuthResponseData{};
+    if (packet.getRemainingSize() < 1) {
         LOG_ERROR("SMSG_AUTH_RESPONSE packet too small: ", packet.getSize(), " bytes");
         return false;
     }
@@ -315,7 +326,39 @@ bool AuthResponseParser::parse(network::Packet& packet, AuthResponseData& respon
     uint8_t resultCode = packet.readUInt8();
     response.result = static_cast<AuthResult>(resultCode);
 
-    LOG_INFO("Parsed SMSG_AUTH_RESPONSE: ", getAuthResultString(response.result));
+    if (response.result == AuthResult::OK) {
+        if (packet.getRemainingSize() >= 10) {
+            response.billingTimeRemaining = packet.readUInt32();
+            response.billingPlanFlags = packet.readUInt8();
+            response.billingTimeRested = packet.readUInt32();
+            response.expansion = packet.readUInt8();
+            response.hasBillingInfo = true;
+        }
+    } else if (response.result == AuthResult::WAIT_QUEUE) {
+        if (packet.getRemainingSize() >= 14) {
+            response.billingTimeRemaining = packet.readUInt32();
+            response.billingPlanFlags = packet.readUInt8();
+            response.billingTimeRested = packet.readUInt32();
+            response.expansion = packet.readUInt8();
+            response.queuePosition = packet.readUInt32();
+            response.hasBillingInfo = true;
+            if (packet.getRemainingSize() >= 1) {
+                response.realmHasFreeCharMigration = (packet.readUInt8() != 0);
+            }
+        } else if (packet.getRemainingSize() >= 4) {
+            response.queuePosition = packet.readUInt32();
+            if (packet.getRemainingSize() >= 1) {
+                response.realmHasFreeCharMigration = (packet.readUInt8() != 0);
+            }
+        }
+    }
+    if (packet.getRemainingSize() > 0) {
+        packet.skipAll();
+    }
+
+    LOG_INFO("Parsed SMSG_AUTH_RESPONSE: ", getAuthResultString(response.result),
+             response.hasBillingInfo ? (" expansion=" + std::to_string(response.expansion)) : "",
+             response.isQueued() ? (" queuePos=" + std::to_string(response.queuePosition)) : "");
 
     return true;
 }
@@ -722,20 +765,38 @@ bool LoginVerifyWorldParser::parse(network::Packet& packet, LoginVerifyWorldData
     return true;
 }
 
-bool AccountDataTimesParser::parse(network::Packet& packet, AccountDataTimesData& data) {
-    // Common layouts seen in the wild:
-    // - WotLK-like: uint32 serverTime, uint8 unk, uint32 mask, uint32[up to 8] slotTimes
-    // - Older/variant: uint32 serverTime, uint8 unk, uint32[up to 8] slotTimes
-    // Some servers only send a subset of slots.
-    if (packet.getSize() < 5) {
+bool AccountDataTimesParser::parse(network::Packet& packet, AccountDataTimesData& data, bool isTbc) {
+    // Expansion layouts:
+    // - TBC 2.4.3 (CMaNGOS WorldSession::SendAccountDataTimes):
+    //   8 * 16 = 128 bytes of raw MD5 digests (all-zero 16-byte block when slot is empty).
+    // - WotLK 3.3.5a:
+    //   uint32 serverTime, uint8 unk, uint32 mask, uint32[up to 8] slotTimes.
+    data = AccountDataTimesData{};
+
+    if (isTbc && packet.getRemainingSize() == 128) {
+        data.isTbcMd5Layout = true;
+        for (size_t slot = 0; slot < 8; ++slot) {
+            bool nonZero = false;
+            for (size_t b = 0; b < 16; ++b) {
+                const uint8_t byte = packet.readUInt8();
+                data.accountDataMd5[slot][b] = byte;
+                if (byte != 0) nonZero = true;
+            }
+            if (nonZero) {
+                data.mask |= (1u << slot);
+            }
+        }
+        LOG_DEBUG("Parsed TBC SMSG_ACCOUNT_DATA_TIMES (128-byte MD5 array): nonEmptyMask=0x",
+                  std::hex, data.mask, std::dec);
+        return true;
+    }
+
+    if (packet.getRemainingSize() < 5) {
         LOG_ERROR("SMSG_ACCOUNT_DATA_TIMES packet too small: ", packet.getSize(),
                   " bytes (need at least 5)");
         return false;
     }
 
-    for (uint32_t& t : data.accountDataTimes) {
-        t = 0;
-    }
     data.serverTime = packet.readUInt32();
     data.unknown = packet.readUInt8();
 
@@ -745,6 +806,7 @@ bool AccountDataTimesParser::parse(network::Packet& packet, AccountDataTimesData
         // Treat first dword as slot mask when payload shape matches.
         mask = packet.readUInt32();
     }
+    data.mask = mask;
     remaining = packet.getRemainingSize();
     size_t slotWords = std::min<size_t>(8, remaining / 4);
 
@@ -764,6 +826,60 @@ bool AccountDataTimesParser::parse(network::Packet& packet, AccountDataTimesData
         packet.skipAll();
     }
 
+    return true;
+}
+
+bool DefenseMessageParser::parse(network::Packet& packet, DefenseMessageData& data) {
+    // CMaNGOS TBC World::SendDefenseMessage / SendDefenseMessageBroadcastText:
+    //   uint32 zoneId + uint32 messageLength + cstring message
+    data = DefenseMessageData{};
+    if (!packet.hasRemaining(8)) {
+        return false;
+    }
+    data.zoneId = packet.readUInt32();
+    data.messageLength = packet.readUInt32();
+    if (packet.hasData()) {
+        data.message = packet.readString();
+    }
+    if (packet.getRemainingSize() > 0) {
+        packet.skipAll();
+    }
+    return true;
+}
+
+bool KickReasonParser::parse(network::Packet& packet, KickReasonData& data, bool isPreWotlk) {
+    data = KickReasonData{};
+    if (isPreWotlk) {
+        // CMaNGOS TBC WorldSession::SendKickReason (WorldSession.cpp:1264-1270):
+        //   uint8 reason + cstring string
+        if (!packet.hasRemaining(1)) {
+            return false;
+        }
+        data.isTbcFormat = true;
+        data.reason = packet.readUInt8();
+        if (packet.hasData()) {
+            data.text = packet.readString();
+        }
+        if (packet.getRemainingSize() > 0) {
+            packet.skipAll();
+        }
+        return true;
+    }
+
+    // Legacy WotLK 12-byte group-kick layout fallback
+    if (!packet.hasRemaining(12)) {
+        packet.skipAll();
+        return false;
+    }
+    data.isTbcFormat = false;
+    data.kickerGuid = packet.readUInt64();
+    data.reasonType = packet.readUInt32();
+    if (packet.hasData()) {
+        data.text = packet.readString();
+    }
+    if (packet.getRemainingSize() > 0) {
+        packet.skipAll();
+    }
     return true;
 }
 

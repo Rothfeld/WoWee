@@ -953,6 +953,12 @@ GameScreen::UnitLabelVisibility GameScreen::unitLabelVisibility(
         else if (guardian) plate = plate && (hostile ? showEnemyGuardians : showFriendlyGuardians);
         if (own || companion) plate = false;
     }
+    const auto& cCache = gameHandler.getCreatureInfoCache();
+    const auto cIt = !isPlayer ? cCache.find(unit.getEntry()) : cCache.end();
+    const uint32_t creatureTypeFlags = (!isPlayer && cIt != cCache.end()) ? cIt->second.typeFlags : 0u;
+    if (!isPlayer && !game::creatureAllowsNameplate(creatureTypeFlags)) {
+        plate = false;
+    }
     // Build 8606 has its own eleven name CVars (ui::tbcUnitNameCVar); the
     // totem, guardian and critter ones below are Wrath's.
     const ui::UnitNameCVar nameCVar = game::isActiveExpansion("tbc")
@@ -967,8 +973,11 @@ GameScreen::UnitLabelVisibility GameScreen::unitLabelVisibility(
             : creatureType == 8 ? "unitNameNonCombatCreatureName" : "unitNameNPC", "1"};
     // Hover is not a reason to show a name (Daelyshia, UnitNameNPC=0:
     // 20261117T102218Z.flight_marker_name_offset/h2-hover-original.png).
-    const bool name = ui::unitWorldNameShown(own, plate, target,
+    bool name = ui::unitWorldNameShown(own, plate, target,
         addons::storedCVarValue(nameCVar.name, nameCVar.defaultValue) != "0");
+    if (!isPlayer && !game::creatureRendersObjectName(creatureTypeFlags)) {
+        name = false;
+    }
     if (own && addons::storedCVarValue("unitNameOwn", "0") == "0") return {};
     return {plate, name};
 }

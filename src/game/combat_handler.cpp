@@ -322,9 +322,10 @@ bool CombatHandler::canUseAutoRangedCombat() const {
 }
 
 void CombatHandler::startAutoAttack(uint64_t targetGuid, bool forceMelee) {
-    // Can't attack yourself
+    // Can't attack yourself or while pacified (UNIT_FLAG_PACIFIED)
     if (targetGuid == owner_.getPlayerGuid()) return;
     if (targetGuid == 0) return;
+    if (owner_.isPlayerPacified()) return;
 
     // Assist Attack: swinging at a friendly unit attacks whatever they are
     // fighting instead. The panel offers this and nothing read it, so an

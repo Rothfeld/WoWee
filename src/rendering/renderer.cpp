@@ -2278,9 +2278,11 @@ void Renderer::update(float deltaTime) {
             gh && (gh->isPlayerGhost() || gh->hasInvisibilityGlow()));
 
         // Sync weather visual renderer with game state
+        bool weatherAbrupt = false;
         if (weather && gh) {
             uint32_t wType = gh->getWeatherType();
             float wInt = gh->getWeatherIntensity();
+            weatherAbrupt = gh->isWeatherAbrupt();
             // The server's weather, and only that: it sends fine weather on
             // entering a zone that has none, and this drew a random zone
             // weather over it. Fog has no particles here. Sandstorms are their
@@ -2292,12 +2294,15 @@ void Renderer::update(float deltaTime) {
                 case game::WeatherKind::THUNDERSTORM: weather->setWeatherType(Weather::Type::STORM); break;
                 default:                              weather->setWeatherType(Weather::Type::NONE); break;
             }
-            weather->setIntensity(weather->getWeatherType() == Weather::Type::NONE ? 0.0f : wInt);
+            weather->setIntensity(weather->getWeatherType() == Weather::Type::NONE ? 0.0f : wInt, weatherAbrupt);
             weather->setEnabled(!insideWmo);
             // Off in indoor WMO groups only. The ruins of Ahn'Qiraj are outdoor
             // WMO groups, and 2.4.3 draws the storm among them.
             sandStormTarget_ = (!insideWmo &&
                                 game::weatherKind(wType) == game::WeatherKind::SANDSTORM) ? wInt : 0.0f;
+            if (weatherAbrupt && sandStorm && camera) {
+                sandStorm->update(*camera, 0.0f, sandStormTarget_, true);
+            }
 
             // Lightning flash disabled
             if (lightning) {

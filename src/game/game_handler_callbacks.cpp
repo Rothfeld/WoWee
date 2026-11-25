@@ -1,4 +1,5 @@
 #include "game/game_handler.hpp"
+#include "game/session_flag_rules.hpp"
 #include "game/game_object_lock.hpp"
 #include "game/game_object_reach.hpp"
 #include "pipeline/m2_loader.hpp"
@@ -252,15 +253,36 @@ void GameHandler::handleAuthResponse(network::Packet& packet) {
         return;
     }
 
+    if (response.hasBillingInfo) {
+        billingTimeRemaining_ = response.billingTimeRemaining;
+        billingPlanFlags_ = response.billingPlanFlags;
+        billingTimeRested_ = response.billingTimeRested;
+        accountExpansion_ = response.expansion;
+    }
+
+    if (response.isQueued()) {
+        authQueued_ = true;
+        authQueuePosition_ = response.queuePosition;
+        LOG_INFO("AUTH_WAIT_QUEUE - position in queue: ", authQueuePosition_);
+        fireAddonEvent("AUTH_WAIT_QUEUE", {std::to_string(authQueuePosition_)});
+        return;
+    }
+
     if (!response.isSuccess()) {
+        authQueued_ = false;
+        authQueuePosition_ = 0;
         std::string reason = std::string("Authentication failed: ") +
                            getAuthResultString(response.result);
         fail(reason);
         return;
     }
 
+    authQueued_ = false;
+    authQueuePosition_ = 0;
+
     // Encryption was already enabled after sending AUTH_SESSION
-    LOG_INFO("AUTH_RESPONSE OK - world authentication successful");
+    LOG_INFO("AUTH_RESPONSE OK - world authentication successful (expansion=",
+             static_cast<int>(accountExpansion_), ")");
 
     setState(WorldState::AUTHENTICATED);
 
@@ -660,20 +682,26 @@ void GameHandler::selectCharacter(uint64_t characterGuid) {
 }
 
 // SMSG_WEATHER, and the 0x006B alias some 1.12 servers send it as.
-void GameHandler::applyWeather(uint32_t state, float intensity) {
+void GameHandler::applyWeather(uint32_t state, float intensity, bool isAbrupt) {
     const WeatherKind was = weatherKind(weatherType_);
     const WeatherKind kind = weatherKind(state);
     weatherType_ = state;
     weatherIntensity_ = intensity;
-    LOG_INFO("Weather changed: state=", state, ", intensity=", intensity);
+    weatherAbrupt_ = isAbrupt;
+    LOG_INFO("Weather changed: state=", state, ", intensity=", intensity,
+             ", abrupt=", isAbrupt);
     // No chat line: 2.4.3 announces no weather (TBC GlobalStrings has no
     // weather line; rain began on pair 6 with nothing printed natively).
     (void)was;
     // Notify addons of weather change
-    fireAddonEvent("WEATHER_CHANGED", {std::to_string(state), std::to_string(intensity)});
+    fireAddonEvent("WEATHER_CHANGED", {
+        std::to_string(state),
+        std::to_string(intensity),
+        isAbrupt ? "1" : "0"
+    });
     // Storm transition: trigger a low-frequency thunder rumble shake
     if (kind == WeatherKind::THUNDERSTORM && intensity > 0.3f && cameraShakeCallback_) {
-        float mag = 0.03f + intensity * 0.04f; // 0.03–0.07 units
+        float mag = 0.03f + intensity * 0.04f; // 0.03-0.07 units
         cameraShakeCallback_(mag, 6.0f, 0.6f);
     }
 }
@@ -1070,31 +1098,66 @@ void GameHandler::handleClientCacheVersion(network::Packet& packet) {
 }
 
 void GameHandler::handleTutorialFlags(network::Packet& packet) {
-    if (packet.getSize() < 32) {
+    if (packet.getRemainingSize() < 32) {
         LOG_WARNING("SMSG_TUTORIAL_FLAGS too short: ", packet.getSize(), " bytes");
         return;
     }
 
-    std::array<uint32_t, 8> flags{};
-    for (uint32_t& v : flags) {
+    for (uint32_t& v : tutorialFlags_) {
         v = packet.readUInt32();
     }
+    tutorialFlagsLoaded_ = true;
 
     LOG_INFO("SMSG_TUTORIAL_FLAGS: [",
-             flags[0], ", ", flags[1], ", ", flags[2], ", ", flags[3], ", ",
-             flags[4], ", ", flags[5], ", ", flags[6], ", ", flags[7], "]");
+             tutorialFlags_[0], ", ", tutorialFlags_[1], ", ", tutorialFlags_[2], ", ", tutorialFlags_[3], ", ",
+             tutorialFlags_[4], ", ", tutorialFlags_[5], ", ", tutorialFlags_[6], ", ", tutorialFlags_[7], "]");
+}
+
+bool GameHandler::isTutorialFlagged(int tutorialId) const {
+    return isTutorialBitSet(tutorialFlags_, tutorialId);
+}
+
+void GameHandler::flagTutorial(int tutorialId) {
+    const auto bitIdx = setTutorialBit(tutorialFlags_, tutorialId);
+    tutorialFlagsLoaded_ = true;
+    if (bitIdx.has_value() && state == WorldState::IN_WORLD && socket) {
+        network::Packet pkt(wireOpcode(Opcode::CMSG_TUTORIAL_FLAG));
+        pkt.writeUInt32(*bitIdx);
+        socket->send(pkt);
+    }
+}
+
+void GameHandler::clearTutorials() {
+    tutorialFlags_.fill(0xFFFFFFFFu);
+    tutorialFlagsLoaded_ = true;
+    if (state == WorldState::IN_WORLD && socket) {
+        network::Packet pkt(wireOpcode(Opcode::CMSG_TUTORIAL_CLEAR));
+        socket->send(pkt);
+    }
+}
+
+void GameHandler::resetTutorials() {
+    tutorialFlags_.fill(0u);
+    tutorialFlagsLoaded_ = true;
+    if (state == WorldState::IN_WORLD && socket) {
+        network::Packet pkt(wireOpcode(Opcode::CMSG_TUTORIAL_RESET));
+        socket->send(pkt);
+    }
 }
 
 void GameHandler::handleAccountDataTimes(network::Packet& packet) {
     LOG_DEBUG("Handling SMSG_ACCOUNT_DATA_TIMES");
 
     AccountDataTimesData data;
-    if (!AccountDataTimesParser::parse(packet, data)) {
+    if (!AccountDataTimesParser::parse(packet, data, isPreWotlk())) {
         LOG_WARNING("Failed to parse SMSG_ACCOUNT_DATA_TIMES");
         return;
     }
 
-    LOG_DEBUG("Account data times received (server time: ", data.serverTime, ")");
+    accountDataTimes_ = data;
+    LOG_DEBUG("Account data times received (tbcMd5=", data.isTbcMd5Layout,
+              ", mask=0x", std::hex, data.mask, std::dec,
+              ", serverTime=", data.serverTime, ")");
 }
 
 void GameHandler::handleMotd(network::Packet& packet) {
@@ -3363,14 +3426,45 @@ void GameHandler::interactWithNpc(uint64_t guid) {
                           " beyond interaction reach; no hello sent");
                 return;
             }
-            if (unit->getNpcFlags() & NPC_FLAG_BATTLEMASTER) {
-                network::Packet packet(wireOpcode(Opcode::CMSG_BATTLEMASTER_HELLO));
-                packet.writeUInt64(guid);
-                socket->send(packet);
-                if (localNpcInteractTalkCallback_ && (!isPlayerDead() || isPlayerGhost())) {
-                    localNpcInteractTalkCallback_(guid);
+            switch (resolveDirectNpcServiceAction(unit->getNpcFlags(), isPreWotlk())) {
+                case DirectNpcServiceAction::BATTLEMASTER_HELLO: {
+                    network::Packet packet(wireOpcode(Opcode::CMSG_BATTLEMASTER_HELLO));
+                    packet.writeUInt64(guid);
+                    socket->send(packet);
+                    if (localNpcInteractTalkCallback_ && (!isPlayerDead() || isPlayerGhost())) {
+                        localNpcInteractTalkCallback_(guid);
+                    }
+                    return;
                 }
-                return;
+                case DirectNpcServiceAction::GUILD_BANKER_ACTIVATE:
+                    openGuildBank(guid);
+                    return;
+                case DirectNpcServiceAction::TABARDVENDOR_ACTIVATE: {
+                    network::Packet packet(wireOpcode(Opcode::MSG_TABARDVENDOR_ACTIVATE));
+                    packet.writeUInt64(guid);
+                    socket->send(packet);
+                    return;
+                }
+                case DirectNpcServiceAction::PETITION_SHOWLIST: {
+                    auto packet = PetitionShowlistPacket::build(guid);
+                    socket->send(packet);
+                    return;
+                }
+                case DirectNpcServiceAction::LIST_STABLED_PETS: {
+                    stableMasterGuid_ = guid;
+                    network::Packet packet(wireOpcode(Opcode::MSG_LIST_STABLED_PETS));
+                    packet.writeUInt64(guid);
+                    socket->send(packet);
+                    return;
+                }
+                case DirectNpcServiceAction::SPELLCLICK: {
+                    network::Packet packet(wireOpcode(Opcode::CMSG_SPELLCLICK));
+                    packet.writeUInt64(guid);
+                    socket->send(packet);
+                    return;
+                }
+                case DirectNpcServiceAction::GOSSIP_HELLO:
+                    break;
             }
             // Sent anyway - the server is the judge - but said, because the
             // server says nothing: an NPC whose faction regards the player as

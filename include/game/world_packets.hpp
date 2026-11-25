@@ -123,9 +123,17 @@ enum class AuthResult : uint8_t {
  * SMSG_AUTH_RESPONSE data (from server)
  */
 struct AuthResponseData {
-    AuthResult result;
+    AuthResult result = AuthResult::FAILED;
+    uint32_t billingTimeRemaining = 0;
+    uint8_t billingPlanFlags = 0;
+    uint32_t billingTimeRested = 0;
+    uint8_t expansion = 0;
+    uint32_t queuePosition = 0;
+    bool hasBillingInfo = false;
+    bool realmHasFreeCharMigration = false;
 
     [[nodiscard]] bool isSuccess() const { return result == AuthResult::OK; }
+    [[nodiscard]] bool isQueued() const { return result == AuthResult::WAIT_QUEUE; }
 };
 
 /**
@@ -310,9 +318,12 @@ public:
  * Contains timestamps for account data (macros, keybindings, etc.)
  */
 struct AccountDataTimesData {
-    uint32_t serverTime;                // Current server time (Unix timestamp)
-    uint8_t unknown;                    // Unknown (always 1?)
-    uint32_t accountDataTimes[8];       // Timestamps for 8 account data slots
+    uint32_t serverTime = 0;            // Current server time (Unix timestamp, WotLK)
+    uint8_t unknown = 0;                // Unknown byte (WotLK)
+    uint32_t mask = 0;                  // Non-empty / present slot mask (bits 0..7)
+    uint32_t accountDataTimes[8] = {};  // Timestamps for 8 account data slots (WotLK)
+    bool isTbcMd5Layout = false;        // True when parsed from TBC 8x16-byte MD5 digest payload
+    std::array<std::array<uint8_t, 16>, 8> accountDataMd5{}; // TBC MD5 digests per slot
 
     [[nodiscard]] bool isValid() const { return true; }
 };
@@ -322,7 +333,39 @@ struct AccountDataTimesData {
  */
 class AccountDataTimesParser {
 public:
-    static bool parse(network::Packet& packet, AccountDataTimesData& data);
+    static bool parse(network::Packet& packet, AccountDataTimesData& data, bool isTbc = false);
+};
+
+/**
+ * SMSG_DEFENSE_MESSAGE data & parser (uint32 zoneId + uint32 messageLength + cstring message)
+ */
+struct DefenseMessageData {
+    uint32_t zoneId = 0;
+    uint32_t messageLength = 0;
+    std::string message;
+};
+
+class DefenseMessageParser {
+public:
+    static bool parse(network::Packet& packet, DefenseMessageData& data);
+};
+
+/**
+ * SMSG_KICK_REASON data & parser
+ * TBC 2.4.3: uint8 reason + cstring text
+ * WotLK custom group-kick fallback: uint64 kickerGuid + uint32 reasonType + cstring text
+ */
+struct KickReasonData {
+    uint8_t reason = 0;
+    uint64_t kickerGuid = 0;
+    uint32_t reasonType = 0;
+    std::string text;
+    bool isTbcFormat = true;
+};
+
+class KickReasonParser {
+public:
+    static bool parse(network::Packet& packet, KickReasonData& data, bool isPreWotlk = true);
 };
 
 /**
