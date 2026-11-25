@@ -99,19 +99,22 @@ void FootstepManager::shutdown() {
 void FootstepManager::update(float) {}
 
 bool FootstepManager::playSoundSpatialOrSelf(uint32_t soundId, const glm::vec3& position,
-                                             bool isLocalPlayer, bool listenerAtCharacter) {
+                                             bool isLocalPlayer, bool listenerAtCharacter,
+                                             uint32_t categoryOverride) {
     if (soundId == 0 || !assetManager || volumeScale <= 0.0f || !AudioEngine::instance().isInitialized()) {
         return false;
     }
     if (isLocalPlayer) {
         if (listenerAtCharacter) {
             return SoundEntryTable::instance().play2D(
-                assetManager, soundId, volumeScale * kLocalSelf2DGain);
+                assetManager, soundId, volumeScale * kLocalSelf2DGain, 1.0f, categoryOverride);
         }
         return SoundEntryTable::instance().play3D(
-            assetManager, soundId, position + glm::vec3(0.0f, 0.0f, kLocalListenerZOffset), volumeScale);
+            assetManager, soundId, position + glm::vec3(0.0f, 0.0f, kLocalListenerZOffset),
+            volumeScale, 1.0f, categoryOverride);
     }
-    return SoundEntryTable::instance().play3D(assetManager, soundId, position, volumeScale);
+    return SoundEntryTable::instance().play3D(
+        assetManager, soundId, position, volumeScale, 1.0f, categoryOverride);
 }
 
 void FootstepManager::playFootstep(uint32_t displayId, uint32_t terrainTypeId, bool wading) {
@@ -132,7 +135,12 @@ bool FootstepManager::playFootstepAt(uint32_t displayId, uint32_t terrainTypeId,
         }
         return false;
     }
-    return playSoundSpatialOrSelf(soundId, position, isLocalPlayer, listenerAtCharacter);
+    // Wow.exe PlayFootstepSound (0x465ae0): local player uses category 0x11 (kFootstepSelf, cap 4),
+    // remote units use category 0x0D (kFootstepOther, cap 6), culled at SoundEntries.DistanceCutoff.
+    const uint32_t category = isLocalPlayer
+        ? SESoundCategory::kFootstepSelf
+        : SESoundCategory::kFootstepOther;
+    return playSoundSpatialOrSelf(soundId, position, isLocalPlayer, listenerAtCharacter, category);
 }
 
 bool FootstepManager::playDeathThud(uint32_t displayId, uint32_t terrainTypeId, bool inWater,

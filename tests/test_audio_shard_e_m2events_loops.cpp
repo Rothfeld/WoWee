@@ -481,6 +481,36 @@ TEST_CASE("DeathThudLookups.dbc (45 rows), 3D/barefoot $FSD footsteps, and $TRD 
         const auto pan = renderRms(2048);
         CHECK(pan.total > 1e-5);
         CHECK(pan.left > pan.right);
+
+        // Wow.exe PlayFootstepSound (0x465ae0) -> SESound::Play (0x461af0):
+        // SE:1182 (CrabFootSteps) uses SoundEntries.DistanceCutoff (45 yd) and vol=0.2;
+        // local player footsteps use kFootstepSelf (cap 4), remote units use kFootstepOther (cap 6).
+        const auto* crabRec = table.findById(&tbc.assets, 1182u);
+        REQUIRE(crabRec != nullptr);
+        CHECK(crabRec->maxDistance == Catch::Approx(45.0f));
+        CHECK(crabRec->volume == Catch::Approx(0.2f));
+        resetHeadlessEngine(tbc.assets);
+        audio::AudioEngine::instance().setListenerPosition(glm::vec3(0.0f));
+        CHECK(table.play3D(&tbc.assets, 1182u, glm::vec3(38.0f, 0.0f, 0.0f), 1.0f, 1.0f,
+                           audio::SESoundCategory::kFootstepOther));
+        CHECK_FALSE(table.play3D(&tbc.assets, 1182u, glm::vec3(46.0f, 0.0f, 0.0f), 1.0f, 1.0f,
+                                 audio::SESoundCategory::kFootstepOther));
+
+        // Local player footsteps enforce kFootstepSelf cap (4) independently of kFootstepOther (6)
+        resetHeadlessEngine(tbc.assets);
+        uint32_t selfPlayed = 0;
+        for (int i = 0; i < 6; ++i) {
+            if (fm.playFootstepAt(49u, 2u, false, false, glm::vec3(0.0f), true, true)) ++selfPlayed;
+        }
+        CHECK(selfPlayed == 4u);
+
+        // Wow.exe Spell_C_CastSpell (0x6fc17b): GAMEABILITYACTIVATE (905) / GAMESPELLACTIVATE (906)
+        const auto* abilityAct = table.findById(&tbc.assets, 905u);
+        const auto* spellAct = table.findById(&tbc.assets, 906u);
+        REQUIRE(abilityAct != nullptr);
+        REQUIRE(spellAct != nullptr);
+        CHECK(abilityAct->volume == Catch::Approx(0.5f));
+        CHECK(spellAct->volume == Catch::Approx(0.5f));
     }
 
     SECTION("$TRD Material.dbc col 2 armor foley (Plate/Chain/Leather/Cloth) and Self/Others CVar gates") {

@@ -2163,6 +2163,19 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid, std::optiona
         const uint64_t current = owner_.getTargetGuid();
         const uint64_t asked = targetGuid != 0 ? targetGuid : current;
         uint64_t chosen = unitTakesAim(asked, aim) ? asked : 0;
+        if (chosen == 0) {
+            // Wow.exe Spell_C_CastSpell (0x6fc17b..0x6fc19b): targeted spell activation
+            // plays GAMEABILITYACTIVATE (SE:905, Attributes & 0x10) or GAMESPELLACTIVATE (SE:906).
+            if (auto* am = owner_.services().assetManager) {
+                owner_.loadSpellNameCache();
+                const auto it = owner_.spellNameCacheRef().find(spellId);
+                const bool isAbility = (it != owner_.spellNameCacheRef().end()) &&
+                                       ((it->second.attr & 0x10u) != 0u);
+                float sfxScale = 1.0f;
+                if (auto* ac = owner_.services().audioCoordinator) sfxScale = ac->getSfxVolumeScale();
+                audio::SoundEntryTable::instance().play2D(am, isAbility ? 905u : 906u, sfxScale);
+            }
+        }
         if (chosen == 0 && aim == spellclass::UnitAim::Enemy) {
             if (owner_.pendingUnitTargetSpell() != 0) owner_.cancelUnitTargeting(false);
             raiseGlobalStringError(owner_, current == 0 ? "ERR_GENERIC_NO_TARGET" : "SPELL_FAILED_BAD_TARGETS");
