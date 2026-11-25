@@ -228,4 +228,30 @@ inline constexpr bool shouldApplyGameObjectState(std::optional<uint8_t> appliedS
     return !appliedState.has_value() || *appliedState != newState;
 }
 
+/// Action to take when SMSG_GAMEOBJECT_DESPAWN_ANIM (0x215) arrives for a
+/// spawned GameObject.
+///
+/// In Wow.exe 2.4.3.8606 (0x6341D0 -> CGGameObject_C::PlayAnim(6) at 0x634490,
+/// lookup table 0x880a0c[6] = 12 -> 145 + 12 = 157 AnimationData::Despawn):
+/// - M2 GameObjects authoring sequence 157 (Despawn) — 90 shipped TBC models
+///   including Naxxramas_Frostwyrm_Birth.m2 (Sapphiron Birth, 36.67 s),
+///   FrostwurmFellfire_Birth.m2 (36.67 s), g_necropolis.m2 (14.7 s),
+///   beerfest_molemachine.m2 (4.67 s), ahn_quiraj_ossiriancrystal.m2 (3.9 s) —
+///   play Despawn (157) to completion even when OUT_OF_RANGE arrives in the
+///   same server tick (CMaNGOS GameObject::Update GO_JUST_DEACTIVATED).
+/// - WMOs and M2s lacking sequence 157 (e.g. g_fishingbobber.m2) fade out
+///   immediately via despawnGameObjectFromServer().
+enum class GameObjectDespawnAnimAction : uint8_t {
+    PLAY_DESPAWN_ANIM,
+    FADE_OUT_IMMEDIATELY,
+};
+
+inline constexpr GameObjectDespawnAnimAction resolveGameObjectDespawnAnim(
+    bool isWmo, bool hasDespawnSequence) {
+    if (!isWmo && hasDespawnSequence) {
+        return GameObjectDespawnAnimAction::PLAY_DESPAWN_ANIM;
+    }
+    return GameObjectDespawnAnimAction::FADE_OUT_IMMEDIATELY;
+}
+
 } // namespace wowee::game

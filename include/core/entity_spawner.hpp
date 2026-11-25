@@ -79,6 +79,10 @@ public:
     /// fades out over rendering::kGameObjectFadeSeconds; transports, WMOs and
     /// objects not yet drawn go at once.
     void despawnGameObjectFromServer(uint64_t guid);
+    /// SMSG_GAMEOBJECT_DESPAWN_ANIM (0x215): plays AnimationData::DESPAWN (157)
+    /// to completion when the M2 authors it (deferring fade-out across an
+    /// immediate OUT_OF_RANGE), otherwise begins fade-out immediately.
+    void playGameObjectDespawnAnim(uint64_t guid);
     /// Current fade opacity (0..1) of a live or fading-in GameObject (1.0 if fully visible).
     [[nodiscard]] float getGameObjectFade(uint64_t guid) const;
 
@@ -932,13 +936,18 @@ private:
     std::unordered_map<uint64_t, uint8_t> gameObjectPendingAnimProgress_;
     /// Last GOState applied per spawned game object, for rules that need its type later.
     std::unordered_map<uint64_t, uint8_t> gameObjectAppliedState_;
-    /// Removed objects' M2 instances still fading out, with their start time and starting alpha.
+    /// Removed objects' M2 instances still fading out (or finishing a Despawn
+    /// 157 animation before fading out), with their start time and starting alpha.
     struct FadingGameObject {
         uint32_t instanceId = 0;
         std::chrono::steady_clock::time_point start;
         float startAlpha = 1.0f;
+        bool waitForAnimationEnd = false;
     };
     std::vector<FadingGameObject> fadingGameObjects_;
+    /// GameObjects currently playing AnimationData::DESPAWN (157) from
+    /// SMSG_GAMEOBJECT_DESPAWN_ANIM (0x215).
+    std::unordered_set<uint64_t> gameObjectDespawningGuids_;
     /// Newly spawned dynamic M2 game objects fading in (0 -> 1 over kGameObjectFadeInSeconds).
     struct FadingInGameObject {
         uint64_t guid = 0;

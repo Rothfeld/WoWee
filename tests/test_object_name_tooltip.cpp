@@ -321,3 +321,23 @@ TEST_CASE("Redundant GameObject state updates (e.g. .gm on/off visibility refres
     CHECK(shouldApplyGameObjectState(uint8_t{1}, 2u));
     CHECK(shouldApplyGameObjectState(uint8_t{2}, 1u));
 }
+
+TEST_CASE("SMSG_GAMEOBJECT_DESPAWN_ANIM plays Despawn (157) when authored, else fades out immediately",
+          "[gameobject][despawn_anim]") {
+    using wowee::game::GameObjectDespawnAnimAction;
+    using wowee::game::resolveGameObjectDespawnAnim;
+
+    // M2 models authoring AnimationData::DESPAWN (157) — e.g. Sapphiron Birth
+    // (Naxxramas_Frostwyrm_Birth.m2, 36.67 s) — play sequence 157 to completion
+    // instead of immediately fading out on 0x215 / same-tick OUT_OF_RANGE.
+    CHECK(resolveGameObjectDespawnAnim(/*isWmo=*/false, /*hasDespawnSequence=*/true) ==
+          GameObjectDespawnAnimAction::PLAY_DESPAWN_ANIM);
+
+    // M2 models without sequence 157 (e.g. g_fishingbobber.m2) and WMOs fade out immediately.
+    CHECK(resolveGameObjectDespawnAnim(/*isWmo=*/false, /*hasDespawnSequence=*/false) ==
+          GameObjectDespawnAnimAction::FADE_OUT_IMMEDIATELY);
+    CHECK(resolveGameObjectDespawnAnim(/*isWmo=*/true, /*hasDespawnSequence=*/true) ==
+          GameObjectDespawnAnimAction::FADE_OUT_IMMEDIATELY);
+    CHECK(resolveGameObjectDespawnAnim(/*isWmo=*/true, /*hasDespawnSequence=*/false) ==
+          GameObjectDespawnAnimAction::FADE_OUT_IMMEDIATELY);
+}

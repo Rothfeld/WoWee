@@ -338,6 +338,14 @@ void M2Renderer::setInstanceAnimationHeld(uint32_t instanceId, uint32_t animatio
     }
 }
 
+bool M2Renderer::isInstanceHeldAtEnd(uint32_t instanceId) const {
+    auto idxIt = instanceIndexById.find(instanceId);
+    if (idxIt == instanceIndexById.end()) return true;
+    const auto& inst = instances[idxIt->second];
+    return inst.holdAtEnd && (inst.animDuration <= 0.0f ||
+                              (inst.animTime >= inst.animDuration && inst.animSpeed == 0.0f));
+}
+
 void M2Renderer::setInstanceAnimProgress(uint32_t instanceId, float normalizedProgress) {
     auto idxIt = instanceIndexById.find(instanceId);
     if (idxIt == instanceIndexById.end()) return;

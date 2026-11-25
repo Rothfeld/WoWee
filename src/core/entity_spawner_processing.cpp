@@ -2286,8 +2286,28 @@ void EntitySpawner::onGameObjectInfoReceived(uint32_t entry) {
     gameObjectPendingAnimPolicy_.erase(it);
 }
 
+void EntitySpawner::playGameObjectDespawnAnim(uint64_t guid) {
+    auto it = gameObjectInstances_.find(guid);
+    auto* m2 = renderer_ ? renderer_->getM2Renderer() : nullptr;
+    const bool hasDespawn = (it != gameObjectInstances_.end() && !it->second.isWmo && m2 &&
+                             m2->hasAnimation(it->second.instanceId, rendering::anim::DESPAWN));
+    if (it != gameObjectInstances_.end() &&
+        game::resolveGameObjectDespawnAnim(it->second.isWmo, hasDespawn) ==
+            game::GameObjectDespawnAnimAction::PLAY_DESPAWN_ANIM) {
+        const uint32_t instanceId = it->second.instanceId;
+        m2->setInstanceAnimationFrozen(instanceId, false);
+        m2->setInstanceAnimationHeld(instanceId, rendering::anim::DESPAWN, /*skipToEnd=*/false);
+        gameObjectDespawningGuids_.insert(guid);
+        LOG_DEBUG("Playing GO despawn animation (157): guid=0x", std::hex, guid, std::dec,
+                  " instance=", instanceId);
+        return;
+    }
+    despawnGameObjectFromServer(guid);
+}
+
 void EntitySpawner::despawnGameObjectFromServer(uint64_t guid) {
     serverGameObjectSpawns_.erase(guid);
+    const bool waitForDespawnAnim = gameObjectDespawningGuids_.erase(guid) != 0;
     float startAlpha = 1.0f;
     for (auto fit = fadingInGameObjects_.begin(); fit != fadingInGameObjects_.end(); ++fit) {
         if (fit->guid == guid) {
@@ -2300,9 +2320,15 @@ void EntitySpawner::despawnGameObjectFromServer(uint64_t guid) {
     auto* m2 = renderer_ ? renderer_->getM2Renderer() : nullptr;
     if (it != gameObjectInstances_.end() && !it->second.isWmo && m2 &&
         !(gameHandler_ && gameHandler_->isTransportGuid(guid))) {
-        fadingGameObjects_.push_back({it->second.instanceId, std::chrono::steady_clock::now(), startAlpha});
+        if (waitForDespawnAnim && startAlpha < 1.0f) {
+            startAlpha = 1.0f;
+            m2->setInstanceFade(it->second.instanceId, 1.0f);
+        }
+        fadingGameObjects_.push_back({it->second.instanceId, std::chrono::steady_clock::now(),
+                                      startAlpha, waitForDespawnAnim});
         gameObjectInstances_.erase(it);  // despawnGameObject must not remove it now
-        LOG_DEBUG("Fading out gameobject: guid=0x", std::hex, guid, std::dec, " startAlpha=", startAlpha);
+        LOG_DEBUG("Fading out gameobject: guid=0x", std::hex, guid, std::dec,
+                  " startAlpha=", startAlpha, " waitForDespawnAnim=", waitForDespawnAnim);
     }
     despawnGameObject(guid);
 }
@@ -2326,7 +2352,14 @@ void EntitySpawner::processFadingGameObjects() {
         m2->setInstanceFade(fadingIn.instanceId, alpha);
         return alpha >= 1.0f;
     });
-    std::erase_if(fadingGameObjects_, [&](const FadingGameObject& fading) {
+    std::erase_if(fadingGameObjects_, [&](FadingGameObject& fading) {
+        if (fading.waitForAnimationEnd) {
+            if (!m2->isInstanceHeldAtEnd(fading.instanceId)) {
+                return false;
+            }
+            fading.waitForAnimationEnd = false;
+            fading.start = now;
+        }
         const float elapsed = std::chrono::duration<float>(now - fading.start).count();
         const float alpha = rendering::fadeOutOpacity(fading.startAlpha, elapsed, rendering::kGameObjectFadeSeconds);
         if (alpha <= 0.0f) {
@@ -2343,11 +2376,13 @@ void EntitySpawner::removeFadingGameObjects() {
         for (const auto& fading : fadingGameObjects_) m2->removeInstance(fading.instanceId);
     fadingGameObjects_.clear();
     fadingInGameObjects_.clear();
+    gameObjectDespawningGuids_.clear();
 }
 
 void EntitySpawner::despawnGameObject(uint64_t guid) {
     gameObjectAppliedState_.erase(guid);
     gameObjectPendingAnimProgress_.erase(guid);
+    gameObjectDespawningGuids_.erase(guid);
     std::erase_if(fadingInGameObjects_, [guid](const FadingInGameObject& f) { return f.guid == guid; });
     pendingTransportDoodadBatches_.erase(
         std::remove_if(pendingTransportDoodadBatches_.begin(), pendingTransportDoodadBatches_.end(),

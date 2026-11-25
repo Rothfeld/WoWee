@@ -741,6 +741,9 @@ public:
     /// the moment it opens, not to the moment it is first seen.
     void setInstanceAnimationHeld(uint32_t instanceId, uint32_t animationId,
                                   bool skipToEnd);
+    /// True when the instance is holding on the final frame of a held one-shot
+    /// animation (or does not exist).
+    [[nodiscard]] bool isInstanceHeldAtEnd(uint32_t instanceId) const;
     /// Seek the instance's active animation to a normalized progress [0.0, 1.0]
     /// (driven by server GAMEOBJECT_ANIMPROGRESS 0..255).
     void setInstanceAnimProgress(uint32_t instanceId, float normalizedProgress);
