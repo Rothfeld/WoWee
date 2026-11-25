@@ -508,10 +508,18 @@ void GameHandler::playErrorSpeech(audio::PlayerErrorSpeech type) {
     if (!ac) return;
     auto* voice = ac->getPlayerVoiceManager();
     if (!voice) return;
-    const Character* ch = getActiveCharacter();
-    if (!ch) return;
-    voice->playError(type, static_cast<uint8_t>(ch->race),
-                     static_cast<uint8_t>(toServerGender(ch->gender)));
+    uint8_t raceId = static_cast<uint8_t>(playerRace_);
+    uint8_t gender = 0;
+    if (const Character* ch = getActiveCharacter()) {
+        raceId = static_cast<uint8_t>(ch->race);
+        gender = static_cast<uint8_t>(toServerGender(ch->gender));
+    } else if (const auto self = entityController_ ? entityController_->getEntityManager().getEntity(playerGuid) : nullptr) {
+        const uint32_t bytes0 = self->getField(fieldIndex(UF::UNIT_FIELD_BYTES_0));
+        if (raceId == 0) raceId = static_cast<uint8_t>(bytes0 & 0xFFu);
+        gender = static_cast<uint8_t>((bytes0 >> 16u) & 0xFFu);
+    }
+    if (raceId == 0) return;
+    voice->playError(type, raceId, gender);
 }
 
 void GameHandler::handleCharLoginFailed(network::Packet& packet) {
@@ -580,6 +588,12 @@ void GameHandler::selectCharacter(uint64_t characterGuid) {
 
     // Store player GUID
     playerGuid = characterGuid;
+    if (auto* ac = services_.audioCoordinator) {
+        if (auto* act = ac->getActivitySoundManager()) {
+            act->setShapeshiftForm(0);
+            act->setActiveDisplayId(0);
+        }
+    }
 
     // Both macro halves, read anew: the account's may have changed on another
     // character since, and nothing of the last character's own may stay.
@@ -2633,6 +2647,27 @@ bool GameHandler::shouldLogSpellstealAura(uint64_t casterGuid, uint64_t victimGu
 
 void GameHandler::updateCombatText(float deltaTime) {
     if (combatHandler_) combatHandler_->updateCombatText(deltaTime);
+    if (auto* ac = services_.audioCoordinator) {
+        if (auto* act = ac->getActivitySoundManager()) {
+            if (playerGuid != 0 && entityController_) {
+                if (const auto self = entityController_->getEntityManager().getEntity(playerGuid)) {
+                    const uint32_t bytes0 = self->getField(fieldIndex(UF::UNIT_FIELD_BYTES_0));
+                    const uint8_t rawPlayerRace = static_cast<uint8_t>(playerRace_);
+                    const uint8_t raceId = rawPlayerRace != 0
+                        ? rawPlayerRace
+                        : static_cast<uint8_t>(bytes0 & 0xFFu);
+                    const uint8_t gender = static_cast<uint8_t>((bytes0 >> 16u) & 0xFFu);
+                    if (raceId != 0) {
+                        act->setCharacterRaceGender(raceId, gender);
+                    }
+                    act->setShapeshiftForm(shapeshiftFormId_);
+                    if (const auto unit = std::dynamic_pointer_cast<Unit>(self)) {
+                        act->setActiveDisplayId(unit->getDisplayId());
+                    }
+                }
+            }
+        }
+    }
 }
 
 bool GameHandler::isAutoAttacking() const {
@@ -3955,6 +3990,7 @@ void GameHandler::performGameObjectInteractionNow(uint64_t guid) {
             // sent.
             if (lockStatus->difficulty == LockDifficulty::Impossible) {
                 errorGlobal("ERR_DOOR_LOCKED");
+                playErrorSpeech(audio::PlayerErrorSpeech::ITEM_LOCKED);
                 LOG_INFO("GO locked door refused before reach: entry=", goEntry,
                          " guid=0x", std::hex, guid, std::dec);
                 return;
@@ -3983,6 +4019,7 @@ void GameHandler::performGameObjectInteractionNow(uint64_t guid) {
         const float maxInteractDistance = (guid == hookedFishingBobberGuid_) ? 30.0f : 10.0f;
         if (inReach ? !*inReach : dist3d > maxInteractDistance) {
             errorGlobal("ERR_USE_TOO_FAR");
+            playErrorSpeech(audio::PlayerErrorSpeech::USE_TOO_FAR);
             return;
         }
         if (goInfo && goType == 23) {
@@ -3996,6 +4033,7 @@ void GameHandler::performGameObjectInteractionNow(uint64_t guid) {
             const uint64_t target = getTargetGuid();
             if (target == 0) {
                 errorGlobal("ERR_GENERIC_NO_TARGET");
+                playErrorSpeech(audio::PlayerErrorSpeech::GENERIC_NO_TARGET);
                 return;
             }
             if (target == getPlayerGuid()) {
@@ -4158,6 +4196,7 @@ void GameHandler::performGameObjectInteractionNow(uint64_t guid) {
         if (flaggedLocked && goType != 0 && keys.empty() &&
             lockStatus->difficulty == LockDifficulty::Impossible) {
             errorGlobal("ERR_ITEM_LOCKED");
+            playErrorSpeech(audio::PlayerErrorSpeech::ITEM_LOCKED);
             LOG_INFO("GO locked object refused: lockId=", gameObjectLockId(goInfo),
                      " guid=0x", std::hex, guid, std::dec, " entry=", goEntry);
             return;
@@ -4193,6 +4232,7 @@ void GameHandler::performGameObjectInteractionNow(uint64_t guid) {
                 // (Dire Maul's Door 177198); anything else names the key.
                 if (flaggedLocked && goType == 0) {
                     errorGlobal("ERR_DOOR_LOCKED");
+                    playErrorSpeech(audio::PlayerErrorSpeech::ITEM_LOCKED);
                 } else if (const ItemQueryResponseData* keyInfo = getItemInfo(keys.front())) {
                     errorGlobal("ERR_USE_LOCKED_WITH_ITEM_S", {keyInfo->name});
                 } else {
@@ -4244,6 +4284,7 @@ void GameHandler::performGameObjectInteractionNow(uint64_t guid) {
         // sends nothing and shows GlobalStrings ERR_DOOR_LOCKED.
         if (flaggedLocked && goType == 0) {
             errorGlobal("ERR_DOOR_LOCKED");
+            playErrorSpeech(audio::PlayerErrorSpeech::ITEM_LOCKED);
             LOG_INFO("GO locked door refused: lockId=", gameObjectLockId(goInfo),
                      " guid=0x", std::hex, guid, std::dec, " entry=", goEntry);
             return;

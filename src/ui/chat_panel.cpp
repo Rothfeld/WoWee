@@ -20,7 +20,9 @@
 #include "rendering/camera_controller.hpp"
 #include "audio/audio_coordinator.hpp"
 #include "audio/audio_engine.hpp"
+#include "audio/player_voice_manager.hpp"
 #include "audio/ui_sound_manager.hpp"
+#include "game/update_field_table.hpp"
 #include "pipeline/asset_manager.hpp"
 #include "pipeline/dbc_loader.hpp"
 #include "pipeline/dbc_layout.hpp"
@@ -294,6 +296,20 @@ void ChatPanel::sendChatMessage(game::GameHandler& gameHandler) {
                 if (dbcId != 0) {
                     uint64_t targetGuid = gameHandler.hasTarget() ? gameHandler.getTargetGuid() : 0;
                     gameHandler.sendTextEmote(dbcId, targetGuid);
+                    if (auto* audioCoord = services_.audioCoordinator;
+                        audioCoord && audioCoord->areEmoteSoundsEnabled() && audioCoord->getPlayerVoiceManager()) {
+                        uint8_t raceId = gameHandler.getPlayerRace();
+                        uint8_t gender = 0;
+                        if (const auto player = gameHandler.getEntityManager().getEntity(gameHandler.getPlayerGuid())) {
+                            const uint32_t bytes0 = player->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_0));
+                            if (raceId == 0) raceId = static_cast<uint8_t>(bytes0 & 0xFFu);
+                            gender = static_cast<uint8_t>((bytes0 >> 16u) & 0xFFu);
+                        } else if (const auto* ch = gameHandler.getActiveCharacter()) {
+                            if (raceId == 0) raceId = static_cast<uint8_t>(ch->race);
+                            gender = static_cast<uint8_t>(game::toServerGender(ch->gender));
+                        }
+                        audioCoord->getPlayerVoiceManager()->playEmote(dbcId, raceId, gender);
+                    }
                 }
 
                 game::MessageChatData msg;

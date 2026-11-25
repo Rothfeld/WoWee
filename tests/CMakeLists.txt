@@ -3544,6 +3544,35 @@ add_test(NAME ribbon_only_spell_models COMMAND test_ribbon_only_spell_models)
 set_tests_properties(ribbon_only_spell_models PROPERTIES SKIP_RETURN_CODE 4)
 register_test_target(test_ribbon_only_spell_models)
 
+# TBC 2.4.3 Audio Parity Shard D: VocalUISounds.dbc (641 rows + 58 GameErrors +
+# SESound::IsPlaying handle gating), EmotesTextSound.dbc self-slash & $ESD
+# Emotes.dbc col 6, and CreatureSoundData.dbc race/shapeshift/3D vocals without
+# bogus *MainJump.wav fallbacks.
+if(NOT ANDROID)
+    add_executable(test_audio_shard_d_vocals_emotes
+        test_audio_shard_d_vocals_emotes.cpp
+        "$<FILTER:$<TARGET_OBJECTS:wowee>,EXCLUDE,/main([.]cpp)?[.]o(bj)?$>"
+    )
+    target_include_directories(test_audio_shard_d_vocals_emotes PRIVATE ${TEST_INCLUDE_DIRS}
+        $<TARGET_PROPERTY:wowee,INCLUDE_DIRECTORIES>)
+    target_include_directories(test_audio_shard_d_vocals_emotes SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
+    target_compile_definitions(test_audio_shard_d_vocals_emotes PRIVATE
+        WOWEE_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+        $<TARGET_PROPERTY:wowee,COMPILE_DEFINITIONS>)
+    target_compile_features(test_audio_shard_d_vocals_emotes PRIVATE cxx_std_20)
+    target_link_libraries(test_audio_shard_d_vocals_emotes PRIVATE catch2_main
+        $<TARGET_PROPERTY:wowee,LINK_LIBRARIES>)
+    wowee_test_link_glm(test_audio_shard_d_vocals_emotes)
+    target_link_directories(test_audio_shard_d_vocals_emotes PRIVATE
+        $<TARGET_PROPERTY:wowee,LINK_DIRECTORIES>)
+    target_link_options(test_audio_shard_d_vocals_emotes PRIVATE
+        $<TARGET_PROPERTY:wowee,LINK_OPTIONS>)
+    add_dependencies(test_audio_shard_d_vocals_emotes wowee)
+    add_test(NAME audio_shard_d_vocals_emotes COMMAND test_audio_shard_d_vocals_emotes)
+    set_tests_properties(audio_shard_d_vocals_emotes PROPERTIES SKIP_RETURN_CODE 4)
+    register_test_target(test_audio_shard_d_vocals_emotes)
+endif()
+
 get_property(ALL_TEST_TARGETS GLOBAL PROPERTY WOWEE_ALL_TEST_TARGETS)
 list(LENGTH ALL_TEST_TARGETS _wowee_test_target_count)
 message(STATUS "Test targets registered: ${_wowee_test_target_count}")

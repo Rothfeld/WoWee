@@ -1047,6 +1047,25 @@ void ChatHandler::handleTextEmote(network::Packet& packet) {
     }
 
     if (data.senderGuid == owner_.getPlayerGuid() && data.senderGuid != 0) {
+        if (auto* ac = owner_.services().audioCoordinator;
+            ac && ac->areEmoteSoundsEnabled() && ac->getPlayerVoiceManager()) {
+            auto* pvm = ac->getPlayerVoiceManager();
+            if (!pvm->wasLocalEmoteRecentlyPlayed(data.textEmoteId, 0.5f)) {
+                uint8_t raceId = owner_.getPlayerRace();
+                uint8_t gender = 0;
+                if (const auto self = owner_.getEntityManager().getEntity(data.senderGuid)) {
+                    const uint32_t bytes0 = self->getField(fieldIndex(UF::UNIT_FIELD_BYTES_0));
+                    if (raceId == 0) raceId = static_cast<uint8_t>(bytes0 & 0xFFu);
+                    gender = static_cast<uint8_t>((bytes0 >> 16u) & 0xFFu);
+                } else if (const Character* ch = owner_.getActiveCharacter()) {
+                    if (raceId == 0) raceId = static_cast<uint8_t>(ch->race);
+                    gender = static_cast<uint8_t>(toServerGender(ch->gender));
+                }
+                if (raceId != 0) {
+                    pvm->playEmote(data.textEmoteId, raceId, gender);
+                }
+            }
+        }
         return;
     }
 
@@ -1789,6 +1808,53 @@ void ChatHandler::addLocalChatLine(ChatType type, const std::string& message) {
 
 void ChatHandler::addSystemChatMessage(const std::string& message) {
     addLocalChatLine(ChatType::SYSTEM, message);
+
+    // TBC 2.4.3 Wow.exe (0xb98770): three vocal GameErrors carry flags=0 (printed
+    // to CHAT_MSG_SYSTEM via systemGlobal rather than UIErrorsFrame):
+    //   ERR_GROUP_FULL (VocalUIEnum 8)
+    //   ERR_ALREADY_IN_GROUP_S (VocalUIEnum 20)
+    //   ERR_GUILD_PERMISSIONS (VocalUIEnum 62)
+    if (!message.empty() && owner_.hasGlobalStrings()) {
+        if (auto* ac = owner_.services().audioCoordinator; ac && ac->getPlayerVoiceManager()) {
+            const char* matchedErr = nullptr;
+            if (const std::string groupFull = owner_.globalString("ERR_GROUP_FULL");
+                !groupFull.empty() && message == groupFull) {
+                matchedErr = "ERR_GROUP_FULL";
+            } else if (const std::string guildPerm = owner_.globalString("ERR_GUILD_PERMISSIONS");
+                       !guildPerm.empty() && message == guildPerm) {
+                matchedErr = "ERR_GUILD_PERMISSIONS";
+            } else if (const std::string alreadyPat = owner_.globalString("ERR_ALREADY_IN_GROUP_S");
+                       !alreadyPat.empty()) {
+                const size_t pct = alreadyPat.find("%s");
+                if (pct != std::string::npos) {
+                    const std::string_view prefix(alreadyPat.data(), pct);
+                    const std::string_view suffix(alreadyPat.data() + pct + 2, alreadyPat.size() - pct - 2);
+                    if (message.size() >= prefix.size() + suffix.size() &&
+                        std::string_view(message).substr(0, prefix.size()) == prefix &&
+                        std::string_view(message).substr(message.size() - suffix.size()) == suffix) {
+                        matchedErr = "ERR_ALREADY_IN_GROUP_S";
+                    }
+                } else if (message == alreadyPat) {
+                    matchedErr = "ERR_ALREADY_IN_GROUP_S";
+                }
+            }
+            if (matchedErr) {
+                uint8_t raceId = owner_.getPlayerRace();
+                uint8_t gender = 0;
+                if (const Character* ch = owner_.getActiveCharacter()) {
+                    raceId = static_cast<uint8_t>(ch->race);
+                    gender = static_cast<uint8_t>(toServerGender(ch->gender));
+                } else if (const auto self = owner_.getEntityManager().getEntity(owner_.getPlayerGuid())) {
+                    const uint32_t bytes0 = self->getField(fieldIndex(UF::UNIT_FIELD_BYTES_0));
+                    if (raceId == 0) raceId = static_cast<uint8_t>(bytes0 & 0xFFu);
+                    gender = static_cast<uint8_t>((bytes0 >> 16u) & 0xFFu);
+                }
+                if (raceId != 0) {
+                    ac->getPlayerVoiceManager()->playGameError(matchedErr, raceId, gender);
+                }
+            }
+        }
+    }
 }
 
 void ChatHandler::toggleAfk(const std::string& message) {

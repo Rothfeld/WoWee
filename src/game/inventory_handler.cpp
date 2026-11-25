@@ -43,6 +43,25 @@ InventoryHandler::InventoryHandler(GameHandler& owner)
 
 namespace {
 constexpr uint32_t kConsumableSubclassItemEnhancement = 6;
+
+void playPlayerVocalGameError(GameHandler& owner, const char* gameErrorName) {
+    if (!gameErrorName || !*gameErrorName) return;
+    auto* ac = owner.services().audioCoordinator;
+    if (!ac || !ac->getPlayerVoiceManager()) return;
+    uint8_t raceId = owner.getPlayerRace();
+    uint8_t gender = 0;
+    if (const Character* ch = owner.getActiveCharacter()) {
+        raceId = static_cast<uint8_t>(ch->race);
+        gender = static_cast<uint8_t>(toServerGender(ch->gender));
+    } else if (const auto self = owner.getEntityManager().getEntity(owner.getPlayerGuid())) {
+        const uint32_t bytes0 = self->getField(fieldIndex(UF::UNIT_FIELD_BYTES_0));
+        if (raceId == 0) raceId = static_cast<uint8_t>(bytes0 & 0xFFu);
+        gender = static_cast<uint8_t>((bytes0 >> 16u) & 0xFFu);
+    }
+    if (raceId != 0) {
+        ac->getPlayerVoiceManager()->playGameError(gameErrorName, raceId, gender);
+    }
+}
 // SpellCastTargetFlags bit set by Spell.dbc for spells cast onto another item.
 constexpr uint32_t kSpellTargetFlagItem = 0x10;
 constexpr uint32_t kBuybackWireSlotStart = 74;
@@ -694,25 +713,12 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
                 sfx->playError();
         }
 
-        // Character speech response for errors with a matching voice line
-        using audio::PlayerErrorSpeech;
-        switch (error) {
-            case 1:  owner_.playErrorSpeech(PlayerErrorSpeech::CANT_EQUIP_LEVEL); break;
-            case 4:  owner_.playErrorSpeech(PlayerErrorSpeech::BAG_FULL); break;
-            case 7:  owner_.playErrorSpeech(PlayerErrorSpeech::AMMO_ONLY); break;
-            case 8:  owner_.playErrorSpeech(PlayerErrorSpeech::CANT_USE_ITEM); break;
-            case 10:
-            case 11: owner_.playErrorSpeech(PlayerErrorSpeech::CANT_EQUIP_EVER); break;
-            case 17: owner_.playErrorSpeech(PlayerErrorSpeech::ITEM_MAX_COUNT); break;
-            case 20: owner_.playErrorSpeech(PlayerErrorSpeech::NOT_EQUIPPABLE); break;
-            case 24: owner_.playErrorSpeech(PlayerErrorSpeech::CANT_DROP_SOULBOUND); break;
-            case 25: owner_.playErrorSpeech(PlayerErrorSpeech::OUT_OF_RANGE); break;
-            case 29: owner_.playErrorSpeech(PlayerErrorSpeech::NOT_ENOUGH_MONEY); break;
-            case 30: owner_.playErrorSpeech(PlayerErrorSpeech::NOT_A_BAG); break;
-            case 36: owner_.playErrorSpeech(PlayerErrorSpeech::ITEM_LOCKED); break;
-            case 50:
-            case 51: owner_.playErrorSpeech(PlayerErrorSpeech::INVENTORY_FULL); break;
-            default: break;
+        // TBC 2.4.3 VocalUISounds.dbc speech response for all vocal InventoryResults
+        // (including ERR_PROFICIENCY_NEEDED=48, ERR_2HSKILLNOTFOUND=43, ERR_WRONG_SLOT=27,
+        // ERR_BAG_IN_BAG=26, ERR_2HANDED_EQUIPPED=42, ERR_CANT_EQUIP_SKILL=41,
+        // ERR_MAIL_BOUND_ITEM=59, ERR_TRADE_BOUND_ITEM=59, etc.).
+        if (name) {
+            playPlayerVocalGameError(owner_, name);
         }
     };
 
@@ -768,14 +774,15 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
                 case 12: msg = "ERR_CANT_EQUIP_REPUTATION"; break;
                 default: break;
             }
-            if (msg) owner_.errorGlobal(msg);
+            if (msg) {
+                owner_.errorGlobal(msg);
+                playPlayerVocalGameError(owner_, msg);
+            }
             if (auto* ac = owner_.services().audioCoordinator) {
                 if (auto* sfx = ac->getUiSoundManager())
                     sfx->playError();
             }
-            if (errCode == 2)
-                owner_.playErrorSpeech(audio::PlayerErrorSpeech::NOT_ENOUGH_MONEY);
-            else if (errCode == 6)
+            if (errCode == 6)
                 owner_.playErrorSpeech(audio::PlayerErrorSpeech::INVENTORY_FULL);
         }
     };
@@ -1319,6 +1326,7 @@ void InventoryHandler::handleLootResponse(network::Packet& packet) {
         if (receivedLoot.lootError) {
             if (const char* global = lootErrorGlobal(*receivedLoot.lootError)) {
                 owner_.errorGlobal(global);
+                playPlayerVocalGameError(owner_, global);
             }
         }
         return;
@@ -2014,6 +2022,7 @@ void InventoryHandler::repairItem(uint64_t vendorGuid, uint64_t itemGuid) {
     uint32_t cost = estimateItemRepairCost(itemGuid);
     if (cost > 0 && owner_.getMoneyCopper() < cost) {
         owner_.errorGlobal("ERR_NOT_ENOUGH_MONEY");
+        playPlayerVocalGameError(owner_, "ERR_NOT_ENOUGH_MONEY");
         return;
     }
 
@@ -2042,6 +2051,7 @@ void InventoryHandler::repairAll(uint64_t vendorGuid, bool useGuildBank) {
 
     if (!useGuildBank && totalCost > 0 && owner_.getMoneyCopper() < totalCost) {
         owner_.errorGlobal("ERR_NOT_ENOUGH_MONEY");
+        playPlayerVocalGameError(owner_, "ERR_NOT_ENOUGH_MONEY");
         return;
     }
 
@@ -3968,6 +3978,9 @@ void InventoryHandler::handleSendMailResult(network::Packet& packet) {
         } else {
             owner_.addUIError(text);
         }
+        if (name) {
+            playPlayerVocalGameError(owner_, name);
+        }
     } else if (action == MAIL_SEND) {
         clearMailAttachments();
         // The frame stays where it is - WoW resets its fields and leaves it
@@ -4151,7 +4164,10 @@ void InventoryHandler::handleBuyBankSlotResult(network::Packet& packet) {
             if (owner_.addonEventCallbackRef()) owner_.addonEventCallbackRef()("PLAYERBANKBAGSLOTS_CHANGED", {});
             break;
         case 0: owner_.errorGlobal("ERR_BANKSLOT_FAILED_TOO_MANY"); break;
-        case 1: owner_.errorGlobal("ERR_BANKSLOT_INSUFFICIENT_FUNDS"); break;
+        case 1:
+            owner_.errorGlobal("ERR_BANKSLOT_INSUFFICIENT_FUNDS");
+            playPlayerVocalGameError(owner_, "ERR_BANKSLOT_INSUFFICIENT_FUNDS");
+            break;
         case 2: owner_.errorGlobal("ERR_BANKSLOT_NOTBANKER"); break;
         default: LOG_WARNING("SMSG_BUY_BANK_SLOT_RESULT: unknown result ", result); break;
     }
@@ -4599,7 +4615,10 @@ void InventoryHandler::handleAuctionCommandResult(network::Packet& packet) {
             case 13: name = "ERR_RESTRICTED_ACCOUNT"; break;
             default: name = "ERR_AUCTION_DATABASE_ERROR"; break;
         }
-        if (name) owner_.errorGlobal(name);
+        if (name) {
+            owner_.errorGlobal(name);
+            playPlayerVocalGameError(owner_, name);
+        }
         else LOG_ERROR("SMSG_AUCTION_COMMAND_RESULT: no line for error ", error);
     }
 }
@@ -4998,6 +5017,7 @@ void InventoryHandler::handleTradeStatus(network::Packet& packet) {
                                                         : "ERR_TRADE_MAX_COUNT_EXCEEDED");
                 } else if (const char* errName = inventoryResultGlobalName(invResult)) {
                     owner_.errorGlobal(errName);
+                    playPlayerVocalGameError(owner_, errName);
                 }
             }
             resetTradeState();
@@ -6873,6 +6893,7 @@ void InventoryHandler::initiateTrade(uint64_t targetGuid) {
 
     if (targetGuid == 0) {
         owner_.errorGlobal("ERR_GENERIC_NO_TARGET");
+        playPlayerVocalGameError(owner_, "ERR_GENERIC_NO_TARGET");
         return;
     }
 
