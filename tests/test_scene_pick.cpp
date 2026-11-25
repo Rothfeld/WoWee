@@ -681,12 +681,19 @@ TEST_CASE("TBC 2.4.3 GameObject selectability matrix covers GO_FLAG and GAMEOBJE
     CHECK_FALSE(monument.use);
     CHECK(monument.tooltip == ObjectNameTooltip::Default);
 
-    // TRAP (type 6), SPELL_FOCUS (type 8), TRANSPORT (type 11 with 0x08|0x20),
-    // DUNGEON_DIFFICULTY (type 31): never hoverable with tooltip/cursor.
+    // TRAP (type 6), TRANSPORT (type 11 with 0x08|0x20), DUNGEON_DIFFICULTY (type 31):
+    // never hoverable with tooltip/cursor.
     CHECK_FALSE(gameObjectAffordance(6, 0, 0, true).hoverable());
-    CHECK_FALSE(gameObjectAffordance(8, 0, 0, true).hoverable());
     CHECK_FALSE(gameObjectAffordance(11, 0, 0, gameObjectInteractionEnabled(kTransport | kNoDespawn, 0)).hoverable());
     CHECK_FALSE(gameObjectAffordance(31, 0, 1, true).hoverable());
+
+    // SPELL_FOCUS (type 8: Icebellow Anvil 181234, Forge 1685, Campfire 1798):
+    // hoverable with default name tooltip and highlight, but no use cursor.
+    const auto anvil = gameObjectAffordance(8, 1362, 10, true);
+    CHECK(anvil.hoverable());
+    CHECK_FALSE(anvil.use);
+    CHECK(anvil.cursor == nullptr);
+    CHECK(anvil.tooltip == ObjectNameTooltip::Default);
 
     // Standard interactables (CHEST 3, CHAIR 7, TEXT 9, MAILBOX 19, MEETINGSTONE 23) stay hoverable.
     for (const uint32_t t : {3u, 7u, 9u, 19u, 23u}) {

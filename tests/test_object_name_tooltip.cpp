@@ -43,8 +43,9 @@ TEST_CASE("the type table covers every type 0..34 in order", "[gameobject][type-
 }
 
 TEST_CASE("types the server never uses offer neither cursor nor name", "[gameobject][type-rule]") {
-    // GameObject::Use has no case and no other handler accepts them.
-    for (uint32_t t : {4u, 11u, 12u, 14u, 15u, 20u, 21u, 28u, 29u, 30u, 31u, 32u, 33u}) {
+    // GameObject::Use has no case and no other handler accepts them (and Wow.exe
+    // build 8606 Slot 3 CanHover is FALSE).
+    for (uint32_t t : {4u, 11u, 12u, 14u, 15u, 20u, 21u, 28u, 31u, 32u, 33u}) {
         INFO("type " << t);
         const auto a = gameObjectAffordance(t, 0, 0, true);
         CHECK_FALSE(a.use);
@@ -107,7 +108,7 @@ TEST_CASE("an unavailable object offers nothing whatever its type", "[gameobject
 }
 
 TEST_CASE("rows the server does not settle come from native hovers", "[gameobject][type-rule]") {
-    for (uint32_t t : {6u, 8u, 16u, 25u, 27u, 34u}) {
+    for (uint32_t t : {6u, 8u, 16u, 25u, 27u, 29u, 30u, 34u}) {
         INFO("type " << t);
         CHECK(gameObjectTypeRule(t).source == GameObjectRuleSource::Native);
     }
@@ -116,11 +117,26 @@ TEST_CASE("rows the server does not settle come from native hovers", "[gameobjec
     // Vault 187299 shows Buy.
     CHECK(std::string(gameObjectAffordance(27, 0, 0, true).cursor) == "Interact");
     CHECK(std::string(gameObjectAffordance(34, 0, 0, true).cursor) == "Buy");
-    // Fishing hole: named, fished rather than clicked.
-    CHECK_FALSE(gameObjectAffordance(25, 0, 0, true).use);
-    CHECK(gameObjectAffordance(25, 0, 0, true).hoverable());
-    // Spell focus (anvils, forges): kept off the mouse until captured.
-    CHECK_FALSE(gameObjectAffordance(8, 0, 0, true).hoverable());
+    // Non-usable highlight+tooltip types (Wow.exe 8606 Slot3=TRUE, Slot5=FALSE):
+    // SPELL_FOCUS (Icebellow Anvil 181234, Forge 1685, Campfire 1798),
+    // DUEL_ARBITER (Duel Flag 21680), FISHINGHOLE (180582), AURA_GENERATOR (183333).
+    for (uint32_t t : {8u, 16u, 25u, 30u}) {
+        INFO("type " << t);
+        const auto a = gameObjectAffordance(t, 0, 0, true);
+        CHECK_FALSE(a.use);
+        CHECK(a.cursor == nullptr);
+        CHECK(a.tooltip == ObjectNameTooltip::Default);
+        CHECK(a.hoverable());
+    }
+    // CAPTURE_POINT (29): Wow.exe 8606 Slot3 = data[19] != 0, Slot5 = FALSE.
+    uint32_t captureData[24] = {};
+    CHECK_FALSE(gameObjectAffordance(29, captureData, true).hoverable());
+    captureData[19] = 1;
+    const auto cap = gameObjectAffordance(29, captureData, true);
+    CHECK_FALSE(cap.use);
+    CHECK(cap.cursor == nullptr);
+    CHECK(cap.tooltip == ObjectNameTooltip::Default);
+    CHECK(cap.hoverable());
 }
 
 #include "game/game_object_cursor.hpp"

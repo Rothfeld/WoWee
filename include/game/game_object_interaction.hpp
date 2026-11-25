@@ -71,7 +71,7 @@ inline constexpr GameObjectTypeRule kGameObjectTypeRules[] = {
     {5,  "GENERIC",            false, false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Server, "Refused; label from data0/data1, highlight from data1"},
     {6,  "TRAP",               false, false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Native, "Not interactive/lit: Silithyst 181603/181618, Drakonid Bones 179804"},
     {7,  "CHAIR",              true,  true,  ObjectNameTooltip::Default, "Interact",  GameObjectRuleSource::Native, "Use (sit); gear and name tooltip natively (Bench 133469, Chair 180046)"},
-    {8,  "SPELL_FOCUS",        false, true,  ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Native, "Campfire 1798, Forge 1685: lit natively, no cursor"},
+    {8,  "SPELL_FOCUS",        false, true,  ObjectNameTooltip::Default, nullptr,     GameObjectRuleSource::Native, "Wow.exe 8606 vtable 0x8c48d0 (Slot3=TRUE, Slot5=FALSE): Icebellow Anvil 181234, Forge 1685, Campfire 1798 highlight + default tooltip, no cursor"},
     {9,  "TEXT",               true,  true,  ObjectNameTooltip::Default, "Inspect",   GameObjectRuleSource::Server, "Page"},
     {10, "GOOBER",             true,  true,  ObjectNameTooltip::Default, "Interact",  GameObjectRuleSource::Server, "Use"},
     {11, "TRANSPORT",          false, false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Server, "Absent; Vator 80023 neither cursor nor highlight natively"},
@@ -79,7 +79,7 @@ inline constexpr GameObjectTypeRule kGameObjectTypeRules[] = {
     {13, "CAMERA",             true,  true,  ObjectNameTooltip::Default, "Interact",  GameObjectRuleSource::Server, "Use (cinematic/event)"},
     {14, "MAP_OBJECT",         false, false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Server, "Absent"},
     {15, "MO_TRANSPORT",       false, false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Server, "Absent"},
-    {16, "DUEL_ARBITER",       false, true,  ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Native, "Duel Flag 21680: lit natively (1.66x), no cursor"},
+    {16, "DUEL_ARBITER",       false, true,  ObjectNameTooltip::Default, nullptr,     GameObjectRuleSource::Native, "Wow.exe 8606 vtable 0x8c48d0 (Slot3=TRUE, Slot5=FALSE): Duel Flag 21680 highlights + default tooltip, no cursor"},
     {17, "FISHINGNODE",        true,  true,  ObjectNameTooltip::Default, "Interact",  GameObjectRuleSource::Server, "Use; TBC 2.4.3 has no Fishing.blp cursor, bobbers use Interact"},
     {18, "SUMMONING_RITUAL",   true,  true,  ObjectNameTooltip::Default, "Interact",  GameObjectRuleSource::Server, "Use"},
     {19, "MAILBOX",            true,  true,  ObjectNameTooltip::Default, "Mail",      GameObjectRuleSource::Server, "Mail"},
@@ -92,8 +92,8 @@ inline constexpr GameObjectTypeRule kGameObjectTypeRules[] = {
     {26, "FLAGDROP",           true,  true,  ObjectNameTooltip::Default, "Interact",  GameObjectRuleSource::Server, "Use"},
     {27, "MINI_GAME",          true,  true,  ObjectNameTooltip::Default, "Interact",  GameObjectRuleSource::Native, "Teleport-Stone to Hyjal 211050: gear and highlight natively"},
     {28, "LOTTERY_KIOSK",      false, false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Server, "Absent"},
-    {29, "CAPTURE_POINT",      false, false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Server, "Absent (proximity); highlight from data19"},
-    {30, "AURA_GENERATOR",     false, true,  ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Server, "Absent; Vanguard of the Alliance 183333 lit natively (2.04x)"},
+    {29, "CAPTURE_POINT",      false, false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Native, "Wow.exe 8606 vtable 0x8c4820 (Slot3=data[19]!=0, Slot5=FALSE): highlight + default tooltip from data19"},
+    {30, "AURA_GENERATOR",     false, true,  ObjectNameTooltip::Default, nullptr,     GameObjectRuleSource::Native, "Wow.exe 8606 vtable 0x8c48d0 (Slot3=TRUE, Slot5=FALSE): Vanguard of the Alliance 183333 highlights + default tooltip, no cursor"},
     {31, "DUNGEON_DIFFICULTY", false, false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Server, "Absent; heroic portal icon 184128 dark natively"},
     {32, "BARBER_CHAIR",       false, false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Server, "Absent"},
     {33, "DESTRUCTIBLE",       false, false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Server, "Absent"},
@@ -111,15 +111,26 @@ inline const GameObjectTypeRule& gameObjectTypeRule(uint32_t type) {
     return row;
 }
 
-/// GAMEOBJECT_TYPE_GENERIC (5) data0 floatingTooltip, data1 highlight
-/// (CMaNGOS GameObject.h _generic). floatingTooltip labels the object at the
-/// cursor; highlight alone (Guild Master & Tabards, 183865) shows its name in
-/// the default bottom-right tooltip; neither is unlabelled scenery. Every
-/// other type takes its row's tooltip.
+/// Name tooltip from Wow.exe build 8606 CGGameObject_C_Type Slot 3 (CanHover)
+/// and CGGameObject_C::HasFloatingTooltip (propId 0x13 = GENERIC data[0]).
+///   - GENERIC (5): data[0] floatingTooltip -> Floating; data[1] highlight -> Default; else None.
+///   - CAPTURE_POINT (29): data[19] highlight -> Default; else None.
+///   - All other types: their row's tooltip (SPELL_FOCUS 8, DUEL_ARBITER 16,
+///     FISHINGHOLE 25, AURA_GENERATOR 30, and all usable types -> Default).
+inline ObjectNameTooltip objectNameTooltip(uint32_t type, std::span<const uint32_t> data) {
+    if (type == 5) {
+        if (data.size() > 0 && data[0] != 0) return ObjectNameTooltip::Floating;
+        return (data.size() > 1 && data[1] != 0) ? ObjectNameTooltip::Default : ObjectNameTooltip::None;
+    }
+    if (type == 29) {
+        return (data.size() > 19 && data[19] != 0) ? ObjectNameTooltip::Default : ObjectNameTooltip::None;
+    }
+    return gameObjectTypeRule(type).tooltip;
+}
+
 inline ObjectNameTooltip objectNameTooltip(uint32_t type, uint32_t data0, uint32_t data1) {
-    if (type != 5) return gameObjectTypeRule(type).tooltip;
-    if (data0 != 0) return ObjectNameTooltip::Floating;
-    return data1 != 0 ? ObjectNameTooltip::Default : ObjectNameTooltip::None;
+    const uint32_t d[2] = {data0, data1};
+    return objectNameTooltip(type, d);
 }
 
 /// Whether 2.4.3 lights the object under the pointer. Measured on build 8606
@@ -149,11 +160,17 @@ struct GameObjectAffordance {
     [[nodiscard]] bool hoverable() const { return use || tooltip != ObjectNameTooltip::None; }
 };
 
-inline GameObjectAffordance gameObjectAffordance(uint32_t type, uint32_t data0, uint32_t data1,
+inline GameObjectAffordance gameObjectAffordance(uint32_t type, std::span<const uint32_t> data,
                                                  bool available) {
     if (!available) return {};
     const auto& rule = gameObjectTypeRule(type);
-    return {rule.use, objectNameTooltip(type, data0, data1), rule.cursor};
+    return {rule.use, objectNameTooltip(type, data), rule.cursor};
+}
+
+inline GameObjectAffordance gameObjectAffordance(uint32_t type, uint32_t data0, uint32_t data1,
+                                                 bool available) {
+    const uint32_t d[2] = {data0, data1};
+    return gameObjectAffordance(type, d, available);
 }
 
 /// The model animation SMSG_GAMEOBJECT_CUSTOM_ANIM's index (0-3) plays:

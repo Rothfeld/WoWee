@@ -113,7 +113,7 @@ ScenePick pickScene(game::GameHandler& gameHandler,
             // with neither a use nor a name does not take the mouse at all,
             // so it cannot hide what stands behind it. It may still light up
             // under the pointer (highlightObjectGuid).
-            highlightOnly = !game::gameObjectAffordance(goInfo->type, goInfo->data[0], goInfo->data[1],
+            highlightOnly = !game::gameObjectAffordance(goInfo->type, goInfo->data,
                                                         enabled).hoverable();
             // Flagged off or hostile (not enabled): nothing, as before.
             highlightable = enabled && game::gameObjectHighlights(goInfo->type, goInfo->data);

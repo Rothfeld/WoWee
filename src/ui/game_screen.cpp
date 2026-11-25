@@ -1320,7 +1320,7 @@ bool GameScreen::drawWorldObjectCursor(game::GameHandler& gameHandler,
     // Generic signs opt into labels through their server template: a floating
     // label at the cursor, or with highlight alone the default tooltip (guild
     // master sign, ledger #04). Chairs and unlabelled scenery keep the cursor.
-    const auto tooltip = info ? game::objectNameTooltip(info->type, info->data[0], info->data[1])
+    const auto tooltip = info ? game::objectNameTooltip(info->type, info->data)
                               : game::ObjectNameTooltip::Default;
     if (tooltip == game::ObjectNameTooltip::None) return usable;
 
