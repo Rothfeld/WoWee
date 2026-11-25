@@ -164,6 +164,8 @@ public:
     [[nodiscard]] uint32_t getOutputChannels() const;
     [[nodiscard]] uint32_t getOutputSampleRate() const;
     [[nodiscard]] size_t getActiveSoundCount() const { return activeSounds_.size(); }
+    void setMaxChannels(uint32_t maxChannels);
+    [[nodiscard]] uint32_t getMaxChannels() const { return maxChannels_; }
 
     /// Synchronously render interleaved float32 PCM frames from the mixer
     /// (used in headless mode for deterministic audio verification).
@@ -196,6 +198,9 @@ private:
     void reapFinishedSounds();
     void refreshEngineMasterGain();
     void refreshSpatialVolumes();
+    bool exceedsPerEntryOverlapLimit(uint32_t soundEntryId, bool stoppable, bool loopEnabled,
+                                     double monoNow) const;
+    bool ensureChannelSlotAvailable(bool stoppable, bool loopEnabled);
     uint32_t startSound2DInternal(const std::vector<uint8_t>& wavData, float volume, float pitch,
                                   bool stoppable, const SfxPlayOptions& options,
                                   const std::string& debugPath);
@@ -231,6 +236,7 @@ private:
     };
     std::vector<ActiveSound> activeSounds_;
     uint32_t nextSoundId_ = 1;
+    uint32_t maxChannels_ = 64;
 
     // Music track state
     ma_sound* musicSound_ = nullptr;

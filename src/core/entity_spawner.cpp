@@ -506,11 +506,12 @@ void EntitySpawner::update() {
                              npcArmorMat, /*skipFootstep=*/swimming || flying);
             }
 
-            // Stop col 24 loops for despawned creatures immediately
+            // Stop col 24 loops and clear queued combat audio for despawned creatures immediately
             for (auto it = tracker.activeCreatureLoopGuids.begin();
                  it != tracker.activeCreatureLoopGuids.end();) {
                 if (!seenCreatureGuids.contains(*it)) {
                     fm->stopCreatureLoopSound(*it);
+                    if (csm) csm->clearUnitEvents(*it);
                     it = tracker.activeCreatureLoopGuids.erase(it);
                 } else {
                     ++it;

@@ -715,3 +715,92 @@ TEST_CASE("M2 audio bridge dispatches HumanMale.m2 combat ($CSS/$CAH/$BWP/$BWR/$
     pvm.shutdown();
     csm.shutdown();
 }
+
+TEST_CASE("High-density rapid overlapping combat and AoE audio bounds active voices and clears backlog on death",
+          "[audio][shard_c][rapid_overlap][stress]") {
+    auto& tbc = env();
+    resetHeadlessEngine(&tbc.assets);
+    auto& engine = audio::AudioEngine::instance();
+    engine.setMaxChannels(24u);
+    REQUIRE(engine.getMaxChannels() == 24u);
+
+    audio::CombatSoundManager csm;
+    REQUIRE(csm.initialize(&tbc.assets));
+    csm.setVolumeScale(1.0f);
+
+    // 1. Burst 20 identical AoE impact SoundEntries in the same frame: per-entry burst coalescing
+    //    caps same-frame duplicates at <= 2 (no 20x audio stacking).
+    size_t startedSameEntry = 0;
+    engine.setPlaybackObserver([&](const audio::AudioEngine::PlaybackEvent& ev) {
+        if (ev.started && ev.soundEntryId == 143u) ++startedSameEntry;
+    });
+    for (int i = 0; i < 20; ++i) {
+        (void)audio::SoundEntryTable::instance().play3D(
+            &tbc.assets, 143u, glm::vec3(2.0f, 0.0f, 0.0f), 1.0f, 1.0f,
+            audio::SESoundCategory::kSfx);
+    }
+    CHECK(startedSameEntry <= 2u);
+    CHECK(startedSameEntry >= 1u);
+
+    // 2. Flood 80 distinct one-shot SFX across categories while keeping a stoppable loop active:
+    //    active sound count never exceeds maxChannels (24), and the looping sound survives eviction.
+    engine.setPlaybackObserver({});
+    const uint32_t loopHandle = audio::SoundEntryTable::instance().play3DStoppable(
+        &tbc.assets, 27u, glm::vec3(1.0f, 0.0f, 0.0f), 1.0f);
+    REQUIRE(loopHandle != 0u);
+    REQUIRE(engine.isSoundPlaying(loopHandle));
+
+    const uint32_t probeIds[] = {
+        143u, 941u, 1151u, 233u, 235u, 237u, 697u, 698u, 699u, 700u,
+        3091u, 3113u, 3325u, 3660u, 7078u, 7079u, 1424u, 1425u, 1426u, 1427u,
+    };
+    size_t peakActive = 0;
+    for (int round = 0; round < 4; ++round) {
+        for (uint32_t sid : probeIds) {
+            (void)audio::SoundEntryTable::instance().play3D(
+                &tbc.assets, sid, glm::vec3(3.0f, 0.0f, 0.0f), 1.0f, 1.0f,
+                audio::SESoundCategory::kSfx);
+            peakActive = std::max(peakActive, engine.getActiveSoundCount());
+        }
+    }
+    CHECK(peakActive <= 24u);
+    CHECK(engine.isSoundPlaying(loopHandle));
+    engine.stopSound(loopHandle);
+    engine.setMaxChannels(64u);
+
+    // 3. Queue 25 attackers x 6 rapid melee events (150 total): per-unit cap (<= 2) and
+    //    global queue cap (<= 24) hold, and clearUnitEvents() immediately wipes dead units.
+    for (uint64_t atk = 0x5001ull; atk < 0x5001ull + 25ull; ++atk) {
+        csm.setUnitHasKeyframeDriver(atk, true);
+        for (int n = 0; n < 6; ++n) {
+            audio::CombatSoundManager::QueuedCombatEvent ev;
+            ev.attackerGuid = atk;
+            ev.victimGuid = 0x9999ull;
+            ev.attackerRenderPos = glm::vec3(4.0f, 0.0f, 0.0f);
+            ev.victimRenderPos = glm::vec3(0.0f, 0.0f, 0.0f);
+            ev.attackerWeaponSubClass = 7u;
+            ev.outcome = audio::CombatSoundManager::CombatOutcome::HIT;
+            csm.queueCombatEvent(ev);
+            CHECK(csm.pendingCombatEventCount(atk) <= 2u);
+            CHECK(csm.pendingCombatEventCount(0u) <= 24u);
+        }
+    }
+    CHECK(csm.pendingCombatEventCount(0u) == 24u);
+
+    // Kill victim 0x9999 -> all pending combat events targeting it are purged immediately
+    csm.clearUnitEvents(0x9999ull);
+    CHECK(csm.pendingCombatEventCount(0u) == 0u);
+
+    // Advance timers by 2 seconds: zero stale swings/hits fire after death
+    size_t postDeathStarts = 0;
+    engine.setPlaybackObserver([&](const audio::AudioEngine::PlaybackEvent& ev) {
+        if (ev.started) ++postDeathStarts;
+    });
+    for (int step = 0; step < 20; ++step) {
+        csm.update(0.1f);
+    }
+    CHECK(postDeathStarts == 0u);
+
+    engine.setPlaybackObserver({});
+    csm.shutdown();
+}

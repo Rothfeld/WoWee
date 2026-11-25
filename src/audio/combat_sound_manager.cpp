@@ -24,7 +24,8 @@ constexpr float kHeadlessHitDelaySec = 0.20f;
 constexpr float kKeyframeSafetySwingDelaySec = 0.55f;
 constexpr float kKeyframeSafetyHitDelaySec = 0.85f;
 constexpr float kUnqueuedSwingGraceSec = 0.35f;
-constexpr size_t kMaxQueuedEventsPerUnit = 8;
+constexpr size_t kMaxQueuedEventsPerUnit = 2;
+constexpr size_t kMaxTotalQueuedCombatEvents = 24;
 
 // TBC 2.4.3 VictimState values (CMaNGOS Unit.h / Wow.exe 0x62f230 & 0x62f600)
 constexpr uint32_t kVictimStateDodge = 2;
@@ -846,6 +847,24 @@ void CombatSoundManager::queueCombatEvent(QueuedCombatEvent ev) {
         recentUnqueuedSwingTimer_.erase(it);
     }
 
+    // Cap total queued combat events across all attackers so high-density multi-mob
+    // pulls never build a multi-second post-combat audio backlog.
+    while (pendingCombatEventCount(0u) >= kMaxTotalQueuedCombatEvents) {
+        auto oldestMapIt = pendingByAttacker_.end();
+        float oldestAge = -1.0f;
+        for (auto it = pendingByAttacker_.begin(); it != pendingByAttacker_.end(); ++it) {
+            if (!it->second.empty() && it->second.front().ageSeconds > oldestAge) {
+                oldestAge = it->second.front().ageSeconds;
+                oldestMapIt = it;
+            }
+        }
+        if (oldestMapIt == pendingByAttacker_.end()) break;
+        oldestMapIt->second.pop_front();
+        if (oldestMapIt->second.empty()) {
+            pendingByAttacker_.erase(oldestMapIt);
+        }
+    }
+
     auto& q = pendingByAttacker_[ev.attackerGuid];
     while (q.size() >= kMaxQueuedEventsPerUnit) {
         q.pop_front();
@@ -884,6 +903,22 @@ void CombatSoundManager::update(float deltaTime) {
 void CombatSoundManager::clearPendingCombatEvents() {
     pendingByAttacker_.clear();
     recentUnqueuedSwingTimer_.clear();
+}
+
+void CombatSoundManager::clearUnitEvents(uint64_t unitGuid) {
+    if (unitGuid == 0u) return;
+    pendingByAttacker_.erase(unitGuid);
+    recentUnqueuedSwingTimer_.erase(unitGuid);
+    keyframeDrivenUnits_.erase(unitGuid);
+    underwaterUnits_.erase(unitGuid);
+    for (auto mapIt = pendingByAttacker_.begin(); mapIt != pendingByAttacker_.end(); ) {
+        auto& q = mapIt->second;
+        q.erase(std::remove_if(q.begin(), q.end(), [unitGuid](const QueuedCombatEvent& ev) {
+            return ev.victimGuid == unitGuid;
+        }), q.end());
+        if (q.empty()) mapIt = pendingByAttacker_.erase(mapIt);
+        else ++mapIt;
+    }
 }
 
 size_t CombatSoundManager::pendingCombatEventCount(uint64_t attackerGuid) const {

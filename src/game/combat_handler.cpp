@@ -2676,6 +2676,9 @@ void CombatHandler::enqueueMeleeCombatAudio(
         data.isMiss(), data.isCrit(), data.isCrushing(), data.isGlancing(),
         data.victimState, data.totalDamage, data.blocked);
 
+    if (lethalHit && data.targetGuid != 0u) {
+        csm->clearUnitEvents(data.targetGuid);
+    }
     csm->queueCombatEvent(std::move(ev));
 }
 
@@ -2751,6 +2754,9 @@ void CombatHandler::enqueuePhysicalSpellCombatAudio(
         : (data.isCrit ? audio::CombatSoundManager::CombatOutcome::CRIT
                        : audio::CombatSoundManager::CombatOutcome::HIT);
 
+    if (lethalHit && data.targetGuid != 0u) {
+        csm->clearUnitEvents(data.targetGuid);
+    }
     csm->queueCombatEvent(std::move(ev));
 }
 

@@ -184,6 +184,7 @@ public:
     void queueCombatEvent(QueuedCombatEvent ev);
     void update(float deltaTime);
     void clearPendingCombatEvents();
+    void clearUnitEvents(uint64_t unitGuid);
     [[nodiscard]] size_t pendingCombatEventCount(uint64_t attackerGuid = 0) const;
 
     /// M2 $CSS keyframe trigger: weapon swing whoosh (+ underwater 0.5f pitch per 0x467000).

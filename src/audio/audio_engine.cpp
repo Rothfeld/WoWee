@@ -536,6 +536,100 @@ void AudioEngine::shutdown() {
     LOG_INFO("AudioEngine shutdown");
 }
 
+void AudioEngine::setMaxChannels(uint32_t maxChannels) {
+    maxChannels_ = std::clamp(maxChannels, 16u, 128u);
+}
+
+bool AudioEngine::exceedsPerEntryOverlapLimit(uint32_t soundEntryId, bool stoppable,
+                                              bool loopEnabled, double monoNow) const {
+    if (soundEntryId == 0u || stoppable || loopEnabled) {
+        return false;
+    }
+    constexpr uint32_t kMaxConcurrentSameEntry = 4u;
+    constexpr uint32_t kMaxSameEntryInBurstWindow = 2u;
+    constexpr double kBurstCoalesceWindowSec = 0.025;
+
+    uint32_t sameIdCount = 0u;
+    uint32_t burstCount = 0u;
+    for (const auto& active : activeSounds_) {
+        if (active.looping || active.soundEntryId != soundEntryId) continue;
+        ++sameIdCount;
+        if (monoNow - active.startMonoSec <= kBurstCoalesceWindowSec) {
+            ++burstCount;
+        }
+    }
+    return sameIdCount >= kMaxConcurrentSameEntry || burstCount >= kMaxSameEntryInBurstWindow;
+}
+
+bool AudioEngine::ensureChannelSlotAvailable(bool stoppable, bool loopEnabled) {
+    if (activeSounds_.size() < maxChannels_) {
+        return true;
+    }
+
+    // Steal the oldest fire-and-forget one-shot so active voices stay bounded by
+    // Sound_NumChannels without starving stoppable/looping sounds.
+    size_t victimIdx = activeSounds_.size();
+    double oldestStart = std::numeric_limits<double>::max();
+    for (size_t i = 0; i < activeSounds_.size(); ++i) {
+        const auto& a = activeSounds_[i];
+        if (!a.looping && a.id == 0u && a.startMonoSec < oldestStart) {
+            oldestStart = a.startMonoSec;
+            victimIdx = i;
+        }
+    }
+    if (victimIdx == activeSounds_.size() && (stoppable || loopEnabled)) {
+        for (size_t i = 0; i < activeSounds_.size(); ++i) {
+            const auto& a = activeSounds_[i];
+            if (!a.looping && a.startMonoSec < oldestStart) {
+                oldestStart = a.startMonoSec;
+                victimIdx = i;
+            }
+        }
+    }
+    if (victimIdx == activeSounds_.size()) {
+        return false;
+    }
+
+    auto& victim = activeSounds_[victimIdx];
+    const double monoNow = monotonicSecondsNow();
+    const double elapsed = std::max(0.0, monoNow - victim.startMonoSec);
+    const uint64_t seq = victim.traceSeq;
+    const uint32_t hid = victim.id;
+    const uint32_t sid = victim.soundEntryId;
+    const std::string sname = victim.soundEntryName;
+    const std::string spath = victim.path;
+
+    ma_sound_stop(victim.sound);
+    ma_sound_uninit(victim.sound);
+    std::free(victim.sound);
+    ma_audio_buffer* buffer = static_cast<ma_audio_buffer*>(victim.buffer);
+    ma_audio_buffer_uninit(buffer);
+    std::free(buffer);
+    activeSounds_[victimIdx] = std::move(activeSounds_.back());
+    activeSounds_.pop_back();
+
+    {
+        std::lock_guard<std::mutex> lock(traceMutex_);
+        if (traceFile_) {
+            std::ostringstream os;
+            os << std::fixed << std::setprecision(6);
+            os << "{\"event\":\"stop\",\"client\":\"wowee\""
+               << ",\"seq\":" << seq
+               << ",\"handle_id\":" << hid
+               << ",\"mono_s\":" << monoNow
+               << ",\"ts_ns\":" << realtimeNsNow()
+               << ",\"sound_id\":" << sid
+               << ",\"sound_name\":\"" << jsonEscape(sname) << "\""
+               << ",\"path\":\"" << jsonEscape(spath) << "\""
+               << ",\"reason\":\"channel_evicted\""
+               << ",\"elapsed_s\":" << elapsed
+               << "}";
+            writeTraceLineUnlocked(os.str());
+        }
+    }
+    return true;
+}
+
 void AudioEngine::setMasterVolume(float volume) {
     masterVolume_ = glm::clamp(volume, 0.0f, 1.0f);
     refreshEngineMasterGain();
@@ -722,10 +816,17 @@ uint32_t AudioEngine::startSound2DInternal(const std::vector<uint8_t>& wavData, 
         return 0;
     }
 
-    // Wow.exe 0x46224c..0x4622a4: Flags & 0x020 (NO_DUPLICATES)
+    // Flags & 0x020 (NO_DUPLICATES)
     if ((options.soundEntryFlags & SoundEntryFlags::kNoDuplicates) != 0u &&
         options.soundEntryId != 0 && isSoundEntryPlaying(options.soundEntryId)) {
         notify(false, 0, nextTraceSeq_++, monotonicSecondsNow(), emptyDec);
+        return 0;
+    }
+
+    const double preStartMono = monotonicSecondsNow();
+    if (exceedsPerEntryOverlapLimit(resolvedId, stoppable, loopEnabled, preStartMono) ||
+        !ensureChannelSlotAvailable(stoppable, loopEnabled)) {
+        notify(false, 0, nextTraceSeq_++, preStartMono, emptyDec);
         return 0;
     }
 
@@ -990,10 +1091,17 @@ uint32_t AudioEngine::startSound3DInternal(const std::vector<uint8_t>& wavData, 
         return 0;
     }
 
-    // Wow.exe 0x46224c..0x4622a4: Flags & 0x020 (NO_DUPLICATES)
+    // Flags & 0x020 (NO_DUPLICATES)
     if ((options.soundEntryFlags & SoundEntryFlags::kNoDuplicates) != 0u &&
         options.soundEntryId != 0 && isSoundEntryPlaying(options.soundEntryId)) {
         notify(false, 0, nextTraceSeq_++, monotonicSecondsNow(), emptyDec);
+        return 0;
+    }
+
+    const double preStartMono = monotonicSecondsNow();
+    if (exceedsPerEntryOverlapLimit(resolvedId, stoppable, loopEnabled, preStartMono) ||
+        !ensureChannelSlotAvailable(stoppable, loopEnabled)) {
+        notify(false, 0, nextTraceSeq_++, preStartMono, emptyDec);
         return 0;
     }
 
