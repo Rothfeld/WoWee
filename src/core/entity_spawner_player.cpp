@@ -905,9 +905,25 @@ uint32_t EntitySpawner::remoteIdleAnimation(uint64_t guid) const {
             castHold, aura, rendering::SpellVisualSystem::kNoAnimation))
         return *overlay;
     if (remoteIdlesInHover(guid)) return rendering::anim::FLY_IDLE;
-    // A unit meleeing holds its ready stance between swings; the original
-    // never rolls Stand fidgets then (Ice Claw Bear, combat_observations).
-    if (unit && unit->getMeleeVictimGuid() != 0 && unit->getHealth() > 0) return meleeReadyAnimation(*unit);
+    // A unit meleeing a living target holds its ready stance between swings;
+    // the original never rolls Stand fidgets then (Ice Claw Bear,
+    // combat_observations) and drops back to Stand once the target dies or
+    // despawns even without a subsequent SMSG_ATTACKSTOP.
+    if (unit && unit->getMeleeVictimGuid() != 0 && unit->getHealth() > 0) {
+        const uint64_t victimGuid = unit->getMeleeVictimGuid();
+        const auto victimEnt = gameHandler_->getEntityManager().getEntity(victimGuid);
+        const auto* victimUnit = (victimEnt && victimEnt->isUnit())
+            ? static_cast<const game::Unit*>(victimEnt.get())
+            : nullptr;
+        if (game::isLiveMeleeVictim(
+                victimUnit != nullptr,
+                deadCreatureGuids_.contains(victimGuid),
+                victimUnit ? victimUnit->getHealth() : 0u,
+                victimUnit ? victimUnit->getMaxHealth() : 0u,
+                victimUnit ? victimUnit->getDynamicFlags() : 0u)) {
+            return meleeReadyAnimation(*unit);
+        }
+    }
     if (auto it = creatureActiveEmotes_.find(guid); it != creatureActiveEmotes_.end()) return it->second;
     if (unit) {
         if (const uint32_t emoteAnim = rendering::AnimationController::getEmoteAnimByEmotesId(unit->getNpcEmoteState());

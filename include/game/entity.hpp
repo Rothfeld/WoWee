@@ -150,6 +150,17 @@ inline bool unitDynDeadClearIsRespawn(uint32_t oldDynamicFlags,
     return !isUnitCorpseState(currentHealth, maxHealth, newDynamicFlags);
 }
 
+/// True when a unit's recorded melee victim is still present and alive so the
+/// attacker should hold its melee ready stance between swings. False once the
+/// victim has died or despawned (e.g. a killing blow whose
+/// SMSG_ATTACKERSTATEUPDATE arrived after SMSG_ATTACKSTOP or without one).
+inline bool isLiveMeleeVictim(bool victimPresent, bool victimMarkedDead,
+                              uint32_t victimHealth, uint32_t victimMaxHealth,
+                              uint32_t victimDynamicFlags) {
+    if (!victimPresent || victimMarkedDead) return false;
+    return !isUnitCorpseState(victimHealth, victimMaxHealth, victimDynamicFlags);
+}
+
 /**
  * Update types for SMSG_UPDATE_OBJECT
  */

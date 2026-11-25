@@ -852,14 +852,37 @@ void CombatHandler::handleAttackerStateUpdate(network::Packet& packet) {
             if (owner_.meleeSwingCallbackRef()) owner_.meleeSwingCallbackRef()(0, isOffHandSwing);
         }
     }
-    // A swing puts its attacker in melee, as SMSG_ATTACKSTART does. The
-    // server sends ATTACKSTART once, when the attack begins; a unit already
+    // Lethal blows suppress victim hit reactions and must not arm or retain a
+    // dead melee target: CMaNGOS sends SMSG_ATTACKSTOP before
+    // SMSG_ATTACKERSTATEUPDATE (or omits it on a one-shot), and
+    // SMSG_UPDATE_OBJECT sets UNIT_FIELD_HEALTH=0 one tick later.
+    const bool lethalHit = [&]() {
+        if (data.overkill > 0) return true;
+        const auto ent = owner_.getEntityManager().getEntity(data.targetGuid);
+        if (!ent || !ent->isUnit()) return false;
+        const auto unit = std::static_pointer_cast<Unit>(ent);
+        if (isUnitCorpseState(unit->getHealth(), unit->getMaxHealth(), unit->getDynamicFlags())) {
+            return true;
+        }
+        if (data.totalDamage <= 0) return false;
+        return GameHandler::isLethalDamage(
+            unit->getHealth(), unit->getMaxHealth(), data.totalDamage, data.overkill);
+    }();
+    // A non-lethal swing puts its attacker in melee, as SMSG_ATTACKSTART does.
+    // The server sends ATTACKSTART once, when the attack begins; a unit already
     // fighting when it came into view has only its swings. Build 8606 holds
     // such a unit in Stand until its first swing and in its ready stance
     // from then on (_experiments/20261118T091949Z.creature_swing_anim, reenter).
     if (auto attacker = owner_.getEntityManager().getEntity(data.attackerGuid);
         attacker && attacker->isUnit() && data.targetGuid != 0) {
-        std::static_pointer_cast<Unit>(attacker)->setMeleeVictimGuid(data.targetGuid);
+        auto attackerUnit = std::static_pointer_cast<Unit>(attacker);
+        if (lethalHit) {
+            if (attackerUnit->getMeleeVictimGuid() == data.targetGuid) {
+                attackerUnit->setMeleeVictimGuid(0);
+            }
+        } else {
+            attackerUnit->setMeleeVictimGuid(data.targetGuid);
+        }
     }
     if (!isPlayerAttacker && !data.isNoAction() && owner_.npcSwingCallbackRef()) {
         owner_.npcSwingCallbackRef()(data.attackerGuid, isOffHandSwing);
@@ -869,19 +892,6 @@ void CombatHandler::handleAttackerStateUpdate(network::Packet& packet) {
     // HITINFO_NOACTION (CMaNGOS sends it for on-next-swing spell results):
     // build 8606 shows the damage and leaves the victim still, no spurt
     // either (_experiments/20261119T1311Z.wound_rule, thugflags).
-    // Lethal blows suppress victim hit reactions: SMSG_ATTACKERSTATEUPDATE arrives
-    // up to one server update tick (~100-400 ms) before SMSG_UPDATE_OBJECT sets
-    // UNIT_FIELD_HEALTH=0, and native 2.4.3 transitions straight into Death without
-    // playing CombatWound first.
-    const bool lethalHit = [&]() {
-        if (data.overkill > 0) return true;
-        if (data.totalDamage <= 0) return false;
-        const auto ent = owner_.getEntityManager().getEntity(data.targetGuid);
-        if (!ent || !ent->isUnit()) return false;
-        const auto unit = std::static_pointer_cast<Unit>(ent);
-        return GameHandler::isLethalDamage(
-            unit->getHealth(), unit->getMaxHealth(), data.totalDamage, data.overkill);
-    }();
     if (owner_.hitReactionCallbackRef() && !data.isNoAction() && !lethalHit) {
         using HR = GameHandler::HitReaction;
         std::optional<HR> reaction;

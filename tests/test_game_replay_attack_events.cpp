@@ -203,3 +203,73 @@ TEST_CASE("ACTIONBAR_UPDATE_STATE fires after same-frame cast fail, cancel, and 
     gh.getSpellHandler()->updateTimers(0.016f);
     CHECK(count(events, "ACTIONBAR_UPDATE_STATE") == 1);
 }
+
+TEST_CASE("remote melee stance clears on lethal swing and dead/despawned victim",
+          "[replay][combat][stance]") {
+    using wowee::game::isLiveMeleeVictim;
+    using wowee::game::UNIT_DYNFLAG_DEAD;
+
+    CHECK(isLiveMeleeVictim(true, false, 100, 100, 0));
+    CHECK_FALSE(isLiveMeleeVictim(false, false, 100, 100, 0));
+    CHECK_FALSE(isLiveMeleeVictim(true, true, 100, 100, 0));
+    CHECK_FALSE(isLiveMeleeVictim(true, false, 0, 100, 0));
+    CHECK_FALSE(isLiveMeleeVictim(true, false, 100, 100, UNIT_DYNFLAG_DEAD));
+
+    constexpr uint64_t kRemotePlayer = 0x0000000000000068ull;
+    constexpr uint64_t kMobA         = 0xF130003F125970DAull;
+    constexpr uint64_t kMobB         = 0xF130003F2759704Bull;
+
+    Session s("tbc");
+    auto& gh = s.handler();
+
+    auto remote = std::make_shared<wowee::game::Player>(kRemotePlayer);
+    remote->setHealth(10000);
+    remote->setMaxHealth(10000);
+    gh.getEntityManager().addEntity(kRemotePlayer, remote);
+
+    auto mobA = std::make_shared<wowee::game::Unit>(kMobA);
+    mobA->setHealth(5000);
+    mobA->setMaxHealth(5000);
+    gh.getEntityManager().addEntity(kMobA, mobA);
+
+    auto mobB = std::make_shared<wowee::game::Unit>(kMobB);
+    mobB->setHealth(3000);
+    mobB->setMaxHealth(3000);
+    gh.getEntityManager().addEntity(kMobB, mobB);
+
+    auto tbcSwing = [](uint64_t attacker, uint64_t victim, int32_t damage) {
+        wowee::network::Packet p(wowee::game::wireOpcode(Opcode::SMSG_ATTACKERSTATEUPDATE));
+        p.writeUInt32(0x2u);           // HITINFO_NORMALSWING2
+        p.writePackedGuid(attacker);
+        p.writePackedGuid(victim);
+        p.writeUInt32(static_cast<uint32_t>(damage));
+        p.writeUInt8(1u);              // subDamageCount
+        p.writeUInt32(1u);             // schoolMask (physical)
+        p.writeFloat(static_cast<float>(damage));
+        p.writeUInt32(static_cast<uint32_t>(damage));
+        p.writeUInt32(0u);             // absorbed
+        p.writeUInt32(0u);             // resisted
+        p.writeUInt32(1u);             // victimState = HIT
+        p.writeUInt32(0u);             // unknown
+        p.writeUInt32(0u);             // spellId
+        p.writeUInt32(0u);             // blocked
+        return p;
+    };
+
+    // 1. Non-lethal swing arms meleeVictimGuid for a remote attacker.
+    s.receive(tbcSwing(kRemotePlayer, kMobA, 1000));
+    CHECK(remote->getMeleeVictimGuid() == kMobA);
+
+    // 2. Killing blow clears meleeVictimGuid even without a subsequent SMSG_ATTACKSTOP.
+    s.receive(tbcSwing(kRemotePlayer, kMobA, 5000));
+    CHECK(remote->getMeleeVictimGuid() == 0);
+
+    // 3. One-shot killing blow from idle leaves meleeVictimGuid == 0.
+    s.receive(tbcSwing(kRemotePlayer, kMobB, 4000));
+    CHECK(remote->getMeleeVictimGuid() == 0);
+
+    // 4. Late swing arriving after victim health is already 0 leaves meleeVictimGuid == 0.
+    mobB->setHealth(0);
+    s.receive(tbcSwing(kRemotePlayer, kMobB, 100));
+    CHECK(remote->getMeleeVictimGuid() == 0);
+}
