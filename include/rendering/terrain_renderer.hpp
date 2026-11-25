@@ -168,6 +168,20 @@ public:
     [[nodiscard]] int getTriangleCount() const;
     [[nodiscard]] VkContext* getVkContext() const { return vkCtx; }
 
+    /// What the texture cache holds, by its own accounting.
+    ///
+    /// For the WOWEE_MEMORY_TRACE line (Renderer::update), which pairs these
+    /// with the allocator's figures so a run can tell cache growth from other
+    /// growth.
+    struct TextureCacheStats {
+        size_t entries = 0;        ///< Everything in the cache.
+        size_t chunkMaps = 0;      ///< Of those, per-chunk alpha and shadow maps.
+        size_t accountedBytes = 0; ///< What the budget is compared against.
+        size_t budgetBytes = 0;
+        size_t chunks = 0;         ///< Live terrain chunks.
+    };
+    [[nodiscard]] TextureCacheStats getTextureCacheStats() const;
+
     /// Where chunks register their geometry for the ray traced lighting.
     void setRtScene(RtScene* scene) { rtScene_ = scene; }
 

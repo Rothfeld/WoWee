@@ -660,6 +660,18 @@ TerrainChunkGPU TerrainRenderer::uploadChunk(const pipeline::ChunkMesh& chunk) {
     return gpuChunk;
 }
 
+TerrainRenderer::TextureCacheStats TerrainRenderer::getTextureCacheStats() const {
+    TextureCacheStats stats;
+    stats.entries = textureCache.size();
+    for (const auto& [key, entry] : textureCache) {
+        if (key.starts_with("__alpha_") || key.starts_with("__mcsh_")) ++stats.chunkMaps;
+    }
+    stats.accountedBytes = textureCacheBytes_;
+    stats.budgetBytes = textureCacheBudgetBytes_;
+    stats.chunks = chunks.size();
+    return stats;
+}
+
 bool TerrainRenderer::evictTexturesFor(size_t needBytes) {
     if (textureCacheBytes_ + needBytes <= textureCacheBudgetBytes_) return true;
     if (!vkCtx) return false;

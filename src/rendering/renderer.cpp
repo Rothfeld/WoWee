@@ -2436,6 +2436,45 @@ void Renderer::update(float deltaTime) {
         if (terrMs > 50.0f) {
             LOG_WARNING("SLOW terrainManager->update: ", terrMs, "ms");
         }
+
+        // WOWEE_MEMORY_TRACE=1: one line every two seconds with the terrain
+        // texture cache's accounting next to what the Vulkan allocator holds,
+        // so a teleport script can read memory per teleport from the log.
+        static const bool traceMemory = core::envFlagEnabled("WOWEE_MEMORY_TRACE");
+        if (traceMemory && terrainRenderer && vkCtx) {
+            static auto lastTrace = std::chrono::steady_clock::time_point{};
+            const auto now = std::chrono::steady_clock::now();
+            if (now - lastTrace >= std::chrono::seconds(2)) {
+                lastTrace = now;
+                const auto cache = terrainRenderer->getTextureCacheStats();
+                VmaBudget budgets[VK_MAX_MEMORY_HEAPS] = {};
+                vmaGetHeapBudgets(vkCtx->getAllocator(), budgets);
+                VkPhysicalDeviceMemoryProperties memProps{};
+                vkGetPhysicalDeviceMemoryProperties(vkCtx->getPhysicalDevice(), &memProps);
+                uint64_t allocations = 0, allocationBytes = 0, blocks = 0, blockBytes = 0;
+                for (uint32_t i = 0; i < memProps.memoryHeapCount; ++i) {
+                    allocations += budgets[i].statistics.allocationCount;
+                    allocationBytes += budgets[i].statistics.allocationBytes;
+                    blocks += budgets[i].statistics.blockCount;
+                    blockBytes += budgets[i].statistics.blockBytes;
+                }
+                LOG_INFO("MEMORY_TRACE {\"terrain_ms\":", terrMs,
+                         ",\"cache_entries\":", cache.entries,
+                         ",\"cache_chunk_maps\":", cache.chunkMaps,
+                         ",\"cache_bytes\":", cache.accountedBytes,
+                         ",\"cache_budget_bytes\":", cache.budgetBytes,
+                         ",\"terrain_chunks\":", cache.chunks,
+                         ",\"vma_allocations\":", allocations,
+                         ",\"vma_allocation_bytes\":", allocationBytes,
+                         ",\"vma_blocks\":", blocks,
+                         ",\"vma_block_bytes\":", blockBytes,
+                         ",\"m2_models\":", m2Renderer ? m2Renderer->getModelCount() : 0u,
+                         ",\"m2_instances\":", m2Renderer ? m2Renderer->getInstanceCount() : 0u,
+                         ",\"wmo_models\":", wmoRenderer ? wmoRenderer->getModelCount() : 0u,
+                         ",\"wmo_instances\":", wmoRenderer ? wmoRenderer->getInstanceCount() : 0u,
+                         "}");
+            }
+        }
     }
 
     // Update sky system (skybox time, star twinkle, clouds, celestial moon phases)
