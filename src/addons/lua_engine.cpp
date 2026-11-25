@@ -12193,7 +12193,8 @@ size_t LuaEngine::editBoxCaretFromPoint(const ui::Widget& w, float rawMouseX, fl
     };
     const auto lines = wowee::ui::layoutEditLines(
         w.editText, wrapW, measure, texWidth, w.editPassword);
-    const float lineOriginX = wowee::ui::placeTextLine(x0 + pad, 0.0f, 0.0f, 0.0f, "LEFT");
+    const float scrollPx = multi ? 0.0f : (w.editScrollX * ws);
+    const float lineOriginX = wowee::ui::placeTextLine(x0 + pad, 0.0f, 0.0f, 0.0f, "LEFT") - scrollPx;
     const float originY = wowee::ui::textOriginY(ty);
     return wowee::ui::hitTestEditCaret(lines, rawMouseX - lineOriginX, rawMouseY - originY,
                                        linePx, multi);

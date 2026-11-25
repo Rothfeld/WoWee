@@ -420,6 +420,10 @@ struct Widget {
     /// is this minus the frame's height (native 2.4.3 MacroFrameText: 9.6
     /// tall empty, 96 with ten lines, range 11 in its 85 frame).
     mutable float editContentH = -1.0f;
+    /// Horizontal scroll offset for a single-line EditBox in widget units
+    /// (`scrollPx / ws`), updated during draw so typing past the right edge
+    /// scrolls the text inside its clip rect rather than overflowing the frame.
+    mutable float editScrollX = 0.0f;
     int   editMaxLetters = 0;   ///< Zero is no limit, which is WoW's default.
     /// Whether the markup that draws nothing counts against that limit. WoW's
     /// default is no, and four boxes in the interface ask for yes - the macro

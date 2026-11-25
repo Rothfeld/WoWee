@@ -399,4 +399,24 @@ inline std::vector<EditSelectionSpan> editSelectionSpans(const std::vector<EditV
     return spans;
 }
 
+/// Update the horizontal scroll offset (in pixels) for a single-line EditBox so
+/// the caret stays inside `[0, viewWidthPx]` while avoiding trailing slack when
+/// the text shrinks or fits. Resets to 0 when unfocused so the start of the
+/// text is shown clipped to the box.
+inline float computeEditScrollX(float currentScrollPx, float caretPx,
+                                float textWidthPx, float viewWidthPx,
+                                bool focused, float caretMarginPx = 2.0f) {
+    if (viewWidthPx <= 0.0f) return 0.0f;
+    if (!focused) return 0.0f;
+    const float maxScroll = std::max(0.0f, textWidthPx + caretMarginPx - viewWidthPx);
+    if (maxScroll <= 0.0f) return 0.0f;
+    float scroll = std::clamp(currentScrollPx, 0.0f, maxScroll);
+    if (caretPx < scroll) {
+        scroll = caretPx;
+    } else if (caretPx + caretMarginPx > scroll + viewWidthPx) {
+        scroll = caretPx + caretMarginPx - viewWidthPx;
+    }
+    return std::clamp(scroll, 0.0f, maxScroll);
+}
+
 }  // namespace wowee::ui

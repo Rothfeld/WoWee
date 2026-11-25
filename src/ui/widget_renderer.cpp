@@ -2897,8 +2897,8 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                 const float ty = multi ? boxTop
                                        : std::round(boxTop + ((boxBottom - boxTop) - static_cast<float>(pixelHeight)) * 0.5f);
                 const float pad = w->textInsetLeft * s;
-                const float wrapW = multi
-                    ? std::max(1.0f, (x1 - x0) - pad - w->textInsetRight * s) : 0.0f;
+                const float viewW = std::max(0.0f, (x1 - x0) - pad - w->textInsetRight * s);
+                const float wrapW = multi ? std::max(1.0f, viewW) : 0.0f;
                 // A multi-line box steps one line per rasterized font height
                 // plus any configured line spacing, as native 2.4.3 does:
                 // MacroFrameText (FRIZQT 10) is 9.6 units a line at 1280x720.
@@ -2910,8 +2910,23 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                 if (multi) {
                     w->editContentH = static_cast<float>(editLayout.size()) * linePx / ws;
                 }
-                const float lineOriginX = placeTextLine(x0 + pad, 0.0f, 0.0f, 0.0f, "LEFT");
+                const size_t clampedPos = std::min(w->cursorPos, w->editText.size());
+                const EditCaretPos cpos = locateEditCaret(editLayout, clampedPos);
+                float scrollPx = 0.0f;
+                if (!multi) {
+                    const float textW = (!editLayout.empty() && !editLayout[0].cells.empty())
+                        ? editLayout[0].cells.back().x1 : 0.0f;
+                    scrollPx = computeEditScrollX(
+                        w->editScrollX * ws, cpos.x, textW, viewW, w->editFocused);
+                    w->editScrollX = ws > 0.0f ? (scrollPx / ws) : 0.0f;
+                } else {
+                    w->editScrollX = 0.0f;
+                }
+                const float clipX0 = std::min(x0 + pad, x1);
+                const float clipX1 = std::max(clipX0, x1 - w->textInsetRight * s);
+                const float lineOriginX = placeTextLine(x0 + pad, 0.0f, 0.0f, 0.0f, "LEFT") - scrollPx;
                 const float originY = textOriginY(ty);
+                dl->PushClipRect(ImVec2(clipX0, y0), ImVec2(clipX1, y1), true);
                 if (w->editFocused && w->hasSelection && w->selEnd > w->selStart) {
                     const float selLineStep = multi ? linePx : static_cast<float>(pixelHeight);
                     const auto spans = editSelectionSpans(editLayout, w->selStart, w->selEnd);
@@ -2936,7 +2951,7 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                         float sc[4] = {w->shadowColor[0], w->shadowColor[1],
                                        w->shadowColor[2], w->shadowColor[3]};
                         drawMarkupText(dl, font, size, ws,
-                                       ImVec2(x0 + pad + std::round(w->shadowX * ws),
+                                       ImVec2(x0 + pad - scrollPx + std::round(w->shadowX * ws),
                                               ty + std::round(-w->shadowY * ws)),
                                        packColor(sc, w->effAlpha * w->shadowColor[3]),
                                        w->effAlpha, drawnText, wrapW, false,
@@ -2949,18 +2964,17 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                     // raw that is what the player sees themselves typing.
                     // Links are only clickable at all as of this branch, so
                     // this became reachable at the same moment.
-                    drawMarkupText(dl, font, size, ws, ImVec2(x0 + pad, ty), col,
+                    drawMarkupText(dl, font, size, ws, ImVec2(x0 + pad - scrollPx, ty), col,
                                    w->effAlpha, drawnText, wrapW, false, nullptr, false,
                                    nullptr, 0, -1.0f, 0.0f, 0.0f, linePx);
                 }
                 if (w->editFocused) {
-                    const size_t clampedPos = std::min(w->cursorPos, w->editText.size());
-                    const EditCaretPos cpos = locateEditCaret(editLayout, clampedPos);
                     const float caretY = multi ? (ty + static_cast<float>(cpos.lineIdx) * linePx) : ty;
                     const float cx = lineOriginX + cpos.x;
                     dl->AddLine(ImVec2(cx, textOriginY(caretY)),
                                 ImVec2(cx, textOriginY(caretY) + static_cast<float>(pixelHeight)), col);
                 }
+                dl->PopClipRect();
             }
             continue;
         }

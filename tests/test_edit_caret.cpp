@@ -158,3 +158,34 @@ TEST_CASE("Password EditBox masks UTF-8 codepoints to asterisks while preserving
     CHECK(lines[0].cells[3].rawEnd == 7);
     CHECK(wowee::ui::hitTestEditCaret(lines, 26.0f, 0.0f, 12.0f, false) == 4);
 }
+
+TEST_CASE("Single-line EditBox horizontal scroll keeps caret inside view and resets on blur",
+          "[edit_caret][scroll]") {
+    using wowee::ui::computeEditScrollX;
+
+    // Text fits inside 100px view -> scroll stays 0.
+    CHECK(computeEditScrollX(0.0f, 80.0f, 80.0f, 100.0f, true) == Catch::Approx(0.0f));
+
+    // Typing past right edge (text 250px, caret 250px, view 100px, margin 2px):
+    // scroll advances to 250 + 2 - 100 = 152px so caret sits inside [0, 100].
+    float scroll = computeEditScrollX(0.0f, 250.0f, 250.0f, 100.0f, true, 2.0f);
+    CHECK(scroll == Catch::Approx(152.0f));
+
+    // Moving caret inside the visible window [152, 250] does not jump scroll.
+    scroll = computeEditScrollX(scroll, 200.0f, 250.0f, 100.0f, true, 2.0f);
+    CHECK(scroll == Catch::Approx(152.0f));
+
+    // Moving caret left of scroll pulls scroll left to reveal the caret.
+    scroll = computeEditScrollX(scroll, 40.0f, 250.0f, 100.0f, true, 2.0f);
+    CHECK(scroll == Catch::Approx(40.0f));
+
+    // Home (caret 0) scrolls all the way back to 0.
+    scroll = computeEditScrollX(scroll, 0.0f, 250.0f, 100.0f, true, 2.0f);
+    CHECK(scroll == Catch::Approx(0.0f));
+
+    // Deleting text so it fits again clamps scroll back to 0.
+    CHECK(computeEditScrollX(152.0f, 60.0f, 60.0f, 100.0f, true, 2.0f) == Catch::Approx(0.0f));
+
+    // Losing focus resets horizontal scroll to 0 so the start of the text shows.
+    CHECK(computeEditScrollX(152.0f, 250.0f, 250.0f, 100.0f, false, 2.0f) == Catch::Approx(0.0f));
+}
