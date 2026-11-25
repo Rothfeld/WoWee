@@ -115,6 +115,14 @@ public:
     // Called from GameHandler::update() each frame
     void updateAutoAttack(float deltaTime);
 
+    // M2 animation keyframe combat audio triggers (delegating unit equipment,
+    // underwater state, and 3D render coordinates to CombatSoundManager).
+    bool onUnitSwingEvent(uint64_t unitGuid, bool offHand = false);
+    bool onUnitHitEvent(uint64_t attackerGuid);
+    bool onUnitBowPullEvent(uint64_t unitGuid);
+    bool onUnitBowReleaseEvent(uint64_t unitGuid);
+    bool onUnitSheatheEvent(uint64_t unitGuid, bool offHandSlot, bool unsheathe);
+
     // --- Targeting ---
     /// False for creature corpses that are neither lootable nor skinnable -
     /// those cannot be selected. Living units, players and non-units are always selectable.
@@ -240,6 +248,13 @@ private:
     void autoTargetAttacker(uint64_t attackerGuid);
     void announceLeaveCombat();
     void stopMeleeAutoAttackOnly();
+    void bindCombatAudioCallbacks();
+    void enqueueMeleeCombatAudio(const AttackerStateUpdateData& data,
+                                 bool isOffHandSwing,
+                                 bool isRangedAutoShot,
+                                 bool lethalHit);
+    void enqueuePhysicalSpellCombatAudio(const SpellDamageLogData& data,
+                                         bool lethalHit);
 
     GameHandler& owner_;
 

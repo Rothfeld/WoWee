@@ -107,6 +107,7 @@
     "ModelScale": 4,
     "FootstepShakeSize": 11,
     "DeathThudShakeSize": 12,
+    "SoundDataID": 13,
     "CollisionHeight": 15,
     "MountHeight": 16,
     "GeoBoxMinX": 17,
@@ -115,6 +116,16 @@
     "GeoBoxMaxX": 20,
     "GeoBoxMaxY": 21,
     "GeoBoxMaxZ": 22
+  },
+  "CreatureSoundData": {
+    "ID": 0,
+    "SoundExertionID": 1,
+    "SoundExertionCriticalID": 2,
+    "SoundInjuryID": 3,
+    "SoundInjuryCriticalID": 4,
+    "SoundInjuryCrushingBlowID": 5,
+    "SoundDeathID": 6,
+    "CreatureImpactType": 25
   },
   "Emotes": {
     "AnimID": 2,
@@ -277,7 +288,55 @@
     "ClassID": 0,
     "DisplayName": 10,
     "SubClassID": 1,
-    "VerboseName": 27
+    "VerboseName": 27,
+    "WeaponSwingSize": 9
+  },
+  "Material": {
+    "Flags": 1,
+    "FoleySoundID": 2,
+    "ID": 0,
+    "SheatheSoundID": 3,
+    "UnsheatheSoundID": 4
+  },
+  "SheatheSoundLookups": {
+    "ID": 0,
+    "IsNotShield": 4,
+    "ItemClass": 1,
+    "ItemEnvTypes": 3,
+    "ItemSubClass": 2,
+    "SheatheSoundID": 5,
+    "UnsheatheSoundID": 6
+  },
+  "WeaponImpactSounds": {
+    "Chain": 4,
+    "CritChain": 14,
+    "CritEthereal": 22,
+    "CritFlesh": 13,
+    "CritParryMetalMetal": 18,
+    "CritParryMetalWood": 19,
+    "CritPlate": 15,
+    "CritShieldMetal": 16,
+    "CritShieldWood": 17,
+    "CritStone": 21,
+    "CritWood": 20,
+    "Ethereal": 12,
+    "Flesh": 3,
+    "ID": 0,
+    "ParryMetalMetal": 8,
+    "ParryMetalWood": 9,
+    "ParrySoundType": 2,
+    "Plate": 5,
+    "ShieldMetal": 6,
+    "ShieldWood": 7,
+    "Stone": 11,
+    "WeaponSubClass": 1,
+    "Wood": 10
+  },
+  "WeaponSwingSounds2": {
+    "Crit": 2,
+    "ID": 0,
+    "SoundID": 3,
+    "WeaponSize": 1
   },
   "ItemSubClassMask": {
     "ClassID": 0,

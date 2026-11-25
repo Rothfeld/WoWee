@@ -20,6 +20,7 @@
 #include "audio/combat_sound_manager.hpp"
 #include "audio/activity_sound_manager.hpp"
 #include "audio/npc_voice_manager.hpp"
+#include "audio/sound_entries.hpp"
 #include "core/application.hpp"
 #include "core/coordinates.hpp"
 #include "core/logger.hpp"
@@ -836,6 +837,7 @@ void CombatHandler::handleAttackerStateUpdate(network::Packet& packet) {
 
     constexpr uint32_t HITINFO_LEFTSWING = 0x4;  // CMaNGOS Unit.h HitInfo
     const bool isOffHandSwing = (data.hitInfo & HITINFO_LEFTSWING) != 0;
+    bool suppressedForRangedShot = false;
 
     if (isPlayerAttacker) {
         autoAttackOutOfRange_ = false;
@@ -847,6 +849,7 @@ void CombatHandler::handleAttackerStateUpdate(network::Packet& packet) {
         // marks an on-next-swing spell result (Heroic Strike, Cleave, Maul,
         // Raptor Strike) whose animation already comes from SMSG_SPELL_GO.
         if (owner_.consumeSuppressMeleeSwingAnim()) {
+            suppressedForRangedShot = true;
             LOG_DEBUG("Suppressed melee swing anim - ranged shot already triggered");
         } else if (!data.isNoAction()) {
             if (owner_.meleeSwingCallbackRef()) owner_.meleeSwingCallbackRef()(0, isOffHandSwing);
@@ -903,17 +906,10 @@ void CombatHandler::handleAttackerStateUpdate(network::Packet& packet) {
             reaction = data.isCrit() ? HR::CRIT_WOUND : HR::WOUND;
         if (reaction) owner_.hitReactionCallbackRef()(data.attackerGuid, data.targetGuid, *reaction);
     }
-    if (!isPlayerAttacker) {
-        auto entity = owner_.getEntityManager().getEntity(data.attackerGuid);
-        auto* audioCoordinator = owner_.services().audioCoordinator;
-        auto* voiceManager = audioCoordinator ? audioCoordinator->getNpcVoiceManager() : nullptr;
-        if (entity && entity->getType() == ObjectType::UNIT && voiceManager) {
-            auto unit = std::static_pointer_cast<Unit>(entity);
-            const glm::vec3 canonical(unit->getLatestX(), unit->getLatestY(), unit->getLatestZ());
-            voiceManager->playCombatAttack(
-                data.attackerGuid, unit->getDisplayId(), core::coords::canonicalToRender(canonical));
-        }
-    }
+
+    // Queue 3D/local combat audio for ALL visible units (local player, remote
+    // players, pets, and NPC-vs-NPC combat) before the local-UI early return.
+    enqueueMeleeCombatAudio(data, isOffHandSwing, suppressedForRangedShot, lethalHit);
 
     // School of the swing (the first sub-damage; a swing has one), and what
     // was taken off it.
@@ -957,66 +953,12 @@ void CombatHandler::handleAttackerStateUpdate(network::Packet& packet) {
     // PetMeleeDamage): the original showed the imp's hits on its target.
     const bool isPetAttacker = owner_.getPetGuid() != 0 && data.attackerGuid == owner_.getPetGuid();
 
-    // Local combat UI, targeting and non-positional player audio remain local.
+    // Local combat UI and auto-targeting remain local.
     if (!isPlayerAttacker && !isPlayerTarget && !isPetAttacker) return;
 
     if (isPlayerTarget && data.attackerGuid != 0) {
         hostileAttackers_.insert(data.attackerGuid);
         autoTargetAttacker(data.attackerGuid);
-    }
-
-    // Play combat sounds via CombatSoundManager + character vocalizations
-    auto* ac = isPlayerAttacker || isPlayerTarget ? owner_.services().audioCoordinator : nullptr;
-    if (ac) {
-        if (auto* csm = ac->getCombatSoundManager()) {
-            auto weaponSize = audio::CombatSoundManager::WeaponSize::SMALL;
-            uint32_t weaponSubClass = 13u; // Unarmed / Fist default
-            bool metalWeapon = false;
-            bool twoHanded = false;
-            if (isPlayerAttacker) {
-                const auto& mh = owner_.getInventory().getEquipSlot(EquipSlot::MAIN_HAND);
-                if (!mh.empty()) {
-                    if (const auto* info = owner_.getItemInfo(mh.item.itemId); info && info->valid) {
-                        weaponSubClass = info->subClass;
-                        metalWeapon = (info->material == 1);
-                        twoHanded = (info->inventoryType == 17);
-                        if (weaponSubClass == 6 || weaponSubClass == 10) {
-                            weaponSize = audio::CombatSoundManager::WeaponSize::LARGE;
-                        } else if (twoHanded || weaponSubClass == 1 || weaponSubClass == 5 || weaponSubClass == 8) {
-                            weaponSize = audio::CombatSoundManager::WeaponSize::MEDIUM;
-                        }
-                    }
-                }
-            }
-            if (data.isMiss() || data.victimState == VICTIMSTATE_EVADES) {
-                csm->playWeaponMiss(twoHanded);
-            } else if (data.victimState == VICTIMSTATE_DODGE) {
-                csm->playWeaponSwing(weaponSize, false);
-            } else if (data.victimState == VICTIMSTATE_PARRY) {
-                csm->playWeaponSwing(weaponSize, false);
-                csm->playWeaponImpactBySubclass(
-                    weaponSubClass, metalWeapon, audio::CombatSoundManager::ImpactType::METAL_WEAPON, false);
-            } else if (data.victimState == VICTIMSTATE_BLOCKS || data.blocked > 0) {
-                csm->playWeaponSwing(weaponSize, data.isCrit());
-                csm->playWeaponImpactBySubclass(
-                    weaponSubClass, metalWeapon, audio::CombatSoundManager::ImpactType::SHIELD, data.isCrit());
-            } else {
-                csm->playWeaponSwing(weaponSize, data.isCrit());
-                csm->playWeaponImpactBySubclass(
-                    weaponSubClass, metalWeapon, audio::CombatSoundManager::ImpactType::FLESH, data.isCrit());
-            }
-        }
-        // Character vocalizations
-        if (auto* asm_ = ac->getActivitySoundManager()) {
-            if (isPlayerAttacker && !data.isMiss() && data.victimState != VICTIMSTATE_DODGE &&
-                data.victimState != VICTIMSTATE_PARRY) {
-                asm_->playAttackGrunt();
-            }
-            if (isPlayerTarget && !lethalHit && !data.isMiss() && data.victimState != VICTIMSTATE_DODGE &&
-                data.victimState != VICTIMSTATE_PARRY) {
-                asm_->playWound(data.isCrit());
-            }
-        }
     }
 
     // An evade comes with the miss flag set as well, so it is asked first.
@@ -1125,19 +1067,15 @@ void CombatHandler::handleSpellDamageLog(network::Packet& packet) {
                                    : data.resisted > 0 ? "RESIST" : "",
                    static_cast<int32_t>(data.damage), data.schoolMask);
 
+    // Queue 3D/local physical/ranged weapon impacts & victim wound vocals for all visible units.
+    enqueuePhysicalSpellCombatAudio(data, lethalHit);
+
     const bool isPetSource = owner_.getPetGuid() != 0 && data.attackerGuid == owner_.getPetGuid();
     if (!isPlayerSource && !isPlayerTarget && !isPetSource) return;  // Not our combat
 
     if (isPlayerTarget && data.attackerGuid != 0) {
         hostileAttackers_.insert(data.attackerGuid);
         autoTargetAttacker(data.attackerGuid);
-    }
-    if (isPlayerTarget && !lethalHit && data.damage > 0) {
-        if (auto* ac = owner_.services().audioCoordinator) {
-            if (auto* asm_ = ac->getActivitySoundManager()) {
-                asm_->playWound(data.isCrit);
-            }
-        }
     }
 
     const auto line = [&](CombatTextEntry::Type type, uint32_t amount, bool reduction = false) {
@@ -1197,6 +1135,13 @@ void CombatHandler::handleSetForcedReactions(network::Packet& packet) {
 // ============================================================
 
 void CombatHandler::updateAutoAttack(float deltaTime) {
+    if (auto* ac = owner_.services().audioCoordinator) {
+        if (auto* csm = ac->getCombatSoundManager()) {
+            bindCombatAudioCallbacks();
+            csm->update(deltaTime);
+        }
+    }
+
     // Decrement range warn cooldown
     if (autoAttackRangeWarnCooldown_ > 0.0f) {
         autoAttackRangeWarnCooldown_ = std::max(0.0f, autoAttackRangeWarnCooldown_ - deltaTime);
@@ -1268,6 +1213,11 @@ void CombatHandler::updateAutoAttack(float deltaTime) {
 // ============================================================
 
 void CombatHandler::resetAllCombatState() {
+    if (auto* ac = owner_.services().audioCoordinator) {
+        if (auto* csm = ac->getCombatSoundManager()) {
+            csm->clearPendingCombatEvents();
+        }
+    }
     hostileAttackers_.clear();
     combatText_.clear();
     autoAttacking_ = false;
@@ -2408,6 +2358,484 @@ void CombatHandler::handleXpGain(network::Packet& packet) {
         msg += " (+" + std::to_string(data.groupBonus) + " group bonus)";
     }
     owner_.addLocalChatLine(ChatType::COMBAT_XP_GAIN, msg);
+}
+
+namespace {
+
+constexpr float kCombatAudioChestHeightOffset = 2.0f;
+constexpr float kMaxRemoteCombatAudioDistSq = 100.0f * 100.0f;
+
+struct UnitCombatPositionInfo {
+    bool known = false;
+    glm::vec3 canonicalPos{0.0f};
+    glm::vec3 renderPos{0.0f};
+    std::shared_ptr<Entity> entity;
+    Unit* unit = nullptr;
+    bool isLocal = false;
+    bool isPlayer = false;
+    uint32_t displayId = 0;
+};
+
+UnitCombatPositionInfo resolveUnitCombatPosition(GameHandler& gh, uint64_t guid) {
+    UnitCombatPositionInfo out;
+    if (guid == 0u) return out;
+    out.isLocal = (guid == gh.getPlayerGuid());
+    out.entity = gh.getEntityManager().getEntity(guid);
+    if (out.entity && out.entity->isUnit()) {
+        out.unit = static_cast<Unit*>(out.entity.get());
+        out.isPlayer = (out.entity->getType() == ObjectType::PLAYER) || out.isLocal;
+        out.displayId = out.unit->getDisplayId();
+        out.canonicalPos = glm::vec3(
+            out.entity->getLatestX(), out.entity->getLatestY(), out.entity->getLatestZ());
+        out.known = true;
+    } else if (out.isLocal) {
+        const auto& mi = gh.getMovementInfo();
+        out.canonicalPos = glm::vec3(mi.x, mi.y, mi.z);
+        out.isPlayer = true;
+        out.known = true;
+    }
+    if (out.known) {
+        out.renderPos = core::coords::canonicalToRender(out.canonicalPos) +
+                        glm::vec3(0.0f, 0.0f, kCombatAudioChestHeightOffset);
+    }
+    return out;
+}
+
+bool withinCombatAudioRange(GameHandler& gh, const UnitCombatPositionInfo& a,
+                            const UnitCombatPositionInfo& b) {
+    if (a.isLocal || b.isLocal) return true;
+    const auto& mi = gh.getMovementInfo();
+    const glm::vec3 listenerCanonical(mi.x, mi.y, mi.z);
+    if (a.known) {
+        const glm::vec3 da = a.canonicalPos - listenerCanonical;
+        if (glm::dot(da, da) <= kMaxRemoteCombatAudioDistSq) return true;
+    }
+    if (b.known) {
+        const glm::vec3 db = b.canonicalPos - listenerCanonical;
+        if (glm::dot(db, db) <= kMaxRemoteCombatAudioDistSq) return true;
+    }
+    return false;
+}
+
+audio::CombatSoundManager::ResolvedWeaponAudio resolveUnitWeaponAudio(
+        GameHandler& gh, const audio::CombatSoundManager& csm,
+        const UnitCombatPositionInfo& uinfo, bool offHand, bool ranged) {
+    using RWA = audio::CombatSoundManager::ResolvedWeaponAudio;
+    if (uinfo.isLocal) {
+        const EquipSlot slot = ranged ? EquipSlot::RANGED
+                             : (offHand ? EquipSlot::OFF_HAND : EquipSlot::MAIN_HAND);
+        const auto& es = gh.getInventory().getEquipSlot(slot);
+        if (es.empty()) return RWA{};
+        if (const auto* q = gh.getItemInfo(es.item.itemId); q && q->valid) {
+            if (q->itemClass == 2u) {
+                return RWA{q->subClass, csm.isMetalMaterial(q->material), q->material};
+            }
+            return RWA{};
+        }
+        if (es.item.itemClass == 2u) {
+            auto guessed = csm.resolveWeaponFromDisplayInfo(es.item.displayInfoId, es.item.inventoryType);
+            guessed.subClass = es.item.subClass;
+            return guessed;
+        }
+        if (es.item.itemClass == 0u) {
+            if (es.item.displayInfoId != 0u || es.item.inventoryType != 0u) {
+                return csm.resolveWeaponFromDisplayInfo(es.item.displayInfoId, es.item.inventoryType);
+            }
+            return csm.resolveWeaponFromItemId(es.item.itemId);
+        }
+        return RWA{};
+    }
+
+    if (uinfo.isPlayer) {
+        std::array<uint32_t, 19> dispIds{};
+        std::array<uint8_t, 19> invTypes{};
+        if (gh.getOtherPlayerEquipment(uinfo.entity ? uinfo.entity->getGuid() : 0u, dispIds, invTypes)) {
+            const size_t idx = ranged ? 17u : (offHand ? 16u : 15u);
+            if (dispIds[idx] != 0u) {
+                return csm.resolveWeaponFromDisplayInfo(dispIds[idx], invTypes[idx]);
+            }
+        }
+        return RWA{};
+    }
+
+    if (uinfo.unit) {
+        const uint16_t slots = fieldIndex(UF::UNIT_VIRTUAL_ITEM_SLOT_ID);
+        const uint16_t info = fieldIndex(UF::UNIT_VIRTUAL_ITEM_INFO);
+        const uint16_t slotIdx = ranged ? 2u : (offHand ? 1u : 0u);
+        if (slots != 0xFFFF && uinfo.unit->getField(static_cast<uint16_t>(slots + slotIdx)) != 0u) {
+            if (info != 0xFFFF) {
+                // TBC / Classic UNIT_VIRTUAL_ITEM_INFO:
+                // byte 0 = classId, byte 1 = subClassId, byte 2 = soundOverrideSubClassId, byte 3 = materialId
+                const uint32_t info0 = uinfo.unit->getField(static_cast<uint16_t>(info + slotIdx * 2u));
+                const uint8_t classId = static_cast<uint8_t>(info0 & 0xFFu);
+                const uint8_t subClassId = static_cast<uint8_t>((info0 >> 8u) & 0xFFu);
+                const uint8_t soundOverride = static_cast<uint8_t>((info0 >> 16u) & 0xFFu);
+                const int32_t matId = static_cast<int32_t>((info0 >> 24u) & 0xFFu);
+                if (classId == 2u) {
+                    const uint32_t effectiveSub =
+                        (soundOverride != 0xFFu && soundOverride <= 20u) ? soundOverride : subClassId;
+                    return RWA{effectiveSub, csm.isMetalMaterial(matId), matId};
+                }
+            } else {
+                const uint32_t itemEntry = uinfo.unit->getField(static_cast<uint16_t>(slots + slotIdx));
+                if (const auto* q = gh.getItemInfo(itemEntry); q && q->valid && q->itemClass == 2u) {
+                    return RWA{q->subClass, csm.isMetalMaterial(q->material), q->material};
+                }
+            }
+        }
+    }
+    return RWA{};
+}
+
+void populateDefenderSurfaceAudio(
+        GameHandler& gh, const audio::CombatSoundManager& csm,
+        const UnitCombatPositionInfo& vinfo,
+        audio::CombatSoundManager::QueuedCombatEvent& ev) {
+    using IT = audio::CombatSoundManager::ImpactType;
+    ev.victimImpactType = IT::FLESH;
+    ev.defenderParryWeaponIsMetal = true;
+    ev.defenderShieldIsMetal = true;
+
+    if (vinfo.isLocal) {
+        const auto& chest = gh.getInventory().getEquipSlot(EquipSlot::CHEST);
+        if (!chest.empty()) {
+            if (const auto* q = gh.getItemInfo(chest.item.itemId); q && q->valid) {
+                ev.victimImpactType = csm.resolveArmorMaterialImpactType(q->material, q->subClass);
+            } else {
+                ev.victimImpactType = csm.resolveArmorMaterialImpactType(0, chest.item.subClass);
+            }
+        }
+        const auto& mh = gh.getInventory().getEquipSlot(EquipSlot::MAIN_HAND);
+        if (!mh.empty()) {
+            if (const auto* q = gh.getItemInfo(mh.item.itemId); q && q->valid) {
+                ev.defenderParryWeaponIsMetal = csm.isMetalMaterial(q->material);
+            }
+        }
+        const auto& oh = gh.getInventory().getEquipSlot(EquipSlot::OFF_HAND);
+        if (!oh.empty()) {
+            if (const auto* q = gh.getItemInfo(oh.item.itemId); q && q->valid) {
+                if (q->itemClass == 4u) {
+                    ev.defenderShieldIsMetal = csm.isMetalMaterial(q->material);
+                }
+            }
+        }
+        return;
+    }
+
+    if (vinfo.isPlayer) {
+        std::array<uint32_t, 19> dispIds{};
+        std::array<uint8_t, 19> invTypes{};
+        if (gh.getOtherPlayerEquipment(vinfo.entity ? vinfo.entity->getGuid() : 0u, dispIds, invTypes)) {
+            ev.victimImpactType = csm.resolveChestDisplayImpactType(dispIds[4]);
+            if (dispIds[15] != 0u) {
+                ev.defenderParryWeaponIsMetal =
+                    csm.resolveWeaponFromDisplayInfo(dispIds[15], invTypes[15]).isMetal;
+            }
+            if (dispIds[16] != 0u) {
+                ev.defenderShieldIsMetal = csm.resolveShieldDisplayIsMetal(dispIds[16]);
+            }
+        }
+        return;
+    }
+
+    if (vinfo.unit) {
+        ev.victimImpactType = csm.getCreatureImpactTypeForDisplay(vinfo.displayId);
+        const uint16_t slots = fieldIndex(UF::UNIT_VIRTUAL_ITEM_SLOT_ID);
+        const uint16_t info = fieldIndex(UF::UNIT_VIRTUAL_ITEM_INFO);
+        if (slots != 0xFFFF && info != 0xFFFF) {
+            if (vinfo.unit->getField(slots) != 0u) {
+                const uint32_t info0 = vinfo.unit->getField(info);
+                if ((info0 & 0xFFu) == 2u) {
+                    ev.defenderParryWeaponIsMetal =
+                        csm.isMetalMaterial(static_cast<int32_t>((info0 >> 24u) & 0xFFu));
+                }
+            }
+            if (vinfo.unit->getField(static_cast<uint16_t>(slots + 1u)) != 0u) {
+                const uint32_t info0 = vinfo.unit->getField(static_cast<uint16_t>(info + 2u));
+                if ((info0 & 0xFFu) == 4u) {
+                    ev.defenderShieldIsMetal =
+                        csm.isMetalMaterial(static_cast<int32_t>((info0 >> 24u) & 0xFFu));
+                }
+            }
+        }
+    }
+}
+
+} // namespace
+
+void CombatHandler::bindCombatAudioCallbacks() {
+    auto* ac = owner_.services().audioCoordinator;
+    auto* csm = ac ? ac->getCombatSoundManager() : nullptr;
+    if (!csm) return;
+
+    if (!csm->hasAttackerExertionCallback()) {
+        csm->setAttackerExertionCallback(
+            [this](uint64_t attackerGuid, uint32_t attackerDisplayId,
+                   const glm::vec3& renderPos, bool attackerIsPlayer,
+                   bool attackerIsLocal, bool /*isCrit*/) {
+                auto* coord = owner_.services().audioCoordinator;
+                if (!coord || coord->getSfxVolumeScale() <= 0.0f) return;
+                if (attackerIsLocal) {
+                    if (auto* asm_ = coord->getActivitySoundManager()) {
+                        asm_->playAttackGrunt();
+                    }
+                } else if (!attackerIsPlayer && attackerDisplayId != 0u) {
+                    if (auto* nvm = coord->getNpcVoiceManager()) {
+                        nvm->playCombatAttack(attackerGuid, attackerDisplayId, renderPos);
+                    }
+                }
+            });
+    }
+
+    if (!csm->hasVictimWoundCallback()) {
+        csm->setVictimWoundCallback(
+            [this](uint64_t victimGuid, uint32_t victimDisplayId,
+                   const glm::vec3& renderPos, bool victimIsPlayer,
+                   bool victimIsLocal, audio::CombatSoundManager::CombatOutcome outcome) {
+                auto* coord = owner_.services().audioCoordinator;
+                auto* soundMgr = coord ? coord->getCombatSoundManager() : nullptr;
+                if (!coord || !soundMgr || coord->getSfxVolumeScale() <= 0.0f) return;
+
+                if (outcome == audio::CombatSoundManager::CombatOutcome::CRUSHING &&
+                    victimDisplayId != 0u) {
+                    if (soundMgr->playCreatureCrushingWound(victimDisplayId, renderPos, victimIsLocal)) {
+                        return;
+                    }
+                }
+
+                const bool isCrit = (outcome == audio::CombatSoundManager::CombatOutcome::CRIT) ||
+                                    (outcome == audio::CombatSoundManager::CombatOutcome::CRUSHING);
+                if (victimIsLocal) {
+                    if (auto* asm_ = coord->getActivitySoundManager()) {
+                        asm_->playWound(isCrit);
+                    }
+                } else if (!victimIsPlayer && victimDisplayId != 0u) {
+                    if (auto* nvm = coord->getNpcVoiceManager()) {
+                        nvm->playWound(victimGuid, victimDisplayId, isCrit, renderPos);
+                    }
+                } else if (victimIsPlayer && victimDisplayId != 0u && owner_.services().assetManager) {
+                    const uint32_t sid = soundMgr->getCreatureWoundSoundId(victimDisplayId, isCrit);
+                    if (sid != 0u) {
+                        audio::SoundEntryTable::instance().play3D(
+                            owner_.services().assetManager, sid, renderPos, coord->getSfxVolumeScale());
+                    }
+                }
+            });
+    }
+}
+
+void CombatHandler::enqueueMeleeCombatAudio(
+        const AttackerStateUpdateData& data, bool isOffHandSwing,
+        bool isRangedAutoShot, bool lethalHit) {
+    auto* ac = owner_.services().audioCoordinator;
+    auto* csm = ac ? ac->getCombatSoundManager() : nullptr;
+    if (!csm || ac->getSfxVolumeScale() <= 0.0f) return;
+    bindCombatAudioCallbacks();
+
+    const UnitCombatPositionInfo atk = resolveUnitCombatPosition(owner_, data.attackerGuid);
+    const UnitCombatPositionInfo vic = resolveUnitCombatPosition(owner_, data.targetGuid);
+    if (!atk.known && !vic.known) return;
+    if (!withinCombatAudioRange(owner_, atk, vic)) return;
+
+    audio::CombatSoundManager::QueuedCombatEvent ev;
+    ev.attackerGuid = data.attackerGuid;
+    ev.victimGuid = data.targetGuid;
+    ev.attackerRenderPos = atk.known ? atk.renderPos : vic.renderPos;
+    ev.victimRenderPos = vic.known ? vic.renderPos : atk.renderPos;
+    ev.attackerIsLocal = atk.isLocal;
+    ev.victimIsLocal = vic.isLocal;
+    ev.attackerIsPlayer = atk.isPlayer;
+    ev.victimIsPlayer = vic.isPlayer;
+    ev.attackerUnderwater = (atk.isLocal && owner_.isSwimming()) ||
+                            csm->isUnitUnderwater(data.attackerGuid);
+    ev.offHand = isOffHandSwing;
+    ev.isRanged = isRangedAutoShot;
+    ev.suppressVictimWound = lethalHit || data.isNoAction();
+    ev.attackerDisplayId = atk.displayId;
+    ev.victimDisplayId = vic.displayId;
+
+    const auto weap = resolveUnitWeaponAudio(owner_, *csm, atk, isOffHandSwing, isRangedAutoShot);
+    ev.attackerWeaponSubClass = weap.subClass;
+    ev.attackerWeaponIsMetal = weap.isMetal;
+    ev.attackerWeaponMaterial = weap.material;
+
+    populateDefenderSurfaceAudio(owner_, *csm, vic, ev);
+    ev.outcome = audio::CombatSoundManager::classifyMeleeOutcome(
+        data.isMiss(), data.isCrit(), data.isCrushing(), data.isGlancing(),
+        data.victimState, data.totalDamage, data.blocked);
+
+    csm->queueCombatEvent(std::move(ev));
+}
+
+void CombatHandler::enqueuePhysicalSpellCombatAudio(
+        const SpellDamageLogData& data, bool lethalHit) {
+    auto* ac = owner_.services().audioCoordinator;
+    auto* csm = ac ? ac->getCombatSoundManager() : nullptr;
+    if (!csm || ac->getSfxVolumeScale() <= 0.0f) return;
+    bindCombatAudioCallbacks();
+
+    const UnitCombatPositionInfo atk = resolveUnitCombatPosition(owner_, data.attackerGuid);
+    const UnitCombatPositionInfo vic = resolveUnitCombatPosition(owner_, data.targetGuid);
+    if (!atk.known && !vic.known) return;
+    if (!withinCombatAudioRange(owner_, atk, vic)) return;
+
+    // Non-physical spells get their spell impact sound from SpellVisualKit; only
+    // trigger victim wound vocal here when damage landed on a non-lethal hit.
+    if (data.schoolMask != 1u) {
+        if (!lethalHit && data.damage > 0u && vic.known) {
+            if (vic.isLocal) {
+                if (auto* asm_ = ac->getActivitySoundManager()) {
+                    asm_->playWound(data.isCrit);
+                }
+            } else if (!vic.isPlayer && vic.displayId != 0u) {
+                if (auto* nvm = ac->getNpcVoiceManager()) {
+                    nvm->playWound(data.targetGuid, vic.displayId, data.isCrit, vic.renderPos);
+                }
+            } else if (vic.isPlayer && vic.displayId != 0u && owner_.services().assetManager) {
+                const uint32_t sid = csm->getCreatureWoundSoundId(vic.displayId, data.isCrit);
+                if (sid != 0u) {
+                    audio::SoundEntryTable::instance().play3D(
+                        owner_.services().assetManager, sid, vic.renderPos, ac->getSfxVolumeScale());
+                }
+            }
+        }
+        return;
+    }
+
+    if (data.damage == 0u && data.blocked == 0u) return;
+
+    bool isRanged = (data.spellId == 75u || data.spellId == 3018u || data.spellId == 2764u);
+    if (!isRanged && atk.unit) {
+        const uint16_t b2 = fieldIndex(UF::UNIT_FIELD_BYTES_2);
+        if (b2 != 0xFFFF && (atk.unit->getField(b2) & 0xFFu) == 2u) {
+            isRanged = true;
+        }
+    }
+
+    audio::CombatSoundManager::QueuedCombatEvent ev;
+    ev.attackerGuid = data.attackerGuid;
+    ev.victimGuid = data.targetGuid;
+    ev.attackerRenderPos = atk.known ? atk.renderPos : vic.renderPos;
+    ev.victimRenderPos = vic.known ? vic.renderPos : atk.renderPos;
+    ev.attackerIsLocal = atk.isLocal;
+    ev.victimIsLocal = vic.isLocal;
+    ev.attackerIsPlayer = atk.isPlayer;
+    ev.victimIsPlayer = vic.isPlayer;
+    ev.attackerUnderwater = (atk.isLocal && owner_.isSwimming()) ||
+                            csm->isUnitUnderwater(data.attackerGuid);
+    ev.isRanged = isRanged;
+    ev.suppressVictimWound = lethalHit;
+    ev.attackerDisplayId = atk.displayId;
+    ev.victimDisplayId = vic.displayId;
+
+    const auto weap = resolveUnitWeaponAudio(owner_, *csm, atk, /*offHand=*/false, isRanged);
+    ev.attackerWeaponSubClass = weap.subClass;
+    ev.attackerWeaponIsMetal = weap.isMetal;
+    ev.attackerWeaponMaterial = weap.material;
+
+    populateDefenderSurfaceAudio(owner_, *csm, vic, ev);
+    ev.outcome = (data.damage == 0u && data.blocked > 0u)
+        ? audio::CombatSoundManager::CombatOutcome::BLOCK
+        : (data.isCrit ? audio::CombatSoundManager::CombatOutcome::CRIT
+                       : audio::CombatSoundManager::CombatOutcome::HIT);
+
+    csm->queueCombatEvent(std::move(ev));
+}
+
+bool CombatHandler::onUnitSwingEvent(uint64_t unitGuid, bool offHand) {
+    auto* ac = owner_.services().audioCoordinator;
+    auto* csm = ac ? ac->getCombatSoundManager() : nullptr;
+    if (!csm || ac->getSfxVolumeScale() <= 0.0f) return false;
+    bindCombatAudioCallbacks();
+
+    const UnitCombatPositionInfo uinfo = resolveUnitCombatPosition(owner_, unitGuid);
+    if (!uinfo.known) return false;
+    const auto weap = resolveUnitWeaponAudio(owner_, *csm, uinfo, offHand, /*ranged=*/false);
+    const bool underwater = (uinfo.isLocal && owner_.isSwimming()) || csm->isUnitUnderwater(unitGuid);
+    return csm->onUnitSwingEvent(unitGuid, uinfo.renderPos, uinfo.isLocal, offHand, underwater, weap.subClass);
+}
+
+bool CombatHandler::onUnitHitEvent(uint64_t attackerGuid) {
+    auto* ac = owner_.services().audioCoordinator;
+    auto* csm = ac ? ac->getCombatSoundManager() : nullptr;
+    if (!csm || ac->getSfxVolumeScale() <= 0.0f) return false;
+    bindCombatAudioCallbacks();
+
+    const UnitCombatPositionInfo uinfo = resolveUnitCombatPosition(owner_, attackerGuid);
+    return csm->onUnitHitEvent(attackerGuid, uinfo.renderPos, uinfo.isLocal);
+}
+
+bool CombatHandler::onUnitBowPullEvent(uint64_t unitGuid) {
+    auto* ac = owner_.services().audioCoordinator;
+    auto* csm = ac ? ac->getCombatSoundManager() : nullptr;
+    if (!csm || ac->getSfxVolumeScale() <= 0.0f) return false;
+
+    const UnitCombatPositionInfo uinfo = resolveUnitCombatPosition(owner_, unitGuid);
+    if (!uinfo.known) return false;
+    const auto weap = resolveUnitWeaponAudio(owner_, *csm, uinfo, /*offHand=*/false, /*ranged=*/true);
+    return csm->onUnitBowPullEvent(unitGuid, uinfo.renderPos, uinfo.isLocal, weap.subClass);
+}
+
+bool CombatHandler::onUnitBowReleaseEvent(uint64_t unitGuid) {
+    auto* ac = owner_.services().audioCoordinator;
+    auto* csm = ac ? ac->getCombatSoundManager() : nullptr;
+    if (!csm || ac->getSfxVolumeScale() <= 0.0f) return false;
+
+    const UnitCombatPositionInfo uinfo = resolveUnitCombatPosition(owner_, unitGuid);
+    if (!uinfo.known) return false;
+    const auto weap = resolveUnitWeaponAudio(owner_, *csm, uinfo, /*offHand=*/false, /*ranged=*/true);
+    return csm->onUnitBowReleaseEvent(unitGuid, uinfo.renderPos, uinfo.isLocal, weap.subClass);
+}
+
+bool CombatHandler::onUnitSheatheEvent(uint64_t unitGuid, bool offHandSlot, bool unsheathe) {
+    auto* ac = owner_.services().audioCoordinator;
+    auto* csm = ac ? ac->getCombatSoundManager() : nullptr;
+    if (!csm || ac->getSfxVolumeScale() <= 0.0f) return false;
+
+    const UnitCombatPositionInfo uinfo = resolveUnitCombatPosition(owner_, unitGuid);
+    if (!uinfo.known) return false;
+
+    if (uinfo.isLocal) {
+        const EquipSlot slot = offHandSlot ? EquipSlot::OFF_HAND : EquipSlot::MAIN_HAND;
+        const auto& es = owner_.getInventory().getEquipSlot(slot);
+        if (es.empty()) return false;
+        if (const auto* q = owner_.getItemInfo(es.item.itemId); q && q->valid) {
+            const bool isShield = (q->inventoryType == InvType::SHIELD) ||
+                                  (q->itemClass == 4u && (q->subClass == 5u || q->subClass == 6u));
+            return csm->onUnitSheatheEvent(
+                unitGuid, uinfo.renderPos, /*isLocalPlayer=*/true,
+                q->itemClass, q->subClass, q->material, isShield, unsheathe);
+        }
+        const bool isShield = (es.item.inventoryType == InvType::SHIELD);
+        const int32_t fallbackMat = (es.item.inventoryType == InvType::HOLDABLE) ? 7 : 1;
+        return csm->onUnitSheatheEvent(
+            unitGuid, uinfo.renderPos, /*isLocalPlayer=*/true,
+            es.item.itemClass, es.item.subClass, fallbackMat, isShield, unsheathe);
+    }
+
+    if (uinfo.unit && !uinfo.isPlayer) {
+        const uint16_t slots = fieldIndex(UF::UNIT_VIRTUAL_ITEM_SLOT_ID);
+        const uint16_t info = fieldIndex(UF::UNIT_VIRTUAL_ITEM_INFO);
+        const uint16_t slotIdx = offHandSlot ? 1u : 0u;
+        if (slots != 0xFFFF && info != 0xFFFF &&
+            uinfo.unit->getField(static_cast<uint16_t>(slots + slotIdx)) != 0u) {
+            const uint32_t info0 = uinfo.unit->getField(static_cast<uint16_t>(info + slotIdx * 2u));
+            const uint32_t info1 = uinfo.unit->getField(static_cast<uint16_t>(info + slotIdx * 2u + 1u));
+            const uint8_t classId = static_cast<uint8_t>(info0 & 0xFFu);
+            const uint8_t subClassId = static_cast<uint8_t>((info0 >> 8u) & 0xFFu);
+            const int32_t matId = static_cast<int32_t>((info0 >> 24u) & 0xFFu);
+            const uint8_t invType = static_cast<uint8_t>(info1 & 0xFFu);
+            const bool isShield = (invType == InvType::SHIELD) || (classId == 4u && subClassId == 6u);
+            return csm->onUnitSheatheEvent(
+                unitGuid, uinfo.renderPos, /*isLocalPlayer=*/false,
+                classId, subClassId, matId, isShield, unsheathe);
+        }
+    }
+
+    const auto weap = resolveUnitWeaponAudio(owner_, *csm, uinfo, offHandSlot, /*ranged=*/false);
+    return csm->onUnitSheatheEvent(
+        unitGuid, uinfo.renderPos, uinfo.isLocal, 2u, weap.subClass,
+        weap.material > 0 ? weap.material : 1, /*isShield=*/false, unsheathe);
 }
 
 } // namespace game

@@ -3441,6 +3441,37 @@ add_test(NAME weapon_trail COMMAND test_weapon_trail)
 set_tests_properties(weapon_trail PROPERTIES SKIP_RETURN_CODE 4)
 register_test_target(test_weapon_trail)
 
+# TBC 2.4.3 Audio Shard C (GAP-05): WeaponSwingSounds2, 20-col WeaponImpactSounds,
+# CreatureImpactType, SheatheSoundLookups/Material, $BWP/$BWR, 3D combat queue.
+add_executable(test_audio_shard_c_combat
+    test_audio_shard_c_combat.cpp
+    ${TEST_COMMON_SOURCES}
+    ${CMAKE_SOURCE_DIR}/src/audio/audio_engine.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/sound_entries.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/combat_sound_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/asset_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/asset_manifest.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/loose_file_reader.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/dbc_loader.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/dbc_layout.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/blp_loader.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/dds_loader.cpp
+    ${CMAKE_SOURCE_DIR}/src/core/memory_monitor.cpp
+)
+target_include_directories(test_audio_shard_c_combat PRIVATE ${TEST_INCLUDE_DIRS})
+target_include_directories(test_audio_shard_c_combat SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
+target_compile_definitions(test_audio_shard_c_combat PRIVATE
+    WOWEE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+target_link_libraries(test_audio_shard_c_combat PRIVATE
+    catch2_main ZLIB::ZLIB Threads::Threads ${CMAKE_DL_LIBS})
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_audio_shard_c_combat PRIVATE m)
+endif()
+wowee_test_link_glm(test_audio_shard_c_combat)
+add_test(NAME audio_shard_c_combat COMMAND test_audio_shard_c_combat)
+set_tests_properties(audio_shard_c_combat PROPERTIES SKIP_RETURN_CODE 4)
+register_test_target(test_audio_shard_c_combat)
+
 # CreatureDisplayInfoExtra.CanEquip player racial illusion tests
 add_executable(test_player_illusion
     test_player_illusion.cpp
