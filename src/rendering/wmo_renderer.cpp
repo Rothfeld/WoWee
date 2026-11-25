@@ -712,6 +712,7 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
             bool specular;
             bool specularAlphaMask;
             bool isMetal;
+            uint8_t lightingMode;
             uint8_t emissiveLevel;
             uint32_t sidnColor;
             bool twoSided;
@@ -725,6 +726,7 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
                        specular == o.specular &&
                        specularAlphaMask == o.specularAlphaMask &&
                        isMetal == o.isMetal &&
+                       lightingMode == o.lightingMode &&
                        emissiveLevel == o.emissiveLevel;
             }
         };
@@ -741,7 +743,8 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
                        (std::hash<bool>()(k.isMetal) << 8) ^
                        (std::hash<bool>()(k.twoSided) << 9) ^
                        (std::hash<bool>()(k.clampS) << 10) ^
-                       (std::hash<bool>()(k.clampT) << 11);
+                       (std::hash<bool>()(k.clampT) << 11) ^
+                       (std::hash<uint8_t>()(k.lightingMode) << 12);
             }
         };
         std::unordered_map<BatchKey, GroupResources::MergedBatch, BatchKeyHash> batchMap;
@@ -813,6 +816,7 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
                           .specularAlphaMask = game::isActiveExpansion("tbc") &&
                               wmoShaderSpecularAlphaMask(matShader),
                           .isMetal = isMetal,
+                          .lightingMode = batch.lightingMode,
                           .emissiveLevel = emissiveLevel, .sidnColor = sidnColor,
                           .twoSided = (matFlags & 0x04) != 0,
                           .clampS = clampS, .clampT = clampT };
@@ -828,6 +832,7 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
                 mb.clampS = clampS;
                 mb.clampT = clampT;
                 mb.isMetal = isMetal;
+                mb.lightingMode = batch.lightingMode;
                 mb.emissiveLevel = emissiveLevel;
                 mb.sidnColor = sidnColor;
                 // Look up normal/height map from texture cache
@@ -850,7 +855,6 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
         // Allocate descriptor sets and UBOs for each merged batch
         groupRes.mergedBatches.reserve(batchMap.size());
         bool anyTextured = false;
-        bool isInterior = pipeline::wmoUsesLocalLighting(groupRes.groupFlags);
         for (auto& [key, mb] : batchMap) {
             if (mb.hasTexture) anyTextured = true;
             if (!vkCtx_) {
@@ -871,7 +875,7 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
             matData.hasTexture = mb.hasTexture ? 1 : 0;
             matData.alphaTest = mb.alphaTest ? 1 : 0;
             matData.unlit = mb.unlit ? 1 : 0;
-            matData.isInterior = isInterior ? 1 : 0;
+            matData.isInterior = static_cast<int32_t>(mb.lightingMode);
             matData.hasVertexColors = (groupRes.groupFlags & 0x4) != 0 ? 1 : 0;
             matData.specularIntensity = key.isMetal ? 0.85f : (key.specular ? 0.5f : 0.0f);
             matData.hasEnvMap = (mb.envTexture != nullptr && mb.envTexture->isValid()) ? 1 : 0;
@@ -2018,21 +2022,12 @@ bool WMORenderer::createGroupResources(const pipeline::WMOGroup& group, GroupRes
         resources.geometryMax = geomMax;
     }
 
-    size_t transVertexEnd = 0;
-    size_t extVertexStart = group.vertices.size();
     const bool hasMocv = (group.flags & 0x4u) != 0;
     const bool localLitGroup = pipeline::wmoUsesLocalLighting(group.flags);
-    if (hasMocv) {
-        if (group.transBatchCount > 0) {
-            transVertexEnd = (group.transBatchCount < group.batches.size())
-                ? static_cast<size_t>(group.batches[group.transBatchCount].startVertex)
-                : group.vertices.size();
-        }
-        const size_t extBatchStart = static_cast<size_t>(group.transBatchCount) + group.intBatchCount;
-        if (group.extBatchCount > 0 && extBatchStart < group.batches.size()) {
-            extVertexStart = static_cast<size_t>(group.batches[extBatchStart].startVertex);
-        }
-    }
+    const auto batchRanges = hasMocv
+        ? pipeline::wmoGroupBatchVertexRanges(group)
+        : pipeline::WMOGroupBatchVertexRanges{0, group.vertices.size()};
+    const size_t extVertexStart = batchRanges.extVertexStart;
 
     std::vector<WMOVertex> vertices;
     vertices.reserve(group.vertices.size());
@@ -2043,15 +2038,17 @@ bool WMORenderer::createGroupResources(const pipeline::WMOGroup& group, GroupRes
         vd.position = v.position;
         vd.normal = v.normal;
         vd.texCoord = v.texCoord;
-        // TBC FixColorVertexAlpha + pixel/mapobjoverbright.bls: only interior-batch
-        // vertices of locally-lit MOCV groups carry wall/floor overbright in alpha
-        // (1 + 4 * MOCV.a). Transition/exterior batches and groups without MOCV
-        // must supply 0.0 overbright alpha.
-        const float overbrightAlpha =
-            (hasMocv && localLitGroup && vi >= transVertexEnd && vi < extVertexStart)
+        // TBC FixColorVertexAlpha:
+        // - transBatch vertices (vi < transVertexEnd): MOCV.a is the exterior/interior
+        //   transition blend weight (0 = interior MOCV, 1 = exterior light).
+        // - intBatch vertices (transVertexEnd <= vi < extVertexStart): MOCV.a is the
+        //   mapobjoverbright.bls wall/floor overbright factor (1 + 4 * MOCV.a).
+        // - extBatch vertices and groups without MOCV supply 0.0 alpha.
+        const float vertAlpha =
+            (hasMocv && localLitGroup && vi < extVertexStart)
                 ? v.color.a
                 : 0.0f;
-        vd.color = glm::vec4(glm::vec3(v.color), overbrightAlpha);
+        vd.color = glm::vec4(glm::vec3(v.color), vertAlpha);
         vd.tangent = glm::vec4(0.0f);
         vertices.push_back(vd);
     }
@@ -2148,22 +2145,12 @@ bool WMORenderer::createGroupResources(const pipeline::WMOGroup& group, GroupRes
     if (pipeline::wmoUsesLocalLighting(group.flags)) {
         resources.collisionColors.reserve(group.vertices.size());
         if ((group.flags & 0x4u) != 0) {
-            size_t transVertexEnd = 0;
-            if (group.transBatchCount > 0) {
-                transVertexEnd = (group.transBatchCount < group.batches.size())
-                    ? static_cast<size_t>(group.batches[group.transBatchCount].startVertex)
-                    : group.vertices.size();
-            }
-            const size_t extBatchStart = static_cast<size_t>(group.transBatchCount) + group.intBatchCount;
-            size_t extVertexStart = group.vertices.size();
-            if (group.extBatchCount > 0 && extBatchStart < group.batches.size()) {
-                extVertexStart = static_cast<size_t>(group.batches[extBatchStart].startVertex);
-            }
+            const auto colRanges = pipeline::wmoGroupBatchVertexRanges(group);
             for (size_t vi = 0; vi < group.vertices.size(); ++vi) {
                 const auto& v = group.vertices[vi];
                 float extBlend = 0.0f;
-                if (vi < transVertexEnd) extBlend = v.color.a;
-                else if (vi >= extVertexStart) extBlend = 1.0f;
+                if (vi < colRanges.transVertexEnd) extBlend = v.color.a;
+                else if (vi >= colRanges.extVertexStart) extBlend = 1.0f;
                 resources.collisionColors.emplace_back(v.color.r, v.color.g, v.color.b, extBlend);
             }
         } else {
@@ -2218,11 +2205,14 @@ bool WMORenderer::createGroupResources(const pipeline::WMOGroup& group, GroupRes
 
     // Create batches
     if (!group.batches.empty()) {
-        for (const auto& batch : group.batches) {
+        for (size_t bi = 0; bi < group.batches.size(); ++bi) {
+            const auto& batch = group.batches[bi];
             GroupResources::Batch resBatch;
             resBatch.startIndex = batch.startIndex;
             resBatch.indexCount = batch.indexCount;
             resBatch.materialId = batch.materialId;
+            resBatch.lightingMode = static_cast<uint8_t>(pipeline::classifyWmoBatchLighting(
+                group.flags, bi, group.transBatchCount, group.intBatchCount));
             resources.batches.push_back(resBatch);
         }
     } else {
@@ -2231,6 +2221,10 @@ bool WMORenderer::createGroupResources(const pipeline::WMOGroup& group, GroupRes
         batch.startIndex = 0;
         batch.indexCount = resources.indexCount;
         batch.materialId = 0;
+        batch.lightingMode = static_cast<uint8_t>(
+            pipeline::wmoUsesLocalLighting(group.flags)
+                ? pipeline::WmoBatchLighting::Interior
+                : pipeline::WmoBatchLighting::Exterior);
         resources.batches.push_back(batch);
     }
 

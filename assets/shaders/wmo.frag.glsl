@@ -274,8 +274,8 @@ void main() {
     RtLight rt = rtLightAt(FragPos);
     shadow = rtShadow(rt, shadow);
 
-    if (isInterior != 0) {
-        // WMO interior: vertex colors (MOCV) are pre-baked lighting from the artist,
+    if (isInterior == 1) {
+        // WMO interior (intBatch): vertex colors (MOCV) are pre-baked lighting from the artist,
         // and indoor groups are shielded from outdoor directional sun shadows.
         // In TBC 2.4.3 (pixel/mapobjoverbright.bls), intBatch MOCV alpha scales
         // interior vertex color by (1 + 4 * VertColor.a), while groups without
@@ -290,6 +290,58 @@ void main() {
             wmoAmbient = max(wmoAmbient, vec3(0.15));
             vec3 mocv = max(VertColor.rgb, wmoAmbient);
             result = texColor.rgb * mocv;
+        }
+    } else if (isInterior == 2) {
+        // WMO transition (transBatch): blends baked interior MOCV (VertColor.a == 0)
+        // with outdoor directional+ambient lighting (VertColor.a == 1) per mapobj.wfx
+        // TransDiffuse/TransSpecular.
+        vec3 wmoAmbient = vec3(wmoAmbientR, wmoAmbientG, wmoAmbientB);
+        vec3 interiorLit;
+        if (lightDir.w != 0.0) {
+            vec3 mocv = hasVertexColors != 0 ? VertColor.rgb : wmoAmbient;
+            interiorLit = texColor.rgb * mocv;
+        } else {
+            wmoAmbient = max(wmoAmbient, vec3(0.15));
+            vec3 mocv = max(VertColor.rgb, wmoAmbient);
+            interiorLit = texColor.rgb * mocv;
+        }
+
+        vec3 exteriorLit;
+        if (unlit != 0) {
+            exteriorLit = texColor.rgb * shadow;
+        } else {
+            vec3 ldir = normalize(-lightDir.xyz);
+            float diff = max(dot(norm, ldir), 0.0);
+
+            vec3 viewDir = normalize(viewPos.xyz - FragPos);
+            vec3 halfDir = normalize(ldir + viewDir);
+            float spec = pow(max(dot(norm, halfDir), 0.0), 32.0) * specularIntensity;
+            if (specularAlphaMask != 0) spec *= texColor.a;
+
+            vec3 highlight = lightDir.w != 0.0 && specularAlphaMask != 0
+                ? VertexSpecular * texColor.a : spec * lightColor.rgb;
+            if (isMetal != 0) {
+                highlight *= mix(vec3(1.0), texColor.rgb, 0.5) * 1.5;
+            }
+            exteriorLit = rtAmbient(rt, ambientColor.rgb) * texColor.rgb
+                        + shadow * (diff * lightColor.rgb * texColor.rgb + highlight);
+            if (lightDir.w != 0.0) {
+                exteriorLit = texColor.rgb * (ambientColor.rgb + shadow * (VertexLighting - ambientColor.rgb))
+                            + shadow * highlight;
+            }
+        }
+        float extWeight = hasVertexColors != 0 ? clamp(VertColor.a, 0.0, 1.0) : 0.0;
+        if (lightDir.w != 0.0) {
+            // TBC transBatch MOCV.rgb bakes mix(interior, white, extWeight) across
+            // 99.99% of transition vertices. Replace the baked white sky component
+            // with exteriorLit so mid-transition doorway walls do not carry a white
+            // halo at night, while matching both endpoints exactly.
+            vec3 interiorPart = hasVertexColors != 0
+                ? texColor.rgb * max(VertColor.rgb - vec3(extWeight), vec3(0.0))
+                : texColor.rgb * wmoAmbient * (1.0 - extWeight);
+            result = interiorPart + exteriorLit * extWeight;
+        } else {
+            result = mix(interiorLit, exteriorLit, extWeight);
         }
     } else if (unlit != 0) {
         // Outdoor unlit surface - still receives directional shadows

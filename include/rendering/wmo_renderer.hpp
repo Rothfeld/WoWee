@@ -612,7 +612,7 @@ private:
         int32_t hasTexture;        // 0
         int32_t alphaTest;         // 4
         int32_t unlit;             // 8
-        int32_t isInterior;        // 12
+        int32_t isInterior;        // 12: 0=exterior, 1=interior, 2=transition (transBatch)
         float specularIntensity;   // 16
         int32_t hasEnvMap;         // 20: MOMT shader 3 (Env) or 5 (EnvMetal) with texture2
         int32_t enableNormalMap;   // 24
@@ -661,6 +661,7 @@ private:
             uint32_t startIndex;   // First index in EBO
             uint32_t indexCount;   // Number of indices to draw
             uint8_t materialId;    // Material/texture reference
+            uint8_t lightingMode = 0; // pipeline::WmoBatchLighting (0=ext, 1=int, 2=trans)
         };
         std::vector<Batch> batches;
 
@@ -681,6 +682,7 @@ private:
             bool clampS = false;            // MOMT flag 0x40 (F_CLAMP_S)
             bool clampT = false;            // MOMT flag 0x80 (F_CLAMP_T)
             bool isMetal = false;           // MOMT shader 2 (Metal) or 5 (EnvMetal)
+            uint8_t lightingMode = 0;       // pipeline::WmoBatchLighting (0=ext, 1=int, 2=trans)
             // 0 = not luminous, 1 = MOMT F_SIDN sidnColor emission (non-TBC profiles).
             uint8_t emissiveLevel = 0;
             uint32_t sidnColor = 0;     // MOMT sidnColor (BGRA)

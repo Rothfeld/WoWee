@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <vector>
 #include <string>
@@ -14,6 +15,32 @@ namespace pipeline {
 // Stormwind streets use this combination; interior visibility is independent.
 constexpr bool wmoUsesLocalLighting(uint32_t groupFlags) {
     return (groupFlags & 0x2000u) != 0 && (groupFlags & 0x40u) == 0;
+}
+
+// Per-batch lighting mode from MOGP batch partition (transBatchCount, intBatchCount, extBatchCount):
+//   0 = Exterior (extBatch / outdoor group: directional sun + ambient + specular)
+//   1 = Interior (intBatch: baked MOCV + TBC mapobjoverbright 1 + 4*MOCV.a)
+//   2 = Transition (transBatch: blends interior MOCV and exterior lighting weighted by MOCV.a)
+enum class WmoBatchLighting : uint8_t {
+    Exterior = 0,
+    Interior = 1,
+    Transition = 2,
+};
+
+constexpr WmoBatchLighting classifyWmoBatchLighting(uint32_t groupFlags,
+                                                    size_t batchIndex,
+                                                    uint16_t transBatchCount,
+                                                    uint16_t intBatchCount) {
+    if (!wmoUsesLocalLighting(groupFlags)) {
+        return WmoBatchLighting::Exterior;
+    }
+    if (batchIndex < static_cast<size_t>(transBatchCount)) {
+        return WmoBatchLighting::Transition;
+    }
+    if (batchIndex < static_cast<size_t>(transBatchCount) + static_cast<size_t>(intBatchCount)) {
+        return WmoBatchLighting::Interior;
+    }
+    return WmoBatchLighting::Exterior;
 }
 
 /**
@@ -193,6 +220,46 @@ struct WMOGroup {
     std::string name;
     std::string description;
 };
+
+struct WMOGroupBatchVertexRanges {
+    size_t transVertexEnd = 0;
+    size_t extVertexStart = 0;
+};
+
+/// Compute exclusive upper bound of transition-batch vertices (`transVertexEnd`)
+/// and inclusive start of exterior-batch vertices (`extVertexStart`) in a WMO
+/// group's vertex array.
+///
+/// Uses the transition batches' own `lastVertex` bounds rather than
+/// `batches[transBatchCount].startVertex` because an interior batch may share a
+/// seam vertex with a transition batch (e.g. `woodtroll_temple_006.wmo` batch 7
+/// has `startVertex = 28` while transition batches span `0..1693`).
+inline WMOGroupBatchVertexRanges wmoGroupBatchVertexRanges(const WMOGroup& group) {
+    WMOGroupBatchVertexRanges ranges;
+    ranges.transVertexEnd = 0;
+    ranges.extVertexStart = group.vertices.size();
+
+    if (group.transBatchCount > 0) {
+        const size_t transCount = std::min<size_t>(group.transBatchCount, group.batches.size());
+        for (size_t bi = 0; bi < transCount; ++bi) {
+            ranges.transVertexEnd = std::max(
+                ranges.transVertexEnd,
+                static_cast<size_t>(group.batches[bi].lastVertex) + 1);
+        }
+        ranges.transVertexEnd = std::min(ranges.transVertexEnd, group.vertices.size());
+    }
+
+    const size_t extBatchStart = static_cast<size_t>(group.transBatchCount) + group.intBatchCount;
+    if (group.extBatchCount > 0 && extBatchStart < group.batches.size()) {
+        size_t minExtStart = group.vertices.size();
+        for (size_t bi = extBatchStart; bi < group.batches.size(); ++bi) {
+            minExtStart = std::min(minExtStart, static_cast<size_t>(group.batches[bi].startVertex));
+        }
+        ranges.extVertexStart = std::max(ranges.transVertexEnd, minExtStart);
+    }
+
+    return ranges;
+}
 
 // Complete WMO Model
 struct WMOModel {
