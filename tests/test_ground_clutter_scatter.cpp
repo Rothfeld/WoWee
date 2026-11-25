@@ -55,7 +55,7 @@ GroundClutterEffectSpec makeEffect(uint32_t density) {
 
 } // namespace
 
-TEST_CASE("ground clutter density follows TBC 2.4.3 N/256 scaling across 256 chunks",
+TEST_CASE("ground clutter density follows TBC 2.4.3 N/64 scaling across 256 chunks",
           "[terrain][clutter]") {
     const MapChunk chunk = makeUniformChunk(944u);
     const GroundClutterEffectSpec ge = makeEffect(8u);
@@ -67,7 +67,7 @@ TEST_CASE("ground clutter density follows TBC 2.4.3 N/256 scaling across 256 chu
     REQUIRE(effectiveGroundEffectDensity(0.5625f) == Catch::Approx(24.0f));
     REQUIRE(effectiveGroundEffectDensity(1.5f) == Catch::Approx(64.0f));
 
-    // At groundEffectDensity = 24 (56.25% UI), density = 8 -> expected 8 * 24 / 256 = 0.75 / cell.
+    // At groundEffectDensity = 24 (56.25% UI), density = 8 -> expected 8 * 24 / 64 = 3.0 / cell.
     size_t total24 = 0;
     size_t activeCells24 = 0;
     for (int cy = 0; cy < 16; ++cy) {
@@ -85,11 +85,11 @@ TEST_CASE("ground clutter density follows TBC 2.4.3 N/256 scaling across 256 chu
     }
     const double meanPerCell24 = static_cast<double>(total24) / (256.0 * 64.0);
     const double activeFrac24 = static_cast<double>(activeCells24) / (256.0 * 64.0);
-    REQUIRE(meanPerCell24 == Catch::Approx(0.75).margin(0.03));
-    // Expected active cell fraction: 1 - (63/64)^24 = 0.3147 (patchy clumps, not 75% uniform).
-    REQUIRE(activeFrac24 == Catch::Approx(0.3147).margin(0.02));
+    REQUIRE(meanPerCell24 == Catch::Approx(3.0).margin(0.01));
+    // Every full density=8 quad receives 3 tufts at N=24 (no multi-quad bald holes).
+    REQUIRE(activeFrac24 == Catch::Approx(1.0));
 
-    // At groundEffectDensity = 64 (150% max UI slider), density = 8 -> expected 8 * 64 / 256 = 2.0 / cell.
+    // At groundEffectDensity = 64 (150% max UI slider), density = 8 -> expected 8 * 64 / 64 = 8.0 / cell.
     size_t total64 = 0;
     size_t activeCells64 = 0;
     for (int cy = 0; cy < 16; ++cy) {
@@ -107,9 +107,22 @@ TEST_CASE("ground clutter density follows TBC 2.4.3 N/256 scaling across 256 chu
     }
     const double meanPerCell64 = static_cast<double>(total64) / (256.0 * 64.0);
     const double activeFrac64 = static_cast<double>(activeCells64) / (256.0 * 64.0);
-    REQUIRE(meanPerCell64 == Catch::Approx(2.0).margin(0.05));
-    // Expected active cell fraction: 1 - (63/64)^64 = 0.6350.
-    REQUIRE(activeFrac64 == Catch::Approx(0.6350).margin(0.02));
+    REQUIRE(meanPerCell64 == Catch::Approx(8.0).margin(0.01));
+    REQUIRE(activeFrac64 == Catch::Approx(1.0));
+
+    // Low-density effects (density = 2 at N = 24 -> 0.75/cell) stochastically round per quad.
+    const GroundClutterEffectSpec sparseGe = makeEffect(2u);
+    auto sparseLookup = [&](uint32_t id) -> const GroundClutterEffectSpec* {
+        return (id == 944u) ? &sparseGe : nullptr;
+    };
+    size_t sparseTotal = 0;
+    for (int cy = 0; cy < 16; ++cy) {
+        for (int cx = 0; cx < 16; ++cx) {
+            scatterChunkGroundClutter(chunk, 31, 42, cx, cy, 0.5625f, sparseLookup,
+                                      [&](const GroundClutterSample&) { ++sparseTotal; });
+        }
+    }
+    REQUIRE(static_cast<double>(sparseTotal) / (256.0 * 64.0) == Catch::Approx(0.75).margin(0.02));
 
     // Zero density emits nothing.
     size_t total0 = 0;
@@ -118,7 +131,7 @@ TEST_CASE("ground clutter density follows TBC 2.4.3 N/256 scaling across 256 chu
     REQUIRE(total0 == 0);
 }
 
-TEST_CASE("raising groundEffectDensity preserves lower-density clumps monotonically",
+TEST_CASE("raising groundEffectDensity preserves lower-density tufts monotonically",
           "[terrain][clutter]") {
     const MapChunk chunk = makeUniformChunk(944u);
     const GroundClutterEffectSpec ge = makeEffect(8u);
@@ -126,23 +139,27 @@ TEST_CASE("raising groundEffectDensity preserves lower-density clumps monotonica
         return (id == 944u) ? &ge : nullptr;
     };
 
-    std::vector<GroundClutterSample> low;
-    std::vector<GroundClutterSample> high;
+    std::array<std::vector<GroundClutterSample>, 64> lowByCell;
+    std::array<std::vector<GroundClutterSample>, 64> highByCell;
     scatterChunkGroundClutter(chunk, 31, 42, 7, 9, 0.5625f, lookup,
-                              [&](const GroundClutterSample& s) { low.push_back(s); });
+                              [&](const GroundClutterSample& s) { lowByCell[s.qy * 8 + s.qx].push_back(s); });
     scatterChunkGroundClutter(chunk, 31, 42, 7, 9, 1.5f, lookup,
-                              [&](const GroundClutterSample& s) { high.push_back(s); });
+                              [&](const GroundClutterSample& s) { highByCell[s.qy * 8 + s.qx].push_back(s); });
 
-    REQUIRE(!low.empty());
-    REQUIRE(high.size() > low.size());
-    for (size_t i = 0; i < low.size(); ++i) {
-        REQUIRE(high[i].qx == low[i].qx);
-        REQUIRE(high[i].qy == low[i].qy);
-        REQUIRE(high[i].fracX == Catch::Approx(low[i].fracX));
-        REQUIRE(high[i].fracY == Catch::Approx(low[i].fracY));
-        REQUIRE(high[i].doodadId == low[i].doodadId);
-        REQUIRE(high[i].yaw == Catch::Approx(low[i].yaw));
-        REQUIRE(high[i].scale == Catch::Approx(low[i].scale));
+    for (size_t cell = 0; cell < 64; ++cell) {
+        const auto& low = lowByCell[cell];
+        const auto& high = highByCell[cell];
+        REQUIRE(!low.empty());
+        REQUIRE(high.size() > low.size());
+        for (size_t i = 0; i < low.size(); ++i) {
+            REQUIRE(high[i].qx == low[i].qx);
+            REQUIRE(high[i].qy == low[i].qy);
+            REQUIRE(high[i].fracX == Catch::Approx(low[i].fracX));
+            REQUIRE(high[i].fracY == Catch::Approx(low[i].fracY));
+            REQUIRE(high[i].doodadId == low[i].doodadId);
+            REQUIRE(high[i].yaw == Catch::Approx(low[i].yaw));
+            REQUIRE(high[i].scale == Catch::Approx(low[i].scale));
+        }
     }
 }
 
@@ -339,4 +356,88 @@ TEST_CASE("real TBC Kalimdor Ratchet hill suppresses path and steep-slope clutte
     scatterChunkGroundClutter(xroads.getChunk(14, 15), 36, 32, 14, 15, 0.5625f, lookup,
                               [&](const GroundClutterSample&) { ++xroadsEmitted; });
     REQUIRE(xroadsEmitted > 0);
+}
+
+TEST_CASE("sub-quad MCAL alpha suppresses ground clutter on bare road halves of mixed quads",
+          "[terrain][clutter]") {
+    MapChunk chunk = makeUniformChunk(944u);
+    chunk.layers.resize(2);
+    chunk.layers[1].textureId = 1;
+    chunk.layers[1].flags = 0x100; // has alpha map (4-bit packed 2048 bytes)
+    chunk.layers[1].offsetMCAL = 0;
+    chunk.layers[1].effectId = 417u; // bare road (no doodads)
+
+    // Paint layer 1 (bare road) across the right half of the chunk (tx >= 32, i.e., fracX >= 4.0)
+    // while leaving predTex mapped to layer 0 everywhere.
+    chunk.alphaMap.assign(wowee::pipeline::ALPHA_MAP_PACKED, 0u);
+    for (size_t ty = 0; ty < 64; ++ty) {
+        for (size_t tx = 0; tx < 64; tx += 2) {
+            const uint8_t lo = (tx >= 32) ? 0x0Fu : 0x00u;
+            const uint8_t hi = (tx + 1 >= 32) ? 0xF0u : 0x00u;
+            chunk.alphaMap[(ty * 64 + tx) / 2] = static_cast<uint8_t>(lo | hi);
+        }
+    }
+
+    const GroundClutterEffectSpec grass = makeEffect(8u);
+    auto lookup = [&](uint32_t id) -> const GroundClutterEffectSpec* {
+        return (id == 944u) ? &grass : nullptr;
+    };
+
+    size_t emitted = 0;
+    for (int cy = 0; cy < 4; ++cy) {
+        for (int cx = 0; cx < 4; ++cx) {
+            scatterChunkGroundClutter(chunk, 31, 42, cx, cy, 1.5f, lookup,
+                                      [&](const GroundClutterSample& s) {
+                                          ++emitted;
+                                          // No sample may land deep inside the painted bare-road half.
+                                          REQUIRE(s.fracX < 4.15f);
+                                      });
+        }
+    }
+    REQUIRE(emitted > 0);
+}
+
+TEST_CASE("real TBC Deadwind Pass Karazhan meadow populates grass at default density while respecting noEffectDoodad",
+          "[terrain][clutter]") {
+    const std::filesystem::path dwpAdt =
+        "/workspace/azerothcore/client/wowee-data/expansions/tbc/world/maps/azeroth/azeroth_35_52.adt";
+    if (!std::filesystem::exists(dwpAdt)) {
+        SUCCEED("TBC Deadwind Pass ADT data not present in this environment");
+        return;
+    }
+
+    std::ifstream in(dwpAdt, std::ios::binary);
+    REQUIRE(in.good());
+    std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)),
+                               std::istreambuf_iterator<char>());
+    const ADTTerrain terrain = ADTLoader::load(bytes);
+    REQUIRE(terrain.isLoaded());
+
+    const GroundClutterEffectSpec weeds = makeEffect(8u);
+    const GroundClutterEffectSpec dirt = makeEffect(4u);
+    const GroundClutterEffectSpec rock = makeEffect(2u);
+    auto lookup = [&](uint32_t id) -> const GroundClutterEffectSpec* {
+        if (id == 599u) return &weeds;
+        if (id == 605u) return &dirt;
+        if (id == 541u || id == 598u) return &rock;
+        return nullptr;
+    };
+
+    const MapChunk& chunk = terrain.getChunk(14, 14);
+    size_t emitted = 0;
+    std::array<int, 64> perQuad{};
+    scatterChunkGroundClutter(chunk, 35, 52, 14, 14, 0.5625f, lookup,
+                              [&](const GroundClutterSample& s) {
+                                  ++emitted;
+                                  ++perQuad[s.qy * 8 + s.qx];
+                                  REQUIRE_FALSE(chunk.isEffectDisabled(s.qy, s.qx));
+                              });
+    // Chunk (14,14) has 34 unmasked DeadwindPassWeeds (density=8) quads plus dirt/rock quads;
+    // at default d=24, expected count is ~110+ tufts across the chunk (vs ~28 at N/256).
+    REQUIRE(emitted >= 80);
+    size_t activeQuads = 0;
+    for (int c : perQuad) {
+        if (c > 0) ++activeQuads;
+    }
+    REQUIRE(activeQuads >= 30);
 }

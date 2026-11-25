@@ -3,8 +3,10 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <vector>
 
 #include "core/coordinates.hpp"
+#include "pipeline/adt_alpha.hpp"
 #include "pipeline/adt_loader.hpp"
 
 namespace wowee {
@@ -63,18 +65,16 @@ inline uint32_t mixGroundClutterSeed(uint32_t x) {
 
 /// Scatter ground-effect detail doodads across one 8x8 MCNK chunk.
 ///
-/// TBC 2.4.3's `groundEffectDensity` (16..64 on the UI slider, up to 256 via
-/// console) scales out of 256, not 64, and distributes tufts as chunk-level
-/// clumps rather than uniform per-cell dots:
-///   - A chunk performs `N = groundEffectDensity` deterministic cell picks
-///     from the 64 quads (with replacement).
-///   - Each pick landing on a valid growing quad spawns `ge.density / 4` tufts
-///     (with stochastic rounding of any fractional remainder).
-///   - Expected tufts per growing cell = (N / 64) * (density / 4) = density * N / 256.
-///   - Active cell fraction = 1 - (63/64)^N (e.g. 31.5% at N=24, 63.5% at N=64),
-///     matching native 2.4.3's patchy road/meadow clutter distribution.
-///   - Each pick index derives its own sub-seed so raising density preserves
-///     every lower-density clump identically.
+/// TBC 2.4.3's `groundEffectDensity` (16..64 on the UI slider, 24 default,
+/// up to 256 via console) scales out of 64 per quad:
+///   - Each valid growing quad (qx, qy) spawns `ge.density * N / 64` tufts
+///     (with deterministic stochastic rounding of any fractional remainder):
+///     3.0 tufts/quad at N=24 / density=8, 8.0 tufts/quad at N=64 / density=8.
+///   - When MCAL alpha maps are present, each sample point (fracX, fracY) checks
+///     the dominant painted terrain layer so tufts on mixed road-edge quads stay
+///     off bare road/snow texels whose layer carries no ground-effect doodads.
+///   - Each tuft index within a quad derives its own sub-seed so raising density
+///     preserves every lower-density tuft identically.
 template <typename LookupEffectFn, typename EmitFn>
 size_t scatterChunkGroundClutter(const MapChunk& chunk,
                                  int tileX, int tileY, int cx, int cy,
@@ -92,29 +92,47 @@ size_t scatterChunkGroundClutter(const MapChunk& chunk,
         (static_cast<uint32_t>(tileY & 0x3F) << 14) |
         (static_cast<uint32_t>(cy & 0xF) << 10) |
         (static_cast<uint32_t>(cx & 0xF) << 6);
-    const uint32_t chunkSeed = mixGroundClutterSeed(chunkKey ^ 0xA511E9B3u);
 
-    uint32_t numPicks = static_cast<uint32_t>(effectiveDensity);
-    const float fracPicks = effectiveDensity - static_cast<float>(numPicks);
-    if (fracPicks > 0.0f) {
-        const uint32_t roundRoll = mixGroundClutterSeed(chunkSeed ^ 0x9E3779B9u);
-        if (static_cast<float>(roundRoll >> 8) / 16777216.0f < fracPicks) {
-            ++numPicks;
+    // Decode MCAL alpha maps once per chunk when multi-layer alpha data is
+    // present so individual tufts respect painted road/snow boundaries inside
+    // mixed quads.
+    const size_t nLayers = std::min<size_t>(chunk.layers.size(), 4);
+    std::array<std::vector<uint8_t>, 4> layerAlphas;
+    bool hasAlphaMaps = false;
+    if (nLayers > 1 && !chunk.alphaMap.empty()) {
+        for (size_t i = 1; i < nLayers; ++i) {
+            if (decodeLayerAlpha(chunk, i, layerAlphas[i], 0)) {
+                hasAlphaMaps = true;
+            }
         }
     }
+
+    auto dominantPaintedLayerAt = [&](float fracX, float fracY) -> size_t {
+        const float u = std::clamp(fracX / 8.0f, 0.0f, 1.0f);
+        const float v = std::clamp(fracY / 8.0f, 0.0f, 1.0f);
+        float rem = 1.0f;
+        size_t domLayer = 0;
+        float domWeight = -1.0f;
+        for (size_t i = nLayers; i-- > 1;) {
+            const float a = layerAlphas[i].empty() ? 0.0f : sampleAlpha(layerAlphas[i], u, v);
+            const float w = rem * a;
+            if (w > domWeight) {
+                domWeight = w;
+                domLayer = i;
+            }
+            rem -= w;
+        }
+        if (std::max(rem, 0.0f) > domWeight) {
+            domLayer = 0;
+        }
+        return domLayer;
+    };
 
     constexpr float kTwoPi = 2.0f * core::coords::PI;
     constexpr float kRand16Max = 65535.0f;
     size_t attemptsTotal = 0;
 
-    for (uint32_t pick = 0; pick < numPicks; ++pick) {
-        uint32_t seed = mixGroundClutterSeed(chunkSeed ^ (pick * 0x85EBCA6Bu + 0xC2B2AE35u));
-        auto nextRand = [&seed]() -> uint32_t {
-            seed = seed * 1664525u + 1013904223u;
-            return seed;
-        };
-
-        const int cell = static_cast<int>((nextRand() >> 16) & 63u);
+    for (int cell = 0; cell < 64; ++cell) {
         const int qx = cell % 8;
         const int qy = cell / 8;
 
@@ -134,14 +152,25 @@ size_t scatterChunkGroundClutter(const MapChunk& chunk,
         const uint32_t totalWeight = ge->weights[0] + ge->weights[1] + ge->weights[2] + ge->weights[3];
         if (ge->density == 0 || totalWeight == 0) continue;
 
-        const float clumpCount = static_cast<float>(ge->density) * 0.25f;
-        uint32_t attempts = static_cast<uint32_t>(clumpCount);
-        if (static_cast<float>(nextRand() >> 8) / 16777216.0f < clumpCount - static_cast<float>(attempts)) {
-            ++attempts;
+        const uint32_t cellSeed = mixGroundClutterSeed((chunkKey | static_cast<uint32_t>(cell)) ^ 0xA511E9B3u);
+        const float exactCount = static_cast<float>(ge->density) * effectiveDensity / 64.0f;
+        uint32_t attempts = static_cast<uint32_t>(exactCount);
+        const float fracCount = exactCount - static_cast<float>(attempts);
+        if (fracCount > 0.0f) {
+            const uint32_t roundRoll = mixGroundClutterSeed(cellSeed ^ 0x9E3779B9u);
+            if (static_cast<float>(roundRoll >> 8) / 16777216.0f < fracCount) {
+                ++attempts;
+            }
         }
         attemptsTotal += attempts;
 
         for (uint32_t a = 0; a < attempts; ++a) {
+            uint32_t seed = mixGroundClutterSeed(cellSeed ^ (a * 0x85EBCA6Bu + 0xC2B2AE35u));
+            auto nextRand = [&seed]() -> uint32_t {
+                seed = seed * 1664525u + 1013904223u;
+                return seed;
+            };
+
             const float fracX = static_cast<float>(qx) + static_cast<float>(nextRand() >> 8) / 16777216.0f;
             const float fracY = static_cast<float>(qy) + static_cast<float>(nextRand() >> 8) / 16777216.0f;
 
@@ -156,10 +185,24 @@ size_t scatterChunkGroundClutter(const MapChunk& chunk,
                 }
             }
             const uint32_t doodadId = ge->doodadIds[slot];
-            if (doodadId == UINT32_MAX) continue;
-
             const float yaw = static_cast<float>(nextRand() & 0xFFFFu) / kRand16Max * kTwoPi;
             const float scale = 0.80f + (static_cast<float>(nextRand() & 0xFFFFu) / kRand16Max) * 0.35f;
+            if (doodadId == UINT32_MAX) continue;
+
+            if (hasAlphaMaps) {
+                const size_t paintedLayer = dominantPaintedLayerAt(fracX, fracY);
+                if (paintedLayer != layerIdx && paintedLayer < chunk.layers.size()) {
+                    const uint32_t paintedEffectId = chunk.layers[paintedLayer].effectId;
+                    if (paintedEffectId == 0) continue;
+                    const GroundClutterEffectSpec* paintedGe = lookupEffect(paintedEffectId);
+                    if (!paintedGe || paintedGe->density == 0) continue;
+                    const uint32_t paintedWeight =
+                        paintedGe->weights[0] + paintedGe->weights[1] +
+                        paintedGe->weights[2] + paintedGe->weights[3];
+                    if (paintedWeight == 0) continue;
+                }
+            }
+
             emit(GroundClutterSample{qx, qy, fracX, fracY, doodadId, yaw, scale});
         }
     }
