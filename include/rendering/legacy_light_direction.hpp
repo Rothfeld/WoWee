@@ -141,4 +141,23 @@ inline glm::vec3 objectFloorLightQueryPosition(const glm::vec3& position,
     return position;
 }
 
+// Build 8606 WMO floor-light triangle filter (Wow.exe 0x00685880 / 0x006bf024):
+// - Units (CMapEntity::flags & 0x1000 == 0 -> 0x006be210 -> 0x006b2df0 -> 0x006ac350(0x20) = 0x88)
+//   raycast with skipFlags = 0x08 (F_COLLISION), skipping collision-only walking
+//   ramps (e.g. Scholomance Ossuary stairs MOPY [0x08, 0xFF]) and hitting rendered
+//   treads/floors (MOPY 0x24 / 0x64 / 0x20 / 0x60).
+// - M2 GameObjects (CMapEntity::flags |= 0x1000 at 0x00685928 -> 0x006bede0 -> 0x006bdfd0)
+//   raycast with skipFlags = 0x04 (F_DETAIL / F_NOCAMCOLLIDE) without skipping
+//   material 0xFF, so on floors whose rendered mesh carries 0x04 and whose collision
+//   hull carries 0x08/0xFF (e.g. Naxxramas Sapphiron's Lair frostwyrm_final01_000.wmo
+//   tri 9262 [0x24, 30] blue vs tri 23436 [0x08, 0xFF] white), GameObjects like
+//   Sapphiron Birth sample the white collision triangle while units sample the blue
+//   rendered ice.
+inline constexpr bool wmoFloorLightSkipsTriangle(uint8_t mopyFlags, uint8_t materialId, bool isUnit) {
+    if (isUnit) {
+        return (mopyFlags & 0x08u) != 0 || materialId == 0xFFu;
+    }
+    return (mopyFlags & 0x04u) != 0;
+}
+
 } // namespace wowee::rendering

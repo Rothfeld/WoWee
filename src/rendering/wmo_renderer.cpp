@@ -4588,11 +4588,12 @@ std::optional<WMORenderer::FloorLightSample> WMORenderer::sampleFloorLight(
             const auto& indices = group.collisionIndices;
             const auto& vertices = group.collisionVertices;
             for (uint32_t triangle : tl_triScratch) {
-                assert(triangle / 3 < group.triMaterials.size() &&
+                const uint32_t triIndex = triangle / 3;
+                assert(triIndex < group.triMaterials.size() &&
                        "WMO group without one MOPY material per triangle");
-                // Collision-only triangles (MOPY material 0xFF) carry white MOCV
-                // on invisible walking ramps (e.g. Scholomance Ossuary stairs).
-                if (group.triMaterials[triangle / 3] == 0xFF) continue;
+                const uint8_t mopyFlags = (triIndex < group.triMopyFlags.size())
+                    ? group.triMopyFlags[triIndex] : 0;
+                if (wmoFloorLightSkipsTriangle(mopyFlags, group.triMaterials[triIndex], isUnit)) continue;
                 const glm::vec3& v0 = vertices[indices[triangle]];
                 const glm::vec3& v1 = vertices[indices[triangle + 1]];
                 const glm::vec3& v2 = vertices[indices[triangle + 2]];

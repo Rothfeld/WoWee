@@ -345,3 +345,32 @@ TEST_CASE("objectFloorLightQueryPosition lifts Z to worldBoundsMin.z when mesh s
     // Degenerate/uninitialized bounds keep pivot Z.
     CHECK(objectFloorLightQueryPosition(cablePos, glm::vec3(0.0f), glm::vec3(0.0f)) == cablePos);
 }
+
+TEST_CASE("wmoFloorLightSkipsTriangle matches build 8606 unit (0x08) vs GameObject (0x04) MOPY filters", "[lighting][wmo][m2]") {
+    using wowee::rendering::wmoFloorLightSkipsTriangle;
+
+    // Sapphiron's Lair (frostwyrm_final01_000.wmo):
+    // Rendered ice floor tri 9262 has MOPY [0x24, 30] (F_RENDER | F_DETAIL, blue MOCV);
+    // collision floor tri 23436 has MOPY [0x08, 0xFF] (F_COLLISION, white MOCV).
+    // Units (Edricf, Sapphiron) skip 0x08/0xFF and sample the blue rendered floor.
+    CHECK_FALSE(wmoFloorLightSkipsTriangle(0x24u, 30u, /*isUnit=*/true));
+    CHECK(wmoFloorLightSkipsTriangle(0x08u, 0xFFu, /*isUnit=*/true));
+    CHECK(wmoFloorLightSkipsTriangle(0x48u, 0xFFu, /*isUnit=*/true));
+
+    // M2 GameObjects (Sapphiron Birth 181356) skip 0x04 (F_DETAIL) and sample 0x08/0xFF white MOCV.
+    CHECK(wmoFloorLightSkipsTriangle(0x24u, 30u, /*isUnit=*/false));
+    CHECK(wmoFloorLightSkipsTriangle(0x64u, 30u, /*isUnit=*/false));
+    CHECK_FALSE(wmoFloorLightSkipsTriangle(0x08u, 0xFFu, /*isUnit=*/false));
+    CHECK_FALSE(wmoFloorLightSkipsTriangle(0x48u, 0xFFu, /*isUnit=*/false));
+
+    // Scholomance Ossuary stairs (ruinedkeep_crypt_instance_004.wmo):
+    // Units skip invisible walking ramp [0x08, 0xFF] and hit drawn treads [0x24, mat].
+    CHECK(wmoFloorLightSkipsTriangle(0x08u, 0xFFu, /*isUnit=*/true));
+    CHECK_FALSE(wmoFloorLightSkipsTriangle(0x24u, 5u, /*isUnit=*/true));
+
+    // Standard collidable rendered floor without 0x04 or 0x08 (e.g. 0x20 / 0x60) is accepted for both.
+    CHECK_FALSE(wmoFloorLightSkipsTriangle(0x20u, 12u, /*isUnit=*/true));
+    CHECK_FALSE(wmoFloorLightSkipsTriangle(0x20u, 12u, /*isUnit=*/false));
+    CHECK_FALSE(wmoFloorLightSkipsTriangle(0x60u, 12u, /*isUnit=*/true));
+    CHECK_FALSE(wmoFloorLightSkipsTriangle(0x60u, 12u, /*isUnit=*/false));
+}
