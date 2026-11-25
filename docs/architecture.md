@@ -95,6 +95,7 @@ Wowee follows a modular architecture with clear separation of concerns:
 **TerrainManager / TerrainRenderer** - ADT terrain streaming and drawing
 - Async tile loading on worker threads (`WOWEE_TERRAIN_WORKERS`) within configurable radius
 - 4-layer texture splatting with alpha blending
+- Texture ownership: tileset textures (`tileset\elwynn\elwynngrassbase.blp`) are shared through a byte-budgeted cache (`PinnedLruCache`, `WOWEE_TERRAIN_TEX_CACHE_MB`, default 4096) in which every chunk pins what it draws with; a chunk's own 64x64 alpha and shadow maps belong to the chunk and are freed with it
 - Frustum + distance culling
 - Ground clutter placement from GroundEffectTexture/GroundEffectDoodad via deterministic RNG
 
