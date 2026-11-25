@@ -225,6 +225,15 @@ unset.
   listens for look identical from outside - the frame simply does not change -
   and they need opposite fixes.
 
+- `WOWEE_FRAME_PROFILE=1` reports the frame budget at warning every ten
+  seconds and adds, per window, the script handlers that cost most, by owner
+  ("script OnUpdate WorldFrame", "script OnEvent of UNIT_AURA").
+- `WOWEE_WIDGET_RECT_DIR=/tmp/rects` lets a script call
+  `__WoweeDumpWidgetRects("bags-open")`, which writes every widget's resolved
+  rect, visibility, level and draw position to `/tmp/rects/bags-open.tsv` once
+  the frame has been drawn. Two builds in the same interface state should
+  write the same file.
+
 With any element handed over, a check runs once the tree has settled and
 reports the frames that element stands or falls on: built or not, shown or
 hidden, its rect, whether it landed off screen, whether its art reached the
@@ -250,3 +259,24 @@ path in the log:
 On a headless load of the whole interface the frame parts were 253 of 286
 names and the real gap was none. Reading the report without that split says
 close to the opposite of the truth.
+
+## Where a frame's interface time goes
+
+The "frame budget over 10s" report (info level; warning with
+`WOWEE_FRAME_PROFILE=1`) lists the stages `Application` times itself and the
+ones the interface notes for itself through `core/frame_stage_times.hpp`:
+
+- `addons->update` - the OnUpdate pump; `scripts/OnUpdate`, `scripts/OnEvent`,
+  `scripts/OnShow` and so on are the handlers' own time by kind, wherever in
+  the frame they ran (an OnEvent runs inside `gameHandler->update`). Only the
+  outermost handler is timed, so the kinds add up without overlap.
+- `addonWidgets/layout/sizing`, `.../solve/anchor walk`, `.../solve/draw order`
+  - the three passes of `WidgetRenderer::layout`.
+- `addonWidgets/engine/visibility`, `.../size changes`, `.../scroll ranges` -
+  the passes that run OnShow/OnHide, OnSizeChanged and OnScrollRangeChanged.
+- `frameXml->draw/tooltips` - the tooltip sizing at the head of the draw.
+- `count ...` lines - widgets in the tree, visible, handed out for writing and
+  sized, per frame.
+
+A noted stage lies inside one of `Application`'s, so the lines do not add up
+to the frame.

@@ -232,6 +232,9 @@ private:
         double totalMs = 0.0;
         float worstMs = 0.0f;
         int frames = 0;
+        /// Only for stages that note themselves through
+        /// core/frame_stage_times.hpp: how many times they ran.
+        uint64_t calls = 0;
     };
     /// WOWEE_FRAME_PROFILE. The breakdown below is reported at info, which the
     /// log a bug report arrives with does not carry - so the one measurement

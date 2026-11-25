@@ -25,6 +25,7 @@
 #include "rendering/vk_context.hpp"
 #include "core/app_clock.hpp"
 #include "core/env_flag.hpp"
+#include "core/frame_stage_times.hpp"
 #include "ui/interface_fonts.hpp"
 #include "core/logger.hpp"
 
@@ -1174,6 +1175,7 @@ void WidgetRenderer::render(WidgetTree& tree, float screenW, float screenH) {
 }
 
 void WidgetRenderer::layout(WidgetTree& tree, float screenW, float screenH) {
+    const auto suppressStart = std::chrono::steady_clock::now();
     linkScreenH_ = screenH;
     linkScale_ = tree.uiScale();
     // Every descriptor set in this cache belongs to the context, which frees
@@ -1279,19 +1281,27 @@ void WidgetRenderer::layout(WidgetTree& tree, float screenW, float screenH) {
     // the offscreen character renders turned out to be 0.47ms between them,
     // and the two say-once diagnostics at the end turned out to be nothing at
     // all. So it is measured rather than reasoned about.
+    //
+    // The passes are also noted every frame as stages of the frame budget
+    // report (core/frame_stage_times.hpp), with or without the flag.
     static const bool profile = core::envFlagEnabled("WOWEE_FRAME_PROFILE", false);
+    tree.setTimeHiddenMarks(profile);
+    core::noteFrameStage("addonWidgets/layout/suppressed frames",
+        std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - suppressStart).count());
     struct PassTimes {
         double sizing = 0.0, solve = 0.0;
         int frames = 0;
         double reportedAt = 0.0;
     };
     static PassTimes times;
-    const auto mark = [&](double& into, auto&& fn) {
-        if (!profile) { fn(); return; }
+    const auto mark = [&](double& into, const char* stage, auto&& fn) {
         const auto t0 = std::chrono::steady_clock::now();
         fn();
-        into += std::chrono::duration<double, std::milli>(
+        const double ms = std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - t0).count();
+        into += ms;
+        core::noteFrameStage(stage, ms);
     };
 
     // Labels and textures, in a single scan; see sizeArtAndText.
@@ -1302,9 +1312,22 @@ void WidgetRenderer::layout(WidgetTree& tree, float screenW, float screenH) {
     // frame and the draw then measured the lines it has now - two answers per
     // frame, and the tooltip flicked between the two widths they gave it.
     // WidgetRenderer::draw sizes them once, after FrameXML has finished.
-    mark(times.sizing, [&] { sizeArtAndText(tree); });
+    mark(times.sizing, "addonWidgets/layout/sizing", [&] { sizeArtAndText(tree); });
 
-    mark(times.solve, [&] { tree.layout(screenW, screenH); });
+    mark(times.solve, "addonWidgets/layout/solve", [&] { tree.layout(screenW, screenH); });
+    core::noteFrameStage("addonWidgets/layout/solve/anchor walk", tree.lastWalkMs());
+    core::noteFrameStage("addonWidgets/layout/solve/draw order", tree.lastDrawOrderMs());
+    if (profile) {
+        core::noteFrameStage("addonWidgets/layout/solve/anchor walk/hidden frames",
+                             tree.lastHiddenMarkMs());
+    }
+    core::noteFrameCount("layout passes", 1);
+    core::noteFrameCount("layout passes with nothing moved", tree.lastPassWasClean() ? 1 : 0);
+    core::noteFrameCount("bytes in one widget, summed over passes", sizeof(Widget));
+    core::noteFrameCount("widgets in the tree, summed over passes", tree.size());
+    core::noteFrameCount("widgets visible, summed over passes", tree.lastVisibleCount());
+    core::noteFrameCount("widgets under hidden frames visited, summed over passes",
+                         tree.lastHiddenMarkedCount());
 
     if (profile) {
         ++times.frames;
@@ -2087,6 +2110,7 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
         // solve gave it. Worth keeping: it is what finally showed that the
         // sizing pass was returning early on the frames that mattered, after
         // six rounds of reasoning about the code had each been wrong.
+        const core::ScopedFrameStage tooltipStage("frameXml->draw/tooltips");
         static const bool tipDiag = std::getenv("WOWEE_TOOLTIP_DIAG") != nullptr;
         int seenTooltip = 0, seenVisible = 0, seenWithLines = 0, sized = 0;
         for (size_t id = 1; id < tree.size(); ++id) {

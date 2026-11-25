@@ -6,6 +6,7 @@
 #include "ui/game_screen.hpp"
 #include "ui/nameplate_stacking.hpp"
 #include "ui/gamepad_controls.hpp"
+#include "core/frame_stage_times.hpp"
 #include "core/gamepad.hpp"
 
 #include <set>
@@ -674,7 +675,10 @@ void GameScreen::render(game::GameHandler& gameHandler) {
     gameHandler.chatAutoJoin.local = chatPanel_.chatAutoJoinLocal;
 
     // Process targeting input before UI windows
-    processTargetInput(gameHandler);
+    {
+        const core::ScopedFrameStage stage("uiManager->render/target input");
+        processTargetInput(gameHandler);
+    }
 
 
     // The chat window is FrameXML's and this client no longer draws one, but
@@ -720,14 +724,23 @@ void GameScreen::render(game::GameHandler& gameHandler) {
     reportRecordingFailure();
 
     // ---- New UI elements ----
-    renderNameplates(gameHandler);  // player names always shown; NPC plates gated by the enemyplates row
+    {
+        const core::ScopedFrameStage stage("uiManager->render/nameplates");
+        renderNameplates(gameHandler);  // player names always shown; NPC plates gated by the enemyplates row
+    }
     // World speech bubbles draw in WORLD strata, below UIParent frames and minimap markers.
-    chatPanel_.renderBubbles(gameHandler);
+    {
+        const core::ScopedFrameStage stage("uiManager->render/chat bubbles");
+        chatPanel_.renderBubbles(gameHandler);
+    }
     combatUI_.playSoundsForNewChat(gameHandler);
     offerPendingTradeItem(gameHandler);
     // The numbers over the world: build 8606 draws them whatever
     // enableCombatText says, which governs Blizzard_CombatText only.
-    combatUI_.renderCombatText(gameHandler);
+    {
+        const core::ScopedFrameStage stage("uiManager->render/combat text");
+        combatUI_.renderCombatText(gameHandler);
+    }
     // FriendsFrame is what "social" suppresses, and its tabs are the friends
     // list, the who list and the guild roster. Only the friends list was gated
     // on this side, so handing social over left two of this client's three
@@ -767,6 +780,7 @@ void GameScreen::render(game::GameHandler& gameHandler) {
             }, &payload, sizeof(payload));
             bg->AddCallback(ImDrawCallback_ResetRenderState, nullptr);
         }
+        const core::ScopedFrameStage stage("uiManager->render/minimap markers");
         renderMinimapMarkers(gameHandler);
     }
     // Not gated on GameMenu ownership. FrameXML's own options frames are shells
@@ -781,7 +795,10 @@ void GameScreen::render(game::GameHandler& gameHandler) {
     // the half that renders it was not. renderWorldMap decides for itself
     // whether the map is wanted; under FrameXML that is FrameXML's frame being
     // on screen rather than this client's own flag.
-    renderWorldMap(gameHandler);
+    {
+        const core::ScopedFrameStage stage("uiManager->render/world map");
+        renderWorldMap(gameHandler);
+    }
 
     // Insert spell link into chat if player shift-clicked a spellbook entry
     {

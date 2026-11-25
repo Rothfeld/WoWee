@@ -1,6 +1,8 @@
 #include "addons/lua_handler_globals.hpp"
+#include "core/frame_stage_times.hpp"
 #include "core/logger.hpp"
 
+#include <chrono>
 #include <cstring>
 #include <string>
 
@@ -121,14 +123,64 @@ int pcallRouted(lua_State* L, int nargs, int nresults) {
 void setLegacyHandlerGlobals(bool on) { gLegacyHandlerGlobals = on; }
 bool legacyHandlerGlobals() { return gLegacyHandlerGlobals; }
 
+namespace {
+/// How many script handlers are running inside one another. Only the
+/// outermost is timed, so OnShow run by a Show() inside an OnUpdate counts as
+/// that OnUpdate's time and no time is counted twice.
+int gScriptTimingDepth = 0;
+ScriptOwnerNamer gScriptOwnerNamer = nullptr;
+
+int pcallScriptUntimed(lua_State* L, const char* script, int nargs, int errfunc);
+}  // namespace
+
+void setScriptOwnerNamer(ScriptOwnerNamer namer) { gScriptOwnerNamer = namer; }
+
 int pcallScript(lua_State* L, const char* script, int nargs, int errfunc) {
+    if (gScriptTimingDepth > 0 || script == nullptr) {
+        return pcallScriptUntimed(L, script, nargs, errfunc);
+    }
+    // Named before the call: the call consumes its arguments.
+    thread_local std::string stage;
+    stage.assign("scripts/").append(script);
+    thread_local std::string owner;
+    thread_local std::string eventKey;
+    eventKey.clear();
+    const bool detail = core::frameStageDetailEnabled() && nargs >= 1;
+    if (detail) {
+        const int selfIdx = lua_gettop(L) - nargs + 1;
+        owner.assign(script).append(" ");
+        // An event handler is named by its event as well as by its frame:
+        // which event costs is a different question from which frame does.
+        if (std::strcmp(script, "OnEvent") == 0 && nargs >= 2 &&
+            lua_type(L, selfIdx + 1) == LUA_TSTRING) {
+            eventKey.assign("OnEvent of ").append(lua_tostring(L, selfIdx + 1));
+            owner.append(lua_tostring(L, selfIdx + 1)).append(" on ");
+        }
+        owner.append(gScriptOwnerNamer ? gScriptOwnerNamer(L, selfIdx) : std::string("?"));
+    }
+    ++gScriptTimingDepth;
+    const auto start = std::chrono::steady_clock::now();
+    const int rc = pcallScriptUntimed(L, script, nargs, errfunc);
+    const double ms = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - start).count();
+    --gScriptTimingDepth;
+    core::noteFrameStage(stage, ms);
+    if (detail) {
+        core::noteFrameStageDetail(owner, ms);
+        if (!eventKey.empty()) core::noteFrameStageDetail(eventKey, ms);
+    }
+    return rc;
+}
+
+namespace {
+int pcallScriptUntimed(lua_State* L, const char* script, int nargs, int errfunc) {
     // No handler of the caller's own: the error handler route, as every
     // script error takes on 2.4.3.
     if (errfunc == 0) {
         const int fn = lua_gettop(L) - nargs;
         lua_pushcfunction(L, luaScriptErrorHandler);
         lua_insert(L, fn);
-        const int rc = pcallScript(L, script, nargs, fn);
+        const int rc = pcallScriptUntimed(L, script, nargs, fn);
         lua_remove(L, fn);
         return rc;
     }
@@ -200,6 +252,7 @@ int pcallScript(lua_State* L, const char* script, int nargs, int errfunc) {
     lua_pop(L, 1);
     return rc;
 }
+}  // namespace
 
 /// An OnLoad that raised, with its message on top of the stack: given to the
 /// error handler seterrorhandler installed (FrameXML's _ERRORMESSAGE, whose

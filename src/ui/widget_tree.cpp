@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <climits>
+#include <cstdio>
 #include <cmath>
 #include <ranges>
 
@@ -888,6 +889,8 @@ void WidgetTree::layout(float pixelW, float pixelH) {
 
     const auto solveStart = std::chrono::steady_clock::now();
     visibleThisPass_ = 0;
+    hiddenMarkedThisPass_ = 0;
+    hiddenMarkMsThisPass_ = 0.0;
 
     Widget& rootW = widgets_[rootId_];
     rootW.left = 0.0f;
@@ -946,6 +949,9 @@ void WidgetTree::layout(float pixelW, float pixelH) {
     // believing they do.
     lastVisibleCount_ = visibleThisPass_;
     visibleThisPass_ = 0;
+    lastHiddenMarkedCount_ = hiddenMarkedThisPass_;
+    lastHiddenMarkMs_ = hiddenMarkMsThisPass_;
+    lastPassWasClean_ = layoutGeneration_ == generationAtLastPass_;
     if (layoutGeneration_ == generationAtLastPass_) ++cleanPasses_;
     ++totalPasses_;
     generationAtLastPass_ = layoutGeneration_;
@@ -968,6 +974,7 @@ void WidgetTree::markSubtreeHidden(uint32_t id) {
             // pass did not claim.
             c->visibleChain = false;
             c->visible = false;
+            ++hiddenMarkedThisPass_;
         }
         markSubtreeHidden(child);
     }
@@ -981,7 +988,14 @@ void WidgetTree::layoutWidget(uint32_t id, float screenW, float screenH) {
     // that is neither drawn nor measured against. Of the 28018 widgets this
     // pass walked, 666 were visible; the other 97% were the 3.4ms.
     if (const Widget* self = get(id); self && !self->visibleChain) {
-        markSubtreeHidden(id);
+        if (timeHiddenMarks_) {
+            const auto start = std::chrono::steady_clock::now();
+            markSubtreeHidden(id);
+            hiddenMarkMsThisPass_ += std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - start).count();
+        } else {
+            markSubtreeHidden(id);
+        }
         return;
     }
 
@@ -1424,6 +1438,32 @@ bool WidgetTree::buttonArtVisible(const Widget& w) const {
         case ButtonArt::DisabledChecked: return owner->checked && !usable;
         default:                         return true;
     }
+}
+
+bool WidgetTree::writeRectDump(const std::string& path) const {
+    std::FILE* out = std::fopen(path.c_str(), "w");
+    if (!out) return false;
+    std::vector<int> drawIndex(widgets_.size(), -1);
+    for (size_t i = 0; i < drawOrder_.size(); ++i) {
+        drawIndex[drawOrder_[i]->id] = static_cast<int>(i);
+    }
+    std::fprintf(out, "id\tkind\tname\tparent\tshown\tvisibleChain\tvisible\tplaced\t"
+                      "left\tbottom\trectW\trectH\twidth\theight\teffScale\teffAlpha\t"
+                      "effStrata\teffLevel\tclipTo\tdrawIndex\n");
+    for (const Widget& w : widgets_) {
+        if (w.id == 0) continue;
+        std::fprintf(out, "%u\t%d\t%s\t%u\t%d\t%d\t%d\t%d\t%a\t%a\t%a\t%a\t%a\t%a\t%a\t%a\t%d\t%d\t%u\t%d\n",
+                     w.id, static_cast<int>(w.kind), w.name.c_str(), w.parent,
+                     w.shown ? 1 : 0, w.visibleChain ? 1 : 0, w.visible ? 1 : 0,
+                     w.placed ? 1 : 0,
+                     static_cast<double>(w.left), static_cast<double>(w.bottom),
+                     static_cast<double>(w.rectW), static_cast<double>(w.rectH),
+                     static_cast<double>(w.width), static_cast<double>(w.height),
+                     static_cast<double>(w.effScale), static_cast<double>(w.effAlpha),
+                     static_cast<int>(w.effStrata), w.effLevel, w.clipTo,
+                     drawIndex[w.id]);
+    }
+    return std::fclose(out) == 0;
 }
 
 void WidgetTree::collectDrawOrder() {

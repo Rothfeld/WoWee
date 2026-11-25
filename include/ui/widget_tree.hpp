@@ -23,6 +23,7 @@
 #include <limits>
 #include <map>
 #include <string>
+#include <utility>
 #include <string_view>
 #include "pipeline/guild_tabard.hpp"
 #include <vector>
@@ -1167,6 +1168,19 @@ public:
     /// Widgets to draw, in the order to draw them. Only those that resolved to a
     /// visible, non-empty rect. Valid until the next layout().
     [[nodiscard]] const std::vector<const Widget*>& drawOrder() const { return drawOrder_; }
+    /// Every widget's resolved state, one line each, for comparing two runs
+    /// or two builds: id, kind, name, parent, shown, visibleChain, visible,
+    /// placed, left, bottom, rectW, rectH, width, height, effScale, effAlpha,
+    /// effStrata, effLevel, clipTo, and its position in drawOrder() (-1 when
+    /// not drawn). Tab separated, floats as hex so equal means bit-equal.
+    /// Example: _experiments/20261125T172500Z.ui_frame_cost/rects/.
+    /// False when the file could not be written.
+    [[nodiscard]] bool writeRectDump(const std::string& path) const;
+    /// A dump asked for from a script, written by the application once the
+    /// frame that is being built has been laid out and drawn.
+    void requestRectDump(std::string path) { rectDumpRequest_ = std::move(path); }
+    [[nodiscard]] std::string takeRectDumpRequest() { return std::exchange(rectDumpRequest_, {}); }
+
     /// Re-collect drawOrder() after post-layout sizing (such as tooltips populated
     /// or resized between layout() and draw()).
     void refreshDrawOrder() { collectDrawOrder(); }
@@ -1176,6 +1190,7 @@ private:
     /// wheel without taking the mouse counts as under the cursor.
     [[nodiscard]] uint32_t hitTestFor(float x, float y, bool forWheel) const;
     std::vector<LinkRect> linkRects_;
+    std::string rectDumpRequest_;
     void layoutWidget(uint32_t id, float screenW, float screenH);
     /// Clear the drawing and running flags under a hidden frame without
     /// placing any of it. See layoutWidget.
@@ -1196,8 +1211,16 @@ private:
     uint64_t generationAtLastPass_ = 0;
     uint64_t cleanPasses_ = 0;
     uint64_t totalPasses_ = 0;
+    bool lastPassWasClean_ = false;
     uint32_t visibleThisPass_ = 0;
     uint32_t lastVisibleCount_ = 0;
+    /// Widgets under hidden frames that the last pass visited only to clear
+    /// their flags, and what that cost when timeHiddenMarks_ asks.
+    uint32_t hiddenMarkedThisPass_ = 0;
+    uint32_t lastHiddenMarkedCount_ = 0;
+    double hiddenMarkMsThisPass_ = 0.0;
+    double lastHiddenMarkMs_ = 0.0;
+    bool timeHiddenMarks_ = false;
 
 public:
     /// The anchor walk and the draw-order collection of the last full pass,
@@ -1208,6 +1231,14 @@ public:
     [[nodiscard]] uint64_t totalPasses() const { return totalPasses_; }
     /// How many widgets the last full pass placed that were actually visible.
     [[nodiscard]] uint32_t lastVisibleCount() const { return lastVisibleCount_; }
+    /// How many widgets under hidden frames the last full pass visited.
+    [[nodiscard]] uint32_t lastHiddenMarkedCount() const { return lastHiddenMarkedCount_; }
+    /// What visiting them cost, measured only after setTimeHiddenMarks(true):
+    /// it is a clock read around every hidden frame.
+    [[nodiscard]] double lastHiddenMarkMs() const { return lastHiddenMarkMs_; }
+    void setTimeHiddenMarks(bool on) { timeHiddenMarks_ = on; }
+    /// Whether the last full pass ran with nothing moved since the one before.
+    [[nodiscard]] bool lastPassWasClean() const { return lastPassWasClean_; }
     void resetPassCounts() { cleanPasses_ = 0; totalPasses_ = 0; }
 
 private:

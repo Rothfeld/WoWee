@@ -20,6 +20,8 @@
 // that has to be exactly right can be tested without a window, a widget tree or
 // an interface: see tests/test_lua_handler_globals.cpp.
 
+#include <string>
+
 struct lua_State;
 
 namespace wowee::addons {
@@ -43,7 +45,16 @@ bool legacyHandlerGlobals();
 ///
 /// `script` decides where the arguments start: OnEvent alone puts the event
 /// name before the payload. Zero results, which every dispatch site wants.
+///
+/// The outermost handler's time is noted as the frame stage "scripts/<script>"
+/// (core/frame_stage_times.hpp): "scripts/OnUpdate", "scripts/OnEvent".
 int pcallScript(lua_State* L, const char* script, int nargs, int errfunc);
+
+/// Names the frame a handler belongs to, given the stack index of the
+/// handler's `self`, for the per-owner script times of WOWEE_FRAME_PROFILE.
+/// The engine installs it; without one the owner reads "?".
+using ScriptOwnerNamer = std::string (*)(lua_State* L, int selfIndex);
+void setScriptOwnerNamer(ScriptOwnerNamer namer);
 
 /// Script errors take one route, as on 2.4.3: the function seterrorhandler
 /// installed is called with the message where the error was raised, for event

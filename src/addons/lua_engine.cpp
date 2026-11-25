@@ -47,6 +47,7 @@
 #include <imgui.h>
 #include <fstream>
 #include "core/app_clock.hpp"
+#include "core/frame_stage_times.hpp"
 #include "core/config_paths.hpp"
 #include <filesystem>
 
@@ -8090,6 +8091,14 @@ LuaEngine::~LuaEngine() {
 bool LuaEngine::initialize() {
     if (L_) return true;
 
+    // Which frame a timed handler belongs to, for WOWEE_FRAME_PROFILE.
+    setScriptOwnerNamer([](lua_State* L, int selfIndex) -> std::string {
+        if (!lua_istable(L, selfIndex)) return "(no frame)";
+        const auto* w = widgetOf(L, selfIndex);
+        if (!w) return "(no widget)";
+        return w->name.empty() ? "(unnamed)" : w->name;
+    });
+
     // The touch controls need to know, at the moment a thumb lands, whether the
     // interface has anything there. frameXmlOwnsMouse answers for where the
     // cursor was last dispatched, which is one frame behind a fresh press; this
@@ -8243,6 +8252,30 @@ void LuaEngine::registerCoreAPI() {
 
     lua_pushcfunction(L_, lua_wowee_warn);
     lua_setglobal(L_, "__WoweeWarn");
+
+    // __WoweeDumpWidgetRects("bags-open"): every widget's resolved rect and
+    // draw position to $WOWEE_WIDGET_RECT_DIR/bags-open.tsv once this frame
+    // has been drawn (WidgetTree::writeRectDump). For comparing two builds'
+    // layouts in the same interface state. Answers false, and writes nothing,
+    // unless the directory is named in the environment.
+    lua_pushlightuserdata(L_, this);
+    lua_pushcclosure(L_, [](lua_State* L) -> int {
+        auto* self = static_cast<LuaEngine*>(lua_touserdata(L, lua_upvalueindex(1)));
+        const char* tag = luaL_checkstring(L, 1);
+        const char* dir = std::getenv("WOWEE_WIDGET_RECT_DIR");
+        if (!self || !dir || !*dir) {
+            lua_pushboolean(L, 0);
+            return 1;
+        }
+        for (const char* c = tag; *c; ++c) {
+            luaL_argcheck(L, std::isalnum(static_cast<unsigned char>(*c)) || *c == '-' || *c == '_',
+                          1, "letters, digits, '-' and '_' only");
+        }
+        self->widgets_.requestRectDump(std::string(dir) + "/" + tag + ".tsv");
+        lua_pushboolean(L, 1);
+        return 1;
+    }, 1);
+    lua_setglobal(L_, "__WoweeDumpWidgetRects");
 
     // Run the deferred OnTextChanged queue now rather than at the next frame.
     //
@@ -13370,6 +13403,7 @@ void LuaEngine::reportEventListenersOnce() {
 /// parent never goes near SetWidth.
 void LuaEngine::updateSizeChanges() {
     if (!L_) return;
+    const core::ScopedFrameStage stage("addonWidgets/engine/size changes");
     for (size_t id = 1; id < widgets_.size(); ++id) {
         const ui::Widget* wp = widgets_.get(static_cast<uint32_t>(id));
         if (!wp) continue;
@@ -13414,6 +13448,7 @@ void LuaEngine::updateSizeChanges() {
 
 void LuaEngine::updateVisibility() {
     if (!L_) return;
+    const core::ScopedFrameStage stage("addonWidgets/engine/visibility");
     // By index and re-fetched each time: a handler is free to create frames,
     // and OnShow very often does.
     // `visible` here and `visibleChain` in the OnUpdate pump, which is a
@@ -13527,6 +13562,7 @@ bool LuaEngine::editBoxHasFocus() const {
 
 void LuaEngine::updateScrollRanges() {
     if (!L_) return;
+    const core::ScopedFrameStage stage("addonWidgets/engine/scroll ranges");
     // Copied: an OnScrollRangeChanged handler may create scroll frames.
     const std::vector<uint32_t> frames = widgets_.scrollFrames();
     for (uint32_t id : frames) {
@@ -13827,6 +13863,7 @@ void LuaEngine::callClickScript(uint32_t wid, const char* script, const char* bu
 
 void LuaEngine::dispatchMouse(float x, float y, float screenH, MouseButtons buttons) {
     if (!L_) return;
+    const core::ScopedFrameStage stage("addonWidgets/mouse");
     const float rawMouseX = x;
     const float rawMouseY = y;
     // The cursor arrives in window pixels measured from the top, and the tree
@@ -14607,6 +14644,7 @@ void LuaEngine::runInterfaceProbe() {
 /// erased here and why scrolling lights everything again - the player reading
 /// back wants what was said, not what is still fresh.
 void LuaEngine::expireMessages(float elapsed) {
+    const core::ScopedFrameStage stage("addons->update/message ages");
     for (size_t id = 1; id < widgets_.size(); ++id) {
         auto* w = widgets_.get(static_cast<uint32_t>(id));
         if (!w || !w->isMessageFrame) continue;
@@ -14693,6 +14731,7 @@ void LuaEngine::dispatchOnUpdate(float elapsed) {
     // rather than the previous one's.
     lua_getglobal(L_, "__WoweeTickAnimations");
     if (lua_isfunction(L_, -1)) {
+        const core::ScopedFrameStage stage("scripts/animation tick");
         lua_pushnumber(L_, elapsed);
         if (lua_pcall(L_, 1, 0, 0) != 0) {
             LOG_WARNING("animation tick error: ", luaL_optstring(L_, -1, "?"));

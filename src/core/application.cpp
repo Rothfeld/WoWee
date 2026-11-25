@@ -3,6 +3,7 @@
 #include "core/application.hpp"
 #include "game/game_utils.hpp"
 #include "core/frame_pacer.hpp"
+#include "core/frame_stage_times.hpp"
 #include <cassert>
 #include <array>
 #include "core/env_flag.hpp"
@@ -1551,6 +1552,7 @@ void Application::run() {
     // CPU 0 and defeated all command-recording parallelism.
 
     frameProfileEnabled_ = core::envFlagEnabled("WOWEE_FRAME_PROFILE", false);
+    core::frameStageNotes().detailEnabled = frameProfileEnabled_;
     if (frameProfileEnabled_) {
         LOG_WARNING("Frame timing profile enabled (WOWEE_FRAME_PROFILE=1) - "
                     "the per-stage breakdown will be reported at warning");
@@ -4970,8 +4972,11 @@ void Application::updateInGame(float deltaTime, const char*& updateCheckpoint) {
     // NEW_WORLD removes the old entities and queues a world load. Finish that
     // load in update() before any stage reads the former player's render state.
     if (worldLoader_ && worldLoader_->hasPendingEntry()) return;
+    // The interface's own frame: OnUpdate handlers, its animations and the
+    // timers built on them. The handlers' time is also noted by kind, as
+    // "scripts/OnUpdate" and its neighbours (core/frame_stage_times.hpp).
     if (addonManager_ && addonsLoaded_) {
-        addonManager_->update(deltaTime);
+        runInGameStage("addons->update", [&] { addonManager_->update(deltaTime); });
     }
     // Always unsheath on combat engage.
     inGameStep = "auto-unsheathe";
@@ -5864,6 +5869,7 @@ void Application::render() {
                 // frames such as MangAdmin's target model. The named frames
                 // above keep their own views and are skipped here.
                 {
+                    const core::ScopedFrameStage scanStage("addonWidgets/paperdoll/unit model scan");
                     const uint32_t named[] = {paperdollWidgetId_, dressUpWidgetId_,
                         auctionDressUpWidgetId_, petModelWidgetId_, stableModelWidgetId_,
                         companionModelWidgetId_, inspectModelWidgetId_};
@@ -6640,6 +6646,17 @@ void Application::render() {
                 widgetRenderer_.draw(addonManager_->getLuaEngine()->widgets(),
                                      uiIo.DisplaySize.x, uiIo.DisplaySize.y);
             });
+            // __WoweeDumpWidgetRects, answered once the frame it was asked in
+            // has been laid out and drawn.
+            auto& tree = addonManager_->getLuaEngine()->widgets();
+            if (const std::string path = tree.takeRectDumpRequest(); !path.empty()) {
+                if (tree.writeRectDump(path)) {
+                    LOG_WARNING("Widget rect dump: ", tree.size() - 1, " widgets, ",
+                                tree.drawOrder().size(), " drawn, to ", path);
+                } else {
+                    LOG_ERROR("Widget rect dump: cannot write ", path);
+                }
+            }
         }
 
         // Only now is the draw data closed.
@@ -6698,6 +6715,14 @@ void Application::render() {
         }
     }
 
+    // What the widget tree, the script handlers and the engine's sweeps noted
+    // for themselves this frame, into the same report as the stages above.
+    for (auto& [name, note] : core::frameStageNotes().stages) {
+        if (note.calls == 0) continue;
+        noteStageTime(name.c_str(), static_cast<float>(note.ms));
+        stageStats_[name].calls += note.calls;
+        note = core::FrameStageNote{};
+    }
     stageStatFrames_ += 1;
     reportStageTimes();
     renderingFrame_ = false;
@@ -6745,7 +6770,40 @@ void Application::reportStageTimes() {
                  << static_cast<float>(total / stageStatFrames_) << "ms/frame avg, "
                  << stat.worstMs << "ms worst, "
                  << static_cast<int>(100.0 * total / windowMs) << "% of the window";
+            // A stage that notes itself can run many times a frame or not in
+            // every frame: say how often, so 0.4ms of OnEvent reads as forty
+            // handlers rather than as one slow one.
+            if (stat.calls > 0) {
+                line << ", " << static_cast<float>(stat.calls) / static_cast<float>(stageStatFrames_)
+                     << " calls/frame, in " << stat.frames << " frames";
+            }
             if (loud) LOG_WARNING(line.str()); else LOG_INFO(line.str());
+        }
+        auto& notes = core::frameStageNotes();
+        for (auto& [name, count] : notes.counts) {
+            std::ostringstream line;
+            line << "  count " << name << ": " << count << " ("
+                 << static_cast<float>(count) / static_cast<float>(stageStatFrames_)
+                 << " per frame)";
+            if (loud) LOG_WARNING(line.str()); else LOG_INFO(line.str());
+            count = 0;
+        }
+        // Which handlers the script time went to, most expensive first
+        // (WOWEE_FRAME_PROFILE only: naming the owner of every call costs).
+        if (!notes.detail.empty()) {
+            std::vector<std::pair<double, std::string>> owners;
+            owners.reserve(notes.detail.size());
+            for (const auto& [name, note] : notes.detail) owners.emplace_back(note.ms, name);
+            std::sort(owners.rbegin(), owners.rend());
+            constexpr size_t kOwnersListed = 25;
+            for (size_t i = 0; i < owners.size() && i < kOwnersListed; ++i) {
+                const auto& note = notes.detail[owners[i].second];
+                LOG_WARNING("  script ", owners[i].second, ": ",
+                            static_cast<float>(note.ms / stageStatFrames_), "ms/frame avg, ",
+                            static_cast<float>(note.calls) / static_cast<float>(stageStatFrames_),
+                            " calls/frame");
+            }
+            notes.detail.clear();
         }
     }
 
