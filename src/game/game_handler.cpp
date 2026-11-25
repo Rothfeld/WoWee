@@ -1203,7 +1203,19 @@ void GameHandler::closeDistantNpcWindows() {
                                   auto closeFn, const char* label) {
         if (!windowOpen || npcGuid == 0) return;
         auto npc = entityController_->getEntityManager().getEntity(npcGuid);
-        if (!npc) return;
+        if (!npc) {
+            // Inventory items (HIGHGUID_ITEM = 0x4000, e.g. Blackhand's Command) and
+            // quest-sharing party members (HIGHGUID_PLAYER = 0x0000) need not have a
+            // live world entity. World NPCs and GameObjects that despawn or leave
+            // visibility (e.g. Karazhan Grandmother ForcedDespawn when transforming
+            // into The Big Bad Wolf) must close their open interaction window.
+            const uint16_t hi16 = static_cast<uint16_t>(npcGuid >> 48);
+            if (hi16 != 0x4000u && hi16 != 0x0000u) {
+                closeFn();
+                LOG_WARNING(label, " closed: NPC despawned or left visibility");
+            }
+            return;
+        }
         // An item that starts a quest (Blackhand's Command) is the giver of its
         // quest window and has no place in the world; only units and game
         // objects have a distance to keep. Measuring to its origin closed the

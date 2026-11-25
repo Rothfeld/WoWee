@@ -4975,6 +4975,52 @@ TEST_CASE_METHOD(Integration, "Gossip closes when NPC loses gossip flag, dies, o
     GameHandlerTestAccess::closeDistantNpcWindows(handler);
     CHECK_FALSE(handler.isGossipWindowOpen());
     CHECK(gossipClosedCount == 3);
+
+    // 4. If NPC despawns (removed from EntityManager, e.g. Karazhan Grandmother
+    //    ForcedDespawn when transforming into The Big Bad Wolf without sending
+    //    SMSG_GOSSIP_COMPLETE), gossip closes and fires GOSSIP_CLOSED.
+    unit->setHealth(5000);
+    openBiteGossip();
+    REQUIRE(handler.isGossipWindowOpen());
+    handler.selectGossipOption(0);
+    CHECK(handler.isGossipWindowOpen());
+    handler.getEntityManager().removeEntity(npcGuid);
+    GameHandlerTestAccess::closeDistantNpcWindows(handler);
+    CHECK_FALSE(handler.isGossipWindowOpen());
+    CHECK(gossipClosedCount == 4);
+
+    // 5. Item-started quest details (HIGHGUID_ITEM = 0x4000) and player-shared
+    //    quest details (HIGHGUID_PLAYER = 0x0000) stay open even with no world entity.
+    auto openQuestDetails = [&](uint64_t giverGuid) {
+        wowee::network::Packet pkt(wireOpcode(Opcode::SMSG_QUESTGIVER_QUEST_DETAILS));
+        pkt.writeUInt64(giverGuid);
+        pkt.writeUInt32(7761); // Blackhand's Command
+        pkt.writeString("Blackhand's Command");
+        pkt.writeString("Details");
+        pkt.writeString("Objectives");
+        pkt.writeUInt32(1); // autoFinish / activateAccept
+        pkt.writeUInt32(0); // suggestedPlayers
+        pkt.writeUInt32(0); // choiceRewards
+        pkt.writeUInt32(0); // fixedRewards
+        pkt.writeUInt32(0); // rewardMoney
+        pkt.writeUInt32(0); // rewardSpell
+        pkt.writeUInt32(0); // rewardSpellCast
+        pkt.writeUInt32(0); // rewardHonor
+        pkt.writeUInt32(0); // srcItemId
+        pkt.writeUInt32(0); // emoteCount
+        session.receive(pkt);
+    };
+    openQuestDetails(0x4000000000001234ULL);
+    REQUIRE(handler.isQuestDetailsOpen());
+    GameHandlerTestAccess::closeDistantNpcWindows(handler);
+    CHECK(handler.isQuestDetailsOpen());
+    handler.declineQuest();
+    REQUIRE_FALSE(handler.isQuestDetailsOpen());
+
+    openQuestDetails(0x0000000000000042ULL);
+    REQUIRE(handler.isQuestDetailsOpen());
+    GameHandlerTestAccess::closeDistantNpcWindows(handler);
+    CHECK(handler.isQuestDetailsOpen());
 }
 
 TEST_CASE_METHOD(Integration, "OnUpdate runs on frame 0 after Show() before layout, hiding cast-bar flash", "[castbar-flash]") {
