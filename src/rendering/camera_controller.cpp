@@ -475,10 +475,30 @@ glm::vec3 CameraController::moveBodyOnFoot(const glm::vec3& start, const glm::ve
     const float run = glm::length(glm::vec2(whole));
     const float radius = std::max(collisionRadius_, 0.1f);
     const int parts = std::max(1, static_cast<int>(std::ceil(run / radius)));
+    const float partSeconds = stepSeconds / static_cast<float>(parts);
     glm::vec3 position = start;
+    glm::vec3 partMove = whole / static_cast<float>(parts);
+    stepTouchdownSeconds_.reset();
     for (int part = 0; part < parts; ++part) {
-        position = moveBodyOnFootOnce(position, position + whole / static_cast<float>(parts),
-                                      stepSeconds / static_cast<float>(parts), parts == 1);
+        const bool airborneBefore = !grounded;
+        partLandedAfter_.reset();
+        position = moveBodyOnFootOnce(position, position + partMove, partSeconds, parts == 1);
+        if (airborneBefore && grounded && !stepTouchdownSeconds_) {
+            // Where and when in this step the fall met what holds the body.
+            stepTouchdownSeconds_ = partSeconds * (static_cast<float>(part) + partLandedAfter_.value_or(1.0f));
+            stepTouchdownPosition_ = partLandedAfter_ ? partLandedAt_ : position;
+            // From the touchdown on the body moves as the keys ask, as it
+            // does for the rest of the part it landed in (fallBody): the
+            // level velocity of the flight ends with the flight. Build 8606
+            // knocked back at 20 yd/s (0.67 yd a frame) stops where it comes
+            // down, 0.34 yd into its last frame, and that is the place its
+            // landing packet names (-6994.976, -3537.36, 12.906; it rests
+            // within 6 mm of the packet's place in 7 flights of 7,
+            // _experiments/20261124T231500Z.movement_collision_parity_round25).
+            // The drop asked of each part stays: a body that walks off again
+            // within the step falls on from there.
+            partMove = glm::vec3(bodyGroundVelocity_.x * partSeconds, bodyGroundVelocity_.y * partSeconds, partMove.z);
+        }
     }
     // Asked for anew in every physics step that walks.
     bodyGroundVelocity_ = glm::vec3(0.0f);
@@ -571,6 +591,8 @@ glm::vec3 CameraController::moveBodyOnFootOnce(const glm::vec3& start, const glm
         move = movement::fallBody(from, glm::vec3(horizontal.x, horizontal.y, delta.z),
                                   radius, height, triangles, minWalkable, maxStep, terrainCount,
                                   glm::vec3(bodyGroundVelocity_.x, bodyGroundVelocity_.y, 0.0f) * stepSeconds);
+        partLandedAfter_ = move.landedAfter;
+        partLandedAt_ = move.landedAt;
     }
     if (move.deflected) {
         if (wmoCount > 0 || terrainCount > 0) ++movementTraceWmoContacts_;
@@ -2798,11 +2820,18 @@ void CameraController::updateThirdPersonCamera(float deltaTime, FrameInput& f) {
     bool airborneBeforeStep = !grounded;
     for (int step = 0; step < steps; ++step) {
         f.nowJump = jumpPressed && step == 0;
+        stepTouchdownSeconds_.reset();
         targetPos = moveFollowedCharacter(f.physicsDeltaTime, f, prevTargetPos);
         groundFollowedCharacter(f.physicsDeltaTime, f, targetPos, prevTargetPos);
         if (airborneBeforeStep && grounded && !touchdownSeconds_) {
-            touchdownSeconds_ = f.physicsDeltaTime * static_cast<float>(step + 1);
-            touchdownPosition_ = *followTarget;
+            // Build 8606's landing packet carries the instant the fall met
+            // the ground, to the millisecond: fall time 825 for a standing
+            // jump on level ground (2 x 7.9555 / 19.2911 s; 2 jumps of 2),
+            // whatever the frames. Where the body was grounded by something
+            // other than its fall's sweep, the end of the step.
+            touchdownSeconds_ = f.physicsDeltaTime * static_cast<float>(step) +
+                                stepTouchdownSeconds_.value_or(f.physicsDeltaTime);
+            touchdownPosition_ = stepTouchdownSeconds_ ? stepTouchdownPosition_ : *followTarget;
         }
         airborneBeforeStep = !grounded;
     }

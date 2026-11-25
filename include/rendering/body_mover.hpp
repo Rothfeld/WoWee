@@ -276,6 +276,11 @@ struct BodyMove {
     // Of a fall: what the faces that turned it aside leave of the frame's
     // level move - the move without what the drop was pushed aside by.
     glm::vec2 levelKept{0.0f};
+    // Of a fall that ground ended: after which part of the frame's move it
+    // did (0 to 1), and where the body touched down - before the walk that
+    // takes the rest of the frame from there.
+    std::optional<float> landedAfter;
+    glm::vec3 landedAt{0.0f};
 };
 
 // `met`, when given, receives the triangle of the contact.
@@ -437,12 +442,16 @@ inline BodyMove fallBody(const glm::vec3& from, const glm::vec3& delta,
     glm::vec3 remaining = turnedByOverlappedWalls(from, delta, radius, height, triangles, minWalkableNormalZ, turned);
     if (turned) move.deflected = true;
     move.levelKept = glm::vec2(remaining);
+    // The part of the frame not yet spent: what turns the move aside shortens
+    // the way, not the time.
+    float timeLeft = 1.0f;
     for (int iteration = 0; iteration < 5 && glm::dot(remaining, remaining) > 1e-12f; ++iteration) {
         const BodyTriangle* met = nullptr;
         const auto contact = firstBodyContact(move.position, remaining, radius, height, triangles, &met);
-        if (!contact) { move.position += remaining; remaining = glm::vec3(0.0f); break; }
+        if (!contact) { move.position += remaining; remaining = glm::vec3(0.0f); timeLeft = 0.0f; break; }
         move.position += remaining * contact->time;
         remaining *= 1.0f - contact->time;
+        timeLeft *= 1.0f - contact->time;
         const glm::vec3 n = contact->normal;
         if (n.z >= minWalkableNormalZ && remaining.z <= 0.0f && contact->face.z >= minWalkableNormalZ) {
             // Ground under the sole ends the fall, and what is left of the
@@ -453,6 +462,8 @@ inline BodyMove fallBody(const glm::vec3& from, const glm::vec3& delta,
             move.position += n * kContactSkin;
             move.support = BodySupport::Walkable;
             move.soleOnGround = true;
+            move.landedAfter = 1.0f - timeLeft;
+            move.landedAt = move.position;
             // On the ground the move is the one the keys ask for
             // (`groundMove`, the level move of a whole frame on ground), for
             // the part of the frame that is left, whatever the fall had kept
@@ -471,6 +482,8 @@ inline BodyMove fallBody(const glm::vec3& from, const glm::vec3& delta,
                 // Only a walk that stays on ground: a landing does not end in a perch or a second fall.
                 if (walked.support == BodySupport::Walkable) {
                     walked.deflected = walked.deflected || move.deflected;
+                    walked.landedAfter = move.landedAfter;
+                    walked.landedAt = move.landedAt;
                     return walked;
                 }
             }
@@ -516,12 +529,16 @@ inline BodyMove fallBody(const glm::vec3& from, const glm::vec3& delta,
             if (levelDistanceToTriangle(move.position, *met) <= kEdgeCatch) {
                 move.position = held;
                 move.support = BodySupport::Walkable;
+                move.landedAfter = 1.0f - timeLeft;
+                move.landedAt = held;
                 const glm::vec3 rest(remaining.x, remaining.y, 0.0f);
                 if (rest.x * rest.x + rest.y * rest.y > 1e-10f) {
                     BodyMove walked = walkBody(held, rest, maxStep, radius, height, triangles,
                                                minWalkableNormalZ, maxStep, heightfieldTriangles, glm::vec3(0.0f), true);
                     if (walked.support == BodySupport::Walkable) {
                         walked.deflected = walked.deflected || move.deflected;
+                        walked.landedAfter = move.landedAfter;
+                        walked.landedAt = move.landedAt;
                         return walked;
                     }
                 }
@@ -612,6 +629,8 @@ inline BodyMove fallBody(const glm::vec3& from, const glm::vec3& delta,
                 move.support = BodySupport::Walkable;
                 move.soleOnGround = true;
                 move.position = rest->position;
+                move.landedAfter = 1.0f - timeLeft;
+                move.landedAt = move.position;
             }
         }
     }

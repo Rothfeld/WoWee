@@ -1118,6 +1118,12 @@ private:
     float airborneSeconds_ = 0.0f;
     std::optional<float> touchdownSeconds_;
     glm::vec3 touchdownPosition_{0.0f};
+    // Within one physics step (moveBodyOnFoot), and within one of its parts
+    // (moveBodyOnFootOnce: BodyMove::landedAfter, landedAt).
+    std::optional<float> stepTouchdownSeconds_;
+    glm::vec3 stepTouchdownPosition_{0.0f};
+    std::optional<float> partLandedAfter_;
+    glm::vec3 partLandedAt_{0.0f};
     bool wasAscending_ = false;   // Space held while flyingActive_
     bool wasDescending_ = false;  // X held while flyingActive_
     /// True while the tile under a position has not finished streaming, which

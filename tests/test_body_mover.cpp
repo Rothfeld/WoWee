@@ -561,6 +561,37 @@ TEST_CASE("A fall that ends on ground walks the rest of the frame's move", "[bod
     CHECK(std::abs(move.position.z) < 0.003f);
 }
 
+// Build 8606's landing packet names the instant and the place the fall met the
+// ground: fall time 825 ms for a standing jump whatever the frames, and a
+// knockback at 20 yd/s ends 0.34 yd into its last frame's 0.67
+// (_experiments/20261124T231500Z.movement_collision_parity_round25).
+TEST_CASE("A fall that ends on ground says when in the frame and where it touched down", "[body_mover]") {
+    Mesh mesh;
+    floorAt(mesh, 0.0f);
+    // 0.3 yd over the floor, a frame's move of 0.6 yd along and 0.5 yd down: the floor is met 0.6 of the way.
+    const BodyMove flown = fallBody({0.0f, 0.0f, 0.3f}, {0.6f, 0.0f, -0.5f}, kRadius, kHeight, mesh,
+                                    kMinWalkableNormalZ, kMaxStepUp, 0, glm::vec3(0.0f));
+    REQUIRE(flown.support == BodySupport::Walkable);
+    REQUIRE(flown.landedAfter);
+    CHECK(*flown.landedAfter == Catch::Approx(0.6f).margin(0.005f));
+    CHECK(flown.landedAt.x == Catch::Approx(0.36f).margin(0.003f));
+    CHECK(flown.landedAt.z == Catch::Approx(0.0f).margin(2.0f * kContactSkin));
+    // No key held: the body stays where it came down.
+    CHECK(flown.position.x == Catch::Approx(flown.landedAt.x).margin(1e-4f));
+
+    // With a key held the rest of the frame is walked, and the touchdown is still said.
+    const BodyMove walkedOn = fallBody({0.0f, 0.0f, 0.3f}, {0.6f, 0.0f, -0.5f}, kRadius, kHeight, mesh,
+                                       kMinWalkableNormalZ, kMaxStepUp, 0, glm::vec3(kFrameRun, 0.0f, 0.0f));
+    REQUIRE(walkedOn.landedAfter);
+    CHECK(*walkedOn.landedAfter == Catch::Approx(0.6f).margin(0.005f));
+    CHECK(walkedOn.landedAt.x == Catch::Approx(0.36f).margin(0.003f));
+    CHECK(walkedOn.position.x == Catch::Approx(0.36f + 0.4f * kFrameRun).margin(0.003f));
+
+    // A fall that meets nothing says nothing.
+    const BodyMove inAir = fallBody({0.0f, 0.0f, 3.0f}, {0.6f, 0.0f, -0.5f}, kRadius, kHeight, mesh);
+    CHECK_FALSE(inAir.landedAfter);
+}
+
 TEST_CASE("A move turned along a face is not stopped by that face", "[body_mover]") {
     // Orgrimmar, where the ramp meets the 53 degree skirt under the wall
     // (1816.17, -4242.35), WoWee's own triangles: ramp, ramp, wall, skirt.
