@@ -22,14 +22,14 @@ bool LevelUpEffect::loadModel(Kind kind,
 
     pipeline::M2Model model = pipeline::M2Loader::load(m2FileData);
     if (model.name.empty()) model.name = defaultName;
-    // Spell effect M2s may have no geometry (particle-only), so don't require isValid()
-    if (model.vertices.empty() && model.particleEmitters.empty()) {
-        LOG_WARNING("LevelUpEffect: M2 ", defaultName, " has no vertices and no particle emitters");
-        return false;
-    }
-
     if (!skinFileData.empty() && model.version >= 264) {
         pipeline::M2Loader::loadSkin(skinFileData, model);
+    }
+
+    // Spell effect M2s may have no geometry (particle-only or ribbon-only)
+    if (!model.hasRenderableContent()) {
+        LOG_WARNING("LevelUpEffect: M2 ", defaultName, " has no renderable content");
+        return false;
     }
 
     if (!m2Renderer_->loadModel(model, modelIdFor(kind))) {

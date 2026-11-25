@@ -875,16 +875,16 @@ uint32_t SpellVisualSystem::loadSpellModel(const std::string& modelPath) {
         LOG_INFO("SpellVisual: M2 parsed: verts=", model.vertices.size(),
                  " bones=", model.bones.size(), " particles=", model.particleEmitters.size(),
                  " ribbons=", model.ribbonEmitters.size());
-        if (model.vertices.empty() && model.particleEmitters.empty()) {
-            LOG_WARNING("SpellVisual: empty model: ", modelPath);
-            spellVisualFailedModels_.insert(modelId);
-            return 0;
-        }
-        // Load skin file for WotLK-format M2s
+        // Load skin file for WotLK-format M2s before testing renderable content
         if (model.version >= 264) {
             std::string skinPath = pipeline::skinPathForM2(modelPath);
             auto skinData = cachedAssetManager_->readFile(skinPath);
             if (!skinData.empty()) pipeline::M2Loader::loadSkin(skinData, model);
+        }
+        if (!model.hasRenderableContent()) {
+            LOG_WARNING("SpellVisual: empty model: ", modelPath);
+            spellVisualFailedModels_.insert(modelId);
+            return 0;
         }
         if (!m2Renderer_->loadModel(model, modelId)) {
             LOG_WARNING("SpellVisual: failed to load model to GPU: ", modelPath);

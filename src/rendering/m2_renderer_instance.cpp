@@ -515,10 +515,11 @@ void M2Renderer::retireInstance(uint32_t instanceId) {
 
 void M2Renderer::retireMissileInstance(uint32_t instanceId) {
     auto& inst = instances.at(instanceIndexById.at(instanceId));
-    // Ribbons age in the particle pass, which only visits models with emitters.
-    if (inst.cachedHasParticleEmitters && inst.cachedModel && !inst.cachedModel->ribbonEmitters.empty())
+    // Ribbons age in the emitter pass (particleInstanceIndices_), which visits
+    // every model with cachedHasEmitters (particle or ribbon emitters).
+    if (inst.cachedHasEmitters && inst.cachedModel && !inst.cachedModel->ribbonEmitters.empty())
         updateRibbons(inst, *inst.cachedModel, 0.0f, /*emit=*/false, /*finalEdge=*/true);
-    const bool trail = inst.cachedHasParticleEmitters &&
+    const bool trail = inst.cachedHasEmitters &&
         std::any_of(inst.ribbonEdges.begin(), inst.ribbonEdges.end(),
                     [](const auto& edges) { return edges.size() >= 2; });
     if (inst.particles.empty() && !trail) {

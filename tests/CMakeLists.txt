@@ -3530,6 +3530,20 @@ wowee_add_packet_test(test_net_sweep_shard6_session_flags
 target_compile_definitions(test_net_sweep_shard6_session_flags PRIVATE
     WOWEE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
+# Ribbon-only spell M2 models (e.g. Gothik soul drain spells/zig_missile.m2)
+add_executable(test_ribbon_only_spell_models
+    test_ribbon_only_spell_models.cpp
+    ${TEST_COMMON_SOURCES}
+    ${CMAKE_SOURCE_DIR}/src/pipeline/m2_loader.cpp
+)
+target_include_directories(test_ribbon_only_spell_models PRIVATE ${TEST_INCLUDE_DIRS})
+target_include_directories(test_ribbon_only_spell_models SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
+target_link_libraries(test_ribbon_only_spell_models PRIVATE catch2_main)
+wowee_test_link_glm(test_ribbon_only_spell_models)
+add_test(NAME ribbon_only_spell_models COMMAND test_ribbon_only_spell_models)
+set_tests_properties(ribbon_only_spell_models PROPERTIES SKIP_RETURN_CODE 4)
+register_test_target(test_ribbon_only_spell_models)
+
 get_property(ALL_TEST_TARGETS GLOBAL PROPERTY WOWEE_ALL_TEST_TARGETS)
 list(LENGTH ALL_TEST_TARGETS _wowee_test_target_count)
 message(STATUS "Test targets registered: ${_wowee_test_target_count}")

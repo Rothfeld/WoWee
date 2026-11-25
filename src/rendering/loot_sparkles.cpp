@@ -21,16 +21,15 @@ bool LootSparkles::ensureModel(M2Renderer* m2, pipeline::AssetManager* assets) {
 
     const auto m2Data = assets->readFile(kLootFxPath);
     pipeline::M2Model model = m2Data.empty() ? pipeline::M2Model{} : pipeline::M2Loader::load(m2Data);
-    // Particles only, so no geometry is expected.
-    if (model.particleEmitters.empty() && model.vertices.empty()) {
-        failed_ = true;
-        LOG_WARNING("LootSparkles: ", kLootFxPath, " is missing or empty - corpses will not sparkle");
-        return false;
-    }
     if (model.name.empty()) model.name = kLootFxPath;
     if (model.version >= 264) {
         const auto skin = assets->readFile(pipeline::skinPathForM2(kLootFxPath));
         if (!skin.empty()) pipeline::M2Loader::loadSkin(skin, model);
+    }
+    if (!model.hasRenderableContent()) {
+        failed_ = true;
+        LOG_WARNING("LootSparkles: ", kLootFxPath, " is missing or empty - corpses will not sparkle");
+        return false;
     }
     if (!m2->loadModel(model, MODEL_ID)) {
         failed_ = true;
