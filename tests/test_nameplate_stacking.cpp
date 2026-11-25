@@ -49,6 +49,14 @@ TEST_CASE("Legacy plate artwork clamps with native frame dimensions", "[nameplat
     CHECK(hoverCombatName.r == 255);
     CHECK(hoverCombatName.g == 255);
     CHECK(hoverCombatName.b == 0);
+
+    // Build 8606 draws 3D world overhead unit names unshadowed, while 2D
+    // nameplates keep a drop shadow behind the name line.
+    CHECK(worldOrPlateLabelShadowAlpha(/*showPlate=*/false, /*legacyPlates=*/true, /*isSubLabel=*/false) == 0);
+    CHECK(worldOrPlateLabelShadowAlpha(/*showPlate=*/false, /*legacyPlates=*/true, /*isSubLabel=*/true) == 0);
+    CHECK(worldOrPlateLabelShadowAlpha(/*showPlate=*/true, /*legacyPlates=*/true, /*isSubLabel=*/false) == 160);
+    CHECK(worldOrPlateLabelShadowAlpha(/*showPlate=*/false, /*legacyPlates=*/false, /*isSubLabel=*/false) == 160);
+    CHECK(worldOrPlateLabelShadowAlpha(/*showPlate=*/false, /*legacyPlates=*/false, /*isSubLabel=*/true) == 120);
 }
 
 TEST_CASE("Creature level colors include the no-XP gray boundary", "[nameplates][difficulty]") {

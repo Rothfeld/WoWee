@@ -437,6 +437,17 @@ inline float legacyPlateAlpha(bool hasTarget, bool isTarget) {
     return (!hasTarget || isTarget) ? 1.0f : 0.5f;
 }
 
+/// TBC 2.4.3 (build 8606) overhead label drop-shadow alpha:
+/// 2D nameplates (`showPlate == true`) render their name text with a 1px black
+/// drop shadow; 3D world overhead unit names and subtitles (`showPlate == false`)
+/// render directly into the 3D scene with no drop shadow (build 8606 draws 3D
+/// unit names unshadowed; a 1px black shadow behind small distant glyphs smears
+/// across thin strokes and darkens red/green names).
+inline int worldOrPlateLabelShadowAlpha(bool showPlate, bool legacyPlates, bool isSubLabel) {
+    if (!showPlate && legacyPlates) return 0;
+    return isSubLabel ? 120 : 160;
+}
+
 /// The unit whose plate is under the pointer, or 0. Plates are listed in draw
 /// order, so the last one containing the point is the one drawn on top.
 ///

@@ -1781,12 +1781,16 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
                 }
                 return;
             }
-            drawList->AddText(nameFont, nameFontSize, ImVec2(pos.x + 1.0f, pos.y + 1.0f),
-                              IM_COL32(0, 0, 0, A(shadowAlpha)), text);
+            if (shadowAlpha > 0) {
+                drawList->AddText(nameFont, nameFontSize, ImVec2(pos.x + 1.0f, pos.y + 1.0f),
+                                  IM_COL32(0, 0, 0, A(shadowAlpha)), text);
+            }
             drawList->AddText(nameFont, nameFontSize, pos, fgCol, text);
         };
         if (showThisName) {
-            drawWorldOrPlateText(ImVec2(nameX, nameY), nameColor, 160, labelBuf);
+            drawWorldOrPlateText(ImVec2(nameX, nameY), nameColor,
+                                 ui::worldOrPlateLabelShadowAlpha(showPlate, legacyPlates, false),
+                                 labelBuf);
         }
 
         // Sub-label below the name (WoW-style <Guild Name> or <NPC Title> in
@@ -1796,7 +1800,9 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             ImVec2 subSz = nameFont->CalcTextSizeA(nameFontSize, FLT_MAX, 0.0f, subLabel.c_str());
             float subX = sx - subSz.x * 0.5f;
             float subY = nameY + textSize.y + 1.0f;
-            drawWorldOrPlateText(ImVec2(subX, subY), nameColor, 120, subLabel.c_str());
+            drawWorldOrPlateText(ImVec2(subX, subY), nameColor,
+                                 ui::worldOrPlateLabelShadowAlpha(showPlate, legacyPlates, true),
+                                 subLabel.c_str());
         }
 
         {
