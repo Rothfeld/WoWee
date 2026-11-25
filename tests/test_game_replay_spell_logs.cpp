@@ -4,8 +4,13 @@
 #include <catch_amalgamated.hpp>
 
 #include "game_replay.hpp"
+#include "audio/creature_sound_index.hpp"
+#include "game/combat_handler.hpp"
+#include "pipeline/dbc_loader.hpp"
 
 #include <algorithm>
+#include <filesystem>
+#include <fstream>
 #include <string>
 
 using replay::Session;
@@ -596,5 +601,337 @@ TEST_CASE("lethal melee and spell hits suppress victim hit-flinch while non-leth
 
         s.receive(makeTbcSpellDamageLog(kMob, kPlayer, 133, 300000, 4));
         CHECK(reactions.size() == 1);  // lethal spell hit suppressed
+    }
+}
+
+TEST_CASE("Shard 2 TBC network wire-payload sweep fixes round-trip cleanly",
+          "[replay][tbc][net_sweep_shard2]") {
+    using wowee::game::CombatTextEntry;
+
+    // 1. P0 SMSG_CLEAR_EXTRA_AURA_INFO (0x3A6): PackedGuid(target) + uint32(spellId)
+    //    6-byte player packet and 11+-byte creature packet both match by spellId.
+    {
+        Session s("tbc");
+        s.handler().setTargetGuidRaw(kMob);
+
+        auto setExtraAura = [](uint64_t guid, uint8_t slot, uint32_t spellId, int32_t maxMs, uint32_t remMs) {
+            Packet p(wireOpcode(Opcode::SMSG_SET_EXTRA_AURA_INFO_OBSOLETE));
+            p.writePackedGuid(guid);
+            p.writeUInt8(slot);
+            p.writeUInt32(spellId);
+            p.writeUInt32(static_cast<uint32_t>(maxMs));
+            p.writeUInt32(remMs);
+            return p;
+        };
+        auto clearExtraAura = [](uint64_t guid, uint32_t spellId) {
+            Packet p(wireOpcode(Opcode::SMSG_CLEAR_EXTRA_AURA_INFO));
+            p.writePackedGuid(guid);
+            p.writeUInt32(spellId);
+            return p;
+        };
+
+        s.receive(setExtraAura(kPlayer, 0, 21562, 1800000, 1800000));
+        s.receive(setExtraAura(kPlayer, 1, 1459, 1800000, 1800000));
+        s.receive(setExtraAura(kMob, 40, 172, 18000, 18000));
+        REQUIRE(s.handler().getPlayerAuras().size() >= 2);
+        CHECK(s.handler().getPlayerAuras()[0].spellId == 21562u);
+        CHECK(s.handler().getPlayerAuras()[1].spellId == 1459u);
+        REQUIRE(s.handler().getTargetAuras().size() >= 41);
+        CHECK(s.handler().getTargetAuras()[40].spellId == 172u);
+
+        // 6-byte player packet (2-byte packed GUID + 4-byte spellId)
+        Packet playerClear = clearExtraAura(kPlayer, 21562);
+        CHECK(playerClear.getSize() < 9u);
+        s.receive(playerClear);
+        CHECK(s.handler().getPlayerAuras()[0].spellId == 0u);
+        CHECK(s.handler().getPlayerAuras()[1].spellId == 1459u);
+
+        // Creature target packet
+        s.receive(clearExtraAura(kMob, 172));
+        CHECK(s.handler().getTargetAuras()[40].spellId == 0u);
+    }
+
+    // 2. P0 CMSG_CANCEL_CAST (4-byte TBC vs 5-byte WotLK) + P1 CMSG_CANCEL_CHANNELLING (0x13B)
+    {
+        Session sTbc("tbc");
+        Packet startCast(wireOpcode(Opcode::SMSG_SPELL_START));
+        startCast.writePackedGuid(kPlayer);
+        startCast.writePackedGuid(kPlayer);
+        startCast.writeUInt32(133); // Fireball
+        startCast.writeUInt8(3);
+        startCast.writeUInt16(0);
+        startCast.writeUInt32(2500);
+        startCast.writeUInt32(0x02);
+        startCast.writePackedGuid(kMob);
+        sTbc.receive(startCast);
+        REQUIRE(sTbc.handler().isCasting());
+
+        sTbc.handler().cancelCast();
+        auto cancelledTbc = sTbc.sent().of(Opcode::CMSG_CANCEL_CAST);
+        REQUIRE(cancelledTbc.size() == 1);
+        REQUIRE(cancelledTbc[0].getSize() == 4u);
+        CHECK(cancelledTbc[0].readUInt32() == 133u);
+        CHECK_FALSE(cancelledTbc[0].hasData());
+
+        // Channel cancel sends CMSG_CANCEL_CHANNELLING (0x13B), 4-byte spellId
+        Packet chanStart(wireOpcode(Opcode::MSG_CHANNEL_START));
+        chanStart.writePackedGuid(kPlayer);
+        chanStart.writeUInt32(12051); // Evocation
+        chanStart.writeUInt32(8000);
+        sTbc.receive(chanStart);
+        REQUIRE(sTbc.handler().isCasting());
+        REQUIRE(sTbc.handler().isChanneling());
+
+        sTbc.handler().cancelCast();
+        auto cancelledChan = sTbc.sent().of(Opcode::CMSG_CANCEL_CHANNELLING);
+        REQUIRE(cancelledChan.size() == 1);
+        REQUIRE(cancelledChan[0].getSize() == 4u);
+        CHECK(cancelledChan[0].readUInt32() == 12051u);
+        CHECK(sTbc.sent().of(Opcode::CMSG_CANCEL_CAST).size() == 1); // no extra CMSG_CANCEL_CAST
+
+        // WotLK CancelCastPacket keeps 5-byte [uint8 castCount + uint32 spellId]
+        Session sWotlk("wotlk");
+        Packet wotlkCancel = wowee::game::CancelCastPacket::build(133u, 7u);
+        REQUIRE(wotlkCancel.getSize() == 5u);
+        CHECK(wotlkCancel.readUInt8() == 7u);
+        CHECK(wotlkCancel.readUInt32() == 133u);
+    }
+
+    // 3. P1 SMSG_SPELL_FAILED_OTHER (0x2A6) reads wire spellId even when caster was untracked
+    {
+        Session s("tbc");
+        s.handler().setTargetGuidRaw(kMob);
+        s.handler().spellNameCacheRef()[116].name = "Frostbolt";
+        std::vector<std::pair<std::string, std::vector<std::string>>> events;
+        s.handler().setAddonEventCallback([&](const std::string& ev, const std::vector<std::string>& args) {
+            if (ev == "UNIT_SPELLCAST_FAILED" || ev == "UNIT_SPELLCAST_STOP") {
+                events.emplace_back(ev, args);
+            }
+        });
+        uint32_t animStoppedSpell = 0;
+        s.handler().setSpellCastAnimCallback([&](uint64_t guid, wowee::game::SpellAnimPhase phase, uint32_t sp) {
+            if (guid == kMob && phase == wowee::game::SpellAnimPhase::STOP) animStoppedSpell = sp;
+        });
+
+        Packet failOther(wireOpcode(Opcode::SMSG_SPELL_FAILED_OTHER));
+        failOther.writePackedGuid(kMob);
+        failOther.writeUInt32(116); // Frostbolt (never preceded by SMSG_SPELL_START)
+        s.receive(failOther);
+
+        CHECK(animStoppedSpell == 116u);
+        REQUIRE(events.size() == 2);
+        REQUIRE(events[0].second.size() == 3);
+        CHECK(events[0].second[0] == "target");
+        CHECK(events[0].second[1] == "Frostbolt");
+        CHECK(events[1].second[0] == "target");
+        CHECK(events[1].second[1] == "Frostbolt");
+    }
+
+    // 4. P1 SMSG_SPELL_START (0x131) reads CAST_FLAG_AMMO (0x20) trailer + source/dest targets
+    {
+        Session s("tbc");
+        Packet p(wireOpcode(Opcode::SMSG_SPELL_START));
+        p.writePackedGuid(kMob);
+        p.writePackedGuid(kMob);
+        p.writeUInt32(75);        // Auto Shot
+        p.writeUInt8(1);          // castCount
+        p.writeUInt16(0x20);      // CAST_FLAG_AMMO
+        p.writeUInt32(500);       // castTime
+        p.writeUInt32(0x02 | 0x20 | 0x40); // UNIT | SOURCE_LOCATION | DEST_LOCATION
+        p.writePackedGuid(kPlayer);
+        p.writeFloat(10.0f); p.writeFloat(20.0f); p.writeFloat(30.0f);
+        p.writeFloat(40.0f); p.writeFloat(50.0f); p.writeFloat(60.0f);
+        p.writeUInt32(5996);      // ammoDisplayId (arrow)
+        p.writeUInt32(24);        // INVTYPE_AMMO
+
+        wowee::game::SpellStartData parsed;
+        REQUIRE(s.handler().getPacketParsers()->parseSpellStart(p, parsed));
+        CHECK_FALSE(p.hasData()); // 0 unread bytes!
+        CHECK(parsed.targetGuid == kPlayer);
+        CHECK(parsed.targetFlags == (0x02u | 0x20u | 0x40u));
+        REQUIRE(parsed.source.has_value());
+        CHECK(parsed.source->x == Catch::Approx(10.0f));
+        REQUIRE(parsed.destination.has_value());
+        CHECK(parsed.destination->z == Catch::Approx(60.0f));
+        CHECK(parsed.ammoDisplayId == 5996u);
+        CHECK(parsed.ammoInventoryType == 24u);
+    }
+
+    // 5. P1 SMSG_DISPEL_FAILED + SMSG_SPELLDISPELLOG + SMSG_SPELLSTEALLOG preserve both spell IDs
+    {
+        Session s("tbc");
+        s.handler().setTargetGuidRaw(kMob);
+        std::vector<std::vector<std::string>> cleu;
+        s.handler().setAddonEventCallback([&](const std::string& ev, const std::vector<std::string>& args) {
+            if (ev == "COMBAT_LOG_EVENT_UNFILTERED") cleu.push_back(args);
+        });
+
+        // Multi-aura SMSG_DISPEL_FAILED
+        Packet df(wireOpcode(Opcode::SMSG_DISPEL_FAILED));
+        df.writeUInt64(kPlayer);
+        df.writeUInt64(kMob);
+        df.writeUInt32(kDispelMagic); // 527
+        df.writeUInt32(1243);         // Fortitude
+        df.writeUInt32(1459);         // Arcane Intellect
+        s.receive(df);
+
+        const auto& texts = s.handler().getCombatText();
+        REQUIRE(texts.size() == 2);
+        CHECK(texts[0].spellId == kDispelMagic);
+        CHECK(texts[0].extraSpellId == 1243u);
+        CHECK(texts[1].spellId == kDispelMagic);
+        CHECK(texts[1].extraSpellId == 1459u);
+        REQUIRE(cleu.size() == 2);
+        CHECK(cleu[0][1] == "SPELL_DISPEL_FAILED");
+        CHECK(cleu[0][8] == "527");
+        CHECK(cleu[0][11] == "1243");
+        CHECK(cleu[1][11] == "1459");
+
+        // SMSG_SPELLDISPELLOG + SMSG_SPELLSTEALLOG carry casting spell in extraSpellId
+        cleu.clear();
+        s.receive(dispelLog(false, kMob, kPlayer));
+        CHECK(s.handler().getCombatText().back().spellId == kPowerWordFortitude);
+        CHECK(s.handler().getCombatText().back().extraSpellId == kDispelMagic);
+        REQUIRE(cleu.size() == 1);
+        CHECK(cleu[0][1] == "SPELL_DISPEL");
+        CHECK(cleu[0][8] == "527");
+        CHECK(cleu[0][11] == "1243");
+        CHECK(cleu[0][14] == "BUFF");
+    }
+
+    // 6. P1 readCastResultArgs: SPELL_FAILED_NOT_READY (0x3F) optional u32 + SPELL_FAILED_MIN_SKILL (0x95)
+    {
+        Session s("tbc");
+        Packet pNotReadyPerm(wireOpcode(Opcode::SMSG_CAST_FAILED));
+        pNotReadyPerm.writeUInt32(20608); // Reincarnation
+        pNotReadyPerm.writeUInt8(0x3F);   // TBC SPELL_FAILED_NOT_READY -> 67
+        pNotReadyPerm.writeUInt8(1);      // castCount
+        pNotReadyPerm.writeUInt32(1);     // IsSpellOnPermanentCooldown = 1
+        wowee::game::CastFailedData cfPerm;
+        REQUIRE(s.handler().getPacketParsers()->parseCastFailed(pNotReadyPerm, cfPerm));
+        CHECK_FALSE(pNotReadyPerm.hasData());
+        CHECK(cfPerm.result == 67u);
+        CHECK(cfPerm.miscArg == 1u);
+
+        Packet pMinSkill(wireOpcode(Opcode::SMSG_CAST_FAILED));
+        pMinSkill.writeUInt32(2575);
+        pMinSkill.writeUInt8(0x95);       // TBC SPELL_FAILED_MIN_SKILL -> 150
+        pMinSkill.writeUInt8(2);
+        pMinSkill.writeUInt32(186);       // Mining SkillLine
+        wowee::game::CastFailedData cfSkill;
+        REQUIRE(s.handler().getPacketParsers()->parseCastFailed(pMinSkill, cfSkill));
+        CHECK_FALSE(pMinSkill.hasData());
+        CHECK(cfSkill.result == 150u);
+        CHECK(cfSkill.miscArg == 186u);
+    }
+
+    // 7. P1 SMSG_SPELLBREAKLOG (0x14F): SPELL_AURA_BROKEN and SPELL_AURA_BROKEN_SPELL
+    {
+        Session s("tbc");
+        CHECK(wireOpcode(Opcode::SMSG_SPELLBREAKLOG) == 0x014Fu);
+        s.handler().setTargetGuidRaw(kMob);
+        std::vector<std::vector<std::string>> cleu;
+        s.handler().setAddonEventCallback([&](const std::string& ev, const std::vector<std::string>& args) {
+            if (ev == "COMBAT_LOG_EVENT_UNFILTERED") cleu.push_back(args);
+        });
+
+        // Fireball (133) breaks Polymorph (118, debuff=1) on kMob
+        Packet brkSpell(wireOpcode(Opcode::SMSG_SPELLBREAKLOG));
+        brkSpell.writePackedGuid(kMob);
+        brkSpell.writePackedGuid(kPlayer);
+        brkSpell.writeUInt32(133); // breakingSpellId = Fireball
+        brkSpell.writeUInt8(0);
+        brkSpell.writeUInt32(1);
+        brkSpell.writeUInt32(118); // broken aura = Polymorph
+        brkSpell.writeUInt8(1);    // !IsPositive() => DEBUFF
+        s.receive(brkSpell);
+
+        REQUIRE(cleu.size() == 1);
+        REQUIRE(cleu[0].size() >= 15);
+        CHECK(cleu[0][1] == "SPELL_AURA_BROKEN_SPELL");
+        CHECK(cleu[0][8] == "118");
+        CHECK(cleu[0][11] == "133");
+        CHECK(cleu[0][14] == "DEBUFF");
+
+        // Melee swing (breakingSpellId = 0) breaks Ice Armor (168, debuff=0 => BUFF)
+        cleu.clear();
+        Packet brkMelee(wireOpcode(Opcode::SMSG_SPELLBREAKLOG));
+        brkMelee.writePackedGuid(kPlayer);
+        brkMelee.writePackedGuid(kMob);
+        brkMelee.writeUInt32(0);
+        brkMelee.writeUInt8(0);
+        brkMelee.writeUInt32(1);
+        brkMelee.writeUInt32(168);
+        brkMelee.writeUInt8(0);    // BUFF
+        s.receive(brkMelee);
+
+        REQUIRE(cleu.size() == 1);
+        REQUIRE(cleu[0].size() >= 12);
+        CHECK(cleu[0][1] == "SPELL_AURA_BROKEN");
+        CHECK(cleu[0][8] == "168");
+        CHECK(cleu[0][11] == "BUFF");
+    }
+
+    // 8. P1 SMSG_PET_ACTION_SOUND (0x324) & SMSG_PET_DISMISS_SOUND (0x325) + TBC CreatureSoundData
+    {
+        Session s("tbc");
+        auto* ch = s.handler().getCombatHandler();
+        REQUIRE(ch != nullptr);
+
+        uint64_t seenPetGuid = 0;
+        uint32_t seenPetTalk = 99;
+        uint32_t seenDismissRow = 0;
+        glm::vec3 seenDismissPos{0.0f};
+        ch->setPetActionSoundCallback([&](uint64_t g, uint32_t talk) {
+            seenPetGuid = g;
+            seenPetTalk = talk;
+        });
+        ch->setPetDismissSoundCallback([&](uint32_t rowId, const glm::vec3& pos) {
+            seenDismissRow = rowId;
+            seenDismissPos = pos;
+        });
+
+        constexpr uint64_t kPetGuid = 0xF14000102A000001ull;
+        Packet pAct(wireOpcode(Opcode::SMSG_PET_ACTION_SOUND));
+        pAct.writeUInt64(kPetGuid);
+        pAct.writeUInt32(1); // PET_TALK_ATTACK
+        s.receive(pAct);
+        CHECK(seenPetGuid == kPetGuid);
+        CHECK(seenPetTalk == 1u);
+
+        Packet pDis(wireOpcode(Opcode::SMSG_PET_DISMISS_SOUND));
+        pDis.writeUInt32(68); // Doomguard CreatureSoundData row
+        pDis.writeFloat(100.0f);
+        pDis.writeFloat(-200.0f);
+        pDis.writeFloat(15.5f);
+        s.receive(pDis);
+        CHECK(seenDismissRow == 68u);
+        CHECK(seenDismissPos.x == Catch::Approx(100.0f));
+        CHECK(seenDismissPos.y == Catch::Approx(-200.0f));
+        CHECK(seenDismissPos.z == Catch::Approx(15.5f));
+
+        // Verify CreatureSoundData columns 28/29/30 against real TBC DBC if present
+        const std::filesystem::path dbcDir = "/workspace/azerothcore/wowee/Data/expansions/tbc/dbfilesclient";
+        if (std::filesystem::exists(dbcDir / "creaturesounddata.dbc")) {
+            auto loadDbc = [&](const char* name) {
+                wowee::pipeline::DBCFile f;
+                std::ifstream in(dbcDir / name, std::ios::binary);
+                std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)),
+                                           std::istreambuf_iterator<char>());
+                REQUIRE(f.load(bytes));
+                return f;
+            };
+            const auto disp = loadDbc("creaturedisplayinfo.dbc");
+            const auto mod  = loadDbc("creaturemodeldata.dbc");
+            const auto snd  = loadDbc("creaturesounddata.dbc");
+            const auto ftl  = loadDbc("footstepterrainlookup.dbc");
+            const auto tt   = loadDbc("terraintype.dbc");
+            wowee::audio::CreatureSoundIndex idx;
+            idx.load(disp, mod, snd, ftl, tt);
+            // Doomguard (row 68): Attack=9104, Order=9105, Dismiss=9103 (NOT SoundEntries[68]!)
+            CHECK(idx.sound(68, wowee::audio::CreatureSoundColumn::PetAttack) == 9104u);
+            CHECK(idx.sound(68, wowee::audio::CreatureSoundColumn::PetOrder) == 9105u);
+            CHECK(idx.sound(68, wowee::audio::CreatureSoundColumn::PetDismiss) == 9103u);
+        }
     }
 }

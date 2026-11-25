@@ -1066,10 +1066,13 @@ bool TbcPacketParsers::parseSpellStart(network::Packet& packet, SpellStartData& 
 
     // SpellCastTargets: consume ALL target payload types to keep the read position
     // aligned for any bytes the caller may parse after this (ammo, etc.).
-    {
-        uint64_t targetGuid = 0;
-        skipTbcSpellCastTargets(packet, &targetGuid);  // non-fatal on truncation
-        data.targetGuid = targetGuid;
+    skipTbcSpellCastTargets(packet, &data.targetGuid, &data.destination, &data.source, &data.targetFlags);
+
+    // CMaNGOS Spell::WriteAmmoToPacket: display id, inventory type.
+    constexpr uint32_t kCastFlagAmmo = 0x20;
+    if ((data.castFlags & kCastFlagAmmo) && rem() >= 8) {
+        data.ammoDisplayId = packet.readUInt32();
+        data.ammoInventoryType = packet.readUInt32();
     }
 
     LOG_DEBUG("[TBC] Spell start: spell=", data.spellId, " castTime=", data.castTime, "ms",

@@ -228,10 +228,10 @@ Packet buildLearnedSpell(uint32_t spellId) {
     return p;
 }
 
-Packet buildClearExtraAuraInfo(uint64_t guid, uint8_t slot) {
+Packet buildClearExtraAuraInfo(uint64_t guid, uint32_t spellId) {
     Packet p(wireOpcode(Opcode::SMSG_CLEAR_EXTRA_AURA_INFO));
-    p.writeUInt64(guid);
-    p.writeUInt8(slot);
+    p.writePackedGuid(guid);
+    p.writeUInt32(spellId);
     return p;
 }
 
@@ -342,8 +342,8 @@ TEST_CASE("Blizzard_CombatText receives helpful & harmful aura start/fade via Ex
 
     // Fade both via SMSG_CLEAR_EXTRA_AURA_INFO (before UNIT_FIELD_AURAS clears them)
     h.clearRecorded();
-    h.session.receive(buildClearExtraAuraInfo(Session::kPlayerGuid, 0));
-    h.session.receive(buildClearExtraAuraInfo(Session::kPlayerGuid, 40));
+    h.session.receive(buildClearExtraAuraInfo(Session::kPlayerGuid, 21562));
+    h.session.receive(buildClearExtraAuraInfo(Session::kPlayerGuid, 6788));
     msgs = h.recorded();
     REQUIRE(msgs.size() == 2);
     CHECK(msgs[0].text == "<Prayer of Fortitude> fades");
@@ -384,10 +384,10 @@ TEST_CASE("Blizzard_CombatText suppresses DO_NOT_DISPLAY and DO_NOT_LOG auras ac
     h.session.receive(buildSetExtraAuraInfo(Session::kPlayerGuid, 2, 5320, 10000, 10000));
     h.session.receive(buildSetExtraAuraInfo(Session::kPlayerGuid, 3, 433, 30000, 30000));
     h.session.receive(buildSetExtraAuraInfo(Session::kPlayerGuid, 4, 29479, 10000, 10000));
-    h.session.receive(buildClearExtraAuraInfo(Session::kPlayerGuid, 1));
-    h.session.receive(buildClearExtraAuraInfo(Session::kPlayerGuid, 2));
-    h.session.receive(buildClearExtraAuraInfo(Session::kPlayerGuid, 3));
-    h.session.receive(buildClearExtraAuraInfo(Session::kPlayerGuid, 4));
+    h.session.receive(buildClearExtraAuraInfo(Session::kPlayerGuid, 33380));
+    h.session.receive(buildClearExtraAuraInfo(Session::kPlayerGuid, 5320));
+    h.session.receive(buildClearExtraAuraInfo(Session::kPlayerGuid, 433));
+    h.session.receive(buildClearExtraAuraInfo(Session::kPlayerGuid, 29479));
     CHECK(h.recorded().empty());
 
     // 2. Gain + fade via UNIT_FIELD_AURAS VALUES updates (suppressed spells stay silent;

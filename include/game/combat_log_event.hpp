@@ -23,6 +23,7 @@ struct CombatLogEventInput {
     CombatTextEntry::Type type = CombatTextEntry::MELEE_DAMAGE;
     int32_t amount = 0;
     uint32_t spellId = 0;
+    uint32_t extraSpellId = 0;
     uint8_t powerType = 0;
     uint64_t srcGuid = 0;
     uint64_t dstGuid = 0;
@@ -31,6 +32,7 @@ struct CombatLogEventInput {
     std::string srcName;
     std::string dstName;
     std::string spellName;
+    std::string extraSpellName;
     int64_t timestamp = 0;
 };
 
@@ -174,6 +176,15 @@ inline std::vector<std::string> buildCombatLogEvent(const CombatLogEventInput& i
             break;
         }
         case T::RESIST: case T::ABSORB:
+            if (in.type == T::RESIST && in.extraSpellId != 0 && hasSpell) {
+                event = "SPELL_DISPEL_FAILED";
+                prefix = spellPrefix();
+                suffix = {std::to_string(in.extraSpellId),
+                          in.extraSpellName.empty() ? "Spell " + std::to_string(in.extraSpellId)
+                                                    : in.extraSpellName,
+                          physical};
+                break;
+            }
             // With an amount these are the part of a hit that did not land, and
             // the hit's own event carries that. With none the whole thing was
             // turned aside, which is a miss.
@@ -183,6 +194,61 @@ inline std::vector<std::string> buildCombatLogEvent(const CombatLogEventInput& i
             suffix = {in.type == T::RESIST ? "RESIST" : "ABSORB"};
             if (wotlk) suffix.push_back("0");
             break;
+        case T::DISPEL: case T::STEAL: {
+            if (!hasSpell) return {};
+            event = (in.type == T::STEAL) ? "SPELL_STOLEN" : "SPELL_DISPEL";
+            const uint32_t castId = in.extraSpellId != 0 ? in.extraSpellId : in.spellId;
+            const std::string& castName = in.extraSpellId != 0 ? in.extraSpellName : in.spellName;
+            prefix = {std::to_string(castId),
+                      castName.empty() ? "Spell " + std::to_string(castId) : castName,
+                      physical};
+            suffix = {std::to_string(in.spellId),
+                      in.spellName.empty() ? "Spell " + std::to_string(in.spellId) : in.spellName,
+                      physical,
+                      in.powerType != 0 ? "DEBUFF" : "BUFF"};
+            break;
+        }
+        case T::INTERRUPT: {
+            if (!hasSpell) return {};
+            event = "SPELL_INTERRUPT";
+            const uint32_t castId = in.extraSpellId != 0 ? in.extraSpellId : in.spellId;
+            const std::string& castName = in.extraSpellId != 0 ? in.extraSpellName : in.spellName;
+            prefix = {std::to_string(castId),
+                      castName.empty() ? "Spell " + std::to_string(castId) : castName,
+                      physical};
+            suffix = {std::to_string(in.spellId),
+                      in.spellName.empty() ? "Spell " + std::to_string(in.spellId) : in.spellName,
+                      physical};
+            break;
+        }
+        case T::INSTAKILL:
+            if (!hasSpell) return {};
+            event = "SPELL_INSTAKILL";
+            prefix = spellPrefix();
+            break;
+        case T::EXTRA_ATTACKS:
+            if (!hasSpell) return {};
+            event = "SPELL_EXTRA_ATTACKS";
+            prefix = spellPrefix();
+            suffix = {amount};
+            break;
+        case T::AURA_BROKEN: {
+            if (!hasSpell) return {};
+            const char* auraType = in.powerType != 0 ? "DEBUFF" : "BUFF";
+            prefix = spellPrefix();
+            if (in.extraSpellId != 0) {
+                event = "SPELL_AURA_BROKEN_SPELL";
+                suffix = {std::to_string(in.extraSpellId),
+                          in.extraSpellName.empty() ? "Spell " + std::to_string(in.extraSpellId)
+                                                    : in.extraSpellName,
+                          physical,
+                          auraType};
+            } else {
+                event = "SPELL_AURA_BROKEN";
+                suffix = {auraType};
+            }
+            break;
+        }
         default:
             return {};
     }

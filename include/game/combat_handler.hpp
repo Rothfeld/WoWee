@@ -95,7 +95,14 @@ public:
     void addCombatText(CombatTextEntry::Type type, int32_t amount, uint32_t spellId,
                        bool isPlayerSource, uint8_t powerType = 0,
                        uint64_t srcGuid = 0, uint64_t dstGuid = 0,
-                       uint32_t schoolMask = 0, bool reduction = false, bool unitCombat = true);
+                       uint32_t schoolMask = 0, bool reduction = false, bool unitCombat = true,
+                       uint32_t extraSpellId = 0);
+
+    using PetActionSoundCallback = std::function<void(uint64_t petGuid, uint32_t petTalk)>;
+    void setPetActionSoundCallback(PetActionSoundCallback cb) { petActionSoundCallback_ = std::move(cb); }
+
+    using PetDismissSoundCallback = std::function<void(uint32_t creatureSoundDataId, const glm::vec3& serverPos)>;
+    void setPetDismissSoundCallback(PetDismissSoundCallback cb) { petDismissSoundCallback_ = std::move(cb); }
 
     /// UNIT_COMBAT for one hit on `victim`, when the interface has a unit
     /// token for it - whoever struck it.
@@ -226,6 +233,8 @@ private:
     void handlePetLearnedSpell(network::Packet& packet);
     void handlePetUnlearnedSpell(network::Packet& packet);
     void handlePetMode(network::Packet& packet);
+    void handlePetActionSound(network::Packet& packet);
+    void handlePetDismissSound(network::Packet& packet);
     void handleResurrectFailed(network::Packet& packet);
 
     void autoTargetAttacker(uint64_t attackerGuid);
@@ -285,6 +294,8 @@ private:
 
     // Forced faction reactions
     std::unordered_map<uint32_t, uint8_t> forcedReactions_;
+    PetActionSoundCallback petActionSoundCallback_;
+    PetDismissSoundCallback petDismissSoundCallback_;
 };
 
 } // namespace game

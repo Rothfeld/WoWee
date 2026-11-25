@@ -297,6 +297,8 @@ void CombatHandler::registerOpcodes(DispatchTable& table) {
     table[Opcode::SMSG_PET_LEARNED_SPELL] = [this](network::Packet& p) { handlePetLearnedSpell(p); };
     table[Opcode::SMSG_PET_UNLEARNED_SPELL] = [this](network::Packet& p) { handlePetUnlearnedSpell(p); };
     table[Opcode::SMSG_PET_MODE] = [this](network::Packet& p) { handlePetMode(p); };
+    table[Opcode::SMSG_PET_ACTION_SOUND] = [this](network::Packet& p) { handlePetActionSound(p); };
+    table[Opcode::SMSG_PET_DISMISS_SOUND] = [this](network::Packet& p) { handlePetDismissSound(p); };
 
     // ---- Resurrect ----
     table[Opcode::SMSG_RESURRECT_FAILED] = [this](network::Packet& p) { handleResurrectFailed(p); };
@@ -491,7 +493,7 @@ void CombatHandler::fireUnitCombat(uint64_t victim, const char* action, const ch
 
 void CombatHandler::addCombatText(CombatTextEntry::Type type, int32_t amount, uint32_t spellId, bool isPlayerSource, uint8_t powerType,
                                   uint64_t srcGuid, uint64_t dstGuid, uint32_t schoolMask, bool reduction,
-                                  bool unitCombat) {
+                                  bool unitCombat, uint32_t extraSpellId) {
     bool normalRanged = false;
     if (spellId != 0) {
         owner_.loadSpellNameCache();
@@ -555,6 +557,7 @@ void CombatHandler::addCombatText(CombatTextEntry::Type type, int32_t amount, ui
         entry.type = type;
         entry.amount = amount;
         entry.spellId = spellId;
+        entry.extraSpellId = extraSpellId;
         entry.age = 0.0f;
         entry.isPlayerSource = isPlayerSource;
         entry.powerType = powerType;
@@ -610,6 +613,7 @@ void CombatHandler::addCombatText(CombatTextEntry::Type type, int32_t amount, ui
     log.type     = type;
     log.amount   = amount;
     log.spellId  = spellId;
+    log.extraSpellId = extraSpellId;
     log.isPlayerSource = isPlayerSource;
     log.powerType = powerType;
     log.timestamp = std::time(nullptr);
@@ -644,6 +648,7 @@ void CombatHandler::addCombatText(CombatTextEntry::Type type, int32_t amount, ui
         input.type = type;
         input.amount = amount;
         input.spellId = spellId;
+        input.extraSpellId = extraSpellId;
         input.powerType = powerType;
         input.srcGuid = effectiveSrc;
         input.dstGuid = effectiveDst;
@@ -652,6 +657,7 @@ void CombatHandler::addCombatText(CombatTextEntry::Type type, int32_t amount, ui
         input.srcName = sourceName;
         input.dstName = targetName;
         input.spellName = (spellId != 0) ? owner_.getSpellName(spellId) : std::string{};
+        input.extraSpellName = (extraSpellId != 0) ? owner_.getSpellName(extraSpellId) : std::string{};
         input.timestamp = static_cast<int64_t>(std::time(nullptr));
         const std::vector<std::string> args = buildCombatLogEvent(input);
         if (!args.empty()) {
@@ -1528,6 +1534,34 @@ void CombatHandler::handlePetActionFeedback(network::Packet& packet) {
     const uint8_t msg = packet.readUInt8();
     if (msg == 1) owner_.errorGlobal("ERR_PET_SPELL_DEAD");
     else LOG_DEBUG("SMSG_PET_ACTION_FEEDBACK ", int(msg));
+    packet.skipAll();
+}
+
+void CombatHandler::handlePetActionSound(network::Packet& packet) {
+    // CMaNGOS Unit::SendPetTalk: uint64 petGuid + uint32 petTalk
+    // (0 = PET_TALK_SPECIAL_SPELL -> PetOrder col 29, 1 = PET_TALK_ATTACK -> PetAttack col 28)
+    if (!packet.hasRemaining(12)) { packet.skipAll(); return; }
+    const uint64_t petGuid = packet.readUInt64();
+    const uint32_t petTalk = packet.readUInt32();
+    LOG_DEBUG("SMSG_PET_ACTION_SOUND: petGuid=0x", std::hex, petGuid, std::dec, " petTalk=", petTalk);
+    if (petActionSoundCallback_) {
+        petActionSoundCallback_(petGuid, petTalk);
+    }
+    packet.skipAll();
+}
+
+void CombatHandler::handlePetDismissSound(network::Packet& packet) {
+    // CMaNGOS Unit::SendPetDismiss: uint32 creatureSoundDataId + float x + float y + float z
+    if (!packet.hasRemaining(16)) { packet.skipAll(); return; }
+    const uint32_t creatureSoundDataId = packet.readUInt32();
+    const float x = packet.readFloat();
+    const float y = packet.readFloat();
+    const float z = packet.readFloat();
+    LOG_DEBUG("SMSG_PET_DISMISS_SOUND: creatureSoundDataId=", creatureSoundDataId,
+              " pos=(", x, ",", y, ",", z, ")");
+    if (creatureSoundDataId != 0 && petDismissSoundCallback_) {
+        petDismissSoundCallback_(creatureSoundDataId, glm::vec3(x, y, z));
+    }
     packet.skipAll();
 }
 

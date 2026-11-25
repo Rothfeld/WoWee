@@ -1771,6 +1771,12 @@ public:
 /** CMSG_CANCEL_CAST packet builder */
 class CancelCastPacket {
 public:
+    static network::Packet build(uint32_t spellId, uint8_t castCount = 0);
+};
+
+/** CMSG_CANCEL_CHANNELLING packet builder */
+class CancelChannellingPacket {
+public:
     static network::Packet build(uint32_t spellId);
 };
 
@@ -2359,6 +2365,7 @@ inline constexpr uint8_t kCastResultEquippedItemClassMainhand = 30;
 inline constexpr uint8_t kCastResultEquippedItemClassOffhand = 31;
 inline constexpr uint8_t kCastResultNeedExoticAmmo = 54;
 inline constexpr uint8_t kCastResultNeedMoreItems = 55;
+inline constexpr uint8_t kCastResultNotReady = 67;
 inline constexpr uint8_t kCastResultNoPower = 85;
 inline constexpr uint8_t kCastResultOnlyShapeshift = 94;
 inline constexpr uint8_t kCastResultReagents = 100;
@@ -2367,6 +2374,7 @@ inline constexpr uint8_t kCastResultRequiresSpellFocus = 102;
 inline constexpr uint8_t kCastResultTotemCategory = 130;
 inline constexpr uint8_t kCastResultTotems = 131;
 inline constexpr uint8_t kCastResultPreventedByMechanic = 147;
+inline constexpr uint8_t kCastResultMinSkill = 150;
 
 /// Read the optional trailing values of a cast failure payload (see above).
 inline void readCastResultArgs(network::Packet& packet, uint8_t result,
@@ -2374,11 +2382,13 @@ inline void readCastResultArgs(network::Packet& packet, uint8_t result,
     arg1 = 0;
     arg2 = 0;
     switch (result) {
+        case kCastResultNotReady:
         case kCastResultRequiresSpellFocus:
         case kCastResultRequiresArea:
         case kCastResultNeedExoticAmmo:
         case kCastResultPreventedByMechanic:
         case kCastResultReagents:
+        case kCastResultMinSkill:
             if (packet.hasRemaining(4)) arg1 = packet.readUInt32();
             break;
         case kCastResultTotems:
@@ -2419,6 +2429,11 @@ struct SpellStartData {
     uint32_t castFlags = 0;
     uint32_t castTime = 0;
     uint64_t targetGuid = 0;
+    std::optional<glm::vec3> destination;
+    std::optional<glm::vec3> source;
+    uint32_t targetFlags = 0;
+    uint32_t ammoDisplayId = 0;
+    uint32_t ammoInventoryType = 0;
 
     [[nodiscard]] bool isValid() const { return spellId != 0; }
 };

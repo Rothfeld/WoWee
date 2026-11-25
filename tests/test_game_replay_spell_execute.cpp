@@ -130,3 +130,95 @@ TEST_CASE("power drain scales rage from tenths on wire", "[replay][execute]") {
     CHECK(texts[1].powerType == 1);
     CHECK(texts[1].amount == 10);
 }
+
+TEST_CASE("TBC SMSG_SPELLLOGEXECUTE parses ADD_EXTRA_ATTACKS and all target-GUID effects without aborting trailing effects",
+          "[replay][execute][tbc]") {
+    namespace SE = wowee::game::SpellEffect;
+
+    // 1. ADD_EXTRA_ATTACKS (19) records extra swings + fires SPELL_EXTRA_ATTACKS
+    {
+        Session s("tbc");
+        std::vector<std::vector<std::string>> cleu;
+        s.handler().setAddonEventCallback([&](const std::string& ev, const std::vector<std::string>& args) {
+            if (ev == "COMBAT_LOG_EVENT_UNFILTERED") cleu.push_back(args);
+        });
+        Packet p = executeLog(kPlayer, 25505, SE::ADD_EXTRA_ATTACKS);
+        p.writePackedGuid(kPlayer);
+        p.writeUInt32(2);
+        s.receive(p);
+
+        const auto& texts = s.handler().getCombatText();
+        REQUIRE(texts.size() == 1);
+        CHECK(texts[0].type == CombatTextEntry::EXTRA_ATTACKS);
+        CHECK(texts[0].spellId == 25505u);
+        CHECK(texts[0].amount == 2);
+
+        REQUIRE(cleu.size() == 1);
+        REQUIRE(cleu[0].size() >= 12);
+        CHECK(cleu[0][1] == "SPELL_EXTRA_ATTACKS");
+        CHECK(cleu[0][8] == "25505");
+        CHECK(cleu[0][11] == "2");
+    }
+
+    // 2. Multi-effect packet containing every TBC target-GUID effect + DURABILITY_DAMAGE
+    //    before INTERRUPT_CAST and POWER_DRAIN: trailing effects must NOT be aborted.
+    {
+        Session s("tbc");
+        s.handler().setTargetGuidRaw(kMob);
+        std::vector<std::vector<std::string>> cleu;
+        s.handler().setAddonEventCallback([&](const std::string& ev, const std::vector<std::string>& args) {
+            if (ev == "COMBAT_LOG_EVENT_UNFILTERED") cleu.push_back(args);
+        });
+
+        const uint32_t targetGuidEffects[] = {
+            SE::RESURRECT, SE::SUMMON, SE::OPEN_LOCK, SE::TRANS_DOOR,
+            SE::SUMMON_PET, SE::OPEN_LOCK_ITEM, SE::SUMMON_OBJECT_WILD,
+            SE::DUEL, SE::DISMISS_PET,
+            SE::SUMMON_OBJECT_SLOT1, SE::SUMMON_OBJECT_SLOT2,
+            SE::SUMMON_OBJECT_SLOT3, SE::SUMMON_OBJECT_SLOT4,
+            SE::RESURRECT_NEW,
+        };
+        const uint32_t totalEffects = static_cast<uint32_t>(std::size(targetGuidEffects)) + 3u;
+
+        Packet p(wireOpcode(Opcode::SMSG_SPELLLOGEXECUTE));
+        p.writePackedGuid(kPlayer);
+        p.writeUInt32(2139); // Counterspell
+        p.writeUInt32(totalEffects);
+
+        for (uint32_t eff : targetGuidEffects) {
+            p.writeUInt32(eff);
+            p.writeUInt32(1);
+            p.writePackedGuid(kMob);
+        }
+
+        p.writeUInt32(SE::DURABILITY_DAMAGE);
+        p.writeUInt32(1);
+        p.writePackedGuid(kMob);
+        p.writeUInt32(19019);
+        p.writeUInt32(1);
+
+        p.writeUInt32(SE::INTERRUPT_CAST);
+        p.writeUInt32(1);
+        p.writePackedGuid(kMob);
+        p.writeUInt32(133); // Fireball
+
+        p.writeUInt32(SE::POWER_DRAIN);
+        p.writeUInt32(1);
+        p.writePackedGuid(kMob);
+        p.writeUInt32(150);
+        p.writeUInt32(0);
+        p.writeFloat(0.0f);
+
+        s.receive(p);
+
+        CHECK(hasText(s, CombatTextEntry::INTERRUPT, 133));
+        CHECK(hasText(s, CombatTextEntry::POWER_DRAIN, 2139));
+
+        const auto it = std::find_if(cleu.begin(), cleu.end(), [](const auto& a) {
+            return a.size() >= 14 && a[1] == "SPELL_INTERRUPT";
+        });
+        REQUIRE(it != cleu.end());
+        CHECK((*it)[8] == "2139");  // Interrupting spell (Counterspell)
+        CHECK((*it)[11] == "133");  // Interrupted spell (Fireball)
+    }
+}

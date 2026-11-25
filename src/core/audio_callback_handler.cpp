@@ -7,9 +7,11 @@
 #include "pipeline/dbc_loader.hpp"
 #include "game/game_handler.hpp"
 #include "audio/audio_coordinator.hpp"
+#include "audio/creature_sound_index.hpp"
 #include "audio/music_manager.hpp"
 #include "audio/audio_engine.hpp"
 #include "audio/sound_entries.hpp"
+#include "game/combat_handler.hpp"
 #include "ui/ui_manager.hpp"
 
 namespace wowee { namespace core {
@@ -27,6 +29,8 @@ AudioCallbackHandler::AudioCallbackHandler(
     , gameHandler_(gameHandler)
 {
 }
+
+AudioCallbackHandler::~AudioCallbackHandler() = default;
 
 void AudioCallbackHandler::setupCallbacks() {
     // Level-up callback - play sound, cheer emote, and trigger UI ding overlay + 3D effect
@@ -126,6 +130,51 @@ void AudioCallbackHandler::setupCallbacks() {
     gameHandler_.setOpenLfgCallback([this]() {
         if (uiManager_) uiManager_->getGameScreen().openDungeonFinder(gameHandler_);
     });
+
+    if (auto* ch = gameHandler_.getCombatHandler()) {
+        auto ensureCreatureSounds = [this]() -> const audio::CreatureSoundIndex* {
+            if (!creatureSoundsLoaded_) {
+                creatureSoundsLoaded_ = true;
+                auto idx = std::make_unique<audio::CreatureSoundIndex>();
+                if (idx->load(assetManager_)) {
+                    creatureSounds_ = std::move(idx);
+                }
+            }
+            return creatureSounds_.get();
+        };
+
+        ch->setPetActionSoundCallback([this, ensureCreatureSounds](uint64_t petGuid, uint32_t petTalk) {
+            const float sfxScale = audioCoordinator_ ? audioCoordinator_->getSfxVolumeScale() : 1.0f;
+            if (sfxScale <= 0.0f) return;
+            const auto* idx = ensureCreatureSounds();
+            if (!idx) return;
+            auto entity = gameHandler_.getEntityManager().getEntity(petGuid);
+            auto unit = std::dynamic_pointer_cast<game::Unit>(entity);
+            if (!unit || unit->getDisplayId() == 0) return;
+            const uint32_t soundDataId = idx->soundDataForDisplay(unit->getDisplayId());
+            const auto col = (petTalk == 1)
+                ? audio::CreatureSoundColumn::PetAttack
+                : audio::CreatureSoundColumn::PetOrder;
+            const uint32_t soundId = idx->sound(soundDataId, col);
+            if (soundId == 0) return;
+            glm::vec3 canonical{unit->getLatestX(), unit->getLatestY(), unit->getLatestZ()};
+            glm::vec3 pos = core::coords::canonicalToRender(canonical);
+            audio::SoundEntryTable::instance().play3D(&assetManager_, soundId, pos, sfxScale);
+        });
+
+        ch->setPetDismissSoundCallback([this, ensureCreatureSounds](uint32_t creatureSoundDataId,
+                                                                     const glm::vec3& serverPos) {
+            const float sfxScale = audioCoordinator_ ? audioCoordinator_->getSfxVolumeScale() : 1.0f;
+            if (sfxScale <= 0.0f) return;
+            const auto* idx = ensureCreatureSounds();
+            if (!idx) return;
+            const uint32_t soundId = idx->sound(creatureSoundDataId, audio::CreatureSoundColumn::PetDismiss);
+            if (soundId == 0) return;
+            glm::vec3 canonical = core::coords::serverToCanonical(serverPos);
+            glm::vec3 pos = core::coords::canonicalToRender(canonical);
+            audio::SoundEntryTable::instance().play3D(&assetManager_, soundId, pos, sfxScale);
+        });
+    }
 }
 
 }} // namespace wowee::core

@@ -3,6 +3,7 @@
 #include "game/packet_parsers.hpp"
 #include "game/spline_packet.hpp"
 #include "game/opcodes.hpp"
+#include "game/game_utils.hpp"
 #include "game/character.hpp"
 #include "auth/crypto.hpp"
 #include "core/logger.hpp"
@@ -31,11 +32,20 @@ network::Packet AttackStopPacket::build() {
     return packet;
 }
 
-network::Packet CancelCastPacket::build(uint32_t spellId) {
+network::Packet CancelCastPacket::build(uint32_t spellId, uint8_t castCount) {
     network::Packet packet(wireOpcode(Opcode::CMSG_CANCEL_CAST));
-    packet.writeUInt32(0); // cast count/sequence
+    if (!isPreWotlk()) {
+        packet.writeUInt8(castCount);
+    }
     packet.writeUInt32(spellId);
     LOG_DEBUG("Built CMSG_CANCEL_CAST for spell: ", spellId);
+    return packet;
+}
+
+network::Packet CancelChannellingPacket::build(uint32_t spellId) {
+    network::Packet packet(wireOpcode(Opcode::CMSG_CANCEL_CHANNELLING));
+    packet.writeUInt32(spellId);
+    LOG_DEBUG("Built CMSG_CANCEL_CHANNELLING for spell: ", spellId);
     return packet;
 }
 

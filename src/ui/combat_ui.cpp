@@ -219,6 +219,19 @@ void CombatUI::renderCombatText(game::GameHandler& gameHandler) {
                 snprintf(text, sizeof(text), "Kill!");
                 color = ImVec4(1.0f, 0.25f, 0.25f, alpha);
                 break;
+            case game::CombatTextEntry::EXTRA_ATTACKS:
+                snprintf(text, sizeof(text), "+%d Extra Attack%s", entry.amount, entry.amount == 1 ? "" : "s");
+                color = ImVec4(1.0f, 0.9f, 0.3f, alpha);
+                break;
+            case game::CombatTextEntry::AURA_BROKEN: {
+                const std::string& brokenName = entry.spellId ? gameHandler.getSpellName(entry.spellId) : "";
+                if (!brokenName.empty())
+                    snprintf(text, sizeof(text), "%s Broken", brokenName.c_str());
+                else
+                    snprintf(text, sizeof(text), "Aura Broken");
+                color = ImVec4(0.9f, 0.75f, 0.5f, alpha);
+                break;
+            }
             default:
                 snprintf(text, sizeof(text), "%d", entry.amount);
                 color = ImVec4(1.0f, 1.0f, 1.0f, alpha);

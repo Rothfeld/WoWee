@@ -2669,10 +2669,7 @@ void GameHandler::registerRemainingOpcodes() {
     // These pet opcodes have incompatible formats - just consume the packet.
     // Previously they shared the unlearn handler, which misinterpreted sound IDs
     // or GUID lists as unlearn costs and could trigger a bogus unlearn dialog.
-    for (auto op : { Opcode::SMSG_PET_GUIDS, Opcode::SMSG_PET_DISMISS_SOUND,
-                     Opcode::SMSG_PET_ACTION_SOUND }) {
-        dispatchTable_[op] = [](network::Packet& packet) { packet.skipAll(); };
-    }
+    dispatchTable_[Opcode::SMSG_PET_GUIDS] = [](network::Packet& packet) { packet.skipAll(); };
     // Server signals that the pet can now be named (first tame)
     dispatchTable_[Opcode::SMSG_PET_RENAMEABLE] = [this](network::Packet& packet) {
         // Server signals that the pet can now be named (first tame)
@@ -3531,9 +3528,6 @@ void GameHandler::registerRemainingOpcodes() {
     // These packets are not damage-shield events. Consume them without
     // synthesizing reflected damage entries or misattributing GUIDs.
     registerSkipHandler(Opcode::SMSG_AURACASTLOG);
-    // These packets are not damage-shield events. Consume them without
-    // synthesizing reflected damage entries or misattributing GUIDs.
-    registerSkipHandler(Opcode::SMSG_SPELLBREAKLOG);
     // Consume silently - informational, no UI action needed
     // What an item cost and how long is left to hand it back.
     //

@@ -31,6 +31,9 @@ enum class CreatureSoundColumn : uint32_t {
     Fidget0 = 14,  // 14..18
     JumpStart = 26,
     JumpEnd = 27,
+    PetAttack = 28,
+    PetOrder = 29,
+    PetDismiss = 30,
 };
 
 /// One SoundEntries.dbc row: files with their weights, and the playback volume.

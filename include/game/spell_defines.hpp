@@ -58,11 +58,13 @@ struct CombatTextEntry {
         MELEE_DAMAGE, SPELL_DAMAGE, HEAL, MISS, DODGE, PARRY, BLOCK,
         EVADE, CRIT_DAMAGE, CRIT_HEAL, PERIODIC_DAMAGE, PERIODIC_HEAL, ENVIRONMENTAL,
         ENERGIZE, PERIODIC_ENERGIZE, POWER_DRAIN, XP_GAIN, IMMUNE, ABSORB, RESIST, DEFLECT, REFLECT, PROC_TRIGGER,
-        DISPEL, STEAL, INTERRUPT, INSTAKILL, HONOR_GAIN, GLANCING, CRUSHING
+        DISPEL, STEAL, INTERRUPT, INSTAKILL, HONOR_GAIN, GLANCING, CRUSHING,
+        EXTRA_ATTACKS, AURA_BROKEN
     };
     Type type;
     int32_t amount = 0;
     uint32_t spellId = 0;
+    uint32_t extraSpellId = 0;  // Casting dispel/steal/interrupt/break spell ID (or failed dispel aura ID)
     float age = 0.0f;           // Seconds since creation (for fadeout)
     bool isPlayerSource = false; // True if player dealt this
     uint8_t powerType = 0;      // For ENERGIZE/POWER_DRAIN: 0=mana,1=rage,2=focus,3=energy,6=runicpower
@@ -116,6 +118,7 @@ struct CombatLogEntry {
     CombatTextEntry::Type type = CombatTextEntry::MELEE_DAMAGE;
     int32_t  amount       = 0;
     uint32_t spellId      = 0;
+    uint32_t extraSpellId = 0;
     bool     isPlayerSource = false;
     uint8_t  powerType    = 0;   // For ENERGIZE/DRAIN: power type; for ENVIRONMENTAL: env damage type
     time_t   timestamp    = 0;   // Wall-clock time (std::time(nullptr))
@@ -135,15 +138,30 @@ struct SpellCooldownEntry {
 };
 
 // ── SpellEffect - SMSG_SPELLLOGEXECUTE effectType field ───────────────────
-// The servers' SpellEffects enum, the same numbers in every expansion. Only the
-// effects this client reads from the log.
+// The servers' SpellEffects enum, the same numbers in every expansion.
 namespace SpellEffect {
     constexpr uint32_t POWER_DRAIN               = 8;
     constexpr uint32_t HEALTH_LEECH              = 9;
+    constexpr uint32_t RESURRECT                 = 18;
+    constexpr uint32_t ADD_EXTRA_ATTACKS         = 19;
     constexpr uint32_t CREATE_ITEM               = 24;
+    constexpr uint32_t SUMMON                    = 28;
+    constexpr uint32_t OPEN_LOCK                 = 33;
+    constexpr uint32_t TRANS_DOOR                = 50;
+    constexpr uint32_t SUMMON_PET                = 56;
+    constexpr uint32_t OPEN_LOCK_ITEM            = 59;
     constexpr uint32_t POWER_BURN                = 62;
     constexpr uint32_t INTERRUPT_CAST            = 68;
+    constexpr uint32_t SUMMON_OBJECT_WILD        = 76;
+    constexpr uint32_t DUEL                      = 83;
     constexpr uint32_t FEED_PET                  = 101;
+    constexpr uint32_t DISMISS_PET               = 102;
+    constexpr uint32_t SUMMON_OBJECT_SLOT1       = 104;
+    constexpr uint32_t SUMMON_OBJECT_SLOT2       = 105;
+    constexpr uint32_t SUMMON_OBJECT_SLOT3       = 106;
+    constexpr uint32_t SUMMON_OBJECT_SLOT4       = 107;
+    constexpr uint32_t DURABILITY_DAMAGE         = 111;
+    constexpr uint32_t RESURRECT_NEW             = 113;
     constexpr uint32_t CREATE_ITEM2              = 157;
 } // namespace SpellEffect
 

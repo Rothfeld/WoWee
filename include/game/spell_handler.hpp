@@ -517,6 +517,7 @@ private:
     void handleSpellChanceProcLog(network::Packet& packet);
     void handleSpellInstaKillLog(network::Packet& packet);
     void handleSpellLogExecute(network::Packet& packet);
+    void handleSpellBreakLog(network::Packet& packet);
     void handleClearExtraAuraInfo(network::Packet& packet);
     void handleItemEnchantTimeUpdate(network::Packet& packet);
     void handleResumeCastBar(network::Packet& packet);
@@ -569,6 +570,10 @@ private:
                                   uint64_t caster, uint32_t spellId, bool isPlayerCaster);
     void parseEffectFeedPet(network::Packet& packet, uint32_t effectLogCount,
                             uint64_t caster, uint32_t spellId, bool isPlayerCaster);
+    void parseEffectExtraAttacks(network::Packet& packet, uint32_t effectLogCount,
+                                 uint64_t caster, uint32_t spellId, bool isPlayerCaster);
+    void parseEffectTargetGuidOnly(network::Packet& packet, uint32_t effectLogCount);
+    void parseEffectDurabilityDamage(network::Packet& packet, uint32_t effectLogCount);
 
     // Find the on-use spell for an item (trigger=0 Use or trigger=5 NoDelay).
     // CMSG_USE_ITEM requires a valid spellId or the server silently ignores it.

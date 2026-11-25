@@ -303,6 +303,7 @@ inline ClassicCombatMessage buildClassicCombatMessage(const ClassicCombatInput& 
             return m;
         }
         case T::XP_GAIN: case T::HONOR_GAIN: case T::PROC_TRIGGER: case T::STEAL:
+        case T::EXTRA_ATTACKS: case T::AURA_BROKEN:
             return m;
     }
     return m;

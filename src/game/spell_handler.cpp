@@ -1440,6 +1440,7 @@ void SpellHandler::registerOpcodes(DispatchTable& table) {
     table[Opcode::SMSG_SPELL_CHANCE_PROC_LOG] = [this](network::Packet& p) { handleSpellChanceProcLog(p); };
     table[Opcode::SMSG_SPELLINSTAKILLLOG] = [this](network::Packet& p) { handleSpellInstaKillLog(p); };
     table[Opcode::SMSG_SPELLLOGEXECUTE] = [this](network::Packet& p) { handleSpellLogExecute(p); };
+    table[Opcode::SMSG_SPELLBREAKLOG] = [this](network::Packet& p) { handleSpellBreakLog(p); };
     table[Opcode::SMSG_CLEAR_EXTRA_AURA_INFO] = [this](network::Packet& p) { handleClearExtraAuraInfo(p); };
     table[Opcode::SMSG_CLEAR_EXTRA_AURA_INFO_OBSOLETE] = [this](network::Packet& p) { handleClearExtraAuraInfo(p); };
     table[Opcode::SMSG_ITEM_ENCHANT_TIME_UPDATE] = [this](network::Packet& p) { handleItemEnchantTimeUpdate(p); };
@@ -2587,7 +2588,9 @@ void SpellHandler::cancelCast() {
     if (owner_.pendingGameObjectInteractGuidRef() == 0 &&
         owner_.getState() == WorldState::IN_WORLD && owner_.getSocket() &&
         currentCastSpellId_ != 0) {
-        auto packet = CancelCastPacket::build(currentCastSpellId_);
+        auto packet = castIsChannel_
+            ? CancelChannellingPacket::build(currentCastSpellId_)
+            : CancelCastPacket::build(currentCastSpellId_, castCount_);
         owner_.getSocket()->send(packet);
     }
     owner_.pendingGameObjectInteractGuidRef() = 0;
@@ -5498,8 +5501,10 @@ void SpellHandler::stopCasting() {
         return;
     }
 
-    if (owner_.pendingGameObjectInteractGuidRef() == 0 && currentCastSpellId_ != 0) {
-        auto packet = CancelCastPacket::build(currentCastSpellId_);
+    if (owner_.pendingGameObjectInteractGuidRef() == 0 && currentCastSpellId_ != 0 && owner_.getSocket()) {
+        auto packet = castIsChannel_
+            ? CancelChannellingPacket::build(currentCastSpellId_)
+            : CancelCastPacket::build(currentCastSpellId_, castCount_);
         owner_.getSocket()->send(packet);
     }
 
@@ -6731,12 +6736,20 @@ void SpellHandler::handleSpellFailedOther(network::Packet& packet) {
     uint64_t failOtherGuid = isClassicLikeExpansion()
         ? (packet.hasRemaining(8) ? packet.readUInt64() : 0)
         : packet.readPackedGuid();
+    // Classic/TBC: uint32 spellId. WotLK: uint8 castCount + uint32 spellId + uint8 reason.
+    uint32_t wireSpellId = 0;
+    if (!isPreWotlk() && packet.hasRemaining(6)) {
+        (void)packet.readUInt8();
+        wireSpellId = packet.readUInt32();
+        (void)packet.readUInt8();
+    } else if (packet.hasRemaining(4)) {
+        wireSpellId = packet.readUInt32();
+    }
     if (failOtherGuid != 0 && failOtherGuid != owner_.getPlayerGuid()) {
-        // Which spell it was, before the state that says so is dropped: the
-        // cast bar matches the id on a stop against the one it started with,
-        // and there is nowhere else to read it from once this is erased.
-        uint32_t failedSpellId = 0;
-        if (const auto* st = getUnitCastState(failOtherGuid)) failedSpellId = st->spellId;
+        uint32_t failedSpellId = wireSpellId;
+        if (failedSpellId == 0) {
+            if (const auto* st = getUnitCastState(failOtherGuid)) failedSpellId = st->spellId;
+        }
         unitCastStates_.erase(failOtherGuid);
         if (auto* renderer = owner_.services().renderer) {
             if (auto* svs = renderer->getSpellVisualSystem()) {
@@ -7076,16 +7089,28 @@ void SpellHandler::handleDispelFailed(network::Packet& packet) {
         if (!packet.hasRemaining(4)) return;
         dispelSpellId = packet.readUInt32();
     }
-    uint32_t firstFailedSpellId = 0;
+    std::vector<uint32_t> failedSpellIds;
     while (packet.hasRemaining(4)) {
         const uint32_t failedSpellId = packet.readUInt32();
-        if (firstFailedSpellId == 0 && failedSpellId != 0) firstFailedSpellId = failedSpellId;
+        if (failedSpellId != 0) failedSpellIds.push_back(failedSpellId);
     }
     if (dispelCasterGuid == owner_.getPlayerGuid() || dispelVictimGuid == owner_.getPlayerGuid()) {
-        const uint32_t loggedSpellId = dispelSpellId != 0 ? dispelSpellId : firstFailedSpellId;
-        owner_.addCombatText(CombatTextEntry::RESIST, 0, loggedSpellId,
-                             dispelCasterGuid == owner_.getPlayerGuid(), 0,
-                             dispelCasterGuid, dispelVictimGuid, 0, false, false);
+        const bool isPlayerCaster = (dispelCasterGuid == owner_.getPlayerGuid());
+        if (!failedSpellIds.empty() && owner_.getCombatHandler()) {
+            for (uint32_t failedId : failedSpellIds) {
+                const uint32_t loggedSpellId = dispelSpellId != 0 ? dispelSpellId : failedId;
+                owner_.getCombatHandler()->addCombatText(
+                    CombatTextEntry::RESIST, 0, loggedSpellId,
+                    isPlayerCaster, 0,
+                    dispelCasterGuid, dispelVictimGuid, 0, false, false,
+                    dispelSpellId != 0 ? failedId : 0u);
+            }
+        } else {
+            const uint32_t loggedSpellId = dispelSpellId;
+            owner_.addCombatText(CombatTextEntry::RESIST, 0, loggedSpellId,
+                                 isPlayerCaster, 0,
+                                 dispelCasterGuid, dispelVictimGuid, 0, false, false);
+        }
     }
     if (dispelCasterGuid == owner_.getPlayerGuid()) {
         const auto& name = owner_.getSpellName(dispelSpellId);
@@ -7370,10 +7395,11 @@ void SpellHandler::handleSpellDispelLog(network::Packet& packet) {
     uint64_t victimGuid = packet.readPackedGuid();
     if (!packet.hasFullPackedGuid()) { packet.skipAll(); return; }
     uint64_t casterGuid = packet.readPackedGuid();
+    uint32_t dispelSpellId = 0;
     uint8_t isStolen = 0;
     if (!classicLayout) {
         if (!packet.hasRemaining(5)) { packet.skipAll(); return; }
-        /*uint32_t dispelSpell =*/ packet.readUInt32();
+        dispelSpellId = packet.readUInt32();
         isStolen = packet.readUInt8();
     }
     if (!packet.hasRemaining(4)) { packet.skipAll(); return; }
@@ -7435,9 +7461,15 @@ void SpellHandler::handleSpellDispelLog(network::Packet& packet) {
         if (!loggedIds.empty()) {
             bool isPlayerCaster = (casterGuid == owner_.getPlayerGuid());
             for (uint32_t dispelledId : loggedIds) {
-                owner_.addCombatText(isStolen ? CombatTextEntry::STEAL : CombatTextEntry::DISPEL,
-                              0, dispelledId, isPlayerCaster, 0,
-                              casterGuid, victimGuid);
+                if (auto* ch = owner_.getCombatHandler()) {
+                    ch->addCombatText(isStolen ? CombatTextEntry::STEAL : CombatTextEntry::DISPEL,
+                                      0, dispelledId, isPlayerCaster, 0,
+                                      casterGuid, victimGuid, 0, false, true, dispelSpellId);
+                } else {
+                    owner_.addCombatText(isStolen ? CombatTextEntry::STEAL : CombatTextEntry::DISPEL,
+                                         0, dispelledId, isPlayerCaster, 0,
+                                         casterGuid, victimGuid);
+                }
             }
         }
     }
@@ -7456,7 +7488,7 @@ void SpellHandler::handleSpellStealLog(network::Packet& packet) {
     if (!packet.hasRemaining(9)) {
         packet.skipAll(); return;
     }
-    /*uint32_t stealSpellId =*/ packet.readUInt32();
+    const uint32_t stealSpellId = packet.readUInt32();
     /*uint8_t  isStolen    =*/ packet.readUInt8();
     uint32_t stealCount   = packet.readUInt32();
     // Preserve every stolen aura in the combat log instead of only the first.
@@ -7493,8 +7525,13 @@ void SpellHandler::handleSpellStealLog(network::Packet& packet) {
         if (!loggedIds.empty()) {
             bool isPlayerCaster = (stealCaster == owner_.getPlayerGuid());
             for (uint32_t stolenId : loggedIds) {
-                owner_.addCombatText(CombatTextEntry::STEAL, 0, stolenId, isPlayerCaster, 0,
-                              stealCaster, stealVictim);
+                if (auto* ch = owner_.getCombatHandler()) {
+                    ch->addCombatText(CombatTextEntry::STEAL, 0, stolenId, isPlayerCaster, 0,
+                                      stealCaster, stealVictim, 0, false, true, stealSpellId);
+                } else {
+                    owner_.addCombatText(CombatTextEntry::STEAL, 0, stolenId, isPlayerCaster, 0,
+                                         stealCaster, stealVictim);
+                }
             }
         }
     }
@@ -7694,9 +7731,15 @@ void SpellHandler::parseEffectInterruptCast(network::Packet& packet, uint32_t ef
             }
         }
         // Record interrupt in combat log when player is involved
-        if (isPlayerCaster || icTarget == playerGuid)
-            owner_.addCombatText(CombatTextEntry::INTERRUPT, 0, icSpellId, isPlayerCaster, 0,
-                                 caster, icTarget);
+        if (isPlayerCaster || icTarget == playerGuid) {
+            if (auto* ch = owner_.getCombatHandler()) {
+                ch->addCombatText(CombatTextEntry::INTERRUPT, 0, icSpellId, isPlayerCaster, 0,
+                                  caster, icTarget, 0, false, true, spellId);
+            } else {
+                owner_.addCombatText(CombatTextEntry::INTERRUPT, 0, icSpellId, isPlayerCaster, 0,
+                                     caster, icTarget);
+            }
+        }
         LOG_DEBUG("SMSG_SPELLLOGEXECUTE INTERRUPT_CAST: spell=", spellId,
                   " interrupted=", icSpellId, " target=0x", std::hex, icTarget, std::dec);
     }
@@ -7719,6 +7762,44 @@ void SpellHandler::parseEffectFeedPet(network::Packet& packet, uint32_t effectLo
         // No chat line: TBC GlobalStrings has none for feeding a pet.
         (void)feedQuality;
         LOG_DEBUG("SMSG_SPELLLOGEXECUTE FEED_PET: item=", feedItem, " name=", itemName);
+    }
+}
+
+void SpellHandler::parseEffectExtraAttacks(network::Packet& packet, uint32_t effectLogCount,
+                                           uint64_t caster, uint32_t spellId,
+                                           bool isPlayerCaster) {
+    // SPELL_EFFECT_ADD_EXTRA_ATTACKS: target + uint32 extraAttacks
+    const uint64_t playerGuid = owner_.getPlayerGuid();
+    for (uint32_t li = 0; li < effectLogCount; ++li) {
+        uint64_t target = 0;
+        if (!readEffectLogTarget(packet, target)) { packet.skipAll(); break; }
+        if (!packet.hasRemaining(4)) { packet.skipAll(); break; }
+        const uint32_t extraAttacks = packet.readUInt32();
+        LOG_DEBUG("SMSG_SPELLLOGEXECUTE ADD_EXTRA_ATTACKS: spell=", spellId,
+                  " target=0x", std::hex, target, std::dec, " count=", extraAttacks);
+        if (extraAttacks > 0 && (isPlayerCaster || target == playerGuid)) {
+            owner_.addCombatText(CombatTextEntry::EXTRA_ATTACKS,
+                                 static_cast<int32_t>(extraAttacks), spellId,
+                                 isPlayerCaster, 0, caster, target, 0, false, false);
+        }
+    }
+}
+
+void SpellHandler::parseEffectTargetGuidOnly(network::Packet& packet, uint32_t effectLogCount) {
+    for (uint32_t li = 0; li < effectLogCount; ++li) {
+        uint64_t target = 0;
+        if (!readEffectLogTarget(packet, target)) { packet.skipAll(); break; }
+    }
+}
+
+void SpellHandler::parseEffectDurabilityDamage(network::Packet& packet, uint32_t effectLogCount) {
+    // SPELL_EFFECT_DURABILITY_DAMAGE: target + uint32 itemEntry + uint32 slotOrBlock
+    for (uint32_t li = 0; li < effectLogCount; ++li) {
+        uint64_t target = 0;
+        if (!readEffectLogTarget(packet, target)) { packet.skipAll(); break; }
+        if (!packet.hasRemaining(8)) { packet.skipAll(); break; }
+        (void)packet.readUInt32();
+        (void)packet.readUInt32();
     }
 }
 
@@ -7764,6 +7845,26 @@ void SpellHandler::handleSpellLogExecute(network::Packet& packet) {
         } else if (effectType == SpellEffect::FEED_PET) {
             parseEffectFeedPet(packet, effectLogCount, exeCaster, exeSpellId,
                                isPlayerCaster);
+        } else if (effectType == SpellEffect::ADD_EXTRA_ATTACKS) {
+            parseEffectExtraAttacks(packet, effectLogCount, exeCaster, exeSpellId,
+                                    isPlayerCaster);
+        } else if (effectType == SpellEffect::OPEN_LOCK ||
+                   effectType == SpellEffect::OPEN_LOCK_ITEM ||
+                   effectType == SpellEffect::SUMMON ||
+                   effectType == SpellEffect::SUMMON_PET ||
+                   effectType == SpellEffect::SUMMON_OBJECT_WILD ||
+                   effectType == SpellEffect::DUEL ||
+                   effectType == SpellEffect::DISMISS_PET ||
+                   effectType == SpellEffect::SUMMON_OBJECT_SLOT1 ||
+                   effectType == SpellEffect::SUMMON_OBJECT_SLOT2 ||
+                   effectType == SpellEffect::SUMMON_OBJECT_SLOT3 ||
+                   effectType == SpellEffect::SUMMON_OBJECT_SLOT4 ||
+                   effectType == SpellEffect::TRANS_DOOR ||
+                   effectType == SpellEffect::RESURRECT ||
+                   effectType == SpellEffect::RESURRECT_NEW) {
+            parseEffectTargetGuidOnly(packet, effectLogCount);
+        } else if (effectType == SpellEffect::DURABILITY_DAMAGE) {
+            parseEffectDurabilityDamage(packet, effectLogCount);
         } else {
             // Unknown effect type - stop parsing to avoid misalignment
             packet.skipAll();
@@ -7773,41 +7874,108 @@ void SpellHandler::handleSpellLogExecute(network::Packet& packet) {
     packet.skipAll();
 }
 
+void SpellHandler::handleSpellBreakLog(network::Packet& packet) {
+    // CMaNGOS Unit::CleanupBeforeRemoveFromMap / ProcDamageAndSpell:
+    //   PackedGuid(victim) + PackedGuid(dealer) + uint32(breakingSpellId) + uint8(0)
+    //   + uint32(count) + count * (uint32(brokenAuraSpellId) + uint8(isDebuff))
+    const bool classicLayout = isClassicLikeExpansion();
+    auto readGuid = [&]() -> std::optional<uint64_t> {
+        if (classicLayout) {
+            if (!packet.hasRemaining(8)) return std::nullopt;
+            return packet.readUInt64();
+        }
+        if (!packet.hasFullPackedGuid()) return std::nullopt;
+        return packet.readPackedGuid();
+    };
+    const auto victimOpt = readGuid();
+    if (!victimOpt) { packet.skipAll(); return; }
+    const auto dealerOpt = readGuid();
+    if (!dealerOpt) { packet.skipAll(); return; }
+    if (!packet.hasRemaining(9)) { packet.skipAll(); return; }
+
+    const uint64_t victimGuid = *victimOpt;
+    const uint64_t dealerGuid = *dealerOpt;
+    const uint32_t breakingSpellId = packet.readUInt32();
+    (void)packet.readUInt8(); // unused
+    const uint32_t count = std::min(packet.readUInt32(), 64u);
+
+    const uint64_t playerGuid = owner_.getPlayerGuid();
+    const uint64_t petGuid = owner_.getPetGuid();
+    const bool involvesPlayer = (victimGuid == playerGuid || dealerGuid == playerGuid ||
+                                 (petGuid != 0 && (victimGuid == petGuid || dealerGuid == petGuid)));
+    const bool isPlayerSource = (dealerGuid == playerGuid);
+
+    for (uint32_t i = 0; i < count && packet.hasRemaining(5); ++i) {
+        const uint32_t brokenSpellId = packet.readUInt32();
+        const uint8_t isDebuff = packet.readUInt8();
+        if (brokenSpellId == 0 || !involvesPlayer) continue;
+        if (auto* ch = owner_.getCombatHandler()) {
+            ch->addCombatText(CombatTextEntry::AURA_BROKEN, 0, brokenSpellId,
+                              isPlayerSource, isDebuff, dealerGuid, victimGuid,
+                              0, false, false, breakingSpellId);
+        }
+    }
+    LOG_DEBUG("SMSG_SPELLBREAKLOG: victim=0x", std::hex, victimGuid,
+              " dealer=0x", dealerGuid, std::dec,
+              " breakingSpell=", breakingSpellId, " count=", count);
+    packet.skipAll();
+}
+
 void SpellHandler::handleClearExtraAuraInfo(network::Packet& packet) {
-    // TBC 2.4.3: clear a single aura slot for a unit
-    // Format: uint64 targetGuid + uint8 slot
-    if (packet.hasRemaining(9)) {
-        uint64_t clearGuid  = packet.readUInt64();
-        uint8_t  slot       = packet.readUInt8();
+    // TBC 2.4.3 CMaNGOS SpellAuraHolder::ClearExtraAuraInfo:
+    //   PackedGuid(target) + uint32(spellId)
+    if (!packet.hasFullPackedGuid()) {
+        packet.skipAll();
+        return;
+    }
+    const uint64_t clearGuid = packet.readPackedGuid();
+    if (!packet.hasRemaining(4)) {
+        packet.skipAll();
+        return;
+    }
+    const uint32_t clearSpellId = packet.readUInt32();
+    if (clearGuid != 0 && clearSpellId != 0) {
         std::vector<AuraSlot>* auraList = nullptr;
         if (clearGuid == owner_.getPlayerGuid())       auraList = &playerAuras_;
         else if (clearGuid == owner_.getTargetGuid())   auraList = &targetAuras_;
-        else if (clearGuid != 0)                         auraList = &unitAurasCache_[clearGuid];
-        if (auraList && slot < auraList->size()) {
-            if (clearGuid == owner_.getPlayerGuid() && !(*auraList)[slot].isEmpty() && owner_.addonEventCallbackRef()) {
-                const auto& dying = (*auraList)[slot];
-                const std::string& name = owner_.auraCombatTextName(dying.spellId);
-                if (!name.empty()) {
-                    const std::string type = (dying.flags & 0x80u) ? "SPELL_AURA_END_HARMFUL" : "SPELL_AURA_END";
-                    owner_.addonEventCallbackRef()("COMBAT_TEXT_UPDATE", {type, name});
+        else                                             auraList = &unitAurasCache_[clearGuid];
+        bool clearedAny = false;
+        if (auraList) {
+            // Prefer playerCast slot first; fall back to any matching spellId slot.
+            size_t matchIdx = auraList->size();
+            for (size_t i = 0; i < auraList->size(); ++i) {
+                if ((*auraList)[i].spellId == clearSpellId) {
+                    matchIdx = i;
+                    if ((*auraList)[i].playerCast) break;
                 }
             }
-            (*auraList)[slot] = AuraSlot{};
+            if (matchIdx < auraList->size()) {
+                if (clearGuid == owner_.getPlayerGuid() && owner_.addonEventCallbackRef()) {
+                    const auto& dying = (*auraList)[matchIdx];
+                    const std::string& name = owner_.auraCombatTextName(dying.spellId);
+                    if (!name.empty()) {
+                        const std::string type = (dying.flags & 0x80u) ? "SPELL_AURA_END_HARMFUL" : "SPELL_AURA_END";
+                        owner_.addonEventCallbackRef()("COMBAT_TEXT_UPDATE", {type, name});
+                    }
+                }
+                (*auraList)[matchIdx] = AuraSlot{};
+                clearedAny = true;
+            }
         }
-        if (auraList) mirrorAurasByGuid(clearGuid, *auraList);
-        if (auraList && owner_.addonEventCallbackRef()) {
-            std::string unitId;
-            if (clearGuid == owner_.getPlayerGuid()) unitId = "player";
-            else if (clearGuid == owner_.getTargetGuid()) unitId = "target";
-            else if (clearGuid == owner_.focusGuidRef()) unitId = "focus";
-            else if (clearGuid == owner_.petGuidRef()) unitId = "pet";
-            if (!unitId.empty()) owner_.addonEventCallbackRef()("UNIT_AURA", {unitId});
-            // The 1.12 name, which carries no unit. See the note at the
-            // site that fires it with a comment in full.
-            if (unitId == "player") owner_.addonEventCallbackRef()("PLAYER_AURAS_CHANGED", {});
-        }
-        if (clearGuid == owner_.getPlayerGuid()) {
-            refreshRestorationFromPlayerAuras();
+        if (clearedAny) {
+            mirrorAurasByGuid(clearGuid, *auraList);
+            if (owner_.addonEventCallbackRef()) {
+                std::string unitId;
+                if (clearGuid == owner_.getPlayerGuid()) unitId = "player";
+                else if (clearGuid == owner_.getTargetGuid()) unitId = "target";
+                else if (clearGuid == owner_.focusGuidRef()) unitId = "focus";
+                else if (clearGuid == owner_.petGuidRef()) unitId = "pet";
+                if (!unitId.empty()) owner_.addonEventCallbackRef()("UNIT_AURA", {unitId});
+                if (unitId == "player") owner_.addonEventCallbackRef()("PLAYER_AURAS_CHANGED", {});
+            }
+            if (clearGuid == owner_.getPlayerGuid()) {
+                refreshRestorationFromPlayerAuras();
+            }
         }
     }
     packet.skipAll();
