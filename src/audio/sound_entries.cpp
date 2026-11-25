@@ -34,6 +34,34 @@ SoundEntryTable& SoundEntryTable::instance() {
     return table;
 }
 
+uint32_t SoundEntryTable::categoryForSoundType(uint32_t dbcSoundType) {
+    switch (dbcSoundType) {
+        case 3u:  // Character dry footsteps
+        case 20u: // Water footstep splashes
+            return SESoundCategory::kFootstepOther; // cap = 6
+        case 4u:  // Weapon/armor combat impacts
+        case 14u: // Object/doodad impacts
+        case 19u: // Armor foley ($TRD)
+            return SESoundCategory::kCombatImpact;  // cap = 4
+        case 6u:  // Weapon swings (WeaponSwingSounds2.dbc)
+            return SESoundCategory::kWeaponSwing;   // cap = 2
+        case 10u: // Unit combat exertion/injury/death
+            return SESoundCategory::kCombatVocal;   // cap = 2
+        case 12u: // VocalUISounds error speech
+            return SESoundCategory::kVocalUi;       // cap = 1
+        case 16u: // DeathThudLookups
+            return SESoundCategory::kDeathThud;     // cap = 2
+        case 17u: // NPC greetings/farewells/pissed
+            return SESoundCategory::kNpcGreeting;   // cap = 1
+        case 26u: // Spell fizzle
+            return SESoundCategory::kSpellFizzle;   // cap = 1
+        case 31u: // Racial flyby narration
+            return SESoundCategory::kRacialCinematic; // cap = 1
+        default:
+            return SESoundCategory::kSfx;           // unlimited (0x7FFFFFFF)
+    }
+}
+
 SoundEntryTable::SoundEntryTable() : rng_(std::random_device{}()) {}
 
 void SoundEntryTable::reset() {
@@ -110,9 +138,6 @@ bool SoundEntryTable::ensureLoaded(pipeline::AssetManager* assets) {
         }
     }
 
-    // UISoundLookups.dbc (0=ID, 1=SoundID, 2=Name): maps legacy/FrameXML alias
-    // names such as TITLEENTERWORLD, LOOTWINDOWCOINSOUND, BAGMENUBUTTONPRESS
-    // to SoundEntries.dbc IDs.
     if (auto uiLookup = assets->loadDBC("UISoundLookups.dbc");
         uiLookup && uiLookup->isLoaded() && uiLookup->getFieldCount() >= 3) {
         for (uint32_t row = 0; row < uiLookup->getRecordCount(); ++row) {
@@ -169,62 +194,190 @@ std::string SoundEntryTable::pickExistingPath(pipeline::AssetManager* assets, co
     return available.back()->path;
 }
 
-bool SoundEntryTable::play2D(pipeline::AssetManager* assets, uint32_t soundId,
-                             float volumeScale, float pitch) {
+bool SoundEntryTable::prepareEntryPlayback(pipeline::AssetManager* assets, uint32_t soundId,
+                                           float volumeScale, float pitch, bool stoppable,
+                                           uint32_t categoryOverride,
+                                           const SoundEntryRecord*& outRec, std::string& outPath,
+                                           float& outVolume, float& outPitch, uint32_t& outCategory,
+                                           bool& outLoop) {
     if (volumeScale <= 0.0f) return false;
     const SoundEntryRecord* rec = findById(assets, soundId);
     if (!rec) return false;
+
+    auto& engine = AudioEngine::instance();
+    const uint32_t category = (categoryOverride == kAutoCategory)
+        ? categoryForSoundType(rec->soundType)
+        : categoryOverride;
+    if (!engine.canStartCategory(category)) {
+        return false;
+    }
+    if ((rec->flags & SoundEntryFlags::kNoDuplicates) != 0u && engine.isSoundEntryPlaying(rec->id)) {
+        return false;
+    }
+
     const std::string path = pickExistingPath(assets, *rec);
     if (path.empty()) return false;
-    const float vol = std::clamp(rec->volume * volumeScale, 0.0f, 1.0f);
+
+    // Wow.exe 0x462515..0x462558: vol = rec->volume * volumeScale + (VARY_VOLUME ? rand[-0.15, +0.15] : 0)
+    float vol = rec->volume * volumeScale;
+    if ((rec->flags & SoundEntryFlags::kVaryVolume) != 0u) {
+        constexpr float kVolJitterMin = -0.15000000596046448f; // 0x897194
+        constexpr float kVolJitterMax =  0.15000000596046448f; // 0x88d5f0
+        std::uniform_real_distribution<float> volDist(kVolJitterMin, kVolJitterMax);
+        vol += volDist(rng_);
+    }
+    vol = std::clamp(vol, 0.0f, 1.0f);
     if (vol <= 0.0f) return false;
+
+    // Wow.exe 0x46255d..0x46258b: VARY_PITCH multiplies pitch by rand[0.85, 1.15]
+    float effectivePitch = pitch;
+    if ((rec->flags & SoundEntryFlags::kVaryPitch) != 0u) {
+        constexpr float kPitchJitterMin = 0.8500000238418579f; // 0x897190
+        constexpr float kPitchJitterMax = 1.149999976158142f;  // 0x89718c
+        std::uniform_real_distribution<float> pitchDist(kPitchJitterMin, kPitchJitterMax);
+        effectivePitch *= pitchDist(rng_);
+    }
+
+    const bool hasLoopFlag = (rec->flags & SoundEntryFlags::kLooping) != 0u;
+    if (hasLoopFlag && !stoppable) {
+        LOG_DEBUG("SoundEntryTable: looping SoundEntry ", rec->id, " ('", rec->name,
+                  "') played without stoppable handle; playing one-shot");
+    }
+
+    outRec = rec;
+    outPath = path;
+    outVolume = vol;
+    outPitch = effectivePitch;
+    outCategory = category;
+    outLoop = stoppable && hasLoopFlag;
+    return true;
+}
+
+bool SoundEntryTable::play2D(pipeline::AssetManager* assets, uint32_t soundId,
+                             float volumeScale, float pitch, uint32_t categoryOverride) {
+    const SoundEntryRecord* rec = nullptr;
+    std::string path;
+    float vol = 0.0f;
+    float effectivePitch = 1.0f;
+    uint32_t category = SESoundCategory::kSfx;
+    bool loop = false;
+    if (!prepareEntryPlayback(assets, soundId, volumeScale, pitch, /*stoppable=*/false,
+                              categoryOverride, rec, path, vol, effectivePitch, category, loop)) {
+        return false;
+    }
     auto data = assets->readFile(path);
     if (data.empty()) return false;
-    return AudioEngine::instance().playSound2D(data, vol, pitch);
+    const SfxPlayOptions opts{
+        .soundEntryId = rec->id,
+        .soundEntryFlags = rec->flags,
+        .category = category,
+        .loop = false,
+    };
+    return AudioEngine::instance().playSound2D(data, vol, effectivePitch, opts, path);
 }
 
 uint32_t SoundEntryTable::play2DStoppable(pipeline::AssetManager* assets, uint32_t soundId,
-                                          float volumeScale, float pitch) {
-    if (volumeScale <= 0.0f) return 0;
-    const SoundEntryRecord* rec = findById(assets, soundId);
-    if (!rec) return 0;
-    const std::string path = pickExistingPath(assets, *rec);
-    if (path.empty()) return 0;
-    const float vol = std::clamp(rec->volume * volumeScale, 0.0f, 1.0f);
-    if (vol <= 0.0f) return 0;
+                                          float volumeScale, float pitch, uint32_t categoryOverride) {
+    const SoundEntryRecord* rec = nullptr;
+    std::string path;
+    float vol = 0.0f;
+    float effectivePitch = 1.0f;
+    uint32_t category = SESoundCategory::kSfx;
+    bool loop = false;
+    if (!prepareEntryPlayback(assets, soundId, volumeScale, pitch, /*stoppable=*/true,
+                              categoryOverride, rec, path, vol, effectivePitch, category, loop)) {
+        return 0;
+    }
     auto data = assets->readFile(path);
     if (data.empty()) return 0;
-    return AudioEngine::instance().playSound2DStoppable(data, vol, pitch);
+    const SfxPlayOptions opts{
+        .soundEntryId = rec->id,
+        .soundEntryFlags = rec->flags,
+        .category = category,
+        .loop = loop,
+    };
+    return AudioEngine::instance().playSound2DStoppable(data, vol, effectivePitch, opts, path);
 }
 
 bool SoundEntryTable::play3D(pipeline::AssetManager* assets, uint32_t soundId,
-                             const glm::vec3& position, float volumeScale, float pitch) {
-    if (volumeScale <= 0.0f) return false;
-    const SoundEntryRecord* rec = findById(assets, soundId);
-    if (!rec) return false;
-    const std::string path = pickExistingPath(assets, *rec);
-    if (path.empty()) return false;
-    const float vol = std::clamp(rec->volume * volumeScale, 0.0f, 1.0f);
-    if (vol <= 0.0f) return false;
+                             const glm::vec3& position, float volumeScale, float pitch,
+                             uint32_t categoryOverride) {
+    const SoundEntryRecord* rec = nullptr;
+    std::string path;
+    float vol = 0.0f;
+    float effectivePitch = 1.0f;
+    uint32_t category = SESoundCategory::kSfx;
+    bool loop = false;
+    if (!prepareEntryPlayback(assets, soundId, volumeScale, pitch, /*stoppable=*/false,
+                              categoryOverride, rec, path, vol, effectivePitch, category, loop)) {
+        return false;
+    }
+    // Avoid reading WAV file from archive when beyond DistanceCutoff (0x461c10)
+    const glm::vec3 rel = position - AudioEngine::instance().getListenerPosition();
+    if (glm::dot(rel, rel) >= rec->maxDistance * rec->maxDistance) {
+        return false;
+    }
     auto data = assets->readFile(path);
     if (data.empty()) return false;
+    const SfxPlayOptions opts{
+        .soundEntryId = rec->id,
+        .soundEntryFlags = rec->flags,
+        .category = category,
+        .loop = false,
+    };
     return AudioEngine::instance().playSound3D(
-        data, position, vol, pitch, rec->maxDistance, rec->minDistance);
+        data, position, vol, effectivePitch, rec->maxDistance, rec->minDistance, opts, path);
 }
 
 uint32_t SoundEntryTable::play3DStoppable(pipeline::AssetManager* assets, uint32_t soundId,
-                                          const glm::vec3& position, float volumeScale, float pitch) {
-    if (volumeScale <= 0.0f) return 0;
-    const SoundEntryRecord* rec = findById(assets, soundId);
-    if (!rec) return 0;
-    const std::string path = pickExistingPath(assets, *rec);
-    if (path.empty()) return 0;
-    const float vol = std::clamp(rec->volume * volumeScale, 0.0f, 1.0f);
-    if (vol <= 0.0f) return 0;
+                                          const glm::vec3& position, float volumeScale, float pitch,
+                                          uint32_t categoryOverride) {
+    const SoundEntryRecord* rec = nullptr;
+    std::string path;
+    float vol = 0.0f;
+    float effectivePitch = 1.0f;
+    uint32_t category = SESoundCategory::kSfx;
+    bool loop = false;
+    if (!prepareEntryPlayback(assets, soundId, volumeScale, pitch, /*stoppable=*/true,
+                              categoryOverride, rec, path, vol, effectivePitch, category, loop)) {
+        return 0;
+    }
+    const glm::vec3 rel = position - AudioEngine::instance().getListenerPosition();
+    if (glm::dot(rel, rel) >= rec->maxDistance * rec->maxDistance) {
+        return 0;
+    }
     auto data = assets->readFile(path);
     if (data.empty()) return 0;
+    const SfxPlayOptions opts{
+        .soundEntryId = rec->id,
+        .soundEntryFlags = rec->flags,
+        .category = category,
+        .loop = loop,
+    };
     return AudioEngine::instance().playSound3DStoppable(
-        data, position, vol, pitch, rec->maxDistance, rec->minDistance);
+        data, position, vol, effectivePitch, rec->maxDistance, rec->minDistance, opts, path);
+}
+
+bool SoundEntryTable::playUnit(pipeline::AssetManager* assets, uint32_t soundId,
+                               const glm::vec3& unitBasePos, bool isLocalPlayer,
+                               bool listenerAtCharacter, float volumeScale, float pitch,
+                               uint32_t categoryOverride) {
+    if (isLocalPlayer && listenerAtCharacter) {
+        return play2D(assets, soundId, volumeScale * kLocalPlayer2DGain, pitch, categoryOverride);
+    }
+    const glm::vec3 pos = unitBasePos + glm::vec3(0.0f, 0.0f, kListenerCharacterZOffset);
+    return play3D(assets, soundId, pos, volumeScale, pitch, categoryOverride);
+}
+
+uint32_t SoundEntryTable::playUnitStoppable(pipeline::AssetManager* assets, uint32_t soundId,
+                                            const glm::vec3& unitBasePos, bool isLocalPlayer,
+                                            bool listenerAtCharacter, float volumeScale, float pitch,
+                                            uint32_t categoryOverride) {
+    if (isLocalPlayer && listenerAtCharacter) {
+        return play2DStoppable(assets, soundId, volumeScale * kLocalPlayer2DGain, pitch, categoryOverride);
+    }
+    const glm::vec3 pos = unitBasePos + glm::vec3(0.0f, 0.0f, kListenerCharacterZOffset);
+    return play3DStoppable(assets, soundId, pos, volumeScale, pitch, categoryOverride);
 }
 
 } // namespace audio

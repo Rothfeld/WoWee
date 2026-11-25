@@ -17,6 +17,36 @@ namespace wowee {
 namespace pipeline { class AssetManager; }
 namespace audio {
 
+/// SESound 18-slot concurrency categories (Wow.exe 8606 table at 0x896dc0 / caps at 0x897018).
+namespace SESoundCategory {
+    inline constexpr uint32_t kSfx             = 0;
+    inline constexpr uint32_t kMusic           = 1;
+    inline constexpr uint32_t kAmbience        = 2;
+    inline constexpr uint32_t kCinematic       = 3;
+    inline constexpr uint32_t kScriptSound     = 4;
+    inline constexpr uint32_t kScriptMusic     = 5;
+    inline constexpr uint32_t kRacialCinematic = 6;   // cap = 1
+    inline constexpr uint32_t kVocalUi         = 7;   // cap = 1
+    inline constexpr uint32_t kItemPickup      = 8;   // cap = 2
+    inline constexpr uint32_t kNpcGreeting     = 9;   // cap = 1
+    inline constexpr uint32_t kWeaponSwing     = 10;  // cap = 2
+    inline constexpr uint32_t kDeathThud       = 11;  // cap = 2
+    inline constexpr uint32_t kVocalEmote      = 12;  // cap = 1
+    inline constexpr uint32_t kFootstepOther   = 13;  // cap = 6
+    inline constexpr uint32_t kCombatImpact    = 14;  // cap = 4
+    inline constexpr uint32_t kSpellFizzle     = 15;  // cap = 1
+    inline constexpr uint32_t kCombatVocal     = 16;  // cap = 2
+    inline constexpr uint32_t kFootstepSelf    = 17;  // cap = 4
+    inline constexpr uint32_t kCount           = 18;
+}
+
+struct SfxPlayOptions {
+    uint32_t soundEntryId = 0;
+    uint32_t soundEntryFlags = 0;
+    uint32_t category = SESoundCategory::kSfx;
+    bool loop = false;
+};
+
 /**
  * AudioEngine: Singleton managing miniaudio device and playback.
  * Replaces process-spawning audio system with proper non-blocking library.
@@ -24,6 +54,13 @@ namespace audio {
 class AudioEngine {
 public:
     static AudioEngine& instance();
+
+    /// Exact Wow.exe build 8606 SESound::ComputeAttenuation (0x756bd0):
+    /// rolloff = 4.0 (0x892db0) with linear fade-to-zero over [0.9 * maxDist, maxDist] (0x8a3218).
+    [[nodiscard]] static float computeDistanceAttenuation(float minDistance, float maxDistance, float distance);
+
+    /// Exact Wow.exe build 8606 per-category concurrency cap table (0x897018).
+    [[nodiscard]] static uint32_t maxConcurrentForCategory(uint32_t category);
 
     ~AudioEngine();
 
@@ -36,12 +73,6 @@ public:
     [[nodiscard]] bool isInitialized() const { return initialized_; }
 
     /// The playback device miniaudio actually opened, by name.
-    ///
-    /// For the Sound panel's output dropdown, which lists the drivers the
-    /// client can use. This client opens whichever device the system offers
-    /// and does not switch between them, so the list is this one name - the
-    /// truth rather than a guess, and the same shape the video panel's
-    /// resolution list already takes. Empty if the engine is not up.
     [[nodiscard]] std::string getOutputDeviceName() const;
 
     // Master volume (0.0 = silent, 1.0 = full)
@@ -49,15 +80,17 @@ public:
     [[nodiscard]] float getMasterVolume() const { return masterVolume_; }
 
     /// Silence the output without forgetting the volume the player chose.
-    ///
-    /// For the window losing focus, where the client should go quiet and come
-    /// back at the same level. Winding masterVolume_ down to zero instead
-    /// would work once and then answer the volume slider wrongly, and would
-    /// trip the masterVolume_ <= 0 early-outs that stop a sound being started
-    /// at all - so a suspended client would come back to silence where a
-    /// looping track used to be.
     void setSuspended(bool suspended);
     [[nodiscard]] bool isSuspended() const { return suspended_; }
+
+    /// Window focus + Sound_EnableSoundWhenGameIsInBG gate (Wow.exe 0x4621ef -> 0x4664b0).
+    void setWindowFocused(bool focused);
+    [[nodiscard]] bool isWindowFocused() const { return windowFocused_; }
+    void setBackgroundSoundEnabled(bool enabled);
+    [[nodiscard]] bool isBackgroundSoundEnabled() const { return backgroundSoundEnabled_; }
+    [[nodiscard]] bool isMutedInBackground() const {
+        return suspended_ || (!windowFocused_ && !backgroundSoundEnabled_);
+    }
 
     // Asset manager (enables sound loading by MPQ path)
     void setAssetManager(pipeline::AssetManager* am) { assetManager_ = am; }
@@ -69,31 +102,45 @@ public:
 
     // Simple 2D sound playback (non-blocking)
     bool playSound2D(const std::vector<uint8_t>& wavData, float volume = 1.0f, float pitch = 1.0f);
+    bool playSound2D(const std::vector<uint8_t>& wavData, float volume, float pitch,
+                     const SfxPlayOptions& options, const std::string& debugPath = {});
     bool playSound2D(const std::string& mpqPath, float volume = 1.0f, float pitch = 1.0f);
 
     // Stoppable 2D sound - returns a non-zero handle, or 0 on failure
     uint32_t playSound2DStoppable(const std::vector<uint8_t>& wavData, float volume = 1.0f, float pitch = 1.0f);
+    uint32_t playSound2DStoppable(const std::vector<uint8_t>& wavData, float volume, float pitch,
+                                  const SfxPlayOptions& options, const std::string& debugPath = {});
     uint32_t playSound2DStoppable(const std::string& mpqPath, float volume = 1.0f, float pitch = 1.0f);
     // Stop a sound started with playSound2DStoppable / playSound3DStoppable (no-op if already finished)
     void stopSound(uint32_t id);
+    void setSoundPosition(uint32_t id, const glm::vec3& position);
+    [[nodiscard]] bool isSoundPlaying(uint32_t id);
+    [[nodiscard]] bool isSoundLooping(uint32_t id) const;
+    [[nodiscard]] bool isSoundEntryPlaying(uint32_t soundEntryId);
+    [[nodiscard]] uint32_t getActiveCategoryCount(uint32_t category);
+    [[nodiscard]] bool canStartCategory(uint32_t category);
 
     // 3D positional sound playback
     bool playSound3D(const std::vector<uint8_t>& wavData, const glm::vec3& position,
                      float volume = 1.0f, float pitch = 1.0f, float maxDistance = 100.0f,
                      float minDistance = 1.0f);
+    bool playSound3D(const std::vector<uint8_t>& wavData, const glm::vec3& position,
+                     float volume, float pitch, float maxDistance, float minDistance,
+                     const SfxPlayOptions& options, const std::string& debugPath = {});
     bool playSound3D(const std::string& mpqPath, const glm::vec3& position,
                      float volume = 1.0f, float pitch = 1.0f, float maxDistance = 100.0f,
                      float minDistance = 1.0f);
     uint32_t playSound3DStoppable(const std::vector<uint8_t>& wavData, const glm::vec3& position,
                                   float volume = 1.0f, float pitch = 1.0f, float maxDistance = 100.0f,
                                   float minDistance = 1.0f);
+    uint32_t playSound3DStoppable(const std::vector<uint8_t>& wavData, const glm::vec3& position,
+                                  float volume, float pitch, float maxDistance, float minDistance,
+                                  const SfxPlayOptions& options, const std::string& debugPath = {});
     uint32_t playSound3DStoppable(const std::string& mpqPath, const glm::vec3& position,
                                   float volume = 1.0f, float pitch = 1.0f, float maxDistance = 100.0f,
                                   float minDistance = 1.0f);
 
     // Music streaming (for background music)
-    // Retains shared ownership: the decoder streams directly from encoded tracks that
-    // run to several MB, so cached music must not be copied for every playback.
     bool playMusic(std::shared_ptr<const std::vector<uint8_t>> musicData,
                    float volume = 1.0f, bool loop = true);
     void stopMusic();
@@ -103,18 +150,9 @@ public:
     // Update (call once per frame for cleanup/position sync)
     void update(float deltaTime);
 
-    /// Keep a copy of what the speakers play, for the screen recorder.
-    ///
-    /// Taken in the device's own callback after the mix and the master volume,
-    /// so a recording sounds as the session did - muted or suspended included.
-    /// Anything captured before this call is discarded. False when there is no
-    /// device to listen to, in which case a recording goes without sound.
     bool beginOutputCapture();
     void endOutputCapture();
-    /// Up to maxFrames interleaved float frames captured since the last read,
-    /// oldest first. One reader at a time; any thread.
     uint32_t readCapturedOutput(float* dst, uint32_t maxFrames);
-    /// Frames captured and not yet read.
     [[nodiscard]] uint32_t capturedOutputAvailable() const;
     [[nodiscard]] uint32_t getOutputChannels() const;
     [[nodiscard]] uint32_t getOutputSampleRate() const;
@@ -142,21 +180,34 @@ public:
     void setPlaybackObserver(PlaybackObserver observer) { playbackObserver_ = std::move(observer); }
 
 private:
+    void reapFinishedSounds();
+    void refreshEngineMasterGain();
+    void refreshSpatialVolumes();
     uint32_t startSound2DInternal(const std::vector<uint8_t>& wavData, float volume, float pitch,
-                                  bool stoppable, const std::string& debugPath);
+                                  bool stoppable, const SfxPlayOptions& options,
+                                  const std::string& debugPath);
     uint32_t startSound3DInternal(const std::vector<uint8_t>& wavData, const glm::vec3& position,
                                   float volume, float pitch, float maxDistance, float minDistance,
-                                  bool stoppable, const std::string& debugPath);
+                                  bool stoppable, const SfxPlayOptions& options,
+                                  const std::string& debugPath);
     AudioEngine();
     AudioEngine(const AudioEngine&) = delete;
     AudioEngine& operator=(const AudioEngine&) = delete;
 
-    // Track active one-shot sounds for cleanup
+    // Track active sounds for cleanup, looping, NO_DUPLICATES, concurrency caps, and 3D attenuation
     struct ActiveSound {
-        ma_sound* sound;
-        void* buffer;  // ma_audio_buffer* - Keep audio buffer alive
+        ma_sound* sound = nullptr;
+        void* buffer = nullptr;  // ma_audio_buffer* - Keep audio buffer alive
         std::shared_ptr<const std::vector<uint8_t>> pcmDataRef;  // Keep decoded PCM alive
         uint32_t id = 0;  // 0 = anonymous (not stoppable)
+        uint32_t soundEntryId = 0;
+        uint32_t category = SESoundCategory::kSfx;
+        bool looping = false;
+        bool spatial = false;
+        float baseVolume = 1.0f;
+        glm::vec3 position{0.0f};
+        float minDistance = 1.0f;
+        float maxDistance = 100.0f;
     };
     std::vector<ActiveSound> activeSounds_;
     uint32_t nextSoundId_ = 1;
@@ -170,6 +221,8 @@ private:
     bool initialized_ = false;
     float masterVolume_ = 1.0f;
     bool suspended_ = false;
+    bool windowFocused_ = true;
+    bool backgroundSoundEnabled_ = false;
     glm::vec3 listenerPosition_{0.0f, 0.0f, 0.0f};
     glm::vec3 listenerForward_{0.0f, 0.0f, -1.0f};
     glm::vec3 listenerUp_{0.0f, 1.0f, 0.0f};
@@ -179,12 +232,7 @@ private:
     // miniaudio engine (opaque pointer)
     ma_engine* engine_ = nullptr;
 
-    /// Replaces miniaudio's own device callback: it mixes exactly as that one
-    /// does, then hands the result to the capture ring when one is open.
     static void deviceDataCallback(ma_device* device, void* out, const void* in, uint32_t frames);
-    // ma_pcm_rb, which miniaudio declares anonymously and so cannot be named
-    // here. Made on the first capture and kept until shutdown: freeing it while
-    // the audio thread might still be writing is the one race not worth having.
     void* captureRing_ = nullptr;
     std::atomic<bool> capturing_{false};
     bool headless_ = false;

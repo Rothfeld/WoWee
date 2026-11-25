@@ -1,14 +1,18 @@
 #define MINIAUDIO_IMPLEMENTATION
 #include "audio/audio_engine.hpp"
+#include "audio/sound_entries.hpp"
 #include "core/logger.hpp"
 #include "pipeline/asset_manager.hpp"
 
-
 #include "../../extern/miniaudio.h"
 
+#include <algorithm>
+#include <array>
+#include <cmath>
 #include <cstring>
 #include <cstdlib>
 #include <iterator>
+#include <limits>
 #include <memory>
 #include <shared_mutex>
 #include <unordered_map>
@@ -18,18 +22,6 @@ namespace audio {
 
 namespace {
 
-/// Owns malloc'd storage for a miniaudio object and unwinds it correctly on
-/// any early return.
-///
-/// miniaudio initialises into caller-provided storage, so teardown is two
-/// steps -- uninit the object, then free the storage -- and the uninit must
-/// not run on storage that was never initialised. That is the distinction the
-/// hand-written cleanup here used to encode by having a different free()
-/// sequence at each of five early returns per function, duplicated across two
-/// functions. Every one of them had to be right, and nothing checked that.
-///
-/// Call markInitialised() once the matching ma_*_init has succeeded, and
-/// release() to hand the pointer to activeSounds_, which owns it from then on.
 template <typename T, void (*Uninit)(T*)>
 class MaStorage {
 public:
@@ -50,7 +42,6 @@ public:
     T* get() const { return ptr_; }
     void markInitialised() { initialised_ = true; }
 
-    /// Give up ownership. The caller frees it from here on.
     T* release() {
         T* p = ptr_;
         ptr_ = nullptr;
@@ -75,15 +66,9 @@ struct DecodedWavCacheEntry {
 };
 
 static std::unordered_map<uint64_t, DecodedWavCacheEntry> gDecodedWavCache;
-// Protects gDecodedWavCache - shared_lock for reads, unique_lock for writes.
-// Required because playSound2D() can be called from multiple threads
-// (main thread, async loaders, animation callbacks).
 static std::shared_mutex gDecodedWavCacheMutex;
 
 static uint64_t makeWavCacheKey(const std::vector<uint8_t>& wavData) {
-    // FNV-1a over the first 256 bytes + last 256 bytes + total size.
-    // Full-content hash would be correct but slow for large files; sampling the
-    // edges catches virtually all distinct files while keeping cost O(1).
     constexpr uint64_t FNV_OFFSET = 14695981039346656037ull;
     constexpr uint64_t FNV_PRIME  = 1099511628211ull;
     uint64_t h = FNV_OFFSET;
@@ -96,8 +81,6 @@ static uint64_t makeWavCacheKey(const std::vector<uint8_t>& wavData) {
         const size_t tail_start = sz > 512 ? sz - 256 : 256;
         for (size_t i = tail_start; i < sz; ++i) mix(wavData[i]);
     }
-    // Mix in the total size so files with identical head/tail but different
-    // lengths still produce different keys.
     for (int s = 0; s < 8; ++s) mix(static_cast<uint8_t>(sz >> (s * 8)));
     return h;
 }
@@ -107,7 +90,6 @@ static bool decodeWavCached(const std::vector<uint8_t>& wavData, DecodedWavCache
 
     const uint64_t key = makeWavCacheKey(wavData);
 
-    // Fast path: shared (read) lock for cache hits - allows concurrent lookups.
     {
         std::shared_lock<std::shared_mutex> readLock(gDecodedWavCacheMutex);
         if (auto it = gDecodedWavCache.find(key); it != gDecodedWavCache.end()) {
@@ -157,13 +139,8 @@ static bool decodeWavCached(const std::vector<uint8_t>& wavData, DecodedWavCache
     entry.sampleRate = sampleRate;
     entry.frames = framesRead;
     entry.pcmData = pcmData;
-    // Evict oldest half when cache grows too large. 256 entries ≈ 50-100 MB of decoded
-    // PCM data depending on file lengths; halving keeps memory bounded while retaining
-    // recently-heard sounds (footsteps, UI clicks, combat hits) for instant replay.
-    // Exclusive (write) lock - only one thread can evict + insert.
     {
         std::lock_guard<std::shared_mutex> writeLock(gDecodedWavCacheMutex);
-        // Re-check in case another thread inserted while we were decoding.
         if (auto it = gDecodedWavCache.find(key); it != gDecodedWavCache.end()) {
             out = it->second;
             return true;
@@ -180,7 +157,63 @@ static bool decodeWavCached(const std::vector<uint8_t>& wavData, DecodedWavCache
     return true;
 }
 
+// Exact Wow.exe build 8606 concurrency caps at 0x897018[0..17]
+constexpr std::array<uint32_t, SESoundCategory::kCount> kSESoundCategoryCaps = {
+    0x7FFFFFFFu, //  0: SFX
+    0x7FFFFFFFu, //  1: MUSIC
+    0x7FFFFFFFu, //  2: AMBIENCE
+    0x7FFFFFFFu, //  3: CINEMATIC
+    0x7FFFFFFFu, //  4: SCRIPTSOUND
+    0x7FFFFFFFu, //  5: SCRIPTMUSIC
+    1u,          //  6: RACIALCINEMATIC
+    1u,          //  7: VOCAL_UI (Error speech)
+    2u,          //  8: ITEM_PICKUP
+    1u,          //  9: NPC_GREETING
+    2u,          // 10: WEAPON_SWING
+    2u,          // 11: DEATH_THUD
+    1u,          // 12: VOCAL_EMOTE
+    6u,          // 13: FOOTSTEP_OTHER
+    4u,          // 14: COMBAT_IMPACT
+    1u,          // 15: SPELL_FIZZLE
+    2u,          // 16: COMBAT_VOCAL
+    4u,          // 17: FOOTSTEP_SELF
+};
+
 } // namespace
+
+float AudioEngine::computeDistanceAttenuation(float minDistance, float maxDistance, float distance) {
+    // Wow.exe build 8606 SESound::ComputeAttenuation (0x756bd0):
+    //   const double kRolloff = 4.0 (0x892db0);
+    //   const double kFadeStartRatio = 0.9 (0x8a3218);
+    if (!std::isfinite(distance) || !std::isfinite(maxDistance) || maxDistance <= 0.0f || distance >= maxDistance) {
+        return 0.0f;
+    }
+    const float safeMin = std::max(0.0f, std::isfinite(minDistance) ? minDistance : 0.0f);
+    if (distance <= safeMin || safeMin >= maxDistance) {
+        return 1.0f;
+    }
+
+    constexpr double kRolloff = 4.0;
+    constexpr float kFadeStartRatio = 0.8999999761581421f; // float(0x8a3218)
+
+    float atten = static_cast<float>(
+        static_cast<double>(safeMin) /
+        (static_cast<double>(safeMin) + kRolloff * static_cast<double>(distance - safeMin)));
+
+    const float fadeStart = kFadeStartRatio * maxDistance;
+    if (distance > fadeStart && maxDistance > fadeStart) {
+        const float fadeFactor = 1.0f - (distance - fadeStart) / (maxDistance - fadeStart);
+        atten *= fadeFactor;
+    }
+    return std::clamp(atten, 0.0f, 1.0f);
+}
+
+uint32_t AudioEngine::maxConcurrentForCategory(uint32_t category) {
+    if (category < kSESoundCategoryCaps.size()) {
+        return kSESoundCategoryCaps[category];
+    }
+    return 0x7FFFFFFFu;
+}
 
 AudioEngine& AudioEngine::instance() {
     static AudioEngine instance;
@@ -193,17 +226,46 @@ AudioEngine::~AudioEngine() {
     shutdown();
 }
 
+void AudioEngine::refreshEngineMasterGain() {
+    if (engine_) {
+        ma_engine_set_volume(engine_, isMutedInBackground() ? 0.0f : masterVolume_);
+    }
+}
+
+void AudioEngine::refreshSpatialVolumes() {
+    for (auto& active : activeSounds_) {
+        if (!active.spatial || !active.sound) continue;
+        const float dist = glm::length(active.position - listenerPosition_);
+        const float atten = computeDistanceAttenuation(active.minDistance, active.maxDistance, dist);
+        ma_sound_set_volume(active.sound, active.baseVolume * atten);
+    }
+}
+
+void AudioEngine::reapFinishedSounds() {
+    if (!initialized_ || !engine_) return;
+    for (size_t i = 0; i < activeSounds_.size(); ) {
+        if (!ma_sound_is_playing(activeSounds_[i].sound)) {
+            ma_sound_uninit(activeSounds_[i].sound);
+            std::free(activeSounds_[i].sound);
+            ma_audio_buffer* buffer = static_cast<ma_audio_buffer*>(activeSounds_[i].buffer);
+            ma_audio_buffer_uninit(buffer);
+            std::free(buffer);
+            activeSounds_[i] = std::move(activeSounds_.back());
+            activeSounds_.pop_back();
+        } else {
+            ++i;
+        }
+    }
+}
+
 bool AudioEngine::initialize() {
     if (initialized_) {
         LOG_WARNING("AudioEngine already initialized");
         return true;
     }
 
-    // Allocate miniaudio engine
     engine_ = new ma_engine();
 
-    // The default config, but with the device's callback our own: it mixes the
-    // same way miniaudio's does and also feeds the screen recorder's tap.
     ma_engine_config engineConfig = ma_engine_config_init();
     engineConfig.dataCallback = &AudioEngine::deviceDataCallback;
     ma_result result = ma_engine_init(&engineConfig, engine_);
@@ -214,10 +276,8 @@ bool AudioEngine::initialize() {
         return false;
     }
 
-    // Set default master volume
-    ma_engine_set_volume(engine_, masterVolume_);
+    refreshEngineMasterGain();
 
-    // Log audio backend info
     ma_backend backend = ma_engine_get_device(engine_)->pContext->backend;
     const char* backendName = "unknown";
     switch (backend) {
@@ -263,7 +323,7 @@ bool AudioEngine::initializeHeadless(uint32_t sampleRate, uint32_t channels) {
         return false;
     }
 
-    ma_engine_set_volume(engine_, suspended_ ? 0.0f : masterVolume_);
+    refreshEngineMasterGain();
     initialized_ = true;
     headless_ = true;
     LOG_INFO("AudioEngine initialized in headless test mode (", engineConfig.sampleRate, " Hz, ",
@@ -284,10 +344,8 @@ void AudioEngine::shutdown() {
         return;
     }
 
-    // Stop music
     stopMusic();
 
-    // Clean up all active sounds
     for (auto& activeSound : activeSounds_) {
         ma_sound_uninit(activeSound.sound);
         std::free(activeSound.sound);
@@ -303,7 +361,6 @@ void AudioEngine::shutdown() {
         delete engine_;
         engine_ = nullptr;
     }
-    // The device is gone, so nothing writes to the ring any more.
     if (captureRing_) {
         auto* ring = static_cast<ma_pcm_rb*>(captureRing_);
         ma_pcm_rb_uninit(ring);
@@ -313,28 +370,43 @@ void AudioEngine::shutdown() {
 
     initialized_ = false;
     headless_ = false;
+    suspended_ = false;
+    windowFocused_ = true;
+    backgroundSoundEnabled_ = false;
+    listenerPosition_ = glm::vec3(0.0f);
+    listenerForward_ = glm::vec3(0.0f, 0.0f, -1.0f);
+    listenerUp_ = glm::vec3(0.0f, 1.0f, 0.0f);
     LOG_INFO("AudioEngine shutdown");
 }
 
 void AudioEngine::setMasterVolume(float volume) {
     masterVolume_ = glm::clamp(volume, 0.0f, 1.0f);
-    if (engine_) {
-        if (!suspended_) ma_engine_set_volume(engine_, masterVolume_);
-    }
+    refreshEngineMasterGain();
 }
+
 void AudioEngine::setSuspended(bool suspended) {
     if (suspended_ == suspended) return;
     suspended_ = suspended;
-    // The engine's own level is the one thing that changes; masterVolume_ is
-    // left alone so the slider and the resume both still read it.
-    if (engine_) ma_engine_set_volume(engine_, suspended_ ? 0.0f : masterVolume_);
+    refreshEngineMasterGain();
 }
 
+void AudioEngine::setWindowFocused(bool focused) {
+    if (windowFocused_ == focused) return;
+    windowFocused_ = focused;
+    refreshEngineMasterGain();
+}
+
+void AudioEngine::setBackgroundSoundEnabled(bool enabled) {
+    if (backgroundSoundEnabled_ == enabled) return;
+    backgroundSoundEnabled_ = enabled;
+    refreshEngineMasterGain();
+}
 
 void AudioEngine::setListenerPosition(const glm::vec3& position) {
     listenerPosition_ = position;
     if (engine_) {
         ma_engine_listener_set_position(engine_, 0, position.x, position.y, position.z);
+        refreshSpatialVolumes();
     }
 }
 
@@ -347,8 +419,73 @@ void AudioEngine::setListenerOrientation(const glm::vec3& forward, const glm::ve
     }
 }
 
+bool AudioEngine::isSoundPlaying(uint32_t id) {
+    if (id == 0) return false;
+    reapFinishedSounds();
+    for (const auto& active : activeSounds_) {
+        if (active.id == id) return true;
+    }
+    return false;
+}
+
+bool AudioEngine::isSoundLooping(uint32_t id) const {
+    if (id == 0) return false;
+    for (const auto& active : activeSounds_) {
+        if (active.id == id) return active.looping;
+    }
+    return false;
+}
+
+bool AudioEngine::isSoundEntryPlaying(uint32_t soundEntryId) {
+    if (soundEntryId == 0) return false;
+    reapFinishedSounds();
+    for (const auto& active : activeSounds_) {
+        if (active.soundEntryId == soundEntryId) return true;
+    }
+    return false;
+}
+
+uint32_t AudioEngine::getActiveCategoryCount(uint32_t category) {
+    reapFinishedSounds();
+    uint32_t count = 0;
+    for (const auto& active : activeSounds_) {
+        if (active.category == category) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+bool AudioEngine::canStartCategory(uint32_t category) {
+    if (category >= SESoundCategory::kCount) {
+        return false;
+    }
+    const uint32_t cap = maxConcurrentForCategory(category);
+    if (cap >= 0x7FFFFFFFu) {
+        return true;
+    }
+    return getActiveCategoryCount(category) < cap;
+}
+
+void AudioEngine::setSoundPosition(uint32_t id, const glm::vec3& position) {
+    if (id == 0) return;
+    for (auto& active : activeSounds_) {
+        if (active.id == id && active.sound) {
+            active.position = position;
+            ma_sound_set_position(active.sound, position.x, position.y, position.z);
+            if (active.spatial) {
+                const float dist = glm::length(position - listenerPosition_);
+                const float atten = computeDistanceAttenuation(active.minDistance, active.maxDistance, dist);
+                ma_sound_set_volume(active.sound, active.baseVolume * atten);
+            }
+            return;
+        }
+    }
+}
+
 uint32_t AudioEngine::startSound2DInternal(const std::vector<uint8_t>& wavData, float volume,
                                            float pitch, bool stoppable,
+                                           const SfxPlayOptions& options,
                                            const std::string& debugPath) {
     LOG_INFO("sfx2d: bytes=", wavData.size(), " vol=", volume);
     const float clampedPitch = glm::clamp(pitch, 0.25f, 4.0f);
@@ -369,6 +506,27 @@ uint32_t AudioEngine::startSound2DInternal(const std::vector<uint8_t>& wavData, 
 
     DecodedWavCacheEntry emptyDec;
     if (!initialized_ || !engine_ || wavData.empty() || masterVolume_ <= 0.0f || volume <= 0.0f) {
+        notify(false, emptyDec);
+        return 0;
+    }
+
+    reapFinishedSounds();
+
+    // Wow.exe 0x4621ef -> 0x4664b0: suppress fire-and-forget one-shots while muted in background
+    if (isMutedInBackground() && !stoppable && !options.loop) {
+        notify(false, emptyDec);
+        return 0;
+    }
+
+    // Wow.exe 0x4620c0..0x4620da: per-category concurrency cap (0x897018)
+    if (!canStartCategory(options.category)) {
+        notify(false, emptyDec);
+        return 0;
+    }
+
+    // Wow.exe 0x46224c..0x4622a4: Flags & 0x020 (NO_DUPLICATES)
+    if ((options.soundEntryFlags & SoundEntryFlags::kNoDuplicates) != 0u &&
+        options.soundEntryId != 0 && isSoundEntryPlaying(options.soundEntryId)) {
         notify(false, emptyDec);
         return 0;
     }
@@ -413,6 +571,10 @@ uint32_t AudioEngine::startSound2DInternal(const std::vector<uint8_t>& wavData, 
     if (customPitch) {
         ma_sound_set_pitch(sound.get(), clampedPitch);
     }
+    const bool loopEnabled = stoppable && options.loop;
+    if (loopEnabled) {
+        ma_sound_set_looping(sound.get(), MA_TRUE);
+    }
     if (ma_sound_start(sound.get()) != MA_SUCCESS) {
         notify(false, decoded);
         return 0;
@@ -423,17 +585,37 @@ uint32_t AudioEngine::startSound2DInternal(const std::vector<uint8_t>& wavData, 
         id = nextSoundId_++;
         if (nextSoundId_ == 0) nextSoundId_ = 1;
     }
-    activeSounds_.push_back({sound.release(), audioBuffer.release(), decoded.pcmData, id});
+    ActiveSound active;
+    active.sound = sound.release();
+    active.buffer = audioBuffer.release();
+    active.pcmDataRef = decoded.pcmData;
+    active.id = id;
+    active.soundEntryId = options.soundEntryId;
+    active.category = options.category;
+    active.looping = loopEnabled;
+    active.spatial = false;
+    active.baseVolume = volume;
+    activeSounds_.push_back(std::move(active));
     notify(true, decoded);
     return stoppable ? id : 1u;
 }
 
 bool AudioEngine::playSound2D(const std::vector<uint8_t>& wavData, float volume, float pitch) {
-    return startSound2DInternal(wavData, volume, pitch, false, {}) != 0;
+    return startSound2DInternal(wavData, volume, pitch, false, SfxPlayOptions{}, {}) != 0;
+}
+
+bool AudioEngine::playSound2D(const std::vector<uint8_t>& wavData, float volume, float pitch,
+                              const SfxPlayOptions& options, const std::string& debugPath) {
+    return startSound2DInternal(wavData, volume, pitch, false, options, debugPath) != 0;
 }
 
 uint32_t AudioEngine::playSound2DStoppable(const std::vector<uint8_t>& wavData, float volume, float pitch) {
-    return startSound2DInternal(wavData, volume, pitch, true, {});
+    return startSound2DInternal(wavData, volume, pitch, true, SfxPlayOptions{}, {});
+}
+
+uint32_t AudioEngine::playSound2DStoppable(const std::vector<uint8_t>& wavData, float volume, float pitch,
+                                           const SfxPlayOptions& options, const std::string& debugPath) {
+    return startSound2DInternal(wavData, volume, pitch, true, options, debugPath);
 }
 
 uint32_t AudioEngine::playSound2DStoppable(const std::string& mpqPath, float volume, float pitch) {
@@ -447,7 +629,7 @@ uint32_t AudioEngine::playSound2DStoppable(const std::string& mpqPath, float vol
         LOG_WARNING("AudioEngine::playSound2DStoppable: failed to load '", mpqPath, "'");
         return 0;
     }
-    return startSound2DInternal(data, volume, pitch, true, mpqPath);
+    return startSound2DInternal(data, volume, pitch, true, SfxPlayOptions{}, mpqPath);
 }
 
 void AudioEngine::stopSound(uint32_t id) {
@@ -477,12 +659,13 @@ bool AudioEngine::playSound2D(const std::string& mpqPath, float volume, float pi
         LOG_WARNING("AudioEngine::playSound2D: failed to load '", mpqPath, "'");
         return false;
     }
-    return startSound2DInternal(data, volume, pitch, false, mpqPath) != 0;
+    return startSound2DInternal(data, volume, pitch, false, SfxPlayOptions{}, mpqPath) != 0;
 }
 
 uint32_t AudioEngine::startSound3DInternal(const std::vector<uint8_t>& wavData, const glm::vec3& position,
                                            float volume, float pitch, float maxDistance,
                                            float minDistance, bool stoppable,
+                                           const SfxPlayOptions& options,
                                            const std::string& debugPath) {
     const float clampedPitch = glm::clamp(pitch, 0.25f, 4.0f);
     const float safeMinDist = std::max(0.1f, minDistance);
@@ -507,6 +690,41 @@ uint32_t AudioEngine::startSound3DInternal(const std::vector<uint8_t>& wavData, 
 
     DecodedWavCacheEntry emptyDec;
     if (!initialized_ || !engine_ || wavData.empty() || masterVolume_ <= 0.0f || volume <= 0.0f) {
+        notify(false, emptyDec);
+        return 0;
+    }
+
+    reapFinishedSounds();
+
+    // Wow.exe 0x4621ef -> 0x4664b0: suppress fire-and-forget one-shots while muted in background
+    if (isMutedInBackground() && !stoppable && !options.loop) {
+        notify(false, emptyDec);
+        return 0;
+    }
+
+    // Wow.exe 0x4620c0..0x4620da: per-category concurrency cap (0x897018)
+    if (!canStartCategory(options.category)) {
+        notify(false, emptyDec);
+        return 0;
+    }
+
+    // Wow.exe 0x46224c..0x4622a4: Flags & 0x020 (NO_DUPLICATES)
+    if ((options.soundEntryFlags & SoundEntryFlags::kNoDuplicates) != 0u &&
+        options.soundEntryId != 0 && isSoundEntryPlaying(options.soundEntryId)) {
+        notify(false, emptyDec);
+        return 0;
+    }
+
+    // Wow.exe 0x461c10 -> 0x461af0: pre-spawn DistanceCutoff^2 cull before decoding/allocating channel
+    const glm::vec3 rel = position - listenerPosition_;
+    const float distSq = glm::dot(rel, rel);
+    if (distSq >= safeMaxDist * safeMaxDist) {
+        notify(false, emptyDec);
+        return 0;
+    }
+    const float dist = std::sqrt(distSq);
+    const float atten = computeDistanceAttenuation(safeMinDist, safeMaxDist, dist);
+    if (atten <= 0.0f) {
         notify(false, emptyDec);
         return 0;
     }
@@ -543,15 +761,22 @@ uint32_t AudioEngine::startSound3DInternal(const std::vector<uint8_t>& wavData, 
     }
     sound.markInitialised();
 
+    // Keep ma_attenuation_model_inverse with rolloff = 0.0f so miniaudio computes full 3D stereo
+    // directional panning while AudioEngine applies exact Wow.exe 0x756bd0 distance attenuation.
     ma_sound_set_position(sound.get(), position.x, position.y, position.z);
-    ma_sound_set_volume(sound.get(), volume);
+    ma_sound_set_volume(sound.get(), volume * atten);
     ma_sound_set_pitch(sound.get(), clampedPitch);
     ma_sound_set_attenuation_model(sound.get(), ma_attenuation_model_inverse);
     ma_sound_set_min_gain(sound.get(), 0.0f);
     ma_sound_set_max_gain(sound.get(), 1.0f);
     ma_sound_set_min_distance(sound.get(), safeMinDist);
     ma_sound_set_max_distance(sound.get(), safeMaxDist);
-    ma_sound_set_rolloff(sound.get(), 1.0f);
+    ma_sound_set_rolloff(sound.get(), 0.0f);
+
+    const bool loopEnabled = stoppable && options.loop;
+    if (loopEnabled) {
+        ma_sound_set_looping(sound.get(), MA_TRUE);
+    }
 
     if (ma_sound_start(sound.get()) != MA_SUCCESS) {
         notify(false, decoded);
@@ -563,14 +788,35 @@ uint32_t AudioEngine::startSound3DInternal(const std::vector<uint8_t>& wavData, 
         id = nextSoundId_++;
         if (nextSoundId_ == 0) nextSoundId_ = 1;
     }
-    activeSounds_.push_back({sound.release(), audioBuffer.release(), decoded.pcmData, id});
+    ActiveSound active;
+    active.sound = sound.release();
+    active.buffer = audioBuffer.release();
+    active.pcmDataRef = decoded.pcmData;
+    active.id = id;
+    active.soundEntryId = options.soundEntryId;
+    active.category = options.category;
+    active.looping = loopEnabled;
+    active.spatial = true;
+    active.baseVolume = volume;
+    active.position = position;
+    active.minDistance = safeMinDist;
+    active.maxDistance = safeMaxDist;
+    activeSounds_.push_back(std::move(active));
     notify(true, decoded);
     return stoppable ? id : 1u;
 }
 
 bool AudioEngine::playSound3D(const std::vector<uint8_t>& wavData, const glm::vec3& position,
                               float volume, float pitch, float maxDistance, float minDistance) {
-    return startSound3DInternal(wavData, position, volume, pitch, maxDistance, minDistance, false, {}) != 0;
+    return startSound3DInternal(wavData, position, volume, pitch, maxDistance, minDistance,
+                                false, SfxPlayOptions{}, {}) != 0;
+}
+
+bool AudioEngine::playSound3D(const std::vector<uint8_t>& wavData, const glm::vec3& position,
+                              float volume, float pitch, float maxDistance, float minDistance,
+                              const SfxPlayOptions& options, const std::string& debugPath) {
+    return startSound3DInternal(wavData, position, volume, pitch, maxDistance, minDistance,
+                                false, options, debugPath) != 0;
 }
 
 bool AudioEngine::playSound3D(const std::string& mpqPath, const glm::vec3& position,
@@ -584,12 +830,21 @@ bool AudioEngine::playSound3D(const std::string& mpqPath, const glm::vec3& posit
         LOG_WARNING("AudioEngine::playSound3D: failed to load '", mpqPath, "'");
         return false;
     }
-    return startSound3DInternal(data, position, volume, pitch, maxDistance, minDistance, false, mpqPath) != 0;
+    return startSound3DInternal(data, position, volume, pitch, maxDistance, minDistance,
+                                false, SfxPlayOptions{}, mpqPath) != 0;
 }
 
 uint32_t AudioEngine::playSound3DStoppable(const std::vector<uint8_t>& wavData, const glm::vec3& position,
                                            float volume, float pitch, float maxDistance, float minDistance) {
-    return startSound3DInternal(wavData, position, volume, pitch, maxDistance, minDistance, true, {});
+    return startSound3DInternal(wavData, position, volume, pitch, maxDistance, minDistance,
+                                true, SfxPlayOptions{}, {});
+}
+
+uint32_t AudioEngine::playSound3DStoppable(const std::vector<uint8_t>& wavData, const glm::vec3& position,
+                                           float volume, float pitch, float maxDistance, float minDistance,
+                                           const SfxPlayOptions& options, const std::string& debugPath) {
+    return startSound3DInternal(wavData, position, volume, pitch, maxDistance, minDistance,
+                                true, options, debugPath);
 }
 
 uint32_t AudioEngine::playSound3DStoppable(const std::string& mpqPath, const glm::vec3& position,
@@ -603,7 +858,8 @@ uint32_t AudioEngine::playSound3DStoppable(const std::string& mpqPath, const glm
         LOG_WARNING("AudioEngine::playSound3DStoppable: failed to load '", mpqPath, "'");
         return 0;
     }
-    return startSound3DInternal(data, position, volume, pitch, maxDistance, minDistance, true, mpqPath);
+    return startSound3DInternal(data, position, volume, pitch, maxDistance, minDistance,
+                                true, SfxPlayOptions{}, mpqPath);
 }
 
 bool AudioEngine::playMusic(std::shared_ptr<const std::vector<uint8_t>> musicData,
@@ -614,14 +870,11 @@ bool AudioEngine::playMusic(std::shared_ptr<const std::vector<uint8_t>> musicDat
 
     LOG_INFO("AudioEngine::playMusic - data size: ", musicData->size(), " bytes, volume: ", volume);
 
-    // Stop any currently playing music
     stopMusic();
 
-    // Keep the encoded bytes alive for as long as miniaudio's decoder streams them.
     musicData_ = std::move(musicData);
     musicVolume_ = volume;
 
-    // Create decoder from memory (for streaming MP3/OGG)
     ma_decoder* decoder = new ma_decoder();
     ma_decoder_config decoderConfig = ma_decoder_config_init_default();
     ma_result result = ma_decoder_init_memory(
@@ -644,7 +897,6 @@ bool AudioEngine::playMusic(std::shared_ptr<const std::vector<uint8_t>> musicDat
 
     musicDecoder_ = decoder;
 
-    // Create streaming sound from decoder
     musicSound_ = static_cast<ma_sound*>(std::malloc(sizeof(ma_sound)));
     if (!musicSound_) {
         ma_decoder_uninit(decoder);
@@ -672,11 +924,9 @@ bool AudioEngine::playMusic(std::shared_ptr<const std::vector<uint8_t>> musicDat
         return false;
     }
 
-    // Set volume and looping
     ma_sound_set_volume(musicSound_, volume);
     ma_sound_set_looping(musicSound_, loop ? MA_TRUE : MA_FALSE);
 
-    // Start playback
     result = ma_sound_start(musicSound_);
     if (result != MA_SUCCESS) {
         LOG_ERROR("Failed to start music playback: ", result);
@@ -686,9 +936,6 @@ bool AudioEngine::playMusic(std::shared_ptr<const std::vector<uint8_t>> musicDat
         ma_decoder_uninit(decoder);
         delete decoder;
         musicDecoder_ = nullptr;
-        // The two failure paths above release this and this one did not, so a
-        // failed start pinned the whole encoded file until the next playMusic
-        // reassigned the member.
         musicData_.reset();
         return false;
     }
@@ -745,27 +992,12 @@ void AudioEngine::update(float deltaTime) {
         return;
     }
 
-    // Clean up finished sounds - swap-and-pop avoids the O(N) shift that
-    // vector::erase does for each removal (and the ref-count atomics in
-    // ActiveSound's shared_ptr made that shift noticeably more expensive).
-    for (size_t i = 0; i < activeSounds_.size(); ) {
-        if (!ma_sound_is_playing(activeSounds_[i].sound)) {
-            ma_sound_uninit(activeSounds_[i].sound);
-            std::free(activeSounds_[i].sound);
-            ma_audio_buffer* buffer = static_cast<ma_audio_buffer*>(activeSounds_[i].buffer);
-            ma_audio_buffer_uninit(buffer);
-            std::free(buffer);
-            activeSounds_[i] = std::move(activeSounds_.back());
-            activeSounds_.pop_back();
-        } else {
-            ++i;
-        }
-    }
+    reapFinishedSounds();
+    refreshSpatialVolumes();
 }
 
 void AudioEngine::deviceDataCallback(ma_device* device, void* out, const void* in, uint32_t frames) {
     (void)in;
-    // What miniaudio's own callback does, less an Emscripten-only job pump.
     auto* engine = static_cast<ma_engine*>(device->pUserData);
     ma_engine_read_pcm_frames(engine, out, frames, nullptr);
 
@@ -774,8 +1006,6 @@ void AudioEngine::deviceDataCallback(ma_device* device, void* out, const void* i
     auto* ring = static_cast<ma_pcm_rb*>(self.captureRing_);
     const ma_uint32 channels = ma_engine_get_channels(engine);
     const auto* src = static_cast<const float*>(out);
-    // Whatever does not fit is dropped: the recorder has fallen a second
-    // behind, and the audio thread is the one thing that must never wait.
     ma_uint32 remaining = frames;
     while (remaining > 0) {
         ma_uint32 chunk = remaining;
@@ -791,8 +1021,6 @@ void AudioEngine::deviceDataCallback(ma_device* device, void* out, const void* i
 bool AudioEngine::beginOutputCapture() {
     if (!initialized_ || !engine_) return false;
     if (!captureRing_) {
-        // A second of the device's output: the recorder drains it every few
-        // tens of milliseconds, so this is room for a long stall.
         auto* ring = new ma_pcm_rb();
         if (ma_pcm_rb_init(ma_format_f32, ma_engine_get_channels(engine_),
                            ma_engine_get_sample_rate(engine_), nullptr, nullptr, ring) != MA_SUCCESS) {
@@ -802,8 +1030,6 @@ bool AudioEngine::beginOutputCapture() {
         }
         captureRing_ = ring;
     }
-    // Drop what an earlier capture left unread. The reader's side, so it is
-    // safe with the audio thread writing.
     auto* ring = static_cast<ma_pcm_rb*>(captureRing_);
     const ma_uint32 stale = ma_pcm_rb_available_read(ring);
     if (stale > 0) ma_pcm_rb_seek_read(ring, stale);

@@ -3380,6 +3380,51 @@ add_test(NAME tbc_audio_coverage COMMAND test_tbc_audio_coverage)
 set_tests_properties(tbc_audio_coverage PROPERTIES SKIP_RETURN_CODE 4)
 register_test_target(test_tbc_audio_coverage)
 
+# -- test_audio_shard_a_engine ---------------------------------
+add_executable(test_audio_shard_a_engine
+    test_audio_shard_a_engine.cpp
+    ${TEST_COMMON_SOURCES}
+    ${CMAKE_SOURCE_DIR}/src/audio/audio_engine.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/sound_entries.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/audio_coordinator.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/music_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/footstep_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/creature_sound_index.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/creature_sound_index_assets.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/activity_sound_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/mount_sound_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/npc_voice_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/player_voice_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/ambient_sound_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/ui_sound_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/combat_sound_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/spell_sound_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/movement_sound_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/game/zone_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/asset_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/asset_manifest.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/loose_file_reader.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/dbc_loader.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/dbc_layout.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/blp_loader.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/dds_loader.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/m2_loader.cpp
+    ${CMAKE_SOURCE_DIR}/src/core/memory_monitor.cpp
+)
+target_include_directories(test_audio_shard_a_engine PRIVATE ${TEST_INCLUDE_DIRS})
+target_include_directories(test_audio_shard_a_engine SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
+target_compile_definitions(test_audio_shard_a_engine PRIVATE
+    WOWEE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+target_link_libraries(test_audio_shard_a_engine PRIVATE
+    catch2_main ZLIB::ZLIB Threads::Threads ${CMAKE_DL_LIBS})
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_audio_shard_a_engine PRIVATE m)
+endif()
+wowee_test_link_glm(test_audio_shard_a_engine)
+add_test(NAME audio_shard_a_engine COMMAND test_audio_shard_a_engine)
+set_tests_properties(audio_shard_a_engine PROPERTIES SKIP_RETURN_CODE 4)
+register_test_target(test_audio_shard_a_engine)
+
 # SpellVisualKit CharProc == 8 weapon swing trail parsing and ribbon decay tests
 add_executable(test_weapon_trail
     test_weapon_trail.cpp

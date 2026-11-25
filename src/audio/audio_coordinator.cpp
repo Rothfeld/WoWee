@@ -104,6 +104,27 @@ void AudioCoordinator::setZoneMusicLooping(bool loop) {
     if (musicManager_) musicManager_->setLooping(loop);
 }
 
+void AudioCoordinator::setBackgroundSoundEnabled(bool enabled) {
+    backgroundSoundEnabled_ = enabled;
+    AudioEngine::instance().setBackgroundSoundEnabled(enabled);
+}
+
+bool AudioCoordinator::playUnitSound(pipeline::AssetManager* assets, uint32_t soundId,
+                                     const glm::vec3& unitBasePos, bool isLocalPlayer,
+                                     float volumeScale, float pitch) const {
+    return SoundEntryTable::instance().playUnit(
+        assets, soundId, unitBasePos, isLocalPlayer, listenerAtCharacter_,
+        sfxVolumeScale_ * volumeScale, pitch);
+}
+
+uint32_t AudioCoordinator::playUnitSoundStoppable(pipeline::AssetManager* assets, uint32_t soundId,
+                                                  const glm::vec3& unitBasePos, bool isLocalPlayer,
+                                                  float volumeScale, float pitch) const {
+    return SoundEntryTable::instance().playUnitStoppable(
+        assets, soundId, unitBasePos, isLocalPlayer, listenerAtCharacter_,
+        sfxVolumeScale_ * volumeScale, pitch);
+}
+
 void AudioCoordinator::onOriginalSoundtrackDisabled(game::ZoneManager* zm) {
     if (!zm || !musicManager_) return;
     if (!musicManager_->isCurrentTrackFile()) return;

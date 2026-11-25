@@ -59,6 +59,9 @@ struct ZoneAudioContext {
 /// Owned by Application; Renderer and UI components access through Application.
 class AudioCoordinator {
 public:
+    static constexpr float kListenerCharacterZOffset = 2.0f; // Wow.exe 0x892b98
+    static constexpr float kLocalPlayer2DGain = 0.65f;       // Wow.exe 0x89748c
+
     /// Loop Music, from the audio options. Takes effect on the next
     /// track; a track already running is not restarted to obey it.
     void setZoneMusicLooping(bool loop);
@@ -83,6 +86,26 @@ public:
 
     void setListenerAtCharacter(bool atChar) { listenerAtCharacter_ = atChar; }
     [[nodiscard]] bool isListenerAtCharacter() const { return listenerAtCharacter_; }
+
+    void setBackgroundSoundEnabled(bool enabled);
+    [[nodiscard]] bool isBackgroundSoundEnabled() const { return backgroundSoundEnabled_; }
+
+    /// Compute 3D listener position per Sound_ListenerAtCharacter (Wow.exe 0x46657d: +2.0f Z).
+    [[nodiscard]] glm::vec3 listenerPositionFor(const glm::vec3& characterBasePos,
+                                                const glm::vec3& cameraPos,
+                                                bool hasCharacter) const {
+        return (listenerAtCharacter_ && hasCharacter)
+            ? (characterBasePos + glm::vec3(0.0f, 0.0f, kListenerCharacterZOffset))
+            : cameraPos;
+    }
+
+    /// Play a SoundEntries ID for a unit obeying Sound_ListenerAtCharacter & 0.65f self-2D rule.
+    bool playUnitSound(pipeline::AssetManager* assets, uint32_t soundId,
+                       const glm::vec3& unitBasePos, bool isLocalPlayer,
+                       float volumeScale = 1.0f, float pitch = 1.0f) const;
+    uint32_t playUnitSoundStoppable(pipeline::AssetManager* assets, uint32_t soundId,
+                                    const glm::vec3& unitBasePos, bool isLocalPlayer,
+                                    float volumeScale = 1.0f, float pitch = 1.0f) const;
 
 
     /// Shutdown all audio managers and engine.
@@ -132,7 +155,8 @@ private:
     bool audioAvailable_ = false;
     float sfxVolumeScale_ = 1.0f;
     bool emoteSoundsEnabled_ = true;
-    bool listenerAtCharacter_ = false;
+    bool listenerAtCharacter_ = true; // Wow.exe 0x467ec6 default "1"
+    bool backgroundSoundEnabled_ = false; // Wow.exe Sound_EnableSoundWhenGameIsInBG default "0"
 
     // Zone/music state - moved from Renderer
     uint32_t currentZoneId_ = 0;

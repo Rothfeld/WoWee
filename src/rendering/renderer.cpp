@@ -2167,10 +2167,10 @@ void Renderer::update(float deltaTime) {
             glm::vec3 up = glm::cross(right, fwd);
             float uLen = glm::length(up);
             up = (uLen < 1e-6f) ? glm::vec3(0.0f, 0.0f, 1.0f) : up / uLen;
-            const glm::vec3 listenerPos =
-                (audioCoordinator_ && audioCoordinator_->isListenerAtCharacter() && characterInstanceId > 0)
-                    ? (characterPosition + glm::vec3(0.0f, 0.0f, 1.6f))
-                    : camera->getPosition();
+            const glm::vec3 listenerPos = audioCoordinator_
+                ? audioCoordinator_->listenerPositionFor(
+                      characterPosition, camera->getPosition(), characterInstanceId > 0)
+                : camera->getPosition();
             audio::AudioEngine::instance().setListenerPosition(listenerPos);
             audio::AudioEngine::instance().setListenerOrientation(fwd, up);
         }

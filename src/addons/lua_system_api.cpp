@@ -780,6 +780,7 @@ static void applySoundCVars(lua_State* L) {
     }
     ac->setEmoteSoundsEnabled(soundCVar("sound_enableemotesounds", 1.0f) != 0.0f);
     ac->setListenerAtCharacter(soundCVar("sound_listeneratcharacter", 1.0f) != 0.0f);
+    ac->setBackgroundSoundEnabled(soundCVar("sound_enablesoundwhengameisinbg", 0.0f) != 0.0f);
 
     // The volume itself is a client setting now, reached through SetCVar, and
     // applied by applyAudioVolumes as one scale over the seven effect volumes
