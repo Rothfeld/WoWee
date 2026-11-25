@@ -619,6 +619,12 @@ void M2Renderer::setInstanceIsSpellVisual(uint32_t instanceId) {
     inst.isSpellVisual = true;
 }
 
+void M2Renderer::setInstanceSuppressAudioEvents(uint32_t instanceId, bool suppress) {
+    auto idxIt = instanceIndexById.find(instanceId);
+    if (idxIt == instanceIndexById.end()) return;
+    instances[idxIt->second].suppressAudioEvents = suppress;
+}
+
 void M2Renderer::setSkipCollision(uint32_t instanceId, bool skip) {
     for (auto& inst : instances) {
         if (inst.id == instanceId) {

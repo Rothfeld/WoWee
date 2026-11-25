@@ -417,6 +417,9 @@ struct M2Instance {
     // Spell visual (SpellVisualSystem): a glow, beam end or state kit on a unit
     // or at a place the server named. Set by SpellVisualSystem.
     bool isSpellVisual = false;
+    // Suppress embedded M2 audio events ($SND/$DSO/$DSL) on this instance
+    // (e.g. CharProc 9 area-impact shards gated 1-in-4 by Wow.exe 0x6ee4c0).
+    bool suppressAudioEvents = false;
     // Drawn to the view distance like the units CharacterRenderer draws, not to
     // the adaptive ambient-doodad distance (~200 yd in a city): the server
     // decides what is in range. Archimonde's Banish_Chest glow and his body
@@ -867,6 +870,7 @@ public:
     /// distance can't cull it while the server still considers it visible.
     void setInstanceIsGameObject(uint32_t instanceId, bool isGameObject);
     void setInstanceIsSpellVisual(uint32_t instanceId);
+    void setInstanceSuppressAudioEvents(uint32_t instanceId, bool suppress = true);
     void setSkipCollision(uint32_t instanceId, bool skip);
     void clear();
     /** Drop all instances but keep models in GPU memory. Cheap path for the

@@ -610,46 +610,29 @@ std::optional<std::string> openLockCastBarCaption(pipeline::AssetManager* assets
 }
 
 // Map a (WotLK-normalized) SpellCastResult to a character speech response.
-// Results without a matching voice line return nullopt.
+// Matches TBC 2.4.3 Wow.exe (build 8606) SMSG_CAST_FAILED (0x6f6d70, switch
+// 0x6f6dff..0x6f7218): only SPELL_FAILED_NOT_READY (67) and SPELL_FAILED_NO_POWER
+// (85) dispatch to DisplayError entries with a VocalUISounds.dbc enum. All other
+// server SMSG_CAST_FAILED results (including SPELL_FAILED_BAD_TARGETS) route to
+// ERR_SPELL_FAILED_S (vocal=0x44 = none) and play only school SpellFizzle*.
 std::optional<audio::PlayerErrorSpeech> errorSpeechForCastResult(
         uint32_t spellId, uint8_t result, int powerType) {
     using audio::PlayerErrorSpeech;
-    // Fishing has no unit target: the server validates a randomly sampled water
-    // point in front of the caster. The generic "no target" voice line is both
-    // misleading and contradicted by the on-screen fishing-specific guidance.
-    if (spellclass::isFishingCast(spellId) && (result == 11 || result == 60 || result == 156 || result == 178))
-        return std::nullopt;
     switch (result) {
-        case 11:  // Bad implicit targets
-        case 178: // No valid targets
-            return PlayerErrorSpeech::GENERIC_NO_TARGET;
-        case 12:  // Invalid target
-            return PlayerErrorSpeech::INVALID_ATTACK_TARGET;
-        case 25:  // Chest in use
-            return PlayerErrorSpeech::CHEST_IN_USE;
-        case 45:  // Item not ready
-            return PlayerErrorSpeech::ITEM_COOLDOWN;
-        case 52:  // Need ammo
-        case 53:  // Need ammo pouch
-        case 54:  // Need exotic ammo
-        case 75:  // No ammo
-            return PlayerErrorSpeech::NO_AMMO;
-        case 67:  // Not ready
+        case 67:  // Not ready (TBC 0x3F -> DisplayError 0x33/0x34)
             // Ranged weapon attacks are abilities, not conventional spells. If the
             // server rejects one (weapon/ammo/attack state), use the generic "I can't
             // do that yet" response instead of "That spell isn't ready yet."
             return spellclass::isRangedWeaponAutoAttack(spellId)
                 ? PlayerErrorSpeech::ABILITY_COOLDOWN
                 : PlayerErrorSpeech::SPELL_COOLDOWN;
-        case 85:  // Not enough power
+        case 85:  // Not enough power (TBC 0x50 -> DisplayError 0x8d3e5c[power])
             switch (powerType) {
                 case 1:  return PlayerErrorSpeech::NO_RAGE;
                 case 3:  return PlayerErrorSpeech::NO_ENERGY;
                 case 2: case 6: return std::nullopt; // no focus/runic power voice lines
                 default: return PlayerErrorSpeech::NO_MANA;
             }
-        case 97:  // Out of range
-            return PlayerErrorSpeech::OUT_OF_RANGE;
         default:
             return std::nullopt;
     }
@@ -6875,10 +6858,33 @@ void SpellHandler::handleSpellFailure(network::Packet& packet) {
     // The caster's precast kit ends, whoever the caster is: a remote unit's
     // interrupted or killed cast (CMaNGOS Spell::cancel sends this packet,
     // also from the death's InterruptNonMeleeSpells) ends its precast too.
+    const uint64_t effectiveCaster = (failGuid == 0) ? owner_.getPlayerGuid() : failGuid;
     if (auto* renderer = owner_.services().renderer) {
         if (auto* svs = renderer->getSpellVisualSystem())
-            svs->cancelPrecastVisuals(owner_.resolveUnitRenderInstance(
-                failGuid == 0 ? owner_.getPlayerGuid() : failGuid));
+            svs->cancelPrecastVisuals(owner_.resolveUnitRenderInstance(effectiveCaster));
+    }
+    // Play 3D school SpellFizzle* (SE:1424..1428) at the caster's position.
+    // Movement-cancelled channels (Blizzard, Rain of Fire) send MSG_CHANNEL_UPDATE(0)
+    // + SMSG_SPELL_FAILURE without SMSG_CAST_FAILED; kSpellFizzle cap=1 deduplicates
+    // when SMSG_CAST_FAILED also follows an interrupted non-channeled cast.
+    uint32_t fizzleSpellId = failSpellId;
+    if (fizzleSpellId == 0) {
+        if (effectiveCaster == owner_.getPlayerGuid()) {
+            fizzleSpellId = currentCastSpellId_;
+        } else if (const auto* st = getUnitCastState(effectiveCaster)) {
+            fizzleSpellId = st->spellId;
+        }
+    }
+    if (const uint32_t fizzleId = spellFizzleSoundId(owner_.getSpellSchoolMask(fizzleSpellId));
+        fizzleId != 0) {
+        if (auto* am = owner_.services().assetManager) {
+            float sfxScale = 1.0f;
+            if (auto* ac = owner_.services().audioCoordinator) sfxScale = ac->getSfxVolumeScale();
+            glm::vec3 pos(0.0f);
+            resolveUnitPosition(effectiveCaster, pos);
+            audio::SoundEntryTable::instance().play3D(
+                am, fizzleId, pos + glm::vec3(0.0f, 0.0f, 2.0f), sfxScale);
+        }
     }
     if (failGuid == owner_.getPlayerGuid() || failGuid == 0) {
         // Player's own cast failed - clear gather-node loot target so the

@@ -476,6 +476,7 @@ private:
     std::unordered_map<uint32_t, uint32_t> activeChannelSounds_;  // attachInstanceId -> AudioEngine soundId
     std::unordered_map<uint32_t, std::unordered_map<uint32_t, uint32_t>> activeAuraSounds_; // attachInstanceId -> (visualId -> soundId)
     std::unordered_map<uint64_t, uint32_t> activeAreaSounds_;     // persistentArea key -> AudioEngine soundId
+    uint32_t areaImpactSoundCounter_ = 0; // Wow.exe 0x6ee4c0: 1-in-4 area-impact $SND gate
     struct ActiveAnimEventLoop {
         uint32_t visualId = 0;
         glm::vec3 position{0.0f};

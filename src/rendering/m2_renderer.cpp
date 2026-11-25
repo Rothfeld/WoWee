@@ -2642,7 +2642,8 @@ void M2Renderer::emitAudioEvents(audio::FootstepManager& footstepManager) {
     }
 
     for (auto& inst : instances) {
-        if (inst.externalPose || inst.retiring || inst.cachedDisableAnimation || !inst.cachedModel) {
+        if (inst.externalPose || inst.retiring || inst.cachedDisableAnimation ||
+            inst.suppressAudioEvents || !inst.cachedModel) {
             continue;
         }
         const auto& events = inst.cachedModel->audioEvents;

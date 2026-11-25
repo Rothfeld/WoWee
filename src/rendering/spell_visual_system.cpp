@@ -2723,6 +2723,12 @@ void SpellVisualSystem::dropAreaImpacts(float deltaTime) {
                 continue;
             }
             m2Renderer_->setInstanceIsSpellVisual(instanceId);
+            // Wow.exe 0x6ee4c0 (registered at 0x6f047e for CharProc 9 area impacts):
+            // only 1 in every 4 area-impact shards ((++counter & 3) == 0) plays its
+            // embedded $SND impact sound (Blizzard SE:22, Rain of Fire SE:3181).
+            if ((++areaImpactSoundCounter_ & 3u) != 0u) {
+                m2Renderer_->setInstanceSuppressAudioEvents(instanceId, true);
+            }
             m2Renderer_->restartInstanceAnimation(instanceId);
             const float lifetime = m2Renderer_->getInstanceAnimDuration(instanceId) / 1000.0f;
             assert(lifetime > 0.0f);

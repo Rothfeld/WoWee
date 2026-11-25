@@ -429,7 +429,7 @@ TEST_CASE("Batch 2: SMSG_CAST_FAILED plays school SpellFizzle (1424..1428) and z
         fix.events.push_back(ev);
     });
 
-    // TBC SMSG_CAST_FAILED: uint32 spellId + uint8 result (2 = SPELL_FAILED_BAD_TARGETS)
+    // TBC SMSG_CAST_FAILED: uint32 spellId + uint8 result (0x0B = SPELL_FAILED_BAD_TARGETS)
     auto sendCastFailed = [&](uint32_t spellId, uint8_t reason) {
         network::Packet pkt(game::wireOpcode(game::Opcode::SMSG_CAST_FAILED));
         pkt.writeUInt32(spellId);
@@ -442,8 +442,9 @@ TEST_CASE("Batch 2: SMSG_CAST_FAILED plays school SpellFizzle (1424..1428) and z
     CHECK_FALSE(sawUiErrorSoundFlag);
     CHECK(fix.events.empty());
 
-    // Fireball (133, Fire 0x04) bad target: plays SpellFizzleFire (SE:1424) in 3D, zero Error.wav
-    sendCastFailed(133, 2);
+    // Fireball (133, Fire 0x04) SPELL_FAILED_BAD_TARGETS (0x0B): plays SpellFizzleFire (SE:1424)
+    // in 3D, zero Error.wav, and zero vocal InvalidTarget speech (Wow.exe 0x6f6d70 slot 14).
+    sendCastFailed(133, 0x0B);
     CHECK_FALSE(sawUiErrorSoundFlag);
     REQUIRE(fix.events.size() == 1);
     CHECK(fix.events.back().started);
@@ -465,13 +466,35 @@ TEST_CASE("Batch 2: SMSG_CAST_FAILED plays school SpellFizzle (1424..1428) and z
 
     // Frostbolt (116, Frost 0x10) -> SpellFizzleFrost (SE:1425)
     resetAudio();
-    sendCastFailed(116, 2);
+    sendCastFailed(116, 0x0B);
     REQUIRE(fix.events.size() == 1);
     CHECK(fix.events.back().path.find("FizzleFrost") != std::string::npos);
 
     // Shadow Bolt (686, Shadow 0x20) -> SpellFizzleShadow (SE:1427)
     resetAudio();
-    sendCastFailed(686, 2);
+    sendCastFailed(686, 0x0B);
     REQUIRE(fix.events.size() == 1);
     CHECK(fix.events.back().path.find("FizzleShadow") != std::string::npos);
+
+    // TBC SMSG_SPELL_FAILURE (movement-cancelled channel Blizzard 10 / Rain of Fire 5740):
+    // packedGuid + uint32 spellId + uint8 reason -> plays 3D SpellFizzleFrost / SpellFizzleFire
+    auto sendSpellFailure = [&](uint64_t casterGuid, uint32_t spellId, uint8_t reason) {
+        network::Packet pkt(game::wireOpcode(game::Opcode::SMSG_SPELL_FAILURE));
+        pkt.writePackedGuid(casterGuid);
+        pkt.writeUInt32(spellId);
+        pkt.writeUInt8(reason);
+        session.receive(pkt);
+    };
+
+    resetAudio();
+    sendSpellFailure(session.handler().getPlayerGuid(), 10, 45);
+    REQUIRE(fix.events.size() == 1);
+    CHECK(fix.events.back().spatial);
+    CHECK(fix.events.back().path.find("FizzleFrost") != std::string::npos);
+
+    resetAudio();
+    sendSpellFailure(session.handler().getPlayerGuid(), 5740, 45);
+    REQUIRE(fix.events.size() == 1);
+    CHECK(fix.events.back().spatial);
+    CHECK(fix.events.back().path.find("FizzleFire") != std::string::npos);
 }
