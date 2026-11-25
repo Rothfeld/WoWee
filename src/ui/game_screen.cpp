@@ -388,13 +388,17 @@ void GameScreen::render(game::GameHandler& gameHandler) {
 
     // Set up UI error frame callback (once)
     if (!uiErrorCallbackSet_) {
-        gameHandler.setUIErrorCallback([this](const std::string& msg) {
+        gameHandler.setUIErrorCallback([this, &gameHandler](const std::string& msg) {
             // The sound first, and outside the gate. It belongs to no
             // element - the error is the same error whoever draws the text -
             // and it sat after the return, so handing the errors over would
-            // have taken the sound with them.
-            if (auto* ac = services_.audioCoordinator) {
-                if (auto* sfx = ac->getUiSoundManager()) sfx->playError();
+            // have taken the sound with them. Spell cast failures suppress the
+            // generic Error.wav beep and play school SpellFizzle + vocal error
+            // speech directly, matching TBC 2.4.3 (build 8606).
+            if (!gameHandler.isUIErrorSoundSuppressed()) {
+                if (auto* ac = services_.audioCoordinator) {
+                    if (auto* sfx = ac->getUiSoundManager()) sfx->playError();
+                }
             }
             // UIErrorsFrame draws the text now. The sound above is still
             // ours: FrameXML plays none for these, so it would go silent.

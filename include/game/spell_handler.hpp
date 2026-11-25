@@ -56,6 +56,18 @@ std::optional<std::pair<uint8_t, uint32_t>> firstMissingTool(GameHandler& owner,
 /// "Must have a Melee Weapon equipped".
 std::optional<uint8_t> missingEquipment(GameHandler& owner, uint32_t spellId);
 
+/// TBC 2.4.3 SoundEntries.dbc SpellFizzle ID for a spell's SchoolMask
+/// (1424 Fire, 1425 Frost, 1426 Nature, 1427 Shadow, 1428 Holy/Arcane;
+/// 0 for Physical 0x01 or empty school masks).
+inline constexpr uint32_t spellFizzleSoundId(uint32_t schoolMask) {
+    if (schoolMask & 0x04u) return 1424u;
+    if (schoolMask & 0x10u) return 1425u;
+    if (schoolMask & 0x08u) return 1426u;
+    if (schoolMask & 0x20u) return 1427u;
+    if (schoolMask & (0x02u | 0x40u)) return 1428u;
+    return 0u;
+}
+
 class SpellHandler {
 public:
     using PacketHandler = std::function<void(network::Packet&)>;

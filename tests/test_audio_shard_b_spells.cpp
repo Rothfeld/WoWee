@@ -391,3 +391,87 @@ TEST_CASE("Shard B: SpellHandler emits zero legacy school fallback or hardcoded 
         CHECK(fix.events.empty());
     }
 }
+
+TEST_CASE("Batch 2: SMSG_CAST_FAILED plays school SpellFizzle (1424..1428) and zero Error.wav",
+          "[audio][tbc][spells]") {
+    CHECK(game::spellFizzleSoundId(0x01u) == 0u);     // Physical (Hearthstone, Sinister Strike)
+    CHECK(game::spellFizzleSoundId(0x04u) == 1424u);  // Fire
+    CHECK(game::spellFizzleSoundId(0x10u) == 1425u);  // Frost
+    CHECK(game::spellFizzleSoundId(0x08u) == 1426u);  // Nature
+    CHECK(game::spellFizzleSoundId(0x20u) == 1427u);  // Shadow
+    CHECK(game::spellFizzleSoundId(0x02u) == 1428u);  // Holy
+    CHECK(game::spellFizzleSoundId(0x40u) == 1428u);  // Arcane
+
+    auto& fix = sharedFixture();
+    if (!fix.ready) SKIP("TBC data not present");
+
+    replay::Session session("tbc");
+    pipeline::setActiveDBCLayout(&fix.layout);
+
+    auto& eng = audio::AudioEngine::instance();
+    eng.shutdown();
+    REQUIRE(eng.initializeHeadless(44100, 2));
+    eng.setAssetManager(&fix.assets);
+    eng.setListenerPosition(glm::vec3(0.0f, 0.0f, 2.0f));
+
+    audio::AudioCoordinator coordinator;
+    coordinator.initializeEarlyAssets(&fix.assets);
+    session.services().assetManager = &fix.assets;
+    session.services().audioCoordinator = &coordinator;
+
+    bool sawUiErrorSoundFlag = false;
+    session.handler().setUIErrorCallback([&](const std::string&) {
+        if (!session.handler().isUIErrorSoundSuppressed()) sawUiErrorSoundFlag = true;
+    });
+
+    fix.events.clear();
+    eng.setPlaybackObserver([&fix](const audio::AudioEngine::PlaybackEvent& ev) {
+        fix.events.push_back(ev);
+    });
+
+    // TBC SMSG_CAST_FAILED: uint32 spellId + uint8 result (2 = SPELL_FAILED_BAD_TARGETS)
+    auto sendCastFailed = [&](uint32_t spellId, uint8_t reason) {
+        network::Packet pkt(game::wireOpcode(game::Opcode::SMSG_CAST_FAILED));
+        pkt.writeUInt32(spellId);
+        pkt.writeUInt8(reason);
+        session.receive(pkt);
+    };
+
+    // Hearthstone (8690, Physical 0x01) interrupted (result=45): zero Error.wav, zero SpellFizzle
+    sendCastFailed(8690, 45);
+    CHECK_FALSE(sawUiErrorSoundFlag);
+    CHECK(fix.events.empty());
+
+    // Fireball (133, Fire 0x04) bad target: plays SpellFizzleFire (SE:1424) in 3D, zero Error.wav
+    sendCastFailed(133, 2);
+    CHECK_FALSE(sawUiErrorSoundFlag);
+    REQUIRE(fix.events.size() == 1);
+    CHECK(fix.events.back().started);
+    CHECK(fix.events.back().spatial);
+    CHECK(fix.events.back().path.find("FizzleFire") != std::string::npos);
+
+    // Reset headless audio engine between back-to-back fizzles because TBC enforces
+    // kSpellFizzle concurrency cap = 1 (SoundType 26).
+    auto resetAudio = [&]() {
+        eng.shutdown();
+        REQUIRE(eng.initializeHeadless(44100, 2));
+        eng.setAssetManager(&fix.assets);
+        eng.setListenerPosition(glm::vec3(0.0f, 0.0f, 2.0f));
+        fix.events.clear();
+        eng.setPlaybackObserver([&fix](const audio::AudioEngine::PlaybackEvent& ev) {
+            fix.events.push_back(ev);
+        });
+    };
+
+    // Frostbolt (116, Frost 0x10) -> SpellFizzleFrost (SE:1425)
+    resetAudio();
+    sendCastFailed(116, 2);
+    REQUIRE(fix.events.size() == 1);
+    CHECK(fix.events.back().path.find("FizzleFrost") != std::string::npos);
+
+    // Shadow Bolt (686, Shadow 0x20) -> SpellFizzleShadow (SE:1427)
+    resetAudio();
+    sendCastFailed(686, 2);
+    REQUIRE(fix.events.size() == 1);
+    CHECK(fix.events.back().path.find("FizzleShadow") != std::string::npos);
+}

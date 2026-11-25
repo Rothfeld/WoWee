@@ -70,43 +70,6 @@ constexpr uint8_t kSpellFailedNotReady = 67;
 constexpr uint8_t kSpellFailedAlreadyOpen = 8;
 constexpr uint8_t kSpellFailedChestInUse = 25;
 constexpr uint8_t kSpellFailedTryAgain = 132;
-constexpr uint8_t kSpellFailedItemNotReady = 45;
-constexpr uint8_t kSpellFailedMoving = 51;
-constexpr uint8_t kSpellFailedNotBehind = 57;
-constexpr uint8_t kSpellFailedNoPower = 85;
-constexpr uint8_t kSpellFailedOutOfRange = 97;
-constexpr uint8_t kSpellFailedSpellInProgress = 105;
-constexpr uint8_t kSpellFailedTooClose = 128;
-constexpr uint8_t kSpellFailedUnitNotInFront = 134;
-
-/// A rejection the player caused by pressing a key a moment too early, or from
-/// half a step out of place.
-///
-/// These arrive once per keypress and a held key repeats them, so a few seconds
-/// of a fight produces several a second: the cooldown, the power cost, the
-/// range, the facing. The red line above the middle of the screen is the whole
-/// of what the real client shows for them - no chat line, and no sound either,
-/// since a beep per rejected keypress is the same spam in another channel.
-///
-/// Codes checked against AzerothCore's SharedDefines.h rather than inferred:
-/// 128 is TOO_CLOSE, not the in-progress code it reads like.
-bool isRoutineCastRejection(uint8_t result) {
-    switch (result) {
-        case kSpellFailedItemNotReady:
-        case kSpellFailedMoving:
-        case kSpellFailedNotBehind:
-        case kSpellFailedNotReady:
-        case kSpellFailedNoPower:
-        case kSpellFailedOutOfRange:
-        case kSpellFailedSpellInProgress:
-        case kSpellFailedTooClose:
-        case kSpellFailedTryAgain:
-        case kSpellFailedUnitNotInFront:
-            return true;
-        default:
-            return false;
-    }
-}
 
 // A string column of the DBC row whose id (column 0) is `id`; empty, with an
 // error logged, when the file or the row is missing.
@@ -3800,37 +3763,32 @@ void SpellHandler::handleCastFailed(network::Packet& packet) {
     if (gatherCast && shouldDespawnGatherTarget(data.result)) {
         owner_.despawnGameObjectLocally(gatherGoGuid);
     }
-    const std::string errMsg = castFailureText(owner_, data.spellId, data.result,
-                                               data.miscArg, data.miscArg2);
-    if (!errMsg.empty()) {
-        owner_.addUIError(errMsg);
+    if (const std::string errMsg = castFailureText(owner_, data.spellId, data.result,
+                                                      data.miscArg, data.miscArg2);
+        !errMsg.empty()) {
+        // Spell cast failures do not play Sound\Interface\Error.wav in TBC 2.4.3;
+        // they play school SpellFizzle (SE:1424..1428) + vocal error speech.
+        owner_.addUIError(errMsg, /*playUiErrorSound=*/false);
     }
 
     // On screen and nowhere else. A cast failure went to the chat log as well
     // from here and from handleCastResult both, so the fix that took it out of
     // GameHandler::raiseUiError changed nothing that was being reported.
-    const bool routine = isRoutineCastRejection(data.result);
-
-    if (!routine) {
-        if (auto* ac = owner_.services().audioCoordinator) {
-            const uint32_t fizzleId = audio::spellFizzleSoundIdForSchoolMask(
-                getSpellSchoolMask(data.spellId));
-            if (fizzleId != 0 && owner_.services().assetManager) {
-                audio::SoundEntryTable::instance().play2D(
-                    owner_.services().assetManager, fizzleId, ac->getSfxVolumeScale() * 0.65f);
-            } else if (errMsg.empty()) {
-                // addUIError() already triggers UiSoundManager::playError();
-                // avoid double-playing Error.wav when an error message was emitted.
-                if (auto* sfx = ac->getUiSoundManager())
-                    sfx->playError();
-            }
+    if (const uint32_t fizzleId = spellFizzleSoundId(owner_.getSpellSchoolMask(data.spellId));
+        fizzleId != 0) {
+        if (auto* am = owner_.services().assetManager) {
+            float sfxScale = 1.0f;
+            if (auto* ac = owner_.services().audioCoordinator) sfxScale = ac->getSfxVolumeScale();
+            glm::vec3 pos(0.0f);
+            resolveUnitPosition(owner_.getPlayerGuid(), pos);
+            audio::SoundEntryTable::instance().play3D(
+                am, fizzleId, pos + glm::vec3(0.0f, 0.0f, 2.0f), sfxScale);
         }
     }
 
-    // Character speech response ("Not enough mana", "I'm out of range", ...)
-    // Suppressed for gather casts, whose failures are routine and already
-    // rephrased, and for the rejections that repeat with the keypress.
-    if (!gatherCast && !routine) {
+    // Character speech response ("Not enough mana", "I'm out of range", "Spell is not ready yet", ...)
+    // Overlap is gated by PlayerVoiceManager::isErrorSpeechPlaying() matching Wow.exe 0x7b8100.
+    if (!gatherCast) {
         if (auto speech = errorSpeechForCastResult(data.spellId, data.result, powerType))
             owner_.playErrorSpeech(*speech);
     }
@@ -6627,7 +6585,18 @@ void SpellHandler::handleCastResult(network::Packet& packet) {
             if (const std::string errMsg = castFailureText(owner_, castResultSpellId, castResult,
                                                               castResultMiscArg, castResultMiscArg2);
                 !errMsg.empty()) {
-                owner_.addUIError(errMsg);
+                owner_.addUIError(errMsg, /*playUiErrorSound=*/false);
+            }
+            if (const uint32_t fizzleId = spellFizzleSoundId(owner_.getSpellSchoolMask(castResultSpellId));
+                fizzleId != 0) {
+                if (auto* am = owner_.services().assetManager) {
+                    float sfxScale = 1.0f;
+                    if (auto* ac = owner_.services().audioCoordinator) sfxScale = ac->getSfxVolumeScale();
+                    glm::vec3 pos(0.0f);
+                    resolveUnitPosition(owner_.getPlayerGuid(), pos);
+                    audio::SoundEntryTable::instance().play3D(
+                        am, fizzleId, pos + glm::vec3(0.0f, 0.0f, 2.0f), sfxScale);
+                }
             }
             if (owner_.spellCastFailedCallbackRef()) owner_.spellCastFailedCallbackRef()(castResultSpellId);
                 owner_.fireAddonEvent("UNIT_SPELLCAST_FAILED", spellcastArgs("player", castResultSpellId));

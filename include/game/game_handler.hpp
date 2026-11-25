@@ -3581,10 +3581,13 @@ public:
     // UI error frame: prominent on-screen error messages (spell can't be cast, etc.)
     using UIErrorCallback = std::function<void(const std::string& msg)>;
     void setUIErrorCallback(UIErrorCallback cb) { uiErrorCallback_ = std::move(cb); }
-    void addUIError(const std::string& msg) {
+    void addUIError(const std::string& msg, bool playUiErrorSound = true) {
+        uiErrorSoundSuppressed_ = !playUiErrorSound;
         if (uiErrorCallback_) uiErrorCallback_(msg);
+        uiErrorSoundSuppressed_ = false;
         fireAddonEvent("UI_ERROR_MESSAGE", {msg});
     }
+    [[nodiscard]] bool isUIErrorSoundSuppressed() const { return uiErrorSoundSuppressed_; }
     /// A script that failed, shown on screen without telling any script about it.
     ///
     /// Deliberately not addUIError. That fires UI_ERROR_MESSAGE, which is a Lua
@@ -6075,6 +6078,7 @@ private:
     // 0 means no active delay (reclaim allowed immediately upon proximity).
     uint64_t corpseReclaimAvailableMs_ = 0;
     bool interfaceLoading_ = false;
+    bool uiErrorSoundSuppressed_ = false;
     // Death release timer latched by latchReleaseTimer at each death.
     uint64_t releaseDeadlineMs_ = 0;  // steady-clock ms, 0 = none
     bool releaseNoTimer_ = false;

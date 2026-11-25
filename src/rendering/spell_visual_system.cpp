@@ -630,13 +630,18 @@ uint32_t SpellVisualSystem::playSoundEntry(uint32_t soundId, const glm::vec3& wo
         }
     }
     auto& table = audio::SoundEntryTable::instance();
+    const auto* rec = table.findById(cachedAssetManager_, soundId);
+    const bool isLooping = rec && ((rec->flags & 0x200u) != 0u);
     if (isLocalPlayer) {
-        if (listenerAtChar) {
+        // TBC 2.4.3 (build 8606): non-looping local-player spell kits play 2D
+        // scaled by 0.65f when Sound_ListenerAtCharacter=1, whereas looping
+        // precast/channel/state kits (Flags & 0x200) play 3D at the character.
+        if (listenerAtChar && !isLooping) {
             const float gain = sfxScale * 0.65f;
             if (stoppable) return table.play2DStoppable(cachedAssetManager_, soundId, gain);
             return table.play2D(cachedAssetManager_, soundId, gain) ? 1u : 0u;
         }
-        const glm::vec3 charSoundPos = worldPosition + glm::vec3(0.0f, 0.0f, 1.6f);
+        const glm::vec3 charSoundPos = worldPosition + glm::vec3(0.0f, 0.0f, 2.0f);
         if (stoppable) return table.play3DStoppable(cachedAssetManager_, soundId, charSoundPos, sfxScale);
         return table.play3D(cachedAssetManager_, soundId, charSoundPos, sfxScale) ? 1u : 0u;
     }
