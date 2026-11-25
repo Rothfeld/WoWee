@@ -41,19 +41,24 @@ AnimationCallbackHandler::AnimationCallbackHandler(
 {
 }
 
+uint32_t AnimationCallbackHandler::resolveUnitInstanceId(uint64_t guid) const {
+    return resolveUnitRenderInstance(
+        entitySpawner_.drawnInstanceIdForGuid(guid),
+        guid == gameHandler_.getPlayerGuid(),
+        renderer_.getCharacterInstanceId(),
+        entitySpawner_.getCreatureInstanceId(guid),
+        entitySpawner_.getPlayerInstanceId(guid));
+}
+
 void AnimationCallbackHandler::playCombatBlood(uint64_t attackerGuid, uint64_t victimGuid, bool critical) {
     // M2 attachments ChestBloodFront and ChestBloodBack.
     constexpr uint32_t kAttachChestBloodFront = 15, kAttachChestBloodBack = 16;
     auto* visuals = renderer_.getSpellVisualSystem();
     auto* cr = renderer_.getCharacterRenderer();
     if (!visuals || !cr) return;
-    const auto instanceOf = [this](uint64_t guid) -> uint32_t {
-        if (guid == gameHandler_.getPlayerGuid()) return renderer_.getCharacterInstanceId();
-        const uint32_t creature = entitySpawner_.getCreatureInstanceId(guid);
-        return creature ? creature : entitySpawner_.getPlayerInstanceId(guid);
-    };
     const auto victim = std::dynamic_pointer_cast<game::Unit>(gameHandler_.getEntityManager().getEntity(victimGuid));
-    const uint32_t victimInstance = instanceOf(victimGuid), attackerInstance = instanceOf(attackerGuid);
+    const uint32_t victimInstance = resolveUnitInstanceId(victimGuid);
+    const uint32_t attackerInstance = resolveUnitInstanceId(attackerGuid);
     glm::vec3 attackerPos;
     if (!victim || !victimInstance || !attackerInstance || !cr->getInstancePosition(attackerInstance, attackerPos)) {
         LOG_DEBUG("Combat blood: attacker 0x", std::hex, attackerGuid, " or victim 0x", victimGuid,
@@ -98,23 +103,16 @@ void AnimationCallbackHandler::setupCallbacks() {
     });
 
     // GUID → CharacterRenderer instance for bone-attached spell visuals:
-    // local player uses the dedicated character instance, other units the
-    // spawner's creature/player instances (0 = not rendered, no attachment).
+    // prefers any active morph/shapeshift instance over the hidden base instance.
     gameHandler_.setUnitRenderInstanceResolver([this](uint64_t guid) -> uint32_t {
-        if (const uint32_t drawn = entitySpawner_.drawnInstanceIdForGuid(guid)) return drawn;
-        if (guid == gameHandler_.getPlayerGuid()) return renderer_.getCharacterInstanceId();
-        uint32_t instanceId = entitySpawner_.getCreatureInstanceId(guid);
-        if (instanceId == 0) instanceId = entitySpawner_.getPlayerInstanceId(guid);
-        return instanceId;
+        return resolveUnitInstanceId(guid);
     });
 
     // NPC/player death callback (online mode) - play death animation
     gameHandler_.setNpcDeathCallback([this](uint64_t guid, bool alreadyDead) {
         entitySpawner_.markCreatureDead(guid);
         if (!renderer_.getCharacterRenderer()) return;
-        uint32_t instanceId = entitySpawner_.getCreatureInstanceId(guid);
-        if (instanceId == 0) instanceId = entitySpawner_.getPlayerInstanceId(guid);
-        if (guid == gameHandler_.getPlayerGuid()) instanceId = renderer_.getCharacterInstanceId();
+        const uint32_t instanceId = resolveUnitInstanceId(guid);
         // A corpse already dead when it came into view lies as Dead (6); one
         // dying in view plays Death (1) and holds its last frame.
         if (instanceId != 0) {
@@ -123,8 +121,12 @@ void AnimationCallbackHandler::setupCallbacks() {
             // Its casting effects die with it (SpellVisualSystem::removeCasterStages).
             if (auto* visuals = renderer_.getSpellVisualSystem()) {
                 visuals->removeCasterStages(instanceId);
-                const uint32_t drawn = entitySpawner_.drawnInstanceIdForGuid(guid);
-                if (drawn != 0 && drawn != instanceId) visuals->removeCasterStages(drawn);
+                const uint32_t baseInstance = (guid == gameHandler_.getPlayerGuid())
+                    ? renderer_.getCharacterInstanceId()
+                    : (entitySpawner_.getCreatureInstanceId(guid)
+                           ? entitySpawner_.getCreatureInstanceId(guid)
+                           : entitySpawner_.getPlayerInstanceId(guid));
+                if (baseInstance != 0 && baseInstance != instanceId) visuals->removeCasterStages(baseInstance);
             }
         }
         if (!alreadyDead && renderer_.getAudioCoordinator()) {
@@ -157,9 +159,7 @@ void AnimationCallbackHandler::setupCallbacks() {
     gameHandler_.setNpcRespawnCallback([this](uint64_t guid) {
         entitySpawner_.unmarkCreatureDead(guid);
         if (!renderer_.getCharacterRenderer()) return;
-        uint32_t instanceId = entitySpawner_.getCreatureInstanceId(guid);
-        if (instanceId == 0) instanceId = entitySpawner_.getPlayerInstanceId(guid);
-        if (guid == gameHandler_.getPlayerGuid()) instanceId = renderer_.getCharacterInstanceId();
+        const uint32_t instanceId = resolveUnitInstanceId(guid);
         if (instanceId != 0) {
             auto* cr = renderer_.getCharacterRenderer();
             // Play RISE one-shot (auto-returns to STAND when finished), fall back to STAND
@@ -181,8 +181,7 @@ void AnimationCallbackHandler::setupCallbacks() {
     gameHandler_.setNpcSwingCallback([this](uint64_t guid, bool offHand) {
         auto* cr = renderer_.getCharacterRenderer();
         if (!cr) return;
-        uint32_t instanceId = entitySpawner_.getCreatureInstanceId(guid);
-        if (instanceId == 0) instanceId = entitySpawner_.getPlayerInstanceId(guid);
+        const uint32_t instanceId = resolveUnitInstanceId(guid);
         if (instanceId == 0 || cr->isInstanceDead(instanceId)) return;
         const auto unit = std::dynamic_pointer_cast<game::Unit>(gameHandler_.getEntityManager().getEntity(guid));
         if (!unit) return;
@@ -219,14 +218,8 @@ void AnimationCallbackHandler::setupCallbacks() {
             playCombatBlood(attackerGuid, victimGuid, reaction == game::GameHandler::HitReaction::CRIT_WOUND);
 
         const bool isLocalPlayer = (victimGuid == gameHandler_.getPlayerGuid());
-        uint32_t instanceId = 0;
-        if (isLocalPlayer) {
-            if (gameHandler_.isPlayerDead() && !gameHandler_.isPlayerGhost()) return;
-            instanceId = renderer_.getCharacterInstanceId();
-        } else {
-            instanceId = entitySpawner_.getCreatureInstanceId(victimGuid);
-            if (instanceId == 0) instanceId = entitySpawner_.getPlayerInstanceId(victimGuid);
-        }
+        if (isLocalPlayer && gameHandler_.isPlayerDead() && !gameHandler_.isPlayerGhost()) return;
+        const uint32_t instanceId = resolveUnitInstanceId(victimGuid);
         if (instanceId == 0) return;
         if (!isLocalPlayer && cr->isInstanceDead(instanceId)) return;
         auto* ac = renderer_.getAnimationController();
@@ -358,8 +351,7 @@ void AnimationCallbackHandler::setupCallbacks() {
     gameHandler_.setUnitAnimHintCallback([this](uint64_t guid, uint32_t animId) {
         auto* cr = renderer_.getCharacterRenderer();
         if (!cr) return;
-        uint32_t instanceId = entitySpawner_.getPlayerInstanceId(guid);
-        if (instanceId == 0) instanceId = entitySpawner_.getCreatureInstanceId(guid);
+        const uint32_t instanceId = resolveUnitInstanceId(guid);
         if (instanceId == 0) return;
         // Don't override Death animation while the unit is in a server dead/corpse pose.
         const auto ent = gameHandler_.getEntityManager().getEntity(guid);
@@ -486,7 +478,7 @@ void AnimationCallbackHandler::setupCallbacks() {
             }
             return;
         }
-        emoteInstanceId = entitySpawner_.getPlayerInstanceId(guid);
+        emoteInstanceId = resolveUnitInstanceId(guid);
         if (emoteInstanceId != 0) {
             cr->setGestureWeaponPose(emoteInstanceId, emoteAnim, sheathe);
             const uint32_t idle = entitySpawner_.remoteIdleAnimation(guid);
@@ -541,10 +533,7 @@ void AnimationCallbackHandler::setupCallbacks() {
         auto* cr = renderer_.getCharacterRenderer();
         if (!cr) return;
         const bool isLocalPlayer = guid == gameHandler_.getPlayerGuid();
-        uint32_t instanceId = 0;
-        if (isLocalPlayer) instanceId = renderer_.getCharacterInstanceId();
-        if (instanceId == 0) instanceId = entitySpawner_.getCreatureInstanceId(guid);
-        if (instanceId == 0) instanceId = entitySpawner_.getPlayerInstanceId(guid);
+        const uint32_t instanceId = resolveUnitInstanceId(guid);
         if (instanceId == 0) return;
         auto* ac = isLocalPlayer ? renderer_.getAnimationController() : nullptr;
         if (isLocalPlayer && !ac) return;
@@ -685,7 +674,7 @@ void AnimationCallbackHandler::setupCallbacks() {
             }
         }
         const bool isRemoteCreature = entitySpawner_.getCreatureInstanceId(guid) == instanceId;
-        const bool isRemotePlayer = !isLocalPlayer && entitySpawner_.getPlayerInstanceId(guid) == instanceId;
+        const bool isRemotePlayer = !isLocalPlayer && entitySpawner_.getPlayerInstanceId(guid) != 0;
         if (!isLocalPlayer && (isRemoteCreature || isRemotePlayer) && isRangedWeaponSpell) {
             const auto unit = std::dynamic_pointer_cast<game::Unit>(gameHandler_.getEntityManager().getEntity(guid));
             const auto ranged = unit ? entitySpawner_.rangedWeaponAnimations(*unit) : std::nullopt;

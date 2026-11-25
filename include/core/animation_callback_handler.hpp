@@ -15,6 +15,25 @@ namespace core { class AppearanceComposer; class EntitySpawner; }
 
 namespace core {
 
+/// Resolve the active CharacterRenderer instance ID for a unit GUID.
+///
+/// Transformed/morphed players (e.g. Red Riding Hood 30753 -> GnomeFemale.m2,
+/// Druid forms, Orb of Deception, Polymorph) render via a separate morph
+/// instance while their native race instance stays hidden. Combat blood
+/// spurts, hit reactions, spell visuals, swings, emotes, and death/respawn
+/// animations must target `drawnInstanceId` whenever present so attachments
+/// (ChestBloodFront 15 / ChestBloodBack 16) and skeletal poses match the
+/// rendered model rather than the hidden native race model.
+inline constexpr uint32_t resolveUnitRenderInstance(uint32_t drawnInstanceId,
+                                                    bool isLocalPlayer,
+                                                    uint32_t localCharacterInstanceId,
+                                                    uint32_t creatureInstanceId,
+                                                    uint32_t remotePlayerInstanceId) {
+    if (drawnInstanceId != 0) return drawnInstanceId;
+    if (isLocalPlayer) return localCharacterInstanceId;
+    return creatureInstanceId != 0 ? creatureInstanceId : remotePlayerInstanceId;
+}
+
 /// Handles animation callbacks: death, respawn, swing, hit reaction, spell cast, emote,
 /// stun, stealth, health, ghost, stand state, loot, sprint, vehicle.
 class AnimationCallbackHandler {
@@ -27,6 +46,10 @@ public:
     void setupCallbacks();
 
 private:
+    /// Resolve the currently drawn CharacterRenderer instance for `guid`
+    /// (preferring an active morph/shapeshift instance over the hidden base instance).
+    uint32_t resolveUnitInstanceId(uint64_t guid) const;
+
     /// UnitBlood combat spurt on a wounded unit, at ChestBloodFront (15) when
     /// the attacker stands in front of it, ChestBloodBack (16) behind it.
     void playCombatBlood(uint64_t attackerGuid, uint64_t victimGuid, bool critical);

@@ -1,5 +1,6 @@
 #include <catch_amalgamated.hpp>
 
+#include "core/animation_callback_handler.hpp"
 #include "rendering/animation/animation_ids.hpp"
 #include "rendering/animation/spell_cast_anim_policy.hpp"
 
@@ -364,4 +365,25 @@ TEST_CASE("Full-body CAST one-shot and cast STOP while moving resume locomotion"
         CHECK(go.animation == anim::WALK);
         CHECK_FALSE(state.hold.has_value());
     }
+}
+
+TEST_CASE("resolveUnitRenderInstance prefers morphed drawn instance over hidden native race instance",
+          "[combat_blood][morph]") {
+    using wowee::core::resolveUnitRenderInstance;
+
+    // Transformed local player (e.g. Red Riding Hood 30753 -> GnomeFemale.m2 instance 1810
+    // while native BloodElfMale instance 1765 is hidden): blood spurts and hit reactions
+    // must attach to 1810, not 1765.
+    CHECK(resolveUnitRenderInstance(1810u, true, 1765u, 0u, 0u) == 1810u);
+
+    // Transformed remote player: must prefer drawn morph instance over hidden player instance.
+    CHECK(resolveUnitRenderInstance(1810u, false, 1u, 0u, 1765u) == 1810u);
+
+    // Unmorphed local player falls back to local character instance.
+    CHECK(resolveUnitRenderInstance(0u, true, 1765u, 0u, 0u) == 1765u);
+
+    // Unmorphed remote creature vs remote player fallbacks.
+    CHECK(resolveUnitRenderInstance(0u, false, 1u, 420u, 0u) == 420u);
+    CHECK(resolveUnitRenderInstance(0u, false, 1u, 0u, 1765u) == 1765u);
+    CHECK(resolveUnitRenderInstance(0u, false, 1u, 0u, 0u) == 0u);
 }
