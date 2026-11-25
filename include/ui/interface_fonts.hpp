@@ -9,6 +9,7 @@
 // afterwards without being torn down.
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
 
 #include <vector>
@@ -109,6 +110,10 @@ float interfaceFontSize(float fontHeight, float pixelScale = 1.0f);
 
 /// Configure the source client's font rasterization limit; zero means uncapped.
 void setInterfaceFontSizeLimit(float maximum);
+
+/// Changes whenever a text measurement might: a face registered or the size
+/// limit set. A measurement kept from an earlier generation is stale.
+[[nodiscard]] uint64_t interfaceFontGeneration();
 
 /// What ImGui's rasterizer scale has to be multiplied by so a face asked for at
 /// height N draws with its EM square N pixels tall.

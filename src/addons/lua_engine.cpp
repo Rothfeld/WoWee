@@ -13404,20 +13404,40 @@ void LuaEngine::reportEventListenersOnce() {
 void LuaEngine::updateSizeChanges() {
     if (!L_) return;
     const core::ScopedFrameStage stage("addonWidgets/engine/size changes");
-    for (size_t id = 1; id < widgets_.size(); ++id) {
-        const ui::Widget* wp = widgets_.get(static_cast<uint32_t>(id));
-        if (!wp) continue;
-        const ui::Widget& w = *wp;
-        if (w.id == 0 || w.kind != ui::WidgetKind::Frame) continue;
-        const bool known = (w.lastReportedW >= 0.0f);
-        if (known && w.lastReportedW == w.rectW && w.lastReportedH == w.rectH) {
+    // Only the frames whose rect was written to something other than what
+    // was last reported, which the tree files as it writes them
+    // (WidgetTree::sizeChanges). Comparing the two on every widget of the
+    // tree, every frame, was 0.5ms to find none.
+    //
+    // In ascending id, and looked up again after every handler: a handler
+    // that resizes a frame with a higher id has it reported in this same
+    // pass, and one with a lower id in the next, as when every widget was
+    // visited in turn.
+    auto& changes = widgets_.sizeChanges();
+    for (uint32_t id = 0;;) {
+        const auto next = changes.upper_bound(id);
+        if (next == changes.end()) break;
+        id = *next;
+        const ui::Widget* wp = widgets_.peek(id);
+        if (!wp || wp->id == 0 || wp->kind != ui::WidgetKind::Frame) {
+            changes.erase(id);
             continue;
         }
-        // Written through the tree, since the loop reads a const view.
-        if (auto* mut = widgets_.get(w.id)) {
+        const ui::Widget& w = *wp;
+        const bool known = (w.lastReportedW >= 0.0f);
+        if (known && w.lastReportedW == w.rectW && w.lastReportedH == w.rectH) {
+            changes.erase(id);
+            continue;
+        }
+        // What this pass derives, so not a change to the widget.
+        if (auto* mut = widgets_.untracked(w.id)) {
             mut->lastReportedW = w.rectW;
             mut->lastReportedH = w.rectH;
         }
+        // Up to date now, unless the rect is not a number and compares
+        // unequal to itself. Taken out before the handler runs: a handler
+        // that resizes this frame again files it again.
+        if (w.lastReportedW == w.rectW && w.lastReportedH == w.rectH) changes.erase(id);
         // Nothing is fired the first time a frame is measured: every frame in
         // the interface would report a change on the first layout, which says
         // nothing and runs 3000 handlers to say it.
@@ -13470,8 +13490,38 @@ void LuaEngine::updateVisibility() {
     // handlers is worth the risk of waking the rest.
     //
     // (UIParent looks like a seventh and is not: it carries setAllPoints.)
-    for (uint32_t id = 1; id < widgets_.size(); ++id) {
-        auto* w = widgets_.get(id);
+    //
+    // Only the widgets with something to report: those whose `visible` the
+    // layout flipped, which the tree files as it flips them, and those a
+    // script showed or hid, found among the widgets handed out since the
+    // last look (WidgetTree::TouchReader). For every other widget this pass
+    // did nothing, 22,000 times a frame.
+    //
+    // In ascending id, with both sources looked at again after every
+    // handler: a handler that shows a frame with a higher id has it reported
+    // in this same pass, and one with a lower id in the next, as when every
+    // widget was visited in turn.
+    auto& changes = widgets_.visibilityChanges();
+    const auto fileTouched = [&] {
+        for (const uint32_t touched :
+             widgets_.takeTouched(ui::WidgetTree::TouchReader::Visibility)) {
+            const ui::Widget* t = widgets_.peek(touched);
+            if (t && (t->shownToggles != 0 || t->visible != t->reportedVisible)) {
+                changes.insert(touched);
+            }
+        }
+    };
+    for (uint32_t id = 0;;) {
+        fileTouched();
+        const auto next = changes.upper_bound(id);
+        if (next == changes.end()) break;
+        id = *next;
+        // Taken out before its handlers run: whatever they change about it
+        // files it again.
+        changes.erase(next);
+        // What this pass writes is its own record of what it has reported,
+        // so not a change to the widget.
+        auto* w = widgets_.untracked(id);
         if (!w || w->id == 0) continue;
         const uint8_t toggles = w->shownToggles;
         w->shownToggles = 0;
@@ -13890,8 +13940,8 @@ void LuaEngine::dispatchMouse(float x, float y, float screenH, MouseButtons butt
         std::chrono::steady_clock::now().time_since_epoch()).count()) / 1000.0;
     if (now - lastReport >= 1.0) {
         size_t mouseFrames = 0;
-        for (uint32_t id = 1; id < widgets_.size(); ++id) {
-            const auto* w = widgets_.get(id);
+        for (const uint32_t id : widgets_.visibleIds()) {
+            const auto* w = widgets_.peek(id);
             if (w && w->mouseEnabled && w->visible) ++mouseFrames;
         }
         // Reported whenever anything is on screen at all, not only when
@@ -13900,11 +13950,7 @@ void LuaEngine::dispatchMouse(float x, float y, float screenH, MouseButtons butt
         // so nothing was logged, so the silence looked like the dispatch never
         // running. A diagnostic must not go quiet in the state it exists to
         // report.
-        size_t visibleFrames = 0;
-        for (uint32_t id = 1; id < widgets_.size(); ++id) {
-            const auto* w = widgets_.get(id);
-            if (w && w->visible) ++visibleFrames;
-        }
+        const size_t visibleFrames = widgets_.visibleIds().size();
         if (visibleFrames > 0) {
             lastReport = now;
             LOG_INFO("WidgetInput: mouse=(", x, ",", y, ") hit=", hit,
@@ -14645,8 +14691,24 @@ void LuaEngine::runInterfaceProbe() {
 /// back wants what was said, not what is still fresh.
 void LuaEngine::expireMessages(float elapsed) {
     const core::ScopedFrameStage stage("addons->update/message ages");
-    for (size_t id = 1; id < widgets_.size(); ++id) {
-        auto* w = widgets_.get(static_cast<uint32_t>(id));
+    // The message frames, found from the widgets handed out since the last
+    // frame (WidgetTree::TouchReader) rather than by asking every widget in
+    // the tree whether it is one: 0.7ms a frame, for about a dozen.
+    const auto isMessageFrame = [](const ui::Widget& w) { return w.isMessageFrame; };
+    const std::vector<uint32_t> frames =
+        widgets_.touchedIndex(ui::WidgetTree::TouchReader::MessageFrames, isMessageFrame);
+    if (ui::widgetSweepVerifyEnabled()) {
+        std::string first;
+        const uint64_t missing = widgets_.missingFromIndex(
+            ui::WidgetTree::TouchReader::MessageFrames, isMessageFrame, first);
+        if (missing > 0) {
+            LOG_ERROR("Widget verify: ", missing, " message frames not in the index, first '",
+                      first, "'");
+        }
+        core::noteFrameCount("widget verify: message frame index mismatches", missing);
+    }
+    for (const uint32_t id : frames) {
+        auto* w = widgets_.get(id);
         if (!w || !w->isMessageFrame) continue;
         if (std::isfinite(w->messageScrollAge)) {
             w->messageScrollAge += elapsed;
@@ -14767,7 +14829,9 @@ void LuaEngine::dispatchOnUpdate(float elapsed) {
         // anything built outside the tree keeps working rather than going
         // silently still.
         bool visible;
-        if (const auto* uw = widgetOf(L_, lua_gettop(L_))) {
+        // Read only, so not through widgetOf: that hands the widget out for
+        // writing, and this asks about every frame that ever had an OnUpdate.
+        if (const auto* uw = widgets_.peek(widgetIdOf(L_, lua_gettop(L_)))) {
             // Walk the live shown ancestor chain rather than reading cached
             // uw->visibleChain, which is only refreshed during WidgetTree::layout()
             // in the render pass. A frame shown during gameHandler->update() (such
@@ -14778,7 +14842,7 @@ void LuaEngine::dispatchOnUpdate(float elapsed) {
             visible = uw->shown;
             if (visible) {
                 for (uint32_t pid = uw->parent; pid != 0;) {
-                    const auto* p = widgets_.get(pid);
+                    const auto* p = widgets_.peek(pid);
                     if (!p) break;
                     if (!p->shown) { visible = false; break; }
                     pid = p->parent;

@@ -518,13 +518,70 @@ void WidgetRenderer::sizeTooltipWidget(Widget* w, ImFont* font, WidgetTree& tree
 /// dispatching on kind gives the same result.
 ///
 /// Tooltips are deliberately not in here; see sizeTooltipWidget.
+///
+/// Only the widgets that could measure differently than they did last pass:
+/// those handed out for writing since (WidgetTree::TouchReader), and labels
+/// whose rect or effective scale the layout changed. Sizing a widget twice
+/// with nothing changed between is a no-op - a label keeps the text, face and
+/// size it was measured with and returns when they match, and a texture is
+/// sized once - so the rest of the tree, 22,000 widgets that nothing touched,
+/// has nothing to gain from the visit. That visit was 1.3ms a frame.
+///
+/// Everything is sized when what the measurements depend on beyond the
+/// widgets has changed: the interface scale, the registered faces, the
+/// default font size, the asset manager.
+///
+/// WOWEE_WIDGET_VERIFY=1 then sizes every widget the old way and reports any
+/// whose size that changed.
 void WidgetRenderer::sizeArtAndText(WidgetTree& tree) {
-    for (size_t id = 1; id < tree.size(); ++id) {
-        Widget* w = tree.get(static_cast<uint32_t>(id));
-        if (!w) continue;
+    const auto sizeOne = [&](Widget* w) {
+        if (!w) return;
         if (w->kind == WidgetKind::FontString) sizeFontStringWidget(w, tree.uiScale() * w->effScale);
         else if (w->kind == WidgetKind::Texture) sizeTextureWidget(w);
+    };
+    const SizingEnvironment now{
+        .tree = &tree,
+        .uiScale = tree.uiScale(),
+        .fontGeneration = interfaceFontGeneration(),
+        .defaultFontSize = ImGui::GetCurrentContext() != nullptr ? ImGui::GetFontSize() : 0.0f,
+        .hasAssets = assets_ != nullptr,
+    };
+    const std::vector<uint32_t> touched = tree.takeTouched(WidgetTree::TouchReader::Sizing);
+    if (now != sizedIn_) {
+        sizedIn_ = now;
+        for (size_t id = 1; id < tree.size(); ++id) sizeOne(tree.untracked(static_cast<uint32_t>(id)));
+        core::noteFrameCount("widgets sized, summed over passes", tree.size());
+    } else {
+        for (uint32_t id : touched) sizeOne(tree.untracked(id));
+        core::noteFrameCount("widgets sized, summed over passes", touched.size());
     }
+    // Labels the sizing itself changed are noted by nobody: it writes through
+    // untracked(). They need no second visit - see above.
+
+    if (!widgetSweepVerifyEnabled()) return;
+    uint64_t mismatches = 0;
+    for (size_t id = 1; id < tree.size(); ++id) {
+        Widget* w = tree.untracked(static_cast<uint32_t>(id));
+        if (!w || w->kind == WidgetKind::Frame) continue;
+        const float width = w->width, height = w->height, measuredSize = w->measuredSize;
+        const bool autoSized = w->autoSized, wraps = w->wrapsToWidth;
+        const std::string measuredText = w->measuredText, measuredFace = w->measuredFace,
+                          measuredOutline = w->measuredOutline;
+        sizeOne(w);
+        if (width == w->width && height == w->height && measuredSize == w->measuredSize &&
+            autoSized == w->autoSized && wraps == w->wrapsToWidth &&
+            measuredText == w->measuredText && measuredFace == w->measuredFace &&
+            measuredOutline == w->measuredOutline) {
+            continue;
+        }
+        if (++mismatches <= 8) {
+            LOG_ERROR("Widget verify: sizing skipped '", w->name, "' (id ", w->id, ", kind ",
+                      static_cast<int>(w->kind), "): ", width, "x", height, " -> ",
+                      w->width, "x", w->height, " text '", w->text, "'");
+        }
+    }
+    core::noteFrameCount("widget verify: sizing mismatches", mismatches);
+    core::noteFrameCount("widget verify: sizing checks", 1);
 }
 
 
@@ -953,7 +1010,7 @@ void WidgetRenderer::drawColorPicker(ImDrawList* dl, const WidgetTree& tree,
     // the XML at all - Blizzard's client moves them, and so does this.
     auto sibling = [&](Widget::ColorRole role) -> const Widget* {
         for (uint32_t id : picker.children) {
-            const Widget* c = tree.get(id);
+            const Widget* c = tree.peek(id);
             if (c && c->colorRole == role) return c;
         }
         return nullptr;
@@ -1328,6 +1385,15 @@ void WidgetRenderer::layout(WidgetTree& tree, float screenW, float screenH) {
     core::noteFrameCount("widgets visible, summed over passes", tree.lastVisibleCount());
     core::noteFrameCount("widgets under hidden frames visited, summed over passes",
                          tree.lastHiddenMarkedCount());
+    core::noteFrameCount("widgets handed out for writing, summed over passes",
+                         tree.takeTouchCount());
+    if (widgetSweepVerifyEnabled()) {
+        for (const std::string& line : tree.verifyTracking()) {
+            LOG_ERROR("Widget verify, after layout: ", line);
+            core::noteFrameCount("widget verify: tracking faults after layout", 1);
+        }
+        core::noteFrameCount("widget verify: tracking faults after layout", 0);
+    }
 
     if (profile) {
         ++times.frames;
@@ -1388,7 +1454,7 @@ void WidgetRenderer::layout(WidgetTree& tree, float screenW, float screenH) {
 /// writes them is somewhere else. This says which label holds one, by name.
 void WidgetRenderer::reportLetteredAmounts(WidgetTree& tree) {
     for (size_t id = 1; id < tree.size(); ++id) {
-        const Widget* w = tree.get(static_cast<uint32_t>(id));
+        const Widget* w = tree.peek(static_cast<uint32_t>(id));
         if (!w || w->kind != WidgetKind::FontString || w->text.empty()) continue;
         // A run of digits with a single g, s or c after it and nothing else.
         const std::string& s = w->text;
@@ -1414,7 +1480,7 @@ void WidgetRenderer::reportLetteredAmounts(WidgetTree& tree) {
 
 void WidgetRenderer::reportOverflowingText(WidgetTree& tree) {
     for (size_t id = 1; id < tree.size(); ++id) {
-        const Widget* w = tree.get(static_cast<uint32_t>(id));
+        const Widget* w = tree.peek(static_cast<uint32_t>(id));
         if (!w || w->kind != WidgetKind::FontString) continue;
         if (!w->autoSized || w->text.empty() || w->rectW <= 0.0f) continue;
         // On screen only. A hidden label's rect is whatever it was last solved
@@ -1441,7 +1507,7 @@ void WidgetRenderer::reportOverflowingText(WidgetTree& tree) {
         float chainScale = 1.0f;
         for (uint32_t up = static_cast<uint32_t>(id), guard = 0;
              up != 0 && guard <= tree.size(); ++guard) {
-            const Widget* node = tree.get(up);
+            const Widget* node = tree.peek(up);
             if (!node) break;
             chainScale *= node->scale;
             up = node->parent;
@@ -1582,14 +1648,14 @@ void WidgetRenderer::reportWidgetDiagnostics(WidgetTree& tree,
         // a diagnostic. Re-resolved if it ever stops naming UIParent, which is
         // what a rebuilt tree would look like from here.
         static uint32_t rootId = 0;
-        const Widget* root = rootId ? tree.get(rootId) : nullptr;
+        const Widget* root = rootId ? tree.peek(rootId) : nullptr;
         if (!root || root->name != "UIParent") {
             root = tree.findByName("UIParent");
             rootId = root ? root->id : 0;
         }
         if (root) {
             for (const uint32_t childId : root->children) {
-                const Widget* w = tree.get(childId);
+                const Widget* w = tree.peek(childId);
                 if (!w || !w->visible || w->name.empty()) continue;
                 if (w->rectW <= 0.0f || w->rectH <= 0.0f) continue;
                 if (accounted.count(w->name) || said.count(w->name)) continue;
@@ -1643,7 +1709,7 @@ void WidgetRenderer::reportWidgetDiagnostics(WidgetTree& tree,
             // the question actually being asked, so ask it of everything.
             int offscreen = 0;
             for (size_t id = 1; id < tree.size(); ++id) {
-                const Widget* w = tree.get(static_cast<uint32_t>(id));
+                const Widget* w = tree.peek(static_cast<uint32_t>(id));
                 if (!w || !w->visible || w->name.empty()) continue;
                 if (w->rectW <= 0.0f || w->rectH <= 0.0f) continue;
                 const float l = w->left * s, b = w->bottom * s;
@@ -1679,7 +1745,7 @@ void WidgetRenderer::reportWidgetDiagnostics(WidgetTree& tree,
             {
                 int flat = 0;
                 for (size_t id = 1; id < tree.size(); ++id) {
-                    const Widget* w = tree.get(static_cast<uint32_t>(id));
+                    const Widget* w = tree.peek(static_cast<uint32_t>(id));
                     if (!w || !w->visible || w->name.empty()) continue;
                     if (w->width <= 0.0f && w->height <= 0.0f) continue;
                     if (w->rectW > 0.0f && w->rectH > 0.0f) continue;
@@ -1705,7 +1771,7 @@ void WidgetRenderer::reportWidgetDiagnostics(WidgetTree& tree,
             {
                 std::map<std::string, int> seen;
                 for (size_t id = 1; id < tree.size(); ++id) {
-                    const Widget* w = tree.get(static_cast<uint32_t>(id));
+                    const Widget* w = tree.peek(static_cast<uint32_t>(id));
                     if (!w || !w->visible || w->name.empty()) continue;
                     ++seen[w->name];
                 }
@@ -1734,14 +1800,14 @@ void WidgetRenderer::reportWidgetDiagnostics(WidgetTree& tree,
             {
                 std::map<std::string, int> texts;
                 for (size_t id = 1; id < tree.size(); ++id) {
-                    const Widget* w = tree.get(static_cast<uint32_t>(id));
+                    const Widget* w = tree.peek(static_cast<uint32_t>(id));
                     if (!w || !w->visible || w->kind != WidgetKind::FontString) continue;
                     if (w->text.size() < 3) continue;   // too short to mean anything
                     ++texts[w->text];
                 }
                 int pairs = 0;
                 for (size_t id = 1; id < tree.size() && pairs < 8; ++id) {
-                    const Widget* w = tree.get(static_cast<uint32_t>(id));
+                    const Widget* w = tree.peek(static_cast<uint32_t>(id));
                     if (!w || !w->visible || w->kind != WidgetKind::FontString) continue;
                     if (w->text.size() < 3 || texts[w->text] < 2) continue;
                     ++pairs;
@@ -1760,7 +1826,7 @@ void WidgetRenderer::reportWidgetDiagnostics(WidgetTree& tree,
             {
                 std::vector<const Widget*> labels;
                 for (size_t id = 1; id < tree.size(); ++id) {
-                    const Widget* w = tree.get(static_cast<uint32_t>(id));
+                    const Widget* w = tree.peek(static_cast<uint32_t>(id));
                     if (!w || !w->visible || w->kind != WidgetKind::FontString) continue;
                     if (w->text.empty() || w->rectW <= 0.0f || w->rectH <= 0.0f) continue;
                     labels.push_back(w);
@@ -1799,7 +1865,7 @@ void WidgetRenderer::reportWidgetDiagnostics(WidgetTree& tree,
             if (const Widget* arrow = tree.findByName("CharacterModelFrameRotateLeftButton");
                 arrow && arrow->visible) {
                 for (size_t id = 1; id < tree.size(); ++id) {
-                    const Widget* w = tree.get(static_cast<uint32_t>(id));
+                    const Widget* w = tree.peek(static_cast<uint32_t>(id));
                     if (!w || !w->visible || w->id == arrow->id) continue;
                     if (w->left > arrow->left + arrow->rectW + 60.0f) continue;
                     if (w->left + w->rectW < arrow->left - 20.0f) continue;
@@ -1827,7 +1893,7 @@ void WidgetRenderer::reportWidgetDiagnostics(WidgetTree& tree,
                 sheet && sheet->visible) {
                 int listed = 0;
                 for (size_t id = 1; id < tree.size() && listed < 24; ++id) {
-                    const Widget* w = tree.get(static_cast<uint32_t>(id));
+                    const Widget* w = tree.peek(static_cast<uint32_t>(id));
                     if (!w || !w->visible || w->kind != WidgetKind::FontString) continue;
                     if (w->text.empty()) continue;
                     if (w->left < sheet->left || w->bottom < sheet->bottom) continue;
@@ -1861,7 +1927,7 @@ void WidgetRenderer::reportWidgetDiagnostics(WidgetTree& tree,
 
             int orphans = 0;
             for (size_t id = 1; id < tree.size(); ++id) {
-                const Widget* w = tree.get(static_cast<uint32_t>(id));
+                const Widget* w = tree.peek(static_cast<uint32_t>(id));
                 if (!w || !w->visible || w->name.empty()) continue;
                 if (w->kind != WidgetKind::Frame) continue;
                 if (!w->anchors.empty()) continue;
@@ -2067,7 +2133,7 @@ void WidgetRenderer::reportWidgetDiagnostics(WidgetTree& tree,
         if (widgetDumpLevel() >= 2) {
             LOG_WARNING("WidgetDump: every named widget, drawn or not");
             for (size_t id = 1; id < tree.size(); ++id) {
-                const Widget* w = tree.get(static_cast<uint32_t>(id));
+                const Widget* w = tree.peek(static_cast<uint32_t>(id));
                 if (!w || w->name.empty()) continue;
                 LOG_WARNING("  ", w->name, " kind=", static_cast<int>(w->kind),
                             " rect=(", w->left, ",", w->bottom, " ",
@@ -2113,8 +2179,30 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
         const core::ScopedFrameStage tooltipStage("frameXml->draw/tooltips");
         static const bool tipDiag = std::getenv("WOWEE_TOOLTIP_DIAG") != nullptr;
         int seenTooltip = 0, seenVisible = 0, seenWithLines = 0, sized = 0;
-        for (size_t id = 1; id < tree.size(); ++id) {
-            Widget* w = tree.get(static_cast<uint32_t>(id));
+        // The tooltips, found from the widgets handed out since the last
+        // frame rather than by asking each of 22,000 widgets whether it is
+        // one - which was 1.0ms a frame for the two dozen that are. Copied:
+        // sizing a tooltip hands out widgets of its own.
+        const auto isTooltip = [](const Widget& w) { return w.isTooltip; };
+        const std::vector<uint32_t> tooltips =
+            tree.touchedIndex(WidgetTree::TouchReader::Tooltips, isTooltip);
+        if (widgetSweepVerifyEnabled()) {
+            std::string first;
+            const uint64_t missing =
+                tree.missingFromIndex(WidgetTree::TouchReader::Tooltips, isTooltip, first);
+            if (missing > 0) {
+                LOG_ERROR("Widget verify: ", missing, " tooltips not in the index, first '",
+                          first, "'");
+            }
+            core::noteFrameCount("widget verify: tooltip index mismatches", missing);
+            for (const std::string& line : tree.verifyTracking()) {
+                LOG_ERROR("Widget verify, before draw: ", line);
+                core::noteFrameCount("widget verify: tracking faults before draw", 1);
+            }
+            core::noteFrameCount("widget verify: tracking faults before draw", 0);
+        }
+        for (const uint32_t id : tooltips) {
+            Widget* w = tree.get(id);
             if (!w || !w->isTooltip) continue;
             ++seenTooltip;
             if (w->visible) ++seenVisible;
@@ -2124,7 +2212,7 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
             // resolveWidget cleared w->visible while w->shown was transiently
             // false, and cursor tooltips awaiting their anchor below). Skip
             // tooltips hidden after layout so they do not resize or ghost-draw.
-            const Widget* parent = w->parent != 0 ? tree.get(w->parent) : nullptr;
+            const Widget* parent = w->parent != 0 ? tree.peek(w->parent) : nullptr;
             const bool shownInTree = w->shown && (!parent || parent->visibleChain);
             if (!shownInTree || w->tooltipLines.empty()) continue;
             // The same face the draw uses, not a different lookup: asking for
@@ -2346,7 +2434,7 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
         // below, which is not a window onto it at all.
         bool clipped = false;
         if (w->clipTo != 0) {
-            if (const Widget* clip = tree.get(w->clipTo)) {
+            if (const Widget* clip = tree.peek(w->clipTo)) {
                 // A clip that does not overlap what it is clipping removes it
                 // from the screen entirely, and leaves no other trace: the
                 // frame is shown, sized, positioned and simply not there.
@@ -2902,7 +2990,7 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
             // every hue and a bar of every brightness, both of them a function
             // of the colour the ColorSelect parent is holding rather than an
             // image of anything.
-            const Widget* picker = tree.get(w->parent);
+            const Widget* picker = tree.peek(w->parent);
             if (!picker) continue;
             drawColorPicker(dl, tree, *w, *picker, screenH, x0, y0, x1, y1);
             continue;
@@ -3194,7 +3282,7 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
             // only while that parent is the frame being held.
             float pushX = 0.0f, pushY = 0.0f;
             if (const uint32_t held = tree.pressedWidget(); held != 0) {
-                if (const Widget* owner = tree.get(w->parent)) {
+                if (const Widget* owner = tree.peek(w->parent)) {
                     if (owner->id == held &&
                         (owner->pushedTextOffsetX != 0.0f ||
                          owner->pushedTextOffsetY != 0.0f)) {
@@ -3281,7 +3369,7 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
             // declares it; only the colour changes, never the size, or a label
             // would jump about as the cursor crossed it.
             const float* textColor = w->color;
-            if (const Widget* owner = tree.get(w->parent)) {
+            if (const Widget* owner = tree.peek(w->parent)) {
                 if (!owner->enabled && owner->hasDisabledColor) {
                     textColor = owner->disabledColor;
                 } else if (owner->enabled && owner->hasHighlightColor &&

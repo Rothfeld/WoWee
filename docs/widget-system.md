@@ -228,6 +228,8 @@ unset.
 - `WOWEE_FRAME_PROFILE=1` reports the frame budget at warning every ten
   seconds and adds, per window, the script handlers that cost most, by owner
   ("script OnUpdate WorldFrame", "script OnEvent of UNIT_AURA").
+- `WOWEE_WIDGET_VERIFY=1` makes every sweep described under "Sweeps over the
+  tree" below also walk the whole tree and report what its filing missed.
 - `WOWEE_WIDGET_RECT_DIR=/tmp/rects` lets a script call
   `__WoweeDumpWidgetRects("bags-open")`, which writes every widget's resolved
   rect, visibility, level and draw position to `/tmp/rects/bags-open.tsv` once
@@ -280,3 +282,37 @@ ones the interface notes for itself through `core/frame_stage_times.hpp`:
 
 A noted stage lies inside one of `Application`'s, so the lines do not add up
 to the frame.
+
+## Sweeps over the tree
+
+The 2.4.3 interface is about 22,700 widgets of 1.7 kB each, a few hundred of
+them visible. Anything that visits every widget once a frame costs 0.5 to 1ms
+for the memory traffic alone, and there were eight such visits. None of them
+remains; each now visits only the widgets filed for it.
+
+The rule they rest on (`WidgetTree::TouchReader`): a widget's own fields
+change only through a pointer handed out by `get()`, `findByName()` or
+`create()`, or through the tree's own functions. The tree notes every widget
+it hands out, once per reader; a reader asks `takeTouched()` for the widgets
+handed out since it last asked, or keeps an ascending list of the ones its
+test held for with `touchedIndex()`. What the layout itself derives - rect,
+effective scale, `visible` - is filed by the tree where it is written
+(`sizeChanges()`, `visibilityChanges()`, `visibleIds()`).
+
+Gotchas:
+
+- Read through `peek()` (or a const tree) when only reading. `get()` on a
+  tree that can be written to counts as a write, and a loop that `get()`s
+  every widget makes every reader visit every widget again.
+- `untracked()` is for the sweeps themselves, which write only what they
+  derive. An input changed through it is a change nothing will notice.
+- A sweep whose results depend on something outside the widgets has to visit
+  everything when that changes. `WidgetRenderer::sizeArtAndText` keys this on
+  the interface scale, `interfaceFontGeneration()`, ImGui's default font size
+  and the asset manager.
+- A new once-a-frame loop over `tree.size()` brings the cost back. Find the
+  widgets with `touchedIndex()` instead, and check it with
+  `WOWEE_WIDGET_VERIFY=1`, which reports under "widget verify" in the frame
+  budget and as "Widget verify:" errors.
+- The whole-tree walk is still right for what runs once: a diagnostic on a
+  timer, `raise()`, a slash command.

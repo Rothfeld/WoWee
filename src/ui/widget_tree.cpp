@@ -3,6 +3,7 @@
 #include <chrono>
 
 #include <algorithm>
+#include <cassert>
 #include <climits>
 #include <cstdio>
 #include <cmath>
@@ -104,6 +105,11 @@ void WidgetTree::reset() {
     scrollFrames_.clear();
     keyboardFrames_.clear();
     ownedTooltips_.clear();
+    for (auto& list : touched_) list.clear();
+    for (auto& index : touchedIndex_) index.clear();
+    visibleIds_.clear();
+    sizeChanges_.clear();
+    visibilityChanges_.clear();
     portraitsByUnit_.clear();
     portraitUnitOf_.clear();
     // Every one of these names a widget by id, and the ids are about to mean
@@ -156,8 +162,122 @@ uint32_t WidgetTree::create(WidgetKind kind, uint32_t parent, const std::string&
         // every click. Elsewhere the same sum went negative.
         w.effLevel = parent == rootId_ ? 0 : frameLevel(parent) + 1;
         w.effStrata = widgets_[parent].effStrata;
+        // A widget nobody has laid out yet is not known to be hidden.
+        clearHiddenBelow(parent);
     }
+    // New to every reader, and a frame's size has never been reported.
+    noteTouched(w);
+    if (kind == WidgetKind::Frame) sizeChanges_.insert(id);
     return id;
+}
+
+std::vector<uint32_t> WidgetTree::takeTouched(TouchReader reader) {
+    std::vector<uint32_t> ids;
+    ids.swap(touched_[static_cast<size_t>(reader)]);
+    const auto bit = static_cast<uint8_t>(1u << static_cast<size_t>(reader));
+    for (uint32_t id : ids) widgets_[id].touchPending &= static_cast<uint8_t>(~bit);
+    return ids;
+}
+
+Widget* WidgetTree::untracked(uint32_t id) { return at(id); }
+
+std::vector<std::string> WidgetTree::verifyTracking() const {
+    struct Fault {
+        const char* what;
+        uint64_t count = 0;
+        std::string first;
+        void note(const Widget& w) {
+            if (count++ == 0) first = w.name.empty() ? "#" + std::to_string(w.id) : w.name;
+        }
+    };
+    Fault notListed{"visible but not in the visible list"};
+    Fault listed{"in the visible list but not visible"};
+    Fault below{"under a frame marked hiddenBelow but running, drawn or unmarked"};
+    Fault size{"frame with an unreported size missing from sizeChanges"};
+    Fault shown{"widget with an unreported visibility change missing from visibilityChanges"};
+    syncVisibleList();
+    const auto visibilityBit =
+        static_cast<uint8_t>(1u << static_cast<size_t>(TouchReader::Visibility));
+    for (const Widget& w : widgets_) {
+        if (w.id == 0) continue;
+        const bool inList = std::binary_search(visibleIds_.begin(), visibleIds_.end(), w.id);
+        if (w.visible && !inList) notListed.note(w);
+        if (!w.visible && inList) listed.note(w);
+        if (w.hiddenBelow) {
+            for (uint32_t child : w.children) {
+                const Widget& c = widgets_[child];
+                if (c.visible || c.visibleChain || !c.hiddenBelow) below.note(c);
+            }
+        }
+        if (w.kind == WidgetKind::Frame &&
+            (w.lastReportedW != w.rectW || w.lastReportedH != w.rectH) &&
+            !sizeChanges_.contains(w.id)) {
+            size.note(w);
+        }
+        if ((w.shownToggles != 0 || w.visible != w.reportedVisible) &&
+            (w.touchPending & visibilityBit) == 0 && !visibilityChanges_.contains(w.id)) {
+            shown.note(w);
+        }
+    }
+    std::vector<std::string> lines;
+    if (!std::is_sorted(visibleIds_.begin(), visibleIds_.end())) {
+        lines.emplace_back("the visible list is not in ascending order");
+    }
+    for (const Fault* fault : {&notListed, &listed, &below, &size, &shown}) {
+        if (fault->count == 0) continue;
+        lines.push_back(std::string(fault->what) + ": " + std::to_string(fault->count) +
+                        ", first '" + fault->first + "'");
+    }
+    return lines;
+}
+
+void WidgetTree::syncVisibleList() const {
+    auto* self = const_cast<WidgetTree*>(this);
+    if (self->touched_[static_cast<size_t>(TouchReader::VisibleList)].empty()) return;
+    for (const uint32_t id : self->takeTouched(TouchReader::VisibleList)) {
+        const Widget& w = widgets_[id];
+        auto& list = self->visibleIds_;
+        const auto slot = std::lower_bound(list.begin(), list.end(), id);
+        const bool listed = slot != list.end() && *slot == id;
+        if (w.visible && !listed) list.insert(slot, id);
+        if (!w.visible && listed) list.erase(slot);
+        if (w.visible || w.visibleChain) self->clearHiddenBelow(w.parent);
+    }
+}
+
+void WidgetTree::setVisibility(Widget& w, bool chain, bool visible) {
+    syncVisibleList();
+    w.visibleChain = chain;
+    if (w.visible == visible) return;
+    w.visible = visible;
+    const auto slot = std::lower_bound(visibleIds_.begin(), visibleIds_.end(), w.id);
+    const bool listed = slot != visibleIds_.end() && *slot == w.id;
+    assert(listed != visible && "the visible list agrees with the flags");
+    if (visible && !listed) visibleIds_.insert(slot, w.id);
+    if (!visible && listed) visibleIds_.erase(slot);
+    visibilityChanges_.insert(w.id);
+}
+
+void WidgetTree::noteRectWritten(Widget& w, float oldRectW, float oldScale) {
+    // OnSizeChanged is owed to a frame whose rect is not the one last
+    // reported (LuaEngine::updateSizeChanges).
+    if (w.kind == WidgetKind::Frame &&
+        (w.lastReportedW != w.rectW || w.lastReportedH != w.rectH)) {
+        sizeChanges_.insert(w.id);
+    }
+    // A label is measured at its effective scale, and a paragraph pinned at
+    // both sides wraps to its rect (font_string_sizing.hpp).
+    if (w.kind == WidgetKind::FontString && (w.rectW != oldRectW || w.effScale != oldScale)) {
+        noteTouchedFor(w, TouchReader::Sizing);
+    }
+}
+
+void WidgetTree::clearHiddenBelow(uint32_t id) {
+    // hiddenBelow is set on whole subtrees at a time, so a frame without it
+    // has no frame above it with it.
+    for (Widget* w = at(id); w && w->hiddenBelow; w = at(w->parent)) {
+        w->hiddenBelow = false;
+    }
 }
 
 int WidgetTree::frameLevel(uint32_t id) const {
@@ -198,6 +318,8 @@ void WidgetTree::setParent(uint32_t id, uint32_t newParent) {
     }
     w->parent = newParent;
     get(newParent)->children.push_back(id);
+    // What moved in may be visible, whatever the new parent was known to hold.
+    clearHiddenBelow(newParent);
 }
 
 void WidgetTree::markScrollFrame(uint32_t id) {
@@ -241,8 +363,7 @@ void WidgetTree::hideOrphanedTooltips() {
         // own right after LootFrame hides above it.
         if (owner && owner->visibleChain) continue;
         tip->shown = false;
-        tip->visible = false;
-        tip->visibleChain = false;
+        setVisibility(*tip, false, false);
     }
 }
 
@@ -301,18 +422,27 @@ Widget* WidgetTree::findByName(std::string_view name) {
     // Backwards, so the last frame to take the name is the one found - the
     // same rule as the global it was published under.
     for (auto& widget : std::views::reverse(widgets_)) {
-        if (widget.id != 0 && widget.name == name) return &widget;
+        if (widget.id != 0 && widget.name == name) {
+            noteTouched(widget);
+            return &widget;
+        }
     }
     return nullptr;
 }
 
 const Widget* WidgetTree::findByName(std::string_view name) const {
-    return const_cast<WidgetTree*>(this)->findByName(name);
+    if (name.empty()) return nullptr;
+    for (const auto& widget : std::views::reverse(widgets_)) {
+        if (widget.id != 0 && widget.name == name) return &widget;
+    }
+    return nullptr;
 }
 
 Widget* WidgetTree::get(uint32_t id) {
     if (id == 0 || id >= widgets_.size()) return nullptr;
-    return &widgets_[id];
+    Widget& w = widgets_[id];
+    noteTouched(w);
+    return &w;
 }
 
 const Widget* WidgetTree::get(uint32_t id) const {
@@ -368,7 +498,9 @@ void WidgetTree::setWidth(uint32_t id, float width) {
     // Provisional, so a read before the next layout sees what was just set.
     // The layout overwrites it from the anchors, which is the final answer
     // where anchors decide the size.
+    const float oldRectW = w->rectW;
     w->rectW = width;
+    noteRectWritten(*w, oldRectW, w->effScale);
 }
 
 void WidgetTree::setHeight(uint32_t id, float height) {
@@ -402,6 +534,7 @@ void WidgetTree::setHeight(uint32_t id, float height) {
     }
     w->height = height;
     w->rectH = height;
+    noteRectWritten(*w, w->rectW, w->effScale);
 }
 
 void WidgetTree::pinToCurrentPosition(uint32_t id) {
@@ -743,7 +876,7 @@ void WidgetTree::resolveSubtree(uint32_t id) {
         const uint32_t next = stack.back();
         stack.pop_back();
         resolveWidget(next);
-        const Widget* w = get(next);
+        const Widget* w = at(next);
         if (!w || !w->shown) continue;
         stack.insert(stack.end(), w->children.begin(), w->children.end());
     }
@@ -772,6 +905,7 @@ void WidgetTree::noteScreenSize(float pixelW, float pixelH) {
         root->rectW = screenW;
         root->rectH = screenH;
         root->effScale = 1.0f;
+        noteRectWritten(*root, root->rectW, root->effScale);
     }
     if (Widget* ui = get(uiParentId_)) {
         const float inL = safeLeft_ / uiScale_;
@@ -781,6 +915,7 @@ void WidgetTree::noteScreenSize(float pixelW, float pixelH) {
         ui->rectW = std::max(screenW - inL - safeRight_ / uiScale_, 1.0f);
         ui->rectH = std::max(screenH - inB - safeTop_ / uiScale_, 1.0f);
         ui->effScale = 1.0f;
+        noteRectWritten(*ui, ui->rectW, ui->effScale);
     }
     markLayoutDirty();
 }
@@ -817,7 +952,7 @@ void WidgetTree::resolveWidget(uint32_t id) {
     // Nothing has run a full pass yet, so there is no screen size to resolve
     // against. Better a stale zero than a rect measured against a guess.
     if (lastPixelW_ <= 0.0f || lastPixelH_ <= 0.0f) return;
-    const Widget* w = get(id);
+    const Widget* w = at(id);
     if (!w || w->resolvedGen == layoutGeneration_) return;
     const float screenW = (uiScale_ > 0.0f) ? (lastPixelW_ / uiScale_) : lastPixelW_;
     const float screenH = (uiScale_ > 0.0f) ? (lastPixelH_ / uiScale_) : lastPixelH_;
@@ -827,7 +962,7 @@ void WidgetTree::resolveWidget(uint32_t id) {
 
 void WidgetTree::resolveChain(uint32_t id, float screenW, float screenH, int& depth) {
     if (id == 0) return;
-    Widget* w = get(id);
+    Widget* w = at(id);
     if (!w || w->resolvedGen == layoutGeneration_) return;
     // The screen and UIParent are placed by the full pass and have no anchors
     // of their own - running the anchor solver over them would give the screen
@@ -888,6 +1023,7 @@ void WidgetTree::layout(float pixelW, float pixelH) {
     const float screenH = (uiScale_ > 0.0f) ? (pixelH / uiScale_) : pixelH;
 
     const auto solveStart = std::chrono::steady_clock::now();
+    syncVisibleList();
     visibleThisPass_ = 0;
     hiddenMarkedThisPass_ = 0;
     hiddenMarkMsThisPass_ = 0.0;
@@ -897,19 +1033,19 @@ void WidgetTree::layout(float pixelW, float pixelH) {
     rootW.bottom = 0.0f;
     rootW.rectW = screenW;
     rootW.rectH = screenH;
-    rootW.visibleChain = rootW.shown;
-    rootW.visible = rootW.shown;
+    setVisibility(rootW, rootW.shown, rootW.shown);
     rootW.placed = true;
     rootW.effStrata = rootW.strata;
     rootW.effLevel = 0;
     rootW.effScale = 1.0f;
     rootW.effAlpha = rootW.alpha;
+    noteRectWritten(rootW, rootW.rectW, rootW.effScale);
 
     // UIParent fills the screen and is laid out here rather than by anchors:
     // it is created before any XML is read, so it has none, and a frame with
     // no anchors is not displayed. Its own shown flag still decides whether
     // anything under it is, which is the whole point of it being a frame.
-    if (Widget* ui = get(uiParentId_); ui && ui != &rootW) {
+    if (Widget* ui = at(uiParentId_); ui && ui != &rootW) {
         // Inside the safe area, which is nothing on a screen with none.
         const float inL = safeLeft_ / uiScale_;
         const float inB = safeBottom_ / uiScale_;
@@ -917,13 +1053,15 @@ void WidgetTree::layout(float pixelW, float pixelH) {
         ui->bottom = inB;
         ui->rectW = std::max(screenW - inL - safeRight_ / uiScale_, 1.0f);
         ui->rectH = std::max(screenH - inB - safeTop_ / uiScale_, 1.0f);
-        ui->visibleChain = rootW.visible && ui->shown;
-        ui->visible = ui->visibleChain;
+        const bool uiVisible = rootW.visible && ui->shown;
+        setVisibility(*ui, uiVisible, uiVisible);
+        if (uiVisible) clearHiddenBelow(rootId_);
         ui->placed = true;
         ui->effStrata = ui->strata;
         ui->effLevel = 0;
         ui->effScale = 1.0f;
         ui->effAlpha = rootW.effAlpha * ui->alpha;
+        noteRectWritten(*ui, ui->rectW, ui->effScale);
         for (uint32_t child : ui->children) layoutWidget(child, screenW, screenH);
     }
 
@@ -958,26 +1096,32 @@ void WidgetTree::layout(float pixelW, float pixelH) {
 }
 
 void WidgetTree::markSubtreeHidden(uint32_t id) {
-    const Widget* w = get(id);
+    Widget* w = at(id);
     if (!w) return;
+    // Already cleared, and nothing below has been laid out, created or moved
+    // in since: this used to visit every widget under every hidden frame on
+    // every pass - 22,000 of the tree's 22,700, for 1.1ms - to write false
+    // over false. Whatever makes a widget visible clears the flag on every
+    // frame above it first (clearHiddenBelow).
+    if (w->hiddenBelow) return;
     const std::size_t count = w->children.size();
     for (std::size_t i = 0; i < count; ++i) {
-        w = get(id);
+        w = at(id);
         if (!w || i >= w->children.size()) return;
         const uint32_t child = w->children[i];
-        if (Widget* c = get(child)) {
+        if (Widget* c = at(child)) {
             // Neither running nor drawn, so the draw-order pass skips it and
             // nothing measures against it. Its rect is deliberately left
             // alone, and its resolvedGen deliberately not stamped: a script
             // that asks a hidden frame for its width still gets a fresh
             // answer, because resolveWidget re-derives whatever the last full
             // pass did not claim.
-            c->visibleChain = false;
-            c->visible = false;
+            setVisibility(*c, false, false);
             ++hiddenMarkedThisPass_;
         }
         markSubtreeHidden(child);
     }
+    if (Widget* done = at(id)) done->hiddenBelow = true;
 }
 
 void WidgetTree::layoutWidget(uint32_t id, float screenW, float screenH) {
@@ -987,7 +1131,7 @@ void WidgetTree::layoutWidget(uint32_t id, float screenW, float screenH) {
     // and every ancestor shown - so placing them is arithmetic for something
     // that is neither drawn nor measured against. Of the 28018 widgets this
     // pass walked, 666 were visible; the other 97% were the 3.4ms.
-    if (const Widget* self = get(id); self && !self->visibleChain) {
+    if (const Widget* self = at(id); self && !self->visibleChain) {
         if (timeHiddenMarks_) {
             const auto start = std::chrono::steady_clock::now();
             markSubtreeHidden(id);
@@ -1009,21 +1153,26 @@ void WidgetTree::layoutWidget(uint32_t id, float screenW, float screenH) {
     // nothing: get() is a bounds check and an index. The count is taken once
     // so a child created during the walk is laid out on the next frame rather
     // than this one, which is what copying the vector did.
-    const Widget* w = get(id);
+    const Widget* w = at(id);
     if (!w) return;
     const std::size_t count = w->children.size();
     for (std::size_t i = 0; i < count; ++i) {
-        w = get(id);
+        w = at(id);
         if (!w || i >= w->children.size()) return;
         layoutWidget(w->children[i], screenW, screenH);
     }
 }
 
 void WidgetTree::layoutWidgetSelf(uint32_t id, float screenW, float screenH) {
-    Widget* w = get(id);
+    // Through at() throughout: this writes what the layout derives, which is
+    // not a change to the widget (see TouchReader). The readers that depend
+    // on what it derives are told below and at the end.
+    Widget* w = at(id);
     if (!w) return;
     w->resolvedGen = layoutGeneration_;
-    const Widget* parent = get(w->parent);
+    const Widget* parent = at(w->parent);
+    const float oldRectW = w->rectW;
+    const float oldScale = w->effScale;
 
     // A frame with no anchor points is not displayed. That is WoW's rule, and
     // without it every frame FrameXML declares without anchors - a money
@@ -1037,12 +1186,12 @@ void WidgetTree::layoutWidgetSelf(uint32_t id, float screenW, float screenH) {
     // every ancestor shown; drawing additionally needs somewhere to be drawn.
     // Inherited from the parent's chain rather than its `visible`, or a child
     // of an unanchored driver frame would stop running too.
-    w->visibleChain = w->shown && (!parent || parent->visibleChain);
+    const bool chain = w->shown && (!parent || parent->visibleChain);
     // How much of the tree the walk placed that nobody can see. The whole
     // pass is 3.4ms over 28018 widgets every frame, and a hidden frame's rect
     // is already re-derived on demand by resolveWidget when something asks
     // for it - so if most of these are hidden, not walking them is the fix.
-    if (w->visibleChain) ++visibleThisPass_;
+    if (chain) ++visibleThisPass_;
     // Drawing inherits from the parent's *drawing*, not from the chain: an
     // anchored child of an unanchored frame has nowhere to be either, because
     // the thing it is anchored to has no position. Deriving this from the
@@ -1058,7 +1207,10 @@ void WidgetTree::layoutWidgetSelf(uint32_t id, float screenW, float screenH) {
     // nowhere to be.
     const bool placed = !lacksPosition(id);
     w->placed = placed;
-    w->visible = w->visibleChain && placed;
+    // Before the flags are set: no frame above a running widget may still
+    // claim that everything below it is hidden.
+    if (chain) clearHiddenBelow(w->parent);
+    setVisibility(*w, chain, chain && placed);
     // Clipping is inherited: anything under a scroll frame is bounded by it,
     // however deep, because a scroll child holds frames of its own.
     //
@@ -1104,7 +1256,7 @@ void WidgetTree::layoutWidgetSelf(uint32_t id, float screenW, float screenH) {
 
     for (const Anchor& a : w->anchors) {
         const Widget* rel = a.relativeTo == kAnchorScreen ? nullptr
-                          : a.relativeTo != 0             ? get(a.relativeTo)
+                          : a.relativeTo != 0             ? at(a.relativeTo)
                                                           : parent;
         float relLeft, relBottom, relW, relH;
         if (rel) {
@@ -1305,12 +1457,13 @@ void WidgetTree::layoutWidgetSelf(uint32_t id, float screenW, float screenH) {
     // one it was moved out of.
     if (w->clampedToScreen && id != rootId_ &&
         w->rectW > 0.0f && w->rectH > 0.0f) {
-        if (const Widget* screen = get(rootId_)) {
+        if (const Widget* screen = at(rootId_)) {
             clampInside(*screen, w->rectW, w->rectH, w->left, w->bottom,
                         w->clampInsetL, w->clampInsetR, w->clampInsetT, w->clampInsetB);
         }
     }
 
+    noteRectWritten(*w, oldRectW, oldScale);
 }
 
 uint32_t WidgetTree::hitTest(float x, float y) const {
@@ -1323,7 +1476,11 @@ uint32_t WidgetTree::hitTestWheel(float x, float y) const {
 
 uint32_t WidgetTree::hitTestFor(float x, float y, bool forWheel) const {
     const Widget* best = nullptr;
-    for (const Widget& w : widgets_) {
+    syncVisibleList();
+    // The visible widgets in ascending id, which is the order a walk over
+    // the whole tree met them in: a tie below keeps the first.
+    for (const uint32_t visibleId : visibleIds_) {
+        const Widget& w = widgets_[visibleId];
         if (w.id == 0 || w.kind != WidgetKind::Frame) continue;
         if (!w.visible) continue;
         // The wheel is enabled separately from the mouse and a scroll frame
@@ -1468,7 +1625,11 @@ bool WidgetTree::writeRectDump(const std::string& path) const {
 
 void WidgetTree::collectDrawOrder() {
     drawOrder_.clear();
-    for (const Widget& w : widgets_) {
+    syncVisibleList();
+    // Ascending id, as the walk over every widget was: the sort below is not
+    // stable, so what it is given has to arrive in the same order.
+    for (const uint32_t visibleId : visibleIds_) {
+        const Widget& w = widgets_[visibleId];
         if (w.id == 0) continue;
         if (!w.visible) continue;
         // A status bar's fill region is drawn by its bar.

@@ -20,6 +20,7 @@ namespace wowee::ui {
 
 namespace {
 float maximumFontSize = 0.0f;
+uint64_t fontGeneration = 1;
 
 /// The lower-case stem of a path, with any directory and extension removed.
 /// "Fonts\\MORPHEUS.ttf" and "morpheus.ttf" both come out as "morpheus", which
@@ -97,8 +98,11 @@ uint32_t beAt(const uint8_t* d, size_t n, size_t at, int bytes) {
 
 } // namespace
 
+uint64_t interfaceFontGeneration() { return fontGeneration; }
+
 void registerInterfaceFace(const std::string& pathOrName, ImFont* font) {
     if (!font) return;
+    ++fontGeneration;
     faces()[faceKey(pathOrName)] = font;
     // The metric tables come from the same bytes ImGui rasterizes: the first
     // source is the face itself, later ones are merged fallbacks.
@@ -144,7 +148,10 @@ ImFont* interfaceFaceOrDefault(const std::string& fontFace) {
     return (ImGui::GetCurrentContext() != nullptr) ? ImGui::GetFont() : nullptr;
 }
 
-void setInterfaceFontSizeLimit(float maximum) { maximumFontSize = maximum; }
+void setInterfaceFontSizeLimit(float maximum) {
+    maximumFontSize = maximum;
+    ++fontGeneration;
+}
 
 float interfaceFontSize(float fontHeight, float pixelScale) {
     assert(std::isfinite(pixelScale) && pixelScale > 0.0f);

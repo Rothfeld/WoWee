@@ -5874,7 +5874,24 @@ void Application::render() {
                         auctionDressUpWidgetId_, petModelWidgetId_, stableModelWidgetId_,
                         companionModelWidgetId_, inspectModelWidgetId_};
                     std::unordered_set<uint32_t> live;
-                    for (uint32_t id = 1; id < widgets.size(); ++id) {
+                    // The frames given a unit, found from the widgets handed
+                    // out since the last frame (WidgetTree::TouchReader)
+                    // rather than by asking every widget in the tree: 0.7ms
+                    // a frame, usually for none.
+                    const auto hasUnit = [](const ui::Widget& w) { return w.modelUnitGuid != 0; };
+                    const std::vector<uint32_t> unitFrames = widgets.touchedIndex(
+                        ui::WidgetTree::TouchReader::UnitModels, hasUnit);
+                    if (ui::widgetSweepVerifyEnabled()) {
+                        std::string first;
+                        const uint64_t missing = widgets.missingFromIndex(
+                            ui::WidgetTree::TouchReader::UnitModels, hasUnit, first);
+                        if (missing > 0) {
+                            LOG_ERROR("Widget verify: ", missing,
+                                      " unit model frames not in the index, first '", first, "'");
+                        }
+                        core::noteFrameCount("widget verify: unit model index mismatches", missing);
+                    }
+                    for (const uint32_t id : unitFrames) {
                         ui::Widget* frame = widgets.get(id);
                         if (!frame || frame->modelUnitGuid == 0) continue;
                         if (std::find(std::begin(named), std::end(named), id) != std::end(named)) continue;

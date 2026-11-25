@@ -18,10 +18,14 @@
 // grows upward. Converting at the point of drawing keeps every anchor rule here
 // readable against Blizzard's own documentation, rather than mirrored.
 
+#include <algorithm>
+#include <array>
 #include <cstdint>
+#include <cstdlib>
 #include <deque>
 #include <limits>
 #include <map>
+#include <set>
 #include <string>
 #include <utility>
 #include <string_view>
@@ -808,6 +812,16 @@ struct Widget {
     uint32_t clipTo = 0;
     FrameStrata effStrata = FrameStrata::Medium;
     int   effLevel = 0;
+
+    // WidgetTree's own bookkeeping; nothing else writes these.
+    /// One bit per WidgetTree::TouchReader that has not yet looked at this
+    /// widget since it was last handed out for writing.
+    uint8_t touchPending = 0;
+    /// Every widget below this one is neither running nor drawn (visibleChain
+    /// and visible false) and carries this flag too, so a pass that finds this
+    /// frame hidden has nothing to clear below it. See
+    /// WidgetTree::markSubtreeHidden.
+    bool  hiddenBelow = false;
 };
 
 /// A link drawn on screen this frame, and where it landed.
@@ -822,6 +836,18 @@ struct LinkRect {
     std::string hyperlink;    ///< the whole |c|H...|h...|h|r escape (WrapRun::hyperlink)
     float x0 = 0.0f, y0 = 0.0f, x1 = 0.0f, y1 = 0.0f;
 };
+
+/// WOWEE_WIDGET_VERIFY=1: every sweep that visits only the widgets filed for
+/// it (WidgetTree::TouchReader) also walks the whole tree, as the sweeps did
+/// before, and reports any widget the filing missed. The frame budget report
+/// counts them under "widget verify". Costs what the whole-tree walks cost.
+inline bool widgetSweepVerifyEnabled() {
+    static const bool enabled = [] {
+        const char* value = std::getenv("WOWEE_WIDGET_VERIFY");
+        return value != nullptr && *value != '\0' && *value != '0';
+    }();
+    return enabled;
+}
 
 class WidgetTree {
 public:
@@ -865,9 +891,105 @@ public:
     [[nodiscard]] uint32_t root() const { return rootId_; }
 
     uint32_t create(WidgetKind kind, uint32_t parent, const std::string& name);
+    /// The widget, to read or to change. Handing it out counts as changing
+    /// it: see TouchReader. Code that only reads, on a tree it could write
+    /// to, asks peek() instead.
     Widget* get(uint32_t id);
     [[nodiscard]] const Widget* get(uint32_t id) const;
+    /// The widget, to read only, from a tree that is not const.
+    [[nodiscard]] const Widget* peek(uint32_t id) const { return get(id); }
     [[nodiscard]] size_t size() const { return widgets_.size(); }
+
+    /// The once-a-frame sweeps that act on a few widgets out of the whole
+    /// tree, and so must not walk the whole tree to find them.
+    ///
+    /// FrameXML builds some 22,000 widgets and shows a few hundred. Each of
+    /// these sweeps used to visit every one of them every frame - six walks
+    /// over a struct of several kilobytes, about 5ms a frame between them -
+    /// to find the handful whose state had changed.
+    ///
+    /// The rule that replaces the walks: a widget's own fields change only
+    /// through a pointer handed out by get(), findByName() or create(), or
+    /// through the tree's own functions. So the tree notes every widget it
+    /// hands out, once per reader, and a reader asks takeTouched() for the
+    /// widgets handed out since it last asked. Whatever a sweep would have
+    /// found on a widget not in that list, it already found the last time.
+    ///
+    /// What the layout itself writes (rect, scale, visibility) is not a
+    /// touch; the tree files those changes with the readers that depend on
+    /// them (noteRectWritten, setVisibility).
+    ///
+    /// A sweep that depends on something outside the widgets - the interface
+    /// scale, the registered fonts - still has to walk everything when that
+    /// changes. WidgetRenderer::sizeArtAndText is the example.
+    enum class TouchReader : uint8_t {
+        Sizing,         ///< WidgetRenderer::sizeArtAndText
+        Tooltips,       ///< WidgetRenderer::draw's tooltip sizing
+        MessageFrames,  ///< LuaEngine::expireMessages
+        UnitModels,     ///< Application's Model:SetUnit views
+        Visibility,     ///< LuaEngine::updateVisibility
+        VisibleList,    ///< the tree's own list of visible widgets
+    };
+    static constexpr size_t kTouchReaders = 6;
+    /// Ids handed out for writing since this reader last asked, each once, in
+    /// no particular order. Asking empties the list.
+    [[nodiscard]] std::vector<uint32_t> takeTouched(TouchReader reader);
+    /// The same widget as get(), without noting it. For the sweeps above,
+    /// which write only what they themselves derive; an input changed through
+    /// this pointer is a change no reader will hear of.
+    [[nodiscard]] Widget* untracked(uint32_t id);
+    /// Every id for which `member` held when the widget was last examined,
+    /// ascending - the widgets a whole-tree walk testing `member` would stop
+    /// at, and possibly some it no longer would: a sweep keeps its own test.
+    /// Examines the widgets handed out since the last call for this reader.
+    template <typename Member>
+    const std::vector<uint32_t>& touchedIndex(TouchReader reader, Member&& member) {
+        auto& index = touchedIndex_[static_cast<size_t>(reader)];
+        for (uint32_t id : takeTouched(reader)) {
+            const Widget* w = peek(id);
+            if (!w || !member(*w)) continue;
+            const auto at = std::lower_bound(index.begin(), index.end(), id);
+            if (at == index.end() || *at != id) index.insert(at, id);
+        }
+        return index;
+    }
+    /// Ids of the widgets whose `visible` is set, ascending.
+    [[nodiscard]] const std::vector<uint32_t>& visibleIds() const {
+        syncVisibleList();
+        return visibleIds_;
+    }
+    /// Frames whose rect was written to something other than what
+    /// OnSizeChanged last reported, and frames never reported.
+    /// LuaEngine::updateSizeChanges takes out the ones it has brought up to date.
+    [[nodiscard]] std::set<uint32_t>& sizeChanges() { return sizeChanges_; }
+    /// Widgets whose `visible` flipped. LuaEngine::updateVisibility adds the
+    /// touched widgets with a pending Show/Hide and takes out the ones it has
+    /// reported.
+    [[nodiscard]] std::set<uint32_t>& visibilityChanges() { return visibilityChanges_; }
+    /// What a walk over the whole tree finds wrong with the tree's own
+    /// filing: the visible list against every widget's flag, hiddenBelow
+    /// against what is below it, and the two change sets against the widgets
+    /// that have a change to report. Empty when nothing is wrong; otherwise
+    /// one line per kind of fault, naming the first widget and the count.
+    [[nodiscard]] std::vector<std::string> verifyTracking() const;
+    /// The same for a touchedIndex(): how many widgets `member` holds for
+    /// that are neither in the index nor waiting to be examined for it, and
+    /// the name of the first.
+    template <typename Member>
+    [[nodiscard]] uint64_t missingFromIndex(TouchReader reader, Member&& member,
+                                            std::string& firstName) const {
+        const auto& index = touchedIndex_[static_cast<size_t>(reader)];
+        const auto bit = static_cast<uint8_t>(1u << static_cast<size_t>(reader));
+        uint64_t missing = 0;
+        for (const Widget& w : widgets_) {
+            if (w.id == 0 || !member(w) || (w.touchPending & bit) != 0) continue;
+            if (std::binary_search(index.begin(), index.end(), w.id)) continue;
+            if (missing++ == 0) firstName = w.name.empty() ? "#" + std::to_string(w.id) : w.name;
+        }
+        return missing;
+    }
+    /// How many widgets were handed out for writing, since the last call.
+    [[nodiscard]] uint64_t takeTouchCount() { return std::exchange(touchCount_, 0); }
 
     /// Anchor helpers. clearPoints is SetPoint's implicit reset when a frame is
     /// re-anchored from scratch, and what SetAllPoints does before pinning both
@@ -1191,6 +1313,47 @@ private:
     [[nodiscard]] uint32_t hitTestFor(float x, float y, bool forWheel) const;
     std::vector<LinkRect> linkRects_;
     std::string rectDumpRequest_;
+
+    /// get() without the note. The layout's own walks read through this.
+    [[nodiscard]] Widget* at(uint32_t id) {
+        if (id == 0 || id >= widgets_.size()) return nullptr;
+        return &widgets_[id];
+    }
+    void noteTouched(Widget& w) {
+        if (w.touchPending == kAllTouchReaders) return;
+        ++touchCount_;
+        for (size_t r = 0; r < kTouchReaders; ++r) {
+            if ((w.touchPending & (1u << r)) == 0) touched_[r].push_back(w.id);
+        }
+        w.touchPending = kAllTouchReaders;
+    }
+    void noteTouchedFor(Widget& w, TouchReader reader) {
+        const auto bit = static_cast<uint8_t>(1u << static_cast<size_t>(reader));
+        if ((w.touchPending & bit) != 0) return;
+        touched_[static_cast<size_t>(reader)].push_back(w.id);
+        w.touchPending |= bit;
+    }
+    /// The one place visibleChain and visible are written, so the list of
+    /// visible widgets and the visibility reader hear of every change.
+    void setVisibility(Widget& w, bool chain, bool visible);
+    /// Called wherever a rect or an effective scale has been written.
+    /// `oldRectW` and `oldScale` are what they were before.
+    void noteRectWritten(Widget& w, float oldRectW, float oldScale);
+    /// Something below `id` may be visible: clear hiddenBelow on it and on
+    /// every frame above it.
+    void clearHiddenBelow(uint32_t id);
+    /// Bring visibleIds_ and hiddenBelow up to date with the widgets handed
+    /// out since the last call, whose `visible` may have been written from
+    /// outside the layout. Const because the list is a cache of the flags:
+    /// everything that reads it calls this first.
+    void syncVisibleList() const;
+    static constexpr uint8_t kAllTouchReaders = (1u << kTouchReaders) - 1;
+    std::array<std::vector<uint32_t>, kTouchReaders> touched_;
+    std::array<std::vector<uint32_t>, kTouchReaders> touchedIndex_;
+    std::vector<uint32_t> visibleIds_;
+    std::set<uint32_t> sizeChanges_;
+    std::set<uint32_t> visibilityChanges_;
+    uint64_t touchCount_ = 0;
     void layoutWidget(uint32_t id, float screenW, float screenH);
     /// Clear the drawing and running flags under a hidden frame without
     /// placing any of it. See layoutWidget.

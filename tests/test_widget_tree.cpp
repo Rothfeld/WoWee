@@ -2,8 +2,10 @@
 
 #include "ui/widget_tree.hpp"
 
+#include <algorithm>
 #include <limits>
 #include <string>
+#include <vector>
 
 using namespace wowee::ui;
 
@@ -3470,3 +3472,450 @@ TEST_CASE("Post-layout tooltip sizing re-places GameTooltipStatusBar below toolt
     CHECK(sawBar);
 }
 
+
+// ── The once-a-frame sweeps visit only the widgets filed for them ───────────
+//
+// See WidgetTree::TouchReader. The rules pinned here are what lets a sweep
+// skip the 22,000 widgets nothing has touched: a miss in any of them is a
+// frame that silently keeps last frame's size, visibility or place.
+
+namespace {
+bool contains(const std::vector<uint32_t>& ids, uint32_t id) {
+    return std::find(ids.begin(), ids.end(), id) != ids.end();
+}
+
+/// What a walk over every widget finds visible, for comparing with the list.
+std::vector<uint32_t> visibleByWalk(const WidgetTree& tree) {
+    std::vector<uint32_t> ids;
+    for (uint32_t id = 1; id < tree.size(); ++id) {
+        if (tree.get(id)->visible) ids.push_back(id);
+    }
+    return ids;
+}
+
+/// A frame that fills UIParent, so it is placed and has a size.
+uint32_t filledFrame(WidgetTree& tree, uint32_t parent, const std::string& name) {
+    const uint32_t id = tree.create(WidgetKind::Frame, parent, name);
+    tree.setAllPoints(id, parent);
+    return id;
+}
+}  // namespace
+
+TEST_CASE("A widget handed out for writing is filed once with each reader",
+          "[widget][touch]") {
+    using Reader = WidgetTree::TouchReader;
+    WidgetTree tree;
+    (void)tree.takeTouched(Reader::Sizing);
+    (void)tree.takeTouched(Reader::Tooltips);
+
+    // Created: new to every reader.
+    const uint32_t a = tree.create(WidgetKind::FontString, tree.uiParentId(), "A");
+    CHECK(contains(tree.takeTouched(Reader::Sizing), a));
+    // Asked once, answered once.
+    CHECK(tree.takeTouched(Reader::Sizing).empty());
+    // Another reader has not looked yet, and is not affected by the first.
+    CHECK(contains(tree.takeTouched(Reader::Tooltips), a));
+
+    // Reading does not file it: through a const tree, or through peek().
+    const WidgetTree& readOnly = tree;
+    CHECK(readOnly.get(a)->id == a);
+    CHECK(tree.peek(a)->id == a);
+    CHECK(readOnly.findByName("A")->id == a);
+    CHECK(tree.takeTouched(Reader::Sizing).empty());
+
+    // get() hands it out for writing, however often, and it is filed once.
+    tree.get(a)->text = "one";
+    tree.get(a)->text = "two";
+    const std::vector<uint32_t> touched = tree.takeTouched(Reader::Sizing);
+    CHECK(std::count(touched.begin(), touched.end(), a) == 1);
+
+    // So does findByName on a tree that can be written to.
+    tree.findByName("A")->text = "three";
+    CHECK(contains(tree.takeTouched(Reader::Sizing), a));
+
+    // And the tree's own setters, which change what the sweeps read.
+    tree.setWidth(a, 40.0f);
+    CHECK(contains(tree.takeTouched(Reader::Sizing), a));
+    CHECK(tree.takeTouched(Reader::Sizing).empty());
+}
+
+TEST_CASE("touchedIndex keeps the widgets its test held for, in ascending id",
+          "[widget][touch]") {
+    using Reader = WidgetTree::TouchReader;
+    WidgetTree tree;
+    const auto isTooltip = [](const Widget& w) { return w.isTooltip; };
+    const uint32_t a = tree.create(WidgetKind::Frame, tree.uiParentId(), "A");
+    const uint32_t b = tree.create(WidgetKind::Frame, tree.uiParentId(), "B");
+    const uint32_t c = tree.create(WidgetKind::Frame, tree.uiParentId(), "C");
+    CHECK(tree.touchedIndex(Reader::Tooltips, isTooltip).empty());
+
+    // Flagged out of order; listed in order.
+    tree.get(c)->isTooltip = true;
+    tree.get(a)->isTooltip = true;
+    CHECK(tree.touchedIndex(Reader::Tooltips, isTooltip) == std::vector<uint32_t>{a, c});
+    // Asking again with nothing touched changes nothing.
+    CHECK(tree.touchedIndex(Reader::Tooltips, isTooltip) == std::vector<uint32_t>{a, c});
+    tree.get(b)->isTooltip = true;
+    CHECK(tree.touchedIndex(Reader::Tooltips, isTooltip) == std::vector<uint32_t>{a, b, c});
+
+    std::string first;
+    CHECK(tree.missingFromIndex(Reader::Tooltips, isTooltip, first) == 0);
+}
+
+TEST_CASE("The visible list holds exactly the visible widgets, in ascending id",
+          "[widget][touch][visible]") {
+    WidgetTree tree;
+    const uint32_t panel = filledFrame(tree, tree.uiParentId(), "Panel");
+    const uint32_t inner = filledFrame(tree, panel, "Inner");
+    const uint32_t art = tree.create(WidgetKind::Texture, inner, "Art");
+    const uint32_t other = filledFrame(tree, tree.uiParentId(), "Other");
+    const uint32_t loose = tree.create(WidgetKind::Frame, tree.uiParentId(), "NoAnchors");
+
+    tree.layout(kScreenW, kScreenH);
+    CHECK(tree.visibleIds() == visibleByWalk(tree));
+    CHECK(contains(tree.visibleIds(), art));
+    // Running, with nowhere to be drawn: not visible, not listed.
+    CHECK(tree.get(loose)->visibleChain);
+    CHECK_FALSE(contains(tree.visibleIds(), loose));
+
+    tree.get(panel)->shown = false;
+    tree.layout(kScreenW, kScreenH);
+    CHECK(tree.visibleIds() == visibleByWalk(tree));
+    CHECK_FALSE(contains(tree.visibleIds(), inner));
+    CHECK_FALSE(contains(tree.visibleIds(), art));
+    CHECK(contains(tree.visibleIds(), other));
+
+    // Moved out from under the hidden frame.
+    tree.setParent(inner, other);
+    tree.layout(kScreenW, kScreenH);
+    CHECK(tree.visibleIds() == visibleByWalk(tree));
+    CHECK(contains(tree.visibleIds(), art));
+
+    // Resolved on demand, between passes.
+    tree.get(panel)->shown = true;
+    tree.markLayoutDirty();
+    tree.resolveWidget(panel);
+    CHECK(tree.get(panel)->visible);
+    CHECK(tree.visibleIds() == visibleByWalk(tree));
+
+    // Written from outside the layout altogether, as a test or a diagnostic
+    // might: the list follows the flag.
+    tree.get(loose)->visible = true;
+    CHECK(contains(tree.visibleIds(), loose));
+    tree.get(loose)->visible = false;
+    CHECK_FALSE(contains(tree.visibleIds(), loose));
+    CHECK(tree.verifyTracking().empty());
+}
+
+TEST_CASE("Nothing under a hidden frame stays visible, however it came to be",
+          "[widget][touch][visible]") {
+    WidgetTree tree;
+    const uint32_t panel = filledFrame(tree, tree.uiParentId(), "Panel");
+    const uint32_t row = filledFrame(tree, panel, "Row");
+    const uint32_t label = tree.create(WidgetKind::FontString, row, "Label");
+    tree.get(label)->text = "text";
+    tree.setWidth(label, 50.0f);
+    tree.setHeight(label, 12.0f);
+    tree.addPoint(label, Anchor{"LEFT", row, "LEFT", 0.0f, 0.0f});
+
+    tree.layout(kScreenW, kScreenH);
+    REQUIRE(tree.get(label)->visible);
+
+    SECTION("hidden, and left hidden across passes that skip it") {
+        tree.get(panel)->shown = false;
+        for (int pass = 0; pass < 3; ++pass) {
+            tree.layout(kScreenW, kScreenH);
+            CHECK_FALSE(tree.get(row)->visible);
+            CHECK_FALSE(tree.get(label)->visible);
+            CHECK_FALSE(tree.get(label)->visibleChain);
+            CHECK(tree.verifyTracking().empty());
+        }
+        // And back, with everything below it.
+        tree.get(panel)->shown = true;
+        tree.layout(kScreenW, kScreenH);
+        CHECK(tree.get(row)->visible);
+        CHECK(tree.get(label)->visible);
+        CHECK(tree.verifyTracking().empty());
+    }
+
+    SECTION("shown, measured, and hidden again before the next pass") {
+        tree.get(panel)->shown = false;
+        tree.layout(kScreenW, kScreenH);
+        tree.layout(kScreenW, kScreenH);
+        REQUIRE_FALSE(tree.get(label)->visible);
+
+        // A handler shows the panel and measures a label inside it: the
+        // label resolves as visible. Then the handler hides the panel again.
+        tree.get(panel)->shown = true;
+        tree.markLayoutDirty();
+        tree.resolveWidget(label);
+        REQUIRE(tree.get(label)->visible);
+        tree.get(panel)->shown = false;
+
+        tree.layout(kScreenW, kScreenH);
+        CHECK_FALSE(tree.get(row)->visible);
+        CHECK_FALSE(tree.get(label)->visible);
+        CHECK_FALSE(tree.get(label)->visibleChain);
+        CHECK(tree.visibleIds() == visibleByWalk(tree));
+        CHECK(tree.verifyTracking().empty());
+    }
+
+    SECTION("a visible frame moved under a frame already known to be hidden") {
+        const uint32_t other = filledFrame(tree, tree.uiParentId(), "Other");
+        const uint32_t otherArt = tree.create(WidgetKind::Texture, other, "OtherArt");
+        tree.get(panel)->shown = false;
+        tree.layout(kScreenW, kScreenH);
+        tree.layout(kScreenW, kScreenH);
+        REQUIRE(tree.get(otherArt)->visible);
+
+        tree.setParent(other, row);
+        tree.layout(kScreenW, kScreenH);
+        CHECK_FALSE(tree.get(other)->visible);
+        CHECK_FALSE(tree.get(otherArt)->visible);
+        CHECK(tree.visibleIds() == visibleByWalk(tree));
+        CHECK(tree.verifyTracking().empty());
+    }
+
+    SECTION("a widget created under a frame already known to be hidden") {
+        tree.get(panel)->shown = false;
+        tree.layout(kScreenW, kScreenH);
+        tree.layout(kScreenW, kScreenH);
+
+        const uint32_t late = filledFrame(tree, row, "Late");
+        const uint32_t lateArt = tree.create(WidgetKind::Texture, late, "LateArt");
+        tree.layout(kScreenW, kScreenH);
+        CHECK_FALSE(tree.get(late)->visible);
+        CHECK(tree.verifyTracking().empty());
+
+        tree.get(panel)->shown = true;
+        tree.layout(kScreenW, kScreenH);
+        CHECK(tree.get(late)->visible);
+        CHECK(tree.get(lateArt)->visible);
+        CHECK(tree.verifyTracking().empty());
+    }
+
+    SECTION("a flag written from outside the layout under a hidden frame") {
+        tree.get(panel)->shown = false;
+        tree.layout(kScreenW, kScreenH);
+        tree.layout(kScreenW, kScreenH);
+
+        tree.get(label)->visible = true;
+        tree.get(label)->visibleChain = true;
+        tree.layout(kScreenW, kScreenH);
+        CHECK_FALSE(tree.get(label)->visible);
+        CHECK_FALSE(tree.get(label)->visibleChain);
+        CHECK(tree.verifyTracking().empty());
+    }
+}
+
+TEST_CASE("A frame whose rect is not the one last reported is filed for OnSizeChanged",
+          "[widget][touch][size]") {
+    WidgetTree tree;
+    const uint32_t panel = tree.create(WidgetKind::Frame, tree.uiParentId(), "Panel");
+    tree.setWidth(panel, 200.0f);
+    tree.setHeight(panel, 100.0f);
+    tree.addPoint(panel, Anchor{"CENTER", 0, "CENTER", 0.0f, 0.0f});
+    // Stretched across the panel: resized whenever the panel is.
+    const uint32_t inner = filledFrame(tree, panel, "Inner");
+    const uint32_t art = tree.create(WidgetKind::Texture, panel, "Art");
+
+    // What LuaEngine::updateSizeChanges does with each one it is given.
+    const auto report = [&tree] {
+        std::vector<uint32_t> reported;
+        auto& changes = tree.sizeChanges();
+        for (const uint32_t id : std::vector<uint32_t>(changes.begin(), changes.end())) {
+            Widget* w = tree.untracked(id);
+            w->lastReportedW = w->rectW;
+            w->lastReportedH = w->rectH;
+            changes.erase(id);
+            reported.push_back(id);
+        }
+        return reported;
+    };
+
+    tree.layout(kScreenW, kScreenH);
+    // Never reported: every frame, and no region.
+    std::vector<uint32_t> first = report();
+    CHECK(contains(first, panel));
+    CHECK(contains(first, inner));
+    CHECK_FALSE(contains(first, art));
+
+    // Nothing moved: nothing filed, pass after pass.
+    tree.layout(kScreenW, kScreenH);
+    tree.layout(kScreenW, kScreenH);
+    CHECK(tree.sizeChanges().empty());
+
+    // Resized by its own setter, read back before any layout.
+    tree.setWidth(panel, 300.0f);
+    CHECK(tree.sizeChanges().contains(panel));
+    // The frame stretched across it follows at the next pass.
+    tree.layout(kScreenW, kScreenH);
+    const std::vector<uint32_t> second = report();
+    CHECK(contains(second, panel));
+    CHECK(contains(second, inner));
+
+    // Resized by an on-demand resolve, between passes.
+    tree.setHeight(panel, 150.0f);
+    (void)report();
+    tree.resolveWidget(inner);
+    CHECK(tree.sizeChanges().contains(inner));
+    CHECK(tree.verifyTracking().empty());
+
+    // Moved without being resized: nothing to report.
+    (void)report();
+    tree.layout(kScreenW, kScreenH);
+    (void)report();
+    tree.nudge(panel, 10.0f, 5.0f);
+    tree.layout(kScreenW, kScreenH);
+    CHECK(tree.sizeChanges().empty());
+}
+
+TEST_CASE("A widget whose visibility flips is filed for OnShow and OnHide",
+          "[widget][touch][visible]") {
+    WidgetTree tree;
+    const uint32_t panel = filledFrame(tree, tree.uiParentId(), "Panel");
+    const uint32_t inner = filledFrame(tree, panel, "Inner");
+    tree.layout(kScreenW, kScreenH);
+    CHECK(tree.visibilityChanges().contains(panel));
+    CHECK(tree.visibilityChanges().contains(inner));
+
+    // Reported, as LuaEngine::updateVisibility records it.
+    const auto report = [&tree] {
+        for (const uint32_t id : tree.visibilityChanges()) {
+            Widget* w = tree.untracked(id);
+            w->reportedVisible = w->visible;
+        }
+        tree.visibilityChanges().clear();
+    };
+    report();
+    tree.layout(kScreenW, kScreenH);
+    CHECK(tree.visibilityChanges().empty());
+
+    tree.get(panel)->shown = false;
+    tree.layout(kScreenW, kScreenH);
+    CHECK(tree.visibilityChanges().contains(panel));
+    CHECK(tree.visibilityChanges().contains(inner));
+    report();
+    tree.layout(kScreenW, kScreenH);
+    CHECK(tree.visibilityChanges().empty());
+    CHECK(tree.verifyTracking().empty());
+}
+
+TEST_CASE("A label whose rect or scale the layout changes is filed for sizing",
+          "[widget][touch][size]") {
+    using Reader = WidgetTree::TouchReader;
+    WidgetTree tree;
+    const uint32_t panel = tree.create(WidgetKind::Frame, tree.uiParentId(), "Panel");
+    tree.setWidth(panel, 200.0f);
+    tree.setHeight(panel, 100.0f);
+    tree.addPoint(panel, Anchor{"CENTER", 0, "CENTER", 0.0f, 0.0f});
+    // A paragraph pinned at both sides: it wraps to the width the layout
+    // gives it (font_string_sizing.hpp).
+    const uint32_t paragraph = tree.create(WidgetKind::FontString, panel, "Paragraph");
+    tree.get(paragraph)->text = "several words that wrap";
+    tree.addPoint(paragraph, Anchor{"TOPLEFT", 0, "TOPLEFT", 0.0f, 0.0f});
+    tree.addPoint(paragraph, Anchor{"TOPRIGHT", 0, "TOPRIGHT", 0.0f, 0.0f});
+    const uint32_t art = tree.create(WidgetKind::Texture, panel, "Art");
+
+    tree.layout(kScreenW, kScreenH);
+    (void)tree.takeTouched(Reader::Sizing);
+    tree.layout(kScreenW, kScreenH);
+    CHECK(tree.takeTouched(Reader::Sizing).empty());
+
+    // The panel is handed out; the paragraph is not, and still has to be
+    // measured again because its rect followed the panel's.
+    tree.setWidth(panel, 120.0f);
+    tree.layout(kScreenW, kScreenH);
+    std::vector<uint32_t> touched = tree.takeTouched(Reader::Sizing);
+    CHECK(contains(touched, paragraph));
+    // A texture's size does not depend on its rect.
+    CHECK_FALSE(contains(touched, art));
+
+    // A scale set on the panel reaches the label as its effective scale.
+    tree.get(panel)->scale = 2.0f;
+    tree.layout(kScreenW, kScreenH);
+    touched = tree.takeTouched(Reader::Sizing);
+    CHECK(contains(touched, paragraph));
+
+    tree.layout(kScreenW, kScreenH);
+    CHECK(tree.takeTouched(Reader::Sizing).empty());
+}
+
+TEST_CASE("Random edits leave the tree's filing agreeing with a walk over every widget",
+          "[widget][touch][visible]") {
+    // The same edits a session makes, in an order no test would think of,
+    // checked after every pass against what a walk over the whole tree says.
+    WidgetTree tree;
+    uint32_t seed = 20261125u;
+    const auto next = [&seed](uint32_t below) {
+        seed = seed * 1664525u + 1013904223u;
+        return (seed >> 8) % below;
+    };
+    std::vector<uint32_t> ids{tree.uiParentId()};
+    const char* const points[] = {"TOPLEFT", "CENTER", "BOTTOMRIGHT", "LEFT", "TOP"};
+    const auto expectedChain = [&tree](uint32_t id) {
+        for (uint32_t at = id; at != 0; at = tree.peek(at)->parent) {
+            if (!tree.peek(at)->shown) return false;
+        }
+        return true;
+    };
+
+    for (int step = 0; step < 4000; ++step) {
+        const uint32_t pick = ids[next(static_cast<uint32_t>(ids.size()))];
+        switch (next(10)) {
+            case 0: case 1: {
+                const auto kind = static_cast<WidgetKind>(next(3));
+                const Widget* parent = tree.peek(pick);
+                // Regions hold nothing.
+                if (parent->kind != WidgetKind::Frame) break;
+                const uint32_t id = tree.create(kind, pick, "");
+                if (next(4) != 0) tree.setAllPoints(id, pick);
+                ids.push_back(id);
+                break;
+            }
+            case 2: case 3:
+                if (pick != tree.uiParentId() || next(8) == 0) {
+                    tree.get(pick)->shown = !tree.peek(pick)->shown;
+                }
+                break;
+            case 4: {
+                const uint32_t to = ids[next(static_cast<uint32_t>(ids.size()))];
+                if (pick != tree.uiParentId() && tree.peek(to)->kind == WidgetKind::Frame) {
+                    tree.setParent(pick, to);
+                }
+                break;
+            }
+            case 5: tree.setWidth(pick, static_cast<float>(next(300))); break;
+            case 6: tree.setHeight(pick, static_cast<float>(next(200))); break;
+            case 7: {
+                if (pick == tree.uiParentId()) break;
+                const uint32_t to = ids[next(static_cast<uint32_t>(ids.size()))];
+                if (to == pick) break;
+                if (next(3) == 0) tree.clearPoints(pick);
+                tree.addPoint(pick, Anchor{points[next(5)], to, points[next(5)],
+                                           static_cast<float>(next(40)), 0.0f});
+                break;
+            }
+            case 8:
+                tree.markLayoutDirty();
+                tree.resolveWidget(pick);
+                break;
+            case 9: {
+                tree.layout(kScreenW, kScreenH);
+                INFO("step " << step);
+                REQUIRE(tree.visibleIds() == visibleByWalk(tree));
+                const std::vector<std::string> faults = tree.verifyTracking();
+                INFO((faults.empty() ? std::string() : faults.front()));
+                REQUIRE(faults.empty());
+                for (const uint32_t id : ids) {
+                    const Widget* w = tree.peek(id);
+                    const bool chain = expectedChain(id);
+                    INFO("widget " << id);
+                    REQUIRE(w->visibleChain == chain);
+                    REQUIRE(w->visible == (chain && !tree.lacksPosition(id)));
+                }
+                break;
+            }
+        }
+    }
+}

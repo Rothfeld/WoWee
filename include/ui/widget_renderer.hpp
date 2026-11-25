@@ -204,6 +204,17 @@ private:
     /// Image dimensions by path, including the ones that could not be read -
     /// stored as zero so a missing file is looked for once and not once a frame.
     std::unordered_map<std::string, std::pair<float, float>> textureSizes_;
+    /// Everything outside the widgets that sizeArtAndText's results depend
+    /// on. While it is unchanged only touched widgets need sizing again.
+    struct SizingEnvironment {
+        const WidgetTree* tree = nullptr;
+        float uiScale = 0.0f;
+        uint64_t fontGeneration = 0;
+        float defaultFontSize = 0.0f;   ///< ImGui's, used by a label with no height
+        bool hasAssets = false;
+        bool operator==(const SizingEnvironment&) const = default;
+    };
+    SizingEnvironment sizedIn_;
     /// Which incarnation of ImGui's backend the cache above belongs to.
     uint32_t uiTextureGenerationSeen_ = 0;
 
