@@ -774,7 +774,6 @@ void EntitySpawner::syncCreatureVisualState() {
             unit->getNpcFlags(),
             cIt != cCache.end() ? cIt->second.typeFlags : 0u);
         characterRenderer->setInstanceVisible(instanceId, ghostVisible);
-        characterRenderer->setUnitFlagPreventAnim(instanceId, game::unitPreventsAnim(unit->getUnitFlags()));
         characterRenderer->setHideBody(instanceId, game::unitHidesBody(unit->getUnitFlags2()));
 
         // CreatureDisplayInfo's model alpha (the Boar Spirit's display 4716

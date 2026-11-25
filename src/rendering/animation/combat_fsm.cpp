@@ -174,8 +174,10 @@ void CombatFSM::triggerHitReaction(uint32_t animId) {
         if (state_ == State::HIT_REACTION) state_ = State::INACTIVE;
         return;
     }
-    // Active melee/ranged swings and charge hold priority over hit reactions.
-    if (state_ == State::MELEE_SWING || state_ == State::RANGED_SHOOT || state_ == State::CHARGE) {
+    // Active spell kit one-shots (e.g. Knockdown 121), melee/ranged swings,
+    // and charge hold priority over hit reactions.
+    if (kitAnimId_ != 0 || state_ == State::MELEE_SWING ||
+        state_ == State::RANGED_SHOOT || state_ == State::CHARGE) {
         return;
     }
     // A hit does not end a cast or a channel: the reaction plays once and
@@ -195,6 +197,10 @@ void CombatFSM::triggerHitReaction(uint32_t animId) {
 }
 
 void CombatFSM::triggerKitAnimation(uint32_t animId) {
+    // Let an already-running identical kit one-shot (e.g. overlapping Knockdown
+    // 11428 procs from multiple mobs) finish its arc rather than snapping back
+    // to frame 0 mid-air.
+    if (animId != 0 && animId == kitAnimId_) return;
     kitAnimId_ = animId;
     kitAnimSeen_ = false;
     kitAnimFrames_ = 0;
@@ -673,6 +679,9 @@ void CombatFSM::reset() {
     state_ = State::INACTIVE;
     clearSpellState();
     hitReactionAnimId_ = 0;
+    kitAnimId_ = 0;
+    kitAnimSeen_ = false;
+    kitAnimFrames_ = 0;
     stunned_ = false;
     charging_ = false;
     weaponsDrawn_ = false;

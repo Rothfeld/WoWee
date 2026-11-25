@@ -4355,8 +4355,6 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                         selfUnit ? selfUnit->getUnitFlags() : 0u));
                 const uint32_t selfInstId = renderer->getCharacterInstanceId();
                 if (selfUnit && selfInstId != 0) {
-                    charRenderer->setUnitFlagPreventAnim(selfInstId,
-                        game::unitPreventsAnim(selfUnit->getUnitFlags()));
                     charRenderer->setHideBody(selfInstId,
                         game::unitHidesBody(selfUnit->getUnitFlags2()));
                 }
@@ -4385,7 +4383,6 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                 remoteUnit->getUnitFlags());
             charRenderer->setLatchWeaponsDrawnByAnimation(instanceId, false);
             charRenderer->setSheathState(instanceId, remoteSheath);
-            charRenderer->setUnitFlagPreventAnim(instanceId, game::unitPreventsAnim(remoteUnit->getUnitFlags()));
             charRenderer->setHideBody(instanceId, game::unitHidesBody(remoteUnit->getUnitFlags2()));
 
             // Distance cull

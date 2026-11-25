@@ -83,6 +83,7 @@ public:
     void setState(State s) { state_ = s; }
 
     [[nodiscard]] bool isStunned() const { return state_ == State::STUNNED; }
+    [[nodiscard]] bool isKitAnimationActive() const { return kitAnimId_ != 0; }
     [[nodiscard]] bool isActive() const { return state_ != State::INACTIVE; }
     /// True while a spell precast, cast/channel hold, release one-shot, or a
     /// mid-cast hit reaction returning to a cast is active.

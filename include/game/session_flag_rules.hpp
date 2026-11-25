@@ -187,6 +187,10 @@ inline constexpr uint32_t kUnitFlagsLossOfControlMask =
     return (unitFlags & UNIT_FLAG_DISARMED) != 0u;
 }
 
+/// UNIT_FLAG_PREVENT_ANIM (0x20000000, set by SPELL_ATTR_EX_PREVENTS_ANIM auras
+/// such as Dazed 1604 and Feign Death 5384) blocks server-side chat emotes and
+/// stand-state changes. It does NOT freeze the M2 skeletal animation clock
+/// (only SpellVisualKit CharProc 11 freezes skeletal animation playback).
 [[nodiscard]] inline constexpr bool unitPreventsAnim(uint32_t unitFlags) {
     return (unitFlags & UNIT_FLAG_PREVENT_ANIM) != 0u;
 }

@@ -116,12 +116,13 @@ inline float activeSwingMaxMsOnQueue(float currentTimeMs,
     return targetRemainWallMs / remainFraction;
 }
 
-/// Units actively mid-swing on a melee attack one-shot do not cut their swing
-/// short (or drop a queued off-hand swing) to play a hit-reaction flinch;
-/// blood spurts and wound vocals still fire.
+/// Units actively mid-swing on a melee attack one-shot or mid-knockdown do not
+/// cut their animation short (or drop a queued off-hand swing) to play a
+/// hit-reaction flinch; blood spurts and wound vocals still fire.
 inline constexpr bool unitSuppressesHitReactionDuringSwing(bool playingOneShot,
                                                            uint32_t activeOneShotAnim) {
-    return playingOneShot && isMeleeSwingAnimation(activeOneShotAnim);
+    return playingOneShot &&
+           (isMeleeSwingAnimation(activeOneShotAnim) || activeOneShotAnim == anim::KNOCKDOWN);
 }
 
 } // namespace wowee::rendering

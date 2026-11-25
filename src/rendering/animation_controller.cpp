@@ -241,12 +241,14 @@ void AnimationController::stopLooting() {
 // ── Hit reactions ────────────────────────────────────────────────────────────
 
 void AnimationController::triggerHitReaction(uint32_t animId) {
+    characterAnimator_.triggerHitReaction(animId);
     if (animId != 0 && meleeSwingTimer_ <= 0.0f && rangedShootTimer_ <= 0.0f &&
-        !charging_ && !characterAnimator_.getCombat().isStunned()) {
-        // Allow back-to-back hit reactions of the same animId to replay.
+        !charging_ && !characterAnimator_.getCombat().isKitAnimationActive() &&
+        characterAnimator_.getCombat().getState() == CombatFSM::State::HIT_REACTION) {
+        // Allow back-to-back hit reactions of the same animId to replay,
+        // without invalidating higher-priority one-shots (e.g. Knockdown 121).
         lastPlayerAnimRequest_ = UINT32_MAX;
     }
-    characterAnimator_.triggerHitReaction(animId);
 }
 
 // ── Crowd control ────────────────────────────────────────────────────────────

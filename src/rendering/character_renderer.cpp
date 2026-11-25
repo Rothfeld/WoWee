@@ -2933,7 +2933,7 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos,
             inst.currentAnimationId = inst.cachedModel->data.sequences[inst.currentSequenceIndex].id;
         }
 
-        if (inst.kitAnimationFrozen || inst.unitFlagPreventAnim) {
+        if (inst.kitAnimationFrozen) {
             toUpdate_.push_back(std::ref(inst));
             continue;
         }
@@ -6007,13 +6007,6 @@ void CharacterRenderer::setInstanceVisible(uint32_t instanceId, bool visible) {
                 }
             }
         }
-    }
-}
-
-void CharacterRenderer::setUnitFlagPreventAnim(uint32_t instanceId, bool prevent) {
-    auto it = instances.find(instanceId);
-    if (it != instances.end()) {
-        it->second.unitFlagPreventAnim = prevent;
     }
 }
 

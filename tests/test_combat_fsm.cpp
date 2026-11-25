@@ -351,6 +351,50 @@ TEST_CASE("CombatFSM: a kit animation plays once over the stun its spell applies
     CHECK(out.animId == anim::STUN);
 }
 
+TEST_CASE("CombatFSM: hit reactions and overlapping kit procs do not restart active Knockdown", "[combat]") {
+    CombatFSM fsm;
+    auto caps = makeCombatCaps();
+    auto wl = unarmedLoadout();
+    fsm.onEvent(AnimEvent::COMBAT_ENTER);
+    fsm.triggerKitAnimation(anim::KNOCKDOWN);
+    CHECK(fsm.isKitAnimationActive());
+
+    auto in = combatInput();
+    in.haveAnimState = true;
+    in.currentAnimId = anim::STAND;
+    auto out = fsm.resolve(in, caps, wl);
+    REQUIRE(out.valid);
+    CHECK(out.animId == anim::KNOCKDOWN);
+    CHECK_FALSE(out.loop);
+
+    // Mid-knockdown: melee hit reactions (Wound 8) and overlapping Knockdown
+    // procs must not enter HIT_REACTION or reset kitAnimSeen_.
+    in.currentAnimId = anim::KNOCKDOWN;
+    in.currentAnimTime = 485.0f;
+    in.currentAnimDuration = 1600.0f;
+    CHECK(fsm.resolve(in, caps, wl).animId == anim::KNOCKDOWN);
+
+    fsm.triggerHitReaction(anim::COMBAT_WOUND);
+    CHECK(fsm.getState() != CombatFSM::State::HIT_REACTION);
+    CHECK(fsm.isKitAnimationActive());
+
+    fsm.triggerKitAnimation(anim::KNOCKDOWN);
+    CHECK(fsm.isKitAnimationActive());
+
+    // Completion of the 1600ms knockdown exits cleanly to COMBAT_IDLE.
+    in.currentAnimTime = 1600.0f;
+    out = fsm.resolve(in, caps, wl);
+    CHECK_FALSE(fsm.isKitAnimationActive());
+    CHECK(out.animId == anim::READY_UNARMED);
+    CHECK(out.loop);
+
+    // Reset (e.g. death) clears an active kit animation.
+    fsm.triggerKitAnimation(anim::KNOCKDOWN);
+    CHECK(fsm.isKitAnimationActive());
+    fsm.reset();
+    CHECK_FALSE(fsm.isKitAnimationActive());
+}
+
 TEST_CASE("CombatFSM: back-to-back precast lets previous CAST finalize complete before looping",
           "[combat][spell_cast_anim]") {
     CombatFSM fsm;
@@ -613,7 +657,9 @@ TEST_CASE("Hit-reaction flinch is suppressed during active melee swings on both 
     CHECK(unitSuppressesHitReactionDuringSwing(true, anim::ATTACK_OFF));
     CHECK(unitSuppressesHitReactionDuringSwing(true, anim::ATTACK_UNARMED));
     CHECK(unitSuppressesHitReactionDuringSwing(true, anim::ATTACK_UNARMED_OFF));
+    CHECK(unitSuppressesHitReactionDuringSwing(true, anim::KNOCKDOWN));
     CHECK_FALSE(unitSuppressesHitReactionDuringSwing(false, anim::ATTACK_1H));
+    CHECK_FALSE(unitSuppressesHitReactionDuringSwing(false, anim::KNOCKDOWN));
     CHECK_FALSE(unitSuppressesHitReactionDuringSwing(true, anim::COMBAT_WOUND));
     CHECK_FALSE(unitSuppressesHitReactionDuringSwing(false, anim::READY_1H));
 
