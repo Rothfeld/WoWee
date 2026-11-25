@@ -4260,7 +4260,13 @@ Gotchas:
   put the original in the background; only a WM activation of another window
   (`_NET_ACTIVE_WINDOW`) or a minimise does. Wine's `+win` trace shows
   `set_foreground_window` when it happens.
-- On Xvfb, `vkQueuePresentKHR` costs 20-26 ms of main-thread CPU per frame
-  (FIFO and IMMEDIATE alike): the NVIDIA driver copies the image to the CPU
-  for the X server. That, not a busy-wait, is most of an idle client's core.
-  `WOWEE_FRAME_PROFILE=1` reports it as `endFrame/present`.
+- On an X server that draws in main memory (Xvfb, Xvnc), `vkQueuePresentKHR`
+  makes the NVIDIA driver read the frame back and write every pixel into the
+  X socket: 13 ms of the main thread per frame at 1280x720, 4 ms at 640x360,
+  FIFO and IMMEDIATE alike. The client presents through MIT-SHM there instead
+  (`src/rendering/x11_shm_presenter.cpp`; 0.9 ms and 0.4 ms) and logs
+  "Frames are presented through shared memory". `WOWEE_X11_SHM_PRESENT=0`
+  keeps the driver's present, `=1` fails start-up when the shared-memory path
+  is not available. `WOWEE_FRAME_PROFILE=1` reports either as
+  `endFrame/present`. A second window (the map window) is still presented by
+  the driver.

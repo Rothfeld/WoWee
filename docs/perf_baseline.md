@@ -68,6 +68,23 @@ The client also measures itself, with no build option needed:
 - `WOWEE_FRAME_PROFILE=1` - every 10 seconds, logs the average and worst
   time of each CPU stage of the frame and the GPU's per-pass timestamps from
   the last completed frame, at warning level instead of info.
+  The main loop's consecutive parts are the `loop/...` lines (`loop/cap wait`,
+  `loop/events and input`, `loop/update`, `loop/render`, `loop/after render`,
+  `loop/pace to refresh`); they add up to the frame. `loop/update outside its
+  stages` and `loop/render outside its stages` are what those two spend
+  outside the stages they time: a large number there is a stage missing a
+  timer. `endFrame/present/cpu in user code` and `.../cpu in kernel` are the
+  main thread's processor time inside the present (Linux), which tells a
+  present that waits from one that copies. With the flag set,
+  `renderer->update/...` and `uiManager->render/nameplates/...` break those
+  two down further.
+- `WOWEE_PRESENT_CHECK=1` - on an X server that qualifies for the
+  shared-memory present (`src/rendering/x11_shm_presenter.cpp`), reads the
+  window back every 30th frame and counts the bytes differing from the frame
+  presented (`count present check: ...` in the report), on either present path.
+- `WOWEE_CVAR_CHECK=1` - for every stored CVar lookup without a row, reads
+  cvars.cfg as every lookup once did and counts answers that differ
+  (`count stored cvar check: ...`).
 - `WOWEE_PASS_ABLATION=1` - switches the world passes (terrain, grass, WMO,
   M2, ground clutter, far doodads, characters, sky, shadows) off one at a time
   for a few seconds each, with a baseline at both ends, and logs what the
