@@ -3790,7 +3790,9 @@ int GameHandler::unitReactionToPlayer(const Unit& unit) const {
         it != factionTemplateRepList_.end() && it->second < initialFactions_.size()) {
         const auto& standing = initialFactions_[it->second];
         int rank = reputationStandingFor(standing.standing).id;
-        if (standing.flags & FACTION_FLAG_PEACE_FORCED) rank = std::max(rank, 5);
+        // FACTION_FLAG_PEACE_FORCED only prevents declaring At War; it does
+        // not raise the unit's reaction rank above the player's standing
+        // (e.g. Blood Elf at Neutral with Orgrimmar stays Neutral / yellow).
         if (standing.flags & FACTION_FLAG_AT_WAR) rank = std::min(rank, 4);
         return rank;
     }
@@ -3815,7 +3817,9 @@ int GameHandler::gameObjectReactionToPlayer(const GameObject& object) const {
         it != factionTemplateRepList_.end() && it->second < initialFactions_.size()) {
         const auto& standing = initialFactions_[it->second];
         int rank = reputationStandingFor(standing.standing).id;
-        if (standing.flags & FACTION_FLAG_PEACE_FORCED) rank = std::max(rank, 5);
+        // FACTION_FLAG_PEACE_FORCED only prevents declaring At War; it does
+        // not raise the unit's reaction rank above the player's standing
+        // (e.g. Blood Elf at Neutral with Orgrimmar stays Neutral / yellow).
         if (standing.flags & FACTION_FLAG_AT_WAR) rank = std::min(rank, 4);
         return rank;
     }

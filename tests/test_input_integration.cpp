@@ -7454,3 +7454,77 @@ TEST_CASE("Minimap blip GameTooltipTemplate creates TextLeft1 with GameTooltipHe
     f.run("WoweeMinimapBlipTooltip:Hide()");
     CHECK_FALSE(tip->shown);
 }
+
+TEST_CASE_METHOD(Integration, "Peace-forced faction keeps standing reaction instead of promoting to Friendly", "[faction-reaction]") {
+    using namespace wowee::game;
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    lua.setGameHandler(&handler);
+
+    // Map FactionTemplate 125 (Stonard Explorer, Orgrimmar) -> repListId 0,
+    // and FactionTemplate 1700 (Kurenai-style unfriendly peace-forced) -> repListId 1.
+    handler.setFactionTemplateRepList({{125, 0}, {1700, 1}});
+    handler.setFactionFriendlyMap({{125, true}, {1700, true}});
+    handler.setFactionHostileMap({{125, false}, {1700, false}});
+
+    wowee::network::Packet initFactions(wireOpcode(Opcode::SMSG_INITIALIZE_FACTIONS));
+    initFactions.writeUInt32(2);
+    // repListId 0: Neutral (standing 500) + VISIBLE | PEACE_FORCED (e.g. Blood Elf with Orgrimmar)
+    initFactions.writeUInt8(GameHandler::FACTION_FLAG_VISIBLE | GameHandler::FACTION_FLAG_PEACE_FORCED);
+    initFactions.writeUInt32(500);
+    // repListId 1: Unfriendly (standing -1200) + PEACE_FORCED (e.g. Alliance with Kurenai)
+    initFactions.writeUInt8(GameHandler::FACTION_FLAG_PEACE_FORCED);
+    initFactions.writeUInt32(static_cast<uint32_t>(-1200));
+    session.receive(initFactions);
+
+    auto explorer = std::make_shared<Unit>(0xf13000035e0097a2ULL);
+    explorer->setName("Stonard Explorer");
+    explorer->setEntry(862);
+    explorer->setLevel(37);
+    explorer->setHealth(100);
+    explorer->setMaxHealth(100);
+    explorer->setFactionTemplate(125);
+    explorer->setHostile(false);
+    handler.getEntityManager().addEntity(explorer->getGuid(), explorer);
+    handler.setTarget(explorer->getGuid());
+
+    // Neutral (4) + yellow selection color, yet non-attackable because not at war.
+    CHECK(handler.unitReactionToPlayer(*explorer) == 4);
+    CHECK_FALSE(handler.canPlayerAttackUnit(*explorer));
+    truth("UnitReaction('target', 'player') == 4");
+    run("local r, g, b, a = UnitSelectionColor('target'); assert(r == 1 and g == 1 and b == 0 and a == 1)");
+
+    // GameObject on the same peace-forced Neutral faction also reports Neutral (4).
+    auto go = std::make_shared<GameObject>(0xf110000100000001ULL);
+    go->setEntry(100);
+    go->setField(fieldIndex(UF::GAMEOBJECT_FACTION), 125);
+    CHECK(handler.gameObjectReactionToPlayer(*go) == 4);
+
+    // Unfriendly (-1200) + PEACE_FORCED stays Unfriendly (3) / orange, not Friendly (5).
+    auto kurenai = std::make_shared<Unit>(0xf130000400000002ULL);
+    kurenai->setName("Kurenai Scout");
+    kurenai->setEntry(18000);
+    kurenai->setLevel(65);
+    kurenai->setHealth(100);
+    kurenai->setMaxHealth(100);
+    kurenai->setFactionTemplate(1700);
+    kurenai->setHostile(false);
+    handler.getEntityManager().addEntity(kurenai->getGuid(), kurenai);
+    handler.setTarget(kurenai->getGuid());
+    CHECK(handler.unitReactionToPlayer(*kurenai) == 3);
+    truth("UnitReaction('target', 'player') == 3");
+    run("local r, g, b, a = UnitSelectionColor('target'); assert(r == 1 and g == 0.5 and b == 0 and a == 1)");
+
+    // Raising standing to Friendly (3000) promotes reaction to 5 (green).
+    wowee::network::Packet friendlyFactions(wireOpcode(Opcode::SMSG_INITIALIZE_FACTIONS));
+    friendlyFactions.writeUInt32(1);
+    friendlyFactions.writeUInt8(GameHandler::FACTION_FLAG_VISIBLE | GameHandler::FACTION_FLAG_PEACE_FORCED);
+    friendlyFactions.writeUInt32(3000);
+    session.receive(friendlyFactions);
+    handler.setTarget(explorer->getGuid());
+    CHECK(handler.unitReactionToPlayer(*explorer) == 5);
+    truth("UnitReaction('target', 'player') == 5");
+    run("local r, g, b, a = UnitSelectionColor('target'); assert(r == 0 and g == 1 and b == 0 and a == 1)");
+
+    lua.setGameHandler(nullptr);
+}
