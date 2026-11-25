@@ -1,4 +1,5 @@
 #include "rendering/weather.hpp"
+#include "rendering/weather_mist_math.hpp"
 
 #include "core/logger.hpp"
 #include "rendering/camera.hpp"
@@ -417,7 +418,10 @@ void Weather::update(const Camera& camera, float deltaTime) {
     }
     updateRain(camera, deltaTime, raining ? amount : 0.0f);
     updateSnow(camera, deltaTime, weatherType == Type::SNOW ? amount : 0.0f);
-    mist_.update(camera, deltaTime, amount, weatherType == Type::SNOW ? kSnowMist : kRainMist);
+    const float mistAmount = (weatherType == Type::SNOW)
+        ? amount
+        : (amount > 0.0f ? rainMistAmount(intensity) * densityScale_ : 0.0f);
+    mist_.update(camera, deltaTime, mistAmount, weatherType == Type::SNOW ? kSnowMist : kRainMist);
 
     // What is in the air, every ten seconds while anything is.
     logTimer_ += deltaTime;

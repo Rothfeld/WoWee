@@ -290,6 +290,11 @@ private:
     void updateM2ProjectedTextures();
     std::function<void(VkCommandBuffer)> afterInterface_;
 
+    // True when a 1x continuation pass with captured scene depth is available
+    // (used for water refraction in WotLK+ and soft-depth weather mist across
+    // all expansions).
+    bool canRunContinuePass() const;
+
     // True when water is drawn in the scene continuation pass rather than in
     // the scene pass itself (see renderWorld).
     bool waterDrawsInContinuePass() const;
@@ -317,6 +322,10 @@ private:
     /// pass. Draw sites test this rather than waterDrawsInContinuePass() so a
     /// mid-run mode change cannot record a pipeline into an incompatible pass.
     bool swimEffectsDrawWithWater_ = false;
+    /// True when WeatherMist pipelines (weather & sandstorm) were built for
+    /// the 1x continuation pass so they sample captured scene depth for soft
+    /// terrain feathering even when pre-WotLK water stays in the scene pass.
+    bool mistDrawsInContinuePass_ = false;
 
     void runDeferredWorldInitStep(float deltaTime);
 

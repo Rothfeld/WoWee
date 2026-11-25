@@ -3757,8 +3757,8 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
             }
             WeatherMist::DepthContext fallbackMistDepth{};
             fallbackMistDepth.sceneSet = waterRenderer ? waterRenderer->getSceneSet(frameIdx) : VK_NULL_HANDLE;
-            if (weather && camera) weather->render(cmd, perFrameSet, !swimEffectsDrawWithWater_, fallbackMistDepth);
-            if (sandStorm && camera) sandStorm->render(cmd, perFrameSet, !swimEffectsDrawWithWater_, fallbackMistDepth);
+            if (weather && camera) weather->render(cmd, perFrameSet, !mistDrawsInContinuePass_, fallbackMistDepth);
+            if (sandStorm && camera) sandStorm->render(cmd, perFrameSet, !mistDrawsInContinuePass_, fallbackMistDepth);
             if (lightning && camera && lightning->isEnabled()) lightning->render(cmd, perFrameSet);
             if (swimEffects && camera && !swimEffectsDrawWithWater_) {
                 swimEffects->render(cmd, perFrameSet);
@@ -3964,8 +3964,8 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
         }
         WeatherMist::DepthContext fallbackMistDepth{};
         fallbackMistDepth.sceneSet = waterRenderer ? waterRenderer->getSceneSet(frameIdx) : VK_NULL_HANDLE;
-        if (weather && camera) weather->render(currentCmd, perFrameSet, !swimEffectsDrawWithWater_, fallbackMistDepth);
-        if (sandStorm && camera) sandStorm->render(currentCmd, perFrameSet, !swimEffectsDrawWithWater_, fallbackMistDepth);
+        if (weather && camera) weather->render(currentCmd, perFrameSet, !mistDrawsInContinuePass_, fallbackMistDepth);
+        if (sandStorm && camera) sandStorm->render(currentCmd, perFrameSet, !mistDrawsInContinuePass_, fallbackMistDepth);
         if (lightning && camera && lightning->isEnabled()) lightning->render(currentCmd, perFrameSet);
         if (swimEffects && camera && !swimEffectsDrawWithWater_) {
             swimEffects->render(currentCmd, perFrameSet);
@@ -3985,12 +3985,13 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
         renderPostSceneOverlays(currentCmd, gameHandler);
     }
 
-    // Water is drawn last, in a continuation of the scene pass, so that the
-    // refraction copy taken just before it holds the scene WITHOUT water. Taking
-    // that copy from the finished frame instead fed the water its own output:
-    // a moving object left one sharp copy per frame (a train of ghosts) and the
-    // brightness applied to the water compounded through the loop and pumped.
-    if (waterDrawsInContinuePass() && camera) {
+    // Water (WotLK+ refraction) and depth-softened weather mist (all expansions)
+    // run in a 1x continuation pass after opaque scene depth is captured.
+    const bool runWaterContinue = waterDrawsInContinuePass() && camera;
+    const bool mistNeedsDepth =
+        mistDrawsInContinuePass_ && camera && waterRenderer &&
+        ((weather && weather->hasMistPuffs()) || (sandStorm && sandStorm->hasMistPuffs()));
+    if (runWaterContinue || mistNeedsDepth) {
         vkCmdEndRenderPass(currentCmd);
 
         VkImage sceneColor = VK_NULL_HANDLE;
@@ -4011,18 +4012,15 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
         // lighting reads its depth here, for the surfaces of the next frame.
         recordRtLighting(sceneDepth, sceneExtent, depthIsMsaa);
 
-        const bool mistNeedsDepth =
-            (weather && weather->hasMistPuffs()) || (sandStorm && sandStorm->hasMistPuffs());
         if (sceneColor != VK_NULL_HANDLE &&
-            (waterRenderer->isRefractionEnabled() || mistNeedsDepth)) {
+            ((runWaterContinue && waterRenderer->isRefractionEnabled()) || mistNeedsDepth)) {
             waterRenderer->captureSceneHistory(currentCmd, sceneColor, sceneDepth,
                                                sceneExtent, depthIsMsaa,
                                                vkCtx->getCurrentFrame());
         }
 
-        // Without MSAA the water continues into the scene's own framebuffer. With
-        // MSAA it draws single-sampled into the resolved image instead, which is
-        // both cheaper and what lets it leave the multisampled pass at all.
+        // Without MSAA the continuation draws into the scene's own framebuffer.
+        // With MSAA it draws single-sampled into the resolved image instead.
         const bool msaaOn = vkCtx->getMsaaSamples() > VK_SAMPLE_COUNT_1_BIT;
         VkRenderPassBeginInfo contRp{};
         contRp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -4056,17 +4054,19 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
         sc.extent = waterExtent;
         vkCmdSetScissor(currentCmd, 0, 1, &sc);
 
-        waterRenderer->setRenderExtent(waterExtent);
-        waterRenderer->render(currentCmd, perFrameSet, *camera, globalTime, msaaOn, frameIdx);
+        if (runWaterContinue) {
+            waterRenderer->setRenderExtent(waterExtent);
+            waterRenderer->render(currentCmd, perFrameSet, *camera, globalTime, msaaOn, frameIdx);
 
-        // Spray belongs on top of the surface it is thrown off. Recorded in the
-        // scene pass it went under the water instead, which the sheet then hid -
-        // barely at the shore where alpha sits near its floor, completely in the
-        // deeper water you swim in.
-        if (swimEffects && camera && swimEffectsDrawWithWater_) {
-            swimEffects->render(currentCmd, perFrameSet);
+            // Spray belongs on top of the surface it is thrown off. Recorded in the
+            // scene pass it went under the water instead, which the sheet then hid -
+            // barely at the shore where alpha sits near its floor, completely in the
+            // deeper water you swim in.
+            if (swimEffects && swimEffectsDrawWithWater_) {
+                swimEffects->render(currentCmd, perFrameSet);
+            }
         }
-        if (swimEffectsDrawWithWater_ && camera && waterRenderer) {
+        if (mistNeedsDepth) {
             WeatherMist::DepthContext mistDepth{};
             mistDepth.sceneSet = waterRenderer->getSceneSet(frameIdx);
             mistDepth.nearPlane = camera->getNearPlane();
@@ -4081,7 +4081,7 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
         // Execute deferred blended world models (waterfalls, translucent M2s,
         // blended characters, M2 particles/ribbons) and post-world effects on
         // top of the rendered water surface.
-        if (deferBlendedAfterWater) {
+        if (runWaterContinue && deferBlendedAfterWater) {
             vkCmdEndRenderPass(currentCmd);
             vkCmdBeginRenderPass(currentCmd, &contRp, VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS);
             VkCommandBuffer postWaterCmds[2];
@@ -4098,35 +4098,34 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
     lastRenderMs = std::chrono::duration<double, std::milli>(renderEnd - renderStart).count();
 }
 
-// Water can leave the scene pass only when there is a continuation pass to draw
-// it in, which excludes MSAA. Everything else in the frame is unaffected.
+// Water (WotLK+) and depth-softened weather mist (all expansions) can leave the
+// scene pass whenever a 1x continuation pass is available.
 void Renderer::syncSwimEffectsTargetPass() {
     if (!vkCtx) return;
 
-    // Default: they stay in the scene pass, matching its MSAA sample count.
-    VkRenderPass pass = vkCtx->getImGuiRenderPass();
-    VkSampleCountFlagBits samples = vkCtx->getMsaaSamples();
-    swimEffectsDrawWithWater_ = false;
-
-    if (waterDrawsInContinuePass()) {
-        // Both continuation passes are single-sampled: with MSAA the water draws
-        // into the resolved image, and without it there is nothing to resolve.
-        if (vkCtx->getMsaaSamples() > VK_SAMPLE_COUNT_1_BIT) {
-            pass = waterRenderer->getWater1xRenderPass();
-        } else {
-            pass = vkCtx->getSceneContinueRenderPass();
-        }
-        if (pass != VK_NULL_HANDLE) {
-            samples = VK_SAMPLE_COUNT_1_BIT;
-            swimEffectsDrawWithWater_ = true;
-        } else {
-            pass = vkCtx->getImGuiRenderPass();
-        }
+    // Default: stay in the scene pass, matching its MSAA sample count.
+    const VkRenderPass scenePass = vkCtx->getImGuiRenderPass();
+    const VkSampleCountFlagBits sceneSamples = vkCtx->getMsaaSamples();
+    VkRenderPass contPass = VK_NULL_HANDLE;
+    if (canRunContinuePass()) {
+        contPass = (sceneSamples > VK_SAMPLE_COUNT_1_BIT)
+            ? waterRenderer->getWater1xRenderPass()
+            : vkCtx->getSceneContinueRenderPass();
     }
 
-    if (swimEffects) swimEffects->setTargetPass(pass, samples);
-    if (weather) weather->setMistTargetPass(pass, samples);
-    if (sandStorm) sandStorm->setMistTargetPass(pass, samples);
+    swimEffectsDrawWithWater_ = waterDrawsInContinuePass() && (contPass != VK_NULL_HANDLE);
+    mistDrawsInContinuePass_ = canRunContinuePass() && (contPass != VK_NULL_HANDLE);
+
+    if (swimEffects) {
+        swimEffects->setTargetPass(
+            swimEffectsDrawWithWater_ ? contPass : scenePass,
+            swimEffectsDrawWithWater_ ? VK_SAMPLE_COUNT_1_BIT : sceneSamples);
+    }
+    const VkRenderPass mistPass = mistDrawsInContinuePass_ ? contPass : scenePass;
+    const VkSampleCountFlagBits mistSamples =
+        mistDrawsInContinuePass_ ? VK_SAMPLE_COUNT_1_BIT : sceneSamples;
+    if (weather) weather->setMistTargetPass(mistPass, mistSamples);
+    if (sandStorm) sandStorm->setMistTargetPass(mistPass, mistSamples);
     // Interface terrain must remain outside world color effects and water.
     if (minimap) {
         minimap->setTargetPass(vkCtx->getOverlayRenderPass(), VK_SAMPLE_COUNT_1_BIT);
@@ -4302,14 +4301,8 @@ void Renderer::renderMinimapOverlayInUiCallback(VkCommandBuffer cmd,
     renderMinimapOverlay(cmd, gameHandler);
 }
 
-bool Renderer::waterDrawsInContinuePass() const {
+bool Renderer::canRunContinuePass() const {
     if (!waterRenderer || !vkCtx) return false;
-    // Pre-WotLK (Classic/TBC) legacy water never samples SceneColor/SceneDepth
-    // refraction (water.frag.glsl returns early in legacyWmoMode > 0.5). Drawing
-    // it in the scene pass between opaque and blended world models composites
-    // waterfalls, fountains, translucent M2s, and particles cleanly over water
-    // at full MSAA instead of painting water on top of them in the 1x pass.
-    if (game::isPreWotlk()) return false;
     const bool msaaEnabled = vkCtx->getMsaaSamples() > VK_SAMPLE_COUNT_1_BIT;
     const bool offscreenScene =
         postProcessPipeline_ && postProcessPipeline_->getSceneFramebuffer() != VK_NULL_HANDLE;
@@ -4320,6 +4313,16 @@ bool Renderer::waterDrawsInContinuePass() const {
                                    offscreenScene,
                                    hasResolvedOffscreen,
                                    vkCtx->getSceneContinueRenderPass() != VK_NULL_HANDLE);
+}
+
+bool Renderer::waterDrawsInContinuePass() const {
+    // Pre-WotLK (Classic/TBC) legacy water never samples SceneColor/SceneDepth
+    // refraction (water.frag.glsl returns early in legacyWmoMode > 0.5). Drawing
+    // it in the scene pass between opaque and blended world models composites
+    // waterfalls, fountains, translucent M2s, and particles cleanly over water
+    // at full MSAA instead of painting water on top of them in the 1x pass.
+    if (game::isPreWotlk()) return false;
+    return canRunContinuePass();
 }
 
 // initPostProcess(), resizePostProcess(), shutdownPostProcess() removed -
@@ -4897,13 +4900,17 @@ void Renderer::setupWater1xPass() {
 void Renderer::refreshSwimEffectsPass() {
     if (!vkCtx) return;
     const bool sprayWasWithWater = swimEffectsDrawWithWater_;
+    const bool mistWasInContinue = mistDrawsInContinuePass_;
     syncSwimEffectsTargetPass();
-    const bool passChanged = swimEffectsDrawWithWater_ != sprayWasWithWater;
-    if (!passChanged) return;
+    const bool sprayChanged = swimEffectsDrawWithWater_ != sprayWasWithWater;
+    const bool mistChanged = mistDrawsInContinuePass_ != mistWasInContinue;
+    if (!sprayChanged && !mistChanged) return;
     vkDeviceWaitIdle(vkCtx->getDevice());
-    if (swimEffects) swimEffects->recreatePipelines();
-    if (weather && weather->isInitialized()) weather->recreateMistPipeline();
-    if (sandStorm && sandStorm->isInitialized()) sandStorm->recreateMistPipeline();
+    if (sprayChanged && swimEffects) swimEffects->recreatePipelines();
+    if (mistChanged) {
+        if (weather && weather->isInitialized()) weather->recreateMistPipeline();
+        if (sandStorm && sandStorm->isInitialized()) sandStorm->recreateMistPipeline();
+    }
 }
 
 // ========================= Multithreaded Secondary Command Buffers =========================

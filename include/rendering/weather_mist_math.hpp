@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cmath>
 
 namespace wowee::rendering {
 
@@ -20,6 +21,59 @@ inline constexpr float kMistMinSoftFadeRange = 1.5f;
 /// views, ~0.19 at 9 yd in immediate horizon foreground, 1.0 past 22 yd).
 inline constexpr float kMistNearEyeFadeStart = 4.0f;
 inline constexpr float kMistNearEyeFadeEnd = 22.0f;
+
+/// Planar view-space depth fade range (yards) so peripheral billboards fade
+/// smoothly to zero before their center crosses behind the camera plane during
+/// camera turns, eliminating hard view-plane pop-in/pop-out.
+inline constexpr float kMistViewDepthFadeStart = 1.0f;
+inline constexpr float kMistViewDepthFadeEnd = 8.0f;
+
+/// Horizontal radial fade margin (yards) at the rim of the yaw-invariant mist
+/// cylinder so puffs fade smoothly to zero before reaching the outer boundary.
+inline constexpr float kMistOuterFadeMargin = 16.0f;
+
+/// Native TBC 2.4.3 (build 8606) rain mist grade onset curve: light/moderate
+/// rain (grade <= 0.50) draws rain streaks without rolling mist puffs; heavier
+/// rain ramps mist smoothly to full intensity at grade 1.00.
+inline constexpr float kRainMistGradeStart = 0.50f;
+inline constexpr float kRainMistGradeFull = 1.00f;
+
+/// Radius (yards) of the yaw-invariant horizontal mist cylinder whose footprint
+/// area matches the configured slab width and along-wind span.
+[[nodiscard]] inline float mistCylinderRadius(float halfWidth, float nearDepth, float farDepth) {
+    assert(halfWidth > 0.0f && farDepth > nearDepth);
+    constexpr float kPi = 3.14159265358979323846f;
+    const float slabArea = (2.0f * halfWidth) * (farDepth - nearDepth);
+    return std::sqrt(slabArea / kPi);
+}
+
+/// Smooth alpha multiplier in [0, 1] fading a puff to zero as its horizontal
+/// distance from the camera approaches `outerRadius`.
+[[nodiscard]] inline float mistOuterRadiusFade(float horizDist, float outerRadius,
+                                               float margin = kMistOuterFadeMargin) {
+    assert(outerRadius > 0.0f && margin > 0.0f);
+    const float effMargin = std::min(margin, outerRadius);
+    const float t = std::clamp((outerRadius - horizDist) / effMargin, 0.0f, 1.0f);
+    return t * t * (3.0f - 2.0f * t);
+}
+
+/// Smooth alpha multiplier in [0, 1] fading a puff to zero before its center
+/// crosses the camera plane (`viewDepth <= kMistViewDepthFadeStart`).
+[[nodiscard]] inline float mistViewDepthFade(float viewDepth) {
+    const float t = std::clamp(
+        (viewDepth - kMistViewDepthFadeStart) / (kMistViewDepthFadeEnd - kMistViewDepthFadeStart),
+        0.0f, 1.0f);
+    return t * t * (3.0f - 2.0f * t);
+}
+
+/// Effective rain mist intensity in [0, 1] for a given weather `amount`,
+/// matching Native TBC 2.4.3's rain mist grade onset.
+[[nodiscard]] inline float rainMistAmount(float weatherAmount) {
+    const float t = std::clamp(
+        (weatherAmount - kRainMistGradeStart) / (kRainMistGradeFull - kRainMistGradeStart),
+        0.0f, 1.0f);
+    return t * t * (3.0f - 2.0f * t);
+}
 
 /// World-space maximum soft-particle fade distance (yards) for `puffSize`.
 [[nodiscard]] inline float mistSoftFadeRange(float puffSize) {

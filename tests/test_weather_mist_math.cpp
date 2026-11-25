@@ -7,13 +7,22 @@
 using wowee::rendering::canUseWaterContinuePass;
 using wowee::rendering::kMistNearEyeFadeEnd;
 using wowee::rendering::kMistNearEyeFadeStart;
+using wowee::rendering::kMistOuterFadeMargin;
 using wowee::rendering::kMistSoftFadeFactor;
+using wowee::rendering::kMistViewDepthFadeEnd;
+using wowee::rendering::kMistViewDepthFadeStart;
+using wowee::rendering::kRainMistGradeFull;
+using wowee::rendering::kRainMistGradeStart;
 using wowee::rendering::linearizeMistDepth;
+using wowee::rendering::mistCylinderRadius;
 using wowee::rendering::mistEffectiveSoftFadeRange;
 using wowee::rendering::mistNearCameraFade;
+using wowee::rendering::mistOuterRadiusFade;
 using wowee::rendering::mistSoftDepthFade;
 using wowee::rendering::mistSoftDepthFadeNdc;
 using wowee::rendering::mistSoftFadeRange;
+using wowee::rendering::mistViewDepthFade;
+using wowee::rendering::rainMistAmount;
 
 namespace {
 
@@ -138,4 +147,49 @@ TEST_CASE("mistNearCameraFade fades near lens by 3D eye distance without killing
     // Directly underneath a camera 14.5 yd above the player (horiz_dist = 0, dist3D = 14.5 yd): >60% mist.
     CHECK(mistNearCameraFade(14.5f) > 0.60f);
     CHECK(mistNearCameraFade(24.0f) == 1.0f);
+}
+
+TEST_CASE("mistCylinderRadius preserves horizontal slab footprint area", "[weather_mist]") {
+    constexpr float kPi = 3.14159265358979323846f;
+    const float r = mistCylinderRadius(65.0f, -28.0f, 110.0f);
+    CHECK(kPi * r * r == Catch::Approx(130.0f * 138.0f).epsilon(1e-4f));
+    CHECK(r > 70.0f);
+    CHECK(r < 85.0f);
+}
+
+TEST_CASE("mistOuterRadiusFade smoothly reaches zero at cylinder rim", "[weather_mist]") {
+    const float r = mistCylinderRadius(65.0f, -28.0f, 110.0f);
+    CHECK(mistOuterRadiusFade(0.0f, r) == 1.0f);
+    CHECK(mistOuterRadiusFade(r - kMistOuterFadeMargin, r) == 1.0f);
+    CHECK(mistOuterRadiusFade(r - 0.5f * kMistOuterFadeMargin, r) == Catch::Approx(0.5f));
+    CHECK(mistOuterRadiusFade(r, r) == 0.0f);
+    CHECK(mistOuterRadiusFade(r + 10.0f, r) == 0.0f);
+}
+
+TEST_CASE("mistViewDepthFade eliminates hard camera-plane pop on camera turns", "[weather_mist]") {
+    CHECK(mistViewDepthFade(-5.0f) == 0.0f);
+    CHECK(mistViewDepthFade(kMistViewDepthFadeStart) == 0.0f);
+    const float mid = 0.5f * (kMistViewDepthFadeStart + kMistViewDepthFadeEnd);
+    CHECK(mistViewDepthFade(mid) == Catch::Approx(0.5f));
+    CHECK(mistViewDepthFade(kMistViewDepthFadeEnd) == 1.0f);
+    // Steep downward view (-68 deg, 10 yd below eye => viewDepth ~9.3 yd) stays at full opacity.
+    CHECK(mistViewDepthFade(9.3f) == 1.0f);
+}
+
+TEST_CASE("rainMistAmount matches Native TBC 2.4.3 rain mist grade onset", "[weather_mist]") {
+    // Light/moderate rain (grade <= 0.50, including Karazhan 0.396) produces zero mist puffs.
+    CHECK(rainMistAmount(0.0f) == 0.0f);
+    CHECK(rainMistAmount(0.396f) == 0.0f);
+    CHECK(rainMistAmount(kRainMistGradeStart) == 0.0f);
+
+    // Heavier rain ramps smoothly to full mist at grade 1.00.
+    const float at06 = rainMistAmount(0.60f);
+    const float at07 = rainMistAmount(0.70f);
+    const float at085 = rainMistAmount(0.85f);
+    CHECK(at06 > 0.05f);
+    CHECK(at06 < 0.20f);
+    CHECK(at07 > at06);
+    CHECK(at085 > at07);
+    CHECK(rainMistAmount(kRainMistGradeFull) == 1.0f);
+    CHECK(rainMistAmount(1.5f) == 1.0f);
 }

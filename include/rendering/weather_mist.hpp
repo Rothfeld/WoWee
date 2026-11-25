@@ -82,6 +82,7 @@ public:
 private:
     struct Puff {
         glm::vec3 position; // camera-relative centre
+        glm::vec3 velocity; // horizontal drift velocity (yards/sec), fixed at spawn
         float age;
         float life;
         float size;         // quad edge, yards

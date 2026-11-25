@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cmath>
 #include <cstring>
 #include <random>
 
@@ -19,11 +20,6 @@ struct MistPush {
     glm::vec4 depthParams; // x = near, y = far, z = maxFadeRange (0 = disabled), w = depthFadeSlope
     glm::vec4 screenSize;  // xy = render target extent in pixels, z = minFadeRange, w = unused
 };
-
-float wrapSigned(float offset, float halfSpan) {
-    const float span = 2.0f * halfSpan;
-    return offset - span * std::floor((offset + halfSpan) / span);
-}
 
 std::mt19937& rng() {
     static std::mt19937 gen(std::random_device{}());
@@ -142,52 +138,50 @@ void WeatherMist::update(const Camera& camera, float deltaTime, float amount, co
     forward = glm::normalize(forward);
     const glm::vec3 right(forward.y, -forward.x, 0.0f);
 
-    const float spanAlong = shape.farDepth - shape.nearDepth;
-    const float pathTime = spanAlong / shape.speed;
+    const float outerRadius = mistCylinderRadius(shape.halfWidth, shape.nearDepth, shape.farDepth);
+    constexpr float kHalfPi = 1.57079632679489661923f;
+    // Mean chord length across a circle of radius R for uniform lateral spawns is (pi/2)*R.
+    const float meanLife = std::max(kHalfPi * outerRadius / shape.speed, 2.0f * shape.fade + 0.1f);
     const float targetCount = std::max(amount, 0.0f) * shape.puffsAtFull;
 
-    // Pre-populate the 3D volume around the camera when weather begins (matching
-    // rain and snow box population) so foreground and downward-pitched views have
-    // immediate mist coverage instead of waiting ~10 s for far puffs to walk in.
+    // Pre-populate the yaw-invariant 3D cylinder around the camera when weather
+    // begins so foreground and downward views have immediate mist coverage
+    // without waiting for upwind puffs to cross the volume.
     if (puffs_.empty() && targetCount >= 1.0f) {
+        constexpr float kTwoPi = 6.28318530717958647692f;
         const size_t initialCount = std::min<size_t>(
             kMaxPuffs, static_cast<size_t>(std::lround(targetCount)));
         for (size_t i = 0; i < initialCount; ++i) {
-            const float along = uniform(shape.nearDepth, shape.farDepth);
-            const glm::vec3 pos = forward * along +
-                                  right * uniform(-shape.halfWidth, shape.halfWidth) +
-                                  glm::vec3(0.0f, 0.0f, uniform(-shape.below, shape.above));
-            const float age = std::clamp((shape.farDepth - along) / shape.speed, 0.0f, pathTime);
-            puffs_.push_back({pos, age, pathTime, shape.size, shape.fade});
+            const float r = outerRadius * std::sqrt(uniform(0.0f, 1.0f));
+            const float theta = uniform(0.0f, kTwoPi);
+            const glm::vec3 pos(r * std::cos(theta), r * std::sin(theta),
+                                uniform(-shape.below, shape.above));
+            const float life = std::max(meanLife, 2.0f * shape.fade + 0.1f);
+            puffs_.push_back({pos, -forward * shape.speed, 0.0f, life, shape.size, shape.fade});
         }
     }
 
+    // Advance every puff along its own spawn-time drift velocity. No camera-yaw
+    // wrapping or forward-plane deletion occurs, so turning the camera never
+    // teleports or pops puffs in or out.
     for (Puff& p : puffs_) {
         p.age += deltaTime;
-        p.position -= forward * (shape.speed * deltaTime);
-        // Keep lateral & upwind coordinates inside the camera-centered slab when
-        // the player yaws the camera, without rigidly locking puffs to screen space.
-        const float along = glm::dot(p.position, forward);
-        const float across = glm::dot(p.position, right);
-        if (std::abs(across) > shape.halfWidth || along > shape.farDepth) {
-            const float wrappedAcross = wrapSigned(across, shape.halfWidth);
-            const float wrappedAlong = (along > shape.farDepth)
-                ? (shape.nearDepth + std::fmod(along - shape.nearDepth, spanAlong))
-                : along;
-            p.position = forward * wrappedAlong + right * wrappedAcross +
-                         glm::vec3(0.0f, 0.0f, p.position.z);
-        }
+        p.position += p.velocity * deltaTime;
     }
+    const float outerRadiusSq = outerRadius * outerRadius;
     std::erase_if(puffs_, [&](const Puff& p) {
-        return p.age >= p.life || glm::dot(p.position, forward) <= shape.nearDepth;
+        const float horizDistSq = p.position.x * p.position.x + p.position.y * p.position.y;
+        return p.age >= p.life || horizDistSq >= outerRadiusSq;
     });
 
-    budget_ += targetCount / pathTime * deltaTime;
+    budget_ += targetCount / meanLife * deltaTime;
     while (budget_ >= 1.0f && puffs_.size() < kMaxPuffs) {
-        const glm::vec3 pos = forward * shape.farDepth +
-                              right * uniform(-shape.halfWidth, shape.halfWidth) +
+        const float across = uniform(-outerRadius * 0.95f, outerRadius * 0.95f);
+        const float along = std::sqrt(std::max(outerRadiusSq - across * across, 0.0f)) * 0.98f;
+        const glm::vec3 pos = forward * along + right * across +
                               glm::vec3(0.0f, 0.0f, uniform(-shape.below, shape.above));
-        puffs_.push_back({pos, 0.0f, pathTime, shape.size, shape.fade});
+        const float life = std::max((2.0f * along) / shape.speed, 2.0f * shape.fade + 0.1f);
+        puffs_.push_back({pos, -forward * shape.speed, 0.0f, life, shape.size, shape.fade});
         budget_ -= 1.0f;
     }
     budget_ = std::min(budget_, 1.0f);
@@ -202,10 +196,14 @@ void WeatherMist::update(const Camera& camera, float deltaTime, float amount, co
     vertices_.clear();
     for (const Puff& p : puffs_) {
         const float viewDepth = glm::dot(p.position, camForward);
-        if (viewDepth <= 0.5f) continue;
+        if (viewDepth <= kMistViewDepthFadeStart) continue;
         const float lifeAlpha = glm::clamp(p.age / p.fade, 0.0f, 1.0f) *
                                 glm::clamp((p.life - p.age) / p.fade, 0.0f, 1.0f);
-        const float alpha = lifeAlpha * mistNearCameraFade(glm::length(p.position));
+        const float horizDist = std::hypot(p.position.x, p.position.y);
+        const float alpha = lifeAlpha *
+                            mistNearCameraFade(glm::length(p.position)) *
+                            mistViewDepthFade(viewDepth) *
+                            mistOuterRadiusFade(horizDist, outerRadius);
         if (alpha <= 0.0f) continue;
         const glm::vec3 c = p.position;
         const glm::vec3 r = camRight * (0.5f * p.size);
