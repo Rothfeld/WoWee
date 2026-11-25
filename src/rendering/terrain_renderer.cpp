@@ -238,9 +238,9 @@ bool TerrainRenderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameL
     unshadowedTexture->upload(*vkCtx, &unshadowedVal, 1, 1, VK_FORMAT_R8_UNORM, false);
     unshadowedTexture->createSampler(device, VK_FILTER_LINEAR, VK_FILTER_LINEAR,
                                       VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE);
-    textureCacheBudgetBytes_ =
-        envSizeMBOrDefault("WOWEE_TERRAIN_TEX_CACHE_MB", 4096) * 1024ull * 1024ull;
-    LOG_INFO("Terrain texture cache budget: ", textureCacheBudgetBytes_ / (1024 * 1024), " MB");
+    tilesetCache_.setBudgetBytes(
+        envSizeMBOrDefault("WOWEE_TERRAIN_TEX_CACHE_MB", 4096) * 1024ull * 1024ull);
+    LOG_INFO("Terrain texture cache budget: ", tilesetCache_.budgetBytes() / (1024 * 1024), " MB");
 
     // Allocate mega vertex/index buffers and indirect draw buffer.
     // All terrain chunks share these buffers, eliminating per-chunk VB/IB rebinds.
@@ -345,13 +345,9 @@ void TerrainRenderer::shutdown() {
     // index buffers outlived the device: twenty thousand of each.
     vkCtx->flushDeferredCleanup();
 
-    for (auto& [path, entry] : textureCache) {
-        if (entry.texture) entry.texture->destroy(device, allocator);
-    }
-    textureCache.clear();
-    textureCacheBytes_ = 0;
-    textureCacheCounter_ = 0;
-    failedTextureCache_.clear();
+    tilesetCache_.drain([&](TerrainTilesetTexture& tileset) {
+        if (tileset.texture) tileset.texture->destroy(device, allocator);
+    });
     loggedTextureLoadFails_.clear();
 
     if (whiteTexture) { whiteTexture->destroy(device, allocator); whiteTexture.reset(); }
@@ -388,7 +384,6 @@ bool TerrainRenderer::loadTerrain(const pipeline::TerrainMesh& mesh,
     }
     LOG_DEBUG("Loading terrain mesh: ", mesh.validChunkCount, " chunks");
 
-    evictProtectFrom_ = textureCacheCounter_ + 1;
     vkCtx->beginUploadBatch();
 
     for (int y = 0; y < 16; y++) {
@@ -446,10 +441,6 @@ bool TerrainRenderer::loadTerrainIncremental(const pipeline::TerrainMesh& mesh,
                                               int& chunkIndex, int maxChunksPerCall) {
     // Batch all GPU uploads (VBs, IBs, textures) into a single command buffer
     // submission with one fence wait, instead of one per buffer/texture.
-    // Nothing this call is handed can be evicted under it: the chunk being
-    // built is not in `chunks` yet, so the in-use scan cannot see its textures.
-    evictProtectFrom_ = textureCacheCounter_ + 1;
-
     vkCtx->beginUploadBatch();
 
     int uploaded = 0;
@@ -516,55 +507,59 @@ void TerrainRenderer::bindChunkTextures(TerrainChunkGPU& gpuChunk,
                                         const pipeline::ChunkMesh& chunk,
                                         const std::vector<std::string>& texturePaths,
                                         int tileX, int tileY, int chunkX, int chunkY) {
-    gpuChunk.shadowTexture = chunk.hasShadowMap
-        ? createShadowTexture(chunk.shadowMap)
-        : unshadowedTexture.get();
+    gpuChunk.shadowTexture = unshadowedTexture.get();
+    if (chunk.hasShadowMap) {
+        if (auto map = createShadowTexture(chunk.shadowMap)) {
+            gpuChunk.shadowTexture = map.get();
+            gpuChunk.ownedShadowMap = std::move(map);
+            ++liveChunkMaps_;
+        }
+    }
 
     if (chunk.layers.empty()) {
         gpuChunk.baseTexture = whiteTexture.get();
         return;
     }
 
-    gpuChunk.layerFlags[0] = chunk.layers[0].flags;
-    gpuChunk.layerSpecMask[0] = 0.0f;
-    uint32_t baseTexId = chunk.layers[0].textureId;
-    if (baseTexId < texturePaths.size()) {
-        bool hasSpec = false;
-        gpuChunk.baseTexture = loadTexture(texturePaths[baseTexId], &hasSpec);
-        gpuChunk.layerSpecMask[0] = hasSpec ? 1.0f : 0.0f;
-    } else {
-        LOG_WARNING("Terrain[", tileX, ",", tileY, "] chunk[", chunkX, ",", chunkY,
-                    "] base textureId ", baseTexId, " >= texturePaths size ",
-                    texturePaths.size(), " - white fallback");
-        gpuChunk.baseTexture = whiteTexture.get();
-    }
+    // Layer `slot`'s tileset texture, pinned for this chunk the moment the
+    // cache hands it over: loading the next layer may have to evict, and
+    // only a pin keeps what this chunk already holds out of that.
+    auto bindTileset = [&](size_t slot) -> VkTexture* {
+        const uint32_t textureId = chunk.layers[slot].textureId;
+        gpuChunk.layerFlags[slot] = chunk.layers[slot].flags;
+        gpuChunk.layerSpecMask[slot] = 0.0f;
+        if (textureId >= texturePaths.size()) {
+            LOG_WARNING("Terrain[", tileX, ",", tileY, "] chunk[", chunkX, ",", chunkY,
+                        "] layer[", slot, "] textureId ", textureId,
+                        " >= texturePaths size ", texturePaths.size(),
+                        " - white fallback");
+            return whiteTexture.get();
+        }
+        TerrainTilesetCache::Entry* entry = loadTexture(texturePaths[textureId]);
+        if (!entry) return whiteTexture.get();
+        tilesetCache_.pin(*entry);
+        gpuChunk.tilesetPins[slot] = entry;
+        gpuChunk.layerSpecMask[slot] = entry->value.hasSpecularAlpha ? 1.0f : 0.0f;
+        return entry->value.texture.get();
+    };
+
+    gpuChunk.baseTexture = bindTileset(0);
 
     // Layer 0 is the base, so the three blended layers are 1..3.
     for (size_t i = 1; i < chunk.layers.size() && i < 4; i++) {
         const auto& layer = chunk.layers[i];
         int li = static_cast<int>(i) - 1;
-        gpuChunk.layerFlags[i] = layer.flags;
-        gpuChunk.layerSpecMask[i] = 0.0f;
-
-        VkTexture* layerTex = whiteTexture.get();
-        if (layer.textureId < texturePaths.size()) {
-            bool hasSpec = false;
-            layerTex = loadTexture(texturePaths[layer.textureId], &hasSpec);
-            gpuChunk.layerSpecMask[i] = hasSpec ? 1.0f : 0.0f;
-        } else {
-            LOG_WARNING("Terrain[", tileX, ",", tileY, "] chunk[", chunkX, ",", chunkY,
-                        "] layer[", i, "] textureId ", layer.textureId,
-                        " >= texturePaths size ", texturePaths.size(),
-                        " - white fallback");
-        }
-        gpuChunk.layerTextures[li] = layerTex;
+        gpuChunk.layerTextures[li] = bindTileset(i);
 
         // A layer with no alpha map covers everything under it.
-        VkTexture* alphaTex = opaqueAlphaTexture.get();
+        gpuChunk.alphaTextures[li] = opaqueAlphaTexture.get();
         if (!layer.alphaData.empty()) {
-            alphaTex = createAlphaTexture(layer.alphaData);
+            if (auto map = createAlphaTexture(layer.alphaData)) {
+                gpuChunk.alphaTextures[li] = map.get();
+                gpuChunk.ownedAlphaMaps[li] = std::move(map);
+                ++liveChunkMaps_;
+            }
         }
-        gpuChunk.alphaTextures[li] = alphaTex;
         gpuChunk.layerCount = static_cast<int>(i);
     }
 }
@@ -662,85 +657,55 @@ TerrainChunkGPU TerrainRenderer::uploadChunk(const pipeline::ChunkMesh& chunk) {
 
 TerrainRenderer::TextureCacheStats TerrainRenderer::getTextureCacheStats() const {
     TextureCacheStats stats;
-    stats.entries = textureCache.size();
-    for (const auto& [key, entry] : textureCache) {
-        if (key.starts_with("__alpha_") || key.starts_with("__mcsh_")) ++stats.chunkMaps;
-    }
-    stats.accountedBytes = textureCacheBytes_;
-    stats.budgetBytes = textureCacheBudgetBytes_;
+    stats.entries = tilesetCache_.size();
+    stats.pinnedEntries = tilesetCache_.pinnedEntries();
+    stats.accountedBytes = tilesetCache_.bytes();
+    stats.budgetBytes = tilesetCache_.budgetBytes();
     stats.chunks = chunks.size();
+    stats.chunkMaps = liveChunkMaps_;
     return stats;
 }
 
 bool TerrainRenderer::evictTexturesFor(size_t needBytes) {
-    if (textureCacheBytes_ + needBytes <= textureCacheBudgetBytes_) return true;
     if (!vkCtx) return false;
 
-    // What the live chunks are holding. These are raw pointers into the cache
-    // and each chunk's material descriptor set names the image directly, so
-    // freeing one out from under a chunk is a use-after-free on the GPU.
-    std::unordered_set<const VkTexture*> inUse;
-    inUse.reserve(chunks.size() * 4);
-    for (const auto& c : chunks) {
-        if (c.baseTexture) inUse.insert(c.baseTexture);
-        for (VkTexture* t : c.layerTextures) if (t) inUse.insert(t);
-        for (VkTexture* t : c.alphaTextures) if (t) inUse.insert(t);
-        if (c.shadowTexture) inUse.insert(c.shadowTexture);
-    }
+    std::vector<TerrainTilesetTexture> evicted;
+    const size_t bytesBefore = tilesetCache_.bytes();
+    const bool fits = tilesetCache_.makeRoom(needBytes, evicted);
 
-    std::vector<std::pair<uint64_t, std::string>> candidates;
-    candidates.reserve(textureCache.size());
-    for (const auto& [key, entry] : textureCache) {
-        if (entry.lastUse >= evictProtectFrom_) continue;
-        if (inUse.count(entry.texture.get()) != 0) continue;
-        candidates.emplace_back(entry.lastUse, key);
-    }
-    std::sort(candidates.begin(), candidates.end(),
-              [](const auto& a, const auto& b) { return a.first < b.first; });
-
-    std::vector<VkTexture*> retired;
-    size_t freedBytes = 0;
-    for (const auto& [lastUse, key] : candidates) {
-        if (textureCacheBytes_ + needBytes <= textureCacheBudgetBytes_) break;
-        auto it = textureCache.find(key);
-        if (it == textureCache.end()) continue;
-        textureCacheBytes_ -= it->second.approxBytes;
-        freedBytes += it->second.approxBytes;
-        retired.push_back(it->second.texture.release());
-        textureCache.erase(it);
-    }
-
-    if (!retired.empty()) {
-        VkDevice device = vkCtx->getDevice();
-        VmaAllocator allocator = vkCtx->getAllocator();
-        vkCtx->deferAfterAllFrameFences([device, allocator, retired]() {
-            for (VkTexture* tex : retired) {
-                tex->destroy(device, allocator);
-                delete tex;
-            }
-        });
-        // The first one at warning, because until now this never happened: the
-        // cache only grew, and the ground going white on a distant continent
-        // was the first anyone heard of it. After that it is routine.
+    if (!evicted.empty()) {
+        const size_t freedBytes = bytesBefore - tilesetCache_.bytes();
+        // The first one at warning, because it means the tileset textures of
+        // the places visited this session passed the budget. After that it is
+        // routine.
         static bool saidFirstEviction = false;
         if (!saidFirstEviction) {
             saidFirstEviction = true;
             LOG_WARNING("Terrain texture cache reached its ",
-                        textureCacheBudgetBytes_ / (1024 * 1024),
-                        " MB budget and is now evicting - freed ", retired.size(),
+                        tilesetCache_.budgetBytes() / (1024 * 1024),
+                        " MB budget and is now evicting - freed ", evicted.size(),
                         " textures, ", freedBytes / (1024 * 1024), " MB");
         }
-        LOG_DEBUG("Terrain texture cache: evicted ", retired.size(), " textures (",
+        LOG_DEBUG("Terrain texture cache: evicted ", evicted.size(), " textures (",
                   freedBytes / (1024 * 1024), " MB), now ",
-                  textureCacheBytes_ / (1024 * 1024), " MB of ",
-                  textureCacheBudgetBytes_ / (1024 * 1024), " MB");
+                  tilesetCache_.bytes() / (1024 * 1024), " MB of ",
+                  tilesetCache_.budgetBytes() / (1024 * 1024), " MB");
+
+        VkDevice device = vkCtx->getDevice();
+        VmaAllocator allocator = vkCtx->getAllocator();
+        auto retired = std::make_shared<std::vector<TerrainTilesetTexture>>(std::move(evicted));
+        vkCtx->deferAfterAllFrameFences([device, allocator, retired]() {
+            for (auto& tileset : *retired) {
+                if (tileset.texture) tileset.texture->destroy(device, allocator);
+            }
+            retired->clear();
+        });
     }
 
-    return textureCacheBytes_ + needBytes <= textureCacheBudgetBytes_;
+    return fits;
 }
 
-VkTexture* TerrainRenderer::loadTexture(const std::string& path, bool* outHasSpecAlpha) {
-    if (outHasSpecAlpha) *outHasSpecAlpha = false;
+TerrainTilesetCache::Entry* TerrainRenderer::loadTexture(const std::string& path) {
     auto normalizeKey = [](std::string key) {
         std::replace(key.begin(), key.end(), '/', '\\');
         std::transform(key.begin(), key.end(), key.begin(),
@@ -749,12 +714,7 @@ VkTexture* TerrainRenderer::loadTexture(const std::string& path, bool* outHasSpe
     };
     std::string key = normalizeKey(path);
 
-    auto it = textureCache.find(key);
-    if (it != textureCache.end()) {
-        it->second.lastUse = ++textureCacheCounter_;
-        if (outHasSpecAlpha) *outHasSpecAlpha = it->second.hasSpecularAlpha;
-        return it->second.texture.get();
-    }
+    if (TerrainTilesetCache::Entry* cached = tilesetCache_.find(key)) return cached;
 
     // In TBC 2.4.3 (terrain1_s..terrain3_s.bls), tileset textures that ship a
     // companion <stem>_s.blp store identical diffuse RGB plus an 8-bit specular
@@ -776,49 +736,38 @@ VkTexture* TerrainRenderer::loadTexture(const std::string& path, bool* outHasSpe
         blp = assetManager->loadTexture(key, true);
     }
     if (!blp.isValid()) {
-        // Return white fallback but don't cache the failure - allow retry
-        // on next tile load in case the asset becomes available.
+        // Not cached as a failure: the next tile asks again, in case the
+        // asset has become available.
         if (loggedTextureLoadFails_.insert(key).second) {
             LOG_WARNING("Failed to load texture: ", path);
         }
-        return whiteTexture.get();
+        return nullptr;
     }
 
     const size_t approxBytes = blp.approxUploadBytes();
     if (!evictTexturesFor(approxBytes)) {
-        // Everything in the cache is under a live chunk, so there is nothing
-        // to give back. White ground is what this looks like, and it used to
-        // be permanent: the cache only ever grew, so the first tile to fill it
-        // condemned every tile after it, and the complaint stopped after three
-        // lines. Said once per texture now, because it is no longer a state
-        // the client cannot leave.
+        // Every texture in the cache is pinned by a live chunk, so there is
+        // nothing to give back. White ground is what this looks like; it ends
+        // when chunks unload and release their pins. Said once per texture.
         if (loggedTextureLoadFails_.insert("budget:" + key).second) {
-            LOG_WARNING("Terrain texture cache full (", textureCacheBytes_ / (1024 * 1024),
-                        " MB / ", textureCacheBudgetBytes_ / (1024 * 1024),
+            LOG_WARNING("Terrain texture cache full (", tilesetCache_.bytes() / (1024 * 1024),
+                        " MB / ", tilesetCache_.budgetBytes() / (1024 * 1024),
                         " MB) and nothing in it is evictable - white ground for: ", path);
         }
-        return whiteTexture.get();
+        return nullptr;
     }
 
-    auto tex = std::make_unique<VkTexture>();
-    if (!tex->uploadBLP(*vkCtx, blp)) {
+    TerrainTilesetTexture tileset;
+    tileset.texture = std::make_unique<VkTexture>();
+    if (!tileset.texture->uploadBLP(*vkCtx, blp)) {
         LOG_WARNING("Failed to upload texture to GPU: ", path);
-        return whiteTexture.get();
+        return nullptr;
     }
-    tex->createSampler(vkCtx->getDevice(), VK_FILTER_LINEAR, VK_FILTER_LINEAR,
-                        VK_SAMPLER_ADDRESS_MODE_REPEAT);
+    tileset.texture->createSampler(vkCtx->getDevice(), VK_FILTER_LINEAR, VK_FILTER_LINEAR,
+                                   VK_SAMPLER_ADDRESS_MODE_REPEAT);
+    tileset.hasSpecularAlpha = loadedSpecVariant;
 
-    VkTexture* raw = tex.get();
-    TextureCacheEntry e;
-    e.texture = std::move(tex);
-    e.approxBytes = approxBytes;
-    e.lastUse = ++textureCacheCounter_;
-    e.hasSpecularAlpha = loadedSpecVariant;
-    if (outHasSpecAlpha) *outHasSpecAlpha = loadedSpecVariant;
-    textureCacheBytes_ += e.approxBytes;
-    textureCache[key] = std::move(e);
-
-    return raw;
+    return &tilesetCache_.insert(std::move(key), std::move(tileset), approxBytes);
 }
 
 void TerrainRenderer::uploadPreloadedTextures(
@@ -842,13 +791,12 @@ void TerrainRenderer::uploadPreloadedTextures(
     }
 
     // Batch all texture uploads into a single command buffer submission
-    evictProtectFrom_ = textureCacheCounter_ + 1;
     vkCtx->beginUploadBatch();
 
     for (const auto& [path, baseBlp] : textures) {
         std::string key = normalizeKey(path);
         if (useSpecVariants && key.ends_with("_s.blp")) continue;
-        if (textureCache.find(key) != textureCache.end()) continue;
+        if (tilesetCache_.contains(key)) continue;
 
         const pipeline::BLPImage* chosen = &baseBlp;
         bool hasSpec = false;
@@ -861,31 +809,22 @@ void TerrainRenderer::uploadPreloadedTextures(
         }
         if (!chosen->isValid()) continue;
 
-        // This path added to the cache without consulting the budget at all,
-        // so the preload for one tile could carry it past the limit and the
-        // next loadTexture would find no room.
-        if (!evictTexturesFor(chosen->approxUploadBytes())) continue;
+        const size_t approxBytes = chosen->approxUploadBytes();
+        if (!evictTexturesFor(approxBytes)) continue;
 
-        auto tex = std::make_unique<VkTexture>();
-        if (!tex->uploadBLP(*vkCtx, *chosen)) continue;
-        tex->createSampler(vkCtx->getDevice(), VK_FILTER_LINEAR, VK_FILTER_LINEAR,
-                            VK_SAMPLER_ADDRESS_MODE_REPEAT);
-
-        TextureCacheEntry e;
-        e.texture = std::move(tex);
-        e.approxBytes = chosen->approxUploadBytes();
-        e.lastUse = ++textureCacheCounter_;
-        e.hasSpecularAlpha = hasSpec;
-        textureCacheBytes_ += e.approxBytes;
-        textureCache[key] = std::move(e);
+        TerrainTilesetTexture tileset;
+        tileset.texture = std::make_unique<VkTexture>();
+        if (!tileset.texture->uploadBLP(*vkCtx, *chosen)) continue;
+        tileset.texture->createSampler(vkCtx->getDevice(), VK_FILTER_LINEAR, VK_FILTER_LINEAR,
+                                       VK_SAMPLER_ADDRESS_MODE_REPEAT);
+        tileset.hasSpecularAlpha = hasSpec;
+        tilesetCache_.insert(std::move(key), std::move(tileset), approxBytes);
     }
 
     vkCtx->endUploadBatch();
 }
 
-VkTexture* TerrainRenderer::createAlphaTexture(const std::vector<uint8_t>& alphaData) {
-    if (alphaData.empty()) return opaqueAlphaTexture.get();
-
+std::unique_ptr<VkTexture> TerrainRenderer::createAlphaTexture(const std::vector<uint8_t>& alphaData) {
     std::vector<uint8_t> expanded;
     const uint8_t* src = alphaData.data();
     if (alphaData.size() < 4096) {
@@ -896,56 +835,23 @@ VkTexture* TerrainRenderer::createAlphaTexture(const std::vector<uint8_t>& alpha
 
     auto tex = std::make_unique<VkTexture>();
     if (!tex->upload(*vkCtx, src, 64, 64, VK_FORMAT_R8_UNORM, false)) {
-        return opaqueAlphaTexture.get();
+        return nullptr;
     }
     tex->createSampler(vkCtx->getDevice(), VK_FILTER_LINEAR, VK_FILTER_LINEAR,
                         VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, 1.0f);
-
-    VkTexture* raw = tex.get();
-    // One per chunk layer, under a key nothing ever looks up again, so these
-    // are dead the moment their chunk is unloaded - and nothing freed them.
-    // ownedAlphaTextures was meant to, and was never filled. Eviction is what
-    // collects them now, which is why they are counted against the budget
-    // rather than added to it in silence.
-    //
-    // Not refused when the cache is full, unlike a tileset texture: 4KB is
-    // never what filled it, and a chunk without its alpha map draws its top
-    // layer over everything below.
-    evictTexturesFor(64 * 64);
-    static uint64_t alphaCounter = 0;
-    std::string key = "__alpha_" + std::to_string(++alphaCounter);
-    TextureCacheEntry e;
-    e.texture = std::move(tex);
-    e.approxBytes = 64 * 64;
-    e.lastUse = ++textureCacheCounter_;
-    textureCacheBytes_ += e.approxBytes;
-    textureCache[key] = std::move(e);
-
-    return raw;
+    return tex;
 }
 
-VkTexture* TerrainRenderer::createShadowTexture(const std::array<uint8_t, 512>& shadowMap) {
+std::unique_ptr<VkTexture> TerrainRenderer::createShadowTexture(const std::array<uint8_t, 512>& shadowMap) {
     const auto unpacked = pipeline::softenMcshShadowMap(pipeline::unpackMcshShadowMap(shadowMap));
 
     auto tex = std::make_unique<VkTexture>();
     if (!tex->upload(*vkCtx, unpacked.data(), 64, 64, VK_FORMAT_R8_UNORM, false)) {
-        return unshadowedTexture.get();
+        return nullptr;
     }
     tex->createSampler(vkCtx->getDevice(), VK_FILTER_LINEAR, VK_FILTER_LINEAR,
                         VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, 1.0f);
-
-    VkTexture* raw = tex.get();
-    evictTexturesFor(64 * 64);
-    static uint64_t mcshCounter = 0;
-    std::string key = "__mcsh_" + std::to_string(++mcshCounter);
-    TextureCacheEntry e;
-    e.texture = std::move(tex);
-    e.approxBytes = 64 * 64;
-    e.lastUse = ++textureCacheCounter_;
-    textureCacheBytes_ += e.approxBytes;
-    textureCache[key] = std::move(e);
-
-    return raw;
+    return tex;
 }
 
 VkDescriptorSet TerrainRenderer::allocateMaterialSet() {
@@ -1333,9 +1239,6 @@ void TerrainRenderer::clear() {
     }
     chunks.clear();
     renderedChunks = 0;
-    // No chunk is holding anything now, so nothing needs protecting from the
-    // next upload's point of view either.
-    evictProtectFrom_ = 0;
 }
 
 void TerrainRenderer::registerRtChunk(TerrainChunkGPU& gpuChunk, const pipeline::ChunkMesh& chunk) {
@@ -1389,11 +1292,22 @@ void TerrainRenderer::destroyChunkGPU(TerrainChunkGPU& chunk) {
     VkDescriptorPool pool = materialDescPool;
     VkDescriptorSet materialSet = chunk.materialSet;
 
-    // The per-chunk alpha maps are not freed here. They live in the texture
-    // cache like everything else - createAlphaTexture puts them there - and
-    // the eviction pass collects them once no chunk points at them. The vector
-    // that used to be released here was never filled by anything, so this loop
-    // had been freeing nothing for as long as it existed.
+    // The shared tileset textures go back to the cache's keeping: unpinned,
+    // they stay cached for the next chunk that asks and become evictable.
+    for (TerrainTilesetCache::Entry*& pin : chunk.tilesetPins) {
+        if (pin) tilesetCache_.unpin(*pin);
+        pin = nullptr;
+    }
+
+    // The chunk's own alpha and shadow maps die with it. They are named by
+    // the material set like the buffers below, so they wait for the same
+    // fences. shared_ptr because std::function wants a copyable lambda.
+    auto ownedMaps = std::make_shared<std::vector<std::unique_ptr<VkTexture>>>();
+    for (auto& map : chunk.ownedAlphaMaps) {
+        if (map) ownedMaps->push_back(std::move(map));
+    }
+    if (chunk.ownedShadowMap) ownedMaps->push_back(std::move(chunk.ownedShadowMap));
+    liveChunkMaps_ -= ownedMaps->size();
 
     chunk.vertexBuffer = VK_NULL_HANDLE;
     chunk.vertexAlloc = VK_NULL_HANDLE;
@@ -1405,9 +1319,12 @@ void TerrainRenderer::destroyChunkGPU(TerrainChunkGPU& chunk) {
     chunk.baseTexture = nullptr;
     for (VkTexture*& t : chunk.layerTextures) t = nullptr;
     for (VkTexture*& t : chunk.alphaTextures) t = nullptr;
+    chunk.shadowTexture = nullptr;
 
     vkCtx->deferAfterAllFrameFences([device, allocator, vertexBuffer, vertexAlloc, indexBuffer, indexAlloc,
-                                     paramsUBO, paramsAlloc, pool, materialSet]() {
+                                     paramsUBO, paramsAlloc, pool, materialSet, ownedMaps]() {
+        for (auto& map : *ownedMaps) map->destroy(device, allocator);
+        ownedMaps->clear();
         if (vertexBuffer) {
             AllocatedBuffer ab{}; ab.buffer = vertexBuffer; ab.allocation = vertexAlloc;
             destroyBuffer(allocator, ab);

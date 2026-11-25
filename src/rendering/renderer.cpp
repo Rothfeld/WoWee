@@ -2460,10 +2460,11 @@ void Renderer::update(float deltaTime) {
                 }
                 LOG_INFO("MEMORY_TRACE {\"terrain_ms\":", terrMs,
                          ",\"cache_entries\":", cache.entries,
-                         ",\"cache_chunk_maps\":", cache.chunkMaps,
+                         ",\"cache_pinned\":", cache.pinnedEntries,
                          ",\"cache_bytes\":", cache.accountedBytes,
                          ",\"cache_budget_bytes\":", cache.budgetBytes,
                          ",\"terrain_chunks\":", cache.chunks,
+                         ",\"chunk_maps\":", cache.chunkMaps,
                          ",\"vma_allocations\":", allocations,
                          ",\"vma_allocation_bytes\":", allocationBytes,
                          ",\"vma_blocks\":", blocks,

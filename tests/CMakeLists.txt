@@ -2431,6 +2431,13 @@ wowee_add_test(test_m2_classifier_foliage
 wowee_add_test(test_terrain_slope_limit
     SOURCES test_terrain_slope_limit.cpp)
 
+# ── test_pinned_lru_cache ───────────────────────────────────
+# The terrain tileset texture cache's rule: pinned entries stay, the least
+# recently used unpinned ones go first, and only what is cached is counted.
+# Header-only, so it needs no Vulkan.
+wowee_add_test(test_pinned_lru_cache
+    SOURCES test_pinned_lru_cache.cpp)
+
 # ── test_particle_density_floor ─────────────────────────────
 # Particle density against the floor that holds a flame together. Applying
 # the setting after the floor instead of before it takes every candle in the

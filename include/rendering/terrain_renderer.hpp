@@ -8,6 +8,8 @@
 #include "pipeline/terrain_mesh.hpp"
 #include "pipeline/blp_loader.hpp"
 #include "rendering/camera.hpp"
+#include "rendering/pinned_lru_cache.hpp"
+#include "rendering/vk_texture.hpp"
 #include <vulkan/vulkan.h>
 #include <vk_mem_alloc.h>
 #include <glm/glm.hpp>
@@ -25,9 +27,17 @@ namespace pipeline { class AssetManager; }
 namespace rendering {
 
 class VkContext;
-class VkTexture;
 class Frustum;
 class RtScene;
+
+/// A tileset texture as the terrain texture cache holds it.
+struct TerrainTilesetTexture {
+    std::unique_ptr<VkTexture> texture;
+    bool hasSpecularAlpha = false;
+};
+/// Tileset textures by normalized path (tileset\elwynn\elwynngrassbase.blp),
+/// pinned by the chunks that draw with them.
+using TerrainTilesetCache = PinnedLruCache<std::string, TerrainTilesetTexture>;
 
 /**
  * GPU-side terrain chunk data (Vulkan)
@@ -46,11 +56,22 @@ struct TerrainChunkGPU {
     ::VkBuffer paramsUBO = VK_NULL_HANDLE;
     VmaAllocation paramsAlloc = VK_NULL_HANDLE;
 
-    // Texture handles (owned by cache, NOT destroyed per-chunk)
+    // What the material descriptor set samples. Each points at a shared
+    // tileset texture (pinned below), at one of this chunk's own maps (owned
+    // below) or at one of the renderer's 1x1 fallbacks.
     VkTexture* baseTexture = nullptr;
     VkTexture* layerTextures[3] = {nullptr, nullptr, nullptr};
     VkTexture* alphaTextures[3] = {nullptr, nullptr, nullptr};
     VkTexture* shadowTexture = nullptr;
+    // The cache entries behind baseTexture and layerTextures, each holding one
+    // pin of this chunk's; null where the fallback is bound. Released in
+    // TerrainRenderer::destroyChunkGPU.
+    TerrainTilesetCache::Entry* tilesetPins[4] = {nullptr, nullptr, nullptr, nullptr};
+    // This chunk's own 64x64 maps: the alpha maps of layers 1..3 and the baked
+    // shadow map. Nothing else can use them, so they live and die with the
+    // chunk (destroyChunkGPU) and are not in the texture cache.
+    std::unique_ptr<VkTexture> ownedAlphaMaps[3];
+    std::unique_ptr<VkTexture> ownedShadowMap;
     int layerCount = 0;
     bool bigAlpha = false;
     uint32_t layerFlags[4] = {0, 0, 0, 0};
@@ -174,11 +195,12 @@ public:
     /// with the allocator's figures so a run can tell cache growth from other
     /// growth.
     struct TextureCacheStats {
-        size_t entries = 0;        ///< Everything in the cache.
-        size_t chunkMaps = 0;      ///< Of those, per-chunk alpha and shadow maps.
+        size_t entries = 0;        ///< Tileset textures in the cache.
+        size_t pinnedEntries = 0;  ///< Of those, held by at least one live chunk.
         size_t accountedBytes = 0; ///< What the budget is compared against.
         size_t budgetBytes = 0;
         size_t chunks = 0;         ///< Live terrain chunks.
+        size_t chunkMaps = 0;      ///< Alpha and shadow maps those chunks own (not in the cache).
     };
     [[nodiscard]] TextureCacheStats getTextureCacheStats() const;
 
@@ -187,9 +209,14 @@ public:
 
 private:
     TerrainChunkGPU uploadChunk(const pipeline::ChunkMesh& chunk);
-    VkTexture* loadTexture(const std::string& path, bool* outHasSpecAlpha = nullptr);
-    VkTexture* createAlphaTexture(const std::vector<uint8_t>& alphaData);
-    VkTexture* createShadowTexture(const std::array<uint8_t, 512>& shadowMap);
+    /// The cache entry for a tileset texture, loading it if need be. Null
+    /// when the file cannot be loaded or uploaded, or the cache is full of
+    /// pinned textures; the caller binds the white fallback then.
+    TerrainTilesetCache::Entry* loadTexture(const std::string& path);
+    /// A chunk's own alpha or shadow map. Null when the upload fails; the
+    /// caller binds the fallback then.
+    std::unique_ptr<VkTexture> createAlphaTexture(const std::vector<uint8_t>& alphaData);
+    std::unique_ptr<VkTexture> createShadowTexture(const std::array<uint8_t, 512>& shadowMap);
     bool isChunkVisible(const TerrainChunkGPU& chunk, const Frustum& frustum);
     void calculateBoundingSphere(TerrainChunkGPU& chunk, const pipeline::ChunkMesh& meshChunk);
     VkDescriptorSet allocateMaterialSet();
@@ -245,34 +272,19 @@ private:
     // Loaded terrain chunks
     std::vector<TerrainChunkGPU> chunks;
 
-    // Texture cache (path -> VkTexture)
-    struct TextureCacheEntry {
-        std::unique_ptr<VkTexture> texture;
-        size_t approxBytes = 0;
-        uint64_t lastUse = 0;
-        bool hasSpecularAlpha = false;
-    };
-    std::unordered_map<std::string, TextureCacheEntry> textureCache;
-    size_t textureCacheBytes_ = 0;
-    uint64_t textureCacheCounter_ = 0;
-    size_t textureCacheBudgetBytes_ = 4096ull * 1024 * 1024;
-    std::unordered_set<std::string> failedTextureCache_;
+    // Shared tileset textures. Chunks pin what they draw with; the per-chunk
+    // alpha and shadow maps are owned by their chunk and are not in here.
+    TerrainTilesetCache tilesetCache_;
     std::unordered_set<std::string> loggedTextureLoadFails_;
-    /// Cache entries handed out at or after this counter are never evicted.
-    ///
-    /// A chunk under construction is not in `chunks` yet, so the scan for what
-    /// is in use cannot see the textures it has already been given. Raised to
-    /// the counter at the start of every upload call, which puts everything
-    /// this tile has taken out of reach until the chunk holding it lands.
-    uint64_t evictProtectFrom_ = 0;
+    size_t liveChunkMaps_ = 0;
 
-    /// Free least-recently-used cached textures until `needBytes` fits.
+    /// Evict least-recently-used unpinned tileset textures until `needBytes`
+    /// fits. Returns whether there is now room.
     ///
-    /// Returns whether there is now room. Only textures no live chunk points
-    /// at are freed, and they go through the frame fences rather than being
-    /// destroyed on the spot: a chunk's material descriptor set names the
-    /// image, so one still being drawn from must outlive the frame that
-    /// referenced it.
+    /// Evicted textures go through the frame fences rather than being
+    /// destroyed on the spot: the chunk that unpinned one may have been
+    /// removed this very frame, with its material descriptor set still named
+    /// by a command buffer in flight.
     bool evictTexturesFor(size_t needBytes);
 
     // Fallback textures
