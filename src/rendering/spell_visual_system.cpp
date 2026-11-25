@@ -23,7 +23,9 @@
 #include "audio/audio_engine.hpp"
 #include "audio/sound_entries.hpp"
 #include "core/application.hpp"
+#include "core/entity_spawner.hpp"
 #include "core/helm_visual.hpp"
+#include "game/game_handler.hpp"
 #include "core/logger.hpp"
 #include <algorithm>
 #include <cmath>
@@ -616,8 +618,17 @@ uint32_t SpellVisualSystem::playSoundEntry(uint32_t soundId, const glm::vec3& wo
     }
     if (sfxScale <= 0.0f) return 0;
 
-    const bool isLocalPlayer = renderer_ && attachInstanceId != 0 &&
-                               attachInstanceId == renderer_->getCharacterInstanceId();
+    bool isLocalPlayer = renderer_ && attachInstanceId != 0 &&
+                         attachInstanceId == renderer_->getCharacterInstanceId();
+    if (!isLocalPlayer && attachInstanceId != 0 && core::Application::hasInstance()) {
+        auto& app = core::Application::getInstance();
+        if (auto* gh = app.getGameHandler(); gh && gh->getPlayerGuid() != 0) {
+            if (auto* spawner = app.getEntitySpawner()) {
+                const uint32_t drawnSelf = spawner->drawnInstanceIdForGuid(gh->getPlayerGuid());
+                isLocalPlayer = (drawnSelf != 0 && attachInstanceId == drawnSelf);
+            }
+        }
+    }
     auto& table = audio::SoundEntryTable::instance();
     if (isLocalPlayer) {
         if (listenerAtChar) {

@@ -153,6 +153,17 @@ bool FootstepManager::playArmorFoley(uint32_t materialId, const glm::vec3& posit
     return playSoundSpatialOrSelf(soundId, position, isLocalPlayer, listenerAtCharacter);
 }
 
+bool FootstepManager::playCreatureWingSound(uint32_t displayId, bool glide, const glm::vec3& position,
+                                            bool isLocalPlayer, bool listenerAtCharacter) {
+    if (!sounds_ || !assetManager || !AudioEngine::instance().isInitialized() || displayId == 0) return false;
+    const uint32_t soundDataId = sounds_->soundDataForDisplay(displayId);
+    if (soundDataId == 0) return false;
+    const uint32_t soundId = sounds_->sound(
+        soundDataId, glide ? CreatureSoundColumn::WingGlide : CreatureSoundColumn::WingFlap);
+    if (soundId == 0) return false;
+    return playSoundSpatialOrSelf(soundId, position, isLocalPlayer, listenerAtCharacter);
+}
+
 bool FootstepManager::playUnitM2Event(pipeline::M2AudioEventType type, uint32_t eventData,
                                       uint32_t displayId, uint32_t terrainTypeId, bool wadingOrInWater,
                                       bool bareFeet, uint32_t armorMaterialId, const glm::vec3& position,

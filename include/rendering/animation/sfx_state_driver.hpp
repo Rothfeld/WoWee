@@ -29,6 +29,7 @@ private:
     bool prevJumping_ = false;
     bool prevFalling_ = false;
     bool prevSwimming_ = false;
+    bool prevFlightAirborne_ = false;
 
     // Seconds since the character last left the water. Climbing out is not a
     // jump and not a landing, but the vertical state passes through both on the

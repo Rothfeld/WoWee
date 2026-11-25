@@ -26,6 +26,7 @@
 #include "rendering/spell_visual_system.hpp"
 #include "game/world_packets.hpp"
 #include "audio/audio_coordinator.hpp"
+#include "audio/sound_entries.hpp"
 #include "audio/spell_sound_manager.hpp"
 #include "audio/combat_sound_manager.hpp"
 #include "core/application.hpp"
@@ -3790,9 +3791,9 @@ void SpellHandler::handleCastFailed(network::Packet& packet) {
     if (gatherCast && shouldDespawnGatherTarget(data.result)) {
         owner_.despawnGameObjectLocally(gatherGoGuid);
     }
-    if (const std::string errMsg = castFailureText(owner_, data.spellId, data.result,
-                                                      data.miscArg, data.miscArg2);
-        !errMsg.empty()) {
+    const std::string errMsg = castFailureText(owner_, data.spellId, data.result,
+                                               data.miscArg, data.miscArg2);
+    if (!errMsg.empty()) {
         owner_.addUIError(errMsg);
     }
 
@@ -3803,8 +3804,17 @@ void SpellHandler::handleCastFailed(network::Packet& packet) {
 
     if (!routine) {
         if (auto* ac = owner_.services().audioCoordinator) {
-            if (auto* sfx = ac->getUiSoundManager())
-                sfx->playError();
+            const uint32_t fizzleId = audio::spellFizzleSoundIdForSchoolMask(
+                getSpellSchoolMask(data.spellId));
+            if (fizzleId != 0 && owner_.services().assetManager) {
+                audio::SoundEntryTable::instance().play2D(
+                    owner_.services().assetManager, fizzleId, ac->getSfxVolumeScale() * 0.65f);
+            } else if (errMsg.empty()) {
+                // addUIError() already triggers UiSoundManager::playError();
+                // avoid double-playing Error.wav when an error message was emitted.
+                if (auto* sfx = ac->getUiSoundManager())
+                    sfx->playError();
+            }
         }
     }
 

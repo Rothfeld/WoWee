@@ -32,12 +32,14 @@ void SfxStateDriver::update(float deltaTime, Renderer* renderer,
         bool falling = cameraController->isFalling();
         bool swimming = cameraController->isSwimming();
         bool moving = cameraController->isMoving();
+        bool flightAirborne = cameraController->isFlightAirborne();
 
         if (!initialized_) {
             prevGrounded_ = grounded;
             prevJumping_ = jumping;
             prevFalling_ = falling;
             prevSwimming_ = swimming;
+            prevFlightAirborne_ = flightAirborne;
             initialized_ = true;
         }
 
@@ -45,10 +47,13 @@ void SfxStateDriver::update(float deltaTime, Renderer* renderer,
         else if (sinceWaterExit_ < kWaterExitSfxSuppress) sinceWaterExit_ += deltaTime;
         const bool justLeftWater = sinceWaterExit_ < kWaterExitSfxSuppress;
 
-        // Jump detection. Wading ashore lifts the character without a jump, and
-        // jumpClips are the character's exertion vocalisations, so a grunt there
-        // sounds like it jumped out of the lake.
-        if (jumping && !prevJumping_ && !swimming && !justLeftWater) {
+        // Jump / unmounted flight takeoff detection. Wading ashore lifts the
+        // character without a jump, and Flight Form / Swift Flight Form
+        // transitions directly to flightAirborne on Space (playing
+        // CreatureSoundData.SoundJumpStartID = 10905 FM_Takeoff.wav).
+        const bool jumpTriggered = jumping && !prevJumping_;
+        const bool flightTakeoff = flightAirborne && !prevFlightAirborne_ && !mounted;
+        if ((jumpTriggered || flightTakeoff) && !swimming && !justLeftWater) {
             activitySoundManager->playJump();
         }
 
@@ -78,6 +83,7 @@ void SfxStateDriver::update(float deltaTime, Renderer* renderer,
         prevJumping_ = jumping;
         prevFalling_ = falling;
         prevSwimming_ = swimming;
+        prevFlightAirborne_ = flightAirborne;
     } else {
         activitySoundManager->setSwimmingState(false, false);
         if (renderer->getAudioCoordinator()->getMusicManager()) {

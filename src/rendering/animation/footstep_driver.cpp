@@ -13,6 +13,9 @@
 #include "rendering/footprint_renderer.hpp"
 #include "core/logger.hpp"
 #include "audio/movement_sound_manager.hpp"
+#include "core/application.hpp"
+#include "core/entity_spawner.hpp"
+#include "game/game_handler.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -128,6 +131,43 @@ void FootstepDriver::update(float deltaTime, Renderer* renderer,
                     characterRenderer->getWingGlideEventTimes(mountInstanceId))) {
                 mountSounds->playWingGlideSound();
             }
+        }
+    } else if (characterRenderer && !mounted) {
+        // Shapeshifted flying forms (e.g. Druid Flight Form / Swift Flight Form)
+        // draw a creature M2 authoring $WNG/$WGL keyframes without being mounted.
+        uint32_t drawnId = characterInstanceId;
+        if (core::Application::hasInstance()) {
+            auto& app = core::Application::getInstance();
+            if (auto* gh = app.getGameHandler(); gh && gh->getPlayerGuid() != 0) {
+                if (auto* spawner = app.getEntitySpawner()) {
+                    if (const uint32_t drawn = spawner->drawnInstanceIdForGuid(gh->getPlayerGuid()); drawn != 0) {
+                        drawnId = drawn;
+                    }
+                }
+            }
+        }
+        const uint32_t displayId = drawnId ? characterRenderer->getInstanceDisplayId(drawnId) : 0;
+        uint32_t wingAnimId = 0;
+        float wingAnimTimeMs = 0.0f, wingAnimDurationMs = 0.0f;
+        if (displayId != 0 &&
+            characterRenderer->getAnimationState(drawnId, wingAnimId, wingAnimTimeMs, wingAnimDurationMs)) {
+            const glm::vec3 pos = renderer->getCharacterPosition();
+            const bool listenerAtChar = renderer->getAudioCoordinator()->isListenerAtCharacter();
+            if (mountWingFlaps_.shouldTriggerFootstepEvent(
+                    wingAnimId, wingAnimTimeMs, wingAnimDurationMs,
+                    characterRenderer->getWingFlapEventTimes(drawnId))) {
+                footstepManager->playCreatureWingSound(displayId, /*glide=*/false, pos,
+                                                       /*isLocalPlayer=*/true, listenerAtChar);
+            }
+            if (mountWingGlides_.shouldTriggerFootstepEvent(
+                    wingAnimId, wingAnimTimeMs, wingAnimDurationMs,
+                    characterRenderer->getWingGlideEventTimes(drawnId))) {
+                footstepManager->playCreatureWingSound(displayId, /*glide=*/true, pos,
+                                                       /*isLocalPlayer=*/true, listenerAtChar);
+            }
+        } else {
+            mountWingFlaps_.reset();
+            mountWingGlides_.reset();
         }
     } else {
         mountWingFlaps_.reset();

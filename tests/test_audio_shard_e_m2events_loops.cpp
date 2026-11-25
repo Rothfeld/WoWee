@@ -21,6 +21,7 @@
 #include "audio/creature_sound_index.hpp"
 #include "audio/footstep_manager.hpp"
 #include "audio/sound_entries.hpp"
+#include "audio/spell_sound_manager.hpp"
 #include "pipeline/asset_manager.hpp"
 #include "pipeline/dbc_layout.hpp"
 #include "pipeline/dbc_loader.hpp"
@@ -779,6 +780,32 @@ TEST_CASE("Drowning loop (3353 / 5736), CreatureSoundData.LoopSoundID (col 24), 
         fm.stopModelAudioInstance(703u);
         CHECK_FALSE(fm.hasActiveModelLoop(703u));
         CHECK(renderRms(2048).total == Catch::Approx(0.0).margin(1e-6));
+    }
+
+    SECTION("Druid Flight Form / Swift Flight Form wing flaps ($WNG -> 433) and SpellFizzle school mapping") {
+        // TBC 2.4.3 Night Elf & Tauren Flight Form / Swift Flight Form displays
+        for (uint32_t dispId : {20857u, 20872u, 21243u, 21244u}) {
+            INFO("Flight form displayId=" << dispId);
+            resetHeadlessEngine(tbc.assets);
+            events.clear();
+            audio::AudioEngine::instance().setPlaybackObserver([&](const audio::AudioEngine::PlaybackEvent& ev) {
+                events.push_back(ev);
+            });
+            CHECK(fm.playCreatureWingSound(dispId, /*glide=*/false, glm::vec3(0.0f),
+                                           /*isLocalPlayer=*/true, /*listenerAtCharacter=*/true));
+            REQUIRE(events.size() == 1u);
+            CHECK_FALSE(events.back().spatial); // local player + Sound_ListenerAtCharacter=1 -> 2D
+            CHECK(renderRms(2048).total > 1e-4);
+        }
+
+        // TBC 2.4.3 SpellFizzle SoundEntries mapping
+        CHECK(audio::spellFizzleSoundIdForSchoolMask(0x01u) == 0u);    // Physical
+        CHECK(audio::spellFizzleSoundIdForSchoolMask(0x02u) == 1428u); // Holy
+        CHECK(audio::spellFizzleSoundIdForSchoolMask(0x04u) == 1424u); // Fire
+        CHECK(audio::spellFizzleSoundIdForSchoolMask(0x08u) == 1426u); // Nature
+        CHECK(audio::spellFizzleSoundIdForSchoolMask(0x10u) == 1425u); // Frost
+        CHECK(audio::spellFizzleSoundIdForSchoolMask(0x20u) == 1427u); // Shadow
+        CHECK(audio::spellFizzleSoundIdForSchoolMask(0x40u) == 1428u); // Arcane -> SpellFizzleHoly in 2.4.3
     }
 
     fm.shutdown();

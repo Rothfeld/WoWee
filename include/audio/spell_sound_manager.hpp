@@ -12,6 +12,17 @@ class AssetManager;
 
 namespace audio {
 
+/// Map TBC 2.4.3 Spell.dbc SchoolMask to its SoundEntries.dbc SpellFizzle ID
+/// (1424 Fire, 1425 Frost, 1426 Nature, 1427 Shadow, 1428 Holy/Arcane; 0 for Physical).
+[[nodiscard]] inline constexpr uint32_t spellFizzleSoundIdForSchoolMask(uint32_t schoolMask) noexcept {
+    if (schoolMask & 0x04u) return 1424u; // Fire -> SpellFizzleFire
+    if (schoolMask & 0x10u) return 1425u; // Frost -> SpellFizzleFrost
+    if (schoolMask & 0x08u) return 1426u; // Nature -> SpellFizzleNature
+    if (schoolMask & 0x20u) return 1427u; // Shadow -> SpellFizzleShadow
+    if (schoolMask & (0x02u | 0x40u)) return 1428u; // Holy / Arcane -> SpellFizzleHoly
+    return 0u;
+}
+
 class SpellSoundManager {
 public:
     SpellSoundManager() = default;

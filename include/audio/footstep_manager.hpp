@@ -55,6 +55,9 @@ public:
     /// $TRD chest/leg armor foley via Material.dbc col 2, gated by Self/Others CVars.
     bool playArmorFoley(uint32_t materialId, const glm::vec3& position,
                         bool isLocalPlayer, bool listenerAtCharacter);
+    /// CreatureSoundData WingFlap / WingGlide for flying shapeshifts (e.g. Druid Flight Form).
+    bool playCreatureWingSound(uint32_t displayId, bool glide, const glm::vec3& position,
+                               bool isLocalPlayer, bool listenerAtCharacter);
 
     /// Dispatch a unit/character M2 audio event ($FSD, $DTH, $TRD, $CSD, $SCD, $SMG, $SMD, $SND, $DSO).
     bool playUnitM2Event(pipeline::M2AudioEventType type, uint32_t eventData,
