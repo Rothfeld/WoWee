@@ -4,6 +4,7 @@
 #pragma once
 
 #include <string>
+#include <string_view>
 #include <unordered_map>
 
 struct lua_State;
@@ -36,7 +37,7 @@ void applySoundCVarSideEffects(lua_State* L);
 /// shadow map's size is chosen when the per-frame resources are built, which
 /// is long before the interface loads. Returns the fallback when the file has
 /// no such key, so a fresh install gets the default rather than nothing.
-std::string storedCVarValue(const std::string& key, const std::string& fallback);
+std::string storedCVarValue(std::string_view key, std::string_view fallback);
 
 /// Tell the CVar store that a setting it drives has been changed elsewhere.
 ///

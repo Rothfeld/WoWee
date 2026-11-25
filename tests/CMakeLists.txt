@@ -675,6 +675,15 @@ target_link_libraries(test_reputation_standing PRIVATE catch2_main)
 add_test(NAME reputation_standing COMMAND test_reputation_standing)
 register_test_target(test_reputation_standing)
 
+# ── test_stored_cvars ───────────────────────────────────────
+# Header-only: when a stored CVar is answered from memory and when from the file.
+add_executable(test_stored_cvars test_stored_cvars.cpp)
+target_include_directories(test_stored_cvars PRIVATE ${TEST_INCLUDE_DIRS})
+target_include_directories(test_stored_cvars SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
+target_link_libraries(test_stored_cvars PRIVATE catch2_main)
+add_test(NAME stored_cvars COMMAND test_stored_cvars)
+register_test_target(test_stored_cvars)
+
 # ── test_widget_tree ────────────────────────────────────────
 add_executable(test_widget_tree
     test_widget_tree.cpp

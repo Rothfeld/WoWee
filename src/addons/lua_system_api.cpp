@@ -1,5 +1,7 @@
 // lua_system_api.cpp - System, time, sound, locale, map, addons, instances, and utilities Lua API bindings.
 // Extracted from lua_engine.cpp as part of §5.1 (Tame LuaEngine).
+#include "addons/stored_cvars.hpp"
+#include "core/frame_stage_times.hpp"
 #include "addons/macro_target.hpp"
 #include "game/damage_meter.hpp"
 #include "game/tracking_services.hpp"
@@ -545,9 +547,12 @@ static int lua_GetPlayerFacing(lua_State* L) {
 /// instant it was read back: ticking a box in the interface options did
 /// nothing, and any code that writes a CVar and then reads it to confirm - of
 /// which FrameXML has a fair amount - saw its own write disappear.
+static StoredCVars& storedCVars() {
+    static StoredCVars stored;
+    return stored;
+}
 static std::unordered_map<std::string, std::string>& cvarStore() {
-    static std::unordered_map<std::string, std::string> store;
-    return store;
+    return storedCVars().rows();
 }
 
 /// Where the CVars live between runs.
@@ -597,18 +602,11 @@ bool migrateStoredCVarRows(std::unordered_map<std::string, std::string>& rows) {
 static void saveStoredCVars();
 
 static void loadStoredCVars() {
-    std::ifstream in(cvarStorePath());
-    if (!in.is_open()) return;
-    std::string line;
-    size_t loaded = 0;
-    while (std::getline(in, line)) {
-        const size_t eq = line.find('=');
-        if (eq == std::string::npos || eq == 0) continue;
-        std::string key = line.substr(0, eq);
-        toLowerInPlace(key);
-        cvarStore()[key] = line.substr(eq + 1);
-        ++loaded;
-    }
+    // From here on the rows answer storedCVarValue and the file is not read
+    // again (addons/stored_cvars.hpp). A missing file is left missing, as before.
+    const bool exists = std::ifstream(cvarStorePath()).is_open();
+    const size_t loaded = storedCVars().load(cvarStorePath());
+    if (!exists) return;
     LOG_INFO("CVars: loaded ", loaded, " from ", cvarStorePath());
     if (migrateStoredCVarRows(cvarStore()) && loaded > 0) saveStoredCVars();
 }
@@ -2108,25 +2106,35 @@ static void applyCVarSideEffects(lua_State* L, const std::string& key,
 /// before any renderer, camera or audio manager is wired, and every branch
 /// above checks its service and would quietly do nothing that early - which is
 /// indistinguishable from the fault this exists to fix.
-std::string storedCVarValue(const std::string& key, const std::string& fallback) {
-    // The store first, for a call made after the interface is up; the file
-    // otherwise, which is the case this exists for. Reading the file twice
-    // costs nothing and keeps the two answers the same.
-    std::string wanted = key;
-    toLowerInPlace(wanted);
-    if (auto it = cvarStore().find(wanted); it != cvarStore().end()) return it->second;
+std::string storedCVarValue(std::string_view key, std::string_view fallback) {
+    // The rows in memory once they are loaded, which is every call made after
+    // the interface is up; the file before that, which is the case this
+    // exists for. The rule and its reason are in addons/stored_cvars.hpp.
+    const StoredCVars& stored = storedCVars();
+    // The path is built only for the early case: it is a string per call.
+    std::string answer = stored.value(key, fallback, stored.loaded() ? std::string() : cvarStorePath());
 
-    std::ifstream in(cvarStorePath());
-    if (!in.is_open()) return fallback;
-    std::string line;
-    while (std::getline(in, line)) {
-        const size_t eq = line.find('=');
-        if (eq == std::string::npos || eq == 0) continue;
-        std::string k = line.substr(0, eq);
-        toLowerInPlace(k);
-        if (k == wanted) return line.substr(eq + 1);
+    // WOWEE_CVAR_CHECK=1: what reading the file for a key without a row -
+    // which is what every call did - would have answered, counted into the
+    // frame budget report against what was answered.
+    static const bool check = [] {
+        const char* value = std::getenv("WOWEE_CVAR_CHECK");
+        return value && *value && *value != '0';
+    }();
+    if (check && stored.loaded()) {
+        std::string lowered(key);
+        toLowerInPlace(lowered);
+        const bool hasRow = stored.rows().find(lowered) != stored.rows().end();
+        const std::string fromFile = hasRow ? answer : StoredCVars{}.value(key, fallback, cvarStorePath());
+        core::noteFrameCount("stored cvar check: lookups compared with the file", 1);
+        core::noteFrameCount("stored cvar check: lookups without a row", hasRow ? 0 : 1);
+        core::noteFrameCount("stored cvar check: lookups differing", fromFile != answer ? 1 : 0);
+        if (fromFile != answer) {
+            LOG_WARNING("Stored CVar check: ", std::string(key), " answered '", answer,
+                        "', the file says '", fromFile, "'");
+        }
     }
-    return fallback;
+    return answer;
 }
 
 void setStoredCVar(const std::string& key, const std::string& value) {
