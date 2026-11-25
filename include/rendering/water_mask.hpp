@@ -16,6 +16,7 @@
 /// were compensation for bugs that are fixed.
 
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 namespace wowee::rendering {
@@ -115,12 +116,25 @@ inline constexpr bool liquidWritesDepth(uint8_t /*basicType*/) {
 
 /// Only opaque magma (2) and slime (3) write depth before M2 particles.
 /// Translucent river/ocean/WMO water (0, 1) defers its depth-only write until
-/// after M2 particles so underwater/surface particle emitters (e.g. Strange Pool
-/// Tradeskill_FishSchool_ElementalWater.m2, fishing schools, underwater spell
-/// effects) composite cleanly through translucent water while opaque terrain/WMO
-/// geometry still occludes them.
+/// after submerged M2 particles so underwater/surface particle emitters (e.g.
+/// Strange Pool Tradeskill_FishSchool_ElementalWater.m2, fishing schools,
+/// underwater spell effects) composite cleanly through translucent water while
+/// opaque terrain/WMO geometry still occludes them.
 inline constexpr bool liquidDepthClipsParticles(uint8_t basicType) {
     return liquidIsOpaque(basicType);
+}
+
+/// Whether a non-negative-priority M2 particle at `particleZ` over a
+/// translucent water surface at `translucentWaterZ` should draw in the
+/// pre-water-depth pass (before translucent water writes depth for submerged
+/// blended M2 meshes) rather than in the normal AfterTransparent pass (after
+/// blended M2 meshes like Kel'Thuzad window portals).
+/// `surfaceMargin` covers water wave crests (up to 0.35 yd ocean wave amp) so
+/// surface emitters like fishing pools are not clipped by wave peaks.
+inline constexpr bool particleDrawsBeforeWaterDepth(
+    float particleZ, std::optional<float> translucentWaterZ,
+    float surfaceMargin = 0.5f) {
+    return translucentWaterZ.has_value() && particleZ <= *translucentWaterZ + surfaceMargin;
 }
 
 }  // namespace wowee::rendering

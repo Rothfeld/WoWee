@@ -3476,6 +3476,12 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
     // scene pass (waterDrawsInContinuePass) still comes after them.
     const bool waterWithWorldModels = waterRenderer && camera && m2Renderer && !skipM2 &&
                                       !waterDrawsInContinuePass();
+    M2Renderer::WaterHeightQuery translucentWaterHeight;
+    if (waterWithWorldModels && waterRenderer->hasTranslucentSurfaces()) {
+        translucentWaterHeight = [wr = waterRenderer.get()](float x, float y) {
+            return wr->getTranslucentWaterHeightAt(x, y);
+        };
+    }
     // When water draws in the non-MSAA continuation pass (for refraction),
     // hold blended world models, particles, ribbons, and post-world effects
     // until after water so waterfalls, fountains, and mist composite over
@@ -3506,17 +3512,18 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
             m2Renderer->renderM2Ribbons(blended, perFrameSet,
                 M2Renderer::ParticlePhase::BeforeTransparent);
             if (waterWithWorldModels) {
-                // Draw M2 particles/ribbons before translucent water writes
-                // depth so underwater/surface particle effects (e.g. Strange
-                // Pool Tradeskill_FishSchool_ElementalWater.m2, fishing pools)
-                // shine through translucent water while opaque geometry still
-                // occludes them; then write translucent water depth so
-                // submerged blended M2 meshes (e.g. Bloodvenom Falls waterfall
-                // curtains) still clip cleanly at the waterline.
-                m2Renderer->renderM2Particles(blended, perFrameSet,
-                    M2Renderer::ParticlePhase::AfterTransparent);
-                m2Renderer->renderM2Ribbons(blended, perFrameSet,
-                    M2Renderer::ParticlePhase::AfterTransparent);
+                // Draw only underwater/surface M2 particles before translucent
+                // water writes depth (so Strange Pool / fishing pool particles
+                // shine through translucent water), then write translucent
+                // water depth so submerged blended M2 meshes (e.g. Bloodvenom
+                // Falls waterfall curtains) clip cleanly at the waterline.
+                // Above-water AfterTransparent particles and ribbons still draw
+                // after transparent M2 meshes so portal/effect particles are
+                // not overwritten by alpha-blended M2 backdrops.
+                if (translucentWaterHeight) {
+                    m2Renderer->renderM2Particles(blended, perFrameSet,
+                        M2Renderer::ParticlePhase::BeforeWaterDepth, translucentWaterHeight);
+                }
                 waterRenderer->renderDepthOnly(blended, perFrameSet, *camera, globalTime);
             }
         };
@@ -3649,15 +3656,11 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
                 recordWorldModels(opaqueCmd, cmd);
                 vkEndCommandBuffer(opaqueCmd);
                 const auto tModels = std::chrono::steady_clock::now();
-                if (!waterWithWorldModels) {
-                    m2Renderer->renderM2Particles(cmd, perFrameSet,
-                        M2Renderer::ParticlePhase::AfterTransparent);
-                }
+                m2Renderer->renderM2Particles(cmd, perFrameSet,
+                    M2Renderer::ParticlePhase::AfterTransparent, translucentWaterHeight);
                 const auto tParts = std::chrono::steady_clock::now();
-                if (!waterWithWorldModels) {
-                    m2Renderer->renderM2Ribbons(cmd, perFrameSet,
-                        M2Renderer::ParticlePhase::AfterTransparent);
-                }
+                m2Renderer->renderM2Ribbons(cmd, perFrameSet,
+                    M2Renderer::ParticlePhase::AfterTransparent);
                 const auto tParticles = std::chrono::steady_clock::now();
                 vkEndCommandBuffer(cmd);
 
@@ -3943,12 +3946,10 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
             if (characterRenderer && !skipChars) characterRenderer->prepareRender(frameIdx);
             auto m2Start = std::chrono::steady_clock::now();
             recordWorldModels(currentCmd, currentCmd);
-            if (!waterWithWorldModels) {
-                m2Renderer->renderM2Particles(currentCmd, perFrameSet,
-                        M2Renderer::ParticlePhase::AfterTransparent);
-                m2Renderer->renderM2Ribbons(currentCmd, perFrameSet,
-                    M2Renderer::ParticlePhase::AfterTransparent);
-            }
+            m2Renderer->renderM2Particles(currentCmd, perFrameSet,
+                M2Renderer::ParticlePhase::AfterTransparent, translucentWaterHeight);
+            m2Renderer->renderM2Ribbons(currentCmd, perFrameSet,
+                M2Renderer::ParticlePhase::AfterTransparent);
             if (vkCtx) vkCtx->gpuMark(currentCmd, "m2");
             lastM2RenderMs = std::chrono::duration<double, std::milli>(
                 std::chrono::steady_clock::now() - m2Start).count();

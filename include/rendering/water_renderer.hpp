@@ -192,6 +192,8 @@ public:
     VkExtent2D getReflectionExtent() const { return {.width = REFLECTION_WIDTH, .height = REFLECTION_HEIGHT}; }
     bool hasReflectionPass() const { return reflectionRenderPass != VK_NULL_HANDLE; }
     bool hasSurfaces() const { return !surfaces.empty(); }
+    /// True when at least one loaded liquid surface is translucent (river/ocean/WMO water, basicType < 2).
+    bool hasTranslucentSurfaces() const;
 
     void setEnabled(bool enabled) { renderingEnabled = enabled; }
     bool isEnabled() const { return renderingEnabled; }
@@ -211,6 +213,8 @@ public:
                                                  float glX, float glY) const;
 
     std::optional<float> getWaterHeightAt(float glX, float glY) const;
+    /// Highest translucent (non-magma, non-slime) water surface at (glX, glY), if any.
+    std::optional<float> getTranslucentWaterHeightAt(float glX, float glY) const;
     /// Like getWaterHeightAt but only returns water surfaces whose height is
     /// close to the query Z (within maxAbove units above). Avoids false
     /// underwater detection from elevated WMO water far above the camera.

@@ -198,4 +198,26 @@ TEST_CASE("Liquid surfaces write depth and magma/slime render opaque", "[water]"
     CHECK(liquidDepthClipsParticles(3));       // slime
 }
 
+TEST_CASE("Only submerged or surface particles draw before translucent water depth", "[water]") {
+    using wowee::rendering::particleDrawsBeforeWaterDepth;
+    // Dry / non-translucent-water scenes (e.g. Kel'Thuzad's Chamber with only
+    // opaque slime, or any indoor dungeon): never route particles before
+    // transparent M2 meshes.
+    CHECK_FALSE(particleDrawsBeforeWaterDepth(152.57f, std::nullopt));
+    CHECK_FALSE(particleDrawsBeforeWaterDepth(-50.0f, std::nullopt));
+
+    // Submerged and waterline emitters (Strange Pool / fishing schools at
+    // waterZ = 10.0, including wave crests up to +0.5 yd) draw before
+    // translucent water's depth-only write so they shine through water.
+    CHECK(particleDrawsBeforeWaterDepth(8.5f, 10.0f));
+    CHECK(particleDrawsBeforeWaterDepth(10.0f, 10.0f));
+    CHECK(particleDrawsBeforeWaterDepth(10.45f, 10.0f));
+
+    // Above-water particles (portal mist, waterfall spray above the surface,
+    // spells over water) stay in AfterTransparent so they composite over
+    // alpha-blended M2 meshes.
+    CHECK_FALSE(particleDrawsBeforeWaterDepth(10.6f, 10.0f));
+    CHECK_FALSE(particleDrawsBeforeWaterDepth(25.0f, 10.0f));
+}
+
 }  // namespace

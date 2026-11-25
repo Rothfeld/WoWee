@@ -1,5 +1,6 @@
 #include "rendering/chain_effect.hpp"
 #include "rendering/particle_emission.hpp"
+#include "rendering/water_mask.hpp"
 #include "rendering/m2_renderer.hpp"
 #include <unordered_set>
 #include "rendering/m2_renderer_internal.h"
@@ -1072,9 +1073,14 @@ VkDescriptorSet M2Renderer::whiteRibbonTextureSet() {
 }
 
 void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
-                                   ParticlePhase phase) {
+                                   ParticlePhase phase,
+                                   const WaterHeightQuery& translucentWaterHeight) {
     const bool before = phase == ParticlePhase::BeforeTransparent;
-    // An emitter belongs to the phase its priority plane sorts it into.
+    const bool beforeWaterDepth = phase == ParticlePhase::BeforeWaterDepth;
+    if (beforeWaterDepth && !translucentWaterHeight) return;
+    // An emitter belongs to BeforeTransparent when its priority plane is
+    // negative; non-negative emitters partition between BeforeWaterDepth
+    // (submerged/surface particles over translucent water) and AfterTransparent.
     const auto inPhase = [before](const pipeline::M2ParticleEmitter& emitter) {
         return (emitter.priorityPlane < 0) == before;
     };
@@ -1092,61 +1098,63 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
     }
     auto& groups = particleGroups_;
 
-    // Size the upload for this frame. A fixed shared cap discarded later
-    // instances (including newly created loot/spell effects) once scenery filled it.
-    size_t requiredVertices = 0;
-    for (size_t idx : particleInstanceIndices_) {
-        if (idx >= instances.size()) continue;
-        const auto& inst = instances[idx];
-        if (!inst.cachedModel || inst.fade <= 0.0f) continue;
-        const glm::vec3 distance = inst.position - cachedCamPos_;
-        if (glm::dot(distance, distance) > particleMaxDistSq(inst)) continue;
-        if (outsideVisibleRegion(inst.position) || exteriorCulled(inst) || roomCulled(inst)) continue;
-        for (const auto& particle : inst.particles) {
-            const auto& emitter = inst.cachedModel->particleEmitters.at(particle.emitterIndex);
-            requiredVertices += emitter.headOrTail == 2 ? 2 : 1;
+    // Size the upload for this frame on BeforeTransparent (the first phase).
+    // A fixed shared cap discarded later instances once scenery filled it.
+    if (before) {
+        particleVbCursor_ = 0;
+        size_t requiredVertices = 0;
+        for (size_t idx : particleInstanceIndices_) {
+            if (idx >= instances.size()) continue;
+            const auto& inst = instances[idx];
+            if (!inst.cachedModel || inst.fade <= 0.0f) continue;
+            const glm::vec3 distance = inst.position - cachedCamPos_;
+            if (glm::dot(distance, distance) > particleMaxDistSq(inst)) continue;
+            if (outsideVisibleRegion(inst.position) || exteriorCulled(inst) || roomCulled(inst)) continue;
+            for (const auto& particle : inst.particles) {
+                const auto& emitter = inst.cachedModel->particleEmitters.at(particle.emitterIndex);
+                requiredVertices += emitter.headOrTail == 2 ? 2 : 1;
+            }
         }
-    }
-    if (requiredVertices > particleVertexCapacity_[frame]) {
-        const size_t capacity = std::max(requiredVertices, particleVertexCapacity_[frame] * 2);
-        VkBufferCreateInfo info{.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
-        info.size = capacity * kParticleVertexFloats * sizeof(float);
-        info.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
-        VmaAllocationCreateInfo allocationInfo{};
-        allocationInfo.usage = VMA_MEMORY_USAGE_CPU_TO_GPU;
-        allocationInfo.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT;
-        ::VkBuffer buffer = VK_NULL_HANDLE;
-        VmaAllocation allocation = VK_NULL_HANDLE;
-        VmaAllocationInfo mapped{};
-        const auto allocator = vkCtx_->getAllocator();
-        const VkResult result = vmaCreateBuffer(allocator, &info, &allocationInfo,
-                                                &buffer, &allocation, &mapped);
-        if (result != VK_SUCCESS) {
-            LOG_ERROR("Particle vertex buffer allocation failed: ", result,
-                      " vertices=", capacity);
-            throw std::runtime_error("Particle vertex buffer allocation failed");
+        if (requiredVertices > particleVertexCapacity_[frame]) {
+            const size_t capacity = std::max(requiredVertices, particleVertexCapacity_[frame] * 2);
+            VkBufferCreateInfo info{.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+            info.size = capacity * kParticleVertexFloats * sizeof(float);
+            info.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+            VmaAllocationCreateInfo allocationInfo{};
+            allocationInfo.usage = VMA_MEMORY_USAGE_CPU_TO_GPU;
+            allocationInfo.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT;
+            ::VkBuffer buffer = VK_NULL_HANDLE;
+            VmaAllocation allocation = VK_NULL_HANDLE;
+            VmaAllocationInfo mapped{};
+            const auto allocator = vkCtx_->getAllocator();
+            const VkResult result = vmaCreateBuffer(allocator, &info, &allocationInfo,
+                                                    &buffer, &allocation, &mapped);
+            if (result != VK_SUCCESS) {
+                LOG_ERROR("Particle vertex buffer allocation failed: ", result,
+                          " vertices=", capacity);
+                throw std::runtime_error("Particle vertex buffer allocation failed");
+            }
+            const ::VkBuffer previousBuffer = m2ParticleVB_[frame];
+            const VmaAllocation previousAllocation = m2ParticleVBAlloc_[frame];
+            vkCtx_->deferAfterAllFrameFences([allocator, previousBuffer, previousAllocation] {
+                vmaDestroyBuffer(allocator, previousBuffer, previousAllocation);
+            });
+            m2ParticleVB_[frame] = buffer;
+            m2ParticleVBAlloc_[frame] = allocation;
+            m2ParticleVBMapped_[frame] = mapped.pMappedData;
+            particleVertexCapacity_[frame] = capacity;
+            LOG_INFO("Particle vertex capacity grown to ", capacity,
+                     " for ", requiredVertices, " live particles");
         }
-        const ::VkBuffer previousBuffer = m2ParticleVB_[frame];
-        const VmaAllocation previousAllocation = m2ParticleVBAlloc_[frame];
-        vkCtx_->deferAfterAllFrameFences([allocator, previousBuffer, previousAllocation] {
-            vmaDestroyBuffer(allocator, previousBuffer, previousAllocation);
-        });
-        m2ParticleVB_[frame] = buffer;
-        m2ParticleVBAlloc_[frame] = allocation;
-        m2ParticleVBMapped_[frame] = mapped.pMappedData;
-        particleVertexCapacity_[frame] = capacity;
-        LOG_INFO("Particle vertex capacity grown to ", capacity,
-                 " for ", requiredVertices, " live particles");
     }
 
     // Written straight into the mapped buffer rather than accumulated into a
     // vector per group and copied in afterwards; see ParticleRun.
     if (!m2ParticleVBMapped_[frame]) return;
     float* const vbBase = static_cast<float*>(m2ParticleVBMapped_[frame]);
-    // The second call appends after the first: both phases' draws read this
-    // frame's buffer, so neither may overwrite the other's vertices.
-    if (before) particleBeforeTransparentEnd_ = 0;
-    uint32_t vbWritten = before ? 0 : particleBeforeTransparentEnd_;
+    // Each phase appends after the previous one: all phases' draws read this
+    // frame's buffer, so none may overwrite an earlier phase's vertices.
+    uint32_t vbWritten = particleVbCursor_;
     particleRuns_.clear();
     ParticleGroup* runGroup = nullptr;
 
@@ -1168,6 +1176,11 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
         const glm::vec3 distance = inst.position - cachedCamPos_;
         if (glm::dot(distance, distance) > particleMaxDistSq(inst)) continue;
         if (outsideVisibleRegion(inst.position) || exteriorCulled(inst) || roomCulled(inst)) continue;
+        const std::optional<float> instTranslucentWaterZ =
+            (!before && translucentWaterHeight)
+                ? translucentWaterHeight(inst.position.x, inst.position.y)
+                : std::nullopt;
+        if (beforeWaterDepth && !instTranslucentWaterZ) continue;
 
         // How far this instance's particles actually reach, against how far
         // the model says it extends. A fire twice the height of the hut behind
@@ -1258,12 +1271,17 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
                 if (twinkle <= 0.0f) continue;
                 const float scale = interpFBlockFloat(em.particleScale, lifeRatio) * twinkle;
 
+                const glm::vec3 worldPosition = glm::vec3(cachedParticleTransform * glm::vec4(p.position, 1));
+                if (!before && instTranslucentWaterZ.has_value()) {
+                    const bool drawsBeforeWaterDepth =
+                        particleDrawsBeforeWaterDepth(worldPosition.z, instTranslucentWaterZ);
+                    if (drawsBeforeWaterDepth != beforeWaterDepth) continue;
+                }
                 assert(vbWritten < particleVertexCapacity_[frame]);
                 if (cachedGroup != runGroup) {
                     runGroup = cachedGroup;
                     particleRuns_.push_back({.group = cachedGroup, .first = vbWritten, .count = 0});
                 }
-                const glm::vec3 worldPosition = glm::vec3(cachedParticleTransform * glm::vec4(p.position, 1));
                 const glm::vec3 worldVelocity = glm::mat3(cachedParticleTransform) * p.velocity;
                 highestParticleZ = std::max(highestParticleZ, worldPosition.z);
                 widestParticle = std::max(widestParticle, scale);
@@ -1307,7 +1325,7 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
 
         // Opt-in effect diagnostics for captured visual comparisons.
         static const char* traceModel = std::getenv("WOWEE_PARTICLE_TRACE");
-        if (!before && traceModel && gpu.name == traceModel) {
+        if (phase == ParticlePhase::AfterTransparent && traceModel && gpu.name == traceModel) {
             static uint32_t traceFrame = 0;
             if (++traceFrame % 60 == 1) {
                 LOG_INFO("Particle trace: model=", gpu.name, " origin=", inst.position.x,
@@ -1362,7 +1380,7 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
         }
     }
 
-    if (before) particleBeforeTransparentEnd_ = vbWritten;
+    particleVbCursor_ = vbWritten;
     if (totalParticles == 0) return;
 
     // Bind per-frame set (set 0) for particle pipeline

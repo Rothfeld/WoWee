@@ -1750,10 +1750,39 @@ std::optional<glm::vec2> WaterRenderer::wateredGridPosition(const WaterSurface& 
     return grid;
 }
 
+bool WaterRenderer::hasTranslucentSurfaces() const {
+    for (const auto& surface : surfaces) {
+        if (surface.vertexBuffer == VK_NULL_HANDLE || surface.indexCount == 0) continue;
+        const uint8_t basicType = (surface.liquidType == 0) ? 0 : ((surface.liquidType - 1) % 4);
+        if (!liquidIsOpaque(basicType)) return true;
+    }
+    return false;
+}
+
 std::optional<float> WaterRenderer::getWaterHeightAt(float glX, float glY) const {
     std::optional<float> best;
 
     for (const auto& surface : surfaces) {
+        const auto grid = wateredGridPosition(surface, glX, glY);
+        if (!grid) continue;
+
+        const auto sampled = sampleGridHeight(surface.heights, surface.width,
+                                              surface.height, grid->x, grid->y);
+        if (!sampled) continue;
+        const float h = *sampled;
+
+        if (!best || h > *best) best = h;
+    }
+
+    return best;
+}
+
+std::optional<float> WaterRenderer::getTranslucentWaterHeightAt(float glX, float glY) const {
+    std::optional<float> best;
+
+    for (const auto& surface : surfaces) {
+        const uint8_t basicType = (surface.liquidType == 0) ? 0 : ((surface.liquidType - 1) % 4);
+        if (liquidIsOpaque(basicType)) continue;
         const auto grid = wateredGridPosition(surface, glX, glY);
         if (!grid) continue;
 

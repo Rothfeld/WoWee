@@ -653,16 +653,27 @@ public:
                       const glm::vec3& shadowCenter = glm::vec3(0), float shadowRadius = 1e9f);
 
     /// Which part of a frame's particles one renderM2Particles call draws.
-    /// Emitters with a negative priority plane sort before the transparent
-    /// mesh batches (priority 0 and up); the rest after them.
-    enum class ParticlePhase { BeforeTransparent, AfterTransparent };
+    /// - BeforeTransparent: emitters with a negative priority plane, drawn
+    ///   between opaque and transparent mesh passes.
+    /// - BeforeWaterDepth: non-negative-priority particles submerged at or
+    ///   below a translucent water surface, drawn before translucent water
+    ///   writes depth so underwater/surface effects (e.g. fishing pools)
+    ///   shine through water while opaque geometry still occludes them.
+    /// - AfterTransparent: all remaining non-negative-priority particles,
+    ///   drawn after transparent M2 meshes and blended characters so emitters
+    ///   composite over alpha-blended backdrops (e.g. Kel'Thuzad portals).
+    enum class ParticlePhase { BeforeTransparent, BeforeWaterDepth, AfterTransparent };
+
+    using WaterHeightQuery = std::function<std::optional<float>(float, float)>;
 
     /**
      * Render M2 particle emitters (point sprites). Call BeforeTransparent
-     * once, between the opaque and transparent mesh passes, then
-     * AfterTransparent once after them, in the same frame.
+     * once, between the opaque and transparent mesh passes, optionally
+     * BeforeWaterDepth before translucent water depth-only write, then
+     * AfterTransparent once after transparent meshes in the same frame.
      */
-    void renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, ParticlePhase phase);
+    void renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, ParticlePhase phase,
+                           const WaterHeightQuery& translucentWaterHeight = {});
 
     /**
      * Render smoke particles from chimneys etc.
@@ -1508,7 +1519,7 @@ private:
     };
     std::vector<ParticleRun> particleRuns_;
     // Vertices the BeforeTransparent call wrote this frame; AfterTransparent appends after them.
-    uint32_t particleBeforeTransparentEnd_ = 0;
+    uint32_t particleVbCursor_ = 0;
     size_t ribbonBeforeTransparentEnd_ = 0;
     /// Vertices the particle buffer holds. Not MAX_M2_PARTICLES, which is the
     /// cap on one instance's particles: this has to hold a whole frame's.
