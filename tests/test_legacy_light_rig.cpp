@@ -374,3 +374,28 @@ TEST_CASE("wmoFloorLightSkipsTriangle matches build 8606 unit (0x08) vs GameObje
     CHECK_FALSE(wmoFloorLightSkipsTriangle(0x60u, 12u, /*isUnit=*/true));
     CHECK_FALSE(wmoFloorLightSkipsTriangle(0x60u, 12u, /*isUnit=*/false));
 }
+
+TEST_CASE("tbcM2PointLightAttenuation stays bounded at close held-lantern distances and fades to zero at radius", "[lighting][unit][m2]") {
+    using wowee::rendering::tbcM2PointLightAttenuation;
+
+    // Apprentice Darius held lantern (misc_1h_lantern_a_01.m2: attEnd = 5.556 yd).
+    constexpr float kLanternRadius = 5.556f;
+    const float atHand = tbcM2PointLightAttenuation(0.22f, kLanternRadius);
+    const float atBicep = tbcM2PointLightAttenuation(0.55f, kLanternRadius);
+    const float atChin = tbcM2PointLightAttenuation(0.85f, kLanternRadius);
+    const float atFence = tbcM2PointLightAttenuation(1.80f, kLanternRadius);
+
+    // Bounded <= 1.0 even at d = 0 (no 1/(0.7*d) singularity at close range).
+    CHECK(tbcM2PointLightAttenuation(0.0f, kLanternRadius) == Catch::Approx(1.0f));
+    CHECK(atHand > 0.7f);
+    CHECK(atHand < 1.0f);
+    CHECK(atBicep < atHand);
+    CHECK(atChin < atBicep);
+    CHECK(atFence < atChin);
+    CHECK(atFence > 0.1f);
+
+    // Smoothly reaches 0 at and beyond attenuationEnd radius.
+    CHECK(tbcM2PointLightAttenuation(kLanternRadius, kLanternRadius) == Catch::Approx(0.0f));
+    CHECK(tbcM2PointLightAttenuation(kLanternRadius + 1.0f, kLanternRadius) == Catch::Approx(0.0f));
+    CHECK(tbcM2PointLightAttenuation(0.5f, 0.0f) == Catch::Approx(0.0f));
+}

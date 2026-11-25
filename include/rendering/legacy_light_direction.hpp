@@ -160,4 +160,15 @@ inline constexpr bool wmoFloorLightSkipsTriangle(uint8_t mopyFlags, uint8_t mate
     return (mopyFlags & 0x04u) != 0;
 }
 
+// Authored M2 point light attenuation shared by character.frag.glsl, m2.vert.glsl,
+// and terrain.vert.glsl. Includes the constant 1.0 term so close-range held lights
+// (e.g. NPC lanterns at d = 0.2..0.8 yd) remain bounded <= 1.0 instead of diverging
+// as 1 / (0.7 * d), plus quadratic edge fade to 0 at radius.
+inline float tbcM2PointLightAttenuation(float dist, float radius) {
+    if (radius <= 0.0f || dist < 0.0f || dist >= radius) return 0.0f;
+    const float edgeFade = 1.0f - dist / radius;
+    const float denom = std::max(1.0f + 0.7f * dist + 0.03f * dist * dist, 1e-4f);
+    return (edgeFade * edgeFade) / denom;
+}
+
 } // namespace wowee::rendering

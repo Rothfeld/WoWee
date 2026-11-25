@@ -59,6 +59,7 @@ layout(location = 1) in vec3 Normal;
 layout(location = 2) in vec2 TexCoord;
 layout(location = 3) in vec2 LayerUV;
 layout(location = 4) in vec3 VertexSpecular;
+layout(location = 5) in vec3 VertexLocalLight;
 
 layout(location = 0) out vec4 outColor;
 
@@ -80,18 +81,6 @@ vec3 localLightContribution(vec3 pos, vec3 normal, vec3 albedo) {
         float wrappedDiffuse = 0.22 + 0.78 * max(dot(normal, toLight / max(dist, 0.001)), 0.0);
         sum += albedo * localLightColorIntensity[i].rgb *
                (localLightColorIntensity[i].w * attenuation * wrappedDiffuse);
-    }
-    for (int i = 0; i < min(localLightMeta.y, 64); ++i) {
-        vec3 toLight = localLightPosRadius[i].xyz - pos;
-        float radius = localLightPosRadius[i].w;
-        float distSq = dot(toLight, toLight);
-        if (radius <= 0.0 || distSq >= radius * radius) continue;
-        float dist = sqrt(distSq);
-        float atten = 1.0 / max(1.0 + 0.7 * dist + 0.03 * distSq, 1e-4);
-        float edgeFade = 1.0 - dist / radius;
-        atten *= edgeFade * edgeFade;
-        float ndotl = max(dot(normal, toLight / max(dist, 0.001)), 0.0);
-        sum += albedo * localLightColorIntensity[i].rgb * (atten * ndotl);
     }
     return sum;
 }
@@ -251,8 +240,8 @@ void main() {
 
     RtLight rt = rtLightAt(FragPos);
     shadow = rtShadow(rt, shadow);
-    vec3 lightFactor = rtAmbient(rt, ambientColor.rgb) + shadow * diff * lightColor.rgb;
-    // TBC 2.4.3 terrain.bls clamps vertex primary color (ambient + NdotL * diffuse)
+    vec3 lightFactor = rtAmbient(rt, ambientColor.rgb) + shadow * diff * lightColor.rgb + VertexLocalLight;
+    // TBC 2.4.3 terrain.bls clamps vertex primary color (ambient + NdotL * diffuse + point lights)
     // to [0, 1] before multiplying blended layer albedo.
     if (lightDir.w != 0.0) {
         lightFactor = clamp(lightFactor, 0.0, 1.0);

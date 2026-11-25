@@ -38,6 +38,7 @@ layout(location = 1) out vec3 Normal;
 layout(location = 2) out vec2 TexCoord;
 layout(location = 3) out vec2 LayerUV;
 layout(location = 4) out vec3 VertexSpecular;
+layout(location = 5) out vec3 VertexLocalLight;
 
 void main() {
     vec4 worldPos = push.model * vec4(aPosition, 1.0);
@@ -45,8 +46,25 @@ void main() {
     Normal = aNormal;
     TexCoord = aTexCoord;
     LayerUV = aLayerUV;
+    vec3 normN = normalize(aNormal);
     vec3 viewDir = normalize(viewPos.xyz - FragPos);
     vec3 halfDir = normalize(normalize(-lightDir.xyz) + viewDir);
-    VertexSpecular = specularColor.rgb * pow(max(dot(normalize(aNormal), halfDir), 0.0), 16.0);
+    VertexSpecular = specularColor.rgb * pow(max(dot(normN, halfDir), 0.0), 16.0);
+    // TBC authored M2 point lights evaluated per-vertex on the terrain grid
+    // rather than per-pixel so close held lights (e.g. NPC lanterns) do not
+    // burn sharp spotlights directly under a character's feet.
+    vec3 localSum = vec3(0.0);
+    for (int i = 0; i < min(localLightMeta.y, 64); ++i) {
+        vec3 toLight = localLightPosRadius[i].xyz - FragPos;
+        float radius = localLightPosRadius[i].w;
+        float distSq = dot(toLight, toLight);
+        if (radius <= 0.0 || distSq >= radius * radius) continue;
+        float dist = sqrt(distSq);
+        float edgeFade = 1.0 - dist / radius;
+        float atten = (edgeFade * edgeFade) / max(1.0 + 0.7 * dist + 0.03 * distSq, 1e-4);
+        float ndotl = max(dot(normN, toLight / max(dist, 0.001)), 0.0);
+        localSum += localLightColorIntensity[i].rgb * (atten * ndotl);
+    }
+    VertexLocalLight = localSum;
     gl_Position = projection * (view * worldPos);
 }

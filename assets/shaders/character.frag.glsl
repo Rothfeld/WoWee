@@ -187,8 +187,11 @@ vec3 tbcM2PointLightSum(vec3 worldPos, vec3 norm, vec3 boundsCenter, float bound
         float d2 = dot(toLight, toLight);
         float invD = inversesqrt(max(d2, 1e-8));
         float d = d2 * invD;
+        if (d >= radius) continue;
         float ndotl = max(dot(norm, toLight * invD), 0.0);
-        sum += localLightColorIntensity[i].rgb * (ndotl / max(0.7 * d + 0.03 * d2, 1e-5));
+        float edgeFade = 1.0 - d / radius;
+        float atten = (edgeFade * edgeFade) / max(1.0 + 0.7 * d + 0.03 * d2, 1e-4);
+        sum += localLightColorIntensity[i].rgb * (ndotl * atten);
     }
     return sum;
 }
@@ -557,9 +560,10 @@ void main() {
                 FragPos, lightNorm,
                 vec3(unitModelCenterX, unitModelCenterY, unitModelCenterZ),
                 unitModelRadius) * kitLight;
-            vec3 baseLight = clamp(effAmbient + max(dot(lightNorm, effDir), 0.0) * effDiffuse + m2Point, 0.0, 1.0);
-            vec3 shaded = clamp(effAmbient + m2Point, 0.0, 1.0);
-            vec3 litFactor = (interiorLit != 0) ? baseLight : mix(shaded, baseLight, shadow);
+            // In TBC 2.4.3, outdoor unit shadowing comes from baked ADT MCSH
+            // (already reflected in effDiffuse via terrainShadowed) plus ground
+            // ShadowBlob.blp rather than real-time shadow-map self-shadowing.
+            vec3 litFactor = clamp(effAmbient + max(dot(lightNorm, effDir), 0.0) * effDiffuse + m2Point, 0.0, 1.0);
             vec3 hoverAdd = hoverHighlight * ambientColor.rgb;
             result = rawTexRgb * clamp(batchTint * litFactor * vec3(kitColorR, kitColorG, kitColorB) + hoverAdd, 0.0, 1.0);
         } else if (interiorLit != 0) {

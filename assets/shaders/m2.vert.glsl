@@ -97,8 +97,11 @@ vec3 tbcM2PointLightSum(vec3 worldPos, vec3 norm, vec3 boundsCenter, float bound
         float d2 = dot(toLight, toLight);
         float invD = inversesqrt(max(d2, 1e-8));
         float d = d2 * invD;
+        if (d >= radius) continue;
         float ndotl = max(dot(norm, toLight * invD), 0.0);
-        sum += localLightColorIntensity[i].rgb * (ndotl / max(0.7 * d + 0.03 * d2, 1e-5));
+        float edgeFade = 1.0 - d / radius;
+        float atten = (edgeFade * edgeFade) / max(1.0 + 0.7 * d + 0.03 * d2, 1e-4);
+        sum += localLightColorIntensity[i].rgb * (ndotl * atten);
     }
     return sum;
 }
