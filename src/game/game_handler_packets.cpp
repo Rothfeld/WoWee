@@ -1378,12 +1378,7 @@ void GameHandler::registerCoreOpcodes() {
         addSystemChatMessage("Gems socketed successfully.");
         LOG_DEBUG("SMSG_SOCKET_GEMS_RESULT: itemGuid=0x", std::hex, itemGuid, std::dec);
     };
-    dispatchTable_[Opcode::SMSG_ITEM_TIME_UPDATE] = [](network::Packet& packet) {
-        if (packet.hasRemaining(12)) {
-            packet.readUInt64(); // itemGuid
-            packet.readUInt32(); // durationMs
-        }
-    };
+    // SMSG_ITEM_TIME_UPDATE - moved to InventoryHandler::registerOpcodes
 
     // ---- Batch 6: Spell miss / env damage / control / spell failure ----
 

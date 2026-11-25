@@ -1453,6 +1453,18 @@ network::Packet CancelTradePacket::build() {
     return packet;
 }
 
+network::Packet BusyTradePacket::build() {
+    network::Packet packet(wireOpcode(Opcode::CMSG_BUSY_TRADE));
+    LOG_DEBUG("Built CMSG_BUSY_TRADE");
+    return packet;
+}
+
+network::Packet IgnoreTradePacket::build() {
+    network::Packet packet(wireOpcode(Opcode::CMSG_IGNORE_TRADE));
+    LOG_DEBUG("Built CMSG_IGNORE_TRADE");
+    return packet;
+}
+
 network::Packet AcceptTradePacket::build(uint32_t peerRevision) {
     network::Packet packet(wireOpcode(Opcode::CMSG_ACCEPT_TRADE));
     if (isActiveExpansion("tbc")) packet.writeUInt32(peerRevision);

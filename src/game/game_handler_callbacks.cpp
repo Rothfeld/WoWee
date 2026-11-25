@@ -1189,6 +1189,18 @@ const std::array<GameHandler::TradeSlot, GameHandler::TRADE_SLOT_COUNT>& GameHan
             converted[i].stackCount = src[i].stackCount;
             converted[i].itemGuid = src[i].itemGuid;
             converted[i].occupied = (src[i].itemId != 0);
+            converted[i].wrapped = src[i].wrapped;
+            converted[i].giftCreatorGuid = src[i].giftCreatorGuid;
+            converted[i].permEnchantId = src[i].permEnchantId;
+            converted[i].socketEnchantIds = src[i].socketEnchantIds;
+            converted[i].creatorGuid = src[i].creatorGuid;
+            converted[i].spellCharges = src[i].spellCharges;
+            converted[i].suffixFactor = src[i].suffixFactor;
+            converted[i].randomPropertyId = src[i].randomPropertyId;
+            converted[i].lockId = src[i].lockId;
+            converted[i].maxDurability = src[i].maxDurability;
+            converted[i].durability = src[i].durability;
+            converted[i].appliedSpellId = src[i].appliedSpellId;
         }
         return converted;
     }
@@ -1204,6 +1216,18 @@ const std::array<GameHandler::TradeSlot, GameHandler::TRADE_SLOT_COUNT>& GameHan
             converted[i].stackCount = src[i].stackCount;
             converted[i].itemGuid = src[i].itemGuid;
             converted[i].occupied = (src[i].itemId != 0);
+            converted[i].wrapped = src[i].wrapped;
+            converted[i].giftCreatorGuid = src[i].giftCreatorGuid;
+            converted[i].permEnchantId = src[i].permEnchantId;
+            converted[i].socketEnchantIds = src[i].socketEnchantIds;
+            converted[i].creatorGuid = src[i].creatorGuid;
+            converted[i].spellCharges = src[i].spellCharges;
+            converted[i].suffixFactor = src[i].suffixFactor;
+            converted[i].randomPropertyId = src[i].randomPropertyId;
+            converted[i].lockId = src[i].lockId;
+            converted[i].maxDurability = src[i].maxDurability;
+            converted[i].durability = src[i].durability;
+            converted[i].appliedSpellId = src[i].appliedSpellId;
         }
         return converted;
     }
@@ -1214,6 +1238,12 @@ uint64_t GameHandler::getMyTradeGold() const {
 }
 uint64_t GameHandler::getPeerTradeGold() const {
     return inventoryHandler_ ? inventoryHandler_->getPeerTradeGold() : peerTradeGold_;
+}
+void GameHandler::busyTrade() {
+    if (inventoryHandler_) inventoryHandler_->busyTrade();
+}
+void GameHandler::ignoreTrade() {
+    if (inventoryHandler_) inventoryHandler_->ignoreTrade();
 }
 
 bool GameHandler::supportsEquipmentSets() const {
@@ -4301,6 +4331,11 @@ void GameHandler::buyItem(uint64_t vendorGuid, uint32_t itemId, uint32_t slot, u
     if (inventoryHandler_) inventoryHandler_->buyItem(vendorGuid, itemId, slot, count);
 }
 
+void GameHandler::buyItemInSlot(uint64_t vendorGuid, uint32_t itemId, uint32_t vendorSlot,
+                                uint64_t bagGuid, uint8_t bagSlot, uint32_t count) {
+    if (inventoryHandler_) inventoryHandler_->buyItemInSlot(vendorGuid, itemId, vendorSlot, bagGuid, bagSlot, count);
+}
+
 void GameHandler::buyBackItem(uint32_t buybackSlot) {
     if (inventoryHandler_) inventoryHandler_->buyBackItem(buybackSlot);
 }
@@ -4383,6 +4418,14 @@ void GameHandler::swapBagSlots(int srcBagIndex, int dstBagIndex) {
 
 void GameHandler::destroyItem(uint8_t bag, uint8_t slot, uint8_t count) {
     if (inventoryHandler_) inventoryHandler_->destroyItem(bag, slot, count);
+}
+
+void GameHandler::autoStoreBagItem(uint8_t srcBag, uint8_t srcSlot, uint8_t dstBag) {
+    if (inventoryHandler_) inventoryHandler_->autoStoreBagItem(srcBag, srcSlot, dstBag);
+}
+
+uint32_t GameHandler::getItemDuration(uint64_t itemGuid) const {
+    return inventoryHandler_ ? inventoryHandler_->getItemDuration(itemGuid) : 0;
 }
 
 void GameHandler::splitItem(uint8_t srcBag, uint8_t srcSlot, uint8_t count) {
@@ -4472,6 +4515,10 @@ void GameHandler::cancelItemTargeting() {
 
 void GameHandler::completeItemUseOnItem(uint64_t targetItemGuid, bool confirmed) {
     if (inventoryHandler_) inventoryHandler_->completeItemUseOnItem(targetItemGuid, confirmed);
+}
+
+bool GameHandler::completeItemUseOnTradeSlot() {
+    return inventoryHandler_ ? inventoryHandler_->completeItemUseOnTradeSlot() : false;
 }
 
 int GameHandler::getInstanceBootTimeRemaining() const {

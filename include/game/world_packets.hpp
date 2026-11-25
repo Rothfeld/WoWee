@@ -1734,6 +1734,18 @@ public:
     static network::Packet build();
 };
 
+/** CMSG_BUSY_TRADE packet builder (no payload) */
+class BusyTradePacket {
+public:
+    static network::Packet build();
+};
+
+/** CMSG_IGNORE_TRADE packet builder (no payload) */
+class IgnoreTradePacket {
+public:
+    static network::Packet build();
+};
+
 /** CMSG_ACCEPT_TRADE: TBC includes the accepted peer offer revision. */
 class AcceptTradePacket {
 public:
@@ -2712,6 +2724,18 @@ public:
     static network::Packet build(uint8_t srcSlot, uint8_t dstSlot);
 };
 
+/** CMSG_AUTOSTORE_BAG_ITEM packet builder */
+class AutoStoreBagItemPacket {
+public:
+    static network::Packet build(uint8_t srcBag, uint8_t srcSlot, uint8_t dstBag);
+};
+
+/** CMSG_DESTROYITEM packet builder (6-byte layout: bag, slot, count, 0, 0, 0) */
+class DestroyItemPacket {
+public:
+    static network::Packet build(uint8_t bag, uint8_t slot, uint8_t count = 0);
+};
+
 /** CMSG_LOOT_MONEY packet builder (empty body) */
 class LootMoneyPacket {
 public:
@@ -3062,6 +3086,13 @@ public:
 class BuyItemPacket {
 public:
     static network::Packet build(uint64_t vendorGuid, uint32_t itemId, uint32_t slot, uint32_t count);
+};
+
+/** CMSG_BUY_ITEM_IN_SLOT packet builder */
+class BuyItemInSlotPacket {
+public:
+    static network::Packet build(uint64_t vendorGuid, uint32_t itemId, uint32_t vendorSlot,
+                                 uint64_t bagGuid, uint8_t bagSlot, uint32_t count);
 };
 
 /** CMSG_SELL_ITEM packet builder */
@@ -3651,8 +3682,11 @@ struct AuctionEntry {
     uint32_t itemEntry = 0;
     uint32_t stackCount = 1;
     uint32_t enchantId = 0;
+    // [0]=perm, [1]=temp, [2..4]=gem sockets 1..3, [5]=socket bonus, [6]=prismatic
+    std::array<uint32_t, 7> enchantIds{};
     uint32_t randomPropertyId = 0;
     uint32_t suffixFactor = 0;
+    int32_t spellCharges = 0;
     uint64_t ownerGuid = 0;
     uint32_t startBid = 0;
     uint32_t minBidIncrement = 0;
@@ -3672,7 +3706,10 @@ struct AuctionCommandResult {
     uint32_t auctionId = 0;
     uint32_t action = 0;    // 0=create, 1=cancel, 2=bid, 3=buyout
     uint32_t errorCode = 0; // 0=success
-    uint32_t bidError = 0;  // secondary error for bid actions
+    uint32_t bidError = 0;  // minimalOutbid on success (action != 0), or InventoryResult on errorCode == 1
+    uint64_t higherBidderGuid = 0; // errorCode == 5 (AUCTION_ERR_HIGHER_BID)
+    uint32_t higherBid = 0;        // errorCode == 5
+    uint32_t higherOutBid = 0;     // errorCode == 5
 };
 
 struct AuctionHelloData {

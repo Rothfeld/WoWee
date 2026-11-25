@@ -10,6 +10,7 @@
  * until the copies were found to disagree.
  */
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <iterator>
@@ -244,11 +245,16 @@ inline void setItemLinkShape(ItemLinkShape shape) { itemLinkShapeRef() = shape; 
 inline std::string itemChatLink(uint32_t itemId, uint32_t quality,
                                 const std::string& name,
                                 uint32_t enchantId = 0,
-                                int32_t randomPropertyId = 0) {
+                                int32_t randomPropertyId = 0,
+                                std::array<uint32_t, 4> gemEnchantIds = {}) {
     const char* tail = itemLinkShapeRef() == ItemLinkShape::Tbc ? ":0|h[" : ":0:0|h[";
     return std::string("|c") + itemQualityColorHex(quality) + "|Hitem:" +
-           std::to_string(itemId) + ":" + std::to_string(enchantId) +
-           ":0:0:0:0:" + std::to_string(randomPropertyId) + tail + name +
+           std::to_string(itemId) + ":" + std::to_string(enchantId) + ":" +
+           std::to_string(gemEnchantIds[0]) + ":" +
+           std::to_string(gemEnchantIds[1]) + ":" +
+           std::to_string(gemEnchantIds[2]) + ":" +
+           std::to_string(gemEnchantIds[3]) + ":" +
+           std::to_string(randomPropertyId) + tail + name +
            "]|h|r";
 }
 

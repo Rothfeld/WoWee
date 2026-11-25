@@ -788,3 +788,122 @@ TEST_CASE("resolveLatestThreeSenders resolves NPC, player, auction, GO, GM and u
         CHECK(names[1] == "Binjy Featherwhistle");
     }
 }
+
+TEST_CASE("AuctionListResultParser preserves gem socket enchant IDs and spellCharges", "[auction]") {
+    wowee::network::Packet packet;
+    packet.writeUInt32(1); // 1 auction
+    packet.writeUInt32(4242); // auctionId
+    packet.writeUInt32(28430); // Lionheart Champion
+    // 6 TBC enchant slots: [0]=perm(2673 Mongoose), [1]=temp(0),
+    // [2]=gem1(2725), [3]=gem2(2734), [4]=gem3(2740), [5]=bonus(2877)
+    const uint32_t enchants[6] = {2673, 0, 2725, 2734, 2740, 2877};
+    for (int s = 0; s < 6; ++s) {
+        packet.writeUInt32(enchants[s]);
+        packet.writeUInt32(0); // duration
+        packet.writeUInt32(0); // charges
+    }
+    packet.writeUInt32(0xFFFFFF9Cu); // -100 randomPropertyId
+    packet.writeUInt32(150);         // suffixFactor
+    packet.writeUInt32(1);           // stackCount
+    packet.writeUInt32(static_cast<uint32_t>(-3)); // spellCharges = -3
+    packet.writeUInt32(0);           // flags
+    packet.writeUInt64(0x1111);      // ownerGuid
+    packet.writeUInt32(100000);      // startBid
+    packet.writeUInt32(5000);        // minBidIncrement
+    packet.writeUInt32(250000);      // buyoutPrice
+    packet.writeUInt32(7200000);     // timeLeftMs
+    packet.writeUInt64(0x2222);      // bidderGuid
+    packet.writeUInt32(105000);      // currentBid
+    packet.writeUInt32(1);           // totalCount
+    packet.writeUInt32(300);         // searchDelay
+
+    AuctionListResult result;
+    REQUIRE(AuctionListResultParser::parse(packet, result, 6));
+    REQUIRE(result.auctions.size() == 1);
+    const auto& e = result.auctions[0];
+    CHECK(e.enchantId == 2673);
+    CHECK(e.enchantIds[0] == 2673);
+    CHECK(e.enchantIds[1] == 0);
+    CHECK(e.enchantIds[2] == 2725);
+    CHECK(e.enchantIds[3] == 2734);
+    CHECK(e.enchantIds[4] == 2740);
+    CHECK(e.enchantIds[5] == 2877);
+    CHECK(e.enchantIds[6] == 0);
+    CHECK(e.spellCharges == -3);
+    CHECK(packet.getRemainingSize() == 0);
+}
+
+TEST_CASE("AuctionCommandResultParser decodes AUCTION_ERR_HIGHER_BID 16-byte tail and inventory errors", "[auction]") {
+    SECTION("errorCode == 5 (AUCTION_ERR_HIGHER_BID) parses newBidderGuid, newBid, newOutBid") {
+        wowee::network::Packet pkt;
+        pkt.writeUInt32(777); // auctionId
+        pkt.writeUInt32(2);   // AUCTION_BID_PLACED
+        pkt.writeUInt32(5);   // AUCTION_ERR_HIGHER_BID
+        pkt.writeUInt64(0x0000000000ABCDEFULL); // newBidderGuid
+        pkt.writeUInt32(45000);                 // newBid
+        pkt.writeUInt32(2250);                  // newOutBid
+
+        wowee::game::AuctionCommandResult res;
+        REQUIRE(wowee::game::AuctionCommandResultParser::parse(pkt, res));
+        CHECK(res.auctionId == 777);
+        CHECK(res.action == 2);
+        CHECK(res.errorCode == 5);
+        CHECK(res.higherBidderGuid == 0xABCDEFULL);
+        CHECK(res.higherBid == 45000);
+        CHECK(res.higherOutBid == 2250);
+        CHECK(pkt.getRemainingSize() == 0);
+    }
+
+    SECTION("errorCode == 1 (AUCTION_ERR_INVENTORY) parses InventoryResult") {
+        wowee::network::Packet pkt;
+        pkt.writeUInt32(0);
+        pkt.writeUInt32(0);  // AUCTION_SELL_ITEM
+        pkt.writeUInt32(1);  // AUCTION_ERR_INVENTORY
+        pkt.writeUInt32(50); // EQUIP_ERR_INVENTORY_FULL
+
+        wowee::game::AuctionCommandResult res;
+        REQUIRE(wowee::game::AuctionCommandResultParser::parse(pkt, res));
+        CHECK(res.errorCode == 1);
+        CHECK(res.bidError == 50);
+        CHECK(pkt.getRemainingSize() == 0);
+    }
+}
+
+TEST_CASE("DestroyItem, AutoStoreBagItem, BusyTrade, IgnoreTrade wire payloads match CMaNGOS-TBC", "[items][trade]") {
+    wowee::game::OpcodeTable table;
+    REQUIRE(table.loadFromJson(std::string(WOWEE_SOURCE_DIR) + "/Data/expansions/tbc/opcodes.json"));
+    wowee::game::setActiveOpcodeTable(&table);
+
+    {
+        auto destroyPkt = wowee::game::DestroyItemPacket::build(0xFF, 25, 0);
+        CHECK(destroyPkt.getOpcode() == 0x0111);
+        const auto& d = destroyPkt.getData();
+        REQUIRE(d.size() == 6);
+        CHECK(d[0] == 0xFF);
+        CHECK(d[1] == 25);
+        CHECK(d[2] == 0);
+        CHECK(d[3] == 0);
+        CHECK(d[4] == 0);
+        CHECK(d[5] == 0);
+    }
+
+    {
+        auto autoStorePkt = wowee::game::AutoStoreBagItemPacket::build(0xFF, 24, 19);
+        CHECK(autoStorePkt.getOpcode() == 0x010B);
+        const auto& d = autoStorePkt.getData();
+        REQUIRE(d.size() == 3);
+        CHECK(d[0] == 0xFF);
+        CHECK(d[1] == 24);
+        CHECK(d[2] == 19);
+    }
+
+    {
+        auto busyPkt = wowee::game::BusyTradePacket::build();
+        CHECK(busyPkt.getOpcode() == 0x0118);
+        CHECK(busyPkt.getData().empty());
+
+        auto ignorePkt = wowee::game::IgnoreTradePacket::build();
+        CHECK(ignorePkt.getOpcode() == 0x0119);
+        CHECK(ignorePkt.getData().empty());
+    }
+}

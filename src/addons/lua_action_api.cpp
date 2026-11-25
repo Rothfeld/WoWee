@@ -1510,7 +1510,7 @@ static void soldHeldItem(lua_State* L) {
     clearCursorItem(L);
 }
 
-bool boughtHeldMerchantItem(lua_State* L) {
+bool boughtHeldMerchantItem(lua_State* L, int dstBag, int dstSlot) {
     if (s_cursorType != CursorType::MERCHANT) return false;
     auto* gh = getGameHandler(L);
     const int index = static_cast<int>(s_cursorId);
@@ -1518,7 +1518,22 @@ bool boughtHeldMerchantItem(lua_State* L) {
         const auto& items = gh->getVendorItems().items;
         if (index <= static_cast<int>(items.size())) {
             const auto& vi = items[index - 1];
-            gh->buyItem(gh->getVendorGuid(), vi.itemId, vi.slot, 1);
+            if (dstBag == 0 && dstSlot >= 1 && dstSlot <= game::Inventory::BACKPACK_SLOTS) {
+                const uint8_t wireSlot = static_cast<uint8_t>(game::slots::backpackWireSlot(dstSlot - 1));
+                gh->buyItemInSlot(gh->getVendorGuid(), vi.itemId, vi.slot,
+                                  gh->getPlayerGuid(), wireSlot, 1);
+            } else if (dstBag >= 1 && dstBag <= game::Inventory::NUM_BAG_SLOTS && dstSlot >= 1) {
+                const uint64_t bagGuid =
+                    gh->getEquipSlotGuid(game::Inventory::FIRST_BAG_EQUIP_SLOT + dstBag - 1);
+                if (bagGuid != 0) {
+                    gh->buyItemInSlot(gh->getVendorGuid(), vi.itemId, vi.slot,
+                                      bagGuid, static_cast<uint8_t>(dstSlot - 1), 1);
+                } else {
+                    gh->buyItem(gh->getVendorGuid(), vi.itemId, vi.slot, 1);
+                }
+            } else {
+                gh->buyItem(gh->getVendorGuid(), vi.itemId, vi.slot, 1);
+            }
         }
     }
     clearCursorItem(L);
@@ -1667,7 +1682,7 @@ static int lua_PickupContainerItem(lua_State* L) {
 
     // A bag click while the cursor holds a vendor's item is the purchase.
     // containerframe.lua routes it here after checking GetCursorInfo.
-    if (boughtHeldMerchantItem(L)) return 0;
+    if (boughtHeldMerchantItem(L, bag, slot)) return 0;
 
     // Carrying something out of the guild bank, so this is the withdrawal.
     // The destination is this bag slot rather than the server's choice, which
@@ -2300,13 +2315,24 @@ static int pushTradeSlot(lua_State* L, game::GameHandler* gh,
                          const game::GameHandler::TradeSlot& slot, bool targetSide) {
     if (!slot.occupied || slot.itemId == 0) { return luaReturnNil(L); }
     const auto* info = gh->getItemInfo(slot.itemId);
-    lua_pushstring(L, info ? info->name.c_str() : "");
+    std::string displayName = info ? info->name : std::string{};
+    if (!displayName.empty() && slot.randomPropertyId != 0 && !slot.wrapped) {
+        const std::string suffix = gh->getRandomPropertyName(slot.randomPropertyId);
+        if (!suffix.empty()) displayName += " " + suffix;
+    }
+    lua_pushstring(L, displayName.c_str());
     lua_pushstring(L, gh->getItemIconPath(
         info && info->displayInfoId ? info->displayInfoId : slot.displayId).c_str());
     lua_pushnumber(L, slot.stackCount);
     if (targetSide) lua_pushnumber(L, info ? static_cast<int>(info->quality) : 0);
     lua_pushboolean(L, 1);       // isUsable
-    lua_pushnil(L);              // enchantment: not carried by the trade packet
+    if (slot.appliedSpellId != 0) {
+        std::string ench = gh->getSpellName(slot.appliedSpellId);
+        if (ench.empty()) ench = "Spell #" + std::to_string(slot.appliedSpellId);
+        lua_pushstring(L, ench.c_str());
+    } else {
+        lua_pushnil(L);
+    }
     return targetSide ? 6 : 5;
 }
 
@@ -2326,9 +2352,17 @@ static int lua_GetTradeTargetItemInfo(lua_State* L) {
 
 static int pushTradeLink(lua_State* L, game::GameHandler* gh,
                          const game::GameHandler::TradeSlot& slot) {
-    const auto* info = (gh && slot.occupied) ? gh->getItemInfo(slot.itemId) : nullptr;
+    const auto* info = (gh && slot.occupied && !slot.wrapped) ? gh->getItemInfo(slot.itemId) : nullptr;
     if (!info || info->name.empty()) { return luaReturnNil(L); }
-    const std::string link = game::itemChatLink(slot.itemId, static_cast<uint32_t>(info->quality), info->name);
+    std::string displayName = info->name;
+    if (slot.randomPropertyId != 0) {
+        const std::string suffix = gh->getRandomPropertyName(slot.randomPropertyId);
+        if (!suffix.empty()) displayName += " " + suffix;
+    }
+    const std::string link = game::itemChatLink(
+        slot.itemId, static_cast<uint32_t>(info->quality), displayName,
+        slot.permEnchantId, slot.randomPropertyId,
+        {slot.socketEnchantIds[0], slot.socketEnchantIds[1], slot.socketEnchantIds[2], 0});
     lua_pushstring(L, link.c_str());
     return 1;
 }
@@ -2370,8 +2404,17 @@ static int lua_ClickTradeButton(lua_State* L) {
     return 0;
 }
 
-// The other side's slots belong to the other player.
-static int lua_ClickTargetTradeButton(lua_State* L) { (void)L; return 0; }
+// Partner slots 1-6 are read-only; slot 7 (TRADE_SLOT_NONTRADED + 1) accepts
+// an item-targeted spell or enhancement (enchanting, lockpicking, weapon oils).
+static int lua_ClickTargetTradeButton(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    const int index = static_cast<int>(luaL_optnumber(L, 1, 0));
+    if (!gh || index != game::GameHandler::TRADE_SLOT_NONTRADED + 1) return 0;
+    if (gh->isAwaitingItemTarget()) {
+        gh->completeItemUseOnTradeSlot();
+    }
+    return 0;
+}
 
 static int lua_SetTradeMoney(lua_State* L) {
     auto* gh = getGameHandler(L);

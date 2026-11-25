@@ -3616,22 +3616,10 @@ static int lua_PutItemInBag(lua_State* L) {
         lua_pushboolean(L, 1);
         return 1;
     }
-    for (int i = 0; i < size; ++i) {
-        const auto& target = isWorn ? inv.getBagSlot(bagIndex, i)
-                                    : inv.getBankBagSlot(bagIndex, i);
-        if (!target.empty()) continue;
-        const int container = isWorn ? game::slots::wornBagContainer(bagIndex)
-                                     : game::slots::bankBagContainer(bagIndex);
-        gh->swapContainerItems(srcBag, srcSlot,
-                               static_cast<uint8_t>(container),
-                               static_cast<uint8_t>(i));
-        // The move is sent; the cursor is empty.
-        wowee::ui::frameXmlPutCursorDown();
-        lua_pushboolean(L, 1);
-        return 1;
-    }
-    // Held, but nowhere to put it - still "had an item", so the button does not
-    // fall through to opening the bag.
+    const int container = isWorn ? game::slots::wornBagContainer(bagIndex)
+                                 : game::slots::bankBagContainer(bagIndex);
+    gh->autoStoreBagItem(srcBag, srcSlot, static_cast<uint8_t>(container));
+    wowee::ui::frameXmlPutCursorDown();
     lua_pushboolean(L, 1);
     return 1;
 }
@@ -3644,13 +3632,8 @@ static int lua_PutItemInBackpack(lua_State* L) {
         lua_pushboolean(L, 0);
         return 1;
     }
-    const int free = gh->getInventory().findFreeBackpackSlot();
-    if (free >= 0) {
-        gh->swapContainerItems(srcBag, srcSlot, 0xFF,
-                               static_cast<uint8_t>(game::slots::backpackWireSlot(free)));
-        // The move is sent; the cursor is empty.
-        wowee::ui::frameXmlPutCursorDown();
-    }
+    gh->autoStoreBagItem(srcBag, srcSlot, 0xFF);
+    wowee::ui::frameXmlPutCursorDown();
     lua_pushboolean(L, 1);
     return 1;
 }
@@ -3900,8 +3883,13 @@ static int lua_GetLootRollItemInfo(lua_State* L) {
     // client does (measured); nil only while its item query is outstanding.
     const auto* info = gh->getItemInfo(roll->itemId);
     if (!info || !info->valid) { return luaReturnNil(L); }
+    std::string fullName = info->name;
+    if (roll->randomPropertyId != 0) {
+        const std::string suffix = gh->getRandomPropertyName(roll->randomPropertyId);
+        if (!suffix.empty()) fullName += " " + suffix;
+    }
     lua_pushstring(L, gh->getItemIconPath(info->displayInfoId).c_str());
-    lua_pushstring(L, info->name.c_str());
+    lua_pushstring(L, fullName.c_str());
     // The roll packet does not carry a stack size. One is right for nearly
     // everything rolled for, and the window only reads it to decide whether to
     // print a number in the corner at all.
@@ -3925,8 +3913,13 @@ static int lua_GetLootRollItemLink(lua_State* L) {
     if (!roll) { return luaReturnNil(L); }
     const auto* info = gh->getItemInfo(roll->itemId);
     if (!info || !info->valid) { return luaReturnNil(L); }
-    lua_pushstring(L, game::buildItemLink(roll->itemId, info->quality,
-                                          info->name).c_str());
+    std::string fullName = info->name;
+    if (roll->randomPropertyId != 0) {
+        const std::string suffix = gh->getRandomPropertyName(roll->randomPropertyId);
+        if (!suffix.empty()) fullName += " " + suffix;
+    }
+    lua_pushstring(L, game::itemChatLink(roll->itemId, info->quality,
+                                         fullName, 0, roll->randomPropertyId).c_str());
     return 1;
 }
 
@@ -5649,11 +5642,20 @@ void registerInventoryLuaAPI(lua_State* L) {
             else if (t == "owner") r = &gh->getAuctionOwnerResults();
             else if (t == "bidder") r = &gh->getAuctionBidderResults();
             if (!r || index > static_cast<int>(r->auctions.size())) { return luaReturnNil(L); }
-            uint32_t itemId = r->auctions[index - 1].itemEntry;
+            const auto& entry = r->auctions[index - 1];
+            const uint32_t itemId = entry.itemEntry;
             const auto* info = gh->getItemInfo(itemId);
             if (!info) { return luaReturnNil(L); }
-        
-    const std::string link = game::itemChatLink(itemId, static_cast<uint32_t>(info->quality), info->name);
+            std::string fullName = info->name;
+            const int32_t randProp = static_cast<int32_t>(entry.randomPropertyId);
+            if (randProp != 0) {
+                const std::string suffix = gh->getRandomPropertyName(randProp);
+                if (!suffix.empty()) fullName += " " + suffix;
+            }
+            const std::string link = game::itemChatLink(
+                itemId, static_cast<uint32_t>(info->quality), fullName,
+                entry.enchantId, randProp,
+                {entry.enchantIds[2], entry.enchantIds[3], entry.enchantIds[4], entry.enchantIds[6]});
             lua_pushstring(L, link.c_str());
             return 1;
         }},

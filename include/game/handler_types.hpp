@@ -525,6 +525,8 @@ struct LootRollEntry {
     uint64_t objectGuid    = 0;
     uint32_t slot          = 0;
     uint32_t itemId        = 0;
+    uint32_t randomSuffix  = 0;
+    int32_t  randomPropertyId = 0;
     /// START_LOOT_ROLL raised. Held back until the item is cached (the roll
     /// window reads name, icon and quality once, in its OnShow) and while four
     /// rolls are announced; see InventoryHandler::announceQueuedLootRolls.

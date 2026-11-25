@@ -1023,11 +1023,15 @@ bool AuctionListResultParser::parse(network::Packet& packet, AuctionListResult& 
         // Vanilla sends only the permanent enchant id; TBC/WotLK send
         // id/duration/charges triplets for every inspected slot.
         e.enchantId = packet.readUInt32();
+        e.enchantIds[0] = e.enchantId;
         if (!vanillaLayout) {
             packet.readUInt32(); // enchant1 duration
             packet.readUInt32(); // enchant1 charges
             for (int s = 1; s < numEnchantSlots; ++s) {
-                packet.readUInt32(); // enchant N id
+                const uint32_t slotEnchantId = packet.readUInt32();
+                if (s < static_cast<int>(e.enchantIds.size())) {
+                    e.enchantIds[static_cast<size_t>(s)] = slotEnchantId;
+                }
                 packet.readUInt32(); // enchant N duration
                 packet.readUInt32(); // enchant N charges
             }
@@ -1035,7 +1039,7 @@ bool AuctionListResultParser::parse(network::Packet& packet, AuctionListResult& 
         e.randomPropertyId = packet.readUInt32();
         e.suffixFactor     = packet.readUInt32();
         e.stackCount       = packet.readUInt32();
-        packet.readUInt32(); // item spell charges
+        e.spellCharges     = static_cast<int32_t>(packet.readUInt32());
         if (!vanillaLayout) packet.readUInt32(); // item flags (server always writes 0)
         e.ownerGuid        = packet.readUInt64();
         e.startBid         = packet.readUInt32();
@@ -1055,18 +1059,23 @@ bool AuctionListResultParser::parse(network::Packet& packet, AuctionListResult& 
 }
 
 bool AuctionCommandResultParser::parse(network::Packet& packet, AuctionCommandResult& data) {
+    data = AuctionCommandResult{};
     if (!packet.hasRemaining(12)) return false;
     data.auctionId = packet.readUInt32();
     data.action = packet.readUInt32();
     data.errorCode = packet.readUInt32();
-    // The fourth word is conditional, and the condition was inverted. The
-    // server writes it under `if (!ErrorCode && Action)` - on *success*, for
-    // any action but the zeroth - while this read it on failure and only for a
-    // bid. The two conditions never overlap, so the field was read exactly
-    // when it was absent and skipped exactly when it was there. Only the
-    // remaining-size guard kept that from reading off the end.
+    // Conditional tail from CMaNGOS SendAuctionCommandResult:
+    // - errorCode == 0 && action != 0: uint32 minimalOutbid (on AUCTION_BID_PLACED)
+    // - errorCode == 1 (AUCTION_ERR_INVENTORY): uint32 InventoryResult
+    // - errorCode == 5 (AUCTION_ERR_HIGHER_BID): uint64 newBidder + uint32 newBid + uint32 newOutBid
     if (data.errorCode == 0 && data.action != 0 && packet.hasRemaining(4)) {
         data.bidError = packet.readUInt32();
+    } else if (data.errorCode == 1 && packet.hasRemaining(4)) {
+        data.bidError = packet.readUInt32();
+    } else if (data.errorCode == 5 && packet.hasRemaining(16)) {
+        data.higherBidderGuid = packet.readUInt64();
+        data.higherBid = packet.readUInt32();
+        data.higherOutBid = packet.readUInt32();
     }
     return true;
 }

@@ -2310,6 +2310,18 @@ public:
         uint8_t  bag         = 0xFF;   // 0xFF = not set
         uint8_t  bagSlot     = 0xFF;
         bool     occupied    = false;
+        bool     wrapped     = false;
+        uint64_t giftCreatorGuid = 0;
+        uint32_t permEnchantId   = 0;
+        std::array<uint32_t, 3> socketEnchantIds{};
+        uint64_t creatorGuid     = 0;
+        int32_t  spellCharges    = 0;
+        uint32_t suffixFactor    = 0;
+        int32_t  randomPropertyId = 0;
+        uint32_t lockId          = 0;
+        uint32_t maxDurability   = 0;
+        uint32_t durability      = 0;
+        uint32_t appliedSpellId  = 0;
     };
 
     TradeStatus getTradeStatus() const;
@@ -2327,6 +2339,8 @@ public:
     /// Take back an acceptance, leaving the trade open.
     void unacceptTrade();
     void declineTradeRequest();  // respond with CMSG_CANCEL_TRADE
+    void busyTrade();            // respond with CMSG_BUSY_TRADE
+    void ignoreTrade();          // respond with CMSG_IGNORE_TRADE
     void acceptTrade();          // lock in offer: CMSG_ACCEPT_TRADE
     void cancelTrade();          // CMSG_CANCEL_TRADE
     void setTradeItem(uint8_t tradeSlot, uint8_t bag, uint8_t bagSlot);
@@ -3701,6 +3715,8 @@ public:
     void openVendor(uint64_t npcGuid);
     void closeVendor();
     void buyItem(uint64_t vendorGuid, uint32_t itemId, uint32_t slot, uint32_t count);
+    void buyItemInSlot(uint64_t vendorGuid, uint32_t itemId, uint32_t vendorSlot,
+                       uint64_t bagGuid, uint8_t bagSlot, uint32_t count);
     void sellItem(uint64_t vendorGuid, uint64_t itemGuid, uint32_t count);
     void sellItemBySlot(int backpackIndex);
     void sellItemInBag(int bagIndex, int slotIndex);
@@ -3791,6 +3807,7 @@ public:
     uint32_t getPendingItemTargetSourceItemId() const;
     void cancelItemTargeting();
     void completeItemUseOnItem(uint64_t targetItemGuid, bool confirmed = false);
+    bool completeItemUseOnTradeSlot();
     void replaceEnchant();
 
     /// Seconds until the server teleports the player out of an instance they
@@ -3805,6 +3822,8 @@ public:
     void readItemBySlot(int backpackIndex);
     void readItemInBag(int bagIndex, int slotIndex);
     void destroyItem(uint8_t bag, uint8_t slot, uint8_t count = 1);
+    void autoStoreBagItem(uint8_t srcBag, uint8_t srcSlot, uint8_t dstBag);
+    uint32_t getItemDuration(uint64_t itemGuid) const;
     void splitItem(uint8_t srcBag, uint8_t srcSlot, uint8_t count);
     void splitItemTo(uint8_t srcBag, uint8_t srcSlot,
                      uint8_t dstBag, uint8_t dstSlot, uint8_t count);

@@ -306,12 +306,76 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
     };
 
     // ---- Read item (books) (moved from GameHandler) ----
-    table[Opcode::SMSG_READ_ITEM_OK] = [](network::Packet& packet) {
+    table[Opcode::SMSG_READ_ITEM_OK] = [this](network::Packet& packet) {
+        const uint64_t itemGuid = packet.hasRemaining(8) ? packet.readUInt64() : pendingReadItemGuid_;
         packet.skipAll();
+
+        uint32_t pageTextId = 0;
+        std::string title;
+        uint32_t material = 0;
+        if (itemGuid != 0 && itemGuid == pendingReadItemGuid_ && pendingReadPageTextId_ != 0) {
+            pageTextId = pendingReadPageTextId_;
+            title = pendingReadTitle_;
+            material = pendingReadMaterial_;
+        } else if (itemGuid != 0) {
+            auto resolveFromItem = [&](const ItemDef& item) {
+                if (pageTextId != 0) return;
+                const auto* info = owner_.getItemInfo(item.itemId);
+                pageTextId = info && info->pageTextId != 0 ? info->pageTextId : item.pageTextId;
+                title = info && !info->name.empty() ? info->name : item.name;
+                material = info ? info->pageMaterial : 0u;
+            };
+            const auto& bpGuids = owner_.backpackSlotGuidsRef();
+            for (int i = 0; i < owner_.inventoryRef().getBackpackSize() && i < static_cast<int>(bpGuids.size()); ++i) {
+                const auto& slot = owner_.inventoryRef().getBackpackSlot(i);
+                if (!slot.empty() && (bpGuids[i] == itemGuid || slot.item.guid == itemGuid)) {
+                    resolveFromItem(slot.item);
+                    break;
+                }
+            }
+            for (int b = 0; b < Inventory::NUM_BAG_SLOTS && pageTextId == 0; ++b) {
+                const uint64_t bagGuid = owner_.equipSlotGuidsRef()[Inventory::FIRST_BAG_EQUIP_SLOT + b];
+                auto cit = bagGuid != 0 ? owner_.containerContentsRef().find(bagGuid)
+                                        : owner_.containerContentsRef().end();
+                for (int s = 0; s < owner_.inventoryRef().getBagSize(b); ++s) {
+                    const auto& slot = owner_.inventoryRef().getBagSlot(b, s);
+                    if (slot.empty()) continue;
+                    const uint64_t sGuid = (cit != owner_.containerContentsRef().end() &&
+                                            s < static_cast<int>(cit->second.numSlots))
+                        ? cit->second.slotGuids[s]
+                        : slot.item.guid;
+                    if (sGuid == itemGuid || slot.item.guid == itemGuid) {
+                        resolveFromItem(slot.item);
+                        break;
+                    }
+                }
+            }
+        }
+
+        pendingReadItemGuid_ = 0;
+        pendingReadPageTextId_ = 0;
+        pendingReadTitle_.clear();
+        pendingReadMaterial_ = 0;
+
+        if (pageTextId != 0 && owner_.getState() == WorldState::IN_WORLD && owner_.getSocket()) {
+            owner_.bookPagesRef().clear();
+            owner_.setBookTitle(title);
+            owner_.setBookMaterial(material);
+            auto pagePacket = PageTextQueryPacket::build(
+                pageTextId, itemGuid != 0 ? itemGuid : owner_.getPlayerGuid());
+            owner_.getSocket()->send(pagePacket);
+        }
     };
     table[Opcode::SMSG_READ_ITEM_FAILED] = [this](network::Packet& packet) {
+        pendingReadItemGuid_ = 0;
+        pendingReadPageTextId_ = 0;
+        pendingReadTitle_.clear();
+        pendingReadMaterial_ = 0;
         owner_.raiseUiError("You cannot read this item.");
         packet.skipAll();
+    };
+    table[Opcode::SMSG_ITEM_TIME_UPDATE] = [this](network::Packet& packet) {
+        handleItemTimeUpdate(packet);
     };
 
     // ---- Loot roll start / notifications ----
@@ -336,8 +400,8 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
         if (hasMapId) packet.readUInt32(); // mapId
         uint32_t lootSlot = packet.readUInt32();
         uint32_t itemId   = packet.readUInt32();
-        /*uint32_t randSuffix =*/ packet.readUInt32();
-        (void)packet.readUInt32(); // random property
+        uint32_t randSuffix = packet.readUInt32();
+        int32_t  randProp   = static_cast<int32_t>(packet.readUInt32());
         if (hasItemCount) (void)packet.readUInt32(); // items in stack
         uint32_t countdown = packet.readUInt32();
         uint8_t  voteMask  = packet.readUInt8();
@@ -347,6 +411,8 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
         // them, so the last to arrive answered for all of them.
         LootRollEntry& roll = beginLootRoll(objectGuid, lootSlot);
         roll.itemId = itemId;
+        roll.randomSuffix = randSuffix;
+        roll.randomPropertyId = randProp;
         roll.rollCountdownMs = countdown;
         roll.voteMask = voteMask;
         roll.rollStartedAt = std::chrono::steady_clock::now();
@@ -848,49 +914,77 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
     table[Opcode::SMSG_AUCTION_COMMAND_RESULT] = [this](network::Packet& packet) { handleAuctionCommandResult(packet); };
 
     table[Opcode::SMSG_AUCTION_OWNER_NOTIFICATION] = [this](network::Packet& packet) {
-        // SendAuctionOwnerNotification writes:
-        //   auctionId(4) bid(4) unk(4) unkGuid(8) item_template(4) unk(4)
-        //   unkTime(float 4) = 32 bytes.
-        // Sent only when an owned auction SELLS - expiry and outbids arrive on
-        // their own opcodes (SMSG_AUCTION_REMOVED_NOTIFICATION /
-        // SMSG_AUCTION_BIDDER_NOTIFICATION).
-        //
-        // The item entry is at offset 20 and reading field 3 made every "sold"
-        // line say "Item #0". That was fixed by counting six uint32s to reach
-        // twenty, which lands in the right place and describes the packet
-        // wrongly: the twelve bytes in the middle are one eight-byte guid and
-        // one word, not three words. Written out properly here so the next
-        // person to add a field does not count from a layout that is not the
-        // one on the wire.
+        // CMaNGOS SendAuctionOwnerNotification:
+        //   auctionId(4) + bid(4) + outbid(4) + bidderGuid(8) + itemTemplate(4) +
+        //   itemRandomPropId(4) [+ WotLK unkTime(float 4)] = 28 bytes TBC, 32 WotLK.
+        // - bidderGuid == 0 && bid == 0: auction expired (ERR_AUCTION_EXPIRED_S)
+        // - bidderGuid == 0 && bid != 0: auction sold (ERR_AUCTION_SOLD_S)
+        // - bidderGuid != 0: active owned auction received a new bid (update row)
         if (packet.hasRemaining(24)) {
-            /*uint32_t auctionId =*/ packet.readUInt32();
-            /*uint32_t bid       =*/ packet.readUInt32();
-            /*uint32_t unk       =*/ packet.readUInt32();
-            /*uint64_t unkGuid   =*/ packet.readUInt64();
-            uint32_t itemEntry = packet.readUInt32();
+            const uint32_t auctionId  = packet.readUInt32();
+            const uint32_t bid        = packet.readUInt32();
+            const uint32_t outbid     = packet.readUInt32();
+            const uint64_t bidderGuid = packet.readUInt64();
+            const uint32_t itemEntry  = packet.readUInt32();
+            const int32_t itemRandomProp = packet.hasRemaining(4)
+                ? static_cast<int32_t>(packet.readUInt32())
+                : 0;
             owner_.ensureItemInfo(itemEntry);
             auto* info = owner_.getItemInfo(itemEntry);
             std::string rawName = info && !info->name.empty() ? info->name : ("Item #" + std::to_string(itemEntry));
-            uint32_t aucQuality = info ? info->quality : 1u;
-            std::string itemLink = buildItemLink(itemEntry, aucQuality, rawName);
-            owner_.systemGlobal("ERR_AUCTION_SOLD_S", {itemLink});
+            if (itemRandomProp != 0) {
+                std::string suffix = owner_.getRandomPropertyName(itemRandomProp);
+                if (!suffix.empty()) rawName += " " + suffix;
+            }
+            const uint32_t aucQuality = info ? info->quality : 1u;
+            const std::string itemLink = itemChatLink(itemEntry, aucQuality, rawName, 0, itemRandomProp);
+
+            if (bidderGuid == 0) {
+                auto& owned = auctionOwnerResults_.auctions;
+                const auto it = std::remove_if(owned.begin(), owned.end(),
+                                               [auctionId](const AuctionEntry& e) { return e.auctionId == auctionId; });
+                if (it != owned.end()) {
+                    const auto removed = static_cast<uint32_t>(std::distance(it, owned.end()));
+                    owned.erase(it, owned.end());
+                    auctionOwnerResults_.totalCount = auctionOwnerResults_.totalCount > removed
+                        ? auctionOwnerResults_.totalCount - removed
+                        : 0;
+                }
+                if (owner_.addonEventCallbackRef()) {
+                    owner_.addonEventCallbackRef()("AUCTION_OWNED_LIST_UPDATE", {});
+                }
+                owner_.systemGlobal(bid == 0 ? "ERR_AUCTION_EXPIRED_S" : "ERR_AUCTION_SOLD_S", {itemLink});
+            } else {
+                owner_.queryPlayerName(bidderGuid);
+                for (auto& e : auctionOwnerResults_.auctions) {
+                    if (e.auctionId == auctionId) {
+                        e.currentBid = bid;
+                        e.minBidIncrement = outbid;
+                        e.bidderGuid = bidderGuid;
+                    }
+                }
+                if (owner_.addonEventCallbackRef()) {
+                    owner_.addonEventCallbackRef()("AUCTION_OWNED_LIST_UPDATE", {});
+                }
+            }
         }
         packet.skipAll();
     };
 
     table[Opcode::SMSG_AUCTION_BIDDER_NOTIFICATION] = [this](network::Packet& packet) {
-        // WotLK format: auctionHouseId(4) + auctionId(4) + bidderGuid(8) +
-        // bidAmount(4) + outbidAmount(4) + itemEntry(4) + randomPropertyId(4) = 32 bytes.
-        // Previously read auctionHouseId as auctionId and auctionId as itemEntry,
-        // so outbid messages always referenced the wrong item.
+        // CMaNGOS SendAuctionWonNotification / SendAuctionOutbiddedNotification:
+        //   auctionHouseId(4) + auctionId(4) + bidderGuid(8) + bidAmount(4) +
+        //   outbidAmount(4) + itemEntry(4) + randomPropertyId(4) = 32 bytes.
+        // bidAmount == 0 means the player won the auction (ERR_AUCTION_WON_S);
+        // bidAmount != 0 means the player was outbid (ERR_AUCTION_OUTBID_S).
         if (!packet.hasRemaining(32)) { packet.skipAll(); return; }
         /*uint32_t auctionHouseId =*/ packet.readUInt32();
-        /*uint32_t auctionId      =*/ packet.readUInt32();
-        /*uint64_t bidderGuid     =*/ packet.readUInt64();
-        /*uint32_t bidAmount      =*/ packet.readUInt32();
-        /*uint32_t outbidAmount   =*/ packet.readUInt32();
-        uint32_t itemEntry = packet.readUInt32();
-        int32_t bidRandProp = static_cast<int32_t>(packet.readUInt32());
+        const uint32_t auctionId    = packet.readUInt32();
+        const uint64_t bidderGuid   = packet.readUInt64();
+        const uint32_t bidAmount    = packet.readUInt32();
+        const uint32_t outbidAmount = packet.readUInt32();
+        const uint32_t itemEntry    = packet.readUInt32();
+        const int32_t  bidRandProp  = static_cast<int32_t>(packet.readUInt32());
         owner_.ensureItemInfo(itemEntry);
         auto* info = owner_.getItemInfo(itemEntry);
         std::string rawName = info && !info->name.empty() ? info->name : ("Item #" + std::to_string(itemEntry));
@@ -898,16 +992,50 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
             std::string suffix = owner_.getRandomPropertyName(bidRandProp);
             if (!suffix.empty()) rawName += " " + suffix;
         }
-        uint32_t bidQuality = info ? info->quality : 1u;
-        owner_.systemGlobal("ERR_AUCTION_OUTBID_S", {buildItemLink(itemEntry, bidQuality, rawName)});
+        const uint32_t bidQuality = info ? info->quality : 1u;
+        const std::string itemLink = itemChatLink(itemEntry, bidQuality, rawName, 0, bidRandProp);
+
+        if (bidAmount == 0) {
+            owner_.systemGlobal("ERR_AUCTION_WON_S", {itemLink});
+            outbiddedAuctionIds_.erase(
+                std::remove(outbiddedAuctionIds_.begin(), outbiddedAuctionIds_.end(), auctionId),
+                outbiddedAuctionIds_.end());
+            auto& bids = auctionBidderResults_.auctions;
+            const auto it = std::remove_if(bids.begin(), bids.end(),
+                                           [auctionId](const AuctionEntry& e) { return e.auctionId == auctionId; });
+            if (it != bids.end()) {
+                const auto removed = static_cast<uint32_t>(std::distance(it, bids.end()));
+                bids.erase(it, bids.end());
+                auctionBidderResults_.totalCount = auctionBidderResults_.totalCount > removed
+                    ? auctionBidderResults_.totalCount - removed
+                    : 0;
+            }
+        } else {
+            owner_.systemGlobal("ERR_AUCTION_OUTBID_S", {itemLink});
+            if (std::find(outbiddedAuctionIds_.begin(), outbiddedAuctionIds_.end(), auctionId) ==
+                outbiddedAuctionIds_.end()) {
+                outbiddedAuctionIds_.push_back(auctionId);
+            }
+            if (bidderGuid != 0) owner_.queryPlayerName(bidderGuid);
+            for (auto& e : auctionBidderResults_.auctions) {
+                if (e.auctionId == auctionId) {
+                    e.bidderGuid = bidderGuid;
+                    e.currentBid = bidAmount;
+                    e.minBidIncrement = outbidAmount;
+                }
+            }
+        }
+        if (owner_.addonEventCallbackRef()) {
+            owner_.addonEventCallbackRef()("AUCTION_BIDDER_LIST_UPDATE", {});
+        }
         packet.skipAll();
     };
 
     table[Opcode::SMSG_AUCTION_REMOVED_NOTIFICATION] = [this](network::Packet& packet) {
         if (packet.hasRemaining(12)) {
-            /*uint32_t auctionId =*/ packet.readUInt32();
-            uint32_t itemEntry = packet.readUInt32();
-            int32_t itemRandom = static_cast<int32_t>(packet.readUInt32());
+            const uint32_t auctionId = packet.readUInt32();
+            const uint32_t itemEntry = packet.readUInt32();
+            const int32_t itemRandom = static_cast<int32_t>(packet.readUInt32());
             owner_.ensureItemInfo(itemEntry);
             auto* info = owner_.getItemInfo(itemEntry);
             std::string rawName3 = info && !info->name.empty() ? info->name : ("Item #" + std::to_string(itemEntry));
@@ -915,9 +1043,25 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
                 std::string suffix = owner_.getRandomPropertyName(itemRandom);
                 if (!suffix.empty()) rawName3 += " " + suffix;
             }
-            uint32_t remQuality = info ? info->quality : 1u;
-            std::string remLink = buildItemLink(itemEntry, remQuality, rawName3);
-            owner_.systemGlobal("ERR_AUCTION_EXPIRED_S", {remLink});
+            const uint32_t remQuality = info ? info->quality : 1u;
+            const std::string remLink = itemChatLink(itemEntry, remQuality, rawName3, 0, itemRandom);
+            owner_.systemGlobal("ERR_AUCTION_REMOVED_S", {remLink});
+            outbiddedAuctionIds_.erase(
+                std::remove(outbiddedAuctionIds_.begin(), outbiddedAuctionIds_.end(), auctionId),
+                outbiddedAuctionIds_.end());
+            auto& bids = auctionBidderResults_.auctions;
+            const auto it = std::remove_if(bids.begin(), bids.end(),
+                                           [auctionId](const AuctionEntry& e) { return e.auctionId == auctionId; });
+            if (it != bids.end()) {
+                const auto removed = static_cast<uint32_t>(std::distance(it, bids.end()));
+                bids.erase(it, bids.end());
+                auctionBidderResults_.totalCount = auctionBidderResults_.totalCount > removed
+                    ? auctionBidderResults_.totalCount - removed
+                    : 0;
+            }
+            if (owner_.addonEventCallbackRef()) {
+                owner_.addonEventCallbackRef()("AUCTION_BIDDER_LIST_UPDATE", {});
+            }
         }
         packet.skipAll();
     };
@@ -1156,9 +1300,11 @@ const char* lootErrorGlobal(uint8_t error) {
         case 8:  return "ERR_LOOT_NOTSTANDING";
         case 9:  return "ERR_LOOT_STUNNED";
         case 10: return "ERR_LOOT_PLAYER_NOT_FOUND";
+        case 11: return "ERR_PLAY_TIME_EXCEEDED";
         case 12: return "ERR_LOOT_MASTER_INV_FULL";
         case 13: return "ERR_LOOT_MASTER_UNIQUE_ITEM";
         case 14: return "ERR_LOOT_MASTER_OTHER";
+        case 15: return "ERR_ALREADY_PICKPOCKETED";
         case 16: return "ERR_NOT_SHAPESHIFT";
         default: return nullptr;
     }
@@ -1244,6 +1390,10 @@ void InventoryHandler::handleLootResponse(network::Packet& packet) {
         owner_.getState() == WorldState::IN_WORLD && owner_.getSocket() &&
         !localLoot.itemAutoLootSent) {
         for (const auto& item : currentLoot_.items) {
+            // Only LOOT_SLOT_NORMAL (0) and LOOT_SLOT_OWNER (4) may be auto-looted.
+            // Sending CMSG_AUTOSTORE_LOOT_ITEM on VIEW (1), MASTER (2), or REQS (3)
+            // causes CMaNGOS HandleAutostoreLootItemOpcode to release and close loot.
+            if (item.lootSlotType != 0 && item.lootSlotType != 4) continue;
             LOG_INFO("Autostoring loot slot=", static_cast<int>(item.slotIndex),
                      " item=", item.itemId, " count=", item.count,
                      " fromGuid=0x", std::hex, currentLoot_.lootGuid, std::dec,
@@ -1713,6 +1863,20 @@ void InventoryHandler::buyItem(uint64_t vendorGuid, uint32_t itemId, uint32_t sl
     pendingBuyItemId_ = itemId;
     pendingBuyItemSlot_ = slot;
     auto packet = BuyItemPacket::build(vendorGuid, itemId, slot, count);
+    owner_.getSocket()->send(packet);
+}
+
+void InventoryHandler::buyItemInSlot(uint64_t vendorGuid, uint32_t itemId, uint32_t vendorSlot,
+                                     uint64_t bagGuid, uint8_t bagSlot, uint32_t count) {
+    if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket() || count == 0) return;
+    LOG_INFO("Buy-in-slot request: vendorGuid=0x", std::hex, vendorGuid,
+             " bagGuid=0x", bagGuid, std::dec,
+             " itemId=", itemId, " vendorSlot=", vendorSlot,
+             " bagSlot=", static_cast<int>(bagSlot), " count=", count,
+             " wire=0x", std::hex, wireOpcode(Opcode::CMSG_BUY_ITEM_IN_SLOT), std::dec);
+    pendingBuyItemId_ = itemId;
+    pendingBuyItemSlot_ = vendorSlot;
+    auto packet = BuyItemInSlotPacket::build(vendorGuid, itemId, vendorSlot, bagGuid, bagSlot, count);
     owner_.getSocket()->send(packet);
 }
 
@@ -2455,6 +2619,78 @@ void InventoryHandler::completeItemUseOnItem(uint64_t targetItemGuid, bool confi
     sendUseItem(pending.bag, pending.slot, pending.itemGuid, pending.spellId, 0, targetItemGuid);
 }
 
+bool InventoryHandler::completeItemUseOnTradeSlot() {
+    if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) {
+        pendingItemTarget_.reset();
+        return false;
+    }
+    if (!isTradeOpen() || !pendingItemTarget_ ||
+        peerTradeSlots_[TRADE_SLOT_NONTRADED].itemId == 0) {
+        return false;
+    }
+
+    constexpr uint32_t kTargetFlagTradeItem = 0x00001000u;
+    constexpr uint64_t kTradeSlotNonTradedGuid = static_cast<uint64_t>(TRADE_SLOT_NONTRADED);
+    const PendingItemTarget pending = *pendingItemTarget_;
+    pendingItemTarget_.reset();
+
+    if (pending.fromSpell) {
+        network::Packet packet(wireOpcode(Opcode::CMSG_CAST_SPELL));
+        if (isClassicLikeExpansion()) {
+            packet.writeUInt32(pending.spellId);
+            packet.writeUInt16(static_cast<uint16_t>(kTargetFlagTradeItem));
+            packet.writePackedGuid(kTradeSlotNonTradedGuid);
+        } else if (isActiveExpansion("tbc")) {
+            packet.writeUInt32(pending.spellId);
+            packet.writeUInt8(0); // castCount
+            packet.writeUInt32(kTargetFlagTradeItem);
+            packet.writePackedGuid(kTradeSlotNonTradedGuid);
+        } else {
+            packet.writeUInt8(0); // castCount
+            packet.writeUInt32(pending.spellId);
+            packet.writeUInt8(0); // castFlags
+            packet.writeUInt32(kTargetFlagTradeItem);
+            packet.writePackedGuid(kTradeSlotNonTradedGuid);
+        }
+        owner_.getSocket()->send(packet);
+        if (isActiveExpansion("tbc")) {
+            owner_.fireAddonEvent("UNIT_SPELLCAST_SENT",
+                                  {"player", owner_.getSpellName(pending.spellId),
+                                   owner_.getSpellRank(pending.spellId), ""});
+        }
+        return true;
+    }
+
+    network::Packet packet(wireOpcode(Opcode::CMSG_USE_ITEM));
+    if (isClassicLikeExpansion()) {
+        packet.writeUInt8(pending.bag);
+        packet.writeUInt8(pending.slot);
+        packet.writeUInt8(0); // spellIndex
+        packet.writeUInt16(static_cast<uint16_t>(kTargetFlagTradeItem));
+        packet.writePackedGuid(kTradeSlotNonTradedGuid);
+    } else if (isActiveExpansion("tbc")) {
+        packet.writeUInt8(pending.bag);
+        packet.writeUInt8(pending.slot);
+        packet.writeUInt8(0); // spellIndex
+        packet.writeUInt8(0); // castCount
+        packet.writeUInt64(pending.itemGuid);
+        packet.writeUInt32(kTargetFlagTradeItem);
+        packet.writePackedGuid(kTradeSlotNonTradedGuid);
+    } else {
+        packet.writeUInt8(pending.bag);
+        packet.writeUInt8(pending.slot);
+        packet.writeUInt8(0); // castCount
+        packet.writeUInt32(pending.spellId);
+        packet.writeUInt64(pending.itemGuid);
+        packet.writeUInt32(0); // glyphIndex
+        packet.writeUInt8(0);  // castFlags
+        packet.writeUInt32(kTargetFlagTradeItem);
+        packet.writePackedGuid(kTradeSlotNonTradedGuid);
+    }
+    owner_.getSocket()->send(packet);
+    return true;
+}
+
 void InventoryHandler::useItemBySlot(int backpackIndex, bool confirmed,
                                      uint64_t unitTarget) {
     if (backpackIndex < 0 || backpackIndex >= owner_.inventoryRef().getBackpackSize()) return;
@@ -2582,13 +2818,12 @@ void InventoryHandler::readItemBySlot(int backpackIndex) {
     uint64_t itemGuid = owner_.backpackSlotGuidsRef()[backpackIndex];
     if (itemGuid == 0) itemGuid = owner_.resolveOnlineItemGuid(slot.item.itemId);
 
-    owner_.bookPagesRef().clear();
-    owner_.setBookTitle(info ? info->name : std::string());
-    owner_.setBookMaterial(info ? info->pageMaterial : 0u);
+    pendingReadItemGuid_ = itemGuid;
+    pendingReadPageTextId_ = pageTextId;
+    pendingReadTitle_ = info && !info->name.empty() ? info->name : slot.item.name;
+    pendingReadMaterial_ = info ? info->pageMaterial : 0u;
     auto readPacket = ReadItemPacket::build(0xFF, static_cast<uint8_t>(Inventory::NUM_EQUIP_SLOTS + backpackIndex));
     owner_.getSocket()->send(readPacket);
-    auto pagePacket = PageTextQueryPacket::build(pageTextId, itemGuid != 0 ? itemGuid : owner_.getPlayerGuid());
-    owner_.getSocket()->send(pagePacket);
     LOG_INFO("readItemBySlot: CMSG_READ_ITEM pageTextId=", pageTextId,
              " bag=0xFF slot=", (Inventory::NUM_EQUIP_SLOTS + backpackIndex));
 }
@@ -2620,31 +2855,32 @@ void InventoryHandler::readItemInBag(int bagIndex, int slotIndex) {
     if (itemGuid == 0) itemGuid = owner_.resolveOnlineItemGuid(slot.item.itemId);
 
     uint8_t wowBag = static_cast<uint8_t>(Inventory::FIRST_BAG_EQUIP_SLOT + bagIndex);
-    owner_.bookPagesRef().clear();
-    owner_.setBookTitle(info ? info->name : std::string());
-    owner_.setBookMaterial(info ? info->pageMaterial : 0u);
+    pendingReadItemGuid_ = itemGuid;
+    pendingReadPageTextId_ = pageTextId;
+    pendingReadTitle_ = info && !info->name.empty() ? info->name : slot.item.name;
+    pendingReadMaterial_ = info ? info->pageMaterial : 0u;
     auto readPacket = ReadItemPacket::build(wowBag, static_cast<uint8_t>(slotIndex));
     owner_.getSocket()->send(readPacket);
-    auto pagePacket = PageTextQueryPacket::build(pageTextId, itemGuid != 0 ? itemGuid : owner_.getPlayerGuid());
-    owner_.getSocket()->send(pagePacket);
     LOG_INFO("readItemInBag: CMSG_READ_ITEM pageTextId=", pageTextId,
              " bag=", static_cast<int>(wowBag), " slot=", slotIndex);
 }
 
 void InventoryHandler::destroyItem(uint8_t bag, uint8_t slot, uint8_t count) {
     if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
-    // Zero means the whole stack, and this used to turn it into one.
-    // HandleDestroyItemOpcode branches on exactly this: a count destroys that
-    // many, no count destroys the slot. Coercing it away left no way to say
-    // "all of them" - which is what the confirmation prompt is asking about,
-    // and the only thing a stack larger than 255 could be told to do.
-    constexpr uint16_t kCmsgDestroyItem = 0x111;
-    network::Packet packet(kCmsgDestroyItem);
-    packet.writeUInt8(bag);
-    packet.writeUInt8(slot);
-    packet.writeUInt32(static_cast<uint32_t>(count));
+    // Zero means the whole stack: HandleDestroyItemOpcode destroys `count` when
+    // non-zero and the entire slot when zero.
+    auto packet = DestroyItemPacket::build(bag, slot, count);
     LOG_DEBUG("Destroy item request: bag=", (int)bag, " slot=", (int)slot,
-              " count=", (int)count, " wire=0x", std::hex, kCmsgDestroyItem, std::dec);
+              " count=", (int)count, " wire=0x", std::hex,
+              wireOpcode(Opcode::CMSG_DESTROYITEM), std::dec);
+    owner_.getSocket()->send(packet);
+}
+
+void InventoryHandler::autoStoreBagItem(uint8_t srcBag, uint8_t srcSlot, uint8_t dstBag) {
+    if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
+    auto packet = AutoStoreBagItemPacket::build(srcBag, srcSlot, dstBag);
+    LOG_DEBUG("Autostore bag item: srcBag=", (int)srcBag, " srcSlot=", (int)srcSlot,
+              " dstBag=", (int)dstBag);
     owner_.getSocket()->send(packet);
 }
 
@@ -4217,7 +4453,7 @@ void InventoryHandler::auctionListOwnerItems(uint32_t offset) {
 void InventoryHandler::auctionListBidderItems(uint32_t offset) {
     if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket() || auctioneerGuid_ == 0) return;
     pendingAuctionTarget_ = AuctionResultTarget::BIDDER;
-    auto packet = AuctionListBidderItemsPacket::build(auctioneerGuid_, offset);
+    auto packet = AuctionListBidderItemsPacket::build(auctioneerGuid_, offset, outbiddedAuctionIds_);
     owner_.getSocket()->send(packet);
 }
 
@@ -4291,16 +4527,21 @@ void InventoryHandler::handleAuctionBidderListResult(network::Packet& packet) {
 }
 
 void InventoryHandler::handleAuctionCommandResult(network::Packet& packet) {
-    if (!packet.hasRemaining(12)) return;
-    uint32_t auctionId = packet.readUInt32();
-    uint32_t action = packet.readUInt32();
-    uint32_t error  = packet.readUInt32();
-    (void)auctionId;
+    AuctionCommandResult res;
+    if (!AuctionCommandResultParser::parse(packet, res)) return;
+    const uint32_t auctionId = res.auctionId;
+    const uint32_t action = res.action;
+    const uint32_t error  = res.errorCode;
 
     // AuctionAction / AuctionError (CMaNGOS AuctionHouseMgr.h), whose comments
     // name the GlobalStrings line of each. An inventory refusal carries an
     // InventoryResult after the error.
     if (error == 0) {
+        if (action == 2 && auctionId != 0) {
+            outbiddedAuctionIds_.erase(
+                std::remove(outbiddedAuctionIds_.begin(), outbiddedAuctionIds_.end(), auctionId),
+                outbiddedAuctionIds_.end());
+        }
         static constexpr const char* kDone[] = {"ERR_AUCTION_STARTED", "ERR_AUCTION_REMOVED", "ERR_AUCTION_BID_PLACED"};
         if (action < 3) owner_.systemGlobal(kDone[action]);
         else LOG_WARNING("SMSG_AUCTION_COMMAND_RESULT: unknown action ", action);
@@ -4320,11 +4561,39 @@ void InventoryHandler::handleAuctionCommandResult(network::Packet& packet) {
         const char* name = nullptr;
         switch (error) {
             case 1:
-                if (packet.hasRemaining(4)) name = inventoryResultGlobalName(static_cast<uint8_t>(packet.readUInt32()));
+                name = inventoryResultGlobalName(static_cast<uint8_t>(res.bidError));
                 break;
             case 3:  name = "ERR_NOT_ENOUGH_MONEY"; break;
             case 4:  name = "ERR_ITEM_NOT_FOUND"; break;
-            case 5:  name = "ERR_AUCTION_HIGHER_BID"; break;
+            case 5: {
+                name = "ERR_AUCTION_HIGHER_BID";
+                if (res.higherBidderGuid != 0 || res.higherBid != 0) {
+                    if (res.higherBidderGuid != 0) owner_.queryPlayerName(res.higherBidderGuid);
+                    bool browseUpdated = false;
+                    for (auto& e : auctionBrowseResults_.auctions) {
+                        if (e.auctionId == auctionId) {
+                            e.bidderGuid = res.higherBidderGuid;
+                            e.currentBid = res.higherBid;
+                            e.minBidIncrement = res.higherOutBid;
+                            browseUpdated = true;
+                        }
+                    }
+                    bool bidderUpdated = false;
+                    for (auto& e : auctionBidderResults_.auctions) {
+                        if (e.auctionId == auctionId) {
+                            e.bidderGuid = res.higherBidderGuid;
+                            e.currentBid = res.higherBid;
+                            e.minBidIncrement = res.higherOutBid;
+                            bidderUpdated = true;
+                        }
+                    }
+                    if (owner_.addonEventCallbackRef()) {
+                        if (browseUpdated) owner_.addonEventCallbackRef()("AUCTION_ITEM_LIST_UPDATE", {});
+                        if (bidderUpdated) owner_.addonEventCallbackRef()("AUCTION_BIDDER_LIST_UPDATE", {});
+                    }
+                }
+                break;
+            }
             case 7:  name = "ERR_AUCTION_BID_INCREMENT"; break;
             case 10: name = "ERR_AUCTION_BID_OWN"; break;
             case 13: name = "ERR_RESTRICTED_ACCOUNT"; break;
@@ -4412,6 +4681,73 @@ void InventoryHandler::handleItemTextQueryResponse(network::Packet& packet) {
     }
 }
 
+uint32_t InventoryHandler::getItemDuration(uint64_t itemGuid) const {
+    const auto it = itemDurations_.find(itemGuid);
+    return it != itemDurations_.end() ? it->second : 0u;
+}
+
+void InventoryHandler::handleItemTimeUpdate(network::Packet& packet) {
+    if (!packet.hasRemaining(12)) { packet.skipAll(); return; }
+    const uint64_t itemGuid = packet.readUInt64();
+    const uint32_t duration = packet.readUInt32();
+    packet.skipAll();
+    if (itemGuid == 0) return;
+
+    itemDurations_[itemGuid] = duration;
+    bool updatedSlot = false;
+    auto& inv = owner_.inventoryRef();
+    const auto& bpGuids = owner_.backpackSlotGuidsRef();
+    for (int i = 0; i < inv.getBackpackSize(); ++i) {
+        const auto& slot = inv.getBackpackSlot(i);
+        if (!slot.empty() && ((i < static_cast<int>(bpGuids.size()) && bpGuids[i] == itemGuid) ||
+                              slot.item.guid == itemGuid)) {
+            ItemDef updated = slot.item;
+            updated.durationSec = duration;
+            inv.setBackpackSlot(i, updated);
+            updatedSlot = true;
+        }
+    }
+    for (int b = 0; b < Inventory::NUM_BAG_SLOTS; ++b) {
+        const uint64_t bagGuid = owner_.equipSlotGuidsRef()[Inventory::FIRST_BAG_EQUIP_SLOT + b];
+        const auto cit = bagGuid != 0 ? owner_.containerContentsRef().find(bagGuid)
+                                      : owner_.containerContentsRef().end();
+        for (int s = 0; s < inv.getBagSize(b); ++s) {
+            const auto& slot = inv.getBagSlot(b, s);
+            if (slot.empty()) continue;
+            const uint64_t sGuid = (cit != owner_.containerContentsRef().end() &&
+                                    s < static_cast<int>(cit->second.numSlots))
+                ? cit->second.slotGuids[s]
+                : slot.item.guid;
+            if (sGuid == itemGuid || slot.item.guid == itemGuid) {
+                ItemDef updated = slot.item;
+                updated.durationSec = duration;
+                inv.setBagSlot(b, s, updated);
+                updatedSlot = true;
+            }
+        }
+    }
+    for (int e = 0; e < Inventory::NUM_EQUIP_SLOTS; ++e) {
+        const auto eqSlot = static_cast<EquipSlot>(e);
+        const auto& slot = inv.getEquipSlot(eqSlot);
+        if (!slot.empty() && (owner_.equipSlotGuidsRef()[e] == itemGuid || slot.item.guid == itemGuid)) {
+            ItemDef updated = slot.item;
+            updated.durationSec = duration;
+            inv.setEquipSlot(eqSlot, updated);
+            updatedSlot = true;
+        }
+    }
+    for (int k = 0; k < inv.getKeyringSize(); ++k) {
+        const auto& slot = inv.getKeyringSlot(k);
+        if (!slot.empty() && slot.item.guid == itemGuid) {
+            ItemDef updated = slot.item;
+            updated.durationSec = duration;
+            inv.setKeyringSlot(k, updated);
+            updatedSlot = true;
+        }
+    }
+    if (updatedSlot) fireBagUpdates();
+}
+
 // ============================================================
 // Trade
 // ============================================================
@@ -4429,6 +4765,19 @@ void InventoryHandler::declineTradeRequest() {
     auto packet = CancelTradePacket::build();
     owner_.getSocket()->send(packet);
     resetTradeState();
+}
+
+void InventoryHandler::busyTrade() {
+    if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
+    auto packet = BusyTradePacket::build();
+    owner_.getSocket()->send(packet);
+}
+
+void InventoryHandler::ignoreTrade() {
+    if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
+    auto packet = IgnoreTradePacket::build();
+    owner_.getSocket()->send(packet);
+    if (tradeStatus_ == TradeStatus::PendingIncoming) resetTradeState();
 }
 
 /// TRADE_ACCEPT_UPDATE(playerState, targetState) - 1 for accepted, 0 for not.
@@ -4482,6 +4831,7 @@ void InventoryHandler::cancelTrade() {
 void InventoryHandler::setTradeItem(uint8_t tradeSlot, uint8_t srcBag, uint8_t srcSlot) {
     if (tradeStatus_ != TradeStatus::Open) return;
     if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
+    ++myTradeClientStateIndex_;
     auto packet = SetTradeItemPacket::build(tradeSlot, srcBag, srcSlot);
     owner_.getSocket()->send(packet);
 }
@@ -4489,6 +4839,7 @@ void InventoryHandler::setTradeItem(uint8_t tradeSlot, uint8_t srcBag, uint8_t s
 void InventoryHandler::clearTradeItem(uint8_t tradeSlot) {
     if (tradeStatus_ != TradeStatus::Open) return;
     if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
+    ++myTradeClientStateIndex_;
     auto packet = ClearTradeItemPacket::build(tradeSlot);
     owner_.getSocket()->send(packet);
 }
@@ -4496,6 +4847,7 @@ void InventoryHandler::clearTradeItem(uint8_t tradeSlot) {
 void InventoryHandler::setTradeGold(uint64_t amount) {
     if (tradeStatus_ != TradeStatus::Open) return;
     if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
+    ++myTradeClientStateIndex_;
     auto packet = SetTradeGoldPacket::build(static_cast<uint32_t>(amount));
     owner_.getSocket()->send(packet);
 }
@@ -4504,6 +4856,7 @@ void InventoryHandler::resetTradeState() {
     tradeStatus_ = TradeStatus::None;
     tradePeerGuid_ = 0;
     peerTradeRevision_ = 0;
+    myTradeClientStateIndex_ = 0;
     tradePeerName_.clear();
     myTradeSlots_ = {};
     peerTradeSlots_ = {};
@@ -4532,13 +4885,30 @@ void InventoryHandler::handleTradeStatus(network::Packet& packet) {
             owner_.errorGlobal("ERR_PLAYER_BUSY_S", {tradePeerName_});
             break;
         case 1: { // BEGIN_TRADE - someone is asking
-            if (packet.hasRemaining(8))
-                tradePeerGuid_ = packet.readUInt64();
+            const uint64_t incomingGuid = packet.hasRemaining(8) ? packet.readUInt64() : 0;
+            if (isTradeOpen()) {
+                busyTrade();
+                break;
+            }
+            tradePeerGuid_ = incomingGuid;
             tradeStatus_ = TradeStatus::PendingIncoming;
             // Resolve name
             auto nit = owner_.getPlayerNameCache().find(tradePeerGuid_);
-            if (nit != owner_.getPlayerNameCache().end()) tradePeerName_ = nit->second;
-            else tradePeerName_ = "Unknown";
+            if (nit != owner_.getPlayerNameCache().end()) {
+                tradePeerName_ = nit->second;
+            } else {
+                tradePeerName_ = "Unknown";
+                if (tradePeerGuid_ != 0) owner_.queryPlayerName(tradePeerGuid_);
+            }
+            for (const auto& contact : owner_.getContacts()) {
+                if (contact.isIgnored() &&
+                    ((tradePeerGuid_ != 0 && contact.guid == tradePeerGuid_) ||
+                     (!contact.name.empty() && contact.name == tradePeerName_))) {
+                    ignoreTrade();
+                    break;
+                }
+            }
+            if (tradeStatus_ == TradeStatus::None) break;
             // Block Trades, which the panel offers and nothing read: every
             // request opened a window whatever it said. Refused before the
             // window rather than after, and said in chat, because a request
@@ -4555,7 +4925,9 @@ void InventoryHandler::handleTradeStatus(network::Packet& packet) {
             break;
         }
         case 2:   // OPEN_WINDOW
+            if (packet.hasRemaining(4)) (void)packet.readUInt32(); // tradeId
             tradeStatus_ = TradeStatus::Open;
+            myTradeClientStateIndex_ = 0;
             tradeSelfAccepted_ = false;
             tradePartnerAccepted_ = false;
             if (owner_.addonEventCallbackRef()) owner_.addonEventCallbackRef()("TRADE_SHOW", {});
@@ -4607,10 +4979,31 @@ void InventoryHandler::handleTradeStatus(network::Packet& packet) {
             resetTradeState();
             owner_.errorGlobal("ERR_PLAYER_WRONG_FACTION");
             break;
-        case 12:  // CLOSE_WINDOW
+        case 12: { // CLOSE_WINDOW
+            const uint32_t invResult = packet.hasRemaining(4) ? packet.readUInt32() : 0;
+            const uint8_t targetError = packet.hasRemaining(1) ? packet.readUInt8() : 0;
+            if (packet.hasRemaining(4)) (void)packet.readUInt32(); // ItemLimitCategoryId
+            if (invResult != 0) {
+                // CMaNGOS TradeHandler.cpp:47-48 flips targetError specifically
+                // for EQUIP_ERR_BAG_FULL (4), while EQUIP_ERR_INVENTORY_FULL (50)
+                // and EQUIP_ERR_CANT_CARRY_MORE_OF_THIS (17) pass IsTargetResult.
+                if (invResult == 4) {
+                    owner_.errorGlobal(targetError != 0 ? "ERR_TRADE_BAG_FULL"
+                                                        : "ERR_TRADE_TARGET_BAG_FULL");
+                } else if (invResult == 50) {
+                    owner_.errorGlobal(targetError != 0 ? "ERR_TRADE_TARGET_BAG_FULL"
+                                                        : "ERR_TRADE_BAG_FULL");
+                } else if (invResult == 17) {
+                    owner_.errorGlobal(targetError != 0 ? "ERR_TRADE_TARGET_MAX_COUNT_EXCEEDED"
+                                                        : "ERR_TRADE_MAX_COUNT_EXCEEDED");
+                } else if (const char* errName = inventoryResultGlobalName(invResult)) {
+                    owner_.errorGlobal(errName);
+                }
+            }
             resetTradeState();
             if (owner_.addonEventCallbackRef()) owner_.addonEventCallbackRef()("TRADE_CLOSED", {});
             break;
+        }
         case 14:  // IGNORE_YOU
             resetTradeState();
             owner_.errorGlobal("ERR_IGNORING_YOU_S", {tradePeerName_});
@@ -4635,13 +5028,34 @@ void InventoryHandler::handleTradeStatus(network::Packet& packet) {
             resetTradeState();
             owner_.errorGlobal("ERR_TARGET_LOGGING_OUT");
             break;
-        case 23:  // NOT_ON_TAPLIST
+        case 21:  // TBC: TRIAL_ACCOUNT
+            if (isPreWotlk()) {
+                resetTradeState();
+                owner_.errorGlobal("ERR_RESTRICTED_ACCOUNT");
+                if (owner_.addonEventCallbackRef()) owner_.addonEventCallbackRef()("TRADE_CLOSED", {});
+            }
+            break;
+        case 22:  // TBC: WRONG_REALM; WotLK: TRIAL_ACCOUNT
+            if (isPreWotlk()) {
+                const uint8_t slot = packet.hasRemaining(1) ? packet.readUInt8() : 0xFF;
+                if (slot == 0xFF) myTradeGold_ = 0;
+                else if (slot < TRADE_SLOT_COUNT) myTradeSlots_[slot] = {};
+                owner_.errorGlobal("ERR_TRADE_WRONG_REALM");
+                if (owner_.addonEventCallbackRef()) owner_.addonEventCallbackRef()("TRADE_UPDATE", {});
+            } else {
+                resetTradeState();
+                owner_.errorGlobal("ERR_RESTRICTED_ACCOUNT");
+                if (owner_.addonEventCallbackRef()) owner_.addonEventCallbackRef()("TRADE_CLOSED", {});
+            }
+            break;
+        case 23:  // WotLK: NOT_ON_TAPLIST / WRONG_REALM
             owner_.raiseUiError("You do not have permission to loot that item.");
             break;
         default:
             LOG_DEBUG("Unhandled SMSG_TRADE_STATUS: ", status);
             break;
     }
+    packet.skipAll();
 }
 
 void InventoryHandler::handleTradeStatusExtended(network::Packet& packet) {
@@ -4658,13 +5072,19 @@ void InventoryHandler::handleTradeStatusExtended(network::Packet& packet) {
     const uint32_t clientRevision = packet.readUInt32();
     const uint32_t serverRevision = packet.readUInt32();
     const uint32_t gold = packet.readUInt32();
-    /*uint32_t spell     =*/ packet.readUInt32();
+    const uint32_t spell = packet.readUInt32();
 
     // Zero is this player's own offer, which is the side myTradeSlots_ holds.
     const bool ownSide = (traderData == 0);
     auto& slots = ownSide ? myTradeSlots_ : peerTradeSlots_;
 
     const bool tbc = isActiveExpansion("tbc");
+    if (tbc && ownSide && clientRevision < myTradeClientStateIndex_) {
+        LOG_DEBUG("Ignoring stale own SMSG_TRADE_STATUS_EXTENDED: clientRev=",
+                  clientRevision, " localRev=", myTradeClientStateIndex_);
+        packet.skipAll();
+        return;
+    }
     if (tbc && (packet.getRemainingSize() % kSlotBytes != 0 ||
                 packet.getRemainingSize() / kSlotBytes > TRADE_SLOT_COUNT)) {
         LOG_ERROR("Invalid TBC trade item payload length: ", packet.getRemainingSize());
@@ -4675,33 +5095,47 @@ void InventoryHandler::handleTradeStatusExtended(network::Packet& packet) {
     if (!ownSide) peerTradeRevision_ = serverRevision;
     slots = {};
     LOG_DEBUG("SMSG_TRADE_STATUS_EXTENDED: ", ownSide ? "own" : "trader",
-              " slots=", count, " gold=", gold);
+              " slots=", count, " gold=", gold, " spell=", spell);
 
     for (uint32_t i = 0; i < count; ++i) {
         if (!packet.hasRemaining(kSlotBytes)) { packet.skipAll(); break; }
         const uint8_t slotNum = packet.readUInt8();
-        const uint32_t itemId    = packet.readUInt32();
-        const uint32_t displayId = packet.readUInt32();
-        const uint32_t stackCnt  = packet.readUInt32();
-        /*uint32_t wrapped     =*/ packet.readUInt32();
-        /*uint64_t giftCreator =*/ packet.readUInt64();
-        /*uint32_t permEnchant =*/ packet.readUInt32();
-        for (int g = 0; g < 3; ++g) packet.readUInt32();   // socket enchants
-        /*uint64_t creator     =*/ packet.readUInt64();
-        /*uint32_t charges     =*/ packet.readUInt32();
-        /*uint32_t suffixFactor=*/ packet.readUInt32();
-        /*int32_t randomProp   =*/ packet.readUInt32();
-        /*uint32_t lockId      =*/ packet.readUInt32();
-        /*uint32_t maxDur      =*/ packet.readUInt32();
-        /*uint32_t durability  =*/ packet.readUInt32();
+        const uint32_t itemId       = packet.readUInt32();
+        const uint32_t displayId    = packet.readUInt32();
+        const uint32_t stackCnt     = packet.readUInt32();
+        const uint32_t wrappedRaw   = packet.readUInt32();
+        const uint64_t giftCreator  = packet.readUInt64();
+        const uint32_t permEnchant  = packet.readUInt32();
+        std::array<uint32_t, 3> socketEnchants{};
+        for (int g = 0; g < 3; ++g) socketEnchants[static_cast<size_t>(g)] = packet.readUInt32();
+        const uint64_t creator      = packet.readUInt64();
+        const int32_t  charges      = static_cast<int32_t>(packet.readUInt32());
+        const uint32_t suffixFactor = packet.readUInt32();
+        const int32_t  randomProp   = static_cast<int32_t>(packet.readUInt32());
+        const uint32_t lockId       = packet.readUInt32();
+        const uint32_t maxDur       = packet.readUInt32();
+        const uint32_t durability   = packet.readUInt32();
 
         if (slotNum < TRADE_SLOT_COUNT) {
-            slots[slotNum].itemId = itemId;
-            slots[slotNum].displayId = displayId;
-            slots[slotNum].stackCount = stackCnt;
+            auto& dst = slots[slotNum];
+            dst.itemId = itemId;
+            dst.displayId = displayId;
+            dst.stackCount = stackCnt;
+            dst.wrapped = (wrappedRaw != 0);
+            dst.giftCreatorGuid = giftCreator;
+            dst.permEnchantId = permEnchant;
+            dst.socketEnchantIds = socketEnchants;
+            dst.creatorGuid = creator;
+            dst.spellCharges = charges;
+            dst.suffixFactor = suffixFactor;
+            dst.randomPropertyId = randomProp;
+            dst.lockId = lockId;
+            dst.maxDurability = maxDur;
+            dst.durability = durability;
         }
         if (itemId != 0) owner_.ensureItemInfo(itemId);
     }
+    slots[TRADE_SLOT_NONTRADED].appliedSpellId = spell;
     packet.skipAll();
 
     uint64_t& side = ownSide ? myTradeGold_ : peerTradeGold_;
@@ -5436,6 +5870,11 @@ ItemDef InventoryHandler::buildItemDef(uint32_t entry, uint32_t stackCount,
     def.unlocked = (flags & 0x4u) != 0;
     def.randomPropertyId = randomPropertyId;
     def.suffixFactor = suffixFactor;
+    if (guid != 0) {
+        if (const auto durIt = itemDurations_.find(guid); durIt != itemDurations_.end()) {
+            def.durationSec = durIt->second;
+        }
+    }
 
     auto infoIt = owner_.itemInfoCacheRef().find(entry);
     if (infoIt != owner_.itemInfoCacheRef().end()) {

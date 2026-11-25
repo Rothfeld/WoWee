@@ -600,6 +600,25 @@ network::Packet SwapInvItemPacket::build(uint8_t srcSlot, uint8_t dstSlot) {
     return packet;
 }
 
+network::Packet AutoStoreBagItemPacket::build(uint8_t srcBag, uint8_t srcSlot, uint8_t dstBag) {
+    network::Packet packet(wireOpcode(Opcode::CMSG_AUTOSTORE_BAG_ITEM));
+    packet.writeUInt8(srcBag);
+    packet.writeUInt8(srcSlot);
+    packet.writeUInt8(dstBag);
+    return packet;
+}
+
+network::Packet DestroyItemPacket::build(uint8_t bag, uint8_t slot, uint8_t count) {
+    network::Packet packet(wireOpcode(Opcode::CMSG_DESTROYITEM));
+    packet.writeUInt8(bag);
+    packet.writeUInt8(slot);
+    packet.writeUInt8(count);
+    packet.writeUInt8(0); // data1
+    packet.writeUInt8(0); // data2
+    packet.writeUInt8(0); // data3
+    return packet;
+}
+
 network::Packet LootMoneyPacket::build() {
     network::Packet packet(wireOpcode(Opcode::CMSG_LOOT_MONEY));
     return packet;
@@ -1571,6 +1590,26 @@ network::Packet BuyItemPacket::build(uint64_t vendorGuid, uint32_t itemId, uint3
         packet.writeUInt32(slot);
         packet.writeUInt32(count);
         packet.writeUInt8(0);
+    }
+    return packet;
+}
+
+network::Packet BuyItemInSlotPacket::build(uint64_t vendorGuid, uint32_t itemId,
+                                           uint32_t vendorSlot, uint64_t bagGuid,
+                                           uint8_t bagSlot, uint32_t count) {
+    network::Packet packet(wireOpcode(Opcode::CMSG_BUY_ITEM_IN_SLOT));
+    packet.writeUInt64(vendorGuid);
+    packet.writeUInt32(itemId);
+    if (isPreWotlk()) {
+        assert(count > 0 && count <= 255);
+        packet.writeUInt64(bagGuid);
+        packet.writeUInt8(bagSlot);
+        packet.writeUInt8(static_cast<uint8_t>(count));
+    } else {
+        packet.writeUInt32(vendorSlot);
+        packet.writeUInt64(bagGuid);
+        packet.writeUInt8(bagSlot);
+        packet.writeUInt32(count);
     }
     return packet;
 }

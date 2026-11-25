@@ -1184,6 +1184,7 @@ wowee_add_test(test_item_stat_names SOURCES test_item_stat_names.cpp)
 
 # ── test_mail_packets ───────────────────────────────────────
 wowee_add_packet_test(test_mail_packets)
+target_compile_definitions(test_mail_packets PRIVATE WOWEE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
 # ── test_raid_target_packets ────────────────────────────────
 wowee_add_packet_test(test_raid_target_packets)
@@ -3249,6 +3250,7 @@ if(NOT ANDROID)
     target_sources(test_game_replay PRIVATE test_game_replay_taxi_mount.cpp)
     target_sources(test_game_replay PRIVATE test_game_replay_move_acks.cpp)
     target_sources(test_game_replay PRIVATE test_game_replay_tbc_framexml_lod.cpp)
+    target_sources(test_game_replay PRIVATE test_game_replay_economy_sweep.cpp)
 
     # Same complete client objects as game_replay: never replace client classes
     # with test implementations or copy an input-routing branch into a seam.

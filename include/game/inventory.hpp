@@ -235,6 +235,7 @@ struct ItemDef {
     struct ExtraStat { uint32_t statType = 0; int32_t statValue = 0; };
     std::vector<ExtraStat> extraStats;
     uint32_t startQuestId = 0;  // Non-zero: item begins a quest
+    uint32_t durationSec = 0;   // Remaining duration in seconds (ITEM_FIELD_DURATION / SMSG_ITEM_TIME_UPDATE)
     // Exact server object identity for this displayed inventory slot. Item IDs
     // are not unique and must never be used to guess destructive operations.
     uint64_t guid = 0;

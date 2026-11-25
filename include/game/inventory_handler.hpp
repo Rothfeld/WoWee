@@ -77,6 +77,18 @@ public:
         uint32_t displayId   = 0;
         uint32_t stackCount  = 0;
         uint64_t itemGuid    = 0;
+        bool     wrapped     = false;
+        uint64_t giftCreatorGuid = 0;
+        uint32_t permEnchantId   = 0;
+        std::array<uint32_t, 3> socketEnchantIds{};
+        uint64_t creatorGuid     = 0;
+        int32_t  spellCharges    = 0;
+        uint32_t suffixFactor    = 0;
+        int32_t  randomPropertyId = 0;
+        uint32_t lockId          = 0;
+        uint32_t maxDurability   = 0;
+        uint32_t durability      = 0;
+        uint32_t appliedSpellId  = 0;
     };
 
     TradeStatus getTradeStatus() const { return tradeStatus_; }
@@ -90,6 +102,8 @@ public:
     uint64_t getPeerTradeGold() const { return peerTradeGold_; }
     void acceptTradeRequest();
     void declineTradeRequest();
+    void busyTrade();
+    void ignoreTrade();
     void acceptTrade();
     void unacceptTrade();
     void cancelTrade();
@@ -181,6 +195,8 @@ public:
     // Drop the session-persistent buyback mirror (fresh character world entry).
     void clearBuybackState();
     void buyItem(uint64_t vendorGuid, uint32_t itemId, uint32_t slot, uint32_t count);
+    void buyItemInSlot(uint64_t vendorGuid, uint32_t itemId, uint32_t vendorSlot,
+                       uint64_t bagGuid, uint8_t bagSlot, uint32_t count);
     void sellItem(uint64_t vendorGuid, uint64_t itemGuid, uint32_t count);
     void sellItemBySlot(int backpackIndex);
     void sellItemInBag(int bagIndex, int slotIndex);
@@ -311,12 +327,17 @@ public:
     void completeLockTargetOnGameObject(uint64_t objectGuid);
     /// Sends the parked CMSG_USE_ITEM with TARGET_FLAG_ITEM against targetItemGuid.
     void completeItemUseOnItem(uint64_t targetItemGuid, bool confirmed = false);
+    /// Sends the parked item-target spell or item enhancement against the trade
+    /// partner's non-traded item slot (TRADE_SLOT_NONTRADED, TARGET_FLAG_TRADE_ITEM).
+    bool completeItemUseOnTradeSlot();
 
     void openItemBySlot(int backpackIndex);
     void openItemInBag(int bagIndex, int slotIndex);
     void readItemBySlot(int backpackIndex);
     void readItemInBag(int bagIndex, int slotIndex);
     void destroyItem(uint8_t bag, uint8_t slot, uint8_t count = 1);
+    void autoStoreBagItem(uint8_t srcBag, uint8_t srcSlot, uint8_t dstBag);
+    uint32_t getItemDuration(uint64_t itemGuid) const;
     void splitItem(uint8_t srcBag, uint8_t srcSlot, uint8_t count);
     /// Split `count` off a stack into a named slot.
     ///
@@ -543,6 +564,7 @@ public:
     const AuctionListResult& getAuctionBrowseResults() const { return auctionBrowseResults_; }
     const AuctionListResult& getAuctionOwnerResults() const { return auctionOwnerResults_; }
     const AuctionListResult& getAuctionBidderResults() const { return auctionBidderResults_; }
+    const std::vector<uint32_t>& getOutbiddedAuctionIds() const { return outbiddedAuctionIds_; }
     /// Writable, for the one thing that reorders a result set in place: the
     /// panel's own column sort. The server sends a list and the client sorts
     /// it, which is what the real client does too, there is no re-query.
@@ -626,6 +648,7 @@ private:
     void handleListInventory(network::Packet& packet);
     void handleTrainerList(network::Packet& packet);
     void handleItemTextQueryResponse(network::Packet& packet);
+    void handleItemTimeUpdate(network::Packet& packet);
     void handleTradeStatus(network::Packet& packet);
     void handleTradeStatusExtended(network::Packet& packet);
     void handleLootRoll(network::Packet& packet);
@@ -719,6 +742,11 @@ private:
     // ---- Item text state ----
     bool        itemTextOpen_   = false;
     std::string itemText_;
+    uint64_t    pendingReadItemGuid_   = 0;
+    uint32_t    pendingReadPageTextId_ = 0;
+    std::string pendingReadTitle_;
+    uint32_t    pendingReadMaterial_   = 0;
+    std::unordered_map<uint64_t, uint32_t> itemDurations_;
 
     // ---- Trade state ----
     TradeStatus tradeStatus_  = TradeStatus::None;
@@ -728,6 +756,7 @@ private:
     /// other player, not back to the one who made it, so there is nothing else
     /// to learn it from.
     uint32_t peerTradeRevision_ = 0;
+    uint32_t myTradeClientStateIndex_ = 0;
     bool tradeSelfAccepted_ = false;
     bool tradePartnerAccepted_ = false;
     void fireTradeAcceptUpdate();
@@ -857,6 +886,7 @@ private:
     AuctionListResult auctionBrowseResults_;
     AuctionListResult auctionOwnerResults_;
     AuctionListResult auctionBidderResults_;
+    std::vector<uint32_t> outbiddedAuctionIds_;
     int auctionActiveTab_ = 0;
     float auctionSearchDelayTimer_ = 0.0f;
     struct AuctionSearchParams {
