@@ -308,7 +308,11 @@ void ChatPanel::sendChatMessage(game::GameHandler& gameHandler) {
                             if (raceId == 0) raceId = static_cast<uint8_t>(ch->race);
                             gender = static_cast<uint8_t>(game::toServerGender(ch->gender));
                         }
-                        audioCoord->getPlayerVoiceManager()->playEmote(dbcId, raceId, gender);
+                        const glm::vec3 playerPos = renderer
+                            ? renderer->getCharacterPosition()
+                            : audio::AudioEngine::instance().getListenerPosition();
+                        audioCoord->getPlayerVoiceManager()->playLocalEmote(
+                            dbcId, raceId, gender, playerPos, audioCoord->isListenerAtCharacter());
                     }
                 }
 

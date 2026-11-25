@@ -125,8 +125,10 @@ public:
     /// Resolve EmotesTextSound.dbc SoundEntries ID for (emotesTextId, raceId, gender).
     [[nodiscard]] uint32_t getEmoteTextSoundId(uint32_t emotesTextId, uint8_t raceId, uint8_t gender);
 
-    /// Play a vocal emote from EmotesTextSound.dbc (2D local or 3D remote).
+    /// Play a vocal emote from EmotesTextSound.dbc (2D local, listener-aware local, or 3D remote).
     bool playEmote(uint32_t emotesTextId, uint8_t raceId, uint8_t gender);
+    bool playLocalEmote(uint32_t emotesTextId, uint8_t raceId, uint8_t gender,
+                        const glm::vec3& unitBasePos, bool listenerAtCharacter);
     bool playEmote3D(uint32_t emotesTextId, uint8_t raceId, uint8_t gender, const glm::vec3& position);
 
     /// Deduplication helper so local DoEmote() / ChatPanel /emote does not double-play

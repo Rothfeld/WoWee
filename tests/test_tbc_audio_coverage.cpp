@@ -708,10 +708,10 @@ TEST_CASE("Movement, M2 $WNG/$WGG wing events, Mount, Combat, SpellVisualKit, Ga
                     }
                 }
                 REQUIRE(raceEmoteId != 0);
-                events.clear();
+                resetHeadless();
                 CHECK(pvm.playEmote(raceEmoteId, raceId, gender));
                 CHECK_FALSE(events.empty());
-                events.clear();
+                resetHeadless();
                 CHECK(pvm.playEmote3D(raceEmoteId, raceId, gender, glm::vec3(3.0f, 0.0f, -3.0f)));
                 CHECK_FALSE(events.empty());
             }
@@ -829,4 +829,94 @@ TEST_CASE("WOWEE_AUDIO_TRACE writes structured JSONL start, stop, and end events
     CHECK(saw3dStart);
     CHECK(sawExplicitStop);
     CHECK(sawNaturalEnd);
+}
+
+TEST_CASE("3D stereo pan ILD matches Native FMOD 9.54 dB and local emotes obey Sound_ListenerAtCharacter",
+          "[audio][tbc][spatial]") {
+    auto& tbc = env();
+    auto& engine = audio::AudioEngine::instance();
+    auto& table = audio::SoundEntryTable::instance();
+
+    auto measureLrIldDb = [&](const glm::vec3& sourcePos) -> double {
+        engine.shutdown();
+        REQUIRE(engine.initializeHeadless(48000, 2));
+        engine.setAssetManager(&tbc.assets);
+        engine.setMasterVolume(1.0f);
+        engine.setSuspended(false);
+        engine.setListenerPosition(glm::vec3(0.0f, 0.0f, 0.0f));
+        engine.setListenerOrientation(glm::vec3(1.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+
+        // SoundEntries 27 = Precast Nature High (minDist=8, maxDist=45)
+        const uint32_t handle = table.play3DStoppable(&tbc.assets, 27u, sourcePos, 1.0f, 1.0f);
+        REQUIRE(handle != 0);
+        constexpr uint32_t kFrames = 12000; // 250 ms
+        std::vector<float> pcm(kFrames * 2, 0.0f);
+        REQUIRE(engine.renderMixFrames(pcm.data(), kFrames) == kFrames);
+        engine.stopSound(handle);
+
+        double sumL = 0.0, sumR = 0.0;
+        for (uint32_t i = 0; i < kFrames; ++i) {
+            const double l = pcm[i * 2];
+            const double r = pcm[i * 2 + 1];
+            sumL += l * l;
+            sumR += r * r;
+        }
+        const double rmsL = std::sqrt(sumL / kFrames);
+        const double rmsR = std::sqrt(sumR / kFrames);
+        REQUIRE(rmsL > 1e-6);
+        REQUIRE(rmsR > 1e-6);
+        return 20.0 * std::log10(rmsL / rmsR);
+    };
+
+    // Listener faces +X with up +Z -> +Y is Left (+90 deg), -Y is Right (-90 deg)
+    const double ildLeft = measureLrIldDb(glm::vec3(0.0f, 8.0f, 0.0f));
+    const double ildRight = measureLrIldDb(glm::vec3(0.0f, -8.0f, 0.0f));
+    const double ildFront = measureLrIldDb(glm::vec3(8.0f, 0.0f, 0.0f));
+
+    CHECK(ildLeft == Catch::Approx(9.5424).margin(0.45));
+    CHECK(ildRight == Catch::Approx(-9.5424).margin(0.45));
+    CHECK(std::abs(ildFront) < 0.15);
+
+    // DistanceCutoff = 45 yd -> 50 yd must be culled before channel start
+    engine.shutdown();
+    REQUIRE(engine.initializeHeadless(48000, 2));
+    engine.setAssetManager(&tbc.assets);
+    engine.setListenerPosition(glm::vec3(0.0f, 0.0f, 0.0f));
+    CHECK(table.play3DStoppable(&tbc.assets, 27u, glm::vec3(50.0f, 0.0f, 0.0f), 1.0f, 1.0f) == 0u);
+
+    // Local player emote obeys Sound_ListenerAtCharacter (true -> 2D @ 0.65f, false -> 3D @ 1.0f)
+    audio::PlayerVoiceManager pvm;
+    REQUIRE(pvm.initialize(&tbc.assets));
+    std::vector<audio::AudioEngine::PlaybackEvent> evs;
+    engine.setPlaybackObserver([&](const audio::AudioEngine::PlaybackEvent& ev) { evs.push_back(ev); });
+
+    // Resolve an authored Human Male vocal emote from EmotesTextSound.dbc
+    auto ets = tbc.assets.loadDBC("EmotesTextSound.dbc");
+    REQUIRE(ets != nullptr);
+    uint32_t humanMaleEmoteId = 0;
+    for (uint32_t r = 0; r < ets->getRecordCount(); ++r) {
+        if (ets->getUInt32(r, 2) == 1u && ets->getUInt32(r, 3) == 0u && ets->getUInt32(r, 4) != 0u) {
+            humanMaleEmoteId = ets->getUInt32(r, 1);
+            break;
+        }
+    }
+    REQUIRE(humanMaleEmoteId != 0u);
+
+    REQUIRE(pvm.playLocalEmote(humanMaleEmoteId, 1u, 0u, glm::vec3(5.0f, 0.0f, 0.0f), /*listenerAtCharacter=*/true));
+    REQUIRE_FALSE(evs.empty());
+    CHECK_FALSE(evs.back().spatial);
+    CHECK(evs.back().volume == Catch::Approx(0.65f).margin(0.02f));
+
+    engine.shutdown();
+    REQUIRE(engine.initializeHeadless(48000, 2));
+    engine.setAssetManager(&tbc.assets);
+    engine.setListenerPosition(glm::vec3(0.0f, 0.0f, 2.0f));
+    evs.clear();
+    REQUIRE(pvm.playLocalEmote(humanMaleEmoteId, 1u, 0u, glm::vec3(5.0f, 0.0f, 0.0f), /*listenerAtCharacter=*/false));
+    REQUIRE_FALSE(evs.empty());
+    CHECK(evs.back().spatial);
+    CHECK(evs.back().volume == Catch::Approx(1.0f).margin(0.02f));
+
+    engine.setPlaybackObserver({});
+    pvm.shutdown();
 }

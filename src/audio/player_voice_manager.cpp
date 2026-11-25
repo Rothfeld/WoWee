@@ -396,7 +396,23 @@ bool PlayerVoiceManager::playEmote(uint32_t emotesTextId, uint8_t raceId, uint8_
     if (!assetManager_ || emotesTextId == 0 || raceId == 0 || volumeScale_ <= 0.0f) return false;
     const uint32_t soundId = getEmoteTextSoundId(emotesTextId, raceId, gender);
     if (soundId == 0) return false;
-    if (!SoundEntryTable::instance().play2D(assetManager_, soundId, volumeScale_)) {
+    if (!SoundEntryTable::instance().play2D(
+            assetManager_, soundId, volumeScale_ * SoundEntryTable::kLocalPlayer2DGain)) {
+        return false;
+    }
+    lastLocalEmoteId_ = emotesTextId;
+    lastLocalEmoteTime_ = std::chrono::steady_clock::now();
+    return true;
+}
+
+bool PlayerVoiceManager::playLocalEmote(uint32_t emotesTextId, uint8_t raceId, uint8_t gender,
+                                        const glm::vec3& unitBasePos, bool listenerAtCharacter) {
+    if (!assetManager_ || emotesTextId == 0 || raceId == 0 || volumeScale_ <= 0.0f) return false;
+    const uint32_t soundId = getEmoteTextSoundId(emotesTextId, raceId, gender);
+    if (soundId == 0) return false;
+    if (!SoundEntryTable::instance().playUnit(
+            assetManager_, soundId, unitBasePos, /*isLocalPlayer=*/true,
+            listenerAtCharacter, volumeScale_)) {
         return false;
     }
     lastLocalEmoteId_ = emotesTextId;

@@ -13,7 +13,9 @@
 #include <cassert>
 #include "rendering/animation_controller.hpp"
 #include "audio/audio_coordinator.hpp"
+#include "audio/audio_engine.hpp"
 #include "audio/player_voice_manager.hpp"
+#include "core/coordinates.hpp"
 #include "game/update_field_table.hpp"
 
 namespace wowee::addons {
@@ -2660,11 +2662,15 @@ void registerSocialLuaAPI(lua_State* L) {
             if (auto* ac = gh->services().audioCoordinator;
                 ac && ac->areEmoteSoundsEnabled() && ac->getPlayerVoiceManager()) {
                 uint8_t gender = 0;
+                glm::vec3 renderPos = audio::AudioEngine::instance().getListenerPosition();
                 if (const auto player = gh->getEntityManager().getEntity(gh->getPlayerGuid())) {
                     const uint32_t bytes0 = player->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_0));
                     gender = static_cast<uint8_t>((bytes0 >> 16u) & 0xFFu);
+                    renderPos = core::coords::canonicalToRender(
+                        glm::vec3(player->getX(), player->getY(), player->getZ()));
                 }
-                ac->getPlayerVoiceManager()->playEmote(emoteId, gh->getPlayerRace(), gender);
+                ac->getPlayerVoiceManager()->playLocalEmote(
+                    emoteId, gh->getPlayerRace(), gender, renderPos, ac->isListenerAtCharacter());
             }
             // And the animation, which this did not do. Telling the server is
             // the half that is seen by everyone else; playing it is the half

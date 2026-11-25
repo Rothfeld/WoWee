@@ -21,6 +21,7 @@
 #include "rendering/renderer.hpp"
 #include "rendering/animation_controller.hpp"
 #include "audio/audio_coordinator.hpp"
+#include "audio/audio_engine.hpp"
 #include "audio/player_voice_manager.hpp"
 #include "core/coordinates.hpp"
 #include "game/update_field_table.hpp"
@@ -1062,7 +1063,13 @@ void ChatHandler::handleTextEmote(network::Packet& packet) {
                     gender = static_cast<uint8_t>(toServerGender(ch->gender));
                 }
                 if (raceId != 0) {
-                    pvm->playEmote(data.textEmoteId, raceId, gender);
+                    glm::vec3 renderPos = audio::AudioEngine::instance().getListenerPosition();
+                    if (const auto self = owner_.getEntityManager().getEntity(data.senderGuid)) {
+                        renderPos = core::coords::canonicalToRender(
+                            glm::vec3(self->getX(), self->getY(), self->getZ()));
+                    }
+                    pvm->playLocalEmote(
+                        data.textEmoteId, raceId, gender, renderPos, ac->isListenerAtCharacter());
                 }
             }
         }

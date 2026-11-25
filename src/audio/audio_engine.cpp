@@ -1045,6 +1045,9 @@ uint32_t AudioEngine::startSound3DInternal(const std::vector<uint8_t>& wavData, 
 
     // Keep ma_attenuation_model_inverse with rolloff = 0.0f so miniaudio computes full 3D stereo
     // directional panning while AudioEngine applies exact Wow.exe 0x756bd0 distance attenuation.
+    // Match Native Wow.exe 8606 (FMOD 4.09.07) +-9.54 dB stereo pan width at +-90 deg (far-ear
+    // gain ratio 1/3) instead of miniaudio's default 1.0f factor (+-13.98 dB, -6 dB front dip).
+    constexpr float kFmodStereoPanDirectionalFactor = 2.0f / 3.0f;
     ma_sound_set_position(sound.get(), position.x, position.y, position.z);
     ma_sound_set_volume(sound.get(), volume * atten);
     ma_sound_set_pitch(sound.get(), clampedPitch);
@@ -1054,6 +1057,7 @@ uint32_t AudioEngine::startSound3DInternal(const std::vector<uint8_t>& wavData, 
     ma_sound_set_min_distance(sound.get(), safeMinDist);
     ma_sound_set_max_distance(sound.get(), safeMaxDist);
     ma_sound_set_rolloff(sound.get(), 0.0f);
+    ma_sound_set_directional_attenuation_factor(sound.get(), kFmodStereoPanDirectionalFactor);
 
     if (loopEnabled) {
         ma_sound_set_looping(sound.get(), MA_TRUE);
