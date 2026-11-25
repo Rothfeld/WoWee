@@ -61,11 +61,14 @@ void main() {
     vUV = corners[gl_VertexIndex];
     if (aSize < 0.0) {
         // XYQuad: flat in the emitter bone's XY plane; aTail is its X axis,
-        // aQuadY its Y axis (world space).
+        // aQuadY its Y axis (world space). Spin turns the quad in that plane
+        // (Wow.exe 8606 0x007aee00).
         vec3 axisX = aTail;
         vec3 axisY = aQuadY;
-        vec2 c = (vUV * 2.0 - 1.0) * -aSize;
-        viewPos4 = view * vec4(aPos + axisX * c.x + axisY * c.y, 1.0);
+        vec2 corner = (vUV * 2.0 - 1.0) * -aSize;
+        float c = cos(aRotation), s = sin(aRotation);
+        vec2 rotCorner = vec2(c * corner.x - s * corner.y, s * corner.x + c * corner.y);
+        viewPos4 = view * vec4(aPos + axisX * rotCorner.x + axisY * rotCorner.y, 1.0);
     } else if (dot(aTail, aTail) > 0.00000001) {
         vec3 tailView = mat3(view) * aTail;
         float projectedLength = length(tailView.xy);

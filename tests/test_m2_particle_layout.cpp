@@ -328,7 +328,34 @@ TEST_CASE("Emitters with flag 0x20 or NoTrail+0x200 size their sprites by placem
     // with 0x20 sprite scaling, while billboard emitters #0/#1 (0x0239) scale once.
     CHECK(particleSpriteHalfWidth(0x1239u, 0.25f, 2.1f) == Catch::Approx(0.25f * 2.1f * 2.1f).margin(0.0001f));
     CHECK(particleSpriteHalfWidth(0x1239u, 0.25f, 1.0f) == Catch::Approx(0.25f).margin(0.0001f));
+    CHECK(particleSpriteHalfWidth(0x1039u, 0.25f, 2.1f) == Catch::Approx(0.25f * 2.1f * 2.1f).margin(0.0001f));
     CHECK(particleSpriteHalfWidth(0x0239u, 0.1667f, 2.1f) == Catch::Approx(0.1667f * 2.1f).margin(0.0001f));
+    // Corrupted Ashbringer (sword_2h_ashbringercorrupt.m2 on Highlord Mograine,
+    // display 16139, CreatureModelScale 1.5): emitters #0-#4 (0x1019 = XYQuad | NoTrail
+    // without 0x20/0x200) transform their XY quad corners by the unnormalized emitter
+    // bone matrix (Wow.exe 8606 0x007af6aa + 0x007af806), scaling once by placementScale,
+    // matching emitter #5 (0x1219). World-space XYQuad without NoTrail (0x1001) stays
+    // authored unless 0x20 (0x1021) is set.
+    CHECK(particleSpriteHalfWidth(0x1019u, 0.4444f, 1.5f) == Catch::Approx(0.4444f * 1.5f).margin(0.0001f));
+    CHECK(particleSpriteHalfWidth(0x1019u, 0.0417f, 1.5f) == Catch::Approx(0.0417f * 1.5f).margin(0.0001f));
+    CHECK(particleSpriteHalfWidth(0x1219u, 0.3333f, 1.5f) == Catch::Approx(0.3333f * 1.5f).margin(0.0001f));
+    CHECK(particleSpriteHalfWidth(0x1001u, 0.50f, 2.0f) == Catch::Approx(0.50f).margin(0.0001f));
+    CHECK(particleSpriteHalfWidth(0x1021u, 0.50f, 2.0f) == Catch::Approx(1.00f).margin(0.0001f));
+    const std::filesystem::path ashbringerPath =
+        "/workspace/azerothcore/client/wowee-data/expansions/tbc/item/objectcomponents/weapon/sword_2h_ashbringercorrupt.m2";
+    if (std::filesystem::exists(ashbringerPath)) {
+        const auto ash = wowee::pipeline::M2Loader::load(
+            wowee::test::readTbcData("item/objectcomponents/weapon/sword_2h_ashbringercorrupt.m2"));
+        REQUIRE(ash.particleEmitters.size() == 6);
+        for (size_t i = 0; i < 5; ++i) {
+            CHECK(ash.particleEmitters[i].flags == 0x1019u);
+            CHECK(particleSpriteHalfWidth(ash.particleEmitters[i].flags, 1.0f, 1.5f) ==
+                  Catch::Approx(1.5f).margin(0.0001f));
+        }
+        CHECK(ash.particleEmitters[5].flags == 0x1219u);
+        CHECK(particleSpriteHalfWidth(ash.particleEmitters[5].flags, 1.0f, 1.5f) ==
+              Catch::Approx(1.5f).margin(0.0001f));
+    }
     // Whirlwind_State_Base.m2 geometry particles (#0/#1 0x0d): without 0x20,
     // birthBasis keeps rotation but strips placement scale; with 0x20, scale stays.
     const glm::mat3 scaledRot = glm::mat3(
