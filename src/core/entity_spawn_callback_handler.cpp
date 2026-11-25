@@ -178,10 +178,10 @@ void EntitySpawnCallbackHandler::setupCallbacks() {
         }
         if (cr->hasAnimation(instanceId, rendering::anim::BIRTH)) {
             cr->playAnimation(instanceId, rendering::anim::BIRTH, false,
-                              entitySpawner_.remoteIdleAnimation(guid));
+                              entitySpawner_.remoteResumeAnimation(guid));
         } else if (cr->hasAnimation(instanceId, rendering::anim::SPAWN)) {
             cr->playAnimation(instanceId, rendering::anim::SPAWN, false,
-                              entitySpawner_.remoteIdleAnimation(guid));
+                              entitySpawner_.remoteResumeAnimation(guid));
         }
     });
 

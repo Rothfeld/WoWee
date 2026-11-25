@@ -481,6 +481,7 @@ void AnimationCallbackHandler::setupCallbacks() {
         if (emoteInstanceId != 0) {
             cr->setGestureWeaponPose(emoteInstanceId, emoteAnim, sheathe);
             const uint32_t idle = entitySpawner_.remoteIdleAnimation(guid);
+            const uint32_t resume = entitySpawner_.remoteResumeAnimation(guid);
             auto& emotes = rendering::EmoteRegistry::instance();
             emotes.loadFromDbc();
             if (!isState && rendering::isSeatedBaseAnimation(idle) &&
@@ -489,8 +490,8 @@ void AnimationCallbackHandler::setupCallbacks() {
                 cr->setUpperBodyAnimation(emoteInstanceId, emoteAnim, false);
                 return;
             }
-            cr->playAnimation(emoteInstanceId, emoteAnim != 0 ? emoteAnim : idle,
-                              isState || emoteAnim == 0, idle);
+            cr->playAnimation(emoteInstanceId, emoteAnim != 0 ? emoteAnim : resume,
+                              isState || emoteAnim == 0, resume);
         }
     });
 
@@ -556,15 +557,19 @@ void AnimationCallbackHandler::setupCallbacks() {
                 entitySpawner_.setRemoteCastHold(guid, castState.hold ? castState.hold->animation : 0);
             }
         };
-        const auto nonCastIdle = [&] {
-            // Temporarily query the unit's non-cast idle/ready animation (Stand,
-            // Ready2HL, etc.) without any cast hold overlay.
+        const auto nonCastResume = [&] {
+            // Temporarily query the unit's non-cast base animation (active
+            // locomotion while moving, else idle/ready stance) without any cast
+            // hold overlay. Using remoteResumeAnimation keeps full-body spell
+            // one-shots (e.g. Unrelenting Deathknight's Shadow Mark 27825 ->
+            // Whirlwind 126) and cast stops mid-move from returning to Stand /
+            // Ready1H while creatureWasMoving_ stays true.
             if (!isLocalPlayer) {
                 const uint32_t prevHold = castState.hold ? castState.hold->animation : 0;
                 entitySpawner_.setRemoteCastHold(guid, 0);
-                const uint32_t baseIdle = entitySpawner_.remoteIdleAnimation(guid);
+                const uint32_t baseAnim = entitySpawner_.remoteResumeAnimation(guid);
                 entitySpawner_.setRemoteCastHold(guid, prevHold);
-                return baseIdle;
+                return baseAnim;
             }
             return rendering::anim::STAND;
         };
@@ -598,7 +603,7 @@ void AnimationCallbackHandler::setupCallbacks() {
                 const bool playingOneShot = cr->isPlayingOneShot(instanceId, &playingAnim);
                 const auto action = rendering::stepRemoteSpellCastAnim(
                     castState, phase, spellId, rendering::SpellVisualSystem::kNoAnimation,
-                    rendering::SpellVisualSystem::kNoAnimation, nonCastIdle(),
+                    rendering::SpellVisualSystem::kNoAnimation, nonCastResume(),
                     playingOneShot, playingAnim);
                 applyRemoteAction(action);
             }
@@ -681,7 +686,7 @@ void AnimationCallbackHandler::setupCallbacks() {
                 const bool playingOneShot = cr->isPlayingOneShot(instanceId, &playingAnim);
                 const uint32_t kitAnim = (phase == game::SpellAnimPhase::PRECAST) ? ranged->aim : ranged->shot;
                 const auto action = rendering::stepRemoteSpellCastAnim(
-                    castState, phase, spellId, kitAnim, none, nonCastIdle(),
+                    castState, phase, spellId, kitAnim, none, nonCastResume(),
                     playingOneShot, playingAnim);
                 applyRemoteAction(action);
                 LOG_DEBUG("Ranged cast animation guid=0x", std::hex, guid, std::dec, " spell=", spellId,
@@ -707,7 +712,7 @@ void AnimationCallbackHandler::setupCallbacks() {
                 const bool playingOneShot = cr->isPlayingOneShot(instanceId, &playingAnim);
                 const bool nonLooping = cr->isAnimationNonLooping(instanceId, animation);
                 const auto action = rendering::stepRemoteSpellCastAnim(
-                    castState, phase, spellId, animation, none, nonCastIdle(),
+                    castState, phase, spellId, animation, none, nonCastResume(),
                     playingOneShot, playingAnim, nonLooping);
                 applyRemoteAction(action);
             }
@@ -734,7 +739,7 @@ void AnimationCallbackHandler::setupCallbacks() {
                 const bool playingOneShot = cr->isPlayingOneShot(instanceId, &playingAnim);
                 const bool nonLooping = cr->isAnimationNonLooping(instanceId, animation);
                 const auto action = rendering::stepRemoteSpellCastAnim(
-                    castState, phase, spellId, animation, none, nonCastIdle(),
+                    castState, phase, spellId, animation, none, nonCastResume(),
                     playingOneShot, playingAnim, nonLooping);
                 applyRemoteAction(action);
                 return;
@@ -795,7 +800,7 @@ void AnimationCallbackHandler::setupCallbacks() {
                 const bool playingOneShot = cr->isPlayingOneShot(instanceId, &playingAnim);
                 const bool nonLooping = cr->isAnimationNonLooping(instanceId, animation);
                 const auto action = rendering::stepRemoteSpellCastAnim(
-                    castState, phase, spellId, animation, none, nonCastIdle(),
+                    castState, phase, spellId, animation, none, nonCastResume(),
                     playingOneShot, playingAnim, nonLooping);
                 applyRemoteAction(action);
             }

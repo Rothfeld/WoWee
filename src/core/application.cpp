@@ -4897,7 +4897,7 @@ void Application::syncChannelVisuals() {
             if (entitySpawner_->remoteCastHold(it->first) == it->second) {
                 entitySpawner_->setRemoteCastHold(it->first, 0);
                 if (const uint32_t instance = instanceOf(it->first); instance && !characters->isInstanceDead(instance))
-                    characters->playAnimation(instance, entitySpawner_->remoteIdleAnimation(it->first), true);
+                    characters->playAnimation(instance, entitySpawner_->remoteResumeAnimation(it->first), true);
             }
             it = fieldChannelAnimations_.erase(it);
         }

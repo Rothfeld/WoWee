@@ -128,8 +128,9 @@ inline constexpr std::optional<uint32_t> remoteOverlayIdle(
 /// Compute the next animation action for a remote unit (creature or remote player)
 /// receiving a spell cast animation phase event.
 ///
-/// `idleAnimation` is the unit's non-cast idle/ready animation (what the unit should
-/// return to when no cast hold is active).
+/// `idleAnimation` is the unit's non-cast resume animation (active locomotion
+/// while moving, or idle/ready stance when stationary) to return to when no
+/// cast hold is active.
 /// `kitAnimNonLooping` is true when the model's M2 sequence for `kitAnimation` has
 /// the non-looping flag (M2Sequence::flags & 0x01), e.g. Illidan's 2100 ms
 /// DragonSpitHover (183) on Throw Glaive Visual (39849, 500 ms precast, no CastKit).

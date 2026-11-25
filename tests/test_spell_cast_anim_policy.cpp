@@ -322,3 +322,46 @@ TEST_CASE("Creature ranged weapon spell detection covers SPELL_ATTR_RANGED witho
     // Non-ranged spell without weapon requirement: must not match.
     CHECK_FALSE(isCreatureRangedWeaponSpell(0x0u, -1, 0u, kNoAnim, kNoAnim, kNoAnim));
 }
+
+TEST_CASE("Full-body CAST one-shot and cast STOP while moving resume locomotion",
+          "[spell_cast_anim][locomotion]") {
+    constexpr uint32_t kShadowMark = 27825; // Unrelenting Deathknight (16125): CastKit 223 -> Whirlwind (126)
+
+    SECTION("Instant full-body CAST while running returns to RUN instead of Stand/Ready") {
+        SpellCastAnimState state{};
+        const auto go = stepRemoteSpellCastAnim(
+            state, SpellAnimPhase::CAST, kShadowMark, anim::WHIRLWIND, kNoAnim,
+            anim::RUN, /*playingOneShot=*/false, 0);
+        CHECK(go.kind == SpellCastAnimAction::Kind::PLAY_ONESHOT);
+        CHECK(go.animation == anim::WHIRLWIND);
+        CHECK(go.returnAnimation == anim::RUN);
+        REQUIRE(state.oneShot.has_value());
+        CHECK(state.oneShot->animation == anim::WHIRLWIND);
+    }
+
+    SECTION("STOP ending a precast while running resumes RUN") {
+        SpellCastAnimState state{};
+        stepRemoteSpellCastAnim(
+            state, SpellAnimPhase::PRECAST, kLightningBolt, anim::READY_SPELL_DIRECTED,
+            kNoAnim, anim::STAND, false, 0);
+        const auto stop = stepRemoteSpellCastAnim(
+            state, SpellAnimPhase::STOP, kLightningBolt, kNoAnim, kNoAnim,
+            anim::RUN, false, 0);
+        CHECK(stop.kind == SpellCastAnimAction::Kind::PLAY_LOOP);
+        CHECK(stop.animation == anim::RUN);
+        CHECK_FALSE(state.hold.has_value());
+    }
+
+    SECTION("No-anim CAST ending a precast while walking resumes WALK") {
+        SpellCastAnimState state{};
+        stepRemoteSpellCastAnim(
+            state, SpellAnimPhase::PRECAST, kLightningBolt, anim::READY_SPELL_DIRECTED,
+            kNoAnim, anim::STAND, false, 0);
+        const auto go = stepRemoteSpellCastAnim(
+            state, SpellAnimPhase::CAST, kLightningBolt, kNoAnim, kNoAnim,
+            anim::WALK, false, 0);
+        CHECK(go.kind == SpellCastAnimAction::Kind::PLAY_LOOP);
+        CHECK(go.animation == anim::WALK);
+        CHECK_FALSE(state.hold.has_value());
+    }
+}
