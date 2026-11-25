@@ -435,7 +435,8 @@ void ActivitySoundManager::playJump() {
         if (std::chrono::duration<float>(now - lastJumpAt).count() < 0.35f) return;
     }
 
-    if (SoundEntryTable::instance().play2D(assetManager, profile.jumpStartId, volumeScale)) {
+    if (SoundEntryTable::instance().play2D(assetManager, profile.jumpStartId,
+                                           volumeScale * SoundEntryTable::kLocalPlayer2DGain)) {
         lastJumpAt = now;
     }
 }
@@ -453,7 +454,8 @@ void ActivitySoundManager::playLanding(bool hardLanding) {
 
     const CreatureVocalProfile profile = getActiveVocalProfile();
     if (profile.jumpEndId != 0 && assetManager && volumeScale > 0.0f) {
-        SoundEntryTable::instance().play2D(assetManager, profile.jumpEndId, volumeScale);
+        SoundEntryTable::instance().play2D(assetManager, profile.jumpEndId,
+                                           volumeScale * SoundEntryTable::kLocalPlayer2DGain);
         return;
     }
 

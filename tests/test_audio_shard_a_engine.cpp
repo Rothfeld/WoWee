@@ -239,6 +239,52 @@ TEST_CASE("GAP-01: Sound_ListenerAtCharacter default, +2.0f Z-offset, and 0.65f 
     CHECK_FALSE(events.back().spatial);
     CHECK(events.back().volume == Catch::Approx(rec->volume * 0.65f).epsilon(1e-4f));
 
+    // Mono 2D equal-power center pan law (FMOD parity: 1/sqrt(2) = -3.01 dB per L/R speaker)
+    {
+        auto makeToneWav = [](uint16_t channels) {
+            constexpr uint32_t kRate = 48000;
+            constexpr uint32_t kFrames = 4096;
+            const uint32_t dataBytes = kFrames * channels * 2;
+            std::vector<uint8_t> wav(44 + dataBytes, 0);
+            auto put32 = [&](size_t off, uint32_t v) {
+                wav[off] = v & 0xFF; wav[off+1] = (v >> 8) & 0xFF;
+                wav[off+2] = (v >> 16) & 0xFF; wav[off+3] = (v >> 24) & 0xFF;
+            };
+            auto put16 = [&](size_t off, uint16_t v) {
+                wav[off] = v & 0xFF; wav[off+1] = (v >> 8) & 0xFF;
+            };
+            std::memcpy(wav.data(), "RIFF", 4); put32(4, 36 + dataBytes);
+            std::memcpy(wav.data() + 8, "WAVEfmt ", 8); put32(16, 16); put16(20, 1);
+            put16(22, channels); put32(24, kRate); put32(28, kRate * channels * 2);
+            put16(32, channels * 2); put16(34, 16);
+            std::memcpy(wav.data() + 36, "data", 4); put32(40, dataBytes);
+            for (uint32_t i = 0; i < kFrames; ++i) {
+                const int16_t s = static_cast<int16_t>(16000.0 * std::sin(2.0 * 3.14159265358979323846 * 440.0 * i / kRate));
+                for (uint16_t ch = 0; ch < channels; ++ch) {
+                    put16(44 + (i * channels + ch) * 2, static_cast<uint16_t>(s));
+                }
+            }
+            return wav;
+        };
+        const auto monoWav = makeToneWav(1);
+        const auto stereoWav = makeToneWav(2);
+        engine.shutdown();
+        REQUIRE(engine.initializeHeadless(48000, 2));
+        REQUIRE(engine.playSound2D(monoWav, 0.5f, 1.0f));
+        const double monoRms = renderTotalRms(2048);
+        engine.shutdown();
+        REQUIRE(engine.initializeHeadless(48000, 2));
+        REQUIRE(engine.playSound2D(stereoWav, 0.5f, 1.0f));
+        const double stereoRms = renderTotalRms(2048);
+        REQUIRE(stereoRms > 1e-3);
+        CHECK(monoRms / stereoRms == Catch::Approx(0.70710678).epsilon(0.02));
+        engine.shutdown();
+        REQUIRE(engine.initializeHeadless(48000, 2));
+        engine.setPlaybackObserver([&](const audio::AudioEngine::PlaybackEvent& ev) {
+            events.push_back(ev);
+        });
+    }
+
     // 2. Local player + ListenerAtCharacter == false -> 3D at charBase + (0, 0, 2.0f)
     coord.setListenerAtCharacter(false);
     engine.setListenerPosition(camPos);

@@ -571,13 +571,16 @@ TEST_CASE("GAP-08: ActivitySoundManager resolves CreatureSoundData.dbc for all 2
             REQUIRE(events.size() == 1u);
         }
 
-        // Druid Flight Form (29) authors SoundJumpStartID = 10905 (FM_Takeoff.wav)
+        // Druid Flight Form (29) authors SoundJumpStartID = 10905 (FM_Takeoff.wav,
+        // baseVol=0.70 * kLocalPlayer2DGain 0.65 = 0.455 matching Native 8606).
         act.setShapeshiftForm(29);
         drainHeadlessMixer();
         events.clear();
         act.playJump();
         REQUIRE(events.size() == 1u);
         CHECK(events.back().started);
+        CHECK_FALSE(events.back().spatial);
+        CHECK(events.back().volume == Catch::Approx(0.70f * 0.65f).epsilon(1e-3f));
 
         // Tauren Druid Cat Form resolves Horde display 8571 (csd 1089, Death 647)
         act.setCharacterRaceGender(6, 0);

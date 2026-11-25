@@ -765,7 +765,12 @@ uint32_t AudioEngine::startSound2DInternal(const std::vector<uint8_t>& wavData, 
     }
     sound.markInitialised();
 
-    ma_sound_set_volume(sound.get(), volume);
+    // FMOD's 2D mono-to-stereo equal-power center pan law scales mono channels
+    // by 1/sqrt(2) (-3.01 dB per L/R speaker) so mono 2D SFX match stereo
+    // acoustic energy; miniaudio otherwise copies mono 1.0 to both L and R.
+    constexpr float kMono2DCenterPanGain = 0.70710678f;
+    const float renderVolume = (decoded.channels == 1) ? (volume * kMono2DCenterPanGain) : volume;
+    ma_sound_set_volume(sound.get(), renderVolume);
     if (customPitch) {
         ma_sound_set_pitch(sound.get(), clampedPitch);
     }
