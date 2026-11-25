@@ -333,11 +333,14 @@ TEST_CASE("SMSG_GAMEOBJECT_DESPAWN_ANIM plays Despawn (157) when authored, else 
     CHECK(resolveGameObjectDespawnAnim(/*isWmo=*/false, /*hasDespawnSequence=*/true) ==
           GameObjectDespawnAnimAction::PLAY_DESPAWN_ANIM);
 
-    // M2 models without sequence 157 (e.g. g_fishingbobber.m2) and WMOs fade out immediately.
+    // M2 models without sequence 157 (e.g. PORTCULLISACTIVE.m2 Kirtonos gate
+    // 175570, g_fishingbobber.m2) and WMOs are a no-op on 0x215 so static doors
+    // receiving GO_JUST_DEACTIVATED are not prematurely deleted before
+    // GAMEOBJECT_STATE = READY (1); real despawns fade out on OUT_OF_RANGE.
     CHECK(resolveGameObjectDespawnAnim(/*isWmo=*/false, /*hasDespawnSequence=*/false) ==
-          GameObjectDespawnAnimAction::FADE_OUT_IMMEDIATELY);
+          GameObjectDespawnAnimAction::NO_OP);
     CHECK(resolveGameObjectDespawnAnim(/*isWmo=*/true, /*hasDespawnSequence=*/true) ==
-          GameObjectDespawnAnimAction::FADE_OUT_IMMEDIATELY);
+          GameObjectDespawnAnimAction::NO_OP);
     CHECK(resolveGameObjectDespawnAnim(/*isWmo=*/true, /*hasDespawnSequence=*/false) ==
-          GameObjectDespawnAnimAction::FADE_OUT_IMMEDIATELY);
+          GameObjectDespawnAnimAction::NO_OP);
 }

@@ -2058,6 +2058,7 @@ void EntitySpawner::applyGameObjectState(uint64_t guid, uint8_t goState) {
         return;
     }
     gameObjectAppliedState_[guid] = goState;
+    gameObjectDespawningGuids_.erase(guid);
     // Canonical GOState: 0 ACTIVE (open), 1 READY (closed), 2 ACTIVE_ALTERNATIVE
     // (destroyed). The animation ids are the game's own: OPEN, CLOSE, DESTROY.
     const uint32_t anim = goState == 0 ? 148u : (goState == 2 ? 149u : 146u);
@@ -2302,7 +2303,12 @@ void EntitySpawner::playGameObjectDespawnAnim(uint64_t guid) {
                   " instance=", instanceId);
         return;
     }
-    despawnGameObjectFromServer(guid);
+    // Never despawn or fade out on SMSG_GAMEOBJECT_DESPAWN_ANIM: CMaNGOS
+    // GameObject::Update (GO_JUST_DEACTIVATED) sends 0x215 on static DB doors
+    // and goobers (e.g. Scholomance Kirtonos gate 175570) before resetting
+    // GAMEOBJECT_STATE = READY (1) without removing the object.
+    LOG_DEBUG("Ignoring SMSG_GAMEOBJECT_DESPAWN_ANIM (no DESPAWN sequence 157): guid=0x",
+              std::hex, guid, std::dec);
 }
 
 void EntitySpawner::despawnGameObjectFromServer(uint64_t guid) {

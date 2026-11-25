@@ -112,10 +112,9 @@ void EntitySpawnCallbackHandler::setupCallbacks() {
         entitySpawner_.despawnGameObjectFromServer(guid);
     });
 
-    // SMSG_GAMEOBJECT_DESPAWN_ANIM (0x215): Wow.exe 2.4.3.8606 (0x6341D0 ->
-    // CGGameObject_C::PlayAnim(6) at 0x634490) plays AnimationData::DESPAWN
-    // (157) when the M2 authors it (e.g. Sapphiron Birth 36.67 s), otherwise
-    // begins fade-out immediately (e.g. fishing bobbers).
+    // SMSG_GAMEOBJECT_DESPAWN_ANIM (0x215): plays AnimationData::DESPAWN (157)
+    // when the M2 authors it (e.g. Sapphiron Birth 36.67 s) and is a no-op
+    // otherwise. Object removal/fade-out happens only on OUT_OF_RANGE.
     gameHandler_.setGameObjectDespawnAnimCallback([this](uint64_t guid) {
         entitySpawner_.playGameObjectDespawnAnim(guid);
     });

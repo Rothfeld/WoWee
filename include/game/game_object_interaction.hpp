@@ -231,19 +231,22 @@ inline constexpr bool shouldApplyGameObjectState(std::optional<uint8_t> appliedS
 /// Action to take when SMSG_GAMEOBJECT_DESPAWN_ANIM (0x215) arrives for a
 /// spawned GameObject.
 ///
-/// In Wow.exe 2.4.3.8606 (0x6341D0 -> CGGameObject_C::PlayAnim(6) at 0x634490,
-/// lookup table 0x880a0c[6] = 12 -> 145 + 12 = 157 AnimationData::Despawn):
-/// - M2 GameObjects authoring sequence 157 (Despawn) — 90 shipped TBC models
-///   including Naxxramas_Frostwyrm_Birth.m2 (Sapphiron Birth, 36.67 s),
+/// - M2 GameObjects authoring sequence 157 (AnimationData::Despawn) — e.g.
+///   Naxxramas_Frostwyrm_Birth.m2 (Sapphiron Birth, 36.67 s),
 ///   FrostwurmFellfire_Birth.m2 (36.67 s), g_necropolis.m2 (14.7 s),
 ///   beerfest_molemachine.m2 (4.67 s), ahn_quiraj_ossiriancrystal.m2 (3.9 s) —
 ///   play Despawn (157) to completion even when OUT_OF_RANGE arrives in the
 ///   same server tick (CMaNGOS GameObject::Update GO_JUST_DEACTIVATED).
-/// - WMOs and M2s lacking sequence 157 (e.g. g_fishingbobber.m2) fade out
-///   immediately via despawnGameObjectFromServer().
+/// - WMOs and M2s lacking sequence 157 (e.g. PORTCULLISACTIVE.m2 Kirtonos gate
+///   175570, WROUGHTIRONDOOR02.m2, g_fishingbobber.m2) do nothing on 0x215:
+///   CMaNGOS sends SMSG_GAMEOBJECT_DESPAWN_ANIM on static DB doors/buttons/
+///   goobers when GO_JUST_DEACTIVATED fires with animProgress > 0 without
+///   despawning them, followed by GAMEOBJECT_STATE = READY (1). Actual object
+///   removal and fade-out are driven strictly by SMSG_UPDATE_OBJECT
+///   (OUT_OF_RANGE -> despawnGameObjectFromServer).
 enum class GameObjectDespawnAnimAction : uint8_t {
     PLAY_DESPAWN_ANIM,
-    FADE_OUT_IMMEDIATELY,
+    NO_OP,
 };
 
 inline constexpr GameObjectDespawnAnimAction resolveGameObjectDespawnAnim(
@@ -251,7 +254,7 @@ inline constexpr GameObjectDespawnAnimAction resolveGameObjectDespawnAnim(
     if (!isWmo && hasDespawnSequence) {
         return GameObjectDespawnAnimAction::PLAY_DESPAWN_ANIM;
     }
-    return GameObjectDespawnAnimAction::FADE_OUT_IMMEDIATELY;
+    return GameObjectDespawnAnimAction::NO_OP;
 }
 
 } // namespace wowee::game
