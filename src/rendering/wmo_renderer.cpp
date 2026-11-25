@@ -3482,8 +3482,10 @@ void WMORenderer::GroupResources::getWallTrianglesInRange(
     gatherCellTriangles(cellWallTriangles, minX, minY, maxX, maxY, out);
 }
 
-void WMORenderer::appendSurfaceTriangles(const glm::vec3& boxMin, const glm::vec3& boxMax,
-                                         std::vector<glm::vec3>& out) const {
+void WMORenderer::appendSurfaceTriangles(
+    const glm::vec3& boxMin, const glm::vec3& boxMax,
+    std::vector<glm::vec3>& outVertices,
+    const std::function<void(const glm::mat4& model, uint32_t firstVertex, uint32_t vertexCount)>& emitBatch) const {
     std::vector<size_t> candidates;
     gatherCandidates(boxMin, boxMax, candidates);
     std::vector<uint32_t> triangles;
@@ -3504,6 +3506,7 @@ void WMORenderer::appendSurfaceTriangles(const glm::vec3& boxMin, const glm::vec
             localMin = glm::min(localMin, local);
             localMax = glm::max(localMax, local);
         }
+        const uint32_t firstVertex = static_cast<uint32_t>(outVertices.size());
         for (size_t gi = 0; gi < model.groups.size(); ++gi) {
             const auto& group = model.groups[gi];
             if (gi < instance.worldGroupBounds.size()) {
@@ -3518,16 +3521,21 @@ void WMORenderer::appendSurfaceTriangles(const glm::vec3& boxMin, const glm::vec
                 const size_t triangle = triStart / 3;
                 // MOPY material 0xFF: collision only, in no render batch.
                 if (triangle < group.triMaterials.size() && group.triMaterials[triangle] == 0xFF) continue;
-                glm::vec3 v[3];
+                glm::vec3 localV[3];
+                glm::vec3 worldV[3];
                 for (int k = 0; k < 3; ++k) {
-                    v[k] = glm::vec3(instance.modelMatrix *
-                                     glm::vec4(group.collisionVertices[group.collisionIndices[triStart + k]], 1.0f));
+                    localV[k] = group.collisionVertices[group.collisionIndices[triStart + k]];
+                    worldV[k] = glm::vec3(instance.modelMatrix * glm::vec4(localV[k], 1.0f));
                 }
-                const glm::vec3 lo = glm::min(v[0], glm::min(v[1], v[2]));
-                const glm::vec3 hi = glm::max(v[0], glm::max(v[1], v[2]));
+                const glm::vec3 lo = glm::min(worldV[0], glm::min(worldV[1], worldV[2]));
+                const glm::vec3 hi = glm::max(worldV[0], glm::max(worldV[1], worldV[2]));
                 if (glm::any(glm::lessThan(hi, boxMin)) || glm::any(glm::greaterThan(lo, boxMax))) continue;
-                out.insert(out.end(), {v[0], v[1], v[2]});
+                outVertices.insert(outVertices.end(), {localV[0], localV[1], localV[2]});
             }
+        }
+        const uint32_t vertexCount = static_cast<uint32_t>(outVertices.size()) - firstVertex;
+        if (vertexCount > 0 && emitBatch) {
+            emitBatch(instance.modelMatrix, firstVertex, vertexCount);
         }
     }
 }

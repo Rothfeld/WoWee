@@ -378,15 +378,21 @@ public:
                                         std::optional<uint32_t>* outTerrainType = nullptr) const;
 
     /**
-     * Append the drawn triangles (world space, three vertices each) of every
+     * Append the drawn triangles (model space, three vertices each) of every
      * group whose bounds meet the box: walls and risers as well as floors,
      * detail geometry (MOPY 0x04) as well as collision. Not the collision-only
      * triangles (material 0xFF), distance shells, antiportals, or groups the
      * room walk left undrawn this frame. For drawing onto the building
-     * itself, as the selection circle is.
+     * itself, as the selection circle and unit shadows are.
+     *
+     * Vertices are emitted in each WMO instance's local space and paired with
+     * instance.modelMatrix via emitBatch so overlay vertex shaders run the
+     * exact same GPU model*pos transform as wmo.vert.glsl.
      */
-    void appendSurfaceTriangles(const glm::vec3& boxMin, const glm::vec3& boxMax,
-                                std::vector<glm::vec3>& out) const;
+    void appendSurfaceTriangles(
+        const glm::vec3& boxMin, const glm::vec3& boxMax,
+        std::vector<glm::vec3>& outVertices,
+        const std::function<void(const glm::mat4& model, uint32_t firstVertex, uint32_t vertexCount)>& emitBatch) const;
 
     /** Query floor collision from one moving WMO instance. */
     std::optional<float> getInstanceFloorHeight(uint32_t instanceId,

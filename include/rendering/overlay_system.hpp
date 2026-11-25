@@ -26,10 +26,28 @@ public:
     /// Height query callable: returns floor height at (x, y) or (x, y, probeZ).
     using HeightQuery2D = std::function<std::optional<float>(float x, float y)>;
     using HeightQuery3D = std::function<std::optional<float>(float x, float y, float probeZ)>;
-    /// Appends the drawn world triangles (three world-space vertices each)
-    /// whose bounds meet the box [min, max].
+    /// One batch of surface triangles sharing a model transform, stored in the
+    /// model's own space (identity for terrain, instance.modelMatrix for a WMO)
+    /// so ground overlays execute the exact same GPU model*pos transform as
+    /// terrain.vert.glsl and wmo.vert.glsl.
+    struct SurfaceTriangleBatch {
+        glm::mat4 model{1.0f};
+        uint32_t firstVertex = 0;
+        uint32_t vertexCount = 0;
+    };
+    struct SurfaceTriangleList {
+        std::vector<glm::vec3> vertices;
+        std::vector<SurfaceTriangleBatch> batches;
+        void clear() {
+            vertices.clear();
+            batches.clear();
+        }
+        [[nodiscard]] bool empty() const { return vertices.empty(); }
+    };
+    /// Appends the drawn world triangles (three model-space vertices each plus
+    /// one batch per model transform) whose world bounds meet [min, max].
     using SurfaceTriangles = std::function<void(const glm::vec3& min, const glm::vec3& max,
-                                                std::vector<glm::vec3>& out)>;
+                                                SurfaceTriangleList& out)>;
 
     OverlaySystem(VkContext* ctx, VkDescriptorSetLayout perFrameLayout);
     ~OverlaySystem();
@@ -120,8 +138,8 @@ private:
     glm::vec3 selCircleColor_{1.0f, 0.0f, 0.0f};
     float selCircleRadius_ = 1.5f;
     bool selCircleVisible_ = false;
-    // The world triangles the ring is drawn on this frame.
-    std::vector<glm::vec3> selCircleTriangles_;
+    // The world triangles the ring is drawn on this frame (model space + per-batch model matrix).
+    SurfaceTriangleList selCircleTriangles_;
 
     // Ground target reticle resources
     void initGroundTargetReticle();
@@ -142,7 +160,7 @@ private:
     float reticleRadius_ = 0.0f;
     bool reticleAcceptable_ = true;
     bool reticleVisible_ = false;
-    std::vector<glm::vec3> reticleTriangles_;
+    SurfaceTriangleList reticleTriangles_;
 
     // Unit blob shadow resources
     void initUnitShadows();
@@ -155,7 +173,7 @@ private:
     VkDescriptorPool shadowPool_ = VK_NULL_HANDLE;
     VkDescriptorSet shadowSet_ = VK_NULL_HANDLE;
     std::vector<UnitShadowBlob> shadowBlobs_;
-    std::vector<glm::vec3> shadowTriangles_;
+    SurfaceTriangleList shadowTriangles_;
 
     // Fullscreen overlay resources
     VkPipeline overlayPipeline_ = VK_NULL_HANDLE;

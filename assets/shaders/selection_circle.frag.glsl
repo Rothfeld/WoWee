@@ -4,6 +4,7 @@
 // or below it, on a floor, a slope or a wall alike.
 layout(set = 1, binding = 0) uniform sampler2D selectionTexture;
 layout(push_constant) uniform Push {
+    mat4 model;
     vec4 color;
     vec4 square;          // centre x, y; half side; u sign (-1 mirrors the texture across its vertical)
     vec4 axisAndHeights;  // the square's right axis x, y; lowest and highest z drawn

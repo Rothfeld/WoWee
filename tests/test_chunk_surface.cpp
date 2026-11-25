@@ -354,3 +354,34 @@ TEST_CASE("projection * (view * worldPos) preserves painting-in-front-of-wall de
     }
     CHECK(checked > 20);
 }
+
+TEST_CASE("world and ground-overlay vertex shaders share invariant GPU model transform",
+          "[chunksurface][depth]") {
+    namespace fs = std::filesystem;
+    fs::path shaderDir = fs::path("assets") / "shaders";
+    if (!fs::exists(shaderDir)) {
+        shaderDir = fs::path(__FILE__).parent_path().parent_path() / "assets" / "shaders";
+    }
+    REQUIRE(fs::exists(shaderDir));
+
+    auto readAll = [&](const char* name) {
+        std::ifstream in(shaderDir / name);
+        REQUIRE(in.good());
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    };
+
+    for (const char* vert : {"wmo.vert.glsl", "terrain.vert.glsl",
+                             "unit_shadow.vert.glsl", "selection_circle.vert.glsl"}) {
+        const std::string src = readAll(vert);
+        INFO("shader=" << vert);
+        CHECK(src.find("invariant gl_Position;") != std::string::npos);
+        CHECK(src.find("push.model * vec4(") != std::string::npos);
+        CHECK(src.find("projection * (view * ") != std::string::npos);
+    }
+
+    for (const char* frag : {"unit_shadow.frag.glsl", "selection_circle.frag.glsl"}) {
+        const std::string src = readAll(frag);
+        INFO("shader=" << frag);
+        CHECK(src.find("mat4 model;") != std::string::npos);
+    }
+}

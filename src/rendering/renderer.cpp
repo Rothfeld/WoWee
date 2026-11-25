@@ -2845,11 +2845,24 @@ void Renderer::refreshSelectionCirclePosition() {
 
 namespace {
 
-/// Terrain and WMO triangles for the selection circle to be drawn onto.
+/// Terrain and WMO triangles for ground overlays (unit shadows, selection
+/// circle, ground target reticle) to be drawn onto.
 OverlaySystem::SurfaceTriangles selectionSurfaces(const TerrainManager* terrain, const WMORenderer* wmo) {
-    return [terrain, wmo](const glm::vec3& min, const glm::vec3& max, std::vector<glm::vec3>& out) {
-        if (terrain) terrain->appendSurfaceTriangles(min, max, out);
-        if (wmo) wmo->appendSurfaceTriangles(min, max, out);
+    return [terrain, wmo](const glm::vec3& min, const glm::vec3& max, OverlaySystem::SurfaceTriangleList& out) {
+        if (terrain) {
+            const uint32_t first = static_cast<uint32_t>(out.vertices.size());
+            terrain->appendSurfaceTriangles(min, max, out.vertices);
+            const uint32_t count = static_cast<uint32_t>(out.vertices.size()) - first;
+            if (count > 0) {
+                out.batches.push_back({glm::mat4(1.0f), first, count});
+            }
+        }
+        if (wmo) {
+            wmo->appendSurfaceTriangles(min, max, out.vertices,
+                [&out](const glm::mat4& model, uint32_t first, uint32_t count) {
+                    out.batches.push_back({model, first, count});
+                });
+        }
     };
 }
 

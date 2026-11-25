@@ -184,11 +184,12 @@ namespace {
 
 /// selection_circle.vert/.frag's push block.
 struct SelectionPush {
+    glm::mat4 model{1.0f};
     glm::vec4 color;
     glm::vec4 square;          // centre x, y; half side; u sign (-1 mirrors)
     glm::vec4 axisAndHeights;  // the square's right axis x, y; lowest and highest z drawn
 };
-static_assert(sizeof(SelectionPush) == 48, "must match selection_circle's push block");
+static_assert(sizeof(SelectionPush) == 112, "must match selection_circle's push block");
 
 }  // namespace
 
@@ -304,11 +305,11 @@ void OverlaySystem::renderSelectionCircle(const glm::mat4& view, VkDescriptorSet
     const uint32_t frame = vkCtx_->getCurrentFrame();
     auto& buffer = selCircleVertexBuffers_[frame];
     auto& capacity = selCircleVertexCapacity_[frame];
-    if (capacity < triangles.size()) {
+    if (capacity < triangles.vertices.size()) {
         // This frame's previous use of the buffer has completed: the frame
         // fence was waited on before recording, so it can be replaced.
         destroyBuffer(vkCtx_->getAllocator(), buffer);
-        capacity = std::max<size_t>(triangles.size(), 4096) * 2;
+        capacity = std::max<size_t>(triangles.vertices.size(), 4096) * 2;
         buffer = createBuffer(vkCtx_->getAllocator(), capacity * sizeof(glm::vec3),
                               VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
         if (!buffer.buffer) throw std::runtime_error("Selection vertex allocation failed");
@@ -316,8 +317,8 @@ void OverlaySystem::renderSelectionCircle(const glm::mat4& view, VkDescriptorSet
     void* mapped = nullptr;
     if (vmaMapMemory(vkCtx_->getAllocator(), buffer.allocation, &mapped) != VK_SUCCESS)
         throw std::runtime_error("Selection vertex mapping failed");
-    const VkDeviceSize bytes = triangles.size() * sizeof(glm::vec3);
-    std::memcpy(mapped, triangles.data(), bytes);
+    const VkDeviceSize bytes = triangles.vertices.size() * sizeof(glm::vec3);
+    std::memcpy(mapped, triangles.vertices.data(), bytes);
     vmaFlushAllocation(vkCtx_->getAllocator(), buffer.allocation, 0, bytes);
     vmaUnmapMemory(vkCtx_->getAllocator(), buffer.allocation);
 
@@ -334,9 +335,12 @@ void OverlaySystem::renderSelectionCircle(const glm::mat4& view, VkDescriptorSet
                             0, 2, sets, 0, nullptr);
     VkDeviceSize offset = 0;
     vkCmdBindVertexBuffers(cmd, 0, 1, &buffer.buffer, &offset);
-    vkCmdPushConstants(cmd, selCirclePipelineLayout_,
-        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push), &push);
-    vkCmdDraw(cmd, static_cast<uint32_t>(triangles.size()), 1, 0, 0);
+    for (const auto& batch : triangles.batches) {
+        push.model = batch.model;
+        vkCmdPushConstants(cmd, selCirclePipelineLayout_,
+            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push), &push);
+        vkCmdDraw(cmd, batch.vertexCount, 1, batch.firstVertex, 0);
+    }
 }
 
 void OverlaySystem::initGroundTargetReticle() {
@@ -393,9 +397,9 @@ void OverlaySystem::renderGroundTargetReticle(VkDescriptorSet perFrameSet,
     const uint32_t frame = vkCtx_->getCurrentFrame();
     auto& buffer = reticleVertexBuffers_[frame];
     auto& capacity = reticleVertexCapacity_[frame];
-    if (capacity < triangles.size()) {
+    if (capacity < triangles.vertices.size()) {
         destroyBuffer(vkCtx_->getAllocator(), buffer);
-        capacity = std::max<size_t>(triangles.size(), 4096) * 2;
+        capacity = std::max<size_t>(triangles.vertices.size(), 4096) * 2;
         buffer = createBuffer(vkCtx_->getAllocator(), capacity * sizeof(glm::vec3),
                               VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
         if (!buffer.buffer) throw std::runtime_error("Ground target reticle vertex allocation failed");
@@ -403,8 +407,8 @@ void OverlaySystem::renderGroundTargetReticle(VkDescriptorSet perFrameSet,
     void* mapped = nullptr;
     if (vmaMapMemory(vkCtx_->getAllocator(), buffer.allocation, &mapped) != VK_SUCCESS)
         throw std::runtime_error("Ground target reticle vertex mapping failed");
-    const VkDeviceSize bytes = triangles.size() * sizeof(glm::vec3);
-    std::memcpy(mapped, triangles.data(), bytes);
+    const VkDeviceSize bytes = triangles.vertices.size() * sizeof(glm::vec3);
+    std::memcpy(mapped, triangles.vertices.data(), bytes);
     vmaFlushAllocation(vkCtx_->getAllocator(), buffer.allocation, 0, bytes);
     vmaUnmapMemory(vkCtx_->getAllocator(), buffer.allocation);
 
@@ -423,21 +427,25 @@ void OverlaySystem::renderGroundTargetReticle(VkDescriptorSet perFrameSet,
                             0, 2, sets, 0, nullptr);
     VkDeviceSize offset = 0;
     vkCmdBindVertexBuffers(cmd, 0, 1, &buffer.buffer, &offset);
-    vkCmdPushConstants(cmd, reticlePipelineLayout_,
-        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push), &push);
-    vkCmdDraw(cmd, static_cast<uint32_t>(triangles.size()), 1, 0, 0);
+    for (const auto& batch : triangles.batches) {
+        push.model = batch.model;
+        vkCmdPushConstants(cmd, reticlePipelineLayout_,
+            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push), &push);
+        vkCmdDraw(cmd, batch.vertexCount, 1, batch.firstVertex, 0);
+    }
 }
 
 namespace {
 
 /// unit_shadow.vert/.frag's push block.
 struct UnitShadowPush {
+    glm::mat4 model{1.0f};
     glm::vec4 centreAxis;  // unit position x, y; facing x, y
     glm::vec4 halfAndZ;    // half extent along facing, across; lowest and highest z drawn
     glm::vec4 camera;      // camera position; unused
     glm::vec4 fog;         // fog start, end; unused
 };
-static_assert(sizeof(UnitShadowPush) == 64, "must match unit_shadow's push block");
+static_assert(sizeof(UnitShadowPush) == 128, "must match unit_shadow's push block");
 
 }  // namespace
 
@@ -498,7 +506,7 @@ void OverlaySystem::renderUnitShadows(VkDescriptorSet perFrameSet,
     if (shadowBlobs_.empty() || cmd == VK_NULL_HANDLE || !shadowTexture_.isValid()) return;
     initUnitShadows();
 
-    struct Draw { UnitShadowPush push; uint32_t first; uint32_t count; };
+    struct Draw { UnitShadowPush push; size_t firstBatch; size_t batchCount; };
     std::vector<Draw> draws;
     auto& triangles = shadowTriangles_;
     triangles.clear();
@@ -518,16 +526,16 @@ void OverlaySystem::renderUnitShadows(VkDescriptorSet perFrameSet,
         const glm::vec2 reach = glm::abs(axis) * blob.halfExtent.x + glm::abs(across) * blob.halfExtent.y;
         const glm::vec3 boxMin(p.x - reach.x, p.y - reach.y, p.z - blob.reach);
         const glm::vec3 boxMax(p.x + reach.x, p.y + reach.y, p.z + blob.reach);
-        const size_t first = triangles.size();
+        const size_t firstBatch = triangles.batches.size();
         if (surfaces) surfaces(boxMin, boxMax, triangles);
-        if (triangles.size() == first) continue;
+        if (triangles.batches.size() == firstBatch) continue;
         Draw draw{};
         draw.push.centreAxis = glm::vec4(p.x, p.y, axis.x, axis.y);
         draw.push.halfAndZ = glm::vec4(blob.halfExtent, boxMin.z, boxMax.z);
         draw.push.camera = glm::vec4(cameraPos, 0.0f);
         draw.push.fog = glm::vec4(fogStart, fogEnd, 0.0f, 0.0f);
-        draw.first = static_cast<uint32_t>(first);
-        draw.count = static_cast<uint32_t>(triangles.size() - first);
+        draw.firstBatch = firstBatch;
+        draw.batchCount = triangles.batches.size() - firstBatch;
         draws.push_back(draw);
     }
     if (draws.empty()) return;
@@ -535,10 +543,10 @@ void OverlaySystem::renderUnitShadows(VkDescriptorSet perFrameSet,
     const uint32_t frame = vkCtx_->getCurrentFrame();
     auto& buffer = shadowVertexBuffers_[frame];
     auto& capacity = shadowVertexCapacity_[frame];
-    if (capacity < triangles.size()) {
+    if (capacity < triangles.vertices.size()) {
         // This frame's previous use of the buffer has completed (frame fence).
         destroyBuffer(vkCtx_->getAllocator(), buffer);
-        capacity = std::max<size_t>(triangles.size(), 16384) * 2;
+        capacity = std::max<size_t>(triangles.vertices.size(), 16384) * 2;
         buffer = createBuffer(vkCtx_->getAllocator(), capacity * sizeof(glm::vec3),
                               VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
         if (!buffer.buffer) throw std::runtime_error("Unit shadow vertex allocation failed");
@@ -546,8 +554,8 @@ void OverlaySystem::renderUnitShadows(VkDescriptorSet perFrameSet,
     void* mapped = nullptr;
     if (vmaMapMemory(vkCtx_->getAllocator(), buffer.allocation, &mapped) != VK_SUCCESS)
         throw std::runtime_error("Unit shadow vertex mapping failed");
-    const VkDeviceSize bytes = triangles.size() * sizeof(glm::vec3);
-    std::memcpy(mapped, triangles.data(), bytes);
+    const VkDeviceSize bytes = triangles.vertices.size() * sizeof(glm::vec3);
+    std::memcpy(mapped, triangles.vertices.data(), bytes);
     vmaFlushAllocation(vkCtx_->getAllocator(), buffer.allocation, 0, bytes);
     vmaUnmapMemory(vkCtx_->getAllocator(), buffer.allocation);
 
@@ -557,10 +565,14 @@ void OverlaySystem::renderUnitShadows(VkDescriptorSet perFrameSet,
                             0, 2, sets, 0, nullptr);
     VkDeviceSize offset = 0;
     vkCmdBindVertexBuffers(cmd, 0, 1, &buffer.buffer, &offset);
-    for (const auto& draw : draws) {
-        vkCmdPushConstants(cmd, shadowPipelineLayout_,
-            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(draw.push), &draw.push);
-        vkCmdDraw(cmd, draw.count, 1, draw.first, 0);
+    for (auto& draw : draws) {
+        for (size_t bi = 0; bi < draw.batchCount; ++bi) {
+            const auto& batch = triangles.batches[draw.firstBatch + bi];
+            draw.push.model = batch.model;
+            vkCmdPushConstants(cmd, shadowPipelineLayout_,
+                VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(draw.push), &draw.push);
+            vkCmdDraw(cmd, batch.vertexCount, 1, batch.firstVertex, 0);
+        }
     }
 }
 

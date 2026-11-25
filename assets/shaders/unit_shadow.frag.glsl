@@ -5,6 +5,7 @@
 // (Lykul Stinger 19367 at 24 yd: 0.68 of its near depth in the sweep).
 layout(set = 1, binding = 0) uniform sampler2D blobTexture;
 layout(push_constant) uniform Push {
+    mat4 model;
     vec4 centreAxis;
     vec4 halfAndZ;
     vec4 cameraFog;
