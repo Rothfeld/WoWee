@@ -4,6 +4,7 @@
 #include "addons/lua_api_registrations.hpp"
 #include "ui/ui_texture_load.hpp"
 #include "ui/ui_upload_budget.hpp"
+#include "core/frame_stage_times.hpp"
 #include "core/helm_visual.hpp"
 #include "pipeline/guild_tabard.hpp"
 #include "ui/ui_raid_icons.hpp"
@@ -1024,8 +1025,13 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
     glm::vec3 playerCanonical(0.0f);
     if (auto player = gameHandler.getEntityManager().getEntity(playerGuid))
         playerCanonical = glm::vec3(player->getX(), player->getY(), player->getZ());
-    gameHandler.getEntityManager().getEntitiesNear(
-        playerCanonical.x, playerCanonical.y, 150.0f, nameplateEntities);
+    {
+        const core::ScopedFrameStage stage("uiManager->render/nameplates/entities near");
+        gameHandler.getEntityManager().getEntitiesNear(
+            playerCanonical.x, playerCanonical.y, 150.0f, nameplateEntities);
+    }
+    core::noteFrameCount("entities within 150 yd for nameplates, summed over frames",
+                         nameplateEntities.size());
 
     // Allow Nameplate Overlap. Off in the real client, and the boxes already
     // placed this frame are what "off" needs to know: a plate that would land
