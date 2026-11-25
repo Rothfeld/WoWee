@@ -105,6 +105,7 @@ void WidgetTree::reset() {
     scrollFrames_.clear();
     keyboardFrames_.clear();
     ownedTooltips_.clear();
+    nameLookups_.clear();
     for (auto& list : touched_) list.clear();
     for (auto& index : touchedIndex_) index.clear();
     visibleIds_.clear();
@@ -404,7 +405,7 @@ const std::vector<uint32_t>& WidgetTree::portraitsFor(const std::string& unit) c
     return (it == portraitsByUnit_.end()) ? kNone : it->second;
 }
 
-// Kept as a scan on purpose.
+// A scan, and not an index of every name.
 //
 // A perf profile put this at 6.51% of the headless interface load, the largest
 // first-party function in it, and indexing name -> ids dropped it to 0.06%.
@@ -415,27 +416,42 @@ const std::vector<uint32_t>& WidgetTree::portraitsFor(const std::string& unit) c
 // hash insert with a string key for every widget created, which the profile
 // never showed as a hotspot because it spread across the creation path.
 //
-// Worth revisiting only with a measurement of lookups at runtime rather than
-// during load, where the tree is full and each scan is longest.
-Widget* WidgetTree::findByName(std::string_view name) {
-    if (name.empty()) return nullptr;
-    // Backwards, so the last frame to take the name is the one found - the
-    // same rule as the global it was published under.
-    for (auto& widget : std::views::reverse(widgets_)) {
+// At runtime the scan is the cost instead. The client asks every frame for
+// frames that do not exist in the loaded interface - CompanionModelFrame,
+// AuctionDressUpModel before the auction addon loads - and each miss walked
+// all 22,700 widgets: 0.44ms a frame for five names, more while a tooltip is
+// up, which asks for a region per line.
+//
+// So only the names that are asked for are remembered, and creating a widget
+// still costs nothing: a name asked for again is looked for among the widgets
+// created since it was last asked for, backwards, so the last frame to take
+// the name is still the one found - the same rule as the global it was
+// published under.
+uint32_t WidgetTree::lookUpName(std::string_view name) const {
+    if (name.empty()) return 0;
+    auto found = nameLookups_.find(name);
+    if (found == nameLookups_.end()) {
+        found = nameLookups_.emplace(std::string(name), NameLookup{}).first;
+    }
+    NameLookup& lookup = found->second;
+    const size_t size = widgets_.size();
+    for (size_t at = size; at-- > lookup.searched;) {
+        const Widget& widget = widgets_[at];
         if (widget.id != 0 && widget.name == name) {
-            noteTouched(widget);
-            return &widget;
+            lookup.id = widget.id;
+            break;
         }
     }
-    return nullptr;
+    lookup.searched = size;
+    return lookup.id;
+}
+
+Widget* WidgetTree::findByName(std::string_view name) {
+    return get(lookUpName(name));
 }
 
 const Widget* WidgetTree::findByName(std::string_view name) const {
-    if (name.empty()) return nullptr;
-    for (const auto& widget : std::views::reverse(widgets_)) {
-        if (widget.id != 0 && widget.name == name) return &widget;
-    }
-    return nullptr;
+    return get(lookUpName(name));
 }
 
 Widget* WidgetTree::get(uint32_t id) {

@@ -3919,3 +3919,41 @@ TEST_CASE("Random edits leave the tree's filing agreeing with a walk over every 
         }
     }
 }
+
+TEST_CASE("findByName answers the last widget to take a name, asked before or after it existed",
+          "[widget][name]") {
+    WidgetTree tree;
+    // Asked for before anything has the name.
+    CHECK(tree.findByName("Late") == nullptr);
+    CHECK(tree.findByName("") == nullptr);
+
+    const uint32_t first = tree.create(WidgetKind::Frame, tree.uiParentId(), "Late");
+    REQUIRE(tree.findByName("Late") != nullptr);
+    CHECK(tree.findByName("Late")->id == first);
+    // Asked again with nothing created in between.
+    CHECK(tree.findByName("Late")->id == first);
+
+    // Unrelated widgets do not change the answer.
+    (void)tree.create(WidgetKind::Texture, first, "Other");
+    (void)tree.create(WidgetKind::Frame, tree.uiParentId(), "");
+    CHECK(tree.findByName("Late")->id == first);
+
+    // A second widget takes the name: the last one wins.
+    const uint32_t second = tree.create(WidgetKind::Frame, tree.uiParentId(), "Late");
+    CHECK(tree.findByName("Late")->id == second);
+    const WidgetTree& readOnly = tree;
+    CHECK(readOnly.findByName("Late")->id == second);
+    CHECK(readOnly.findByName("Other") != nullptr);
+    CHECK(readOnly.findByName("Missing") == nullptr);
+
+    // A name is a whole name.
+    CHECK(tree.findByName("Lat") == nullptr);
+    CHECK(tree.findByName("Later") == nullptr);
+
+    // A new tree has forgotten all of it.
+    tree.reset();
+    CHECK(tree.findByName("Late") == nullptr);
+    CHECK(tree.findByName("UIParent") != nullptr);
+    const uint32_t again = tree.create(WidgetKind::Frame, tree.uiParentId(), "Late");
+    CHECK(tree.findByName("Late")->id == again);
+}

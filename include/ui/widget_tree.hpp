@@ -29,6 +29,7 @@
 #include <string>
 #include <utility>
 #include <string_view>
+#include <unordered_map>
 #include "pipeline/guild_tabard.hpp"
 #include <vector>
 
@@ -1268,6 +1269,10 @@ public:
     /// The widget published under this name, or null. Names are unique in
     /// FrameXML by convention, and the last one to claim a name wins, which is
     /// what a lookup by name means there too.
+    ///
+    /// A name asked for before is answered from what was found then plus the
+    /// widgets created since: a widget's name is given at create() and never
+    /// changes, and widgets are never removed.
     Widget* findByName(std::string_view name);
     [[nodiscard]] const Widget* findByName(std::string_view name) const;
 
@@ -1313,6 +1318,21 @@ private:
     [[nodiscard]] uint32_t hitTestFor(float x, float y, bool forWheel) const;
     std::vector<LinkRect> linkRects_;
     std::string rectDumpRequest_;
+
+    /// What findByName last answered for a name, and how much of the tree
+    /// that answer covers.
+    struct NameLookup {
+        uint32_t id = 0;        ///< the last widget with the name, or 0
+        size_t searched = 0;    ///< widgets_[0, searched) have been looked at
+    };
+    struct NameHash {
+        using is_transparent = void;
+        size_t operator()(std::string_view name) const {
+            return std::hash<std::string_view>{}(name);
+        }
+    };
+    mutable std::unordered_map<std::string, NameLookup, NameHash, std::equal_to<>> nameLookups_;
+    [[nodiscard]] uint32_t lookUpName(std::string_view name) const;
 
     /// get() without the note. The layout's own walks read through this.
     [[nodiscard]] Widget* at(uint32_t id) {
