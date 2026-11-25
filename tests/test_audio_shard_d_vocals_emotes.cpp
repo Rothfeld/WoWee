@@ -387,8 +387,36 @@ TEST_CASE("GAP-07: EmotesTextSound.dbc 522 rows, local self-emote playback/dedup
                 CHECK(pvm.playEmote(it->second, raceId, 0));
                 REQUIRE(events.size() == 1u);
                 CHECK(events.back().started);
+                CHECK_FALSE(events.back().spatial);
+                // Local emote with Sound_ListenerAtCharacter=1 uses rec->volume * 0.65f self-2D gain (Wow.exe 0x6277f2)
+                const uint32_t sid = pvm.getEmoteTextSoundId(it->second, raceId, 0);
+                const auto* srec = audio::SoundEntryTable::instance().findById(&tbc.assets, sid);
+                REQUIRE(srec != nullptr);
+                CHECK(events.back().volume == Catch::Approx(srec->volume * 0.65f).margin(0.16f));
                 CHECK(mixFramesRms(8192).total > 1e-5);
             }
+        }
+
+        // Local emote with Sound_ListenerAtCharacter=0 plays 3D at unitBasePos + (0, 0, 2.0f)
+        {
+            auto helloIt = slashToEmotesTextId.find("hello");
+            REQUIRE(helloIt != slashToEmotesTextId.end());
+            drainHeadlessMixer();
+            engine.setListenerPosition(glm::vec3(0.0f));
+            engine.setListenerOrientation(glm::vec3(0.0f, 1.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+            events.clear();
+            CHECK(pvm.playLocalEmote(helloIt->second, 1, 0, glm::vec3(0.0f, 5.0f, 10.0f), /*listenerAtCharacter=*/false));
+            REQUIRE(events.size() == 1u);
+            CHECK(events.back().spatial);
+            CHECK(events.back().position.z == Catch::Approx(12.0f));
+
+            // Remote 3D emote also applies +2.0f Z offset
+            drainHeadlessMixer();
+            events.clear();
+            CHECK(pvm.playEmote3D(helloIt->second, 1, 0, glm::vec3(-8.0f, 0.0f, 3.0f)));
+            REQUIRE(events.size() == 1u);
+            CHECK(events.back().spatial);
+            CHECK(events.back().position.z == Catch::Approx(5.0f));
         }
 
         // Tauren-exclusive /moo (EmotesText 226)

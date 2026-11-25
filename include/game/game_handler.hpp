@@ -3637,6 +3637,7 @@ public:
     // Play the player character's spoken error response ("Not enough mana", ...)
     // using the active character's race/gender. Gated by the Character Speech setting.
     void playErrorSpeech(audio::PlayerErrorSpeech type);
+    void playGameErrorSpeech(std::string_view gameErrorName);
 
     // Loot window open/close callback (for loot kneel animation)
     using LootWindowCallback = std::function<void(bool open)>;

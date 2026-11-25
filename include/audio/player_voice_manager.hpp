@@ -138,7 +138,8 @@ public:
     /// Resolve Emotes.dbc col 6 (EmoteSoundID) for M2 $ESD animation events.
     [[nodiscard]] uint32_t getEmoteSoundId(uint32_t emoteId);
     [[nodiscard]] uint32_t getEmoteSoundIdForAnim(uint32_t animId);
-    bool playEmoteAnimSound(uint32_t emoteId);
+    bool playEmoteAnimSound(uint32_t emoteId, bool listenerAtCharacter = true,
+                            const glm::vec3& unitBasePos = glm::vec3(0.0f));
     bool playEmoteAnimSound3D(uint32_t emoteId, const glm::vec3& position);
     bool playEmoteAnimSoundForEvent(uint32_t eventData, uint32_t npcEmoteState,
                                     uint32_t animId, bool isLocalPlayer,

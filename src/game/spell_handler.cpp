@@ -513,7 +513,8 @@ void raiseGlobalStringError(GameHandler& owner, const char* name) {
         LOG_ERROR("GlobalStrings has no ", name);
         return;
     }
-    owner.raiseUiError(text);
+    owner.addUIError(text, /*playUiErrorSound=*/false);
+    owner.playGameErrorSpeech(name);
 }
 
 bool isGatherSpellId(uint32_t spellId) {
@@ -620,10 +621,10 @@ std::optional<audio::PlayerErrorSpeech> errorSpeechForCastResult(
     using audio::PlayerErrorSpeech;
     switch (result) {
         case 67:  // Not ready (TBC 0x3F -> DisplayError 0x33/0x34)
-            // Ranged weapon attacks are abilities, not conventional spells. If the
-            // server rejects one (weapon/ammo/attack state), use the generic "I can't
-            // do that yet" response instead of "That spell isn't ready yet."
-            return spellclass::isRangedWeaponAutoAttack(spellId)
+            // Rage/Energy abilities (Warrior/Rogue) and ranged weapon attacks use
+            // ABILITY_COOLDOWN ("I can't do that yet", VocalUIEnum 14); mana spells
+            // use SPELL_COOLDOWN ("That spell isn't ready yet", VocalUIEnum 12).
+            return (spellclass::isRangedWeaponAutoAttack(spellId) || powerType == 1 || powerType == 3)
                 ? PlayerErrorSpeech::ABILITY_COOLDOWN
                 : PlayerErrorSpeech::SPELL_COOLDOWN;
         case 85:  // Not enough power (TBC 0x50 -> DisplayError 0x8d3e5c[power])
@@ -6583,6 +6584,17 @@ void SpellHandler::handleCastResult(network::Packet& packet) {
                     resolveUnitPosition(owner_.getPlayerGuid(), pos);
                     audio::SoundEntryTable::instance().play3D(
                         am, fizzleId, pos + glm::vec3(0.0f, 0.0f, 2.0f), sfxScale);
+                }
+            }
+            if (!gatherCast) {
+                int powerType = -1;
+                if (auto playerEntity = owner_.getEntityManager().getEntity(owner_.getPlayerGuid())) {
+                    if (auto playerUnit = std::dynamic_pointer_cast<Unit>(playerEntity)) {
+                        powerType = playerUnit->getPowerType();
+                    }
+                }
+                if (auto speech = errorSpeechForCastResult(castResultSpellId, castResult, powerType)) {
+                    owner_.playErrorSpeech(*speech);
                 }
             }
             if (owner_.spellCastFailedCallbackRef()) owner_.spellCastFailedCallbackRef()(castResultSpellId);

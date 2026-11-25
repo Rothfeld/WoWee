@@ -522,6 +522,26 @@ void GameHandler::playErrorSpeech(audio::PlayerErrorSpeech type) {
     voice->playError(type, raceId, gender);
 }
 
+void GameHandler::playGameErrorSpeech(std::string_view gameErrorName) {
+    if (gameErrorName.empty()) return;
+    auto* ac = services_.audioCoordinator;
+    if (!ac) return;
+    auto* voice = ac->getPlayerVoiceManager();
+    if (!voice) return;
+    uint8_t raceId = static_cast<uint8_t>(playerRace_);
+    uint8_t gender = 0;
+    if (const Character* ch = getActiveCharacter()) {
+        raceId = static_cast<uint8_t>(ch->race);
+        gender = static_cast<uint8_t>(toServerGender(ch->gender));
+    } else if (const auto self = entityController_ ? entityController_->getEntityManager().getEntity(playerGuid) : nullptr) {
+        const uint32_t bytes0 = self->getField(fieldIndex(UF::UNIT_FIELD_BYTES_0));
+        if (raceId == 0) raceId = static_cast<uint8_t>(bytes0 & 0xFFu);
+        gender = static_cast<uint8_t>((bytes0 >> 16u) & 0xFFu);
+    }
+    if (raceId == 0) return;
+    (void)voice->playGameError(gameErrorName, raceId, gender);
+}
+
 void GameHandler::handleCharLoginFailed(network::Packet& packet) {
     uint8_t reason = packet.readUInt8();
 

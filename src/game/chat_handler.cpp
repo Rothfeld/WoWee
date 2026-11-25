@@ -1078,14 +1078,25 @@ void ChatHandler::handleTextEmote(network::Packet& packet) {
 
     if (auto* ac = owner_.services().audioCoordinator;
         ac && ac->areEmoteSoundsEnabled() && ac->getPlayerVoiceManager()) {
-        if (const auto sender = owner_.getEntityManager().getEntity(data.senderGuid)) {
-            const uint32_t bytes0 = sender->getField(fieldIndex(UF::UNIT_FIELD_BYTES_0));
-            const uint8_t raceId = static_cast<uint8_t>(bytes0 & 0xFFu);
-            const uint8_t gender = static_cast<uint8_t>((bytes0 >> 16u) & 0xFFu);
-            if (raceId != 0) {
-                const glm::vec3 renderPos = core::coords::canonicalToRender(
-                    glm::vec3(sender->getX(), sender->getY(), sender->getZ()));
-                ac->getPlayerVoiceManager()->playEmote3D(data.textEmoteId, raceId, gender, renderPos);
+        // Wow.exe CGUnit_C::PlayEmoteSound (0x627860..0x627887 -> CGPartyInfo::IsMember 0x4b83e0):
+        // remote SMSG_TEXT_EMOTE vocal lines play only for party members.
+        bool isPartyMember = false;
+        for (const auto& member : owner_.getPartyData().members) {
+            if (member.guid == data.senderGuid) {
+                isPartyMember = true;
+                break;
+            }
+        }
+        if (isPartyMember) {
+            if (const auto sender = owner_.getEntityManager().getEntity(data.senderGuid)) {
+                const uint32_t bytes0 = sender->getField(fieldIndex(UF::UNIT_FIELD_BYTES_0));
+                const uint8_t raceId = static_cast<uint8_t>(bytes0 & 0xFFu);
+                const uint8_t gender = static_cast<uint8_t>((bytes0 >> 16u) & 0xFFu);
+                if (raceId != 0) {
+                    const glm::vec3 renderPos = core::coords::canonicalToRender(
+                        glm::vec3(sender->getX(), sender->getY(), sender->getZ()));
+                    ac->getPlayerVoiceManager()->playEmote3D(data.textEmoteId, raceId, gender, renderPos);
+                }
             }
         }
     }
