@@ -449,11 +449,51 @@ public:
         return remotePredictedMotion_ && remoteAirborne_;
     }
 
-    // Ground speeds come from the server's movement block, including mounts
-    // and movement-speed auras. Zero means not initialized, never a guessed speed.
+    // Ground, swim, and flight speeds come from the server's movement block,
+    // including mounts and movement-speed auras. Zero means not initialized.
     float groundWalkSpeed = 0.0f;
     float groundRunSpeed = 0.0f;
     float groundBackSpeed = 0.0f;
+    float swimSpeed = 0.0f;
+    float swimBackSpeed = 0.0f;
+    float flightSpeed = 0.0f;
+    float flightBackSpeed = 0.0f;
+
+    /// Synchronize cyclic server spline elapsed fraction [0, 1) from SMSG_FLIGHT_SPLINE_SYNC.
+    void syncSplineProgress(float elapsedFraction) {
+        if (!usePathMode_ || !activeSpline_ || splineDurationMs_ == 0 || !std::isfinite(elapsedFraction)) {
+            return;
+        }
+        float clamped = std::clamp(elapsedFraction, 0.0f, 0.999999f);
+        moveElapsed_ = clamped * moveDuration_;
+        uint32_t pathTimeMs = static_cast<uint32_t>(clamped * static_cast<float>(splineDurationMs_));
+        if (pathTimeMs >= splineDurationMs_) pathTimeMs = splineDurationMs_ - 1;
+        glm::vec3 pos;
+        glm::vec3 tangent;
+        if (smoothPath_) {
+            const auto sample = activeSpline_->evaluate(pathTimeMs);
+            pos = sample.position;
+            tangent = sample.tangent;
+        } else {
+            const auto& keys = activeSpline_->keys();
+            auto end = std::upper_bound(keys.begin(), keys.end(), pathTimeMs,
+                [](uint32_t time, const math::SplineKey& key) { return time < key.timeMs; });
+            if (end == keys.begin()) end = keys.begin() + 1;
+            if (end == keys.end()) end = keys.end() - 1;
+            const auto& begin = *(end - 1);
+            const uint32_t segDur = end->timeMs > begin.timeMs ? (end->timeMs - begin.timeMs) : 1u;
+            const float fraction = static_cast<float>(pathTimeMs - begin.timeMs) /
+                static_cast<float>(segDur);
+            tangent = end->position - begin.position;
+            pos = begin.position + tangent * fraction;
+        }
+        x = pos.x;
+        y = pos.y;
+        z = pos.z;
+        if (followPathFacing_ && glm::dot(glm::vec2(tangent), glm::vec2(tangent)) > 0.000001f) {
+            orientation = std::atan2(-tangent.y, tangent.x);
+        }
+    }
 
     void updateMovement(float deltaTime) {
         const float turned = advanceRemoteFacing(deltaTime);

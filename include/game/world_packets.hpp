@@ -465,6 +465,7 @@ struct MovementInfo {
     float jumpSinAngle = 0.0f;      // Jump horizontal sin
     float jumpCosAngle = 0.0f;      // Jump horizontal cos
     float jumpXYSpeed = 0.0f;       // Jump horizontal speed
+    float splineElevation = 0.0f;   // Spline elevation (MOVEFLAG_SPLINE_ELEVATION = 0x04000000)
 
     // Transport fields (when ONTRANSPORT flag is set)
     uint64_t transportGuid = 0;     // GUID of transport (boat/zeppelin/etc)
@@ -483,6 +484,7 @@ struct MovementInfo {
     // What the movement flags mean. GameHandler and MovementHandler both used
     // to spell these out against their own copy of the flag word, which is one
     // definition of flying in two places.
+    // The rest of world_packets.hpp lines 486-565...
     [[nodiscard]] bool isPlayerRooted() const { return hasFlag(MovementFlags::ROOT); }
     [[nodiscard]] bool isGravityDisabled() const { return hasFlag(MovementFlags::LEVITATING); }
     [[nodiscard]] bool isFeatherFalling() const { return hasFlag(MovementFlags::FEATHER_FALL); }
@@ -559,9 +561,18 @@ struct UpdateBlock {
     // Raw movement flags from LIVING block (SWIMMING=0x200000, WALKING=0x100, CAN_FLY=0x800000, FLYING=0x1000000)
     // Used to initialise swim/walk/fly state on entity spawn (cold-join).
     uint32_t moveFlags = 0;
+    float pitch = 0.0f;
+    uint32_t fallTime = 0;
+    float jumpVelocity = 0.0f;
+    float jumpCosAngle = 0.0f;
+    float jumpSinAngle = 0.0f;
+    float jumpXYSpeed = 0.0f;
+    float splineElevation = 0.0f;
+    uint64_t attackingTargetGuid = 0;
 
     // Active TBC create/movement spline, including elapsed server time.
     uint32_t splineFlags = 0;
+    uint32_t splineId = 0;
     uint32_t splineElapsedMs = 0;
     uint32_t splineDurationMs = 0;
     std::vector<std::array<float, 3>> splinePath;
@@ -2137,6 +2148,7 @@ public:
 struct MonsterMoveData {
     uint64_t guid = 0;
     float x = 0, y = 0, z = 0;  // Current position (server coords)
+    uint32_t splineId = 0;
     uint8_t moveType = 0;  // 0=Normal, 1=Stop, 2=FacingSpot, 3=FacingTarget, 4=FacingAngle
     float facingSpotX = 0, facingSpotY = 0, facingSpotZ = 0;  // Server coords (moveType == 2)
     float facingAngle = 0;
@@ -2284,8 +2296,11 @@ public:
 struct XpGainData {
     uint64_t victimGuid = 0;    // 0 for non-kill XP (quest, exploration)
     uint32_t totalXp = 0;
+    uint32_t baseXp = 0;        // Base XP without rested/RaF bonus (GivenXP on kill XP)
+    uint32_t restedBonus = 0;
     uint8_t type = 0;           // 0 = kill, 1 = non-kill
     uint32_t groupBonus = 0;
+    bool rafBonus = false;
 
     [[nodiscard]] bool isValid() const { return totalXp > 0; }
 };
@@ -3258,9 +3273,18 @@ public:
 /** CMSG_ACTIVATETAXIEXPRESS packet builder */
 class ActivateTaxiExpressPacket {
 public:
-    /// No cost field. HandleActivateTaxiExpressOpcode reads a guid and then
-    /// straight into the node count, and one was being written between them.
+    /// WotLK 3.3.5a layout (guid + nodeCount + nodes).
     static network::Packet build(uint64_t npcGuid, const std::vector<uint32_t>& pathNodes);
+    /// Expansion-aware layout: Classic/TBC inserts uint32 totalCost before nodeCount.
+    static network::Packet build(uint64_t npcGuid, uint32_t totalCost,
+                                 const std::vector<uint32_t>& pathNodes,
+                                 bool includeTotalCost = true);
+};
+
+/** CMSG_ZONEUPDATE packet builder */
+class ZoneUpdatePacket {
+public:
+    static network::Packet build(uint32_t zoneId);
 };
 
 /** CMSG_ACTIVATETAXI packet builder */

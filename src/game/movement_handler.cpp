@@ -100,16 +100,29 @@ void MovementHandler::registerOpcodes(DispatchTable& table) {
     table[Opcode::SMSG_MONSTER_MOVE] = [this](network::Packet& packet) { handleMonsterMove(packet); };
     table[Opcode::SMSG_COMPRESSED_MOVES] = [this](network::Packet& packet) { handleCompressedMoves(packet); };
     table[Opcode::SMSG_MONSTER_MOVE_TRANSPORT] = [this](network::Packet& packet) { handleMonsterMoveTransport(packet); };
+    table[Opcode::SMSG_FLIGHT_SPLINE_SYNC] = [this](network::Packet& packet) { handleFlightSplineSync(packet); };
 
-    // Spline move: consume-only (no state change)
-    for (auto op : { Opcode::SMSG_SPLINE_MOVE_FEATHER_FALL,
-                     Opcode::SMSG_SPLINE_MOVE_GRAVITY_DISABLE,
-                     Opcode::SMSG_SPLINE_MOVE_GRAVITY_ENABLE,
-                     Opcode::SMSG_SPLINE_MOVE_LAND_WALK,
-                     Opcode::SMSG_SPLINE_MOVE_NORMAL_FALL }) {
-        table[op] = [](network::Packet& packet) {
-            if (packet.hasRemaining(1))
-                (void)packet.readPackedGuid();
+    // Spline move flag transitions (Unit::SetFeatherFall, Unit::SetWaterWalk, levitate)
+    for (auto [op, flag, enabled] : {
+             std::tuple{Opcode::SMSG_SPLINE_MOVE_FEATHER_FALL, MovementFlags::FEATHER_FALL, true},
+             std::tuple{Opcode::SMSG_SPLINE_MOVE_NORMAL_FALL,  MovementFlags::FEATHER_FALL, false},
+             std::tuple{Opcode::SMSG_SPLINE_MOVE_WATER_WALK,   MovementFlags::WATER_WALK,   true},
+             std::tuple{Opcode::SMSG_SPLINE_MOVE_LAND_WALK,    MovementFlags::WATER_WALK,   false},
+             std::tuple{Opcode::SMSG_SPLINE_MOVE_GRAVITY_DISABLE, MovementFlags::LEVITATING, true},
+             std::tuple{Opcode::SMSG_SPLINE_MOVE_GRAVITY_ENABLE,  MovementFlags::LEVITATING, false},
+         }) {
+        table[op] = [this, flag, enabled](network::Packet& packet) {
+            if (!packet.hasFullPackedGuid()) return;
+            const uint64_t guid = packet.readPackedGuid();
+            const uint32_t bit = static_cast<uint32_t>(flag);
+            if (guid == owner_.getPlayerGuid()) {
+                if (enabled) movementInfo.flags |= bit;
+                else movementInfo.flags &= ~bit;
+                return;
+            }
+            if (guid != 0 && owner_.unitMoveFlagsCallbackRef()) {
+                owner_.unitMoveFlagsCallbackRef()(guid, enabled ? bit : 0u, bit);
+            }
         };
     }
 
@@ -167,10 +180,14 @@ void MovementHandler::registerOpcodes(DispatchTable& table) {
             if (std::isfinite(speed) && speed > 0.01f && speed < 200.0f) {
                 if (guid == owner_.getPlayerGuid()) this->*member = speed;
                 if (auto entity = owner_.getEntityManager().getEntity(guid)) {
-                    if (member == &MovementHandler::serverRunSpeed_) entity->groundRunSpeed = speed;
-                    if (member == &MovementHandler::serverWalkSpeed_) entity->groundWalkSpeed = speed;
-                    if (member == &MovementHandler::serverRunBackSpeed_) entity->groundBackSpeed = speed;
-                    if (member == &MovementHandler::serverTurnRate_) entity->turnRate = speed;
+                    if (member == &MovementHandler::serverRunSpeed_)        entity->groundRunSpeed  = speed;
+                    if (member == &MovementHandler::serverWalkSpeed_)       entity->groundWalkSpeed = speed;
+                    if (member == &MovementHandler::serverRunBackSpeed_)    entity->groundBackSpeed = speed;
+                    if (member == &MovementHandler::serverSwimSpeed_)       entity->swimSpeed       = speed;
+                    if (member == &MovementHandler::serverSwimBackSpeed_)   entity->swimBackSpeed   = speed;
+                    if (member == &MovementHandler::serverFlightSpeed_)     entity->flightSpeed     = speed;
+                    if (member == &MovementHandler::serverFlightBackSpeed_) entity->flightBackSpeed = speed;
+                    if (member == &MovementHandler::serverTurnRate_)        entity->turnRate        = speed;
                 }
             }
         };
@@ -324,15 +341,6 @@ void MovementHandler::registerOpcodes(DispatchTable& table) {
             else movementInfo.flags &= ~static_cast<uint32_t>(MovementFlags::ROOT);
         };
     }
-    for (auto op : {Opcode::SMSG_SPLINE_MOVE_WATER_WALK}) {
-        table[op] = [](network::Packet& packet) {
-            // Minimal parse: PackedGuid only - no animation-relevant state change.
-            if (packet.hasRemaining(1)) {
-                (void)packet.readPackedGuid();
-            }
-        };
-    }
-
     table[Opcode::SMSG_SPLINE_MOVE_UNSET_FLYING] = [this](network::Packet& packet) {
         // PackedGuid + synthesised move-flags=0 → clears flying animation.
         if (!packet.hasRemaining(1)) return;
@@ -667,14 +675,20 @@ void MovementHandler::setFlightAirborne(bool airborne) {
     if (airborne == now) return;
     if (airborne) {
         movementInfo.flags |= flying;
+        if (wireOpcode(Opcode::CMSG_MOVE_SET_FLY) != 0xFFFF) {
+            sendMovement(Opcode::CMSG_MOVE_SET_FLY);
+        }
         return;
     }
-    // Landed. Said with a heartbeat, which carries the flags and is never
-    // held back: the landing is otherwise only visible in the next movement
-    // packet, and a player who lands and stands still sends none.
+    // Landed. When CAN_FLY is still active, CMSG_MOVE_SET_FLY notifies the
+    // server that flight ended; otherwise fall back to MSG_MOVE_HEARTBEAT.
     movementInfo.flags &= ~(flying | static_cast<uint32_t>(MovementFlags::ASCENDING) |
                             static_cast<uint32_t>(MovementFlags::DESCENDING));
-    sendMovement(Opcode::MSG_MOVE_HEARTBEAT);
+    if ((movementInfo.flags & canFly) != 0 && wireOpcode(Opcode::CMSG_MOVE_SET_FLY) != 0xFFFF) {
+        sendMovement(Opcode::CMSG_MOVE_SET_FLY);
+    } else {
+        sendMovement(Opcode::MSG_MOVE_HEARTBEAT);
+    }
 }
 
 bool MovementHandler::shouldSuppressPreWotlkSetFacing(uint32_t movementTime) const {
@@ -1263,7 +1277,9 @@ void MovementHandler::forceClearTaxiAndMovementState() {
     playerServerSplinePendingSettle_ = false;
     playerServerSplineJustLanded_ = false;
     playerServerSplineFlags_ = 0;
+    playerServerSplineId_ = 0;
     playerServerSplineFacingTarget_ = 0;
+    owner_.resetSentZoneUpdate();
 
     const bool clearingTaxiMount = taxiMountActive_;
     if (clearingTaxiMount && owner_.mountCallbackRef()) {
@@ -1478,8 +1494,64 @@ void MovementHandler::syncPlayerServerSpline() {
 
     playerServerSplinePendingSettle_ = false;
     playerServerSplineJustLanded_ = true;
+    const uint32_t doneSplineId = playerServerSplineId_;
+    playerServerSplineId_ = 0;
     commitServerSplineArrival(glm::vec3(self->getX(), self->getY(), self->getZ()),
                               self->getOrientation());
+    sendSplineDone(doneSplineId);
+}
+
+void MovementHandler::sendSplineDone(uint32_t splineId) {
+    if (!owner_.getSocket() || owner_.getState() != WorldState::IN_WORLD) return;
+    const uint16_t wireOp = wireOpcode(Opcode::CMSG_MOVE_SPLINE_DONE);
+    if (wireOp == 0xFFFF) return;
+
+    MovementInfo wireInfo = movementInfo;
+    wireInfo.time = movementClockNowMs();
+    glm::vec3 serverPos = core::coords::canonicalToServer(
+        glm::vec3(movementInfo.x, movementInfo.y, movementInfo.z));
+    wireInfo.x = serverPos.x;
+    wireInfo.y = serverPos.y;
+    wireInfo.z = serverPos.z;
+    wireInfo.orientation = core::coords::canonicalToServerYaw(movementInfo.orientation);
+
+    auto packet = owner_.getPacketParsers()
+        ? owner_.getPacketParsers()->buildMovementPacket(
+              Opcode::CMSG_MOVE_SPLINE_DONE, wireInfo, owner_.getPlayerGuid())
+        : MovementPacket::build(
+              Opcode::CMSG_MOVE_SPLINE_DONE, wireInfo, owner_.getPlayerGuid());
+    packet.writeUInt32(splineId);
+    owner_.getSocket()->send(packet);
+    LOG_DEBUG("Sent CMSG_MOVE_SPLINE_DONE: splineId=", splineId);
+}
+
+void MovementHandler::handleFlightSplineSync(network::Packet& packet) {
+    // CMaNGOS-TBC Unit::SendFlightSplineSync: float elapsedFraction + ObjectGuid(u64).
+    // WotLK 3.3.5a: float elapsedFraction + PackedGuid.
+    if (!packet.hasRemaining(5)) {
+        packet.skipAll();
+        return;
+    }
+    const float elapsedFraction = packet.readFloat();
+    uint64_t guid = 0;
+    if (isPreWotlk()) {
+        if (!packet.hasRemaining(8)) {
+            packet.skipAll();
+            return;
+        }
+        guid = packet.readUInt64();
+    } else {
+        if (!packet.hasFullPackedGuid()) {
+            packet.skipAll();
+            return;
+        }
+        guid = packet.readPackedGuid();
+    }
+    packet.skipAll();
+    if (guid == 0 || !std::isfinite(elapsedFraction)) return;
+    if (auto entity = owner_.getEntityManager().getEntity(guid)) {
+        entity->syncSplineProgress(elapsedFraction);
+    }
 }
 
 void MovementHandler::setOrientation(float orientation) {
@@ -1970,24 +2042,117 @@ void MovementHandler::applyKnockBack(const PendingKnockBack& order) {
 // ============================================================
 
 void MovementHandler::handleMoveSetSpeed(network::Packet& packet) {
-    // Broadcast movement-speed updates use packed GUIDs in TBC too.
+    // CMaNGOS-TBC / WotLK MSG_MOVE_SET_*_SPEED: PackedGuid + MovementInfo + float newspeed.
+    if (!packet.hasFullPackedGuid()) return;
     uint64_t moverGuid = packet.readPackedGuid();
 
-    const size_t remaining = packet.getRemainingSize();
-    if (remaining < 4) return;
-    if (remaining > 4) {
-        packet.setReadPos(packet.getSize() - 4);
+    const size_t remainingAfterGuid = packet.getRemainingSize();
+    if (remainingAfterGuid < 4) return;
+    const size_t speedPos = packet.getSize() - 4;
+
+    uint8_t flags2Size = owner_.getPacketParsers() ? owner_.getPacketParsers()->movementFlags2Size() : 2;
+    const size_t minMoveInfoBytes = 4u + flags2Size + 4u + 16u + 4u;
+    if (moverGuid != 0 && moverGuid != owner_.getPlayerGuid() &&
+        remainingAfterGuid >= minMoveInfoBytes + 4u) {
+        MovementInfo info{};
+        info.flags = packet.readUInt32();
+        if (flags2Size == 2) info.flags2 = packet.readUInt16();
+        else if (flags2Size == 1) info.flags2 = packet.readUInt8();
+        info.time = packet.readUInt32();
+        info.x = packet.readFloat();
+        info.y = packet.readFloat();
+        info.z = packet.readFloat();
+        info.orientation = packet.readFloat();
+
+        const uint32_t wireTransportFlag =
+            owner_.getPacketParsers() ? owner_.getPacketParsers()->wireOnTransportFlag() : 0x00000200u;
+        const bool onTransport = (info.flags & wireTransportFlag) != 0;
+        uint64_t transportGuid = 0;
+        float tLocalX = 0.0f, tLocalY = 0.0f, tLocalZ = 0.0f, tLocalO = 0.0f;
+        bool moveOk = true;
+        if (onTransport) {
+            const size_t minTrans = (flags2Size < 2 ? 8u : 1u) + 16u + (flags2Size >= 1 ? 4u : 0u);
+            if (packet.getReadPos() + minTrans <= speedPos) {
+                transportGuid = flags2Size < 2 ? packet.readUInt64() : packet.readPackedGuid();
+                tLocalX = packet.readFloat();
+                tLocalY = packet.readFloat();
+                tLocalZ = packet.readFloat();
+                tLocalO = packet.readFloat();
+                if (flags2Size >= 1) info.transportTime = packet.readUInt32();
+                if (flags2Size >= 2 && packet.getReadPos() + 1 <= speedPos) {
+                    packet.readUInt8();
+                    if ((info.flags2 & 0x0200) && packet.getReadPos() + 4 <= speedPos) {
+                        packet.readUInt32();
+                    }
+                }
+            } else {
+                moveOk = false;
+            }
+        }
+        if (moveOk && ((info.flags & (static_cast<uint32_t>(MovementFlags::SWIMMING) |
+                                      static_cast<uint32_t>(MovementFlags::FLYING))) ||
+                       (flags2Size >= 2 && (info.flags2 & 0x20)))) {
+            if (packet.getReadPos() + 4 <= speedPos) info.pitch = packet.readFloat();
+            else moveOk = false;
+        }
+        if (moveOk && packet.getReadPos() + 4 <= speedPos) {
+            info.fallTime = packet.readUInt32();
+        } else {
+            moveOk = false;
+        }
+        const uint32_t wireFallingFlag = flags2Size == 0 ? 0x00002000u : 0x00001000u;
+        if (moveOk && (info.flags & wireFallingFlag) != 0) {
+            if (packet.getReadPos() + 16 <= speedPos) {
+                info.jumpVelocity = packet.readFloat();
+                info.jumpCosAngle = packet.readFloat();
+                info.jumpSinAngle = packet.readFloat();
+                info.jumpXYSpeed  = packet.readFloat();
+            } else {
+                moveOk = false;
+            }
+        }
+        if (moveOk && flags2Size >= 1 && (info.flags & 0x04000000u) != 0) {
+            if (packet.getReadPos() + 4 <= speedPos) {
+                info.splineElevation = packet.readFloat();
+            } else {
+                moveOk = false;
+            }
+        }
+        if (moveOk && packet.getReadPos() == speedPos) {
+            if (auto entity = owner_.getEntityManager().getEntity(moverGuid)) {
+                glm::vec3 canonical = core::coords::serverToCanonical(glm::vec3(info.x, info.y, info.z));
+                float canYaw = core::coords::serverToCanonicalYaw(info.orientation);
+                if (onTransport && transportGuid != 0 && owner_.getTransportManager()) {
+                    glm::vec3 localCanonical = owner_.getTransportManager()->serverToTransportLocal(
+                        transportGuid, glm::vec3(tLocalX, tLocalY, tLocalZ));
+                    owner_.setTransportAttachment(moverGuid, entity->getType(), transportGuid, localCanonical, true,
+                                                  core::coords::serverToCanonicalYaw(tLocalO));
+                    canonical = owner_.getTransportManager()->getPlayerWorldPosition(transportGuid, localCanonical);
+                } else if (!onTransport) {
+                    owner_.clearTransportAttachment(moverGuid);
+                }
+                entity->setPosition(canonical.x, canonical.y, canonical.z, canYaw);
+                if (owner_.unitMoveFlagsCallbackRef()) {
+                    owner_.unitMoveFlagsCallbackRef()(moverGuid, info.flags, ~0u);
+                }
+            }
+        }
     }
 
+    packet.setReadPos(speedPos);
     float speed = packet.readFloat();
     if (!std::isfinite(speed) || speed <= 0.01f || speed > 200.0f) return;
 
     const uint16_t wireOp = packet.getOpcode();
     if (auto entity = owner_.getEntityManager().getEntity(moverGuid)) {
-        if (wireOp == wireOpcode(Opcode::MSG_MOVE_SET_RUN_SPEED)) entity->groundRunSpeed = speed;
-        if (wireOp == wireOpcode(Opcode::MSG_MOVE_SET_WALK_SPEED)) entity->groundWalkSpeed = speed;
-        if (wireOp == wireOpcode(Opcode::MSG_MOVE_SET_RUN_BACK_SPEED)) entity->groundBackSpeed = speed;
-        if (wireOp == wireOpcode(Opcode::MSG_MOVE_SET_TURN_RATE)) entity->turnRate = speed;
+        if      (wireOp == wireOpcode(Opcode::MSG_MOVE_SET_RUN_SPEED))         entity->groundRunSpeed  = speed;
+        else if (wireOp == wireOpcode(Opcode::MSG_MOVE_SET_WALK_SPEED))        entity->groundWalkSpeed = speed;
+        else if (wireOp == wireOpcode(Opcode::MSG_MOVE_SET_RUN_BACK_SPEED))    entity->groundBackSpeed = speed;
+        else if (wireOp == wireOpcode(Opcode::MSG_MOVE_SET_SWIM_SPEED))        entity->swimSpeed       = speed;
+        else if (wireOp == wireOpcode(Opcode::MSG_MOVE_SET_SWIM_BACK_SPEED))   entity->swimBackSpeed   = speed;
+        else if (wireOp == wireOpcode(Opcode::MSG_MOVE_SET_FLIGHT_SPEED))      entity->flightSpeed     = speed;
+        else if (wireOp == wireOpcode(Opcode::MSG_MOVE_SET_FLIGHT_BACK_SPEED)) entity->flightBackSpeed = speed;
+        else if (wireOp == wireOpcode(Opcode::MSG_MOVE_SET_TURN_RATE))         entity->turnRate        = speed;
     }
     if (moverGuid != owner_.getPlayerGuid()) return;
     if      (wireOp == wireOpcode(Opcode::MSG_MOVE_SET_RUN_SPEED))        serverRunSpeed_      = speed;
@@ -1997,6 +2162,7 @@ void MovementHandler::handleMoveSetSpeed(network::Packet& packet) {
     else if (wireOp == wireOpcode(Opcode::MSG_MOVE_SET_SWIM_BACK_SPEED))  serverSwimBackSpeed_ = speed;
     else if (wireOp == wireOpcode(Opcode::MSG_MOVE_SET_FLIGHT_SPEED))     serverFlightSpeed_   = speed;
     else if (wireOp == wireOpcode(Opcode::MSG_MOVE_SET_FLIGHT_BACK_SPEED))serverFlightBackSpeed_= speed;
+    else if (wireOp == wireOpcode(Opcode::MSG_MOVE_SET_TURN_RATE))        serverTurnRate_      = speed;
 }
 
 void MovementHandler::handleOtherPlayerMovement(network::Packet& packet) {
@@ -2056,7 +2222,8 @@ void MovementHandler::handleOtherPlayerMovement(network::Packet& packet) {
     const uint32_t wireFallingFlag = flags2Size == 0 ? 0x00002000u : 0x00001000u;
     bool airborne = (info.flags & wireFallingFlag) != 0;
     if ((info.flags & (static_cast<uint32_t>(MovementFlags::SWIMMING) |
-                       static_cast<uint32_t>(MovementFlags::FLYING))) || (info.flags2 & 0x20)) {
+                       static_cast<uint32_t>(MovementFlags::FLYING))) ||
+        (flags2Size >= 2 && (info.flags2 & 0x20))) {
         info.pitch = packet.readFloat();
     }
     info.fallTime = packet.readUInt32();
@@ -2068,6 +2235,11 @@ void MovementHandler::handleOtherPlayerMovement(network::Packet& packet) {
         LOG_DEBUG("Remote fall: guid=", moverGuid, " elapsed=", info.fallTime,
                   " launchSpeed=", info.jumpVelocity, " cos=", info.jumpCosAngle,
                   " sin=", info.jumpSinAngle, " horizontalSpeed=", info.jumpXYSpeed);
+    }
+    // CMaNGOS-TBC Unit.cpp:307-310 / WotLK MovementInfo: float splineElevation when 0x04000000 is set.
+    // Must be consumed before trailing MSG_MOVE_KNOCK_BACK fields or knockback floats shift by 4 bytes.
+    if (flags2Size >= 1 && (info.flags & 0x04000000u) != 0 && packet.hasRemaining(4)) {
+        info.splineElevation = packet.readFloat();
     }
     const uint16_t wireOp = packet.getOpcode();
     const bool isKnockBackOpcode = (wireOp == wireOpcode(Opcode::MSG_MOVE_KNOCK_BACK));
@@ -2677,6 +2849,7 @@ void MovementHandler::handleMonsterMove(network::Packet& packet) {
             movementInfo.jumpCosAngle = 0.0f;
             movementInfo.jumpXYSpeed = 0.0f;
             playerServerSplineFlags_ = data.splineFlags;
+            playerServerSplineId_ = data.splineId;
             playerServerSplineFacingTarget_ = facingTargetGuid;
             if (entity->isServerSplineActive()) {
                 movementInfo.x = startCanonical.x;
@@ -2983,15 +3156,60 @@ void MovementHandler::handleTeleportAck(network::Packet& packet) {
     }
 
     const uint32_t serverMoveFlags = packet.readUInt32();
+    uint16_t serverMoveFlags2 = 0;
     if (!taNoFlags2)
-        packet.readUInt16();  // moveFlags2 (WotLK only)
+        serverMoveFlags2 = packet.readUInt16();  // moveFlags2 (WotLK only)
     if (taByteFlags2)
-        packet.readUInt8();  // TBC moveFlags2 precedes movement timestamp.
+        serverMoveFlags2 = packet.readUInt8();   // TBC moveFlags2 precedes movement timestamp.
     uint32_t moveTime = packet.readUInt32();
     float serverX = packet.readFloat();
     float serverY = packet.readFloat();
     float serverZ = packet.readFloat();
     float orientation = packet.readFloat();
+
+    // Parse optional trailing MovementInfo fields (transport, pitch, fallTime, jump, splineElevation).
+    const uint32_t wireTransportFlag =
+        owner_.getPacketParsers() ? owner_.getPacketParsers()->wireOnTransportFlag() : 0x00000200u;
+    if ((serverMoveFlags & wireTransportFlag) != 0) {
+        if (taNoFlags2) {
+            if (packet.hasRemaining(8 + 16)) {
+                (void)packet.readUInt64();
+                for (int i = 0; i < 4; ++i) (void)packet.readFloat();
+                if (taByteFlags2 && packet.hasRemaining(4)) (void)packet.readUInt32();
+            }
+        } else if (packet.hasFullPackedGuid()) {
+            (void)packet.readPackedGuid();
+            if (packet.hasRemaining(16 + 4 + 1)) {
+                for (int i = 0; i < 4; ++i) (void)packet.readFloat();
+                (void)packet.readUInt32();
+                (void)packet.readUInt8();
+                if ((serverMoveFlags2 & 0x0200) && packet.hasRemaining(4)) (void)packet.readUInt32();
+            }
+        }
+    }
+    float serverPitch = 0.0f;
+    if (((serverMoveFlags & (static_cast<uint32_t>(MovementFlags::SWIMMING) |
+                             static_cast<uint32_t>(MovementFlags::FLYING))) != 0 ||
+         (!taNoFlags2 && (serverMoveFlags2 & 0x20) != 0)) &&
+        packet.hasRemaining(4)) {
+        serverPitch = packet.readFloat();
+    }
+    uint32_t serverFallTime = 0;
+    if (packet.hasRemaining(4)) {
+        serverFallTime = packet.readUInt32();
+    }
+    const uint32_t wireFallingFlag = (taNoFlags2 && !taByteFlags2) ? 0x00002000u : 0x00001000u;
+    if ((serverMoveFlags & wireFallingFlag) != 0 && packet.hasRemaining(16)) {
+        for (int i = 0; i < 4; ++i) (void)packet.readFloat();
+    }
+    float serverSplineElevation = 0.0f;
+    if ((!taNoFlags2 || taByteFlags2) && (serverMoveFlags & 0x04000000u) != 0 && packet.hasRemaining(4)) {
+        serverSplineElevation = packet.readFloat();
+    }
+    (void)moveTime;
+    (void)serverPitch;
+    (void)serverFallTime;
+    (void)serverSplineElevation;
 
     LOG_WARNING("MSG_MOVE_TELEPORT_ACK: guid=0x", std::hex, guid, std::dec,
                 " counter=", counter,
@@ -3211,7 +3429,9 @@ void MovementHandler::handleNewWorld(network::Packet& packet) {
     playerServerSplinePendingSettle_ = false;
     playerServerSplineJustLanded_ = false;
     playerServerSplineFlags_ = 0;
+    playerServerSplineId_ = 0;
     playerServerSplineFacingTarget_ = 0;
+    owner_.resetSentZoneUpdate();
     const uint32_t transferAreaTriggerId = lastAreaTriggerId_;
     lastAreaTriggerId_ = 0;
     postTransferReturnAreaTriggerId_ = findKnownReturnAreaTrigger(transferAreaTriggerId);
@@ -3860,7 +4080,10 @@ void MovementHandler::finishClientTaxiFlight(bool snapToFinalWaypoint) {
     taxiRecoverPending_ = false;
     movementInfo.flags = 0;
     movementInfo.flags2 = 0;
+    const uint32_t doneSplineId = playerServerSplineId_;
+    playerServerSplineId_ = 0;
     if (owner_.getSocket()) {
+        sendSplineDone(doneSplineId);
         sendMovement(Opcode::MSG_MOVE_STOP);
         sendMovement(Opcode::MSG_MOVE_HEARTBEAT);
     }
@@ -4281,7 +4504,7 @@ void MovementHandler::activateTaxi(uint32_t destNodeId) {
     // everything further did not.
     if (path.size() > 2) {
         auto expressPkt =
-            ActivateTaxiExpressPacket::build(taxiNpcGuid_, path);
+            ActivateTaxiExpressPacket::build(taxiNpcGuid_, totalCost, path, isPreWotlk());
         owner_.getSocket()->send(expressPkt);
         LOG_WARNING("Taxi activate: sent EXPRESS for ", path.size(),
                     " nodes (a multi-hop route has no single path to ask for)");

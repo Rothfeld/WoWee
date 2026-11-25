@@ -1579,7 +1579,13 @@ network::Packet SellItemPacket::build(uint64_t vendorGuid, uint64_t itemGuid, ui
     network::Packet packet(wireOpcode(Opcode::CMSG_SELL_ITEM));
     packet.writeUInt64(vendorGuid);
     packet.writeUInt64(itemGuid);
-    packet.writeUInt32(count);
+    if (isPreWotlk()) {
+        // CMaNGOS Classic/TBC HandleSellItemOpcode reads uint8 count (17 bytes total).
+        packet.writeUInt8(static_cast<uint8_t>(std::min<uint32_t>(count, 255u)));
+    } else {
+        // WotLK 3.3.5a widened count to uint32 (20 bytes total).
+        packet.writeUInt32(count);
+    }
     return packet;
 }
 
@@ -2106,8 +2112,14 @@ bool MirrorImageDataParser::parse(network::Packet& packet, MirrorImageData& data
 }
 
 // ============================================================
-// Taxi / Flight Paths
+// Taxi / Flight Paths & Zone Update
 // ============================================================
+
+network::Packet ZoneUpdatePacket::build(uint32_t zoneId) {
+    network::Packet packet(wireOpcode(Opcode::CMSG_ZONEUPDATE));
+    packet.writeUInt32(zoneId);
+    return packet;
+}
 
 } // namespace game
 } // namespace wowee

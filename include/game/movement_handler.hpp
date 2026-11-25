@@ -344,6 +344,8 @@ private:
     ReleasedFall beginReleasedFall();
     void sendLandingOfSameInstant();
     void handleTeleportAck(network::Packet& packet);
+    void handleFlightSplineSync(network::Packet& packet);
+    void sendSplineDone(uint32_t splineId);
     void handleNewWorld(network::Packet& packet);
     void handleTransferPending(network::Packet& packet);
     void handleShowTaxiNodes(network::Packet& packet);
@@ -376,6 +378,7 @@ private:
     bool playerServerSplinePendingSettle_ = false;
     bool playerServerSplineJustLanded_ = false;
     uint32_t playerServerSplineFlags_ = 0;
+    uint32_t playerServerSplineId_ = 0;
     uint64_t playerServerSplineFacingTarget_ = 0;
     bool worldportAckPending_ = false;
     uint64_t clientControlledUnit_ = 0;

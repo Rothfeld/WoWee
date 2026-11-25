@@ -2240,6 +2240,8 @@ void Renderer::update(float deltaTime) {
     if (liveZoneId != 0 && liveZoneId != announcedZoneId_) {
         announcedZoneId_ = liveZoneId;
         areaEvent = "ZONE_CHANGED_NEW_AREA";
+        if (auto* gh = core::Application::getInstance().getGameHandler())
+            gh->sendZoneUpdate(liveZoneId);
     } else if (interiorNameChanged) {
         areaEvent = playerInterior ? "ZONE_CHANGED_INDOORS" : "ZONE_CHANGED";
     } else if (areaId != 0 && areaId != announcedAreaId_ &&

@@ -900,6 +900,11 @@ void MovementPacket::writeMovementPayload(network::Packet& packet, const Movemen
         packet.writeFloat(info.jumpCosAngle);
         packet.writeFloat(info.jumpXYSpeed);
     }
+
+    // Spline elevation (MOVEMENTFLAG_SPLINE_ELEVATION = 0x04000000)
+    if (info.flags & 0x04000000u) {
+        packet.writeFloat(info.splineElevation);
+    }
 }
 
 network::Packet MovementPacket::build(Opcode opcode, const MovementInfo& info, uint64_t playerGuid) {

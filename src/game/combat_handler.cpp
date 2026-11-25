@@ -2319,6 +2319,11 @@ void CombatHandler::handleXpGain(network::Packet& packet) {
     } else {
         msg = "You gain " + std::to_string(data.totalXp) + " experience.";
     }
+    if (data.restedBonus > 0) {
+        msg += " (+" + std::to_string(data.restedBonus) + " exp Rested bonus)";
+    } else if (data.rafBonus && data.totalXp > data.baseXp) {
+        msg += " (+" + std::to_string(data.totalXp - data.baseXp) + " exp Refer-A-Friend bonus)";
+    }
     if (data.groupBonus > 0) {
         msg += " (+" + std::to_string(data.groupBonus) + " group bonus)";
     }

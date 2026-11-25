@@ -551,7 +551,7 @@ void GameHandler::registerCoreOpcodes() {
     };
     // Consume silently - opcodes we receive but don't need to act on
     for (auto op : {
-        Opcode::SMSG_FLIGHT_SPLINE_SYNC, Opcode::SMSG_FORCE_DISPLAY_UPDATE,
+        Opcode::SMSG_FORCE_DISPLAY_UPDATE,
         Opcode::SMSG_FORCE_SEND_QUEUED_PACKETS, Opcode::SMSG_FORCE_SET_VEHICLE_REC_ID,
         Opcode::SMSG_CORPSE_MAP_POSITION_QUERY_RESPONSE, Opcode::SMSG_DAMAGE_CALC_LOG,
         Opcode::SMSG_DYNAMIC_DROP_ROLL_RESULT, Opcode::SMSG_DESTRUCTIBLE_BUILDING_DAMAGE,
@@ -942,36 +942,38 @@ void GameHandler::registerCoreOpcodes() {
         }
     };
     dispatchTable_[Opcode::SMSG_RESURRECT_REQUEST] = [this](network::Packet& packet) {
-        // Spell::SendResurrectRequest writes:
-        //
+        // CMaNGOS Classic/TBC Player::SendResurrectRequest:
         //   uint64 casterGuid
-        //   uint32 nameLength      (the name plus its terminator)
-        //   char[] name            with that terminator
-        //   uint8  0               a second one, written explicitly
-        //   uint8  sickness        1 from a creature, 0 from a player
-        //   uint32 0               only when the spell overrides the timer
+        //   uint32 nameLength      (strlen(sentName) + 1)
+        //   char[] sentName        (with its single null terminator)
+        //   uint8  isSpiritHealer  (1 = spirit healer / sickness, 0 = player)
+        //   uint8  hasTimer        (!SPELL_ATTR_EX3_NO_RES_TIMER)
         //
-        // The length was never read, so readString took the first byte of it
-        // as the whole name - a control character, for any name shorter than
-        // two hundred and fifty-five - and the dialog was raised offering a
-        // resurrection from that. Everything after it was out of step too, so
-        // the sickness flag was never read at all.
+        // WotLK 3.3.5a Spell::SendResurrectRequest:
+        //   uint64 casterGuid + uint32 nameLength + char[] name + uint8(0)
+        //   + uint8 sickness + optional uint32(0) when timer is waived.
         if (!packet.hasRemaining(12)) { packet.skipAll(); return; }
         const uint64_t casterGuid = packet.readUInt64();
         /*uint32_t nameLength =*/ packet.readUInt32();
         std::string casterName = packet.readString();
-        if (packet.hasRemaining(1)) packet.readUInt8();   // the second terminator
-        const bool sickness = packet.hasRemaining(1) && packet.readUInt8() != 0;
-        // The trailing word is present only when the spell waives the reclaim
-        // delay, so having one means there is no timer to wait out.
-        const bool hasTimer = !packet.hasRemaining(4);
+        bool isSpiritHealer = false;
+        bool sickness = false;
+        bool hasTimer = true;
+        if (isPreWotlk()) {
+            isSpiritHealer = packet.hasRemaining(1) && packet.readUInt8() != 0;
+            sickness = isSpiritHealer;
+            hasTimer = !packet.hasRemaining(1) || packet.readUInt8() != 0;
+        } else {
+            if (packet.hasRemaining(1)) packet.readUInt8();   // WotLK second terminator
+            sickness = packet.hasRemaining(1) && packet.readUInt8() != 0;
+            isSpiritHealer = sickness;
+            hasTimer = !packet.hasRemaining(4);
+        }
         packet.skipAll();
 
         if (!casterGuid) return;
         resurrectCasterGuid_ = casterGuid;
-        // A creature offering this is a spirit healer, and that is what the
-        // sickness flag says - it is set for every non-player caster.
-        resurrectIsSpiritHealer_ = false;
+        resurrectIsSpiritHealer_ = isSpiritHealer;
         resurrectHasSickness_ = sickness;
         resurrectHasTimer_ = hasTimer;
         resurrectCasterName_ = casterName.empty() ? lookupName(casterGuid) : casterName;
@@ -1599,13 +1601,45 @@ void GameHandler::registerCoreOpcodes() {
     for (auto op : {Opcode::SMSG_LEVELUP_INFO, Opcode::SMSG_LEVELUP_INFO_ALT}) {
         dispatchTable_[op] = [this](network::Packet& packet) {
             // Server-authoritative level-up event.
-            // WotLK layout: uint32 newLevel + uint32 hpDelta + uint32 manaDelta + 5x uint32 statDeltas
+            // Classic/TBC (CMaNGOS Player::GiveLevel, MAX_POWERS=5):
+            //   uint32 newLevel + uint32 hpDelta + 5x uint32 powerDeltas
+            //   (mana, rage, focus, energy, happiness) + 5x uint32 statDeltas = 48 bytes.
+            // WotLK 3.3.5a (MAX_POWERS=7):
+            //   uint32 newLevel + uint32 hpDelta + 7x uint32 powerDeltas + 5x uint32 statDeltas = 56 bytes.
             if (packet.hasRemaining(4)) {
                 uint32_t newLevel = packet.readUInt32();
                 if (newLevel > 0) {
-                    // Parse stat deltas (WotLK layout has 7 more uint32s)
                     lastLevelUpDeltas_ = {};
-                    if (packet.hasRemaining(28)) {
+                    const size_t rem = packet.getRemainingSize();
+                    if (rem >= 52) {
+                        // WotLK 7-power layout
+                        lastLevelUpDeltas_.hp        = packet.readUInt32();
+                        lastLevelUpDeltas_.mana      = packet.readUInt32();
+                        lastLevelUpDeltas_.rage      = packet.readUInt32();
+                        lastLevelUpDeltas_.focus     = packet.readUInt32();
+                        lastLevelUpDeltas_.energy    = packet.readUInt32();
+                        lastLevelUpDeltas_.happiness = packet.readUInt32();
+                        /*uint32_t rune =*/            packet.readUInt32();
+                        /*uint32_t runicPower =*/      packet.readUInt32();
+                        lastLevelUpDeltas_.str       = packet.readUInt32();
+                        lastLevelUpDeltas_.agi       = packet.readUInt32();
+                        lastLevelUpDeltas_.sta       = packet.readUInt32();
+                        lastLevelUpDeltas_.intel     = packet.readUInt32();
+                        lastLevelUpDeltas_.spi       = packet.readUInt32();
+                    } else if (rem >= 44) {
+                        // Classic / TBC 5-power layout
+                        lastLevelUpDeltas_.hp        = packet.readUInt32();
+                        lastLevelUpDeltas_.mana      = packet.readUInt32();
+                        lastLevelUpDeltas_.rage      = packet.readUInt32();
+                        lastLevelUpDeltas_.focus     = packet.readUInt32();
+                        lastLevelUpDeltas_.energy    = packet.readUInt32();
+                        lastLevelUpDeltas_.happiness = packet.readUInt32();
+                        lastLevelUpDeltas_.str       = packet.readUInt32();
+                        lastLevelUpDeltas_.agi       = packet.readUInt32();
+                        lastLevelUpDeltas_.sta       = packet.readUInt32();
+                        lastLevelUpDeltas_.intel     = packet.readUInt32();
+                        lastLevelUpDeltas_.spi       = packet.readUInt32();
+                    } else if (rem >= 28) {
                         lastLevelUpDeltas_.hp    = packet.readUInt32();
                         lastLevelUpDeltas_.mana  = packet.readUInt32();
                         lastLevelUpDeltas_.str   = packet.readUInt32();
@@ -1632,6 +1666,18 @@ void GameHandler::registerCoreOpcodes() {
                         if (!ui::frameXmlOwns(ui::UiElement::Chat)) {
                             addSystemChatMessage("You have reached level " +
                                                  std::to_string(newLevel) + "!");
+                            if (lastLevelUpDeltas_.hp > 0)
+                                addSystemChatMessage("You have gained " + std::to_string(lastLevelUpDeltas_.hp) + " hit points.");
+                            if (lastLevelUpDeltas_.mana > 0)
+                                addSystemChatMessage("You have gained " + std::to_string(lastLevelUpDeltas_.mana) + " mana.");
+                            auto logStat = [this](uint32_t v, const char* label) {
+                                if (v > 0) addSystemChatMessage("Your " + std::string(label) + " increases by " + std::to_string(v) + ".");
+                            };
+                            logStat(lastLevelUpDeltas_.str, "Strength");
+                            logStat(lastLevelUpDeltas_.agi, "Agility");
+                            logStat(lastLevelUpDeltas_.sta, "Stamina");
+                            logStat(lastLevelUpDeltas_.intel, "Intellect");
+                            logStat(lastLevelUpDeltas_.spi, "Spirit");
                         }
                         withSoundManager(&audio::AudioCoordinator::getUiSoundManager, [](auto* sfx) { sfx->playLevelUp(); });
                         if (levelUpCallback_) levelUpCallback_(newLevel);
@@ -3641,7 +3687,6 @@ void GameHandler::registerRemainingOpcodes() {
         Opcode::SMSG_TEST_DROP_RATE_RESULT,
         Opcode::SMSG_UPDATE_ACCOUNT_DATA,
         Opcode::SMSG_UPDATE_ACCOUNT_DATA_COMPLETE,
-        Opcode::SMSG_UPDATE_INSTANCE_OWNERSHIP,
         Opcode::SMSG_UPDATE_LAST_INSTANCE,
         Opcode::SMSG_VOICESESSION_FULL,
         Opcode::SMSG_VOICE_CHAT_STATUS,
@@ -3652,6 +3697,16 @@ void GameHandler::registerRemainingOpcodes() {
         Opcode::SMSG_VOICE_SESSION_ROSTER_UPDATE,
         Opcode::SMSG_VOICE_SET_TALKER_MUTED
     }) { registerSkipHandler(op); }
+
+    dispatchTable_[Opcode::SMSG_UPDATE_INSTANCE_OWNERSHIP] = [this](network::Packet& packet) {
+        if (!packet.hasRemaining(4)) {
+            packet.skipAll();
+            return;
+        }
+        hasInstanceOwnership_ = (packet.readUInt32() != 0);
+        packet.skipAll();
+        fireAddonEvent("UPDATE_INSTANCE_INFO", {});
+    };
 
     // Observed on 2.4.3: each SMSG_LFG_UPDATE raises MEETINGSTONE_CHANGED
     // then LFG_UPDATE; the slot/queue updates raise LFG_UPDATE alone.

@@ -3442,6 +3442,10 @@ void EntityController::handleCreateObject(const UpdateBlock& block, bool& newIte
             entity->groundWalkSpeed = block.walkSpeed;
             entity->groundRunSpeed = block.runSpeed;
             entity->groundBackSpeed = block.runBackSpeed;
+            entity->swimSpeed = block.swimSpeed;
+            entity->swimBackSpeed = block.swimBackSpeed;
+            entity->flightSpeed = block.flightSpeed;
+            entity->flightBackSpeed = block.flightBackSpeed;
             entity->turnRate = block.turnRate;
         }
         LOG_DEBUG("  Position: (", pos.x, ", ", pos.y, ", ", pos.z, ")");
@@ -3512,6 +3516,10 @@ void EntityController::handleValuesUpdate(const UpdateBlock& block) {
             entity->groundWalkSpeed = block.walkSpeed;
             entity->groundRunSpeed = block.runSpeed;
             entity->groundBackSpeed = block.runBackSpeed;
+            entity->swimSpeed = block.swimSpeed;
+            entity->swimBackSpeed = block.swimBackSpeed;
+            entity->flightSpeed = block.flightSpeed;
+            entity->flightBackSpeed = block.flightBackSpeed;
             entity->turnRate = block.turnRate;
         }
         updateNonPlayerTransportAttachment(block, entity, entity->getType());
@@ -3549,6 +3557,10 @@ void EntityController::handleMovementUpdate(const UpdateBlock& block) {
                     entity->groundWalkSpeed = block.walkSpeed;
                     entity->groundRunSpeed = block.runSpeed;
                     entity->groundBackSpeed = block.runBackSpeed;
+                    entity->swimSpeed = block.swimSpeed;
+                    entity->swimBackSpeed = block.swimBackSpeed;
+                    entity->flightSpeed = block.flightSpeed;
+                    entity->flightBackSpeed = block.flightBackSpeed;
                     entity->turnRate = block.turnRate;
                 }
                 LOG_DEBUG("Updated entity position: 0x", std::hex, block.guid, std::dec);

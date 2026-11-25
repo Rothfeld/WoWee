@@ -406,6 +406,11 @@ public:
     void queueAreaSpiritHeal();
     bool resurrectHasSickness() const { return resurrectHasSickness_; }
     bool resurrectHasTimer() const { return resurrectHasTimer_; }
+    bool resurrectIsSpiritHealer() const { return resurrectIsSpiritHealer_; }
+    bool hasInstanceOwnership() const { return hasInstanceOwnership_; }
+    void sendZoneUpdate(uint32_t zoneId);
+    uint32_t lastSentZoneUpdateId() const { return lastSentZoneUpdateId_; }
+    void resetSentZoneUpdate() { lastSentZoneUpdateId_ = 0; }
     /// Seconds until the next one, and the healer it belongs to.
     float getAreaSpiritHealerTime() const { return areaSpiritHealerSeconds_; }
     uint64_t getAreaSpiritHealerGuid() const { return areaSpiritHealerGuid_; }
@@ -3077,8 +3082,12 @@ public:
 
     // Stat deltas from the last SMSG_LEVELUP_INFO (valid until next level-up)
     struct LevelUpDeltas {
-        uint32_t hp   = 0;
-        uint32_t mana = 0;
+        uint32_t hp        = 0;
+        uint32_t mana      = 0;
+        uint32_t rage      = 0;
+        uint32_t focus     = 0;
+        uint32_t energy    = 0;
+        uint32_t happiness = 0;
         uint32_t str = 0, agi = 0, sta = 0, intel = 0, spi = 0;
     };
     const LevelUpDeltas& getLastLevelUpDeltas() const { return lastLevelUpDeltas_; }
@@ -6080,6 +6089,8 @@ private:
     /// which of the three dialogs the interface raises.
     bool        resurrectHasSickness_ = false;
     bool        resurrectHasTimer_ = true;
+    bool        hasInstanceOwnership_ = false;
+    uint32_t    lastSentZoneUpdateId_ = 0;
     uint64_t    areaSpiritHealerGuid_ = 0;
     float       areaSpiritHealerQueryCooldown_ = 0.0f;
     bool        areaSpiritHealerInRange_ = false;

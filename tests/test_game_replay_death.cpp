@@ -530,7 +530,8 @@ TEST_CASE("SMSG_CORPSE_RECLAIM_DELAY, SMSG_RESURRECT_REQUEST, and SMSG_SPIRIT_HE
         CHECK(gh.getCorpseReclaimDelaySec() <= 30.0f);
     }
 
-    // 2) SMSG_RESURRECT_REQUEST from a player (sickness=0, no trailing uint32 => hasTimer=true)
+    // 2) TBC SMSG_RESURRECT_REQUEST from a player (isSpiritHealer=0, hasTimer=1)
+    // CMaNGOS-TBC Player::SendResurrectRequest: guid(8) + nameLen(4) + sentName + uint8(isSpiritHealer) + uint8(!noResTimer)
     {
         const uint64_t priestGuid = 0x0000000000001234ull;
         const std::string name = "Priestess";
@@ -538,9 +539,10 @@ TEST_CASE("SMSG_CORPSE_RECLAIM_DELAY, SMSG_RESURRECT_REQUEST, and SMSG_SPIRIT_HE
         pkt.writeUInt64(priestGuid);
         pkt.writeUInt32(static_cast<uint32_t>(name.size() + 1));
         pkt.writeString(name);
-        pkt.writeUInt8(0);  // second terminator
-        pkt.writeUInt8(0);  // sickness = false
+        pkt.writeUInt8(0);  // isSpiritHealer = false
+        pkt.writeUInt8(1);  // !SPELL_ATTR_EX3_NO_RES_TIMER => hasTimer = true
         s.receive(pkt);
+        CHECK_FALSE(gh.resurrectIsSpiritHealer());
         CHECK_FALSE(gh.resurrectHasSickness());
         CHECK(gh.resurrectHasTimer());
         REQUIRE_FALSE(events.empty());
@@ -549,7 +551,7 @@ TEST_CASE("SMSG_CORPSE_RECLAIM_DELAY, SMSG_RESURRECT_REQUEST, and SMSG_SPIRIT_HE
         CHECK(events.back().second[0] == "Priestess");
     }
 
-    // 3) SMSG_RESURRECT_REQUEST from a creature with sickness=1 and timer waived (trailing uint32)
+    // 3) TBC SMSG_RESURRECT_REQUEST from a Spirit Healer / instant-res spell (isSpiritHealer=1, hasTimer=0)
     {
         const uint64_t healerGuid = 0xF13000195B000001ull;
         const std::string name = "Spirit Healer";
@@ -557,14 +559,32 @@ TEST_CASE("SMSG_CORPSE_RECLAIM_DELAY, SMSG_RESURRECT_REQUEST, and SMSG_SPIRIT_HE
         pkt.writeUInt64(healerGuid);
         pkt.writeUInt32(static_cast<uint32_t>(name.size() + 1));
         pkt.writeString(name);
-        pkt.writeUInt8(0);
-        pkt.writeUInt8(1);  // sickness = true
-        pkt.writeUInt32(0); // waive reclaim delay => hasTimer = false
+        pkt.writeUInt8(1);  // isSpiritHealer = true => sickness = true
+        pkt.writeUInt8(0);  // SPELL_ATTR_EX3_NO_RES_TIMER => hasTimer = false
         s.receive(pkt);
+        CHECK(gh.resurrectIsSpiritHealer());
         CHECK(gh.resurrectHasSickness());
         CHECK_FALSE(gh.resurrectHasTimer());
         CHECK(events.back().first == "RESURRECT_REQUEST");
         CHECK(events.back().second[0] == "Spirit Healer");
+    }
+
+    // 3b) WotLK SMSG_RESURRECT_REQUEST preserves extra-terminator + optional trailing uint32 layout
+    {
+        Session sWotlk("wotlk");
+        auto& ghW = sWotlk.handler();
+        const uint64_t healerGuid = 0xF13000195B000001ull;
+        const std::string name = "Spirit Healer";
+        wowee::network::Packet pkt(wowee::game::wireOpcode(wowee::game::Opcode::SMSG_RESURRECT_REQUEST));
+        pkt.writeUInt64(healerGuid);
+        pkt.writeUInt32(static_cast<uint32_t>(name.size() + 1));
+        pkt.writeString(name);
+        pkt.writeUInt8(0);  // WotLK second terminator
+        pkt.writeUInt8(1);  // sickness = true
+        pkt.writeUInt32(0); // waive reclaim delay => hasTimer = false
+        sWotlk.receive(pkt);
+        CHECK(ghW.resurrectHasSickness());
+        CHECK_FALSE(ghW.resurrectHasTimer());
     }
 
     // 4) SMSG_SPIRIT_HEALER_CONFIRM fires CONFIRM_XP_LOSS

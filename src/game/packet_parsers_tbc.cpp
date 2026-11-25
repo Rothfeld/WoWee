@@ -99,29 +99,29 @@ bool TbcPacketParsers::parseMovementBlock(network::Packet& packet, UpdateBlock& 
         // Pitch: SWIMMING, or else ONTRANSPORT (TBC-specific secondary pitch)
         if (moveFlags & TbcMoveFlags::SWIMMING) {
             if (rem() < 4) return false;
-            /*float pitch =*/ packet.readFloat();
+            block.pitch = packet.readFloat();
         } else if (moveFlags & TbcMoveFlags::ONTRANSPORT) {
             if (rem() < 4) return false;
-            /*float pitch =*/ packet.readFloat();
+            block.pitch = packet.readFloat();
         }
 
         // Fall time (always present)
         if (rem() < 4) return false;
-        /*uint32_t fallTime =*/ packet.readUInt32();
+        block.fallTime = packet.readUInt32();
 
         // Falling payload: downward zspeed, cosine, sine, horizontal speed.
         if (moveFlags & TbcMoveFlags::FALLING) {
             if (rem() < 16) return false;
-            /*float jumpVelocity =*/ packet.readFloat();
-            /*float jumpCosAngle =*/ packet.readFloat();
-            /*float jumpSinAngle =*/ packet.readFloat();
-            /*float jumpXYSpeed =*/ packet.readFloat();
+            block.jumpVelocity = packet.readFloat();
+            block.jumpCosAngle = packet.readFloat();
+            block.jumpSinAngle = packet.readFloat();
+            block.jumpXYSpeed = packet.readFloat();
         }
 
         // Spline elevation (same bit as WotLK)
         if (moveFlags & TbcMoveFlags::SPLINE_ELEVATION) {
             if (rem() < 4) return false;
-            /*float splineElevation =*/ packet.readFloat();
+            block.splineElevation = packet.readFloat();
         }
 
         // Speeds (TBC: 8 values - walk, run, runBack, swim, swimBack, fly, flyBack, turn)
@@ -163,7 +163,7 @@ bool TbcPacketParsers::parseMovementBlock(network::Packet& packet, UpdateBlock& 
             if (rem() < 16) return false;
             block.splineElapsedMs = packet.readUInt32();
             block.splineDurationMs = packet.readUInt32();
-            /*uint32_t splineId =*/ packet.readUInt32();
+            block.splineId = packet.readUInt32();
 
             uint32_t pointCount = packet.readUInt32();
             // Cap waypoints to prevent DoS from malformed packets allocating huge arrays
@@ -211,8 +211,8 @@ bool TbcPacketParsers::parseMovementBlock(network::Packet& packet, UpdateBlock& 
 
     // Attacking target (0x04)
     if (updateFlags & UPDATEFLAG_HAS_TARGET) {
-        if (rem() < 1) return false;
-        /*uint64_t targetGuid =*/ packet.readPackedGuid();
+        if (!packet.hasFullPackedGuid()) return false;
+        block.attackingTargetGuid = packet.readPackedGuid();
     }
 
     // Transport time/path progress (0x02)
@@ -285,6 +285,11 @@ void TbcPacketParsers::writeMovementPayload(network::Packet& packet, const Movem
         packet.writeFloat(info.jumpSinAngle);
         packet.writeFloat(info.jumpXYSpeed);
     }
+
+    // Spline elevation (CMaNGOS-TBC Unit.cpp:266-269, MOVEFLAG_SPLINE_ELEVATION = 0x04000000)
+    if (info.flags & TbcMoveFlags::SPLINE_ELEVATION) {
+        packet.writeFloat(info.splineElevation);
+    }
 }
 
 // ============================================================================
@@ -341,41 +346,9 @@ bool TbcPacketParsers::parseUpdateObject(network::Packet& packet, UpdateObjectDa
             /*uint8_t hasTransport =*/ packet.readUInt8();
         }
 
-        uint32_t remainingBlockCount = out.blockCount;
-
-        if (packet.hasRemaining(1)) {
-            uint8_t firstByte = packet.readUInt8();
-            if (firstByte == static_cast<uint8_t>(UpdateType::OUT_OF_RANGE_OBJECTS)) {
-                if (remainingBlockCount == 0) {
-                    packet.setReadPos(start);
-                    return false;
-                }
-                --remainingBlockCount;
-                if (!packet.hasRemaining(4)) {
-                    packet.setReadPos(start);
-                    return false;
-                }
-                uint32_t count = packet.readUInt32();
-                if (count > kMaxReasonableUpdateBlocks) {
-                    packet.setReadPos(start);
-                    return false;
-                }
-                for (uint32_t i = 0; i < count; ++i) {
-                    if (packet.getReadPos() >= packet.getSize()) {
-                        packet.setReadPos(start);
-                        return false;
-                    }
-                    uint64_t guid = packet.readPackedGuid();
-                    out.outOfRangeGuids.push_back(guid);
-                }
-            } else {
-                packet.setReadPos(packet.getReadPos() - 1);
-            }
-        }
-
-        out.blockCount = remainingBlockCount;
-        out.blocks.reserve(out.blockCount);
-        for (uint32_t i = 0; i < out.blockCount; ++i) {
+        const uint32_t headerBlockCount = out.blockCount;
+        out.blocks.reserve(headerBlockCount);
+        for (uint32_t i = 0; i < headerBlockCount; ++i) {
             if (packet.getReadPos() >= packet.getSize()) {
                 packet.setReadPos(start);
                 return false;
@@ -384,26 +357,40 @@ bool TbcPacketParsers::parseUpdateObject(network::Packet& packet, UpdateObjectDa
             UpdateBlock block;
             uint8_t updateTypeVal = packet.readUInt8();
             if (updateTypeVal > static_cast<uint8_t>(UpdateType::NEAR_OBJECTS)) {
-                if (!out.blocks.empty()) break;
+                if (!out.blocks.empty() || !out.outOfRangeGuids.empty()) break;
                 packet.setReadPos(start);
                 return false;
             }
             block.updateType = static_cast<UpdateType>(updateTypeVal);
 
             bool ok = false;
+            bool pushBlock = true;
             switch (block.updateType) {
                 case UpdateType::VALUES: {
+                    if (!packet.hasFullPackedGuid()) {
+                        ok = false;
+                        break;
+                    }
                     block.guid = packet.readPackedGuid();
                     ok = UpdateObjectParser::parseUpdateFields(packet, block);
                     break;
                 }
                 case UpdateType::MOVEMENT: {
-                    block.guid = packet.readUInt64();
+                    // CMaNGOS-TBC writes PackedGuid for UPDATETYPE_MOVEMENT as well as VALUES/CREATE.
+                    if (!packet.hasFullPackedGuid()) {
+                        ok = false;
+                        break;
+                    }
+                    block.guid = packet.readPackedGuid();
                     ok = this->parseMovementBlock(packet, block);
                     break;
                 }
                 case UpdateType::CREATE_OBJECT:
                 case UpdateType::CREATE_OBJECT2: {
+                    if (!packet.hasFullPackedGuid()) {
+                        ok = false;
+                        break;
+                    }
                     block.guid = packet.readPackedGuid();
                     if (packet.getReadPos() >= packet.getSize()) {
                         ok = false;
@@ -416,9 +403,30 @@ bool TbcPacketParsers::parseUpdateObject(network::Packet& packet, UpdateObjectDa
                     break;
                 }
                 case UpdateType::OUT_OF_RANGE_OBJECTS:
-                case UpdateType::NEAR_OBJECTS:
+                case UpdateType::NEAR_OBJECTS: {
+                    pushBlock = false;
+                    if (!packet.hasRemaining(4)) {
+                        ok = false;
+                        break;
+                    }
+                    uint32_t count = packet.readUInt32();
+                    if (count > kMaxReasonableUpdateBlocks) {
+                        ok = false;
+                        break;
+                    }
                     ok = true;
+                    for (uint32_t g = 0; g < count; ++g) {
+                        if (!packet.hasFullPackedGuid()) {
+                            ok = false;
+                            break;
+                        }
+                        uint64_t guid = packet.readPackedGuid();
+                        if (block.updateType == UpdateType::OUT_OF_RANGE_OBJECTS) {
+                            out.outOfRangeGuids.push_back(guid);
+                        }
+                    }
                     break;
+                }
                 default:
                     ok = false;
                     break;
@@ -428,20 +436,23 @@ bool TbcPacketParsers::parseUpdateObject(network::Packet& packet, UpdateObjectDa
                 static int tbcBlockErrors = 0;
                 if (++tbcBlockErrors <= 5) {
                     LOG_WARNING("[TBC] SMSG_UPDATE_OBJECT block parse failed",
-                                " blockIndex=", i, " of ", out.blockCount,
+                                " blockIndex=", i, " of ", headerBlockCount,
                                 " updateType=", static_cast<int>(block.updateType),
                                 " readPos=", packet.getReadPos(),
                                 " packetSize=", packet.getSize(),
                                 " (", out.blocks.size(), " blocks kept)");
                 }
-                if (out.blocks.empty()) {
+                if (out.blocks.empty() && out.outOfRangeGuids.empty()) {
                     packet.setReadPos(start);
                     return false;
                 }
                 break;
             }
-            out.blocks.push_back(block);
+            if (pushBlock) {
+                out.blocks.push_back(std::move(block));
+            }
         }
+        out.blockCount = static_cast<uint32_t>(out.blocks.size());
         return true;
     };
 
@@ -568,7 +579,7 @@ bool TbcPacketParsers::parseMonsterMove(network::Packet& packet, MonsterMoveData
     data.z = packet.readFloat();
 
     if (!packet.hasRemaining(4)) return false;
-    packet.readUInt32(); // splineId
+    data.splineId = packet.readUInt32();
 
     if (packet.getReadPos() >= packet.getSize()) return false;
     {

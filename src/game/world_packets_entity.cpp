@@ -989,6 +989,7 @@ bool SpellHealLogParser::parse(network::Packet& packet, SpellHealLogData& data) 
 // ============================================================
 
 bool XpGainParser::parse(network::Packet& packet, XpGainData& data) {
+    data = XpGainData{};
     // Validate minimum packet size: victimGuid(8) + totalXp(4) + type(1)
     if (!packet.hasRemaining(13)) {
         LOG_WARNING("SMSG_LOG_XPGAIN: packet too small (", packet.getSize(), " bytes)");
@@ -999,18 +1000,41 @@ bool XpGainParser::parse(network::Packet& packet, XpGainData& data) {
     data.totalXp = packet.readUInt32();
     data.type = packet.readUInt8();
     if (data.type == 0) {
-        // Kill XP: float groupRate (1.0 = solo) + uint8 RAF flag
-        // Validate before reading conditional fields
-        if (packet.hasRemaining(5)) {
+        // Kill XP (CMaNGOS Player::SendLogXPGain):
+        //   uint32 baseXp (GivenXP without rested/RaF bonus)
+        //   float  groupRate (1.0 = solo)
+        //   uint8  rafBonus  (TBC 2.4.3+ / WotLK; absent on Classic 1.12)
+        if (packet.hasRemaining(8)) {
+            data.baseXp = packet.readUInt32();
             float groupRate = packet.readFloat();
-            packet.readUInt8(); // RAF bonus flag
-            // Group bonus = total - (total / rate); only if grouped (rate > 1)
-            if (groupRate > 1.0f) {
-                data.groupBonus = data.totalXp - static_cast<uint32_t>(data.totalXp / groupRate);
+            if (packet.hasRemaining(1)) {
+                data.rafBonus = (packet.readUInt8() != 0);
             }
+            if (!data.rafBonus && data.totalXp > data.baseXp) {
+                data.restedBonus = data.totalXp - data.baseXp;
+            }
+            // Group bonus = baseXp - round(baseXp / rate); only if grouped (rate > 1)
+            if (groupRate > 1.0f) {
+                const uint32_t refXp = data.baseXp > 0 ? data.baseXp : data.totalXp;
+                const uint32_t ungroupedXp = static_cast<uint32_t>(
+                    std::lround(static_cast<double>(refXp) / static_cast<double>(groupRate)));
+                if (refXp > ungroupedXp) {
+                    data.groupBonus = refXp - ungroupedXp;
+                }
+            }
+        } else {
+            data.baseXp = data.totalXp;
+        }
+    } else {
+        data.baseXp = data.totalXp;
+        // Non-kill XP in TBC 2.4.3+ / WotLK appends uint8 recruitAFriend.
+        if (packet.hasRemaining(1)) {
+            data.rafBonus = (packet.readUInt8() != 0);
         }
     }
-    LOG_DEBUG("XP gain: ", data.totalXp, " xp (type=", static_cast<int>(data.type), ")");
+    LOG_DEBUG("XP gain: total=", data.totalXp, " base=", data.baseXp,
+              " rested=", data.restedBonus, " raf=", data.rafBonus,
+              " (type=", static_cast<int>(data.type), ")");
     return data.totalXp > 0;
 }
 

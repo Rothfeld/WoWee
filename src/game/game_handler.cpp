@@ -1303,6 +1303,17 @@ void GameHandler::handleXpGain(network::Packet& packet) {
     if (combatHandler_) combatHandler_->handleXpGain(packet);
 }
 
+void GameHandler::sendZoneUpdate(uint32_t zoneId) {
+    if (zoneId == 0 || zoneId == lastSentZoneUpdateId_) return;
+    if (state != WorldState::IN_WORLD || !socket) return;
+    const uint16_t wireOp = wireOpcode(Opcode::CMSG_ZONEUPDATE);
+    if (wireOp == 0xFFFF) return;
+    lastSentZoneUpdateId_ = zoneId;
+    auto pkt = ZoneUpdatePacket::build(zoneId);
+    socket->send(pkt);
+    LOG_DEBUG("Sent CMSG_ZONEUPDATE: zoneId=", zoneId);
+}
+
 void GameHandler::addMoneyCopper(uint32_t amount) {
     if (inventoryHandler_) inventoryHandler_->addMoneyCopper(amount);
 }

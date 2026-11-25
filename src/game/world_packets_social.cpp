@@ -10,6 +10,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstring>
+#include <deque>
 #include <sstream>
 #include <iomanip>
 #include <zlib.h>
@@ -469,16 +470,33 @@ bool QueryTimeResponseParser::parse(network::Packet& packet, QueryTimeResponseDa
     return true;
 }
 
+namespace {
+// Pre-WotLK (Classic/TBC) CMSG_PLAYED_TIME carries 0 bytes and SMSG_PLAYED_TIME
+// carries 8 bytes (no triggerMessage byte). Track pending show-in-chat intent per
+// outbound pre-WotLK request so silent login queries stay silent while /played
+// and standalone 8-byte parser calls trigger TIME_PLAYED_MSG.
+std::deque<bool>& pendingPreWotlkPlayedTimeQueue() {
+    static std::deque<bool> q;
+    return q;
+}
+} // namespace
+
 network::Packet RequestPlayedTimePacket::build(bool sendToChat) {
     network::Packet packet(wireOpcode(Opcode::CMSG_PLAYED_TIME));
-    packet.writeUInt8(sendToChat ? 1 : 0);
-    LOG_DEBUG("Built CMSG_PLAYED_TIME: sendToChat=", sendToChat);
+    if (isPreWotlk()) {
+        auto& q = pendingPreWotlkPlayedTimeQueue();
+        if (q.size() >= 16) q.pop_front();
+        q.push_back(sendToChat);
+    } else {
+        packet.writeUInt8(sendToChat ? 1 : 0);
+    }
+    LOG_DEBUG("Built CMSG_PLAYED_TIME: sendToChat=", sendToChat, " size=", packet.getSize());
     return packet;
 }
 
 bool PlayedTimeParser::parse(network::Packet& packet, PlayedTimeData& data) {
-    // Classic/Turtle may omit the trailing trigger-message byte and send only
-    // totalTime(4) + levelTime(4). Later expansions append triggerMsg(1).
+    // Classic/TBC omit the trailing trigger-message byte and send only
+    // totalTime(4) + levelTime(4). WotLK appends triggerMsg(1).
     if (!packet.hasRemaining(8)) {
         LOG_WARNING("SMSG_PLAYED_TIME: packet too small (", packet.getSize(), " bytes)");
         return false;
@@ -486,8 +504,19 @@ bool PlayedTimeParser::parse(network::Packet& packet, PlayedTimeData& data) {
 
     data.totalTimePlayed = packet.readUInt32();
     data.levelTimePlayed = packet.readUInt32();
-    data.triggerMessage = (packet.hasRemaining(1)) && (packet.readUInt8() != 0);
-    LOG_DEBUG("Parsed SMSG_PLAYED_TIME: total=", data.totalTimePlayed, " level=", data.levelTimePlayed);
+    if (packet.hasRemaining(1)) {
+        data.triggerMessage = (packet.readUInt8() != 0);
+    } else {
+        auto& q = pendingPreWotlkPlayedTimeQueue();
+        if (!q.empty()) {
+            data.triggerMessage = q.front();
+            q.pop_front();
+        } else {
+            data.triggerMessage = true;
+        }
+    }
+    LOG_DEBUG("Parsed SMSG_PLAYED_TIME: total=", data.totalTimePlayed,
+              " level=", data.levelTimePlayed, " trigger=", data.triggerMessage);
     return true;
 }
 

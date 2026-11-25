@@ -809,6 +809,9 @@ wowee_add_test(test_monster_move_facing
 wowee_add_packet_test(test_tbc_spline_facing
     SOURCES ${CMAKE_SOURCE_DIR}/src/math/spline.cpp)
 
+wowee_add_packet_test(test_tbc_entities_movement_packets
+    SOURCES ${CMAKE_SOURCE_DIR}/src/math/spline.cpp)
+
 # ── test_packet ──────────────────────────────────────────────
 add_executable(test_packet
     test_packet.cpp
@@ -3241,6 +3244,7 @@ if(NOT ANDROID)
     target_sources(test_game_replay PRIVATE test_game_replay_go_facing.cpp)
     target_sources(test_game_replay PRIVATE test_game_replay_npc_talk.cpp)
     target_sources(test_game_replay PRIVATE test_game_replay_taxi.cpp)
+    target_sources(test_game_replay PRIVATE test_game_replay_tbc_entities_movement.cpp)
     target_sources(test_game_replay PRIVATE test_game_replay_mount_poof.cpp)
     target_sources(test_game_replay PRIVATE test_game_replay_taxi_mount.cpp)
     target_sources(test_game_replay PRIVATE test_game_replay_move_acks.cpp)
