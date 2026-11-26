@@ -42,6 +42,12 @@ public:
     [[nodiscard]] bool isLoading() const { return pendingFileLoad_.has_value(); }
     [[nodiscard]] bool isInitialized() const { return assetManager != nullptr; }
     [[nodiscard]] const std::string& getCurrentTrack() const { return currentTrack; }
+    /// Track currently playing or queued for crossfade/async load.
+    [[nodiscard]] const std::string& getActiveOrPendingTrack() const {
+        if (crossfading && !pendingTrack.empty()) return pendingTrack;
+        if (pendingFileLoad_) return pendingFileLoad_->path;
+        return currentTrack;
+    }
     /// True when the current track came from the filesystem (WoWee original
     /// music) rather than a game archive.
     [[nodiscard]] bool isCurrentTrackFile() const { return currentTrackIsFile; }
@@ -82,6 +88,8 @@ private:
     bool pendingIsFile = false;
     float fadeTimer = 0.0f;
     float fadeDuration = 0.0f;
+    float crossfadeStartVolume_ = 0.0f;
+    float appliedVolume_ = 0.3f;
     bool fadingIn = false;
     float fadeInTimer = 0.0f;
     float fadeInDuration = 0.0f;

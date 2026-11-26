@@ -3704,6 +3704,54 @@ if(NOT ANDROID)
     register_test_target(test_audio_shard_d_vocals_emotes)
 endif()
 
+# TBC 2.4.3 Environmental Audio Shard 3: WorldStateZoneSounds.dbc overrides,
+# AreaTable/WMOAreaTable parent & room audio inheritance, and live world-state
+# ZoneMusic / SoundAmbience re-evaluation.
+add_executable(test_worldstate_zone_sounds
+    test_worldstate_zone_sounds.cpp
+    ${TEST_COMMON_SOURCES}
+    ${CMAKE_SOURCE_DIR}/src/audio/audio_engine.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/sound_entries.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/audio_coordinator.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/music_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/footstep_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/creature_sound_index.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/creature_sound_index_assets.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/activity_sound_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/mount_sound_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/npc_voice_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/player_voice_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/ambient_sound_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/ui_sound_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/combat_sound_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/spell_sound_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/movement_sound_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/game/zone_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/asset_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/asset_manifest.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/loose_file_reader.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/dbc_loader.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/dbc_layout.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/blp_loader.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/dds_loader.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/m2_loader.cpp
+    ${CMAKE_SOURCE_DIR}/src/core/memory_monitor.cpp
+    ${CMAKE_SOURCE_DIR}/tools/editor/stb_image_impl.cpp
+)
+target_include_directories(test_worldstate_zone_sounds PRIVATE ${TEST_INCLUDE_DIRS})
+target_include_directories(test_worldstate_zone_sounds SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
+target_compile_definitions(test_worldstate_zone_sounds PRIVATE
+    WOWEE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+target_link_libraries(test_worldstate_zone_sounds PRIVATE
+    catch2_main ZLIB::ZLIB Threads::Threads ${CMAKE_DL_LIBS})
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_worldstate_zone_sounds PRIVATE m)
+endif()
+wowee_test_link_glm(test_worldstate_zone_sounds)
+add_test(NAME worldstate_zone_sounds COMMAND test_worldstate_zone_sounds)
+set_tests_properties(worldstate_zone_sounds PROPERTIES SKIP_RETURN_CODE 4)
+register_test_target(test_worldstate_zone_sounds)
+
 get_property(ALL_TEST_TARGETS GLOBAL PROPERTY WOWEE_ALL_TEST_TARGETS)
 list(LENGTH ALL_TEST_TARGETS _wowee_test_target_count)
 message(STATUS "Test targets registered: ${_wowee_test_target_count}")

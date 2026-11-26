@@ -14,6 +14,7 @@
 #include "audio/audio_engine.hpp"
 #include "audio/sound_entries.hpp"
 #include "game/combat_handler.hpp"
+#include "game/zone_manager.hpp"
 #include "ui/ui_manager.hpp"
 
 namespace wowee { namespace core {
@@ -94,6 +95,43 @@ void AudioCallbackHandler::setupCallbacks() {
             music->playMusic(path, /*loop=*/false);
         }
     });
+
+    // WorldStateZoneSounds.dbc sync (SMSG_INIT_WORLD_STATES / SMSG_UPDATE_WORLD_STATE):
+    // immediately update ZoneManager's world-state map so the next frame's
+    // updateZoneAudio() re-evaluates ZoneMusic, SoundAmbience, ZoneIntroMusic,
+    // and SoundProviderPreferences without waiting for a zone boundary crossing.
+    // Also fade out any stale track in case AudioCoordinator is inside its 4s
+    // switch cooldown from an earlier world-entry frame.
+    auto syncWorldStateAudio = [this]() {
+        auto* zm = renderer_ ? renderer_->getZoneManager() : nullptr;
+        if (!zm) return;
+        const bool affectedChanged = zm->setWorldStates(gameHandler_.getWorldStates());
+        if (!affectedChanged || !audioCoordinator_) return;
+
+        auto* music = audioCoordinator_->getMusicManager();
+        if (!music || (!music->isPlaying() && !music->isLoading())) return;
+        const std::string& activeTrack = music->getActiveOrPendingTrack();
+        if (activeTrack.empty() || activeTrack.rfind("file:", 0) == 0) return;
+
+        uint32_t activeSet = 0;
+        if (renderer_ && renderer_->getCurrentAreaId() != 0) {
+            activeSet = zm->getAreaZoneMusicId(renderer_->getCurrentAreaId());
+        }
+        if (activeSet == 0 && renderer_ && renderer_->getCurrentZoneId() != 0) {
+            activeSet = zm->getAreaZoneMusicId(renderer_->getCurrentZoneId());
+        }
+        if (activeSet == 0 && gameHandler_.getWorldStateAreaId() != 0) {
+            activeSet = zm->getAreaZoneMusicId(gameHandler_.getWorldStateAreaId());
+        }
+        if (activeSet == 0 && audioCoordinator_->getCurrentZoneId() != 0) {
+            activeSet = zm->getAreaZoneMusicId(audioCoordinator_->getCurrentZoneId());
+        }
+        if (activeSet != 0 && !zm->zoneMusicSetContainsTrack(activeSet, activeTrack)) {
+            music->stopMusic(600.0f);
+        }
+    };
+    syncWorldStateAudio();
+    gameHandler_.setWorldStateChangedCallback(syncWorldStateAudio);
 
     // SMSG_PLAY_SOUND: look up SoundEntries.dbc and play 2-D sound effect
     gameHandler_.setPlaySoundCallback([this](uint32_t soundId) {

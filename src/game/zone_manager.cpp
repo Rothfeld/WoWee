@@ -3,6 +3,7 @@
 #include "pipeline/dbc_layout.hpp"
 #include "core/logger.hpp"
 #include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <ctime>
 #include <filesystem>
@@ -145,11 +146,128 @@ const ZoneInfo* ZoneManager::getZoneInfo(uint32_t zoneId) const {
 }
 
 std::string ZoneManager::getRandomMusic(uint32_t zoneId) {
+    // Prefer dynamic ZoneMusic set resolution so WorldStateZoneSounds overrides
+    // apply here too (e.g. when toggling the custom WoWee soundtrack off).
+    const uint32_t musicId = getAreaZoneMusicId(zoneId);
+    if (const auto* tracks = getZoneMusicTracks(musicId); tracks && !tracks->empty()) {
+        std::vector<std::string> combined = *tracks;
+        if (useOriginalSoundtrack_) {
+            if (auto it = zones.find(zoneId); it != zones.end()) {
+                for (const auto& p : it->second.musicPaths) {
+                    if (p.rfind("file:", 0) == 0) combined.push_back(p);
+                }
+            }
+        }
+        return pickTrack(combined);
+    }
     // An empty pool after the setting's filter is silence, never the
     // filtered tracks: the setting must stay off in zones that are all ours.
     auto it = zones.find(zoneId);
     if (it == zones.end()) return "";
     return pickTrack(it->second.musicPaths);
+}
+
+bool ZoneManager::setWorldStates(const std::unordered_map<uint32_t, uint32_t>& states) {
+    bool affectedChanged = false;
+    for (uint32_t wsId : watchedWorldStateIds_) {
+        const uint32_t before = getWorldStateValue(wsId);
+        const auto afterIt = states.find(wsId);
+        const uint32_t after = (afterIt != states.end()) ? afterIt->second : 0u;
+        if (before != after) {
+            affectedChanged = true;
+            break;
+        }
+    }
+    worldStates_ = states;
+    return affectedChanged;
+}
+
+bool ZoneManager::setWorldState(uint32_t worldStateId, uint32_t value) {
+    const uint32_t before = getWorldStateValue(worldStateId);
+    worldStates_[worldStateId] = value;
+    return before != value && watchedWorldStateIds_.count(worldStateId) > 0;
+}
+
+void ZoneManager::clearWorldStates() {
+    worldStates_.clear();
+}
+
+uint32_t ZoneManager::getWorldStateValue(uint32_t worldStateId) const {
+    const auto it = worldStates_.find(worldStateId);
+    return it == worldStates_.end() ? 0u : it->second;
+}
+
+void ZoneManager::addWorldStateZoneSoundOverride(const WorldStateZoneSoundOverride& rule) {
+    if (rule.worldStateId == 0) return;
+    const size_t idx = worldStateZoneSounds_.size();
+    worldStateZoneSounds_.push_back(rule);
+    watchedWorldStateIds_.insert(rule.worldStateId);
+    if (rule.wmoAreaId != 0) {
+        wmoWorldStateOverrides_[rule.wmoAreaId].push_back(idx);
+    } else if (rule.areaId != 0) {
+        areaWorldStateOverrides_[rule.areaId].push_back(idx);
+    }
+}
+
+bool ZoneManager::isValidZoneMusicId(uint32_t id) const {
+    if (id == 0 || id == UINT32_MAX) return false;
+    const auto it = zoneMusicSets_.find(id);
+    return it != zoneMusicSets_.end() && (!it->second.dayTracks.empty() || !it->second.nightTracks.empty());
+}
+
+bool ZoneManager::isValidIntroMusicId(uint32_t id) const {
+    if (id == 0 || id == UINT32_MAX) return false;
+    const auto it = zoneIntroMusic_.find(id);
+    return it != zoneIntroMusic_.end() && !it->second.tracks.empty();
+}
+
+bool ZoneManager::isValidAmbienceId(uint32_t id) const {
+    if (id == 0 || id == UINT32_MAX) return false;
+    const auto it = ambiencePaths_.find(id);
+    return it != ambiencePaths_.end() && (!it->second.first.empty() || !it->second.second.empty());
+}
+
+bool ZoneManager::isValidSoundProviderPrefId(uint32_t id) const {
+    return id != 0 && id != UINT32_MAX && soundProviderPrefs_.count(id) > 0;
+}
+
+ZoneManager::WorldStateZoneSoundOverride
+ZoneManager::resolveAreaWorldStateOverride(uint32_t areaId) const {
+    WorldStateZoneSoundOverride merged{};
+    if (areaId == 0) return merged;
+    const auto it = areaWorldStateOverrides_.find(areaId);
+    if (it == areaWorldStateOverrides_.end()) return merged;
+    for (size_t idx : it->second) {
+        const auto& rule = worldStateZoneSounds_[idx];
+        if (getWorldStateValue(rule.worldStateId) != rule.worldStateValue) continue;
+        if (isValidIntroMusicId(rule.zoneIntroMusicId)) merged.zoneIntroMusicId = rule.zoneIntroMusicId;
+        if (isValidZoneMusicId(rule.zoneMusicId)) merged.zoneMusicId = rule.zoneMusicId;
+        if (isValidAmbienceId(rule.soundAmbienceId)) merged.soundAmbienceId = rule.soundAmbienceId;
+        if (isValidSoundProviderPrefId(rule.soundProviderPrefId)) {
+            merged.soundProviderPrefId = rule.soundProviderPrefId;
+        }
+    }
+    return merged;
+}
+
+ZoneManager::WorldStateZoneSoundOverride
+ZoneManager::resolveWmoWorldStateOverride(uint32_t wmoAreaId, uint32_t areaId) const {
+    WorldStateZoneSoundOverride merged{};
+    if (wmoAreaId == 0) return merged;
+    const auto it = wmoWorldStateOverrides_.find(wmoAreaId);
+    if (it == wmoWorldStateOverrides_.end()) return merged;
+    for (size_t idx : it->second) {
+        const auto& rule = worldStateZoneSounds_[idx];
+        if (rule.areaId != 0 && rule.areaId != areaId) continue;
+        if (getWorldStateValue(rule.worldStateId) != rule.worldStateValue) continue;
+        if (isValidIntroMusicId(rule.zoneIntroMusicId)) merged.zoneIntroMusicId = rule.zoneIntroMusicId;
+        if (isValidZoneMusicId(rule.zoneMusicId)) merged.zoneMusicId = rule.zoneMusicId;
+        if (isValidAmbienceId(rule.soundAmbienceId)) merged.soundAmbienceId = rule.soundAmbienceId;
+        if (isValidSoundProviderPrefId(rule.soundProviderPrefId)) {
+            merged.soundProviderPrefId = rule.soundProviderPrefId;
+        }
+    }
+    return merged;
 }
 
 std::vector<std::string> ZoneManager::getAllMusicPaths() const {
@@ -185,24 +303,64 @@ void ZoneManager::enrichFromDBC(pipeline::AssetManager* assets) {
         LOG_INFO("Loaded map linked zones: ", mapZones_.size());
     }
 
-    wmoAreaNames_.clear();
-    wmoAreaIds_.clear();
+    wmoAreaRecords_.clear();
     const auto wmoAreas = assets->loadDBC("WMOAreaTable.dbc");
     if (!wmoAreas || !wmoAreas->isLoaded() || wmoAreas->getFieldCount() < 12)
         throw std::runtime_error("WMOAreaTable.dbc missing or invalid");
-    wmoAreaSounds_.clear();
     for (uint32_t row = 0; row < wmoAreas->getRecordCount(); ++row) {
-        wmoAreaIds_[{wmoAreas->getUInt32(row, 1), wmoAreas->getUInt32(row, 2),
-                     wmoAreas->getUInt32(row, 3)}] = wmoAreas->getUInt32(row, 10);
-        // AmbienceID (6), ZoneMusic (7) and IntroSound (8): a tavern's room
-        // names Zone-TavernAlliance and the Tavern ambience, a smithy BlackSmith.
-        wmoAreaSounds_[{wmoAreas->getUInt32(row, 1), wmoAreas->getUInt32(row, 2),
-                        wmoAreas->getUInt32(row, 3)}] =
-            WmoAreaSounds{wmoAreas->getUInt32(row, 7), wmoAreas->getUInt32(row, 6),
-                          wmoAreas->getUInt32(row, 8)};
-        const auto name = wmoAreas->getString(row, 11);
-        if (!name.empty()) wmoAreaNames_[{wmoAreas->getUInt32(row, 1),
-            wmoAreas->getUInt32(row, 2), wmoAreas->getUInt32(row, 3)}] = name;
+        const uint32_t recId = wmoAreas->getUInt32(row, 0);
+        const auto key = std::make_tuple(wmoAreas->getUInt32(row, 1),
+                                         wmoAreas->getUInt32(row, 2),
+                                         wmoAreas->getUInt32(row, 3));
+        // WMOAreaTable is sorted on disk by (root, nameSet, group) rather than
+        // primary ID, and 13 triples in TBC have duplicate rows where a newer
+        // higher-ID record (e.g. 35968 Stonehearth Outpost areaId=2958) precedes
+        // an older lower-ID record (32862 areaId=0). Prefer the higher ID.
+        auto existing = wmoAreaRecords_.find(key);
+        if (existing != wmoAreaRecords_.end() && existing->second.recordId > recId) {
+            continue;
+        }
+        WmoAreaRecord rec;
+        rec.recordId = recId;
+        rec.soundProviderPrefId = wmoAreas->getUInt32(row, 4);
+        rec.soundProviderPrefUnderwaterId = wmoAreas->getUInt32(row, 5);
+        rec.ambienceId = wmoAreas->getUInt32(row, 6);
+        rec.zoneMusicId = wmoAreas->getUInt32(row, 7);
+        rec.introSoundId = wmoAreas->getUInt32(row, 8);
+        rec.areaId = wmoAreas->getUInt32(row, 10);
+        rec.name = wmoAreas->getString(row, 11);
+        wmoAreaRecords_[key] = std::move(rec);
+    }
+
+    soundProviderPrefs_.clear();
+    if (auto spDbc = assets->loadDBC("SoundProviderPreferences.dbc");
+        spDbc && spDbc->isLoaded() && spDbc->getFieldCount() >= 1) {
+        for (uint32_t row = 0; row < spDbc->getRecordCount(); ++row) {
+            const uint32_t prefId = spDbc->getUInt32(row, 0);
+            if (prefId != 0 && prefId != UINT32_MAX) soundProviderPrefs_.insert(prefId);
+        }
+    }
+
+    worldStateZoneSounds_.clear();
+    areaWorldStateOverrides_.clear();
+    wmoWorldStateOverrides_.clear();
+    watchedWorldStateIds_.clear();
+    if (auto wszDbc = assets->loadDBC("WorldStateZoneSounds.dbc");
+        wszDbc && wszDbc->isLoaded() && wszDbc->getFieldCount() >= 8) {
+        for (uint32_t row = 0; row < wszDbc->getRecordCount(); ++row) {
+            WorldStateZoneSoundOverride rule;
+            rule.worldStateId = wszDbc->getUInt32(row, 0);
+            rule.worldStateValue = wszDbc->getUInt32(row, 1);
+            rule.areaId = wszDbc->getUInt32(row, 2);
+            rule.wmoAreaId = wszDbc->getUInt32(row, 3);
+            rule.zoneIntroMusicId = wszDbc->getUInt32(row, 4);
+            rule.zoneMusicId = wszDbc->getUInt32(row, 5);
+            rule.soundAmbienceId = wszDbc->getUInt32(row, 6);
+            rule.soundProviderPrefId = wszDbc->getUInt32(row, 7);
+            addWorldStateZoneSoundOverride(rule);
+        }
+        LOG_INFO("Loaded WorldStateZoneSounds.dbc: ", worldStateZoneSounds_.size(),
+                 " rules across ", watchedWorldStateIds_.size(), " world state(s)");
     }
 
     auto areaDbc = assets->loadDBC("AreaTable.dbc");
@@ -267,7 +425,21 @@ void ZoneManager::enrichFromDBC(pipeline::AssetManager* assets) {
         for (uint32_t f = 3; f <= 12; ++f) {
             std::string name = soundDbc->getString(row, f);
             if (name.empty()) continue;
-            paths.push_back(dir.empty() ? name : dir + "\\" + name);
+            std::string candidate = dir.empty() ? name : dir + "\\" + name;
+            // SoundEntries 12292 (Zone-QuelDanasStage02) lists
+            // "Sunwell\\SW_FelEnergyWalkUni01" without its .mp3 extension.
+            const auto slash = candidate.find_last_of("\\/");
+            const std::string_view leaf = (slash == std::string::npos)
+                ? std::string_view(candidate)
+                : std::string_view(candidate).substr(slash + 1);
+            if (leaf.find('.') == std::string_view::npos && !assets->fileExists(candidate)) {
+                if (assets->fileExists(candidate + ".mp3")) {
+                    candidate += ".mp3";
+                } else if (assets->fileExists(candidate + ".wav")) {
+                    candidate += ".wav";
+                }
+            }
+            paths.push_back(std::move(candidate));
         }
         return paths;
     };
@@ -353,65 +525,15 @@ void ZoneManager::enrichFromDBC(pipeline::AssetManager* assets) {
         ambienceVolumes_[ambId] = {getSoundVolume(daySid), getSoundVolume(nightSid)};
     }
 
-    // Each area: its name, and the music (ZoneMusic, 8), intro (IntroSound, 9),
-    // and ambience (AmbienceID, 7) of the nearest of itself and its ancestors
-    // that names one.
-    std::unordered_map<uint32_t, uint32_t> ownMusic;
-    std::unordered_map<uint32_t, uint32_t> ownIntro;
-    std::unordered_map<uint32_t, uint32_t> ownAmbience;
-    std::unordered_map<uint32_t, std::string> names;
-    for (uint32_t i = 0; i < numAreas; ++i) {
-        const uint32_t areaId = areaDbc->getUInt32(i, 0);
-        if (areaId == 0) continue;
-        ownMusic[areaId] = areaDbc->getUInt32(i, 8);
-        if (areaFields > 9) ownIntro[areaId] = areaDbc->getUInt32(i, 9);
-        ownAmbience[areaId] = areaDbc->getUInt32(i, 7);
-        if (areaFields > 11) names[areaId] = areaDbc->getString(i, 11);
-    }
-    const auto nearest = [&](const std::unordered_map<uint32_t, uint32_t>& own, uint32_t areaId) {
-        uint32_t current = areaId;
-        for (int depth = 0; current != 0 && depth < 16; ++depth) {
-            const auto it = own.find(current);
-            if (it != own.end() && it->second != 0) return it->second;
-            const auto parent = areaParents_.find(current);
-            if (parent == areaParents_.end() || parent->second == current) break;
-            current = parent->second;
-        }
-        return 0u;
-    };
-    areaZoneMusic_.clear();
-    areaIntroMusic_.clear();
-    areaAmbience_.clear();
-    for (const auto& [areaId, music] : ownMusic) {
-        const uint32_t found = nearest(ownMusic, areaId);
-        areaZoneMusic_[areaId] = found;
-        areaIntroMusic_[areaId] = nearest(ownIntro, areaId);
-        areaAmbience_[areaId] = nearest(ownAmbience, areaId);
-        ZoneInfo& zone = zones[areaId];
-        zone.id = areaId;
-        zone.name = names[areaId];
-        zone.musicPaths.clear();
-        if (const auto t = zoneMusicTracks_.find(found); t != zoneMusicTracks_.end())
-            zone.musicPaths = t->second;
-    }
-    for (const WoweeTrack& track : kWoweeSoundtrack) {
-        const std::string path = filePrefix(resolveOriginalMusic(track.file));
-        if (!path.empty()) zones[track.zoneId].musicPaths.push_back(path);
-    }
-
-    LOG_INFO("Zone music from DBC: ", zones.size(), " areas, ", zoneMusicTracks_.size(),
-             " ZoneMusic sets, ", ambiencePaths_.size(), " ambiences, ",
-             wmoAreaSounds_.size(), " WMO areas");
-
-    // A track the data does not have is taken out of the pool rather than
-    // picked and failed on: each one was a "Could not read" and a zone gone
-    // quiet until the next pick. SoundEntries names files an extraction may
-    // not hold, so this is checked against what is actually there. The
-    // client's own tracks (file:) are not game data and are left.
+    // Each area: its name, and the own columns of AreaTable.dbc:
+    // SoundProviderPref (5), SoundProviderPrefUnderwater (6), AmbienceID (7),
+    // ZoneMusic (8), and IntroSound (9). Dynamic getters walk the ancestor
+    // chain with active WorldStateZoneSounds.dbc overrides and table validation;
+    // missing tracks are pruned from the pools first so empty/dangling IDs never
+    // shadow a valid parent zone.
     std::size_t dropped = 0;
     std::string firstDropped;
     std::vector<std::vector<std::string>*> pools;
-    for (auto& [zoneId, zone] : zones) pools.push_back(&zone.musicPaths);
     for (auto& [setId, tracks] : zoneMusicTracks_) pools.push_back(&tracks);
     for (auto& [setId, set] : zoneMusicSets_) {
         pools.push_back(&set.dayTracks);
@@ -428,6 +550,53 @@ void ZoneManager::enrichFromDBC(pipeline::AssetManager* assets) {
         };
         paths.erase(std::remove_if(paths.begin(), paths.end(), missing), paths.end());
     }
+    for (auto& [ambId, pair] : ambiencePaths_) {
+        if (!pair.first.empty() && !assets->fileExists(pair.first)) pair.first.clear();
+        if (!pair.second.empty() && !assets->fileExists(pair.second)) pair.second.clear();
+    }
+
+    ownAreaZoneMusic_.clear();
+    ownAreaIntroMusic_.clear();
+    ownAreaAmbience_.clear();
+    ownAreaSoundProviderPref_.clear();
+    ownAreaUnderwaterSoundProviderPref_.clear();
+    std::unordered_map<uint32_t, std::string> names;
+    for (uint32_t i = 0; i < numAreas; ++i) {
+        const uint32_t areaId = areaDbc->getUInt32(i, 0);
+        if (areaId == 0) continue;
+        if (areaFields > 5) ownAreaSoundProviderPref_[areaId] = areaDbc->getUInt32(i, 5);
+        if (areaFields > 6) ownAreaUnderwaterSoundProviderPref_[areaId] = areaDbc->getUInt32(i, 6);
+        ownAreaAmbience_[areaId] = areaDbc->getUInt32(i, 7);
+        ownAreaZoneMusic_[areaId] = areaDbc->getUInt32(i, 8);
+        if (areaFields > 9) ownAreaIntroMusic_[areaId] = areaDbc->getUInt32(i, 9);
+        if (areaFields > 11) names[areaId] = areaDbc->getString(i, 11);
+    }
+
+    areaZoneMusic_.clear();
+    areaIntroMusic_.clear();
+    areaAmbience_.clear();
+    for (const auto& [areaId, music] : ownAreaZoneMusic_) {
+        (void)music;
+        const uint32_t found = getAreaZoneMusicId(areaId);
+        areaZoneMusic_[areaId] = found;
+        areaIntroMusic_[areaId] = getAreaIntroMusicId(areaId);
+        areaAmbience_[areaId] = getAreaAmbienceId(areaId);
+        ZoneInfo& zone = zones[areaId];
+        zone.id = areaId;
+        zone.name = names[areaId];
+        zone.musicPaths.clear();
+        if (const auto t = zoneMusicTracks_.find(found); t != zoneMusicTracks_.end())
+            zone.musicPaths = t->second;
+    }
+    for (const WoweeTrack& track : kWoweeSoundtrack) {
+        const std::string path = filePrefix(resolveOriginalMusic(track.file));
+        if (!path.empty()) zones[track.zoneId].musicPaths.push_back(path);
+    }
+
+    LOG_INFO("Zone music from DBC: ", zones.size(), " areas, ", zoneMusicTracks_.size(),
+             " ZoneMusic sets, ", ambiencePaths_.size(), " ambiences, ",
+             wmoAreaRecords_.size(), " WMO areas");
+
     if (dropped > 0) {
         LOG_WARNING("Zone music: ", dropped, " track(s) named for zones are not in the data and "
                     "were left out, first ", firstDropped);
@@ -437,15 +606,72 @@ void ZoneManager::enrichFromDBC(pipeline::AssetManager* assets) {
 ZoneManager::WmoAreaSounds ZoneManager::getWmoAreaSounds(uint32_t root, uint32_t nameSet,
                                                         uint32_t group) const {
     // The room's own row, else the WMO's root row; each field independently,
-    // since a room may name only its ambience and take the building's music.
+    // with WorldStateZoneSounds.dbc overrides for the row's WMOAreaTable ID
+    // taking precedence over the row's static column.
     WmoAreaSounds out;
     for (const uint32_t candidate : {group, UINT32_MAX}) {
-        const auto it = wmoAreaSounds_.find({root, nameSet, candidate});
-        if (it == wmoAreaSounds_.end()) continue;
-        if (out.zoneMusicId == 0) out.zoneMusicId = it->second.zoneMusicId;
-        if (out.ambienceId == 0) out.ambienceId = it->second.ambienceId;
-        if (out.introSoundId == 0) out.introSoundId = it->second.introSoundId;
+        const auto it = wmoAreaRecords_.find({root, nameSet, candidate});
+        if (it == wmoAreaRecords_.end()) continue;
+        const WmoAreaRecord& rec = it->second;
+        if (out.wmoAreaId == 0 && rec.recordId != 0) out.wmoAreaId = rec.recordId;
+        if (out.areaId == 0 && rec.areaId != 0 && areaParents_.count(rec.areaId) > 0) out.areaId = rec.areaId;
+
+        const auto ws = resolveWmoWorldStateOverride(rec.recordId, rec.areaId);
+        const uint32_t candMusic = ws.zoneMusicId != 0
+            ? ws.zoneMusicId
+            : (isValidZoneMusicId(rec.zoneMusicId) ? rec.zoneMusicId : 0u);
+        const uint32_t candAmb = ws.soundAmbienceId != 0
+            ? ws.soundAmbienceId
+            : (isValidAmbienceId(rec.ambienceId) ? rec.ambienceId : 0u);
+        const uint32_t candIntro = ws.zoneIntroMusicId != 0
+            ? ws.zoneIntroMusicId
+            : (isValidIntroMusicId(rec.introSoundId) ? rec.introSoundId : 0u);
+        const uint32_t candPref = ws.soundProviderPrefId != 0
+            ? ws.soundProviderPrefId
+            : (isValidSoundProviderPrefId(rec.soundProviderPrefId) ? rec.soundProviderPrefId : 0u);
+        const uint32_t candPrefUw = isValidSoundProviderPrefId(rec.soundProviderPrefUnderwaterId)
+            ? rec.soundProviderPrefUnderwaterId
+            : 0u;
+
+        if (out.zoneMusicId == 0) out.zoneMusicId = candMusic;
+        if (out.ambienceId == 0) out.ambienceId = candAmb;
+        if (out.introSoundId == 0) out.introSoundId = candIntro;
+        if (out.soundProviderPrefId == 0) out.soundProviderPrefId = candPref;
+        if (out.soundProviderPrefUnderwaterId == 0) out.soundProviderPrefUnderwaterId = candPrefUw;
     }
+    return out;
+}
+
+ZoneManager::ResolvedZoneAudio ZoneManager::resolveZoneAudio(uint32_t wmoRoot, uint32_t wmoNameSet,
+                                                             uint32_t wmoGroup, bool hasWmoArea,
+                                                             uint32_t areaId, uint32_t zoneId) const {
+    ResolvedZoneAudio out;
+    uint32_t effectiveArea = areaId;
+    if (hasWmoArea) {
+        const WmoAreaSounds wmo = getWmoAreaSounds(wmoRoot, wmoNameSet, wmoGroup);
+        out.zoneMusicId = wmo.zoneMusicId;
+        out.soundAmbienceId = wmo.ambienceId;
+        out.zoneIntroMusicId = wmo.introSoundId;
+        out.soundProviderPrefId = wmo.soundProviderPrefId;
+        out.soundProviderPrefUnderwaterId = wmo.soundProviderPrefUnderwaterId;
+        if (effectiveArea == 0) effectiveArea = wmo.areaId;
+    }
+    if (out.zoneMusicId == 0) out.zoneMusicId = getAreaZoneMusicId(effectiveArea);
+    if (out.zoneMusicId == 0) out.zoneMusicId = getAreaZoneMusicId(zoneId);
+
+    if (out.soundAmbienceId == 0) out.soundAmbienceId = getAreaAmbienceId(effectiveArea);
+    if (out.soundAmbienceId == 0) out.soundAmbienceId = getAreaAmbienceId(zoneId);
+
+    if (out.zoneIntroMusicId == 0) out.zoneIntroMusicId = getAreaIntroMusicId(effectiveArea);
+    if (out.zoneIntroMusicId == 0) out.zoneIntroMusicId = getAreaIntroMusicId(zoneId);
+
+    if (out.soundProviderPrefId == 0) out.soundProviderPrefId = getAreaSoundProviderPrefId(effectiveArea);
+    if (out.soundProviderPrefId == 0) out.soundProviderPrefId = getAreaSoundProviderPrefId(zoneId);
+
+    if (out.soundProviderPrefUnderwaterId == 0)
+        out.soundProviderPrefUnderwaterId = getAreaUnderwaterSoundProviderPrefId(effectiveArea);
+    if (out.soundProviderPrefUnderwaterId == 0)
+        out.soundProviderPrefUnderwaterId = getAreaUnderwaterSoundProviderPrefId(zoneId);
     return out;
 }
 
@@ -457,6 +683,25 @@ const std::vector<std::string>* ZoneManager::getZoneMusicTracks(uint32_t zoneMus
 const ZoneManager::ZoneMusicSet* ZoneManager::getZoneMusicSet(uint32_t zoneMusicId) const {
     const auto it = zoneMusicSets_.find(zoneMusicId);
     return it == zoneMusicSets_.end() ? nullptr : &it->second;
+}
+
+bool ZoneManager::zoneMusicSetContainsTrack(uint32_t zoneMusicId, const std::string& track) const {
+    if (track.empty()) return false;
+    const auto* tracks = getZoneMusicTracks(zoneMusicId);
+    if (!tracks) return false;
+    const auto eqInsensitive = [](const std::string& a, const std::string& b) {
+        if (a.size() != b.size()) return false;
+        for (size_t i = 0; i < a.size(); ++i) {
+            const char ca = (a[i] == '/') ? '\\' : static_cast<char>(std::tolower(static_cast<unsigned char>(a[i])));
+            const char cb = (b[i] == '/') ? '\\' : static_cast<char>(std::tolower(static_cast<unsigned char>(b[i])));
+            if (ca != cb) return false;
+        }
+        return true;
+    };
+    for (const auto& candidate : *tracks) {
+        if (eqInsensitive(candidate, track)) return true;
+    }
+    return false;
 }
 
 std::string ZoneManager::pickZoneMusicTrack(uint32_t zoneId, uint32_t zoneMusicId,
@@ -486,13 +731,37 @@ std::pair<float, float> ZoneManager::getZoneSilenceInterval(uint32_t zoneMusicId
 }
 
 uint32_t ZoneManager::getAreaZoneMusicId(uint32_t areaId) const {
-    const auto it = areaZoneMusic_.find(areaId);
-    return it == areaZoneMusic_.end() ? 0 : it->second;
+    uint32_t current = areaId;
+    for (int depth = 0; current != 0 && depth < 16; ++depth) {
+        if (const auto ws = resolveAreaWorldStateOverride(current); ws.zoneMusicId != 0) {
+            return ws.zoneMusicId;
+        }
+        if (const auto it = ownAreaZoneMusic_.find(current);
+            it != ownAreaZoneMusic_.end() && isValidZoneMusicId(it->second)) {
+            return it->second;
+        }
+        const auto parent = areaParents_.find(current);
+        if (parent == areaParents_.end() || parent->second == current) break;
+        current = parent->second;
+    }
+    return 0u;
 }
 
 uint32_t ZoneManager::getAreaIntroMusicId(uint32_t areaId) const {
-    const auto it = areaIntroMusic_.find(areaId);
-    return it == areaIntroMusic_.end() ? 0 : it->second;
+    uint32_t current = areaId;
+    for (int depth = 0; current != 0 && depth < 16; ++depth) {
+        if (const auto ws = resolveAreaWorldStateOverride(current); ws.zoneIntroMusicId != 0) {
+            return ws.zoneIntroMusicId;
+        }
+        if (const auto it = ownAreaIntroMusic_.find(current);
+            it != ownAreaIntroMusic_.end() && isValidIntroMusicId(it->second)) {
+            return it->second;
+        }
+        const auto parent = areaParents_.find(current);
+        if (parent == areaParents_.end() || parent->second == current) break;
+        current = parent->second;
+    }
+    return 0u;
 }
 
 const ZoneManager::ZoneIntroMusic* ZoneManager::getZoneIntroMusic(uint32_t introId) const {
@@ -501,8 +770,51 @@ const ZoneManager::ZoneIntroMusic* ZoneManager::getZoneIntroMusic(uint32_t intro
 }
 
 uint32_t ZoneManager::getAreaAmbienceId(uint32_t areaId) const {
-    const auto it = areaAmbience_.find(areaId);
-    return it == areaAmbience_.end() ? 0 : it->second;
+    uint32_t current = areaId;
+    for (int depth = 0; current != 0 && depth < 16; ++depth) {
+        if (const auto ws = resolveAreaWorldStateOverride(current); ws.soundAmbienceId != 0) {
+            return ws.soundAmbienceId;
+        }
+        if (const auto it = ownAreaAmbience_.find(current);
+            it != ownAreaAmbience_.end() && isValidAmbienceId(it->second)) {
+            return it->second;
+        }
+        const auto parent = areaParents_.find(current);
+        if (parent == areaParents_.end() || parent->second == current) break;
+        current = parent->second;
+    }
+    return 0u;
+}
+
+uint32_t ZoneManager::getAreaSoundProviderPrefId(uint32_t areaId) const {
+    uint32_t current = areaId;
+    for (int depth = 0; current != 0 && depth < 16; ++depth) {
+        if (const auto ws = resolveAreaWorldStateOverride(current); ws.soundProviderPrefId != 0) {
+            return ws.soundProviderPrefId;
+        }
+        if (const auto it = ownAreaSoundProviderPref_.find(current);
+            it != ownAreaSoundProviderPref_.end() && isValidSoundProviderPrefId(it->second)) {
+            return it->second;
+        }
+        const auto parent = areaParents_.find(current);
+        if (parent == areaParents_.end() || parent->second == current) break;
+        current = parent->second;
+    }
+    return 0u;
+}
+
+uint32_t ZoneManager::getAreaUnderwaterSoundProviderPrefId(uint32_t areaId) const {
+    uint32_t current = areaId;
+    for (int depth = 0; current != 0 && depth < 16; ++depth) {
+        if (const auto it = ownAreaUnderwaterSoundProviderPref_.find(current);
+            it != ownAreaUnderwaterSoundProviderPref_.end() && isValidSoundProviderPrefId(it->second)) {
+            return it->second;
+        }
+        const auto parent = areaParents_.find(current);
+        if (parent == areaParents_.end() || parent->second == current) break;
+        current = parent->second;
+    }
+    return 0u;
 }
 
 std::string ZoneManager::getAmbienceSound(uint32_t ambienceId, bool night) const {
@@ -540,15 +852,28 @@ std::string ZoneManager::pickTrack(const std::vector<std::string>& tracks) {
 uint32_t ZoneManager::getWmoAreaId(uint32_t root, uint32_t nameSet, uint32_t group) const {
     // A group without an AreaTable assignment inherits its WMO's root area.
     for (const uint32_t candidate : {group, UINT32_MAX}) {
-        const auto entry = wmoAreaIds_.find({root, nameSet, candidate});
-        if (entry != wmoAreaIds_.end() && entry->second != 0) return entry->second;
+        const auto entry = wmoAreaRecords_.find({root, nameSet, candidate});
+        if (entry != wmoAreaRecords_.end() && entry->second.areaId != 0 &&
+            areaParents_.count(entry->second.areaId) > 0) {
+            return entry->second.areaId;
+        }
+    }
+    return 0;
+}
+
+uint32_t ZoneManager::getWmoAreaTableId(uint32_t root, uint32_t nameSet, uint32_t group) const {
+    for (const uint32_t candidate : {group, UINT32_MAX}) {
+        const auto entry = wmoAreaRecords_.find({root, nameSet, candidate});
+        if (entry != wmoAreaRecords_.end() && entry->second.recordId != 0) {
+            return entry->second.recordId;
+        }
     }
     return 0;
 }
 
 std::string ZoneManager::getWmoAreaName(uint32_t root, uint32_t nameSet, uint32_t group) const {
-    const auto exact = wmoAreaNames_.find({root, nameSet, group});
-    if (exact != wmoAreaNames_.end()) return exact->second;
+    const auto exact = wmoAreaRecords_.find({root, nameSet, group});
+    if (exact != wmoAreaRecords_.end()) return exact->second.name;
     return {};
 }
 

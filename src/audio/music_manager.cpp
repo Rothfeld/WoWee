@@ -91,7 +91,9 @@ void MusicManager::playMusic(const std::string& mpqPath, bool loop, float fadeIn
     float startVolume = (fadeInMs > 0.0f) ? 0.0f : targetVolume;
     if (AudioEngine::instance().playMusic(cacheIt->second, startVolume, loop, mpqPath)) {
         playing = true;
+        fadingOut = false;
         fadingIn = false;
+        appliedVolume_ = startVolume;
         if (fadeInMs > 0.0f) {
             fadingIn = true;
             fadeInTimer = 0.0f;
@@ -176,7 +178,9 @@ void MusicManager::pollPendingFileLoad() {
     float startVolume = (fadeInMs > 0.0f) ? 0.0f : targetVolume;
     if (AudioEngine::instance().playMusic(std::move(data), startVolume, loop, filePath)) {
         playing = true;
+        fadingOut = false;
         fadingIn = false;
+        appliedVolume_ = startVolume;
         if (fadeInMs > 0.0f) {
             fadingIn = true;
             fadeInTimer = 0.0f;
@@ -205,11 +209,12 @@ void MusicManager::stopMusic(float fadeMs) {
         fadingOut = true;
         fadeOutTimer = 0.0f;
         fadeOutDuration = fadeMs / 1000.0f;
-        fadeOutStartVolume = effectiveMusicVolume();
+        fadeOutStartVolume = appliedVolume_ > 0.0f ? appliedVolume_ : effectiveMusicVolume();
     } else {
         AudioEngine::instance().stopMusic();
         playing = false;
         fadingOut = false;
+        appliedVolume_ = 0.0f;
         currentTrack.clear();
         currentTrackIsFile = false;
     }
@@ -226,8 +231,10 @@ void MusicManager::setVolume(int volume) {
     if (fadingIn) {
         fadeInTargetVolume = vol;
         float t = std::clamp(fadeInTimer / std::max(fadeInDuration, 0.001f), 0.0f, 1.0f);
-        AudioEngine::instance().setMusicVolume(fadeInTargetVolume * t);
-    } else {
+        appliedVolume_ = fadeInTargetVolume * t;
+        AudioEngine::instance().setMusicVolume(appliedVolume_);
+    } else if (!crossfading && !fadingOut) {
+        appliedVolume_ = vol;
         AudioEngine::instance().setMusicVolume(vol);
     }
 }
@@ -241,40 +248,50 @@ void MusicManager::setUnderwaterMode(bool underwater) {
     if (fadingIn) {
         fadeInTargetVolume = vol;
         float t = std::clamp(fadeInTimer / std::max(fadeInDuration, 0.001f), 0.0f, 1.0f);
-        AudioEngine::instance().setMusicVolume(fadeInTargetVolume * t);
-    } else {
+        appliedVolume_ = fadeInTargetVolume * t;
+        AudioEngine::instance().setMusicVolume(appliedVolume_);
+    } else if (!crossfading && !fadingOut) {
+        appliedVolume_ = vol;
         AudioEngine::instance().setMusicVolume(vol);
     }
 }
 
 void MusicManager::crossfadeTo(const std::string& mpqPath, float fadeMs) {
-    if (mpqPath == currentTrack && playing) return;
+    if (mpqPath == currentTrack && playing && !fadingOut && !crossfading) return;
+    if (crossfading && !pendingIsFile && mpqPath == pendingTrack) return;
 
     // Zone tracks play once per pass so multi-track sets rotate cleanly;
     // AudioCoordinator handles Sound_ZoneMusicNoDelay vs silence intervals.
-    if (fadeMs > 0 && playing) {
+    if (fadeMs > 0.0f && playing) {
+        fadingOut = false;
+        fadingIn = false;
         crossfading = true;
         pendingTrack = mpqPath;
         pendingIsFile = false;
         fadeTimer = 0.0f;
         fadeDuration = fadeMs / 1000.0f;
-        AudioEngine::instance().stopMusic();
+        crossfadeStartVolume_ = appliedVolume_ > 0.0f ? appliedVolume_ : effectiveMusicVolume();
     } else {
+        fadingOut = false;
         playMusic(mpqPath, false);
     }
 }
 
 void MusicManager::crossfadeToFile(const std::string& filePath, float fadeMs) {
-    if (filePath == currentTrack && playing) return;
+    if (filePath == currentTrack && playing && !fadingOut && !crossfading) return;
+    if (crossfading && pendingIsFile && filePath == pendingTrack) return;
 
-    if (fadeMs > 0 && playing) {
+    if (fadeMs > 0.0f && playing) {
+        fadingOut = false;
+        fadingIn = false;
         crossfading = true;
         pendingTrack = filePath;
         pendingIsFile = true;
         fadeTimer = 0.0f;
         fadeDuration = fadeMs / 1000.0f;
-        AudioEngine::instance().stopMusic();
+        crossfadeStartVolume_ = appliedVolume_ > 0.0f ? appliedVolume_ : effectiveMusicVolume();
     } else {
+        fadingOut = false;
         playFilePath(filePath, false);
     }
 }
@@ -291,12 +308,14 @@ void MusicManager::update(float deltaTime) {
     if (fadingOut) {
         fadeOutTimer += deltaTime;
         float t = std::clamp(1.0f - fadeOutTimer / std::max(fadeOutDuration, 0.001f), 0.0f, 1.0f);
-        AudioEngine::instance().setMusicVolume(fadeOutStartVolume * t);
+        appliedVolume_ = fadeOutStartVolume * t;
+        AudioEngine::instance().setMusicVolume(appliedVolume_);
         if (t <= 0.0f) {
             // Fade complete - stop playback and restore volume for next track
             fadingOut = false;
             AudioEngine::instance().stopMusic();
-            AudioEngine::instance().setMusicVolume(effectiveMusicVolume());
+            appliedVolume_ = effectiveMusicVolume();
+            AudioEngine::instance().setMusicVolume(appliedVolume_);
             playing = false;
             currentTrack.clear();
             currentTrackIsFile = false;
@@ -304,28 +323,40 @@ void MusicManager::update(float deltaTime) {
         return;  // Don't process other fade logic while fading out
     }
 
+    // Handle smooth crossfade: ramp outgoing track to 0 over 0.3 * fadeDuration,
+    // then start the incoming track with a 0.3 * fadeDuration fade-in.
+    if (crossfading) {
+        fadeTimer += deltaTime;
+        const float outDuration = std::max(0.05f, fadeDuration * 0.3f);
+        if (fadeTimer < outDuration && playing) {
+            const float t = std::clamp(1.0f - fadeTimer / outDuration, 0.0f, 1.0f);
+            appliedVolume_ = crossfadeStartVolume_ * t;
+            AudioEngine::instance().setMusicVolume(appliedVolume_);
+            return;
+        }
+        crossfading = false;
+        AudioEngine::instance().stopMusic();
+        playing = false;
+        const std::string nextTrack = std::move(pendingTrack);
+        const bool nextIsFile = pendingIsFile;
+        pendingTrack.clear();
+        pendingIsFile = false;
+        const float inFadeMs = outDuration * 1000.0f;
+        if (nextIsFile) {
+            playFilePath(nextTrack, false, inFadeMs);
+        } else {
+            playMusic(nextTrack, false, inFadeMs);
+        }
+        return;
+    }
+
     if (fadingIn) {
         fadeInTimer += deltaTime;
         float t = std::clamp(fadeInTimer / std::max(fadeInDuration, 0.001f), 0.0f, 1.0f);
-        AudioEngine::instance().setMusicVolume(fadeInTargetVolume * t);
+        appliedVolume_ = fadeInTargetVolume * t;
+        AudioEngine::instance().setMusicVolume(appliedVolume_);
         if (t >= 1.0f) {
             fadingIn = false;
-        }
-    }
-
-    // Handle crossfade
-    if (crossfading) {
-        fadeTimer += deltaTime;
-        if (fadeTimer >= fadeDuration * 0.3f) {
-            // Start new track after brief pause
-            crossfading = false;
-            if (pendingIsFile) {
-                playFilePath(pendingTrack, false);
-            } else {
-                playMusic(pendingTrack, false);
-            }
-            pendingTrack.clear();
-            pendingIsFile = false;
         }
     }
 }

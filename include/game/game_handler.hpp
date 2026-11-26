@@ -442,6 +442,12 @@ public:
     using AddonEventCallback = std::function<void(const std::string&, const std::vector<std::string>&)>;
     void setAddonEventCallback(AddonEventCallback cb) { addonEventCallback_ = std::move(cb); }
 
+    // World-state packet callback (SMSG_INIT_WORLD_STATES / SMSG_UPDATE_WORLD_STATE)
+    using WorldStateChangedCallback = std::function<void()>;
+    void setWorldStateChangedCallback(WorldStateChangedCallback cb) {
+        worldStateChangedCallback_ = std::move(cb);
+    }
+
     /// Run a line of the interface's own Lua.
     ///
     /// The keys this client binds are its own, and the windows they open are
@@ -3617,6 +3623,9 @@ public:
         fireAddonEvent("UI_INFO_MESSAGE", {msg});
     }
     void fireAddonEvent(const std::string& event, const std::vector<std::string>& args = {}) {
+        if (worldStateChangedCallback_ && event == "UPDATE_WORLD_STATES") {
+            worldStateChangedCallback_();
+        }
         if (addonEventCallback_) addonEventCallback_(event, args);
     }
     /// Fire an event once the running script has returned: at the start of the
@@ -6147,6 +6156,7 @@ private:
     PlayMusicCallback playMusicCallback_;
     PlaySoundCallback playSoundCallback_;
     PlayPositionalSoundCallback playPositionalSoundCallback_;
+    WorldStateChangedCallback worldStateChangedCallback_;
 
     // ---- UI error frame callback ----
     UIErrorCallback uiErrorCallback_;
