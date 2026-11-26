@@ -4,6 +4,9 @@
 #include "rendering/sun_direction.hpp"
 
 #include <fstream>
+#ifdef __GLIBC__
+#include <malloc.h>
+#endif
 #include <iterator>
 #include "addons/lua_api_registrations.hpp"
 #include "core/env_flag.hpp"
@@ -2478,6 +2481,19 @@ void Renderer::update(float deltaTime) {
                     blocks += budgets[i].statistics.blockCount;
                     blockBytes += budgets[i].statistics.blockBytes;
                 }
+#ifdef __GLIBC__
+                // glibc malloc over all arenas: bytes handed out, bytes held free,
+                // bytes obtained from the system for arenas, bytes in mmapped chunks.
+                const struct mallinfo2 heap = mallinfo2();
+                const uint64_t mallocInUse = heap.uordblks, mallocFree = heap.fordblks,
+                               mallocArena = heap.arena, mallocMmapped = heap.hblkhd,
+                               mallocMmapChunks = heap.hblks, mallocTrimmable = heap.keepcost;
+#else
+                const uint64_t mallocInUse = 0, mallocFree = 0, mallocArena = 0, mallocMmapped = 0,
+                               mallocMmapChunks = 0, mallocTrimmable = 0;
+#endif
+                const auto* traceAssets = core::Application::getInstance().getAssetManager();
+                const uint64_t fileCacheBytes = traceAssets ? traceAssets->getFileCacheSize() : 0;
                 LOG_INFO("MEMORY_TRACE {\"terrain_ms\":", terrMs,
                          ",\"cache_entries\":", cache.entries,
                          ",\"cache_pinned\":", cache.pinnedEntries,
@@ -2493,6 +2509,15 @@ void Renderer::update(float deltaTime) {
                          ",\"m2_instances\":", m2Renderer ? m2Renderer->getInstanceCount() : 0u,
                          ",\"wmo_models\":", wmoRenderer ? wmoRenderer->getModelCount() : 0u,
                          ",\"wmo_instances\":", wmoRenderer ? wmoRenderer->getInstanceCount() : 0u,
+                         ",\"tiles_loaded\":", terrainManager->getLoadedTileCount(),
+                         ",\"tiles_pending\":", terrainManager->getPendingTileCount(),
+                         ",\"file_cache_bytes\":", fileCacheBytes,
+                         ",\"malloc_in_use\":", mallocInUse,
+                         ",\"malloc_free\":", mallocFree,
+                         ",\"malloc_arena\":", mallocArena,
+                         ",\"malloc_mmapped\":", mallocMmapped,
+                         ",\"malloc_mmap_chunks\":", mallocMmapChunks,
+                         ",\"malloc_trimmable\":", mallocTrimmable,
                          "}");
             }
         }
