@@ -740,13 +740,17 @@ TEST_CASE("Detached particles move in yards whatever the placement scale", "[m2]
 
 TEST_CASE("Detached particles without flag 0x8 move at placement scale", "[m2][particle]") {
     using namespace wowee::rendering;
-    // LootFX.m2 flare #0 (0x101, 0.5556 yd/s for 1.6 s) over GnomeBigGear,
-    // sparkle scale 3.52: rises about 3 yd in the original.
+    // LootFX.m2 flare #0 (0x101, 0.5556 yd/s for 1.6 s, gravity 0) over GnomeBigGear,
+    // sparkle scale 3.52: initial velocity rises about 3 yd in the original.
+    // Detached world-space gravity scales with placement only on map doodads/spell
+    // visuals (scalesWithPlacement == true) and stays 1.0x world yards/s^2 on
+    // units and GameObjects (scalesWithPlacement == false).
     const auto model = glm::scale(glm::rotate(glm::mat4(1),glm::radians(40.0f),glm::vec3(0,0,1)),glm::vec3(3.52f));
     const auto birth = particleBirthTransform(0x101u, model, glm::mat4(1));
     const auto basis = particleWorldVelocityBasis(0x101u, birth, false);
     CHECK(glm::length(basis * glm::vec3(0,0,0.5556f)) * 1.6f == Catch::Approx(3.129f).margin(0.001f));
-    CHECK(glm::length(particleGravityDirection(0x101u, model, false)) == Catch::Approx(3.52f));
+    CHECK(glm::length(particleGravityDirection(0x101u, model, true)) == Catch::Approx(3.52f));
+    CHECK(glm::length(particleGravityDirection(0x101u, model, false)) == Catch::Approx(1.0f));
     CHECK(glm::length(particleGravityDirection(0x109u, model, false)) == Catch::Approx(1.0f));
 }
 
@@ -1569,4 +1573,82 @@ TEST_CASE("Scaled GameObject unpinned 0x8 emitters (OutlandMonolith 0.25x, OgreC
 
     // Pinned Sunwell gate GameObjects (0x409) remain in unscaled yards.
     CHECK_FALSE(particleScalesWithPlacement(/*isGameObject=*/true, /*externalPose=*/false, 0x409u));
+}
+
+TEST_CASE("Scaled Core Hound and Magmadar 0x401 drool emitters keep world-yard gravity",
+          "[m2][particle][tbc]") {
+    using namespace wowee::rendering;
+
+    // Core Hound (11671, scale 1.0), Ancient Core Hound (11673, scale 2.0),
+    // and Magmadar / The Beast (11982 / 10430, scale 3.0) share FelBeast.m2:
+    // emitters #0..#7 (LAVADRIP.BLP, flags 0x401 = OwnColor | Pinned, no 0x8,
+    // no 0x20, headOrTail 1, speed 0, gravity +6.9444, tailLength 0.25..0.35,
+    // life 0.30 / 0.80) fall under unscaled world gravity (6.9444 yd/s^2) at
+    // every display scale rather than stretching 2x-3x into razor-thin spears
+    // that shoot above the upper fangs.
+    const auto felBeast = wowee::pipeline::M2Loader::load(
+        wowee::test::readTbcData("creature/felbeast/felbeast.m2"));
+    REQUIRE(felBeast.particleEmitters.size() == 12);
+
+    const bool gravScales = particleGravityScalesWithPlacement(/*isGameObject=*/false, /*externalPose=*/true);
+    CHECK_FALSE(gravScales);
+
+    for (size_t ei = 0; ei < 8; ++ei) {
+        const auto& em = felBeast.particleEmitters[ei];
+        CHECK(em.flags == 0x401u);
+        CHECK(em.blendingType == 2u);
+        CHECK(em.headOrTail == 1u);
+        CHECK(em.tailLength >= 0.24f);
+        CHECK(em.tailLength <= 0.36f);
+
+        const float spd = m2_track::sampleFloat(em.emissionSpeed, 2, 0.0f, 0.0f,
+                                                felBeast.globalSequenceDurations, -1.0f);
+        const float grav = m2_track::sampleFloat(em.gravity, 2, 0.0f, 0.0f,
+                                                 felBeast.globalSequenceDurations, 0.0f);
+        const float life = m2_track::sampleFloat(em.lifespan, 2, 0.0f, 0.0f,
+                                                 felBeast.globalSequenceDurations, 0.0f);
+        CHECK(spd == Catch::Approx(0.0f).margin(1e-4f));
+        CHECK(grav == Catch::Approx(6.9444f).margin(0.01f));
+        CHECK((life == Catch::Approx(0.30f).margin(0.01f) ||
+               life == Catch::Approx(0.80f).margin(0.01f)));
+
+        for (const float unitScale : {1.0f, 2.0f, 3.0f}) {
+            const glm::mat4 unitModel = glm::scale(glm::mat4(1.0f), glm::vec3(unitScale));
+            const glm::vec3 gravDir = particleGravityDirection(em.flags, unitModel, gravScales);
+            CHECK(gravDir.x == Catch::Approx(0.0f).margin(1e-6f));
+            CHECK(gravDir.y == Catch::Approx(0.0f).margin(1e-6f));
+            CHECK(gravDir.z == Catch::Approx(-1.0f).margin(1e-6f));
+
+            // At midpoint peak alpha (age = 0.5 * life), fall distance and tail
+            // span stay identical in world yards across 1x, 2x, and 3x creatures
+            // (max +0.417 yd inside the 3x tooth socket, vs +1.25 yd under 3x-scaled gravity).
+            const float midAge = 0.5f * life;
+            const glm::vec3 posDelta = gravDir * (0.5f * grav * midAge * midAge);
+            const glm::vec3 vel = gravDir * (grav * midAge);
+            const glm::vec3 tail = particleTailVector(em.flags, vel, em.tailLength, midAge, em.drag);
+            const float expectedTopZ = grav * midAge * (std::min(em.tailLength, midAge) - 0.5f * midAge);
+            CHECK(posDelta.z == Catch::Approx(-0.5f * grav * midAge * midAge).margin(1e-4f));
+            CHECK(posDelta.z + tail.z == Catch::Approx(expectedTopZ).margin(1e-4f));
+            CHECK(posDelta.z + tail.z < 0.45f);
+            CHECK(glm::length(tail) < 1.0f);
+
+            const float midHalfWidth = particleSpriteHalfWidth(
+                em.flags, em.particleScale.floatValues.at(1), unitScale, /*tailSprite=*/true);
+            CHECK(midHalfWidth == Catch::Approx(0.0806f).margin(0.002f));
+        }
+    }
+
+    // Uvuros (21102, scale 3.5) uses FelBeastShadowmoon.m2 with the same 0x401 drool emitters.
+    const auto shadowHound = wowee::pipeline::M2Loader::load(
+        wowee::test::readTbcData("creature/felbeastshadowmoon/felbeastshadowmoon.m2"));
+    REQUIRE(shadowHound.particleEmitters.size() == 14);
+    for (const size_t ei : {size_t{0}, size_t{1}, size_t{2}, size_t{3},
+                            size_t{5}, size_t{7}, size_t{8}, size_t{9}}) {
+        const auto& em = shadowHound.particleEmitters[ei];
+        CHECK(em.flags == 0x401u);
+        CHECK(em.headOrTail == 1u);
+        const glm::vec3 gravDir = particleGravityDirection(
+            em.flags, glm::scale(glm::mat4(1.0f), glm::vec3(3.5f)), gravScales);
+        CHECK(gravDir == glm::vec3(0.0f, 0.0f, -1.0f));
+    }
 }

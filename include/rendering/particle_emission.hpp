@@ -363,12 +363,17 @@ inline bool particleScalesWithPlacement(bool isGameObject, bool externalPose,
 }
 
 inline bool particleGravityScalesWithPlacement(bool isGameObject, bool externalPose) {
-    // Only map doodads and spell visuals scale 0x8 gravitational acceleration
-    // by placement. Units and GameObjects keep 0x8 gravity in world yards/s^2
-    // even when 0x20 scales sprite size and initial velocity: Netherspite's
-    // Void Zone (PortalofKathune.m2, display scale 0.1, flags 0x229, vRange 0
-    // horizontal velocity, gravity -1.39) still lifts its smoke 1.56 yd over
-    // 1.5 s rather than 0.156 yd.
+    // Only map doodads and spell visuals scale detached gravitational
+    // acceleration by placement. Units and GameObjects keep world-space
+    // gravity in world yards/s^2 regardless of flag 0x8 or 0x20:
+    // - Netherspite's Void Zone (PortalofKathune.m2, display scale 0.1,
+    //   flags 0x229, vRange 0, gravity -1.39) still lifts its smoke 1.56 yd
+    //   over 1.5 s rather than 0.156 yd.
+    // - Ancient Core Hound (scale 2.0) and Magmadar / The Beast (scale 3.0)
+    //   (FelBeast.m2 #0..#7, flags 0x401 without 0x8/0x20, headOrTail 1,
+    //   speed 0, gravity +6.944, tailLength 0.25..0.35, life 0.30/0.80) keep
+    //   drool gravity at 6.944 yd/s^2 rather than 3x-accelerating tails into
+    //   4 yd razor-thin spears skewering the upper jaw and eye.
     return !isGameObject && !externalPose;
 }
 
@@ -381,31 +386,31 @@ inline glm::vec3 particleGravityDirection(uint32_t flags, const glm::mat4& model
     // bone is pitched, and bone-oriented hand/breath effects (Fire_Precast_Hand,
     // AcidLiquidBreath) still rise/fall vertically when the hand/head bone pitches.
     // NoTrail and ModelFrame particles are simulated in their local frame.
-    // Detached particles without flag 0x8 (or on map doodads/spell visuals) scale
-    // gravity by the placement scale, matching particleWorldVelocityBasis.
+    // Detached world-space particles scale gravity only when scalesWithPlacement
+    // is true (map doodads and spell visuals); units and GameObjects keep
+    // world-space gravity in yards/s^2 even when flag 0x8 is unset.
     if (flags & (kParticleNoTrail | kParticleModelFrame)) return {0, 0, -1};
-    const float scale = particleMovesInYards(flags, scalesWithPlacement)
-        ? 1.0f : particlePlacementScale(model);
+    const float scale = scalesWithPlacement ? particlePlacementScale(model) : 1.0f;
     return {0.0f, 0.0f, -scale};
 }
 
 // Flag 0x8: a detached particle (neither NoTrail nor in the model's frame)
 // on a game object or unit travels in yards, whatever the placement scale;
-// without it, its velocity and gravity take the placement scale as its birth
-// point does. 12654 of 16070 TBC emitters set it, 7020 of them detached.
+// without it, its initial emission velocity takes the placement scale as its
+// birth point does. 12654 of 16070 TBC emitters set it, 7020 of them detached.
 // - With 0x8: the Sunwell gate barrier (GO 188118, SUNWELLRAID_GATE_04.m2,
 //   scale 8.69, 0x409) otherwise throws its sparks 8.7x too fast, past the
 //   doorway, as radial streaks; Netherspite's Void Zone (PortalofKathune.m2,
 //   display scale 0.1, 0x229) lifts its smoke a tenth of the height.
 // - Without 0x8: the quest-object sparkle's flare (LootFX.m2 #0, 0x101,
-//   0.56 yd/s for 1.6 s) rises 0.4-0.5 yd at scale 1 and 3-4 yd over
-//   GnomeBigGear (scale 3.5) in the original; in yards it stayed a band at
+//   0.56 yd/s for 1.6 s, gravity 0) rises 0.4-0.5 yd at scale 1 and 3-4 yd
+//   over GnomeBigGear (scale 3.5) in the original; in yards it stayed a band at
 //   the gear's hub. Light of Elune 177415/177418 (feralaslightblue.m2, 0x1,
-//   GO sizes 2 and 5) fall in columns as long as the object is large.
+//   gravity 0, GO sizes 2 and 5) fall in columns as long as the object is large.
 // Attached particles live in the scaled bone or model frame: Brutallus' back
 // flames (0x339, NoTrail, scale 6) rise with the model's scale in the original.
-// Gravity follows the velocity's rule; it is not observed separately for
-// emitters without 0x8.
+// Detached world-space gravity on units and GameObjects stays in world yards/s^2
+// even without 0x8 (FelBeast.m2 #0..#7 0x401 drool on 2x/3x Core Hounds).
 // Map doodads (ADT MDDF and WMO MODD placements) and spell visuals move at
 // their placement scale with 0x8 as well. Magisters' Terrace's throne orb
 // (BloodElf_PowerOrb_Green.m2, MODD 964, scale 0.358, smoke #5/#6 0x629 at
