@@ -775,3 +775,161 @@ TEST_CASE("TBC Quest push decline, complete rewards, query metadata, kill guid, 
     CHECK(chatMentions(s, "12650"));
     CHECK(chatMentions(s, "7 Gold"));
 }
+
+TEST_CASE("TBC auto-complete quest (Method 0, icon 4) routes via CMSG_QUESTGIVER_COMPLETE_QUEST to QUEST_PROGRESS and CMSG_QUESTGIVER_REQUEST_REWARD",
+          "[replay][quest][gossip][tbc]") {
+    Session s("tbc");
+    s.receive(UpdateObject().tbc().create(
+        Session::kPlayerGuid, wowee::game::ObjectType::PLAYER,
+        {{UF::UNIT_FIELD_LEVEL, 70}}, true));
+
+    ScopedLua lua(s);
+    lua_pushnumber(lua.L, 20400);
+    lua_setglobal(lua.L, "__WoweeInterfaceVersion");
+    wowee::addons::registerSocialLuaAPI(lua.L);
+
+    std::vector<std::string> events;
+    s.handler().setAddonEventCallback(
+        [&](const std::string& name, const std::vector<std::string>&) {
+            events.push_back(name);
+        });
+
+    // Aurius (entry 10917) in Stratholme offering Method==0 quest 5122 "The Medallion of Faith"
+    // with questIcon = 4 (DIALOG_STATUS_REWARD_REP), NOT present in PLAYER_QUEST_LOG_*.
+    constexpr uint64_t kAuriusGuid = 0xF130002AA532355Cull;
+    constexpr uint32_t kMedallionQuestId = 5122;
+    constexpr uint32_t kMedallionItemId = 12845;
+
+    {
+        Packet gos(wireOpcode(Opcode::SMSG_GOSSIP_MESSAGE));
+        gos.writeUInt64(kAuriusGuid);
+        gos.writeUInt32(4201); // menuId
+        gos.writeUInt32(5091); // titleTextId
+        gos.writeUInt32(0);    // 0 gossip options
+        gos.writeUInt32(1);    // 1 quest
+        gos.writeUInt32(kMedallionQuestId);
+        gos.writeUInt32(4);    // TBC DIALOG_STATUS_REWARD_REP (active repeatable/auto-complete)
+        gos.writeUInt32(60);   // questLevel
+        gos.writeString("The Medallion of Faith");
+        s.receive(gos);
+    }
+    REQUIRE(s.handler().isGossipWindowOpen());
+
+    // GetNumGossipAvailableQuests / GetNumGossipActiveQuests match GetGossipAvailableQuests / GetGossipActiveQuests
+    REQUIRE(luaL_dostring(lua.L,
+        "availN = GetNumGossipAvailableQuests(); "
+        "activeN = GetNumGossipActiveQuests(); "
+        "activeTitle = GetGossipActiveQuests()") == 0);
+    lua_getglobal(lua.L, "availN");
+    CHECK(lua_tonumber(lua.L, -1) == 0);
+    lua_pop(lua.L, 1);
+    lua_getglobal(lua.L, "activeN");
+    CHECK(lua_tonumber(lua.L, -1) == 1);
+    lua_pop(lua.L, 1);
+    lua_getglobal(lua.L, "activeTitle");
+    REQUIRE(lua_isstring(lua.L, -1));
+    CHECK(std::string(lua_tostring(lua.L, -1)) == "The Medallion of Faith");
+    lua_pop(lua.L, 1);
+
+    // Clicking GossipTitleButton1 runs SelectGossipActiveQuest(1), which MUST send
+    // CMSG_QUESTGIVER_COMPLETE_QUEST (NOT CMSG_QUESTGIVER_QUERY_QUEST) even though
+    // quest 5122 is absent from PLAYER_QUEST_LOG_*.
+    REQUIRE(luaL_dostring(lua.L, "SelectGossipActiveQuest(1)") == 0);
+    CHECK(s.sent().of(Opcode::CMSG_QUESTGIVER_QUERY_QUEST).empty());
+    const auto completePkts = s.sent().of(Opcode::CMSG_QUESTGIVER_COMPLETE_QUEST);
+    REQUIRE(completePkts.size() == 1);
+    {
+        Packet p = completePkts[0];
+        CHECK(p.readUInt64() == kAuriusGuid);
+        CHECK(p.readUInt32() == kMedallionQuestId);
+    }
+
+    // Server replies with SMSG_QUESTGIVER_REQUEST_ITEMS (incomplete first: flags1=0)
+    auto buildRequestItems = [&](bool completable) {
+        Packet ri(wireOpcode(Opcode::SMSG_QUESTGIVER_REQUEST_ITEMS));
+        ri.writeUInt64(kAuriusGuid);
+        ri.writeUInt32(kMedallionQuestId);
+        ri.writeString("The Medallion of Faith");
+        ri.writeString("The power of this chapel gives me the strength to resist the corruption in my heart.");
+        ri.writeUInt32(0); // emoteDelay
+        ri.writeUInt32(1); // emote
+        ri.writeUInt32(0); // closeOnCancel
+        ri.writeUInt32(0); // suggestedPlayers
+        ri.writeUInt32(0); // requiredMoney
+        ri.writeUInt32(1); // reqItemsCount
+        ri.writeUInt32(kMedallionItemId);
+        ri.writeUInt32(1);
+        ri.writeUInt32(22829); // displayInfoId
+        ri.writeUInt32(completable ? 0x03u : 0x00u);
+        ri.writeUInt32(0x04u);
+        ri.writeUInt32(0x08u);
+        ri.writeUInt32(0x10u);
+        return ri;
+    };
+
+    events.clear();
+    s.receive(buildRequestItems(false));
+    CHECK(s.handler().isQuestRequestItemsOpen());
+    CHECK_FALSE(s.handler().isQuestDetailsOpen());
+    CHECK(std::find(events.begin(), events.end(), "QUEST_PROGRESS") != events.end());
+
+    // Populate item query response for Medallion of Faith so GetQuestItemInfo & GetQuestItemLink("required", 1) resolve
+    {
+        Packet iq(wireOpcode(Opcode::SMSG_ITEM_QUERY_SINGLE_RESPONSE));
+        iq.writeUInt32(kMedallionItemId);
+        iq.writeUInt32(12);          // Quest item class
+        iq.writeUInt32(0);
+        iq.writeUInt32(0xFFFFFFFFu); // sound override subclass
+        iq.writeString("Medallion of Faith");
+        iq.writeString("");
+        iq.writeString("");
+        iq.writeString("");
+        iq.writeUInt32(22829); // displayInfoId
+        iq.writeUInt32(1);     // quality
+        for (int i = 0; i < 120; ++i) iq.writeUInt32(0);
+        s.receive(iq);
+    }
+
+    REQUIRE(luaL_dostring(lua.L,
+        "progTitle = GetTitleText(); "
+        "progText = GetProgressText(); "
+        "progDone = IsQuestCompletable(); "
+        "reqN = GetNumQuestItems(); "
+        "reqName, _, reqCount = GetQuestItemInfo('required', 1); "
+        "reqLink = GetQuestItemLink('required', 1)") == 0);
+    lua_getglobal(lua.L, "progTitle");
+    CHECK(std::string(lua_tostring(lua.L, -1)) == "The Medallion of Faith");
+    lua_pop(lua.L, 1);
+    lua_getglobal(lua.L, "progText");
+    CHECK(std::string(lua_tostring(lua.L, -1)).find("The power of this chapel") != std::string::npos);
+    lua_pop(lua.L, 1);
+    lua_getglobal(lua.L, "progDone");
+    CHECK(lua_toboolean(lua.L, -1) == 0);
+    lua_pop(lua.L, 1);
+    lua_getglobal(lua.L, "reqN");
+    CHECK(lua_tonumber(lua.L, -1) == 1);
+    lua_pop(lua.L, 1);
+    lua_getglobal(lua.L, "reqName");
+    CHECK(std::string(lua_tostring(lua.L, -1)) == "Medallion of Faith");
+    lua_pop(lua.L, 1);
+    lua_getglobal(lua.L, "reqCount");
+    CHECK(lua_tonumber(lua.L, -1) == 1);
+    lua_pop(lua.L, 1);
+    lua_getglobal(lua.L, "reqLink");
+    REQUIRE(lua_isstring(lua.L, -1));
+    CHECK(std::string(lua_tostring(lua.L, -1)).find("Hitem:12845") != std::string::npos);
+    lua_pop(lua.L, 1);
+
+    // Now test completable turn-in: CompleteQuest() sends CMSG_QUESTGIVER_REQUEST_REWARD directly
+    s.receive(buildRequestItems(true));
+    REQUIRE(s.handler().isQuestRequestItemsOpen());
+    CHECK(s.sent().of(Opcode::CMSG_QUESTGIVER_REQUEST_REWARD).empty());
+    s.handler().completeQuest();
+    const auto reqRewardPkts = s.sent().of(Opcode::CMSG_QUESTGIVER_REQUEST_REWARD);
+    REQUIRE(reqRewardPkts.size() == 1);
+    {
+        Packet p = reqRewardPkts[0];
+        CHECK(p.readUInt64() == kAuriusGuid);
+        CHECK(p.readUInt32() == kMedallionQuestId);
+    }
+}

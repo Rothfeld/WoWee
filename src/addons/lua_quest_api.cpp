@@ -3464,7 +3464,11 @@ static int lua_GetQuestItemLink(lua_State* L) {
     const int index = static_cast<int>(luaL_optnumber(L, 2, 0));
     const QuestSource s = currentQuestSource(gh);
 
-    const auto* list = (std::string(type) == "choice") ? s.choices : s.rewards;
+    const std::string want(type);
+    const std::vector<game::QuestRewardItem>* list = nullptr;
+    if (want == "choice")        list = s.choices;
+    else if (want == "required") list = gh ? &gh->getQuestRequestItems().requiredItems : nullptr;
+    else                         list = s.rewards;
     if (!gh || !list || index < 1) { return luaReturnNil(L); }
 
     int seen = 0;

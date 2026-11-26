@@ -1482,7 +1482,7 @@ void QuestHandler::selectGossipOption(uint32_t optionId, const std::string& code
 
 }
 
-void QuestHandler::selectGossipQuest(uint32_t questId) {
+void QuestHandler::selectGossipQuest(uint32_t questId, std::optional<bool> activeOverride) {
     if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket() || !gossipWindowOpen_ || gossipOptionPending_) return;
 
     const QuestLogEntry* activeQuest = nullptr;
@@ -1517,12 +1517,34 @@ void QuestHandler::selectGossipQuest(uint32_t questId) {
             }
         }
     }
-    const bool activeQuestConfirmedByServer = questInServerLog;
-    const bool shouldStartProgressFlow = activeQuestConfirmedByServer;
+
+    // Auto-complete / repeatable turn-in quests (Method == 0, e.g. 5122 "The
+    // Medallion of Faith", cloth / reputation turn-ins) are never accepted into
+    // PLAYER_QUEST_LOG_*, yet arrive in SMSG_GOSSIP_MESSAGE / SMSG_QUESTGIVER_QUEST_LIST
+    // with an active icon (TBC DIALOG_STATUS_REWARD_REP = 4) and are selected via
+    // SelectGossipActiveQuest / SelectActiveQuest -> CMSG_QUESTGIVER_COMPLETE_QUEST.
+    // Sending CMSG_QUESTGIVER_QUERY_QUEST instead makes the server reply with
+    // SMSG_QUESTGIVER_QUEST_DETAILS whose Details and Objectives are empty.
+    bool shouldStartProgressFlow = questInServerLog;
+    if (activeOverride.has_value()) {
+        shouldStartProgressFlow = *activeOverride;
+    } else {
+        for (const auto& q : currentGossip_.quests) {
+            if (q.questId != questId) continue;
+            const auto state = gossipQuestState(q.questIcon, isActiveExpansion("tbc"));
+            if (state == GossipQuestState::Incomplete || state == GossipQuestState::Completable) {
+                shouldStartProgressFlow = true;
+            } else if (state == GossipQuestState::Available) {
+                shouldStartProgressFlow = false;
+            }
+            break;
+        }
+    }
+
     if (shouldStartProgressFlow) {
         pendingTurnInQuestId_ = questId;
         pendingTurnInNpcGuid_ = currentGossip_.npcGuid;
-        pendingTurnInRewardRequest_ = activeQuest ? activeQuest->complete : false;
+        pendingTurnInRewardRequest_ = false;
         auto packet = QuestgiverCompleteQuestPacket::build(currentGossip_.npcGuid, questId);
         owner_.getSocket()->send(packet);
     } else {
@@ -1706,15 +1728,18 @@ void QuestHandler::offerQuestFromItem(uint64_t itemGuid, uint32_t questId) {
 
 void QuestHandler::completeQuest() {
     if (!questRequestItemsOpen_ || owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
-    pendingTurnInQuestId_ = currentQuestRequestItems_.questId;
-    pendingTurnInNpcGuid_ = currentQuestRequestItems_.npcGuid;
-    pendingTurnInRewardRequest_ = currentQuestRequestItems_.isCompletable();
+    const uint32_t questId = currentQuestRequestItems_.questId;
+    const uint64_t npcGuid = currentQuestRequestItems_.npcGuid;
+    const bool completable = currentQuestRequestItems_.isCompletable();
+    pendingTurnInQuestId_ = questId;
+    pendingTurnInNpcGuid_ = npcGuid;
+    pendingTurnInRewardRequest_ = false;
 
-    LOG_DEBUG("completeQuest: questId=", currentQuestRequestItems_.questId,
-              " completable=", currentQuestRequestItems_.isCompletable());
+    LOG_DEBUG("completeQuest: questId=", questId, " completable=", completable);
 
-    auto packet = QuestgiverCompleteQuestPacket::build(
-        currentQuestRequestItems_.npcGuid, currentQuestRequestItems_.questId);
+    auto packet = completable
+        ? QuestgiverRequestRewardPacket::build(npcGuid, questId)
+        : QuestgiverCompleteQuestPacket::build(npcGuid, questId);
     owner_.getSocket()->send(packet);
     questRequestItemsOpen_ = false;
     currentQuestRequestItems_ = QuestRequestItemsData{};

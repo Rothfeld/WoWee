@@ -4373,8 +4373,8 @@ void GameHandler::selectGossipOption(uint32_t optionId, const std::string& code)
     if (questHandler_) questHandler_->selectGossipOption(optionId, code);
 }
 
-void GameHandler::selectGossipQuest(uint32_t questId) {
-    if (questHandler_) questHandler_->selectGossipQuest(questId);
+void GameHandler::selectGossipQuest(uint32_t questId, std::optional<bool> activeOverride) {
+    if (questHandler_) questHandler_->selectGossipQuest(questId, activeOverride);
 }
 
 bool GameHandler::requestQuestQuery(uint32_t questId, bool force) {

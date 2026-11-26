@@ -2649,7 +2649,7 @@ public:
     void interactWithGameObject(uint64_t guid);
     uint64_t getHookedFishingBobberGuid() const { return hookedFishingBobberGuid_; }
     void selectGossipOption(uint32_t optionId, const std::string& code = "");
-    void selectGossipQuest(uint32_t questId);
+    void selectGossipQuest(uint32_t questId, std::optional<bool> activeOverride = std::nullopt);
     void acceptQuest();
     void declineQuest(bool announce = true);
     void closeGossip();

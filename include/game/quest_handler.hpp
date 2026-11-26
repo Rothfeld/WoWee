@@ -8,6 +8,7 @@
 #include <chrono>
 #include <functional>
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <unordered_map>
@@ -34,7 +35,7 @@ public:
 
     // NPC Gossip
     void selectGossipOption(uint32_t optionId, const std::string& code = "");
-    void selectGossipQuest(uint32_t questId);
+    void selectGossipQuest(uint32_t questId, std::optional<bool> activeOverride = std::nullopt);
     void acceptQuest();
     /// `announce` fires QUEST_FINISHED, which is what closes FrameXML's
     /// quest frame. False when the interface is the one closing it.

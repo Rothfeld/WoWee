@@ -1088,7 +1088,7 @@ int selectGossipQuestAt(lua_State* L, bool available) {
                                        : gossipQuestIsActive(L, q.questIcon);
         if (!matches) continue;
         if (++seen != index) continue;
-        gh->selectGossipQuest(q.questId);
+        gh->selectGossipQuest(q.questId, /*activeOverride=*/!available);
         return 0;
     }
     return 0;
@@ -3313,21 +3313,11 @@ void registerSocialLuaAPI(lua_State* L) {
             return 0;
         }},
                 {"GetNumGossipAvailableQuests", [](lua_State* L) -> int {
-            auto* gh = getGameHandler(L);
-            if (!gh) { return luaReturnZero(L); }
-            int count = 0;
-            for (const auto& q : gh->getCurrentGossip().quests)
-                if (q.questIcon != 4) ++count; // 4 = active/in-progress
-            lua_pushnumber(L, count);
+            lua_pushnumber(L, countGossipQuests(L, /*available=*/true));
             return 1;
         }},
                 {"GetNumGossipActiveQuests", [](lua_State* L) -> int {
-            auto* gh = getGameHandler(L);
-            if (!gh) { return luaReturnZero(L); }
-            int count = 0;
-            for (const auto& q : gh->getCurrentGossip().quests)
-                if (q.questIcon == 4) ++count;
-            lua_pushnumber(L, count);
+            lua_pushnumber(L, countGossipQuests(L, /*available=*/false));
             return 1;
         }},
                 {"CloseGossip", [](lua_State* L) -> int {
