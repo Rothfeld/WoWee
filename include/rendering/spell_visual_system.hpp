@@ -639,6 +639,13 @@ private:
         float remaining = 0.0f;  // seconds; inf for field-driven channels
     };
     std::unordered_map<uint32_t, ActiveChannelVisual> unitChannelVisuals_;
+    /// Active channel `(visualId, remaining)` tracked even when `ChannelKit == 0`
+    /// (e.g. SpellVisual 8377 Whirlwind 13736, 6044 Bladestorm 9632) so CastKit
+    /// and StateKit weapon trails cap to the channel duration and halt on
+    /// `MSG_CHANNEL_UPDATE(0)` without suppressing StateKit M2 effects.
+    std::unordered_map<uint32_t, ActiveChannelVisual> activeChannelTiming_;
+    [[nodiscard]] std::optional<float> activeChannelRemainingForVisual(
+        uint32_t attachInstanceId, uint32_t visualId) const;
     /// SpellChainEffects.dbc, TBC 2.4.3 173-byte records: dwords 0-38, then
     /// bytes Alpha, Red, Green, Blue, BlendMode at +156, Combo string +161,
     /// RenderLayer +165, TextureLength float +169 (not read).

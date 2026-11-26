@@ -68,15 +68,50 @@ struct ActiveUnitWeaponTrail {
     std::vector<WeaponTrailChannel> channels;
 };
 
-/// Native TBC 2.4.3 CWeaponTrail fade time constant (Wow.exe 0x8d0df0 = 300.0 ms).
+/// Exponential head-alpha decay time constant (300 ms) over the second half of
+/// a CharProc == 8 weapon trail's active duration.
 inline constexpr float kWeaponTrailFadeTauSec = 0.300f;
 
-/// Step the active weapon trail head alpha matching native TBC 2.4.3
-/// CWeaponTrail::UpdateAndRender (0x6d3c40..0x6d3d6f): holds full alpha until
-/// half duration (`elapsedSec <= durationSec * 0.5f`), then decays headAlpha
-/// exponentially with tau = 300 ms (minimum 1/255 step) and terminates once
-/// headAlpha drops below 1/255 so post-Whirlwind swings/movement do not emit
-/// full-opacity broad trails.
+/// Render RGB color for a CharProc == 8 weapon swing trail strip.
+/// Side-by-side pixel measurements against native TBC 2.4.3 across dirt, snow,
+/// and salt terrains (Whirlwind kits 369/370, Charge kit 44) give
+/// `fg / bg == (1 - alpha)` identically across R, G, and B: native renders the
+/// ribbon as a subtle translucent black motion-blur shadow (`SrcRGB = (0,0,0)`)
+/// modulated by `edge.alpha`, never an unlit neon RGB polygon.
+[[nodiscard]] constexpr glm::vec3 weaponTrailRenderColor(const WeaponTrailSpec& /*spec*/) noexcept {
+    return glm::vec3(0.0f, 0.0f, 0.0f);
+}
+
+/// True when an attached weapon is eligible to emit a SpellVisualKit
+/// CharProc == 8 swing trail on native TBC 2.4.3:
+/// 1. Player-equipped melee weapon (`!unitLatchesWeaponsOnAnim`; creature
+///    virtual weapons on ObjectType::UNIT never emit CharProc == 8 trails,
+///    e.g. Rend Blackhand 10429, Illidan 22917, Leotheras 21215, Cabal
+///    Executioner 18632).
+/// 2. Hand-held melee slot (`attachmentId` 1 or 2, `weaponHeldSheathState == 1`).
+/// 3. Currently drawn in hand (`!weaponCurrentlySheathed`, including temporary
+///    WeaponFlags 0x20 animation draws such as Whirlwind 126 on a sheathed
+///    player; once a 0x20 animation ends on a sheathed player, the weapon
+///    returns to its sheath point and stops emitting).
+/// 4. Weapon M2 authors both `$WTB` (base) and `$WTT` (tip) event anchors.
+[[nodiscard]] constexpr bool canEmitWeaponTrail(
+    bool unitLatchesWeaponsOnAnim,
+    uint32_t attachmentId,
+    int8_t weaponHeldSheathState,
+    bool weaponCurrentlySheathed,
+    bool hasTrailBaseAndTipAnchors) noexcept {
+    if (unitLatchesWeaponsOnAnim) return false;
+    if (attachmentId != 1u && attachmentId != 2u) return false;
+    if (weaponHeldSheathState != 1) return false;
+    if (weaponCurrentlySheathed) return false;
+    return hasTrailBaseAndTipAnchors;
+}
+
+/// Step the active weapon trail head alpha matching native TBC 2.4.3: holds
+/// full alpha until half duration (`elapsedSec <= durationSec * 0.5f`), then
+/// decays headAlpha exponentially with tau = 300 ms (minimum 1/255 step) and
+/// terminates once headAlpha drops below 1/255 so post-Whirlwind swings and
+/// movement do not emit full-opacity broad trails.
 [[nodiscard]] float stepWeaponTrailHeadAlpha(float currentHeadAlpha,
                                              float elapsedSec,
                                              float durationSec,

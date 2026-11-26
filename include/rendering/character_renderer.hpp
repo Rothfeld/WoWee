@@ -511,6 +511,9 @@ public:
         bool sequenceChanged = false;
         std::vector<DrawnWeaponSpan> spans;
     };
+    /// True when `charInstanceId` is a player unit eligible for SpellVisualKit
+    /// CharProc == 8 weapon swing trails (creatures with virtual weapons never emit).
+    [[nodiscard]] bool isPlayerWeaponTrailUnit(uint32_t charInstanceId) const;
     /// Returns world-space blade spans for all visible, drawn melee weapons
     /// currently held by charInstanceId (main-hand and/or off-hand).
     std::vector<DrawnWeaponSpan> getDrawnMeleeWeaponSpans(uint32_t charInstanceId) const;

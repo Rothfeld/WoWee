@@ -3405,29 +3405,36 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos,
         }
     }
 }
+bool CharacterRenderer::isPlayerWeaponTrailUnit(uint32_t charInstanceId) const {
+    const auto it = instances.find(charInstanceId);
+    if (it == instances.end()) return false;
+    return !it->second.latchWeaponsDrawnByAnimation;
+}
+
 std::vector<CharacterRenderer::DrawnWeaponSpan>
 CharacterRenderer::getDrawnMeleeWeaponSpans(uint32_t charInstanceId) const {
     std::vector<DrawnWeaponSpan> result;
     const auto it = instances.find(charInstanceId);
     if (it == instances.end()) return result;
     const auto& inst = it->second;
-    if (!inst.visible || inst.replaced || inst.roomHidden) return result;
+    if (!inst.visible || inst.replaced || inst.roomHidden || inst.latchWeaponsDrawnByAnimation) {
+        return result;
+    }
     for (const auto& wa : inst.weaponAttachments) {
-        // Only hand-held melee weapons (attachment 1=RightHand, 2=LeftHand;
-        // exclude ranged weapons heldSheathState==2, shields attachment 0,
-        // helms/shoulders).
-        if (wa.attachmentId != 1 && wa.attachmentId != 2) continue;
-        if (wa.heldSheathState == 2) continue;
-        if (weaponSheathed(inst, wa)) continue;
+        const bool sheathed = weaponSheathed(inst, wa);
         const auto weapIt = instances.find(wa.weaponInstanceId);
         if (weapIt == instances.end()) continue;
         const auto& weap = weapIt->second;
         if (!weap.visible || !weap.hasOverrideModelMatrix) continue;
         const auto modelIt = models.find(weap.modelId);
         if (modelIt == models.end()) continue;
-        // Native TBC 2.4.3 (0x6d3e7a..0x6d3ff4) emits CharProc == 8 trails only
-        // on weapon M2s that author both $WTB (base) and $WTT (tip) events.
-        if (!modelIt->second.data.weaponTrailBase || !modelIt->second.data.weaponTrailTip) continue;
+        const bool hasTrailAnchors =
+            modelIt->second.data.weaponTrailBase.has_value() &&
+            modelIt->second.data.weaponTrailTip.has_value();
+        if (!canEmitWeaponTrail(inst.latchWeaponsDrawnByAnimation, wa.attachmentId,
+                                wa.heldSheathState, sheathed, hasTrailAnchors)) {
+            continue;
+        }
         const glm::vec3 baseLocal = modelIt->second.data.weaponTrailBase->position;
         const glm::vec3 tipLocal = modelIt->second.data.weaponTrailTip->position;
         const glm::vec3 baseWorld = glm::vec3(weap.overrideModelMatrix * glm::vec4(baseLocal, 1.0f));
@@ -3475,14 +3482,18 @@ CharacterRenderer::getDrawnMeleeWeaponSpansSubstepped(
     };
     std::vector<ActiveWeaponInfo> activeWeapons;
     for (const auto& wa : inst.weaponAttachments) {
-        if (wa.attachmentId != 1 && wa.attachmentId != 2) continue;
-        if (wa.heldSheathState == 2) continue;
-        if (weaponSheathed(inst, wa)) continue;
+        const bool sheathed = weaponSheathed(inst, wa);
         const auto weapIt = instances.find(wa.weaponInstanceId);
         if (weapIt == instances.end() || !weapIt->second.visible || !weapIt->second.hasOverrideModelMatrix) continue;
         const auto modelIt = models.find(weapIt->second.modelId);
         if (modelIt == models.end()) continue;
-        if (!modelIt->second.data.weaponTrailBase || !modelIt->second.data.weaponTrailTip) continue;
+        const bool hasTrailAnchors =
+            modelIt->second.data.weaponTrailBase.has_value() &&
+            modelIt->second.data.weaponTrailTip.has_value();
+        if (!canEmitWeaponTrail(inst.latchWeaponsDrawnByAnimation, wa.attachmentId,
+                                wa.heldSheathState, sheathed, hasTrailAnchors)) {
+            continue;
+        }
         ActiveWeaponInfo info;
         info.wa = &wa;
         info.baseLocal = modelIt->second.data.weaponTrailBase->position;

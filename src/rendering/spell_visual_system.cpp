@@ -1051,7 +1051,11 @@ void SpellVisualSystem::playSpellVisual(uint32_t visualId, const glm::vec3& worl
     playKitShake(kit->second, worldPosition);
     startKitOpacityFade(kit->second, attachInstanceId);
     spawnKitEffects(kit->second, worldPosition, attachInstanceId, -1.0f, KitStage::Cast, 0u, deathPersistent);
-    startKitWeaponTrail(kit->second, attachInstanceId);
+    if (const auto chanRem = activeChannelRemainingForVisual(attachInstanceId, visualId)) {
+        startKitWeaponTrail(kit->second, attachInstanceId, /*fromChannel=*/true, *chanRem);
+    } else {
+        startKitWeaponTrail(kit->second, attachInstanceId);
+    }
 }
 
 uint32_t SpellVisualSystem::kitAnimation(const std::unordered_map<uint32_t, uint32_t>& kits,
@@ -1146,16 +1150,34 @@ bool SpellVisualSystem::hasTargetImpactKit(uint32_t visualId) {
     return check(impactKits_) || check(targetImpactKits_);
 }
 
+std::optional<float> SpellVisualSystem::activeChannelRemainingForVisual(
+    uint32_t attachInstanceId, uint32_t visualId) const {
+    if (!attachInstanceId || !visualId) return std::nullopt;
+    const auto it = activeChannelTiming_.find(attachInstanceId);
+    if (it != activeChannelTiming_.end() && it->second.visualId == visualId) {
+        return it->second.remaining;
+    }
+    return std::nullopt;
+}
+
 void SpellVisualSystem::startChannelVisual(uint32_t visualId, const glm::vec3& position,
                                           uint32_t durationMs, uint32_t attachInstanceId) {
     if (!attachInstanceId) return;
     if (!spellVisualDbcLoaded_) loadSpellVisualDbc();
+    const float remaining = channelDurationSeconds(durationMs);
     const auto kit = channelKits_.find(visualId);
     if (kit == channelKits_.end() || !kit->second) {
         stopChannelVisualImmediate(attachInstanceId);
+        activeChannelTiming_[attachInstanceId] = {visualId, remaining};
+        for (auto& trail : activeWeaponTrails_) {
+            if (trail.ownerInstanceId == attachInstanceId) {
+                trail.fromChannel = true;
+                trail.spec.durationSec =
+                    resolveChannelWeaponTrailDuration(trail.spec.durationSec, remaining);
+            }
+        }
         return;
     }
-    const float remaining = channelDurationSeconds(durationMs);
     if (const auto existing = unitChannelVisuals_.find(attachInstanceId);
         existing != unitChannelVisuals_.end() && existing->second.visualId == visualId) {
         const bool expectsEffects = m2Renderer_ && kitEffects_.find(kit->second) != kitEffects_.end();
@@ -1168,6 +1190,7 @@ void SpellVisualSystem::startChannelVisual(uint32_t visualId, const glm::vec3& p
         }
         if (!expectsEffects || refreshedAnyEffect) {
             existing->second.remaining = remaining;
+            activeChannelTiming_[attachInstanceId] = {visualId, remaining};
             for (auto& trail : activeWeaponTrails_) {
                 if (trail.ownerInstanceId == attachInstanceId && trail.fromChannel) {
                     trail.spec.durationSec = trail.elapsed + remaining;
@@ -1189,6 +1212,7 @@ void SpellVisualSystem::startChannelVisual(uint32_t visualId, const glm::vec3& p
     }
     stopChannelVisualImmediate(attachInstanceId);
     unitChannelVisuals_[attachInstanceId] = {visualId, remaining};
+    activeChannelTiming_[attachInstanceId] = {visualId, remaining};
     suppressAuraVisual(attachInstanceId, visualId);
     startKitLight(kit->second, attachInstanceId);
     startKitWeaponTrail(kit->second, attachInstanceId, /*fromChannel=*/true, remaining);
@@ -1345,7 +1369,11 @@ bool SpellVisualSystem::syncAuraVisuals(uint32_t attachInstanceId,
             if (isAuraVisualSuppressed(attachInstanceId, visual)) continue;
             if (const auto kit = stateKits_.find(visual); kit != stateKits_.end() && kit->second) {
                 startKitLight(kit->second, attachInstanceId);
-                startKitWeaponTrail(kit->second, attachInstanceId, /*fromChannel=*/false, 0.0f, visual);
+                if (const auto chanRem = activeChannelRemainingForVisual(attachInstanceId, visual)) {
+                    startKitWeaponTrail(kit->second, attachInstanceId, /*fromChannel=*/true, *chanRem, visual);
+                } else {
+                    startKitWeaponTrail(kit->second, attachInstanceId, /*fromChannel=*/false, 0.0f, visual);
+                }
                 if (const uint32_t snd = playKitSound(kit->second, position, attachInstanceId, /*stoppable=*/true);
                     snd != 0) {
                     stopAuraSound(attachInstanceId, visual);
@@ -1588,6 +1616,7 @@ void SpellVisualSystem::stopChannelVisualImmediate(uint32_t attachInstanceId) {
     }
     stopChannelSound(attachInstanceId);
     stopChannelWeaponTrails(attachInstanceId);
+    activeChannelTiming_.erase(attachInstanceId);
     fieldChannels_.erase(attachInstanceId);
     heldChannelKits_.erase(attachInstanceId);
     if (const auto chan = unitChannelVisuals_.find(attachInstanceId);
@@ -1603,6 +1632,7 @@ void SpellVisualSystem::updateChannelVisual(uint32_t attachInstanceId, uint32_t 
     if (!remainingMs) {
         stopChannelSound(attachInstanceId);
         stopChannelWeaponTrails(attachInstanceId);
+        activeChannelTiming_.erase(attachInstanceId);
         auto* characters = renderer_ ? renderer_->getCharacterRenderer() : nullptr;
         if (!characters || !characters->hasInstance(attachInstanceId)) {
             stopChannelVisualImmediate(attachInstanceId);
@@ -1639,6 +1669,10 @@ void SpellVisualSystem::updateChannelVisual(uint32_t attachInstanceId, uint32_t 
     if (const auto chan = unitChannelVisuals_.find(attachInstanceId);
         chan != unitChannelVisuals_.end()) {
         chan->second.remaining = remainingSec;
+    }
+    if (const auto timing = activeChannelTiming_.find(attachInstanceId);
+        timing != activeChannelTiming_.end()) {
+        timing->second.remaining = remainingSec;
     }
 }
 
@@ -2030,7 +2064,11 @@ void SpellVisualSystem::playCastKit(uint32_t visualId, const glm::vec3& casterPo
     if (!m2Renderer_) return;
     playKitShake(kit->second, casterPosition);
     const float models = spawnKitEffects(kit->second, casterPosition, casterInstanceId, -1.0f, KitStage::Cast);
-    startKitWeaponTrail(kit->second, casterInstanceId);
+    if (const auto chanRem = activeChannelRemainingForVisual(casterInstanceId, visualId)) {
+        startKitWeaponTrail(kit->second, casterInstanceId, /*fromChannel=*/true, *chanRem);
+    } else {
+        startKitWeaponTrail(kit->second, casterInstanceId);
+    }
     const auto chainId = kitChainEffects_.find(kit->second);
     if (chainId == kitChainEffects_.end() || ends.empty()) return;
     const uint32_t chainEffectId = chainId->second.chainId;
@@ -2192,7 +2230,14 @@ void SpellVisualSystem::startKitWeaponTrail(uint32_t kitId, uint32_t attachInsta
     entry.fromChannel = fromChannel;
     entry.sourceAuraVisualId = sourceAuraVisualId;
 
-    if (auto* characters = renderer_ ? renderer_->getCharacterRenderer() : nullptr) {
+    auto* characters = renderer_ ? renderer_->getCharacterRenderer() : nullptr;
+    if (characters) {
+        if (!characters->isPlayerWeaponTrailUnit(attachInstanceId)) {
+            std::erase_if(activeWeaponTrails_, [&](const ActiveUnitWeaponTrail& t) {
+                return t.ownerInstanceId == attachInstanceId;
+            });
+            return;
+        }
         const auto spans = characters->getDrawnMeleeWeaponSpans(attachInstanceId);
         for (const auto& span : spans) {
             WeaponTrailChannel ch;
@@ -2207,6 +2252,15 @@ void SpellVisualSystem::startKitWeaponTrail(uint32_t kitId, uint32_t attachInsta
     auto existing = std::find_if(activeWeaponTrails_.begin(), activeWeaponTrails_.end(),
                                  [&](const ActiveUnitWeaponTrail& t) { return t.ownerInstanceId == attachInstanceId; });
     if (existing != activeWeaponTrails_.end()) {
+        for (auto& ch : entry.channels) {
+            for (auto& oldCh : existing->channels) {
+                if (oldCh.weaponInstanceId == ch.weaponInstanceId) {
+                    ch.edges = std::move(oldCh.edges);
+                    ch.sampleAccum = oldCh.sampleAccum;
+                    break;
+                }
+            }
+        }
         *existing = std::move(entry);
     } else {
         activeWeaponTrails_.push_back(std::move(entry));
@@ -2291,7 +2345,7 @@ void SpellVisualSystem::updateWeaponTrails(float deltaTime) {
             }
             if (chIt->edges.size() >= 2) {
                 M2Renderer::WeaponTrailStrip strip;
-                strip.color = it->spec.color;
+                strip.color = weaponTrailRenderColor(it->spec);
                 strip.edges.reserve(chIt->edges.size());
                 for (const auto& e : chIt->edges) {
                     strip.edges.push_back({e.base, e.tip, e.alpha});
@@ -2869,9 +2923,26 @@ void SpellVisualSystem::update(float deltaTime) {
             }
             ++it;
         }
+        for (auto it = activeChannelTiming_.begin(); it != activeChannelTiming_.end();) {
+            glm::vec3 position;
+            if (!characters->getInstancePosition(it->first, position)) {
+                it = activeChannelTiming_.erase(it);
+                continue;
+            }
+            if (std::isfinite(it->second.remaining)) {
+                it->second.remaining -= deltaTime;
+                if (it->second.remaining <= 0.0f) {
+                    it = activeChannelTiming_.erase(it);
+                    continue;
+                }
+            }
+            ++it;
+        }
     }
-    if (activeSpellVisuals_.empty() && physicalProjectiles_.empty() && spellMissiles_.empty())
+    if (activeSpellVisuals_.empty() && physicalProjectiles_.empty() && spellMissiles_.empty()) {
+        updateWeaponTrails(deltaTime);
         return;
+    }
 
     // Collected first: the impact spawns into activeSpellVisuals_, and a
     // missile's arrival is the moment its impact/resist kit belongs to.
@@ -3291,6 +3362,7 @@ void SpellVisualSystem::removeCasterStages(uint32_t attachInstanceId) {
         fieldChannels_.erase(attachInstanceId);
         heldChannelKits_.erase(attachInstanceId);
         unitChannelVisuals_.erase(attachInstanceId);
+        activeChannelTiming_.erase(attachInstanceId);
         return;
     }
     for (auto it = activeSpellVisuals_.begin(); it != activeSpellVisuals_.end();) {
@@ -3311,11 +3383,15 @@ void SpellVisualSystem::removeCasterStages(uint32_t attachInstanceId) {
     });
     fieldChannels_.erase(attachInstanceId);
     heldChannelKits_.erase(attachInstanceId);
+    activeChannelTiming_.erase(attachInstanceId);
     if (unitChannelVisuals_.erase(attachInstanceId))
         applyCharacterProcedures(attachInstanceId);
-    std::erase_if(activeWeaponTrails_, [&](const ActiveUnitWeaponTrail& trail) {
+    const size_t erasedTrails = std::erase_if(activeWeaponTrails_, [&](const ActiveUnitWeaponTrail& trail) {
         return trail.ownerInstanceId == attachInstanceId;
     });
+    if (erasedTrails > 0 && activeWeaponTrails_.empty()) {
+        m2Renderer_->setWeaponTrailStrips({});
+    }
 }
 
 void SpellVisualSystem::clearUnitKitLight(uint32_t attachInstanceId) {
@@ -3435,6 +3511,11 @@ void SpellVisualSystem::transferUnitVisuals(uint32_t fromInstanceId, uint32_t to
         unitChannelVisuals_.erase(toInstanceId);
         unitChannelVisuals_.insert(std::move(node));
     }
+    if (auto node = activeChannelTiming_.extract(fromInstanceId)) {
+        node.key() = toInstanceId;
+        activeChannelTiming_.erase(toInstanceId);
+        activeChannelTiming_.insert(std::move(node));
+    }
     if (auto node = activePrecastSounds_.extract(fromInstanceId)) {
         stopPrecastSound(toInstanceId);
         node.key() = toInstanceId;
@@ -3510,6 +3591,7 @@ void SpellVisualSystem::reset() {
     suppressedAuraVisuals_.clear();
     syncedAuraInstances_.clear();
     unitChannelVisuals_.clear();
+    activeChannelTiming_.clear();
     recentUnitImpacts_.clear();
     beams_.clear();
     hopBeams_.clear();

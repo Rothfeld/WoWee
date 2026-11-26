@@ -345,3 +345,140 @@ TEST_CASE("stepWeaponTrailHeadAlpha holds full alpha until half duration then de
     REQUIRE(ch.edges.size() == 1);
     CHECK(ch.edges.back().alpha == Approx(0.10f));
 }
+
+TEST_CASE("weaponTrailRenderColor produces translucent black motion-blur shadow matching native TBC 2.4.3",
+          "[weapon_trail][color]") {
+    // Native TBC 2.4.3 pixel regression across dirt, snow, and salt terrains
+    // gives fg/bg == (1 - alpha) across R, G, and B (SrcRGB = (0,0,0)), even
+    // when CharParamZero encodes 0xF71717 (kit 369), 0xFB8713 (kit 370), or
+    // 0xDB0B10 (kit 44).
+    const auto wwCast = *parseWeaponTrailCharProc(static_cast<float>(0xF71717u), 20.0f, 2000.0f, 100.0f);
+    const auto wwState = *parseWeaponTrailCharProc(static_cast<float>(0xFB8713u), 20.0f, 10000.0f, 100.0f);
+    const auto charge = *parseWeaponTrailCharProc(static_cast<float>(0xDB0B10u), 20.0f, 1000.0f, 100.0f);
+
+    for (const auto& spec : {wwCast, wwState, charge}) {
+        const glm::vec3 rc = weaponTrailRenderColor(spec);
+        CHECK(rc.r == Approx(0.0f));
+        CHECK(rc.g == Approx(0.0f));
+        CHECK(rc.b == Approx(0.0f));
+    }
+
+    // Alpha-blending SrcRGB=(0,0,0) at 1 tick decayed from 100/255 (80/255)
+    // reproduces Goldshire dirt ratio ~0.69 across all three channels.
+    const glm::vec3 bgDirt{58.78f, 46.20f, 22.09f};
+    const float alphaAfterOneTick = (100.0f - 20.0f) / 255.0f;
+    const glm::vec3 composited = weaponTrailRenderColor(wwCast) * alphaAfterOneTick +
+                                 bgDirt * (1.0f - alphaAfterOneTick);
+    CHECK((composited.r / bgDirt.r) == Approx(1.0f - alphaAfterOneTick));
+    CHECK((composited.g / bgDirt.g) == Approx(1.0f - alphaAfterOneTick));
+    CHECK((composited.b / bgDirt.b) == Approx(1.0f - alphaAfterOneTick));
+}
+
+TEST_CASE("canEmitWeaponTrail gates CharProc 8 trails to player drawn melee weapons with anchors",
+          "[weapon_trail][sheath]") {
+    // Player with drawn main-hand or off-hand melee weapon authoring $WTB/$WTT
+    // (including temporary WeaponFlags 0x20 draw during Whirlwind 126) -> emits
+    CHECK(canEmitWeaponTrail(/*unitLatchesWeaponsOnAnim=*/false,
+                             /*attachmentId=*/1u, /*weaponHeldSheathState=*/1,
+                             /*weaponCurrentlySheathed=*/false,
+                             /*hasTrailBaseAndTipAnchors=*/true));
+    CHECK(canEmitWeaponTrail(/*unitLatchesWeaponsOnAnim=*/false,
+                             /*attachmentId=*/2u, /*weaponHeldSheathState=*/1,
+                             /*weaponCurrentlySheathed=*/false,
+                             /*hasTrailBaseAndTipAnchors=*/true));
+
+    // Creature virtual weapons (Rend Blackhand 10429, Illidan 22917, Leotheras 21215,
+    // Cabal Executioner 18632: unitLatchesWeaponsOnAnim == true) -> never emit
+    CHECK_FALSE(canEmitWeaponTrail(/*unitLatchesWeaponsOnAnim=*/true,
+                                   /*attachmentId=*/1u, /*weaponHeldSheathState=*/1,
+                                   /*weaponCurrentlySheathed=*/false,
+                                   /*hasTrailBaseAndTipAnchors=*/true));
+    CHECK_FALSE(canEmitWeaponTrail(/*unitLatchesWeaponsOnAnim=*/true,
+                                   /*attachmentId=*/2u, /*weaponHeldSheathState=*/1,
+                                   /*weaponCurrentlySheathed=*/false,
+                                   /*hasTrailBaseAndTipAnchors=*/true));
+
+    // Sheathed weapon (e.g. after 0x20 animation ends on a sheathed player, or
+    // during pose/gesture/standState sheathing), shield/ranged attachments, or
+    // missing $WTB/$WTT -> never emit
+    CHECK_FALSE(canEmitWeaponTrail(false, 1u, 1, /*weaponCurrentlySheathed=*/true, true));
+    CHECK_FALSE(canEmitWeaponTrail(false, 0u, 1, false, true));
+    CHECK_FALSE(canEmitWeaponTrail(false, 2u, 2, false, true));
+    CHECK_FALSE(canEmitWeaponTrail(false, 1u, 1, false, /*hasTrailBaseAndTipAnchors=*/false));
+}
+
+TEST_CASE("Channeled SpellVisuals with ChannelKit == 0 and StateKit CharProc 8 cap StateKit duration",
+          "[weapon_trail][tbc_data][channel]") {
+    const char* envDir = std::getenv("WOWEE_TBC_DATA_DIR");
+    const std::filesystem::path tbcDir = envDir
+        ? std::filesystem::path(envDir)
+        : std::filesystem::path("/workspace/azerothcore/client/wowee-data/expansions/tbc");
+    const auto kitDbcPath = tbcDir / "dbfilesclient/spellvisualkit.dbc";
+    const auto visDbcPath = tbcDir / "dbfilesclient/spellvisual.dbc";
+    const auto spellDbcPath = tbcDir / "dbfilesclient/spell.dbc";
+    const auto layoutPath = tbcDir / "dbc_layouts.json";
+    if (!std::filesystem::exists(kitDbcPath) || !std::filesystem::exists(visDbcPath) ||
+        !std::filesystem::exists(spellDbcPath) || !std::filesystem::exists(layoutPath)) {
+        SKIP("TBC data directory unavailable");
+    }
+
+    wowee::pipeline::DBCLayout layout;
+    REQUIRE(layout.loadFromJson(layoutPath.string()));
+    const auto* kitLayout = layout.getLayout("SpellVisualKit");
+    const auto* visLayout = layout.getLayout("SpellVisual");
+    const auto* spellLayout = layout.getLayout("Spell");
+    REQUIRE(kitLayout != nullptr);
+    REQUIRE(visLayout != nullptr);
+    REQUIRE(spellLayout != nullptr);
+
+    wowee::pipeline::DBCFile kitDbc, visDbc, spellDbc;
+    REQUIRE(kitDbc.load(readFileBytes(kitDbcPath)));
+    REQUIRE(visDbc.load(readFileBytes(visDbcPath)));
+    REQUIRE(spellDbc.load(readFileBytes(spellDbcPath)));
+
+    std::unordered_map<uint32_t, WeaponTrailSpec> kitSpecs;
+    for (uint32_t i = 0; i < kitDbc.getRecordCount(); ++i) {
+        const uint32_t kitId = kitDbc.getUInt32(i, 0);
+        if (!kitId) continue;
+        for (int k = 0; k < 4; ++k) {
+            if (kitDbc.getUInt32(i, kitLayout->field("CharProc" + std::to_string(k))) == 8u) {
+                const auto spec = parseWeaponTrailCharProc(
+                    kitDbc.getFloat(i, kitLayout->field("CharParamZero" + std::to_string(k))),
+                    kitDbc.getFloat(i, kitLayout->field("CharParamOne" + std::to_string(k))),
+                    kitDbc.getFloat(i, kitLayout->field("CharParamTwo" + std::to_string(k))),
+                    kitDbc.getFloat(i, kitLayout->field("CharParamThree" + std::to_string(k))));
+                if (spec) kitSpecs[kitId] = *spec;
+            }
+        }
+    }
+
+    // Spell 13736 (Whirlwind) -> SpellVisual 8377: CastKit=369 (2s), StateKit=370 (10s), ChannelKit=0.
+    const int32_t spRec = spellDbc.findRecordById(13736);
+    REQUIRE(spRec >= 0);
+    const uint32_t visId = spellDbc.getUInt32(spRec, spellLayout->field("SpellVisualID"));
+    CHECK(visId == 8377u);
+
+    const int32_t visRec = visDbc.findRecordById(visId);
+    REQUIRE(visRec >= 0);
+    const uint32_t castKit = visDbc.getUInt32(visRec, visLayout->field("CastKit"));
+    const uint32_t stateKit = visDbc.getUInt32(visRec, visLayout->field("StateKit"));
+    const uint32_t chanKit = visDbc.getUInt32(visRec, visLayout->field("ChannelKit"));
+    CHECK(castKit == 369u);
+    CHECK(stateKit == 370u);
+    CHECK(chanKit == 0u);
+
+    REQUIRE(kitSpecs.count(stateKit) == 1);
+    CHECK(kitSpecs.at(stateKit).durationSec == Approx(10.0f));
+
+    // Capping StateKit 370 (10s) to the 2.0s channel duration causes headAlpha to
+    // begin decaying at 1.0s and terminate before 2.0s instead of lingering 10s.
+    const float cappedDur = resolveChannelWeaponTrailDuration(kitSpecs.at(stateKit).durationSec, 2.0f);
+    CHECK(cappedDur == Approx(2.0f));
+    float headAlpha = kitSpecs.at(stateKit).alpha;
+    float elapsed = 0.0f;
+    while (elapsed < 1.90f) {
+        elapsed += 1.0f / 60.0f;
+        headAlpha = stepWeaponTrailHeadAlpha(headAlpha, elapsed, cappedDur, 1.0f / 60.0f);
+    }
+    CHECK(headAlpha == 0.0f);
+}

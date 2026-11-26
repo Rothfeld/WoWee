@@ -145,9 +145,9 @@ float stepWeaponTrailHeadAlpha(float currentHeadAlpha,
     if (elapsedSec <= durationSec * 0.5f || dt <= 0.0f) {
         return currentHeadAlpha;
     }
-    // Native TBC 2.4.3 (0x6d3c40..0x6d3d6f): after elapsedMs > durationMs / 2,
-    // headAlpha decays by max(1, round(headAlpha * dtMs / 300.0)) each tick
-    // and terminates once headAlpha / alphaStep <= 1.
+    // Past half duration (`elapsedSec > durationSec * 0.5f`), headAlpha decays
+    // exponentially with tau = 300 ms (at least 1/255 per 60 Hz tick) and
+    // terminates once it reaches <= 1/255.
     constexpr float kMinByteAlpha = 1.0f / 255.0f;
     const float decayed = currentHeadAlpha * std::exp(-dt / kWeaponTrailFadeTauSec);
     // Enforce the native >= 1/255 per-tick floor (at 60 Hz equivalent) so low
