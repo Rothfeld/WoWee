@@ -1023,6 +1023,9 @@ public:
     void clearPetitionSignaturesUI();
     void signPetition(uint64_t petitionGuid);
     void turnInPetition(uint64_t petitionGuid);
+    void turnInArenaPetition(uint64_t petitionGuid, uint32_t backgroundColor,
+                             uint32_t iconStyle, uint32_t iconColor,
+                             uint32_t borderStyle, uint32_t borderColor);
     void offerPetition(uint64_t petitionGuid, uint64_t targetGuid);
 
     // Guild name lookup for other players' nameplates

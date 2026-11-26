@@ -142,11 +142,7 @@ public:
     static constexpr float kStartPitch = -5.0f;
     [[nodiscard]] bool hasEnteredWorld() const { return enteredWorld_; }
     void markEnteredWorld() { enteredWorld_ = true; }
-    void setDefaultSpawn(const glm::vec3& position, float yawDeg, float pitchDeg) {
-        defaultPosition = position;
-        defaultYaw = yawDeg;
-        defaultPitch = pitchDeg;
-    }
+    void setDefaultSpawn(const glm::vec3& position, float yawDeg, float pitchDeg);
 
     void reset();
     void resetAngles();
@@ -400,7 +396,7 @@ public:
         serverDrivenSpeed_ = (controlled && moving) ? speed : 0.0f;
     }
     [[nodiscard]] bool isServerControlled() const { return serverControlled_; }
-    void setFacingYaw(float yaw) { facingYaw = yaw; }  // For taxi/scripted movement
+    void setFacingYaw(float newFacing);  // For taxi/scripted/teleport facing updates
     void addCameraYaw(float deltaDeg) { yaw += deltaDeg; }
     /// Rotate both camera orbit yaw and character facing yaw in lockstep with a
     /// turning transport (build 8606 stores passenger camera & facing yaw in
@@ -613,6 +609,12 @@ private:
     float pitch = -30.0f;
     float facingYaw = 180.0f;  // Character-facing yaw (can differ from camera yaw)
     float travelYaw_ = 180.0f; // Heading of actual movement vector (see getTravelYaw)
+    // Build 8606 preserves the character-relative horizontal orbit angle
+    // (yaw - facingYaw) across both same-map (MSG_MOVE_TELEPORT_ACK) and
+    // cross-map (SMSG_NEW_WORLD) teleports.
+    float spawnOrbitYawOffsetDeg_ = 0.0f;
+    float teleportOrbitYawOffsetDeg_ = 0.0f;
+    bool preserveOrbitYawOnNextFacing_ = false;
     bool legsFollowTravel_ = false;
     std::optional<GroundDirection> airborneLegDir_;
     float targetLegYawOffsetRad_ = 0.0f;

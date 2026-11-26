@@ -3317,6 +3317,7 @@ void CameraController::updateFreeFlyCamera(float /*deltaTime*/, FrameInput& f) {
 }
 
 void CameraController::update(float deltaTime) {
+    preserveOrbitYawOnNextFacing_ = false;
     if (!enabled || !camera) {
         return;
     }
@@ -4171,9 +4172,29 @@ void CameraController::resetView(int view) {
 }
 
 void CameraController::applyScriptedViewMotion(const std::string& op, float value) {
+    if (op == "zoom_in") {
+        if (std::isfinite(value) && value > 0.0f) {
+            processMouseWheel(value);
+        }
+        return;
+    }
+    if (op == "zoom_out") {
+        if (std::isfinite(value) && value > 0.0f) {
+            processMouseWheel(-value);
+        }
+        return;
+    }
     if (scriptedView_.apply(op, value, yaw) && camera) {
         camera->setRotation(yaw, pitch);
     }
+}
+
+void CameraController::setDefaultSpawn(const glm::vec3& position, float yawDeg, float pitchDeg) {
+    spawnOrbitYawOffsetDeg_ =
+        enteredWorld_ ? std::remainder(yaw - facingYaw, 360.0f) : 0.0f;
+    defaultPosition = position;
+    defaultYaw = yawDeg;
+    defaultPitch = pitchDeg;
 }
 
 void CameraController::advanceScriptedViewMotion(float deltaTime) {
@@ -4190,6 +4211,7 @@ void CameraController::advanceScriptedViewMotion(float deltaTime) {
 }
 
 void CameraController::resetAngles() {
+    preserveOrbitYawOnNextFacing_ = false;
     floorContactPitch_.reset();
     if (!camera) return;
     yaw = defaultYaw;
@@ -4199,6 +4221,7 @@ void CameraController::resetAngles() {
 }
 
 void CameraController::reset() {
+    preserveOrbitYawOnNextFacing_ = false;
     waterJumpAirborne_ = false;
     floorContactPitch_.reset();
     dbcShakeState_.clear();
@@ -4210,8 +4233,9 @@ void CameraController::reset() {
         return;
     }
 
-    yaw = defaultYaw;
+    yaw = defaultYaw + spawnOrbitYawOffsetDeg_;
     facingYaw = defaultYaw;
+    travelYaw_ = defaultYaw;
     pitch = defaultPitch;
     verticalVelocity = 0.0f;
     grounded = true;
@@ -4441,6 +4465,8 @@ void CameraController::reset() {
 }
 
 void CameraController::teleportTo(const glm::vec3& pos) {
+    teleportOrbitYawOffsetDeg_ = std::remainder(yaw - facingYaw, 360.0f);
+    preserveOrbitYawOnNextFacing_ = true;
     waterJumpAirborne_ = false;
     floorContactPitch_.reset();
     if (!camera) return;
@@ -4539,7 +4565,31 @@ void CameraController::applyTransportYawDelta(float deltaYawDeg) {
     }
 }
 
+void CameraController::setFacingYaw(float newFacing) {
+    facingYaw = newFacing;
+    if (!preserveOrbitYawOnNextFacing_) {
+        return;
+    }
+    preserveOrbitYawOnNextFacing_ = false;
+    yaw = newFacing + teleportOrbitYawOffsetDeg_;
+    travelYaw_ = newFacing;
+    if (!camera) {
+        return;
+    }
+    camera->setRotation(yaw, pitch);
+    if (thirdPerson && followTarget) {
+        const glm::vec3 forward3D = camera->getForward();
+        const float mountedOffset = mounted_ ? mountHeightOffset_ : 0.0f;
+        const glm::vec3 pivot =
+            *followTarget + glm::vec3(0.0f, 0.0f, followedPivotHeight() + mountedOffset);
+        const glm::vec3 camPos = pivot - forward3D * currentDistance;
+        smoothedCamPos = camPos;
+        camera->setPosition(camPos);
+    }
+}
+
 void CameraController::setCameraAndFacingYaw(float cameraYawDeg, float characterFacingYawDeg) {
+    preserveOrbitYawOnNextFacing_ = false;
     if (!std::isfinite(cameraYawDeg) || !std::isfinite(characterFacingYawDeg)) return;
     yaw = cameraYawDeg;
     facingYaw = characterFacingYawDeg;
@@ -4629,6 +4679,7 @@ bool CameraController::isMoving() const {
 }
 
 void CameraController::clearMovementInputs() {
+    preserveOrbitYawOnNextFacing_ = false;
     moveForwardActive = false;
     moveBackwardActive = false;
     strafeLeftActive = false;

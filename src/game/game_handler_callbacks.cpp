@@ -3338,6 +3338,15 @@ void GameHandler::turnInPetition(uint64_t petitionGuid) {
     if (socialHandler_) socialHandler_->turnInPetition(petitionGuid);
 }
 
+void GameHandler::turnInArenaPetition(uint64_t petitionGuid, uint32_t backgroundColor,
+                                      uint32_t iconStyle, uint32_t iconColor,
+                                      uint32_t borderStyle, uint32_t borderColor) {
+    if (socialHandler_) {
+        socialHandler_->turnInArenaPetition(petitionGuid, backgroundColor, iconStyle,
+                                            iconColor, borderStyle, borderColor);
+    }
+}
+
 void GameHandler::offerPetition(uint64_t petitionGuid, uint64_t targetGuid) {
     if (socialHandler_) socialHandler_->offerPetition(petitionGuid, targetGuid);
 }

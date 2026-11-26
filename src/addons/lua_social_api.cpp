@@ -1467,18 +1467,69 @@ void registerSocialLuaAPI(lua_State* L) {
             lua_pushnumber(L, cost);
             return 3;
         }},
-                // TurnInArenaPetition(teamSize, r,g,b, icon, ...) - the banner
-                // designer's Accept.
+                // TurnInArenaPetition(teamSize, bgR, bgG, bgB, iconStyle,
+                //                     iconR, iconG, iconB, borderStyle,
+                //                     borderR, borderG, borderB)
                 //
-                // Every argument after the first is the tabard being drawn on
-                // screen, and the server reads none of them:
-                // HandleTurnInPetitionOpcode takes the petition's guid and
-                // nothing else. So the charter whose window is open is the
-                // whole of the request, and the colours are a client-side
-                // preview of a banner the server assigns itself.
+                // ArenaRegistrarFrame.lua:199 submits the team size (2, 3, 5)
+                // and banner design from PVPBannerFrame. Unlike guild charters
+                // (type 9, 8-byte GUID only), HandleTurnInPetitionOpcode reads
+                // five trailing uint32 fields (background, icon, iconColor,
+                // border, borderColor) for arena charters and calls SetEmblem.
                 {"TurnInArenaPetition", [](lua_State* L) -> int {
-            if (auto* gh = getGameHandler(L))
-                gh->turnInPetition(gh->getPetitionInfo().petitionGuid);
+            auto* gh = getGameHandler(L);
+            if (!gh) return 0;
+            const int teamSize = static_cast<int>(luaL_optnumber(L, 1, 0));
+            uint32_t charterItemId = 0;
+            if (teamSize == 2) charterItemId = 23560;
+            else if (teamSize == 3) charterItemId = 23561;
+            else if (teamSize == 5) charterItemId = 23562;
+
+            uint64_t petitionGuid = 0;
+            if (charterItemId != 0) {
+                const auto& inv = gh->getInventory();
+                for (int i = 0; i < inv.getBackpackSize() && petitionGuid == 0; ++i) {
+                    if (inv.getBackpackSlot(i).item.itemId == charterItemId) {
+                        petitionGuid = gh->getBackpackItemGuid(i);
+                    }
+                }
+                for (int b = 0; b < game::Inventory::NUM_BAG_SLOTS && petitionGuid == 0; ++b) {
+                    for (int sl = 0; sl < inv.getBagSize(b) && petitionGuid == 0; ++sl) {
+                        if (inv.getBagSlot(b, sl).item.itemId == charterItemId) {
+                            petitionGuid = gh->getBagItemGuid(b, sl);
+                        }
+                    }
+                }
+            }
+            if (petitionGuid == 0) {
+                petitionGuid = gh->getPetitionInfo().petitionGuid;
+            }
+            if (petitionGuid == 0) return 0;
+
+            auto packArgb = [](double r, double g, double b) -> uint32_t {
+                auto toByte = [](double c) -> uint32_t {
+                    if (!(c > 0.0)) return 0u;
+                    if (c >= 1.0) return 255u;
+                    return static_cast<uint32_t>(c * 255.0 + 0.5);
+                };
+                return 0xFF000000u | (toByte(r) << 16) | (toByte(g) << 8) | toByte(b);
+            };
+            const uint32_t bgColor = packArgb(luaL_optnumber(L, 2, 0.0),
+                                              luaL_optnumber(L, 3, 0.0),
+                                              luaL_optnumber(L, 4, 0.0));
+            const uint32_t iconStyle =
+                static_cast<uint32_t>(static_cast<int32_t>(luaL_optnumber(L, 5, 0.0)));
+            const uint32_t iconColor = packArgb(luaL_optnumber(L, 6, 0.0),
+                                                luaL_optnumber(L, 7, 0.0),
+                                                luaL_optnumber(L, 8, 0.0));
+            const uint32_t borderStyle =
+                static_cast<uint32_t>(static_cast<int32_t>(luaL_optnumber(L, 9, 0.0)));
+            const uint32_t borderColor = packArgb(luaL_optnumber(L, 10, 0.0),
+                                                  luaL_optnumber(L, 11, 0.0),
+                                                  luaL_optnumber(L, 12, 0.0));
+
+            gh->turnInArenaPetition(petitionGuid, bgColor, iconStyle, iconColor,
+                                    borderStyle, borderColor);
             return 0;
         }},
                 // --- The guild registrar ---

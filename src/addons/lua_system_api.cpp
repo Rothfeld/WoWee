@@ -1522,6 +1522,20 @@ static int lua_FlipCameraYaw(lua_State* L) {
     }
     return 0;
 }
+static int lua_CameraZoomIn(lua_State* L) {
+    const float yards = static_cast<float>(luaL_optnumber(L, 1, 1.0));
+    if (auto* svc = getLuaServices(L); svc && svc->cameraMoveView && std::isfinite(yards) && yards > 0.0f) {
+        svc->cameraMoveView("zoom_in", yards);
+    }
+    return 0;
+}
+static int lua_CameraZoomOut(lua_State* L) {
+    const float yards = static_cast<float>(luaL_optnumber(L, 1, 1.0));
+    if (auto* svc = getLuaServices(L); svc && svc->cameraMoveView && std::isfinite(yards) && yards > 0.0f) {
+        svc->cameraMoveView("zoom_out", yards);
+    }
+    return 0;
+}
 
 static int lua_GetCVar(lua_State* L) {
     const char* name = luaL_checkstring(L, 1);
@@ -8026,6 +8040,8 @@ void registerSystemLuaAPI(lua_State* L) {
                 {"MoveViewOutStart",    lua_MoveViewOutStart},
                 {"MoveViewOutStop",     lua_MoveViewOutStop},
                 {"FlipCameraYaw",       lua_FlipCameraYaw},
+                {"CameraZoomIn",        lua_CameraZoomIn},
+                {"CameraZoomOut",       lua_CameraZoomOut},
                 {"GetCVarBool",         lua_GetCVarBool},
                 {"ShowNameplates", [](lua_State* L) -> int {
             lua_settop(L, 0); lua_pushstring(L, "nameplateShowEnemies"); lua_pushstring(L, "1"); return lua_SetCVar(L);

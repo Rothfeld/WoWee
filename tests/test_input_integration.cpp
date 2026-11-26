@@ -7574,3 +7574,165 @@ TEST_CASE_METHOD(Integration, "Peace-forced faction keeps standing reaction inst
 
     lua.setGameHandler(nullptr);
 }
+
+TEST_CASE_METHOD(Integration,
+                 "TurnInArenaPetition serializes 28-byte TBC arena emblem payload while TurnInGuildCharter stays 8-byte",
+                 "[petition][arena][tbc]") {
+    using namespace wowee::game;
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    lua.setGameHandler(&handler);
+
+    // Put a Guild Charter (5863) in slot 0, 2v2 charter (23560) in slot 1, and 5v5 charter (23562) in slot 2.
+    ItemDef guildCharter{};
+    guildCharter.itemId = 5863;
+    guildCharter.stackCount = 1;
+    handler.inventoryRef().setBackpackSlot(0, guildCharter);
+    handler.backpackSlotGuidsRef()[0] = 0x4000000000001001ULL;
+
+    ItemDef arena2v2{};
+    arena2v2.itemId = 23560;
+    arena2v2.stackCount = 1;
+    handler.inventoryRef().setBackpackSlot(1, arena2v2);
+    handler.backpackSlotGuidsRef()[1] = 0x4000000000002002ULL;
+
+    ItemDef arena5v5{};
+    arena5v5.itemId = 23562;
+    arena5v5.stackCount = 1;
+    handler.inventoryRef().setBackpackSlot(2, arena5v5);
+    handler.backpackSlotGuidsRef()[2] = 0x4000000000005005ULL;
+
+    // 1. ArenaRegistrarFrame.lua:199 signature:
+    // TurnInArenaPetition(teamSize, bgR, bgG, bgB, iconStyle, iconR, iconG, iconB, borderStyle, borderR, borderG, borderB)
+    run("TurnInArenaPetition(5, 1.0, 0.0, 0.5019608, 42, 0.2, 0.4, 0.8, 4, 0.0, 1.0, 0.0)");
+
+    auto sent = session.sent().of(Opcode::CMSG_TURN_IN_PETITION);
+    REQUIRE(sent.size() == 1);
+    auto pkt5 = sent[0];
+    REQUIRE(pkt5.getSize() == 28);
+    CHECK(pkt5.readUInt64() == 0x4000000000005005ULL);
+    CHECK(pkt5.readUInt32() == 0xFFFF0080u);  // background ARGB (255, 0, 128)
+    CHECK(pkt5.readUInt32() == 42u);          // iconStyle (1-based)
+    CHECK(pkt5.readUInt32() == 0xFF3366CCu);  // iconColor ARGB (51, 102, 204)
+    CHECK(pkt5.readUInt32() == 4u);           // borderStyle (1-based)
+    CHECK(pkt5.readUInt32() == 0xFF00FF00u);  // borderColor ARGB (0, 255, 0)
+    CHECK(pkt5.getRemainingSize() == 0);
+
+    // 2. Guild charter turn-in still emits an 8-byte CMSG_TURN_IN_PETITION with no trailing emblem fields.
+    run("TurnInGuildCharter()");
+    sent = session.sent().of(Opcode::CMSG_TURN_IN_PETITION);
+    REQUIRE(sent.size() == 2);
+    auto pktGuild = sent[1];
+    REQUIRE(pktGuild.getSize() == 8);
+    CHECK(pktGuild.readUInt64() == 0x4000000000001001ULL);
+    CHECK(pktGuild.getRemainingSize() == 0);
+
+    lua.setGameHandler(nullptr);
+}
+
+TEST_CASE_METHOD(Integration,
+                 "CameraZoomIn and CameraZoomOut Lua globals drive CameraController zoom smoothly",
+                 "[camera][lua]") {
+    rendering::Camera camera;
+    rendering::CameraController controller(&camera);
+    glm::vec3 followPos(0.0f);
+    controller.setIdleOrbitEnabled(false);
+    controller.setOnlineMode(true);
+    controller.setGravityDisabled(true);
+    controller.setFollowTarget(&followPos);
+    controller.setDefaultSpawn(followPos, 180.0f, -10.0f);
+    controller.reset();
+
+    addons::LuaServices svc;
+    svc.cameraMoveView = [&](const std::string& op, float value) {
+        controller.applyScriptedViewMotion(op, value);
+    };
+    lua.setLuaServices(svc);
+
+    const float baseDist = controller.zoomDistance();
+    REQUIRE(baseDist == Catch::Approx(5.55f));
+
+    // CameraZoomOut(6) followed immediately by CameraZoomIn(2) replaces opposite-direction
+    // pending zoom and moves 2 yards inward over subsequent frames (Bindings.xml CAMERAZOOMIN/OUT).
+    run("CameraZoomOut(6.0); CameraZoomIn(2.0)");
+    for (int i = 0; i < 60; ++i) {
+        controller.update(1.0f / 60.0f);
+    }
+    CHECK(controller.zoomDistance() < baseDist - 1.8f);
+
+    // CameraZoomOut(8.0) zooms outward smoothly to ~11.5 yards.
+    const float zoomedInDist = controller.zoomDistance();
+    run("CameraZoomOut(8.0)");
+    for (int i = 0; i < 90; ++i) {
+        controller.update(1.0f / 60.0f);
+    }
+    CHECK(controller.zoomDistance() > zoomedInDist + 7.5f);
+
+    lua.setLuaServices({});
+}
+
+TEST_CASE("CameraController preserves character-relative orbit yaw across same-map and cross-map teleports",
+          "[camera][teleport]") {
+    rendering::Camera camera;
+    rendering::CameraController controller(&camera);
+    glm::vec3 followPos(0.0f, 0.0f, 10.0f);
+    controller.setIdleOrbitEnabled(false);
+    controller.setOnlineMode(true);
+    controller.setGravityDisabled(true);
+    controller.setFollowTarget(&followPos);
+
+    // Initial world entry: camera aligns behind character (orbit offset = 0 deg).
+    controller.setDefaultSpawn(followPos, 180.0f, -10.0f);
+    controller.markEnteredWorld();
+    controller.reset();
+    CHECK(controller.getYaw() == Catch::Approx(180.0f));
+    CHECK(controller.getFacingYaw() == Catch::Approx(180.0f));
+
+    // 1. Same-map teleport (MSG_MOVE_TELEPORT_ACK: teleportTo -> arriveAirborneIfFlying -> setFacingYaw)
+    // from facing 180 deg to facing 0 deg (180-deg turnaround) keeps camera squarely behind back (0 deg),
+    // preventing stereo listener L/R inversion and side/front camera misalignment.
+    const glm::vec3 sameMapDest1(100.0f, 200.0f, 10.0f);
+    controller.teleportTo(sameMapDest1);
+    controller.arriveAirborneIfFlying();
+    controller.setFacingYaw(0.0f);
+    controller.clearMovementInputs();
+    CHECK(controller.getFacingYaw() == Catch::Approx(0.0f));
+    CHECK(controller.getYaw() == Catch::Approx(0.0f));
+    CHECK(camera.getForward().x > 0.9f);
+    CHECK(std::abs(camera.getForward().y) < 1e-4f);
+
+    // 2. Player orbits camera +90 deg via LMB/FlipCameraYaw(90) while character still faces 0 deg.
+    controller.applyScriptedViewMotion("flip_yaw", 90.0f);
+    CHECK(controller.getYaw() == Catch::Approx(90.0f));
+    CHECK(controller.getFacingYaw() == Catch::Approx(0.0f));
+
+    // Same-map teleport to new heading 45 deg preserves the +90 deg character-relative orbit (-> 135 deg).
+    const glm::vec3 sameMapDest2(300.0f, 400.0f, 10.0f);
+    controller.teleportTo(sameMapDest2);
+    controller.arriveAirborneIfFlying();
+    controller.setFacingYaw(45.0f);
+    controller.clearMovementInputs();
+    CHECK(controller.getFacingYaw() == Catch::Approx(45.0f));
+    CHECK(controller.getYaw() == Catch::Approx(135.0f));
+
+    // 3. Cross-map teleport (SMSG_NEW_WORLD: setDefaultSpawn -> markEnteredWorld -> reset)
+    // to new heading -30 deg also preserves the +90 deg character-relative orbit (-> +60 deg).
+    const glm::vec3 crossMapDest(-500.0f, 600.0f, 20.0f);
+    controller.setDefaultSpawn(crossMapDest, -30.0f, -10.0f);
+    controller.markEnteredWorld();
+    controller.reset();
+    CHECK(controller.getFacingYaw() == Catch::Approx(-30.0f));
+    CHECK(controller.getYaw() == Catch::Approx(60.0f));
+
+    // 4. Non-teleport NPC faceTarget / taxi setFacingYaw leaves world camera yaw untouched,
+    // and possession release (teleportTo -> clearMovementInputs -> setFacingYaw) keeps world yaw.
+    controller.setFacingYaw(120.0f);
+    CHECK(controller.getFacingYaw() == Catch::Approx(120.0f));
+    CHECK(controller.getYaw() == Catch::Approx(60.0f));
+
+    controller.teleportTo(crossMapDest);
+    controller.clearMovementInputs();
+    controller.setFacingYaw(-90.0f);
+    CHECK(controller.getFacingYaw() == Catch::Approx(-90.0f));
+    CHECK(controller.getYaw() == Catch::Approx(60.0f));
+}

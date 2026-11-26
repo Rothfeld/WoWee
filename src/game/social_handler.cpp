@@ -1972,6 +1972,24 @@ void SocialHandler::turnInPetition(uint64_t petitionGuid) {
     owner_.getSocket()->send(pkt);
 }
 
+void SocialHandler::turnInArenaPetition(uint64_t petitionGuid,
+                                        uint32_t backgroundColor,
+                                        uint32_t iconStyle,
+                                        uint32_t iconColor,
+                                        uint32_t borderStyle,
+                                        uint32_t borderColor) {
+    if (!owner_.getSocket() || owner_.getState() != WorldState::IN_WORLD) return;
+    if (petitionGuid == 0) return;
+    network::Packet pkt(wireOpcode(Opcode::CMSG_TURN_IN_PETITION));
+    pkt.writeUInt64(petitionGuid);
+    pkt.writeUInt32(backgroundColor);
+    pkt.writeUInt32(iconStyle);
+    pkt.writeUInt32(iconColor);
+    pkt.writeUInt32(borderStyle);
+    pkt.writeUInt32(borderColor);
+    owner_.getSocket()->send(pkt);
+}
+
 void SocialHandler::offerPetition(uint64_t petitionGuid, uint64_t targetGuid) {
     if (!owner_.getSocket() || owner_.getState() != WorldState::IN_WORLD) return;
     if (petitionGuid == 0 || targetGuid == 0) return;
