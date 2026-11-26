@@ -18,7 +18,11 @@ inline constexpr StandPose standPose(uint8_t state) {
     case 4: return {0, anim::SIT_CHAIR_LOW, 0};
     case 2: case 5: return {0, anim::SIT_CHAIR_MED, 0};
     case 6: return {0, anim::SIT_CHAIR_HIGH, 0};
-    case 7: return {0, anim::DEAD, 0};
+    // UNIT_STAND_STATE_DEAD: living units collapsing into stand-state 7 (e.g.
+    // Molten Core Core Hound smolder, Mograine, Thekal, Romulo/Julianne) play
+    // Death (1) into Dead (6); units entering view already in state 7 skip the
+    // transition (initial == true) and show Dead immediately.
+    case 7: return {anim::DEATH, anim::DEAD, 0};
     // UNIT_STAND_STATE_SUBMERGED: burrowed worms and the like lie hidden in
     // Submerged (AnimationData 202), entered by Submerge and left by Emerge.
     case 9: return {anim::SUBMERGE, anim::SUBMERGED, anim::EMERGE};

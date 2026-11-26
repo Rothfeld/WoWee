@@ -123,6 +123,19 @@ inline bool isUnitDeadPose(uint32_t health, uint32_t maxHealth, uint32_t dynamic
            npcEmoteState == EMOTE_STATE_DEAD;
 }
 
+/// True when a unit was already prone in a dead pose prior to a health=0 or
+/// UNIT_DYNFLAG_DEAD update (e.g. Permanent Feign Death 29266, Molten Core
+/// Core Hound smoldering in UNIT_STAND_STATE_DEAD before Suicide(), or an NPC
+/// holding EMOTE_STATE_DEAD), so lethal completion keeps anim::DEAD instead of
+/// popping upright to replay anim::DEATH.
+inline bool isUnitAlreadyProneForDeath(uint32_t priorDynamicFlags,
+                                       uint8_t priorStandState,
+                                       uint32_t priorNpcEmoteState = 0) {
+    return (priorDynamicFlags & UNIT_DYNFLAG_DEAD) != 0 ||
+           priorStandState == UNIT_STAND_STATE_DEAD ||
+           priorNpcEmoteState == EMOTE_STATE_DEAD;
+}
+
 /// True when a moving living unit's renderer is still holding a corpse pose
 /// (e.g. UNIT_STAND_STATE_DEAD cleared by the server after aggro MonsterMove)
 /// and must transition to locomotion, while preserving genuine corpses and
@@ -908,7 +921,9 @@ public:
         mirrorImage_ = (f & kUnitFlag2MirrorImage) != 0u;
     }
 
-    // Client presentation flags (byte 2 of UNIT_FIELD_BYTES_1).
+    // Stand state (byte 0) and client presentation flags (byte 2) of UNIT_FIELD_BYTES_1.
+    [[nodiscard]] uint8_t getStandState() const { return standState_; }
+    void setStandState(uint8_t s) { standState_ = s; }
     [[nodiscard]] uint8_t getVisibilityFlags() const { return visibilityFlags; }
     void setVisibilityFlags(uint8_t f) { visibilityFlags = f; }
     [[nodiscard]] bool hasCreepVisibility() const { return (visibilityFlags & UNIT_VIS_FLAG_CREEP) != 0; }
@@ -972,6 +987,7 @@ protected:
     uint32_t mountDisplayId = 0;
     uint32_t unitFlags = 0;
     uint32_t unitFlags2_ = 0;
+    uint8_t standState_ = 0;
     uint8_t visibilityFlags = 0;
     uint64_t meleeVictimGuid = 0;
     uint32_t dynamicFlags = 0;

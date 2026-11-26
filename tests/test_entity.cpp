@@ -237,6 +237,26 @@ TEST_CASE("Dead pose state covers corpse, feign death, stand-state dead, and emo
     REQUIRE_FALSE(isUnitDeadPose(100, 100, UNIT_DYNFLAG_TAPPED, 1, 0));
 }
 
+TEST_CASE("Already-prone death check distinguishes smoldering stand-state dead from standing kills", "[entity][corpse][death]") {
+    Unit u(0xBEEF);
+    REQUIRE(u.getStandState() == 0);
+    REQUIRE_FALSE(isUnitAlreadyProneForDeath(u.getDynamicFlags(), u.getStandState(), u.getNpcEmoteState()));
+
+    // Molten Core Core Hound (11671) smolder: health=1, standState=UNIT_STAND_STATE_DEAD (7), no dynFlags.
+    u.setStandState(UNIT_STAND_STATE_DEAD);
+    REQUIRE(u.getStandState() == UNIT_STAND_STATE_DEAD);
+    REQUIRE(isUnitAlreadyProneForDeath(u.getDynamicFlags(), u.getStandState(), u.getNpcEmoteState()));
+
+    // Reignite clears standState back to 0: subsequent kill must play DEATH again.
+    u.setStandState(0);
+    REQUIRE_FALSE(isUnitAlreadyProneForDeath(u.getDynamicFlags(), u.getStandState(), u.getNpcEmoteState()));
+
+    // Permanent Feign Death (29266) and EMOTE_STATE_DEAD (65) are also already prone.
+    REQUIRE(isUnitAlreadyProneForDeath(UNIT_DYNFLAG_DEAD, 0, 0));
+    REQUIRE(isUnitAlreadyProneForDeath(0, 0, EMOTE_STATE_DEAD));
+    REQUIRE_FALSE(isUnitAlreadyProneForDeath(UNIT_DYNFLAG_TAPPED, 1, 0));
+}
+
 TEST_CASE("Moving living unit leaves stale corpse pose without regressing corpses or dead-pose auras", "[entity][corpse]") {
     // Tortured Skeleton / Cabal Familiar: UNIT_STAND_STATE_DEAD cleared to 0 while moving.
     REQUIRE(shouldLeaveCorpsePoseForMovement(/*serverDeadPose=*/false, /*isMovingNow=*/true,

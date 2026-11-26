@@ -1279,6 +1279,7 @@ bool EntityController::applyUnitFieldsOnCreate(const UpdateBlock& block,
         // permanently stealthed creatures (Wildspawn Shadowstalker, Sneak 22766)
         // drawn opaque.
         else if (ufi.bytes1 != 0xFFFF && key == ufi.bytes1) {
+            unit->setStandState(static_cast<uint8_t>(val & 0xFFu));
             const uint8_t visFlags = static_cast<uint8_t>((val >> 16) & 0xFF);
             unit->setVisibilityFlags(visFlags);
             if (block.guid == owner_.getPlayerGuid() && owner_.stealthStateCallbackRef()) {
@@ -1367,6 +1368,10 @@ EntityController::UnitFieldUpdateResult EntityController::applyUnitFieldsOnUpdat
     UnitFieldUpdateResult result;
     result.oldDisplayId = unit->getDisplayId();
     uint32_t oldHealth = unit->getHealth();
+    const bool alreadyProneBeforeUpdate =
+        isUnitAlreadyProneForDeath(unit->getDynamicFlags(),
+                                   unit->getStandState(),
+                                   unit->getNpcEmoteState());
     bool petExperienceChanged = false;
     bool petStatsChanged = false;
     // The unit events go out as each field is applied, so the interface hears
@@ -1411,11 +1416,12 @@ EntityController::UnitFieldUpdateResult EntityController::applyUnitFieldsOnUpdat
                     pendingEvents_.emit("PLAYER_DEAD", {});
                 }
                 if ((entity->getType() == ObjectType::UNIT || entity->getType() == ObjectType::PLAYER) && owner_.npcDeathCallbackRef()) {
-                    // A unit already prone via UNIT_DYNFLAG_DEAD (e.g. Permanent
-                    // Feign Death 29266) stays lying dead instead of popping up
-                    // to replay the standing->falling DEATH animation.
-                    const bool alreadyProne = (unit->getDynamicFlags() & UNIT_DYNFLAG_DEAD) != 0;
-                    owner_.npcDeathCallbackRef()(block.guid, alreadyProne);
+                    // A unit already prone before this update (Permanent Feign
+                    // Death 29266, UNIT_STAND_STATE_DEAD smolder such as Molten
+                    // Core Core Hounds before Suicide(), or EMOTE_STATE_DEAD)
+                    // stays lying in anim::DEAD instead of popping upright to
+                    // replay the standing->falling DEATH animation.
+                    owner_.npcDeathCallbackRef()(block.guid, alreadyProneBeforeUpdate);
                     result.npcDeathNotified = true;
                 }
             } else if (oldHealth == 0 && val > 0) {
@@ -1545,6 +1551,7 @@ EntityController::UnitFieldUpdateResult EntityController::applyUnitFieldsOnUpdat
             }
         }
         else if (ufi.bytes1 != 0xFFFF && key == ufi.bytes1) {
+            unit->setStandState(static_cast<uint8_t>(val & 0xFFu));
             const uint8_t oldVisibilityFlags = unit->getVisibilityFlags();
             const uint8_t newVisibilityFlags = static_cast<uint8_t>((val >> 16) & 0xFF);
             unit->setVisibilityFlags(newVisibilityFlags);
@@ -1598,7 +1605,7 @@ EntityController::UnitFieldUpdateResult EntityController::applyUnitFieldsOnUpdat
                     owner_.stopAutoAttack();
                     pendingEvents_.emit("PLAYER_DEAD", {});
                     if (!result.npcDeathNotified && owner_.npcDeathCallbackRef()) {
-                        owner_.npcDeathCallbackRef()(block.guid, false);
+                        owner_.npcDeathCallbackRef()(block.guid, alreadyProneBeforeUpdate);
                         result.npcDeathNotified = true;
                     }
                 } else if (unitDynDeadClearIsRespawn(oldDyn, val, unit->getHealth(), unit->getMaxHealth())) {
@@ -1619,7 +1626,7 @@ EntityController::UnitFieldUpdateResult EntityController::applyUnitFieldsOnUpdat
                 bool nowDead = (val & UNIT_DYNFLAG_DEAD) != 0;
                 if (!wasDead && nowDead) {
                     if (!result.npcDeathNotified && owner_.npcDeathCallbackRef()) {
-                        owner_.npcDeathCallbackRef()(block.guid, false);
+                        owner_.npcDeathCallbackRef()(block.guid, alreadyProneBeforeUpdate);
                         result.npcDeathNotified = true;
                     }
                 } else if (unitDynDeadClearIsRespawn(oldDyn, val, unit->getHealth(), unit->getMaxHealth())) {

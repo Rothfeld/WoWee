@@ -1455,7 +1455,6 @@ void EntitySpawner::updateRemoteUnitState(uint64_t guid, uint32_t instanceId, bo
     renderer_->getCharacterRenderer()->setStandState(instanceId, state);
     const auto [it, initial] = remoteStandStates_.try_emplace(guid, state);
     const uint8_t previous = it->second;
-    it->second = state;
     const auto unit = std::static_pointer_cast<game::Unit>(entity);
     const bool corpseState = deadCreatureGuids_.contains(guid) ||
         game::isUnitCorpseState(unit->getHealth(), unit->getMaxHealth(), unit->getDynamicFlags());
@@ -1510,12 +1509,34 @@ void EntitySpawner::updateRemoteUnitState(uint64_t guid, uint32_t instanceId, bo
         }
     }
     // A newly visible standing unit keeps its spawn/emote animation. Nonzero
-    // stand states must override that spawn pose immediately.
-    if ((initial && state == 0) || (!initial && previous == state) || moving || mounted) return;
-    if (corpseState) return;
+    // stand states must override that spawn pose immediately. When leaving a
+    // stand state while already moving (e.g. Tortured Skeleton aggro), record
+    // state=0 immediately because locomotion already stood the unit up; when
+    // entering a non-dead stand state mid-spline, defer committing state until
+    // movement ends so the transition is not lost. UNIT_STAND_STATE_DEAD (7)
+    // is never blocked by residual spline movement.
+    if (state == 0) {
+        it->second = 0;
+        if (initial || previous == 0 || moving || mounted || corpseState) return;
+    } else {
+        if (corpseState) {
+            it->second = state;
+            return;
+        }
+        if ((moving && !deadPose) || mounted) return;
+        it->second = state;
+        if (!initial && previous == state) return;
+    }
     auto* cr = renderer_->getCharacterRenderer();
     const auto pose = rendering::standPose(state);
     const uint32_t transition = initial ? 0 : (state == 0 ? rendering::standPose(previous).leave : pose.enter);
+    if (transition == rendering::anim::DEATH) {
+        uint32_t current = 0; float time = 0.0f, duration = 0.0f;
+        if (cr->getAnimationState(instanceId, current, time, duration) &&
+            rendering::anim::isCorpsePose(current)) {
+            return;
+        }
+    }
     const uint32_t idle = remoteIdleAnimation(guid);
     cr->playAnimation(instanceId, transition != 0 ? transition : idle, transition == 0, idle);
     LOG_DEBUG("Remote stand pose: guid=", guid, " state=", unsigned(state), " animation=", transition != 0 ? transition : idle);

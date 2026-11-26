@@ -300,6 +300,14 @@ TEST_CASE("Ground sit, sleep, and kneel play enter, loop, and exit animations", 
     }
 }
 
+TEST_CASE("Dead stand state enters with Death collapse and idles in Dead without exit animation", "[animation][stand-state][death]") {
+    const auto pose = standPose(ActivityFSM::STAND_STATE_DEAD);
+    CHECK(pose.enter == anim::DEATH);
+    CHECK(pose.idle == anim::DEAD);
+    CHECK(pose.leave == 0);
+    CHECK_FALSE(isSeatedStandState(ActivityFSM::STAND_STATE_DEAD));
+}
+
 TEST_CASE("Stealthed spell cast plays cast animation instead of StealthStand", "[animation][stealth][pickpocket]") {
     AnimCapabilitySet caps;
     caps.resolvedStand = anim::STAND;

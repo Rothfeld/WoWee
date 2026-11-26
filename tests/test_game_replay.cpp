@@ -2016,5 +2016,107 @@ TEST_CASE("targeting an out-of-range party member persists across ticks and desp
     CHECK(s.handler().getTargetGuid() == 0);
 }
 
+TEST_CASE("smoldering UNIT_STAND_STATE_DEAD Core Hound stays prone on Suicide while standing kills play Death",
+          "[replay][death][standstate][tbc]") {
+    Session s("tbc");
+    s.spawnPlayer({{UF::UNIT_FIELD_HEALTH, 5000}, {UF::UNIT_FIELD_MAXHEALTH, 5000}, {UF::UNIT_FIELD_LEVEL, 70}});
+
+    std::vector<std::pair<uint64_t, bool>> deaths;
+    s.handler().setNpcDeathCallback([&](uint64_t guid, bool alreadyDead) {
+        deaths.emplace_back(guid, alreadyDead);
+    });
+
+    // 1. Molten Core Core Hound (11671): collapses at health=1 into UNIT_STAND_STATE_DEAD (7),
+    //    then 10s later Suicide() drops health 1 -> 0. Must fire npcDeathCallback with
+    //    alreadyDead=true so it stays lying in Dead (6) instead of popping upright.
+    constexpr uint64_t kSmolderHound = 0xf130002d97000001ULL;
+    s.receive(UpdateObject().tbc().create(kSmolderHound, wowee::game::ObjectType::UNIT, {
+        {UF::UNIT_FIELD_DISPLAYID, 12168},
+        {UF::UNIT_FIELD_HEALTH, 100000},
+        {UF::UNIT_FIELD_MAXHEALTH, 100000},
+        {UF::UNIT_FIELD_BYTES_1, 0},
+    }));
+    REQUIRE(deaths.empty());
+
+    s.receive(UpdateObject().tbc().values(kSmolderHound, {
+        {UF::UNIT_FIELD_HEALTH, 1},
+        {UF::UNIT_FIELD_BYTES_1, wowee::game::UNIT_STAND_STATE_DEAD},
+    }));
+    auto smolderUnit = std::dynamic_pointer_cast<wowee::game::Unit>(
+        s.handler().getEntityManager().getEntity(kSmolderHound));
+    REQUIRE(smolderUnit);
+    CHECK(smolderUnit->getStandState() == wowee::game::UNIT_STAND_STATE_DEAD);
+    CHECK(deaths.empty());
+
+    s.receive(UpdateObject().tbc().values(kSmolderHound, {
+        {UF::UNIT_FIELD_HEALTH, 0},
+    }));
+    REQUIRE(deaths.size() == 1);
+    CHECK(deaths.back().first == kSmolderHound);
+    CHECK(deaths.back().second == true);
+
+    // 2. Pack Core Hound collapses into UNIT_STAND_STATE_DEAD (7), then Reignites back
+    //    to standState=0 at full health, and later dies standing in a single update
+    //    carrying both health=0 and bytes1=7: must play Death (alreadyDead=false).
+    constexpr uint64_t kReigniteHound = 0xf130002d97000002ULL;
+    s.receive(UpdateObject().tbc().create(kReigniteHound, wowee::game::ObjectType::UNIT, {
+        {UF::UNIT_FIELD_DISPLAYID, 12168},
+        {UF::UNIT_FIELD_HEALTH, 100000},
+        {UF::UNIT_FIELD_MAXHEALTH, 100000},
+        {UF::UNIT_FIELD_BYTES_1, 0},
+    }));
+    s.receive(UpdateObject().tbc().values(kReigniteHound, {
+        {UF::UNIT_FIELD_HEALTH, 1},
+        {UF::UNIT_FIELD_BYTES_1, wowee::game::UNIT_STAND_STATE_DEAD},
+    }));
+    s.receive(UpdateObject().tbc().values(kReigniteHound, {
+        {UF::UNIT_FIELD_HEALTH, 100000},
+        {UF::UNIT_FIELD_BYTES_1, 0},
+    }));
+    auto reignitedUnit = std::dynamic_pointer_cast<wowee::game::Unit>(
+        s.handler().getEntityManager().getEntity(kReigniteHound));
+    REQUIRE(reignitedUnit);
+    CHECK(reignitedUnit->getStandState() == 0);
+
+    s.receive(UpdateObject().tbc().values(kReigniteHound, {
+        {UF::UNIT_FIELD_HEALTH, 0},
+        {UF::UNIT_FIELD_BYTES_1, wowee::game::UNIT_STAND_STATE_DEAD},
+        {UF::UNIT_DYNAMIC_FLAGS, wowee::game::UNIT_DYNFLAG_LOOTABLE},
+    }));
+    REQUIRE(deaths.size() == 2);
+    CHECK(deaths.back().first == kReigniteHound);
+    CHECK(deaths.back().second == false);
+
+    // 3. Ancient Core Hound (11673) killed directly from standing (health=0 + bytes1=7
+    //    in the same VALUES packet): must play Death (alreadyDead=false).
+    constexpr uint64_t kAncientHound = 0xf130002d99000003ULL;
+    s.receive(UpdateObject().tbc().create(kAncientHound, wowee::game::ObjectType::UNIT, {
+        {UF::UNIT_FIELD_DISPLAYID, 12189},
+        {UF::UNIT_FIELD_HEALTH, 300000},
+        {UF::UNIT_FIELD_MAXHEALTH, 300000},
+    }));
+    s.receive(UpdateObject().tbc().values(kAncientHound, {
+        {UF::UNIT_FIELD_HEALTH, 0},
+        {UF::UNIT_FIELD_BYTES_1, wowee::game::UNIT_STAND_STATE_DEAD},
+    }));
+    REQUIRE(deaths.size() == 3);
+    CHECK(deaths.back().first == kAncientHound);
+    CHECK(deaths.back().second == false);
+
+    // 4. Pre-existing corpse entering view via CREATE_OBJECT (health=0, bytes1=7):
+    //    must arrive as alreadyDead=true so it stays flat in Dead (6).
+    constexpr uint64_t kCorpseHound = 0xf130002d99000004ULL;
+    s.receive(UpdateObject().tbc().create(kCorpseHound, wowee::game::ObjectType::UNIT, {
+        {UF::UNIT_FIELD_DISPLAYID, 12189},
+        {UF::UNIT_FIELD_HEALTH, 0},
+        {UF::UNIT_FIELD_MAXHEALTH, 300000},
+        {UF::UNIT_FIELD_BYTES_1, wowee::game::UNIT_STAND_STATE_DEAD},
+        {UF::UNIT_DYNAMIC_FLAGS, wowee::game::UNIT_DYNFLAG_DEAD},
+    }));
+    REQUIRE(deaths.size() == 4);
+    CHECK(deaths.back().first == kCorpseHound);
+    CHECK(deaths.back().second == true);
+}
+
 
 

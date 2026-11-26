@@ -4045,7 +4045,8 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                                         wmo->roomHides(center);
                     charRenderer->setInstanceRoomHidden(instanceId, hidden);
                 }
-                entitySpawner_->updateRemoteUnitState(guid, instanceId, locoIn.moving, false);
+                entitySpawner_->updateRemoteUnitState(guid, instanceId,
+                    !creatureDeadOrCorpse && locoIn.moving, false);
 
                 const float facing = core::coords::characterYawDegToCanonical(renderer->getCharacterYaw());
                 const float renderYaw = facing + glm::radians(90.0f);
@@ -4241,7 +4242,7 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                 if (creatureMount) charRenderer->setInstanceRoomHidden(creatureMount->instanceId, hidden);
             }
             entitySpawner_->updateRemoteUnitState(guid, instanceId,
-                entity->isActivelyMoving(), creatureMount != nullptr);
+                !creatureDeadOrCorpse && entity->isActivelyMoving(), creatureMount != nullptr);
 
             // Native turns the local conversation partner toward this player
             // unless it is not standing or is stunned.
@@ -4467,6 +4468,14 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
 
             const glm::vec3 mountRenderPos = renderPos;
             if (remoteMount) renderPos.z += remoteMount->riderHeight;
+            const auto remoteUnitPtr = std::static_pointer_cast<game::Unit>(entity);
+            const auto remoteStandState = static_cast<uint8_t>(
+                entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_1)));
+            const bool remoteDeadOrCorpse = entitySpawner_->isCreatureDead(guid) ||
+                game::isUnitDeadPose(
+                    remoteUnitPtr->getHealth(), remoteUnitPtr->getMaxHealth(),
+                    remoteUnitPtr->getDynamicFlags(), remoteStandState,
+                    remoteUnitPtr->getNpcEmoteState());
 
             if (posIt == _pCreatureRenderPosCache.end()) {
                 charRenderer->setInstancePosition(instanceId, renderPos);
@@ -4481,14 +4490,7 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                 float planarDistSq = ddx2 * ddx2 + ddy2 * ddy2;
                 float dz = std::abs(renderPos.z - prevPos.z);
 
-                auto unitPtr = std::static_pointer_cast<game::Unit>(entity);
-                const auto remoteStandState = static_cast<uint8_t>(
-                    entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_1)));
-                const bool deadOrCorpse = entitySpawner_->isCreatureDead(guid) ||
-                    game::isUnitDeadPose(
-                        unitPtr->getHealth(), unitPtr->getMaxHealth(),
-                        unitPtr->getDynamicFlags(), remoteStandState,
-                        unitPtr->getNpcEmoteState());
+                const bool deadOrCorpse = remoteDeadOrCorpse;
                 const bool largeCorrection = (planarDistSq > 36.0f) || (dz > 3.0f);
                 const bool entityIsMoving = entity->isActivelyMoving();
                 constexpr float kMoveThreshSq2 = 0.03f * 0.03f;
@@ -4693,7 +4695,7 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                 if (remoteMount) charRenderer->setInstanceRoomHidden(remoteMount->instanceId, hidden);
             }
             entitySpawner_->updateRemoteUnitState(guid, instanceId,
-                entity->isActivelyMoving(), remoteMount != nullptr);
+                !remoteDeadOrCorpse && entity->isActivelyMoving(), remoteMount != nullptr);
 
             // Orientation sync
             const float facingYaw = entity->getOrientation() + glm::radians(90.0f);
