@@ -838,7 +838,11 @@ void EntitySpawner::syncPlayerMorphs() {
                 if (timeMs >= durationMs) play = rendering::anim::DEAD;
                 else loop = false;
             }
-            cr->playAnimation(morph.instanceId, play, loop);
+            if (loop && play != rendering::anim::DEAD && cr->isPlayingOneShot(morph.instanceId)) {
+                cr->setOneShotReturn(morph.instanceId, play);
+            } else {
+                cr->playAnimation(morph.instanceId, play, loop);
+            }
         }
     }
 }

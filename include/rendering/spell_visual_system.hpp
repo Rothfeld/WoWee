@@ -347,6 +347,21 @@ public:
                (attachment >= kAttachSpecial1 && attachment <= kAttachSpecial3);
     }
 
+    // Slots whose effect is skipped when the model lacks their attachment:
+    // weapon hands 1/2, spell hands 21/22, breath 17, and Special1-3 (23-25).
+    // For example, UBRS Gyth w/ Rend (OrcDrakeRider.m2, displayId 9723) authors
+    // attachment 17 (Breath) and omits attachment 23 (Special1), so Flame Breath
+    // (16390, SpecialEffect0 -> 23) draws nothing on Native TBC 2.4.3 rather than
+    // spawning unrotated dragonflamebreath.m2 on the floor at attachment 0.
+    static constexpr bool slotSkippedWhenAbsent(uint32_t attachment) {
+        return attachment == kAttachRightWeapon ||
+               attachment == kAttachLeftWeapon ||
+               attachment == kAttachBreath ||
+               attachment == kAttachSpellLeftHand ||
+               attachment == kAttachSpellRightHand ||
+               (attachment >= kAttachSpecial1 && attachment <= kAttachSpecial3);
+    }
+
 private:
     // Spell visual effects - transient M2 instances spawned by SMSG_PLAY_SPELL_VISUAL/IMPACT
     struct SpellVisualInstance {
@@ -506,13 +521,6 @@ private:
     std::unordered_map<uint32_t, uint32_t> targetImpactKits_;
     std::unordered_map<uint32_t, uint32_t> persistentAreaKits_;
     std::unordered_map<uint64_t, std::vector<uint32_t>> persistentAreas_;  // key -> M2 instances
-    // Slots whose effect is not drawn on a model lacking their attachment:
-    // weapon hands 1/2, spell hands 21/22, and breath 17 (others fall back to the unit position).
-    static constexpr bool slotSkippedWhenAbsent(uint32_t attachment) {
-        return attachment == kAttachRightWeapon || attachment == kAttachLeftWeapon ||
-               attachment == kAttachSpellLeftHand || attachment == kAttachSpellRightHand ||
-               attachment == kAttachBreath;
-    }
     /// SpellVisualKit CharProc 0: CharParamZero is a SpellChainEffects.dbc id,
     /// the beam drawn while the kit plays. All 284 TBC kits with procedure 0
     /// and a parameter name an existing record; Green Beam's (33346) channel

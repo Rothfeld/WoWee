@@ -53,13 +53,44 @@ struct QueuedMeleeSwing {
     }
 };
 
+/// True for spell-cast and dragon/creature ability one-shot animations that
+/// must finish their authored clip before a queued auto-attack melee swing runs
+/// (e.g. UBRS Gyth SpellCastDirected 53 left-to-right breath sweep when a 2000 ms
+/// melee swing arrives 400 ms mid-breath).
+inline constexpr bool isSpellCastOneShotAnimation(uint32_t animId) {
+    switch (animId) {
+        case anim::SPELL:
+        case anim::SPELL_CAST:
+        case anim::SPELL_CAST_AREA:
+        case anim::SPELL_CAST_DIRECTED:
+        case anim::SPELL_CAST_OMNI:
+        case anim::BATTLE_ROAR:
+        case anim::CREATURE_SPECIAL:
+        case anim::DRAGON_TAIL:
+        case anim::DRAGON_STOMP:
+        case anim::DRAGON_SPIT:
+        case anim::DRAGON_SPIT_HOVER:
+        case anim::DRAGON_SPIT_FLY:
+        case anim::FLY_SPELL:
+        case anim::FLY_SPELL_CAST:
+        case anim::FLY_SPELL_CAST_AREA:
+        case anim::FLY_SPELL_CAST_DIRECTED:
+        case anim::FLY_SPELL_CAST_OMNI:
+        case anim::FLY_BATTLE_ROAR:
+            return true;
+        default:
+            return false;
+    }
+}
+
 /// Queue an incoming melee swing rather than interrupting when the unit is
-/// already mid-swing on a melee one-shot. Non-swing poses (Ready1H, Stand,
-/// Run, CombatWound, etc.) or an already-finished swing start immediately.
+/// already mid-swing on a melee one-shot or mid-cast on a spell-cast one-shot.
+/// Non-swing poses (Ready1H, Stand, Run, CombatWound, etc.) or an already-finished
+/// one-shot start immediately.
 inline constexpr bool shouldQueueIncomingMeleeSwing(bool playingOneShot, uint32_t currentAnimId,
                                                     float currentTimeMs, float currentDurationMs) {
     return playingOneShot &&
-           isMeleeSwingAnimation(currentAnimId) &&
+           (isMeleeSwingAnimation(currentAnimId) || isSpellCastOneShotAnimation(currentAnimId)) &&
            currentDurationMs > 0.0f &&
            currentTimeMs < currentDurationMs;
 }

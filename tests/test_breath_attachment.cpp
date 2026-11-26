@@ -509,3 +509,97 @@ TEST_CASE("Gargoyle.m2 (Kirtonos) has no hand attachments while ScourgeMale.m2 a
         CHECK(wowee::rendering::resolveModelAttachmentBone(model, 30u, bone, offset));
     }
 }
+
+TEST_CASE("SpellVisualSystem::slotSkippedWhenAbsent skips missing Special1-3 slots like Breath and hands",
+          "[spell-visual][gyth]") {
+    using wowee::rendering::SpellVisualSystem;
+    for (uint32_t att : {1u, 2u, 17u, 21u, 22u, 23u, 24u, 25u}) {
+        INFO("attachment=" << att);
+        CHECK(SpellVisualSystem::slotSkippedWhenAbsent(att));
+        CHECK(SpellVisualSystem::slotFollowsBone(att));
+    }
+    for (uint32_t att : {0u, 11u, 18u, 19u, 20u, 34u}) {
+        INFO("attachment=" << att);
+        CHECK_FALSE(SpellVisualSystem::slotSkippedWhenAbsent(att));
+        CHECK_FALSE(SpellVisualSystem::slotFollowsBone(att));
+    }
+}
+
+TEST_CASE("Gyth OrcDrakeRider.m2 omits Special1 (23) and sweeps Breath (17) left-and-right in SpellCastDirected",
+          "[spell-visual][assets][gyth]") {
+    const char* root = std::getenv("WOWEE_TBC_DATA_DIR");
+    if (!root || !*root) SKIP("Set WOWEE_TBC_DATA_DIR to client/wowee-data/expansions/tbc");
+
+    const auto riderBytes = readBytes(std::filesystem::path(root) / "creature/drake/orcdrakerider.m2");
+    REQUIRE_FALSE(riderBytes.empty());
+    const auto rider = wowee::pipeline::M2Loader::load(riderBytes);
+
+    // OrcDrakeRider.m2 (displayId 9723, Gyth w/ Rend) authors Breath (17) at the mouth
+    // and omits Special1 (23), so Flame Breath (16390, SpecialEffect0 -> 23) is skipped.
+    uint16_t bone = 0xFFFF;
+    glm::vec3 offset(0.0f);
+    CHECK(wowee::rendering::resolveModelAttachmentBone(rider, 17u, bone, offset));
+    CHECK_FALSE(wowee::rendering::resolveModelAttachmentBone(rider, 23u, bone, offset));
+
+    // Dismounted Drake.m2 (displayId 9806) authors both Breath (17) and Special1 (23).
+    const auto drakeBytes = readBytes(std::filesystem::path(root) / "creature/drake/drake.m2");
+    REQUIRE_FALSE(drakeBytes.empty());
+    const auto drake = wowee::pipeline::M2Loader::load(drakeBytes);
+    CHECK(wowee::rendering::resolveModelAttachmentBone(drake, 17u, bone, offset));
+    CHECK(wowee::rendering::resolveModelAttachmentBone(drake, 23u, bone, offset));
+
+    // Verify SpellCastDirected (53) sweeps Breath (17) across > 95 deg of yaw over 1000 ms,
+    // whereas AttackUnarmed (16) holds yaw nearly straight (< 5 deg).
+    const uint16_t breathAttIdx = rider.attachmentLookup[17];
+    REQUIRE(breathAttIdx < rider.attachments.size());
+    const uint16_t breathBone = rider.attachments[breathAttIdx].bone;
+    REQUIRE(breathBone < rider.bones.size());
+
+    std::vector<uint32_t> chain;
+    for (int32_t b = static_cast<int32_t>(breathBone); b >= 0; b = rider.bones[b].parentBone) {
+        chain.push_back(static_cast<uint32_t>(b));
+    }
+
+    auto sampleYawDeg = [&](int seqIdx, float tMs) {
+        glm::mat3 rot(1.0f);
+        for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
+            const glm::quat q = wowee::rendering::m2_track::sampleQuat(
+                rider.bones[*it].rotation, seqIdx, tMs, 0.0f, rider.globalSequenceDurations);
+            rot = rot * glm::mat3_cast(q);
+        }
+        const glm::vec3 fwd = rot * glm::vec3(1.0f, 0.0f, 0.0f);
+        return glm::degrees(std::atan2(fwd.y, fwd.x));
+    };
+
+    int castSeq = -1;
+    int attackSeq = -1;
+    for (size_t s = 0; s < rider.sequences.size(); ++s) {
+        if (rider.sequences[s].id == 53 && castSeq < 0) castSeq = static_cast<int>(s);
+        if (rider.sequences[s].id == 16 && attackSeq < 0) attackSeq = static_cast<int>(s);
+    }
+    REQUIRE(castSeq >= 0);
+    REQUIRE(attackSeq >= 0);
+    CHECK(rider.sequences[castSeq].duration == 1000u);
+
+    float minCastYaw = 180.0f;
+    float maxCastYaw = -180.0f;
+    for (float t = 0.0f; t <= 1000.0f; t += 50.0f) {
+        const float y = sampleYawDeg(castSeq, t);
+        minCastYaw = std::min(minCastYaw, y);
+        maxCastYaw = std::max(maxCastYaw, y);
+    }
+    CHECK(minCastYaw < -40.0f);
+    CHECK(maxCastYaw > 45.0f);
+    CHECK((maxCastYaw - minCastYaw) > 95.0f);
+
+    float minAttackYaw = 180.0f;
+    float maxAttackYaw = -180.0f;
+    for (float t = 0.0f; t <= 1000.0f; t += 100.0f) {
+        const float y = sampleYawDeg(attackSeq, t);
+        minAttackYaw = std::min(minAttackYaw, y);
+        maxAttackYaw = std::max(maxAttackYaw, y);
+        CHECK(std::abs(y) < 20.0f);
+    }
+    CHECK((maxAttackYaw - minAttackYaw) < 35.0f);
+    CHECK((maxCastYaw - minCastYaw) > 3.0f * (maxAttackYaw - minAttackYaw));
+}

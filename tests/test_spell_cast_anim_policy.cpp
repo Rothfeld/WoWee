@@ -387,3 +387,27 @@ TEST_CASE("resolveUnitRenderInstance prefers morphed drawn instance over hidden 
     CHECK(resolveUnitRenderInstance(0u, false, 1u, 0u, 1765u) == 1765u);
     CHECK(resolveUnitRenderInstance(0u, false, 1u, 0u, 0u) == 0u);
 }
+
+TEST_CASE("Auto-attack melee swing queues behind active SpellCastDirected breath sweep without truncating it",
+          "[spell_cast_anim][melee_swing][gyth]") {
+    // UBRS Gyth (10339): 1000 ms SpellCastDirected (53) head sweep for Freeze (16350) /
+    // Corrosive Acid Breath (16359) must not be aborted when a 2000 ms melee swing arrives
+    // 400 ms into the breath cast.
+    CHECK(isSpellCastOneShotAnimation(anim::SPELL_CAST_DIRECTED));
+    CHECK(isSpellCastOneShotAnimation(anim::SPELL_CAST_OMNI));
+    CHECK(isSpellCastOneShotAnimation(anim::DRAGON_SPIT));
+    CHECK(isSpellCastOneShotAnimation(anim::DRAGON_SPIT_HOVER));
+    CHECK_FALSE(isSpellCastOneShotAnimation(anim::ATTACK_UNARMED));
+    CHECK_FALSE(isSpellCastOneShotAnimation(anim::COMBAT_WOUND));
+    CHECK_FALSE(isSpellCastOneShotAnimation(anim::STAND));
+
+    CHECK(shouldQueueIncomingMeleeSwing(true, anim::SPELL_CAST_DIRECTED, 400.0f, 1000.0f));
+    CHECK(shouldQueueIncomingMeleeSwing(true, anim::SPELL_CAST_OMNI, 250.0f, 1000.0f));
+    CHECK(shouldQueueIncomingMeleeSwing(true, anim::DRAGON_SPIT, 500.0f, 1500.0f));
+
+    // Once the 1000 ms cast one-shot reaches completion, or during CombatWound / Stand,
+    // incoming melee swings play immediately.
+    CHECK_FALSE(shouldQueueIncomingMeleeSwing(true, anim::SPELL_CAST_DIRECTED, 1000.0f, 1000.0f));
+    CHECK_FALSE(shouldQueueIncomingMeleeSwing(false, anim::SPELL_CAST_DIRECTED, 400.0f, 1000.0f));
+    CHECK_FALSE(shouldQueueIncomingMeleeSwing(true, anim::COMBAT_WOUND, 200.0f, 600.0f));
+}

@@ -2684,20 +2684,26 @@ void CharacterRenderer::playMeleeSwing(uint32_t instanceId, uint32_t animationId
     if (modelIt == models.end()) return;
     const auto& sequences = modelIt->second.data.sequences;
 
-    // Check if an upper-body or full-body melee swing one-shot is already in progress.
+    // Check if an upper-body or full-body melee/cast one-shot is already in progress.
     if (instance.upperBodySequenceIndex >= 0 &&
         static_cast<size_t>(instance.upperBodySequenceIndex) < sequences.size() &&
         !instance.upperBodyAnimationLoop) {
         const auto& upperSeq = sequences[instance.upperBodySequenceIndex];
         const float upperDur = static_cast<float>(upperSeq.duration);
         if (shouldQueueIncomingMeleeSwing(true, upperSeq.id, instance.upperBodyAnimationTime, upperDur)) {
-            const float queuedMaxMs = dualWieldSwingMaxMs(maxDurationMs);
-            instance.pendingMeleeSwing = {animationId, oneShotReturnAnim, queuedMaxMs};
-            instance.upperBodyOneShotMaxDurationMs = activeSwingMaxMsOnQueue(
-                instance.upperBodyAnimationTime, upperDur,
-                instance.upperBodyOneShotMaxDurationMs, queuedMaxMs);
-            LOG_DEBUG("Queued upper-body melee swing instance=", instanceId, " anim=", animationId,
-                      " behind active=", upperSeq.id, " maxMs=", queuedMaxMs);
+            if (isMeleeSwingAnimation(upperSeq.id)) {
+                const float queuedMaxMs = dualWieldSwingMaxMs(maxDurationMs);
+                instance.pendingMeleeSwing = {animationId, oneShotReturnAnim, queuedMaxMs};
+                instance.upperBodyOneShotMaxDurationMs = activeSwingMaxMsOnQueue(
+                    instance.upperBodyAnimationTime, upperDur,
+                    instance.upperBodyOneShotMaxDurationMs, queuedMaxMs);
+                LOG_DEBUG("Queued upper-body melee swing instance=", instanceId, " anim=", animationId,
+                          " behind active=", upperSeq.id, " maxMs=", queuedMaxMs);
+            } else {
+                instance.pendingMeleeSwing = {animationId, oneShotReturnAnim, maxDurationMs};
+                LOG_DEBUG("Queued upper-body melee swing instance=", instanceId, " anim=", animationId,
+                          " behind cast=", upperSeq.id, " maxMs=", maxDurationMs);
+            }
             return;
         }
     } else if (!instance.animationLoop && !instance.holdFinalPose &&
@@ -2706,13 +2712,19 @@ void CharacterRenderer::playMeleeSwing(uint32_t instanceId, uint32_t animationId
         const auto& curSeq = sequences[instance.currentSequenceIndex];
         const float curDur = static_cast<float>(curSeq.duration);
         if (shouldQueueIncomingMeleeSwing(true, instance.currentAnimationId, instance.animationTime, curDur)) {
-            const float queuedMaxMs = dualWieldSwingMaxMs(maxDurationMs);
-            instance.pendingMeleeSwing = {animationId, oneShotReturnAnim, queuedMaxMs};
-            instance.oneShotMaxDurationMs = activeSwingMaxMsOnQueue(
-                instance.animationTime, curDur,
-                instance.oneShotMaxDurationMs, queuedMaxMs);
-            LOG_DEBUG("Queued melee swing instance=", instanceId, " anim=", animationId,
-                      " behind active=", instance.currentAnimationId, " maxMs=", queuedMaxMs);
+            if (isMeleeSwingAnimation(instance.currentAnimationId)) {
+                const float queuedMaxMs = dualWieldSwingMaxMs(maxDurationMs);
+                instance.pendingMeleeSwing = {animationId, oneShotReturnAnim, queuedMaxMs};
+                instance.oneShotMaxDurationMs = activeSwingMaxMsOnQueue(
+                    instance.animationTime, curDur,
+                    instance.oneShotMaxDurationMs, queuedMaxMs);
+                LOG_DEBUG("Queued melee swing instance=", instanceId, " anim=", animationId,
+                          " behind active=", instance.currentAnimationId, " maxMs=", queuedMaxMs);
+            } else {
+                instance.pendingMeleeSwing = {animationId, oneShotReturnAnim, maxDurationMs};
+                LOG_DEBUG("Queued melee swing instance=", instanceId, " anim=", animationId,
+                          " behind cast=", instance.currentAnimationId, " maxMs=", maxDurationMs);
+            }
             return;
         }
     }
