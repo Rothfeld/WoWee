@@ -475,8 +475,8 @@ void GameScreen::render(game::GameHandler& gameHandler) {
             }
             }
             if (!settingsPanel_.terrainSettingsApplied_) {
-            if (auto* tm = renderer->getTerrainManager()) {
-                tm->setGroundClutterDensityScale(
+            if (renderer->getTerrainManager()) {
+                renderer->setGroundClutterDensityScale(
                     static_cast<float>(settingsPanel_.pendingGroundClutterDensity) / 100.0f);
                 renderer->setGrassEnabled(settingsPanel_.pendingGrassEnabled);
                 renderer->setGrassScales(

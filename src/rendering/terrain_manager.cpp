@@ -1365,11 +1365,27 @@ bool TerrainManager::advanceFinalization(FinalizingTile& ft) {
         tile->wmoInstanceIds = std::move(ft.wmoInstanceIds);
         tile->wmoUniqueIds = std::move(ft.tileWmoUniqueIds);
         tile->doodadUniqueIds = std::move(ft.tileUniqueIds);
+        const float currentClutterScale = groundClutterDensityScale_.load(std::memory_order_relaxed);
+        if (std::abs(pending->groundDetailDensityScale - currentClutterScale) > 1e-4f) {
+            ensureGroundEffectTablesLoaded();
+            std::array<GroundDetailPatch, 256> refreshedPatches;
+            std::unordered_set<uint32_t> refreshedModels;
+            if (!taxiStreamingMode_ && !groundEffectById_.empty() && !groundDoodadModelById_.empty()) {
+                scatterTileGroundDetail(
+                    coord, pending->terrain, currentClutterScale, refreshedPatches, refreshedModels,
+                    [this](const std::string& m2Path, uint32_t modelId) {
+                        return uploadGroundDetailModelMainThread(m2Path, modelId);
+                    });
+            }
+            pending->groundDetail = std::move(refreshedPatches);
+            pending->groundDetailModels = std::move(refreshedModels);
+            pending->groundDetailDensityScale = currentClutterScale;
+        }
         tile->groundDetail = std::move(pending->groundDetail);
         tile->groundDetailModels = std::move(pending->groundDetailModels);
         for (uint32_t id : tile->groundDetailModels) {
             ++groundDetailModelUsers_[id];
-            m2Renderer->setModelPinned(id, true);
+            if (m2Renderer) m2Renderer->setModelPinned(id, true);
         }
         getTileBounds(coord, tile->minX, tile->minY, tile->maxX, tile->maxY);
         loadedTiles[coord] = std::move(tile);
@@ -1900,12 +1916,14 @@ void TerrainManager::updateGroundDetail(const Camera& camera) {
 }
 
 void TerrainManager::ensureGroundEffectTablesLoaded() {
-    if (groundEffectsLoaded_ || !assetManager) return;
-    groundEffectsLoaded_ = true;
+    if (groundEffectsLoaded_.load(std::memory_order_acquire) || !assetManager) return;
+    std::lock_guard<std::mutex> lock(groundEffectsMutex_);
+    if (groundEffectsLoaded_.load(std::memory_order_relaxed)) return;
 
     auto groundEffectTex = assetManager->loadDBC("GroundEffectTexture.dbc");
     auto groundEffectDoodad = assetManager->loadDBC("GroundEffectDoodad.dbc");
     if (!groundEffectTex || !groundEffectDoodad) {
+        groundEffectsLoaded_.store(true, std::memory_order_release);
         LOG_WARNING("Ground clutter DBCs missing; skipping procedural ground effects");
         return;
     }
@@ -1947,14 +1965,170 @@ void TerrainManager::ensureGroundEffectTablesLoaded() {
         }
     }
 
+    groundEffectsLoaded_.store(true, std::memory_order_release);
     LOG_INFO("Ground clutter tables loaded: ", groundEffectById_.size(),
              " effects, ", groundDoodadModelById_.size(), " doodad models");
 }
 
+bool TerrainManager::uploadGroundDetailModelMainThread(const std::string& m2Path, uint32_t modelId) {
+    if (!m2Renderer) return true;
+    if (m2Renderer->hasModel(modelId)) return true;
+    if (!assetManager) return false;
+
+    std::vector<uint8_t> m2Data = assetManager->readFile(m2Path);
+    if (m2Data.empty()) return false;
+
+    pipeline::M2Model m2Model = pipeline::M2Loader::load(m2Data);
+    m2Model.name = m2Path;
+    std::string skinPath = pipeline::skinPathForM2(m2Path);
+    std::vector<uint8_t> skinData = assetManager->readFileOptional(skinPath);
+    if (!skinData.empty() && m2Model.version >= 264) {
+        pipeline::M2Loader::loadSkin(skinData, m2Model);
+    }
+    if (!m2Model.isValid()) return false;
+
+    if (m2Renderer->loadModel(m2Model, modelId, true)) {
+        std::lock_guard<std::mutex> lock(uploadedM2IdsMutex_);
+        uploadedM2Ids_.insert(modelId);
+        return true;
+    }
+    return false;
+}
+
+void TerrainManager::scatterTileGroundDetail(
+    const TileCoord& coord,
+    const pipeline::ADTTerrain& terrain,
+    float densityScale,
+    std::array<GroundDetailPatch, 256>& outPatches,
+    std::unordered_set<uint32_t>& outModels,
+    const std::function<bool(const std::string&, uint32_t)>& ensureModelReady,
+    size_t* outAdded,
+    size_t* outAttempts,
+    size_t* outNoEffectMatch,
+    size_t* outNoDoodadModel) {
+    constexpr float unitSize = CHUNK_SIZE / 8.0f;
+    size_t added = 0;
+    size_t attemptsTotal = 0;
+    size_t noEffectMatch = 0;
+    size_t noDoodadModel = 0;
+
+    auto lookupEffect = [&](uint32_t effectId) -> const pipeline::GroundClutterEffectSpec* {
+        auto it = groundEffectById_.find(effectId);
+        if (it == groundEffectById_.end()) return nullptr;
+        thread_local pipeline::GroundClutterEffectSpec spec;
+        spec.doodadIds = it->second.doodadIds;
+        spec.weights = it->second.weights;
+        spec.density = it->second.density;
+        return &spec;
+    };
+
+    for (int cy = 0; cy < 16; ++cy) {
+        for (int cx = 0; cx < 16; ++cx) {
+            const auto& chunk = terrain.getChunk(cx, cy);
+            attemptsTotal += pipeline::scatterChunkGroundClutter(
+                chunk, coord.x, coord.y, cx, cy, densityScale,
+                lookupEffect,
+                [&](const pipeline::GroundClutterSample& sample) {
+                    auto doodadIt = groundDoodadModelById_.find(sample.doodadId);
+                    if (doodadIt == groundDoodadModelById_.end()) {
+                        noDoodadModel++;
+                        return;
+                    }
+                    const std::string& doodadModelPath = doodadIt->second;
+                    // Its own id space: ADTs and WMOs place some of these
+                    // files as ordinary doodads (world\nodxt\detail\wetbus01),
+                    // which keep their authored materials and collision.
+                    uint32_t modelId = static_cast<uint32_t>(
+                        std::hash<std::string>{}("GroundEffectDoodad|" + doodadModelPath));
+                    if (!ensureModelReady(doodadModelPath, modelId)) {
+                        LOG_ERROR("Ground clutter model could not load: ", doodadModelPath);
+                        assert(false && "Authored ground detail model failed to load");
+                        return;
+                    }
+
+                    glm::vec3 surfaceNormal(0.0f, 0.0f, 1.0f);
+                    const glm::vec3 surfacePoint = pipeline::TerrainMeshGenerator::chunkSurfacePoint(
+                        chunk.position, chunk.heightMap, sample.fracX, sample.fracY, unitSize, &surfaceNormal);
+
+                    GroundDetailPlacement p;
+                    p.modelId = modelId;
+                    // MCNK chunk.position is already in terrain/render world space.
+                    // Do not convert via ADT placement mapping (that is for MDDF/MODF records).
+                    p.rotation = glm::vec3(0.0f, 0.0f, sample.yaw);
+                    p.scale = sample.scale;
+                    // Snap directly to sampled terrain height.
+                    p.position = glm::vec3(surfacePoint.x, surfacePoint.y, surfacePoint.z + 0.01f);
+                    p.groundNormal = surfaceNormal;
+                    p.shadowed = chunk.isShadowed(sample.fracX, sample.fracY);
+                    outPatches[cy * 16 + cx].placements.push_back(p);
+                    outModels.insert(modelId);
+                    added++;
+                },
+                &noEffectMatch);
+        }
+    }
+
+    if (outAdded) *outAdded = added;
+    if (outAttempts) *outAttempts = attemptsTotal;
+    if (outNoEffectMatch) *outNoEffectMatch = noEffectMatch;
+    if (outNoDoodadModel) *outNoDoodadModel = noDoodadModel;
+}
+
+void TerrainManager::setGroundClutterDensityScale(float scale) {
+    const float clamped = glm::clamp(scale, 0.0f, 1.5f);
+    const float prev = groundClutterDensityScale_.exchange(clamped, std::memory_order_relaxed);
+    if (std::abs(clamped - prev) <= 1e-4f) return;
+    if (loadedTiles.empty()) return;
+
+    ensureGroundEffectTablesLoaded();
+
+    std::vector<uint32_t> removeIds;
+    for (auto& [coord, tile] : loadedTiles) {
+        if (!tile) continue;
+        for (auto& patch : tile->groundDetail) {
+            removeIds.insert(removeIds.end(), patch.instanceIds.begin(), patch.instanceIds.end());
+            patch.instanceIds.clear();
+        }
+    }
+    if (m2Renderer && !removeIds.empty()) {
+        m2Renderer->removeInstances(removeIds);
+    }
+
+    const bool canScatter = !taxiStreamingMode_ && !groundEffectById_.empty() && !groundDoodadModelById_.empty();
+    for (auto& [coord, tile] : loadedTiles) {
+        if (!tile) continue;
+        std::array<GroundDetailPatch, 256> newPatches;
+        std::unordered_set<uint32_t> newModels;
+        if (canScatter) {
+            scatterTileGroundDetail(
+                coord, tile->terrain, clamped, newPatches, newModels,
+                [this](const std::string& m2Path, uint32_t modelId) {
+                    return uploadGroundDetailModelMainThread(m2Path, modelId);
+                });
+        }
+        for (uint32_t id : newModels) {
+            ++groundDetailModelUsers_[id];
+            if (m2Renderer) m2Renderer->setModelPinned(id, true);
+        }
+        for (uint32_t id : tile->groundDetailModels) {
+            auto it = groundDetailModelUsers_.find(id);
+            if (it != groundDetailModelUsers_.end() && --it->second == 0) {
+                if (m2Renderer) m2Renderer->setModelPinned(id, false);
+                groundDetailModelUsers_.erase(it);
+            }
+        }
+        tile->groundDetail = std::move(newPatches);
+        tile->groundDetailModels = std::move(newModels);
+    }
+}
+
 void TerrainManager::generateGroundClutterPlacements(std::shared_ptr<PendingTile>& pending,
                                                      std::unordered_set<uint32_t>& preparedModelIds) {
+    if (!pending) return;
+    const float densityScale = groundClutterDensityScale_.load(std::memory_order_relaxed);
+    pending->groundDetailDensityScale = densityScale;
     if (taxiStreamingMode_) return;  // Skip clutter while on taxi flights.
-    if (!pending || groundEffectById_.empty() || groundDoodadModelById_.empty()) return;
+    if (groundEffectById_.empty() || groundDoodadModelById_.empty()) return;
 
     size_t modelMissing = 0;
     size_t modelInvalid = 0;
@@ -1989,67 +2163,15 @@ void TerrainManager::generateGroundClutterPlacements(std::shared_ptr<PendingTile
         return true;
     };
 
-    constexpr float unitSize = CHUNK_SIZE / 8.0f;
     size_t added = 0;
     size_t attemptsTotal = 0;
     size_t noEffectMatch = 0;
     size_t noDoodadModel = 0;
-
-    auto lookupEffect = [&](uint32_t effectId) -> const pipeline::GroundClutterEffectSpec* {
-        auto it = groundEffectById_.find(effectId);
-        if (it == groundEffectById_.end()) return nullptr;
-        thread_local pipeline::GroundClutterEffectSpec spec;
-        spec.doodadIds = it->second.doodadIds;
-        spec.weights = it->second.weights;
-        spec.density = it->second.density;
-        return &spec;
-    };
-
-    for (int cy = 0; cy < 16; ++cy) {
-        for (int cx = 0; cx < 16; ++cx) {
-            const auto& chunk = pending->terrain.getChunk(cx, cy);
-            attemptsTotal += pipeline::scatterChunkGroundClutter(
-                chunk, pending->coord.x, pending->coord.y, cx, cy, groundClutterDensityScale_,
-                lookupEffect,
-                [&](const pipeline::GroundClutterSample& sample) {
-                    auto doodadIt = groundDoodadModelById_.find(sample.doodadId);
-                    if (doodadIt == groundDoodadModelById_.end()) {
-                        noDoodadModel++;
-                        return;
-                    }
-                    const std::string& doodadModelPath = doodadIt->second;
-                    // Its own id space: ADTs and WMOs place some of these
-                    // files as ordinary doodads (world\nodxt\detail\wetbus01),
-                    // which keep their authored materials and collision.
-                    uint32_t modelId = static_cast<uint32_t>(
-                        std::hash<std::string>{}("GroundEffectDoodad|" + doodadModelPath));
-                    if (!ensureModelPrepared(doodadModelPath, modelId)) {
-                        LOG_ERROR("Ground clutter model could not load: ", doodadModelPath);
-                        assert(false && "Authored ground detail model failed to load");
-                        return;
-                    }
-
-                    glm::vec3 surfaceNormal(0.0f, 0.0f, 1.0f);
-                    const glm::vec3 surfacePoint = pipeline::TerrainMeshGenerator::chunkSurfacePoint(
-                        chunk.position, chunk.heightMap, sample.fracX, sample.fracY, unitSize, &surfaceNormal);
-
-                    GroundDetailPlacement p;
-                    p.modelId = modelId;
-                    // MCNK chunk.position is already in terrain/render world space.
-                    // Do not convert via ADT placement mapping (that is for MDDF/MODF records).
-                    p.rotation = glm::vec3(0.0f, 0.0f, sample.yaw);
-                    p.scale = sample.scale;
-                    // Snap directly to sampled terrain height.
-                    p.position = glm::vec3(surfacePoint.x, surfacePoint.y, surfacePoint.z + 0.01f);
-                    p.groundNormal = surfaceNormal;
-                    p.shadowed = chunk.isShadowed(sample.fracX, sample.fracY);
-                    pending->groundDetail[cy * 16 + cx].placements.push_back(p);
-                    pending->groundDetailModels.insert(modelId);
-                    added++;
-                },
-                &noEffectMatch);
-        }
-    }
+    scatterTileGroundDetail(
+        pending->coord, pending->terrain, densityScale,
+        pending->groundDetail, pending->groundDetailModels,
+        ensureModelPrepared,
+        &added, &attemptsTotal, &noEffectMatch, &noDoodadModel);
 
     if (added > 0) {
         static int clutterLogCount = 0;

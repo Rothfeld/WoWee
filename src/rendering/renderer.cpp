@@ -2987,6 +2987,13 @@ void Renderer::setGrassEnabled(bool enabled) {
     grassWindowValid_ = false;
 }
 
+void Renderer::setGroundClutterDensityScale(float scale) {
+    groundClutterDensityScale_ = glm::clamp(scale, 0.0f, 1.5f);
+    if (terrainManager) {
+        terrainManager->setGroundClutterDensityScale(groundClutterDensityScale_);
+    }
+}
+
 void Renderer::setGrassScales(float density, float height) {
     // Up to triple. Density past 1 costs generation time and can meet the
     // blade cap, which thins the whole window rather than cutting a side off
@@ -4532,6 +4539,7 @@ bool Renderer::initializeRenderers(pipeline::AssetManager* assetManager, const s
     // Create and initialize terrain manager
     if (!terrainManager) {
         terrainManager = std::make_unique<TerrainManager>();
+        terrainManager->setGroundClutterDensityScale(groundClutterDensityScale_);
         if (!terrainManager->initialize(assetManager, terrainRenderer.get())) {
             LOG_ERROR("Failed to initialize terrain manager");
             terrainManager.reset();

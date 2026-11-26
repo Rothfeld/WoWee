@@ -26,6 +26,7 @@
 #include "pipeline/grass_clearing.hpp"
 #include "pipeline/grass_population.hpp"
 #include "pipeline/grass_profile.hpp"
+#include "ui/graphics_defaults.hpp"
 
 namespace wowee {
 namespace core { class Window; }
@@ -690,11 +691,17 @@ public:
      * generation time on the main thread, and turning it off has to release
      * what it was holding rather than merely stop drawing. */
     void setGrassEnabled(bool enabled);
+    /** Ground-clutter density scale (0.0..1.5 = 0%..150% UI slider).
+     * Stored on Renderer so settings loaded at startup reach TerrainManager
+     * before initial world tiles stream in, and forwarded live on change. */
+    void setGroundClutterDensityScale(float scale);
+    [[nodiscard]] float getGroundClutterDensityScale() const { return groundClutterDensityScale_; }
 private:
     bool grassEnabled_ = false;
     float grassDensityScale_ = 1.0f;
     float grassHeightScale_ = 1.0f;
     float grassDistance_ = 150.0f;
+    float groundClutterDensityScale_ = static_cast<float>(ui::kDefaultGroundClutter) / 100.0f;
     // (biome, effectId) -> index into the profile table, built as effects are
     // met. Grass profiles are a blend of five categories crossed with the
     // biome overrides, so distinct ones stay far fewer than the hundreds of

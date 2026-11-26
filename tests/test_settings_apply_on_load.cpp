@@ -134,13 +134,45 @@ TEST_CASE("no default is spelled out a second time", "[settings]") {
     // The literals themselves, so a new copy has to be a deliberate act.
     const std::string panelHeader = wowee::test::slurp("include/ui/settings_panel.hpp");
     const std::string authHeader = wowee::test::slurp("include/ui/auth_screen.hpp");
+    const std::string terrainHeader = wowee::test::slurp("include/rendering/terrain_manager.hpp");
+    const std::string rendererHeader = wowee::test::slurp("include/rendering/renderer.hpp");
     REQUIRE(panelHeader.size() > 500);
     REQUIRE(authHeader.size() > 500);
+    REQUIRE(terrainHeader.size() > 500);
+    REQUIRE(rendererHeader.size() > 500);
 
     CHECK(authHeader.find("kDefaultViewDistance") != std::string::npos);
     CHECK(authHeader.find("kDefaultGroundClutter") != std::string::npos);
+    CHECK(terrainHeader.find("kDefaultGroundClutter") != std::string::npos);
+    CHECK(rendererHeader.find("kDefaultGroundClutter") != std::string::npos);
     // The old value, in either header, would mean a fourth copy came back.
     CHECK(authHeader.find("1200.0f") == std::string::npos);
+}
+
+TEST_CASE("ground clutter density reaches Renderer before TerrainManager exists",
+          "[settings]") {
+    // TerrainManager is constructed inside Renderer::initializeRenderers while
+    // initial login tiles stream in. Routing applySettingSideEffects("groundclutter")
+    // behind renderer->getTerrainManager() dropped the saved value at startup
+    // and streamed every initial login tile at 1.0f instead of settings.cfg.
+    const std::string panel = wowee::test::slurp("src/ui/settings_panel.cpp");
+    const std::string renderer = wowee::test::slurp("src/rendering/renderer.cpp");
+    REQUIRE(panel.size() > 1000);
+    REQUIRE(renderer.size() > 1000);
+
+    const size_t keyPos = panel.find("key == \"groundclutter\"");
+    REQUIRE(keyPos != std::string::npos);
+    const size_t nextKey = panel.find("else if (key ==", keyPos + 1);
+    REQUIRE(nextKey != std::string::npos);
+    const std::string branch = panel.substr(keyPos, nextKey - keyPos);
+    CHECK(branch.find("renderer->setGroundClutterDensityScale") != std::string::npos);
+    CHECK(branch.find("getTerrainManager") == std::string::npos);
+
+    const size_t initPos = renderer.find("std::make_unique<TerrainManager>()");
+    REQUIRE(initPos != std::string::npos);
+    const std::string initWindow = renderer.substr(initPos, 400);
+    CHECK(initWindow.find("terrainManager->setGroundClutterDensityScale(groundClutterDensityScale_)") !=
+          std::string::npos);
 }
 
 // ---------------------------------------------------------------------------

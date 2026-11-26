@@ -2,12 +2,14 @@
 
 #include "core/coordinates.hpp"
 #include "rendering/legacy_light_direction.hpp"
+#include "ui/graphics_defaults.hpp"
 #include "pipeline/adt_loader.hpp"
 #include "pipeline/terrain_mesh.hpp"
 #include "pipeline/m2_loader.hpp"
 #include "pipeline/wmo_loader.hpp"
 #include "pipeline/blp_loader.hpp"
 #include <string>
+#include <functional>
 #include <unordered_map>
 #include <unordered_set>
 #include <memory>
@@ -82,6 +84,7 @@ struct TerrainTile {
     std::vector<uint32_t> doodadUniqueIds;  // For dedup cleanup on unload
     std::array<GroundDetailPatch, 256> groundDetail;
     std::unordered_set<uint32_t> groundDetailModels;
+    float groundDetailDensityScale = -1.0f;
 };
 
 /**
@@ -93,6 +96,7 @@ struct PendingTile {
     pipeline::TerrainMesh mesh;
     std::array<GroundDetailPatch, 256> groundDetail;
     std::unordered_set<uint32_t> groundDetailModels;
+    float groundDetailDensityScale = -1.0f;
 
     // Pre-loaded M2 data
     struct M2Ready {
@@ -275,8 +279,10 @@ public:
     void setStreamingEnabled(bool enabled) { streamingEnabled = enabled; }
     void setUpdateInterval(float seconds) { updateInterval = seconds; }
     void setTaxiStreamingMode(bool enabled) { taxiStreamingMode_ = enabled; }
-    void setGroundClutterDensityScale(float scale) { groundClutterDensityScale_ = glm::clamp(scale, 0.0f, 1.5f); }
-    [[nodiscard]] float getGroundClutterDensityScale() const { return groundClutterDensityScale_; }
+    void setGroundClutterDensityScale(float scale);
+    [[nodiscard]] float getGroundClutterDensityScale() const {
+        return groundClutterDensityScale_.load(std::memory_order_relaxed);
+    }
 
     /** Density for a ground-effect id, or 0 if it grows nothing or is unknown.
      *
@@ -457,6 +463,18 @@ private:
     void workerLoop();
 
     void ensureGroundEffectTablesLoaded();
+    void scatterTileGroundDetail(
+        const TileCoord& coord,
+        const pipeline::ADTTerrain& terrain,
+        float densityScale,
+        std::array<GroundDetailPatch, 256>& outPatches,
+        std::unordered_set<uint32_t>& outModels,
+        const std::function<bool(const std::string&, uint32_t)>& ensureModelReady,
+        size_t* outAdded = nullptr,
+        size_t* outAttempts = nullptr,
+        size_t* outNoEffectMatch = nullptr,
+        size_t* outNoDoodadModel = nullptr);
+    bool uploadGroundDetailModelMainThread(const std::string& m2Path, uint32_t modelId);
     void generateGroundClutterPlacements(std::shared_ptr<PendingTile>& pending,
                                          std::unordered_set<uint32_t>& preparedModelIds);
 
@@ -594,10 +612,12 @@ private:
         std::array<uint32_t, 4> weights{{0, 0, 0, 0}};
         uint32_t density = 0;
     };
-    bool groundEffectsLoaded_ = false;
+    std::atomic<bool> groundEffectsLoaded_{false};
+    std::mutex groundEffectsMutex_;
     std::unordered_map<uint32_t, GroundEffectEntry> groundEffectById_; // effectId -> config
     std::unordered_map<uint32_t, std::string> groundDoodadModelById_;  // doodadId -> model path
-    float groundClutterDensityScale_ = 1.0f;
+    std::atomic<float> groundClutterDensityScale_{
+        static_cast<float>(ui::kDefaultGroundClutter) / 100.0f};
     std::unordered_map<uint32_t, size_t> groundDetailModelUsers_;
     std::unordered_map<std::string, TerrainTextureTones> terrainTextureTones_;
 };

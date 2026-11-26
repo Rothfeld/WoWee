@@ -492,10 +492,8 @@ void SettingsPanel::applySettingSideEffects(const std::string& key) {
         if (renderer) renderer->setWaterRefractionEnabled(pendingWaterRefraction);
     } else if (key == "groundclutter") {
         if (renderer) {
-            if (auto* tm = renderer->getTerrainManager()) {
-                tm->setGroundClutterDensityScale(
-                    static_cast<float>(pendingGroundClutterDensity) / 100.0f);
-            }
+            renderer->setGroundClutterDensityScale(
+                static_cast<float>(pendingGroundClutterDensity) / 100.0f);
         }
     } else if (key == "groundclutterdistance") {
         // The five below reach the same code the game's own Effects panel

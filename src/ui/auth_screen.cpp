@@ -1927,6 +1927,16 @@ void AuthScreen::renderLoginSettingsSheet(float screenW, float screenH) {
         if (ui_.button("gfx.apply", ImVec2(col.x1 - applyW, y), ImVec2(col.x1, y + bh), "Apply",
                        PaperUI::ButtonKind::Primary)) {
             saveLoginGraphicsState();
+            if (services_.renderer) {
+                services_.renderer->setGroundClutterDensityScale(
+                    loginGfx_.groundClutter / 100.0f);
+                services_.renderer->setGrassEnabled(loginGfx_.grass);
+                services_.renderer->setGrassScales(
+                    static_cast<float>(loginGfx_.grassDensity) / 100.0f,
+                    static_cast<float>(loginGfx_.grassHeight) / 100.0f);
+                services_.renderer->setGrassDistance(
+                    static_cast<float>(loginGfx_.grassDistance));
+            }
             if (services_.window) {
                 if (services_.window->isVsyncEnabled() != loginGfx_.vsync) {
                     services_.window->setVsync(loginGfx_.vsync);
