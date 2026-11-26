@@ -147,13 +147,111 @@ inline float activeSwingMaxMsOnQueue(float currentTimeMs,
     return targetRemainWallMs / remainFraction;
 }
 
-/// Units actively mid-swing on a melee attack one-shot or mid-knockdown do not
-/// cut their animation short (or drop a queued off-hand swing) to play a
-/// hit-reaction flinch; blood spurts and wound vocals still fire.
-inline constexpr bool unitSuppressesHitReactionDuringSwing(bool playingOneShot,
-                                                           uint32_t activeOneShotAnim) {
-    return playingOneShot &&
-           (isMeleeSwingAnimation(activeOneShotAnim) || activeOneShotAnim == anim::KNOCKDOWN);
+/// True for active defensive combat reaction one-shots (`Dodge`, weapon-grip
+/// `Parry*`, `ShieldBlock`, `Block`, `Deflect`, and their flying variants).
+/// Unlike passive wound flinches (`StandWound 8`, `CombatWound 9`,
+/// `CombatCritical 10`), active defensive reactions interrupt an in-progress
+/// melee swing one-shot on Native TBC 2.4.3.
+inline constexpr bool isActiveDefenseReactionAnimation(uint32_t animId) {
+    switch (animId) {
+        case anim::PARRY_UNARMED:
+        case anim::PARRY_1H:
+        case anim::PARRY_2H:
+        case anim::PARRY_2H_LOOSE:
+        case anim::SHIELD_BLOCK:
+        case anim::DODGE:
+        case anim::BLOCK:
+        case anim::DEFLECT:
+        case anim::FLY_PARRY_UNARMED:
+        case anim::FLY_PARRY_1H:
+        case anim::FLY_PARRY_2H:
+        case anim::FLY_PARRY_2HL:
+        case anim::FLY_SHIELD_BLOCK:
+        case anim::FLY_DODGE:
+        case anim::FLY_BLOCK:
+            return true;
+        default:
+            return false;
+    }
+}
+
+/// True for non-looping melee attack or melee special one-shot animations
+/// (auto-attack swings, crit/ability `Special*`, `ShieldBash`, `Kick`,
+/// `Mutilate`, and feral swipe/bite/maul strikes).
+inline constexpr bool isMeleeAttackOneShotAnimation(uint32_t animId) {
+    if (isMeleeSwingAnimation(animId)) return true;
+    switch (animId) {
+        case anim::SPECIAL_1H:
+        case anim::SPECIAL_2H:
+        case anim::SHIELD_BASH:
+        case anim::KICK:
+        case anim::SPECIAL_UNARMED:
+        case anim::DRUID_CAT_POUNCE:
+        case anim::DRUID_CAT_RIP:
+        case anim::DRUID_CAT_RAKE:
+        case anim::DRUID_CAT_RAVAGE:
+        case anim::DRUID_CAT_CLAW:
+        case anim::DRUID_BEAR_SWIPE:
+        case anim::DRUID_BEAR_BITE:
+        case anim::DRUID_BEAR_MAUL:
+        case anim::DRUID_BEAR_BASH:
+        case anim::MUTILATE:
+        case anim::FLY_SPECIAL_1H:
+        case anim::FLY_SPECIAL_2H:
+        case anim::FLY_SPECIAL_UNARMED:
+            return true;
+        default:
+            return false;
+    }
+}
+
+/// Units actively mid-knockdown suppress all hit reactions; units mid-swing on
+/// a melee attack/special one-shot suppress wound flinches (`StandWound`,
+/// `CombatWound`, `CombatCritical`) while allowing active defensive reactions
+/// (`Dodge`, `Parry*`, `ShieldBlock`) to interrupt the swing.
+inline constexpr bool unitSuppressesHitReactionDuringSwing(
+    bool playingOneShot,
+    uint32_t activeOneShotAnim,
+    uint32_t reactionAnimId = anim::COMBAT_WOUND) {
+    if (!playingOneShot) return false;
+    if (activeOneShotAnim == anim::KNOCKDOWN) return true;
+    if (isMeleeAttackOneShotAnimation(activeOneShotAnim)) {
+        return !isActiveDefenseReactionAnimation(reactionAnimId);
+    }
+    return false;
+}
+
+/// Looping animation a remote unit resumes after a hit-reaction one-shot ends.
+///
+/// Empirical Native TBC 2.4.3 rule:
+///   - Moving, hovering, cast-holding, aura-overridden, or out-of-combat units
+///     (`!isCombatReadyIdle`) always resume `spawnerResumeAnim`.
+///   - Stationary combat-ready units whose looping `Ready*` stance is active
+///     between swings resume `Ready*` (`spawnerResumeAnim`) after `Dodge`,
+///     `Parry*`, `ShieldBlock`, or `CombatWound`.
+///   - Stationary combat-ready units whose non-looping melee swing (`Attack*` /
+///     `Special*`) is interrupted mid-swing by an active defensive reaction
+///     (`Dodge`, `Parry*`, `ShieldBlock`) transition to `Stand (0)` when that
+///     reaction finishes, and stay in `Stand (0)` across any follow-up reaction
+///     until their next melee swing restores `Attack* -> Ready*`.
+inline constexpr uint32_t remoteHitReactionResumeAnimation(
+    bool playingOneShot,
+    uint32_t activeOneShotAnim,
+    uint32_t reactionAnimId,
+    uint32_t instanceResumeAnim,
+    uint32_t spawnerResumeAnim,
+    bool isCombatReadyIdle) {
+    if (!isCombatReadyIdle) return spawnerResumeAnim;
+    if (playingOneShot &&
+        isMeleeAttackOneShotAnimation(activeOneShotAnim) &&
+        isActiveDefenseReactionAnimation(reactionAnimId)) {
+        return anim::STAND;
+    }
+    if (instanceResumeAnim == anim::STAND &&
+        (!playingOneShot || !isMeleeAttackOneShotAnimation(activeOneShotAnim))) {
+        return anim::STAND;
+    }
+    return spawnerResumeAnim;
 }
 
 } // namespace wowee::rendering

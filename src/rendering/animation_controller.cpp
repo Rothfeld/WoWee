@@ -1,6 +1,7 @@
 #include <span>
 
 #include "rendering/animation/melee_anim_chains.hpp"
+#include "rendering/animation/melee_swing_queue.hpp"
 #include "rendering/animation/weapon_spell_anim.hpp"
 #include "rendering/animation_controller.hpp"
 #include "rendering/animation/emote_registry.hpp"
@@ -241,6 +242,15 @@ void AnimationController::stopLooting() {
 // ── Hit reactions ────────────────────────────────────────────────────────────
 
 void AnimationController::triggerHitReaction(uint32_t animId) {
+    if (animId != 0 && isActiveDefenseReactionAnimation(animId) &&
+        meleeSwingTimer_ > 0.0f && rangedShootTimer_ <= 0.0f &&
+        !stunned_ && !charging_ && !characterAnimator_.getCombat().isKitAnimationActive()) {
+        meleeSwingTimer_ = 0.0f;
+        meleeSwingMaxDurationMs_ = 0.0f;
+        hasPendingMeleeSwing_ = false;
+        pendingMeleeSwingMaxDurationMs_ = 0.0f;
+        specialAttackAnimId_ = 0;
+    }
     characterAnimator_.triggerHitReaction(animId);
     if (animId != 0 && meleeSwingTimer_ <= 0.0f && rangedShootTimer_ <= 0.0f &&
         !charging_ && !characterAnimator_.getCombat().isKitAnimationActive() &&

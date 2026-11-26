@@ -425,7 +425,7 @@ void AnimationCallbackHandler::setupCallbacks() {
         }
         uint32_t activeOneShot = 0;
         const bool playingOneShot = cr->isPlayingOneShot(instanceId, &activeOneShot);
-        if (rendering::unitSuppressesHitReactionDuringSwing(playingOneShot, activeOneShot)) {
+        if (rendering::unitSuppressesHitReactionDuringSwing(playingOneShot, activeOneShot, animId)) {
             LOG_DEBUG("Hit reaction ", animId, " suppressed during active melee swing ",
                       activeOneShot, " on 0x", std::hex, victimGuid, std::dec);
             return;
@@ -447,7 +447,12 @@ void AnimationCallbackHandler::setupCallbacks() {
                 return;
             }
         }
-        cr->playAnimation(instanceId, animId, false, entitySpawner_.remoteResumeAnimation(victimGuid));
+        const uint32_t defaultResume = entitySpawner_.remoteResumeAnimation(victimGuid);
+        const uint32_t resumeAnim = rendering::remoteHitReactionResumeAnimation(
+            playingOneShot, activeOneShot, animId,
+            cr->getOneShotResumeAnimation(instanceId), defaultResume,
+            rendering::isCombatReadyStance(defaultResume));
+        cr->playAnimation(instanceId, animId, false, resumeAnim);
     });
 
     // Stun animation is driven by active aura StateKit.AnimID == STUN (14) in
@@ -620,6 +625,14 @@ void AnimationCallbackHandler::setupCallbacks() {
                 // the unit's idle - its ready stance while it is meleeing.
                 auto retained = activeEmotes.find(guid);
                 uint32_t resumeAnim = entitySpawner_.remoteResumeAnimation(guid);
+                if (rendering::isWoundAnimation(emoteAnim)) {
+                    uint32_t activeOneShot = 0;
+                    const bool playingOneShot = cr->isPlayingOneShot(emoteInstanceId, &activeOneShot);
+                    resumeAnim = rendering::remoteHitReactionResumeAnimation(
+                        playingOneShot, activeOneShot, emoteAnim,
+                        cr->getOneShotResumeAnimation(emoteInstanceId), resumeAnim,
+                        rendering::isCombatReadyStance(resumeAnim));
+                }
                 if (retained != activeEmotes.end() &&
                     cr->hasAnimation(emoteInstanceId, retained->second)) {
                     resumeAnim = retained->second;
@@ -632,7 +645,15 @@ void AnimationCallbackHandler::setupCallbacks() {
         if (emoteInstanceId != 0) {
             cr->setGestureWeaponPose(emoteInstanceId, emoteAnim, sheathe);
             const uint32_t idle = entitySpawner_.remoteIdleAnimation(guid);
-            const uint32_t resume = entitySpawner_.remoteResumeAnimation(guid);
+            uint32_t resume = entitySpawner_.remoteResumeAnimation(guid);
+            if (!isState && rendering::isWoundAnimation(emoteAnim)) {
+                uint32_t activeOneShot = 0;
+                const bool playingOneShot = cr->isPlayingOneShot(emoteInstanceId, &activeOneShot);
+                resume = rendering::remoteHitReactionResumeAnimation(
+                    playingOneShot, activeOneShot, emoteAnim,
+                    cr->getOneShotResumeAnimation(emoteInstanceId), resume,
+                    rendering::isCombatReadyStance(resume));
+            }
             auto& emotes = rendering::EmoteRegistry::instance();
             emotes.loadFromDbc();
             if (!isState && rendering::isSeatedBaseAnimation(idle) &&

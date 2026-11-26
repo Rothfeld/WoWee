@@ -1,5 +1,6 @@
 #include "rendering/animation/combat_fsm.hpp"
 #include "rendering/animation/animation_ids.hpp"
+#include "rendering/animation/melee_swing_queue.hpp"
 #include "game/inventory.hpp"
 #include "core/logger.hpp"
 #include <cassert>
@@ -174,10 +175,13 @@ void CombatFSM::triggerHitReaction(uint32_t animId) {
         if (state_ == State::HIT_REACTION) state_ = State::INACTIVE;
         return;
     }
-    // Active spell kit one-shots (e.g. Knockdown 121), melee/ranged swings,
-    // and charge hold priority over hit reactions.
-    if (kitAnimId_ != 0 || state_ == State::MELEE_SWING ||
-        state_ == State::RANGED_SHOOT || state_ == State::CHARGE) {
+    // Active spell kit one-shots (e.g. Knockdown 121), ranged shots, and charge
+    // hold priority over all hit reactions. Melee swings suppress passive wound
+    // flinches while active defensive reactions (Dodge/Parry*/ShieldBlock) interrupt.
+    if (kitAnimId_ != 0 || state_ == State::RANGED_SHOOT || state_ == State::CHARGE) {
+        return;
+    }
+    if (state_ == State::MELEE_SWING && !isActiveDefenseReactionAnimation(animId)) {
         return;
     }
     // A hit does not end a cast or a channel: the reaction plays once and

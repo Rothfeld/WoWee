@@ -651,19 +651,76 @@ TEST_CASE("Brutallus (24882) 1000ms and VanCleef (639) 1500ms dual-wield cadence
     runSimulation(1500.0f, 1000.0f, 1000.0f, 880.0f);
 }
 
-TEST_CASE("Hit-reaction flinch is suppressed during active melee swings on both remote units and local CombatFSM",
+TEST_CASE("Hit-reaction flinch is suppressed during active melee swings while active defenses interrupt",
           "[combat][dualwield][hit_reaction]") {
+    // Passive wound flinches (8, 9, 10) are suppressed during active melee/special swings and Knockdown.
     CHECK(unitSuppressesHitReactionDuringSwing(true, anim::ATTACK_1H));
+    CHECK(unitSuppressesHitReactionDuringSwing(true, anim::ATTACK_1H, anim::STAND_WOUND));
+    CHECK(unitSuppressesHitReactionDuringSwing(true, anim::ATTACK_1H, anim::COMBAT_WOUND));
+    CHECK(unitSuppressesHitReactionDuringSwing(true, anim::ATTACK_2H_LOOSE, anim::COMBAT_CRITICAL));
+    CHECK(unitSuppressesHitReactionDuringSwing(true, anim::SPECIAL_2H, anim::COMBAT_WOUND));
     CHECK(unitSuppressesHitReactionDuringSwing(true, anim::ATTACK_OFF));
     CHECK(unitSuppressesHitReactionDuringSwing(true, anim::ATTACK_UNARMED));
     CHECK(unitSuppressesHitReactionDuringSwing(true, anim::ATTACK_UNARMED_OFF));
-    CHECK(unitSuppressesHitReactionDuringSwing(true, anim::KNOCKDOWN));
+    CHECK(unitSuppressesHitReactionDuringSwing(true, anim::KNOCKDOWN, anim::COMBAT_WOUND));
+    CHECK(unitSuppressesHitReactionDuringSwing(true, anim::KNOCKDOWN, anim::DODGE));
+    CHECK(unitSuppressesHitReactionDuringSwing(true, anim::KNOCKDOWN, anim::PARRY_2H_LOOSE));
+
+    // Active defensive reactions (Dodge 30, Parry* 20..23, ShieldBlock 24) interrupt active melee/special swings.
+    CHECK_FALSE(unitSuppressesHitReactionDuringSwing(true, anim::ATTACK_1H, anim::DODGE));
+    CHECK_FALSE(unitSuppressesHitReactionDuringSwing(true, anim::ATTACK_2H_LOOSE, anim::DODGE));
+    CHECK_FALSE(unitSuppressesHitReactionDuringSwing(true, anim::SPECIAL_2H, anim::DODGE));
+    CHECK_FALSE(unitSuppressesHitReactionDuringSwing(true, anim::ATTACK_1H, anim::PARRY_1H));
+    CHECK_FALSE(unitSuppressesHitReactionDuringSwing(true, anim::ATTACK_2H, anim::PARRY_2H));
+    CHECK_FALSE(unitSuppressesHitReactionDuringSwing(true, anim::ATTACK_2H_LOOSE, anim::PARRY_2H_LOOSE));
+    CHECK_FALSE(unitSuppressesHitReactionDuringSwing(true, anim::ATTACK_UNARMED, anim::PARRY_UNARMED));
+    CHECK_FALSE(unitSuppressesHitReactionDuringSwing(true, anim::ATTACK_1H, anim::SHIELD_BLOCK));
+
     CHECK_FALSE(unitSuppressesHitReactionDuringSwing(false, anim::ATTACK_1H));
     CHECK_FALSE(unitSuppressesHitReactionDuringSwing(false, anim::KNOCKDOWN));
     CHECK_FALSE(unitSuppressesHitReactionDuringSwing(true, anim::COMBAT_WOUND));
     CHECK_FALSE(unitSuppressesHitReactionDuringSwing(false, anim::READY_1H));
 
-    // Local CombatFSM keeps MELEE_SWING undisturbed when hit mid-swing.
+    // Remote post-reaction resume rule (Native TBC 2.4.3):
+    // 1. Between swings in Ready2HL (28): Dodge/Parry/Wound returns to Ready2HL (28).
+    CHECK(remoteHitReactionResumeAnimation(
+              false, 0, anim::DODGE, anim::READY_2H_LOOSE, anim::READY_2H_LOOSE, true) ==
+          anim::READY_2H_LOOSE);
+    CHECK(remoteHitReactionResumeAnimation(
+              false, 0, anim::COMBAT_WOUND, anim::READY_2H_LOOSE, anim::READY_2H_LOOSE, true) ==
+          anim::READY_2H_LOOSE);
+    // 2. Mid-swing (Attack2HL 19 or Special2H 58) on stationary unit: Dodge/Parry/ShieldBlock
+    //    returns to Stand (0) until the next melee swing.
+    CHECK(remoteHitReactionResumeAnimation(
+              true, anim::ATTACK_2H_LOOSE, anim::DODGE, anim::READY_2H_LOOSE, anim::READY_2H_LOOSE, true) ==
+          anim::STAND);
+    CHECK(remoteHitReactionResumeAnimation(
+              true, anim::SPECIAL_2H, anim::DODGE, anim::READY_2H_LOOSE, anim::READY_2H_LOOSE, true) ==
+          anim::STAND);
+    CHECK(remoteHitReactionResumeAnimation(
+              true, anim::ATTACK_2H_LOOSE, anim::PARRY_2H_LOOSE, anim::READY_2H_LOOSE, anim::READY_2H_LOOSE, true) ==
+          anim::STAND);
+    CHECK(remoteHitReactionResumeAnimation(
+              true, anim::ATTACK_1H, anim::SHIELD_BLOCK, anim::READY_1H, anim::READY_1H, true) ==
+          anim::STAND);
+    // 3. Follow-up reaction while already mid-Dodge (returning to Stand 0) or idling in Stand (0)
+    //    before the next swing preserves Stand (0).
+    CHECK(remoteHitReactionResumeAnimation(
+              true, anim::DODGE, anim::COMBAT_WOUND, anim::STAND, anim::READY_2H_LOOSE, true) ==
+          anim::STAND);
+    CHECK(remoteHitReactionResumeAnimation(
+              false, 0, anim::COMBAT_WOUND, anim::STAND, anim::READY_2H_LOOSE, true) ==
+          anim::STAND);
+    // 4. Moving or hovering unit resumes locomotion/hover even when dodging mid-swing.
+    CHECK(remoteHitReactionResumeAnimation(
+              true, anim::ATTACK_2H_LOOSE, anim::DODGE, anim::RUN, anim::RUN, false) ==
+          anim::RUN);
+    CHECK(remoteHitReactionResumeAnimation(
+              true, anim::ATTACK_2H_LOOSE, anim::DODGE, anim::FLY_IDLE, anim::FLY_IDLE, false) ==
+          anim::FLY_IDLE);
+
+    // Local CombatFSM keeps MELEE_SWING undisturbed on wound flinches, but transitions
+    // to HIT_REACTION -> COMBAT_IDLE when an active defense (Dodge/Parry/ShieldBlock) interrupts.
     CombatFSM fsm;
     auto caps = makeCombatCaps();
     caps.resolvedReady1H = anim::READY_1H;
@@ -681,9 +738,30 @@ TEST_CASE("Hit-reaction flinch is suppressed during active melee swings on both 
     REQUIRE(fsm.resolve(in, caps, wl).animId == anim::ATTACK_OFF);
     REQUIRE(fsm.getState() == CombatFSM::State::MELEE_SWING);
 
+    // Wound flinch is ignored mid-swing.
     fsm.triggerHitReaction(anim::COMBAT_WOUND);
     CHECK(fsm.getState() == CombatFSM::State::MELEE_SWING);
     CHECK(fsm.resolve(in, caps, wl).animId == anim::ATTACK_OFF);
+
+    // Active defense (Dodge 30) interrupts MELEE_SWING -> HIT_REACTION -> COMBAT_IDLE (Ready1H).
+    in.meleeSwingTimer = 0.0f;  // Cleared by AnimationController::triggerHitReaction
+    fsm.triggerHitReaction(anim::DODGE);
+    CHECK(fsm.getState() == CombatFSM::State::HIT_REACTION);
+    in.haveAnimState = true;
+    in.currentAnimId = anim::DODGE;
+    in.currentAnimTime = 0.3f;
+    in.currentAnimDuration = 1.1f;
+    auto dodgeOut = fsm.resolve(in, caps, wl);
+    REQUIRE(dodgeOut.valid);
+    CHECK(dodgeOut.animId == anim::DODGE);
+    CHECK_FALSE(dodgeOut.loop);
+
+    in.currentAnimTime = 1.08f;
+    auto postDodgeOut = fsm.resolve(in, caps, wl);
+    REQUIRE(postDodgeOut.valid);
+    CHECK(fsm.getState() == CombatFSM::State::COMBAT_IDLE);
+    CHECK(postDodgeOut.animId == anim::READY_1H);
+    CHECK(postDodgeOut.loop);
 }
 
 TEST_CASE("CombatFSM: dual-wield MH+OH, OH+MH, and Thrash sequences honor HITINFO_LEFTSWING and serial transitions",
