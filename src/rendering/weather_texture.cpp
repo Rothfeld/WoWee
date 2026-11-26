@@ -9,19 +9,31 @@
 
 namespace wowee::rendering {
 
-bool WeatherTexture::load(VkContext& ctx, pipeline::AssetManager& assets, const std::string& path) {
+bool WeatherTexture::load(VkContext& ctx, pipeline::AssetManager& assets, const std::string& path,
+                          float mipLodBias, float maxAnisotropy) {
     VkDevice device = ctx.getDevice();
-    pipeline::BLPImage image = assets.loadTexture(path);
-    if (!image.isValid() || !texture_.upload(ctx, image.data.data(), image.width, image.height,
-                                             VK_FORMAT_R8G8B8A8_UNORM, true)) {
+
+    // Load DXT weather textures (RainDrop01.blp, BLP2 DXT3 16x128, 8 mips) in
+    // block-compressed form via uploadBLP so Blizzard's authored BC2 mip chain
+    // preserves center-stripe contrast at mips 2..7 (145..162 vs box-blitted
+    // 128.5, which vanished under Mod2x). Paletted atlases (RainDropSplash01.blp)
+    // automatically take uploadBLP's RGBA8 linear mip-generation path, avoiding
+    // palette quantization spikes at mip 4 while keeping full mip 0..3 crowns.
+    pipeline::BLPImage image = assets.loadTexture(path, /*keepCompressed=*/true);
+    bool uploaded = image.isValid() && texture_.uploadBLP(ctx, image);
+    if (!uploaded && image.isBlockCompressed()) {
+        pipeline::BLPImage decoded = assets.loadTexture(path, /*keepCompressed=*/false);
+        uploaded = decoded.isValid() && texture_.uploadBLP(ctx, decoded);
+    }
+    if (!uploaded) {
         LOG_ERROR("WeatherTexture: failed to load ", path);
         return false;
     }
-    // Trilinear, no anisotropic filtering: a drop is a sliver, and an
-    // anisotropic footprint keeps its across-the-drop sampling at the finest
-    // mip, so the bright centre texels fall between pixel centres and the
-    // streak breaks up (_experiments/20261119T0930.weather).
-    texture_.createSampler(device, VK_FILTER_LINEAR, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, 1.0f);
+
+    texture_.createSampler(device, VK_FILTER_LINEAR,
+                           VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+                           VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+                           maxAnisotropy, mipLodBias, /*disableMipmaps=*/false);
     if (!texture_.isValid()) {
         LOG_ERROR("WeatherTexture: ", path, " is not sampleable");
         return false;

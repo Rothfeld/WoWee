@@ -59,8 +59,13 @@ public:
                                   VkDescriptorSetLayout sceneSetLayout,
                                   pipeline::AssetManager* assets);
     [[nodiscard]] bool isInitialized() const { return vkCtx_ != nullptr; }
-    void setMistTargetPass(VkRenderPass pass, VkSampleCountFlagBits samples) {
+    void setTargetPass(VkRenderPass pass, VkSampleCountFlagBits samples) {
+        targetPass_ = pass;
+        targetSamples_ = samples;
         mist_.setTargetPass(pass, samples);
+    }
+    void setMistTargetPass(VkRenderPass pass, VkSampleCountFlagBits samples) {
+        setTargetPass(pass, samples);
     }
     void recreatePipelines();
     void recreateMistPipeline() { mist_.recreatePipeline(); }
@@ -153,6 +158,8 @@ private:
     VkPipeline snowPipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout mod2xLayout_ = VK_NULL_HANDLE;
     VkPipelineLayout snowLayout_ = VK_NULL_HANDLE;
+    VkRenderPass targetPass_ = VK_NULL_HANDLE;
+    VkSampleCountFlagBits targetSamples_ = VK_SAMPLE_COUNT_1_BIT;
     WeatherTexture dropTexture_;
     WeatherTexture splashTexture_;
     WeatherTexture flakeTexture_;

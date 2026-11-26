@@ -1,6 +1,12 @@
 #include <catch_amalgamated.hpp>
 #include "rendering/weather_mist_math.hpp"
 
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <string>
+#include <vector>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -23,6 +29,11 @@ using wowee::rendering::mistSoftDepthFadeNdc;
 using wowee::rendering::mistSoftFadeRange;
 using wowee::rendering::mistViewDepthFade;
 using wowee::rendering::rainMistAmount;
+using wowee::rendering::mod2xNeutralize128;
+using wowee::rendering::rainDropMipLodBias;
+using wowee::rendering::resolveWeatherLandingHeight;
+using wowee::rendering::weatherSplashLiftZ;
+using wowee::rendering::weatherSplashMinCornerZ;
 
 namespace {
 
@@ -192,4 +203,92 @@ TEST_CASE("rainMistAmount matches Native TBC 2.4.3 rain mist grade onset", "[wea
     CHECK(at085 > at07);
     CHECK(rainMistAmount(kRainMistGradeFull) == 1.0f);
     CHECK(rainMistAmount(1.5f) == 1.0f);
+}
+
+TEST_CASE("resolveWeatherLandingHeight lands rain and snow on rivers, bridges, and ocean", "[weather_mist][weather]") {
+    // Deadwind Pass river canyon: riverbed at z=18.9, river surface at z=23.8, spawn top z=74.0 -> lands on river (23.8).
+    const auto riverHit = resolveWeatherLandingHeight(18.9f, std::nullopt, 23.8f, 74.0f);
+    REQUIRE(riverHit.has_value());
+    CHECK(*riverHit == Catch::Approx(23.8f));
+
+    // WMO bridge deck over the river at z=31.0 -> lands on bridge deck (31.0).
+    const auto bridgeHit = resolveWeatherLandingHeight(18.9f, 31.0f, 23.8f, 74.0f);
+    REQUIRE(bridgeHit.has_value());
+    CHECK(*bridgeHit == Catch::Approx(31.0f));
+
+    // Elevated aqueduct/pool at z=80 above spawn ceiling maxZ=60 is ignored.
+    const auto belowAqueduct = resolveWeatherLandingHeight(14.0f, std::nullopt, 80.0f, 60.0f);
+    REQUIRE(belowAqueduct.has_value());
+    CHECK(*belowAqueduct == Catch::Approx(14.0f));
+
+    // Deep ocean where terrain is -300 and sea level is 0.0 -> returns 0.0 so kRainCeiling (74 yd) stays active.
+    const auto oceanHit = resolveWeatherLandingHeight(-300.0f, std::nullopt, 0.0f, 55.0f);
+    REQUIRE(oceanHit.has_value());
+    CHECK(*oceanHit == Catch::Approx(0.0f));
+}
+
+TEST_CASE("rainDropMipLodBias aligns 16x128 RainDrop01.blp with 0.10x2.0 yd drop aspect", "[weather_mist][weather]") {
+    const float bias = rainDropMipLodBias(16.0f, 128.0f, 0.10f, 2.0f);
+    CHECK(bias == Catch::Approx(std::log2(0.4f)).margin(1e-4f));
+    CHECK(bias < -1.30f);
+    CHECK(bias > -1.35f);
+}
+
+TEST_CASE("weatherSplashMinCornerZ keeps splash rings above flat ground and water depth at all pitches", "[weather_mist][weather]") {
+    constexpr float kSplashCell = 0.23f;
+    constexpr float kWaterZ = 23.81f;
+    CHECK(weatherSplashLiftZ(kSplashCell) == Catch::Approx(0.125f));
+    for (float lookdown : {0.0f, 0.15f, 0.30f, 0.60f, 0.85f, 1.0f}) {
+        for (float upZ : {0.0f, 0.5f, 0.866f, 0.966f, 1.0f}) {
+            CHECK(weatherSplashMinCornerZ(kWaterZ, lookdown, upZ, kSplashCell) >= kWaterZ);
+        }
+    }
+}
+
+TEST_CASE("mod2xNeutralize128 maps BLP neutral grey byte 128 to exact 0.5", "[weather_mist][weather]") {
+    CHECK(mod2xNeutralize128(128.0f / 255.0f) == Catch::Approx(0.5f).margin(1e-7f));
+    CHECK(2.0f * mod2xNeutralize128(128.0f / 255.0f) == Catch::Approx(1.0f).margin(1e-7f));
+    CHECK(2.0f * mod2xNeutralize128(1.0f) == Catch::Approx(510.0f / 256.0f).margin(1e-6f));
+}
+
+TEST_CASE("shipped TBC RainDrop01.blp stores 8 authored DXT3 mip levels keeping distance contrast", "[weather_mist][weather][tbc]") {
+    const char* envDir = std::getenv("WOWEE_TBC_DATA_DIR");
+    const std::string base = envDir ? envDir : "/workspace/azerothcore/client/wowee-data/expansions/tbc";
+    FILE* f = std::fopen((base + "/textures/weather/raindrop01.blp").c_str(), "rb");
+    if (!f) {
+        SKIP("TBC RainDrop01.blp not present");
+    }
+    std::fseek(f, 0, SEEK_END);
+    const long sz = std::ftell(f);
+    std::fseek(f, 0, SEEK_SET);
+    REQUIRE(sz >= 1172);
+    std::vector<uint8_t> raw(static_cast<size_t>(sz));
+    REQUIRE(std::fread(raw.data(), 1, raw.size(), f) == raw.size());
+    std::fclose(f);
+
+    CHECK(std::memcmp(raw.data(), "BLP2", 4) == 0);
+    CHECK(raw[8] == 2u);  // DXTC
+    CHECK(raw[9] == 8u);  // alphaDepth 8
+    CHECK(raw[10] == 1u); // DXT3 / BC2
+    uint32_t w = 0, h = 0;
+    std::memcpy(&w, raw.data() + 12, 4);
+    std::memcpy(&h, raw.data() + 16, 4);
+    CHECK(w == 16u);
+    CHECK(h == 128u);
+
+    uint32_t mipOffsets[16]{};
+    uint32_t mipSizes[16]{};
+    std::memcpy(mipOffsets, raw.data() + 20, sizeof(mipOffsets));
+    std::memcpy(mipSizes, raw.data() + 84, sizeof(mipSizes));
+    int mipCount = 0;
+    for (int i = 0; i < 16 && mipOffsets[i] != 0 && mipSizes[i] != 0; ++i) {
+        ++mipCount;
+    }
+    CHECK(mipCount == 8);
+    // Authored mip 7 (1x1 BC2 block, color endpoint c0 at offset +8) stays > 140 (> 0.55),
+    // whereas box-blitting mip 0 collapses mip 7 to 128.5 (invisible under Mod2x).
+    uint16_t c0 = 0;
+    std::memcpy(&c0, raw.data() + mipOffsets[7] + 8, 2);
+    const float g8 = static_cast<float>((c0 >> 5) & 63u) * (255.0f / 63.0f);
+    CHECK(g8 > 140.0f);
 }

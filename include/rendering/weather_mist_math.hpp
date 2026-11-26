@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cmath>
+#include <optional>
 
 namespace wowee::rendering {
 
@@ -140,6 +141,64 @@ inline constexpr float kRainMistGradeFull = 1.00f;
         return !offscreenScene || hasResolvedOffscreenAttachments;
     }
     return hasSceneContinuePass;
+}
+
+/// Highest landing surface at or below `maxZ` for outdoor rain drops and snow
+/// flakes across terrain, WMO roofs/bridges, and liquid surfaces (rivers,
+/// lakes, oceans, outdoor WMO pools).
+[[nodiscard]] inline std::optional<float> resolveWeatherLandingHeight(
+    std::optional<float> terrainZ,
+    std::optional<float> wmoFloorZ,
+    std::optional<float> waterZ,
+    float maxZ) {
+    std::optional<float> best;
+    const auto consider = [&](std::optional<float> h) {
+        if (!h || !std::isfinite(*h) || *h > maxZ) return;
+        if (!best || *h > *best) best = *h;
+    };
+    consider(terrainZ);
+    consider(wmoFloorZ);
+    consider(waterZ);
+    return best;
+}
+
+/// Mip LOD bias that aligns isotropic mip selection across a narrow elongated
+/// raindrop triangle (`dropWidthYards x dropLengthYards`, e.g. `0.10 x 2.0 yd`)
+/// with the along-streak texel density of `RainDrop01.blp` (`16 x 128`), even
+/// when hardware anisotropic filtering is disabled (`texture_filtering=0`).
+[[nodiscard]] inline float rainDropMipLodBias(float texWidth, float texHeight,
+                                              float dropWidthYards, float dropLengthYards) {
+    assert(texWidth > 0.0f && texHeight > 0.0f && dropWidthYards > 0.0f && dropLengthYards > 0.0f);
+    const float texAspect = texWidth / texHeight;
+    const float geomAspect = dropWidthYards / dropLengthYards;
+    return std::log2(geomAspect / texAspect);
+}
+
+/// Vertical clearance lift per unit `lookdown` for `RainDropSplash01.blp` quads
+/// so centering the splash onto the impact point (`-0.5 * lookdown * up * cell`)
+/// never pushes the lower edge below flat terrain or `waterDepthOnlyPipeline`.
+[[nodiscard]] inline constexpr float weatherSplashLiftZ(float splashCellYards) {
+    return 0.5f * splashCellYards + 0.01f;
+}
+
+/// Lowest world-space Z reached by a splash quad of size `splashCellYards` at
+/// impact height `splashZ`, camera downward cosine `lookdown` in [0, 1], and
+/// camera-up Z component `cameraUpZ` in [0, 1].
+[[nodiscard]] inline constexpr float weatherSplashMinCornerZ(float splashZ,
+                                                             float lookdown,
+                                                             float cameraUpZ,
+                                                             float splashCellYards) {
+    const float clampedLookdown = std::clamp(lookdown, 0.0f, 1.0f);
+    const float clampedUpZ = std::clamp(cameraUpZ, 0.0f, 1.0f);
+    return splashZ - 0.5f * clampedLookdown * splashCellYards * clampedUpZ +
+           clampedLookdown * weatherSplashLiftZ(splashCellYards);
+}
+
+/// Neutralize BLP palette/DXT byte 128 (`128 / 255`) to exact `0.5` for Mod2x
+/// (`dst * src * 2`) so uncovered atlas background texels leave destination
+/// pixels unchanged (`2 * 0.5 == 1.0`).
+[[nodiscard]] inline constexpr float mod2xNeutralize128(float unormTexel) {
+    return unormTexel * (255.0f / 256.0f);
 }
 
 } // namespace wowee::rendering

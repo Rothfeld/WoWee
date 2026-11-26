@@ -22,8 +22,9 @@ public:
     WeatherTexture(const WeatherTexture&) = delete;
     WeatherTexture& operator=(const WeatherTexture&) = delete;
 
-    /// Clamped at the edges (sprites and atlases), mip-mapped.
-    [[nodiscard]] bool load(VkContext& ctx, pipeline::AssetManager& assets, const std::string& path);
+    /// Clamped at the edges (sprites and atlases), preserving authored BLP2 mip chains.
+    [[nodiscard]] bool load(VkContext& ctx, pipeline::AssetManager& assets, const std::string& path,
+                            float mipLodBias = 0.0f, float maxAnisotropy = 1.0f);
     void destroy(VkContext& ctx);
 
     [[nodiscard]] VkDescriptorSetLayout layout() const { return layout_; }

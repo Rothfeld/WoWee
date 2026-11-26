@@ -162,7 +162,11 @@ bool Weather::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout,
     perFrameLayout_ = perFrameLayout;
     // Rain's textures are Weather.dbc's EffectTexture and the names Wow.exe
     // keeps next to rain.bls and patter.bls; snow's next to snowpoint.bls.
-    if (!dropTexture_.load(*ctx, *assets, "Textures\\Weather\\RainDrop01.blp") ||
+    // RainDrop01.blp (16x128) maps onto a 0.10 x 2.0 yd drop, so biasing LOD by
+    // log2((16/128) / (0.10/2.0)) = -1.32 tracks along-streak dv/dy even when
+    // texture_filtering=0 disables anisotropic filtering.
+    const float dropLodBias = rainDropMipLodBias(16.0f, 128.0f, 2.0f * kDropHalfWidth, kDropLength);
+    if (!dropTexture_.load(*ctx, *assets, "Textures\\Weather\\RainDrop01.blp", dropLodBias, 4.0f) ||
         !splashTexture_.load(*ctx, *assets, "Textures\\Weather\\RainDropSplash01.blp") ||
         !flakeTexture_.load(*ctx, *assets, "Textures\\Weather\\SnowFlake01.blp") ||
         !mist_.initialize(ctx, perFrameLayout, sceneSetLayout, assets, "Textures\\Weather\\SnowMist01.blp") ||
@@ -173,7 +177,7 @@ bool Weather::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout,
     }
     for (auto& f : frames_) {
         AllocatedBuffer s = createBuffer(ctx->getAllocator(),
-                                         (kMaxDrops + kMaxSplashes) * 3 * sizeof(SpriteVertex),
+                                         (kMaxDrops * 3 + kMaxSplashes * 6) * sizeof(SpriteVertex),
                                          VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
         AllocatedBuffer p = createBuffer(ctx->getAllocator(), kMaxFlakes * sizeof(FlakeVertex),
                                          VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
@@ -223,6 +227,9 @@ bool Weather::createPipelines() {
     mod2x.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
     mod2x.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
 
+    const VkRenderPass rp = targetPass_ ? targetPass_ : vkCtx_->getImGuiRenderPass();
+    const VkSampleCountFlagBits samples = targetPass_ ? targetSamples_ : vkCtx_->getMsaaSamples();
+
     VkVertexInputBindingDescription spriteBinding{0, sizeof(SpriteVertex), VK_VERTEX_INPUT_RATE_VERTEX};
     std::vector<VkVertexInputAttributeDescription> spriteAttrs{
         {0, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(SpriteVertex, position)},
@@ -235,9 +242,9 @@ bool Weather::createPipelines() {
         .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE)
         .setDepthTest(true, false, VK_COMPARE_OP_LESS_OR_EQUAL)
         .setColorBlendAttachment(mod2x)
-        .setMultisample(vkCtx_->getMsaaSamples())
+        .setMultisample(samples)
         .setLayout(mod2xLayout_)
-        .setRenderPass(vkCtx_->getImGuiRenderPass())
+        .setRenderPass(rp)
         .setDynamicStates(viewportAndScissorDynamic())
         .build(device, vkCtx_->getPipelineCache());
 
@@ -252,9 +259,9 @@ bool Weather::createPipelines() {
         .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE)
         .setDepthTest(true, false, VK_COMPARE_OP_LESS_OR_EQUAL)
         .setColorBlendAttachment(PipelineBuilder::blendAlpha())
-        .setMultisample(vkCtx_->getMsaaSamples())
+        .setMultisample(samples)
         .setLayout(snowLayout_)
-        .setRenderPass(vkCtx_->getImGuiRenderPass())
+        .setRenderPass(rp)
         .setDynamicStates(viewportAndScissorDynamic())
         .build(device, vkCtx_->getPipelineCache());
 
@@ -494,13 +501,24 @@ void Weather::updateRain(const Camera& camera, float deltaTime, float amount) {
         dropVertices_.push_back({glm::vec4(tailBase + back * kDropLength, 0.0f), {0.5f, 0.0f}});
     }
 
-    // Splashes: patter.bls. Base corners kSplashCell apart across the view,
-    // apex kSplashCell up; texture triangle (0,1/4) (1/8,0) (1/4,1/4) of the
-    // frame's cell.
+    // Splashes: RainDropSplash01.blp 4x4 cell quad ([-0.5*cell, +0.5*cell] across
+    // right x [0, cell] along up) so all three crown prongs, side droplets, and
+    // top-down ripple rings render unclipped without bleeding across cell edges.
     const glm::vec3 right = camera.getRight();
     const glm::vec3 up = camera.getUp();
-    const glm::vec3 offsets[3] = {-right * (0.5f * kSplashCell), up * kSplashCell, right * (0.5f * kSplashCell)};
-    const glm::vec2 cellUv[3] = {{0.0f, 0.25f}, {0.125f, 0.0f}, {0.25f, 0.25f}};
+    const glm::vec3 halfRight = right * (0.5f * kSplashCell);
+    const glm::vec3 fullUp = up * kSplashCell;
+    const glm::vec3 quadOffsets[4] = {-halfRight, halfRight, halfRight + fullUp, -halfRight + fullUp};
+    constexpr float kSplashUvInset = 0.5f / 256.0f;
+    constexpr float kSplashUvSpan = 0.25f - kSplashUvInset;
+    const glm::vec2 quadCellUv[4] = {
+        {kSplashUvInset, kSplashUvSpan},
+        {kSplashUvSpan,  kSplashUvSpan},
+        {kSplashUvSpan,  kSplashUvInset},
+        {kSplashUvInset, kSplashUvInset},
+    };
+    constexpr int kQuadIndices[6] = {0, 1, 2, 0, 2, 3};
+    constexpr float kSplashLiftZ = weatherSplashLiftZ(kSplashCell);
     splashVertices_.clear();
     for (const Splash& s : splashes_) {
         const glm::vec3 rel = s.position - cam;
@@ -509,10 +527,11 @@ void Weather::updateRain(const Camera& camera, float deltaTime, float amount) {
         const float lookdown = std::max(-rel.z / dist, 0.0f);
         const float column = std::floor(s.age * 4.0f * 3.99f);
         const float row = std::floor((1.0f - lookdown) * 3.99f);
-        const glm::vec3 shift = -0.5f * lookdown * offsets[1] + glm::vec3(0.0f, 0.0f, lookdown / 12.0f);
-        for (int i = 0; i < 3; ++i) {
-            splashVertices_.push_back({glm::vec4(rel + offsets[i] + shift, 0.0f),
-                                       cellUv[i] + 0.25f * glm::vec2(column, row)});
+        const glm::vec3 shift = -0.5f * lookdown * fullUp + glm::vec3(0.0f, 0.0f, lookdown * kSplashLiftZ);
+        const glm::vec2 cellOrigin = 0.25f * glm::vec2(column, row);
+        for (int idx : kQuadIndices) {
+            splashVertices_.push_back({glm::vec4(rel + quadOffsets[idx] + shift, 0.0f),
+                                       cellOrigin + quadCellUv[idx]});
         }
     }
 }

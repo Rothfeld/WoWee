@@ -1777,6 +1777,29 @@ std::optional<float> WaterRenderer::getWaterHeightAt(float glX, float glY) const
     return best;
 }
 
+std::optional<float> WaterRenderer::getWaterHeightAt(float glX, float glY, float maxZ) const {
+    std::optional<float> best;
+
+    for (const auto& surface : surfaces) {
+        if (surface.wmoId != 0 && wmoGroupDrawn_ &&
+            !wmoGroupDrawn_(surface.wmoId, {surface.wmoGroup})) {
+            continue;
+        }
+        const auto grid = wateredGridPosition(surface, glX, glY);
+        if (!grid) continue;
+
+        const auto sampled = sampleGridHeight(surface.heights, surface.width,
+                                              surface.height, grid->x, grid->y);
+        if (!sampled) continue;
+        const float h = *sampled;
+        if (h > maxZ) continue;
+
+        if (!best || h > *best) best = h;
+    }
+
+    return best;
+}
+
 std::optional<float> WaterRenderer::getTranslucentWaterHeightAt(float glX, float glY) const {
     std::optional<float> best;
 

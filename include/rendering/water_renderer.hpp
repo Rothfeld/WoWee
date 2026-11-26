@@ -213,6 +213,10 @@ public:
                                                  float glX, float glY) const;
 
     std::optional<float> getWaterHeightAt(float glX, float glY) const;
+    /// Highest rendered water surface at (glX, glY) at or below `maxZ` (so outdoor
+    /// rain/snow lands on rivers, lakes, oceans, and visible WMO pools without
+    /// hitting elevated aqueducts above the spawn box or hidden indoor WMO water).
+    std::optional<float> getWaterHeightAt(float glX, float glY, float maxZ) const;
     /// Highest translucent (non-magma, non-slime) water surface at (glX, glY), if any.
     std::optional<float> getTranslucentWaterHeightAt(float glX, float glY) const;
     /// Like getWaterHeightAt but only returns water surfaces whose height is

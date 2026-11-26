@@ -20,5 +20,9 @@ layout(location = 0) out vec4 outColor;
 
 void main() {
     vec4 t = texture(uTexture, vTexCoord);
-    outColor = vec4(mix(vec3(0.5), t.rgb * push.color.rgb, vFog), 1.0);
+    // Palette/DXT weather textures author neutral background texels as byte 128
+    // (128/255 = 0.50196); scaling by 255/256 maps byte 128 to exact 0.5 so
+    // Mod2x (dst * src * 2) leaves uncovered splash-quad corners untouched.
+    vec3 src = t.rgb * (255.0 / 256.0) * push.color.rgb;
+    outColor = vec4(mix(vec3(0.5), src, vFog), 1.0);
 }

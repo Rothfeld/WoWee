@@ -154,6 +154,8 @@ bool SandStorm::createPipelines() {
         {0, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(Grain, start)},
         {1, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(Grain, velocity)},
     };
+    const VkRenderPass rp = targetPass_ ? targetPass_ : vkCtx_->getImGuiRenderPass();
+    const VkSampleCountFlagBits samples = targetPass_ ? targetSamples_ : vkCtx_->getMsaaSamples();
     grainPipeline_ = PipelineBuilder()
         .setShaders(grainShaders.vertStage, grainShaders.fragStage)
         .setVertexInput({grainBinding}, grainAttrs)
@@ -161,9 +163,9 @@ bool SandStorm::createPipelines() {
         .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE)
         .setDepthTest(true, false, VK_COMPARE_OP_LESS_OR_EQUAL)
         .setColorBlendAttachment(PipelineBuilder::blendAlpha())
-        .setMultisample(vkCtx_->getMsaaSamples())
+        .setMultisample(samples)
         .setLayout(grainLayout_)
-        .setRenderPass(vkCtx_->getImGuiRenderPass())
+        .setRenderPass(rp)
         .setDynamicStates(viewportAndScissorDynamic())
         .build(device, vkCtx_->getPipelineCache());
 
