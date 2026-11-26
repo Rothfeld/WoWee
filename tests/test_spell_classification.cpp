@@ -823,3 +823,39 @@ TEST_CASE("drawsRangedWeaponOnCast identifies ranged auto-attacks and bow/gun/cr
     CHECK_FALSE(drawsRangedWeaponOnCast(1752u, 2, (1u << 7) | (1u << 15))); // Sinister Strike
     CHECK_FALSE(drawsRangedWeaponOnCast(3044u, 4, kBowGunCrossbow)); // Non-weapon item class
 }
+
+TEST_CASE("takesUnitCastTarget strips selected unit from script/area/object pet and possess casts",
+          "[spell][possess][pet]") {
+    using wowee::game::spellclass::takesUnitCastTarget;
+
+    // Razorgore the Untamed (12435) possess bar spells:
+    // - 19632 Cleave (tA=6) and 19872 Calm Dragonkin (tA=25) take a unit target.
+    // - 19873 Destroy Egg (tA=40 TARGET_GAMEOBJECT_SCRIPT_NEAR_CASTER, maxRange=10 yd)
+    //   and 22425 Fireball Volley (tA=22 TARGET_LOCATION_CASTER_SRC, maxRange=40 yd)
+    //   do NOT take a unit target despite maxRange > 0.
+    CHECK(takesUnitCastTarget(6u, 0u));         // 19632 Cleave / 3110 Firebolt / 16827 Claw
+    CHECK(takesUnitCastTarget(25u, 0u));        // 19872 Calm Dragonkin / 19505 Devour Magic
+    CHECK_FALSE(takesUnitCastTarget(40u, 0u));  // 19873 Destroy Egg
+    CHECK_FALSE(takesUnitCastTarget(22u, 0u));  // 22425 Fireball Volley / 17735 Suffering / 26090 Thunderstomp
+
+    // Karazhan Chess cone strikes, Power of the Blue Flight, and pet self/master/party abilities
+    CHECK_FALSE(takesUnitCastTarget(60u, 0u));  // 37406 Heroic Blow / 37413 Vicious Strike
+    CHECK_FALSE(takesUnitCastTarget(59u, 0u));  // 45856 Breath: Haste / 45860 Breath: Revitalize
+    CHECK_FALSE(takesUnitCastTarget(18u, 0u));  // 45848 Shield of the Blue / 24840 Poison Cloud
+    CHECK_FALSE(takesUnitCastTarget(27u, 0u));  // 7812 Voidwalker Sacrifice (TARGET_UNIT_CASTER_MASTER)
+    CHECK_FALSE(takesUnitCastTarget(20u, 0u));  // 24604 Furious Howl (PARTY_WITHIN_CASTER_RANGE)
+    CHECK_FALSE(takesUnitCastTarget(5u, 0u));   // 136 Mend Pet / 755 Health Funnel (CASTER_PET)
+    CHECK_FALSE(takesUnitCastTarget(1u, 0u));   // 23099 Dash / 4511 Phase Shift (CASTER)
+
+    // Friendly/group/channel/unit-offset targets and explicit unit/corpse targetFlags take a unit
+    CHECK(takesUnitCastTarget(21u, 0u));        // Friendly unit
+    CHECK(takesUnitCastTarget(35u, 0u));        // Party member
+    CHECK(takesUnitCastTarget(57u, 0u));        // Raid member
+    CHECK(takesUnitCastTarget(61u, 0u));        // Greater Blessings
+    CHECK(takesUnitCastTarget(53u, 0u));        // Shadowfiend
+    CHECK(takesUnitCastTarget(64u, 0u));        // TARGET_LOCATION_UNIT_FRONT
+    CHECK(takesUnitCastTarget(77u, 0u));        // Channel target
+    CHECK(takesUnitCastTarget(0u, 0x8000u));    // Resurrection (TARGET_FLAG_CORPSE_ALLY)
+    CHECK(takesUnitCastTarget(0u, 0x0002u));    // Explicit TARGET_FLAG_UNIT
+    CHECK_FALSE(takesUnitCastTarget(8u, 0x0040u)); // Ground destination only (37146 Chess Move)
+}

@@ -293,6 +293,43 @@ inline UnitAim unitAim(uint32_t implicitTargetA, uint32_t targetFlags = 0) {
     }
 }
 
+/// Whether native TBC 2.4.3 serializes a unit or corpse GUID into SpellCastTargets
+/// when sending CMSG_CAST_SPELL / CMSG_PET_CAST_SPELL (CMaNGOS SpellMgr.h
+/// IsUnitTargetTarget + SpellCastTargetFlags; verified on pair 16 with Razorgore
+/// 19873 Destroy Egg).
+///
+/// Spells whose EffectImplicitTargetA[0] resolves via script, area, caster, pet,
+/// master, or gameobject targeting (e.g. 19873 Destroy Egg tA=40 maxRange=10,
+/// 22425 Fireball Volley tA=22 maxRange=40, 37406 Heroic Blow tA=60, 7812 Sacrifice
+/// tA=27, 136 Mend Pet tA=5 maxRange=45) carry a non-zero SpellRange.dbc maxRange
+/// (so isSelfCastRange is false), yet native 2.4.3 sends TARGET_FLAG_SELF (0x00)
+/// even when a distant unit is selected. Sending TARGET_FLAG_UNIT leaks the
+/// unrelated selection into Spell::CheckRange on the server and fails the cast
+/// with SPELL_FAILED_OUT_OF_RANGE whenever that unit stands beyond maxRange.
+inline constexpr bool takesUnitCastTarget(uint32_t implicitTargetA, uint32_t targetFlags = 0) {
+    constexpr uint32_t kUnitOrCorpseTargetFlags =
+        0x00000002u | // TARGET_FLAG_UNIT
+        0x00000004u | // TARGET_FLAG_UNIT_RAID
+        0x00000008u | // TARGET_FLAG_UNIT_PARTY
+        0x00000080u | // TARGET_FLAG_UNIT_ENEMY
+        0x00000100u | // TARGET_FLAG_UNIT_ALLY
+        0x00000200u | // TARGET_FLAG_CORPSE_ENEMY
+        0x00000400u | // TARGET_FLAG_UNIT_DEAD
+        0x00008000u | // TARGET_FLAG_CORPSE_ALLY
+        0x00010000u;  // TARGET_FLAG_UNIT_MINIPET
+    if ((targetFlags & kUnitOrCorpseTargetFlags) != 0) return true;
+    switch (implicitTargetA) {
+        case 6:  case 21: case 25: case 35: case 37:
+        case 45: case 53: case 57: case 61:
+        case 64: case 65: case 66: case 67:
+        case 68: case 69: case 70: case 71:
+        case 77:
+            return true;
+        default:
+            return false;
+    }
+}
+
 /// Legacy client IDs for the three repeating ranged weapon attacks.
 ///
 /// Their Spell.dbc rows carry a dummy one-point rage cost even for classes that do

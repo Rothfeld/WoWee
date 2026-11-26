@@ -5172,6 +5172,9 @@ void SpellHandler::castPetSpell(uint32_t spellId, uint64_t targetGuid) {
 
     if (isSelfCastSpell(spellId)) {
         targetGuid = 0;
+    } else if (const auto* entry = owner_.getSpellNameEntry(spellId);
+               entry && !spellclass::takesUnitCastTarget(entry->implicitTargetA, entry->targetFlags)) {
+        targetGuid = 0;
     }
 
     network::Packet pkt(wireOpcode(Opcode::CMSG_PET_CAST_SPELL));
