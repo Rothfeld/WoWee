@@ -52,31 +52,51 @@ struct SpellCooldownState {
     }
 
     /// Apply a server-reported spell cooldown (merges with any active value).
-    void mergeSpell(uint32_t spellId, float seconds) {
+    void mergeSpell(uint32_t spellId, float seconds, float totalHintSeconds = 0.0f) {
         if (spellId == 0 || seconds <= 0.0f) return;
+        const float initialTotal = std::max(seconds, totalHintSeconds);
         auto it = spellRemaining.find(spellId);
         if (it == spellRemaining.end()) {
             spellRemaining[spellId] = seconds;
-            spellTotal[spellId] = seconds;
+            spellTotal[spellId] = initialTotal;
         } else {
             it->second = mergeSeconds(it->second, seconds);
             float& total = spellTotal[spellId];
-            total = std::max(total, it->second);
+            total = std::max({total, it->second, totalHintSeconds});
         }
     }
 
     /// Apply a server-reported category cooldown (merges with any active value).
-    void mergeCategory(uint32_t categoryId, float seconds) {
+    void mergeCategory(uint32_t categoryId, float seconds, float totalHintSeconds = 0.0f) {
         if (categoryId == 0 || seconds <= 0.0f) return;
+        const float initialTotal = std::max(seconds, totalHintSeconds);
         auto it = categoryRemaining.find(categoryId);
         if (it == categoryRemaining.end()) {
             categoryRemaining[categoryId] = seconds;
-            categoryTotal[categoryId] = seconds;
+            categoryTotal[categoryId] = initialTotal;
         } else {
             it->second = mergeSeconds(it->second, seconds);
             float& total = categoryTotal[categoryId];
-            total = std::max(total, it->second);
+            total = std::max({total, it->second, totalHintSeconds});
         }
+    }
+
+    /// Convert (remaining, total) into Lua GetTime()-based (start, duration) such
+    /// that start > 0 is always satisfied for CooldownFrame_SetTimer even when a
+    /// long cooldown began before this client process launched (small nowSec),
+    /// while preserving the exact expiry timestamp (start + duration == now + remaining).
+    [[nodiscard]] static std::pair<double, double> toLuaCooldownWindow(
+        double nowSec, double remainingSec, double totalSec) {
+        if (remainingSec <= 0.0) return {0.0, 0.0};
+        const double total = std::max(totalSec, remainingSec);
+        const double start = nowSec - (total - remainingSec);
+        constexpr double kMinPositiveStart = 0.001;
+        if (start > kMinPositiveStart) {
+            return {start, total};
+        }
+        const double endSec = nowSec + remainingSec;
+        const double clampedDuration = std::max(remainingSec, endSec - kMinPositiveStart);
+        return {kMinPositiveStart, clampedDuration};
     }
 
     /// Returns {remaining, total} for a spell considering both its own cooldown

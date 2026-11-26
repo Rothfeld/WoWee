@@ -115,3 +115,42 @@ TEST_CASE("SpellCooldownState: player and pet states stay isolated across identi
     CHECK(petState.query(kPetSpell, kSharedCat).first == Catch::Approx(8.0f));
     CHECK(playerState.query(kFireBlastR1, kSharedCat).first == 0.0f);
 }
+
+TEST_CASE("SpellCooldownState: partial server cooldown preserves DBC total duration hint", "[spell][cooldown]") {
+    // Re-possessing Razorgore (Destroy Egg 19873: 7.0s total, 3.2s left) or
+    // resummoning Voidwalker (Suffering 17735: cat 84, 120.0s total, 85.0s left)
+    // via SMSG_PET_SPELLS CharmCooldownInitialize must retain full DBC total.
+    SpellCooldownState petState;
+    petState.mergeSpell(19873u, 3.2f, 7.0f);
+    const auto [eggRem, eggTot] = petState.query(19873u, 0u);
+    CHECK(eggRem == Catch::Approx(3.2f));
+    CHECK(eggTot == Catch::Approx(7.0f));
+
+    petState.mergeCategory(84u, 85.0f, 120.0f);
+    const auto [sufRem, sufTot] = petState.query(17735u, 84u);
+    CHECK(sufRem == Catch::Approx(85.0f));
+    CHECK(sufTot == Catch::Approx(120.0f));
+}
+
+TEST_CASE("SpellCooldownState: toLuaCooldownWindow keeps start > 0 at low client uptime without shifting expiry", "[spell][cooldown]") {
+    // Normal uptime (nowSec = 500s, total = 120s, remaining = 90s -> start = 470s, duration = 120s)
+    {
+        const auto [start, dur] = SpellCooldownState::toLuaCooldownWindow(500.0, 90.0, 120.0);
+        CHECK(start == Catch::Approx(470.0));
+        CHECK(dur == Catch::Approx(120.0));
+        CHECK((start + dur) == Catch::Approx(590.0));
+    }
+    // Early uptime (nowSec = 5s, total = 120s, remaining = 60s -> raw start = -55s <= 0)
+    // CooldownFrame_SetTimer requires start > 0, and repeated queries as time advances
+    // must keep both start and duration stable with start + duration == now + remaining.
+    {
+        const auto [s0, d0] = SpellCooldownState::toLuaCooldownWindow(5.0, 60.0, 120.0);
+        const auto [s1, d1] = SpellCooldownState::toLuaCooldownWindow(15.0, 50.0, 120.0);
+        CHECK(s0 > 0.0);
+        CHECK(d0 > 0.0);
+        CHECK((s0 + d0) == Catch::Approx(65.0));
+        CHECK(s1 == Catch::Approx(s0));
+        CHECK(d1 == Catch::Approx(d0));
+        CHECK((s1 + d1) == Catch::Approx(65.0));
+    }
+}

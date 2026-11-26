@@ -358,6 +358,11 @@ public:
     [[nodiscard]] float getGCDTotal() const { return gcdTotal_; }
     [[nodiscard]] bool isGCDActive() const { return getGCDRemaining() > 0.0f; }
 
+    // Pet / Possessed Global Cooldown (StartRecoveryCategory 133)
+    [[nodiscard]] float getPetGCDRemaining() const;
+    [[nodiscard]] float getPetGCDTotal() const { return petGcdTotal_; }
+    [[nodiscard]] bool isPetGCDActive() const { return getPetGCDRemaining() > 0.0f; }
+
     // Spell book tabs
     const std::vector<SpellBookTab>& getSpellBookTabs();
 
@@ -591,6 +596,9 @@ private:
 
     // Find the on-use spell for an item (trigger=0 Use or trigger=5 NoDelay).
     // CMSG_USE_ITEM requires a valid spellId or the server silently ignores it.
+    [[nodiscard]] bool isControlledPetOrCharmGuid(uint64_t guid) const;
+    bool startPetGCDFromSpellInfo(uint32_t spellId);
+    void notifyPetCooldownChanged(bool anyExpired = false);
     void seedCooldownFromSpellInfo(uint32_t spellId, bool isPet = false);
     void syncActionBarCooldowns(uint32_t spellId, uint32_t categoryId);
     void upgradeActionBarSpell(uint32_t oldSpellId, uint32_t newSpellId);
@@ -727,6 +735,9 @@ private:
     // The cast that started the optimistic GCD, which a refused cast takes back.
     uint32_t optimisticGcdSpellId_ = 0;
     uint8_t optimisticGcdCastCount_ = 0;
+    float petGcdTotal_ = 0.0f;
+    double petGcdStartedAtSec_ = 0.0;
+    bool petGcdWasActive_ = false;
 
     // Spell book tabs, rebuilt when the known spells, race or class change.
     std::vector<SpellBookTab> spellBookTabs_;

@@ -1124,37 +1124,31 @@ static int lua_GetSpellCooldown(lua_State* L) {
                            lua_tostring(L, 2) && std::string(lua_tostring(L, 2)) == "pet";
     const uint32_t spellId = spellIdForCall(L, gh);
     if (pushPendingCooldown(L, *gh, spellId)) return 3;
-    float cd = isPetBook ? gh->getPetSpellCooldown(spellId) : gh->getSpellCooldown(spellId);
-    // Also check GCD - if spell has no individual cooldown but GCD is active,
-    // return the GCD timing (this is how WoW handles it)
-    // Only spells the global cooldown covers (StartRecoveryCategory 133).
-    float gcdRem = (!isPetBook && game::onGlobalCooldown(*gh, spellId)) ? gh->getGCDRemaining() : 0.0f;
-    float gcdTotal = gh->getGCDTotal();
+    const auto& petSpells = gh->getPetSpells();
+    const bool isPetSpell = isPetBook ||
+        (spellId != 0 && !gh->getKnownSpells().count(spellId) &&
+         std::find(petSpells.begin(), petSpells.end(), spellId) != petSpells.end());
+    const float cd = isPetSpell ? gh->getPetSpellCooldown(spellId) : gh->getSpellCooldown(spellId);
+    // Also check GCD (player GCD for player spells, pet GCD for pet spells) for
+    // spells covered by StartRecoveryCategory 133.
+    const float gcdRem = game::onGlobalCooldown(*gh, spellId)
+        ? (isPetSpell ? gh->getPetGCDRemaining() : gh->getGCDRemaining())
+        : 0.0f;
+    const float gcdTotal = isPetSpell ? gh->getPetGCDTotal() : gh->getGCDTotal();
 
     // WoW returns (start, duration, enabled) where remaining = start + duration - GetTime()
-    double nowSec = luaGetTimeNow();
+    const double nowSec = luaGetTimeNow();
 
-    if (cd > 0.01f) {
-        // Spell-specific or category cooldown (longer than GCD). The pair asked for is
-        // (start, duration), not (now, remaining) - the cooldown frame draws a
-        // sweep of `duration` beginning at `start`, so saying it began now with
-        // a length of whatever is left restarts the swirl at full every time
-        // the interface asks. It asks on every ACTIONBAR_UPDATE_COOLDOWN, which
-        // fires on every cast, so a five-minute cooldown looked like it kept
-        // starting over. Wound back the same way the GCD branch below already
-        // does it.
-        double total = isPetBook ? gh->getPetSpellCooldownTotal(spellId)
-                                 : gh->getSpellCooldownTotal(spellId);
-        if (total < cd) total = cd;   // a total never recorded falls back to what is left
-        double start = nowSec - (total - cd);
+    if (cd > 0.01f && cd >= gcdRem) {
+        const double total = isPetSpell ? gh->getPetSpellCooldownTotal(spellId)
+                                        : gh->getSpellCooldownTotal(spellId);
+        const auto [start, duration] = game::SpellCooldownState::toLuaCooldownWindow(nowSec, cd, total);
         lua_pushnumber(L, start);
-        lua_pushnumber(L, total);
+        lua_pushnumber(L, duration);
     } else if (gcdRem > 0.01f) {
-        // GCD is active - return GCD timing
-        double elapsed = gcdTotal - gcdRem;
-        double start = nowSec - elapsed;
+        const auto [start, duration] = game::SpellCooldownState::toLuaCooldownWindow(nowSec, gcdRem, gcdTotal);
         lua_pushnumber(L, start);
-        lua_pushnumber(L, gcdTotal);
+        lua_pushnumber(L, duration);
     } else {
         lua_pushnumber(L, 0);       // not on cooldown
         lua_pushnumber(L, 0);

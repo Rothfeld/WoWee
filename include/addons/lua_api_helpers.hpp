@@ -1036,10 +1036,10 @@ inline bool itemUseCooldown(game::GameHandler* gh, uint32_t itemId,
         if (sp.spellId == 0 || (sp.spellTrigger != 0 && sp.spellTrigger != 5)) continue;
         const float remaining = gh->getSpellCooldown(sp.spellId);
         if (remaining <= 0.0f) continue;
-        double total = gh->getSpellCooldownTotal(sp.spellId);
-        if (total < remaining) total = remaining;
-        start = luaGetTimeNow() - (total - remaining);
-        duration = total;
+        const auto [s, d] = game::SpellCooldownState::toLuaCooldownWindow(
+            luaGetTimeNow(), remaining, gh->getSpellCooldownTotal(sp.spellId));
+        start = s;
+        duration = d;
         return true;
     }
     return false;

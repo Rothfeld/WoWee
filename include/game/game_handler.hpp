@@ -1758,6 +1758,9 @@ public:
     float getGCDRemaining() const;
     float getGCDTotal() const;
     bool isGCDActive() const { return getGCDRemaining() > 0.0f; }
+    float getPetGCDRemaining() const;
+    float getPetGCDTotal() const;
+    bool isPetGCDActive() const { return getPetGCDRemaining() > 0.0f; }
 
     // Weather state (updated by SMSG_WEATHER): the server's WeatherState, see
     // weather_state.hpp

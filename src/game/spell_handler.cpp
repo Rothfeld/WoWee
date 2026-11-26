@@ -30,6 +30,7 @@
 #include "audio/spell_sound_manager.hpp"
 #include "audio/combat_sound_manager.hpp"
 #include "core/application.hpp"
+#include "core/app_clock.hpp"
 #include "core/coordinates.hpp"
 #include "core/logger.hpp"
 #include "network/world_socket.hpp"
@@ -2688,6 +2689,46 @@ float SpellHandler::getPetSpellCooldownTotal(uint32_t spellId) const {
     return petCooldowns_.query(spellId, cat).second;
 }
 
+float SpellHandler::getPetGCDRemaining() const {
+    if (petGcdTotal_ <= 0.0f) return 0.0f;
+    const double elapsed = core::appTimeSeconds() - petGcdStartedAtSec_;
+    if (elapsed <= 0.0) return petGcdTotal_;
+    const float rem = petGcdTotal_ - static_cast<float>(elapsed);
+    return rem > 0.0f ? rem : 0.0f;
+}
+
+bool SpellHandler::isControlledPetOrCharmGuid(uint64_t guid) const {
+    if (guid == 0 || guid == owner_.getPlayerGuid()) return false;
+    return (owner_.getPetGuid() != 0 && guid == owner_.getPetGuid()) ||
+           (owner_.getPossessedGuid() != 0 && guid == owner_.getPossessedGuid());
+}
+
+bool SpellHandler::startPetGCDFromSpellInfo(uint32_t spellId) {
+    if (spellId == 0) return false;
+    owner_.loadSpellNameCache();
+    const auto it = owner_.spellNameCacheRef().find(spellId);
+    if (it == owner_.spellNameCacheRef().end()) return false;
+    constexpr uint32_t kGlobalCooldownCategory = 133u;
+    if (it->second.startRecoveryCategory != kGlobalCooldownCategory ||
+        it->second.startRecoveryMs == 0) {
+        return false;
+    }
+    petGcdTotal_ = it->second.startRecoveryMs / 1000.0f;
+    petGcdStartedAtSec_ = core::appTimeSeconds();
+    petGcdWasActive_ = true;
+    return true;
+}
+
+void SpellHandler::notifyPetCooldownChanged(bool anyExpired) {
+    if (!owner_.addonEventCallbackRef()) return;
+    owner_.addonEventCallbackRef()("PET_BAR_UPDATE_COOLDOWN", {});
+    owner_.addonEventCallbackRef()("SPELL_UPDATE_COOLDOWN", {});
+    owner_.addonEventCallbackRef()("ACTIONBAR_UPDATE_COOLDOWN", {});
+    if (anyExpired) {
+        owner_.addonEventCallbackRef()("SPELL_UPDATE_USABLE", {});
+    }
+}
+
 void SpellHandler::syncActionBarCooldowns(uint32_t spellId, uint32_t categoryId) {
     for (auto& slot : owner_.actionBarRef()) {
         if (slot.type != ActionBarSlot::SPELL || slot.id == 0) continue;
@@ -2735,7 +2776,8 @@ void SpellHandler::seedCooldownFromSpellInfo(uint32_t spellId, bool isPet) {
     if (entry.category != 0 && catRecMs > 0) {
         seeded |= state.seedCategory(entry.category, catRecMs / 1000.0f);
     }
-    if (!seeded) return;
+    const bool petGcdStarted = isPet && startPetGCDFromSpellInfo(spellId);
+    if (!seeded && !petGcdStarted) return;
 
     if (!isPet) {
         syncActionBarCooldowns(spellId, entry.category);
@@ -2743,16 +2785,13 @@ void SpellHandler::seedCooldownFromSpellInfo(uint32_t spellId, bool isPet) {
 
     LOG_DEBUG("Seeded cooldown from Spell.dbc: spell=", spellId,
               " cat=", entry.category, " recMs=", recMs, " catRecMs=", catRecMs,
-              " isPet=", isPet ? 1 : 0);
-    if (owner_.addonEventCallbackRef()) {
-        if (isPet) {
-            owner_.addonEventCallbackRef()("PET_BAR_UPDATE_COOLDOWN", {});
-            owner_.addonEventCallbackRef()("SPELL_UPDATE_COOLDOWN", {});
-        } else {
-            owner_.addonEventCallbackRef()("SPELL_UPDATE_COOLDOWN", {});
-            owner_.addonEventCallbackRef()("BAG_UPDATE_COOLDOWN", {});
-            owner_.addonEventCallbackRef()("ACTIONBAR_UPDATE_COOLDOWN", {});
-        }
+              " petGcd=", petGcdStarted ? 1 : 0, " isPet=", isPet ? 1 : 0);
+    if (isPet) {
+        notifyPetCooldownChanged();
+    } else if (owner_.addonEventCallbackRef()) {
+        owner_.addonEventCallbackRef()("SPELL_UPDATE_COOLDOWN", {});
+        owner_.addonEventCallbackRef()("BAG_UPDATE_COOLDOWN", {});
+        owner_.addonEventCallbackRef()("ACTIONBAR_UPDATE_COOLDOWN", {});
     }
 }
 
@@ -3442,6 +3481,11 @@ void SpellHandler::updateTimers(float dt) {
     // Tick down player and pet spell/category cooldowns
     const bool anyPlayerCooldownEnded = cooldowns_.tick(dt);
     const bool anyPetCooldownEnded = petCooldowns_.tick(dt);
+    const bool petGcdEnded = petGcdWasActive_ && !isPetGCDActive();
+    if (petGcdEnded) {
+        petGcdWasActive_ = false;
+        petGcdTotal_ = 0.0f;
+    }
     // A cooldown running out is the one thing that makes a spell usable again
     // without the server saying anything, so nothing announced it and the
     // button stayed dimmed until the next time mana happened to change - the
@@ -3452,9 +3496,13 @@ void SpellHandler::updateTimers(float dt) {
         owner_.addonEventCallbackRef()("SPELL_UPDATE_USABLE", {});
         owner_.addonEventCallbackRef()("SPELL_UPDATE_COOLDOWN", {});
     }
-    if (anyPetCooldownEnded && owner_.addonEventCallbackRef()) {
+    if ((anyPetCooldownEnded || petGcdEnded) && owner_.addonEventCallbackRef()) {
         owner_.addonEventCallbackRef()("PET_BAR_UPDATE_COOLDOWN", {});
         if (!anyPlayerCooldownEnded) {
+            owner_.addonEventCallbackRef()("ACTIONBAR_UPDATE_COOLDOWN", {});
+            if (anyPetCooldownEnded) {
+                owner_.addonEventCallbackRef()("SPELL_UPDATE_USABLE", {});
+            }
             owner_.addonEventCallbackRef()("SPELL_UPDATE_COOLDOWN", {});
         }
     }
@@ -3840,6 +3888,9 @@ void SpellHandler::handleSpellStart(network::Packet& packet) {
         s.timeTotal      = data.castTime / 1000.0f;
         s.timeRemaining  = s.timeTotal;
         s.interruptible  = owner_.isSpellInterruptible(data.spellId);
+        if (isControlledPetOrCharmGuid(data.casterUnit) && startPetGCDFromSpellInfo(data.spellId)) {
+            notifyPetCooldownChanged();
+        }
         if (owner_.spellCastAnimCallbackRef())
             owner_.spellCastAnimCallbackRef()(data.casterUnit, SpellAnimPhase::PRECAST, data.spellId);
     } else if (rangedWeaponAttack && owner_.spellCastAnimCallbackRef()) {
@@ -4125,14 +4176,18 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
             castSpell(nextSpell, nextTarget);
         }
     } else {
-        // Pet casts also seed their own Spell.dbc recovery/category cooldowns
-        // on SMSG_SPELL_GO (e.g. Felhunter Devour Magic cat=12, Voidwalker Suffering cat=84).
-        if (owner_.getPetGuid() != 0 && data.casterUnit == owner_.getPetGuid()) {
+        // Pet and possessed casts also seed their own Spell.dbc recovery/category
+        // cooldowns and Pet GCD on SMSG_SPELL_GO (e.g. Felhunter Devour Magic cat=12,
+        // Voidwalker Suffering cat=84, Hunter pet Claw GCD).
+        if (isControlledPetOrCharmGuid(data.casterUnit)) {
             owner_.loadSpellNameCache();
             constexpr uint32_t kAttrCooldownOnEvent = 0x02000000;
             const auto cast = owner_.spellNameCacheRef().find(data.spellId);
             if (cast != owner_.spellNameCacheRef().end() && (cast->second.attr & kAttrCooldownOnEvent)) {
                 cooldownEventPending_.insert(data.spellId);
+                if (startPetGCDFromSpellInfo(data.spellId)) {
+                    notifyPetCooldownChanged();
+                }
             } else {
                 seedCooldownFromSpellInfo(data.spellId, /*isPet=*/true);
             }
@@ -4439,7 +4494,7 @@ void SpellHandler::handleSpellCooldown(network::Packet& packet) {
 
     if (!packet.hasRemaining(8)) return;
     const uint64_t guid = packet.readUInt64();
-    const bool isPet = (owner_.getPetGuid() != 0 && guid == owner_.getPetGuid());
+    const bool isPet = isControlledPetOrCharmGuid(guid);
 
     uint8_t flags = 0;
     if (!isClassicFormat) {
@@ -4460,25 +4515,37 @@ void SpellHandler::handleSpellCooldown(network::Packet& packet) {
         float seconds = cooldownMs / 1000.0f;
 
         // spellId=0 is the Global Cooldown marker
-        if (!isPet && spellId == 0 && cooldownMs > 0 && cooldownMs <= 2000) {
-            gcdTotal_ = seconds;
-            gcdStartedAt_ = std::chrono::steady_clock::now();
+        if (spellId == 0 && cooldownMs > 0 && cooldownMs <= 2000) {
+            if (isPet) {
+                petGcdTotal_ = seconds;
+                petGcdStartedAtSec_ = core::appTimeSeconds();
+                petGcdWasActive_ = true;
+            } else {
+                gcdTotal_ = seconds;
+                gcdStartedAt_ = std::chrono::steady_clock::now();
+            }
             continue;
         }
 
         // CMaNGOS Creature::AddCooldown sends recTime=0 with FLAG_INCLUDE_GCD for
-        // pet abilities whose cooldown lives in CategoryRecoveryTime (e.g. Devour Magic).
+        // pet abilities whose cooldown lives in CategoryRecoveryTime (e.g. Devour Magic)
+        // or whose only cooldown is the Pet GCD (e.g. Claw, Firebolt, Waterbolt).
         if (isPet && cooldownMs == 0 && (flags & 0x1u) != 0) {
             seedCooldownFromSpellInfo(spellId, /*isPet=*/true);
             continue;
         }
+        if (isPet && (flags & 0x1u) != 0 && !isPetGCDActive()) {
+            startPetGCDFromSpellInfo(spellId);
+        }
 
         const auto* se = owner_.getSpellNameEntry(spellId);
         const uint32_t catId = se ? se->category : 0u;
-        state.mergeSpell(spellId, seconds);
+        const float dbcSpellTotal = (se && se->recoveryMs > 0) ? (se->recoveryMs / 1000.0f) : 0.0f;
+        const float dbcCatTotal = (se && se->categoryRecoveryMs > 0) ? (se->categoryRecoveryMs / 1000.0f) : 0.0f;
+        state.mergeSpell(spellId, seconds, dbcSpellTotal);
         if (catId != 0 && se && se->categoryRecoveryMs > 0 && cooldownMs > 0) {
             // If this spell's cooldown is a category cooldown, propagate to category siblings.
-            state.mergeCategory(catId, seconds);
+            state.mergeCategory(catId, seconds, dbcCatTotal);
         }
 
         if (!isPet) {
@@ -4501,15 +4568,12 @@ void SpellHandler::handleSpellCooldown(network::Packet& packet) {
     LOG_DEBUG("handleSpellCooldown: parsed for ",
               isClassicFormat ? "Classic" : "TBC/WotLK",
               isPet ? " (pet)" : " (player)");
-    if (owner_.addonEventCallbackRef()) {
-        if (isPet) {
-            owner_.addonEventCallbackRef()("PET_BAR_UPDATE_COOLDOWN", {});
-            owner_.addonEventCallbackRef()("SPELL_UPDATE_COOLDOWN", {});
-        } else {
-            owner_.addonEventCallbackRef()("SPELL_UPDATE_COOLDOWN", {});
-            owner_.addonEventCallbackRef()("BAG_UPDATE_COOLDOWN", {});
-            owner_.addonEventCallbackRef()("ACTIONBAR_UPDATE_COOLDOWN", {});
-        }
+    if (isPet) {
+        notifyPetCooldownChanged();
+    } else if (owner_.addonEventCallbackRef()) {
+        owner_.addonEventCallbackRef()("SPELL_UPDATE_COOLDOWN", {});
+        owner_.addonEventCallbackRef()("BAG_UPDATE_COOLDOWN", {});
+        owner_.addonEventCallbackRef()("ACTIONBAR_UPDATE_COOLDOWN", {});
     }
 }
 
@@ -4519,7 +4583,7 @@ void SpellHandler::handleCooldownEvent(network::Packet& packet) {
     uint64_t guid = 0;
     if (packet.hasRemaining(8))
         guid = packet.readUInt64();
-    const bool isPet = (owner_.getPetGuid() != 0 && guid == owner_.getPetGuid());
+    const bool isPet = isControlledPetOrCharmGuid(guid);
     // The event starts the cooldown the cast left waiting (CMaNGOS
     // Player::AddCooldown: "send cooldown event to start cd client side").
     // Native 2.4.3: Stealth shows its 10 s sweep from the moment stealth ends.
@@ -4531,15 +4595,12 @@ void SpellHandler::handleCooldownEvent(network::Packet& packet) {
         syncActionBarCooldowns(spellId, catId);
     }
     seedCooldownFromSpellInfo(spellId, isPet);
-    if (owner_.addonEventCallbackRef()) {
-        if (isPet) {
-            owner_.addonEventCallbackRef()("PET_BAR_UPDATE_COOLDOWN", {});
-            owner_.addonEventCallbackRef()("SPELL_UPDATE_COOLDOWN", {});
-        } else {
-            owner_.addonEventCallbackRef()("SPELL_UPDATE_COOLDOWN", {});
-            owner_.addonEventCallbackRef()("BAG_UPDATE_COOLDOWN", {});
-            owner_.addonEventCallbackRef()("ACTIONBAR_UPDATE_COOLDOWN", {});
-        }
+    if (isPet) {
+        notifyPetCooldownChanged();
+    } else if (owner_.addonEventCallbackRef()) {
+        owner_.addonEventCallbackRef()("SPELL_UPDATE_COOLDOWN", {});
+        owner_.addonEventCallbackRef()("BAG_UPDATE_COOLDOWN", {});
+        owner_.addonEventCallbackRef()("ACTIONBAR_UPDATE_COOLDOWN", {});
     }
 }
 
@@ -5031,6 +5092,9 @@ void SpellHandler::handlePetSpells(network::Packet& packet) {
         owner_.petSpellListRef().clear();
         owner_.petAutocastSpellsRef().clear();
         memset(owner_.petActionSlotsRef(), 0, sizeof(owner_.petActionSlotsRef()));
+        petCooldowns_.clearAll();
+        petGcdTotal_ = 0.0f;
+        petGcdWasActive_ = false;
         LOG_INFO("SMSG_PET_SPELLS: pet cleared");
         owner_.fireAddonEvent("UNIT_PET", {"player"});
         // The pet frame and the pet action bar both rebuild from this one;
@@ -5040,6 +5104,7 @@ void SpellHandler::handlePetSpells(network::Packet& packet) {
         owner_.fireAddonEvent("PET_BAR_UPDATE", {});
         owner_.fireAddonEvent("ACTIONBAR_UPDATE_STATE", {});
         owner_.fireAddonEvent("SPELLS_CHANGED", {});
+        notifyPetCooldownChanged();
         return;
     }
 
@@ -5050,6 +5115,9 @@ void SpellHandler::handlePetSpells(network::Packet& packet) {
         owner_.petSpellListRef().clear();
         owner_.petAutocastSpellsRef().clear();
         memset(owner_.petActionSlotsRef(), 0, sizeof(owner_.petActionSlotsRef()));
+        petCooldowns_.clearAll();
+        petGcdTotal_ = 0.0f;
+        petGcdWasActive_ = false;
         LOG_INFO("SMSG_PET_SPELLS: pet cleared (guid=0)");
         owner_.fireAddonEvent("UNIT_PET", {"player"});
         // The pet frame and the pet action bar both rebuild from this one;
@@ -5059,8 +5127,14 @@ void SpellHandler::handlePetSpells(network::Packet& packet) {
         owner_.fireAddonEvent("PET_BAR_UPDATE", {});
         owner_.fireAddonEvent("ACTIONBAR_UPDATE_STATE", {});
         owner_.fireAddonEvent("SPELLS_CHANGED", {});
+        notifyPetCooldownChanged();
         return;
     }
+
+    petCooldowns_.clearAll();
+    petGcdTotal_ = 0.0f;
+    petGcdWasActive_ = false;
+    uint32_t parsedCooldownCount = 0;
 
     // Verified against AzerothCore's Player::PetSpellInitialize, which writes
     //   guid(8) family(2) duration(4) react(1) command(1) flags(2)
@@ -5116,19 +5190,52 @@ void SpellHandler::handlePetSpells(network::Packet& packet) {
                 owner_.petAutocastSpellsRef().insert(spellId);
             }
         }
+
+        // Unit::CharmCooldownInitialize appends uint8 cdCount followed by
+        // (uint16 spellId [uint32 in WotLK], uint16 category, uint32 spellCdMs, uint32 catCdMs).
+        if (!packet.hasRemaining(1)) break;
+        const uint8_t cdCount = packet.readUInt8();
+        const size_t cdEntrySize = isPreWotlk() ? 12u : 14u;
+        owner_.loadSpellNameCache();
+        constexpr uint32_t kPermanentCooldownFlag = 0x80000000u;
+        for (uint8_t i = 0; i < cdCount; ++i) {
+            if (!packet.hasRemaining(cdEntrySize)) break;
+            const uint32_t spellId = isPreWotlk() ? packet.readUInt16() : packet.readUInt32();
+            uint32_t categoryId = packet.readUInt16();
+            const uint32_t spellCdMs = packet.readUInt32();
+            const uint32_t catCdMs = packet.readUInt32();
+            const auto* se = owner_.getSpellNameEntry(spellId);
+            if (categoryId == 0 && se) categoryId = se->category;
+            if (spellCdMs > 0 && (spellCdMs & kPermanentCooldownFlag) == 0) {
+                const float totalHint = (se && se->recoveryMs > 0) ? (se->recoveryMs / 1000.0f) : 0.0f;
+                petCooldowns_.mergeSpell(spellId, spellCdMs / 1000.0f, totalHint);
+                ++parsedCooldownCount;
+            }
+            if (catCdMs > 0 && (catCdMs & kPermanentCooldownFlag) == 0) {
+                const float totalHint = (se && se->categoryRecoveryMs > 0) ? (se->categoryRecoveryMs / 1000.0f) : 0.0f;
+                if (categoryId != 0) {
+                    petCooldowns_.mergeCategory(categoryId, catCdMs / 1000.0f, totalHint);
+                } else {
+                    petCooldowns_.mergeSpell(spellId, catCdMs / 1000.0f, totalHint);
+                }
+                ++parsedCooldownCount;
+            }
+        }
     } while (false);
 
     LOG_INFO("SMSG_PET_SPELLS: petGuid=0x", std::hex, owner_.petGuidRef(), std::dec,
              " react=", static_cast<int>(owner_.petReactRef()), " command=", static_cast<int>(owner_.petCommandRef()),
-             " spells=", owner_.petSpellListRef().size());
+             " spells=", owner_.petSpellListRef().size(),
+             " cooldowns=", parsedCooldownCount);
     owner_.fireAddonEvent("UNIT_PET", {"player"});
-        // The pet frame and the pet action bar both rebuild from this one;
-        // UNIT_PET alone tells them the pet changed but not that its interface
-        // should be redrawn.
-        owner_.fireAddonEvent("PET_UI_UPDATE", {});
+    // The pet frame and the pet action bar both rebuild from this one;
+    // UNIT_PET alone tells them the pet changed but not that its interface
+    // should be redrawn.
+    owner_.fireAddonEvent("PET_UI_UPDATE", {});
     owner_.fireAddonEvent("PET_BAR_UPDATE", {});
     owner_.fireAddonEvent("ACTIONBAR_UPDATE_STATE", {});
     owner_.fireAddonEvent("SPELLS_CHANGED", {});
+    notifyPetCooldownChanged();
 }
 
 void SpellHandler::sendPetAction(uint32_t action, uint64_t targetGuid) {
@@ -5425,6 +5532,9 @@ void SpellHandler::resetAllState() {
     supercededSpells_.clear();
     cooldowns_.clearAll();
     petCooldowns_.clearAll();
+    petGcdTotal_ = 0.0f;
+    petGcdStartedAtSec_ = 0.0;
+    petGcdWasActive_ = false;
     playerAuras_.clear();
     lastFieldPlayerAuras_.clear();
     targetAuras_.clear();
@@ -6674,21 +6784,18 @@ void SpellHandler::handleClearCooldown(network::Packet& packet) {
         const uint32_t spellId = packet.readUInt32();
         uint64_t guid = 0;
         if (packet.hasRemaining(8)) guid = packet.readUInt64();
-        const bool isPet = (owner_.getPetGuid() != 0 && guid == owner_.getPetGuid());
+        const bool isPet = isControlledPetOrCharmGuid(guid);
         const auto* se = owner_.getSpellNameEntry(spellId);
         const uint32_t catId = se ? se->category : 0u;
         (isPet ? petCooldowns_ : cooldowns_).clear(spellId, catId);
         if (!isPet) {
             syncActionBarCooldowns(spellId, catId);
         }
-        if (owner_.addonEventCallbackRef()) {
-            if (isPet) {
-                owner_.addonEventCallbackRef()("PET_BAR_UPDATE_COOLDOWN", {});
-                owner_.addonEventCallbackRef()("SPELL_UPDATE_COOLDOWN", {});
-            } else {
-                owner_.addonEventCallbackRef()("SPELL_UPDATE_COOLDOWN", {});
-                owner_.addonEventCallbackRef()("ACTIONBAR_UPDATE_COOLDOWN", {});
-            }
+        if (isPet) {
+            notifyPetCooldownChanged(/*anyExpired=*/true);
+        } else if (owner_.addonEventCallbackRef()) {
+            owner_.addonEventCallbackRef()("SPELL_UPDATE_COOLDOWN", {});
+            owner_.addonEventCallbackRef()("ACTIONBAR_UPDATE_COOLDOWN", {});
         }
     }
 }
@@ -6702,21 +6809,18 @@ void SpellHandler::handleModifyCooldown(network::Packet& packet) {
         const uint64_t guid    = packet.readUInt64();
         const int32_t  diffMs  = static_cast<int32_t>(packet.readUInt32());
         const float diffSec = diffMs / 1000.0f;
-        const bool isPet = (owner_.getPetGuid() != 0 && guid == owner_.getPetGuid());
+        const bool isPet = isControlledPetOrCharmGuid(guid);
         const auto* se = owner_.getSpellNameEntry(spellId);
         const uint32_t catId = se ? se->category : 0u;
         if ((isPet ? petCooldowns_ : cooldowns_).modify(spellId, catId, diffSec)) {
             if (!isPet) {
                 syncActionBarCooldowns(spellId, catId);
             }
-            if (owner_.addonEventCallbackRef()) {
-                if (isPet) {
-                    owner_.addonEventCallbackRef()("PET_BAR_UPDATE_COOLDOWN", {});
-                    owner_.addonEventCallbackRef()("SPELL_UPDATE_COOLDOWN", {});
-                } else {
-                    owner_.addonEventCallbackRef()("SPELL_UPDATE_COOLDOWN", {});
-                    owner_.addonEventCallbackRef()("ACTIONBAR_UPDATE_COOLDOWN", {});
-                }
+            if (isPet) {
+                notifyPetCooldownChanged(/*anyExpired=*/diffSec < 0.0f && getPetSpellCooldown(spellId) <= 0.0f);
+            } else if (owner_.addonEventCallbackRef()) {
+                owner_.addonEventCallbackRef()("SPELL_UPDATE_COOLDOWN", {});
+                owner_.addonEventCallbackRef()("ACTIONBAR_UPDATE_COOLDOWN", {});
             }
         }
     }

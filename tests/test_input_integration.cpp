@@ -7966,3 +7966,212 @@ TEST_CASE_METHOD(Integration, "TBC minimap service tracking stays in-session acr
 
     lua.setGameHandler(nullptr);
 }
+
+TEST_CASE_METHOD(Integration, "TBC pet, pet spellbook, and possessed bonus bar cooldowns and Pet GCD", "[pet][possess][cooldown][tbc]") {
+    using wowee::game::Opcode;
+    using wowee::game::UF;
+    using wowee::game::wireOpcode;
+
+    class ConnectedSentPackets : public replay::SentPackets {
+    public:
+        [[nodiscard]] bool isConnected() const override { return true; }
+        void update() override {}
+    };
+
+    replay::Session session("tbc");
+    auto& gh = session.handler();
+    wowee::game::GameHandlerTestAccess::setSocket(gh, std::make_unique<ConnectedSentPackets>());
+    lua.setGameHandler(&gh);
+    run("__WoweeInterfaceVersion = 20400");
+
+    std::vector<std::string> events;
+    gh.setAddonEventCallback([&](const std::string& name, const std::vector<std::string>&) {
+        events.push_back(name);
+    });
+
+    session.spawnPlayer({{UF::UNIT_FIELD_HEALTH, 4000}, {UF::UNIT_FIELD_MAXHEALTH, 4000}, {UF::UNIT_FIELD_LEVEL, 70}});
+
+    // Seed SpellNameEntry metadata matching TBC 2.4.3 Spell.dbc for Voidwalker, Imp, and Razorgore spells.
+    gh.loadSpellNameCache();
+    auto& cache = gh.spellNameCacheRef();
+    auto seedSpellMeta = [&](uint32_t id, const char* name, uint32_t cat, uint32_t recMs,
+                             uint32_t catRecMs, uint32_t startRecCat, uint32_t startRecMs) {
+        auto& e = cache[id];
+        e.name = name;
+        e.category = cat;
+        e.recoveryMs = recMs;
+        e.categoryRecoveryMs = catRecMs;
+        e.startRecoveryCategory = startRecCat;
+        e.startRecoveryMs = startRecMs;
+    };
+    seedSpellMeta(3716u, "Torment", 36u, 0u, 5000u, 133u, 1500u);
+    seedSpellMeta(17735u, "Suffering", 84u, 0u, 120000u, 133u, 1500u);
+    seedSpellMeta(17767u, "Consume Shadows", 0u, 0u, 0u, 133u, 1500u);
+    seedSpellMeta(7812u, "Sacrifice", 0u, 0u, 0u, 0u, 0u);
+    seedSpellMeta(3110u, "Firebolt", 0u, 0u, 0u, 133u, 1000u);
+    seedSpellMeta(19873u, "Destroy Egg", 0u, 7000u, 0u, 0u, 0u);
+    seedSpellMeta(19832u, "Possess", 0u, 0u, 0u, 0u, 0u);
+    cache[19832u].effectAuraIds[0] = 2u; // SPELL_AURA_MOD_POSSESS
+
+    // Ensure client uptime is comfortably positive for standard wind-back checks.
+    wowee::core::advanceTestClock(200.0);
+
+    // 1. Send TBC SMSG_PET_SPELLS for Voidwalker (guid=0xF140000744000001) with CharmCooldownInitialize
+    // carrying 90s remaining of Suffering's 120s category 84 cooldown.
+    constexpr uint64_t kPetGuid = 0xF140000744000001ULL;
+    auto buildTbcPetSpells = [&](uint64_t guid, const std::array<uint32_t, 10>& bar,
+                                 const std::vector<uint32_t>& spells,
+                                 const std::vector<std::tuple<uint16_t, uint16_t, uint32_t, uint32_t>>& cds) {
+        wowee::network::Packet p(wireOpcode(Opcode::SMSG_PET_SPELLS));
+        p.writeUInt64(guid);
+        if (guid == 0) return p;
+        p.writeUInt32(0);     // duration
+        p.writeUInt8(1);      // react = Defensive
+        p.writeUInt8(1);      // command = Follow
+        p.writeUInt16(0);     // flags
+        for (uint32_t slot : bar) p.writeUInt32(slot);
+        p.writeUInt8(static_cast<uint8_t>(spells.size()));
+        for (uint32_t sp : spells) p.writeUInt32(sp);
+        p.writeUInt8(static_cast<uint8_t>(cds.size()));
+        for (const auto& [sid, cat, spMs, catMs] : cds) {
+            p.writeUInt16(sid);
+            p.writeUInt16(cat);
+            p.writeUInt32(spMs);
+            p.writeUInt32(catMs);
+        }
+        return p;
+    };
+
+    // ACT_COMMAND (0x07) | COMMAND_ATTACK (2)
+    constexpr uint32_t cmdAttack = (0x07u << 24) | 2u;
+    const uint32_t actTorment = (0xC1u << 24) | 3716u;
+    const uint32_t actSuffering = (0x81u << 24) | 17735u;
+    const uint32_t actConsume = (0x81u << 24) | 17767u;
+    const uint32_t actSacrifice = (0x81u << 24) | 7812u;
+    const uint32_t actFirebolt = (0xC1u << 24) | 3110u;
+    std::array<uint32_t, 10> petBar = {
+        cmdAttack, 0, 0, actTorment, actSuffering, actConsume, actSacrifice, actFirebolt, 0, 0
+    };
+    session.receive(buildTbcPetSpells(
+        kPetGuid, petBar,
+        {actTorment, actSuffering, actConsume, actSacrifice, actFirebolt},
+        {{17735u, 84u, 0u, 90000u}}));
+
+    // CharmCooldownInitialize preserved full 120s DBC total with 90s remaining on Suffering (slot 5),
+    // while command slot 1 and empty slot 2 return (0, 0, 0) and ready spell slot 4 returns (0, 0, 1).
+    run("function _CDChk(wantPos, wantDur, wantEn, s, d, e) "
+        "if wantPos then return s > 0 and math.abs(d - wantDur) < 0.01 and e == wantEn "
+        "else return s == 0 and d == 0 and e == wantEn end end");
+    CHECK(gh.getPetSpellCooldown(17735u) == Catch::Approx(90.0f));
+    CHECK(gh.getPetSpellCooldownTotal(17735u) == Catch::Approx(120.0f));
+    truth("_CDChk(false, 0, 0, GetPetActionCooldown(1))");
+    truth("_CDChk(false, 0, 0, GetPetActionCooldown(2))");
+    truth("_CDChk(false, 0, 1, GetPetActionCooldown(4))");
+    truth("_CDChk(true, 120.0, 1, GetPetActionCooldown(5))");
+    truth("_CDChk(true, 120.0, 1, GetSpellCooldown(17735))");
+
+    // 2. Auto-cast / manual Torment (3716) SMSG_SPELL_COOLDOWN with recTime=0 + FLAG_INCLUDE_GCD (0x1)
+    // seeds 5s category 36 cooldown AND starts 1.5s Pet GCD across StartRecoveryCategory=133 pet spells,
+    // leaving Sacrifice (7812, StartRecoveryCategory=0) unaffected at 0s, and firing ACTIONBAR_UPDATE_COOLDOWN!
+    events.clear();
+    {
+        wowee::network::Packet cdPkt(wireOpcode(Opcode::SMSG_SPELL_COOLDOWN));
+        cdPkt.writeUInt64(kPetGuid);
+        cdPkt.writeUInt8(0x1u); // SPELL_COOLDOWN_FLAG_INCLUDE_GCD
+        cdPkt.writeUInt32(3716u);
+        cdPkt.writeUInt32(0u);  // recTime=0 (uses CategoryRecoveryTime + Pet GCD)
+        session.receive(cdPkt);
+    }
+    CHECK(std::count(events.begin(), events.end(), "PET_BAR_UPDATE_COOLDOWN") >= 1);
+    CHECK(std::count(events.begin(), events.end(), "SPELL_UPDATE_COOLDOWN") >= 1);
+    CHECK(std::count(events.begin(), events.end(), "ACTIONBAR_UPDATE_COOLDOWN") >= 1);
+    truth("_CDChk(true, 5.0, 1, GetPetActionCooldown(4))");
+    truth("_CDChk(true, 120.0, 1, GetPetActionCooldown(5))");
+    truth("_CDChk(true, 1.5, 1, GetPetActionCooldown(6))");
+    truth("_CDChk(false, 0, 1, GetPetActionCooldown(7))");
+    truth("_CDChk(true, 1.5, 1, GetSpellCooldown(17767))");
+
+    // Advance 1.6s: 1.5s Pet GCD finishes while 5s Torment and 90s Suffering remain active.
+    wowee::core::advanceTestClock(1.6);
+    gh.update(1.6f);
+    truth("_CDChk(false, 0, 1, GetPetActionCooldown(6))");
+    truth("_CDChk(true, 5.0, 1, GetPetActionCooldown(4))");
+
+    // 3. Timed pet cast SMSG_SPELL_START (Imp Firebolt 3110: 2000ms cast, 1000ms StartRecoveryTime)
+    // starts 1.0s Pet GCD immediately on cast start.
+    {
+        wowee::network::Packet startPkt(wireOpcode(Opcode::SMSG_SPELL_START));
+        startPkt.writePackedGuid(kPetGuid);
+        startPkt.writePackedGuid(kPetGuid);
+        startPkt.writeUInt32(3110u);
+        startPkt.writeUInt16(0u);
+        startPkt.writeUInt32(2000u);
+        startPkt.writeUInt32(0u); // TARGET_FLAG_SELF
+        session.receive(startPkt);
+    }
+    truth("_CDChk(true, 1.0, 1, GetPetActionCooldown(8))");
+    truth("_CDChk(true, 1.0, 1, GetPetActionCooldown(6))");
+
+    // 4. Dismissing pet (SMSG_PET_SPELLS guid=0) clears pet cooldowns and Pet GCD cleanly.
+    session.receive(buildTbcPetSpells(0, {}, {}, {}));
+    CHECK(gh.getPetSpellCooldown(17735u) == 0.0f);
+    CHECK_FALSE(gh.isPetGCDActive());
+    truth("_CDChk(false, 0, 0, GetPetActionCooldown(5))");
+    truth("_CDChk(false, 0, 0, GetActionCooldown(121))");
+
+    // 5. Possessing Razorgore (guid=0xF13000309347905D) sets UNIT_FIELD_CHARM + Possess aura (19832) and BonusActionBar slots 121..130.
+    constexpr uint64_t kRazorgoreGuid = 0xF13000309347905DULL;
+    session.receive(replay::UpdateObject().tbc().create(kRazorgoreGuid, wowee::game::ObjectType::UNIT, {
+        {UF::OBJECT_FIELD_ENTRY, 12435u},
+        {UF::UNIT_FIELD_HEALTH, 450000u},
+        {UF::UNIT_FIELD_MAXHEALTH, 450000u},
+        {UF::UNIT_FIELD_AURAS, 19832u},
+        {UF::UNIT_FIELD_AURAFLAGS, 0x09u},
+    }));
+    const uint16_t charmIdx = wowee::game::fieldIndex(UF::UNIT_FIELD_CHARM);
+    const uint16_t auraIdx = wowee::game::fieldIndex(UF::UNIT_FIELD_AURAS);
+    const uint16_t auraFlagsIdx = wowee::game::fieldIndex(UF::UNIT_FIELD_AURAFLAGS);
+    REQUIRE(charmIdx != 0xFFFFu);
+    REQUIRE(auraIdx != 0xFFFFu);
+    REQUIRE(auraFlagsIdx != 0xFFFFu);
+    session.receive(replay::UpdateObject().tbc().valuesAt(replay::Session::kPlayerGuid, {
+        {charmIdx, static_cast<uint32_t>(kRazorgoreGuid & 0xFFFFFFFFu)},
+        {static_cast<uint16_t>(charmIdx + 1u), static_cast<uint32_t>(kRazorgoreGuid >> 32)},
+        {auraIdx, 19832u},
+        {auraFlagsIdx, 0x09u},
+    }));
+    REQUIRE(gh.getPossessedGuid() == kRazorgoreGuid);
+    REQUIRE(gh.getBonusActionBarOffset() == 5u);
+
+    std::array<uint32_t, 10> possessBar = {
+        (0x01u << 24) | 19873u, cmdAttack, 0, 0, 0, 0, 0, 0, 0, 0
+    };
+    session.receive(buildTbcPetSpells(kRazorgoreGuid, possessBar, {}, {}));
+    truth("_CDChk(false, 0, 1, GetActionCooldown(121))");
+    truth("_CDChk(false, 0, 0, GetActionCooldown(122))");
+    truth("_CDChk(false, 0, 0, GetActionCooldown(123))");
+
+    // Casting Destroy Egg (19873) sends SMSG_SPELL_COOLDOWN (7000ms) for Razorgore:
+    // must fire ACTIONBAR_UPDATE_COOLDOWN so BonusActionButton1Cooldown starts its 7.0s sweep!
+    events.clear();
+    {
+        wowee::network::Packet eggCd(wireOpcode(Opcode::SMSG_SPELL_COOLDOWN));
+        eggCd.writeUInt64(kRazorgoreGuid);
+        eggCd.writeUInt8(0u);
+        eggCd.writeUInt32(19873u);
+        eggCd.writeUInt32(7000u);
+        session.receive(eggCd);
+    }
+    CHECK(std::count(events.begin(), events.end(), "ACTIONBAR_UPDATE_COOLDOWN") >= 1);
+    truth("_CDChk(true, 7.0, 1, GetActionCooldown(121))");
+
+    // Ticking past 7.0s expires Destroy Egg and fires ACTIONBAR_UPDATE_COOLDOWN + SPELL_UPDATE_USABLE.
+    events.clear();
+    wowee::core::advanceTestClock(7.2);
+    gh.update(7.2f);
+    CHECK(std::count(events.begin(), events.end(), "ACTIONBAR_UPDATE_COOLDOWN") >= 1);
+    CHECK(std::count(events.begin(), events.end(), "SPELL_UPDATE_USABLE") >= 1);
+    truth("_CDChk(false, 0, 1, GetActionCooldown(121))");
+
+    lua.setGameHandler(nullptr);
+}

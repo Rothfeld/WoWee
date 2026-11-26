@@ -5337,6 +5337,12 @@ float GameHandler::getGCDRemaining() const {
 float GameHandler::getGCDTotal() const {
     return spellHandler_ ? spellHandler_->getGCDTotal() : 0.0f;
 }
+float GameHandler::getPetGCDRemaining() const {
+    return spellHandler_ ? spellHandler_->getPetGCDRemaining() : 0.0f;
+}
+float GameHandler::getPetGCDTotal() const {
+    return spellHandler_ ? spellHandler_->getPetGCDTotal() : 0.0f;
+}
 bool GameHandler::showTalentWipeConfirmDialog() const {
     return spellHandler_ ? spellHandler_->showTalentWipeConfirmDialog() : false;
 }

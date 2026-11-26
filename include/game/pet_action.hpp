@@ -61,6 +61,7 @@ constexpr ActionType petActionType(uint32_t packed) {
 /// Whether a packed slot holds a castable spell rather than a built-in command
 /// or stance. The spell types are the ones that carry an autocast bit.
 constexpr bool isPetSpellAction(uint32_t packed) {
+    if (petActionId(packed) == 0) return false;
     const ActionType t = petActionType(packed);
     return t != ActionType::Command && t != ActionType::Reaction;
 }
