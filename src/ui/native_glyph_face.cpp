@@ -335,4 +335,83 @@ std::optional<NativeGlyphRaster> NativeGlyphFace::rasterize(uint32_t codepoint, 
     return glyph;
 }
 
+std::optional<NativeGlyphOutlinedRaster> NativeGlyphFace::rasterizeOutlined(uint32_t codepoint,
+                                                                            float emPixels,
+                                                                            int outlinePixels) const {
+    assert(outlinePixels > 0);
+    const auto base = rasterize(codepoint, emPixels);
+    if (!base) return std::nullopt;
+
+    NativeGlyphOutlinedRaster out;
+    out.advance = base->advance + (outlinePixels > 1 && !base->coverage.empty() ? (outlinePixels - 1) : 0);
+    if (base->coverage.empty()) return out;
+
+    const int pad = 2 * outlinePixels;
+    const int srcW = base->width;
+    const int srcH = base->rows;
+    const int dstW = srcW + 2 * pad;
+    const int dstH = srcH + 2 * pad;
+
+    out.left = base->left - pad;
+    out.top = base->top - pad;
+    out.width = dstW;
+    out.rows = dstH;
+    out.rgba.resize(static_cast<size_t>(dstW) * dstH * 4u, 0);
+
+    // Precompute circular dilation weights matching build 8606's 4-bit outline halo
+    // (1 px ring at 15/15 = 255, 2 px orthogonal ring at 9/15 = 153 for OUTLINE).
+    const float r0 = 1.45f * static_cast<float>(outlinePixels);
+    const float r1 = 2.82f * static_cast<float>(outlinePixels);
+    const int kDim = 2 * pad + 1;
+    std::vector<float> kernel(static_cast<size_t>(kDim) * kDim, 0.0f);
+    for (int dy = -pad; dy <= pad; ++dy) {
+        for (int dx = -pad; dx <= pad; ++dx) {
+            const float d = std::hypot(static_cast<float>(dx), static_cast<float>(dy));
+            const float w = (d <= r0) ? 1.0f : std::clamp((r1 - d) / (r1 - r0), 0.0f, 1.0f);
+            kernel[static_cast<size_t>(dy + pad) * kDim + static_cast<size_t>(dx + pad)] = w;
+        }
+    }
+
+    for (int oy = 0; oy < dstH; ++oy) {
+        for (int ox = 0; ox < dstW; ++ox) {
+            const int sxCenter = ox - pad;
+            const int syCenter = oy - pad;
+            const int f = (sxCenter >= 0 && sxCenter < srcW && syCenter >= 0 && syCenter < srcH)
+                              ? static_cast<int>(base->coverage[static_cast<size_t>(syCenter) * srcW + sxCenter])
+                              : 0;
+
+            float maxOutline = 0.0f;
+            const int dyMin = std::max(-pad, oy - pad - (srcH - 1));
+            const int dyMax = std::min(pad, oy - pad);
+            const int dxMin = std::max(-pad, ox - pad - (srcW - 1));
+            const int dxMax = std::min(pad, ox - pad);
+            for (int dy = dyMin; dy <= dyMax; ++dy) {
+                const int sy = oy - pad - dy;
+                const unsigned char* srcRow = &base->coverage[static_cast<size_t>(sy) * srcW];
+                const float* kRow = &kernel[static_cast<size_t>(dy + pad) * kDim];
+                for (int dx = dxMin; dx <= dxMax; ++dx) {
+                    const float w = kRow[static_cast<size_t>(dx + pad)];
+                    if (w <= 0.0f) continue;
+                    const int sx = ox - pad - dx;
+                    const float cand = static_cast<float>(srcRow[sx]) * w;
+                    if (cand > maxOutline) maxOutline = cand;
+                }
+            }
+
+            const int oRaw = std::clamp(static_cast<int>(std::lround(maxOutline)), 0, 255);
+            const int o = static_cast<int>(nativeCoverage(static_cast<unsigned char>(oRaw)));
+            const int aTotal = std::clamp(f + (o * (255 - f) + 127) / 255, 0, 255);
+            const int lum = (aTotal > 0) ? std::clamp((255 * f + aTotal / 2) / aTotal, 0, 255) : 0;
+
+            unsigned char* px = &out.rgba[(static_cast<size_t>(oy) * dstW + ox) * 4u];
+            px[0] = static_cast<unsigned char>(lum);
+            px[1] = static_cast<unsigned char>(lum);
+            px[2] = static_cast<unsigned char>(lum);
+            px[3] = static_cast<unsigned char>(aTotal);
+        }
+    }
+
+    return out;
+}
+
 } // namespace wowee::ui

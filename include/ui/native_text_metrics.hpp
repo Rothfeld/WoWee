@@ -76,7 +76,9 @@ int nativePixelHeight(float fontHeight, float pixelsPerUnit);
 inline int outlinePixelsForFlag(std::string_view outline) {
     if (outline.empty()) return 0;
     if (outline.find("THICK") != std::string_view::npos) return 2;
-    return 1;
+    if (outline.find("OUTLINE") != std::string_view::npos ||
+        outline.find("NORMAL") != std::string_view::npos) return 1;
+    return 0;
 }
 
 /// One face at one pixel height. Codepoints the face does not have are

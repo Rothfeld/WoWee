@@ -495,7 +495,7 @@ void CombatHandler::fireUnitCombat(uint64_t victim, const char* action, const ch
 
 void CombatHandler::addCombatText(CombatTextEntry::Type type, int32_t amount, uint32_t spellId, bool isPlayerSource, uint8_t powerType,
                                   uint64_t srcGuid, uint64_t dstGuid, uint32_t schoolMask, bool reduction,
-                                  bool unitCombat, uint32_t extraSpellId) {
+                                  bool unitCombat, uint32_t extraSpellId, bool periodicAura) {
     bool normalRanged = false;
     if (spellId != 0) {
         owner_.loadSpellNameCache();
@@ -524,7 +524,8 @@ void CombatHandler::addCombatText(CombatTextEntry::Type type, int32_t amount, ui
                 }
                 if (caster.empty()) caster = "Unknown";
             }
-            const auto update = combatTextUpdateFor(type, amount, isSpellAbility, powerType, caster,
+            const bool fromSpellForUpdate = isSpellAbility && !periodicAura;
+            const auto update = combatTextUpdateFor(type, amount, fromSpellForUpdate, powerType, caster,
                                                     reduction ? incomingHitDamage_ : -1,
                                                     isActiveExpansion("wotlk"));
             if (!reduction) {
@@ -573,9 +574,9 @@ void CombatHandler::addCombatText(CombatTextEntry::Type type, int32_t amount, ui
     // UNIT_COMBAT - the same hit, for the frames that draw their own feedback
     // over a portrait (CombatFeedback.lua). Swings and spell damage logs
     // announce themselves (fireUnitCombat, for every unit with a token, as the
-    // original does); this covers direct heals, environmental damage, and spell
-    // misses/resists/dodges/parries/blocks. Periodic ticks (SMSG_PERIODICAURALOG)
-    // and partial reductions never fire UNIT_COMBAT in build 8606.
+    // original does); this covers direct heals, environmental damage, periodic
+    // damage/absorbs/resists, and spell misses/resists/dodges/parries/blocks.
+    // Periodic heals (HoTs) and partial reductions never fire UNIT_COMBAT in build 8606.
     if (unitCombat && !reduction) {
         const char* action = nullptr;
         const char* flags  = "";
@@ -583,6 +584,7 @@ void CombatHandler::addCombatText(CombatTextEntry::Type type, int32_t amount, ui
         switch (type) {
             case CombatTextEntry::MELEE_DAMAGE:
             case CombatTextEntry::SPELL_DAMAGE:
+            case CombatTextEntry::PERIODIC_DAMAGE:
             case CombatTextEntry::ENVIRONMENTAL: action = "WOUND"; break;
             case CombatTextEntry::CRIT_DAMAGE: action = "WOUND"; flags = "CRITICAL"; break;
             case CombatTextEntry::MISS: action = "MISS"; ucAmount = 0; break;
@@ -594,7 +596,7 @@ void CombatHandler::addCombatText(CombatTextEntry::Type type, int32_t amount, ui
             case CombatTextEntry::BLOCK: action = "BLOCK"; flags = "BLOCK"; ucAmount = 0; break;
             case CombatTextEntry::ABSORB: action = "WOUND"; flags = "ABSORB"; ucAmount = 0; break;
             case CombatTextEntry::RESIST:
-                if (spellId != 0 && amount == 0) {
+                if (spellId != 0 && !periodicAura && amount == 0) {
                     action = "RESIST";
                 } else {
                     action = "WOUND";
@@ -604,7 +606,7 @@ void CombatHandler::addCombatText(CombatTextEntry::Type type, int32_t amount, ui
                 break;
             case CombatTextEntry::HEAL: action = "HEAL"; break;
             case CombatTextEntry::CRIT_HEAL: action = "HEAL"; flags = "CRITICAL"; break;
-            default: break;  // periodic ticks, spell immune, energize, xp, honour - not combat feedback
+            default: break;  // periodic heals, spell immune, energize, xp, honour - not combat feedback
         }
         if (action) fireUnitCombat(dstGuid, action, flags, ucAmount, schoolMask);
     }

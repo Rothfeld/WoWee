@@ -1028,3 +1028,72 @@ TEST_CASE("Incoming melee swings, on-next-swing Cleave, and normal ranged attack
     CHECK(worldShown[0].kind == wowee::ui::fct::Presentation::Number);
     CHECK(worldShown[0].number == 310);
 }
+
+TEST_CASE("SMSG_PERIODICAURALOG periodic damage and absorbs emit red DAMAGE/ABSORB and portrait UNIT_COMBAT across all schools", "[fct][framexml][periodic]") {
+    FctHarness h(/*warrior*/ 1, /*rage*/ 1);
+    REQUIRE(h.lua.executeString("SetCVar('fctDamageReduction', '1'); COMBAT_TEXT_TYPE_INFO['ABSORB'].show = 1; COMBAT_TEXT_TYPE_INFO['RESIST'].show = 1"));
+
+    auto sendPeriodicTick = [&](uint32_t spellId, uint32_t dmg, uint32_t schoolMask, uint32_t absorbed = 0, uint32_t resisted = 0) {
+        Packet p(wireOpcode(Opcode::SMSG_PERIODICAURALOG));
+        p.writePackedGuid(Session::kPlayerGuid);
+        p.writePackedGuid(kMobGuid);
+        p.writeUInt32(spellId);
+        p.writeUInt32(1);          // count
+        p.writeUInt32(3);          // SPELL_AURA_PERIODIC_DAMAGE
+        p.writeUInt32(dmg);
+        p.writeUInt32(schoolMask);
+        p.writeUInt32(absorbed);
+        p.writeUInt32(resisted);
+        h.session.receive(p);
+    };
+
+    // 1. Physical bleed (19771 Serrated Bite, school 1), Shadow DoT (589 SW:P, school 32), Fire DoT (348 Immolate, school 4)
+    sendPeriodicTick(19771, 240, 1);
+    sendPeriodicTick(589, 85, 32);
+    sendPeriodicTick(348, 62, 4);
+    // 2. Full periodic absorb (PW:S absorbing Serrated Bite & SW:P) and full periodic resist
+    sendPeriodicTick(19771, 0, 1, /*absorbed=*/240, 0);
+    sendPeriodicTick(589, 0, 32, /*absorbed=*/85, 0);
+    sendPeriodicTick(589, 0, 32, 0, /*resisted=*/85);
+
+    const auto msgs = h.recorded();
+    REQUIRE(msgs.size() == 6);
+    // All three periodic ticks are red ("DAMAGE": r=1.0, g=0.1, b=0.1), never purple ("SPELL_DAMAGE": 0.79, 0.3, 0.85)
+    CHECK(msgs[0].text == "-240");
+    CHECK(msgs[0].r == Catch::Approx(1.0));
+    CHECK(msgs[0].g == Catch::Approx(0.1));
+    CHECK(msgs[0].b == Catch::Approx(0.1));
+    CHECK(msgs[1].text == "-85");
+    CHECK(msgs[1].r == Catch::Approx(1.0));
+    CHECK(msgs[1].g == Catch::Approx(0.1));
+    CHECK(msgs[1].b == Catch::Approx(0.1));
+    CHECK(msgs[2].text == "-62");
+    CHECK(msgs[2].r == Catch::Approx(1.0));
+    CHECK(msgs[2].g == Catch::Approx(0.1));
+    CHECK(msgs[2].b == Catch::Approx(0.1));
+    // Periodic absorbs and resists are also red ("ABSORB" / "RESIST"), never purple ("SPELL_ABSORB" / "SPELL_RESIST")
+    CHECK(msgs[3].text == "Absorb");
+    CHECK(msgs[3].r == Catch::Approx(1.0));
+    CHECK(msgs[3].g == Catch::Approx(0.1));
+    CHECK(msgs[4].text == "Absorb");
+    CHECK(msgs[4].r == Catch::Approx(1.0));
+    CHECK(msgs[4].g == Catch::Approx(0.1));
+    CHECK(msgs[5].text == "Resist");
+    CHECK(msgs[5].r == Catch::Approx(1.0));
+    CHECK(msgs[5].g == Catch::Approx(0.1));
+
+    // Portrait UNIT_COMBAT fires WOUND with exact schoolMask for ticks, absorbs, and resists
+    std::vector<std::vector<std::string>> playerUnitCombat;
+    for (const auto& [ev, args] : h.rawEvents) {
+        if (ev == "UNIT_COMBAT" && !args.empty() && args[0] == "player") {
+            playerUnitCombat.push_back(args);
+        }
+    }
+    REQUIRE(playerUnitCombat.size() == 6);
+    CHECK(playerUnitCombat[0] == std::vector<std::string>{"player", "WOUND", "", "240", "1"});
+    CHECK(playerUnitCombat[1] == std::vector<std::string>{"player", "WOUND", "", "85", "32"});
+    CHECK(playerUnitCombat[2] == std::vector<std::string>{"player", "WOUND", "", "62", "4"});
+    CHECK(playerUnitCombat[3] == std::vector<std::string>{"player", "WOUND", "ABSORB", "0", "1"});
+    CHECK(playerUnitCombat[4] == std::vector<std::string>{"player", "WOUND", "ABSORB", "0", "32"});
+    CHECK(playerUnitCombat[5] == std::vector<std::string>{"player", "WOUND", "RESIST", "0", "32"});
+}

@@ -44,6 +44,7 @@ std::unordered_map<std::string, ImFont*>& faces() {
 struct NativeEntry {
     std::shared_ptr<NativeFace> face;
     ImFont* font = nullptr;
+    ImFont* outlinedFont[2] = {nullptr, nullptr};  // [0] = OUTLINE (1px), [1] = THICKOUTLINE (2px)
 };
 
 std::unordered_map<std::string, NativeEntry>& nativeFaces() {
@@ -116,6 +117,26 @@ void registerInterfaceFace(const std::string& pathOrName, ImFont* font) {
     nativeFaces()[faceKey(pathOrName)] = std::move(entry);
 }
 
+void registerInterfaceOutlinedFace(const std::string& pathOrName, int outlinePixels, ImFont* font) {
+    if (!font || outlinePixels <= 0) return;
+    auto it = nativeFaces().find(faceKey(pathOrName));
+    if (it == nativeFaces().end()) return;
+    const int idx = (outlinePixels >= 2) ? 1 : 0;
+    it->second.outlinedFont[idx] = font;
+    ++fontGeneration;
+}
+
+ImFont* interfaceOutlinedFace(const ImFont* baseFont, int outlinePixels) {
+    if (!baseFont || outlinePixels <= 0) return nullptr;
+    const int idx = (outlinePixels >= 2) ? 1 : 0;
+    for (const auto& [key, e] : nativeFaces()) {
+        if (e.font == baseFont || e.outlinedFont[0] == baseFont || e.outlinedFont[1] == baseFont) {
+            return e.outlinedFont[idx];
+        }
+    }
+    return nullptr;
+}
+
 const NativeFace* interfaceNativeFace(const std::string& fontFace) {
     const NativeEntry* e = nativeEntry(fontFace);
     return e ? e->face.get() : nullptr;
@@ -165,7 +186,8 @@ NativeTextMeasure interfaceTextMeasure(const ImFont* font, int pixelHeight, int 
     m.pixelHeight = pixelHeight;
     m.outlinePixels = outlinePixels;
     for (const auto& [key, e] : nativeFaces()) {
-        if (e.font != font || !e.face) continue;
+        const bool match = (e.font == font || e.outlinedFont[0] == font || e.outlinedFont[1] == font);
+        if (!match || !e.face) continue;
         m.face = e.face.get();
         m.missingAdvance = &fallbackAdvance;
         m.missingCtx = e.font;

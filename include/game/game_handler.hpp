@@ -4657,7 +4657,8 @@ public:
     void addCombatText(CombatTextEntry::Type type, int32_t amount, uint32_t spellId,
                        bool isPlayerSource, uint8_t powerType = 0,
                        uint64_t srcGuid = 0, uint64_t dstGuid = 0,
-                       uint32_t schoolMask = 0, bool reduction = false, bool unitCombat = true);
+                       uint32_t schoolMask = 0, bool reduction = false, bool unitCombat = true,
+                       bool periodicAura = false);
     bool shouldLogSpellstealAura(uint64_t casterGuid, uint64_t victimGuid, uint32_t spellId);
     void addSystemChatMessage(const std::string& message);
     /// A chat line of a given kind - money looted, experience gained, a

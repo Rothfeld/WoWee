@@ -2748,7 +2748,8 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                     const auto& m = w->messages[pm.index];
                     const float msgAlpha = w->effAlpha * m.color[3];
                     float rgb[4] = {m.color[0], m.color[1], m.color[2], 1.0f};
-                    if (outlinePx > 0) {
+                    ImFont* outFont = (outlinePx > 0) ? interfaceOutlinedFace(font, outlinePx) : nullptr;
+                    if (outlinePx > 0 && !outFont) {
                         const uint32_t outlineCol = IM_COL32(
                             0, 0, 0, static_cast<int>(std::clamp(msgAlpha, 0.0f, 1.0f) * 255.0f + 0.5f));
                         const int maxRing = (outlinePx >= 2 && pixelHeight >= 16) ? 2 : 1;
@@ -2776,7 +2777,7 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                                        w->justifyH.c_str(), true, nullptr, 0, -1.0f, 0.0f,
                                        indent, pm.rowHeight, shadowPx, boxW, outlinePx, false);
                     }
-                    drawMarkupText(dl, font, size, ws, ImVec2(x0, pm.top),
+                    drawMarkupText(dl, outFont ? outFont : font, size, ws, ImVec2(x0, pm.top),
                                    packColor(rgb, msgAlpha), msgAlpha, m.text, wrapW, false,
                                    w->justifyH.c_str(), false, &tree, w->id, -1.0f, 0.0f,
                                    indent, pm.rowHeight, shadowPx, boxW, outlinePx, false);
@@ -3335,12 +3336,11 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
             if (w->justifyV == "TOP")         ty = y0;
             else if (w->justifyV == "BOTTOM") ty = y1 - extent.y;
             ty += pushY;
-            // An outline is drawn as the same glyphs in black around the text.
-            // ImGui has no outlined draw, and offsetting a few copies is what
-            // the effect amounts to at these sizes - it is what keeps a
-            // nameplate legible against whatever is behind it. Always fill the
-            // 1 px ring so thin glyphs under THICKOUTLINE have no hollow gap.
-            if (outlinePx > 0) {
+            // Single-pass RGBA32 outlined font avoids dark interior overdraw when
+            // fading outlined numbers (e.g. PlayerHitIndicator); 8-pass stamp remains
+            // only if no outlined atlas variant was registered.
+            ImFont* outFont = (outlinePx > 0) ? interfaceOutlinedFace(font, outlinePx) : nullptr;
+            if (outlinePx > 0 && !outFont) {
                 const uint32_t shadow = IM_COL32(0, 0, 0,
                     static_cast<int>(std::clamp(w->effAlpha, 0.0f, 1.0f) * 255.0f));
                 const int maxRing = (outlinePx >= 2 && pixelHeight >= 16) ? 2 : 1;
@@ -3351,10 +3351,6 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                         {-d, -d}, {d, -d}, {-d, d}, {d, d},
                     };
                     for (const ImVec2& o : around) {
-                        // Through the same wrap as the text itself. Drawn straight
-                        // it was one long line behind a wrapped label - a second
-                        // copy of the words in a darker shade, out of line with
-                        // the ones on top of it.
                         drawMarkupText(dl, font, size, ws, ImVec2(tx + o.x, ty + o.y),
                                        shadow, w->effAlpha, shown, wrapW,
                                        w->nonSpaceWrap, justify, true, nullptr, 0,
@@ -3363,7 +3359,7 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                     }
                 }
             }
-            // The shadow sits under the text and over the outline: a single
+            // The shadow sits under the text and over any fallback outline: a single
             // copy offset by whole pixels (the interface's units, rounded), so
             // it keeps its distance from the glyphs wherever the box lands.
             if (w->hasShadow) {
@@ -3394,7 +3390,7 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                     textColor = owner->highlightColor;
                 }
             }
-            drawMarkupText(dl, font, size, ws, ImVec2(tx, ty),
+            drawMarkupText(dl, outFont ? outFont : font, size, ws, ImVec2(tx, ty),
                            packColor(textColor, w->effAlpha), w->effAlpha, shown,
                            wrapW, w->nonSpaceWrap, justify, false,
                            &tree, w->id, w->alphaGradientStart, w->alphaGradientLength, 0.0f, linePx,

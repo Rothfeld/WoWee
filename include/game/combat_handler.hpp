@@ -96,7 +96,7 @@ public:
                        bool isPlayerSource, uint8_t powerType = 0,
                        uint64_t srcGuid = 0, uint64_t dstGuid = 0,
                        uint32_t schoolMask = 0, bool reduction = false, bool unitCombat = true,
-                       uint32_t extraSpellId = 0);
+                       uint32_t extraSpellId = 0, bool periodicAura = false);
 
     using PetActionSoundCallback = std::function<void(uint64_t petGuid, uint32_t petTalk)>;
     void setPetActionSoundCallback(PetActionSoundCallback cb) { petActionSoundCallback_ = std::move(cb); }

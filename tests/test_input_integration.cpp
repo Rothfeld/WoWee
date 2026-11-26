@@ -8175,3 +8175,43 @@ TEST_CASE_METHOD(Integration, "TBC pet, pet spellbook, and possessed bonus bar c
 
     lua.setGameHandler(nullptr);
 }
+
+TEST_CASE_METHOD(Integration, "FontInstance GetFont and SetFont canonicalize XML NORMAL and THICK outline flags", "[ui][font][outline]") {
+    ui::XmlNode xmlRoot;
+    std::string xmlErr;
+    REQUIRE(ui::parseXml(R"xml(
+        <Ui>
+            <Font name="TestOutlineFont" font="Fonts\skurri.ttf" outline="NORMAL" virtual="true">
+                <FontHeight><AbsValue val="30"/></FontHeight>
+            </Font>
+            <Font name="TestThickFont" font="Fonts\FRIZQT__.TTF" outline="THICK" virtual="true">
+                <FontHeight><AbsValue val="26"/></FontHeight>
+            </Font>
+            <Frame name="TestFontFrame">
+                <Layers>
+                    <Layer level="OVERLAY">
+                        <FontString name="TestOutlineFS" inherits="TestOutlineFont"/>
+                        <FontString name="TestThickFS" inherits="TestThickFont"/>
+                    </Layer>
+                </Layers>
+            </Frame>
+        </Ui>
+    )xml", xmlRoot, xmlErr));
+    run(ui::emitFrameXml(xmlRoot).lua);
+
+    truth("select(3, TestOutlineFont:GetFont()) == 'OUTLINE'");
+    truth("select(3, TestThickFont:GetFont()) == 'THICKOUTLINE'");
+    truth("select(3, TestOutlineFS:GetFont()) == 'OUTLINE'");
+    truth("select(3, TestThickFS:GetFont()) == 'THICKOUTLINE'");
+
+    // Round-trip GetFont() -> SetFont() preserves canonical flags (and accepts XML "NORMAL")
+    run("local f, h, fl = TestOutlineFS:GetFont(); TestOutlineFS:SetFont(f, 28, fl)");
+    truth("select(2, TestOutlineFS:GetFont()) == 28");
+    truth("select(3, TestOutlineFS:GetFont()) == 'OUTLINE'");
+
+    run("TestOutlineFS:SetFont('Fonts\\\\ARIALN.TTF', 14, 'NORMAL')");
+    truth("select(3, TestOutlineFS:GetFont()) == 'OUTLINE'");
+
+    run("TestOutlineFS:SetFont('Fonts\\\\ARIALN.TTF', 12, 'THICK, MONOCHROME')");
+    truth("select(3, TestOutlineFS:GetFont()) == 'THICKOUTLINE, MONOCHROME'");
+}

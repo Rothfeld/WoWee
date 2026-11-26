@@ -5852,18 +5852,32 @@ int lua_FontString_SetTextColor(lua_State* L) {
     return 0;
 }
 
+static std::string canonicalFontFlags(std::string_view raw) {
+    if (raw.empty()) return {};
+    std::string upper(raw);
+    for (char& c : upper) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    const bool thick = upper.find("THICK") != std::string::npos;
+    const bool outline = !thick && (upper.find("OUTLINE") != std::string::npos ||
+                                    upper.find("NORMAL") != std::string::npos);
+    const bool mono = upper.find("MONOCHROME") != std::string::npos;
+    std::string out;
+    if (thick) out = "THICKOUTLINE";
+    else if (outline) out = "OUTLINE";
+    if (mono) {
+        if (!out.empty()) out += ", ";
+        out += "MONOCHROME";
+    }
+    return out;
+}
+
 int lua_FontString_SetFont(lua_State* L) {
     if (auto* w = widgetOf(L, 1)) {
         if (lua_isstring(L, 2)) w->fontFace = lua_tostring(L, 2);
-        // The flags argument, where "OUTLINE" and "THICKOUTLINE" arrive.
+        // Build 8606 canonicalizes XML "NORMAL"/"THICK" and Lua "OUTLINE"/"THICKOUTLINE"
+        // so GetFont() -> SetFont() round-trips preserve the outline flag.
         if (const char* flags = lua_isstring(L, 4) ? lua_tostring(L, 4) : nullptr) {
-            const std::string f(flags);
-            if (f.find("THICK") != std::string::npos)        w->fontOutline = "THICK";
-            else if (f.find("OUTLINE") != std::string::npos) w->fontOutline = "NORMAL";
-            else                                             w->fontOutline.clear();
+            w->fontOutline = canonicalFontFlags(flags);
         }
-        // (path, height, flags). Only the height is honoured for now; the path
-        // needs a font atlas rebuild, which cannot happen mid-frame.
         const double h = luaL_optnumber(L, 3, 0.0);
         if (h > 0.0) w->fontHeight = static_cast<float>(h);
     }
@@ -5894,7 +5908,8 @@ int lua_FontString_GetFont(lua_State* L) {
     lua_pushstring(L, (w && !w->fontFace.empty()) ? w->fontFace.c_str()
                                                   : "Fonts\\FRIZQT__.TTF");
     lua_pushnumber(L, w && w->fontHeight > 0.0f ? w->fontHeight : wowee::ui::interfaceFontSize(0.0f));
-    lua_pushstring(L, (w && !w->fontOutline.empty()) ? w->fontOutline.c_str() : "");
+    const std::string flags = w ? canonicalFontFlags(w->fontOutline) : std::string{};
+    lua_pushstring(L, flags.c_str());
     return 3;
 }
 
@@ -5945,7 +5960,7 @@ static void applyFontObject(lua_State* L, int fontIndex, wowee::ui::Widget* w) {
         if (lua_isstring(L, -1)) w->fontFace = lua_tostring(L, -1);
         lua_pop(L, 1);
         lua_getfield(L, -1, "outline");
-        if (lua_isstring(L, -1)) w->fontOutline = lua_tostring(L, -1);
+        if (lua_isstring(L, -1)) w->fontOutline = canonicalFontFlags(lua_tostring(L, -1));
         lua_pop(L, 1);
         // Which way it sits in its box. A font object carries this and it was
         // being read off the object by nothing, so GameFontNormalLeft and
@@ -11398,16 +11413,27 @@ void LuaEngine::registerCoreAPI() {
         // A bare table has no GetTextColor, so that indexes nil and the enable
         // path raises - for every checkbox, slider and dropdown in the options
         // panels, which is where a control most needs to come back to life.
+        "local function __canonFlags(fl)\n"
+        "    if not fl or fl == '' then return '' end\n"
+        "    local u = string.upper(tostring(fl))\n"
+        "    local out = ''\n"
+        "    if string.find(u, 'THICK', 1, true) then out = 'THICKOUTLINE'\n"
+        "    elseif string.find(u, 'OUTLINE', 1, true) or string.find(u, 'NORMAL', 1, true) then out = 'OUTLINE' end\n"
+        "    if string.find(u, 'MONOCHROME', 1, true) then\n"
+        "        out = (out ~= '') and (out .. ', MONOCHROME') or 'MONOCHROME'\n"
+        "    end\n"
+        "    return out\n"
+        "end\n"
         "local fontMT = { __index = {\n"
         "    GetTextColor = function(self) return self.r, self.g, self.b, self.a end,\n"
         "    SetTextColor = function(self, r, g, b, a)\n"
         "        self.r, self.g, self.b, self.a = r, g, b, a or 1\n"
         "    end,\n"
         "    GetFont = function(self)\n"
-        "        return self.font or 'Fonts\\\\FRIZQT__.TTF', self.height, self.outline or ''\n"
+        "        return self.font or 'Fonts\\\\FRIZQT__.TTF', self.height, __canonFlags(self.outline)\n"
         "    end,\n"
         "    SetFont = function(self, f, h, flags)\n"
-        "        self.font, self.height, self.outline = f, h, flags\n"
+        "        self.font, self.height, self.outline = f, h, __canonFlags(flags)\n"
         "    end,\n"
         "    GetFontHeight = function(self) return self.height end,\n"
         "    GetShadowColor = function(self) return 0, 0, 0, 1 end,\n"

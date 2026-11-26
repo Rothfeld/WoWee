@@ -41,6 +41,18 @@ struct NativeGlyphRaster {
     std::vector<unsigned char> coverage;  ///< width * rows, level * 17; empty for a space
 };
 
+/// One outlined interface glyph baked as straight-alpha RGBA32 (lum, lum, lum, alpha)
+/// so ImGui composites foreground ink over dilated black outline in a single quad
+/// without multi-pass dark overdraw under partial widget alpha (e.g. PlayerHitIndicator).
+struct NativeGlyphOutlinedRaster {
+    int advance = 0;
+    int left = 0;
+    int top = 0;
+    int width = 0;
+    int rows = 0;
+    std::vector<unsigned char> rgba;  ///< width * rows * 4 (R, G, B, A); empty for a space
+};
+
 /// A TrueType face's glyphs as 2.4.3 draws them. Outlines come from the glyf
 /// table unhinted and are scaled the way FreeType scales them without hinting:
 /// 16.16 scale = em pixels * 64 / unitsPerEm (rounded), every point
@@ -63,6 +75,9 @@ public:
     std::optional<int> advance(uint32_t codepoint, float emPixels) const;
     /// The glyph's bitmap and placement at em size `emPixels`.
     std::optional<NativeGlyphRaster> rasterize(uint32_t codepoint, float emPixels) const;
+    /// Single-pass RGBA32 outlined glyph (`outlinePixels` = 1 for OUTLINE, 2 for THICKOUTLINE).
+    std::optional<NativeGlyphOutlinedRaster> rasterizeOutlined(uint32_t codepoint, float emPixels,
+                                                               int outlinePixels) const;
 
 private:
     struct Stb;
@@ -81,8 +96,9 @@ private:
 
 /// The ImGui font loader for interface faces (ImFontConfig::FontLoader).
 /// Sizes are em sizes: a face added at N draws its em square N pixels tall,
-/// so ExtraSizeScale stays 1 for these sources.
-const ImFontLoader* nativeGlyphLoader();
+/// so ExtraSizeScale stays 1 for these sources. `outlinePixels` = 0 (plain),
+/// 1 (OUTLINE), or 2 (THICKOUTLINE).
+const ImFontLoader* nativeGlyphLoader(int outlinePixels = 0);
 
 /// Rows from the line top to the baseline at pixel height `h`, for a face
 /// with hhea `ascender` and `descender` (font units, descender negative):

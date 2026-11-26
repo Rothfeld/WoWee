@@ -146,3 +146,91 @@ TEST_CASE("interface face glyph bitmaps at 9..24 px are unchanged", "[glyph_rast
         }
     }
 }
+
+TEST_CASE("single-pass RGBA32 outlined glyph preserves pure white interior under partial alpha", "[glyph_raster][assets][outline]") {
+    const char* root = std::getenv("WOWEE_TBC_DATA_DIR");
+    if (!root || !*root) SKIP("Set WOWEE_TBC_DATA_DIR to client/wowee-data/expansions/tbc");
+    std::ifstream in(std::filesystem::path(root) / "fonts" / "skurri.ttf", std::ios::binary);
+    const std::vector<unsigned char> font{std::istreambuf_iterator<char>(in), {}};
+    REQUIRE_FALSE(font.empty());
+    const auto face = NativeGlyphFace::open(font.data(), font.size(), 0);
+    REQUIRE(face);
+
+    const auto plain = face->rasterize('4', 30.0f);
+    const auto out1  = face->rasterizeOutlined('4', 30.0f, 1);
+    const auto out2  = face->rasterizeOutlined('4', 30.0f, 2);
+    REQUIRE(plain);
+    REQUIRE(out1);
+    REQUIRE(out2);
+
+    CHECK(out1->advance == plain->advance);
+    CHECK(out1->left == plain->left - 2);
+    CHECK(out1->top == plain->top - 2);
+    CHECK(out1->width == plain->width + 4);
+    CHECK(out1->rows == plain->rows + 4);
+
+    CHECK(out2->advance == plain->advance + 1);
+    CHECK(out2->left == plain->left - 4);
+    CHECK(out2->top == plain->top - 4);
+    CHECK(out2->width == plain->width + 8);
+    CHECK(out2->rows == plain->rows + 8);
+
+    int fullInteriorCount = 0;
+    bool sawOuter2pxSoftRing = false;
+    for (int sy = 0; sy < plain->rows; ++sy) {
+        for (int sx = 0; sx < plain->width; ++sx) {
+            const unsigned char f = plain->coverage[static_cast<size_t>(sy) * plain->width + sx];
+            if (f == 255) {
+                ++fullInteriorCount;
+                const int ox = sx + 2;
+                const int oy = sy + 2;
+                const unsigned char* px = &out1->rgba[(static_cast<size_t>(oy) * out1->width + ox) * 4u];
+                // Full foreground texel is pure opaque white (255, 255, 255, 255):
+                // compositing over white (255) at alpha=0.5 yields 255*0.5 + 255*(1-0.5) = 255!
+                CHECK(px[0] == 255);
+                CHECK(px[1] == 255);
+                CHECK(px[2] == 255);
+                CHECK(px[3] == 255);
+            }
+        }
+    }
+    // Check 1px and 2px left of the glyph's leftmost full-coverage column (or '1' stem):
+    // ox == 1 is 1px left of sx == 0, and ox == 0 is 2px left of sx == 0.
+    const auto onePlain = face->rasterize('1', 30.0f);
+    const auto oneOut1  = face->rasterizeOutlined('1', 30.0f, 1);
+    REQUIRE(onePlain);
+    REQUIRE(oneOut1);
+    for (int oy = 2; oy < oneOut1->rows - 2; ++oy) {
+        for (int ox = 2; ox < oneOut1->width; ++ox) {
+            const int sx = ox - 2;
+            const int sy = oy - 2;
+            if (sx >= 0 && sx < onePlain->width && sy >= 0 && sy < onePlain->rows &&
+                onePlain->coverage[static_cast<size_t>(sy) * onePlain->width + sx] == 255) {
+                // Walk left to the first pure-outline pixel (f == 0) and one pixel further left
+                int edgeSx = sx - 1;
+                while (edgeSx >= 0 && onePlain->coverage[static_cast<size_t>(sy) * onePlain->width + edgeSx] > 0) {
+                    --edgeSx;
+                }
+                const int ring1Ox = (edgeSx + 2);
+                const int ring2Ox = ring1Ox - 1;
+                if (ring2Ox >= 0) {
+                    const unsigned char* ring1 = &oneOut1->rgba[(static_cast<size_t>(oy) * oneOut1->width + ring1Ox) * 4u];
+                    const unsigned char* ring2 = &oneOut1->rgba[(static_cast<size_t>(oy) * oneOut1->width + ring2Ox) * 4u];
+                    CHECK(static_cast<int>(ring1[0]) == 0);
+                    CHECK(static_cast<int>(ring1[3]) > 0);
+                    if (edgeSx == sx - 1) {
+                        CHECK(static_cast<int>(ring1[3]) == 255);
+                        CHECK(static_cast<int>(ring2[0]) == 0);
+                        CHECK(static_cast<int>(ring2[3]) == 9 * 17);
+                        sawOuter2pxSoftRing = true;
+                    } else if (edgeSx == sx - 2 && ring2[0] == 0 && ring2[3] > 0) {
+                        sawOuter2pxSoftRing = true;
+                    }
+                }
+                break;
+            }
+        }
+    }
+    CHECK(fullInteriorCount > 20);
+    CHECK(sawOuter2pxSoftRing);
+}

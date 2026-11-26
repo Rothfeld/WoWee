@@ -2658,9 +2658,10 @@ uint64_t GameHandler::acquireAttackTarget(uint64_t explicitTargetGuid) {
 }
 
 void GameHandler::addCombatText(CombatTextEntry::Type type, int32_t amount, uint32_t spellId, bool isPlayerSource, uint8_t powerType,
-                                uint64_t srcGuid, uint64_t dstGuid, uint32_t schoolMask, bool reduction, bool unitCombat) {
+                                uint64_t srcGuid, uint64_t dstGuid, uint32_t schoolMask, bool reduction, bool unitCombat,
+                                bool periodicAura) {
     if (combatHandler_) combatHandler_->addCombatText(type, amount, spellId, isPlayerSource, powerType, srcGuid, dstGuid,
-                                                      schoolMask, reduction, unitCombat);
+                                                      schoolMask, reduction, unitCombat, 0, periodicAura);
 }
 
 bool GameHandler::shouldLogSpellstealAura(uint64_t casterGuid, uint64_t victimGuid, uint32_t spellId) {

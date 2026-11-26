@@ -283,19 +283,19 @@ void UIManager::loadInterfaceFont(const std::string& dataRoot,
     };
     // The faces FrameXML names are rasterized as 2.4.3 rasterizes them
     // (ui/native_glyph_loader.hpp), where a size already is the em size.
-    auto nativeFaceConfig = [] {
+    auto nativeFaceConfig = [](int outlinePixels = 0) {
         ImFontConfig cfg;
-        cfg.FontLoader = nativeGlyphLoader();
+        cfg.FontLoader = nativeGlyphLoader(outlinePixels);
         return cfg;
     };
 
-    auto addFromArchive = [&](const char* name, float size, bool nativeGlyphs) -> ImFont* {
+    auto addFromArchive = [&](const char* name, float size, bool nativeGlyphs, int outlinePixels = 0) -> ImFont* {
         if (!assets) return nullptr;
         auto data = assets->readFileOptional(std::string("Fonts\\") + name);
         if (data.empty()) return nullptr;
         void* owned = IM_ALLOC(data.size());
         std::memcpy(owned, data.data(), data.size());
-        ImFontConfig cfg = nativeGlyphs ? nativeFaceConfig()
+        ImFontConfig cfg = nativeGlyphs ? nativeFaceConfig(outlinePixels)
                                         : interfaceFontConfig(fontEmSizeScale(data.data(), data.size()));
         cfg.FontDataOwnedByAtlas = true;
         return io.Fonts->AddFontFromMemoryTTF(owned, static_cast<int>(data.size()),
@@ -353,6 +353,18 @@ void UIManager::loadInterfaceFont(const std::string& dataRoot,
         }
         if (f) {
             registerInterfaceFace(name, f);
+            for (int outlinePx : {1, 2}) {
+                ImFontConfig outCfg = nativeFaceConfig(outlinePx);
+                ImFont* fOut = file.empty()
+                    ? nullptr
+                    : io.Fonts->AddFontFromFileTTF(file.string().c_str(), kAtlasSize, &outCfg);
+                if (!fOut) {
+                    std::string upper(name);
+                    for (char& c : upper) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+                    fOut = addFromArchive(upper.c_str(), kAtlasSize, true, outlinePx);
+                }
+                if (fOut) registerInterfaceOutlinedFace(name, outlinePx, fOut);
+            }
             ++loaded;
         }
     }

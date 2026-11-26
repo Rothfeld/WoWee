@@ -57,8 +57,11 @@ inline std::optional<CombatTextUpdate> combatTextUpdateFor(CombatTextEntry::Type
             if (amount <= 0) return std::nullopt;
             return CombatTextUpdate{fromSpell ? "SPELL_DAMAGE" : "DAMAGE", value, {}};
         case T::PERIODIC_DAMAGE:
+            // Empirical 2.4.3 (Pair 12, Serrated Bite / Rend / SW:P / Immolate):
+            // SMSG_PERIODICAURALOG periodic damage always fires red staggered "DAMAGE"
+            // across all spell schools, never unstaggered purple "SPELL_DAMAGE".
             if (amount <= 0) return std::nullopt;
-            return CombatTextUpdate{"SPELL_DAMAGE", value, {}};
+            return CombatTextUpdate{"DAMAGE", value, {}};
         case T::MISS: return CombatTextUpdate{spell + "MISS", {}, {}};
         case T::DODGE: return CombatTextUpdate{spell + "DODGE", {}, {}};
         case T::PARRY: return CombatTextUpdate{spell + "PARRY", {}, {}};

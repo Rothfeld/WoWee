@@ -25,6 +25,14 @@ namespace wowee::ui {
 /// face replace the earlier one.
 void registerInterfaceFace(const std::string& pathOrName, ImFont* font);
 
+/// Records the single-pass RGBA32 outlined ImFont variant (`outlinePixels` = 1 or 2)
+/// associated with `pathOrName`.
+void registerInterfaceOutlinedFace(const std::string& pathOrName, int outlinePixels, ImFont* font);
+
+/// Returns the single-pass RGBA32 outlined ImFont variant for `baseFont` at
+/// `outlinePixels` (1 or 2), or nullptr if none was registered.
+ImFont* interfaceOutlinedFace(const ImFont* baseFont, int outlinePixels);
+
 /// The metric tables of a registered face: the widget's own, then the
 /// interface default. Null when neither was registered.
 const NativeFace* interfaceNativeFace(const std::string& fontFace);

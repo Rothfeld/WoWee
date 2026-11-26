@@ -7210,17 +7210,19 @@ void SpellHandler::handlePeriodicAuraLog(network::Packet& packet) {
             uint32_t res      = packet.readUInt32();
             bool dotCrit = false;
             if (periodicWotlk) dotCrit = (packet.readUInt8() != 0);
-            // Periodic ticks never fire UNIT_COMBAT in build 8606 (verified on Pair 3 & Pair 13).
+            // Empirical 2.4.3 (Pair 12, Serrated Bite / Rend / SW:P / Immolate / PW:S):
+            // periodic damage ticks and periodic absorbs/resists fire portrait UNIT_COMBAT("WOUND", ...)
+            // and red COMBAT_TEXT_UPDATE("DAMAGE" / "ABSORB" / "RESIST"), whereas HoTs do not.
             if (dmg > 0)
                 owner_.addCombatText(dotCrit ? CombatTextEntry::CRIT_DAMAGE : CombatTextEntry::PERIODIC_DAMAGE,
                               static_cast<int32_t>(dmg),
-                              spellId, isPlayerCaster, 0, casterGuid, victimGuid, school, false, false);
+                              spellId, isPlayerCaster, 0, casterGuid, victimGuid, school, false, true, true);
             if (abs > 0)
                 owner_.addCombatText(CombatTextEntry::ABSORB, static_cast<int32_t>(abs),
-                              spellId, isPlayerCaster, 0, casterGuid, victimGuid, school, dmg > 0, false);
+                              spellId, isPlayerCaster, 0, casterGuid, victimGuid, school, dmg > 0, true, true);
             if (res > 0 && (dmg > 0 || abs == 0))
                 owner_.addCombatText(CombatTextEntry::RESIST, static_cast<int32_t>(res),
-                              spellId, isPlayerCaster, 0, casterGuid, victimGuid, school, dmg > 0, false);
+                              spellId, isPlayerCaster, 0, casterGuid, victimGuid, school, dmg > 0, true, true);
         } else if (auraType == 8 || auraType == 20) {
             // Classic/TBC: heal(4)
             // WotLK: heal(4)+overheal(4)+absorbed(4)+isCrit(1)

@@ -371,6 +371,7 @@ TEST_CASE("A scroll frame keeps text on even rows and on every column it touches
 
 TEST_CASE("Outlined text widens extent and insets pen like 2.4.3", "[native-text][outline]") {
     CHECK(outlinePixelsForFlag("") == 0);
+    CHECK(outlinePixelsForFlag("MONOCHROME") == 0);
     CHECK(outlinePixelsForFlag("NORMAL") == 1);
     CHECK(outlinePixelsForFlag("OUTLINE") == 1);
     CHECK(outlinePixelsForFlag("THICK") == 2);
