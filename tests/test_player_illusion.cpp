@@ -12,6 +12,7 @@ using wowee::core::HumanoidDisplayExtraInfo;
 using wowee::core::PlayerHumanoidMorph;
 using wowee::core::PlayerIllusionRaceLimits;
 using wowee::core::packAppearanceBytes;
+using wowee::core::resolveBareRacialPlayerMorph;
 using wowee::core::resolvePlayerHumanoidMorph;
 using wowee::core::wrapAppearanceIndex;
 
@@ -134,10 +135,43 @@ TEST_CASE("Non-CanEquip humanoid NPC morph uses NPC appearance and does not equi
         npcMorph, playerBytes, 2, kHumanMaleLimits);
     CHECK_FALSE(m.isEquipablePlayerIllusion);
     CHECK_FALSE(m.usePlayerAppearance);
+    CHECK_FALSE(m.useDefaultModelGeosets);
     CHECK(m.targetRace == 1);
     CHECK(m.targetSex == 0);
     CHECK(m.appearanceBytes == packAppearanceBytes(1, 2, 3, 4));
     CHECK(m.facialHair == 5);
+}
+
+TEST_CASE("Bare racial CreatureDisplayInfo morph keeps player textures and selects variation-0 geosets",
+          "[illusion][morph]") {
+    // Human Male (race 1, sex 0, skin=5, face=6, hair=7, hairColor=9, facial=1)
+    // morphed into bare racial BloodElfMale (15476 -> race 10, sex 0) or TaurenMale (59 -> race 6, sex 0).
+    const uint32_t playerBytes = packAppearanceBytes(5, 6, 7, 9);
+    const PlayerHumanoidMorph belf = resolveBareRacialPlayerMorph(
+        /*targetRace=*/10, /*targetSex=*/0,
+        /*textureRace=*/1, /*textureSex=*/0,
+        playerBytes, /*playerFacialHair=*/1, kHumanMaleLimits);
+    CHECK_FALSE(belf.isEquipablePlayerIllusion);
+    CHECK(belf.usePlayerAppearance);
+    CHECK(belf.useDefaultModelGeosets);
+    CHECK(belf.targetRace == 10);
+    CHECK(belf.targetSex == 0);
+    CHECK(belf.textureRace == 1);
+    CHECK(belf.textureSex == 0);
+    CHECK(belf.appearanceBytes == playerBytes);
+    CHECK(belf.facialHair == 1);
+
+    const PlayerHumanoidMorph tauren = resolveBareRacialPlayerMorph(
+        /*targetRace=*/6, /*targetSex=*/0,
+        /*textureRace=*/1, /*textureSex=*/0,
+        packAppearanceBytes(13, 15, 19, 12), /*playerFacialHair=*/14, kHumanMaleLimits);
+    CHECK_FALSE(tauren.isEquipablePlayerIllusion);
+    CHECK(tauren.usePlayerAppearance);
+    CHECK(tauren.useDefaultModelGeosets);
+    CHECK(tauren.targetRace == 6);
+    CHECK(tauren.textureRace == 1);
+    CHECK(tauren.appearanceBytes == packAppearanceBytes(3, 3, 7, 2));
+    CHECK(tauren.facialHair == 5);
 }
 
 TEST_CASE("DBC layouts expose CreatureDisplayInfoExtra.CanEquip on 21-field expansions", "[illusion][dbc]") {

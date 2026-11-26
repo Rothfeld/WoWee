@@ -253,14 +253,50 @@ inline constexpr float areaImpactEffectiveRate(float dbcPerSecond) {
     return (dbcPerSecond > 0.0f) ? (dbcPerSecond * 0.5f) : 0.0f;
 }
 
+/// Effective horizontal scatter radius for a CharProc 9 area-impact spell whose
+/// DynamicObject carries `radius` yards. Authored impact M2s (Blizzard_Impact_Base,
+/// RainOfFire_Impact_Base, HellfireRaid_Dust_Impact_Base, ArcaneShot_Area) splash
+/// ~3 yards around their origin; Native TBC 2.4.3 subtracts a 3-yard margin so
+/// 3-yard AoEs (e.g. 28547 Chill) drop collinearly at the center (0 yd), 5-yard
+/// AoEs (43440 Rain of Fire) scatter within 2 yd, 8-yard AoEs (10/8364 Blizzard,
+/// 1510 Volley, 5740 Rain of Fire, 36240 Cave In) scatter within 5 yd, and 13-yard
+/// AoEs (29951 Blizzard) scatter within 10 yd.
+inline constexpr float areaImpactEffectiveRadius(float radius) {
+    constexpr float kImpactSplashMarginYards = 3.0f;
+    return (radius > kImpactSplashMarginYards) ? (radius - kImpactSplashMarginYards) : 0.0f;
+}
+
 /// Radial offset for a CharProc 9 area impact within `radius` yards from a
-/// uniform [0, 1] draw. Uniform radial sampling concentrates drops around the
-/// AoE center (90% of horizontal projections within +-0.625 * radius = +-5 yd
-/// on an 8 yd Volley), matching Native 2.4.3 instead of pushing 75% to the rim.
-inline constexpr float areaImpactSampleDistance(float radius, float unitRandom) {
-    const float r = (radius > 0.0f) ? radius : 0.0f;
-    const float u = (unitRandom < 0.0f) ? 0.0f : ((unitRandom > 1.0f) ? 1.0f : unitRandom);
-    return r * u;
+/// uniform [0, 1] draw over the shrunk disc of radius `max(0, radius - 3)`.
+inline float areaImpactSampleDistance(float radius, float unitRandom) {
+    const float effectiveRadius = areaImpactEffectiveRadius(radius);
+    if (effectiveRadius <= 0.0f) return 0.0f;
+    const float u = std::clamp(unitRandom, 0.0f, 1.0f);
+    return effectiveRadius * std::sqrt(u);
+}
+
+/// True when a newly arriving DynamicObject persistent area is a co-located
+/// companion effect of an already-active persistent area from the same cast
+/// (e.g. multi-effect SPELL_EFFECT_PERSISTENT_AREA_AURA spells such as 28547
+/// Chill, 21097 Manastorm, 29951 Blizzard, 16914 Hurricane, 41382 Blizzard,
+/// where the server spawns one DynamicObject per persistent-area effect in the
+/// same tick at the same coordinates and radius). Native TBC 2.4.3 plays one
+/// PersistentAreaKit visual/sound/CharProc-9 stream for the cast rather than
+/// multiplying shards and looping clouds by the effect count, while still
+/// rendering independent casts separated in space or time (> 0.5 s apart).
+inline bool persistentAreaSharesInstance(uint32_t existingVisualId,
+                                         const glm::vec3& existingCenter,
+                                         float existingRadius,
+                                         float existingCreatedClock,
+                                         uint32_t newVisualId,
+                                         const glm::vec3& newCenter,
+                                         float newRadius,
+                                         float nowClock) {
+    if (existingVisualId == 0 || existingVisualId != newVisualId) return false;
+    if (std::abs(nowClock - existingCreatedClock) > 0.5f) return false;
+    if (std::abs(existingRadius - newRadius) > 0.25f) return false;
+    const glm::vec3 delta = newCenter - existingCenter;
+    return glm::dot(delta, delta) <= (0.25f * 0.25f);
 }
 
 /// True when a newly triggered CastKit (`newKitId`) on `newAttachInstanceId`

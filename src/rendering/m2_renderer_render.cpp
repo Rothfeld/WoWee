@@ -2543,6 +2543,7 @@ void M2Renderer::renderShadow(VkCommandBuffer cmd, const glm::mat4& lightSpaceMa
     auto& texSetCache = shadowTexSetCache_;
 
     auto getTexDescSet = [&](VkTexture* tex) -> VkDescriptorSet {
+        if (!tex || !tex->isValid()) return shadowParams_.set;
         VkImageView iv = tex->getImageView();
         auto cacheIt = texSetCache.find(iv);
         if (cacheIt != texSetCache.end()) return cacheIt->second;

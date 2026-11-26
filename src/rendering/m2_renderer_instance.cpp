@@ -981,6 +981,7 @@ size_t M2Renderer::evictUnreferencedTextures(size_t bytesNeeded) {
     for (const auto& [modelId, model] : models) {
         for (const auto& batch : model.batches) {
             if (batch.texture) inUse.insert(batch.texture);
+            if (batch.texture2) inUse.insert(batch.texture2);
         }
         for (const VkTexture* tex : model.particleTextures) {
             if (tex) inUse.insert(tex);
@@ -1129,7 +1130,10 @@ VkTexture* M2Renderer::loadTexture(const std::string& path, uint32_t texFlags,
 
     // Create Vulkan texture
     auto tex = std::make_unique<VkTexture>();
-    tex->uploadBLP(*vkCtx_, blp);
+    if (!tex->uploadBLP(*vkCtx_, blp)) {
+        LOG_WARNING("M2: Failed to upload texture to GPU: ", path);
+        return whiteTexture_.get();
+    }
 
     // M2Texture flags: bit 0 = WrapS (1=repeat, 0=clamp), bit 1 = WrapT
     VkSamplerAddressMode wrapS = (texFlags & 0x1) ? VK_SAMPLER_ADDRESS_MODE_REPEAT : VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
@@ -1153,6 +1157,10 @@ VkTexture* M2Renderer::loadTexture(const std::string& path, uint32_t texFlags,
     }();
     tex->createSampler(vkCtx_->getDevice(), VK_FILTER_LINEAR, wrapS, wrapT,
                        16.0f, skyMode_ ? skyMipBias : 0.0f, disableMipmaps);
+    if (!tex->isValid()) {
+        LOG_WARNING("M2: Texture uploaded without valid view/sampler: ", path);
+        return whiteTexture_.get();
+    }
 
     VkTexture* texPtr = tex.get();
 

@@ -564,6 +564,15 @@ private:
         float due = 0.0f;  // impacts owed and not yet dropped
     };
     std::unordered_map<uint64_t, ActiveAreaImpacts> activeAreaImpacts_;  // persistent area key
+    struct PersistentAreaBinding {
+        uint32_t visualId = 0;
+        glm::vec3 center{0.0f};
+        float radius = 0.0f;
+        float createdClock = 0.0f;
+        std::unordered_set<uint64_t> sharedKeys;
+    };
+    std::unordered_map<uint64_t, PersistentAreaBinding> persistentAreaMeta_; // primary key -> metadata + ref keys
+    std::unordered_map<uint64_t, uint64_t> persistentAreaOwner_;             // any DynamicObject key -> primary key
     void dropAreaImpacts(float deltaTime);
     struct UnitAuraVisuals {
         std::vector<uint32_t> ids;

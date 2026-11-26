@@ -38,6 +38,11 @@ struct PlayerHumanoidMorph {
     /// player's own skin/face/hair/facial-hair bytes are mapped onto the target
     /// race/sex.
     bool usePlayerAppearance = false;
+    /// True on bare racial CreatureDisplayInfo morphs (ExtraDisplayInfoID == 0,
+    /// e.g. 15476 BloodElfMale, 59 TaurenMale, 51 OrcMale): CharSections.dbc
+    /// textures still come from the player's own race/sex/PLAYER_BYTES, while
+    /// target Character M2 hair and facial-hair geosets select default variation 0.
+    bool useDefaultModelGeosets = false;
     uint8_t targetRace = 0;
     uint8_t targetSex = 0;
     /// Race/sex used for CharSections.dbc texture lookup. Matches targetRace /
@@ -112,6 +117,41 @@ inline PlayerHumanoidMorph resolvePlayerHumanoidMorph(
             extra.skinId, extra.faceId, extra.hairStyleId, extra.hairColorId);
         out.facialHair = extra.facialHairId;
     }
+    return out;
+}
+
+/// Resolve a bare racial CreatureDisplayInfo morph (ExtraDisplayInfoID == 0, e.g.
+/// 15476 BloodElfMale, 59 TaurenMale, 51 OrcMale). Native TBC 2.4.3 renders the
+/// target Character M2 unarmored (`isEquipablePlayerIllusion = false`) with
+/// default variation-0 hair/facial geosets (`useDefaultModelGeosets = true`),
+/// while sourcing replaceable CharSections textures from the player's own
+/// UNIT_BYTES_0 (`playerRace`, `playerSex`) and PLAYER_BYTES / PLAYER_BYTES_2.
+inline PlayerHumanoidMorph resolveBareRacialPlayerMorph(
+    uint8_t targetRace,
+    uint8_t targetSex,
+    uint8_t textureRace,
+    uint8_t textureSex,
+    uint32_t playerAppearanceBytes,
+    uint8_t playerFacialHair,
+    const PlayerIllusionRaceLimits& textureLimits) {
+    PlayerHumanoidMorph out;
+    out.isEquipablePlayerIllusion = false;
+    out.usePlayerAppearance = true;
+    out.useDefaultModelGeosets = true;
+    out.targetRace = targetRace;
+    out.targetSex = targetSex;
+    out.textureRace = textureRace;
+    out.textureSex = textureSex;
+    const uint8_t pSkin      = static_cast<uint8_t>( playerAppearanceBytes        & 0xFFu);
+    const uint8_t pFace      = static_cast<uint8_t>((playerAppearanceBytes >> 8)  & 0xFFu);
+    const uint8_t pHairStyle = static_cast<uint8_t>((playerAppearanceBytes >> 16) & 0xFFu);
+    const uint8_t pHairColor = static_cast<uint8_t>((playerAppearanceBytes >> 24) & 0xFFu);
+    out.appearanceBytes = packAppearanceBytes(
+        wrapAppearanceIndex(pSkin, textureLimits.skinCount),
+        wrapAppearanceIndex(pFace, textureLimits.faceCount),
+        wrapAppearanceIndex(pHairStyle, textureLimits.hairStyleCount),
+        wrapAppearanceIndex(pHairColor, textureLimits.hairColorCount));
+    out.facialHair = wrapAppearanceIndex(playerFacialHair, textureLimits.facialHairCount);
     return out;
 }
 

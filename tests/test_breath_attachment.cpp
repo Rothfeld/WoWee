@@ -342,14 +342,40 @@ TEST_CASE("SpellVisualKit policies for InstantAreaKit destination, CharProc 1 ef
         CHECK_FALSE(persistentAreaSkipsDuplicateBaseEffect("Spells\\LightningStorm_Cloud_State.m2", "Spells\\CallLightning_Impact.m2"));
         CHECK_FALSE(persistentAreaSkipsDuplicateBaseEffect("Spells\\Smash_Impact_Chest.m2", "Spells\\HellfireRaid_Dust_Impact_Base.m2"));
 
-        // Effective spawn rate matches Native 2.4.3 (~2.5/s for CharParamOne = 5.0).
+        // Effective spawn rate matches Native 2.4.3 (~2.5/s for CharParamOne = 5.0, 7.5/s for 15.0).
         CHECK(areaImpactEffectiveRate(5.0f) == Catch::Approx(2.5f));
+        CHECK(areaImpactEffectiveRate(15.0f) == Catch::Approx(7.5f));
         CHECK(areaImpactEffectiveRate(0.0f) == Catch::Approx(0.0f));
 
-        // Uniform radial sampling concentrates impacts around the AoE center.
+        // 3-yard splash margin keeps impact explosions within the AoE radius:
+        // r <= 3 yd (28547 Chill) drops collinearly at center (0 yd);
+        // r = 5 yd (43440 Rain of Fire) scatters in [0, 2] yd;
+        // r = 8 yd (Blizzard / Volley / Rain of Fire / Cave In) scatters in [0, 5] yd;
+        // r = 13 yd (29951 Blizzard) scatters in [0, 10] yd.
+        CHECK( wowee::rendering::areaImpactEffectiveRadius(3.0f) == Catch::Approx(0.0f));
+        CHECK( wowee::rendering::areaImpactEffectiveRadius(5.0f) == Catch::Approx(2.0f));
+        CHECK( wowee::rendering::areaImpactEffectiveRadius(8.0f) == Catch::Approx(5.0f));
+        CHECK( wowee::rendering::areaImpactEffectiveRadius(13.0f) == Catch::Approx(10.0f));
+        CHECK(areaImpactSampleDistance(3.0f, 0.0f) == Catch::Approx(0.0f));
+        CHECK(areaImpactSampleDistance(3.0f, 1.0f) == Catch::Approx(0.0f));
         CHECK(areaImpactSampleDistance(8.0f, 0.0f) == Catch::Approx(0.0f));
-        CHECK(areaImpactSampleDistance(8.0f, 0.5f) == Catch::Approx(4.0f));
-        CHECK(areaImpactSampleDistance(8.0f, 1.0f) == Catch::Approx(8.0f));
+        CHECK(areaImpactSampleDistance(8.0f, 0.25f) == Catch::Approx(2.5f));
+        CHECK(areaImpactSampleDistance(8.0f, 1.0f) == Catch::Approx(5.0f));
+
+        // Co-located multi-effect DynamicObjects from the same cast (e.g. 28547 Chill,
+        // 21097 Manastorm, 29951 Blizzard, 16914 Hurricane) share one persistent area.
+        const glm::vec3 center{-10085.0f, 655.0f, 36.8f};
+        CHECK(wowee::rendering::persistentAreaSharesInstance(
+            7608u, center, 3.0f, 10.000f, 7608u, center, 3.0f, 10.002f));
+        // Different visualId, offset position, different radius, or later cast (> 0.5 s) do not share.
+        CHECK_FALSE(wowee::rendering::persistentAreaSharesInstance(
+            7608u, center, 3.0f, 10.0f, 10386u, center, 3.0f, 10.002f));
+        CHECK_FALSE(wowee::rendering::persistentAreaSharesInstance(
+            7608u, center, 3.0f, 10.0f, 7608u, center + glm::vec3(1.0f, 0.0f, 0.0f), 3.0f, 10.002f));
+        CHECK_FALSE(wowee::rendering::persistentAreaSharesInstance(
+            7608u, center, 3.0f, 10.0f, 7608u, center, 8.0f, 10.002f));
+        CHECK_FALSE(wowee::rendering::persistentAreaSharesInstance(
+            9490u, center, 8.0f, 10.0f, 9490u, center, 8.0f, 12.0f));
     }
 
     SECTION("Mutual channel/aura SpellVisual collision suppresses matching StateKit visualId only") {

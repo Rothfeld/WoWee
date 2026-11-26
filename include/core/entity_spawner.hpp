@@ -732,16 +732,21 @@ private:
                                    uint8_t raceId, uint8_t genderId,
                                    uint32_t appearanceBytes, uint8_t facialFeatures,
                                    OnlinePlayerAppearanceState& outState,
-                                   uint8_t textureRaceId = 0, uint8_t textureGenderId = 0xFF);
+                                   uint8_t textureRaceId = 0, uint8_t textureGenderId = 0xFF,
+                                   bool useDefaultModelGeosets = false);
     void applyPlayerEquipmentToInstance(uint64_t guid, const OnlinePlayerAppearanceState& st,
                                         const std::array<uint32_t, 19>& displayInfoIds,
                                         const std::array<uint8_t, 19>& inventoryTypes);
+    void applyPlayerWeaponsToInstance(uint64_t guid, uint32_t instanceId,
+                                      const std::array<uint32_t, 19>& displayInfoIds,
+                                      const std::array<uint8_t, 19>& inventoryTypes);
     struct PlayerMorph {
         uint32_t displayId = 0;
         uint32_t instanceId = 0;
         uint32_t playerInstanceId = 0;
         uint32_t animation = 0xFFFFFFFFu;
         bool isEquipableIllusion = false;
+        bool retainsPlayerWeapons = false;
         OnlinePlayerAppearanceState illusionAppearance;
         uint64_t illusionEquipHash = 0;
         uint8_t sheathState = 0xFFu;

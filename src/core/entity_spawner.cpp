@@ -686,10 +686,20 @@ void EntitySpawner::syncPlayerMorphs() {
                 buildPlayerBaseAppearance(instance, modelId, illusion.targetRace, illusion.targetSex,
                                           illusion.appearanceBytes, illusion.facialHair,
                                           entry.illusionAppearance,
-                                          illusion.textureRace, illusion.textureSex);
+                                          illusion.textureRace, illusion.textureSex,
+                                          illusion.useDefaultModelGeosets);
             } else {
                 applyCreatureInstanceAppearance(instance, modelId, display);
             }
+            // In TBC 2.4.3, morphed players retain equipped weapons + sheath state
+            // whenever the target model provides weapon hand + sheath attachments
+            // (all Character\* morphs including bare racial morphs 15476/59/51 and
+            // NPC outfits like 17629 Red Riding Hood, plus weapon-rigged creatures
+            // like 7550 Noggenfogger Skeleton), while beast forms without sheath
+            // attachments (e.g. 4613 Ghost Wolf) hide weapons.
+            entry.retainsPlayerWeapons = isEquipableIllusion ||
+                (cr->hasAttachmentPoint(instance, 1u) &&
+                 (cr->hasAttachmentPoint(instance, 26u) || cr->hasAttachmentPoint(instance, 27u)));
             // The display's CreatureModelAlpha, as for a creature: Ghost Wolf
             // (display 4613, alpha 102) is drawn see-through in 2.4.3.
             cr->setInstanceOpacity(instance, creatureDisplayAlpha(display));
@@ -706,30 +716,32 @@ void EntitySpawner::syncPlayerMorphs() {
             continue;
         }
         syncLocalCameraPivot(morph.instanceId);
-        if (morph.isEquipableIllusion) {
+        if (morph.isEquipableIllusion || morph.retainsPlayerWeapons) {
             std::array<uint32_t, 19> displayIds{};
             std::array<uint8_t, 19> invTypes{};
             const bool hasEquip = gameHandler_->getOtherPlayerEquipment(guid, displayIds, invTypes);
-            bool hideHelm = false;
-            bool hideCloak = false;
-            if (guid == gameHandler_->getPlayerGuid()) {
-                hideHelm = !gameHandler_->isHelmVisible();
-                hideCloak = !gameHandler_->isCloakVisible();
-            } else {
-                const uint16_t pfIdx = game::fieldIndex(game::UF::PLAYER_FLAGS);
-                if (pfIdx != 0xFFFF) {
-                    const uint32_t pf = unit->getField(pfIdx);
-                    hideHelm = (pf & 0x00000400u) != 0;
-                    hideCloak = (pf & 0x00000800u) != 0;
+            if (morph.isEquipableIllusion) {
+                bool hideHelm = false;
+                bool hideCloak = false;
+                if (guid == gameHandler_->getPlayerGuid()) {
+                    hideHelm = !gameHandler_->isHelmVisible();
+                    hideCloak = !gameHandler_->isCloakVisible();
+                } else {
+                    const uint16_t pfIdx = game::fieldIndex(game::UF::PLAYER_FLAGS);
+                    if (pfIdx != 0xFFFF) {
+                        const uint32_t pf = unit->getField(pfIdx);
+                        hideHelm = (pf & 0x00000400u) != 0;
+                        hideCloak = (pf & 0x00000800u) != 0;
+                    }
                 }
-            }
-            if (hideHelm) {
-                displayIds[static_cast<size_t>(game::EquipSlot::HEAD)] = 0;
-                invTypes[static_cast<size_t>(game::EquipSlot::HEAD)] = 0;
-            }
-            if (hideCloak) {
-                displayIds[static_cast<size_t>(game::EquipSlot::BACK)] = 0;
-                invTypes[static_cast<size_t>(game::EquipSlot::BACK)] = 0;
+                if (hideHelm) {
+                    displayIds[static_cast<size_t>(game::EquipSlot::HEAD)] = 0;
+                    invTypes[static_cast<size_t>(game::EquipSlot::HEAD)] = 0;
+                }
+                if (hideCloak) {
+                    displayIds[static_cast<size_t>(game::EquipSlot::BACK)] = 0;
+                    invTypes[static_cast<size_t>(game::EquipSlot::BACK)] = 0;
+                }
             }
 
             uint64_t equipHash = 14695981039346656037ull;
@@ -738,10 +750,25 @@ void EntitySpawner::syncPlayerMorphs() {
                 equipHash *= 1099511628211ull;
             };
             mix(hasEquip ? 1u : 0u);
-            mix(gameHandler_->getEntityGuildId(guid));
-            for (size_t s = 0; s < 19; ++s) {
-                mix(displayIds[s]);
-                mix(invTypes[s]);
+            if (morph.isEquipableIllusion) {
+                mix(gameHandler_->getEntityGuildId(guid));
+                for (size_t s = 0; s < 19; ++s) {
+                    mix(displayIds[s]);
+                    mix(invTypes[s]);
+                }
+            } else {
+                for (const auto slot : {game::EquipSlot::MAIN_HAND, game::EquipSlot::OFF_HAND,
+                                        game::EquipSlot::RANGED}) {
+                    const size_t s = static_cast<size_t>(slot);
+                    mix(displayIds[s]);
+                    mix(invTypes[s]);
+                    if (guid == gameHandler_->getPlayerGuid()) {
+                        const auto& eqSlot = gameHandler_->getInventory().getEquipSlot(slot);
+                        mix(eqSlot.empty() ? 0u : (gameHandler_->getItemInfo(eqSlot.item.itemId) ? 1u : 0u));
+                    } else if (const auto* vis = gameHandler_->getOtherPlayerVisibleEquipment(guid)) {
+                        mix(gameHandler_->getItemInfo((*vis)[s]) ? 1u : 0u);
+                    }
+                }
             }
             if (guid == gameHandler_->getPlayerGuid()) {
                 for (const auto slot : {game::EquipSlot::MAIN_HAND, game::EquipSlot::OFF_HAND,
@@ -762,7 +789,11 @@ void EntitySpawner::syncPlayerMorphs() {
             }
             if (equipHash == 0) equipHash = 1;
             if (equipHash != morph.illusionEquipHash) {
-                applyPlayerEquipmentToInstance(guid, morph.illusionAppearance, displayIds, invTypes);
+                if (morph.isEquipableIllusion) {
+                    applyPlayerEquipmentToInstance(guid, morph.illusionAppearance, displayIds, invTypes);
+                } else {
+                    applyPlayerWeaponsToInstance(guid, morph.instanceId, displayIds, invTypes);
+                }
                 morph.illusionEquipHash = equipHash;
                 morph.sheathState = 0xFFu;
             }
@@ -2270,22 +2301,8 @@ bool EntitySpawner::resolvePlayerIllusion(uint32_t displayId,
             limIt != raceAppearanceLimits_.end()) {
             limits = limIt->second;
         }
-        const uint8_t pSkin = static_cast<uint8_t>(playerAppearanceBytes & 0xFFu);
-        const uint8_t pFace = static_cast<uint8_t>((playerAppearanceBytes >> 8) & 0xFFu);
-        const uint8_t pHair = static_cast<uint8_t>((playerAppearanceBytes >> 16) & 0xFFu);
-        const uint8_t pHairColor = static_cast<uint8_t>((playerAppearanceBytes >> 24) & 0xFFu);
-        out.isEquipablePlayerIllusion = false;
-        out.usePlayerAppearance = true;
-        out.targetRace = race;
-        out.targetSex = sex;
-        out.textureRace = texRace;
-        out.textureSex = texSex;
-        out.appearanceBytes = packAppearanceBytes(
-            wrapAppearanceIndex(pSkin, limits.skinCount),
-            wrapAppearanceIndex(pFace, limits.faceCount),
-            wrapAppearanceIndex(pHair, limits.hairStyleCount),
-            wrapAppearanceIndex(pHairColor, limits.hairColorCount));
-        out.facialHair = wrapAppearanceIndex(playerFacialHair, limits.facialHairCount);
+        out = resolveBareRacialPlayerMorph(
+            race, sex, texRace, texSex, playerAppearanceBytes, playerFacialHair, limits);
         return true;
     }
     auto extraIt = humanoidExtraMap_.find(disp->second.extraDisplayId);

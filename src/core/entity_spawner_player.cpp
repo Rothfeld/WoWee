@@ -166,7 +166,8 @@ void EntitySpawner::buildPlayerBaseAppearance(uint32_t instanceId, uint32_t mode
                                               uint8_t raceId, uint8_t genderId,
                                               uint32_t appearanceBytes, uint8_t facialFeatures,
                                               OnlinePlayerAppearanceState& outState,
-                                              uint8_t textureRaceId, uint8_t textureGenderId) {
+                                              uint8_t textureRaceId, uint8_t textureGenderId,
+                                              bool useDefaultModelGeosets) {
     auto* charRenderer = renderer_->getCharacterRenderer();
     if (!charRenderer) return;
 
@@ -237,7 +238,9 @@ void EntitySpawner::buildPlayerBaseAppearance(uint32_t instanceId, uint32_t mode
         hairTex = charRenderer->loadTexture(hairTexturePath);
     }
     rendering::VkTexture* skinExtraTex = nullptr;
-    {
+    if (!skinExtraPath.empty()) {
+        skinExtraTex = charRenderer->loadTexture(skinExtraPath);
+    } else if (texRace == raceId) {
         pipeline::CharacterSectionTextures resolved;
         resolved.bodySkin = bodySkinPath;
         resolved.skinExtra = skinExtraPath;
@@ -245,6 +248,12 @@ void EntitySpawner::buildPlayerBaseAppearance(uint32_t instanceId, uint32_t mode
         const std::string extraPath = pipeline::resolveSkinExtraTexture(resolved);
         if (!extraPath.empty()) skinExtraTex = charRenderer->loadTexture(extraPath);
         else skinExtraTex = charRenderer->loadTexture(pelvisPath);
+    } else {
+        // Cross-race bare morphs (e.g. Human -> 59 TaurenMale) whose source race
+        // has no CharSections Texture2 leave Type 8 (SkinExtra) untextured white
+        // on Native TBC 2.4.3 rather than projecting Human pelvis underwear onto
+        // the Tauren mane and tail.
+        skinExtraTex = charRenderer->loadTexture("");
     }
 
     const PlayerTextureSlots& slots = playerTextureSlotsByModelId_[modelId];
@@ -258,8 +267,10 @@ void EntitySpawner::buildPlayerBaseAppearance(uint32_t instanceId, uint32_t mode
         charRenderer->setTextureSlotOverride(instanceId, static_cast<uint16_t>(slots.skinExtra), skinExtraTex);
     }
 
-    const uint16_t selectedHairScalp = selectHairScalpGeoset(hairGeosetMap_, raceId, genderId, hairStyleId);
-    auto itFacial = facialHairGeosetMap_.find(appearanceKey(raceId, genderId, facialFeatures));
+    const uint8_t geosetHairStyle = useDefaultModelGeosets ? 0u : hairStyleId;
+    const uint8_t geosetFacial = useDefaultModelGeosets ? 0u : facialFeatures;
+    const uint16_t selectedHairScalp = selectHairScalpGeoset(hairGeosetMap_, raceId, genderId, geosetHairStyle);
+    auto itFacial = facialHairGeosetMap_.find(appearanceKey(raceId, genderId, geosetFacial));
     std::unordered_set<uint16_t> activeGeosets = bareGeosetsFor(
         selectedHairScalp,
         itFacial != facialHairGeosetMap_.end() ? &itFacial->second : nullptr, raceId);
@@ -791,6 +802,19 @@ void EntitySpawner::applyPlayerEquipmentToInstance(uint64_t guid,
         charRenderer->setTextureSlotOverride(st.instanceId, static_cast<uint16_t>(slots.skin), newTex);
     }
 
+    applyPlayerWeaponsToInstance(guid, st.instanceId, displayInfoIds, inventoryTypes);
+}
+
+void EntitySpawner::applyPlayerWeaponsToInstance(uint64_t guid,
+                                                 uint32_t instanceId,
+                                                 const std::array<uint32_t, 19>& displayInfoIds,
+                                                 const std::array<uint8_t, 19>& inventoryTypes) {
+    if (!renderer_ || !renderer_->getCharacterRenderer() || !assetManager_ || !assetManager_->isInitialized()) return;
+    auto* charRenderer = renderer_->getCharacterRenderer();
+    if (!charRenderer || instanceId == 0) return;
+    auto displayInfoDbc = assetManager_->loadDBC("ItemDisplayInfo.dbc");
+    if (!displayInfoDbc) return;
+
     // --- Weapon model attachment ---
     // Item SheatheType comes with the item query of each visible entry;
     // corpses carry display ids only and keep their weapons in hand.
@@ -798,7 +822,7 @@ void EntitySpawner::applyPlayerEquipmentToInstance(uint64_t guid,
     const auto* visibleEntries = (!isLocalPlayer && gameHandler_)
         ? gameHandler_->getOtherPlayerVisibleEquipment(guid) : nullptr;
     for (const uint32_t point : {kAttachShield, kAttachRightHand, kAttachLeftHand})
-        charRenderer->detachWeapon(st.instanceId, point);
+        charRenderer->detachWeapon(instanceId, point);
     for (const auto equipSlot : {game::EquipSlot::MAIN_HAND, game::EquipSlot::OFF_HAND,
                                  game::EquipSlot::RANGED}) {
         const int slotIndex = static_cast<int>(equipSlot);
@@ -826,7 +850,7 @@ void EntitySpawner::applyPlayerEquipmentToInstance(uint64_t guid,
             }
             heldState = static_cast<int8_t>(heldSheathState(equipSlot));
             sheath = sheathAttachment(static_cast<uint8_t>(info->sheath), equipSlot);
-            if (sheath != UINT32_MAX && !charRenderer->hasAttachmentPoint(st.instanceId, sheath)) {
+            if (sheath != UINT32_MAX && !charRenderer->hasAttachmentPoint(instanceId, sheath)) {
                 sheath = UINT32_MAX;
             }
         } else if (visibleEntries) {
@@ -838,7 +862,7 @@ void EntitySpawner::applyPlayerEquipmentToInstance(uint64_t guid,
             }
             heldState = static_cast<int8_t>(heldSheathState(equipSlot));
             sheath = sheathAttachment(static_cast<uint8_t>(info->sheath), equipSlot);
-            if (sheath != UINT32_MAX && !charRenderer->hasAttachmentPoint(st.instanceId, sheath)) {
+            if (sheath != UINT32_MAX && !charRenderer->hasAttachmentPoint(instanceId, sheath)) {
                 LOG_WARNING("setOnlinePlayerEquipment: player model has no sheath attachment ", sheath);
                 sheath = UINT32_MAX;
             }
@@ -864,7 +888,7 @@ void EntitySpawner::applyPlayerEquipmentToInstance(uint64_t guid,
 
         uint32_t weaponModelId = nextWeaponModelId_++;
         const uint32_t held = heldAttachment(equipSlot, inventoryTypes[slotIndex]);
-        if (charRenderer->attachWeapon(st.instanceId, held, weaponModel, weaponModelId, texturePath,
+        if (charRenderer->attachWeapon(instanceId, held, weaponModel, weaponModelId, texturePath,
                                        glm::mat4(1.0f), heldState, sheath)) {
             std::pair<uint32_t, uint32_t> enchantPair{0u, 0u};
             if (isLocalPlayer) {
@@ -874,14 +898,14 @@ void EntitySpawner::applyPlayerEquipmentToInstance(uint64_t guid,
                 enchantPair = (*enchants)[slotIndex];
             }
             const auto [permanent, temporary] = enchantPair;
-            attachItemVisual(st.instanceId, held, heldState,
+            attachItemVisual(instanceId, held, heldState,
                              equippedItemVisual(weapDisplayId, permanent, temporary));
         }
     }
     if (const auto entity = gameHandler_ ? gameHandler_->getEntityManager().getEntity(guid) : nullptr) {
         const auto* unit = dynamic_cast<const game::Unit*>(entity.get());
-        charRenderer->setLatchWeaponsDrawnByAnimation(st.instanceId, false);
-        charRenderer->setSheathState(st.instanceId,
+        charRenderer->setLatchWeaponsDrawnByAnimation(instanceId, false);
+        charRenderer->setSheathState(instanceId,
             game::effectiveUnitSheathState(
                 static_cast<uint8_t>(entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_2)) & 0xFFu),
                 unit ? unit->getUnitFlags() : 0u));

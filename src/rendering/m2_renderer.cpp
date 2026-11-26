@@ -1870,7 +1870,10 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId, boo
                 // declares SHADER_READ_ONLY_OPTIMAL over it.
                 VkTexture* tex = gpuModel.particleTextures[ei];
                 if (!tex || !tex->isValid()) tex = whiteTexture_.get();
-                if (!tex || !tex->isValid()) continue;
+                if (!tex || !tex->isValid()) {
+                    gpuModel.particleTexSets[ei] = VK_NULL_HANDLE;
+                    continue;
+                }
                 VkDescriptorImageInfo imgInfo = tex->descriptorInfo();
                 VkWriteDescriptorSet write{.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
                 write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -1928,7 +1931,10 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId, boo
                 if (vkAllocateDescriptorSets(device, &ai, &gpuModel.ribbonTexSets[ri]) == VK_SUCCESS) {
                     VkTexture* tex = gpuModel.ribbonTextures[ri];
                     if (!tex || !tex->isValid()) tex = whiteTexture_.get();
-                    if (!tex || !tex->isValid()) continue;
+                    if (!tex || !tex->isValid()) {
+                        gpuModel.ribbonTexSets[ri] = VK_NULL_HANDLE;
+                        continue;
+                    }
                     VkDescriptorImageInfo imgInfo = tex->descriptorInfo();
                     VkWriteDescriptorSet write{.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
                     write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -2407,7 +2413,9 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId, boo
         if (!batchTex || !batchTex->isValid()) bgpu.materialSet = VK_NULL_HANDLE;
         if (bgpu.materialSet) {
             VkDescriptorImageInfo imgInfo = batchTex->descriptorInfo();
-            VkDescriptorImageInfo imgInfo2 = (bgpu.texture2 ? bgpu.texture2 : batchTex)->descriptorInfo();
+            VkTexture* batchTex2 = (bgpu.texture2 && bgpu.texture2->isValid())
+                ? bgpu.texture2 : batchTex;
+            VkDescriptorImageInfo imgInfo2 = batchTex2->descriptorInfo();
 
             VkDescriptorBufferInfo matBufInfo{};
             matBufInfo.buffer = bgpu.materialUBO;

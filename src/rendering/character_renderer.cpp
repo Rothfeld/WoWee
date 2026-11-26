@@ -753,11 +753,29 @@ void CharacterRenderer::clear() {
     compositeCache_.clear();
     failedTextureCache_.clear();
 
-    // Recreate default textures (needed by loadModel/loadTexture fallbacks)
-    whiteTexture_.reset();
-    transparentTexture_.reset();
-    flatNormalTexture_.reset();
-    createFallbackTextures(device);
+    // Preserve 1x1 fallback textures across map clears when already valid:
+    // shadowParams_.set permanently binds whiteTexture_->getImageView() at
+    // binding 0, so destroying whiteTexture_ here invalidated shadowParams_.set
+    // on every map transition (VUID-vkCmdDrawIndexed-None-08114).
+    if (!whiteTexture_ || !whiteTexture_->isValid() ||
+        !transparentTexture_ || !transparentTexture_->isValid() ||
+        !flatNormalTexture_ || !flatNormalTexture_->isValid()) {
+        whiteTexture_.reset();
+        transparentTexture_.reset();
+        flatNormalTexture_.reset();
+        createFallbackTextures(device);
+        if (shadowParams_.set != VK_NULL_HANDLE && whiteTexture_ && whiteTexture_->isValid()) {
+            VkDescriptorImageInfo imgInfo = whiteTexture_->descriptorInfo();
+            VkWriteDescriptorSet write{};
+            write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            write.dstSet = shadowParams_.set;
+            write.dstBinding = 0;
+            write.descriptorCount = 1;
+            write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            write.pImageInfo = &imgInfo;
+            vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+        }
+    }
 
     models.clear();
     instances.clear();

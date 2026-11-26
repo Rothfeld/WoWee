@@ -2315,6 +2315,26 @@ void SpellVisualSystem::playPersistentArea(uint64_t key, uint32_t visualId, cons
     stopPersistentArea(key);
     const auto kit = persistentAreaKits_.find(visualId);
     if (kit == persistentAreaKits_.end() || kit->second == 0) return;
+    // Deduplicate co-located DynamicObjects spawned in the same tick by multi-effect
+    // SPELL_EFFECT_PERSISTENT_AREA_AURA spells (e.g. 28547 Chill, 21097 Manastorm,
+    // 29951 Blizzard, 16914 Hurricane): share the existing primary area visual until
+    // all participating DynamicObjects expire.
+    for (auto& [primaryKey, meta] : persistentAreaMeta_) {
+        if (persistentAreaSharesInstance(meta.visualId, meta.center, meta.radius, meta.createdClock,
+                                         visualId, worldPosition, radius, beamClock_)) {
+            meta.sharedKeys.insert(key);
+            persistentAreaOwner_[key] = primaryKey;
+            return;
+        }
+    }
+    persistentAreaMeta_[key] = {
+        .visualId = visualId,
+        .center = worldPosition,
+        .radius = radius,
+        .createdClock = beamClock_,
+        .sharedKeys = {key},
+    };
+    persistentAreaOwner_[key] = key;
     if (const uint32_t snd = playKitSound(kit->second, worldPosition, /*attachInstanceId=*/0, /*stoppable=*/true);
         snd != 0) {
         activeAreaSounds_[key] = snd;
@@ -2364,13 +2384,25 @@ void SpellVisualSystem::playPersistentArea(uint64_t key, uint32_t visualId, cons
 }
 
 void SpellVisualSystem::stopPersistentArea(uint64_t key) {
+    uint64_t primaryKey = key;
+    if (const auto ownerIt = persistentAreaOwner_.find(key); ownerIt != persistentAreaOwner_.end()) {
+        primaryKey = ownerIt->second;
+        persistentAreaOwner_.erase(ownerIt);
+        if (const auto metaIt = persistentAreaMeta_.find(primaryKey); metaIt != persistentAreaMeta_.end()) {
+            metaIt->second.sharedKeys.erase(key);
+            if (!metaIt->second.sharedKeys.empty()) {
+                return;
+            }
+            persistentAreaMeta_.erase(metaIt);
+        }
+    }
     // Impacts already falling finish their fall.
-    activeAreaImpacts_.erase(key);
-    if (auto sndIt = activeAreaSounds_.find(key); sndIt != activeAreaSounds_.end()) {
+    activeAreaImpacts_.erase(primaryKey);
+    if (auto sndIt = activeAreaSounds_.find(primaryKey); sndIt != activeAreaSounds_.end()) {
         audio::AudioEngine::instance().stopSound(sndIt->second);
         activeAreaSounds_.erase(sndIt);
     }
-    const auto it = persistentAreas_.find(key);
+    const auto it = persistentAreas_.find(primaryKey);
     if (it == persistentAreas_.end()) return;
     if (m2Renderer_) {
         for (uint32_t instanceId : it->second) {
@@ -3505,6 +3537,8 @@ void SpellVisualSystem::reset() {
     }
     persistentAreas_.clear();
     activeAreaImpacts_.clear();
+    persistentAreaMeta_.clear();
+    persistentAreaOwner_.clear();
     // Reset the negative cache so models that failed during asset loading can retry.
     spellVisualFailedModels_.clear();
 }
