@@ -878,15 +878,16 @@ glm::vec3 CameraController::moveFollowedCharacter(float /*deltaTime*/, FrameInpu
         if (waterJumpAirborne_) inWater = false;
 
         if (inWater) {
-        // Falling into water: native 2.4.3 keeps falling until feet reach
-        // `waterH - swimSurfaceOffset_` and carries the downward plunge below
-        // float depth (e.g. Dustwallow bay 1..40 yd drops settle 0.2..0.9 yd
-        // below float depth; Slave Pens 12 yd drop puts the character under
-        // water rather than clamping shoulders above the waterline).
+        // Falling into water: native 2.4.3 integrates ballistic free-fall until
+        // feet cross `<= waterH - swimSurfaceOffset_` and immediately zeros
+        // vertical and airborne horizontal velocity on swim entry (`dz = 0.0000`
+        // after `MSG_MOVE_START_SWIM`).
         const bool fellIn = !swimming && !grounded && verticalVelocity < 0.0f && waterH.has_value();
         swimming = true;
         if (fellIn) {
             verticalVelocity = waterEntryVerticalVelocity(verticalVelocity);
+            preserveAirborneMomentum_ = false;
+            airborneHorizontalVelocity_ = glm::vec3(0.0f);
         }
         // Swim movement follows look pitch (f.forward/back), while strafe stays
         // lateral for stable control.
@@ -1245,14 +1246,14 @@ glm::vec3 CameraController::moveFollowedCharacter(float /*deltaTime*/, FrameInpu
             else verticalVelocity *= std::max(0.0f, 1.0f - 3.0f * f.physicsDeltaTime);
         } else {
             // Constant-acceleration position matches the arc reconstructed by
-            // native clients, independent of the number of physics substeps.
-            targetPos.z -= 0.5f * f.gravity * f.physicsDeltaTime * f.physicsDeltaTime;
-            verticalVelocity += f.gravity * f.physicsDeltaTime;
-            // Feather Fall / Slow Fall: cap downward terminal velocity to ~2 m/s
-            if (featherFallActive_ && verticalVelocity < -2.0f)
-                verticalVelocity = -2.0f;
+            // native clients, independent of the number of physics substeps,
+            // capped at TBC 2.4.3 downward terminal speed (60.148003 yd/s).
+            const float maxDownSpeed = featherFallActive_ ? 2.0f : kTerminalFallVelocity;
+            const auto fallStep = stepFreeFallVertical(
+                targetPos.z, verticalVelocity, f.gravity, f.physicsDeltaTime, maxDownSpeed);
+            targetPos.z = fallStep.z;
+            verticalVelocity = fallStep.verticalVelocity;
         }
-        targetPos.z += verticalVelocity * f.physicsDeltaTime;
         // Resolve re-entry in the step that crosses the swimming height.
         // Waiting until the next step exposes one frame below the surface
         // and lets the camera follow that overshoot before the clamp runs.
@@ -1307,7 +1308,52 @@ glm::vec3 CameraController::moveFollowedCharacter(float /*deltaTime*/, FrameInpu
     const bool onFoot = !externalFollow_ && !swimming && !isFlightAirborne() && !hoverActive_ &&
         !sitting && !seatedInChair_ && !waterWalkActive_;
     if (onFoot) {
+        const bool wasAirborneDescent = !grounded && verticalVelocity <= 0.0f;
         targetPos = moveBodyOnFoot(*followTarget, targetPos, f.physicsDeltaTime);
+        // Resolve airborne water entry on the exact crossing step (matching
+        // native 2.4.3 emitting MSG_MOVE_START_SWIM at the crossing frame's
+        // ballistic z with zero post-entry sinking and no false fall-land on
+        // submerged riverbeds).
+        if (wasAirborneDescent && waterRenderer) {
+            constexpr float kMaxSwimDepthFromSurface = 12.0f;
+            constexpr float kSwimExitWaterDepth = 0.85f;
+            const auto endWaterH = waterRenderer->getNearestWaterHeightAt(
+                targetPos.x, targetPos.y, targetPos.z, 400.0f);
+            if (endWaterH && targetPos.z < *endWaterH) {
+                const auto waterType = waterRenderer->getWaterTypeAt(targetPos.x, targetPos.y);
+                const bool isOcean = waterType && *waterType != 0 && (((*waterType - 1) % 4) == 1);
+                const bool depthAllowed = isOcean ||
+                    ((*endWaterH - targetPos.z) <= kMaxSwimDepthFromSurface);
+                if (depthAllowed) {
+                    const auto terrainH = terrainManager
+                        ? liquidBedTerrain(terrainManager->getHeightAt(targetPos.x, targetPos.y),
+                                           targetPos.z + 2.0f)
+                        : std::nullopt;
+                    const auto wmoH = wmoRenderer
+                        ? wmoRenderer->getFloorHeight(targetPos.x, targetPos.y, targetPos.z + 2.0f)
+                        : std::nullopt;
+                    const auto m2H = m2Renderer
+                        ? m2Renderer->getFloorHeight(targetPos.x, targetPos.y, targetPos.z + 1.0f)
+                        : std::nullopt;
+                    const auto floorH = selectHighestFloor(terrainH, wmoH, m2H);
+                    if (shouldBeInWater(false, *endWaterH, targetPos.z, floorH,
+                                        swimSurfaceOffset_, kSwimExitWaterDepth)) {
+                        swimming = true;
+                        grounded = false;
+                        verticalVelocity = waterEntryVerticalVelocity(verticalVelocity);
+                        preserveAirborneMomentum_ = false;
+                        airborneHorizontalVelocity_ = glm::vec3(0.0f);
+                        waterJumpAirborne_ = false;
+                        stepTouchdownSeconds_.reset();
+                        bodyPerched_ = false;
+                        bodyOnSlope_ = false;
+                        bodyWalkedOntoSlope_ = glm::vec3(0.0f);
+                        bodyStepBaseKnown_ = false;
+                        return targetPos;
+                    }
+                }
+            }
+        }
         bodyMoved_ = true;
         return targetPos;
     }

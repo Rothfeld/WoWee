@@ -122,24 +122,79 @@ TEST_CASE("falling into deep water waits until feet reach swim entry depth", "[s
     CHECK_FALSE(shouldBeInWater(true, waterH, waterH - 0.70f, waterH - 0.70f, enterDepth, exitDepth));
 }
 
-TEST_CASE("water entry velocity retains downward plunge proportional to impact speed", "[swim]") {
+TEST_CASE("water entry zeros vertical velocity after the ballistic crossing step", "[swim]") {
+    using wowee::rendering::kTerminalFallVelocity;
+    using wowee::rendering::shouldBeInWater;
+    using wowee::rendering::stepFreeFallVertical;
     using wowee::rendering::waterEntryVerticalVelocity;
-    // Gentle walk-in or upward velocity produces zero plunge.
+
+    // Native 2.4.3 stops vertical motion on the frame `MSG_MOVE_START_SWIM` fires
+    // (`dz = 0.0000` across +19..+950 ms after a 70 yd Karazhan bridge jump).
     CHECK(waterEntryVerticalVelocity(0.0f) == 0.0f);
     CHECK(waterEntryVerticalVelocity(5.0f) == 0.0f);
+    CHECK(waterEntryVerticalVelocity(-15.0f) == 0.0f);
+    CHECK(waterEntryVerticalVelocity(-52.414f) == 0.0f);
 
-    // Downward impact retains 20% velocity -> under 6/s damping, plunges ~|v|/30 yd.
-    CHECK(waterEntryVerticalVelocity(-15.0f) == Catch::Approx(-3.0f));
-    CHECK(waterEntryVerticalVelocity(-22.5f) == Catch::Approx(-4.5f));
-    // Simulate damping loop at 60 Hz for 0.5 s: total plunge matches ~|v|/30 yd.
-    float vz = waterEntryVerticalVelocity(-20.5f);
-    float dz = 0.0f;
-    constexpr float dt = 1.0f / 60.0f;
-    for (int i = 0; i < 30; ++i) {
-        vz *= std::max(0.0f, 1.0f - 6.0f * dt);
-        if (std::abs(vz) < 0.05f) vz = 0.0f;
-        dz += vz * dt;
+    // Simulate Karazhan high-bridge drop (`z0 = 94.887 -> waterH = 24.836`,
+    // `enterDepth = 1.52325`, riverbed `20.80`) at 60 Hz and 30 Hz.
+    constexpr float waterH = 24.836f;
+    constexpr float enterDepth = 1.52325f;
+    constexpr float exitDepth = 0.85f;
+    constexpr float floatZ = waterH - enterDepth;
+    constexpr float riverFloor = 20.80f;
+    constexpr float gravity = -19.29f;
+
+    for (float dt : {1.0f / 60.0f, 1.0f / 30.0f}) {
+        float z = 94.887f;
+        float vz = 0.0f;
+        bool swimming = false;
+        int swimEntryFrame = -1;
+        float entryZ = z;
+        float preEntryVz = 0.0f;
+
+        for (int frame = 0; frame < 300; ++frame) {
+            if (!swimming) {
+                const auto step = stepFreeFallVertical(z, vz, gravity, dt);
+                preEntryVz = step.verticalVelocity;
+                z = std::max(step.z, riverFloor);
+                vz = step.verticalVelocity;
+                if (shouldBeInWater(false, waterH, z, riverFloor, enterDepth, exitDepth)) {
+                    swimming = true;
+                    vz = waterEntryVerticalVelocity(vz);
+                    swimEntryFrame = frame;
+                    entryZ = z;
+                }
+            } else {
+                vz *= std::max(0.0f, 1.0f - 6.0f * dt);
+                z += vz * dt;
+            }
+        }
+
+        REQUIRE(swimming);
+        CHECK(swimEntryFrame > 0);
+        // Crossing frame lands within one free-fall frame below floatZ, well above riverbed.
+        CHECK(entryZ <= floatZ);
+        CHECK(entryZ >= floatZ + preEntryVz * dt - 1e-3f);
+        CHECK(entryZ > 21.5f);
+        // Zero post-entry sink after MSG_MOVE_START_SWIM.
+        CHECK(z == Catch::Approx(entryZ));
+        CHECK(vz == 0.0f);
     }
-    CHECK(dz < -0.50f);
-    CHECK(dz > -0.80f);
+
+    // 250 yd high drop caps downward speed at TBC terminal velocity (60.148003 yd/s).
+    float z = 274.836f;
+    float vz = 0.0f;
+    for (int frame = 0; frame < 400; ++frame) {
+        const auto step = stepFreeFallVertical(z, vz, gravity, 1.0f / 60.0f);
+        z = step.z;
+        vz = step.verticalVelocity;
+        CHECK(vz >= -kTerminalFallVelocity - 1e-5f);
+        if (shouldBeInWater(false, waterH, z, riverFloor, enterDepth, exitDepth)) {
+            vz = waterEntryVerticalVelocity(vz);
+            break;
+        }
+    }
+    CHECK(vz == 0.0f);
+    CHECK(z <= floatZ);
+    CHECK(z >= floatZ - kTerminalFallVelocity * (1.0f / 60.0f) - 1e-3f);
 }

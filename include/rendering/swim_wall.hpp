@@ -80,21 +80,52 @@ inline bool shouldBeInWater(bool alreadySwimming, float waterH, float feetZ,
            (!floorH && depthFromFeet >= exitDepth);
 }
 
-/// Retained downward vertical velocity on the frame a falling character enters
-/// swimming (`feetZ <= waterH - swimSurfaceOffset_`).
+/// Downward free-fall terminal speed in TBC 2.4.3 (`60.148003 yd/s`, matching
+/// `Unit::remoteTerminalVelocity` and CMaNGOS `Movement::terminalVelocity`).
+inline constexpr float kTerminalFallVelocity = 60.148003f;
+
+/// Post-entry vertical velocity when a falling character enters swimming
+/// (`feetZ <= waterH - swimSurfaceOffset_`).
 ///
-/// Native 2.4.3 carries a falling character past float depth and holds them
-/// underwater (Dustwallow bay `waterH = 0.0`: 1 yd drop -> -1.84 yd, 6 yd ->
-/// -1.80 yd, 15 yd -> -2.22 yd, 20 yd 5-trial mean -> -2.11 yd, 40 yd -> -2.42 yd;
-/// Slave Pens `waterH = 8.20`: 12 yd drop -> ~6.17 yd underwater). Retaining 20%
-/// of downward entry speed into the existing `SWIM_VERTICAL_DAMPING = 6.0 /s`
-/// deceleration yields frame-rate-independent plunge depth `|v| / 30` (~0.23 yd
-/// at 1 yd drop up to ~0.95 yd at 40 yd drop), stopping smoothly in ~0.1 s.
-inline constexpr float kWaterEntryVelocityRetention = 0.20f;
-inline float waterEntryVerticalVelocity(float impactVerticalVelocity) {
-    return impactVerticalVelocity < 0.0f
-        ? impactVerticalVelocity * kWaterEntryVelocityRetention
-        : 0.0f;
+/// Native 2.4.3 integrates ballistic free-fall while `!swimming` and transitions
+/// to `MOVEFLAG_SWIMMING` on the discrete step whose end-of-frame `feetZ` crosses
+/// `<= waterH - swimSurfaceOffset_`, immediately zeroing vertical velocity with
+/// zero post-entry sinking:
+/// - Karazhan high bridge (`z = 94.89 -> waterH = 24.84`, `fallTime = 2717 ms`,
+///   impact `-52.41 yd/s`): `MSG_MOVE_START_SWIM` at `z = 22.5683` and `z` stays
+///   `22.5683` (`dz = 0.0000`) across `+19..+950 ms`.
+/// - Controlled drops (`2, 10, 30, 70, 250 yd` in Karazhan river; `1..40 yd` in
+///   Dustwallow bay; `12 yd` in Slave Pens): settled depth lies within the single
+///   ballistic crossing step `[floatZ - |v_z| * dt, floatZ]` and holds constant.
+/// Retaining 20% of impact speed after `MSG_MOVE_START_SWIM` double-counted the
+/// plunge and silently sank WoWee an extra `1.1..1.6 yd` deeper on bridge jumps.
+inline constexpr float kWaterEntryVelocityRetention = 0.0f;
+inline float waterEntryVerticalVelocity(float /*impactVerticalVelocity*/) {
+    return 0.0f;
+}
+
+/// Step airborne vertical free-fall across `dt` (with `gravity < 0.0f` and
+/// downward speed capped at `maxDownSpeed > 0.0f`), preserving exact constant-
+/// acceleration displacement above terminal speed and trapezoidal clamping at
+/// terminal speed.
+struct FreeFallStep {
+    float z = 0.0f;
+    float verticalVelocity = 0.0f;
+};
+
+inline FreeFallStep stepFreeFallVertical(float z, float verticalVelocity,
+                                         float gravity, float dt,
+                                         float maxDownSpeed = kTerminalFallVelocity) {
+    const float prevVz = verticalVelocity;
+    float nextVz = verticalVelocity + gravity * dt;
+    if (nextVz >= -maxDownSpeed) {
+        z -= 0.5f * gravity * dt * dt;
+        z += nextVz * dt;
+    } else {
+        nextVz = -maxDownSpeed;
+        z += 0.5f * (prevVz + nextVz) * dt;
+    }
+    return {.z = z, .verticalVelocity = nextVz};
 }
 
 }  // namespace wowee::rendering
