@@ -341,19 +341,21 @@ inline bool particleScalesWithPlacement(bool isGameObject, bool externalPose,
     // - Corrupted/Cleansed Windblossom (GO 164887 / 164884, Windblossom02.m2 /
     //   Windblossom01.m2, scale 2.0, flags 0x429) send their pinned light
     //   pillars twice as high as unscaled yards.
-    // On scaled creature models (`externalPose && !isGameObject`), unpinned
-    // non-burst `0x8` body-aura emitters (e.g. MountedDeathKnight.m2 #8 0x9,
-    // Taerar.m2 #3..#30 0x9, FelBeast.m2 #11 0x9, FrostLord.m2 #9..#16 0x9)
-    // also scale detached velocity by `externalParticleScale` so torso/body
-    // auras reach the scaled skeleton (3.28 yd up to the rider's shoulders at
-    // 1.5x instead of stopping at 2.19 yd at the saddle), while weapon enchants
-    // keep 1.0x via `externalParticleScale = 1.0`. Pinned (`0x400`, Shaman
-    // totems 0x409/0x40b up to scale 10, Sunwell gate GO 188118 scale 8.69
-    // 0x409) and `InheritVelocity` (`0x40`, WaterElemental 0xc49 up to scale 5)
-    // emitters without 0x20 keep moving in yards.
+    // Unpinned non-`InheritVelocity` `0x8` emitters (`0x9`, `0x209`, `0x1009`)
+    // on both scaled creatures (`MountedDeathKnight.m2` #8 0x9, `Taerar.m2`
+    // #3..#30 0x9, `FelBeast.m2` #11 0x9, `FrostLord.m2` #9..#16 0x9) and
+    // scaled GameObjects (`Drakkisath's Brand` 179880 / `Altar of the Defiler`
+    // 153205 `OutlandMonolith.m2` #0 0x9 at scale 0.25, `Bonfire` / `Burning
+    // Blade Pyre` `OgreCampfire01.m2` #1 0x9 at scale 0.29..0.47) also scale
+    // detached velocity by placement/particle scale: `OutlandMonolith.m2` #0
+    // rises 1.59 yd (`z = 1.53 -> 3.12 yd`, framing the 3.26 yd horn) in
+    // native 2.4.3 instead of shooting 6.36 yd (`z = 7.89 yd`) above the
+    // monument, while weapon enchants keep 1.0x via `externalParticleScale = 1.0`.
+    // Pinned (`0x400`, Shaman totems 0x409/0x40b up to scale 10, Sunwell gate
+    // GO 188118 scale 8.69 0x409) and `InheritVelocity` (`0x40`, WaterElemental
+    // 0xc49 up to scale 5) emitters without 0x20 keep moving in yards.
     if ((flags & kParticleScaledSprite) != 0) return true;
-    if (!isGameObject && externalPose &&
-        (flags & kParticleTravelsInYards) != 0 &&
+    if ((flags & kParticleTravelsInYards) != 0 &&
         (flags & (kParticlePinned | kParticleInheritVelocity)) == 0) {
         return true;
     }

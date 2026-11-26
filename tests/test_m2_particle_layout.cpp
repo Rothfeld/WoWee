@@ -1450,12 +1450,14 @@ TEST_CASE("MountedDeathKnight torso aura (0x9) and bone-frame smoke tails (0x419
           "[m2][particle][tbc]") {
     using namespace wowee::rendering;
 
-    // Unpinned non-burst 0x8 emitters on externally posed creatures (0x9) scale
-    // detached velocity with externalParticleScale (1.5x on Cavalier / Four Horsemen,
-    // 1.0x on weapon enchants), while GameObjects (0x9/0x409) and pinned/burst unit
-    // emitters (totems 0x409, WaterElemental 0xc49) stay in unscaled yards.
+    // Unpinned non-burst 0x8 emitters on externally posed creatures and scaled
+    // GameObjects (0x9) scale detached velocity with placement/particle scale
+    // (1.5x on Cavalier / Four Horsemen, 0.25x on Drakkisath's Brand / Altar of
+    // the Defiler OutlandMonolith.m2, 1.0x on weapon enchants), while pinned and
+    // InheritVelocity emitters (Sunwell gate GO 0x409, totems 0x409, WaterElemental
+    // 0xc49) stay in unscaled yards.
     CHECK(particleScalesWithPlacement(/*isGameObject=*/false, /*externalPose=*/true, 0x9u));
-    CHECK_FALSE(particleScalesWithPlacement(/*isGameObject=*/true, /*externalPose=*/false, 0x9u));
+    CHECK(particleScalesWithPlacement(/*isGameObject=*/true, /*externalPose=*/false, 0x9u));
     CHECK_FALSE(particleScalesWithPlacement(/*isGameObject=*/false, /*externalPose=*/true, 0x409u));
     CHECK_FALSE(particleScalesWithPlacement(/*isGameObject=*/false, /*externalPose=*/true, 0x0c49u));
 
@@ -1522,4 +1524,49 @@ TEST_CASE("Shipped TBC Etherial.m2 additive emitters stay unlit without kParticl
         CHECK(eff.g == Catch::Approx(mid.g));
         CHECK(eff.b == Catch::Approx(mid.b));
     }
+}
+
+TEST_CASE("Scaled GameObject unpinned 0x8 emitters (OutlandMonolith 0.25x, OgreCampfire01 0.29x) scale velocity with placement",
+          "[m2][particle][tbc]") {
+    using namespace wowee::rendering;
+
+    // Drakkisath's Brand (GO 179880) & Altar of the Defiler (GO 153205):
+    // OutlandMonolith.m2 at OBJECT_FIELD_SCALE_X = 0.25 (horn z = 0..3.258 yd).
+    // Emitter #0 (flags 0x9, speed 2.7778, life 2.6 s, drag 0.1, scales
+    // 0.583/1.389/0.336) keeps its 1.389 yd half-width halo while scaling
+    // upward travel by 0.25x (1.589 yd rise -> z = 1.529..3.118 yd, framing
+    // the 3.258 yd horn instead of shooting 6.356 yd to z = 7.885 yd).
+    const auto monolith = wowee::pipeline::M2Loader::load(
+        wowee::test::readTbcData("world/outland/passivedoodads/monument/outlandmonolith.m2"));
+    REQUIRE(monolith.particleEmitters.size() == 1);
+    const auto& em = monolith.particleEmitters[0];
+    CHECK(em.flags == 0x9u);
+    CHECK(em.blendingType == 4u);
+    CHECK(em.emitterType == 1u);
+
+    const float spd = m2_track::sampleFloat(em.emissionSpeed, 0, 0.0f, 0.0f,
+                                            monolith.globalSequenceDurations, 0.0f);
+    const float life = m2_track::sampleFloat(em.lifespan, 0, 0.0f, 0.0f,
+                                             monolith.globalSequenceDurations, 0.0f);
+    CHECK(spd == Catch::Approx(2.7778f).margin(0.001f));
+    CHECK(life == Catch::Approx(2.6f).margin(0.001f));
+    CHECK(em.drag == Catch::Approx(0.1f).margin(0.001f));
+
+    const glm::mat4 goModel = glm::scale(glm::mat4(1.0f), glm::vec3(0.25f));
+    const glm::mat4 birth = particleBirthTransform(em.flags, goModel, glm::mat4(1.0f));
+    const bool velScales = particleScalesWithPlacement(/*isGameObject=*/true, /*externalPose=*/false, em.flags);
+    CHECK(velScales);
+
+    const glm::vec3 birthWorld = glm::vec3(birth * glm::vec4(em.position, 1.0f));
+    const glm::vec3 velWorld =
+        particleWorldVelocityBasis(em.flags, birth, velScales) * glm::vec3(0.0f, 0.0f, spd);
+    const float endZ = birthWorld.z + velWorld.z * particleDragTravel(em.drag, life);
+    CHECK(birthWorld.z == Catch::Approx(1.5293f).margin(0.005f));
+    CHECK(endZ == Catch::Approx(3.1182f).margin(0.01f));
+    CHECK(endZ < 13.032f * 0.25f);
+    CHECK(particleSpriteHalfWidth(em.flags, em.particleScale.floatValues.at(1), 0.25f) ==
+          Catch::Approx(1.3889f).margin(0.001f));
+
+    // Pinned Sunwell gate GameObjects (0x409) remain in unscaled yards.
+    CHECK_FALSE(particleScalesWithPlacement(/*isGameObject=*/true, /*externalPose=*/false, 0x409u));
 }
