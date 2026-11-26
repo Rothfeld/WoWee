@@ -22,6 +22,7 @@
 #include "audio/audio_coordinator.hpp"
 #include "audio/audio_engine.hpp"
 #include "audio/sound_entries.hpp"
+#include "audio/spell_sound_manager.hpp"
 #include "core/application.hpp"
 #include "core/entity_spawner.hpp"
 #include "core/helm_visual.hpp"
@@ -653,6 +654,15 @@ uint32_t SpellVisualSystem::playKitSound(uint32_t kitId, const glm::vec3& worldP
                                          uint32_t attachInstanceId, bool stoppable) {
     const auto sndIt = kitSounds_.find(kitId);
     if (sndIt == kitSounds_.end() || sndIt->second == 0) return 0;
+    const auto fxIt = kitEffects_.find(kitId);
+    const bool hasVisualEffects = fxIt != kitEffects_.end() && !fxIt->second.empty();
+    if (!audio::spellVisualKitAttachesSoundToUnit(hasVisualEffects)) {
+        const glm::vec3 detachedPos =
+            attachInstanceId != 0
+                ? worldPosition + glm::vec3(0.0f, 0.0f, audio::SoundEntryTable::kListenerCharacterZOffset)
+                : worldPosition;
+        return playSoundEntry(sndIt->second, detachedPos, /*attachInstanceId=*/0, stoppable);
+    }
     return playSoundEntry(sndIt->second, worldPosition, attachInstanceId, stoppable);
 }
 

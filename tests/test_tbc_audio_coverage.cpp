@@ -964,3 +964,102 @@ TEST_CASE("SoundEntries duplicate UI names honor later VolumeFloat (0.75) and Ko
 
     engine.setPlaybackObserver({});
 }
+
+TEST_CASE("TBC audio spatial/gain side-discoveries: SpellVisualKit effect-attachment, Flight Form jump, SpellFizzle",
+          "[audio][tbc][spatial][spellvisualkit]") {
+    auto& tbc = env();
+    auto& engine = audio::AudioEngine::instance();
+
+    engine.shutdown();
+    REQUIRE(engine.initializeHeadless(48000, 2));
+    engine.setAssetManager(&tbc.assets);
+    engine.setMasterVolume(1.0f);
+    engine.setSuspended(false);
+    engine.setListenerPosition(glm::vec3(0.0f, 0.0f, 2.0f));
+
+    // 1. SpellFizzle school mapping (1424..1428; 0 for Physical)
+    CHECK(audio::spellFizzleSoundIdForSchoolMask(0x01u) == 0u);
+    CHECK(audio::spellFizzleSoundIdForSchoolMask(0x04u) == 1424u);
+    CHECK(audio::spellFizzleSoundIdForSchoolMask(0x10u) == 1425u);
+    CHECK(audio::spellFizzleSoundIdForSchoolMask(0x08u) == 1426u);
+    CHECK(audio::spellFizzleSoundIdForSchoolMask(0x20u) == 1427u);
+    CHECK(audio::spellFizzleSoundIdForSchoolMask(0x02u) == 1428u);
+    CHECK(audio::spellFizzleSoundIdForSchoolMask(0x40u) == 1428u);
+
+    // 2. Druid Flight Form (displayId 20857 -> SE:10905 FlyingMountTakeOff, VolumeFloat=0.70)
+    // plays 2D scaled by kLocalPlayer2DGain (0.70 * 0.65 = 0.455).
+    std::vector<audio::AudioEngine::PlaybackEvent> evs;
+    engine.setPlaybackObserver([&](const audio::AudioEngine::PlaybackEvent& ev) { evs.push_back(ev); });
+
+    audio::ActivitySoundManager act;
+    REQUIRE(act.initialize(&tbc.assets));
+    act.setCharacterRaceGender(4u, 0u); // Night Elf Male
+    act.setActiveDisplayId(20857u);     // Flight Form
+    act.playJump();
+    REQUIRE_FALSE(evs.empty());
+    CHECK(evs.back().soundEntryId == 10905u);
+    CHECK_FALSE(evs.back().spatial);
+    CHECK(evs.back().volume == Catch::Approx(0.70f * audio::SoundEntryTable::kLocalPlayer2DGain).margin(0.01f));
+    act.shutdown();
+
+    // 3. SpellVisualKit.dbc effect-attachment spatial rule:
+    // Effectless sound/anim kits (cols 3..14 all zero: Totem Birth kit 352 -> SE:2552,
+    // Bloodlust CastKit 6746 -> SE:1484) do not attach to a unit visual object (3D @ 1.0x),
+    // whereas kits with SpellVisualEffectName models (Rain of Fire CastKit 5391 -> SE:1484,
+    // Bloodlust kit 6799 -> SE:10030, Heroism kit 6897 -> SE:10049, Seal of Command kit 6845,
+    // Devotion Aura kit 831, Divine Shield kit 417) attach to the unit visual (2D @ 0.65x).
+    auto kitDbc = tbc.assets.loadDBC("SpellVisualKit.dbc");
+    REQUIRE(kitDbc != nullptr);
+    REQUIRE(kitDbc->getFieldCount() > 15u);
+
+    auto kitInfo = [&](uint32_t targetKitId) -> std::pair<uint32_t, bool> {
+        for (uint32_t r = 0; r < kitDbc->getRecordCount(); ++r) {
+            if (kitDbc->getUInt32(r, 0) != targetKitId) continue;
+            const uint32_t soundId = kitDbc->getUInt32(r, 15);
+            bool hasEffects = false;
+            for (uint32_t col = 3; col <= 14; ++col) {
+                if (kitDbc->getUInt32(r, col) != 0u) {
+                    hasEffects = true;
+                    break;
+                }
+            }
+            return {soundId, hasEffects};
+        }
+        FAIL("Missing SpellVisualKit ID " << targetKitId);
+        return {0u, false};
+    };
+
+    const auto [totemBirthSound, totemBirthFx] = kitInfo(352u);
+    CHECK(totemBirthSound == 2552u);
+    CHECK_FALSE(audio::spellVisualKitAttachesSoundToUnit(totemBirthFx));
+
+    const auto [bloodlustCastSound, bloodlustCastFx] = kitInfo(6746u);
+    CHECK(bloodlustCastSound == 1484u);
+    CHECK_FALSE(audio::spellVisualKitAttachesSoundToUnit(bloodlustCastFx));
+
+    const auto [rainOfFireCastSound, rainOfFireCastFx] = kitInfo(5391u);
+    CHECK(rainOfFireCastSound == 1484u);
+    CHECK(audio::spellVisualKitAttachesSoundToUnit(rainOfFireCastFx));
+
+    const auto [bloodlustImpactSound, bloodlustImpactFx] = kitInfo(6799u);
+    CHECK(bloodlustImpactSound == 10030u);
+    CHECK(audio::spellVisualKitAttachesSoundToUnit(bloodlustImpactFx));
+
+    const auto [heroismImpactSound, heroismImpactFx] = kitInfo(6897u);
+    CHECK(heroismImpactSound == 10049u);
+    CHECK(audio::spellVisualKitAttachesSoundToUnit(heroismImpactFx));
+
+    const auto [sealOfCommandSound, sealOfCommandFx] = kitInfo(6845u);
+    CHECK(sealOfCommandSound == 10724u);
+    CHECK(audio::spellVisualKitAttachesSoundToUnit(sealOfCommandFx));
+
+    const auto [devotionAuraSound, devotionAuraFx] = kitInfo(831u);
+    CHECK(devotionAuraSound == 1505u);
+    CHECK(audio::spellVisualKitAttachesSoundToUnit(devotionAuraFx));
+
+    const auto [divineShieldSound, divineShieldFx] = kitInfo(417u);
+    CHECK(divineShieldSound == 2562u);
+    CHECK(audio::spellVisualKitAttachesSoundToUnit(divineShieldFx));
+
+    engine.setPlaybackObserver({});
+}

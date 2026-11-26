@@ -23,6 +23,15 @@ namespace audio {
     return 0u;
 }
 
+/// True when a SpellVisualKit spawns at least one SpellVisualEffectName model
+/// (cols 3..14) so its SoundID attaches to the unit visual (2D @ 0.65f on the
+/// local player when Sound_ListenerAtCharacter=1). Effectless kits (e.g. Totem
+/// Birth kit 352 -> SE:2552, Bloodlust CastKit 6746 -> SE:1484) spawn no unit
+/// visual object and play 3D at the unit position.
+[[nodiscard]] inline constexpr bool spellVisualKitAttachesSoundToUnit(bool kitHasVisualEffects) noexcept {
+    return kitHasVisualEffects;
+}
+
 class SpellSoundManager {
 public:
     SpellSoundManager() = default;

@@ -156,3 +156,61 @@ TEST_CASE("drain hands back every value and empties the cache", "[pinned_lru_cac
     REQUIRE(cache.bytes() == 0);
     REQUIRE(cache.pinnedEntries() == 0);
 }
+
+TEST_CASE("Minimap interior compositing never evicts tiles pinned in the same pass", "[pinned_lru_cache][minimap]") {
+    // Reproduces the cross-map WMO minimap crash shape: a 1024-tile cache
+    // filled across prior maps, followed by an interior WMO pass (e.g. Black
+    // Temple map 564) pinning hundreds of tiles in one composite loop before
+    // writing descriptor sets. No tile pinned earlier in the pass may be
+    // evicted by later tiles in the same pass, and evicted tiles from prior
+    // passes are returned for fence-deferred cleanup rather than destroyed
+    // immediately.
+    constexpr size_t kMaxTileCache = 1024;
+    Cache cache = makeCache(kMaxTileCache);
+
+    for (size_t i = 0; i < kMaxTileCache; ++i) {
+        const std::string key = "prior_tile_" + std::to_string(i);
+        cache.insert(key, key, 1);
+    }
+    REQUIRE(cache.size() == kMaxTileCache);
+
+    std::vector<Cache::Entry*> passPinned;
+    std::vector<std::string> passKeys;
+    std::vector<std::string> deferredEvictions;
+    constexpr size_t kInteriorTilesInPass = 384;
+
+    for (size_t i = 0; i < kInteriorTilesInPass; ++i) {
+        const std::string key = "bt_interior_" + std::to_string(i);
+        passKeys.push_back(key);
+        Cache::Entry* entry = cache.find(key);
+        if (!entry) {
+            std::vector<std::string> evicted;
+            REQUIRE(cache.makeRoom(1, evicted));
+            for (auto& oldVal : evicted) {
+                deferredEvictions.push_back(std::move(oldVal));
+            }
+            entry = &cache.insert(key, key, 1);
+        }
+        cache.pin(*entry);
+        passPinned.push_back(entry);
+    }
+
+    // Every pointer collected during the loop remains valid and intact when
+    // building VkWriteDescriptorSet entries at the end of compositeInterior.
+    REQUIRE(cache.size() == kMaxTileCache);
+    REQUIRE(cache.pinnedEntries() == kInteriorTilesInPass);
+    REQUIRE(deferredEvictions.size() == kInteriorTilesInPass);
+    for (size_t i = 0; i < kInteriorTilesInPass; ++i) {
+        REQUIRE(passPinned[i]->pins == 1);
+        REQUIRE(passPinned[i]->value == passKeys[i]);
+        REQUIRE(cache.find(passKeys[i]) == passPinned[i]);
+    }
+
+    // Releasing pins at the end of the pass makes those tiles eligible for
+    // future passes without dropping them from the cache immediately.
+    for (Cache::Entry* entry : passPinned) {
+        cache.unpin(*entry);
+    }
+    REQUIRE(cache.pinnedEntries() == 0);
+    REQUIRE(cache.size() == kMaxTileCache);
+}

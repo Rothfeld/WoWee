@@ -1,13 +1,13 @@
 #pragma once
 
+#include "rendering/pinned_lru_cache.hpp"
 #include <vulkan/vulkan.h>
 #include <vk_mem_alloc.h>
 #include <glm/glm.hpp>
 #include <chrono>
 #include <memory>
 #include <string>
-#include <unordered_map>
-#include <deque>
+#include <unordered_set>
 #include <algorithm>
 #include <map>
 
@@ -116,7 +116,10 @@ public:
     [[nodiscard]] const std::string& getMapName() const { return mapName; }
 
 private:
+    using TileCache = PinnedLruCache<std::string, std::unique_ptr<VkTexture>>;
+    TileCache::Entry* getOrLoadNamedTileEntry(std::string key);
     VkTexture* getOrLoadNamedTile(std::string key);
+    void deferEvictedTiles(std::vector<std::unique_ptr<VkTexture>>& evicted);
     void compositeInterior(VkCommandBuffer cmd, const glm::vec3& center);
     WMORenderer* wmoRenderer_ = nullptr;
     bool interiorComposite_ = false;
@@ -136,11 +139,11 @@ private:
     std::map<std::string, std::string> trsLookup;
     bool trsParsed = false;
 
-    // Tile texture cache: hash → VkTexture
-    // Evicted (FIFO) when the count of successfully-loaded tiles exceeds MAX_TILE_CACHE.
+    // Tile texture cache: hash -> VkTexture (pinned during active composite passes,
+    // LRU-evicted and freed behind frame fences when exceeding MAX_TILE_CACHE).
     static constexpr size_t MAX_TILE_CACHE = 1024;
-    std::unordered_map<std::string, std::unique_ptr<VkTexture>> tileTextureCache;
-    std::deque<std::string> tileInsertionOrder;  // hashes of successfully loaded tiles, oldest first
+    TileCache tileTextureCache_;
+    std::unordered_set<std::string> failedTileHashes_;
     std::unique_ptr<VkTexture> noDataTexture;
 
     // Composite render target (3x3 tiles = 768x768)

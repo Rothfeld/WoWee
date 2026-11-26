@@ -39,7 +39,9 @@ struct MinimapDisplayPush {
     float opacity;
 };  // 44 bytes
 
-Minimap::Minimap() = default;
+Minimap::Minimap() {
+    tileTextureCache_.setBudgetBytes(MAX_TILE_CACHE);
+}
 
 Minimap::~Minimap() {
     shutdown();
@@ -275,11 +277,11 @@ void Minimap::shutdown() {
 
     destroy(alloc, quadVB, quadVBAlloc);
 
-    for (auto& [hash, tex] : tileTextureCache) {
+    tileTextureCache_.drain([&](std::unique_ptr<VkTexture>& tex) {
         if (tex) tex->destroy(device, alloc);
-    }
-    tileTextureCache.clear();
-    tileInsertionOrder.clear();
+    });
+    tileTextureCache_.setBudgetBytes(MAX_TILE_CACHE);
+    failedTileHashes_.clear();
 
     if (noDataTexture) { noDataTexture->destroy(device, alloc); noDataTexture.reset(); }
     if (compositeTarget) { compositeTarget->destroy(device, alloc); compositeTarget.reset(); }
@@ -390,26 +392,51 @@ VkTexture* Minimap::getOrLoadTileTexture(int tileX, int tileY) {
     return getOrLoadNamedTile(mapName + name);
 }
 
-VkTexture* Minimap::getOrLoadNamedTile(std::string key) {
+void Minimap::deferEvictedTiles(std::vector<std::unique_ptr<VkTexture>>& evicted) {
+    if (evicted.empty()) return;
+    if (!vkCtx) {
+        evicted.clear();
+        return;
+    }
+    VkDevice device = vkCtx->getDevice();
+    VmaAllocator alloc = vkCtx->getAllocator();
+    for (auto& tex : evicted) {
+        if (!tex) continue;
+        std::shared_ptr<VkTexture> keepAlive(std::move(tex));
+        vkCtx->deferAfterAllFrameFences([device, alloc, keepAlive]() mutable {
+            if (keepAlive) {
+                keepAlive->destroy(device, alloc);
+                keepAlive.reset();
+            }
+        });
+    }
+    evicted.clear();
+}
+
+Minimap::TileCache::Entry* Minimap::getOrLoadNamedTileEntry(std::string key) {
     if (!trsParsed) parseTRS();
     std::transform(key.begin(), key.end(), key.begin(), [](unsigned char c) { return std::tolower(c); });
 
     auto trsIt = trsLookup.find(key);
     if (trsIt == trsLookup.end())
-        return noDataTexture.get();
+        return nullptr;
 
     const std::string& hash = trsIt->second;
+    if (failedTileHashes_.contains(hash))
+        return nullptr;
 
-    auto cacheIt = tileTextureCache.find(hash);
-    if (cacheIt != tileTextureCache.end())
-        return cacheIt->second.get();
+    if (auto* cached = tileTextureCache_.find(hash))
+        return cached;
+
+    if (!assetManager || !vkCtx)
+        return nullptr;
 
     // Load from MPQ
     std::string blpPath = "Textures\\Minimap\\" + hash + ".blp";
     auto blpImage = assetManager->loadTexture(blpPath);
     if (!blpImage.isValid()) {
-        tileTextureCache[hash] = nullptr;  // Mark as failed
-        return noDataTexture.get();
+        failedTileHashes_.insert(hash);
+        return nullptr;
     }
 
     auto tex = std::make_unique<VkTexture>();
@@ -417,19 +444,22 @@ VkTexture* Minimap::getOrLoadNamedTile(std::string key) {
                 VK_FORMAT_R8G8B8A8_UNORM, false);
     tex->createSampler(vkCtx->getDevice(), VK_FILTER_LINEAR, VK_FILTER_LINEAR,
                        VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, 1.0f);
-
-    VkTexture* ptr = tex.get();
-    tileTextureCache[hash] = std::move(tex);
-    tileInsertionOrder.push_back(hash);
-
-    // Evict oldest tiles when cache grows too large to bound GPU memory usage.
-    while (tileInsertionOrder.size() > MAX_TILE_CACHE) {
-        const std::string& oldest = tileInsertionOrder.front();
-        tileTextureCache.erase(oldest);
-        tileInsertionOrder.pop_front();
+    if (!tex->isValid()) {
+        tex->destroy(vkCtx->getDevice(), vkCtx->getAllocator());
+        failedTileHashes_.insert(hash);
+        return nullptr;
     }
 
-    return ptr;
+    std::vector<std::unique_ptr<VkTexture>> evicted;
+    tileTextureCache_.makeRoom(1, evicted);
+    deferEvictedTiles(evicted);
+
+    return &tileTextureCache_.insert(hash, std::move(tex), 1);
+}
+
+VkTexture* Minimap::getOrLoadNamedTile(std::string key) {
+    auto* entry = getOrLoadNamedTileEntry(std::move(key));
+    return (entry && entry->value) ? entry->value.get() : noDataTexture.get();
 }
 
 // --------------------------------------------------------
@@ -441,6 +471,14 @@ void Minimap::updateTileDescriptors(uint32_t frameIdx, int centerTileX, int cent
     VkDevice device = vkCtx->getDevice();
     std::array<VkDescriptorImageInfo, kTileCount> imgInfos{};
     std::array<VkWriteDescriptorSet, kTileCount> writes{};
+    std::vector<TileCache::Entry*> pinned;
+    pinned.reserve(kTileCount);
+    struct UnpinGuard {
+        TileCache& cache;
+        std::vector<TileCache::Entry*>& entries;
+        ~UnpinGuard() { for (auto* e : entries) cache.unpin(*e); }
+    } guard{tileTextureCache_, pinned};
+
     int slot = 0;
 
     for (int dr = -1; dr <= 1; dr++) {
@@ -448,9 +486,17 @@ void Minimap::updateTileDescriptors(uint32_t frameIdx, int centerTileX, int cent
             int tx = centerTileX + dr;
             int ty = centerTileY + dc;
 
-            VkTexture* tileTex = getOrLoadTileTexture(tx, ty);
-            if (!tileTex || !tileTex->isValid())
-                tileTex = noDataTexture.get();
+            VkTexture* tileTex = noDataTexture.get();
+            if (tx >= 0 && tx < 64 && ty >= 0 && ty < 64) {
+                char name[16];
+                std::snprintf(name, sizeof(name), "\\map%02d_%02d", tx, ty);
+                if (auto* entry = getOrLoadNamedTileEntry(mapName + name);
+                    entry && entry->value && entry->value->isValid()) {
+                    tileTextureCache_.pin(*entry);
+                    pinned.push_back(entry);
+                    tileTex = entry->value.get();
+                }
+            }
 
             imgInfos[slot] = tileTex->descriptorInfo();
 
@@ -485,6 +531,13 @@ void Minimap::compositeInterior(VkCommandBuffer cmd, const glm::vec3& center) {
     stem = stem.substr(6, stem.size() - 10);
     struct Tile { VkTexture* texture; MinimapTilePush push; };
     std::vector<Tile> tiles;
+    std::vector<TileCache::Entry*> pinned;
+    struct UnpinGuard {
+        TileCache& cache;
+        std::vector<TileCache::Entry*>& entries;
+        ~UnpinGuard() { for (auto* e : entries) cache.unpin(*e); }
+    } guard{tileTextureCache_, pinned};
+
     const auto project = [&](glm::vec3 point) {
         const glm::vec3 world(location->transform * glm::vec4(point, 1));
         return glm::vec2(0.5f) - glm::vec2(world - center) / INTERIOR_SPAN;
@@ -497,9 +550,12 @@ void Minimap::compositeInterior(VkCommandBuffer cmd, const glm::vec3& center) {
             unsigned tileX = 0, tileY = 0;
             if (std::sscanf(it->first.c_str() + prefix.size(), "%u_%u", &tileX, &tileY) != 2)
                 throw std::runtime_error("Invalid WMO minimap tile name: " + it->first);
-            auto* texture = getOrLoadNamedTile(it->first);
-            if (!texture || texture == noDataTexture.get())
+            auto* entry = getOrLoadNamedTileEntry(it->first);
+            if (!entry || !entry->value || !entry->value->isValid())
                 throw std::runtime_error("Missing authored WMO minimap tile: " + it->first);
+            tileTextureCache_.pin(*entry);
+            pinned.push_back(entry);
+            auto* texture = entry->value.get();
             // Authored maps use two pixels per local yard. Power-of-two
             // padding is above/right of the group's minimum, not a stretch
             // across its bounds. Tile indices advance 256 pixels.

@@ -144,7 +144,7 @@ public:
     /// without touching color. Run after M2 particles and before blended M2
     /// meshes so underwater particle effects remain visible through translucent
     /// water while submerged blended M2 meshes still clip at the waterline.
-    void renderDepthOnly(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const Camera& camera, float time);
+    void renderDepthOnly(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const Camera& camera, float time, uint32_t frameIndex = 0);
     void captureSceneHistory(VkCommandBuffer cmd,
                              VkImage srcColorImage,
                              VkImage srcDepthImage,

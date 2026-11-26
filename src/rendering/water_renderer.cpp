@@ -666,7 +666,7 @@ void WaterRenderer::createSceneHistoryResources(VkExtent2D extent, VkFormat colo
         depthInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
         VkDescriptorImageInfo reflColorInfo{};
-        reflColorInfo.sampler = sceneColorSampler;
+        reflColorInfo.sampler = reflectionSampler ? reflectionSampler : sceneColorSampler;
         reflColorInfo.imageView = reflectionColorView ? reflectionColorView : sh.colorView;
         reflColorInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
@@ -1378,9 +1378,9 @@ void WaterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
 }
 
 void WaterRenderer::renderDepthOnly(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
-                                    const Camera& camera, float time) {
+                                    const Camera& camera, float time, uint32_t frameIndex) {
     if (!renderingEnabled || surfaces.empty() || !waterDepthOnlyPipeline) return;
-    VkDescriptorSet activeSceneSet = sceneHistory[0].sceneSet;
+    VkDescriptorSet activeSceneSet = sceneHistory[frameIndex % SCENE_HISTORY_FRAMES].sceneSet;
     if (!activeSceneSet || liquidSets.empty()) return;
 
     Frustum frustum;
@@ -2136,28 +2136,11 @@ void WaterRenderer::endReflectionPass(VkCommandBuffer cmd) {
     if (!cmd) return;
     vkCmdEndRenderPass(cmd);
     reflectionColorLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-
-    // Update only the current frame's scene descriptor set with the reflection texture.
-    // Updating all frames would race with in-flight command buffers that have the
-    // other frame's descriptor set bound.
-    if (reflectionColorView && reflectionSampler && vkCtx) {
-        uint32_t fi = vkCtx->getCurrentFrame() % SCENE_HISTORY_FRAMES;
-        if (sceneHistory[fi].sceneSet) {
-            VkDescriptorImageInfo reflInfo{};
-            reflInfo.sampler = reflectionSampler;
-            reflInfo.imageView = reflectionColorView;
-            reflInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-
-            VkWriteDescriptorSet write{};
-            write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            write.dstSet = sceneHistory[fi].sceneSet;
-            write.dstBinding = 2;
-            write.descriptorCount = 1;
-            write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            write.pImageInfo = &reflInfo;
-            vkUpdateDescriptorSets(vkCtx->getDevice(), 1, &write, 0, nullptr);
-        }
-    }
+    // Note: reflectionColorView and reflectionSampler are already bound to
+    // sceneHistory[*].sceneSet (dstBinding = 2) when createSceneHistoryResources()
+    // runs after createReflectionResources(); rewriting dstBinding = 2 here
+    // every frame is redundant and violates VUID-vkUpdateDescriptorSets-None-03047
+    // whenever another in-flight command buffer still references that set.
 }
 
 void WaterRenderer::updateReflectionUBO(const glm::mat4& reflViewProj) {

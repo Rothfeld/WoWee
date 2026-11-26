@@ -975,11 +975,29 @@ bool Renderer::initialize(core::Window* win) {
     // The ray traced lighting normally records where the water leaves the
     // scene pass. A multisampled scene in an off-screen target never leaves
     // it early, so the pass records here instead, as the upscaler takes over.
-    postProcessPipeline_->setSceneClosedHook([this](VkCommandBuffer) {
-        if (rtRecordedThisFrame_ || !postProcessPipeline_) return;
-        recordRtLighting(postProcessPipeline_->getSceneDepthImage(),
-                         postProcessPipeline_->getSceneRenderExtent(),
-                         postProcessPipeline_->sceneDepthIsMsaa());
+    postProcessPipeline_->setSceneClosedHook([this](VkCommandBuffer cmd) {
+        if (!postProcessPipeline_) return;
+        if (!rtRecordedThisFrame_) {
+            recordRtLighting(postProcessPipeline_->getSceneDepthImage(),
+                             postProcessPipeline_->getSceneRenderExtent(),
+                             postProcessPipeline_->sceneDepthIsMsaa());
+        }
+        // When water stays in the scene pass (pre-WotLK or MSAA) and the scene
+        // rendered into PostProcessPipeline's off-screen framebuffer, capture
+        // refraction history from the off-screen color + depth right as the
+        // scene pass closes (while sceneColor is PRESENT_SRC_KHR and sceneDepth
+        // is DEPTH_STENCIL_ATTACHMENT_OPTIMAL), instead of touching the
+        // unrendered swapchain depth image in UNDEFINED layout later in endFrame.
+        if (!waterDrawsInContinuePass() && waterRenderer &&
+            waterRenderer->isRefractionEnabled() && waterRenderer->hasSurfaces()) {
+            waterRenderer->captureSceneHistory(
+                cmd,
+                postProcessPipeline_->getSceneColorImage(),
+                postProcessPipeline_->getSceneDepthImage(),
+                postProcessPipeline_->getSceneRenderExtent(),
+                postProcessPipeline_->sceneDepthIsMsaa(),
+                vkCtx->getCurrentFrame());
+        }
     });
 
     // Not fatal: without them the picture is only missing its rays.
@@ -1571,7 +1589,9 @@ void Renderer::endFrame() {
     // renderWorld already took the copy at the one point in the frame where the
     // scene is finished but the water is not yet over it; copying again here
     // would replace that with an image containing the water.
-    if (!waterDrawsInContinuePass()
+    const bool offscreenScene =
+        postProcessPipeline_ && postProcessPipeline_->getSceneFramebuffer() != VK_NULL_HANDLE;
+    if (!waterDrawsInContinuePass() && !offscreenScene
         && waterRenderer && waterRenderer->isRefractionEnabled() && waterRenderer->hasSurfaces()
         && currentImageIndex < vkCtx->getSwapchainImages().size()) {
         waterRenderer->captureSceneHistory(
@@ -3571,7 +3591,7 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
                     m2Renderer->renderM2Particles(blended, perFrameSet,
                         M2Renderer::ParticlePhase::BeforeWaterDepth, translucentWaterHeight);
                 }
-                waterRenderer->renderDepthOnly(blended, perFrameSet, *camera, globalTime);
+                waterRenderer->renderDepthOnly(blended, perFrameSet, *camera, globalTime, frameIdx);
             }
         };
         const auto drawCharactersBefore = [&](float depth) {
