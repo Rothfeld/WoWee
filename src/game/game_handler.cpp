@@ -90,9 +90,10 @@ void GameHandler::playServerEmote(uint64_t guid, uint32_t animId, bool isState, 
     if (!emoteAnimCallback_) return;
     if (guid != getPlayerGuid()) {
         const auto unit = std::dynamic_pointer_cast<Unit>(getEntityManager().getEntity(guid));
-        if (unit && isUnitCorpseState(unit->getHealth(), unit->getMaxHealth(), unit->getDynamicFlags())) {
+        if (unit && (unit->hasPendingLethalHit() ||
+                     isUnitCorpseState(unit->getHealth(), unit->getMaxHealth(), unit->getDynamicFlags()))) {
             LOG_DEBUG("Emote ", emoteId, " (animation ", animId, isState ? ", state" : "",
-                      ") on corpse 0x", std::hex, guid, std::dec, " keeps its death pose");
+                      ") on corpse/dying unit 0x", std::hex, guid, std::dec, " keeps its death pose");
             return;
         }
     }

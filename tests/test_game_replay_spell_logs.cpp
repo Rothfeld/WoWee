@@ -649,6 +649,60 @@ TEST_CASE("lethal melee and spell hits suppress victim hit-flinch while non-leth
         s.receive(makeTbcSpellDamageLog(kMob, kPlayer, 133, 300000, 4));
         CHECK(reactions.size() == 1);  // lethal spell hit suppressed
     }
+
+    // 4. Lethal melee CRIT followed in the same tick by CMaNGOS SMSG_EMOTE 34
+    //    (EMOTE_ONESHOT_WOUNDCRITICAL, before SMSG_UPDATE_OBJECT sets health=0)
+    //    suppresses both HitReaction and playServerEmote; non-lethal crits and
+    //    post-respawn emotes still fire.
+    {
+        auto makeTbcEmote = [](uint32_t emoteId, uint64_t sourceGuid) {
+            Packet p(wireOpcode(Opcode::SMSG_EMOTE));
+            p.writeUInt32(emoteId);
+            p.writeUInt64(sourceGuid);
+            return p;
+        };
+
+        Session s("tbc");
+        spawnMobWithHp(s, kMob, 500, 20958);
+        std::vector<HR> reactions;
+        std::vector<uint32_t> emotes;
+        s.handler().setHitReactionCallback([&](uint64_t, uint64_t victim, HR r) {
+            if (victim == kMob) reactions.push_back(r);
+        });
+        s.handler().setEmoteAnimCallback([&](uint64_t guid, uint32_t animId, bool /*isState*/, uint32_t emoteId) {
+            if (guid == kMob) emotes.push_back(emoteId ? emoteId : animId);
+        });
+
+        // Non-lethal melee crit (100 dmg on 500 HP): both CRIT_WOUND and SMSG_EMOTE 34 reach callbacks
+        // (AnimationCallbackHandler then deduplicates/gates by unit flags and active animations).
+        s.receive(makeTbcMeleeHit(kPlayer, kMob, 100, /*hitInfo=*/0x82));
+        s.receive(makeTbcEmote(34, kMob));
+        CHECK(reactions.size() == 1);
+        CHECK(emotes.size() == 1);
+
+        auto unit = std::static_pointer_cast<wowee::game::Unit>(
+            s.handler().getEntityManager().getEntity(kMob));
+        unit->setHealth(400);
+
+        // Lethal melee crit (600 dmg on 400 HP) + immediate SMSG_EMOTE 34 BEFORE health=0 update:
+        // neither HitReaction nor emoteAnimCallback fires!
+        s.receive(makeTbcMeleeHit(kPlayer, kMob, 600, /*hitInfo=*/0x82));
+        CHECK(unit->hasPendingLethalHit());
+        s.receive(makeTbcEmote(34, kMob));
+        CHECK(reactions.size() == 1);
+        CHECK(emotes.size() == 1);
+
+        // Server tick arrives setting health=0: pending flag clears, corpse check continues suppressing.
+        unit->setHealth(0);
+        CHECK_FALSE(unit->hasPendingLethalHit());
+        s.receive(makeTbcEmote(34, kMob));
+        CHECK(emotes.size() == 1);
+
+        // Respawn (health > 0): server emotes work again.
+        unit->setHealth(20958);
+        s.receive(makeTbcEmote(15, kMob));
+        CHECK(emotes.size() == 2);
+    }
 }
 
 TEST_CASE("Shard 2 TBC network wire-payload sweep fixes round-trip cleanly",

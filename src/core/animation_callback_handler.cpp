@@ -50,6 +50,104 @@ uint32_t AnimationCallbackHandler::resolveUnitInstanceId(uint64_t guid) const {
         entitySpawner_.getPlayerInstanceId(guid));
 }
 
+uint64_t AnimationCallbackHandler::resolveRemoteGuidForInstance(uint32_t instanceId) const {
+    if (instanceId == 0) return 0;
+    for (const auto& [guid, inst] : entitySpawner_.getCreatureInstances()) {
+        if (inst == instanceId || entitySpawner_.drawnInstanceIdForGuid(guid) == instanceId) {
+            return guid;
+        }
+    }
+    for (const auto& [guid, inst] : entitySpawner_.getPlayerInstances()) {
+        if (inst == instanceId || entitySpawner_.drawnInstanceIdForGuid(guid) == instanceId) {
+            return guid;
+        }
+    }
+    return 0;
+}
+
+bool AnimationCallbackHandler::canPlayRemoteWoundAnimation(
+    uint64_t guid, uint32_t instanceId, uint32_t animId, bool isServerEmote) const {
+    auto* cr = renderer_.getCharacterRenderer();
+    if (!cr || instanceId == 0 || guid == 0) return false;
+    if (cr->isInstanceDead(instanceId)) return false;
+
+    const auto victim = std::dynamic_pointer_cast<game::Unit>(
+        gameHandler_.getEntityManager().getEntity(guid));
+    if (!victim) return false;
+    if (victim->hasPendingLethalHit() ||
+        game::isUnitCorpseState(victim->getHealth(), victim->getMaxHealth(), victim->getDynamicFlags())) {
+        return false;
+    }
+
+    const bool creature = victim->getType() == game::ObjectType::UNIT;
+    uint32_t typeFlags = 0;
+    if (creature) {
+        const auto& cache = gameHandler_.getCreatureInfoCache();
+        if (const auto info = cache.find(victim->getEntry()); info != cache.end()) {
+            typeFlags = info->second.typeFlags;
+        }
+    }
+    const auto modelFlags = entitySpawner_.creatureModelFlags(victim->getDisplayId());
+    if (!modelFlags) {
+        LOG_WARNING("Wound animation on 0x", std::hex, guid, std::dec, ": display ",
+                    victim->getDisplayId(), " has no CreatureModelData flags");
+    }
+
+    uint32_t activeOneShot = 0;
+    const bool playingOneShot = cr->isPlayingOneShot(instanceId, &activeOneShot);
+
+    bool hasActiveCastHold = false;
+    bool hasActiveCastOneShot = false;
+    if (const auto castIt = castAnimStates_.find(guid); castIt != castAnimStates_.end()) {
+        hasActiveCastHold = castIt->second.hold.has_value();
+        hasActiveCastOneShot = castIt->second.oneShot.has_value() &&
+                               playingOneShot &&
+                               activeOneShot == castIt->second.oneShot->animation;
+    }
+
+    auto* visuals = renderer_.getSpellVisualSystem();
+    const uint32_t noAnim = rendering::SpellVisualSystem::kNoAnimation;
+    const uint32_t activeAuraAnim = visuals ? visuals->auraStateAnimation(instanceId) : noAnim;
+
+    if (isServerEmote) {
+        if (rendering::unitSuppressesWoundEmote(
+                animId, /*isState=*/false, creature, typeFlags, modelFlags.value_or(0),
+                victim->getUnitFlags(), playingOneShot, activeOneShot,
+                hasActiveCastHold, hasActiveCastOneShot, activeAuraAnim, noAnim)) {
+            LOG_DEBUG("Wound emote ", animId, " suppressed on 0x", std::hex, guid,
+                      " (typeFlags=0x", typeFlags, ", modelFlags=0x", modelFlags.value_or(0),
+                      ", unitFlags=0x", victim->getUnitFlags(), std::dec,
+                      ", oneShot=", playingOneShot ? static_cast<int>(activeOneShot) : -1,
+                      ", castHold=", hasActiveCastHold, ", auraAnim=", activeAuraAnim, ")");
+            return false;
+        }
+        return true;
+    }
+
+    if (!rendering::unitPlaysWound(animId, creature, typeFlags, modelFlags.value_or(0))) {
+        LOG_DEBUG("Hit reaction ", animId, " suppressed on 0x", std::hex, guid,
+                  " (creature type flags 0x", typeFlags, ", model flags 0x", modelFlags.value_or(0), ")",
+                  std::dec);
+        return false;
+    }
+    if (rendering::unitSuppressesHitReactionWhileStunned(victim->getUnitFlags())) {
+        LOG_DEBUG("Hit reaction ", animId, " suppressed on stunned unit 0x", std::hex, guid, std::dec);
+        return false;
+    }
+    if (rendering::unitSuppressesHitReactionDuringSwing(playingOneShot, activeOneShot)) {
+        LOG_DEBUG("Hit reaction ", animId, " suppressed during active melee swing ",
+                  activeOneShot, " on 0x", std::hex, guid, std::dec);
+        return false;
+    }
+    if (rendering::unitSuppressesHitReactionDuringCastOrAura(
+            hasActiveCastOneShot, activeAuraAnim, noAnim)) {
+        LOG_DEBUG("Hit reaction ", animId, " suppressed during active cast/aura animation on 0x",
+                  std::hex, guid, std::dec);
+        return false;
+    }
+    return true;
+}
+
 void AnimationCallbackHandler::playCombatBlood(uint64_t attackerGuid, uint64_t victimGuid, bool critical) {
     // M2 attachments ChestBloodFront and ChestBloodBack.
     constexpr uint32_t kAttachChestBloodFront = 15, kAttachChestBloodBack = 16;
@@ -107,6 +205,14 @@ void AnimationCallbackHandler::setupCallbacks() {
     gameHandler_.setUnitRenderInstanceResolver([this](uint64_t guid) -> uint32_t {
         return resolveUnitInstanceId(guid);
     });
+
+    if (auto* visuals = renderer_.getSpellVisualSystem()) {
+        visuals->setWoundAnimationFilter([this](uint32_t instanceId, uint32_t animId) -> bool {
+            const uint64_t guid = resolveRemoteGuidForInstance(instanceId);
+            if (guid == 0) return true;
+            return canPlayRemoteWoundAnimation(guid, instanceId, animId, /*isServerEmote=*/false);
+        });
+    }
 
     // NPC/player death callback (online mode) - play death animation
     gameHandler_.setNpcDeathCallback([this](uint64_t guid, bool alreadyDead) {
@@ -266,6 +372,9 @@ void AnimationCallbackHandler::setupCallbacks() {
                 LOG_WARNING("Hit reaction ", animId, " on 0x", std::hex, victimGuid, std::dec, " without a unit entity");
                 return;
             }
+            if (!isLocalPlayer && victim->hasPendingLethalHit()) {
+                return;
+            }
             const bool creature = victim->getType() == game::ObjectType::UNIT;
             uint32_t typeFlags = 0;
             if (creature) {
@@ -315,11 +424,28 @@ void AnimationCallbackHandler::setupCallbacks() {
             }
         }
         uint32_t activeOneShot = 0;
-        if (rendering::unitSuppressesHitReactionDuringSwing(
-                cr->isPlayingOneShot(instanceId, &activeOneShot), activeOneShot)) {
+        const bool playingOneShot = cr->isPlayingOneShot(instanceId, &activeOneShot);
+        if (rendering::unitSuppressesHitReactionDuringSwing(playingOneShot, activeOneShot)) {
             LOG_DEBUG("Hit reaction ", animId, " suppressed during active melee swing ",
                       activeOneShot, " on 0x", std::hex, victimGuid, std::dec);
             return;
+        }
+        {
+            bool hasActiveCastOneShot = false;
+            if (const auto castIt = castAnimStates_.find(victimGuid); castIt != castAnimStates_.end()) {
+                hasActiveCastOneShot = castIt->second.oneShot.has_value() &&
+                                       playingOneShot &&
+                                       activeOneShot == castIt->second.oneShot->animation;
+            }
+            auto* visuals = renderer_.getSpellVisualSystem();
+            const uint32_t noAnim = rendering::SpellVisualSystem::kNoAnimation;
+            const uint32_t activeAuraAnim = visuals ? visuals->auraStateAnimation(instanceId) : noAnim;
+            if (rendering::unitSuppressesHitReactionDuringCastOrAura(
+                    hasActiveCastOneShot, activeAuraAnim, noAnim)) {
+                LOG_DEBUG("Hit reaction ", animId, " suppressed during active cast/aura animation on 0x",
+                          std::hex, victimGuid, std::dec);
+                return;
+            }
         }
         cr->playAnimation(instanceId, animId, false, entitySpawner_.remoteResumeAnimation(victimGuid));
     });
@@ -420,6 +546,30 @@ void AnimationCallbackHandler::setupCallbacks() {
             !gameHandler_.isPlayerGhost()) return;
         auto* cr = renderer_.getCharacterRenderer();
         if (!cr) return;
+
+        // CMaNGOS Unit::DealMeleeDamage sends SMSG_EMOTE (EMOTE_ONESHOT_WOUNDCRITICAL = 34
+        // -> CombatCritical 10) on every melee crit alongside SMSG_ATTACKERSTATEUPDATE.
+        // Route one-shot wound emotes through the same wound eligibility & CombatFSM rules
+        // so DO_NOT_PLAY_WOUND_ANIM bosses (e.g. Warchief Rend Blackhand 10429), no-wound
+        // models (Lich/Skeleton/Ghoul/golems/totems), stunned units, and units mid-swing,
+        // mid-cast/channel, or spinning in Whirlwind do not flinch or break their active pose.
+        if (!isState && rendering::isWoundAnimation(emoteAnim)) {
+            if (guid == gameHandler_.getPlayerGuid()) {
+                const uint32_t localInst = resolveUnitInstanceId(guid);
+                if (localInst != 0 && cr->hasAnimation(localInst, emoteAnim)) {
+                    if (auto* ac = renderer_.getAnimationController()) {
+                        ac->triggerHitReaction(emoteAnim);
+                    }
+                }
+                return;
+            }
+            const uint32_t unitInst = resolveUnitInstanceId(guid);
+            if (unitInst == 0 || !cr->hasAnimation(unitInst, emoteAnim)) return;
+            if (!canPlayRemoteWoundAnimation(guid, unitInst, emoteAnim, /*isServerEmote=*/true)) {
+                return;
+            }
+        }
+
         auto& registry = rendering::EmoteRegistry::instance();
         registry.loadFromDbc();
         const bool sheathe = registry.sheathWeaponsFor(emoteId);

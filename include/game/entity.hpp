@@ -841,7 +841,17 @@ public:
 
     // Health
     [[nodiscard]] uint32_t getHealth() const { return health; }
-    void setHealth(uint32_t h) { health = h; }
+    void setHealth(uint32_t h) {
+        health = h;
+        pendingLethalHit_ = false;
+    }
+
+    // Latched when a lethal melee/spell hit arrives before SMSG_UPDATE_OBJECT
+    // sets UNIT_FIELD_HEALTH=0, preventing trailing same-tick packets (such as
+    // CMaNGOS SMSG_EMOTE 34 EMOTE_ONESHOT_WOUNDCRITICAL) from playing a wound
+    // flinch right before Death. Cleared automatically on the next setHealth().
+    void markPendingLethalHit() { pendingLethalHit_ = true; }
+    [[nodiscard]] bool hasPendingLethalHit() const { return pendingLethalHit_; }
 
     [[nodiscard]] uint32_t getMaxHealth() const { return maxHealth; }
     void setMaxHealth(uint32_t h) { maxHealth = h; }
@@ -971,6 +981,7 @@ protected:
     bool hostile = false;
     bool newlySpawned_ = false;
     bool mirrorImage_ = false;
+    bool pendingLethalHit_ = false;
 };
 
 /**

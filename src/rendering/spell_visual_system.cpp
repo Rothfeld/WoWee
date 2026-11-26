@@ -1,4 +1,5 @@
 #include "rendering/spell_visual_system.hpp"
+#include "rendering/animation/hit_reaction.hpp"
 #include "rendering/corpse_aura_policy.hpp"
 #include "rendering/aura_marker_visibility.hpp"
 #include "rendering/unit_fade.hpp"
@@ -2121,11 +2122,20 @@ void SpellVisualSystem::playSpellVisualKit(uint32_t kitId, const glm::vec3& worl
         uint32_t current = 0; float time = 0, duration = 0;
         cr->getAnimationState(attachInstanceId, current, time, duration);
         if (current == anim::SITTING || current == anim::SIT_GROUND_DOWN) {
-            cr->setUpperBodyAnimation(attachInstanceId, 0);
-            cr->setUpperBodyAnimation(attachInstanceId, animation->second, false);
+            if (!isWoundAnimation(animation->second) ||
+                attachInstanceId == renderer_->getCharacterInstanceId() ||
+                !woundAnimationFilter_ || woundAnimationFilter_(attachInstanceId, animation->second)) {
+                cr->setUpperBodyAnimation(attachInstanceId, 0);
+                cr->setUpperBodyAnimation(attachInstanceId, animation->second, false);
+            }
         } else if (attachInstanceId == renderer_->getCharacterInstanceId()) {
-            renderer_->getAnimationController()->playKitAnimation(animation->second);
-        } else {
+            if (isWoundAnimation(animation->second)) {
+                renderer_->getAnimationController()->triggerHitReaction(animation->second);
+            } else {
+                renderer_->getAnimationController()->playKitAnimation(animation->second);
+            }
+        } else if (!isWoundAnimation(animation->second) ||
+                   !woundAnimationFilter_ || woundAnimationFilter_(attachInstanceId, animation->second)) {
             const uint32_t returnAnim = cr->getOneShotResumeAnimation(attachInstanceId);
             cr->playAnimation(attachInstanceId, animation->second, false, returnAnim);
         }

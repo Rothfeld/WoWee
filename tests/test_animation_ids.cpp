@@ -598,6 +598,90 @@ TEST_CASE("Type flag 0x8 creatures and model flag 0x2 units do not flinch from h
     CHECK(unitPlaysWound(anim::COMBAT_WOUND, false, 0x8, 0x4));           // players have no type flags
 }
 
+TEST_CASE("Server wound emotes and cast/aura states follow TBC 2.4.3 hit-flinch suppression rules",
+          "[hit-reaction][emote]") {
+    using namespace wowee::rendering;
+    constexpr uint32_t kNoAnim = 0xffffffffu;
+    constexpr uint32_t kStunFlag = 0x00040000u;
+
+    CHECK(isWoundAnimation(anim::STAND_WOUND));
+    CHECK(isWoundAnimation(anim::COMBAT_WOUND));
+    CHECK(isWoundAnimation(anim::COMBAT_CRITICAL));
+    CHECK_FALSE(isWoundAnimation(anim::DODGE));
+    CHECK_FALSE(isWoundAnimation(anim::EMOTE_ROAR));
+    CHECK_FALSE(isWoundAnimation(anim::KNOCKDOWN));
+
+    // Warchief Rend Blackhand (10429, typeFlags 0x8, OrcMale modelFlags 0x4):
+    // CMaNGOS sends SMSG_EMOTE 34 (CombatCritical 10) on every melee crit; must be suppressed.
+    CHECK(unitSuppressesWoundEmote(
+        anim::COMBAT_CRITICAL, /*isState=*/false, /*isCreature=*/true,
+        /*creatureTypeFlags=*/0x8u, /*creatureModelFlags=*/0x4u, /*unitFlags=*/0u,
+        /*playingOneShot=*/false, /*activeOneShotAnim=*/0u,
+        /*hasActiveCastHold=*/false, /*hasActiveCastOneShot=*/false,
+        /*activeAuraStateAnim=*/kNoAnim, kNoAnim));
+    CHECK(unitSuppressesWoundEmote(
+        anim::COMBAT_WOUND, /*isState=*/false, /*isCreature=*/true,
+        0x8u, 0x4u, 0u, false, 0u, false, false, kNoAnim, kNoAnim));
+    // Non-wound emotes (e.g. ONESHOT_ROAR 15 -> 74) still play on typeFlags 0x8 bosses.
+    CHECK_FALSE(unitSuppressesWoundEmote(
+        anim::EMOTE_ROAR, /*isState=*/false, /*isCreature=*/true,
+        0x8u, 0x4u, 0u, false, 0u, false, false, kNoAnim, kNoAnim));
+    // Persistent STATE_ emotes are never suppressed by one-shot wound gating.
+    CHECK_FALSE(unitSuppressesWoundEmote(
+        anim::COMBAT_CRITICAL, /*isState=*/true, /*isCreature=*/true,
+        0x8u, 0x4u, 0u, false, 0u, false, false, kNoAnim, kNoAnim));
+
+    // Ras Frostwhisper (10508, typeFlags 0x0, Lich.mdx modelFlags 0x3): suppressed.
+    CHECK(unitSuppressesWoundEmote(
+        anim::COMBAT_CRITICAL, false, true, 0u, 0x3u, 0u,
+        false, 0u, false, false, kNoAnim, kNoAnim));
+
+    // Blackhand Veteran (9819, typeFlags 0x0, OrcMale modelFlags 0x4) standing idle/Ready1H: plays!
+    CHECK_FALSE(unitSuppressesWoundEmote(
+        anim::COMBAT_CRITICAL, false, true, 0u, 0x4u, 0u,
+        false, 0u, false, false, kNoAnim, kNoAnim));
+
+    // Stunned Blackhand Veteran (Hammer of Justice 10308 -> UNIT_FLAG_STUNNED): suppressed.
+    CHECK(unitSuppressesWoundEmote(
+        anim::COMBAT_CRITICAL, false, true, 0u, 0x4u, kStunFlag,
+        false, 0u, false, false, anim::STUN, kNoAnim));
+    CHECK(unitSuppressesWoundEmote(
+        anim::COMBAT_CRITICAL, false, true, 0u, 0x4u, kStunFlag,
+        false, 0u, false, false, kNoAnim, kNoAnim));
+
+    // Mid-melee-swing (Attack1H 17 / Attack2HLoose 19) or Knockdown (121): suppressed.
+    CHECK(unitSuppressesWoundEmote(
+        anim::COMBAT_CRITICAL, false, true, 0u, 0x4u, 0u,
+        true, anim::ATTACK_1H, false, false, kNoAnim, kNoAnim));
+    CHECK(unitSuppressesWoundEmote(
+        anim::COMBAT_CRITICAL, false, true, 0u, 0x4u, 0u,
+        true, anim::ATTACK_2H_LOOSE, false, false, kNoAnim, kNoAnim));
+    CHECK(unitSuppressesWoundEmote(
+        anim::COMBAT_CRITICAL, false, true, 0u, 0x4u, 0u,
+        true, anim::KNOCKDOWN, false, false, kNoAnim, kNoAnim));
+
+    // Actively casting / channeling (hasActiveCastHold = true, e.g. ReadySpellOmni 52):
+    // SMSG_EMOTE 34 suppressed, while direct HitReaction during precast still plays & resumes.
+    CHECK(unitSuppressesWoundEmote(
+        anim::COMBAT_CRITICAL, false, true, 0u, 0x4u, 0u,
+        false, 0u, /*hasActiveCastHold=*/true, false, kNoAnim, kNoAnim));
+    CHECK_FALSE(unitSuppressesHitReactionDuringCastOrAura(
+        /*hasActiveCastOneShot=*/false, kNoAnim, kNoAnim));
+
+    // Active spell cast release one-shot (Special2H 58 Cleave/Mortal Strike) or Whirlwind StateKit (126):
+    // suppresses both HitReaction and SMSG_EMOTE 34.
+    CHECK(unitSuppressesHitReactionDuringCastOrAura(true, kNoAnim, kNoAnim));
+    CHECK(unitSuppressesHitReactionDuringCastOrAura(false, anim::WHIRLWIND, kNoAnim));
+    CHECK_FALSE(unitSuppressesHitReactionDuringCastOrAura(false, anim::STAND, kNoAnim));
+    CHECK_FALSE(unitSuppressesHitReactionDuringCastOrAura(false, anim::STUN, kNoAnim));
+    CHECK(unitSuppressesWoundEmote(
+        anim::COMBAT_CRITICAL, false, true, 0u, 0x4u, 0u,
+        true, anim::SPECIAL_2H, false, true, kNoAnim, kNoAnim));
+    CHECK(unitSuppressesWoundEmote(
+        anim::COMBAT_CRITICAL, false, true, 0u, 0x4u, 0u,
+        false, 0u, false, false, anim::WHIRLWIND, kNoAnim));
+}
+
 TEST_CASE("Wound hit reaction chooses StandWound when standing idle and CombatWound in combat stance",
           "[hit-reaction]") {
     using namespace wowee::rendering;

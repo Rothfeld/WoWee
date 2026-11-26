@@ -50,6 +50,16 @@ private:
     /// (preferring an active morph/shapeshift instance over the hidden base instance).
     uint32_t resolveUnitInstanceId(uint64_t guid) const;
 
+    /// Reverse-lookup a remote unit GUID from its rendered CharacterRenderer instance ID.
+    uint64_t resolveRemoteGuidForInstance(uint32_t instanceId) const;
+
+    /// Shared TBC 2.4.3 wound-animation eligibility check for remote creatures and
+    /// remote players across SMSG_ATTACKERSTATEUPDATE, SMSG_SPELLNONMELEEDAMAGELOG,
+    /// SMSG_EMOTE (EMOTE_ONESHOT_WOUND 33 / EMOTE_ONESHOT_WOUNDCRITICAL 34), and
+    /// SpellVisualKit ImpactKit wound animations (e.g. Fireball / Frostbolt / Fire Blast).
+    bool canPlayRemoteWoundAnimation(uint64_t guid, uint32_t instanceId,
+                                     uint32_t animId, bool isServerEmote) const;
+
     /// UnitBlood combat spurt on a wounded unit, at ChestBloodFront (15) when
     /// the attacker stands in front of it, ChestBloodBack (16) behind it.
     void playCombatBlood(uint64_t attackerGuid, uint64_t victimGuid, bool critical);

@@ -872,6 +872,11 @@ void CombatHandler::handleAttackerStateUpdate(network::Packet& packet) {
         return GameHandler::isLethalDamage(
             unit->getHealth(), unit->getMaxHealth(), data.totalDamage, data.overkill);
     }();
+    if (lethalHit && data.targetGuid != owner_.getPlayerGuid()) {
+        if (auto* victimUnit = owner_.getUnitByGuid(data.targetGuid)) {
+            victimUnit->markPendingLethalHit();
+        }
+    }
     // A non-lethal swing puts its attacker in melee, as SMSG_ATTACKSTART does.
     // The server sends ATTACKSTART once, when the attack begins; a unit already
     // fighting when it came into view has only its swings. Build 8606 holds
@@ -1050,6 +1055,11 @@ void CombatHandler::handleSpellDamageLog(network::Packet& packet) {
         const auto unit = std::static_pointer_cast<Unit>(ent);
         return GameHandler::isLethalDamage(unit->getHealth(), unit->getMaxHealth(), dmg, ok);
     }();
+    if (lethalHit && data.targetGuid != owner_.getPlayerGuid()) {
+        if (auto* victimUnit = owner_.getUnitByGuid(data.targetGuid)) {
+            victimUnit->markPendingLethalHit();
+        }
+    }
 
     // Direct spell damage with a per-target SpellVisual impact kit triggers victim
     // hit-flinch (StandWound 8 / CombatWound 9 / CombatCritical 10) for local player,

@@ -48,6 +48,11 @@ public:
 
     void playSpellVisualKit(uint32_t kitId, const glm::vec3& worldPosition, uint32_t attachInstanceId,
                             bool deathPersistent = false);
+    /// Optional predicate consulted before playing a wound animation (StandWound 8,
+    /// CombatWound 9, CombatCritical 10) authored on an ImpactKit (e.g. Fireball
+    /// kit 286, Frostbolt kit 4991, Fire Blast kit 728) on a remote unit instance.
+    using WoundAnimationFilter = std::function<bool(uint32_t instanceId, uint32_t animId)>;
+    void setWoundAnimationFilter(WoundAnimationFilter filter) { woundAnimationFilter_ = std::move(filter); }
     /// One end of a cast kit's beam: a unit (its render instance, chest 34,
     /// followed while the beam lasts) or, with instanceId 0, a fixed point.
     struct ChainEnd {
@@ -719,6 +724,7 @@ private:
 
     M2Renderer* m2Renderer_ = nullptr;
     Renderer* renderer_ = nullptr;
+    WoundAnimationFilter woundAnimationFilter_;
     pipeline::AssetManager* cachedAssetManager_ = nullptr;
 
     std::vector<SpellVisualInstance> activeSpellVisuals_;
