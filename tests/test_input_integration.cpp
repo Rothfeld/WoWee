@@ -138,18 +138,29 @@ TEST_CASE("TBC game object creation and updates deliver authored state", "[game-
             if (present) packet.writeUInt32(state);
             session.receive(packet);
         };
+        const uint32_t updatedState = 1u - initialState;
         send(true, initialState);
         REQUIRE(states.size() == 1);
         CHECK(states.back() == initialState);
-        send(false, 1u - initialState);
+        send(false, updatedState);
         REQUIRE(states.size() == 2);
-        CHECK(states.back() == 1u - initialState);
+        CHECK(states.back() == updatedState);
         session.handler().setReadingGameObject(guid);
-        REQUIRE(states.size() == 3);
-        CHECK(states.back() == 0);
-        session.handler().clearBook();
-        REQUIRE(states.size() == 4);
-        CHECK(states.back() == 1u - initialState);
+        if (updatedState != 0) {
+            // Closed GameObject (GO_STATE_READY = 1) opens locally to state 0 while read,
+            // and restores its server state when the book closes.
+            REQUIRE(states.size() == 3);
+            CHECK(states.back() == 0);
+            session.handler().clearBook();
+            REQUIRE(states.size() == 4);
+            CHECK(states.back() == updatedState);
+        } else {
+            // Already-open GameObject (GO_STATE_ACTIVE = 0) does not replay redundant
+            // Open/Close state transitions when read or closed.
+            CHECK(states.size() == 2);
+            session.handler().clearBook();
+            CHECK(states.size() == 2);
+        }
     }
 }
 

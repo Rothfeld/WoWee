@@ -343,7 +343,14 @@ bool TbcPacketParsers::parseUpdateObject(network::Packet& packet, UpdateObjectDa
                 packet.setReadPos(start);
                 return false;
             }
-            /*uint8_t hasTransport =*/ packet.readUInt8();
+            // CMaNGOS-TBC UpdateData::BuildPacket writes uint8(bool hasTransport) in {0, 1}.
+            // Rejecting values > 1 prevents headerless UpdateType::OUT_OF_RANGE_OBJECTS (4)
+            // packets from false-positively parsing as hasTransport=4 + UpdateType::MOVEMENT (1).
+            const uint8_t hasTransport = packet.readUInt8();
+            if (hasTransport > 1) {
+                packet.setReadPos(start);
+                return false;
+            }
         }
 
         const uint32_t headerBlockCount = out.blockCount;

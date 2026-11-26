@@ -2444,8 +2444,9 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid, std::optiona
     // Auto Shot and the wand's Shoot keep going once started, and the action
     // button flashes for as long as they do. Only once the cast is sent: a
     // press refused above never reaches the server, so nothing would stop it.
-    // The stop half comes from the server on SMSG_CANCEL_AUTO_REPEAT. A press
-    // while it already runs starts nothing, and the server ignores it.
+    // Pressing the button again while active toggles it off above via
+    // CMSG_CANCEL_AUTO_REPEAT_SPELL (unless guarded by secureAbilityToggle);
+    // server-initiated stops arrive via SMSG_CANCEL_AUTO_REPEAT.
     constexpr uint32_t kAutoShot = 75, kShoot = 5019;
     if ((spellId == kAutoShot || spellId == kShoot) && autoRepeatSpellId_ != spellId) {
         autoRepeatSpellId_ = spellId;

@@ -262,7 +262,8 @@ public:
 
     // The expansion is chosen and its tables loaded the way the client does it
     // at startup, from the profiles under Data/expansions in this repository.
-    explicit Session(const char* expansion = "wotlk") : handler_(services_) {
+    explicit Session(const char* expansion = "wotlk")
+        : handler_(services_), tbc_(std::string_view(expansion) == "tbc") {
         auto registry = std::make_unique<wowee::game::ExpansionRegistry>();
         registry->initialize(std::string(WOWEE_SOURCE_DIR) + "/Data");
         REQUIRE(registry->setActive(expansion));
@@ -292,8 +293,9 @@ public:
 
     // The player's own create block, as the server sends it on login.
     void spawnPlayer(const UpdateObject::Fields& fields) {
-        receive(UpdateObject().create(kPlayerGuid, wowee::game::ObjectType::PLAYER, fields,
-                                      true));
+        UpdateObject u;
+        if (tbc_) u.tbc();
+        receive(u.create(kPlayerGuid, wowee::game::ObjectType::PLAYER, fields, true));
     }
 
 private:
@@ -303,6 +305,7 @@ private:
     wowee::game::GameServices services_;
     wowee::game::GameHandler handler_;
     SentPackets* sent_ = nullptr;
+    bool tbc_ = false;
 };
 
 // CMaNGOS-TBC CharacterNameQueryResponse: guid, name, realm byte, race,

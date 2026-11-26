@@ -146,13 +146,29 @@ TEST_CASE("a refused Auto Shot press stops the repeat it started", "[replay]") {
     CHECK(s.handler().getAutoRepeatSpellId() == 0);
 }
 
-TEST_CASE("a refused second Auto Shot press leaves the first one repeating", "[replay]") {
+TEST_CASE("a second Auto Shot press toggles off unless guarded by secureAbilityToggle, and mismatched castFailed leaves it repeating", "[replay]") {
     Session s;
     huntMob(s);
-    s.handler().castSpell(kAutoShot, kMob);
-    s.handler().castSpell(kAutoShot, kMob);
 
-    s.receive(castFailed(lastCastCount(s), kAutoShot, kNotReady));
+    // 1. With secureAbilityToggle=0 (fixture default), a second Auto Shot press toggles
+    //    Auto Shot off via CMSG_CANCEL_AUTO_REPEAT_SPELL without sending a second CMSG_CAST_SPELL,
+    //    matching Native TBC 2.4.3, and a third press starts it again.
+    s.handler().castSpell(kAutoShot, kMob);
+    REQUIRE(s.handler().getAutoRepeatSpellId() == kAutoShot);
+    REQUIRE(s.sent().of(wowee::game::Opcode::CMSG_CAST_SPELL).size() == 1);
+
+    s.handler().castSpell(kAutoShot, kMob);
+    CHECK(s.handler().getAutoRepeatSpellId() == 0);
+    CHECK(s.sent().of(wowee::game::Opcode::CMSG_CANCEL_AUTO_REPEAT_SPELL).size() == 1);
+    CHECK(s.sent().of(wowee::game::Opcode::CMSG_CAST_SPELL).size() == 1);
+
+    s.handler().castSpell(kAutoShot, kMob);
+    REQUIRE(s.handler().getAutoRepeatSpellId() == kAutoShot);
+    REQUIRE(s.sent().of(wowee::game::Opcode::CMSG_CAST_SPELL).size() == 2);
+
+    // 2. A refused cast carrying a non-initiating castCount leaves the running Auto Shot repeating.
+    const uint8_t mismatchCount = static_cast<uint8_t>(lastCastCount(s) + 1u);
+    s.receive(castFailed(mismatchCount, kAutoShot, kNotReady));
     CHECK(s.handler().getAutoRepeatSpellId() == kAutoShot);
 }
 
@@ -840,13 +856,17 @@ TEST_CASE("TBC monster and raid-boss chat expands $-tokens and delivers arg1..ar
     }
 
     SECTION("RAID_BOSS_EMOTE targeting uncached remote player waits for NAME_QUERY_RESPONSE") {
+        const size_t queriesBefore = s.sent().of(wowee::game::Opcode::CMSG_NAME_QUERY).size();
         s.receive(tbcMonsterChatPacket(
             ChatType::RAID_BOSS_EMOTE, kBossGuid, "Grand Warlock Alythess",
             kRemotePlayerGuid, "",
             "Alythess directs Conflagration at $n ($c $r $gman:woman;)."));
         // Deferred until name query resolves.
         CHECK(events.empty());
-        CHECK(s.sent().of(wowee::game::Opcode::CMSG_NAME_QUERY).size() == 1);
+        const auto queries = s.sent().of(wowee::game::Opcode::CMSG_NAME_QUERY);
+        REQUIRE(queries.size() == queriesBefore + 1);
+        wowee::network::Packet qCopy = queries.back();
+        CHECK(qCopy.readUInt64() == kRemotePlayerGuid);
 
         // Blood Elf(10) Female(1) Paladin(2)
         s.receive(nameResponse(kRemotePlayerGuid, "Horserichy", /*race=*/10, /*gender=*/1, /*cls=*/2));
@@ -1796,8 +1816,15 @@ TEST_CASE("out-of-range and destroy of in-view party member mirror stats and re-
     using wowee::game::Opcode;
     using wowee::game::wireOpcode;
 
-    for (const bool destroy : {false, true}) {
-        INFO((destroy ? "SMSG_DESTROY_OBJECT" : "OUT_OF_RANGE_OBJECTS"));
+    // mode 0: TBC OUT_OF_RANGE_OBJECTS with hasTransport=0 (real CMaNGOS-TBC wire layout)
+    // mode 1: TBC OUT_OF_RANGE_OBJECTS with hasTransport=1 (real CMaNGOS-TBC wire layout)
+    // mode 2: headerless OUT_OF_RANGE_OBJECTS (tests TbcPacketParsers fallback rejecting hasTransport=4)
+    // mode 3: SMSG_DESTROY_OBJECT
+    for (const int mode : {0, 1, 2, 3}) {
+        const bool destroy = (mode == 3);
+        INFO((mode == 0 ? "OUT_OF_RANGE_OBJECTS (hasTransport=0)" :
+              mode == 1 ? "OUT_OF_RANGE_OBJECTS (hasTransport=1)" :
+              mode == 2 ? "OUT_OF_RANGE_OBJECTS (headerless fallback)" : "SMSG_DESTROY_OBJECT"));
         Session s("tbc");
         constexpr uint64_t memberGuid = 77;
         joinGroup(s, memberGuid, false);
@@ -1823,6 +1850,9 @@ TEST_CASE("out-of-range and destroy of in-view party member mirror stats and re-
             despawn.writeUInt8(0);
         } else {
             despawn.writeUInt32(1);
+            if (mode == 0 || mode == 1) {
+                despawn.writeUInt8(static_cast<uint8_t>(mode)); // hasTransport in {0, 1}
+            }
             despawn.writeUInt8(static_cast<uint8_t>(wowee::game::UpdateType::OUT_OF_RANGE_OBJECTS));
             despawn.writeUInt32(1);
             despawn.writePackedGuid(memberGuid);
