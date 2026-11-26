@@ -1473,3 +1473,147 @@ TEST_CASE("A gully of the terrain between steep faces is walked up", "[body_move
         CHECK(glm::distance(moved, glm::vec3(0.0615f, -0.1050f, 0.1679f)) < 0.003f);
     }
 }
+
+TEST_CASE("A jump up an oblique walkable hill touches down while rising and runs straight on", "[body_mover]") {
+    // Searing Gorge, Dustfire Valley (-6370.91, -1949.46): a 23 degree hill
+    // rising mainly along +y, crossed diagonally at heading 0.8925 rad (51.1
+    // degrees). Where the hill along the heading rises faster than the jump
+    // climbs, native touches down before the jump's 412 ms apex (at 0 to 224
+    // ms at 35 yd/s, and before the apex at 7 yd/s on steeper walkable ground)
+    // and walks the rest of the frame straight along its heading. Refusing a
+    // landing while delta.z > 0 turned the rising jump along the hill's
+    // contour and pushed it 4 to 8 yd sideways.
+    const auto obliqueHill = [](float slopeDeg) {
+        const float dzDy = std::tan(glm::radians(slopeDeg));
+        Mesh mesh;
+        const auto h = [&](float x, float y) { return 0.08f * dzDy * x + dzDy * y; };
+        quad(mesh, {-40.0f, -10.0f, h(-40.0f, -10.0f)},
+             {80.0f, -10.0f, h(80.0f, -10.0f)},
+             {80.0f, 90.0f, h(80.0f, 90.0f)},
+             {-40.0f, 90.0f, h(-40.0f, 90.0f)});
+        return mesh;
+    };
+    const float yaw = 0.892526f;
+    const glm::vec3 dir(std::cos(yaw), std::sin(yaw), 0.0f);
+    const glm::vec3 side(-std::sin(yaw), std::cos(yaw), 0.0f);
+
+    SECTION("mid-frame rising touchdown walks the remainder straight ahead") {
+        const Mesh mesh = obliqueHill(23.0f);
+        const float dt = 1.0f / 30.0f;
+        const glm::vec3 groundMove = dir * (20.0f * dt);
+        // Start 0.06 yd above the slope: horizontal move climbs ~0.236 yd on
+        // the slope while delta.z rises +0.10 yd, meeting the slope ~0.44 in.
+        const glm::vec3 from(0.0f, 0.0f, 0.06f);
+        const glm::vec3 delta = groundMove + glm::vec3(0.0f, 0.0f, 0.10f);
+        const BodyMove move = fallBody(from, delta, kRadius, kHeight, mesh,
+                                       kMinWalkableNormalZ, kMaxStepUp, mesh.size(), groundMove);
+        REQUIRE(move.support == BodySupport::Walkable);
+        CHECK(move.soleOnGround);
+        REQUIRE(move.landedAfter);
+        CHECK(*move.landedAfter > 0.35f);
+        CHECK(*move.landedAfter < 0.55f);
+        // Touchdown and end-of-frame walk both keep the heading without contour push.
+        CHECK(std::abs(glm::dot(move.landedAt - from, side)) < 0.003f);
+        CHECK(std::abs(glm::dot(move.position - from, side)) < 0.005f);
+        CHECK(glm::dot(move.position - from, dir) == Catch::Approx(glm::length(groundMove)).margin(0.01f));
+    }
+
+    SECTION("takeoff onto ground steeper than the jump arc lands at t=0 and walks the whole frame") {
+        const Mesh mesh = obliqueHill(24.0f);
+        const auto stood = lowerBody({0.0f, 0.0f, 0.5f}, 1.0f, kRadius, kHeight, mesh);
+        REQUIRE(stood);
+        const float partDt = (1.0f / 30.0f) / 4.0f;
+        const glm::vec3 partRun = dir * (35.0f * partDt);
+        const float partRise = (7.9555f * (1.0f / 30.0f) - 0.5f * kGravity * (1.0f / 900.0f)) / 4.0f;
+        const BodyMove move = fallBody(stood->position, partRun + glm::vec3(0.0f, 0.0f, partRise),
+                                       kRadius, kHeight, mesh, kMinWalkableNormalZ, kMaxStepUp,
+                                       mesh.size(), partRun);
+        REQUIRE(move.support == BodySupport::Walkable);
+        CHECK(move.soleOnGround);
+        REQUIRE(move.landedAfter);
+        CHECK(*move.landedAfter == Catch::Approx(0.0f).margin(1e-4f));
+        CHECK(glm::distance(move.landedAt, stood->position) < 0.003f);
+        CHECK(std::abs(glm::dot(move.position - stood->position, side)) < 0.003f);
+        CHECK(glm::dot(move.position - stood->position, dir) == Catch::Approx(glm::length(partRun)).margin(0.005f));
+    }
+
+    SECTION("normal run speed jumping up a 42 degree diagonal walkable hill is not pushed sideways") {
+        const Mesh mesh = obliqueHill(42.0f);
+        const auto stood = lowerBody({0.0f, 0.0f, 0.5f}, 1.0f, kRadius, kHeight, mesh);
+        REQUIRE(stood);
+        Walker walker{.position = stood->position, .baseZ = stood->position.z, .terrain = mesh.size()};
+        const float dt = 1.0f / 30.0f;
+        const glm::vec3 run = dir * (7.0f * dt);
+        walker.frame(mesh, run, dt);
+        REQUIRE(walker.grounded);
+        // Jump while running diagonally uphill: slope rise along heading is
+        // 7 * (0.08*cos + sin) * tan(42) = 5.20 yd/s, so touchdown occurs at
+        // ~286 ms (< 412 ms apex), while vertical velocity is still positive.
+        walker.grounded = false;
+        walker.verticalVelocity = 7.9555f;
+        int airFrames = 0;
+        for (int i = 0; i < 30; ++i) {
+            walker.frame(mesh, run, dt);
+            if (!walker.grounded) ++airFrames;
+        }
+        REQUIRE(walker.grounded);
+        CHECK(airFrames < 12); // lands well before the 12.4-frame (412 ms) apex
+        CHECK(std::abs(glm::dot(walker.position - stood->position, side)) < 0.01f);
+        CHECK(glm::dot(walker.position - stood->position, dir) == Catch::Approx(31.0f * 7.0f * dt).margin(0.03f));
+    }
+
+    SECTION("5x speed sub-stepped uphill jumps stay on heading without contour deflection") {
+        const Mesh mesh = obliqueHill(23.0f);
+        const auto stood = lowerBody({0.0f, 0.0f, 0.5f}, 1.0f, kRadius, kHeight, mesh);
+        REQUIRE(stood);
+        glm::vec3 pos = stood->position;
+        float baseZ = pos.z;
+        bool grounded = true;
+        float vz = 0.0f;
+        glm::vec3 airVel(0.0f);
+        const float dt = 1.0f / 30.0f;
+        const glm::vec3 groundVel = dir * 35.0f;
+        for (int frame = 0; frame < 45; ++frame) {
+            if (grounded) airVel = groundVel;
+            if (grounded && (frame == 3 || frame == 18 || frame == 33)) {
+                grounded = false;
+                vz = 7.9555f;
+            }
+            const glm::vec3 horizVel = grounded ? groundVel : airVel;
+            float dz = 0.0f;
+            if (!grounded) {
+                dz = vz * dt - 0.5f * kGravity * dt * dt;
+                vz -= kGravity * dt;
+            }
+            const glm::vec3 whole = horizVel * dt + glm::vec3(0.0f, 0.0f, dz);
+            const int parts = std::max(1, static_cast<int>(std::ceil(glm::length(glm::vec2(whole)) / kRadius)));
+            const float partDt = dt / static_cast<float>(parts);
+            glm::vec3 partMove = whole / static_cast<float>(parts);
+            for (int p = 0; p < parts; ++p) {
+                const bool airBefore = !grounded;
+                BodyMove m;
+                if (grounded && vz <= 0.0f) {
+                    const float budget = std::clamp(baseZ + kMaxStepUp - pos.z, 0.0f, kMaxStepUp);
+                    m = walkBody(pos, glm::vec3(partMove.x, partMove.y, 0.0f), budget, kRadius, kHeight,
+                                 mesh, kMinWalkableNormalZ, kMaxStepUp, mesh.size(), glm::vec3(0.0f), parts == 1);
+                } else {
+                    m = fallBody(pos, partMove, kRadius, kHeight, mesh, kMinWalkableNormalZ, kMaxStepUp,
+                                 mesh.size(), groundVel * partDt);
+                    if (m.deflected) airVel = glm::vec3(m.levelKept, 0.0f) / partDt;
+                }
+                pos = m.position;
+                grounded = m.support != BodySupport::None;
+                if (grounded) {
+                    vz = 0.0f;
+                    baseZ = pos.z;
+                }
+                if (airBefore && grounded) {
+                    partMove = glm::vec3(groundVel.x * partDt, groundVel.y * partDt, partMove.z);
+                }
+            }
+        }
+        CHECK(grounded);
+        CHECK(std::abs(glm::dot(pos - stood->position, side)) < 0.02f);
+        CHECK(glm::dot(pos - stood->position, dir) == Catch::Approx(45.0f * 35.0f * dt).margin(0.05f));
+    }
+}

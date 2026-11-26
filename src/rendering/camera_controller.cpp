@@ -3048,11 +3048,18 @@ void CameraController::updateThirdPersonCamera(float deltaTime, FrameInput& f) {
     touchdownSeconds_.reset();
     bool airborneBeforeStep = !grounded;
     for (int step = 0; step < steps; ++step) {
+        const bool startedJumpBefore = f.startedJump;
         f.nowJump = jumpPressed && step == 0;
         stepTouchdownSeconds_.reset();
         targetPos = moveFollowedCharacter(f.physicsDeltaTime, f, prevTargetPos);
         groundFollowedCharacter(f.physicsDeltaTime, f, targetPos, prevTargetPos);
-        if (airborneBeforeStep && grounded && !touchdownSeconds_) {
+        // A jump that begins and touches down within the same step (uphill
+        // ground steeper along the heading than the takeoff climb: native
+        // sends MSG_MOVE_JUMP and MSG_MOVE_FALL_LAND at the same timestamp,
+        // fallTime 0, at the takeoff spot, then walks the rest of the frame)
+        // also has a touchdown to stamp.
+        const bool jumpedThisStep = !startedJumpBefore && f.startedJump;
+        if ((airborneBeforeStep || jumpedThisStep) && grounded && !touchdownSeconds_) {
             // Build 8606's landing packet carries the instant the fall met
             // the ground, to the millisecond: fall time 825 for a standing
             // jump on level ground (2 x 7.9555 / 19.2911 s; 2 jumps of 2),

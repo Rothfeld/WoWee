@@ -536,12 +536,19 @@ inline BodyMove fallBody(const glm::vec3& from, const glm::vec3& delta,
             // (_experiments/20261125T224500Z.movement_collision_parity_round26)
             return holdOnEdge(move.position.z + n.z * kContactSkin);
         }
-        if (n.z >= minWalkableNormalZ && remaining.z <= 0.0f && contact->face.z >= minWalkableNormalZ) {
-            // Ground under the sole ends the fall, and what is left of the
-            // frame's level move is walked from there: native coming down on
-            // the floor beyond the Anvilmar railing (-6080.5, 389.5) 0.67 of
-            // the way through a frame ends that frame its whole 0.2305 yd on
-            // (11 runs of 11), not where it touched down.
+        if (n.z >= minWalkableNormalZ && contact->face.z >= minWalkableNormalZ &&
+            (remaining.z <= 0.0f || (n.z >= kMinWalkableNormalZ && glm::dot(remaining, n) < 0.0f))) {
+            // Ground under the sole ends the fall, whether the body drops onto
+            // it or rises into ground steeper along the heading than the arc's
+            // climb (Dustfire Valley, -6370.9, -1949.5: native jumping up a
+            // 22 to 24 degree hill at 35 yd/s touches down 0 to 224 ms into
+            // the jump, while still rising, and runs straight on up; refused
+            // until the apex, the rising jump slid 4 to 8 yd sideways along
+            // the hill's contour). What is left of the frame's level move is
+            // walked from there: native coming down on the floor beyond the
+            // Anvilmar railing (-6080.5, 389.5) 0.67 of the way through a
+            // frame ends that frame its whole 0.2305 yd on (11 runs of 11),
+            // not where it touched down.
             move.position += n * kContactSkin;
             move.support = BodySupport::Walkable;
             move.soleOnGround = true;
@@ -556,7 +563,7 @@ inline BodyMove fallBody(const glm::vec3& from, const glm::vec3& delta,
             // the frame, and ends that frame 0.105 yd on along its heading,
             // 0.238 yd up on the nose again (3 runs; 0.108 is the rest of a
             // frame's 0.231).
-            const float left = delta.z < -1e-6f ? std::clamp(remaining.z / delta.z, 0.0f, 1.0f) : 0.0f;
+            const float left = delta.z < -1e-6f ? std::clamp(remaining.z / delta.z, 0.0f, 1.0f) : timeLeft;
             const glm::vec3 rest = groundMove ? glm::vec3(groundMove->x, groundMove->y, 0.0f) * left
                                               : glm::vec3(remaining.x, remaining.y, 0.0f);
             if ((groundMove || delta.x * delta.x + delta.y * delta.y > 1e-10f) && rest.x * rest.x + rest.y * rest.y > 1e-10f) {
