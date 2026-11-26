@@ -23,6 +23,12 @@ namespace SoundEntryFlags {
     inline constexpr uint32_t kVaryVolume   = 0x0800u; // 0x462515: uniform gain offset in [-0.15, +0.15]
 }
 
+enum class SoundLoopMode : uint8_t {
+    FromEntryFlags = 0, // Obey SoundEntries.dbc Flags & kLooping (0x0200)
+    ForceOneShot   = 1, // Authoritative one-shot (e.g. M2 $DSO DoodadSoundOneShot)
+    ForceLoop      = 2, // Authoritative loop (e.g. M2 $DSL DoodadSoundLoop, $GO2, CreatureLoop)
+};
+
 struct SoundVariant {
     std::string path;
     uint32_t weight = 1;
@@ -72,16 +78,20 @@ public:
 
     bool play2D(pipeline::AssetManager* assets, uint32_t soundId,
                 float volumeScale = 1.0f, float pitch = 1.0f,
-                uint32_t categoryOverride = kAutoCategory);
+                uint32_t categoryOverride = kAutoCategory,
+                SoundLoopMode loopMode = SoundLoopMode::FromEntryFlags);
     uint32_t play2DStoppable(pipeline::AssetManager* assets, uint32_t soundId,
                              float volumeScale = 1.0f, float pitch = 1.0f,
-                             uint32_t categoryOverride = kAutoCategory);
+                             uint32_t categoryOverride = kAutoCategory,
+                             SoundLoopMode loopMode = SoundLoopMode::FromEntryFlags);
     bool play3D(pipeline::AssetManager* assets, uint32_t soundId, const glm::vec3& position,
                 float volumeScale = 1.0f, float pitch = 1.0f,
-                uint32_t categoryOverride = kAutoCategory);
+                uint32_t categoryOverride = kAutoCategory,
+                SoundLoopMode loopMode = SoundLoopMode::FromEntryFlags);
     uint32_t play3DStoppable(pipeline::AssetManager* assets, uint32_t soundId, const glm::vec3& position,
                              float volumeScale = 1.0f, float pitch = 1.0f,
-                             uint32_t categoryOverride = kAutoCategory);
+                             uint32_t categoryOverride = kAutoCategory,
+                             SoundLoopMode loopMode = SoundLoopMode::FromEntryFlags);
 
     /// Local-player vs world spatial routing (Wow.exe 0x466562..0x4665f6, 0x627796..0x627818):
     /// - When isLocalPlayer && listenerAtCharacter: plays 2D scaled by 0.65f (0x89748c).
@@ -103,7 +113,8 @@ private:
 
     bool prepareEntryPlayback(pipeline::AssetManager* assets, uint32_t soundId,
                               float volumeScale, float pitch, bool stoppable,
-                              uint32_t categoryOverride,
+                              uint32_t categoryOverride, SoundLoopMode loopMode,
+                              const glm::vec3* worldPos3D,
                               const SoundEntryRecord*& outRec, std::string& outPath,
                               float& outVolume, float& outPitch, uint32_t& outCategory,
                               bool& outLoop);

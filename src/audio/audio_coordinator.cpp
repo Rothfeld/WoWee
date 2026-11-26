@@ -98,13 +98,18 @@ void AudioCoordinator::shutdown() {
     LOG_INFO("AudioCoordinator shutdown complete");
 }
 
-void AudioCoordinator::playZoneMusic(const std::string& music) {
-    if (music.empty() || !musicManager_) return;
+void AudioCoordinator::playZoneMusic(const std::string& music, uint32_t soundEntryId) {
+    if (music.empty() || !musicManager_ || !musicManager_->isEnabled()) return;
     if (music.rfind("file:", 0) == 0) {
         musicManager_->crossfadeToFile(music.substr(5));
     } else {
-        musicManager_->crossfadeTo(music);
+        musicManager_->crossfadeTo(music, MusicManager::kDefaultCrossfadeMs, soundEntryId);
     }
+}
+
+void AudioCoordinator::notifyWorldStateMusicChanged() {
+    musicSwitchCooldown_ = 0.0f;
+    currentMusicSetId_ = 0;
 }
 
 void AudioCoordinator::setZoneMusicLooping(bool loop) {
@@ -183,7 +188,9 @@ void AudioCoordinator::onOriginalSoundtrackDisabled(game::ZoneManager* zm) {
 
     std::string music = zm->getRandomMusic(currentZoneId_);
     if (!music.empty() && music.rfind("file:", 0) != 0) {
-        playZoneMusic(music);
+        const uint32_t musicSet = zm->getAreaZoneMusicId(currentZoneId_);
+        const uint32_t seId = musicManager_->resolveZoneMusicSoundEntryId(musicSet, currentMusicNight_);
+        playZoneMusic(music, seId);
         musicSwitchCooldown_ = 6.0f;
     } else {
         musicManager_->stopMusic();
@@ -255,6 +262,21 @@ void AudioCoordinator::updateZoneAudio(const ZoneAudioContext& ctx) {
         }
     }
 
+    uint32_t musicSet = ctx.wmoZoneMusicId;
+    if (musicSet == 0) musicSet = zm->getAreaZoneMusicId(ctx.areaId);
+    if (musicSet == 0) musicSet = zm->getAreaZoneMusicId(zoneId);
+
+    // Do not decode or start silent MP3 streams while music is disabled or zero-volume;
+    // keep currentMusicSetId_ synced with zero cooldown so re-enabling music starts immediately.
+    if (!musicManager_->isEnabled()) {
+        musicManager_->update(deltaTime);
+        currentMusicSetId_ = musicSet;
+        currentMusicNight_ = night;
+        introPlaying_ = false;
+        musicSwitchCooldown_ = 0.0f;
+        return;
+    }
+
     // ZoneIntroMusicTable: play area/WMO intro fanfare (Stormwind Valley of
     // Heroes, Orgrimmar Intro, Undercity Intro, Silvermoon Intro) once per
     // MinDelayMinutes cooldown before settling into regular ZoneMusic.
@@ -274,7 +296,8 @@ void AudioCoordinator::updateZoneAudio(const ZoneAudioContext& ctx) {
                 (readyIt == introReadyAt_.end() || audioClockSeconds_ >= readyIt->second)) {
                 const std::string track = zm->pickTrack(intro->tracks);
                 if (!track.empty()) {
-                    playZoneMusic(track);
+                    const uint32_t seId = musicManager_->resolveZoneIntroSoundEntryId(introId);
+                    playZoneMusic(track, seId);
                     introReadyAt_[introId] = audioClockSeconds_ + intro->minDelaySeconds;
                     introPlaying_ = true;
                     musicSwitchCooldown_ = 2.0f;
@@ -284,9 +307,6 @@ void AudioCoordinator::updateZoneAudio(const ZoneAudioContext& ctx) {
         }
     }
 
-    uint32_t musicSet = ctx.wmoZoneMusicId;
-    if (musicSet == 0) musicSet = zm->getAreaZoneMusicId(ctx.areaId);
-    if (musicSet == 0) musicSet = zm->getAreaZoneMusicId(zoneId);
     const auto pickForSet = [&]() -> std::string {
         const bool includeWowee = (ctx.wmoZoneMusicId == 0 && currentZoneId_ != 0 &&
                                    zm->getAreaZoneMusicId(currentZoneId_) == musicSet);
@@ -300,7 +320,8 @@ void AudioCoordinator::updateZoneAudio(const ZoneAudioContext& ctx) {
         currentMusicNight_ = night;
         const std::string music = pickForSet();
         if (!music.empty()) {
-            playZoneMusic(music);
+            const uint32_t seId = musicManager_->resolveZoneMusicSoundEntryId(musicSet, night);
+            playZoneMusic(music, seId);
             musicSwitchCooldown_ = 4.0f;
         }
     } else if (setChanged) {
@@ -321,7 +342,8 @@ void AudioCoordinator::updateZoneAudio(const ZoneAudioContext& ctx) {
         if (musicSwitchCooldown_ <= 0.0f) {
             const std::string music = pickForSet();
             if (!music.empty()) {
-                playZoneMusic(music);
+                const uint32_t seId = musicManager_->resolveZoneMusicSoundEntryId(currentMusicSetId_, currentMusicNight_);
+                playZoneMusic(music, seId);
                 if (musicManager_->isLooping()) {
                     musicSwitchCooldown_ = 0.5f;
                 } else {

@@ -100,21 +100,22 @@ void FootstepManager::update(float) {}
 
 bool FootstepManager::playSoundSpatialOrSelf(uint32_t soundId, const glm::vec3& position,
                                              bool isLocalPlayer, bool listenerAtCharacter,
-                                             uint32_t categoryOverride) {
+                                             uint32_t categoryOverride, bool forceOneShot) {
     if (soundId == 0 || !assetManager || volumeScale <= 0.0f || !AudioEngine::instance().isInitialized()) {
         return false;
     }
+    const SoundLoopMode loopMode = forceOneShot ? SoundLoopMode::ForceOneShot : SoundLoopMode::FromEntryFlags;
     if (isLocalPlayer) {
         if (listenerAtCharacter) {
             return SoundEntryTable::instance().play2D(
-                assetManager, soundId, volumeScale * kLocalSelf2DGain, 1.0f, categoryOverride);
+                assetManager, soundId, volumeScale * kLocalSelf2DGain, 1.0f, categoryOverride, loopMode);
         }
         return SoundEntryTable::instance().play3D(
             assetManager, soundId, position + glm::vec3(0.0f, 0.0f, kLocalListenerZOffset),
-            volumeScale, 1.0f, categoryOverride);
+            volumeScale, 1.0f, categoryOverride, loopMode);
     }
     return SoundEntryTable::instance().play3D(
-        assetManager, soundId, position, volumeScale, 1.0f, categoryOverride);
+        assetManager, soundId, position, volumeScale, 1.0f, categoryOverride, loopMode);
 }
 
 void FootstepManager::playFootstep(uint32_t displayId, uint32_t terrainTypeId, bool wading) {
@@ -208,8 +209,10 @@ bool FootstepManager::playUnitM2Event(pipeline::M2AudioEventType type, uint32_t 
             return playSoundSpatialOrSelf(soundId, position, isLocalPlayer, listenerAtCharacter);
         }
         case T::Sound:
-        case T::DoodadSoundOneShot:
             return playSoundSpatialOrSelf(eventData, position, isLocalPlayer, listenerAtCharacter);
+        case T::DoodadSoundOneShot:
+            return playSoundSpatialOrSelf(eventData, position, isLocalPlayer, listenerAtCharacter,
+                                          SoundEntryTable::kAutoCategory, /*forceOneShot=*/true);
         default:
             return false;
     }
@@ -244,8 +247,18 @@ uint32_t FootstepManager::stepModelAudioEvents(
         return 0;
     }
 
-    if (cursor.activeLoopHandle != 0 && cursor.activeLoopSequence != sequenceIndex) {
-        stopActiveLoop();
+    if (cursor.activeLoopHandle != 0) {
+        if (cursor.activeLoopSequence != sequenceIndex) {
+            stopActiveLoop();
+        } else if (!AudioEngine::instance().isSoundPlaying(cursor.activeLoopHandle)) {
+            cursor.activeLoopHandle = 0;
+            cursor.activeLoopSoundId = 0;
+            cursor.activeLoopSequence = -1;
+        } else if (boneWorldPos) {
+            AudioEngine::instance().setSoundPosition(
+                cursor.activeLoopHandle,
+                boneWorldPos(cursor.activeLoopBone, cursor.activeLoopLocalOffset));
+        }
     }
 
     if (heldAtEnd && animDurationMs > 0.0f && animTimeMs >= animDurationMs) {
@@ -289,21 +302,36 @@ uint32_t FootstepManager::stepModelAudioEvents(
         const glm::vec3 worldPos = boneWorldPos ? boneWorldPos(ev.bone, ev.position) : ev.position;
         switch (ev.type) {
             case T::Sound:
-            case T::DoodadSoundOneShot:
                 if (ev.data != 0 &&
                     SoundEntryTable::instance().play3D(assetManager, ev.data, worldPos, volumeScale)) {
                     ++firedCount;
                 }
                 break;
+            case T::DoodadSoundOneShot:
+                // $DSO explicitly plays a single one-shot per animation keyframe crossing, even when
+                // the referenced SoundEntries.dbc record carries 0x0200 (e.g. SE:3431 DeadMineSteamWhistleon,
+                // SE:9370 Cocoon_YellowDeath, SE:9116 hellfire_dw_converClosed.wav).
+                if (ev.data != 0 &&
+                    SoundEntryTable::instance().play3D(assetManager, ev.data, worldPos, volumeScale,
+                                                       1.0f, SoundEntryTable::kAutoCategory,
+                                                       SoundLoopMode::ForceOneShot)) {
+                    ++firedCount;
+                }
+                break;
             case T::DoodadSoundLoop:
+                // $DSL explicitly loops while the sequence remains active, including the 122 TBC M2
+                // $DSL entries whose SoundEntries.dbc row omits 0x0200 (e.g. SE:3246 FlameCircleLoop).
                 if (ev.data != 0) {
                     if (cursor.activeLoopHandle != 0 && cursor.activeLoopSoundId == ev.data) break;
                     stopActiveLoop();
                     cursor.activeLoopHandle = SoundEntryTable::instance().play3DStoppable(
-                        assetManager, ev.data, worldPos, volumeScale);
+                        assetManager, ev.data, worldPos, volumeScale, 1.0f,
+                        SoundEntryTable::kAutoCategory, SoundLoopMode::ForceLoop);
                     if (cursor.activeLoopHandle != 0) {
                         cursor.activeLoopSoundId = ev.data;
                         cursor.activeLoopSequence = sequenceIndex;
+                        cursor.activeLoopBone = ev.bone;
+                        cursor.activeLoopLocalOffset = ev.position;
                         ++firedCount;
                     }
                 }
@@ -321,7 +349,9 @@ uint32_t FootstepManager::stepModelAudioEvents(
                 else if (ev.type == T::GameObject5) slot = 5;
                 const uint32_t soundId = goSlotSoundResolver(slot);
                 if (soundId != 0 &&
-                    SoundEntryTable::instance().play3D(assetManager, soundId, worldPos, volumeScale)) {
+                    SoundEntryTable::instance().play3D(assetManager, soundId, worldPos, volumeScale,
+                                                       1.0f, SoundEntryTable::kAutoCategory,
+                                                       SoundLoopMode::ForceOneShot)) {
                     ++firedCount;
                 }
                 break;
@@ -334,10 +364,13 @@ uint32_t FootstepManager::stepModelAudioEvents(
                     if (cursor.activeLoopHandle != 0 && cursor.activeLoopSoundId == soundId) break;
                     stopActiveLoop();
                     cursor.activeLoopHandle = SoundEntryTable::instance().play3DStoppable(
-                        assetManager, soundId, worldPos, volumeScale);
+                        assetManager, soundId, worldPos, volumeScale, 1.0f,
+                        SoundEntryTable::kAutoCategory, SoundLoopMode::ForceLoop);
                     if (cursor.activeLoopHandle != 0) {
                         cursor.activeLoopSoundId = soundId;
                         cursor.activeLoopSequence = sequenceIndex;
+                        cursor.activeLoopBone = ev.bone;
+                        cursor.activeLoopLocalOffset = ev.position;
                         ++firedCount;
                     }
                 }
@@ -507,7 +540,8 @@ void FootstepManager::updateDrowningState(bool isDrowning) {
     if (!assetManager || volumeScale <= 0.0f || !AudioEngine::instance().isInitialized()) return;
     if (drowningLoopHandle_ == 0) {
         drowningLoopHandle_ = SoundEntryTable::instance().play2DStoppable(
-            assetManager, kPlayerDrowningLoopSoundId, volumeScale * kLocalSelf2DGain);
+            assetManager, kPlayerDrowningLoopSoundId, volumeScale * kLocalSelf2DGain,
+            1.0f, SoundEntryTable::kAutoCategory, SoundLoopMode::ForceLoop);
     }
 }
 
@@ -561,7 +595,8 @@ void FootstepManager::syncCreatureLoopSound(uint64_t guid, uint32_t displayId,
     }
 
     const uint32_t handle = SoundEntryTable::instance().play3DStoppable(
-        assetManager, loopSoundId, position, volumeScale);
+        assetManager, loopSoundId, position, volumeScale,
+        1.0f, SoundEntryTable::kAutoCategory, SoundLoopMode::ForceLoop);
     if (handle != 0) {
         creatureLoops_[guid] = CreatureLoopState{loopSoundId, handle};
     }

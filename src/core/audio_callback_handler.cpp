@@ -92,16 +92,14 @@ void AudioCallbackHandler::setupCallbacks() {
         if (!rec) return;
         const std::string path = audio::SoundEntryTable::instance().pickExistingPath(&assetManager_, *rec);
         if (!path.empty()) {
-            music->playMusic(path, /*loop=*/false);
+            music->playMusic(path, /*loop=*/false, /*fadeInMs=*/0.0f, rec->id);
         }
     });
 
     // WorldStateZoneSounds.dbc sync (SMSG_INIT_WORLD_STATES / SMSG_UPDATE_WORLD_STATE):
-    // immediately update ZoneManager's world-state map so the next frame's
-    // updateZoneAudio() re-evaluates ZoneMusic, SoundAmbience, ZoneIntroMusic,
-    // and SoundProviderPreferences without waiting for a zone boundary crossing.
-    // Also fade out any stale track in case AudioCoordinator is inside its 4s
-    // switch cooldown from an earlier world-entry frame.
+    // immediately update ZoneManager's world-state map and clear AudioCoordinator's
+    // switch cooldown so the next frame's updateZoneAudio() performs a seamless
+    // overlapping crossfade to the new ZoneMusic set without a silence gap.
     auto syncWorldStateAudio = [this]() {
         auto* zm = renderer_ ? renderer_->getZoneManager() : nullptr;
         if (!zm) return;
@@ -109,7 +107,10 @@ void AudioCallbackHandler::setupCallbacks() {
         if (!affectedChanged || !audioCoordinator_) return;
 
         auto* music = audioCoordinator_->getMusicManager();
-        if (!music || (!music->isPlaying() && !music->isLoading())) return;
+        if (!music || (!music->isPlaying() && !music->isLoading())) {
+            audioCoordinator_->notifyWorldStateMusicChanged();
+            return;
+        }
         const std::string& activeTrack = music->getActiveOrPendingTrack();
         if (activeTrack.empty() || activeTrack.rfind("file:", 0) == 0) return;
 
@@ -127,7 +128,7 @@ void AudioCallbackHandler::setupCallbacks() {
             activeSet = zm->getAreaZoneMusicId(audioCoordinator_->getCurrentZoneId());
         }
         if (activeSet != 0 && !zm->zoneMusicSetContainsTrack(activeSet, activeTrack)) {
-            music->stopMusic(600.0f);
+            audioCoordinator_->notifyWorldStateMusicChanged();
         }
     };
     syncWorldStateAudio();

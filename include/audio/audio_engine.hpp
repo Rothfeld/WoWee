@@ -157,13 +157,20 @@ public:
                                   float volume = 1.0f, float pitch = 1.0f, float maxDistance = 100.0f,
                                   float minDistance = 1.0f);
 
-    // Music streaming (for background music)
+    // Music streaming (primary + simultaneous crossfade-out decoder slot)
     bool playMusic(std::shared_ptr<const std::vector<uint8_t>> musicData,
                    float volume = 1.0f, bool loop = true,
-                   const std::string& debugPath = {});
+                   const std::string& debugPath = {},
+                   bool keepOutgoingForCrossfade = false,
+                   uint32_t soundEntryId = 0);
     void stopMusic();
+    void stopCrossfadeOut();
     [[nodiscard]] bool isMusicPlaying() const;
+    [[nodiscard]] bool isCrossfadeOutPlaying() const;
     void setMusicVolume(float volume);
+    void setCrossfadeOutVolume(float volume);
+    [[nodiscard]] float getMusicVolume() const { return activeMusic_.volume; }
+    [[nodiscard]] float getCrossfadeOutVolume() const { return fadingOutMusic_.volume; }
 
     // Update (call once per frame for cleanup/position sync)
     void update(float deltaTime);
@@ -259,14 +266,21 @@ private:
     uint32_t nextSoundId_ = 1;
     uint32_t maxChannels_ = 64;
 
-    // Music track state
-    ma_sound* musicSound_ = nullptr;
-    void* musicDecoder_ = nullptr;  // ma_decoder* - Keep decoder alive for streaming
-    std::shared_ptr<const std::vector<uint8_t>> musicData_;  // Keep encoded music data alive
-    float musicVolume_ = 1.0f;
-    uint64_t musicTraceSeq_ = 0;
-    std::string musicTracePath_;
-    double musicStartMonoSec_ = 0.0;
+    struct MusicStreamSlot {
+        ma_sound* sound = nullptr;
+        void* decoder = nullptr;  // ma_decoder* - Keep decoder alive for streaming
+        std::shared_ptr<const std::vector<uint8_t>> data;  // Keep encoded music data alive
+        float volume = 1.0f;
+        uint32_t soundEntryId = 0;
+        std::string soundEntryName;
+        uint64_t traceSeq = 0;
+        std::string tracePath;
+        double startMonoSec = 0.0;
+    };
+    void stopMusicSlot(MusicStreamSlot& slot, const char* reason);
+
+    MusicStreamSlot activeMusic_;
+    MusicStreamSlot fadingOutMusic_;
 
     bool initialized_ = false;
     float masterVolume_ = 1.0f;

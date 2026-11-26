@@ -3832,6 +3832,55 @@ add_test(NAME env_audio_reverb_underwater COMMAND test_env_audio_reverb_underwat
 set_tests_properties(env_audio_reverb_underwater PROPERTIES SKIP_RETURN_CODE 4)
 register_test_target(test_env_audio_reverb_underwater)
 
+# Wave-2 Audio Side-Discovery Parity: Native 0.6081 * SoundEntries.vol music gain,
+# simultaneous dual-decoder overlapping crossfade, Sound_EnableMusic=0 stream gate,
+# and 3D DistanceCutoff pre-cull + M2 $DSO/$DSL authoritative loop modes.
+add_executable(test_music_crossfade_loops
+    test_music_crossfade_loops.cpp
+    ${TEST_COMMON_SOURCES}
+    ${CMAKE_SOURCE_DIR}/src/audio/audio_engine.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/environment_reverb.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/sound_entries.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/audio_coordinator.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/music_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/footstep_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/creature_sound_index.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/creature_sound_index_assets.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/activity_sound_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/mount_sound_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/npc_voice_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/player_voice_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/ambient_sound_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/ui_sound_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/combat_sound_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/spell_sound_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/movement_sound_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/game/zone_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/asset_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/asset_manifest.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/loose_file_reader.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/dbc_loader.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/dbc_layout.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/blp_loader.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/dds_loader.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/m2_loader.cpp
+    ${CMAKE_SOURCE_DIR}/src/core/memory_monitor.cpp
+    ${CMAKE_SOURCE_DIR}/tools/editor/stb_image_impl.cpp
+)
+target_include_directories(test_music_crossfade_loops PRIVATE ${TEST_INCLUDE_DIRS})
+target_include_directories(test_music_crossfade_loops SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
+target_compile_definitions(test_music_crossfade_loops PRIVATE
+    WOWEE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+target_link_libraries(test_music_crossfade_loops PRIVATE
+    catch2_main ZLIB::ZLIB Threads::Threads ${CMAKE_DL_LIBS})
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_music_crossfade_loops PRIVATE m)
+endif()
+wowee_test_link_glm(test_music_crossfade_loops)
+add_test(NAME music_crossfade_loops COMMAND test_music_crossfade_loops)
+set_tests_properties(music_crossfade_loops PROPERTIES SKIP_RETURN_CODE 4)
+register_test_target(test_music_crossfade_loops)
+
 get_property(ALL_TEST_TARGETS GLOBAL PROPERTY WOWEE_ALL_TEST_TARGETS)
 list(LENGTH ALL_TEST_TARGETS _wowee_test_target_count)
 message(STATUS "Test targets registered: ${_wowee_test_target_count}")

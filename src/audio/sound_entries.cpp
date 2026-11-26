@@ -267,7 +267,8 @@ std::string SoundEntryTable::pickExistingPath(pipeline::AssetManager* assets, co
 
 bool SoundEntryTable::prepareEntryPlayback(pipeline::AssetManager* assets, uint32_t soundId,
                                            float volumeScale, float pitch, bool stoppable,
-                                           uint32_t categoryOverride,
+                                           uint32_t categoryOverride, SoundLoopMode loopMode,
+                                           const glm::vec3* worldPos3D,
                                            const SoundEntryRecord*& outRec, std::string& outPath,
                                            float& outVolume, float& outPitch, uint32_t& outCategory,
                                            bool& outLoop) {
@@ -276,6 +277,15 @@ bool SoundEntryTable::prepareEntryPlayback(pipeline::AssetManager* assets, uint3
     if (!rec) return false;
 
     auto& engine = AudioEngine::instance();
+    // Cull 3D sounds beyond DistanceCutoff (0x461c10) BEFORE archive lookups,
+    // RNG rolls, concurrency checks, or loop-mode diagnostics.
+    if (worldPos3D != nullptr) {
+        const glm::vec3 rel = *worldPos3D - engine.getListenerPosition();
+        if (glm::dot(rel, rel) >= rec->maxDistance * rec->maxDistance) {
+            return false;
+        }
+    }
+
     const uint32_t category = (categoryOverride == kAutoCategory)
         ? categoryForSoundType(rec->soundType)
         : categoryOverride;
@@ -309,8 +319,19 @@ bool SoundEntryTable::prepareEntryPlayback(pipeline::AssetManager* assets, uint3
         effectivePitch *= pitchDist(rng_);
     }
 
-    const bool hasLoopFlag = (rec->flags & SoundEntryFlags::kLooping) != 0u;
-    if (hasLoopFlag && !stoppable) {
+    bool wantsLoop = false;
+    switch (loopMode) {
+        case SoundLoopMode::ForceOneShot:
+            wantsLoop = false;
+            break;
+        case SoundLoopMode::ForceLoop:
+            wantsLoop = true;
+            break;
+        case SoundLoopMode::FromEntryFlags:
+            wantsLoop = (rec->flags & SoundEntryFlags::kLooping) != 0u;
+            break;
+    }
+    if (wantsLoop && !stoppable) {
         LOG_DEBUG("SoundEntryTable: looping SoundEntry ", rec->id, " ('", rec->name,
                   "') played without stoppable handle; playing one-shot");
     }
@@ -320,12 +341,13 @@ bool SoundEntryTable::prepareEntryPlayback(pipeline::AssetManager* assets, uint3
     outVolume = vol;
     outPitch = effectivePitch;
     outCategory = category;
-    outLoop = stoppable && hasLoopFlag;
+    outLoop = stoppable && wantsLoop;
     return true;
 }
 
 bool SoundEntryTable::play2D(pipeline::AssetManager* assets, uint32_t soundId,
-                             float volumeScale, float pitch, uint32_t categoryOverride) {
+                             float volumeScale, float pitch, uint32_t categoryOverride,
+                             SoundLoopMode loopMode) {
     const SoundEntryRecord* rec = nullptr;
     std::string path;
     float vol = 0.0f;
@@ -333,7 +355,8 @@ bool SoundEntryTable::play2D(pipeline::AssetManager* assets, uint32_t soundId,
     uint32_t category = SESoundCategory::kSfx;
     bool loop = false;
     if (!prepareEntryPlayback(assets, soundId, volumeScale, pitch, /*stoppable=*/false,
-                              categoryOverride, rec, path, vol, effectivePitch, category, loop)) {
+                              categoryOverride, loopMode, /*worldPos3D=*/nullptr,
+                              rec, path, vol, effectivePitch, category, loop)) {
         return false;
     }
     auto data = assets->readFile(path);
@@ -352,7 +375,8 @@ bool SoundEntryTable::play2D(pipeline::AssetManager* assets, uint32_t soundId,
 }
 
 uint32_t SoundEntryTable::play2DStoppable(pipeline::AssetManager* assets, uint32_t soundId,
-                                          float volumeScale, float pitch, uint32_t categoryOverride) {
+                                          float volumeScale, float pitch, uint32_t categoryOverride,
+                                          SoundLoopMode loopMode) {
     const SoundEntryRecord* rec = nullptr;
     std::string path;
     float vol = 0.0f;
@@ -360,7 +384,8 @@ uint32_t SoundEntryTable::play2DStoppable(pipeline::AssetManager* assets, uint32
     uint32_t category = SESoundCategory::kSfx;
     bool loop = false;
     if (!prepareEntryPlayback(assets, soundId, volumeScale, pitch, /*stoppable=*/true,
-                              categoryOverride, rec, path, vol, effectivePitch, category, loop)) {
+                              categoryOverride, loopMode, /*worldPos3D=*/nullptr,
+                              rec, path, vol, effectivePitch, category, loop)) {
         return 0;
     }
     auto data = assets->readFile(path);
@@ -380,7 +405,7 @@ uint32_t SoundEntryTable::play2DStoppable(pipeline::AssetManager* assets, uint32
 
 bool SoundEntryTable::play3D(pipeline::AssetManager* assets, uint32_t soundId,
                              const glm::vec3& position, float volumeScale, float pitch,
-                             uint32_t categoryOverride) {
+                             uint32_t categoryOverride, SoundLoopMode loopMode) {
     const SoundEntryRecord* rec = nullptr;
     std::string path;
     float vol = 0.0f;
@@ -388,12 +413,8 @@ bool SoundEntryTable::play3D(pipeline::AssetManager* assets, uint32_t soundId,
     uint32_t category = SESoundCategory::kSfx;
     bool loop = false;
     if (!prepareEntryPlayback(assets, soundId, volumeScale, pitch, /*stoppable=*/false,
-                              categoryOverride, rec, path, vol, effectivePitch, category, loop)) {
-        return false;
-    }
-    // Avoid reading WAV file from archive when beyond DistanceCutoff (0x461c10)
-    const glm::vec3 rel = position - AudioEngine::instance().getListenerPosition();
-    if (glm::dot(rel, rel) >= rec->maxDistance * rec->maxDistance) {
+                              categoryOverride, loopMode, &position,
+                              rec, path, vol, effectivePitch, category, loop)) {
         return false;
     }
     auto data = assets->readFile(path);
@@ -414,7 +435,7 @@ bool SoundEntryTable::play3D(pipeline::AssetManager* assets, uint32_t soundId,
 
 uint32_t SoundEntryTable::play3DStoppable(pipeline::AssetManager* assets, uint32_t soundId,
                                           const glm::vec3& position, float volumeScale, float pitch,
-                                          uint32_t categoryOverride) {
+                                          uint32_t categoryOverride, SoundLoopMode loopMode) {
     const SoundEntryRecord* rec = nullptr;
     std::string path;
     float vol = 0.0f;
@@ -422,11 +443,8 @@ uint32_t SoundEntryTable::play3DStoppable(pipeline::AssetManager* assets, uint32
     uint32_t category = SESoundCategory::kSfx;
     bool loop = false;
     if (!prepareEntryPlayback(assets, soundId, volumeScale, pitch, /*stoppable=*/true,
-                              categoryOverride, rec, path, vol, effectivePitch, category, loop)) {
-        return 0;
-    }
-    const glm::vec3 rel = position - AudioEngine::instance().getListenerPosition();
-    if (glm::dot(rel, rel) >= rec->maxDistance * rec->maxDistance) {
+                              categoryOverride, loopMode, &position,
+                              rec, path, vol, effectivePitch, category, loop)) {
         return 0;
     }
     auto data = assets->readFile(path);

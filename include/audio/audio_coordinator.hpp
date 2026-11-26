@@ -126,6 +126,10 @@ public:
     /// for the track to end.
     void onOriginalSoundtrackDisabled(game::ZoneManager* zm);
 
+    /// Clear switch cooldown so a live WorldStateZoneSounds transition crossfades
+    /// immediately on the next updateZoneAudio() tick without a fade-to-silence gap.
+    void notifyWorldStateMusicChanged();
+
     // Accessors for all audio managers (same interface as Renderer had)
     MusicManager* getMusicManager() { return musicManager_.get(); }
     FootstepManager* getFootstepManager() { return footstepManager_.get(); }
@@ -148,7 +152,7 @@ public:
     [[nodiscard]] uint32_t activeEnvironmentPresetId() const { return activeEnvPresetId_; }
 
 private:
-    void playZoneMusic(const std::string& music);
+    void playZoneMusic(const std::string& music, uint32_t soundEntryId = 0);
 
     std::unique_ptr<MusicManager> musicManager_;
     std::unique_ptr<FootstepManager> footstepManager_;

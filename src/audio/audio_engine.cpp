@@ -1428,24 +1428,71 @@ uint32_t AudioEngine::playSound3DStoppable(const std::string& mpqPath, const glm
                                 true, SfxPlayOptions{}, mpqPath);
 }
 
+void AudioEngine::stopMusicSlot(MusicStreamSlot& slot, const char* reason) {
+    const bool wasPlaying = (slot.sound != nullptr);
+    const uint64_t seq = slot.traceSeq;
+    const uint32_t seId = slot.soundEntryId;
+    const std::string seName = slot.soundEntryName;
+    const std::string spath = slot.tracePath;
+    const double startMono = slot.startMonoSec;
+
+    if (slot.sound) {
+        ma_sound_uninit(slot.sound);
+        std::free(slot.sound);
+        slot.sound = nullptr;
+    }
+    if (slot.decoder) {
+        ma_decoder* decoder = static_cast<ma_decoder*>(slot.decoder);
+        ma_decoder_uninit(decoder);
+        delete decoder;
+        slot.decoder = nullptr;
+    }
+    slot.data.reset();
+    slot.volume = 0.0f;
+    slot.soundEntryId = 0;
+    slot.soundEntryName.clear();
+    slot.traceSeq = 0;
+    slot.tracePath.clear();
+    slot.startMonoSec = 0.0;
+
+    if (wasPlaying) {
+        const double monoNow = monotonicSecondsNow();
+        std::lock_guard<std::mutex> lock(traceMutex_);
+        if (traceFile_) {
+            std::ostringstream os;
+            os << std::fixed << std::setprecision(6);
+            os << "{\"event\":\"stop\",\"client\":\"wowee\""
+               << ",\"seq\":" << seq
+               << ",\"handle_id\":0"
+               << ",\"mono_s\":" << monoNow
+               << ",\"ts_ns\":" << realtimeNsNow()
+               << ",\"sound_id\":" << seId
+               << ",\"sound_name\":\"" << jsonEscape(seName) << "\""
+               << ",\"path\":\"" << jsonEscape(spath) << "\""
+               << ",\"reason\":\"" << jsonEscape(reason ? reason : "explicit_stop") << "\""
+               << ",\"elapsed_s\":" << std::max(0.0, monoNow - startMono)
+               << "}";
+            writeTraceLineUnlocked(os.str());
+        }
+    }
+}
+
 bool AudioEngine::playMusic(std::shared_ptr<const std::vector<uint8_t>> musicData,
-                            float volume, bool loop, const std::string& debugPath) {
+                            float volume, bool loop, const std::string& debugPath,
+                            bool keepOutgoingForCrossfade, uint32_t soundEntryId) {
     if (!initialized_ || !engine_ || !musicData || musicData->empty()) {
         return false;
     }
 
-    LOG_INFO("AudioEngine::playMusic - data size: ", musicData->size(), " bytes, volume: ", volume);
-
-    stopMusic();
-
-    musicData_ = std::move(musicData);
-    musicVolume_ = volume;
+    const float clampedVol = glm::clamp(volume, 0.0f, 1.0f);
+    LOG_INFO("AudioEngine::playMusic - data size: ", musicData->size(), " bytes, volume: ", clampedVol,
+             ", crossfade: ", keepOutgoingForCrossfade);
 
     ma_decoder* decoder = new ma_decoder();
     ma_decoder_config decoderConfig = ma_decoder_config_init_default();
     ma_result result = ma_decoder_init_memory(
-        musicData_->data(),
-        musicData_->size(),
+        musicData->data(),
+        musicData->size(),
         &decoderConfig,
         decoder
     );
@@ -1453,71 +1500,93 @@ bool AudioEngine::playMusic(std::shared_ptr<const std::vector<uint8_t>> musicDat
     if (result != MA_SUCCESS) {
         LOG_ERROR("Failed to create music decoder: ", result);
         delete decoder;
-        musicData_.reset();
         return false;
     }
 
-    LOG_INFO("Decoder created - format: ", decoder->outputFormat,
-             ", channels: ", decoder->outputChannels,
-             ", sampleRate: ", decoder->outputSampleRate);
-
-    musicDecoder_ = decoder;
-
-    musicSound_ = static_cast<ma_sound*>(std::malloc(sizeof(ma_sound)));
-    if (!musicSound_) {
+    ma_sound* sound = static_cast<ma_sound*>(std::malloc(sizeof(ma_sound)));
+    if (!sound) {
         ma_decoder_uninit(decoder);
         delete decoder;
-        musicDecoder_ = nullptr;
-        musicData_.reset();
         return false;
     }
+
     result = ma_sound_init_from_data_source(
         engine_,
         decoder,
         MA_SOUND_FLAG_STREAM | MA_SOUND_FLAG_NO_PITCH | MA_SOUND_FLAG_NO_SPATIALIZATION,
         nullptr,
-        musicSound_
+        sound
     );
 
     if (result != MA_SUCCESS) {
         LOG_ERROR("Failed to create music sound: ", result);
         ma_decoder_uninit(decoder);
         delete decoder;
-        musicDecoder_ = nullptr;
-        std::free(musicSound_);
-        musicSound_ = nullptr;
-        musicData_.reset();
+        std::free(sound);
         return false;
     }
 
-    ma_sound_set_volume(musicSound_, volume);
-    ma_sound_set_looping(musicSound_, loop ? MA_TRUE : MA_FALSE);
+    ma_sound_set_volume(sound, clampedVol);
+    ma_sound_set_looping(sound, loop ? MA_TRUE : MA_FALSE);
 
-    result = ma_sound_start(musicSound_);
+    result = ma_sound_start(sound);
     if (result != MA_SUCCESS) {
         LOG_ERROR("Failed to start music playback: ", result);
-        ma_sound_uninit(musicSound_);
-        std::free(musicSound_);
-        musicSound_ = nullptr;
+        ma_sound_uninit(sound);
+        std::free(sound);
         ma_decoder_uninit(decoder);
         delete decoder;
-        musicDecoder_ = nullptr;
-        musicData_.reset();
         return false;
     }
 
-    LOG_INFO("Music playback started successfully - volume: ", volume,
+    // Transition outgoing stream cleanly: either move activeMusic_ into fadingOutMusic_
+    // for simultaneous dual-decoder crossfade, or stop active/fading streams immediately.
+    if (keepOutgoingForCrossfade && activeMusic_.sound != nullptr &&
+        ma_sound_is_playing(activeMusic_.sound) == MA_TRUE && activeMusic_.volume > 0.0f) {
+        stopMusicSlot(fadingOutMusic_, "crossfade_superseded");
+        fadingOutMusic_ = std::move(activeMusic_);
+        activeMusic_ = MusicStreamSlot{};
+    } else {
+        stopMusicSlot(fadingOutMusic_, "explicit_stop");
+        stopMusicSlot(activeMusic_, "explicit_stop");
+    }
+
+    uint32_t resolvedId = soundEntryId;
+    std::string resolvedName;
+    const auto& table = SoundEntryTable::instance();
+    if (resolvedId != 0) {
+        if (const SoundEntryRecord* rec = table.findLoadedById(resolvedId)) {
+            resolvedName = rec->name;
+        }
+    } else if (!debugPath.empty()) {
+        if (const SoundEntryRecord* rec = table.findLoadedByPath(debugPath)) {
+            resolvedId = rec->id;
+            resolvedName = rec->name;
+        }
+    }
+
+    activeMusic_.sound = sound;
+    activeMusic_.decoder = decoder;
+    activeMusic_.data = std::move(musicData);
+    activeMusic_.volume = clampedVol;
+    activeMusic_.soundEntryId = resolvedId;
+    activeMusic_.soundEntryName = resolvedName;
+    activeMusic_.traceSeq = nextTraceSeq_++;
+    activeMusic_.tracePath = debugPath;
+    activeMusic_.startMonoSec = monotonicSecondsNow();
+
+    LOG_INFO("Music playback started successfully - volume: ", clampedVol,
              ", loop: ", loop,
-             ", is_playing: ", ma_sound_is_playing(musicSound_));
-    musicTraceSeq_ = nextTraceSeq_++;
-    musicTracePath_ = debugPath;
-    musicStartMonoSec_ = monotonicSecondsNow();
+             ", is_playing: ", ma_sound_is_playing(activeMusic_.sound));
+
     if (playbackObserver_) {
         PlaybackEvent ev;
+        ev.soundEntryId = resolvedId;
+        ev.soundEntryName = resolvedName;
         ev.path = debugPath;
-        ev.byteSize = musicData_ ? musicData_->size() : 0;
+        ev.byteSize = activeMusic_.data ? activeMusic_.data->size() : 0;
         ev.sampleRate = decoder->outputSampleRate;
-        ev.volume = volume;
+        ev.volume = clampedVol;
         ev.music = true;
         ev.started = true;
         playbackObserver_(ev);
@@ -1528,14 +1597,15 @@ bool AudioEngine::playMusic(std::shared_ptr<const std::vector<uint8_t>> musicDat
             std::ostringstream os;
             os << std::fixed << std::setprecision(6);
             os << "{\"event\":\"start\",\"client\":\"wowee\""
-               << ",\"seq\":" << musicTraceSeq_
+               << ",\"seq\":" << activeMusic_.traceSeq
                << ",\"handle_id\":0"
-               << ",\"mono_s\":" << musicStartMonoSec_
+               << ",\"mono_s\":" << activeMusic_.startMonoSec
                << ",\"ts_ns\":" << realtimeNsNow()
-               << ",\"sound_id\":0,\"sound_name\":\"\""
+               << ",\"sound_id\":" << resolvedId
+               << ",\"sound_name\":\"" << jsonEscape(resolvedName) << "\""
                << ",\"path\":\"" << jsonEscape(debugPath) << "\""
                << ",\"spatial\":false,\"loop\":" << (loop ? "true" : "false") << ",\"music\":true"
-               << ",\"volume\":" << safeJsonFloat(volume)
+               << ",\"volume\":" << safeJsonFloat(clampedVol)
                << ",\"master_volume\":" << safeJsonFloat(masterVolume_)
                << ",\"suspended\":" << (suspended_ ? "true" : "false")
                << ",\"pitch\":1.0,\"min_dist\":0.0,\"max_dist\":0.0"
@@ -1554,56 +1624,39 @@ bool AudioEngine::playMusic(std::shared_ptr<const std::vector<uint8_t>> musicDat
 }
 
 void AudioEngine::stopMusic() {
-    const bool wasPlaying = (musicSound_ != nullptr);
-    const uint64_t seq = musicTraceSeq_;
-    const std::string spath = musicTracePath_;
-    const double startMono = musicStartMonoSec_;
-    if (musicSound_) {
-        ma_sound_uninit(musicSound_);
-        std::free(musicSound_);
-        musicSound_ = nullptr;
-    }
-    if (musicDecoder_) {
-        ma_decoder* decoder = static_cast<ma_decoder*>(musicDecoder_);
-        ma_decoder_uninit(decoder);
-        delete decoder;
-        musicDecoder_ = nullptr;
-    }
-    musicData_.reset();
-    musicTraceSeq_ = 0;
-    musicTracePath_.clear();
-    if (wasPlaying) {
-        const double monoNow = monotonicSecondsNow();
-        std::lock_guard<std::mutex> lock(traceMutex_);
-        if (traceFile_) {
-            std::ostringstream os;
-            os << std::fixed << std::setprecision(6);
-            os << "{\"event\":\"stop\",\"client\":\"wowee\""
-               << ",\"seq\":" << seq
-               << ",\"handle_id\":0"
-               << ",\"mono_s\":" << monoNow
-               << ",\"ts_ns\":" << realtimeNsNow()
-               << ",\"sound_id\":0,\"sound_name\":\"\""
-               << ",\"path\":\"" << jsonEscape(spath) << "\""
-               << ",\"reason\":\"explicit_stop\""
-               << ",\"elapsed_s\":" << std::max(0.0, monoNow - startMono)
-               << "}";
-            writeTraceLineUnlocked(os.str());
-        }
-    }
+    stopMusicSlot(fadingOutMusic_, "explicit_stop");
+    stopMusicSlot(activeMusic_, "explicit_stop");
+}
+
+void AudioEngine::stopCrossfadeOut() {
+    stopMusicSlot(fadingOutMusic_, "crossfade_end");
 }
 
 bool AudioEngine::isMusicPlaying() const {
-    if (!musicSound_) {
+    if (!activeMusic_.sound) {
         return false;
     }
-    return ma_sound_is_playing(musicSound_) == MA_TRUE;
+    return ma_sound_is_playing(activeMusic_.sound) == MA_TRUE;
+}
+
+bool AudioEngine::isCrossfadeOutPlaying() const {
+    if (!fadingOutMusic_.sound) {
+        return false;
+    }
+    return ma_sound_is_playing(fadingOutMusic_.sound) == MA_TRUE;
 }
 
 void AudioEngine::setMusicVolume(float volume) {
-    musicVolume_ = glm::clamp(volume, 0.0f, 1.0f);
-    if (musicSound_) {
-        ma_sound_set_volume(musicSound_, musicVolume_);
+    activeMusic_.volume = glm::clamp(volume, 0.0f, 1.0f);
+    if (activeMusic_.sound) {
+        ma_sound_set_volume(activeMusic_.sound, activeMusic_.volume);
+    }
+}
+
+void AudioEngine::setCrossfadeOutVolume(float volume) {
+    fadingOutMusic_.volume = glm::clamp(volume, 0.0f, 1.0f);
+    if (fadingOutMusic_.sound) {
+        ma_sound_set_volume(fadingOutMusic_.sound, fadingOutMusic_.volume);
     }
 }
 

@@ -143,7 +143,8 @@ public:
 private:
     bool playSoundSpatialOrSelf(uint32_t soundId, const glm::vec3& position,
                                 bool isLocalPlayer, bool listenerAtCharacter,
-                                uint32_t categoryOverride = UINT32_MAX);
+                                uint32_t categoryOverride = UINT32_MAX,
+                                bool forceOneShot = false);
 
     struct ModelAudioCursor {
         int prevSequence = -1;
@@ -151,6 +152,8 @@ private:
         uint32_t activeLoopHandle = 0;
         uint32_t activeLoopSoundId = 0;
         int activeLoopSequence = -1;
+        uint16_t activeLoopBone = 0;
+        glm::vec3 activeLoopLocalOffset{0.0f};
     };
 
     struct CharacterAudioCursor {
