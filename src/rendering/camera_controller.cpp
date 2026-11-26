@@ -554,6 +554,7 @@ glm::vec3 CameraController::moveBodyOnFootOnce(const glm::vec3& start, const glm
 
     movement::BodyMove move;
     bool walked = false;
+    fallBeginsNextStep_ = false;
     if (supported) {
         // The step height above where the sole last stood on ground.
         const float budget = std::clamp(walkableStepBaseZ_ + maxStep - from.z, 0.0f, maxStep);
@@ -614,6 +615,28 @@ glm::vec3 CameraController::moveBodyOnFootOnce(const glm::vec3& start, const glm
         // Walked off: the fall goes on at the velocity the body actually had
         // in this frame, not the one it left the ground with.
         airborneHorizontalVelocity_ = glm::vec3(move.position.x - from.x, move.position.y - from.y, 0.0f) / stepSeconds;
+        // The fall begins in the next frame, from rest: the frame after
+        // native walks off an edge or steps into the air above a nose drops
+        // 0.0105 yd at 33 ms - half of gravity times the frame squared - and
+        // the ones after it 0.0315 to 0.0328, 0.0525 to 0.0544 (the frame
+        // after a walking frame that went down by its move times the bevel,
+        // in the recorded runs of rounds 14 to 25: 0.010 to 0.012 in 42 of
+        // 57; the first frame after a step into the air before Karazhan:
+        // 0.007 to 0.013, as its frame was long, in 102 of 103,
+        // _experiments/20261125T224500Z.movement_collision_parity_round26).
+        // Left with the gravity this walking frame had gathered, WoWee
+        // dropped 0.0321 in that frame (0.032 to 0.035 in 37 of its 47 such
+        // frames in those runs) and was a frame ahead for the rest of the
+        // fall.
+        verticalVelocity = 0.0f;
+        fallBeginsNextStep_ = true;
+    } else if (!walked && move.landedAfter && move.support == movement::BodySupport::None) {
+        // Came down on ground and stepped into the air from there within the
+        // frame (fallBody): a new fall, from rest, with the velocity the keys
+        // ask for.
+        verticalVelocity = 0.0f;
+        fallBeginsNextStep_ = true;
+        airborneHorizontalVelocity_ = glm::vec3(bodyGroundVelocity_.x, bodyGroundVelocity_.y, 0.0f);
     } else if (!walked && move.deflected) {
         // Turned aside in the air: the fall goes on with what the faces left
         // of its level velocity. Native falling off the Dustwallow plank ramp
@@ -668,6 +691,8 @@ glm::vec3 CameraController::moveBodyOnFootOnce(const glm::vec3& start, const glm
     const bool landed = !walked && move.support == movement::BodySupport::Walkable;
     if (move.soleOnGround || landed || move.position.z < walkableStepBaseZ_)
         walkableStepBaseZ_ = move.position.z;
+    // Held on ground's edge over the ground that ended the fall: from that ground.
+    if (!walked && move.heldOverGroundZ) walkableStepBaseZ_ = std::min(walkableStepBaseZ_, *move.heldOverGroundZ);
     return move.position;
 }
 
@@ -3947,8 +3972,18 @@ void CameraController::update(float deltaTime) {
     // This is also the wire fallTime: swimming is not part of a ballistic arc.
     // Takeoff starts a new clock even when no ground contact preceded it.
     // Include this frame's physics, since heartbeats sample its final position.
+    // A fall that follows a walk off an edge or a step into the air begins
+    // with the next frame (moveBodyOnFootOnce): build 8606's landing after
+    // five frames of fall down the nose of the step before Karazhan says
+    // fall time 168, after three 100 to 103, after two 67 or 68, and its
+    // heartbeat one frame into such a fall 33 or 34 (9 paired runs with
+    // both characters visible, 15 landings;
+    // _experiments/20261125T224500Z.movement_collision_parity_round26
+    // packets_*.txt). Counted from the walking frame WoWee said 200 or 201
+    // where native says 168.
     airborneSeconds_ = (grounded || swimming || isFlightAirborne()) ? 0.0f :
-        (f.startedJump ? deltaTime : airborneSeconds_ + deltaTime);
+        (f.startedJump ? deltaTime : (fallBeginsNextStep_ ? 0.0f : airborneSeconds_ + deltaTime));
+    fallBeginsNextStep_ = false;
 
     // R key is now handled above with chat safeguard (WantTextInput check)
 

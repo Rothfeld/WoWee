@@ -50,7 +50,11 @@
 //  edge crosses an edge of the underside the drop pushes the body off along
 //  both sides of the underside that meet there. Wedged between such faces
 //  the body is held as on a perch: its fall starts over each frame, and the
-//  move the keys ask for is taken from there when it steps on.
+//  move the keys ask for is taken from there when it steps on. Pushed off
+//  the edge of ground that way and then stopped by ground under the sole, it
+//  does not come down: it is held on that edge, hung by its bevel, and walks
+//  on from there (the nose of a step no higher than the bevel and a frame's
+//  drop).
 //
 //  Triangles are solid from their front only (body_collision.hpp).
 //
@@ -281,6 +285,11 @@ struct BodyMove {
     // takes the rest of the frame from there.
     std::optional<float> landedAfter;
     glm::vec3 landedAt{0.0f};
+    // Of a fall held on the edge of ground by the body's underside because
+    // ground under the sole stopped it from going on down past that edge:
+    // the height the sole would have stood at on that ground. The step's
+    // yard is counted from there (fallBody).
+    std::optional<float> heldOverGroundZ;
 };
 
 // `met`, when given, receives the triangle of the contact.
@@ -445,14 +454,88 @@ inline BodyMove fallBody(const glm::vec3& from, const glm::vec3& delta,
     // The part of the frame not yet spent: what turns the move aside shortens
     // the way, not the time.
     float timeLeft = 1.0f;
+    // Where the edge of ground under the bevel first turned this fall aside
+    // without catching it, and how much of the frame was left then.
+    struct EdgeHold { glm::vec3 position; float timeLeft; };
+    std::optional<EdgeHold> edgeHold;
+    // The fall held on ground's edge (below): `groundZ` is where the sole
+    // would have stood on the ground that stopped it.
+    const auto holdOnEdge = [&](float groundZ) {
+        move.position = edgeHold->position;
+        move.support = BodySupport::Walkable;
+        move.soleOnGround = false;
+        move.deflected = true;
+        move.landedAfter = 1.0f - edgeHold->timeLeft;
+        move.landedAt = move.position;
+        move.heldOverGroundZ = std::min(groundZ, move.position.z);
+        const glm::vec3 rest = (groundMove ? glm::vec3(groundMove->x, groundMove->y, 0.0f)
+                                           : glm::vec3(delta.x, delta.y, 0.0f)) * edgeHold->timeLeft;
+        if (rest.x * rest.x + rest.y * rest.y > 1e-10f) {
+            const float budget = std::clamp(maxStep - (move.position.z - *move.heldOverGroundZ), 0.0f, maxStep);
+            BodyMove walked = walkBody(move.position, rest, budget, radius, height, triangles,
+                                       minWalkableNormalZ, maxStep, heightfieldTriangles, glm::vec3(0.0f), true);
+            if (walked.support == BodySupport::Walkable) {
+                walked.deflected = true;
+                walked.landedAfter = move.landedAfter;
+                walked.landedAt = move.landedAt;
+                walked.heldOverGroundZ = move.heldOverGroundZ;
+                return walked;
+            }
+        }
+        return move;
+    };
     for (int iteration = 0; iteration < 5 && glm::dot(remaining, remaining) > 1e-12f; ++iteration) {
         const BodyTriangle* met = nullptr;
         const auto contact = firstBodyContact(move.position, remaining, radius, height, triangles, &met);
         if (!contact) { move.position += remaining; remaining = glm::vec3(0.0f); timeLeft = 0.0f; break; }
+        // A body that begins the frame resting against what it meets - within
+        // the contact skin it is kept off by - meets it at the frame's start.
+        const bool metAtStart = iteration == 0 && contact->time * glm::length(remaining) <= kContactSkin * 2.0f;
         move.position += remaining * contact->time;
         remaining *= 1.0f - contact->time;
-        timeLeft *= 1.0f - contact->time;
+        if (!metAtStart) timeLeft *= 1.0f - contact->time;
         const glm::vec3 n = contact->normal;
+        if (edgeHold && n.z >= minWalkableNormalZ && remaining.z <= 0.0f && contact->face.z >= minWalkableNormalZ) {
+            // Ground under the sole stops a fall that the edge of other
+            // ground, under the bevel, has turned aside in this frame: the
+            // body cannot go on down past that edge. It does not come down:
+            // it is held on the edge, where the edge met it, as a body hung
+            // on ground's edge by its bevel stands, and what was left of the
+            // frame there is walked from there with the move the keys ask
+            // for.
+            //
+            // The step before Karazhan (map 0, -11117.5, -2009.8; level
+            // terrain, an upright riser 0.572 yd high, a level top - the
+            // riser's top edge a hair above the top of the body's bevel,
+            // 0.565): native stepped into the air over the nose (walkBody)
+            // comes back down it, pushed off by both sides of its underside
+            // frame after frame, and in the frame whose drop would bring it
+            // down on the terrain it takes its whole level move from where
+            // it is instead, 0.03 to 0.09 yd above the terrain, and ends hung
+            // on the nose where the body lifted, carried and lowered rests
+            // (within 0.2 mm), then walks on up the nose and onto the top:
+            // 72 falls at speeds 0.3 to 1.25, headings 19 to 65 degrees and
+            // frames of 17 and 33 ms (one more was held two frames sooner,
+            // 0.127 yd above the terrain, which is not explained). With the
+            // forward key let go during the fall it stays there, at rest
+            // hung on the nose 0.02 to 0.08 yd above the terrain (15 runs of
+            // 15), 1.5 to 2.8 mm below where that frame began: the contact
+            // skin. Where the fall ends with the nose already above the
+            // bevel - the sole within 0.01 yd of the terrain, the box's side
+            // against the riser, nothing under the underside - it lands on
+            // the terrain and steps again from there (15 falls of 15), as at
+            // the step in Dun Morogh below. In the Karabor Sewers (430.7,
+            // 907.7; the nose of a ramp's side) a recorded fall along the
+            // nose ends the same way, a whole move walked from the air
+            // (+0.1095; round 20's `ns20_u12`, which the replay now follows
+            // to its end). Brought down on the terrain
+            // before Karazhan and walked from there, WoWee stepped into the
+            // air again in the next frame and went up and down before the
+            // step for as long as the key was held (the user's client,
+            // 2026-11-25 22:40; 28 paired runs of 29).
+            // (_experiments/20261125T224500Z.movement_collision_parity_round26)
+            return holdOnEdge(move.position.z + n.z * kContactSkin);
+        }
         if (n.z >= minWalkableNormalZ && remaining.z <= 0.0f && contact->face.z >= minWalkableNormalZ) {
             // Ground under the sole ends the fall, and what is left of the
             // frame's level move is walked from there: native coming down on
@@ -479,8 +562,18 @@ inline BodyMove fallBody(const glm::vec3& from, const glm::vec3& delta,
             if ((groundMove || delta.x * delta.x + delta.y * delta.y > 1e-10f) && rest.x * rest.x + rest.y * rest.y > 1e-10f) {
                 BodyMove walked = walkBody(move.position, rest, maxStep, radius, height, triangles,
                                            minWalkableNormalZ, maxStep, heightfieldTriangles, glm::vec3(0.0f), true);
-                // Only a walk that stays on ground: a landing does not end in a perch or a second fall.
-                if (walked.support == BodySupport::Walkable) {
+                // A walk that stays on ground, or a step that leaves the
+                // body in the air above what it would rest on (walkBody):
+                // native come down the last hair before the Karazhan step
+                // (above), its box against the riser, ends that frame 1.4233
+                // times the rest of its move above the terrain - 0.0992 yd
+                // for 0.0689, 0.1631 for 0.1152, 0.2390 for 0.1679 - and
+                // falls from there, a first frame of fall (15 falls of 15).
+                // Kept on the terrain for that frame, WoWee stepped a frame
+                // later and with a whole move. A landing does not end in a
+                // perch or in walking off.
+                if (walked.support == BodySupport::Walkable ||
+                    (walked.support == BodySupport::None && walked.stepped)) {
                     walked.deflected = walked.deflected || move.deflected;
                     walked.landedAfter = move.landedAfter;
                     walked.landedAt = move.landedAt;
@@ -544,6 +637,7 @@ inline BodyMove fallBody(const glm::vec3& from, const glm::vec3& delta,
                 }
                 return move;
             }
+            if (!edgeHold) edgeHold = EdgeHold{held, timeLeft};
         }
         // What turns the level part of the move and what turns the drop.
         // The level part is turned by the direction separating body and
@@ -626,6 +720,8 @@ inline BodyMove fallBody(const glm::vec3& from, const glm::vec3& delta,
     if (delta.z <= 0.0f) {
         if (const auto rest = lowerBody(move.position, kContactSkin * 2.0f, radius, height, triangles)) {
             if (isBodySoleOnGround(*rest, minWalkableNormalZ)) {
+                // Come down to ground past ground's edge: held on the edge instead.
+                if (edgeHold) return holdOnEdge(rest->position.z);
                 move.support = BodySupport::Walkable;
                 move.soleOnGround = true;
                 move.position = rest->position;

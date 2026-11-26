@@ -85,7 +85,9 @@ struct Walker {
             move = fallBody(position, airMove + glm::vec3(0, 0, drop), kRadius, kHeight, mesh,
                             kMinWalkableNormalZ, kMaxStepUp, terrain, run);
             if (move.held && verticalVelocity < 0.0f) verticalVelocity = 0.0f;
-            if (move.deflected) airMove = glm::vec3(move.levelKept, 0.0f);
+            // Came down and stepped into the air within the frame: a new fall, from rest.
+            if (move.landedAfter && move.support == BodySupport::None) { verticalVelocity = 0.0f; airMove = run; }
+            else if (move.deflected) airMove = glm::vec3(move.levelKept, 0.0f);
         } else if (move.support == BodySupport::None) {
             airMove = glm::vec3(move.position.x - from.x, move.position.y - from.y, 0.0f);
         }
@@ -97,6 +99,7 @@ struct Walker {
         if (grounded) verticalVelocity = 0.0f;
         const bool landed = !walked && move.support == BodySupport::Walkable;
         if (move.soleOnGround || landed || position.z < baseZ) baseZ = position.z;
+        if (!walked && move.heldOverGroundZ) baseZ = std::min(baseZ, *move.heldOverGroundZ);
         return move;
     }
 };
@@ -1173,6 +1176,84 @@ TEST_CASE("A step over a wall the box meets lifts by the move over the radius an
         // The first frame may rise by the 0.089 yd the nose stands above
         // the box's lower corners besides.
         CHECK(rose < 0.21f);
+    }
+}
+
+TEST_CASE("A fall down the nose of a step that ground would end is held on the nose", "[body_mover]") {
+    // The step before Karazhan (map 0, -11117.5, -2009.8), WoWee's own
+    // triangles moved to the origin: level ground, an upright riser 0.572 yd
+    // high - a hair above the top of the body's bevel, 0.565 - whose foot
+    // runs 51.5 degrees off the x axis, a level top. Native headings 19.4,
+    // 42.3 and 65.3 degrees, the riser fronting 218.5.
+    const glm::vec2 out(std::cos(glm::radians(218.5f)), std::sin(glm::radians(218.5f)));
+    const glm::vec2 along(-out.y, out.x);
+    const float top = 0.572f;
+    const auto at = [&](float a, float b, float z) { return glm::vec3(along * a - out * b, z); };
+    const Mesh mesh = {
+        {{{-30.0f, -30.0f, 0.0f}, {30.0f, -30.0f, 0.0f}, {30.0f, 30.0f, 0.0f}}},
+        {{{-30.0f, -30.0f, 0.0f}, {30.0f, 30.0f, 0.0f}, {-30.0f, 30.0f, 0.0f}}},
+        {{at(-10.0f, 0.0f, 0.0f), at(10.0f, 0.0f, 0.0f), at(-10.0f, 0.0f, top)}},
+        {{at(10.0f, 0.0f, 0.0f), at(10.0f, 0.0f, top), at(-10.0f, 0.0f, top)}},
+        {{at(-10.0f, 0.0f, top), at(10.0f, 0.0f, top), at(-10.0f, 20.0f, top)}},
+        {{at(10.0f, 0.0f, top), at(10.0f, 20.0f, top), at(-10.0f, 20.0f, top)}},
+    };
+    const glm::vec3 heading(std::cos(glm::radians(42.3f)), std::sin(glm::radians(42.3f)), 0.0f);
+    const glm::vec3 start = glm::vec3(out * 2.0f, 0.0f);
+
+    SECTION("with the key held it walks on from there and is on the top after one fall") {
+        // Native: up 1.4233 times the move, five frames of fall at 33 ms
+        // (-0.0105, -0.0328, -0.0532, -0.0767, -0.0958), then its whole move
+        // from 0.06 to 0.08 yd above the ground, +0.30, +0.21 onto the top;
+        // at 17 ms seven frames of fall; at half and three tenths of the
+        // speed three and two.
+        for (const auto [speed, dt] : {std::pair{7.0f, 0.033f}, std::pair{7.0f, 0.017f}, std::pair{3.5f, 0.033f},
+                                       std::pair{2.1f, 0.033f}, std::pair{8.75f, 0.033f}}) {
+            Walker walker{.position = start};
+            int steps = 0, falls = 0, frames = 0;
+            float lowestFall = top;
+            while (frames < 400 && !(walker.grounded && walker.position.z > top - 0.01f)) {
+                const bool wasGrounded = walker.grounded;
+                const float before = walker.position.z;
+                const BodyMove move = walker.frame(mesh, heading * (speed * dt), dt);
+                if (wasGrounded && move.support == BodySupport::None) ++steps;
+                if (!wasGrounded && move.support == BodySupport::None) { ++falls; lowestFall = std::min(lowestFall, walker.position.z); }
+                // Held: the frame that ends the fall ends above where it began.
+                if (!wasGrounded && move.support != BodySupport::None && move.heldOverGroundZ)
+                    CHECK(walker.position.z > before + 0.02f);
+                ++frames;
+            }
+            INFO("speed " << speed << " frame " << dt << ": " << frames << " frames, " << steps << " steps into the air, "
+                 << falls << " frames of fall, lowest " << lowestFall);
+            CHECK(walker.position.z > top - 0.01f);
+            // Native goes up after one fall, or after two where the first
+            // ends within a hair of the ground.
+            CHECK(steps <= 2);
+        }
+    }
+    SECTION("with the key let go during the fall it stays hung on the nose above the ground") {
+        // Native (9 runs): at rest 0.02 to 0.08 yd above the ground.
+        const float dt = 0.033f;
+        Walker walker{.position = start};
+        int frames = 0;
+        while (frames < 100 && walker.grounded) { walker.frame(mesh, heading * (7.0f * dt), dt); ++frames; }
+        REQUIRE(!walker.grounded);
+        for (int i = 0; i < 30; ++i) walker.frame(mesh, glm::vec3(0.0f), dt);
+        CHECK(walker.grounded);
+        CHECK(walker.position.z > 0.015f);
+        CHECK(walker.position.z < 0.12f);
+        const glm::vec3 rest = walker.position;
+        for (int i = 0; i < 30; ++i) walker.frame(mesh, glm::vec3(0.0f), dt);
+        CHECK(glm::distance(walker.position, rest) < 1e-3f);
+    }
+    SECTION("the frame after a step into the air falls from rest") {
+        const float dt = 0.033f;
+        Walker walker{.position = start};
+        int frames = 0;
+        while (frames < 100 && walker.grounded) { walker.frame(mesh, heading * (7.0f * dt), dt); ++frames; }
+        REQUIRE(!walker.grounded);
+        const float before = walker.position.z;
+        walker.frame(mesh, heading * (7.0f * dt), dt);
+        CHECK(before - walker.position.z == Catch::Approx(0.5f * kGravity * dt * dt).margin(1e-3f));
     }
 }
 

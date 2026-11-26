@@ -1161,6 +1161,9 @@ private:
     /// range plays as a landing, so a mounted player crossing a field looked to
     /// everyone else like one landing over and over.
     float airborneSeconds_ = 0.0f;
+    // The last physics step walked the body off its ground or stepped it into
+    // the air: the fall, and its clock, begin with the next step.
+    bool fallBeginsNextStep_ = false;
     std::optional<float> touchdownSeconds_;
     glm::vec3 touchdownPosition_{0.0f};
     // Within one physics step (moveBodyOnFoot), and within one of its parts
