@@ -500,8 +500,7 @@ void SettingsPanel::applySettingSideEffects(const std::string& key) {
         // reached through LuaServices. They are settings rather than cvars
         // now; kClientCVars keeps the cvar pointing at the same value.
         if (renderer) {
-            if (auto* m2 = renderer->getM2Renderer())
-                m2->setGroundDetailDistance(static_cast<float>(pendingGroundClutterDistance));
+            renderer->setGroundDetailDistance(static_cast<float>(pendingGroundClutterDistance));
         }
     } else if (key == "particledensity") {
         if (renderer) {

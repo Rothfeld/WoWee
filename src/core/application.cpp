@@ -690,7 +690,7 @@ bool Application::initialize() {
         };
         luaSvc.setGroundDetailDistance = [this](float yards) {
             if (!renderer) return;
-            if (auto* m2 = renderer->getM2Renderer()) m2->setGroundDetailDistance(yards);
+            renderer->setGroundDetailDistance(yards);
         };
         luaSvc.setAnisotropyLimit = [this](float limit) {
             if (auto* window = this->window.get()) {

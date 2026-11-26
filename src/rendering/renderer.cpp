@@ -4518,6 +4518,7 @@ bool Renderer::initializeRenderers(pipeline::AssetManager* assetManager, const s
         if (!m2Renderer->initialize(vkCtx, perFrameSetLayout, assetManager))
             LOG_ERROR("M2Renderer initialization failed");
         m2Renderer->setRtScene(rtScene_.get());
+        if (groundDetailDistance_) m2Renderer->setGroundDetailDistance(*groundDetailDistance_);
         // Initialize SpellVisualSystem once M2Renderer is available (§4.4)
         if (!spellVisualSystem_) {
             spellVisualSystem_ = std::make_unique<SpellVisualSystem>();
@@ -4839,6 +4840,11 @@ void Renderer::setSharpStars(bool enabled) {
     // sky with no stars or a sky with two sets of them.
     if (m2Renderer) m2Renderer->setSuppressBakedStars(sharpStars_);
     if (skySystem) skySystem->setProceduralStarsEnabled(sharpStars_);
+}
+
+void Renderer::setGroundDetailDistance(float yards) {
+    groundDetailDistance_ = yards;
+    if (m2Renderer) m2Renderer->setGroundDetailDistance(yards);
 }
 
 void Renderer::setViewDistance(float distance) {

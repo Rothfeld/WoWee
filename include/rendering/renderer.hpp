@@ -436,6 +436,7 @@ private:
     bool shadowsEnabled = true;
     float shadowDistance_ = 300.0f;  // Shadow frustum half-extent (default: 300 units)
     float viewDistance_ = 1200.0f;
+    std::optional<float> groundDetailDistance_;  // unset: nobody has configured one
     bool sharpStars_ = true;
     float diagTerrainFurthest_ = -1.0f;
     float diagM2Furthest_ = -1.0f;
@@ -458,6 +459,13 @@ public:
     float getShadowDistance() const { return shadowDistance_; }
     void setViewDistance(float distance);
     float getViewDistance() const { return viewDistance_; }
+    /// Ground Clutter Radius in yards (M2Renderer::setGroundDetailDistance).
+    /// Kept here as well: the settings are read at startup and the M2 renderer
+    /// is created with the first world load, so a value handed straight to it
+    /// had nobody to take it. Until the interface set it again after the
+    /// loading screen the M2 renderer ran with its own default, no radius, and
+    /// the terrain manager instantiated the clutter of every loaded tile.
+    void setGroundDetailDistance(float yards);
     /// Draw the client's own point stars in place of the sky model's baked
     /// star layer, which is a 256x256 compressed texture stretched across the
     /// whole dome. See Renderer::setSharpStars.
