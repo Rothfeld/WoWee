@@ -68,6 +68,7 @@
 #include "pipeline/adt_loader.hpp"
 #include "pipeline/terrain_mesh.hpp"
 #include "core/application.hpp"
+#include "core/entity_spawner.hpp"
 #include "core/window.hpp"
 #include "core/logger.hpp"
 #include "game/world.hpp"
@@ -1686,6 +1687,10 @@ void Renderer::endFrame() {
 
 void Renderer::setCharacterFollow(uint32_t instanceId) {
     characterInstanceId = instanceId;
+    characterTurnBodyLagDeg_ = 0.0f;
+    characterTurnBodyAligning_ = false;
+    characterTurnShuffleDir_ = 0;
+    hasLastLogicalCharacterYaw_ = false;
     if (cameraController && instanceId > 0) {
         cameraController->setFollowTarget(&characterPosition);
     }
@@ -2357,6 +2362,7 @@ void Renderer::update(float deltaTime) {
 
         // Movement-facing comes from camera controller and is decoupled from LMB orbit.
         bool taxiFlight = animationController_ && animationController_->isTaxiFlight();
+        bool combatAutoFacing = false;
         if (taxiFlight || cameraController->isServerControlled()) {
             characterYaw = cameraController->getFacingYaw();
         } else if (cameraController->isMoving() || cameraController->isRightMouseHeld() ||
@@ -2379,6 +2385,7 @@ void Renderer::update(float deltaTime) {
                 float diff = targetYaw - characterYaw;
                 while (diff > 180.0f) diff -= 360.0f;
                 while (diff < -180.0f) diff += 360.0f;
+                if (std::abs(diff) > 1e-3f) combatAutoFacing = true;
                 float rotSpeed = 360.0f * deltaTime;
                 if (std::abs(diff) < rotSpeed) {
                     characterYaw = targetYaw;
@@ -2415,31 +2422,77 @@ void Renderer::update(float deltaTime) {
         lastLogicalCharacterYaw_ = characterYaw;
         hasLastLogicalCharacterYaw_ = true;
 
+        uint32_t drawnInstanceId = characterInstanceId;
+        if (const auto* gh = core::Application::getInstance().getGameHandler()) {
+            if (auto* spawner = core::Application::getInstance().getEntitySpawner();
+                spawner && gh->getPlayerGuid() != 0) {
+                if (const uint32_t drawn = spawner->drawnInstanceIdForGuid(gh->getPlayerGuid());
+                    drawn != 0 && characterRenderer->hasInstance(drawn)) {
+                    drawnInstanceId = drawn;
+                }
+            }
+        }
+        const bool hasSpineLow = characterRenderer->hasInstanceKeyBone(drawnInstanceId, 4);
+        const bool playerActivelyTurning = cameraController->isRightMouseHeld() ||
+                                           cameraController->isTurningLeft() ||
+                                           cameraController->isTurningRight() ||
+                                           combatAutoFacing;
         const bool resetBodyLag = taxiFlight || cameraController->isServerControlled() ||
                                   playerBodyHeld_.has_value() || mounted ||
                                   cameraController->isSwimming() || cameraController->isFlightAirborne() ||
-                                  characterRenderer->isInstanceDead(characterInstanceId) ||
-                                  std::abs(logicalDeltaDeg) > 120.0f;
+                                  characterRenderer->isInstanceDead(drawnInstanceId) ||
+                                  (!playerActivelyTurning && std::abs(logicalDeltaDeg) > 120.0f);
+        float standingSpineYawRad = 0.0f;
+        float standingHeadYawRad = 0.0f;
         if (resetBodyLag) {
             characterTurnBodyLagDeg_ = 0.0f;
+            characterTurnBodyAligning_ = false;
+            characterTurnShuffleDir_ = 0;
         } else {
-            const bool accumulateTurnLag = !cameraController->isMoving() &&
-                                           cameraController->isGrounded() &&
-                                           !cameraController->isSitting();
-            characterTurnBodyLagDeg_ = stepTurnBodyLagDeg(
-                characterTurnBodyLagDeg_, logicalDeltaDeg, deltaTime, accumulateTurnLag);
+            const bool groundedStationary = !cameraController->isMoving() &&
+                                            cameraController->isGrounded() &&
+                                            !cameraController->isSitting();
+            const bool keyTurning = cameraController->isTurningLeft() ||
+                                    cameraController->isTurningRight() ||
+                                    combatAutoFacing;
+            const auto turnOut = stepStandingTurn(
+                {characterTurnBodyLagDeg_, characterTurnBodyAligning_},
+                {
+                    .logicalDeltaDeg = logicalDeltaDeg,
+                    .dt = deltaTime,
+                    .groundedStationary = groundedStationary,
+                    .keyTurning = keyTurning,
+                    .hasSpineLow = hasSpineLow,
+                });
+            characterTurnBodyLagDeg_ = turnOut.state.footLagDeg;
+            characterTurnBodyAligning_ = turnOut.state.aligningToFacing;
+            characterTurnShuffleDir_ = turnOut.shuffleDirection;
+            standingSpineYawRad = turnOut.spineLowYawRad;
+            standingHeadYawRad = turnOut.headYawRad;
         }
 
         const float modelYawRad = glm::radians(characterYaw + characterTurnBodyLagDeg_) + characterLegYawOffsetRad_;
+        const float totalTorsoYawRad = std::clamp(
+            characterTorsoYawOffsetRad_ + standingSpineYawRad,
+            -kLegYawMaxOffsetRad, kLegYawMaxOffsetRad);
+        const float appliedTorsoYawRad = mounted ? 0.0f : totalTorsoYawRad;
+        const float appliedHeadYawRad  = mounted ? 0.0f : standingHeadYawRad;
         characterRenderer->setInstanceRotation(characterInstanceId, glm::vec3(0.0f, 0.0f, modelYawRad));
-        characterRenderer->setInstanceTorsoYaw(characterInstanceId,
-            mounted ? 0.0f : characterTorsoYawOffsetRad_);
+        characterRenderer->setInstanceTorsoYaw(characterInstanceId, appliedTorsoYawRad);
+        characterRenderer->setInstanceHeadYaw(characterInstanceId, appliedHeadYawRad);
+        if (drawnInstanceId != characterInstanceId && !playerBodyHeld_) {
+            characterRenderer->setInstancePosition(drawnInstanceId, characterPosition);
+            characterRenderer->setInstanceRotation(drawnInstanceId, glm::vec3(0.0f, 0.0f, modelYawRad));
+            characterRenderer->setInstanceTorsoYaw(drawnInstanceId, hasSpineLow ? appliedTorsoYawRad : 0.0f);
+            characterRenderer->setInstanceHeadYaw(drawnInstanceId, hasSpineLow ? appliedHeadYawRad : 0.0f);
+        }
 
         if (playerBodyHeld_) {
             characterRenderer->setInstancePosition(characterInstanceId, glm::vec3(*playerBodyHeld_));
             characterRenderer->setInstanceRotation(characterInstanceId,
                 glm::vec3(0.0f, 0.0f, glm::radians(playerBodyHeld_->w)));
             characterRenderer->setInstanceTorsoYaw(characterInstanceId, 0.0f);
+            characterRenderer->setInstanceHeadYaw(characterInstanceId, 0.0f);
         }
         // Update animation based on movement state (delegated to AnimationController §4.2)
         if (animationController_ && !playerBodyHeld_) {

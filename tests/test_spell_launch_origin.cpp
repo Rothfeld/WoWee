@@ -384,6 +384,57 @@ TEST_CASE("M2Loader parses TBC 2.4.3 $CSL/$CSR/$CST release events across races 
         CHECK(handLeftAtt->position.y > 2.0f);
         CHECK(breathAtt->position.z - handLeftAtt->position.z > 1.4f);
     }
+
+    SECTION("Standing RMB-turn SpineLow (4) + Head (6) yaw overrides twist chest 50% and head 100% while leaving pelvis stationary across BloodElfMale, HumanMale, and TaurenMale") {
+        const float twistRad = glm::radians(40.0f);
+        const float spineYaw = 0.5f * twistRad;
+        const float headYaw  = 0.5f * twistRad;
+
+        for (const char* relPath : {
+                 "character/bloodelf/male/bloodelfmale.m2",
+                 "character/human/male/humanmale.m2",
+                 "character/tauren/male/taurenmale.m2",
+             }) {
+            const auto bytes = readFileBytes(dataDir / relPath);
+            REQUIRE(!bytes.empty());
+            const M2Model m = M2Loader::load(bytes);
+
+            int pelvisIdx = -1;
+            int shoulderIdx = -1;
+            int headIdx = -1;
+            for (size_t bi = 0; bi < m.bones.size(); ++bi) {
+                if (m.bones[bi].keyBoneId == 5 && pelvisIdx < 0) pelvisIdx = static_cast<int>(bi);
+                if (m.bones[bi].keyBoneId == 2 && shoulderIdx < 0) shoulderIdx = static_cast<int>(bi);
+                if (m.bones[bi].keyBoneId == 6 && headIdx < 0) headIdx = static_cast<int>(bi);
+            }
+            REQUIRE(pelvisIdx >= 0);
+            REQUIRE(shoulderIdx >= 0);
+            REQUIRE(headIdx >= 0);
+
+            auto forwardYawDeg = [](const glm::mat4& mat) {
+                const glm::vec3 fwd = glm::vec3(mat * glm::vec4(1.0f, 0.0f, 0.0f, 0.0f));
+                return glm::degrees(std::atan2(fwd.y, fwd.x));
+            };
+            auto wrapDeg = [](float d) { return std::remainder(d, 360.0f); };
+
+            glm::mat4 pelvBase(1.0f), pelvTwist(1.0f);
+            glm::mat4 shldBase(1.0f), shldTwist(1.0f);
+            glm::mat4 headBase(1.0f), headTwist(1.0f);
+            REQUIRE(evaluateModelBoneAtAnimation(m, static_cast<uint16_t>(pelvisIdx), 0, 0.0f, 0.0f, 0.0f, pelvBase, 0.0f));
+            REQUIRE(evaluateModelBoneAtAnimation(m, static_cast<uint16_t>(pelvisIdx), 0, 0.0f, 0.0f, spineYaw, pelvTwist, headYaw));
+            REQUIRE(evaluateModelBoneAtAnimation(m, static_cast<uint16_t>(shoulderIdx), 0, 0.0f, 0.0f, 0.0f, shldBase, 0.0f));
+            REQUIRE(evaluateModelBoneAtAnimation(m, static_cast<uint16_t>(shoulderIdx), 0, 0.0f, 0.0f, spineYaw, shldTwist, headYaw));
+            REQUIRE(evaluateModelBoneAtAnimation(m, static_cast<uint16_t>(headIdx), 0, 0.0f, 0.0f, 0.0f, headBase, 0.0f));
+            REQUIRE(evaluateModelBoneAtAnimation(m, static_cast<uint16_t>(headIdx), 0, 0.0f, 0.0f, spineYaw, headTwist, headYaw));
+
+            // Pelvis (keyBoneId 5) is NOT a descendant of SpineLow (4): stays at 0 deg shift.
+            CHECK(wrapDeg(forwardYawDeg(pelvTwist) - forwardYawDeg(pelvBase)) == Catch::Approx(0.0f).margin(0.1f));
+            // Shoulder (keyBoneId 2) inherits SpineLow (+20 deg).
+            CHECK(wrapDeg(forwardYawDeg(shldTwist) - forwardYawDeg(shldBase)) == Catch::Approx(20.0f).margin(1.5f));
+            // Head (keyBoneId 6) inherits SpineLow (+20 deg) + Head (+20 deg) = +40 deg total.
+            CHECK(wrapDeg(forwardYawDeg(headTwist) - forwardYawDeg(headBase)) == Catch::Approx(40.0f).margin(2.5f));
+        }
+    }
 }
 
 TEST_CASE("beamAttachmentFallbacks preserves Base (19) at feet and falls Breath/Hand/Chest back cleanly across TBC corpus", "[spell_origin]") {

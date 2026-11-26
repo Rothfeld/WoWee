@@ -787,6 +787,9 @@ void EntitySpawner::syncPlayerMorphs() {
         cr->setInstanceCameraOpacity(morph.instanceId, cameraOpacity);
         cr->setInstancePosition(morph.instanceId, position);
         cr->setInstanceRotation(morph.instanceId, rotation);
+        const bool morphHasSpine = cr->hasInstanceKeyBone(morph.instanceId, 4);
+        cr->setInstanceTorsoYaw(morph.instanceId, morphHasSpine ? cr->getInstanceTorsoYaw(playerInstance) : 0.0f);
+        cr->setInstanceHeadYaw(morph.instanceId, morphHasSpine ? cr->getInstanceHeadYaw(playerInstance) : 0.0f);
         // A seated character's creature sits in the same seat.
         cr->setInstanceSeat(morph.instanceId, cr->instanceSeat(playerInstance));
         if (const float locoSpeed = cr->getLocomotionSpeed(playerInstance); locoSpeed >= 0.0f) {

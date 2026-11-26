@@ -1263,25 +1263,23 @@ void AnimationController::updateCharacterAnimation() {
     // still catching up after a standing turn ended. Build 8606 shuffles its
     // standing character's feet until the body finishes aligning.
     const float yaw = renderer_->getCharacterYaw();
-    int turnDirection = 0;
+    int mountTurnDirection = 0;
     if (lastAnimatedYaw_ && (cameraController->isTurningLeft() ||
                              cameraController->isTurningRight() ||
                              cameraController->isRightMouseHeld())) {
         float delta = yaw - *lastAnimatedYaw_;
         while (delta > 180.0f) delta -= 360.0f;
         while (delta < -180.0f) delta += 360.0f;
-        if (delta != 0.0f) turnDirection = delta > 0.0f ? 1 : -1;
-    }
-    if (turnDirection == 0 && !dead && !isMounted()) {
-        turnDirection = turnBodyCatchupDirection(renderer_->getCharacterTurnBodyLagDeg());
+        if (delta != 0.0f) mountTurnDirection = delta > 0.0f ? 1 : -1;
     }
     lastAnimatedYaw_ = yaw;
 
     // When mounted, delegate to MountFSM and handle positioning
     if (!dead && isMounted()) {
-        updateMountedAnimation(lastDeltaTime_, turnDirection);
+        updateMountedAnimation(lastDeltaTime_, mountTurnDirection);
         return;
     }
+    const int turnDirection = dead ? 0 : renderer_->getCharacterTurnShuffleDirection();
 
     // Build FrameInput for CharacterAnimator from camera/renderer state
     CharacterAnimator::FrameInput fi;

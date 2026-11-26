@@ -267,7 +267,8 @@ inline bool evaluateModelBoneAtAnimation(const pipeline::M2Model& model,
                                          float sampleTimeMs,
                                          float globalSeqTimeMs,
                                          float torsoYawOverrideRad,
-                                         glm::mat4& outBoneMatrix) {
+                                         glm::mat4& outBoneMatrix,
+                                         float headYawOverrideRad = 0.0f) {
     if (boneIndex >= model.bones.size()) return false;
 
     int seqIdx = -1;
@@ -294,6 +295,7 @@ inline bool evaluateModelBoneAtAnimation(const pipeline::M2Model& model,
     }
 
     constexpr int32_t kSpineLowKeyBone = 4;
+    constexpr int32_t kHeadKeyBone = 6;
     glm::mat4 accum(1.0f);
     for (size_t k = chainLen; k > 0; --k) {
         const auto& bone = model.bones[chain[k - 1]];
@@ -319,10 +321,13 @@ inline bool evaluateModelBoneAtAnimation(const pipeline::M2Model& model,
         localTransform[2] = glm::vec4(c2, 0.0f);
         localTransform[3] = glm::vec4(t, 1.0f);
 
-        if (bone.keyBoneId == kSpineLowKeyBone && torsoYawOverrideRad != 0.0f) {
+        const float extraBoneYawRad =
+            (bone.keyBoneId == kSpineLowKeyBone) ? torsoYawOverrideRad :
+            (bone.keyBoneId == kHeadKeyBone)     ? headYawOverrideRad  : 0.0f;
+        if (extraBoneYawRad != 0.0f) {
             const glm::mat4 extraYaw =
                 glm::translate(glm::mat4(1.0f), bone.pivot) *
-                glm::rotate(glm::mat4(1.0f), torsoYawOverrideRad, glm::vec3(0.0f, 0.0f, 1.0f)) *
+                glm::rotate(glm::mat4(1.0f), extraBoneYawRad, glm::vec3(0.0f, 0.0f, 1.0f)) *
                 glm::translate(glm::mat4(1.0f), -bone.pivot);
             localTransform = extraYaw * localTransform;
         }
@@ -341,7 +346,8 @@ inline bool evaluateModelAttachmentAtAnimation(const pipeline::M2Model& model,
                                                float sampleTimeMs,
                                                float globalSeqTimeMs,
                                                float torsoYawOverrideRad,
-                                               glm::mat4& outAttachmentMatrix) {
+                                               glm::mat4& outAttachmentMatrix,
+                                               float headYawOverrideRad = 0.0f) {
     uint16_t boneIndex = 0;
     glm::vec3 offset(0.0f);
     bool found = false;
@@ -367,7 +373,8 @@ inline bool evaluateModelAttachmentAtAnimation(const pipeline::M2Model& model,
 
     glm::mat4 boneMat(1.0f);
     if (!evaluateModelBoneAtAnimation(model, boneIndex, animationId, sampleTimeMs,
-                                      globalSeqTimeMs, torsoYawOverrideRad, boneMat)) {
+                                      globalSeqTimeMs, torsoYawOverrideRad, boneMat,
+                                      headYawOverrideRad)) {
         return false;
     }
     outAttachmentMatrix = boneMat * glm::translate(glm::mat4(1.0f), offset);

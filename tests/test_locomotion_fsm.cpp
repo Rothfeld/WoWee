@@ -482,6 +482,181 @@ TEST_CASE("TurnBodyLag: standing keyboard turn leads with camera and catches up 
     CHECK(stepTurnBodyLagDeg(90.0f, 10.0f, -0.1f, true) == Catch::Approx(kMaxTurnBodyLagDeg));
 }
 
+TEST_CASE("StandingTurn: RMB mouse-look twists upper body first and keeps feet planted within +-60 deg", "[locomotion][turn]") {
+    using namespace wowee::rendering;
+    constexpr float dt = 1.0f / 60.0f;
+    constexpr float kDegToRad = 3.14159265358979323846f / 180.0f;
+
+    // 1. Small/medium RMB turn (+25 deg left): feet stay planted (-25 deg relative
+    // to facing -> 0 deg world shift), zero shuffle, SpineLow + Head split +25 deg.
+    StandingTurnState state{};
+    auto out = stepStandingTurn(state, {
+        .logicalDeltaDeg = 25.0f,
+        .dt = dt,
+        .groundedStationary = true,
+        .keyTurning = false,
+        .hasSpineLow = true,
+    });
+    state = out.state;
+    CHECK(state.footLagDeg == Catch::Approx(-25.0f));
+    CHECK(out.shuffleDirection == 0);
+    CHECK(out.spineLowYawRad == Catch::Approx(12.5f * kDegToRad));
+    CHECK(out.headYawRad == Catch::Approx(12.5f * kDegToRad));
+    CHECK((out.spineLowYawRad + out.headYawRad) == Catch::Approx(25.0f * kDegToRad));
+
+    // Holding stationary after releasing RMB (5 seconds): feet remain planted at -25 deg
+    // with zero decay and zero shuffle (matching Native TBC 2.4.3).
+    for (int i = 0; i < 300; ++i) {
+        out = stepStandingTurn(state, {
+            .logicalDeltaDeg = 0.0f,
+            .dt = dt,
+            .groundedStationary = true,
+            .keyTurning = false,
+            .hasSpineLow = true,
+        });
+        state = out.state;
+        CHECK(out.shuffleDirection == 0);
+    }
+    CHECK(state.footLagDeg == Catch::Approx(-25.0f));
+
+    // 2. High-DPI slow RMB creep (0.08 deg/frame at 240 Hz for 200 frames = +16 deg)
+    // accumulates smoothly without quantization loss.
+    StandingTurnState creep{};
+    for (int i = 0; i < 200; ++i) {
+        auto cOut = stepStandingTurn(creep, {
+            .logicalDeltaDeg = 0.08f,
+            .dt = 1.0f / 240.0f,
+            .groundedStationary = true,
+            .keyTurning = false,
+            .hasSpineLow = true,
+        });
+        creep = cOut.state;
+        CHECK(cOut.shuffleDirection == 0);
+    }
+    CHECK(creep.footLagDeg == Catch::Approx(-16.0f).margin(1e-3f));
+
+    // 3. Advancing RMB turn up to 59.5 deg still does not shuffle; crossing 60 deg
+    // pulls feet along at -60 deg and emits ShuffleLeft (+1) only while pushed past 60 deg.
+    out = stepStandingTurn(state, {
+        .logicalDeltaDeg = 34.5f, // -25 - 34.5 = -59.5 deg
+        .dt = dt,
+        .groundedStationary = true,
+        .keyTurning = false,
+        .hasSpineLow = true,
+    });
+    state = out.state;
+    CHECK(state.footLagDeg == Catch::Approx(-59.5f));
+    CHECK(out.shuffleDirection == 0);
+
+    out = stepStandingTurn(state, {
+        .logicalDeltaDeg = 10.0f, // -59.5 - 10.0 = -69.5 -> clamped to -60.0
+        .dt = dt,
+        .groundedStationary = true,
+        .keyTurning = false,
+        .hasSpineLow = true,
+    });
+    state = out.state;
+    CHECK(state.footLagDeg == Catch::Approx(-60.0f));
+    CHECK(out.shuffleDirection == 1);
+    CHECK(out.spineLowYawRad == Catch::Approx(30.0f * kDegToRad));
+    CHECK(out.headYawRad == Catch::Approx(30.0f * kDegToRad));
+
+    // Stopping mouse movement at -60 deg stops requesting new shuffles and retains -60 deg.
+    out = stepStandingTurn(state, {
+        .logicalDeltaDeg = 0.0f,
+        .dt = dt,
+        .groundedStationary = true,
+        .keyTurning = false,
+        .hasSpineLow = true,
+    });
+    state = out.state;
+    CHECK(state.footLagDeg == Catch::Approx(-60.0f));
+    CHECK(out.shuffleDirection == 0);
+
+    // Reversing right by -90 deg (-60 - (-90) = +30 deg) untwists through 0 without shuffling;
+    // another -35 deg (+30 - (-35) = +65 -> +60) triggers ShuffleRight (-1).
+    out = stepStandingTurn(state, {
+        .logicalDeltaDeg = -90.0f,
+        .dt = dt,
+        .groundedStationary = true,
+        .keyTurning = false,
+        .hasSpineLow = true,
+    });
+    state = out.state;
+    CHECK(state.footLagDeg == Catch::Approx(30.0f));
+    CHECK(out.shuffleDirection == 0);
+
+    out = stepStandingTurn(state, {
+        .logicalDeltaDeg = -35.0f,
+        .dt = dt,
+        .groundedStationary = true,
+        .keyTurning = false,
+        .hasSpineLow = true,
+    });
+    state = out.state;
+    CHECK(state.footLagDeg == Catch::Approx(60.0f));
+    CHECK(out.shuffleDirection == -1);
+
+    // 4. Starting translational movement decays residual RMB foot twist rapidly.
+    for (int i = 0; i < 15; ++i) {
+        out = stepStandingTurn(state, {
+            .logicalDeltaDeg = 0.0f,
+            .dt = dt,
+            .groundedStationary = false,
+            .keyTurning = false,
+            .hasSpineLow = true,
+        });
+        state = out.state;
+        CHECK(out.shuffleDirection == 0);
+    }
+    CHECK(std::abs(state.footLagDeg) < 1.0f);
+
+    // 5. Keyboard A tap (+40 deg < 60 deg) shuffles immediately and aligns all the way to 0 after release.
+    StandingTurnState keyState{};
+    for (int i = 0; i < 12; ++i) { // 200ms @ 180 deg/s = 36 deg
+        out = stepStandingTurn(keyState, {
+            .logicalDeltaDeg = 180.0f * dt,
+            .dt = dt,
+            .groundedStationary = true,
+            .keyTurning = true,
+            .hasSpineLow = true,
+        });
+        keyState = out.state;
+        CHECK(out.shuffleDirection == 1);
+    }
+    CHECK(keyState.footLagDeg < -20.0f);
+    CHECK(keyState.aligningToFacing);
+
+    bool sawCatchupShuffle = false;
+    for (int i = 0; i < 90; ++i) {
+        out = stepStandingTurn(keyState, {
+            .logicalDeltaDeg = 0.0f,
+            .dt = dt,
+            .groundedStationary = true,
+            .keyTurning = false,
+            .hasSpineLow = true,
+        });
+        keyState = out.state;
+        if (out.shuffleDirection == 1) sawCatchupShuffle = true;
+    }
+    CHECK(sawCatchupShuffle);
+    CHECK(keyState.footLagDeg == 0.0f);
+    CHECK_FALSE(keyState.aligningToFacing);
+
+    // 6. Quadruped models without SpineLow align full body and emit zero bone overrides.
+    StandingTurnState quad{};
+    out = stepStandingTurn(quad, {
+        .logicalDeltaDeg = 20.0f,
+        .dt = dt,
+        .groundedStationary = true,
+        .keyTurning = false,
+        .hasSpineLow = false,
+    });
+    CHECK(out.shuffleDirection == 1);
+    CHECK(out.spineLowYawRad == 0.0f);
+    CHECK(out.headYawRad == 0.0f);
+}
+
 TEST_CASE("LocomotionFSM: speed-driven ground gait selection across 0.5x..10x and Walk/Run modes", "[locomotion][speed]") {
     auto caps = makeLocoCaps();
     constexpr float kWalkStride = 2.5f;

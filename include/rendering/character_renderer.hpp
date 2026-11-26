@@ -202,6 +202,10 @@ public:
     void setInstancePosition(uint32_t instanceId, const glm::vec3& position);
     void setInstanceRotation(uint32_t instanceId, const glm::vec3& rotation);
     void setInstanceTorsoYaw(uint32_t instanceId, float deltaYawRad);
+    void setInstanceHeadYaw(uint32_t instanceId, float deltaYawRad);
+    [[nodiscard]] float getInstanceTorsoYaw(uint32_t instanceId) const;
+    [[nodiscard]] float getInstanceHeadYaw(uint32_t instanceId) const;
+    [[nodiscard]] bool hasInstanceKeyBone(uint32_t instanceId, int32_t keyBoneId) const;
     void moveInstanceTo(uint32_t instanceId, const glm::vec3& destination, float durationSeconds,
                         bool updateAnimation = true);
     void startFadeIn(uint32_t instanceId, float durationSeconds, float targetOpacity = 1.0f);
@@ -603,6 +607,7 @@ private:
         // reappear immediately at full density when the weapon returns.
         bool preserveEmittersWhileHidden = false;
         float torsoYawOverrideRad = 0.0f;
+        float headYawOverrideRad = 0.0f;
 
         // Animation state
         uint32_t currentAnimationId = 0;

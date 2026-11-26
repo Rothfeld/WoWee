@@ -93,6 +93,7 @@ namespace wowee {
 namespace rendering {
 
 constexpr int32_t kKeyBoneSpineLow = 4;  // M2 key bone of the upper-body layer
+constexpr int32_t kKeyBoneHead = 6;      // M2 key bone of the head
 
 namespace {
 
@@ -3502,9 +3503,12 @@ CharacterRenderer::getDrawnMeleeWeaponSpansSubstepped(
                                                model.sequences[seq], stepUpperTime, false);
                 }
                 glm::mat4 localTransform = getBoneTransform(bone, time, stepGlobalTime, seq, gsd, -1, 0.0f, 0.0f);
-                if (bone.keyBoneId == kKeyBoneSpineLow && inst.torsoYawOverrideRad != 0.0f) {
+                const float extraBoneYawRad =
+                    (bone.keyBoneId == kKeyBoneSpineLow) ? inst.torsoYawOverrideRad :
+                    (bone.keyBoneId == kKeyBoneHead)     ? inst.headYawOverrideRad  : 0.0f;
+                if (extraBoneYawRad != 0.0f) {
                     glm::mat4 extraYaw = glm::translate(glm::mat4(1.0f), bone.pivot)
-                                       * glm::rotate(glm::mat4(1.0f), inst.torsoYawOverrideRad, glm::vec3(0.0f, 0.0f, 1.0f))
+                                       * glm::rotate(glm::mat4(1.0f), extraBoneYawRad, glm::vec3(0.0f, 0.0f, 1.0f))
                                        * glm::translate(glm::mat4(1.0f), -bone.pivot);
                     localTransform = extraYaw * localTransform;
                 }
@@ -4009,9 +4013,12 @@ void CharacterRenderer::calculateBoneMatrices(CharacterInstance& instance) {
             instance.blendSequenceIndex >= 0
                 ? 1.0f - glm::smoothstep(0.0f, instance.blendDuration, instance.blendElapsed) : 0.0f);
 
-        if (bone.keyBoneId == kKeyBoneSpineLow && instance.torsoYawOverrideRad != 0.0f) {
+        const float extraBoneYawRad =
+            (bone.keyBoneId == kKeyBoneSpineLow) ? instance.torsoYawOverrideRad :
+            (bone.keyBoneId == kKeyBoneHead)     ? instance.headYawOverrideRad  : 0.0f;
+        if (extraBoneYawRad != 0.0f) {
             glm::mat4 extraYaw = glm::translate(glm::mat4(1.0f), bone.pivot)
-                                * glm::rotate(glm::mat4(1.0f), instance.torsoYawOverrideRad, glm::vec3(0.0f, 0.0f, 1.0f))
+                                * glm::rotate(glm::mat4(1.0f), extraBoneYawRad, glm::vec3(0.0f, 0.0f, 1.0f))
                                 * glm::translate(glm::mat4(1.0f), -bone.pivot);
             localTransform = extraYaw * localTransform;
         }
@@ -5583,6 +5590,30 @@ void CharacterRenderer::setInstanceTorsoYaw(uint32_t instanceId, float deltaYawR
     }
 }
 
+void CharacterRenderer::setInstanceHeadYaw(uint32_t instanceId, float deltaYawRad) {
+    auto it = instances.find(instanceId);
+    if (it != instances.end()) {
+        it->second.headYawOverrideRad = deltaYawRad;
+    }
+}
+
+float CharacterRenderer::getInstanceTorsoYaw(uint32_t instanceId) const {
+    auto it = instances.find(instanceId);
+    return it != instances.end() ? it->second.torsoYawOverrideRad : 0.0f;
+}
+
+float CharacterRenderer::getInstanceHeadYaw(uint32_t instanceId) const {
+    auto it = instances.find(instanceId);
+    return it != instances.end() ? it->second.headYawOverrideRad : 0.0f;
+}
+
+bool CharacterRenderer::hasInstanceKeyBone(uint32_t instanceId, int32_t keyBoneId) const {
+    const auto* model = getInstanceModelData(instanceId);
+    if (!model || keyBoneId < 0) return false;
+    return std::any_of(model->bones.begin(), model->bones.end(),
+                       [keyBoneId](const auto& b) { return b.keyBoneId == keyBoneId; });
+}
+
 void CharacterRenderer::moveInstanceTo(uint32_t instanceId, const glm::vec3& destination, float durationSeconds,
                                        bool updateAnimation) {
     auto it = instances.find(instanceId);
@@ -7017,7 +7048,7 @@ bool CharacterRenderer::getRangedShotLaunchTransform(uint32_t instanceId, uint32
         if (effectiveAnimId != 0 &&
             evaluateModelBoneAtAnimation(model, boneIdx, effectiveAnimId, 0.0f,
                                          instance.globalSequenceTime, instance.torsoYawOverrideRad,
-                                         outBoneMat)) {
+                                         outBoneMat, instance.headYawOverrideRad)) {
             return true;
         }
         if (boneIdx < instance.boneMatrices.size()) {
@@ -7063,7 +7094,7 @@ bool CharacterRenderer::getRangedShotLaunchTransform(uint32_t instanceId, uint32
             glm::mat4 modelAttachMat(1.0f);
             if (evaluateModelAttachmentAtAnimation(model, attachId, effectiveAnimId, 0.0f,
                                                    instance.globalSequenceTime, instance.torsoYawOverrideRad,
-                                                   modelAttachMat)) {
+                                                   modelAttachMat, instance.headYawOverrideRad)) {
                 outTransform = charModelMat * modelAttachMat;
                 return true;
             }

@@ -219,6 +219,8 @@ public:
     float getCharacterLegYawOffsetRad() const { return characterLegYawOffsetRad_; }
     /// Visual body yaw offset relative to logical characterYaw during standing turns, in [-60, +60] deg.
     float getCharacterTurnBodyLagDeg() const { return characterTurnBodyLagDeg_; }
+    /// Lower-body shuffle direction (+1 ShuffleLeft, -1 ShuffleRight, 0 none) resolved for standing turns.
+    int getCharacterTurnShuffleDirection() const { return characterTurnShuffleDir_; }
     /// While the player moves a possessed unit, characterPosition and
     /// characterYaw are that unit's; the player's own model stays here.
     void setPlayerBodyHeld(std::optional<glm::vec4> positionAndYawDeg) { playerBodyHeld_ = positionAndYawDeg; }
@@ -528,6 +530,8 @@ private:
     float characterLegYawOffsetRad_ = 0.0f;
     float characterTorsoYawOffsetRad_ = 0.0f;
     float characterTurnBodyLagDeg_ = 0.0f;
+    bool characterTurnBodyAligning_ = false;
+    int characterTurnShuffleDir_ = 0;
     float lastLogicalCharacterYaw_ = 0.0f;
     bool hasLastLogicalCharacterYaw_ = false;
 

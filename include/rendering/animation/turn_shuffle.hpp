@@ -51,6 +51,102 @@ inline int turnBodyCatchupDirection(float lagDeg) {
     return 0;
 }
 
+// Standing turn-in-place lower-body / upper-body split (Native TBC 2.4.3.8606,
+// measured across HumanMale, BloodElfMale, and TaurenMale):
+//   - Mouse-look (RMB) standing turns leave the lower body (feet/pelvis)
+//     planted in Stand with zero ShuffleLeft/ShuffleRight while
+//     |footYaw - facingYaw| <= 60 deg (pi/3 rad), counter-rotating SpineLow
+//     (keyBoneId 4) by -0.5 * footLag and Head (keyBoneId 6) by -0.5 * footLag
+//     so the upper body and head twist immediately into the turn.
+//   - Once RMB turning pushes |footYaw - facingYaw| past +-60 deg, the lower
+//     body is pulled along at the +-60 deg boundary and plays ShuffleLeft /
+//     ShuffleRight only on the frames where the feet step; stopping mouse
+//     motion retains the twisted foot offset until movement or key-turning.
+//   - Keyboard turns (A/D), combat auto-facing, and models without SpineLow
+//     (quadruped shapeshifts) actively slew the lower body toward facingYaw
+//     (3.2 s^-1) and shuffle until aligned.
+constexpr float kStandingTurnSpineCounterScale = 0.5f;
+constexpr float kStandingTurnHeadCounterScale  = 0.5f;
+constexpr float kStandingTurnBoundaryEpsDeg    = 0.05f;
+
+struct StandingTurnState {
+    float footLagDeg = 0.0f;       // visualFootYaw - logicalFacingYaw, in [-60, +60] deg
+    bool aligningToFacing = false; // latched by keyboard turn / auto-face until aligned
+};
+
+struct StandingTurnStepInput {
+    float logicalDeltaDeg = 0.0f;    // wrapped change in characterYaw this frame (+CCW/left, -CW/right)
+    float dt = 0.0f;
+    bool groundedStationary = false; // !moving && grounded && !sitting
+    bool keyTurning = false;         // A/D keyboard turn or combat auto-face active
+    bool hasSpineLow = true;         // model has M2 keyBoneId 4 (SpineLow)
+};
+
+struct StandingTurnStepOutput {
+    StandingTurnState state{};
+    int shuffleDirection = 0;      // +1 = ShuffleLeft (CCW), -1 = ShuffleRight (CW), 0 = none
+    float spineLowYawRad = 0.0f;   // extra Z yaw on keyBoneId 4 (SpineLow)
+    float headYawRad = 0.0f;       // extra Z yaw on keyBoneId 6 (Head)
+};
+
+inline StandingTurnStepOutput stepStandingTurn(StandingTurnState current,
+                                               const StandingTurnStepInput& in) {
+    constexpr float kDegToRad = 3.14159265358979323846f / 180.0f;
+    float lag = std::isfinite(current.footLagDeg)
+        ? std::clamp(current.footLagDeg, -kMaxTurnBodyLagDeg, kMaxTurnBodyLagDeg)
+        : 0.0f;
+    const float delta = std::isfinite(in.logicalDeltaDeg) ? in.logicalDeltaDeg : 0.0f;
+
+    auto makeOutput = [&](float outLag, bool aligning, int shuffleDir) -> StandingTurnStepOutput {
+        const float clampedLag = std::clamp(outLag, -kMaxTurnBodyLagDeg, kMaxTurnBodyLagDeg);
+        const float lagRad = clampedLag * kDegToRad;
+        return StandingTurnStepOutput{
+            .state = {clampedLag, aligning},
+            .shuffleDirection = shuffleDir,
+            .spineLowYawRad = in.hasSpineLow ? (-kStandingTurnSpineCounterScale * lagRad) : 0.0f,
+            .headYawRad     = in.hasSpineLow ? (-kStandingTurnHeadCounterScale * lagRad)  : 0.0f,
+        };
+    };
+
+    if (!std::isfinite(in.dt) || in.dt <= 0.0f) {
+        return makeOutput(lag, current.aligningToFacing && in.hasSpineLow, 0);
+    }
+
+    if (!in.groundedStationary) {
+        lag = stepTurnBodyLagDeg(lag, delta, in.dt, false);
+        return makeOutput(lag, false, 0);
+    }
+
+    const bool activelyAligning =
+        in.keyTurning || !in.hasSpineLow ||
+        (current.aligningToFacing && std::abs(delta) <= 1e-4f);
+    if (activelyAligning) {
+        lag = stepTurnBodyLagDeg(lag, delta, in.dt, true);
+        int shuffleDir = 0;
+        if ((in.keyTurning || !in.hasSpineLow) && delta != 0.0f) {
+            shuffleDir = delta > 0.0f ? 1 : -1;
+        } else {
+            shuffleDir = turnBodyCatchupDirection(lag);
+        }
+        const bool keepAligning = (in.keyTurning || current.aligningToFacing) &&
+                                  (lag != 0.0f) && in.hasSpineLow;
+        return makeOutput(lag, keepAligning, shuffleDir);
+    }
+
+    const float unclamped = lag - delta;
+    int shuffleDir = 0;
+    if (unclamped < -kMaxTurnBodyLagDeg - kStandingTurnBoundaryEpsDeg) {
+        lag = -kMaxTurnBodyLagDeg;
+        shuffleDir = 1;
+    } else if (unclamped > kMaxTurnBodyLagDeg + kStandingTurnBoundaryEpsDeg) {
+        lag = kMaxTurnBodyLagDeg;
+        shuffleDir = -1;
+    } else {
+        lag = std::clamp(unclamped, -kMaxTurnBodyLagDeg, kMaxTurnBodyLagDeg);
+    }
+    return makeOutput(lag, false, shuffleDir);
+}
+
 // Feet of a standing unit turning in place: ShuffleLeft (11) toward a left
 // turn, ShuffleRight (12) toward a right one. A shuffle cycle in which the
 // unit turned is followed by another; a cycle without a turn ends the
