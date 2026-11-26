@@ -347,7 +347,11 @@ void main() {
             // players remain visible through the surface, while deep fatigue
             // ocean (255/255) reaches oceanDeepColor/alpha. Rivers/lakes scale
             // by (255/90)/NdotV for grazing-angle obscuration.
-            float opticalDepth = basicType > 0.5
+            // Rivers/lakes scale by (255/90)/NdotV for above-water grazing-angle
+            // obscuration; when submerged looking up at the ceiling (viewPos.z <
+            // FragPos.z), use raw [0, 1] depth like WMO pools so the air-water
+            // boundary remains translucent instead of saturating to alpha = 1.0.
+            float opticalDepth = (basicType > 0.5 || viewPos.z < FragPos.z)
                 ? clamp(LiquidDepth, 0.0, 1.0)
                 : clamp(LiquidDepth * (255.0 / 90.0) / ndotv, 0.0, 1.0);
             vec4 shallow = basicType > 0.5 ? oceanShallowColor : vec4(riverShallowColor.rgb, liquidParams.x);
@@ -357,10 +361,11 @@ void main() {
             alpha = depthColor.a;
         }
         // Viewing the underside of the water surface from underwater: TBC
-        // renders dark animated ripples fogged by the underwater LightParams
-        // fog rather than above-water ocean/river body color and sun specular.
+        // tints the ceiling with the underwater fog colour plus quarter-strength
+        // animated ripple highlights, rather than black (0,0,0) or above-water
+        // river/ocean body colour and sun specular.
         if (viewPos.z < FragPos.z) {
-            color = texel.rgb + 0.25 * texel.a;
+            color = gFogColor.rgb + texel.rgb + 0.25 * texel.a;
         }
         color += contactLight() / max(alpha, 0.001);
         outColor = vec4(applyFog(color, FragPos, length(viewPos.xyz - FragPos)), alpha);

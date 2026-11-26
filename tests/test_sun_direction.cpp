@@ -94,10 +94,21 @@ TEST_CASE("sun arc matches TBC 2.4.3 elevation and azimuth across the day", "[sk
     CHECK(afternoonSun.x > 0.35f);
     CHECK(afternoonSun.y > 0.45f);
 
-    // Sunrise (06:00) at east horizon (-Y), sunset (18:00) at west horizon (+Y),
+    // 17:31 (Deadwind Pass / Karazhan late afternoon): ~26 deg elevation in WNW,
+    // visible above Karazhan's battlements; 20:24 dusk (~6 deg) before 21:15 sunset.
+    const glm::vec3 karaLateAfternoon = sunDirectionFromLightDir(
+        sunLightDirectionForDayFraction((17.0f + 31.0f / 60.0f) / 24.0f));
+    CHECK(glm::degrees(std::asin(karaLateAfternoon.z)) == Catch::Approx(26.4f).margin(2.0f));
+    CHECK(karaLateAfternoon.y > 0.80f);
+
+    const glm::vec3 duskSun = sunDirectionFromLightDir(
+        sunLightDirectionForDayFraction((20.0f + 24.0f / 60.0f) / 24.0f));
+    CHECK(glm::degrees(std::asin(duskSun.z)) == Catch::Approx(6.1f).margin(1.5f));
+
+    // Sunrise (06:00) at east horizon (-Y), sunset (21:15) at west horizon (+Y),
     // midnight (00:00) below horizon.
     const glm::vec3 sunrise = sunDirectionFromLightDir(sunLightDirectionForDayFraction(0.25f));
-    const glm::vec3 sunset  = sunDirectionFromLightDir(sunLightDirectionForDayFraction(0.75f));
+    const glm::vec3 sunset  = sunDirectionFromLightDir(sunLightDirectionForDayFraction(21.25f / 24.0f));
     const glm::vec3 midnight = sunDirectionFromLightDir(sunLightDirectionForDayFraction(0.0f));
     CHECK(sunrise.z == Catch::Approx(0.0f).margin(1e-5f));
     CHECK(sunrise.y == Catch::Approx(-1.0f).margin(1e-5f));

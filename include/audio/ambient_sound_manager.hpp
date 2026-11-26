@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <memory>
@@ -15,6 +16,18 @@ class AssetManager;
 }
 
 namespace audio {
+
+/// Native TBC 2.4.3 2D SoundAmbience.dbc bus gain (calibrated against 48 kHz
+/// ALSA waveform captures across Deadwind Pass SE 4212 vol=0.69 -> 0.420,
+/// Ironforge SE 4162 vol=0.55 -> 0.335, Salt Flats SE 4191 vol=0.69 -> 0.420,
+/// matching UNDERWATER_LOOP_VOLUME = 0.60 on mono UndwaterLoop SE 4209).
+inline constexpr float kAmbienceBusGain = 0.61f;
+
+[[nodiscard]] constexpr float computeAmbiencePlaybackGain(float entryVolume,
+                                                          float volumeScale) noexcept {
+    return kAmbienceBusGain * std::clamp(entryVolume, 0.0f, 1.0f) *
+           std::clamp(volumeScale, 0.0f, 1.0f);
+}
 
 struct LiquidProximityCandidate {
     glm::vec3 position{0.0f};

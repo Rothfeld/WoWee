@@ -23,9 +23,6 @@ namespace {
     // Volume settings
     constexpr float FIRE_VOLUME = 0.7f;
     constexpr float WATER_VOLUME = 0.5f;
-    // WoWee's level for the area/room ambience bed. SoundEntries carries a
-    // per-entry volume that is not read yet.
-    constexpr float AMBIENCE_VOLUME = 0.4f;
     // Native TBC 2.4.3 submerged water loop (UndwaterLoop.wav, SE 4209):
     // 0.60 * 0.7071 center pan = 0.424 L/R gain (measured 0.419 on build 8606).
     constexpr float UNDERWATER_LOOP_VOLUME = 0.60f;
@@ -306,13 +303,19 @@ void AmbientSoundManager::update(float deltaTime, const glm::vec3& cameraPos, bo
     updateBellTolls(deltaTime);
 }
 
-void AmbientSoundManager::updateAmbience(float deltaTime) {
+void AmbientSoundManager::updateAmbience(float /*deltaTime*/) {
     if (!ambience_.loaded || volumeScale_ <= 0.0f) return;
-    // Restarted as each pass ends, so the file plays back to back.
-    ambienceLoopTime_ -= deltaTime;
-    if (ambienceLoopTime_ > 0.0f) return;
-    ambienceSoundId_ = AudioEngine::instance().playSound2DStoppable(
-        ambience_.data, AMBIENCE_VOLUME * ambienceEntryVolume_ * volumeScale_);
+    auto& engine = AudioEngine::instance();
+    if (ambienceSoundId_ != 0 && engine.isSoundPlaying(ambienceSoundId_)) return;
+    SfxPlayOptions opts;
+    opts.category = SESoundCategory::kAmbience;
+    opts.loop = true;
+    ambienceSoundId_ = engine.playSound2DStoppable(
+        ambience_.data,
+        computeAmbiencePlaybackGain(ambienceEntryVolume_, volumeScale_),
+        1.0f,
+        opts,
+        ambience_.path);
     ambienceLoopTime_ = ambienceDuration_;
 }
 

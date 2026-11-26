@@ -1408,6 +1408,10 @@ void WaterRenderer::renderDepthOnly(VkCommandBuffer cmd, VkDescriptorSet perFram
         if (!surface.materialSet) continue;
         const uint8_t basicType = (surface.liquidType == 0) ? 0 : ((surface.liquidType - 1) % 4);
         if (liquidIsOpaque(basicType)) continue; // already wrote depth in render()
+        // When the camera eye is submerged beneath a translucent water surface,
+        // do not write depth on the ceiling or above-water blended geometry/units
+        // will be clipped behind the translucent surface.
+        if (camera.getPosition().z < surface.minHeight) continue;
         if (surface.wmoId != 0 && wmoGroupDrawn_) {
             wmoGroup[0] = surface.wmoGroup;
             if (!wmoGroupDrawn_(surface.wmoId, wmoGroup)) continue;

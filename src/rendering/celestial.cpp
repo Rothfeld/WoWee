@@ -158,8 +158,8 @@ void Celestial::renderSun(VkCommandBuffer cmd, VkDescriptorSet /*perFrameSet*/,
                            float timeOfDay,
                            const glm::vec3* sunDir, const glm::vec3* sunColor,
                            float sunVisibility) {
-    // Sun visible 5:00–19:00
-    if (timeOfDay < 5.0f || timeOfDay >= 19.0f || sunVisibility <= 0.01f) {
+    // Sun visible 5:00-21:30 (matches TBC 2.4.3 LightIntBand 21:00 sunset schedule)
+    if (timeOfDay < 5.0f || timeOfDay >= 21.5f || sunVisibility <= 0.01f) {
         return;
     }
 
@@ -308,11 +308,11 @@ float Celestial::getSunIntensity(float timeOfDay) const {
     if (timeOfDay >= 5.0f && timeOfDay < 6.0f) {
         return timeOfDay - 5.0f;          // Fade in
     }
-    if (timeOfDay >= 6.0f && timeOfDay < 18.0f) {
-        return 1.0f;                       // Full day
+    if (timeOfDay >= 6.0f && timeOfDay < 20.25f) {
+        return 1.0f;                       // Full day + late afternoon
     }
-    if (timeOfDay >= 18.0f && timeOfDay < 19.0f) {
-        return 1.0f - (timeOfDay - 18.0f); // Fade out
+    if (timeOfDay >= 20.25f && timeOfDay < 21.25f) {
+        return 1.0f - (timeOfDay - 20.25f); // Dusk sunset fade out
     }
     return 0.0f;
 }

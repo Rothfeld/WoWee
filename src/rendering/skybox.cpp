@@ -135,7 +135,7 @@ void Skybox::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const SkyP
     push.horizonColor    = glm::vec4(params.skyBand1Color, 1.0f);
     push.fogColor        = glm::vec4(params.skyBand2Color, 1.0f);
     push.smogColor       = glm::vec4(params.skySmogColor, glm::clamp(params.cloudDensity, 0.0f, 1.0f));
-    push.horizonFogColor = glm::vec4(params.fogColor, 1.0f);
+    push.horizonFogColor = glm::vec4(params.fogColor, params.submergedInWater ? 1.0f : 0.0f);
     push.sunDirAndTime   = glm::vec4(sunDir, params.timeOfDay);
 
     // Bind pipeline

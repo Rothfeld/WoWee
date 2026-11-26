@@ -152,7 +152,7 @@ void main() {
         vec2 oq = vec2(fbm(op, 3), fbm(op + vec2(4.1, 2.7), 3));
         float billow = fbm(op + oq * 1.1, 4);
         float darkMass = smoothstep(0.36, 0.72, billow);
-        vec3 overcastRgb = mix(push.cloudColor.rgb, push.cloudEmissiveColor.rgb, darkMass * 0.72) * ambient;
+        vec3 overcastRgb = mix(push.cloudColor.rgb, push.cloudEmissiveColor.rgb, darkMass * mix(0.72, 0.45, sunUp)) * ambient;
         float overcastAlpha = horizonFade * mix(0.92, 0.98, darkMass);
         cloudRgb = mix(cloudRgb, overcastRgb, overcast);
         alpha = mix(alpha, overcastAlpha, overcast);

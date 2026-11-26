@@ -132,11 +132,16 @@ void Clouds::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const SkyP
     // DBC IntBand[10] (cloud sun/highlight) and IntBand[11] (cloud emissive/shade)
     // are already authored per hour (warm/white by day, luminous cyan-blue at night).
     // Overcast zones (e.g. Karazhan 386 / Deadwind Pass 19, FloatBand[3]=0.70)
-    // author bright IntBand[10]/[11] overcast sky with dark IntBand[12] storm clouds.
+    // author bright SkyTop (185,227,251) by day with dark IntBand[12] storm billows
+    // at night (SkyTop=(27,34,37), luma=0.128 -> daylight=0.0).
     const float overcast = overcastCloudCover(density_, params.cloudLayer2Weight);
-    const float layer2Mix = overcast * glm::clamp(params.cloudLayer2Weight, 0.0f, 1.0f);
-    glm::vec3 cloudLitColor = params.cloudColor;
-    glm::vec3 cloudShadeColor = glm::mix(params.cloudEmissiveColor, params.cloudLayer2Color, layer2Mix);
+    const float daylight = skySmoothstep(0.16f, 0.36f, skyColorLuminance(params.skyTopColor));
+    const float nightFactor = 1.0f - daylight;
+    const float layer2Mix = overcast * glm::clamp(params.cloudLayer2Weight, 0.0f, 1.0f) * nightFactor;
+    const float overcastDayLift = 1.0f + 0.24f * overcast * daylight;
+    glm::vec3 cloudLitColor = glm::min(params.cloudColor * overcastDayLift, glm::vec3(1.0f));
+    glm::vec3 baseShade = glm::min(params.cloudEmissiveColor * (1.0f + 0.16f * overcast * daylight), glm::vec3(1.0f));
+    glm::vec3 cloudShadeColor = glm::mix(baseShade, params.cloudLayer2Color, layer2Mix);
 
     // Sun direction (opposite of light direction).
     glm::vec3 sunDir = -glm::normalize(params.directionalDir);

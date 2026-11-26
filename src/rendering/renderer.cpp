@@ -3871,8 +3871,23 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
                     lightingManager ? &lightingManager->getLightingParams() : nullptr,
                     useOriginalSkybox);
                 skyParams.sunOcclusion = sunOcclusion_;
+                uint16_t skyEyeLiquid = 0;
+                const auto skyEyeWater = waterRenderer
+                    ? waterRenderer->getNearestWaterHeightAt(
+                          camera->getPosition().x, camera->getPosition().y,
+                          camera->getPosition().z, 400.0f, &skyEyeLiquid)
+                    : std::nullopt;
+                skyParams.submergedInWater =
+                    skyEyeWater && camera->getPosition().z < *skyEyeWater &&
+                    classifySubmergedLiquid(skyEyeLiquid) == SubmergedLiquid::Water;
+                if (skyParams.submergedInWater) {
+                    skyParams.fogColor = glm::vec3(currentFrameData.fogColor);
+                    skyParams.fogStart = currentFrameData.fogParams.x;
+                    skyParams.fogEnd = currentFrameData.fogParams.y;
+                }
                 skySystem->render(cmd, perFrameSet, *camera, skyParams);
-                if (drawSkyModels) {
+                if (drawSkyModels &&
+                    !(skyParams.submergedInWater && skyParams.fogEnd <= 28.0f)) {
                     skyboxModelRenderer_->render(cmd, perFrameSet, *camera);
                 }
             }
@@ -4068,8 +4083,23 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
                 lightingManager ? &lightingManager->getLightingParams() : nullptr,
                 useOriginalSkybox);
             skyParams.sunOcclusion = sunOcclusion_;
+            uint16_t skyEyeLiquid = 0;
+            const auto skyEyeWater = waterRenderer
+                ? waterRenderer->getNearestWaterHeightAt(
+                      camera->getPosition().x, camera->getPosition().y,
+                      camera->getPosition().z, 400.0f, &skyEyeLiquid)
+                : std::nullopt;
+            skyParams.submergedInWater =
+                skyEyeWater && camera->getPosition().z < *skyEyeWater &&
+                classifySubmergedLiquid(skyEyeLiquid) == SubmergedLiquid::Water;
+            if (skyParams.submergedInWater) {
+                skyParams.fogColor = glm::vec3(currentFrameData.fogColor);
+                skyParams.fogStart = currentFrameData.fogParams.x;
+                skyParams.fogEnd = currentFrameData.fogParams.y;
+            }
             skySystem->render(currentCmd, perFrameSet, *camera, skyParams);
-            if (drawSkyModels) {
+            if (drawSkyModels &&
+                !(skyParams.submergedInWater && skyParams.fogEnd <= 28.0f)) {
                 skyboxModelRenderer_->prepareRender(frameIdx, *camera);
                 skyboxModelRenderer_->render(currentCmd, perFrameSet, *camera);
             }

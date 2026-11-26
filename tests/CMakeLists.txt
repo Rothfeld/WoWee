@@ -3034,6 +3034,11 @@ wowee_add_test(test_night_sky
             ${CMAKE_SOURCE_DIR}/src/pipeline/dbc_loader.cpp
             ${TEST_COMMON_SOURCES})
 
+wowee_add_test(test_sidedisc2_sky_fog_water_amb
+    SOURCES test_sidedisc2_sky_fog_water_amb.cpp
+            ${CMAKE_SOURCE_DIR}/src/pipeline/dbc_loader.cpp
+            ${TEST_COMMON_SOURCES})
+
 # ── test_placement_transform ─────────────────────────────────
 # The model matrix a doodad or a building placement becomes. Nothing on flat
 # ground can tell the six composition orders apart, so this checks four real

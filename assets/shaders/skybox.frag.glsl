@@ -125,6 +125,18 @@ void main() {
         }
     }
 
+    if (push.horizonFogColor.w > 0.5) {
+        // Submerged camera: attenuate sky dome by underwater fogParams/fogColor
+        // so short-range underwater fogs (e.g. Stormwind Canals LP 24, fogEnd =
+        // 27.78 yd) obscure the sky seamlessly behind fogged above-water walls
+        // and lampposts while wider river/lake underwater fogs (e.g. Deadwind
+        // Pass LP 20, fogEnd = 83.33 yd) keep a soft misty ceiling tint.
+        float uwSkyDepth = mix(45.0, 28.0, elevClamped);
+        float uwFogSpan = max(fogParams.y - fogParams.x, 1e-3);
+        float uwFogFactor = clamp((fogParams.y - uwSkyDepth) / uwFogSpan, 0.0, 1.0);
+        sky = mix(fogColor.rgb, sky, uwFogFactor);
+    }
+
     if (volumetricParams.x > 0.5) {
         vec4 air = fogVolumeSky(TexCoord);
         sky = sky * air.a + air.rgb;

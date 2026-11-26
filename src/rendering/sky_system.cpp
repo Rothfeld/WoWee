@@ -158,30 +158,35 @@ void SkySystem::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
         return;
     }
 
-    const float overcastAttenuation = 1.0f - glm::smoothstep(0.15f, 0.70f, effectiveOvercast);
-    const float celestialVisibility =
-        overcastAttenuation * glm::clamp(params.celestialGlowThrough, 0.0f, 1.0f);
-
-    // --- Celestial bodies (sun + White Lady + Blue Child) ---
-    if (celestial_) {
-        const float nightFactor = moonNightVisibility(
-            params.timeOfDay, params.skyTopColor,
-            effectiveOvercast, params.celestialGlowThrough);
-        celestial_->render(cmd, perFrameSet, params.timeOfDay,
-                           &params.directionalDir, &params.sunColor, params.gameTime,
-                           nightFactor, celestialVisibility);
-    }
-
     // --- Clouds (DBC-driven daytime clouds, permanent overcast, + storm overcast) ---
-    if (clouds_) {
+    if (clouds_ && !params.submergedInWater) {
         if (effectiveCloudDensity > 0.01f) {
             clouds_->setDensity(effectiveCloudDensity);
             clouds_->render(cmd, perFrameSet, params);
         }
     }
 
+    const glm::vec3 sunDir = sunDirectionFromLightDir(params.directionalDir);
+    const float celestialVisibility = daytimeCelestialVisibility(
+        params.weatherIntensity, params.celestialGlowThrough,
+        params.submergedInWater, sunDir.z, params.fogStart, params.fogEnd);
+
+    // --- Celestial bodies (sun + White Lady + Blue Child) ---
+    // Rendered after clouds so daytime sun / SunGlare glows through overcast
+    // decks when LightFloatBand[2] (CELESTIAL_GLOW_THROUGH) > 0, while night
+    // moon visibility remains gated on effectiveOvercast via moonNightVisibility.
+    if (celestial_) {
+        const float nightFactor = params.submergedInWater
+            ? 0.0f
+            : moonNightVisibility(params.timeOfDay, params.skyTopColor,
+                                  effectiveOvercast, params.celestialGlowThrough);
+        celestial_->render(cmd, perFrameSet, params.timeOfDay,
+                           &params.directionalDir, &params.sunColor, params.gameTime,
+                           nightFactor, celestialVisibility);
+    }
+
     // --- Lens flare (attenuated by atmosphere) ---
-    if (lensFlare_) {
+    if (lensFlare_ && !params.submergedInWater) {
         glm::vec3 sunPos = getSunPosition(params);
         lensFlare_->render(cmd, camera, sunPos, params.timeOfDay,
                            params.fogDensity, params.cloudDensity,

@@ -42,6 +42,8 @@ struct SkyParams {
     float celestialGlowThrough = 1.0f; // 0-1 (LightFloatBand 2)
     float cloudDensity = 0.0f;         // 0-1 (LightFloatBand 3: sky smog / cloud weight)
     float fogDensity = 0.0f;        // 0-1
+    float fogStart = 100.0f;        // Distance fog start (yards)
+    float fogEnd = 1000.0f;         // Distance fog end (yards)
     float horizonGlow = 0.3f;       // 0-1
     float weatherIntensity = 0.0f;  // 0-1 (rain/snow intensity, attenuates lens flare)
     // How much of the line from the eye to the sun is blocked, 0 clear to 1
@@ -50,6 +52,7 @@ struct SkyParams {
     // ceiling between the two changed nothing and the flare hung over the
     // terrain that was covering it.
     float sunOcclusion = 0.0f;
+    bool submergedInWater = false;  // Camera eye submerged in water (fogs sky dome by underwater fog)
 
     // Time
     float timeOfDay = 12.0f;    // 0-24 hours
@@ -60,6 +63,40 @@ struct SkyParams {
     bool skyboxHasStars = false;  // Does loaded skybox include baked stars?
     bool useOriginalSkybox = false; // Original camera-centered client M2 is active
 };
+
+/// Distance-fog transmittance in [0, 1] for the sky dome when viewed from
+/// underwater (`submergedInWater`). Tight underwater fogs such as Stormwind
+/// Canals (LightParams 24, fogEnd = 27.78 yd) obscure the sky dome completely
+/// behind underwater fogColor (0.0) so fogged buildings/lampposts above the
+/// surface do not silhouette against a bright noon sky cutout, whereas wider
+/// river/lake underwater fogs (e.g. Deadwind Pass LP 20, fogEnd = 83.33 yd)
+/// transmit a soft misty sky gradient through the translucent water ceiling.
+inline float underwaterSkyFogFactor(float elevSin, float fogStart, float fogEnd) {
+    const float clampedElev = std::clamp(elevSin, 0.0f, 1.0f);
+    const float effectiveDepth = 45.0f + (28.0f - 45.0f) * clampedElev;
+    const float span = std::max(fogEnd - fogStart, 1e-3f);
+    return std::clamp((fogEnd - effectiveDepth) / span, 0.0f, 1.0f);
+}
+
+/// Daytime sun disc visibility in [0, 1].
+/// Unlike night stars/moon (which hide under permanent DBC overcast decks via
+/// overcastCloudCover), daytime sun visibility follows LightFloatBand[2]
+/// (CELESTIAL_GLOW_THROUGH) attenuated by active precipitation weatherIntensity
+/// (and underwater sky fog transmittance when submerged).
+inline float daytimeCelestialVisibility(float weatherIntensity,
+                                        float celestialGlowThrough,
+                                        bool submergedInWater = false,
+                                        float sunElevSin = 1.0f,
+                                        float fogStart = 0.0f,
+                                        float fogEnd = 1000.0f) {
+    const float weatherAtten =
+        1.0f - skySmoothstep(0.15f, 0.70f, std::clamp(weatherIntensity, 0.0f, 1.0f));
+    float vis = weatherAtten * std::clamp(celestialGlowThrough, 0.0f, 1.0f);
+    if (submergedInWater) {
+        vis *= underwaterSkyFogFactor(sunElevSin, fogStart, fogEnd);
+    }
+    return vis;
+}
 
 /// Effective procedural cloud density in [0, 1] for Azeroth/Eversong skies.
 ///
