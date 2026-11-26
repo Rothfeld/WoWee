@@ -1,7 +1,9 @@
 #include "audio/ambient_sound_manager.hpp"
 #include "audio/sample_load.hpp"
 #include "audio/audio_engine.hpp"
+#include "audio/sound_entries.hpp"
 #include "pipeline/asset_manager.hpp"
+#include "pipeline/dbc_loader.hpp"
 #include "core/logger.hpp"
 #include <random>
 #include <algorithm>
@@ -24,6 +26,10 @@ namespace {
     // WoWee's level for the area/room ambience bed. SoundEntries carries a
     // per-entry volume that is not read yet.
     constexpr float AMBIENCE_VOLUME = 0.4f;
+    // Native TBC 2.4.3 submerged water loop (UndwaterLoop.wav, SE 4209):
+    // 0.60 * 0.7071 center pan = 0.424 L/R gain (measured 0.419 on build 8606).
+    constexpr float UNDERWATER_LOOP_VOLUME = 0.60f;
+    constexpr uint32_t kUnderwaterSoundEntryId = 4209u;
 
     // Timing settings (seconds)
     constexpr float FIRE_LOOP_INTERVAL = 3.0f;  // Fire crackling loop length
@@ -34,6 +40,12 @@ namespace {
     float randomFloat(float min, float max) {
         std::uniform_real_distribution<float> dist(min, max);
         return dist(gen);
+    }
+
+    uint8_t normalizeWaterSubtype(uint8_t subtype) {
+        if (subtype >= 8u) return 8u;
+        if (subtype >= 4u) return 4u;
+        return 0u;
     }
 
     /// Playing time of a RIFF/WAVE file in seconds: the data chunk's size over
@@ -60,11 +72,94 @@ namespace {
     }
 }
 
+void AmbientSoundManager::loadSoundWaterTypeTable(pipeline::AssetManager* assets) {
+    waterTypeRules_.clear();
+    waterSoundBanks_.clear();
+    if (!assets) return;
+
+    SoundEntryTable::instance().ensureLoaded(assets);
+
+    auto dbc = assets->loadDBC("SoundWaterType.dbc");
+    if (dbc && dbc->isLoaded() && dbc->getFieldCount() >= 4) {
+        for (uint32_t row = 0; row < dbc->getRecordCount(); ++row) {
+            const uint32_t basicType = dbc->getUInt32(row, 1);
+            const uint32_t subtype = dbc->getUInt32(row, 2);
+            const uint32_t soundEntryId = dbc->getUInt32(row, 3);
+            if (basicType > 3u || soundEntryId == 0u) continue;
+            waterTypeRules_.push_back(WaterTypeRule{
+                .basicType = static_cast<uint8_t>(basicType),
+                .soundSubtype = normalizeWaterSubtype(static_cast<uint8_t>(subtype)),
+                .soundEntryId = soundEntryId,
+            });
+        }
+    }
+
+    // Load WAV data and SoundEntries.dbc attenuation parameters for each referenced sound ID.
+    for (const auto& rule : waterTypeRules_) {
+        if (waterSoundBanks_.contains(rule.soundEntryId)) continue;
+
+        WaterSoundBank bank;
+        bank.soundEntryId = rule.soundEntryId;
+        if (const SoundEntryRecord* rec = SoundEntryTable::instance().findById(assets, rule.soundEntryId)) {
+            bank.volume = rec->volume;
+            bank.flags = rec->flags;
+            bank.minDistance = rec->minDistance;
+            bank.maxDistance = rec->maxDistance;
+            const std::string chosenPath = SoundEntryTable::instance().pickExistingPath(assets, *rec);
+            if (!chosenPath.empty()) {
+                loadSound(chosenPath, bank.sample, assets);
+            }
+        }
+        waterSoundBanks_.emplace(rule.soundEntryId, std::move(bank));
+    }
+
+    LOG_INFO("AmbientSoundManager: SoundWaterType rules loaded: ", waterTypeRules_.size(),
+             " (", waterSoundBanks_.size(), " sound banks)");
+}
+
+uint32_t AmbientSoundManager::resolveWaterSoundEntryId(uint8_t basicType, uint8_t soundSubtype) const {
+    const uint8_t normSub = normalizeWaterSubtype(soundSubtype);
+    for (const auto& rule : waterTypeRules_) {
+        if (rule.basicType == basicType && rule.soundSubtype == normSub) {
+            return rule.soundEntryId;
+        }
+    }
+    for (const auto& rule : waterTypeRules_) {
+        if (rule.basicType == basicType && rule.soundSubtype == 0u) {
+            return rule.soundEntryId;
+        }
+    }
+    return 0u;
+}
+
+void AmbientSoundManager::setLiquidProximity(std::span<const LiquidProximityCandidate> candidates) {
+    liquidCandidates_.assign(candidates.begin(), candidates.end());
+}
+
+void AmbientSoundManager::clearLiquidProximity() {
+    liquidCandidates_.clear();
+}
+
+void AmbientSoundManager::stopAllWaterLoops() {
+    if (underwaterSoundId_ != 0) {
+        AudioEngine::instance().stopSound(underwaterSoundId_);
+        underwaterSoundId_ = 0;
+        underwaterStartedScale_ = 0.0f;
+    }
+    for (auto& slot : activeWaterLoops_) {
+        if (slot.soundId != 0) {
+            AudioEngine::instance().stopSound(slot.soundId);
+            slot = ActiveWaterLoop{};
+        }
+    }
+}
+
 bool AmbientSoundManager::initialize(pipeline::AssetManager* assets) {
     if (!assets) {
         LOG_ERROR("AmbientSoundManager: AssetManager is null");
         return false;
     }
+    stopAllWaterLoops();
     assets_ = assets;
 
     LOG_INFO("AmbientSoundManager: Initializing...");
@@ -79,19 +174,15 @@ bool AmbientSoundManager::initialize(pipeline::AssetManager* assets) {
     torchSounds_.resize(1);
     loadSound("Sound\\Doodad\\TorchFireLoop.wav", torchSounds_[0], assets);
 
-    // Load water sounds
-    waterSounds_.resize(1);
-    loadSound("Sound\\Ambience\\Water\\River_LakeStillA.wav", waterSounds_[0], assets);
-
-    riverSounds_.resize(1);
-    loadSound("Sound\\Ambience\\Water\\RiverSlowA.wav", riverSounds_[0], assets);
-
     waterfallSounds_.resize(1);
     loadSound("Sound\\Doodad\\WaterFallSmall.wav", waterfallSounds_[0], assets);
 
     // Load fountain sounds
     fountainSounds_.resize(1);
     loadSound("Sound\\Doodad\\FountainSmallMediumLoop.wav", fountainSounds_[0], assets);
+
+    // Load SoundWaterType.dbc + SoundEntries.dbc proximity banks (river, ocean, magma, slime)
+    loadSoundWaterTypeTable(assets);
 
     // Load weather sounds (TBC 2.4.3 uses Rain*Loop.wav and SandStorm*.wav)
     rainLightSounds_.resize(1);
@@ -161,8 +252,12 @@ void AmbientSoundManager::shutdown() {
     if (ambienceSoundId_ != 0) AudioEngine::instance().stopSound(ambienceSoundId_);
     ambienceSoundId_ = 0;
     ambience_ = AmbientSample{};
+    stopAllWaterLoops();
+    liquidCandidates_.clear();
+    waterTypeRules_.clear();
+    waterSoundBanks_.clear();
     emitters_.clear();
-    activeSounds_.clear();
+    wasSwimming_ = false;
     initialized_ = false;
 }
 
@@ -212,7 +307,7 @@ void AmbientSoundManager::update(float deltaTime, const glm::vec3& cameraPos, bo
 }
 
 void AmbientSoundManager::updateAmbience(float deltaTime) {
-    if (!ambience_.loaded) return;
+    if (!ambience_.loaded || volumeScale_ <= 0.0f) return;
     // Restarted as each pass ends, so the file plays back to back.
     ambienceLoopTime_ -= deltaTime;
     if (ambienceLoopTime_ > 0.0f) return;
@@ -222,17 +317,22 @@ void AmbientSoundManager::updateAmbience(float deltaTime) {
 }
 
 void AmbientSoundManager::updatePositionalEmitters(float deltaTime, const glm::vec3& cameraPos) {
-    // First pass: mark emitters as active/inactive based on distance
     int activeFireCount = 0;
     int activeWaterCount = 0;
-    const int MAX_ACTIVE_FIRE = 5;      // Max 5 fire sounds at once
-    const int MAX_ACTIVE_WATER = 3;     // Max 3 water sounds at once
+    const int MAX_ACTIVE_FIRE = 5;
+    const int MAX_ACTIVE_WATER = 3;
 
     for (auto& emitter : emitters_) {
+        // Liquid-body surface/river audio is driven continuously by SoundWaterType.dbc
+        // and WaterRenderer::queryLiquidProximity; skip legacy per-chunk one-shot stubs.
+        if (emitter.type == AmbientType::WATER_SURFACE || emitter.type == AmbientType::RIVER) {
+            emitter.active = false;
+            continue;
+        }
+
         const glm::vec3 delta = emitter.position - cameraPos;
         const float distSq = glm::dot(delta, delta);
 
-        // Determine max distance based on type
         float maxDist = MAX_AMBIENT_DISTANCE;
         bool isFire = false;
         bool isWater = false;
@@ -242,15 +342,12 @@ void AmbientSoundManager::updatePositionalEmitters(float deltaTime, const glm::v
             emitter.type == AmbientType::TORCH) {
             maxDist = MAX_FIRE_DISTANCE;
             isFire = true;
-        } else if (emitter.type == AmbientType::WATER_SURFACE ||
-                   emitter.type == AmbientType::RIVER ||
-                   emitter.type == AmbientType::WATERFALL ||
+        } else if (emitter.type == AmbientType::WATERFALL ||
                    emitter.type == AmbientType::FOUNTAIN) {
             maxDist = MAX_WATER_DISTANCE;
             isWater = true;
         }
 
-        // Update active state based on distance AND limits
         const float maxDistSq = maxDist * maxDist;
         const bool withinRange = (distSq < maxDistSq);
 
@@ -261,20 +358,16 @@ void AmbientSoundManager::updatePositionalEmitters(float deltaTime, const glm::v
             emitter.active = true;
             activeWaterCount++;
         } else if (!isFire && !isWater && withinRange) {
-            emitter.active = true;  // Other types (fountain, etc)
+            emitter.active = true;
         } else {
             emitter.active = false;
         }
 
         if (!emitter.active) continue;
 
-        // Update play timer
         emitter.lastPlayTime += deltaTime;
-
-        // We only need the true distance for volume attenuation once the emitter is active.
         const float distance = std::sqrt(distSq);
 
-        // Handle different emitter types
         switch (emitter.type) {
             case AmbientType::FIREPLACE_SMALL:
                 if (emitter.lastPlayTime >= FIRE_LOOP_INTERVAL && !fireSoundsSmall_.empty() && fireSoundsSmall_[0].loaded) {
@@ -296,22 +389,6 @@ void AmbientSoundManager::updatePositionalEmitters(float deltaTime, const glm::v
                 if (emitter.lastPlayTime >= FIRE_LOOP_INTERVAL && !torchSounds_.empty() && torchSounds_[0].loaded) {
                     float volume = FIRE_VOLUME * 0.7f * volumeScale_ * (1.0f - (distance / maxDist));
                     AudioEngine::instance().playSound3D(torchSounds_[0].data, emitter.position, volume);
-                    emitter.lastPlayTime = 0.0f;
-                }
-                break;
-
-            case AmbientType::WATER_SURFACE:
-                if (emitter.lastPlayTime >= 5.0f && !waterSounds_.empty() && waterSounds_[0].loaded) {
-                    float volume = WATER_VOLUME * volumeScale_ * (1.0f - (distance / maxDist));
-                    AudioEngine::instance().playSound3D(waterSounds_[0].data, emitter.position, volume);
-                    emitter.lastPlayTime = 0.0f;
-                }
-                break;
-
-            case AmbientType::RIVER:
-                if (emitter.lastPlayTime >= 5.0f && !riverSounds_.empty() && riverSounds_[0].loaded) {
-                    float volume = WATER_VOLUME * volumeScale_ * (1.0f - (distance / maxDist));
-                    AudioEngine::instance().playSound3D(riverSounds_[0].data, emitter.position, volume);
                     emitter.lastPlayTime = 0.0f;
                 }
                 break;
@@ -339,26 +416,33 @@ void AmbientSoundManager::updatePositionalEmitters(float deltaTime, const glm::v
 }
 
 uint64_t AmbientSoundManager::addEmitter(const glm::vec3& position, AmbientType type) {
+    const uint64_t id = nextEmitterId_++;
+    if (type == AmbientType::WATER_SURFACE || type == AmbientType::RIVER) {
+        return id;
+    }
+
     AmbientEmitter emitter;
-    emitter.id = nextEmitterId_++;
+    emitter.id = id;
     emitter.type = type;
     emitter.position = position;
     emitter.active = false;
-    emitter.lastPlayTime = randomFloat(0.0f, 2.0f);  // Random initial offset
+    emitter.lastPlayTime = randomFloat(0.0f, 2.0f);
     emitter.loopInterval = FIRE_LOOP_INTERVAL;
 
     emitters_.push_back(emitter);
     return emitter.id;
 }
+
 void AmbientSoundManager::setVolumeScale(float scale) {
-    const float clamped = std::max(0.0f, std::min(1.0f, scale));
+    const float clamped = std::clamp(scale, 0.0f, 1.0f);
     if (clamped == volumeScale_) return;
     volumeScale_ = clamped;
-    // A pass runs up to ~90 s at the volume it started with; restart the
-    // ambience so the slider (or sound_enableambience off) takes now.
+    // Restart area ambience and stop/resync water proximity & underwater loops
+    // immediately when Sound_EnableAmbience or Sound_AmbienceVolume changes.
     if (ambienceSoundId_ != 0) AudioEngine::instance().stopSound(ambienceSoundId_);
     ambienceSoundId_ = 0;
     ambienceLoopTime_ = 0.0f;
+    stopAllWaterLoops();
 }
 
 void AmbientSoundManager::setWeather(WeatherType type) {
@@ -366,12 +450,11 @@ void AmbientSoundManager::setWeather(WeatherType type) {
         LOG_INFO("AmbientSoundManager: Weather changed from ", static_cast<int>(currentWeather_),
                  " to ", static_cast<int>(type));
         currentWeather_ = type;
-        weatherLoopTime_ = (type != WeatherType::NONE) ? 100.0f : 0.0f;  // Play immediately on onset
+        weatherLoopTime_ = (type != WeatherType::NONE) ? 100.0f : 0.0f;
     }
 }
 
 void AmbientSoundManager::setZoneId(uint32_t zoneId) {
-    // Only the bell tolls still key on this: which capital, by AreaTable id.
     CityType city = CityType::NONE;
     switch (zoneId) {
         case 1519: city = CityType::STORMWIND;    break;
@@ -390,19 +473,17 @@ void AmbientSoundManager::setCityType(CityType type) {
         LOG_INFO("AmbientSoundManager: City changed from ", static_cast<int>(currentCity_),
                  " to ", static_cast<int>(type));
         currentCity_ = type;
-        bellTollTime_ = randomFloat(60.0f, 90.0f);  // First bell after 1-1.5 minutes
+        bellTollTime_ = randomFloat(60.0f, 90.0f);
     }
 }
 
 void AmbientSoundManager::updateWeatherAmbience(float deltaTime, bool isIndoor) {
-    // Don't play weather sounds when indoors
-    if (isIndoor || currentWeather_ == WeatherType::NONE) return;
+    if (isIndoor || currentWeather_ == WeatherType::NONE || volumeScale_ <= 0.0f) return;
 
     weatherLoopTime_ += deltaTime;
 
-    // Select appropriate sound library based on weather type
     const std::vector<AmbientSample>* weatherLibrary = nullptr;
-    float loopInterval = 20.0f;  // Default 20 second loop for weather
+    float loopInterval = 20.0f;
 
     switch (currentWeather_) {
         case WeatherType::RAIN_LIGHT:
@@ -445,10 +526,9 @@ void AmbientSoundManager::updateWeatherAmbience(float deltaTime, bool isIndoor) 
             return;
     }
 
-    // Play weather sound if library is loaded and timer expired
     if (weatherLibrary && !weatherLibrary->empty() && (*weatherLibrary)[0].loaded) {
         if (weatherLoopTime_ >= loopInterval) {
-            float volume = 0.4f * volumeScale_;  // Weather ambience at moderate volume
+            float volume = 0.4f * volumeScale_;
             AudioEngine::instance().playSound2D((*weatherLibrary)[0].data, volume, 1.0f);
             LOG_INFO("Playing weather ambience: type ", static_cast<int>(currentWeather_));
             weatherLoopTime_ = 0.0f;
@@ -456,47 +536,136 @@ void AmbientSoundManager::updateWeatherAmbience(float deltaTime, bool isIndoor) 
     }
 }
 
-void AmbientSoundManager::updateWaterAmbience(float deltaTime, bool isSwimming) {
-    bool stateChanged = (wasSwimming_ != isSwimming);
-
-    if (stateChanged) {
-        LOG_INFO("Ambient: ", isSwimming ? "ENTERED WATER" : "EXITED WATER");
-        oceanLoopTime_ = isSwimming ? 100.0f : 0.0f;  // Play immediately when submerging
+void AmbientSoundManager::updateWaterAmbience(float /*deltaTime*/, bool isSwimming) {
+    auto& engine = AudioEngine::instance();
+    if (wasSwimming_ != isSwimming) {
+        LOG_INFO("Ambient: ", isSwimming ? "CAMERA SUBMERGED IN WATER" : "CAMERA EXITED WATER");
+        wasSwimming_ = isSwimming;
     }
 
-    wasSwimming_ = isSwimming;
+    if (volumeScale_ <= 0.0f) {
+        stopAllWaterLoops();
+        return;
+    }
 
-    // Play underwater sounds when swimming
+    // 1. Underwater ambience (UndwaterLoop.wav, SE 4209): continuous 2D loop
+    // while camera is submerged in translucent water/ocean, stopped immediately on exit.
     if (isSwimming) {
-        if (!underwaterSounds_.empty() && underwaterSounds_[0].loaded) {
-            oceanLoopTime_ += deltaTime;
-            // Play every 18 seconds for underwater ambience
-            if (oceanLoopTime_ >= 18.0f) {
-                float volume = 0.5f * volumeScale_;
-                AudioEngine::instance().playSound2D(underwaterSounds_[0].data, volume, 1.0f);
-                LOG_INFO("Playing underwater ambience");
-                oceanLoopTime_ = 0.0f;
+        const bool running = underwaterSoundId_ != 0 &&
+                             engine.isSoundPlaying(underwaterSoundId_) &&
+                             std::abs(underwaterStartedScale_ - volumeScale_) <= 1e-3f;
+        if (!running) {
+            if (underwaterSoundId_ != 0) {
+                engine.stopSound(underwaterSoundId_);
+                underwaterSoundId_ = 0;
+            }
+            if (!underwaterSounds_.empty() && underwaterSounds_[0].loaded) {
+                SfxPlayOptions opts;
+                opts.soundEntryId = kUnderwaterSoundEntryId;
+                opts.category = SESoundCategory::kAmbience;
+                opts.loop = true;
+                underwaterSoundId_ = engine.playSound2DStoppable(
+                    underwaterSounds_[0].data,
+                    UNDERWATER_LOOP_VOLUME * volumeScale_,
+                    1.0f,
+                    opts,
+                    underwaterSounds_[0].path);
+                underwaterStartedScale_ = volumeScale_;
             }
         }
+    } else if (underwaterSoundId_ != 0) {
+        engine.stopSound(underwaterSoundId_);
+        underwaterSoundId_ = 0;
+        underwaterStartedScale_ = 0.0f;
     }
-    // Ocean ambience for standing beside water, rather than in it, is not
-    // played and its sample is no longer loaded for it.
-    //
-    // It wants a distance to the nearest water surface, which nothing here
-    // measures: isSwimming says in or out and nothing about how far away it is
-    // when out. Being near the sea is already covered approximately by the
-    // BEACH zone ambience above, which is why this was never missed. Whoever
-    // adds the proximity query can load Sound\\Ambience\\Water\\OceanDeepDay.wav
-    // here again - keeping it in memory until then bought nothing.
+
+    // 2. SoundWaterType.dbc 3D proximity loops for Water(0), Ocean(1), Magma(2), Slime(3).
+    // Native TBC 2.4.3 suppresses Water(0) and Ocean(1) surface loops while the camera is
+    // submerged in water, whereas Slime(3) and Magma(2) continue playing when submerged.
+    const glm::vec3 listenerPos = engine.getListenerPosition();
+
+    for (uint8_t basicType = 0; basicType < 4u; ++basicType) {
+        ActiveWaterLoop& slot = activeWaterLoops_[basicType];
+        if (isSwimming && basicType < 2u) {
+            if (slot.soundId != 0) {
+                engine.stopSound(slot.soundId);
+                slot = ActiveWaterLoop{};
+            }
+            continue;
+        }
+
+        const LiquidProximityCandidate* bestCand = nullptr;
+        const WaterSoundBank* bestBank = nullptr;
+        float bestGain = 0.0f;
+
+        for (const auto& cand : liquidCandidates_) {
+            if (cand.basicType != basicType) continue;
+            const uint32_t seId = resolveWaterSoundEntryId(basicType, cand.soundSubtype);
+            if (seId == 0u) continue;
+            const auto bankIt = waterSoundBanks_.find(seId);
+            if (bankIt == waterSoundBanks_.end() || !bankIt->second.sample.loaded) continue;
+
+            const WaterSoundBank& bank = bankIt->second;
+            const float dist = glm::length(cand.position - listenerPos);
+            const float atten = AudioEngine::computeDistanceAttenuation(
+                bank.minDistance, bank.maxDistance, dist);
+            const float effectiveGain = bank.volume * atten;
+            if (effectiveGain > bestGain) {
+                bestGain = effectiveGain;
+                bestCand = &cand;
+                bestBank = &bank;
+            }
+        }
+
+        if (!bestCand || !bestBank || bestGain <= 0.0f) {
+            if (slot.soundId != 0) {
+                engine.stopSound(slot.soundId);
+                slot = ActiveWaterLoop{};
+            }
+            continue;
+        }
+
+        const bool keepExisting =
+            slot.soundId != 0 &&
+            slot.soundEntryId == bestBank->soundEntryId &&
+            std::abs(slot.startedVolumeScale - volumeScale_) <= 1e-3f &&
+            engine.isSoundPlaying(slot.soundId);
+
+        if (!keepExisting) {
+            if (slot.soundId != 0) {
+                engine.stopSound(slot.soundId);
+                slot = ActiveWaterLoop{};
+            }
+            SfxPlayOptions opts;
+            opts.soundEntryId = bestBank->soundEntryId;
+            opts.soundEntryFlags = bestBank->flags;
+            opts.category = SESoundCategory::kAmbience;
+            opts.loop = true;
+            const uint32_t newId = engine.playSound3DStoppable(
+                bestBank->sample.data,
+                bestCand->position,
+                bestBank->volume * volumeScale_,
+                1.0f,
+                bestBank->maxDistance,
+                bestBank->minDistance,
+                opts,
+                bestBank->sample.path);
+            if (newId != 0) {
+                slot.soundId = newId;
+                slot.soundEntryId = bestBank->soundEntryId;
+                slot.startedVolumeScale = volumeScale_;
+            }
+        } else {
+            engine.setSoundPosition(slot.soundId, bestCand->position);
+        }
+    }
 }
 
 void AmbientSoundManager::updateBellTolls(float deltaTime) {
-    // Only play bells when in a city
     if (currentCity_ == CityType::NONE) return;
 
     bellTollTime_ += deltaTime;
 
-    // Select appropriate bell sound based on city faction
     const std::vector<AmbientSample>* bellLibrary = nullptr;
 
     switch (currentCity_) {
@@ -518,16 +687,9 @@ void AmbientSoundManager::updateBellTolls(float deltaTime) {
             return;
     }
 
-    // The authored sample already contains its complete bell phrase. Play it
-    // once at a sparse ambient interval instead of replaying the whole sample
-    // once per clock hour count.
     const float bellInterval = randomFloat(120.0f, 180.0f);
     if (bellLibrary && !bellLibrary->empty() && (*bellLibrary)[0].loaded) {
         if (bellTollTime_ >= bellInterval) {
-            // Bells have their own "Capital City Bells" slider (bellVolumeScale_)
-            // and must be independent of the ambient slider (volumeScale_) - the
-            // engine still applies master volume. Coupling to volumeScale_ made the
-            // bell control appear dead whenever ambient was turned down.
             float volume = 0.5f * bellVolumeScale_;
             AudioEngine::instance().playSound2D((*bellLibrary)[0].data, volume, 1.0f);
             LOG_INFO("Bell toll ringing in city: type ", static_cast<int>(currentCity_));

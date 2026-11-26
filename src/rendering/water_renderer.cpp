@@ -751,7 +751,7 @@ void WaterRenderer::updateMaterialUBO(WaterSurface& surface) {
     glm::vec4 color = getLiquidColor(surface.liquidType);
     float alpha = getLiquidAlpha(surface.liquidType);
 
-    const uint8_t liquidBasicType = (surface.liquidType == 0) ? 0 : ((surface.liquidType - 1) % 4);
+    const uint8_t liquidBasicType = classifyLiquidBasicType(surface.liquidType);
     if (legacyWater && liquidBasicType >= 2) {
         // psLiquidMagma's vertex colour: white outdoors (ADT lava measured
         // equal to its texels), the MLIQ material's MOMT color2 in an interior
@@ -928,6 +928,7 @@ void WaterRenderer::loadFromTerrain(const pipeline::ADTTerrain& terrain, bool ap
                 surface.minHeight = layer.minHeight;
                 surface.maxHeight = layer.maxHeight;
                 surface.liquidType = layer.liquidType;
+                surface.soundSubtype = defaultTerrainLiquidSubtype(classifyLiquidBasicType(layer.liquidType));
                 surface.greenMagma = greenMagma;
                 // Keep mask coordinates in the MH2O chunk's native x/y order;
                 // only the world-space origin needs the terrain axis conversion.
@@ -986,6 +987,7 @@ void WaterRenderer::loadFromTerrain(const pipeline::ADTTerrain& terrain, bool ap
         surface.xOffset = 0;
         surface.yOffset = 0;
         surface.liquidType = key.liquidType;
+        surface.soundSubtype = defaultTerrainLiquidSubtype(classifyLiquidBasicType(key.liquidType));
         surface.greenMagma = greenMagma;
         surface.tileX = tileX;
         surface.tileY = tileY;
@@ -1140,6 +1142,12 @@ void WaterRenderer::loadFromWMO(const pipeline::WMOLiquid& liquid,
     surface.wmoId = wmoId;
     surface.wmoGroup = groupIndex;
     surface.liquidType = liquid.liquidType;
+    if (const auto nibble = pipeline::wmoLiquidTileNibble(liquid.flags);
+        liquid.liquidType < 21 && nibble.has_value()) {
+        surface.soundSubtype = static_cast<uint8_t>(*nibble & 0x0Cu);
+    } else {
+        surface.soundSubtype = defaultTerrainLiquidSubtype(classifyLiquidBasicType(liquid.liquidType));
+    }
     if (liquid.indoor) {
         const uint32_t color = liquid.materialColor;
         surface.indoorColor = glm::vec4((color >> 16) & 255, (color >> 8) & 255,
@@ -1753,7 +1761,7 @@ std::optional<glm::vec2> WaterRenderer::wateredGridPosition(const WaterSurface& 
 bool WaterRenderer::hasTranslucentSurfaces() const {
     for (const auto& surface : surfaces) {
         if (surface.vertexBuffer == VK_NULL_HANDLE || surface.indexCount == 0) continue;
-        const uint8_t basicType = (surface.liquidType == 0) ? 0 : ((surface.liquidType - 1) % 4);
+        const uint8_t basicType = classifyLiquidBasicType(surface.liquidType);
         if (!liquidIsOpaque(basicType)) return true;
     }
     return false;
@@ -1804,7 +1812,7 @@ std::optional<float> WaterRenderer::getTranslucentWaterHeightAt(float glX, float
     std::optional<float> best;
 
     for (const auto& surface : surfaces) {
-        const uint8_t basicType = (surface.liquidType == 0) ? 0 : ((surface.liquidType - 1) % 4);
+        const uint8_t basicType = classifyLiquidBasicType(surface.liquidType);
         if (liquidIsOpaque(basicType)) continue;
         const auto grid = wateredGridPosition(surface, glX, glY);
         if (!grid) continue;
@@ -1854,6 +1862,133 @@ std::optional<float> WaterRenderer::getNearestWaterHeightAt(float glX, float glY
     return best;
 }
 
+std::vector<LiquidProximityHit> WaterRenderer::queryLiquidProximity(
+    const glm::vec3& queryPos, float maxRadius) const {
+    std::vector<LiquidProximityHit> out;
+    if (surfaces.empty() || !std::isfinite(maxRadius) || maxRadius <= 0.0f) {
+        return out;
+    }
+
+    const float maxRadiusSq = maxRadius * maxRadius;
+    std::array<std::optional<LiquidProximityHit>, 12> bestByBucket;
+
+    for (const auto& surface : surfaces) {
+        if (surface.indexCount <= 0 || surface.width == 0 || surface.height == 0) {
+            continue;
+        }
+
+        const uint8_t basicType = classifyLiquidBasicType(surface.liquidType);
+        if (basicType >= 4) continue;
+        const uint8_t normSubtype = (surface.soundSubtype >= 8u) ? 8u : ((surface.soundSubtype >= 4u) ? 4u : 0u);
+        const size_t subtypeSlot = (normSubtype == 8u) ? 2u : ((normSubtype == 4u) ? 1u : 0u);
+        const size_t bucket = static_cast<size_t>(basicType) * 3u + subtypeSlot;
+
+        float limitDistSq = bestByBucket[bucket].has_value()
+            ? bestByBucket[bucket]->distanceSq
+            : maxRadiusSq;
+
+        float dzBox = 0.0f;
+        if (queryPos.z < surface.minHeight) dzBox = surface.minHeight - queryPos.z;
+        else if (queryPos.z > surface.maxHeight) dzBox = queryPos.z - surface.maxHeight;
+        if (dzBox * dzBox >= limitDistSq) continue;
+
+        const glm::vec2 axisX(surface.stepX.x, surface.stepX.y);
+        const glm::vec2 axisY(surface.stepY.x, surface.stepY.y);
+        const float lenSqX = glm::dot(axisX, axisX);
+        const float lenSqY = glm::dot(axisY, axisY);
+        if (lenSqX < 1e-6f || lenSqY < 1e-6f) continue;
+
+        const float lenX = std::sqrt(lenSqX);
+        const float lenY = std::sqrt(lenSqY);
+        const glm::vec2 relXY(queryPos.x - surface.origin.x, queryPos.y - surface.origin.y);
+        const float gx = glm::dot(relXY, axisX) / lenSqX;
+        const float gy = glm::dot(relXY, axisY) / lenSqY;
+
+        const float cosAxes = std::abs(glm::dot(axisX, axisY)) / (lenX * lenY);
+        const bool nearlyOrthogonal = cosAxes < 1e-3f;
+        if (nearlyOrthogonal) {
+            const float dxGrid = (gx < 0.0f)
+                ? (-gx * lenX)
+                : ((gx > static_cast<float>(surface.width))
+                       ? ((gx - static_cast<float>(surface.width)) * lenX)
+                       : 0.0f);
+            const float dyGrid = (gy < 0.0f)
+                ? (-gy * lenY)
+                : ((gy > static_cast<float>(surface.height))
+                       ? ((gy - static_cast<float>(surface.height)) * lenY)
+                       : 0.0f);
+            if (dxGrid * dxGrid + dyGrid * dyGrid + dzBox * dzBox >= limitDistSq) {
+                continue;
+            }
+        }
+
+        const float horizBudget = std::sqrt(std::max(0.0f, limitDistSq - dzBox * dzBox));
+        const float shearGuard = nearlyOrthogonal ? 1.0f : (1.0f / std::sqrt(std::max(0.1f, 1.0f - cosAxes)));
+        const int radCellsX = static_cast<int>(std::ceil((horizBudget * shearGuard) / lenX)) + 1;
+        const int radCellsY = static_cast<int>(std::ceil((horizBudget * shearGuard) / lenY)) + 1;
+
+        const int centerCx = static_cast<int>(std::floor(gx));
+        const int centerCy = static_cast<int>(std::floor(gy));
+        const int minCx = std::max(0, centerCx - radCellsX);
+        const int maxCx = std::min(static_cast<int>(surface.width) - 1, centerCx + radCellsX);
+        const int minCy = std::max(0, centerCy - radCellsY);
+        const int maxCy = std::min(static_cast<int>(surface.height) - 1, centerCy + radCellsY);
+        if (minCx > maxCx || minCy > maxCy) continue;
+
+        auto evalCell = [&](int cx, int cy) {
+            if (!waterCellRendered(surface.mask, surface.wmoId, surface.width,
+                                   surface.xOffset, surface.yOffset, cx, cy)) {
+                return;
+            }
+            const float clampedGx = std::clamp(gx, static_cast<float>(cx), static_cast<float>(cx + 1));
+            const float clampedGy = std::clamp(gy, static_cast<float>(cy), static_cast<float>(cy + 1));
+            const glm::vec3 worldXY = surface.origin + surface.stepX * clampedGx + surface.stepY * clampedGy;
+            const float dx = worldXY.x - queryPos.x;
+            const float dy = worldXY.y - queryPos.y;
+            const float dxySq = dx * dx + dy * dy;
+            if (dxySq >= limitDistSq) return;
+
+            const auto sampledH = sampleGridHeight(
+                surface.heights, surface.width, surface.height, clampedGx, clampedGy);
+            const float h = sampledH.value_or(surface.minHeight);
+            const float dz = h - queryPos.z;
+            const float distSq = dxySq + dz * dz;
+            if (distSq < limitDistSq) {
+                limitDistSq = distSq;
+                bestByBucket[bucket] = LiquidProximityHit{
+                    .position = glm::vec3(worldXY.x, worldXY.y, h),
+                    .distanceSq = distSq,
+                    .liquidType = surface.liquidType,
+                    .basicType = basicType,
+                    .soundSubtype = normSubtype,
+                    .wmoId = surface.wmoId,
+                };
+            }
+        };
+
+        // Test the cell directly beneath/closest to (gx, gy) first so limitDistSq
+        // shrinks immediately before scanning the surrounding ring.
+        const int seedCx = std::clamp(centerCx, minCx, maxCx);
+        const int seedCy = std::clamp(centerCy, minCy, maxCy);
+        evalCell(seedCx, seedCy);
+
+        for (int cy = minCy; cy <= maxCy; ++cy) {
+            for (int cx = minCx; cx <= maxCx; ++cx) {
+                if (cx == seedCx && cy == seedCy) continue;
+                evalCell(cx, cy);
+            }
+        }
+    }
+
+    out.reserve(12);
+    for (const auto& slot : bestByBucket) {
+        if (slot.has_value()) {
+            out.push_back(*slot);
+        }
+    }
+    return out;
+}
+
 std::optional<uint16_t> WaterRenderer::getWaterTypeAt(float glX, float glY) const {
     std::optional<float> bestHeight;
     std::optional<uint16_t> bestType;
@@ -1883,7 +2018,7 @@ bool WaterRenderer::isWmoWaterAt(float glX, float glY) const {
 }
 
 glm::vec4 WaterRenderer::getLiquidColor(uint16_t liquidType) const {
-    uint8_t basicType = (liquidType == 0) ? 0 : ((liquidType - 1) % 4);
+    uint8_t basicType = classifyLiquidBasicType(liquidType);
     switch (basicType) {
         case 0:  return glm::vec4(0.10f, 0.28f, 0.55f, 1.0f); // inland: richer blue
         case 1:  return glm::vec4(0.04f, 0.16f, 0.38f, 1.0f); // ocean: deep blue
@@ -1894,7 +2029,7 @@ glm::vec4 WaterRenderer::getLiquidColor(uint16_t liquidType) const {
 }
 
 float WaterRenderer::getLiquidAlpha(uint16_t liquidType) const {
-    uint8_t basicType = (liquidType == 0) ? 0 : ((liquidType - 1) % 4);
+    uint8_t basicType = classifyLiquidBasicType(liquidType);
     switch (basicType) {
         case 1:  return 0.72f;  // ocean
         case 2:  return 0.75f;  // magma

@@ -35,6 +35,7 @@ struct WaterSurface {
     float minHeight;
     float maxHeight;
     uint16_t liquidType;
+    uint8_t soundSubtype = 0;  // SoundWaterType.dbc subtype (0=still, 4=slow, 8=fast)
     std::optional<glm::vec4> indoorColor;
 
     int tileX = -1, tileY = -1;
@@ -85,6 +86,15 @@ struct WaterContactActor {
     uint64_t guid;
     glm::vec3 position;
     float radius;
+};
+
+struct LiquidProximityHit {
+    glm::vec3 position{0.0f};
+    float distanceSq = 0.0f;
+    uint16_t liquidType = 0;
+    uint8_t basicType = 0;     // 0=Water, 1=Ocean, 2=Magma, 3=Slime
+    uint8_t soundSubtype = 0;  // 0, 4, or 8 (SoundWaterType.dbc col 2)
+    uint32_t wmoId = 0;
 };
 
 struct WaterFrameUBOData {
@@ -242,6 +252,24 @@ public:
             return q(pos, surface);
         };
     }
+    static constexpr uint8_t classifyLiquidBasicType(uint16_t liquidType) {
+        if (liquidType == 0 || liquidType == 41 || liquidType == 61) return 0;
+        if (liquidType == 21) return 3;  // LiquidType.dbc ID 21: "Naxxramas - Slime"
+        return static_cast<uint8_t>((liquidType - 1) % 4);
+    }
+
+    static constexpr uint8_t defaultTerrainLiquidSubtype(uint8_t basicType) {
+        // TBC ADT MCLQ tiles author nibble 4 on water (0x04/0x44 -> RiverSlow 1112)
+        // and nibble 6 on magma (0x06/0x46 -> LavaFlowLoop 3052); ocean (0x41) and
+        // slime use subtype 0.
+        return (basicType == 0 || basicType == 2) ? 4u : 0u;
+    }
+
+    /// Nearest 3D point on a rendered wet cell within `maxRadius` for each
+    /// (basicType, soundSubtype) bucket present around `queryPos`.
+    [[nodiscard]] std::vector<LiquidProximityHit> queryLiquidProximity(
+        const glm::vec3& queryPos, float maxRadius = 60.0f) const;
+
     std::optional<uint16_t> getWaterTypeAt(float glX, float glY) const;
     bool isWmoWaterAt(float glX, float glY) const;
 

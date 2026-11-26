@@ -2831,10 +2831,39 @@ void Renderer::update(float deltaTime) {
 
     // Ambient environmental sounds + zone/music transitions (delegated to AudioCoordinator)
     if (audioCoordinator_) {
+        uint16_t eyeLiquidType = 0;
+        const auto eyeWater = (waterRenderer && camera)
+            ? waterRenderer->getNearestWaterHeightAt(camPos.x, camPos.y, camPos.z, 400.0f, &eyeLiquidType)
+            : std::nullopt;
+        const bool cameraSubmergedInWater =
+            eyeWater.has_value() && camPos.z < *eyeWater &&
+            WaterRenderer::classifyLiquidBasicType(eyeLiquidType) < 2u;
+
+        if (auto* ambient = audioCoordinator_->getAmbientSoundManager()) {
+            if (waterRenderer) {
+                const glm::vec3 listenerPos = audio::AudioEngine::instance().getListenerPosition();
+                const auto hits = waterRenderer->queryLiquidProximity(
+                    listenerPos, audio::AmbientSoundManager::kMaxLiquidProximityRange);
+                std::vector<audio::LiquidProximityCandidate> candidates;
+                candidates.reserve(hits.size());
+                for (const auto& hit : hits) {
+                    candidates.push_back(audio::LiquidProximityCandidate{
+                        .position = hit.position,
+                        .distanceSq = hit.distanceSq,
+                        .basicType = hit.basicType,
+                        .soundSubtype = hit.soundSubtype,
+                    });
+                }
+                ambient->setLiquidProximity(candidates);
+            } else {
+                ambient->clearLiquidProximity();
+            }
+        }
+
         audio::ZoneAudioContext zctx;
         zctx.deltaTime = deltaTime;
         zctx.cameraPosition = camPos;
-        zctx.isSwimming = cameraController ? cameraController->isSwimming() : false;
+        zctx.isSwimming = cameraSubmergedInWater;
         zctx.insideWmo = insideWmo;
         if (playerArea && zoneManager) {
             const auto sounds = zoneManager->getWmoAreaSounds(

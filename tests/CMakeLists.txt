@@ -3752,6 +3752,33 @@ add_test(NAME worldstate_zone_sounds COMMAND test_worldstate_zone_sounds)
 set_tests_properties(worldstate_zone_sounds PROPERTIES SKIP_RETURN_CODE 4)
 register_test_target(test_worldstate_zone_sounds)
 
+# TBC 2.4.3 Environmental Audio Shard 2: SoundWaterType.dbc + LiquidType.dbc +
+# ADT MCLQ / WMO MLIQ 3D liquid-body proximity & underwater loop parity.
+if(NOT ANDROID)
+    add_executable(test_env_audio_water_type
+        test_env_audio_water_type.cpp
+        "$<FILTER:$<TARGET_OBJECTS:wowee>,EXCLUDE,/main([.]cpp)?[.]o(bj)?$>"
+    )
+    target_include_directories(test_env_audio_water_type PRIVATE ${TEST_INCLUDE_DIRS}
+        $<TARGET_PROPERTY:wowee,INCLUDE_DIRECTORIES>)
+    target_include_directories(test_env_audio_water_type SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
+    target_compile_definitions(test_env_audio_water_type PRIVATE
+        WOWEE_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+        $<TARGET_PROPERTY:wowee,COMPILE_DEFINITIONS>)
+    target_compile_features(test_env_audio_water_type PRIVATE cxx_std_20)
+    target_link_libraries(test_env_audio_water_type PRIVATE catch2_main
+        $<TARGET_PROPERTY:wowee,LINK_LIBRARIES>)
+    wowee_test_link_glm(test_env_audio_water_type)
+    target_link_directories(test_env_audio_water_type PRIVATE
+        $<TARGET_PROPERTY:wowee,LINK_DIRECTORIES>)
+    target_link_options(test_env_audio_water_type PRIVATE
+        $<TARGET_PROPERTY:wowee,LINK_OPTIONS>)
+    add_dependencies(test_env_audio_water_type wowee)
+    add_test(NAME env_audio_water_type COMMAND test_env_audio_water_type)
+    set_tests_properties(env_audio_water_type PROPERTIES SKIP_RETURN_CODE 4)
+    register_test_target(test_env_audio_water_type)
+endif()
+
 get_property(ALL_TEST_TARGETS GLOBAL PROPERTY WOWEE_ALL_TEST_TARGETS)
 list(LENGTH ALL_TEST_TARGETS _wowee_test_target_count)
 message(STATUS "Test targets registered: ${_wowee_test_target_count}")
