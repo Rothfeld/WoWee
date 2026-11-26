@@ -2492,8 +2492,6 @@ void Renderer::update(float deltaTime) {
                 const uint64_t mallocInUse = 0, mallocFree = 0, mallocArena = 0, mallocMmapped = 0,
                                mallocMmapChunks = 0, mallocTrimmable = 0;
 #endif
-                const auto* traceAssets = core::Application::getInstance().getAssetManager();
-                const uint64_t fileCacheBytes = traceAssets ? traceAssets->getFileCacheSize() : 0;
                 LOG_INFO("MEMORY_TRACE {\"terrain_ms\":", terrMs,
                          ",\"cache_entries\":", cache.entries,
                          ",\"cache_pinned\":", cache.pinnedEntries,
@@ -2511,7 +2509,6 @@ void Renderer::update(float deltaTime) {
                          ",\"wmo_instances\":", wmoRenderer ? wmoRenderer->getInstanceCount() : 0u,
                          ",\"tiles_loaded\":", terrainManager->getLoadedTileCount(),
                          ",\"tiles_pending\":", terrainManager->getPendingTileCount(),
-                         ",\"file_cache_bytes\":", fileCacheBytes,
                          ",\"malloc_in_use\":", mallocInUse,
                          ",\"malloc_free\":", mallocFree,
                          ",\"malloc_arena\":", mallocArena,

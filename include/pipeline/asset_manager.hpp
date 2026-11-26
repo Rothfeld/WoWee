@@ -40,7 +40,7 @@ public:
     /**
      * Replace the active manifest without replacing the AssetManager object.
      * Intended for expansion changes from the login screen, before world work
-     * is active. Existing file/DBC caches are cleared on success.
+     * is active. The DBC cache is cleared on success.
      */
     bool switchDataPath(const std::string& newDataPath);
 
@@ -138,14 +138,8 @@ public:
     [[nodiscard]] std::vector<uint8_t> readFileOptional(const std::string& path) const;
 
     /**
-     * Get file cache stats
-     */
-    [[nodiscard]] size_t getFileCacheSize() const { return fileCacheTotalBytes; }
-    [[nodiscard]] size_t getFileCacheHits() const { return fileCacheHits; }
-    [[nodiscard]] size_t getFileCacheMisses() const { return fileCacheMisses; }
-
-    /**
-     * Clear all cached resources
+     * Clear the DBC cache (file contents are not cached here; the kernel's
+     * page cache holds them)
      */
     void clearCache();
 
@@ -190,29 +184,10 @@ private:
     [[nodiscard]] std::shared_ptr<DBCFile> cachedDBC(const std::string& name) const;
     std::shared_ptr<DBCFile> cacheDBC(const std::string& name, std::shared_ptr<DBCFile> dbc);
 
-    // Guards fileCache, dbcCache, fileCacheTotalBytes, fileCacheAccessCounter, and
-    // fileCacheBudget.  Shared lock for read-only cache lookups (readFile cache hit,
-    // loadDBC cache hit); exclusive lock for inserts and eviction.
+    // Guards dbcCache. Shared lock for lookups, exclusive lock for inserts.
     mutable std::shared_mutex cacheMutex;
     // THREAD-SAFE: protected by cacheMutex (exclusive lock for writes).
     std::unordered_map<std::string, std::shared_ptr<DBCFile>> dbcCache;
-
-    // File cache (LRU, dynamic budget based on system RAM)
-    struct CachedFile {
-        std::vector<uint8_t> data;
-        uint64_t lastAccessTime;
-    };
-    // THREAD-SAFE: protected by cacheMutex (shared_mutex - shared_lock for reads,
-    // exclusive lock_guard for writes/eviction).
-    mutable std::unordered_map<std::string, CachedFile> fileCache;
-    mutable size_t fileCacheTotalBytes = 0;
-    mutable uint64_t fileCacheAccessCounter = 0;
-    // THREAD-SAFE: atomic - incremented from any thread after releasing cacheMutex.
-    mutable std::atomic<size_t> fileCacheHits{0};
-    mutable std::atomic<size_t> fileCacheMisses{0};
-    mutable size_t fileCacheBudget = 1024 * 1024 * 1024;  // Dynamic, starts at 1GB
-
-    void setupFileCacheBudget();
 
     /**
      * Try to load a PNG override for a BLP path.

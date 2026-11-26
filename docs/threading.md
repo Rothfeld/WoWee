@@ -48,8 +48,9 @@ follow.
   `watchdogHeartbeatMs_` (atomic); after 1500ms without a beat it sets
   `watchdogRequestRelease` (atomic), and the main thread releases mouse
   capture, since SDL video calls are only safe from the main thread.
-* **World preload** - reads the ADTs around the expected login position to
-  warm the `AssetManager` file cache before Enter World.
+* **World preload** - reads the ADTs around the expected login position so
+  the kernel's page cache holds them before Enter World (`AssetManager`
+  keeps no copy of file contents).
 * **Update check** - one HTTPS request to GitHub for the latest release tag;
   the result is read by the login screen under `UpdateCheck::mutex_`.
 * **Asset builder** - extraction and pack jobs for the first-run screen; they
@@ -73,12 +74,7 @@ follow.
 
 | Variable                | Guard            | Notes |
 |-------------------------|------------------|-------|
-| `fileCache`             | `cacheMutex` (shared_mutex) | `shared_lock` for reads, `lock_guard` for writes/eviction |
 | `dbcCache`              | `cacheMutex`     | `shared_lock` for the lookup, `lock_guard` for the insert; the load between them is unlocked, and the first table inserted for a name is the one every caller gets |
-| `fileCacheTotalBytes`   | `cacheMutex`     | Written under exclusive lock only |
-| `fileCacheAccessCounter`| `cacheMutex`     | Written under exclusive lock only |
-| `fileCacheHits`         | `std::atomic`    | Incremented after releasing cacheMutex |
-| `fileCacheMisses`       | `std::atomic`    | Never incremented (see Known Limitations) |
 
 ### Audio Engine (`src/audio/audio_engine.cpp`)
 
@@ -188,10 +184,4 @@ follow.
 * `packetCallback` in `WorldSocket` is set once before `connect()` and
   never modified afterwards.  This is safe in practice but not formally
   synchronized - do not change the callback after `connect()`.
-
-* `fileCacheMisses` is declared as `std::atomic<size_t>` for consistency but is
-  currently never incremented.  `fileCacheAccessCounter` is not a total either:
-  it is bumped only when a missed file is inserted into the cache (hits do not
-  touch it) and reset by `clearCache()`, so it approximates cached misses since
-  the last clear.
 

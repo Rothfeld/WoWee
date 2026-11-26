@@ -2,7 +2,6 @@
 #include "pipeline/base_fallback.hpp"
 #include "pipeline/dds_loader.hpp"
 #include "core/logger.hpp"
-#include "core/memory_monitor.hpp"
 #include "core/profiler.hpp"
 #include <algorithm>
 #include <cstdlib>
@@ -18,22 +17,6 @@ namespace wowee {
 namespace pipeline {
 
 namespace {
-size_t parseEnvSizeMB(const char* name) {
-    const char* v = std::getenv(name);
-    if (!v || !*v) {
-        return 0;
-    }
-    char* end = nullptr;
-    unsigned long long mb = std::strtoull(v, &end, 10);
-    if (end == v || mb == 0) {
-        return 0;
-    }
-    if (mb > (std::numeric_limits<size_t>::max() / (1024ull * 1024ull))) {
-        return 0;
-    }
-    return static_cast<size_t>(mb);
-}
-
 size_t parseEnvCount(const char* name, size_t defValue) {
     const char* v = std::getenv(name);
     if (!v || !*v) {
@@ -63,8 +46,6 @@ bool AssetManager::initialize(const std::string& dataPath_) {
     overridePath_ = dataPath + "/override";
     LOG_INFO("Initializing asset manager with data path: ", dataPath);
 
-    setupFileCacheBudget();
-
     std::string manifestPath = dataPath + "/manifest.json";
     if (!std::filesystem::exists(manifestPath)) {
         LOG_ERROR("manifest.json not found in: ", dataPath);
@@ -82,8 +63,7 @@ bool AssetManager::initialize(const std::string& dataPath_) {
     }
 
     initialized = true;
-    LOG_INFO("Asset manager initialized: ", manifest_.getEntryCount(),
-             " files indexed (file cache: ", fileCacheBudget / (1024 * 1024), " MB)");
+    LOG_INFO("Asset manager initialized: ", manifest_.getEntryCount(), " files indexed");
     return true;
 }
 
@@ -110,53 +90,12 @@ bool AssetManager::switchDataPath(const std::string& newDataPath) {
     return true;
 }
 
-void AssetManager::setupFileCacheBudget() {
-    auto& memMonitor = core::MemoryMonitor::getInstance();
-    size_t recommendedBudget = memMonitor.getRecommendedCacheBudget();
-    size_t dynamicBudget = (recommendedBudget * 3) / 4;
-
-    const size_t envFixedMB = parseEnvSizeMB("WOWEE_FILE_CACHE_MB");
-    const size_t envMaxMB = parseEnvSizeMB("WOWEE_FILE_CACHE_MAX_MB");
-
-    const size_t minBudgetBytes = 256ull * 1024ull * 1024ull;
-#ifdef __ANDROID__
-    // Half of available RAM is a desktop rule. Android does not let one app
-    // have that: it enforces a per-app limit far below the machine's memory and
-    // kills the process rather than swapping when it is passed. A phone with
-    // 8 GB was handing this cache 840 MB, which is both more than the app may
-    // hold and a good way to be killed the moment it goes to the background.
-    const size_t defaultMaxBudgetBytes = 384ull * 1024ull * 1024ull;
-#else
-    const size_t defaultMaxBudgetBytes = 12288ull * 1024ull * 1024ull;  // 12 GB max for file cache
-#endif
-    const size_t maxBudgetBytes = (envMaxMB > 0)
-        ? (envMaxMB * 1024ull * 1024ull)
-        : defaultMaxBudgetBytes;
-
-    if (envFixedMB > 0) {
-        fileCacheBudget = envFixedMB * 1024ull * 1024ull;
-        if (fileCacheBudget < minBudgetBytes) {
-            fileCacheBudget = minBudgetBytes;
-        }
-        LOG_WARNING("Asset file cache fixed via WOWEE_FILE_CACHE_MB=", envFixedMB,
-                    " (effective ", fileCacheBudget / (1024 * 1024), " MB)");
-    } else {
-        fileCacheBudget = std::clamp(dynamicBudget, minBudgetBytes, maxBudgetBytes);
-    }
-}
-
 void AssetManager::shutdown() {
     if (!initialized) {
         return;
     }
 
     LOG_INFO("Shutting down asset manager");
-
-    if (fileCacheHits + fileCacheMisses > 0) {
-        float hitRate = static_cast<float>(fileCacheHits) / (fileCacheHits + fileCacheMisses) * 100.0f;
-        LOG_INFO("File cache stats: ", fileCacheHits, " hits, ", fileCacheMisses, " misses (",
-                 static_cast<int>(hitRate), "% hit rate), ", fileCacheTotalBytes / 1024 / 1024, " MB cached");
-    }
 
     clearCache();
     initialized = false;
@@ -609,7 +548,7 @@ std::shared_ptr<DBCFile> AssetManager::loadDBC(const std::string& name) {
 }
 
 // The lookup and the insert each take cacheMutex, and the load between them
-// does not: readFile takes the same lock, and it is not recursive. loadDBC is
+// does not, so two tables can load at once. loadDBC is
 // called off the main thread - the entity spawner reads CharSections on a
 // worker - so an unlocked find could walk the table while an insert rehashed
 // it.
@@ -656,18 +595,10 @@ std::vector<uint8_t> AssetManager::readFile(const std::string& path) const {
 
     std::string normalized = normalizePath(path);
 
-    // Check cache first (shared lock allows concurrent reads)
-    {
-        std::shared_lock<std::shared_mutex> cacheLock(cacheMutex);
-        auto it = fileCache.find(normalized);
-        if (it != fileCache.end()) {
-            auto data = it->second.data;
-            cacheLock.unlock();
-            fileCacheHits++;
-            return data;
-        }
-    }
-
+    // No copy is kept here. The kernel's page cache already holds every file
+    // read, shared by all processes and given back under memory pressure; a
+    // second copy in this process's heap (1 GB after four places, with a
+    // budget of half the free memory) bought only the open and the read.
     // Read from filesystem (override dir first, then base manifest)
     std::string fsPath = resolveFile(normalized);
     if (fsPath.empty()) {
@@ -678,29 +609,6 @@ std::vector<uint8_t> AssetManager::readFile(const std::string& path) const {
     if (data.empty()) {
         LOG_WARNING("Manifest entry exists but file unreadable: ", fsPath);
         return data;
-    }
-
-    // Add to cache if within budget
-    size_t fileSize = data.size();
-    if (fileSize > 0 && fileSize < fileCacheBudget / 2) {
-        std::lock_guard<std::shared_mutex> cacheLock(cacheMutex);
-        // Evict old entries if needed (LRU)
-        while (fileCacheTotalBytes + fileSize > fileCacheBudget && !fileCache.empty()) {
-            auto lru = fileCache.begin();
-            for (auto it = fileCache.begin(); it != fileCache.end(); ++it) {
-                if (it->second.lastAccessTime < lru->second.lastAccessTime) {
-                    lru = it;
-                }
-            }
-            fileCacheTotalBytes -= lru->second.data.size();
-            fileCache.erase(lru);
-        }
-
-        CachedFile cached;
-        cached.data = data;
-        cached.lastAccessTime = ++fileCacheAccessCounter;
-        fileCache[normalized] = std::move(cached);
-        fileCacheTotalBytes += fileSize;
     }
 
     return data;
@@ -725,10 +633,7 @@ void AssetManager::clearDBCCache() {
 void AssetManager::clearCache() {
     std::lock_guard<std::shared_mutex> lock(cacheMutex);
     dbcCache.clear();
-    fileCache.clear();
-    fileCacheTotalBytes = 0;
-    fileCacheAccessCounter = 0;
-    LOG_INFO("Cleared asset cache (DBC + file cache)");
+    LOG_INFO("Cleared asset cache (DBC)");
 }
 std::string AssetManager::normalizePath(const std::string& path) const {
     std::string normalized = path;
