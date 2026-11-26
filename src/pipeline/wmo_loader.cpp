@@ -739,15 +739,12 @@ bool WMOLoader::loadGroup(const std::vector<uint8_t>& groupData,
         offset = chunkEnd;
     }
 
-    // Create a default batch if none were loaded
-    if (group.batches.empty() && !group.indices.empty()) {
-        WMOBatch batch;
-        batch.startIndex = 0;
-        batch.indexCount = static_cast<uint16_t>(group.indices.size());
-        batch.materialId = 0;
-        group.batches.push_back(batch);
-    }
-
+    // Do not synthesize a render batch when MOBA is empty: 39 TBC WMO groups
+    // (including Karazhan exterior kharazan_011.wmo "maintower", Karazhan raid
+    // 067..070, Silvermoon 032, Auchindoun, Tempest Keep, Naxxramas, Ahn'Qiraj,
+    // and Hyjal roots) store collision-only MOPY/MOVI/MOVT geometry (materialId
+    // 0xFF, trans/int/ext batch counts all 0) that must block movement/camera
+    // rays without rendering or casting shadows.
     core::Logger::getInstance().debug("WMO group ", groupIndex, " loaded: ",
                                       group.vertices.size(), " vertices, ",
                                       group.indices.size(), " indices, ",

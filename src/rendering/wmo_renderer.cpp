@@ -2112,7 +2112,10 @@ bool WMORenderer::createGroupResources(const pipeline::WMOGroup& group, GroupRes
         }
     }
 
-    if (vkCtx_) {
+    // Collision-only WMO groups (MOBA empty, e.g. kharazan_011.wmo "maintower")
+    // carry no render batches and must neither allocate GPU draw buffers nor
+    // draw/cast shadows, while retaining CPU collision geometry below.
+    if (vkCtx_ && !group.batches.empty()) {
         // Upload vertex buffer to GPU
         AllocatedBuffer vertBuf = uploadBuffer(*vkCtx_, vertices.data(),
             vertices.size() * sizeof(WMOVertex),
@@ -2203,29 +2206,17 @@ bool WMORenderer::createGroupResources(const pipeline::WMOGroup& group, GroupRes
                     " name='", group.name, "'");
     }
 
-    // Create batches
-    if (!group.batches.empty()) {
-        for (size_t bi = 0; bi < group.batches.size(); ++bi) {
-            const auto& batch = group.batches[bi];
-            GroupResources::Batch resBatch;
-            resBatch.startIndex = batch.startIndex;
-            resBatch.indexCount = batch.indexCount;
-            resBatch.materialId = batch.materialId;
-            resBatch.lightingMode = static_cast<uint8_t>(pipeline::classifyWmoBatchLighting(
-                group.flags, bi, group.transBatchCount, group.intBatchCount));
-            resources.batches.push_back(resBatch);
-        }
-    } else {
-        // No batches defined - render entire group as one batch
-        GroupResources::Batch batch;
-        batch.startIndex = 0;
-        batch.indexCount = resources.indexCount;
-        batch.materialId = 0;
-        batch.lightingMode = static_cast<uint8_t>(
-            pipeline::wmoUsesLocalLighting(group.flags)
-                ? pipeline::WmoBatchLighting::Interior
-                : pipeline::WmoBatchLighting::Exterior);
-        resources.batches.push_back(batch);
+    // Create batches strictly from authored MOBA entries; empty MOBA means
+    // collision-only geometry (zero draw batches).
+    for (size_t bi = 0; bi < group.batches.size(); ++bi) {
+        const auto& batch = group.batches[bi];
+        GroupResources::Batch resBatch;
+        resBatch.startIndex = batch.startIndex;
+        resBatch.indexCount = batch.indexCount;
+        resBatch.materialId = batch.materialId;
+        resBatch.lightingMode = static_cast<uint8_t>(pipeline::classifyWmoBatchLighting(
+            group.flags, bi, group.transBatchCount, group.intBatchCount));
+        resources.batches.push_back(resBatch);
     }
 
     return true;

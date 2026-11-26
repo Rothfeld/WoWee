@@ -459,6 +459,8 @@ TEST_CASE("WOB toWMOModel conversion", "[wob]") {
     REQUIRE(wmoOut.nGroups == 1);
     REQUIRE(wmoOut.groups[0].vertices.size() == 3);
     REQUIRE(wmoOut.groups[0].indices.size() == 3);
+    REQUIRE(wmoOut.groups[0].batches.size() == 1);
+    CHECK(wmoOut.groups[0].batches[0].indexCount == 3);
 }
 
 TEST_CASE("WOB toWMOModel restores materials/portals/doodads/doodadSet", "[wob]") {

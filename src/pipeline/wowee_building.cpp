@@ -454,6 +454,30 @@ bool WoweeBuildingLoader::toWMOModel(const WoweeBuilding& building, WMOModel& ou
             }
         }
 
+        if (!wmoGroup.indices.empty()) {
+            WMOBatch batch{};
+            batch.startIndex = 0;
+            batch.indexCount = static_cast<uint16_t>(
+                std::min<size_t>(wmoGroup.indices.size(), 0xFFFFu));
+            if (!wmoGroup.vertices.empty()) {
+                batch.startVertex = 0;
+                batch.lastVertex = static_cast<uint16_t>(
+                    std::min<size_t>(wmoGroup.vertices.size() - 1, 0xFFFFu));
+            }
+            if (!grp.materials.empty()) {
+                const auto it = materialIndex.find(materialKey(grp.materials[0]));
+                if (it != materialIndex.end()) {
+                    batch.materialId = static_cast<uint8_t>(it->second);
+                }
+            }
+            wmoGroup.batches.push_back(batch);
+            if (grp.isOutdoor) {
+                wmoGroup.extBatchCount = 1;
+            } else {
+                wmoGroup.intBatchCount = 1;
+            }
+        }
+
         outModel.groups.push_back(std::move(wmoGroup));
     }
 

@@ -985,3 +985,53 @@ TEST_CASE("shipped Sunwell Plateau Parhelion Plaza stairs climb at 1x and 5x whi
         }
     }
 }
+
+TEST_CASE("collision-only WMO groups with empty MOBA retain collision and doodads without fabricating render batches",
+          "[collision][wmo][karazhan]") {
+    const auto tbcDir = findTbcDataDir();
+    if (tbcDir.empty()) {
+        SKIP("TBC extracted data directory not available");
+    }
+
+    // 1. Exterior Karazhan (Deadwind Pass, Map 0): kharazan_011.wmo ("towercollision")
+    // is a 12-sided roof collision cylinder (40 verts, 24 tris, MOPY flags=0x48,
+    // matId=0xFF, MOBA=0 bytes). Fabricating a default materialId=0 batch drew a
+    // giant flat-topped solid cylinder ("not-a-dome") atop Karazhan's rotunda.
+    const auto karaDir = tbcDir / "world/wmo/dungeon/az_karazahn";
+    auto kara = wowee::pipeline::WMOLoader::load(readBinaryFile(karaDir / "kharazan.wmo"));
+    REQUIRE(kara.nGroups == 12);
+    REQUIRE(wowee::pipeline::WMOLoader::loadGroup(readBinaryFile(karaDir / "kharazan_009.wmo"), kara, 9));
+    REQUIRE(wowee::pipeline::WMOLoader::loadGroup(readBinaryFile(karaDir / "kharazan_011.wmo"), kara, 11));
+
+    CHECK_FALSE(kara.groups[9].batches.empty());
+    const auto& mainTower = kara.groups[11];
+    CHECK(mainTower.name == "towercollision");
+    CHECK(mainTower.batches.empty());
+    CHECK(mainTower.transBatchCount == 0);
+    CHECK(mainTower.intBatchCount == 0);
+    CHECK(mainTower.extBatchCount == 0);
+    REQUIRE(mainTower.vertices.size() == 40);
+    REQUIRE(mainTower.indices.size() == 72);
+    REQUIRE(mainTower.triFlags.size() == 24);
+    REQUIRE(mainTower.triMaterials.size() == 24);
+    for (size_t t = 0; t < 24; ++t) {
+        CHECK(mainTower.triMaterials[t] == 0xFFu);
+        CHECK(mainTower.triFlags[t] == 0x48u);
+        CHECK(wowee::rendering::wmoTriangleBlocksMovement(mainTower.triFlags[t]));
+        CHECK(wowee::rendering::wmoTriangleStopsCamera(mainTower.triFlags[t]));
+    }
+
+    // 2. Auchindoun Shadow Labyrinth (shadow_council_wing_016.wmo): MOBA=0 collision
+    // volume that also references MODR doodads; loading must keep both collision
+    // triangles and doodadRefs while keeping batches empty.
+    const auto auchDir = tbcDir / "world/wmo/dungeon/ol_auchindoun";
+    auto shadowWing = wowee::pipeline::WMOLoader::load(readBinaryFile(auchDir / "shadow_council_wing.wmo"));
+    REQUIRE(shadowWing.nGroups > 16);
+    REQUIRE(wowee::pipeline::WMOLoader::loadGroup(readBinaryFile(auchDir / "shadow_council_wing_016.wmo"), shadowWing, 16));
+    CHECK(shadowWing.groups[16].batches.empty());
+    CHECK(shadowWing.groups[16].indices.size() == 32 * 3);
+    CHECK_FALSE(shadowWing.groups[16].doodadRefs.empty());
+    for (uint8_t matId : shadowWing.groups[16].triMaterials) {
+        CHECK(matId == 0xFFu);
+    }
+}
