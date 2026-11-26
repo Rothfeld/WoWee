@@ -624,14 +624,22 @@ void EntityController::syncPreWotlkAurasFromFields(const std::shared_ptr<Entity>
     // One byte per slot, the stack count minus one (CMaNGOS
     // SpellAuraHolder::UpdateAuraApplication). Absent is zero: one stack.
     const uint16_t ufAuraApps  = fieldIndex(UF::UNIT_FIELD_AURAAPPLICATIONS);
+    const uint16_t ufBytes2    = fieldIndex(UF::UNIT_FIELD_BYTES_2);
     if (ufAuras == 0xFFFF) return;
 
-    const int positiveSlots = isActiveExpansion("tbc") ? 40 : 32;
-    const int auraSlots = positiveSlots + 16;
+    const bool tbc = isActiveExpansion("tbc");
+    const int auraSlots = preWotlkVisibleAuraSlots(tbc);
     const bool localPlayer = entity->getGuid() == owner_.getPlayerGuid();
     const auto* cached = localPlayer ? &owner_.getPlayerAuras() : owner_.getUnitAuras(entity->getGuid());
     const auto previousAuras = cached ? *cached : std::vector<AuraSlot>{};
     const auto& allFields = entity->getFields();
+    uint32_t unitBytes2 = 0;
+    if (ufBytes2 != 0xFFFF) {
+        if (const auto b2It = allFields.find(ufBytes2); b2It != allFields.end()) {
+            unitBytes2 = b2It->second;
+        }
+    }
+    const int positiveSlots = preWotlkPositiveAuraSlots(tbc, unitBytes2);
     bool hasAuraField = false;
     for (const auto& [fk, fv] : allFields) {
         if (fk >= ufAuras && fk < ufAuras + auraSlots) { hasAuraField = true; break; }
@@ -651,7 +659,7 @@ void EntityController::syncPreWotlkAurasFromFields(const std::shared_ptr<Entity>
             return false;
         };
         if (!touches(ufAuras, auraSlots) && !touches(ufAuraFlags, (auraSlots + 3) / 4) &&
-            !touches(ufAuraApps, (auraSlots + 3) / 4)) {
+            !touches(ufAuraApps, (auraSlots + 3) / 4) && !(tbc && touches(ufBytes2, 1))) {
             if (localPlayer) owner_.getSpellHandler()->pendingPlayerAuraDurations().clear();
             return;
         }
@@ -691,15 +699,17 @@ void EntityController::syncPreWotlkAurasFromFields(const std::shared_ptr<Entity>
                 a.durationMs = pendingIt->second.durationMs;
                 a.maxDurationMs = pendingIt->second.durationMs;
                 a.receivedAtMs = pendingIt->second.receivedAtMs;
+                a.casterGuid = localPlayer ? owner_.getPlayerGuid() : 0;
             } else if (sameAura) {
                 a.durationMs = previousAuras[slot].durationMs;
                 a.maxDurationMs = previousAuras[slot].maxDurationMs;
                 a.receivedAtMs = previousAuras[slot].receivedAtMs;
                 a.playerCast = previousAuras[slot].playerCast;
+                a.casterGuid = previousAuras[slot].casterGuid;
             } else {
                 a.receivedAtMs = nowMs;
+                a.casterGuid = localPlayer ? owner_.getPlayerGuid() : 0;
             }
-            a.casterGuid = localPlayer ? owner_.getPlayerGuid() : 0;
         }
     }
     // A pending duration is for the aura the next aura-field change puts in

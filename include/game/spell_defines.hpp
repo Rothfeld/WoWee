@@ -36,6 +36,21 @@ struct AuraSlot {
     }
 };
 
+/// Total visible UNIT_FIELD_AURAS slots before WotLK: 56 in TBC 2.4.3, 48 in Classic 1.12.
+[[nodiscard]] inline constexpr int preWotlkVisibleAuraSlots(bool isTbc) {
+    return isTbc ? 56 : 48;
+}
+
+/// Positive aura slot count (first negative/debuff slot index) for a pre-WotLK unit.
+/// In TBC 2.4.3, UNIT_FIELD_BYTES_2 byte 1 (UNIT_BYTES_2_OFFSET_DEBUFF_LIMIT) splits
+/// [0, limit) positive buffs from [limit, 56) negative debuffs: 40 on players and
+/// player-controlled pets, 16 on creatures (giving creatures 16 buff + 40 debuff slots).
+[[nodiscard]] inline constexpr int preWotlkPositiveAuraSlots(bool isTbc, uint32_t unitBytes2) {
+    if (!isTbc) return 32;
+    const uint8_t limit = static_cast<uint8_t>((unitBytes2 >> 8) & 0xFFu);
+    return (limit > 0u && limit <= 56u) ? static_cast<int>(limit) : 40;
+}
+
 /**
  * Action bar slot
  */

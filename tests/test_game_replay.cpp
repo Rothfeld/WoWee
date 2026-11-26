@@ -1415,6 +1415,85 @@ TEST_CASE("TBC extra-aura info ignores non-visible passive slots >= 56", "[repla
     CHECK(auraEvents == 1);
 }
 
+TEST_CASE("TBC creature aura slots split positive and negative by UNIT_FIELD_BYTES_2 byte 1",
+          "[replay][tbc][aura]") {
+    // TBC 2.4.3 stores each unit's positive aura slot limit in UNIT_FIELD_BYTES_2
+    // byte 1 (UNIT_BYTES_2_OFFSET_DEBUFF_LIMIT): 16 on creatures (slots 0..15 buffs,
+    // slots 16..55 debuffs) and 40 on player-controlled units (slots 0..39 buffs,
+    // slots 40..55 debuffs). Hardcoding 40 classified creature debuffs in slots 16..39
+    // (such as Explosive Trap Effect 27026 in slot 16) as buffs, omitting the red or
+    // dispel-typed TargetDebuffButtonTemplate border on TargetFrame.
+    Session s("tbc");
+    constexpr uint64_t kCadaver = 0xF13000288E3233AFull;
+    s.receive(UpdateObject().tbc().create(Session::kPlayerGuid, wowee::game::ObjectType::PLAYER,
+        {{UF::UNIT_FIELD_HEALTH, 100}, {UF::UNIT_FIELD_MAXHEALTH, 100},
+         {UF::UNIT_FIELD_BYTES_2, 40u << 8}}, true));
+    s.receive(UpdateObject().tbc().create(kCadaver, wowee::game::ObjectType::UNIT,
+        {{UF::OBJECT_FIELD_ENTRY, 10382}, {UF::UNIT_FIELD_HEALTH, 100},
+         {UF::UNIT_FIELD_MAXHEALTH, 100}, {UF::UNIT_FIELD_BYTES_2, 16u << 8}}));
+    s.handler().setTarget(kCadaver);
+
+    const uint16_t auraBase = wowee::game::fieldIndex(UF::UNIT_FIELD_AURAS);
+    const uint16_t flagsBase = wowee::game::fieldIndex(UF::UNIT_FIELD_AURAFLAGS);
+    const auto sendExtra = [&](uint64_t guid, uint8_t slot, uint32_t spellId, int32_t maxDur, uint32_t remDur) {
+        wowee::network::Packet p(wowee::game::wireOpcode(wowee::game::Opcode::SMSG_SET_EXTRA_AURA_INFO_OBSOLETE));
+        p.writePackedGuid(guid);
+        p.writeUInt8(slot);
+        p.writeUInt32(spellId);
+        p.writeUInt32(static_cast<uint32_t>(maxDur));
+        p.writeUInt32(remDur);
+        s.receive(p);
+    };
+
+    // 1. SMSG_SET_EXTRA_AURA_INFO arrives first for slot 16 (Explosive Trap Effect 27026),
+    //    followed by UNIT_FIELD_AURAS: must be flagged harmful (0x80) at both steps and
+    //    keep playerCast + casterGuid + durationMs.
+    sendExtra(kCadaver, 16, 27026, 20000, 19500);
+    REQUIRE(s.handler().getTargetAuras().size() > 16u);
+    CHECK((s.handler().getTargetAuras().at(16).flags & 0x80u) != 0u);
+    CHECK(s.handler().getTargetAuras().at(16).playerCast);
+    CHECK(s.handler().getTargetAuras().at(16).casterGuid == Session::kPlayerGuid);
+
+    s.receive(UpdateObject().tbc().valuesAt(kCadaver, {
+        {static_cast<uint16_t>(auraBase + 0), 26990u},   // Mark of the Wild (slot 0 buff)
+        {static_cast<uint16_t>(auraBase + 15), 1126u},   // Last creature buff slot (15)
+        {static_cast<uint16_t>(auraBase + 16), 27026u},  // First creature debuff slot (16)
+        {static_cast<uint16_t>(auraBase + 39), 13555u},  // Creature debuff slot 39 (< 40)
+        {static_cast<uint16_t>(flagsBase + 4), 0x07u},   // Low effect bits on slot 16
+    }));
+    const auto& targetAuras = s.handler().getTargetAuras();
+    REQUIRE(targetAuras.size() == 56u);
+    CHECK((targetAuras.at(0).flags & 0x80u) == 0u);
+    CHECK((targetAuras.at(15).flags & 0x80u) == 0u);
+    CHECK((targetAuras.at(16).flags & 0x80u) != 0u);
+    CHECK((targetAuras.at(16).flags & 0x7Fu) == 0x07u);
+    CHECK(targetAuras.at(16).durationMs == 19500);
+    CHECK(targetAuras.at(16).playerCast);
+    CHECK(targetAuras.at(16).casterGuid == Session::kPlayerGuid);
+    CHECK((targetAuras.at(39).flags & 0x80u) != 0u);
+
+    // 2. Refreshing SMSG_SET_EXTRA_AURA_INFO after UNIT_FIELD_AURAFLAGS preserves low bits + 0x80.
+    sendExtra(kCadaver, 16, 27026, 20000, 20000);
+    CHECK((s.handler().getTargetAuras().at(16).flags & 0x80u) != 0u);
+    CHECK((s.handler().getTargetAuras().at(16).flags & 0x7Fu) == 0x07u);
+
+    // 3. On the player (debuffLimit = 40), slot 16 and slot 39 remain buffs while slot 40 is a debuff.
+    s.receive(UpdateObject().tbc().valuesAt(Session::kPlayerGuid, {
+        {static_cast<uint16_t>(auraBase + 16), 26990u},
+        {static_cast<uint16_t>(auraBase + 39), 1126u},
+        {static_cast<uint16_t>(auraBase + 40), 27026u},
+    }));
+    CHECK((s.handler().getPlayerAuras().at(16).flags & 0x80u) == 0u);
+    CHECK((s.handler().getPlayerAuras().at(39).flags & 0x80u) == 0u);
+    CHECK((s.handler().getPlayerAuras().at(40).flags & 0x80u) != 0u);
+
+    // 4. Dynamic Mind Control / Charm changing UNIT_FIELD_BYTES_2 byte 1 updates debuff boundary.
+    s.receive(UpdateObject().tbc().values(kCadaver, {{UF::UNIT_FIELD_BYTES_2, 40u << 8}}));
+    CHECK((s.handler().getTargetAuras().at(16).flags & 0x80u) == 0u);
+    s.receive(UpdateObject().tbc().values(kCadaver, {{UF::UNIT_FIELD_BYTES_2, 16u << 8}}));
+    CHECK((s.handler().getTargetAuras().at(16).flags & 0x80u) != 0u);
+}
+
 TEST_CASE("every power in a values block is announced, in field order", "[replay][tbc][power]") {
     // A night elf druid shifting into Cat Form (pair 13, CMaNGOS TBC
     // Player::Regenerate and the form's power change in one block): mana,

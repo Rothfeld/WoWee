@@ -7330,11 +7330,21 @@ void SpellHandler::handleExtraAuraInfo(network::Packet& packet, bool isInit) {
     else if (auraTargetGuid != 0) auraList = &unitAurasCache_[auraTargetGuid];
     const auto nowMs = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now().time_since_epoch()).count());
-    // TBC visible aura slots are 0..55 (40 positive + 16 negative; Classic: 0..47).
-    // CMaNGOS assigns non-visible/passive auras theoretical slots >= MAX_AURAS (56..255)
-    // and still sends SMSG_SET_EXTRA_AURA_INFO for them; never insert those into the
-    // visible aura table or BuffFrame/UnitBuff will display racial/class passives.
-    const uint8_t maxVisibleSlots = isActiveExpansion("tbc") ? 56u : 48u;
+    // TBC visible aura slots are 0..55 (Classic: 0..47), split between positive
+    // and negative slots by UNIT_FIELD_BYTES_2 byte 1 (40 on players/pets, 16 on
+    // creatures). CMaNGOS assigns non-visible/passive auras theoretical slots >=
+    // MAX_AURAS (56..255) and still sends SMSG_SET_EXTRA_AURA_INFO for them; never
+    // insert those into the visible aura table or BuffFrame/UnitBuff will display
+    // racial/class passives.
+    const bool tbc = isActiveExpansion("tbc");
+    const uint8_t maxVisibleSlots = static_cast<uint8_t>(preWotlkVisibleAuraSlots(tbc));
+    uint32_t targetBytes2 = 0;
+    if (const uint16_t ufBytes2 = fieldIndex(UF::UNIT_FIELD_BYTES_2); ufBytes2 != 0xFFFF) {
+        if (auto targetEntity = owner_.getEntityManager().getEntity(auraTargetGuid)) {
+            targetBytes2 = targetEntity->getField(ufBytes2);
+        }
+    }
+    const int positiveSlots = preWotlkPositiveAuraSlots(tbc, targetBytes2);
     bool updatedVisibleSlot = false;
     while (packet.hasRemaining(13)) {
         const uint8_t slot = packet.readUInt8();
@@ -7345,8 +7355,10 @@ void SpellHandler::handleExtraAuraInfo(network::Packet& packet, bool isInit) {
         if (auraList) {
             if (auraList->size() <= slot) auraList->resize(slot + 1);
             auto& aura = (*auraList)[slot];
+            const uint8_t lowFlags =
+                (aura.spellId == spellId) ? static_cast<uint8_t>(aura.flags & ~0x80u) : 0u;
             aura.spellId = spellId;
-            aura.flags = slot >= 40 && slot < 56 ? 0x80u : 0u;
+            aura.flags = static_cast<uint8_t>(lowFlags | (slot >= positiveSlots ? 0x80u : 0u));
             aura.durationMs = maximum < 0 ? -1 : static_cast<int32_t>(remaining);
             aura.maxDurationMs = maximum;
             aura.receivedAtMs = nowMs;

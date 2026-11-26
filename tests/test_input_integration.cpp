@@ -3860,6 +3860,120 @@ TEST_CASE_METHOD(Integration, "TBC remote aura fields survive target selection a
     lua.setGameHandler(nullptr);
 }
 
+TEST_CASE_METHOD(Integration, "TBC creature debuffs in slots 16..39 answer UnitDebuff and color TargetFrameDebuff borders", "[remote-aura]") {
+    using namespace wowee::game;
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    run("__WoweeInterfaceVersion = 20400");
+    lua.setGameHandler(&handler);
+
+    constexpr uint64_t kCadaver = 0xf13000288e3233afull;
+    session.receive(replay::UpdateObject().tbc().create(kCadaver, ObjectType::UNIT,
+        {{UF::OBJECT_FIELD_ENTRY, 10382}, {UF::UNIT_FIELD_HEALTH, 500},
+         {UF::UNIT_FIELD_MAXHEALTH, 500}, {UF::UNIT_FIELD_BYTES_2, 16u << 8}}));
+
+    handler.spellNameCacheLoadedRef() = true;
+    std::map<uint32_t, std::string> icons;
+    auto defSpell = [&](uint32_t id, const char* name, const char* icon, uint8_t dispel) {
+        auto& entry = handler.spellNameCacheRef()[id];
+        entry.name = name;
+        entry.dispelType = dispel;
+        icons[id] = icon;
+    };
+    defSpell(26990, "Mark of the Wild", "Interface\\Icons\\Spell_Nature_Regeneration", 1);
+    defSpell(27026, "Explosive Trap Effect", "Interface\\Icons\\Spell_Fire_SelfDestruct", 0);
+    defSpell(10894, "Shadow Word: Pain", "Interface\\Icons\\Spell_Shadow_ShadowWordPain", 1);
+    defSpell(11711, "Curse of Agony", "Interface\\Icons\\Spell_Shadow_CurseOfSargeras", 2);
+    defSpell(19278, "Devouring Plague", "Interface\\Icons\\Spell_Shadow_BlackPlague", 3);
+    defSpell(13555, "Serpent Sting", "Interface\\Icons\\Ability_Hunter_Quickshot", 4);
+    handler.setSpellIconPathResolver([icons](uint32_t id) {
+        const auto it = icons.find(id);
+        return it != icons.end() ? it->second : std::string{};
+    });
+
+    const uint16_t auraBase = fieldIndex(UF::UNIT_FIELD_AURAS);
+    session.receive(replay::UpdateObject().tbc().valuesAt(kCadaver, {
+        {static_cast<uint16_t>(auraBase + 0), 26990u},
+        {static_cast<uint16_t>(auraBase + 16), 27026u},
+        {static_cast<uint16_t>(auraBase + 17), 10894u},
+        {static_cast<uint16_t>(auraBase + 18), 11711u},
+        {static_cast<uint16_t>(auraBase + 19), 19278u},
+        {static_cast<uint16_t>(auraBase + 20), 13555u},
+    }));
+    handler.setTarget(kCadaver);
+
+    truth("UnitBuff('target', 1) == 'Mark of the Wild'");
+    truth("UnitBuff('target', 2) == nil");
+    truth("UnitDebuff('target', 1) == 'Explosive Trap Effect' and select(5, UnitDebuff('target', 1)) == nil");
+    truth("UnitDebuff('target', 2) == 'Shadow Word: Pain' and select(5, UnitDebuff('target', 2)) == 'Magic'");
+    truth("UnitDebuff('target', 3) == 'Curse of Agony' and select(5, UnitDebuff('target', 3)) == 'Curse'");
+    truth("UnitDebuff('target', 4) == 'Devouring Plague' and select(5, UnitDebuff('target', 4)) == 'Disease'");
+    truth("UnitDebuff('target', 5) == 'Serpent Sting' and select(5, UnitDebuff('target', 5)) == 'Poison'");
+    truth("UnitDebuff('target', 6) == nil");
+
+    const auto emitXml = [&](const std::string& xmlSource) {
+        wowee::ui::XmlNode root;
+        std::string parseErr;
+        REQUIRE(wowee::ui::parseXml(xmlSource, root, parseErr));
+        const auto emitted = wowee::ui::emitFrameXml(root);
+        run(emitted.lua);
+    };
+    emitXml(R"xml(
+        <Ui>
+            <Button name="TargetDebuffButtonTemplate" virtual="true">
+                <Size><AbsDimension x="17" y="17"/></Size>
+                <Layers>
+                    <Layer level="ARTWORK">
+                        <Texture name="$parentIcon" setAllPoints="true"/>
+                    </Layer>
+                    <Layer level="OVERLAY">
+                        <Texture name="$parentBorder" file="Interface\Buttons\UI-Debuff-Overlays">
+                            <Size><AbsDimension x="17" y="17"/></Size>
+                            <Anchors><Anchor point="CENTER"><Offset><AbsDimension x="0" y="0"/></Offset></Anchor></Anchors>
+                            <TexCoords left="0.296875" right="0.5703125" top="0" bottom="0.515625"/>
+                        </Texture>
+                    </Layer>
+                </Layers>
+            </Button>
+            <Button name="TargetFrame" parent="UIParent">
+                <Size><AbsDimension x="232" y="100"/></Size>
+            </Button>
+        </Ui>
+    )xml");
+    run(R"lua(
+        DebuffTypeColor = {
+            ["none"]    = { r = 0.80, g = 0.00, b = 0.00 },
+            ["Magic"]   = { r = 0.20, g = 0.60, b = 1.00 },
+            ["Curse"]   = { r = 0.60, g = 0.00, b = 1.00 },
+            ["Disease"] = { r = 0.60, g = 0.40, b = 0.00 },
+            ["Poison"]  = { r = 0.00, g = 0.60, b = 0.00 },
+        }
+        for i = 1, 5 do
+            local name, rank, icon, count, debuffType = UnitDebuff("target", i)
+            local btn = CreateFrame("Button", "TargetFrameDebuff"..i, TargetFrame, "TargetDebuffButtonTemplate")
+            local border = _G["TargetFrameDebuff"..i.."Border"]
+            local color = debuffType and DebuffTypeColor[debuffType] or DebuffTypeColor["none"]
+            border:SetVertexColor(color.r, color.g, color.b)
+            btn:Show()
+        end
+    )lua");
+
+    const auto approxColor = [&](const char* borderName, float er, float eg, float eb) {
+        const std::string expr = std::string("(function() local r,g,b,a = ") + borderName +
+            ":GetVertexColor(); return math.abs(r-" + std::to_string(er) + ")<0.01 and math.abs(g-" +
+            std::to_string(eg) + ")<0.01 and math.abs(b-" + std::to_string(eb) + ")<0.01 and math.abs(a-1.0)<0.01 end)()";
+        INFO(borderName);
+        REQUIRE(lua.evaluateBoolean(expr));
+    };
+    approxColor("TargetFrameDebuff1Border", 0.80f, 0.00f, 0.00f);
+    approxColor("TargetFrameDebuff2Border", 0.20f, 0.60f, 1.00f);
+    approxColor("TargetFrameDebuff3Border", 0.60f, 0.00f, 1.00f);
+    approxColor("TargetFrameDebuff4Border", 0.60f, 0.40f, 0.00f);
+    approxColor("TargetFrameDebuff5Border", 0.00f, 0.60f, 0.00f);
+
+    lua.setGameHandler(nullptr);
+}
+
 TEST_CASE_METHOD(Integration, "Mining loot survives rejected duplicate open and uses server slot", "[mining-loot]") {
     using namespace wowee::game;
     replay::Session session("tbc");

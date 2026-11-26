@@ -2887,7 +2887,13 @@ void SocialHandler::handlePartyMemberStats(network::Packet& packet, bool isFull)
                 // each change, misread every slot after the first, and could
                 // not express a removal at all - a party member's debuffs
                 // stayed on the frame after the fight.
-                const int positiveSlots = tbc ? 40 : 32;
+                uint32_t memberBytes2 = 0;
+                if (const uint16_t ufBytes2 = fieldIndex(UF::UNIT_FIELD_BYTES_2); ufBytes2 != 0xFFFF) {
+                    if (auto ent = owner_.getEntityManager().getEntity(memberGuid)) {
+                        memberBytes2 = ent->getField(ufBytes2);
+                    }
+                }
+                const int positiveSlots = preWotlkPositiveAuraSlots(tbc, memberBytes2);
                 std::vector<AuraSlot> slots;
                 if (!isFull) {
                     if (const auto* known = owner_.getUnitAuras(memberGuid)) slots = *known;
@@ -2957,7 +2963,14 @@ void SocialHandler::handlePartyMemberStats(network::Packet& packet, bool isFull)
                 }
                 if (petCacheable) owner_.getSpellHandler()->mirrorAurasByGuid(member->petGuid, petAuras);
             } else {
-                const int positiveSlots = tbc ? 40 : 32;
+                uint32_t petBytes2 = 0;
+                if (const uint16_t ufBytes2 = fieldIndex(UF::UNIT_FIELD_BYTES_2);
+                    ufBytes2 != 0xFFFF && member->petGuid != 0) {
+                    if (auto ent = owner_.getEntityManager().getEntity(member->petGuid)) {
+                        petBytes2 = ent->getField(ufBytes2);
+                    }
+                }
+                const int positiveSlots = preWotlkPositiveAuraSlots(tbc, petBytes2);
                 std::vector<AuraSlot> petSlots;
                 if (!isFull && member->petGuid == before.petGuid) {
                     if (const auto* known = owner_.getUnitAuras(member->petGuid)) petSlots = *known;
