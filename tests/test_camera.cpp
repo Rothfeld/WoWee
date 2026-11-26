@@ -292,12 +292,22 @@ TEST_CASE("Scripted MoveView orbit/zoom and FlipCameraYaw advance and stop clean
     CHECK(anglesChanged);
     CHECK(distChanged);
     CHECK(yaw == Catch::Approx(90.0f));
-    CHECK(pitch == Catch::Approx(2.5f));
+    // MoveViewUpStart raises the camera above the character (toward -89 deg).
+    CHECK(pitch == Catch::Approx(-42.5f));
     CHECK(dist == Catch::Approx(10.55f));
 
     CHECK_FALSE(motion.apply("right", 0.0f, yaw));
     CHECK_FALSE(motion.apply("up", 0.0f, yaw));
     CHECK_FALSE(motion.apply("out", 0.0f, yaw));
+    CHECK_FALSE(motion.active());
+
+    // MoveViewDownStart lowers the camera toward the ground (toward +89 deg).
+    CHECK_FALSE(motion.apply("down", 1.0f, yaw));
+    motion.advance(0.5f, 180.0f, 90.0f, 10.0f, -89.0f, 89.0f, 20.0f,
+                   yaw, pitch, dist, anglesChanged, distChanged);
+    CHECK(anglesChanged);
+    CHECK(pitch == Catch::Approx(2.5f));
+    CHECK_FALSE(motion.apply("down", 0.0f, yaw));
     CHECK_FALSE(motion.active());
 
     motion.advance(0.5f, 180.0f, 90.0f, 10.0f, -89.0f, 89.0f, 20.0f,
@@ -308,4 +318,35 @@ TEST_CASE("Scripted MoveView orbit/zoom and FlipCameraYaw advance and stop clean
 
     CHECK(motion.apply("flip_yaw", 180.0f, yaw));
     CHECK(yaw == Catch::Approx(270.0f));
+}
+
+TEST_CASE("Close-camera self-fade uses active external pose eye position when held", "[camera][fade]") {
+    Camera cam;
+    const glm::vec3 pivot(10.0f, 20.0f, 31.864f);
+    const glm::vec3 staleOrbitEye(10.0f, 25.55f, 32.828f); // 5.55 yd away
+
+    // Without external pose, orbit eye governs self-fade (opaque at >= 1.2 yd).
+    cam.setPosition(staleOrbitEye);
+    cam.setRotation(0.0f, -10.0f);
+    CHECK_FALSE(cam.hasExternalPose());
+    CHECK(effectiveCameraEyePosition(&cam, staleOrbitEye) == staleOrbitEye);
+    CHECK(computePlayerCameraOpacity(glm::distance(effectiveCameraEyePosition(&cam, staleOrbitEye), pivot)) ==
+          Catch::Approx(1.0f));
+
+    // Holding an external comparison pose inside the head/torso (<= 0.2 yd) hides
+    // the local player even if smoothedCamPos was still distant (prevents near-plane
+    // vest ghosting over close M2 props like Northshire barrels).
+    cam.setExternalPose(pivot + glm::vec3(0.10f, 0.0f, 0.0f),
+                        glm::vec3(1.0f, 0.0f, 0.0f),
+                        glm::vec3(0.0f, 0.0f, 1.0f), 45.0f);
+    REQUIRE(cam.hasExternalPose());
+    const float heldEyeDist = glm::distance(effectiveCameraEyePosition(&cam, staleOrbitEye), pivot);
+    CHECK(heldEyeDist == Catch::Approx(0.10f));
+    CHECK(computePlayerCameraOpacity(heldEyeDist) == Catch::Approx(0.0f));
+
+    // Linear ramp across (0.2, 1.2) yd matches Native TBC 2.4.3 (.gm off).
+    CHECK(computePlayerCameraOpacity(0.20f) == Catch::Approx(0.0f));
+    CHECK(computePlayerCameraOpacity(0.70f) == Catch::Approx(0.50f));
+    CHECK(computePlayerCameraOpacity(1.20f) == Catch::Approx(1.0f));
+    CHECK(computePlayerCameraOpacity(2.50f) == Catch::Approx(1.0f));
 }

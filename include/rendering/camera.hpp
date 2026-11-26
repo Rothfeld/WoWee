@@ -134,7 +134,10 @@ struct ScriptedViewMotion {
         const float zoomRate = (outSpeed - inSpeed) * distanceMoveSpeed;
         if (yawRate != 0.0f || pitchRate != 0.0f) {
             ioYaw -= yawRate * deltaTime;
-            ioPitch = std::clamp(ioPitch + pitchRate * deltaTime, minPitch, maxPitch);
+            // Negative pitch orbits the camera above the pivot (looking down):
+            // MoveViewUpStart() raises the camera toward -89 deg; MoveViewDownStart()
+            // lowers it toward +89 deg.
+            ioPitch = std::clamp(ioPitch - pitchRate * deltaTime, minPitch, maxPitch);
             outAnglesChanged = true;
         }
         if (zoomRate != 0.0f) {
@@ -143,6 +146,19 @@ struct ScriptedViewMotion {
         }
     }
 };
+
+/// Effective world-space eye position for close-camera local-player self-fade:
+/// when an explicit comparison/debug pose (`Camera::setExternalPose`) is active,
+/// `camera->getPosition()` is the rendered eye; otherwise `orbitEyePos` applies.
+inline glm::vec3 effectiveCameraEyePosition(const Camera* camera, const glm::vec3& orbitEyePos) {
+    return (camera && camera->hasExternalPose()) ? camera->getPosition() : orbitEyePos;
+}
+
+/// TBC 2.4.3 close-camera local-player opacity ramp: 1.0 at >= 1.2 yd, linear
+/// fade across (0.2, 1.2) yd, and 0.0 (hidden) at <= 0.2 yd.
+inline float computePlayerCameraOpacity(float eyeDistance) {
+    return std::clamp((eyeDistance - 0.2f) / 1.0f, 0.0f, 1.0f);
+}
 
 } // namespace rendering
 } // namespace wowee

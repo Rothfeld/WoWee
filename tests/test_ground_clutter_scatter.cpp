@@ -10,6 +10,7 @@
 #include "pipeline/adt_alpha.hpp"
 #include "pipeline/adt_loader.hpp"
 #include "pipeline/ground_clutter_scatter.hpp"
+#include "rendering/placement_transform.hpp"
 
 using wowee::pipeline::ADTLoader;
 using wowee::pipeline::ADTTerrain;
@@ -440,4 +441,48 @@ TEST_CASE("real TBC Deadwind Pass Karazhan meadow populates grass at default den
         if (c > 0) ++activeQuads;
     }
     REQUIRE(activeQuads >= 30);
+}
+
+TEST_CASE("groundClutterSlopeEuler tilts GroundEffectDoodad +Z onto terrain surfaceNormal",
+          "[terrain][clutter][slope]") {
+    using wowee::pipeline::groundClutterSlopeEuler;
+    using wowee::rendering::placementModelMatrix;
+
+    // Flat terrain keeps horizontal yaw-only rotation.
+    for (float yaw : {0.0f, 0.85f, 3.14159f, 5.42f}) {
+        const glm::vec3 e = groundClutterSlopeEuler(glm::vec3(0.0f, 0.0f, 1.0f), yaw);
+        const glm::mat4 m = placementModelMatrix(glm::vec3(0.0f), e, 1.0f);
+        const glm::vec3 zOut = glm::vec3(m * glm::vec4(0.0f, 0.0f, 1.0f, 0.0f));
+        const glm::vec3 xOut = glm::vec3(m * glm::vec4(1.0f, 0.0f, 0.0f, 0.0f));
+        CHECK(zOut.x == Catch::Approx(0.0f).margin(1e-5f));
+        CHECK(zOut.y == Catch::Approx(0.0f).margin(1e-5f));
+        CHECK(zOut.z == Catch::Approx(1.0f).margin(1e-5f));
+        CHECK(xOut.x == Catch::Approx(std::cos(yaw)).margin(1e-5f));
+        CHECK(xOut.y == Catch::Approx(std::sin(yaw)).margin(1e-5f));
+    }
+
+    // Sloped hillsides (including Dustfire Valley MCNK (10..11, 15) ash slopes)
+    // map local +Z onto normalize(surfaceNormal) with orthonormal basis vectors.
+    const std::array<glm::vec3, 4> normals = {{
+        {-0.02f, -0.37f, 0.92f},
+        {-0.17f, -0.27f, 0.94f},
+        { 0.35f, -0.28f, 0.89f},
+        {-0.42f,  0.31f, 0.85f},
+    }};
+    for (const glm::vec3& rawN : normals) {
+        const glm::vec3 n = glm::normalize(rawN);
+        for (float yaw : {0.0f, 1.23f, 2.75f, 4.90f}) {
+            const glm::vec3 e = groundClutterSlopeEuler(rawN, yaw);
+            const glm::mat4 m = placementModelMatrix(glm::vec3(-6391.0f, -1973.0f, 250.5f), e, 0.95f);
+            const glm::vec3 xAxis = glm::normalize(glm::vec3(m[0]));
+            const glm::vec3 yAxis = glm::normalize(glm::vec3(m[1]));
+            const glm::vec3 zAxis = glm::normalize(glm::vec3(m[2]));
+            CHECK(zAxis.x == Catch::Approx(n.x).margin(1e-5f));
+            CHECK(zAxis.y == Catch::Approx(n.y).margin(1e-5f));
+            CHECK(zAxis.z == Catch::Approx(n.z).margin(1e-5f));
+            CHECK(glm::dot(xAxis, zAxis) == Catch::Approx(0.0f).margin(1e-5f));
+            CHECK(glm::dot(yAxis, zAxis) == Catch::Approx(0.0f).margin(1e-5f));
+            CHECK(glm::dot(xAxis, yAxis) == Catch::Approx(0.0f).margin(1e-5f));
+        }
+    }
 }

@@ -1342,38 +1342,8 @@ bool TerrainManager::advanceFinalization(FinalizingTile& ft) {
     }
 
     case FinalizationPhase::WATER: {
-        // Terrain water was already loaded in TERRAIN phase.
-        // Generate water ambient emitters here.
-        if (ambientSoundManager) {
-            for (size_t chunkIdx = 0; chunkIdx < pending->terrain.waterData.size(); chunkIdx++) {
-                const auto& chunkWater = pending->terrain.waterData[chunkIdx];
-                if (!chunkWater.hasWater()) continue;
-
-                int chunkX = chunkIdx % 16;
-                int chunkY = chunkIdx / 16;
-                float tileOriginX = (32.0f - x) * core::coords::TILE_SIZE;
-                float tileOriginY = (32.0f - y) * core::coords::TILE_SIZE;
-                float chunkCenterX = tileOriginX + (chunkX + 0.5f) * 33.333333f;
-                float chunkCenterY = tileOriginY + (chunkY + 0.5f) * 33.333333f;
-
-                if (!chunkWater.layers.empty()) {
-                    const auto& layer = chunkWater.layers[0];
-                    float waterHeight = layer.minHeight;
-                    if (layer.liquidType == 0 && chunkIdx % 32 == 0) {
-                        PendingTile::AmbientEmitter emitter;
-                        emitter.position = glm::vec3(chunkCenterX, chunkCenterY, waterHeight);
-                        emitter.type = 4;
-                        pending->ambientEmitters.push_back(emitter);
-                    } else if (layer.liquidType == 1 && chunkIdx % 64 == 0) {
-                        PendingTile::AmbientEmitter emitter;
-                        emitter.position = glm::vec3(chunkCenterX, chunkCenterY, waterHeight);
-                        emitter.type = 4;
-                        pending->ambientEmitters.push_back(emitter);
-                    }
-                }
-            }
-        }
-
+        // Terrain water geometry was loaded in TERRAIN phase; TBC water proximity
+        // audio is driven directly by WaterRenderer::queryLiquidProximity.
         ft.phase = FinalizationPhase::AMBIENT;
         return false;
     }
@@ -2084,8 +2054,9 @@ void TerrainManager::scatterTileGroundDetail(
                     GroundDetailPlacement p;
                     p.modelId = modelId;
                     // MCNK chunk.position is already in terrain/render world space.
-                    // Do not convert via ADT placement mapping (that is for MDDF/MODF records).
-                    p.rotation = glm::vec3(0.0f, 0.0f, sample.yaw);
+                    // Tilt local +Z onto the terrain triangle normal so flat pebbles
+                    // (e.g. Burning Steppes BstRoc01/02) and shrubs sit flush on slopes.
+                    p.rotation = pipeline::groundClutterSlopeEuler(surfaceNormal, sample.yaw);
                     p.scale = sample.scale;
                     // Snap directly to sampled terrain height.
                     p.position = glm::vec3(surfacePoint.x, surfacePoint.y, surfacePoint.z + 0.01f);

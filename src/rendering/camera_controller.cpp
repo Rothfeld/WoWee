@@ -1247,8 +1247,9 @@ glm::vec3 CameraController::moveFollowedCharacter(float /*deltaTime*/, FrameInpu
         } else {
             // Constant-acceleration position matches the arc reconstructed by
             // native clients, independent of the number of physics substeps,
-            // capped at TBC 2.4.3 downward terminal speed (60.148003 yd/s).
-            const float maxDownSpeed = featherFallActive_ ? 2.0f : kTerminalFallVelocity;
+            // capped at TBC 2.4.3 downward terminal speed (60.148003 yd/s, or
+            // 7.0 yd/s under MOVE_FEATHER_FALL / Slow Fall).
+            const float maxDownSpeed = featherFallActive_ ? kTerminalSavefallVelocity : kTerminalFallVelocity;
             const auto fallStep = stepFreeFallVertical(
                 targetPos.z, verticalVelocity, f.gravity, f.physicsDeltaTime, maxDownSpeed);
             targetPos.z = fallStep.z;
@@ -3015,14 +3016,15 @@ void CameraController::updateOrbitCamera(float deltaTime, FrameInput& f,
             if (measuredHead) followedHeadZ_ = headZ;
         }
 
-        // Collision can put the eye inside the head despite a distant zoom
-        // request. Share this visibility decision with the renderer so its
-        // recovery path cannot immediately reveal the intersecting mesh again.
-        const float eyeDistance = glm::distance(smoothedCamPos, pivot);
-        // Build 8606 (zoom steps at the Terrace): opaque at 1.31 yd and above,
-        // partly transparent at 1.06, about half at 0.79-0.63, faint at 0.43,
-        // gone by 0.17-0.23: a linear fade from 1.2 down to 0.2 yd.
-        playerCameraOpacity_ = glm::clamp((eyeDistance - 0.2f) / 1.0f, 0.0f, 1.0f);
+        // Collision or an active external comparison pose can put the eye inside
+        // the head/torso despite a distant zoom request. Measure from the active
+        // rendered eye position so near-plane-sliced vest geometry never ghosts
+        // over close world props under external camera hold.
+        const glm::vec3 activeEyePos = effectiveCameraEyePosition(camera, smoothedCamPos);
+        const float eyeDistance = glm::distance(activeEyePos, pivot);
+        // Build 8606 (zoom steps at the Terrace & Sunstrider Isle with .gm off):
+        // opaque at >= 1.2 yd, ~86% at 1.06, ~55% at 0.75, ~22% at 0.42, gone by <= 0.2 yd.
+        playerCameraOpacity_ = computePlayerCameraOpacity(eyeDistance);
         characterRenderer->setInstanceCameraOpacity(playerInstanceId,
             playerCameraOpacity_);
         characterRenderer->setInstanceVisible(playerInstanceId, !shouldHidePlayer());
@@ -4206,8 +4208,7 @@ void CameraController::setView(int view) {
     userTargetDistance = views_[view].distance;
     zoomPending_ = 0.0f;
     pitch = glm::clamp(views_[view].pitch, MIN_PITCH, MAX_PITCH);
-    // Back behind the character, as the original does.
-    yaw = facingYaw;
+    // Native TBC 2.4.3 preserves horizontal camera orbit yaw across SetView/ResetView.
     if (camera) camera->setRotation(yaw, pitch);
 }
 

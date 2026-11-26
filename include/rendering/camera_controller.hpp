@@ -58,7 +58,7 @@ public:
         distanceMax_ = yards;
     }
     /// SetView/SaveView/ResetView/NextView/PrevView (build 8606): five
-    /// views of distance and pitch, the camera put back behind the character.
+    /// views of distance and pitch, keeping the current horizontal camera yaw.
     /// Defaults measured on 2.4.3: 1 first person (0 yd, 0 deg), 2 5.55/-10,
     /// 3 5.55/-20, 4 13.88/-30, 5 13.88/-10. NextView/PrevView step without
     /// wrapping; ResetView of the current view applies it at once.
@@ -138,8 +138,8 @@ public:
 
     void processMouseWheel(float delta);
     void setFollowTarget(glm::vec3* target);
-    /// Camera pitch on the first entry into the world (build 8606: -5).
-    static constexpr float kStartPitch = -5.0f;
+    /// Camera pitch on the first entry into the world (build 8606 fresh View 2: -10 deg).
+    static constexpr float kStartPitch = -10.0f;
     [[nodiscard]] bool hasEnteredWorld() const { return enteredWorld_; }
     void markEnteredWorld() { enteredWorld_ = true; }
     void setDefaultSpawn(const glm::vec3& position, float yawDeg, float pitchDeg);
@@ -653,9 +653,8 @@ private:
     // Third-person orbit camera (WoW-style)
     bool thirdPerson = false;
     /// Where a new process starts: build 8606 entered the world 5.55 yards
-    /// back at -5 degrees (defaultPitch), the distance its SetView(2) and
-    /// SetView(3) also use. Logging out and back in, and teleports, keep
-    /// whatever the camera had, as they do here.
+    /// back at -10 degrees (kStartPitch, matching SetView(2)). Logging out and
+    /// back in, and teleports, keep whatever the camera had, as they do here.
     static constexpr float kStartDistance = 5.55f;
     float userTargetDistance = kStartDistance;  // What the player wants (scroll wheel)
     float currentDistance = kStartDistance;     // Distance the zoom has reached

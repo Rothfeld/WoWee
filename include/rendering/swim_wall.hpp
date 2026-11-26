@@ -84,6 +84,12 @@ inline bool shouldBeInWater(bool alreadySwimming, float waterH, float feetZ,
 /// `Unit::remoteTerminalVelocity` and CMaNGOS `Movement::terminalVelocity`).
 inline constexpr float kTerminalFallVelocity = 60.148003f;
 
+/// Downward Slow Fall / Feather Fall (`MOVE_FEATHER_FALL`, e.g. Mage Slow Fall
+/// spell 130, Priest Levitate) terminal speed in TBC 2.4.3 (`7.0 yd/s`,
+/// matching CMaNGOS `Movement::terminalSavefallVelocity` and empirical Native
+/// TBC 2.4.3 `MSG_MOVE_HEARTBEAT` deltas of `-3.50 yd` per `0.50 s`).
+inline constexpr float kTerminalSavefallVelocity = 7.0f;
+
 /// Post-entry vertical velocity when a falling character enters swimming
 /// (`feetZ <= waterH - swimSurfaceOffset_`).
 ///

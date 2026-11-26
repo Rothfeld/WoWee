@@ -2,8 +2,11 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <vector>
+
+#include <glm/glm.hpp>
 
 #include "core/coordinates.hpp"
 #include "pipeline/adt_alpha.hpp"
@@ -61,6 +64,34 @@ inline uint32_t mixGroundClutterSeed(uint32_t x) {
     x *= 0x846CA68Bu;
     x ^= x >> 16;
     return x;
+}
+
+/// Decompose `R_tilt((0,0,1) -> surfaceNormal) * Rz(yawRadians)` into exact
+/// `(ex, ey, ez)` radians for `rendering::placementModelMatrix` (`Rz(ez)*Ry(ey)*Rx(ex)`).
+/// Native TBC 2.4.3 tilts all `GroundEffectDoodad` instances perpendicular to the
+/// terrain triangle normal so flat rock domes (`BstRoc01/02`) and slope shrubs sit
+/// flush on hillsides rather than having their uphill half buried underground.
+inline glm::vec3 groundClutterSlopeEuler(const glm::vec3& surfaceNormal, float yawRadians) {
+    const float lenSq = glm::dot(surfaceNormal, surfaceNormal);
+    if (lenSq <= 1e-8f) {
+        return glm::vec3(0.0f, 0.0f, yawRadians);
+    }
+    const glm::vec3 n = surfaceNormal * (1.0f / std::sqrt(lenSq));
+    if (n.z <= -0.9999f) {
+        return glm::vec3(core::coords::PI, 0.0f, yawRadians);
+    }
+    const float k = 1.0f / (1.0f + n.z);
+    const float cyw = std::cos(yawRadians);
+    const float syw = std::sin(yawRadians);
+    const float d0 = n.x * cyw + n.y * syw;
+    const float c0x = cyw - n.x * d0 * k;
+    const float c0y = syw - n.y * d0 * k;
+    const float c0z = -d0;
+    const float c1z = n.x * syw - n.y * cyw;
+    const float ey = std::asin(std::clamp(-c0z, -1.0f, 1.0f));
+    const float ez = std::atan2(c0y, c0x);
+    const float ex = std::atan2(c1z, n.z);
+    return glm::vec3(ex, ey, ez);
 }
 
 /// Scatter ground-effect detail doodads across one 8x8 MCNK chunk.

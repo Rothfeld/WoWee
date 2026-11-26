@@ -198,3 +198,33 @@ TEST_CASE("water entry zeros vertical velocity after the ballistic crossing step
     CHECK(z <= floatZ);
     CHECK(z >= floatZ - kTerminalFallVelocity * (1.0f / 60.0f) - 1e-3f);
 }
+
+TEST_CASE("Slow Fall / Feather Fall caps downward speed at TBC 2.4.3 7.0 yd/s terminal velocity", "[swim][featherfall]") {
+    using wowee::rendering::kTerminalSavefallVelocity;
+    using wowee::rendering::stepFreeFallVertical;
+
+    REQUIRE(kTerminalSavefallVelocity == Catch::Approx(7.0f));
+
+    constexpr float gravity = -19.29f;
+    constexpr float dt = 1.0f / 60.0f;
+    float z = 80.0f;
+    float vz = 0.0f;
+    // Accelerate from rest to -7.0 yd/s (~0.363 s), then cruise for 1.0 s total.
+    for (int frame = 0; frame < 60; ++frame) {
+        const auto step = stepFreeFallVertical(z, vz, gravity, dt, kTerminalSavefallVelocity);
+        z = step.z;
+        vz = step.verticalVelocity;
+        CHECK(vz >= -kTerminalSavefallVelocity - 1e-5f);
+    }
+    CHECK(vz == Catch::Approx(-7.0f));
+
+    // Over the next 0.50 s (one MSG_MOVE_HEARTBEAT interval) at terminal speed,
+    // z drops by exactly 3.50 yd (matching Native TBC 2.4.3 Slow Fall 74.27 -> 70.77 -> 67.27).
+    const float zBeforeHeartbeat = z;
+    for (int frame = 0; frame < 30; ++frame) {
+        const auto step = stepFreeFallVertical(z, vz, gravity, dt, kTerminalSavefallVelocity);
+        z = step.z;
+        vz = step.verticalVelocity;
+    }
+    CHECK((zBeforeHeartbeat - z) == Catch::Approx(3.50f).margin(1e-3f));
+}

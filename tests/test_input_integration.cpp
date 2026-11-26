@@ -656,6 +656,23 @@ TEST_CASE_METHOD(Integration, "Camera views follow the original's SetView, SaveV
     controller.resetView(2);
     settle();
     CHECK(controller.zoomDistance() == Catch::Approx(5.55f).margin(0.01f));
+
+    // Native TBC 2.4.3 preserves horizontal camera orbit yaw across SetView(same),
+    // SetView(other), NextView/PrevView, and ResetView (measured on Pair 3).
+    controller.applyScriptedViewMotion("flip_yaw", 60.0f);
+    const float orbitedYaw = controller.getYaw();
+    REQUIRE(std::abs(orbitedYaw - controller.getFacingYaw()) > 30.0f);
+    controller.setView(2);
+    CHECK(controller.getYaw() == Catch::Approx(orbitedYaw));
+    controller.setView(3);
+    CHECK(controller.getYaw() == Catch::Approx(orbitedYaw));
+    CHECK(controller.getPitch() == Catch::Approx(-20.0f));
+    controller.nextView();
+    CHECK(controller.getYaw() == Catch::Approx(orbitedYaw));
+    controller.prevView();
+    CHECK(controller.getYaw() == Catch::Approx(orbitedYaw));
+    controller.resetView(3);
+    CHECK(controller.getYaw() == Catch::Approx(orbitedYaw));
 }
 
 TEST_CASE_METHOD(Integration, "Camera collision pulls in at once and eases back over two seconds", "[camera][collision]") {
