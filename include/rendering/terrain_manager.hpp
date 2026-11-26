@@ -556,6 +556,11 @@ private:
     std::shared_ptr<PendingTile> getCachedTile(const TileCoord& coord);
     void logMissingAdtOnce(const std::string& adtPath);
     std::atomic<bool> workerRunning{false};
+    // Whether the WMO renderer would use normal/height maps (normal mapping or
+    // parallax occlusion on), copied here each update for the workers: with
+    // both off it drops the predecoded maps unread, so they are not generated.
+    // True until the first update, like the WMO renderer's own defaults.
+    std::atomic<bool> wmoNormalMapsWanted_{true};
 
     // Track tiles currently queued or being processed to avoid duplicates
     std::unordered_map<TileCoord, bool, TileCoord::Hash> pendingTiles; // THREAD-SAFE: protected by queueMutex

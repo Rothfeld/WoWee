@@ -189,6 +189,10 @@ bool TerrainManager::initialize(pipeline::AssetManager* assets, TerrainRenderer*
 
 void TerrainManager::update(const Camera& camera, float deltaTime) {
     ZoneScopedN("TerrainManager::update");
+    if (wmoRenderer) {
+        wmoNormalMapsWanted_.store(wmoRenderer->isNormalMappingEnabled() || wmoRenderer->isPOMEnabled(),
+                                   std::memory_order_relaxed);
+    }
     if (!streamingEnabled || !assetManager || !terrainRenderer) {
         return;
     }
@@ -896,19 +900,26 @@ std::shared_ptr<PendingTile> TerrainManager::prepareTile(int x, int y) {
                     // that cost already was.
                     auto blp = assetManager->loadTexture(blpKey, true);
                     if (blp.isValid()) {
-                        float variance = 0.0f;
-                        const std::vector<uint8_t> decoded =
-                            blp.isBlockCompressed()
-                                ? pipeline::BLPLoader::decodeBaseLevel(blp)
-                                : blp.data;
-                        auto normalPixels = decoded.empty()
-                            ? pipeline::BLPImage{}
-                            : WMORenderer::generateNormalHeightMapPixels(
-                                  decoded.data(), static_cast<uint32_t>(blp.width),
-                                  static_cast<uint32_t>(blp.height), variance);
-                        if (normalPixels.isValid()) {
-                            pending->preloadedWMONormalMaps[blpKey] = std::move(normalPixels);
-                            pending->preloadedWMONormalMapVariances[blpKey] = variance;
+                        // WMORenderer::loadTexture reads these maps only with
+                        // normal mapping or parallax occlusion on. With both
+                        // off each one was a decode, a Sobel pass and a
+                        // quarter megabyte held until the tile was finalized,
+                        // for every texture of every WMO of every tile.
+                        if (wmoNormalMapsWanted_.load(std::memory_order_relaxed)) {
+                            float variance = 0.0f;
+                            const std::vector<uint8_t> decoded =
+                                blp.isBlockCompressed()
+                                    ? pipeline::BLPLoader::decodeBaseLevel(blp)
+                                    : blp.data;
+                            auto normalPixels = decoded.empty()
+                                ? pipeline::BLPImage{}
+                                : WMORenderer::generateNormalHeightMapPixels(
+                                      decoded.data(), static_cast<uint32_t>(blp.width),
+                                      static_cast<uint32_t>(blp.height), variance);
+                            if (normalPixels.isValid()) {
+                                pending->preloadedWMONormalMaps[blpKey] = std::move(normalPixels);
+                                pending->preloadedWMONormalMapVariances[blpKey] = variance;
+                            }
                         }
                         pending->preloadedWMOTextures[blpKey] = std::move(blp);
                     }
