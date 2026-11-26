@@ -71,7 +71,9 @@ struct GroundDetailPatch {
 struct TerrainTile {
     TileCoord coord;
     pipeline::ADTTerrain terrain;
-    pipeline::TerrainMesh mesh;
+    // No copy of the generated mesh: the renderer has it in vertex and index
+    // buffers and in the chunk alpha/shadow textures, and every query here
+    // (height, holes, area, dominant texture) reads `terrain`.
     bool loaded = false;
 
     // Tile bounds in world coordinates

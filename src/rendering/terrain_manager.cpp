@@ -1359,7 +1359,6 @@ bool TerrainManager::advanceFinalization(FinalizingTile& ft) {
         auto tile = std::make_unique<TerrainTile>();
         tile->coord = coord;
         tile->terrain = std::move(pending->terrain);
-        tile->mesh = std::move(pending->mesh);
         tile->loaded = true;
         tile->m2InstanceIds = std::move(ft.m2InstanceIds);
         tile->wmoInstanceIds = std::move(ft.wmoInstanceIds);
@@ -1389,9 +1388,9 @@ bool TerrainManager::advanceFinalization(FinalizingTile& ft) {
         }
         getTileBounds(coord, tile->minX, tile->minY, tile->maxX, tile->maxY);
         loadedTiles[coord] = std::move(tile);
-        // NOTE: Don't cache pending here - std::move above empties terrain/mesh,
-        // so the cached tile would have 0 valid chunks on reuse.  Tiles are
-        // re-parsed from ADT files (file-cache hit) when they re-enter range.
+        // The pending tile, with the generated mesh (vertices, indices, decoded
+        // layer alpha), dies when the finalizing entry is popped. Tiles are
+        // re-parsed from ADT files when they re-enter range.
 
         // Now safe to remove from pendingTiles (tile is in loadedTiles)
         {
