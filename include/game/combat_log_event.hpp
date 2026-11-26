@@ -34,6 +34,7 @@ struct CombatLogEventInput {
     std::string spellName;
     std::string extraSpellName;
     int64_t timestamp = 0;
+    bool normalRangedAttack = false;
 };
 
 namespace combat_log {
@@ -133,7 +134,10 @@ inline std::vector<std::string> buildCombatLogEvent(const CombatLogEventInput& i
             const bool swing = !hasSpell && (in.type == T::MELEE_DAMAGE || in.type == T::CRIT_DAMAGE ||
                                               in.type == T::GLANCING || in.type == T::CRUSHING);
             const bool periodic = in.type == T::PERIODIC_DAMAGE;
-            event = swing ? "SWING_DAMAGE" : (periodic ? "SPELL_PERIODIC_DAMAGE" : "SPELL_DAMAGE");
+            const bool ranged = hasSpell && !periodic && in.normalRangedAttack;
+            event = swing ? "SWING_DAMAGE"
+                          : (periodic ? "SPELL_PERIODIC_DAMAGE"
+                                      : (ranged ? "RANGE_DAMAGE" : "SPELL_DAMAGE"));
             if (!swing) prefix = spellPrefix();
             suffix = damageSuffix(in.type == T::CRIT_DAMAGE, in.type == T::GLANCING,
                                   in.type == T::CRUSHING);
@@ -163,7 +167,8 @@ inline std::vector<std::string> buildCombatLogEvent(const CombatLogEventInput& i
             break;
         case T::MISS: case T::DODGE: case T::PARRY: case T::BLOCK: case T::EVADE:
         case T::IMMUNE: case T::DEFLECT: case T::REFLECT: {
-            event = hasSpell ? "SPELL_MISSED" : "SWING_MISSED";
+            event = !hasSpell ? "SWING_MISSED"
+                              : (in.normalRangedAttack ? "RANGE_MISSED" : "SPELL_MISSED");
             if (hasSpell) prefix = spellPrefix();
             const char* missType =
                 in.type == T::DODGE ? "DODGE" : in.type == T::PARRY ? "PARRY" :
@@ -189,7 +194,8 @@ inline std::vector<std::string> buildCombatLogEvent(const CombatLogEventInput& i
             // the hit's own event carries that. With none the whole thing was
             // turned aside, which is a miss.
             if (in.amount > 0) return {};
-            event = hasSpell ? "SPELL_MISSED" : "SWING_MISSED";
+            event = !hasSpell ? "SWING_MISSED"
+                              : (in.normalRangedAttack ? "RANGE_MISSED" : "SPELL_MISSED");
             if (hasSpell) prefix = spellPrefix();
             suffix = {in.type == T::RESIST ? "RESIST" : "ABSORB"};
             if (wotlk) suffix.push_back("0");

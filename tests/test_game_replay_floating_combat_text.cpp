@@ -832,3 +832,199 @@ TEST_CASE("SMSG_ENVIRONMENTALDAMAGELOG fires UNIT_COMBAT with physical schoolMas
     CHECK(uc[5] == std::make_tuple("player", "WOUND", "", "180", "4"));
     CHECK(uc[6] == std::make_tuple("player", "WOUND", "ABSORB", "0", "1"));
 }
+
+TEST_CASE("Incoming melee swings, on-next-swing Cleave, and normal ranged attacks match TBC 2.4.3 red Miss/Damage parity",
+          "[fct][framexml][incoming]") {
+    FctHarness h(/*warrior*/ 1, /*rage*/ 1);
+    auto& spells = h.session.handler().spellNameCacheRef();
+    spells[75].name = "Auto Shot";
+    spells[75].attrEx3 = wowee::game::kSpellAttrEx3NormalRangedAttack;
+    spells[75].schoolMask = 0x01;
+    spells[5019].name = "Shoot";
+    spells[5019].attrEx3 = wowee::game::kSpellAttrEx3NormalRangedAttack;
+    spells[5019].schoolMask = 0x01;
+    spells[6660].name = "Shoot";
+    spells[6660].attrEx3 = 0u;  // Creature Shoot (no SPELL_ATTR_EX3_NORMAL_RANGED_ATTACK)
+    spells[6660].schoolMask = 0x01;
+    spells[15496].name = "Cleave";
+    spells[15496].attr = 0x00040014u;
+    spells[15496].schoolMask = 0x01;
+    spells[78].name = "Heroic Strike";
+    spells[78].attr = 0x00040014u;
+    spells[78].schoolMask = 0x01;
+
+    auto makeMeleeSwing = [](uint64_t attacker, uint64_t target, uint32_t hitInfo,
+                             uint32_t victimState, int32_t damage = 0) {
+        Packet p(wireOpcode(Opcode::SMSG_ATTACKERSTATEUPDATE));
+        p.writeUInt32(hitInfo);
+        p.writePackedGuid(attacker);
+        p.writePackedGuid(target);
+        p.writeUInt32(static_cast<uint32_t>(damage));
+        p.writeUInt8(1);
+        p.writeUInt32(1);
+        p.writeFloat(static_cast<float>(damage));
+        p.writeUInt32(static_cast<uint32_t>(damage));
+        p.writeUInt32(0);
+        p.writeUInt32(0);
+        p.writeUInt32(victimState);
+        p.writeUInt32(0);
+        p.writeUInt32(0);
+        p.writeUInt32(0);
+        return p;
+    };
+
+    auto makeSpellDamage = [](uint64_t target, uint64_t attacker, uint32_t spellId,
+                              uint32_t damage, bool isCrit = false) {
+        Packet p(wireOpcode(Opcode::SMSG_SPELLNONMELEEDAMAGELOG));
+        p.writePackedGuid(target);
+        p.writePackedGuid(attacker);
+        p.writeUInt32(spellId);
+        p.writeUInt32(damage);
+        p.writeUInt8(0x01);
+        p.writeUInt32(0);
+        p.writeUInt32(0);
+        p.writeUInt8(0);
+        p.writeUInt8(0);
+        p.writeUInt32(0);
+        p.writeUInt32(isCrit ? 0x02u : 0u);
+        return p;
+    };
+
+    // 1. Incoming melee swing miss (0x12), on-next-swing Cleave miss (0x10012),
+    //    dodge (state 2), parry (state 3), evade (0x10 + state 6), immune (state 7), deflect (state 8):
+    //    all render in red (1.0, 0.1, 0.1) in Blizzard_CombatText when COMBAT_TEXT_SHOW_DODGE_PARRY_MISS == "1",
+    //    and none draw in 3D world space over the player.
+    h.clearRecorded();
+    h.session.handler().clearCombatText();
+    h.session.receive(makeMeleeSwing(kMobGuid, Session::kPlayerGuid, 0x12u, 0u));     // MISS
+    h.session.receive(makeMeleeSwing(kMobGuid, Session::kPlayerGuid, 0x10012u, 0u));  // HITINFO_NOACTION | HITINFO_MISS
+    h.session.receive(makeMeleeSwing(kMobGuid, Session::kPlayerGuid, 0x02u, 2u));     // DODGE
+    h.session.receive(makeMeleeSwing(kMobGuid, Session::kPlayerGuid, 0x02u, 3u));     // PARRY
+    h.session.receive(makeMeleeSwing(kMobGuid, Session::kPlayerGuid, 0x12u, 6u));     // EVADE (with HITINFO_MISS bit)
+    h.session.receive(makeMeleeSwing(kMobGuid, Session::kPlayerGuid, 0x02u, 7u));     // IMMUNE
+    h.session.receive(makeMeleeSwing(kMobGuid, Session::kPlayerGuid, 0x02u, 8u));     // DEFLECT
+
+    auto msgs = h.recorded();
+    REQUIRE(msgs.size() == 7);
+    const char* expectedWords[7] = {"Miss", "Miss", "Dodge", "Parry", "Evade", "Immune", "Deflect"};
+    for (size_t i = 0; i < 7; ++i) {
+        CHECK(msgs[i].text == expectedWords[i]);
+        CHECK(msgs[i].r == Catch::Approx(1.0));
+        CHECK(msgs[i].g == Catch::Approx(0.1));
+        CHECK(msgs[i].b == Catch::Approx(0.1));
+    }
+    for (const auto& entry : h.session.handler().getCombatText()) {
+        CHECK_FALSE(wowee::ui::fct::showsForUnit(entry, Session::kPlayerGuid, 0));
+    }
+
+    // When COMBAT_TEXT_SHOW_DODGE_PARRY_MISS == "0", Blizzard_CombatText suppresses incoming Miss/Dodge/Parry
+    // while portrait UNIT_COMBAT("player", "MISS") still fires.
+    REQUIRE(h.lua.executeString("COMBAT_TEXT_SHOW_DODGE_PARRY_MISS = '0' CombatText_UpdateDisplayedMessages()"));
+    h.clearRecorded();
+    h.session.receive(makeMeleeSwing(kMobGuid, Session::kPlayerGuid, 0x12u, 0u));
+    CHECK(h.recorded().empty());
+    bool sawPortraitMiss = false;
+    for (const auto& [ev, args] : h.rawEvents) {
+        if (ev == "UNIT_COMBAT" && args.size() >= 2 && args[0] == "player" && args[1] == "MISS") {
+            sawPortraitMiss = true;
+        }
+    }
+    CHECK(sawPortraitMiss);
+    REQUIRE(h.lua.executeString("COMBAT_TEXT_SHOW_DODGE_PARRY_MISS = '1' CombatText_UpdateDisplayedMessages()"));
+
+    // 2. Incoming Normal Ranged Weapon Attacks (Auto Shot 75, Wand Shoot 5019 -> attrEx3 & 0x8000):
+    //    emit red "DAMAGE" / "DAMAGE_CRIT" / "MISS" (1.0, 0.1, 0.1) and RANGE_DAMAGE / RANGE_MISSED,
+    //    whereas Creature Shoot (6660, attrEx3 == 0) emits purple "SPELL_DAMAGE" (0.79, 0.3, 0.85)
+    //    and white "SPELL_MISS" (1.0, 1.0, 1.0).
+    h.clearRecorded();
+    h.session.receive(makeSpellDamage(Session::kPlayerGuid, kMobGuid, 75, 35, false));
+    h.session.receive(makeSpellDamage(Session::kPlayerGuid, kMobGuid, 5019, 33, true));
+    h.session.receive(makeSpellDamage(Session::kPlayerGuid, kMobGuid, 6660, 65, false));
+
+    Packet rangedMisses(wireOpcode(Opcode::SMSG_SPELLLOGMISS));
+    rangedMisses.writeUInt32(75);
+    rangedMisses.writeUInt64(kMobGuid);
+    rangedMisses.writeUInt8(0);
+    rangedMisses.writeUInt32(1);
+    rangedMisses.writeUInt64(Session::kPlayerGuid);
+    rangedMisses.writeUInt8(wowee::game::SpellMissInfo::MISS);
+    h.session.receive(rangedMisses);
+
+    Packet npcShootMiss(wireOpcode(Opcode::SMSG_SPELLLOGMISS));
+    npcShootMiss.writeUInt32(6660);
+    npcShootMiss.writeUInt64(kMobGuid);
+    npcShootMiss.writeUInt8(0);
+    npcShootMiss.writeUInt32(1);
+    npcShootMiss.writeUInt64(Session::kPlayerGuid);
+    npcShootMiss.writeUInt8(wowee::game::SpellMissInfo::MISS);
+    h.session.receive(npcShootMiss);
+
+    msgs = h.recorded();
+    REQUIRE(msgs.size() == 5);
+    // Auto Shot (75) normal hit -> red "-35"
+    CHECK(msgs[0].text == "-35");
+    CHECK(msgs[0].r == Catch::Approx(1.0));
+    CHECK(msgs[0].g == Catch::Approx(0.1));
+    CHECK(msgs[0].b == Catch::Approx(0.1));
+    // Wand Shoot (5019) crit -> red "-33" crit
+    CHECK(msgs[1].text == "-33");
+    CHECK(msgs[1].displayType == "crit");
+    CHECK(msgs[1].r == Catch::Approx(1.0));
+    CHECK(msgs[1].g == Catch::Approx(0.1));
+    // Creature Shoot (6660) hit -> purple "-65"
+    CHECK(msgs[2].text == "-65");
+    CHECK(msgs[2].r == Catch::Approx(0.79));
+    CHECK(msgs[2].g == Catch::Approx(0.3));
+    CHECK(msgs[2].b == Catch::Approx(0.85));
+    // Auto Shot (75) miss -> red "Miss"
+    CHECK(msgs[3].text == "Miss");
+    CHECK(msgs[3].r == Catch::Approx(1.0));
+    CHECK(msgs[3].g == Catch::Approx(0.1));
+    // Creature Shoot (6660) miss -> white "Miss"
+    CHECK(msgs[4].text == "Miss");
+    CHECK(msgs[4].r == Catch::Approx(1.0));
+    CHECK(msgs[4].g == Catch::Approx(1.0));
+    CHECK(msgs[4].b == Catch::Approx(1.0));
+
+    bool sawRangeDamage = false;
+    bool sawRangeMissed = false;
+    for (const auto& [ev, args] : h.rawEvents) {
+        if (ev == "COMBAT_LOG_EVENT_UNFILTERED" && args.size() >= 2) {
+            if (args[1] == "RANGE_DAMAGE") sawRangeDamage = true;
+            if (args[1] == "RANGE_MISSED") sawRangeMissed = true;
+        }
+    }
+    CHECK(sawRangeDamage);
+    CHECK(sawRangeMissed);
+
+    // 3. On-next-swing Cleave (15496 incoming) & Heroic Strike (78 outgoing):
+    //    0-damage HITINFO_NOACTION (0x10002) swing carrier must NOT emit SWING_DAMAGE 0
+    //    or draw a fake 3D world "Miss" over the mob!
+    h.clearRecorded();
+    h.session.handler().clearCombatText();
+    h.session.receive(makeMeleeSwing(kMobGuid, Session::kPlayerGuid, 0x10002u, 1u, 0));
+    h.session.receive(makeSpellDamage(Session::kPlayerGuid, kMobGuid, 15496, 599, false));
+    h.session.receive(makeMeleeSwing(Session::kPlayerGuid, kMobGuid, 0x10002u, 1u, 0));
+    h.session.receive(makeSpellDamage(kMobGuid, Session::kPlayerGuid, 78, 310, false));
+
+    msgs = h.recorded();
+    REQUIRE(msgs.size() == 1);
+    CHECK(msgs[0].text == "-599");
+    CHECK(msgs[0].r == Catch::Approx(0.79));
+
+    for (const auto& [ev, args] : h.rawEvents) {
+        if (ev == "COMBAT_LOG_EVENT_UNFILTERED" && args.size() >= 9 && args[1] == "SWING_DAMAGE") {
+            CHECK(args[8] != "0");
+        }
+    }
+    // Only the real 310 Heroic Strike spell damage appears over the mob (no fake "Miss" from 0-damage carrier!)
+    std::vector<wowee::ui::fct::Presentation> worldShown;
+    for (const auto& entry : h.session.handler().getCombatText()) {
+        if (wowee::ui::fct::showsForUnit(entry, Session::kPlayerGuid, 0)) {
+            worldShown.push_back(wowee::ui::fct::presentationFor(entry));
+        }
+    }
+    REQUIRE(worldShown.size() == 1);
+    CHECK(worldShown[0].kind == wowee::ui::fct::Presentation::Number);
+    CHECK(worldShown[0].number == 310);
+}

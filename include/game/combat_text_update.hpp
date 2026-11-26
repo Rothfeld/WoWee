@@ -53,7 +53,10 @@ inline std::optional<CombatTextUpdate> combatTextUpdateFor(CombatTextEntry::Type
         case T::CRIT_DAMAGE:
             if (amount <= 0) return std::nullopt;
             return CombatTextUpdate{fromSpell ? "SPELL_DAMAGE_CRIT" : "DAMAGE_CRIT", value, {}};
-        case T::SPELL_DAMAGE: case T::PERIODIC_DAMAGE:
+        case T::SPELL_DAMAGE:
+            if (amount <= 0) return std::nullopt;
+            return CombatTextUpdate{fromSpell ? "SPELL_DAMAGE" : "DAMAGE", value, {}};
+        case T::PERIODIC_DAMAGE:
             if (amount <= 0) return std::nullopt;
             return CombatTextUpdate{"SPELL_DAMAGE", value, {}};
         case T::MISS: return CombatTextUpdate{spell + "MISS", {}, {}};

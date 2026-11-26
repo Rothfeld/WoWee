@@ -661,6 +661,7 @@ void CombatHandler::addCombatText(CombatTextEntry::Type type, int32_t amount, ui
         input.spellName = (spellId != 0) ? owner_.getSpellName(spellId) : std::string{};
         input.extraSpellName = (extraSpellId != 0) ? owner_.getSpellName(extraSpellId) : std::string{};
         input.timestamp = static_cast<int64_t>(std::time(nullptr));
+        input.normalRangedAttack = normalRanged;
         const std::vector<std::string> args = buildCombatLogEvent(input);
         if (!args.empty()) {
             owner_.addonEventCallbackRef()("COMBAT_LOG_EVENT_UNFILTERED", args);
@@ -988,7 +989,12 @@ void CombatHandler::handleAttackerStateUpdate(network::Packet& packet) {
         line(CombatTextEntry::BLOCK, static_cast<int32_t>(data.blocked));
     } else if (data.totalDamage == 0 && totalResisted > 0) {
         line(CombatTextEntry::RESIST, static_cast<int32_t>(totalResisted));
-    } else {
+    } else if (!data.isNoAction() || data.totalDamage > 0) {
+        // An on-next-swing spell hit (Heroic Strike, Cleave, Maul, Raptor Strike)
+        // arrives as a 0-damage HITINFO_NOACTION swing paired with SMSG_SPELLNONMELEEDAMAGELOG;
+        // build 8606 emits no SWING_DAMAGE 0 or world "Miss" for that carrier packet
+        // (verified on Pair 12, Cleave 15496). An on-next-swing miss carries HITINFO_MISS
+        // (0x10012) or a dodge/parry victimState and is already handled above.
         CombatTextEntry::Type type;
         if (data.isCrit())
             type = CombatTextEntry::CRIT_DAMAGE;

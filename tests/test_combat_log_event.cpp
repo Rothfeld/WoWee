@@ -132,3 +132,20 @@ TEST_CASE("TBC misses carry no amount", "[combatlog]") {
     block.layout = CombatLogLayout::Tbc;
     CHECK(buildCombatLogEvent(block).back() == "BLOCK");
 }
+
+TEST_CASE("normal ranged weapon attacks emit RANGE_DAMAGE and RANGE_MISSED", "[combatlog]") {
+    auto shot = hit(T::SPELL_DAMAGE, 75);
+    shot.spellName = "Auto Shot";
+    shot.normalRangedAttack = true;
+    const auto dmg = buildCombatLogEvent(shot);
+    REQUIRE(dmg.size() == 20);
+    CHECK(dmg[1] == "RANGE_DAMAGE");
+    CHECK(dmg[8] == "75");
+
+    auto missed = hit(T::MISS, 75);
+    missed.spellName = "Auto Shot";
+    missed.normalRangedAttack = true;
+    const auto m = buildCombatLogEvent(missed);
+    CHECK(m[1] == "RANGE_MISSED");
+    CHECK(m.back() == "MISS");
+}

@@ -3764,13 +3764,65 @@ TEST_CASE("Stored mouse-look CVars from this client's old sensitivity scale are 
     CHECK_FALSE(rows.contains("camerapitchmovespeed"));
     CHECK_FALSE(rows.contains("mousespeed"));
     CHECK(rows.at("farclip") == "1900");
-    CHECK(rows.at("wowee_cvarsversion") == "1");
+    CHECK(rows.at("wowee_cvarsversion") == "2");
     // Once recorded, the player's own values stay.
     rows["camerayawmovespeed"] = "90";
     rows["camerapitchmovespeed"] = "45";
     CHECK_FALSE(addons::migrateStoredCVarRows(rows));
     CHECK(rows.at("camerayawmovespeed") == "90");
     CHECK(rows.at("camerapitchmovespeed") == "45");
+}
+
+TEST_CASE("v1 stored CVars backfill omitted fctDodgeParryMiss and fctLowManaHealth only when all sibling FCT rows are enabled",
+          "[fct][cvar][migration]") {
+    // Shared/pair cvars.cfg saved while pushCvarDefault answered "1" for
+    // fctdodgeparrymiss and fctlowmanahealth and "0" for the other 8 switches.
+    std::unordered_map<std::string, std::string> allEnabled{
+        {"wowee_cvarsversion", "1"},
+        {"enablecombattext", "1"},
+        {"fctauras", "1"},
+        {"fctcombatstate", "1"},
+        {"fctdamagereduction", "1"},
+        {"fctenergygains", "1"},
+        {"fctfriendlyhealers", "1"},
+        {"fcthonorgains", "1"},
+        {"fctreactives", "1"},
+        {"fctrepchanges", "1"},
+    };
+    CHECK(addons::migrateStoredCVarRows(allEnabled));
+    CHECK(allEnabled.at("fctdodgeparrymiss") == "1");
+    CHECK(allEnabled.at("fctlowmanahealth") == "1");
+    CHECK(allEnabled.at("wowee_cvarsversion") == "2");
+    CHECK_FALSE(addons::migrateStoredCVarRows(allEnabled));
+
+    // Explicit "0" chosen by the player is never overwritten.
+    std::unordered_map<std::string, std::string> explicitZero{
+        {"wowee_cvarsversion", "1"},
+        {"enablecombattext", "1"},
+        {"fctdodgeparrymiss", "0"},
+        {"fctlowmanahealth", "0"},
+        {"fctauras", "1"},
+        {"fctcombatstate", "1"},
+        {"fctdamagereduction", "1"},
+        {"fctenergygains", "1"},
+        {"fctfriendlyhealers", "1"},
+        {"fcthonorgains", "1"},
+        {"fctreactives", "1"},
+        {"fctrepchanges", "1"},
+    };
+    CHECK(addons::migrateStoredCVarRows(explicitZero));
+    CHECK(explicitZero.at("fctdodgeparrymiss") == "0");
+    CHECK(explicitZero.at("fctlowmanahealth") == "0");
+
+    // Partial or disabled FCT config leaves unstored switches untouched.
+    std::unordered_map<std::string, std::string> partial{
+        {"wowee_cvarsversion", "1"},
+        {"enablecombattext", "1"},
+        {"fctauras", "1"},
+    };
+    CHECK(addons::migrateStoredCVarRows(partial));
+    CHECK_FALSE(partial.contains("fctdodgeparrymiss"));
+    CHECK_FALSE(partial.contains("fctlowmanahealth"));
 }
 
 TEST_CASE_METHOD(Integration, "TBC remote aura fields survive target selection and update", "[remote-aura]") {

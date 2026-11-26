@@ -581,7 +581,14 @@ static std::string cvarStorePath() {
 ///    also wrote 90 and 45 at load), and taken as they are now 0.2 would turn
 ///    the camera 0.00025 degrees a pixel. They are dropped back to the
 ///    original's defaults, 180, 90 and 1.
-static constexpr int kCVarStoreVersion = 1;
+/// 2: Backfills fctdodgeparrymiss=1 and fctlowmanahealth=1 when absent on a
+///    config that has enablecombattext=1 and all eight other TBC Combat Text
+///    checkboxes enabled. Before v3.1.55 pushCvarDefault answered "1" for
+///    those two switches and "0" for the other eight, so ticking every
+///    unchecked box on InterfaceOptionsCombatTextPanel wrote "1" for the eight
+///    and left those two with no row; correcting GetCVarDefault to "0" then
+///    silently turned Dodges/Parries/Misses and Low Mana & Health off.
+static constexpr int kCVarStoreVersion = 2;
 static constexpr const char* kCVarStoreVersionKey = "wowee_cvarsversion";
 // TBC town-service minimap tracking lives only in memory for the current
 // character session: build 8606 keeps SetTracking(service) across ReloadUI()
@@ -592,11 +599,32 @@ bool migrateStoredCVarRows(std::unordered_map<std::string, std::string>& rows) {
     const auto found = rows.find(kCVarStoreVersionKey);
     const int version = found == rows.end() ? 0 : std::atoi(found->second.c_str());
     if (version >= kCVarStoreVersion) return false;
-    for (const char* key : {"camerayawmovespeed", "camerapitchmovespeed", "mousespeed"}) {
-        if (auto it = rows.find(key); it != rows.end()) {
-            LOG_INFO("CVars: dropping ", key, "=", it->second,
-                     " written in this client's old mouse sensitivity units");
-            rows.erase(it);
+    if (version < 1) {
+        for (const char* key : {"camerayawmovespeed", "camerapitchmovespeed", "mousespeed"}) {
+            if (auto it = rows.find(key); it != rows.end()) {
+                LOG_INFO("CVars: dropping ", key, "=", it->second,
+                         " written in this client's old mouse sensitivity units");
+                rows.erase(it);
+            }
+        }
+    }
+    if (version < 2) {
+        const auto isOne = [&](const char* key) {
+            const auto it = rows.find(key);
+            return it != rows.end() && it->second == "1";
+        };
+        if (isOne("enablecombattext") &&
+            isOne("fctauras") && isOne("fctcombatstate") &&
+            isOne("fctdamagereduction") && isOne("fctenergygains") &&
+            isOne("fctfriendlyhealers") && isOne("fcthonorgains") &&
+            isOne("fctreactives") && isOne("fctrepchanges")) {
+            for (const char* key : {"fctdodgeparrymiss", "fctlowmanahealth"}) {
+                if (!rows.contains(key)) {
+                    LOG_INFO("CVars: backfilling ", key,
+                             "=1 omitted while old GetCVarDefault answered 1");
+                    rows.emplace(key, "1");
+                }
+            }
         }
     }
     rows[kCVarStoreVersionKey] = std::to_string(kCVarStoreVersion);
