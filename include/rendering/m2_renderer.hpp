@@ -904,7 +904,9 @@ public:
     bool checkCollision(const glm::vec3& from, const glm::vec3& to,
                         glm::vec3& adjustedPos, float playerRadius = 0.5f,
                         float playerHeight = 2.0f, bool allowHorizontalRise = true) const;
-    std::optional<float> getFloorHeight(float glX, float glY, float glZ, float* outNormalZ = nullptr) const;
+    std::optional<float> getFloorHeight(float glX, float glY, float glZ,
+                                        float* outNormalZ = nullptr,
+                                        float maxDropDist = 10.0f) const;
     // Authored collision faces of every movement-blocking instance overlapping
     // the world box, transformed to world space.
     void appendBodyCollisionTriangles(const glm::vec3& worldLow, const glm::vec3& worldHigh,

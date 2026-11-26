@@ -941,6 +941,12 @@ bool SpellHandler::resolveUnitPosition(uint64_t guid, glm::vec3& outPos) {
         outPos = renderer->getCharacterPosition();
         return true;
     }
+    if (auto* chars = renderer->getCharacterRenderer()) {
+        const uint32_t inst = owner_.resolveUnitRenderInstance(guid);
+        if (inst != 0 && chars->getInstancePosition(inst, outPos)) {
+            return true;
+        }
+    }
     auto entity = owner_.getEntityManager().getEntity(guid);
     if (!entity) return false;
     glm::vec3 canonical(entity->getLatestX(), entity->getLatestY(), entity->getLatestZ());

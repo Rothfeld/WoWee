@@ -4,6 +4,16 @@
 
 using wowee::rendering::arbitrateEntityFloor;
 using wowee::rendering::kEntityFloorTerrainExactTolerance;
+using wowee::rendering::kMoveFlagFalling;
+using wowee::rendering::kMoveFlagFallingFar;
+using wowee::rendering::kMoveFlagFlying;
+using wowee::rendering::kMoveFlagHover;
+using wowee::rendering::kMoveFlagLevitating;
+using wowee::rendering::kMoveFlagOnTransport;
+using wowee::rendering::kMoveFlagSwimming;
+using wowee::rendering::kSplineFlagFalling;
+using wowee::rendering::kSplineFlagFlying;
+using wowee::rendering::unitSuppressesFloorSnap;
 
 TEST_CASE("stationary creature on M2 mound stands on mound top rather than sinking to terrain",
           "[collision][floor][tbc]") {
@@ -49,13 +59,10 @@ TEST_CASE("stationary creature recovers onto streamed M2/WMO floor after initial
     CHECK(*frame2 == Catch::Approx(132.766f));
 }
 
-TEST_CASE("stationary creature inside non-collidable web tent grounds to terrain within 3 yd",
+TEST_CASE("stationary creature inside non-collidable web tent grounds to terrain",
           "[collision][floor][tbc]") {
     // Bloodmyst Isle Webbed Creature guid 63432 inside nastyspiderweb_yellow.m2
     // (0 authored collision triangles): serverZ = 138.527, terrain = 136.308 (+2.219 yd).
-    // Verified on Native TBC 2.4.3: grounds to 136.308 so the cocoon stays enclosed
-    // under the web tent canopy instead of poking 2 yd through its roof; spawns more
-    // than 3 yd above terrain without support preserve authoritative server Z.
     const glm::vec3 tentPos(-10672.3f, -1514.5f, 138.527f);
     const auto inTent = arbitrateEntityFloor(
         tentPos, std::nullopt, /*isSplineOrMoving=*/false,
@@ -63,11 +70,96 @@ TEST_CASE("stationary creature inside non-collidable web tent grounds to terrain
     REQUIRE(inTent.has_value());
     CHECK(*inTent == Catch::Approx(136.308f));
 
-    const glm::vec3 highElevated(-10672.3f, -1514.5f, 140.0f);
+    // Unloaded deep-pit WMO interiors (> kEntityFloorMaxDrop = 50 yd above raw terrain,
+    // such as Auchindoun Levixus at -8.92 over -101.40 pit) preserve server Z while WMO streams.
+    const glm::vec3 auchindounUnloadedWmo(-3565.73f, 4943.27f, -8.92f);
     const auto preserved = arbitrateEntityFloor(
-        highElevated, std::nullopt, /*isSplineOrMoving=*/false,
-        /*terrainHeight=*/136.308f, /*wmoHeight=*/std::nullopt, /*m2Height=*/std::nullopt);
+        auchindounUnloadedWmo, std::nullopt, /*isSplineOrMoving=*/false,
+        /*terrainHeight=*/-101.40f, /*wmoHeight=*/std::nullopt, /*m2Height=*/std::nullopt);
     CHECK_FALSE(preserved.has_value());
+}
+
+TEST_CASE("elevated non-levitating TBC creature spawns snap down to ground matching Native 2.4.3",
+          "[collision][floor][tbc]") {
+    // 1. Nexus-King Salhadaar (entry 20454, guid 72462, Ethereum Staging Grounds):
+    // InhabitType = 3 (GROUND | WATER), moveFlags = 0x100 (WALKING), serverZ = 115.753,
+    // ADT terrain = 108.194 (+7.559 yd). Verified side-by-side on WOWEE_PAIR=9:
+    // Native TBC 2.4.3 snaps immediately to ground (108.194).
+    CHECK_FALSE(unitSuppressesFloorSnap(/*moveFlags=*/0x100u));
+    const glm::vec3 salhadaarPos(2494.05f, 3881.92f, 115.753f);
+    const auto salhadaarFloor = arbitrateEntityFloor(
+        salhadaarPos, std::nullopt, /*isSplineOrMoving=*/false,
+        /*terrainHeight=*/108.194f, /*wmoHeight=*/std::nullopt, /*m2Height=*/std::nullopt);
+    REQUIRE(salhadaarFloor.has_value());
+    CHECK(*salhadaarFloor == Catch::Approx(108.194f));
+
+    // 2. Shimmerwing Moth (entry 20611, guid 72870 & 72866, Eco-Dome Midrealm):
+    // moveFlags = 0x100, serverZ = 144.247 (+14.043 yd) and 174.280 (+19.727 yd).
+    const glm::vec3 moth14Pos(3115.23f, 3522.40f, 144.247f);
+    const auto moth14Floor = arbitrateEntityFloor(
+        moth14Pos, std::nullopt, /*isSplineOrMoving=*/false,
+        /*terrainHeight=*/130.204f, /*wmoHeight=*/std::nullopt, /*m2Height=*/std::nullopt);
+    REQUIRE(moth14Floor.has_value());
+    CHECK(*moth14Floor == Catch::Approx(130.204f));
+
+    // When an already-grounded moth starts a ground spline whose initial server node still
+    // carries stale elevated Z, continuity with previousRenderPos keeps it on terrain.
+    const glm::vec3 prevGroundedMoth(3115.23f, 3522.40f, 130.204f);
+    const auto mothSplineStart = arbitrateEntityFloor(
+        moth14Pos, prevGroundedMoth, /*isSplineOrMoving=*/true,
+        /*terrainHeight=*/130.204f, /*wmoHeight=*/std::nullopt, /*m2Height=*/std::nullopt);
+    REQUIRE(mothSplineStart.has_value());
+    CHECK(*mothSplineStart == Catch::Approx(130.204f));
+
+    const glm::vec3 moth20Pos(2766.27f, 3438.47f, 174.280f);
+    const auto moth20Floor = arbitrateEntityFloor(
+        moth20Pos, std::nullopt, /*isSplineOrMoving=*/false,
+        /*terrainHeight=*/154.553f, /*wmoHeight=*/std::nullopt, /*m2Height=*/std::nullopt);
+    REQUIRE(moth20Floor.has_value());
+    CHECK(*moth20Floor == Catch::Approx(154.553f));
+
+    // 3. Mana Snapper (entry 18883, guid 67733, Netherstorm Crumbling Waste):
+    // serverZ = 110.971 (+4.47 yd above netherstorm_overhangrock_small_03.m2 at 106.50,
+    // while raw ADT terrain abyss is -1.984). Must ground onto the collidable M2 rock.
+    const glm::vec3 manaSnapperPos(2494.45f, 2833.43f, 110.971f);
+    const auto snapperFloor = arbitrateEntityFloor(
+        manaSnapperPos, std::nullopt, /*isSplineOrMoving=*/false,
+        /*terrainHeight=*/-1.984f, /*wmoHeight=*/std::nullopt, /*m2Height=*/106.50f);
+    REQUIRE(snapperFloor.has_value());
+    CHECK(*snapperFloor == Catch::Approx(106.50f));
+}
+
+TEST_CASE("airborne, levitating, and hovering movement flags suppress floor snap",
+          "[collision][floor][tbc]") {
+    // Ground walking (0x100) and ground CAN_FLY (0x01000100) still snap to floor.
+    CHECK_FALSE(unitSuppressesFloorSnap(0x0u));
+    CHECK_FALSE(unitSuppressesFloorSnap(0x100u));
+    CHECK_FALSE(unitSuppressesFloorSnap(0x01000100u));
+
+    // LEVITATING (0x400), HOVER (0x40000000, e.g. Ethereum Prisoner Tyralius 20825
+    // 0x40000100 or Priest Levitate 1706), FLYING, FALLING, SWIMMING, ONTRANSPORT suppress snap.
+    CHECK(unitSuppressesFloorSnap(kMoveFlagLevitating));
+    CHECK(unitSuppressesFloorSnap(kMoveFlagHover | 0x100u));
+    CHECK(unitSuppressesFloorSnap(kMoveFlagFlying));
+    CHECK(unitSuppressesFloorSnap(kMoveFlagFalling));
+    CHECK(unitSuppressesFloorSnap(kMoveFlagFallingFar));
+    CHECK(unitSuppressesFloorSnap(kMoveFlagSwimming));
+    CHECK(unitSuppressesFloorSnap(kMoveFlagOnTransport));
+
+    // Active airborne splines (Flying 0x200 / Falling 0x002) suppress snap only while moving.
+    CHECK(unitSuppressesFloorSnap(0x100u, kSplineFlagFlying, /*activelyMoving=*/true));
+    CHECK(unitSuppressesFloorSnap(0x100u, kSplineFlagFalling, /*activelyMoving=*/true));
+    CHECK_FALSE(unitSuppressesFloorSnap(0x100u, kSplineFlagFlying, /*activelyMoving=*/false));
+}
+
+TEST_CASE("elevated bridge mover preserves Z across transient 1-frame seam miss",
+          "[collision][floor][tbc]") {
+    const glm::vec3 prevBridge(500.0f, 600.0f, 115.0f);
+    const glm::vec3 bridgeStep(500.2f, 600.0f, 115.0f);
+    const auto seamFrame = arbitrateEntityFloor(
+        bridgeStep, prevBridge, /*isSplineOrMoving=*/true,
+        /*terrainHeight=*/100.0f, /*wmoHeight=*/std::nullopt, /*m2Height=*/std::nullopt);
+    CHECK_FALSE(seamFrame.has_value());
 }
 
 TEST_CASE("ordinary stationary creature on uneven terrain grounds across heightmap quantization",
@@ -130,7 +222,7 @@ TEST_CASE("corpse resting on low M2 stone ledge snaps onto ledge even after appr
     CHECK(*chosen == Catch::Approx(19.94f));
 }
 
-TEST_CASE("grounded creature spawned above WMO dungeon floor drops onto floor within 3 yd",
+TEST_CASE("grounded creature spawned above WMO dungeon floor drops onto floor within drop reach",
           "[collision][floor][tbc]") {
     // Auchenai Crypts (WMO-only interior, no ADT terrain): Exarch Maladaar's Stolen Soul
     // can spawn at serverZ = 28.6193 (+2.03 yd above the WMO floor at 26.5893).
@@ -150,8 +242,8 @@ TEST_CASE("grounded creature spawned above WMO dungeon floor drops onto floor wi
     REQUIRE(lateWmoFrame.has_value());
     CHECK(*lateWmoFrame == Catch::Approx(26.5893f));
 
-    // Spawns more than kEntityFloorMaxDrop (3.0 yd) above the WMO floor preserve server Z.
-    const glm::vec3 tooHigh(63.1268f, -381.365f, 30.0f);
+    // Spawns more than kEntityFloorMaxDrop (50.0 yd) above the WMO floor preserve server Z.
+    const glm::vec3 tooHigh(63.1268f, -381.365f, 80.0f);
     const auto preserved = arbitrateEntityFloor(
         tooHigh, std::nullopt, /*isSplineOrMoving=*/false,
         /*terrainHeight=*/std::nullopt, /*wmoHeight=*/26.5893f, /*m2Height=*/std::nullopt);

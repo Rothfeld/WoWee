@@ -375,7 +375,8 @@ public:
                                         float* outNormalZ = nullptr,
                                         float referenceZ =
                                             std::numeric_limits<float>::quiet_NaN(),
-                                        std::optional<uint32_t>* outTerrainType = nullptr) const;
+                                        std::optional<uint32_t>* outTerrainType = nullptr,
+                                        float maxDropDist = 4.0f) const;
 
     /**
      * Append the drawn triangles (model space, three vertices each) of every

@@ -1319,7 +1319,9 @@ std::optional<float> M2Renderer::getInstanceFloorHeight(uint32_t instanceId,
     return best;
 }
 
-std::optional<float> M2Renderer::getFloorHeight(float glX, float glY, float glZ, float* outNormalZ) const {
+std::optional<float> M2Renderer::getFloorHeight(float glX, float glY, float glZ,
+                                                float* outNormalZ,
+                                                float maxDropDist) const {
     QueryTimer timer(&queryTimeMs, &queryCallCount);
     static const bool traceFloor = [] {
         const char* value = std::getenv("WOWEE_TRACE_M2_FLOOR");
@@ -1327,8 +1329,9 @@ std::optional<float> M2Renderer::getFloorHeight(float glX, float glY, float glZ,
     }();
     std::optional<float> bestFloor;
     float bestNormalZ = 1.0f;  // Default to flat
+    const float dropReach = std::max(maxDropDist, 10.0f);
 
-    glm::vec3 queryMin(glX - 2.0f, glY - 2.0f, glZ - 6.0f);
+    glm::vec3 queryMin(glX - 2.0f, glY - 2.0f, glZ - dropReach);
     glm::vec3 queryMax(glX + 2.0f, glY + 2.0f, glZ + 8.0f);
     gatherCandidates(queryMin, queryMax, tl_m2_candidateScratch);
 
@@ -1336,7 +1339,7 @@ std::optional<float> M2Renderer::getFloorHeight(float glX, float glY, float glZ,
         const auto& instance = instances[idx];
         if (glX < instance.worldBoundsMin.x || glX > instance.worldBoundsMax.x ||
             glY < instance.worldBoundsMin.y || glY > instance.worldBoundsMax.y ||
-            glZ + 5.0f < instance.worldBoundsMin.z || glZ - 10.0f > instance.worldBoundsMax.z) {
+            glZ + 5.0f < instance.worldBoundsMin.z || glZ - dropReach > instance.worldBoundsMax.z) {
             continue;
         }
 
@@ -1388,7 +1391,7 @@ std::optional<float> M2Renderer::getFloorHeight(float glX, float glY, float glZ,
             const glm::vec3 localRayOrigin = glm::vec3(
                 instance.invModelMatrix * glm::vec4(glX, glY, glZ + 5.0f, 1.0f));
             const glm::vec3 localRayEnd = glm::vec3(
-                instance.invModelMatrix * glm::vec4(glX, glY, glZ - 10.0f, 1.0f));
+                instance.invModelMatrix * glm::vec4(glX, glY, glZ - dropReach, 1.0f));
             glm::vec3 localRayVector = localRayEnd - localRayOrigin;
             const float localRayLength = glm::length(localRayVector);
             if (localRayLength <= 1e-5f) continue;

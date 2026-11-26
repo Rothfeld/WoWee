@@ -2,6 +2,7 @@
 #include "rendering/entity_floor_arbitration.hpp"
 #include "core/application.hpp"
 #include "game/game_utils.hpp"
+#include "game/spline_flight.hpp"
 #include "core/frame_pacer.hpp"
 #include "core/frame_stage_times.hpp"
 #include <cassert>
@@ -137,6 +138,15 @@ namespace core {
 
 namespace {
 
+static_assert(rendering::kMoveFlagOnTransport == static_cast<uint32_t>(game::MovementFlags::ONTRANSPORT));
+static_assert(rendering::kMoveFlagLevitating  == static_cast<uint32_t>(game::MovementFlags::LEVITATING));
+static_assert(rendering::kMoveFlagFalling     == static_cast<uint32_t>(game::MovementFlags::FALLING));
+static_assert(rendering::kMoveFlagFallingFar  == static_cast<uint32_t>(game::MovementFlags::FALLINGFAR));
+static_assert(rendering::kMoveFlagSwimming    == static_cast<uint32_t>(game::MovementFlags::SWIMMING));
+static_assert(rendering::kMoveFlagFlying      == static_cast<uint32_t>(game::MovementFlags::FLYING));
+static_assert(rendering::kMoveFlagHover       == static_cast<uint32_t>(game::MovementFlags::HOVER));
+static_assert(rendering::kSplineFlagFlying    == game::kTbcSplineFlying);
+
 std::optional<float> movingEntityFloor(rendering::Renderer* renderer,
                                         const glm::vec3& renderPos,
                                         const std::optional<glm::vec3>& previousRenderPos,
@@ -164,10 +174,12 @@ std::optional<float> movingEntityFloor(rendering::Renderer* renderer,
         // Closest to the mover's own feet, so a creature or another player
         // under an overhang is not snapped up to the floor of the level above
         // them - the same flip that pulled the local player between levels.
-        wmoFloor = wmo->getFloorHeight(renderPos.x, renderPos.y, probeZ, nullptr, renderPos.z);
+        wmoFloor = wmo->getFloorHeight(renderPos.x, renderPos.y, probeZ, nullptr, renderPos.z,
+                                       nullptr, rendering::kEntityFloorMaxDrop);
     }
     if (auto* m2 = renderer->getM2Renderer()) {
-        m2Floor = m2->getFloorHeight(renderPos.x, renderPos.y, probeZ);
+        m2Floor = m2->getFloorHeight(renderPos.x, renderPos.y, probeZ, nullptr,
+                                     rendering::kEntityFloorMaxDrop);
     }
 
     const std::optional<float> chosen = rendering::arbitrateEntityFloor(
@@ -3968,11 +3980,15 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
             // (Creature.cpp SetLevitate), and such a unit stays at its server
             // height (Enslaved Druid of the Talon, 2852, 2 yd above the floor).
             const auto retainedFlags = entitySpawner_->getRemoteMovementFlags().find(guid);
-            const bool levitating = retainedFlags != entitySpawner_->getRemoteMovementFlags().end() &&
-                (retainedFlags->second & static_cast<uint32_t>(game::MovementFlags::LEVITATING)) != 0;
+            const uint32_t creatureMoveFlags =
+                retainedFlags != entitySpawner_->getRemoteMovementFlags().end()
+                    ? retainedFlags->second
+                    : 0u;
+            const bool suppressesFloorSnap = rendering::unitSuppressesFloorSnap(
+                creatureMoveFlags, entity->serverSplineFlags(), entity->isActivelyMoving());
             const bool effectiveSwimming = entitySpawner_->isCreatureEffectivelySwimming(guid, renderPos);
             const bool groundCreature = !_creatureFlyingState.count(guid) &&
-                                        !effectiveSwimming && !levitating;
+                                        !effectiveSwimming && !suppressesFloorSnap;
             const bool onTransport = gameHandler->transportAttachmentsRef().count(guid) != 0;
             if (!onTransport && effectiveSwimming &&
                 !_creatureFlyingState.count(guid) && renderer->getWaterRenderer()) {
@@ -4457,9 +4473,10 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
             // WMO overlap regions (tunnels, buildings, bridges), and server-authored
             // splines (such as CMaNGOS MoveCharge, which adds +1.0 yd to spline Z)
             // require floor projection after arrival while the player stands still.
-            const bool levitating = hasMoveFlag(game::MovementFlags::LEVITATING);
+            const bool suppressesPlayerFloorSnap = rendering::unitSuppressesFloorSnap(
+                moveFlags, entity->serverSplineFlags(), entity->isActivelyMoving());
             const bool onTransport = gameHandler->transportAttachmentsRef().count(guid) != 0;
-            const bool groundPlayer = !airborne && !levitating && !onTransport &&
+            const bool groundPlayer = !airborne && !suppressesPlayerFloorSnap && !onTransport &&
                                       !_pCreatureFlyingState.count(guid) &&
                                       !_pCreatureSwimmingState.count(guid);
             if ((entity->isActivelyMoving() || entity->hasServerSplinePosition()) && groundPlayer) {

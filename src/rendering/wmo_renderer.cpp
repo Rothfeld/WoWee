@@ -3526,9 +3526,12 @@ void WMORenderer::appendSurfaceTriangles(
 }
 
 std::optional<float> WMORenderer::getFloorHeight(float glX, float glY, float glZ, float* outNormalZ, float referenceZ,
-                                                  std::optional<uint32_t>* outTerrainType) const {
+                                                  std::optional<uint32_t>* outTerrainType,
+                                                  float maxDropDist) const {
     if (outTerrainType) outTerrainType->reset();
     const bool byReference = std::isfinite(referenceZ);
+    const float groupDropReach = std::max(maxDropDist, 4.0f);
+    const float candidateDropReach = std::max(maxDropDist, 8.0f);
     // Per-frame cache disabled: camera and player query the same (x,y) at
     // different Z within a single frame. The allowAbove filter depends on glZ,
     // so caching by (x,y) alone returns wrong floors across Z contexts.
@@ -3677,7 +3680,7 @@ std::optional<float> WMORenderer::getFloorHeight(float glX, float glY, float glZ
                     const auto& [gMin, gMax] = instance.worldGroupBounds[gi];
                     if (glX < gMin.x || glX > gMax.x ||
                         glY < gMin.y || glY > gMax.y ||
-                        glZ - 4.0f > gMax.z) {
+                        glZ - groupDropReach > gMax.z) {
                         return;
                     }
                 }
@@ -3699,7 +3702,7 @@ std::optional<float> WMORenderer::getFloorHeight(float glX, float glY, float glZ
 
     // Full scan: test all instances (active group result above is not
     // early-returned because overlapping WMO instances need full coverage).
-    glm::vec3 queryMin(glX - 2.0f, glY - 2.0f, glZ - 8.0f);
+    glm::vec3 queryMin(glX - 2.0f, glY - 2.0f, glZ - candidateDropReach);
     glm::vec3 queryMax(glX + 2.0f, glY + 2.0f, glZ + 10.0f);
     gatherCandidates(queryMin, queryMax, tl_candidateScratch);
 
@@ -3715,7 +3718,7 @@ std::optional<float> WMORenderer::getFloorHeight(float glX, float glY, float glZ
 
         const ModelData& model = it->second;
         float zMarginDown = model.isLowPlatform ? 20.0f : 2.0f;
-        float zMarginUp = model.isLowPlatform ? 20.0f : 4.0f;
+        float zMarginUp = model.isLowPlatform ? std::max(20.0f, groupDropReach) : groupDropReach;
 
         // Broad-phase reject in world space to avoid expensive matrix transforms.
         if (bestFloor && instance.worldBoundsMax.z <= (*bestFloor + 0.05f)) {
@@ -3747,7 +3750,7 @@ std::optional<float> WMORenderer::getFloorHeight(float glX, float glY, float glZ
             const auto& [gMin, gMax] = instance.worldGroupBounds[gi];
             if (glX >= gMin.x && glX <= gMax.x &&
                 glY >= gMin.y && glY <= gMax.y &&
-                glZ - 4.0f <= gMax.z) {
+                glZ - groupDropReach <= gMax.z) {
                 anyGroupOverlaps = true;
                 break;
             }
@@ -3764,7 +3767,7 @@ std::optional<float> WMORenderer::getFloorHeight(float glX, float glY, float glZ
                 const auto& [gMin, gMax] = instance.worldGroupBounds[gi];
                 if (glX < gMin.x || glX > gMax.x ||
                     glY < gMin.y || glY > gMax.y ||
-                    glZ - 4.0f > gMax.z) {
+                    glZ - groupDropReach > gMax.z) {
                     continue;
                 }
             }
