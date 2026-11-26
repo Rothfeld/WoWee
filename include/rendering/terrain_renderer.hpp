@@ -8,6 +8,7 @@
 #include "pipeline/terrain_mesh.hpp"
 #include "pipeline/blp_loader.hpp"
 #include "rendering/camera.hpp"
+#include "rendering/descriptor_pool_chain.hpp"
 #include "rendering/pinned_lru_cache.hpp"
 #include "rendering/vk_texture.hpp"
 #include <vulkan/vulkan.h>
@@ -51,6 +52,7 @@ struct TerrainChunkGPU {
 
     // Material descriptor set (set 1: 7 samplers + params UBO)
     VkDescriptorSet materialSet = VK_NULL_HANDLE;
+    VkDescriptorPool materialPool = VK_NULL_HANDLE;  // the pool materialSet is freed to
 
     // Per-chunk params UBO (hasLayer1/2/3)
     ::VkBuffer paramsUBO = VK_NULL_HANDLE;
@@ -219,7 +221,9 @@ private:
     std::unique_ptr<VkTexture> createShadowTexture(const std::array<uint8_t, 512>& shadowMap);
     bool isChunkVisible(const TerrainChunkGPU& chunk, const Frustum& frustum);
     void calculateBoundingSphere(TerrainChunkGPU& chunk, const pipeline::ChunkMesh& meshChunk);
-    VkDescriptorSet allocateMaterialSet();
+    /// Sets chunk.materialSet and chunk.materialPool. False when no pool
+    /// could serve and a new one could not be created.
+    bool allocateMaterialSet(TerrainChunkGPU& chunk);
     /// False when there is nothing sampleable to write, in which case the
     /// caller must drop the chunk: a descriptor set that was allocated and
     /// never written is as undefined to bind as one holding a null view.
@@ -259,15 +263,15 @@ private:
     /// built and torn down here and in three other renderers.
     ShadowParamsSet shadowParams_;
 
-    // Descriptor pool for material sets. One set per terrain chunk, 256 chunks
-    // to a tile, so this is a tile budget: 65536 covered 256 tiles, and tiles
-    // are held to the *unload* radius, not the load radius - 8 loading and 11
-    // unloading is 23×23 = 529 resident. Every tile past the 256th arrived
-    // with no descriptor set and, before the retry in loadTerrainIncremental,
-    // was dropped for good: terrain that simply was not there, in whichever
-    // direction the player had travelled furthest.
-    VkDescriptorPool materialDescPool = VK_NULL_HANDLE;
-    static constexpr uint32_t MAX_MATERIAL_SETS = 160 * 1024;  // 640 tiles
+    // Descriptor pools for material sets: one set per terrain chunk, 256
+    // chunks to a tile, and tiles are held to the *unload* radius. A pool is
+    // added when the existing ones are full (descriptor_pool_chain.hpp), so
+    // the number of resident tiles has no ceiling here and a chunk is not left
+    // without a set for want of pool space.
+    DescriptorPoolChain<VkDescriptorPool, VkDescriptorSet> materialPools_;
+    /// Sets per pool: 64 tiles. One pool carries the 49 tiles of the smallest
+    /// load radius; 81 to 112 resident tiles (view distance 1900) take two.
+    static constexpr uint32_t MATERIAL_SETS_PER_POOL = 16 * 1024;
 
     // Loaded terrain chunks
     std::vector<TerrainChunkGPU> chunks;

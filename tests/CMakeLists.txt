@@ -2438,6 +2438,12 @@ wowee_add_test(test_terrain_slope_limit
 wowee_add_test(test_pinned_lru_cache
     SOURCES test_pinned_lru_cache.cpp)
 
+# ── test_descriptor_pool_chain ──────────────────────────────
+# Terrain material descriptor pools: a set comes from an existing pool while
+# one can serve, a pool is added only when none can. Header-only, no Vulkan.
+wowee_add_test(test_descriptor_pool_chain
+    SOURCES test_descriptor_pool_chain.cpp)
+
 # ── test_work_settled_trigger ───────────────────────────────
 # When freed heap pages go back to the system: once per burst of terrain
 # streaming, after it has been over for the settle time. Header-only.

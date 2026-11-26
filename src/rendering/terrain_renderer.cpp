@@ -168,23 +168,8 @@ bool TerrainRenderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameL
         return false;
     }
 
-    // --- Create descriptor pool ---
-    VkDescriptorPoolSize poolSizes[] = {
-        { .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = MAX_MATERIAL_SETS * 8 },
-        { .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, .descriptorCount = MAX_MATERIAL_SETS },
-    };
-
-    VkDescriptorPoolCreateInfo poolInfo{};
-    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    poolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
-    poolInfo.maxSets = MAX_MATERIAL_SETS;
-    poolInfo.poolSizeCount = 2;
-    poolInfo.pPoolSizes = poolSizes;
-
-    if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &materialDescPool) != VK_SUCCESS) {
-        LOG_ERROR("TerrainRenderer: failed to create descriptor pool");
-        return false;
-    }
+    // Material descriptor pools are created as chunks need them
+    // (allocateMaterialSet).
 
     // --- Create pipeline layout ---
     VkPushConstantRange pushRange{};
@@ -357,7 +342,7 @@ void TerrainRenderer::shutdown() {
     destroy(device, pipeline);
     destroy(device, wireframePipeline);
     destroy(device, pipelineLayout);
-    destroy(device, materialDescPool);
+    materialPools_.destroyAll([&](VkDescriptorPool pool) { destroy(device, pool); });
     destroy(device, materialSetLayout);
 
     // Shadow pipeline cleanup
@@ -414,8 +399,7 @@ bool TerrainRenderer::loadTerrain(const pipeline::TerrainMesh& mesh,
                 continue;
             }
 
-            gpuChunk.materialSet = allocateMaterialSet();
-            if (!gpuChunk.materialSet) {
+            if (!allocateMaterialSet(gpuChunk)) {
                 destroyChunkGPU(gpuChunk);
                 continue;
             }
@@ -470,8 +454,7 @@ bool TerrainRenderer::loadTerrainIncremental(const pipeline::TerrainMesh& mesh,
             break;
         }
 
-        gpuChunk.materialSet = allocateMaterialSet();
-        if (!gpuChunk.materialSet) {
+        if (!allocateMaterialSet(gpuChunk)) {
             destroyChunkGPU(gpuChunk);
             // Give the chunk back rather than dropping it. Both failures above
             // are pressure, not corruption: the descriptor pool is shared by
@@ -854,23 +837,70 @@ std::unique_ptr<VkTexture> TerrainRenderer::createShadowTexture(const std::array
     return tex;
 }
 
-VkDescriptorSet TerrainRenderer::allocateMaterialSet() {
-    VkDescriptorSetAllocateInfo allocInfo{};
-    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    allocInfo.descriptorPool = materialDescPool;
-    allocInfo.descriptorSetCount = 1;
-    allocInfo.pSetLayouts = &materialSetLayout;
+namespace {
 
-    VkDescriptorSet set = VK_NULL_HANDLE;
-    if (vkAllocateDescriptorSets(vkCtx->getDevice(), &allocInfo, &set) != VK_SUCCESS) {
+// The two Vulkan calls behind DescriptorPoolChain for terrain material sets.
+struct MaterialPoolBackend {
+    VkDevice device;
+    VkDescriptorSetLayout layout;
+    uint32_t setsPerPool;
+
+    VkDescriptorPool createPool() const {
+        // Per set: 8 combined image samplers (base, three layers, three alpha
+        // maps, shadow map) and the params UBO.
+        const VkDescriptorPoolSize poolSizes[] = {
+            { .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = setsPerPool * 8 },
+            { .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, .descriptorCount = setsPerPool },
+        };
+        VkDescriptorPoolCreateInfo poolInfo{};
+        poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        poolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+        poolInfo.maxSets = setsPerPool;
+        poolInfo.poolSizeCount = 2;
+        poolInfo.pPoolSizes = poolSizes;
+        VkDescriptorPool pool = VK_NULL_HANDLE;
+        if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &pool) != VK_SUCCESS) {
+            LOG_ERROR("TerrainRenderer: failed to create a material descriptor pool");
+            return VK_NULL_HANDLE;
+        }
+        return pool;
+    }
+
+    VkDescriptorSet allocate(VkDescriptorPool pool) const {
+        VkDescriptorSetAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        allocInfo.descriptorPool = pool;
+        allocInfo.descriptorSetCount = 1;
+        allocInfo.pSetLayouts = &layout;
+        VkDescriptorSet set = VK_NULL_HANDLE;
+        // A full pool answers VK_ERROR_OUT_OF_POOL_MEMORY; the chain then asks
+        // the next pool or creates one.
+        if (vkAllocateDescriptorSets(device, &allocInfo, &set) != VK_SUCCESS) return VK_NULL_HANDLE;
+        return set;
+    }
+};
+
+} // namespace
+
+bool TerrainRenderer::allocateMaterialSet(TerrainChunkGPU& chunk) {
+    const size_t poolsBefore = materialPools_.pools().size();
+    const auto allocation = materialPools_.allocate(
+        MaterialPoolBackend{vkCtx->getDevice(), materialSetLayout, MATERIAL_SETS_PER_POOL});
+    if (materialPools_.pools().size() != poolsBefore) {
+        LOG_INFO("TerrainRenderer: material descriptor pool ", materialPools_.pools().size(),
+                 " created (", MATERIAL_SETS_PER_POOL, " sets each)");
+    }
+    if (!allocation) {
         static uint64_t failCount = 0;
         ++failCount;
         if (failCount <= 8 || (failCount % 256) == 0) {
             LOG_WARNING("TerrainRenderer: failed to allocate material descriptor set (count=", failCount, ")");
         }
-        return VK_NULL_HANDLE;
+        return false;
     }
-    return set;
+    chunk.materialSet = allocation.set;
+    chunk.materialPool = allocation.pool;
+    return true;
 }
 
 bool TerrainRenderer::writeMaterialDescriptors(VkDescriptorSet set, const TerrainChunkGPU& chunk) {
@@ -1289,7 +1319,7 @@ void TerrainRenderer::destroyChunkGPU(TerrainChunkGPU& chunk) {
     VmaAllocation indexAlloc = chunk.indexAlloc;
     ::VkBuffer paramsUBO = chunk.paramsUBO;
     VmaAllocation paramsAlloc = chunk.paramsAlloc;
-    VkDescriptorPool pool = materialDescPool;
+    VkDescriptorPool pool = chunk.materialPool;
     VkDescriptorSet materialSet = chunk.materialSet;
 
     // The shared tileset textures go back to the cache's keeping: unpinned,
@@ -1316,6 +1346,7 @@ void TerrainRenderer::destroyChunkGPU(TerrainChunkGPU& chunk) {
     chunk.paramsUBO = VK_NULL_HANDLE;
     chunk.paramsAlloc = VK_NULL_HANDLE;
     chunk.materialSet = VK_NULL_HANDLE;
+    chunk.materialPool = VK_NULL_HANDLE;
     chunk.baseTexture = nullptr;
     for (VkTexture*& t : chunk.layerTextures) t = nullptr;
     for (VkTexture*& t : chunk.alphaTextures) t = nullptr;
