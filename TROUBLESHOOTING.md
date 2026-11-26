@@ -227,7 +227,7 @@ Logs are written to `logs/wowee.log` in the working directory (typically `build/
 
 The log records warnings and errors by default. Run with `WOWEE_LOG_LEVEL=info` (or `debug`) for more detail.
 
-For memory growth, run with `WOWEE_MEMORY_TRACE=1` and `WOWEE_LOG_LEVEL=info`: every two seconds the log gets a `MEMORY_TRACE {...}` line with the terrain texture cache (entries, pinned entries, bytes, budget), live terrain chunks and their alpha/shadow maps, the Vulkan allocator's allocation and block totals, and M2/WMO model and instance counts.
+For memory growth, run with `WOWEE_MEMORY_TRACE=1` and `WOWEE_LOG_LEVEL=info`: every two seconds the log gets a `MEMORY_TRACE {...}` line with the terrain texture cache (entries, pinned entries, bytes, budget), live terrain chunks and their alpha/shadow maps, the Vulkan allocator's allocation and block totals, M2/WMO model and instance counts, terrain tiles loaded and in work (`tiles_loaded`, `tiles_pending`), and glibc's malloc figures over all arenas (`malloc_in_use` handed out, `malloc_free` held free, `malloc_mmapped` in chunks of their own). `malloc_free` stays large after "Terrain streaming settled: freed heap pages returned to the system": the pages of those free chunks are back with the kernel, the chunks are still the allocator's.
 
 Include relevant log entries when reporting issues. The first lines name the build, platform and GPU driver.
 

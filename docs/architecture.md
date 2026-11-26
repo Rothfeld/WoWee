@@ -96,6 +96,7 @@ Wowee follows a modular architecture with clear separation of concerns:
 - Async tile loading on worker threads (`WOWEE_TERRAIN_WORKERS`) within configurable radius
 - 4-layer texture splatting with alpha blending
 - Texture ownership: tileset textures (`tileset\elwynn\elwynngrassbase.blp`) are shared through a byte-budgeted cache (`PinnedLruCache`, `WOWEE_TERRAIN_TEX_CACHE_MB`, default 4096) in which every chunk pins what it draws with; a chunk's own 64x64 alpha and shadow maps belong to the chunk and are freed with it
+- Memory: a loaded tile keeps its parsed ADT (`TerrainTile::terrain`: heights, holes, areas, layer alpha for height and texture queries) and no copy of the generated mesh; material descriptor sets come from pools of 16,384 sets added as needed (`DescriptorPoolChain`); when a burst of loading and unloading has been over for two seconds the freed heap pages go back to the system (`core::WorkSettledTrigger`, `malloc_trim`, glibc only). `AssetManager` keeps no copy of file contents; the kernel's page cache does
 - Frustum + distance culling
 - Ground clutter placement from GroundEffectTexture/GroundEffectDoodad via deterministic RNG
 
