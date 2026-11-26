@@ -612,10 +612,14 @@ void WorldLoader::loadMapGeometry(uint32_t mapId, const std::string& mapName,
             auto* camera = renderer_->getCamera();
 
             // Use a small radius for the initial load (just immediate tiles),
-            // then restore the full radius after entering the game.
+            // then restore the configured radius after entering the game.
             // This matches WoW's behavior: load quickly, stream the rest in-game.
-            const int savedLoadRadius = 6;
-            terrainMgr->setLoadRadius(4);   // 9x9=81 tiles - prevents hitches on spawn
+            // Radius 4 is 49 tiles; a view distance that asks for less (500
+            // yards: radius 2, 13 tiles) gets what it asks for, as it does
+            // when the player walks there. The 36 tiles more were loaded
+            // behind the loading screen and then kept, never drawn.
+            const int configuredLoadRadius = renderer_->getTerrainLoadRadius();
+            terrainMgr->setLoadRadius(std::min(4, configuredLoadRadius));
             terrainMgr->setUnloadRadius(9);
 
             // Trigger tile streaming for surrounding area
@@ -713,8 +717,16 @@ void WorldLoader::loadMapGeometry(uint32_t mapId, const std::string& mapName,
 
             LOG_INFO("Online terrain streaming complete: ", terrainMgr->getLoadedTileCount(), " tiles loaded");
 
-            // Restore full load radius - remaining tiles stream in-game
-            terrainMgr->setLoadRadius(savedLoadRadius);
+            // Restore the radii the view distance asks for - remaining tiles
+            // stream in-game. Not a fixed 6: Application::updateInGame sets
+            // the configured radius every frame, but it runs before this load
+            // and the terrain update after it, so that one update streamed
+            // with whatever was left here. When its two-second proactive
+            // timer happened to be due, a client with view distance 1900
+            // (radius 5, 81 tiles) loaded the radius 6 ring as well and kept
+            // it: 113 tiles, 32 of them past anything it draws.
+            terrainMgr->setLoadRadius(configuredLoadRadius);
+            terrainMgr->setUnloadRadius(renderer_->getTerrainUnloadRadius());
 
             // Load/precompute collision cache
             if (renderer_->getWMORenderer()) {
