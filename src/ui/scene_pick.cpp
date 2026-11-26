@@ -207,7 +207,7 @@ ScenePick pickScene(game::GameHandler& gameHandler,
                         }
                         if (!blocked) {
                             if (auto* m2 = renderer->getM2Renderer(); m2 &&
-                                m2->raycastVisibleGeometry(ray.origin, ray.direction, fbT, 0) < fbT) {
+                                m2->raycastCollisionGeometry(ray.origin, ray.direction, fbT, 0) < fbT) {
                                 blocked = true;
                             }
                         }
@@ -267,11 +267,13 @@ ScenePick pickScene(game::GameHandler& gameHandler,
                     " blocker=", wmo->raycastVisibleGeometry(ray.origin, ray.direction, hitT));
                 continue;
             }
-            if (auto* m2 = renderer->getM2Renderer(); m2 &&
-                m2->raycastVisibleGeometry(ray.origin, ray.direction, hitT, pickedM2) < hitT) {
-                if (params.trace) LOG_DEBUG("Scene pick M2 blocked guid=", guid, " hit=", hitT,
-                    " blocker=", m2->raycastVisibleGeometry(ray.origin, ray.direction, hitT, pickedM2));
-                continue;
+            if (auto* m2 = renderer->getM2Renderer(); m2) {
+                const float blockerT = m2->raycastCollisionGeometry(ray.origin, ray.direction, hitT, pickedM2);
+                if (blockerT < hitT) {
+                    if (params.trace) LOG_DEBUG("Scene pick M2 blocked guid=", guid, " hit=", hitT,
+                        " blocker=", blockerT);
+                    continue;
+                }
             }
             if (auto* terrain = renderer->getTerrainManager(); terrain &&
                 terrainOccludesSceneRay(ray, hitT, [terrain](float x, float y) {

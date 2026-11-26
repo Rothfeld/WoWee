@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "pipeline/m2_loader.hpp"
+#include "rendering/m2_track_sampler.hpp"
 
 namespace wowee::rendering {
 
@@ -55,6 +56,74 @@ inline constexpr uint8_t kM2BatchFlagNonPickable = 0x08u;
     if ((batchFlags & kM2BatchFlagNonPickable) != 0) return false;
     if (submeshLevel != 0 || batchOpacity < 0.01f || starLayer) return false;
     return ownSurface || blendMode < 2;
+}
+
+/// World-surface M2 occlusion rule for unit/corpse/object ray picking
+/// (build 8606 CGWorldFrame 0x4aeb10 -> 0x681940 world ray cut; verified live
+/// on WOWEE_PAIR=7):
+/// - Doodads without authored collision triangles (elwynnbush09, tombstones,
+///   ground clutter, tree leaf cards) never block unit clicks.
+/// - Colliding doodads (elwynntreemid01 trunk, generalweaponrack01) cut the ray
+///   at their authored M2 collision triangles, even across visual gaps.
+/// - Open doors (skipCollision), runtime spell visuals, and invisible
+///   collision-only hulls whose batches all have 0 opacity (AuctioneerCollision,
+///   Sunwell_BossCollision01/02) do not hide units behind them from the mouse.
+[[nodiscard]] constexpr bool m2InstanceOccludesWorldPick(
+    bool hasCollisionTriangles, bool skipCollision, bool isInvisibleTrap,
+    bool isRuntimeSpellVisual, bool isSpellEffect, bool hasVisibleOccluderBatch) {
+    return hasCollisionTriangles && !skipCollision && !isInvisibleTrap &&
+           !isRuntimeSpellVisual && !isSpellEffect && hasVisibleOccluderBatch;
+}
+
+[[nodiscard]] inline bool m2ModelHasVisibleOccluderBatch(
+    const pipeline::M2Model& model, float instanceOpacityScale = 1.0f) {
+    for (const auto& b : model.batches) {
+        const uint8_t blend = b.materialIndex < model.materials.size()
+                                  ? static_cast<uint8_t>(model.materials[b.materialIndex].blendMode)
+                                  : 0u;
+        float opacity = instanceOpacityScale;
+        if (b.transparencyIndex < model.textureWeightLookup.size()) {
+            const uint16_t wi = model.textureWeightLookup[b.transparencyIndex];
+            if (wi < model.textureWeightTracks.size() &&
+                !m2_track::opacityVaries(model.textureWeightTracks[wi]) &&
+                m2_track::isAlwaysZero(model.textureWeightTracks[wi])) {
+                opacity = 0.0f;
+            } else if (wi < model.textureWeights.size() &&
+                       (wi >= model.textureWeightTracks.size() ||
+                        !m2_track::opacityVaries(model.textureWeightTracks[wi]))) {
+                opacity *= model.textureWeights[wi];
+            }
+        }
+        if (b.colorIndex < model.colorAlphaTracks.size() &&
+            !m2_track::opacityVaries(model.colorAlphaTracks[b.colorIndex]) &&
+            m2_track::isAlwaysZero(model.colorAlphaTracks[b.colorIndex])) {
+            opacity = 0.0f;
+        }
+        if (m2BatchIsPickable(b.flags, b.submeshLevel, blend, opacity, false, /*ownSurface=*/false)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+[[nodiscard]] inline float pickM2CollisionMesh(
+    const pipeline::M2Model& model,
+    const glm::vec3& origin,
+    const glm::vec3& direction,
+    float limit,
+    bool skipCollision = false,
+    bool isInvisibleTrap = false,
+    bool isRuntimeSpellVisual = false,
+    bool isSpellEffect = false,
+    float instanceOpacityScale = 1.0f) {
+    const bool hasCollision = model.collisionIndices.size() >= 3 && !model.collisionVertices.empty();
+    const bool hasVisibleBatch = m2ModelHasVisibleOccluderBatch(model, instanceOpacityScale);
+    if (!m2InstanceOccludesWorldPick(hasCollision, skipCollision, isInvisibleTrap,
+                                     isRuntimeSpellVisual, isSpellEffect, hasVisibleBatch)) {
+        return limit;
+    }
+    return pickVisualTriangles(model.collisionVertices, model.collisionIndices,
+                               origin, direction, limit);
 }
 
 /// The nearest drawn WMO triangle among `triangleStarts` (offsets into

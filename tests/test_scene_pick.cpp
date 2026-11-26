@@ -826,3 +826,133 @@ TEST_CASE("Pass-2 living unit GeoBox pick sphere matches Mother Shahraz and huma
     CHECK(isBetterPass2Hit(kPass2PriorityLivingUnit, 10.0f, kPass2PriorityLivingUnit, 15.0f));
     CHECK_FALSE(isBetterPass2Hit(kPass2PriorityLivingUnit, 15.0f, kPass2PriorityLivingUnit, 10.0f));
 }
+
+TEST_CASE("M2 world-pick occlusion uses authored collision triangles and skips invisible collision hulls", "[scene-pick][m2-occlusion]") {
+    using wowee::rendering::m2InstanceOccludesWorldPick;
+    using wowee::rendering::pickM2CollisionMesh;
+
+    CHECK(m2InstanceOccludesWorldPick(true, false, false, false, false, true));
+    CHECK_FALSE(m2InstanceOccludesWorldPick(false, false, false, false, false, true)); // Bush / ground clutter (0 collision tris)
+    CHECK_FALSE(m2InstanceOccludesWorldPick(true, true, false, false, false, true));   // Open door (skipCollision)
+    CHECK_FALSE(m2InstanceOccludesWorldPick(true, false, true, false, false, true));   // Invisible trap
+    CHECK_FALSE(m2InstanceOccludesWorldPick(true, false, false, true, false, true));   // Runtime spell visual
+    CHECK_FALSE(m2InstanceOccludesWorldPick(true, false, false, false, true, true));   // Spell effect M2
+    CHECK_FALSE(m2InstanceOccludesWorldPick(true, false, false, false, false, false)); // Invisible hull (AuctioneerCollision)
+
+    // Model with visual quad at z=4 (with a central window gap) and solid collision quad at z=2:
+    // world-pick occlusion hits the z=2 collision mesh at t=8 from z=10 even through the visual gap.
+    wowee::pipeline::M2Model rack;
+    wowee::pipeline::M2Vertex v{};
+    v.position = {-2.0f, -1.0f, 4.0f}; rack.vertices.push_back(v);
+    v.position = {-1.0f, -1.0f, 4.0f}; rack.vertices.push_back(v);
+    v.position = {-1.0f,  1.0f, 4.0f}; rack.vertices.push_back(v);
+    rack.indices = {0, 1, 2};
+    wowee::pipeline::M2Material opaqueMat{};
+    opaqueMat.blendMode = 0;
+    rack.materials = {opaqueMat};
+    wowee::pipeline::M2Batch batch{};
+    batch.materialIndex = 0;
+    batch.indexStart = 0;
+    batch.indexCount = 3;
+    rack.batches = {batch};
+    rack.collisionVertices = {{-1.0f, -1.0f, 2.0f}, {1.0f, -1.0f, 2.0f},
+                              {1.0f,  1.0f, 2.0f}, {-1.0f,  1.0f, 2.0f}};
+    rack.collisionIndices = {0, 1, 2, 0, 2, 3};
+
+    CHECK(pickM2CollisionMesh(rack, {0.0f, 0.0f, 10.0f}, {0.0f, 0.0f, -1.0f}, 20.0f) == Catch::Approx(8.0f));
+    // Open door (skipCollision=true) or faded forcefield (opacityScale=0) lets the ray pass to 20.0.
+    CHECK(pickM2CollisionMesh(rack, {0.0f, 0.0f, 10.0f}, {0.0f, 0.0f, -1.0f}, 20.0f, /*skipCollision=*/true) == Catch::Approx(20.0f));
+    CHECK(pickM2CollisionMesh(rack, {0.0f, 0.0f, 10.0f}, {0.0f, 0.0f, -1.0f}, 20.0f, false, false, false, false, 0.0f) == Catch::Approx(20.0f));
+
+    // Bush with visual geometry at z=4 and zero collision triangles never blocks unit clicks.
+    wowee::pipeline::M2Model bush = rack;
+    bush.collisionVertices.clear();
+    bush.collisionIndices.clear();
+    CHECK(pickM2CollisionMesh(bush, {-1.3f, -0.5f, 10.0f}, {0.0f, 0.0f, -1.0f}, 20.0f) == Catch::Approx(20.0f));
+}
+
+TEST_CASE("Shipped TBC doodads occlude unit picks by collision mesh while bushes, tombstones, and AuctioneerCollision pass through", "[scene-pick][m2-occlusion][portrait][assets]") {
+    namespace fs = std::filesystem;
+    fs::path tbcRoot;
+    if (const char* env = std::getenv("WOWEE_TBC_DATA_DIR"); env && *env) {
+        tbcRoot = env;
+    } else {
+        tbcRoot = "/workspace/azerothcore/client/wowee-data/expansions/tbc";
+    }
+    if (!fs::is_directory(tbcRoot)) return;
+
+    const auto loadM2 = [&](const char* relPath) {
+        const fs::path full = tbcRoot / relPath;
+        INFO("loading " << full.string());
+        REQUIRE(fs::is_regular_file(full));
+        std::ifstream in(full, std::ios::binary | std::ios::ate);
+        REQUIRE(in.is_open());
+        const auto sz = in.tellg();
+        std::vector<uint8_t> bytes(static_cast<size_t>(sz));
+        in.seekg(0);
+        in.read(reinterpret_cast<char*>(bytes.data()), sz);
+        return wowee::pipeline::M2Loader::load(bytes);
+    };
+
+    using wowee::rendering::m2ModelHasVisibleOccluderBatch;
+    using wowee::rendering::pickM2CollisionMesh;
+
+    // Non-colliding foliage and props (colTris == 0) pass unit rays straight through.
+    for (const char* rel : {
+             "world/azeroth/elwynn/passivedoodads/bush/elwynnbush09.m2",
+             "world/azeroth/westfall/passivedoodads/tombstones/tombstone01.m2",
+             "world/azeroth/westfall/passivedoodads/tombstones/tombstone03.m2",
+             "world/azeroth/elwynn/passivedoodads/campfire/elwynncampfire.m2",
+             "world/goober/g_holylightwell.m2"}) {
+        const auto m = loadM2(rel);
+        CHECK(m.collisionIndices.empty());
+        CHECK(pickM2CollisionMesh(m, {-5.0f, 0.0f, 0.6f}, {1.0f, 0.0f, 0.0f}, 20.0f) == Catch::Approx(20.0f));
+    }
+
+    // Colliding weapon rack (generalweaponrack01.m2, 66 collision tris) blocks rays across its collision slab.
+    {
+        const auto rack = loadM2("world/generic/human/passive doodads/weaponracks/generalweaponrack01.m2");
+        REQUIRE(rack.collisionIndices.size() == 198);
+        CHECK(m2ModelHasVisibleOccluderBatch(rack));
+        const float hitT = pickM2CollisionMesh(rack, {0.0f, -5.0f, 1.0f}, {0.0f, 1.0f, 0.0f}, 20.0f);
+        CHECK(hitT < 6.0f);
+    }
+
+    // Colliding tree (elwynntreemid01.m2, 12 trunk collision tris): trunk blocks, leaf canopy outside trunk passes through.
+    {
+        const auto tree = loadM2("world/azeroth/elwynn/passivedoodads/trees/elwynntreemid01.m2");
+        REQUIRE(tree.collisionIndices.size() == 36);
+        CHECK(m2ModelHasVisibleOccluderBatch(tree));
+        const float trunkHit = pickM2CollisionMesh(tree, {-5.0f, -0.9f, 1.5f}, {1.0f, 0.0f, 0.0f}, 20.0f);
+        CHECK(trunkHit < 6.5f);
+        const float canopyPass = pickM2CollisionMesh(tree, {-5.0f, 2.5f, 4.0f}, {1.0f, 0.0f, 0.0f}, 20.0f);
+        CHECK(canopyPass == Catch::Approx(20.0f));
+    }
+
+    // Invisible collision-only hulls (Ironforge AuctioneerCollision.m2, Sunwell_BossCollision01/02.m2)
+    // carry collision triangles for player movement but 0-opacity batches so mouse picks pass through.
+    for (const char* rel : {
+             "world/khazmodan/ironforge/passivedoodads/auctionhouse/auctioneercollision.m2",
+             "world/expansion01/doodads/sunwell/passivedoodads/sunwell/sunwell_bosscollision01.m2",
+             "world/expansion01/doodads/sunwell/passivedoodads/sunwell/sunwell_bosscollision02.m2"}) {
+        const auto hull = loadM2(rel);
+        REQUIRE_FALSE(hull.collisionIndices.empty());
+        CHECK_FALSE(m2ModelHasVisibleOccluderBatch(hull));
+        CHECK(pickM2CollisionMesh(hull, {0.0f, -30.0f, 1.5f}, {0.0f, 1.0f, 0.0f}, 80.0f) == Catch::Approx(80.0f));
+    }
+
+    // Eye Stalk (EyeStalkofKathune.m2, displayId 15788): authored M2 portrait camera (type 0)
+    // frames the head/eyelid at z=5.855 matching Native 2.4.3 SetPortraitTexture.
+    {
+        const auto stalk = loadM2("creature/eyestalkofkathune/eyestalkofkathune.m2");
+        REQUIRE_FALSE(stalk.cameras.empty());
+        CHECK(stalk.cameras[0].type == 0);
+        CHECK(stalk.cameras[0].fov == Catch::Approx(0.95f).margin(1e-3f));
+        CHECK(stalk.cameras[0].positionBase.x == Catch::Approx(2.318f).margin(1e-2f));
+        CHECK(stalk.cameras[0].positionBase.y == Catch::Approx(0.929f).margin(1e-2f));
+        CHECK(stalk.cameras[0].positionBase.z == Catch::Approx(5.705f).margin(1e-2f));
+        CHECK(stalk.cameras[0].targetBase.x == Catch::Approx(0.395f).margin(1e-2f));
+        CHECK(stalk.cameras[0].targetBase.y == Catch::Approx(-0.043f).margin(1e-2f));
+        CHECK(stalk.cameras[0].targetBase.z == Catch::Approx(5.855f).margin(1e-2f));
+    }
+}

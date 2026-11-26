@@ -1690,6 +1690,67 @@ float M2Renderer::raycastVisibleGeometry(const glm::vec3& origin, const glm::vec
     return closest;
 }
 
+float M2Renderer::raycastCollisionGeometry(const glm::vec3& origin, const glm::vec3& direction,
+                                           float maxDistance, uint32_t excludedInstanceId) const {
+    float closest = maxDistance;
+    const glm::vec3 end = origin + direction * maxDistance;
+    gatherCandidates(glm::min(origin, end), glm::max(origin, end), tl_m2_candidateScratch);
+    for (size_t index : tl_m2_candidateScratch) {
+        const auto& instance = instances[index];
+        if (instance.id == excludedInstanceId || instance.skipCollision || !instance.cachedModel) continue;
+        const auto& model = *instance.cachedModel;
+        if (!model.collision.valid()) continue;
+
+        bool hasVisibleOccluderBatch = false;
+        for (const auto& batch : model.batches) {
+            const float effectiveOpacity =
+                batch.batchOpacity * m2_internal::animatedBatchOpacity(model, batch, instance);
+            if (m2BatchIsPickable(batch.batchFlags, batch.submeshLevel, batch.blendMode,
+                                  effectiveOpacity, batch.starLayer, /*ownSurface=*/false)) {
+                hasVisibleOccluderBatch = true;
+                break;
+            }
+        }
+        if (!m2InstanceOccludesWorldPick(model.collision.valid(), instance.skipCollision,
+                                         model.isInvisibleTrap, model.isRuntimeSpellVisual,
+                                         model.isSpellEffect, hasVisibleOccluderBatch)) {
+            continue;
+        }
+
+        float enter = 0.0f;
+        const glm::vec3 currentEnd = origin + direction * closest;
+        if (!segmentIntersectsAABB(origin, currentEnd, instance.worldBoundsMin,
+                                   instance.worldBoundsMax, enter)) {
+            continue;
+        }
+
+        const glm::vec3 localOrigin(instance.invModelMatrix * glm::vec4(origin, 1.0f));
+        const glm::vec3 localDirection(instance.invModelMatrix * glm::vec4(direction, 0.0f));
+        const auto& mesh = model.collision;
+        if (mesh.triCount <= 128) {
+            closest = pickVisualTriangles(mesh.vertices, mesh.indices,
+                                          localOrigin, localDirection, closest);
+        } else {
+            const glm::vec3 localEnd = localOrigin + localDirection * closest;
+            const glm::vec2 rangeMin = glm::min(glm::vec2(localOrigin), glm::vec2(localEnd));
+            const glm::vec2 rangeMax = glm::max(glm::vec2(localOrigin), glm::vec2(localEnd));
+            for (const auto* cells : {&mesh.cellFloorTris, &mesh.cellWallTris}) {
+                mesh.gatherTrisInRange(*cells, rangeMin.x, rangeMin.y,
+                                       rangeMax.x, rangeMax.y, tl_m2_collisionTriScratch);
+                for (uint32_t ti : tl_m2_collisionTriScratch) {
+                    const size_t start = static_cast<size_t>(ti) * 3u;
+                    assert(start + 3u <= mesh.indices.size());
+                    closest = pickVisualTriangles(
+                        mesh.vertices,
+                        std::span<const uint16_t>(mesh.indices).subspan(start, 3u),
+                        localOrigin, localDirection, closest);
+                }
+            }
+        }
+    }
+    return closest;
+}
+
 float M2Renderer::raycastBoundingBoxes(const glm::vec3& origin, const glm::vec3& direction, float maxDistance, uint32_t excludedInstanceId, glm::vec3* outWorldNormal) const {
     QueryTimer timer(&queryTimeMs, &queryCallCount);
     float closestHit = maxDistance;
