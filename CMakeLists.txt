@@ -720,6 +720,7 @@ set(WOWEE_SOURCES
     src/audio/audio_engine.cpp
     src/audio/sound_entries.cpp
     src/audio/audio_coordinator.cpp
+    src/audio/environment_reverb.cpp
     src/audio/music_manager.cpp
     src/audio/footstep_manager.cpp
     src/audio/creature_sound_index.cpp

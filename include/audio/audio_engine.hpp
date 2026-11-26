@@ -19,6 +19,9 @@ namespace wowee {
 namespace pipeline { class AssetManager; }
 namespace audio {
 
+struct SoundProviderPrefRecord;
+class EnvironmentReverbProcessor;
+
 /// SESound 18-slot concurrency categories (Wow.exe 8606 table at 0x896dc0 / caps at 0x897018).
 namespace SESoundCategory {
     inline constexpr uint32_t kSfx             = 0;
@@ -42,11 +45,19 @@ namespace SESoundCategory {
     inline constexpr uint32_t kCount           = 18;
 }
 
+enum class EnvironmentBusMode : uint8_t {
+    Auto = 0,
+    ForceDry = 1,
+    ForceWet = 2,
+};
+
 struct SfxPlayOptions {
     uint32_t soundEntryId = 0;
     uint32_t soundEntryFlags = 0;
     uint32_t category = SESoundCategory::kSfx;
     bool loop = false;
+    uint32_t eaxDef = 0;
+    EnvironmentBusMode envBusMode = EnvironmentBusMode::Auto;
 };
 
 /**
@@ -194,7 +205,17 @@ public:
     bool setAudioTracePath(const std::string& jsonlPath);
     void closeAudioTrace();
 
+    /// Environmental reverb & underwater acoustic preset (SoundProviderPreferences.dbc).
+    void setEnvironmentPreset(const SoundProviderPrefRecord* preset, bool enabled = true);
+    void clearEnvironmentPreset();
+    [[nodiscard]] uint32_t activeEnvironmentPresetId() const;
+    [[nodiscard]] bool isEnvironmentReverbEnabled() const;
+
 private:
+    bool initEnvironmentGraph();
+    void uninitEnvironmentGraph();
+    [[nodiscard]] ma_sound* selectTargetGroup(uint32_t resolvedSoundId, bool spatial,
+                                              const SfxPlayOptions& options) const;
     void reapFinishedSounds();
     void refreshEngineMasterGain();
     void refreshSpatialVolumes();
@@ -260,6 +281,9 @@ private:
 
     // miniaudio engine (opaque pointer)
     ma_engine* engine_ = nullptr;
+    std::unique_ptr<EnvironmentReverbProcessor> envProcessor_;
+    void* envEffectNode_ = nullptr;
+    ma_sound* envGroup_ = nullptr;
 
     static void deviceDataCallback(ma_device* device, void* out, const void* in, uint32_t frames);
     void* captureRing_ = nullptr;

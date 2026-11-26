@@ -1,5 +1,6 @@
 #define MINIAUDIO_IMPLEMENTATION
 #include "audio/audio_engine.hpp"
+#include "audio/environment_reverb.hpp"
 #include "audio/sound_entries.hpp"
 #include "core/logger.hpp"
 #include "pipeline/asset_manager.hpp"
@@ -239,6 +240,34 @@ void resolveSoundMetadata(uint32_t& ioSoundId, std::string& outName, const std::
     }
 }
 
+struct EnvEffectMaNode {
+    ma_node_base base;
+    EnvironmentReverbProcessor* processor = nullptr;
+};
+
+void envEffectNodeProcessPcmFrames(ma_node* pNode, const float** ppFramesIn, ma_uint32* pFrameCountIn,
+                                   float** ppFramesOut, ma_uint32* pFrameCountOut) {
+    (void)pFrameCountIn;
+    auto* node = reinterpret_cast<EnvEffectMaNode*>(pNode);
+    const ma_uint32 frameCount = pFrameCountOut ? *pFrameCountOut : 0u;
+    const float* inBuf = (ppFramesIn && ppFramesIn[0]) ? ppFramesIn[0] : nullptr;
+    float* outBuf = (ppFramesOut && ppFramesOut[0]) ? ppFramesOut[0] : nullptr;
+    if (node && node->processor && outBuf && frameCount > 0u) {
+        node->processor->processFrames(inBuf, outBuf, frameCount);
+    } else if (outBuf && frameCount > 0u) {
+        const ma_uint32 ch = ma_node_get_output_channels(pNode, 0);
+        std::fill_n(outBuf, static_cast<size_t>(frameCount) * ch, 0.0f);
+    }
+}
+
+const ma_node_vtable kEnvEffectNodeVtable = {
+    envEffectNodeProcessPcmFrames,
+    nullptr,
+    1,
+    1,
+    static_cast<ma_uint32>(MA_NODE_FLAG_CONTINUOUS_PROCESSING),
+};
+
 } // namespace
 
 float AudioEngine::computeDistanceAttenuation(float minDistance, float maxDistance, float distance) {
@@ -285,6 +314,129 @@ AudioEngine::AudioEngine() = default;
 AudioEngine::~AudioEngine() {
     shutdown();
     closeAudioTrace();
+}
+
+bool AudioEngine::initEnvironmentGraph() {
+    if (!engine_) return false;
+    const uint32_t sr = std::max(8000u, ma_engine_get_sample_rate(engine_));
+    const uint32_t ch = std::max(1u, ma_engine_get_channels(engine_));
+
+    envProcessor_ = std::make_unique<EnvironmentReverbProcessor>();
+    envProcessor_->configure(sr, ch);
+
+    auto* node = static_cast<EnvEffectMaNode*>(std::calloc(1, sizeof(EnvEffectMaNode)));
+    if (!node) {
+        envProcessor_.reset();
+        return false;
+    }
+    node->processor = envProcessor_.get();
+
+    const ma_uint32 inCh[1] = {ch};
+    const ma_uint32 outCh[1] = {ch};
+    ma_node_config nodeCfg = ma_node_config_init();
+    nodeCfg.vtable = &kEnvEffectNodeVtable;
+    nodeCfg.pInputChannels = inCh;
+    nodeCfg.pOutputChannels = outCh;
+
+    ma_node_graph* graph = ma_engine_get_node_graph(engine_);
+    if (ma_node_init(graph, &nodeCfg, nullptr, &node->base) != MA_SUCCESS) {
+        std::free(node);
+        envProcessor_.reset();
+        return false;
+    }
+    if (ma_node_attach_output_bus(&node->base, 0, ma_engine_get_endpoint(engine_), 0) != MA_SUCCESS) {
+        ma_node_uninit(&node->base, nullptr);
+        std::free(node);
+        envProcessor_.reset();
+        return false;
+    }
+    envEffectNode_ = node;
+
+    auto* group = static_cast<ma_sound*>(std::calloc(1, sizeof(ma_sound)));
+    if (!group) {
+        uninitEnvironmentGraph();
+        return false;
+    }
+    const ma_uint32 groupFlags = static_cast<ma_uint32>(MA_SOUND_FLAG_NO_SPATIALIZATION) |
+                                 static_cast<ma_uint32>(MA_SOUND_FLAG_NO_PITCH);
+    if (ma_sound_group_init(engine_, groupFlags, nullptr, group) != MA_SUCCESS) {
+        std::free(group);
+        uninitEnvironmentGraph();
+        return false;
+    }
+    if (ma_node_attach_output_bus(group, 0, &node->base, 0) != MA_SUCCESS) {
+        ma_sound_group_uninit(group);
+        std::free(group);
+        uninitEnvironmentGraph();
+        return false;
+    }
+    envGroup_ = group;
+    return true;
+}
+
+void AudioEngine::uninitEnvironmentGraph() {
+    if (envGroup_) {
+        ma_sound_group_uninit(envGroup_);
+        std::free(envGroup_);
+        envGroup_ = nullptr;
+    }
+    if (envEffectNode_) {
+        auto* node = static_cast<EnvEffectMaNode*>(envEffectNode_);
+        ma_node_uninit(&node->base, nullptr);
+        std::free(node);
+        envEffectNode_ = nullptr;
+    }
+    envProcessor_.reset();
+}
+
+ma_sound* AudioEngine::selectTargetGroup(uint32_t resolvedSoundId, bool spatial,
+                                         const SfxPlayOptions& options) const {
+    if (!envGroup_) return nullptr;
+    if (options.envBusMode == EnvironmentBusMode::ForceDry) return nullptr;
+    if (options.envBusMode == EnvironmentBusMode::ForceWet) return envGroup_;
+
+    switch (options.category) {
+        case SESoundCategory::kMusic:
+        case SESoundCategory::kAmbience:
+        case SESoundCategory::kCinematic:
+        case SESoundCategory::kScriptMusic:
+        case SESoundCategory::kRacialCinematic:
+            return nullptr;
+        default:
+            break;
+    }
+    if (options.eaxDef == 1u) {
+        return nullptr;
+    }
+    if (resolvedSoundId != 0u) {
+        if (const SoundEntryRecord* rec = SoundEntryTable::instance().findLoadedById(resolvedSoundId)) {
+            return SoundEntryTable::usesEnvironmentBus(*rec, options.category) ? envGroup_ : nullptr;
+        }
+    }
+    if (options.eaxDef >= 2u || spatial) {
+        return envGroup_;
+    }
+    return nullptr;
+}
+
+void AudioEngine::setEnvironmentPreset(const SoundProviderPrefRecord* preset, bool enabled) {
+    if (envProcessor_) {
+        envProcessor_->setTargetPreset(preset, enabled);
+    }
+}
+
+void AudioEngine::clearEnvironmentPreset() {
+    if (envProcessor_) {
+        envProcessor_->clearTargetPreset();
+    }
+}
+
+uint32_t AudioEngine::activeEnvironmentPresetId() const {
+    return envProcessor_ ? envProcessor_->activePresetId() : 0u;
+}
+
+bool AudioEngine::isEnvironmentReverbEnabled() const {
+    return envProcessor_ ? envProcessor_->isEnabled() : false;
 }
 
 void AudioEngine::refreshEngineMasterGain() {
@@ -364,6 +516,9 @@ bool AudioEngine::initialize() {
     }
 
     refreshEngineMasterGain();
+    if (!initEnvironmentGraph()) {
+        LOG_WARNING("AudioEngine: environmental reverb node graph failed to initialize; running dry");
+    }
 
     ma_backend backend = ma_engine_get_device(engine_)->pContext->backend;
     const char* backendName = "unknown";
@@ -421,6 +576,9 @@ bool AudioEngine::initializeHeadless(uint32_t sampleRate, uint32_t channels) {
     }
 
     refreshEngineMasterGain();
+    if (!initEnvironmentGraph()) {
+        LOG_WARNING("AudioEngine: headless environmental reverb node graph failed to initialize");
+    }
     initialized_ = true;
     headless_ = true;
     {
@@ -512,6 +670,7 @@ void AudioEngine::shutdown() {
     }
     activeSounds_.clear();
 
+    uninitEnvironmentGraph();
     capturing_.store(false, std::memory_order_release);
     if (engine_) {
         ma_engine_uninit(engine_);
@@ -858,9 +1017,10 @@ uint32_t AudioEngine::startSound2DInternal(const std::vector<uint8_t>& wavData, 
                             static_cast<ma_uint32>(MA_SOUND_FLAG_NO_SPATIALIZATION) |
                             (customPitch ? 0u : static_cast<ma_uint32>(MA_SOUND_FLAG_NO_PITCH));
 
+    ma_sound* targetGroup = selectTargetGroup(resolvedId, /*spatial=*/false, options);
     SoundStorage sound;
     if (!sound ||
-        ma_sound_init_from_data_source(engine_, audioBuffer.get(), flags, nullptr, sound.get()) != MA_SUCCESS) {
+        ma_sound_init_from_data_source(engine_, audioBuffer.get(), flags, targetGroup, sound.get()) != MA_SUCCESS) {
         notify(false, 0, nextTraceSeq_++, monotonicSecondsNow(), decoded);
         return 0;
     }
@@ -1141,11 +1301,12 @@ uint32_t AudioEngine::startSound3DInternal(const std::vector<uint8_t>& wavData, 
     }
     audioBuffer.markInitialised();
 
+    ma_sound* targetGroup = selectTargetGroup(resolvedId, /*spatial=*/true, options);
     SoundStorage sound;
     if (!sound ||
         ma_sound_init_from_data_source(engine_, audioBuffer.get(),
                                        MA_SOUND_FLAG_DECODE | MA_SOUND_FLAG_ASYNC,
-                                       nullptr, sound.get()) != MA_SUCCESS) {
+                                       targetGroup, sound.get()) != MA_SUCCESS) {
         notify(false, 0, nextTraceSeq_++, monotonicSecondsNow(), decoded);
         return 0;
     }
@@ -1536,10 +1697,17 @@ uint32_t AudioEngine::renderMixFrames(float* dstInterleaved, uint32_t frameCount
     if (!initialized_ || !engine_ || !dstInterleaved || frameCount == 0) return 0;
     const uint32_t ch = std::max(1u, ma_engine_get_channels(engine_));
     std::memset(dstInterleaved, 0, static_cast<size_t>(frameCount) * ch * sizeof(float));
-    ma_uint64 framesRead = 0;
-    const ma_result res = ma_engine_read_pcm_frames(engine_, dstInterleaved, frameCount, &framesRead);
-    if (res != MA_SUCCESS && res != MA_AT_END) {
-        return 0;
+    constexpr uint32_t kPeriodFrames = 256u;
+    uint32_t offset = 0u;
+    while (offset < frameCount) {
+        const uint32_t chunk = std::min(kPeriodFrames, frameCount - offset);
+        ma_uint64 framesRead = 0;
+        const ma_result res = ma_engine_read_pcm_frames(
+            engine_, dstInterleaved + static_cast<size_t>(offset) * ch, chunk, &framesRead);
+        if (res != MA_SUCCESS && res != MA_AT_END) {
+            return offset;
+        }
+        offset += chunk;
     }
     update(static_cast<float>(frameCount) / static_cast<float>(std::max(1u, ma_engine_get_sample_rate(engine_))));
     return frameCount;

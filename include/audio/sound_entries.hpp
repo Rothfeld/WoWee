@@ -37,6 +37,7 @@ struct SoundEntryRecord {
     uint32_t flags = 0;
     float minDistance = 8.0f;
     float maxDistance = 45.0f;
+    uint32_t eaxDef = 0; // SoundEntries.dbc col 28: SoundSamplePreferences ID (0=default, 1=excluded, 2=world SFX)
 };
 
 /// Shared TBC 2.4.3 / Classic / WotLK SoundEntries.dbc + UISoundLookups.dbc resolver.
@@ -50,6 +51,10 @@ public:
 
     /// Map SoundEntries.dbc SoundType (col 1) to Wow.exe 0x897018 SESoundCategory (0..17).
     [[nodiscard]] static uint32_t categoryForSoundType(uint32_t dbcSoundType);
+
+    /// True when a SoundEntryRecord routes through the 3D world environmental reverb/underwater bus
+    /// (false for UI SoundType 2, ZoneMusic 28, IntroMusic 30, Narration 31, ZoneAmbience 50, and EAXDef == 1).
+    [[nodiscard]] static bool usesEnvironmentBus(const SoundEntryRecord& rec, uint32_t resolvedCategory);
 
     bool ensureLoaded(pipeline::AssetManager* assets);
     void reset();

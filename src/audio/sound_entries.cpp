@@ -71,6 +71,37 @@ uint32_t SoundEntryTable::categoryForSoundType(uint32_t dbcSoundType) {
     }
 }
 
+bool SoundEntryTable::usesEnvironmentBus(const SoundEntryRecord& rec, uint32_t resolvedCategory) {
+    // Non-world 2D channels bypass the 3D environmental reverb/underwater bus:
+    // SoundType 2 (UI, e.g. igMainMenuOptionCheckBoxOn), 28 (ZoneMusic), 30 (IntroMusic),
+    // 31 (Narration), and 50 (ZoneAmbience).
+    switch (rec.soundType) {
+        case 2u:
+        case 28u:
+        case 30u:
+        case 31u:
+        case 50u:
+            return false;
+        default:
+            break;
+    }
+    switch (resolvedCategory) {
+        case SESoundCategory::kMusic:
+        case SESoundCategory::kAmbience:
+        case SESoundCategory::kCinematic:
+        case SESoundCategory::kScriptMusic:
+        case SESoundCategory::kRacialCinematic:
+            return false;
+        default:
+            break;
+    }
+    // EAXDef == 1 maps to SoundSamplePreferences ID 1 (Exclusion = -10000 mB, e.g. Ashbringer).
+    if (rec.eaxDef == 1u) {
+        return false;
+    }
+    return true;
+}
+
 SoundEntryTable::SoundEntryTable() : rng_(std::random_device{}()) {}
 
 void SoundEntryTable::reset() {
@@ -139,6 +170,9 @@ bool SoundEntryTable::ensureLoaded(pipeline::AssetManager* assets) {
             if (std::isfinite(maxDist) && maxDist > 0.0f) {
                 rec.maxDistance = std::max(rec.minDistance, maxDist);
             }
+        }
+        if (fc > 28) {
+            rec.eaxDef = dbc->getUInt32(row, 28);
         }
 
         if (!rec.variants.empty()) {
@@ -309,6 +343,10 @@ bool SoundEntryTable::play2D(pipeline::AssetManager* assets, uint32_t soundId,
         .soundEntryFlags = rec->flags,
         .category = category,
         .loop = false,
+        .eaxDef = rec->eaxDef,
+        .envBusMode = usesEnvironmentBus(*rec, category)
+            ? EnvironmentBusMode::ForceWet
+            : EnvironmentBusMode::ForceDry,
     };
     return AudioEngine::instance().playSound2D(data, vol, effectivePitch, opts, path);
 }
@@ -332,6 +370,10 @@ uint32_t SoundEntryTable::play2DStoppable(pipeline::AssetManager* assets, uint32
         .soundEntryFlags = rec->flags,
         .category = category,
         .loop = loop,
+        .eaxDef = rec->eaxDef,
+        .envBusMode = usesEnvironmentBus(*rec, category)
+            ? EnvironmentBusMode::ForceWet
+            : EnvironmentBusMode::ForceDry,
     };
     return AudioEngine::instance().playSound2DStoppable(data, vol, effectivePitch, opts, path);
 }
@@ -361,6 +403,10 @@ bool SoundEntryTable::play3D(pipeline::AssetManager* assets, uint32_t soundId,
         .soundEntryFlags = rec->flags,
         .category = category,
         .loop = false,
+        .eaxDef = rec->eaxDef,
+        .envBusMode = usesEnvironmentBus(*rec, category)
+            ? EnvironmentBusMode::ForceWet
+            : EnvironmentBusMode::ForceDry,
     };
     return AudioEngine::instance().playSound3D(
         data, position, vol, effectivePitch, rec->maxDistance, rec->minDistance, opts, path);
@@ -390,6 +436,10 @@ uint32_t SoundEntryTable::play3DStoppable(pipeline::AssetManager* assets, uint32
         .soundEntryFlags = rec->flags,
         .category = category,
         .loop = loop,
+        .eaxDef = rec->eaxDef,
+        .envBusMode = usesEnvironmentBus(*rec, category)
+            ? EnvironmentBusMode::ForceWet
+            : EnvironmentBusMode::ForceDry,
     };
     return AudioEngine::instance().playSound3DStoppable(
         data, position, vol, effectivePitch, rec->maxDistance, rec->minDistance, opts, path);

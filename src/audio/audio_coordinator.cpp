@@ -13,6 +13,7 @@
 #include "audio/combat_sound_manager.hpp"
 #include "audio/spell_sound_manager.hpp"
 #include "audio/movement_sound_manager.hpp"
+#include "audio/environment_reverb.hpp"
 #include "pipeline/asset_manager.hpp"
 #include "game/zone_manager.hpp"
 #include "core/logger.hpp"
@@ -47,6 +48,7 @@ bool AudioCoordinator::initialize() {
     combatSoundManager_ = std::make_unique<CombatSoundManager>();
     spellSoundManager_ = std::make_unique<SpellSoundManager>();
     movementSoundManager_ = std::make_unique<MovementSoundManager>();
+    environmentReverbTable_ = std::make_unique<EnvironmentReverbTable>();
 
     LOG_INFO("AudioCoordinator initialized with ", 11, " audio managers");
     return true;
@@ -56,6 +58,9 @@ void AudioCoordinator::initializeEarlyAssets(pipeline::AssetManager* assets) {
     if (!assets || !audioAvailable_) return;
     AudioEngine::instance().setAssetManager(assets);
     SoundEntryTable::instance().ensureLoaded(assets);
+    if (environmentReverbTable_ && !environmentReverbTable_->isLoaded()) {
+        environmentReverbTable_->initialize(assets);
+    }
     if (musicManager_ && !musicManager_->isInitialized()) {
         musicManager_->initialize(assets);
     }
@@ -68,7 +73,9 @@ void AudioCoordinator::initializeEarlyAssets(pipeline::AssetManager* assets) {
 }
 
 void AudioCoordinator::shutdown() {
+    clearEnvironmentAcoustics();
     SoundEntryTable::instance().reset();
+    environmentReverbTable_.reset();
     // Reset all managers first (they may reference AudioEngine)
     movementSoundManager_.reset();
     spellSoundManager_.reset();
@@ -107,6 +114,46 @@ void AudioCoordinator::setZoneMusicLooping(bool loop) {
 void AudioCoordinator::setBackgroundSoundEnabled(bool enabled) {
     backgroundSoundEnabled_ = enabled;
     AudioEngine::instance().setBackgroundSoundEnabled(enabled);
+}
+
+void AudioCoordinator::setReverbEnabled(bool enabled) {
+    if (reverbEnabled_ == enabled && envStateApplied_) return;
+    reverbEnabled_ = enabled;
+    if (!enabled) {
+        const SoundProviderPrefRecord* cur = (environmentReverbTable_ && activeEnvPresetId_ != 0u)
+            ? environmentReverbTable_->findProviderPref(activeEnvPresetId_)
+            : nullptr;
+        AudioEngine::instance().setEnvironmentPreset(cur, false);
+        activeEnvPresetId_ = 0u;
+        envStateApplied_ = true;
+    } else {
+        envStateApplied_ = false;
+    }
+}
+
+void AudioCoordinator::updateEnvironmentAcoustics(const EnvironmentQuery& query) {
+    if (!audioAvailable_) return;
+    reverbEnabled_ = query.reverbEnabled;
+    const SoundProviderPrefRecord* preset = (environmentReverbTable_ && environmentReverbTable_->isLoaded())
+        ? environmentReverbTable_->resolvePreset(query)
+        : nullptr;
+    const uint32_t nextId = preset ? preset->id : 0u;
+    if (envStateApplied_ && nextId == activeEnvPresetId_ &&
+        AudioEngine::instance().isEnvironmentReverbEnabled() == query.reverbEnabled) {
+        return;
+    }
+    activeEnvPresetId_ = nextId;
+    envStateApplied_ = true;
+    AudioEngine::instance().setEnvironmentPreset(preset, query.reverbEnabled);
+}
+
+void AudioCoordinator::clearEnvironmentAcoustics() {
+    if (!envStateApplied_ && activeEnvPresetId_ == 0u) return;
+    activeEnvPresetId_ = 0u;
+    envStateApplied_ = false;
+    if (audioAvailable_) {
+        AudioEngine::instance().clearEnvironmentPreset();
+    }
 }
 
 bool AudioCoordinator::playUnitSound(pipeline::AssetManager* assets, uint32_t soundId,

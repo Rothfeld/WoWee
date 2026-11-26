@@ -23,6 +23,8 @@ class UiSoundManager;
 class CombatSoundManager;
 class SpellSoundManager;
 class MovementSoundManager;
+class EnvironmentReverbTable;
+struct EnvironmentQuery;
 
 /// Flat context passed from Renderer into updateZoneAudio() each frame.
 /// All values are pre-queried so AudioCoordinator needs no rendering pointers.
@@ -136,6 +138,14 @@ public:
     CombatSoundManager* getCombatSoundManager() { return combatSoundManager_.get(); }
     SpellSoundManager* getSpellSoundManager() { return spellSoundManager_.get(); }
     MovementSoundManager* getMovementSoundManager() { return movementSoundManager_.get(); }
+    EnvironmentReverbTable* getEnvironmentReverbTable() { return environmentReverbTable_.get(); }
+    const EnvironmentReverbTable* getEnvironmentReverbTable() const { return environmentReverbTable_.get(); }
+
+    void setReverbEnabled(bool enabled);
+    [[nodiscard]] bool isReverbEnabled() const { return reverbEnabled_; }
+    void updateEnvironmentAcoustics(const EnvironmentQuery& query);
+    void clearEnvironmentAcoustics();
+    [[nodiscard]] uint32_t activeEnvironmentPresetId() const { return activeEnvPresetId_; }
 
 private:
     void playZoneMusic(const std::string& music);
@@ -151,12 +161,16 @@ private:
     std::unique_ptr<CombatSoundManager> combatSoundManager_;
     std::unique_ptr<SpellSoundManager> spellSoundManager_;
     std::unique_ptr<MovementSoundManager> movementSoundManager_;
+    std::unique_ptr<EnvironmentReverbTable> environmentReverbTable_;
 
     bool audioAvailable_ = false;
     float sfxVolumeScale_ = 1.0f;
     bool emoteSoundsEnabled_ = true;
     bool listenerAtCharacter_ = true; // Wow.exe 0x467ec6 default "1"
     bool backgroundSoundEnabled_ = false; // Wow.exe Sound_EnableSoundWhenGameIsInBG default "0"
+    bool reverbEnabled_ = true; // TBC Sound_EnableReverb default "1"
+    uint32_t activeEnvPresetId_ = 0;
+    bool envStateApplied_ = false;
 
     // Zone/music state - moved from Renderer
     uint32_t currentZoneId_ = 0;

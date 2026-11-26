@@ -41,6 +41,7 @@
 #include "rendering/loot_sparkles.hpp"
 #include "rendering/vk_context.hpp"
 #include "audio/npc_voice_manager.hpp"
+#include "audio/environment_reverb.hpp"
 #include "rendering/camera.hpp"
 #include "rendering/camera_controller.hpp"
 #include "rendering/terrain_renderer.hpp"
@@ -5392,6 +5393,40 @@ void Application::update(float deltaTime) {
         if (ruMs + shadowsMs > 50.0f) {
             LOG_WARNING("SLOW update stage 'renderer->update': ", ruMs + shadowsMs, "ms");
         }
+        if (audioCoordinator_) {
+            if (auto* ert = audioCoordinator_->getEnvironmentReverbTable();
+                ert && !ert->isLoaded() && assetManager) {
+                ert->initialize(assetManager.get());
+            }
+            audio::EnvironmentQuery envQuery;
+            envQuery.reverbEnabled = addons::storedCVarValue("Sound_EnableReverb", "1") != "0";
+            const auto* cam = renderer->getCamera();
+            const glm::vec3 eyePos = cam ? cam->getPosition() : renderer->getCharacterPosition();
+            const glm::vec3 probePos = (renderer->getCharacterInstanceId() != 0u)
+                ? renderer->getCharacterPosition()
+                : eyePos;
+            if (const auto* water = renderer->getWaterRenderer()) {
+                uint16_t liquidType = 0;
+                const auto waterZ = water->getNearestWaterHeightAt(eyePos.x, eyePos.y, eyePos.z, 400.0f, &liquidType);
+                // Exclude opaque magma/slime surfaces (basicType >= 2 in LiquidType, i.e. 2,3,6,7,...)
+                const bool nonMagmaSlime = (liquidType == 0u) || (((liquidType - 1u) & 3u) < 2u);
+                envQuery.submerged = waterZ.has_value() && (eyePos.z < *waterZ) && nonMagmaSlime;
+            }
+            if (const auto* wmo = renderer->getWMORenderer()) {
+                if (const auto loc = wmo->getInteriorLocation(probePos, false)) {
+                    envQuery.hasWmoLocation = true;
+                    envQuery.insideInteriorWmo = (loc->groupFlags & 0x2000u) != 0u;
+                    envQuery.wmoRootId = loc->rootId;
+                    envQuery.wmoNameSet = loc->nameSet;
+                    envQuery.wmoGroupId = loc->groupId;
+                }
+            }
+            envQuery.areaId = renderer->getCurrentAreaId();
+            envQuery.zoneId = renderer->getCurrentZoneId();
+            audioCoordinator_->updateEnvironmentAcoustics(envQuery);
+        }
+    } else if (audioCoordinator_) {
+        audioCoordinator_->clearEnvironmentAcoustics();
     }
     // Update UI
     updateCheckpoint = "ui update";
