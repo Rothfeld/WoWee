@@ -255,3 +255,71 @@ TEST_CASE("EyeStalkOfKathune.m2 ChannelCastDirected (124) collapses to STAND (0)
     const auto titanFemale = pipeline::M2Loader::load(test::readTbcData("creature/titanfemale/titanfemale.m2"));
     CHECK(resolvesPastStand(titanFemale, A::SPELL_CAST_DIRECTED));
 }
+
+TEST_CASE("SalamanderMale.m2 (Majordomo Executus) ShuffleLeft/ShuffleRight/EmoteTalk stand-ins draw all three Stand variations including talking sequence 4",
+          "[animation][assets][majordomo]") {
+    const auto data = loadAnimationData();
+    const auto salamander = pipeline::M2Loader::load(test::readTbcData("creature/salamander/salamandermale.m2"));
+
+    const auto hasSeq = [&](const pipeline::M2Model& m, uint32_t id) {
+        return std::any_of(m.sequences.begin(), m.sequences.end(),
+                           [id](const auto& s) { return s.id == id && s.duration > 0; });
+    };
+    const auto resolvesPlayable = [&](const pipeline::M2Model& m, uint32_t id) {
+        return rendering::animationResolvesToPlayable(
+            id, m.playableAnimations,
+            [&](uint32_t want) { return hasSeq(m, want); },
+            [&](uint32_t want) -> std::optional<uint32_t> {
+                const auto it = data.fallback.find(want);
+                return it == data.fallback.end() ? std::nullopt : std::optional<uint32_t>(it->second);
+            },
+            [&](uint32_t want) -> uint32_t {
+                const auto it = data.flags.find(want);
+                return it == data.flags.end() ? 0u : it->second;
+            });
+    };
+
+    REQUIRE_FALSE(hasSeq(salamander, A::SHUFFLE_LEFT));
+    REQUIRE_FALSE(hasSeq(salamander, A::SHUFFLE_RIGHT));
+    REQUIRE_FALSE(hasSeq(salamander, A::EMOTE_TALK));
+    CHECK(resolvesPlayable(salamander, A::SHUFFLE_LEFT));
+    CHECK(resolvesPlayable(salamander, A::SHUFFLE_RIGHT));
+    CHECK(resolvesPlayable(salamander, A::EMOTE_TALK));
+
+    for (const uint32_t req : {A::SHUFFLE_LEFT, A::SHUFFLE_RIGHT, A::EMOTE_TALK}) {
+        const auto shown = standIn(salamander, req, data);
+        REQUIRE(shown);
+        CHECK(shown->animationId == A::STAND);
+        CHECK_FALSE(shown->reversed);
+        CHECK_FALSE(shown->frozenAtEnd);
+        // One-shot conversation turn shuffle / talk emote rolls weighted Stand variations.
+        CHECK(rendering::standInAllowsVariationDraw(*shown, req, /*loop=*/false));
+        // Looping shuffle keeps primary Stand without rolling fidgets.
+        CHECK_FALSE(rendering::standInAllowsVariationDraw(*shown, req, /*loop=*/true));
+    }
+
+    std::mt19937 rng(12018);
+    std::set<int> drawnIndices;
+    const auto shuffleStandIn = standIn(salamander, A::SHUFFLE_RIGHT, data);
+    REQUIRE(shuffleStandIn);
+    for (int i = 0; i < 64; ++i) {
+        const auto v = rendering::drawSequenceVariation(salamander.sequences, shuffleStandIn->animationId, rng);
+        REQUIRE(v);
+        drawnIndices.insert(v->index);
+    }
+    // SalamanderMale.m2 authors three equal-weight (10922) Stand sequences: 2 (4s), 3 (4s), and 4 (3s jaw/arm talking).
+    CHECK(drawnIndices == std::set<int>{2, 3, 4});
+
+    // Combat one-shots and ready loops that fall back to Stand must still hold primary Stand.
+    const auto serpent = pipeline::M2Loader::load(test::readTbcData("creature/netherdragon/netherdragon.m2"));
+    const auto parryStandIn = standIn(serpent, A::PARRY_UNARMED, data);
+    REQUIRE(parryStandIn);
+    CHECK(parryStandIn->animationId == A::STAND);
+    CHECK_FALSE(rendering::standInAllowsVariationDraw(*parryStandIn, A::PARRY_UNARMED, /*loop=*/false));
+    CHECK_FALSE(rendering::standInAllowsVariationDraw(*parryStandIn, A::READY_UNARMED, /*loop=*/true));
+
+    // Doodad models mapping ShuffleLeft to an absent target (147 Closed) are not playable.
+    auto broom = withSequences({A::STAND});
+    broom.playableAnimations.assign(203, {147, 0});
+    CHECK_FALSE(resolvesPlayable(broom, A::SHUFFLE_LEFT));
+}

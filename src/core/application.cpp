@@ -4275,10 +4275,11 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                         (current == rendering::anim::STAND ||
                          current == rendering::anim::SHUFFLE_LEFT ||
                          current == rendering::anim::SHUFFLE_RIGHT) &&
-                        current != shuffle && charRenderer->hasAnimation(instanceId, shuffle)) {
+                        current != shuffle && charRenderer->hasPlayableAnimation(instanceId, shuffle)) {
                         charRenderer->playAnimation(instanceId, shuffle, false);
                     }
                 }
+                entitySpawner_->getRemoteTurns()[guid].lastFacing = facing;
                 if (!interactionYaw && std::abs(coords::normalizeAngleRad(facing - entity->getOrientation())) < 0.0001f)
                     npcInteractionFacing_.erase(it);
             }

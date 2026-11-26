@@ -70,14 +70,54 @@ inline std::optional<PlayableStandIn> resolvePlayableStandIn(
     return std::nullopt;
 }
 
+/// True when `requested` is a non-looping turn-shuffle or conversation talk
+/// emote whose fallback to `STAND` (0) restarts `STAND` with a weighted M2
+/// variation draw on Native TBC 2.4.3 (e.g. `SalamanderMale.m2` Majordomo
+/// Executus lacks `ShuffleLeft`/`ShuffleRight`/`EmoteTalk` and maps 11/12/60 to
+/// `Stand`, drawing across sequences 2, 3, and 4 including his 3000 ms jaw/arm
+/// talking variation when turning to face a conversation partner).
+inline constexpr bool isTurnOrTalkOneShot(uint32_t requested, bool loop) {
+    if (loop) return false;
+    switch (requested) {
+        case anim::SHUFFLE_LEFT:
+        case anim::SHUFFLE_RIGHT:
+        case anim::EMOTE_TALK:
+        case anim::EMOTE_EXCLAMATION:
+        case anim::EMOTE_QUESTION:
+            return true;
+        default:
+            return false;
+    }
+}
+
 /// True when a stand-in animation reached via `resolvePlayableStandIn` should
 /// draw weighted M2 sequence variations (e.g. `AttackUnarmedOff 117 -> AttackOff 87`
-/// on `Brutallus.m2`, which authors two `AttackOff` variations at frequency
-/// 16383 each). Excludes `STAND` (so `Ready* -> Stand` on beasts holds plain
-/// primary `Stand` without rearing fidgets), frozen poses (`Dead -> Death`),
-/// and reversed clips (`WalkBackwards -> Walk`).
-inline constexpr bool standInAllowsVariationDraw(const PlayableStandIn& standIn) {
-    return !standIn.frozenAtEnd && !standIn.reversed && standIn.animationId != anim::STAND;
+/// on `Brutallus.m2`, or non-looping `ShuffleLeft`/`ShuffleRight -> Stand 0` on
+/// `SalamanderMale.m2`). Excludes looping/combat `STAND` stand-ins (`Ready* -> Stand`
+/// on `Bear.m2`/`Wendigo.m2` and `Parry*/ShieldBlock/Dodge/StandWound -> Stand`
+/// on `NetherDragon.m2`), frozen poses (`Dead -> Death`), and reversed clips
+/// (`WalkBackwards -> Walk`).
+inline constexpr bool standInAllowsVariationDraw(const PlayableStandIn& standIn,
+                                                 uint32_t requested = 0,
+                                                 bool loop = true) {
+    if (standIn.frozenAtEnd || standIn.reversed) return false;
+    if (standIn.animationId == anim::STAND) {
+        return isTurnOrTalkOneShot(requested, loop);
+    }
+    return true;
+}
+
+/// True when `requested` resolves to an authored positive-duration sequence or
+/// a valid playable stand-in on `model` (false on doodads such as `Be_Broom01.m2`
+/// whose lookup maps missing animations to an absent `Closed` 147 sequence).
+inline bool animationResolvesToPlayable(
+        uint32_t requested,
+        const std::vector<pipeline::M2Model::PlayableAnimation>& lookup,
+        const std::function<bool(uint32_t)>& hasSequence,
+        const std::function<std::optional<uint32_t>(uint32_t)>& dbcFallback,
+        const std::function<uint32_t(uint32_t)>& dbcFlags) {
+    if (hasSequence(requested)) return true;
+    return resolvePlayableStandIn(requested, lookup, hasSequence, dbcFallback, dbcFlags).has_value();
 }
 
 /// True when `requested` resolves to an authored sequence or a non-STAND

@@ -2308,7 +2308,7 @@ void CharacterRenderer::playAnimation(uint32_t instanceId, uint32_t animationId,
             if (seqIdx < 0) {
                 if (const auto standIn = playableStandIn(model, animationId);
                     standIn && !standIn->frozenAtEnd && !standIn->reversed) {
-                    if (standInAllowsVariationDraw(*standIn)) {
+                    if (standInAllowsVariationDraw(*standIn, animationId, /*loop=*/false)) {
                         if (const auto drawn = drawSequenceVariation(model.sequences, standIn->animationId, upperVariationRandom)) {
                             if (model.sequences[drawn->index].duration > 0) seqIdx = drawn->index;
                         }
@@ -2539,7 +2539,7 @@ void CharacterRenderer::playAnimation(uint32_t instanceId, uint32_t animationId,
     instance.playReversed = false;
     if (instance.currentSequenceIndex < 0) {
         if (const auto standIn = playableStandIn(model, animationId)) {
-            if (standInAllowsVariationDraw(*standIn)) {
+            if (standInAllowsVariationDraw(*standIn, animationId, loop)) {
                 static std::mt19937 standInVariationRandom(std::random_device{}());
                 if (const auto drawn = drawSequenceVariation(model.sequences, standIn->animationId, standInVariationRandom)) {
                     instance.currentSequenceIndex = drawn->index;
@@ -6440,6 +6440,22 @@ bool CharacterRenderer::hasAnimation(uint32_t instanceId, uint32_t animationId) 
     if (animationId == anim::LOOT_HOLD || animationId == anim::LOOT_UP)
         return hasAnimation(instanceId, anim::LOOT);
     return false;
+}
+
+bool CharacterRenderer::hasPlayableAnimation(uint32_t instanceId, uint32_t animationId) {
+    auto it = instances.find(instanceId);
+    if (it == instances.end()) return false;
+    auto modelIt = models.find(it->second.modelId);
+    if (modelIt == models.end()) return false;
+    const auto& model = modelIt->second.data;
+    return animationResolvesToPlayable(
+        animationId, model.playableAnimations,
+        [&](uint32_t id) {
+            return std::any_of(model.sequences.begin(), model.sequences.end(),
+                               [id](const auto& seq) { return seq.id == id && seq.duration > 0; });
+        },
+        [this](uint32_t id) { return animationFallback(id); },
+        [this](uint32_t id) { return animationFlags(id); });
 }
 
 bool CharacterRenderer::resolvesToNonStandAnimation(uint32_t instanceId, uint32_t animationId) {

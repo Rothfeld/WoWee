@@ -355,6 +355,11 @@ public:
     [[nodiscard]] const std::vector<uint32_t>* getWingFlapEventTimes(uint32_t instanceId) const;
     [[nodiscard]] const std::vector<uint32_t>* getWingGlideEventTimes(uint32_t instanceId) const;
     [[nodiscard]] bool hasAnimation(uint32_t instanceId, uint32_t animationId) const;
+    /// True when `animationId` resolves to an authored sequence or any playable
+    /// stand-in on the instance's model (including `STAND` stand-ins such as
+    /// `ShuffleLeft`/`ShuffleRight -> Stand` on `SalamanderMale.m2`, while false
+    /// on doodad models whose lookup names an absent target).
+    [[nodiscard]] bool hasPlayableAnimation(uint32_t instanceId, uint32_t animationId);
     /// True when `animationId` resolves to an authored sequence or a non-STAND
     /// playable stand-in on the instance's model (false when a non-STAND spell/
     /// channel animation collapses to STAND 0 on models lacking cast/channel
