@@ -183,3 +183,39 @@ TEST_CASE("buildGrid seeds on floor when quad center lands on a raised pillar", 
         REQUIRE(v.data[2] + 10.0f == Catch::Approx(10.0f + pt::kSurfaceLift).margin(1e-4));
     }
 }
+
+TEST_CASE("buildGrid rejects waist-high vertical WMO bone/wall cliffs inside coarse 1-yd cells",
+          "[projected_texture]") {
+    // Sapphiron's Lair 28547 Chill (Blizzard_Impact_Base.m2): 4.02 x 4.02 yd
+    // projected quad (cellsU = cellsV = 4, ds = 1.005 yd, reach = 2.84 yd) on
+    // the z = 137.75 stone floor next to a 1.35 yd vertical skeletal WMO bone
+    // shelf at z = 139.10. Although 1.35 yd <= kMaxSlopeTan * 1.005 yd (1.51 yd),
+    // the instantaneous vertical cliff inside the cell must be rejected so the
+    // snowflake decal stays flat on the floor without stretching vertical
+    // curtains up onto the waist-high bone.
+    const float floorZ = 137.75f;
+    const float quadZ = floorZ + 0.13f;
+    const float half = 2.01f;
+    const std::array<pt::Corner, 4> c{{
+        {{-half, -half, quadZ}, {0, 0, 1}, {0, 0}, {0, 0}},
+        {{ half, -half, quadZ}, {0, 0, 1}, {1, 0}, {1, 0}},
+        {{ half,  half, quadZ}, {0, 0, 1}, {1, 1}, {1, 1}},
+        {{-half,  half, quadZ}, {0, 0, 1}, {0, 1}, {0, 1}},
+    }};
+    const auto surface = [&](float x, float, float planeZ, float reach) -> std::optional<float> {
+        const float h = (x > 0.6f) ? (floorZ + 1.35f) : floorZ;
+        if (std::abs(h - planeZ) > reach) return std::nullopt;
+        return h;
+    };
+
+    std::vector<pt::Vertex> out;
+    const glm::vec3 origin(0.0f, 0.0f, floorZ);
+    pt::buildGrid(c, origin, surface, out);
+    REQUIRE(!out.empty());
+    REQUIRE(out.size() % 3 == 0);
+
+    for (const auto& v : out) {
+        const float worldZ = v.data[2] + origin.z;
+        REQUIRE(worldZ == Catch::Approx(floorZ + pt::kSurfaceLift).margin(1e-4f));
+    }
+}

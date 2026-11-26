@@ -157,13 +157,33 @@ inline void buildGrid(const std::array<Corner, 4>& c, const glm::vec3& origin,
     }
 
     // Flood-fill surface continuity from the quad center so vertical cliffs
-    // (pillars, walls, ceiling/capital hits) never stretch vertical curtains or
-    // emit disconnected patches high above the floor.
+    // (pillars, walls, ceiling/capital hits, and waist-high floor bones/ledges)
+    // never stretch vertical curtains or emit disconnected shelves in mid-air.
+    // When an edge rises by more than `kMaxStepHeight` (0.55 yd), sub-sample
+    // along the segment at ~1/3-cell spacing so genuine steep ramps pass
+    // gradually while vertical 0.6..2.2 yd walls inside one coarse cell reject.
     const auto edgeContinuous = [&](size_t u, size_t v) {
         const glm::vec3 d = worldPos[v] - worldPos[u];
         const float ds = std::hypot(d.x, d.y);
         const float maxDz = std::max(kMaxSlopeTan * ds, kMaxStepHeight);
-        return std::abs(d.z) <= maxDz;
+        if (std::abs(d.z) > maxDz) return false;
+        if (std::abs(d.z) <= kMaxStepHeight) return true;
+
+        const int subSteps = std::max(3, static_cast<int>(std::ceil(ds / (kCellSize / 3.0f))));
+        const float subDs = ds / static_cast<float>(subSteps);
+        const float subMaxDz = std::max(kMaxSlopeTan * subDs, kMaxStepHeight);
+        float prevZ = worldPos[u].z;
+        for (int s = 1; s < subSteps; ++s) {
+            const float t = static_cast<float>(s) / static_cast<float>(subSteps);
+            const float sx = glm::mix(worldPos[u].x, worldPos[v].x, t);
+            const float sy = glm::mix(worldPos[u].y, worldPos[v].y, t);
+            const float spz = glm::mix(quadPlaneZ[u], quadPlaneZ[v], t);
+            float sz = spz;
+            if (auto h = surface(sx, sy, spz, reach)) sz = *h + kSurfaceLift;
+            if (std::abs(sz - prevZ) > subMaxDz) return false;
+            prevZ = sz;
+        }
+        return std::abs(worldPos[v].z - prevZ) <= subMaxDz;
     };
 
     const int centerI = cellsU / 2;

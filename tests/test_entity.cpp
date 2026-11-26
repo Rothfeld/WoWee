@@ -4,6 +4,7 @@
 #include "game/game_object_reach.hpp"
 #include "game/remote_jump.hpp"
 #include "rendering/loot_sparkles.hpp"
+#include "rendering/m2_collision_bounds.hpp"
 #include "rendering/animation/ground_direction.hpp"
 #include <cmath>
 #include <limits>
@@ -711,6 +712,34 @@ TEST_CASE("Quest game objects sparkle by their SPARKLE bit, scaled by collision 
     // Wide solid chest: Gordok Tribute (G_ChestTitan.m2, height 2.34, radius 2.84)
     // must scale past its horizontal walls so LootFX is not occluded inside the lid.
     CHECK(LootSparkles::objectScale(2.34f, 2.84f) == Catch::Approx(4.26f));
+
+    // M2 header collision radius filtering (m2CollisionSparkleRadius):
+    // Enclosing boxy chests keep their bounding radius; thin wheels/banners and
+    // wide flat floor-skirt props (Icebellow Anvil NOX_ANVIL.m2: 8.19 x 6.67 x 1.98,
+    // boundRadius 5.37 = 2.71x height) drop boundingRadius to 0 so LootFX scales
+    // by collisionBoxHeight (1.98) instead of blowing up 4x (8.06) across the room.
+    using wowee::rendering::m2CollisionSparkleRadius;
+    const float chestR = m2CollisionSparkleRadius({-1.57f, -2.05f, 0.02f}, {1.57f, 2.06f, 2.35f}, 2.84f);
+    CHECK(chestR == Catch::Approx(2.84f));
+    CHECK(LootSparkles::objectScale(2.33f, chestR) == Catch::Approx(4.26f));
+
+    const float titanChestR = m2CollisionSparkleRadius({-1.68f, -2.28f, 0.01f}, {1.34f, 2.27f, 2.12f}, 2.93f);
+    CHECK(titanChestR == Catch::Approx(2.93f));
+
+    const float anvilR = m2CollisionSparkleRadius({-3.25f, -3.25f, -0.02f}, {4.94f, 3.42f, 1.96f}, 5.37f);
+    CHECK(anvilR == 0.0f);
+    CHECK(LootSparkles::objectScale(1.98f, anvilR) == Catch::Approx(1.98f));
+
+    const float gearR = m2CollisionSparkleRadius({-0.23f, -1.91f, -1.89f}, {0.23f, 1.87f, 1.89f}, 2.68f);
+    CHECK(gearR == 0.0f);
+    CHECK(LootSparkles::objectScale(3.78f, gearR) == Catch::Approx(3.78f));
+
+    const float bannerR = m2CollisionSparkleRadius({-0.16f, -1.23f, 0.0f}, {0.39f, 1.24f, 5.79f}, 3.16f);
+    CHECK(bannerR == 0.0f);
+    CHECK(LootSparkles::objectScale(5.79f, bannerR) == Catch::Approx(5.79f));
+
+    const float furnaceR = m2CollisionSparkleRadius({-4.74f, -2.31f, -5.62f}, {3.96f, 3.57f, 5.65f}, 7.70f);
+    CHECK(furnaceR == 0.0f);
 
     // Unit corpse sparkles: normal mobs stay at 1.0, large boss corpses (e.g.
     // Entropius at scale 6, selection radius 5.03 yd) scale up with the corpse.

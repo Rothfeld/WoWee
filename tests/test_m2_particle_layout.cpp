@@ -1446,6 +1446,63 @@ TEST_CASE("kParticleOwnColor (0x1) preserves authored particle color against Spe
     CHECK(noAlphaAdd.b == Catch::Approx(fireMid.b));
 }
 
+TEST_CASE("MountedDeathKnight torso aura (0x9) and bone-frame smoke tails (0x419) scale at 1.5x Cavalier display scale",
+          "[m2][particle][tbc]") {
+    using namespace wowee::rendering;
+
+    // Unpinned non-burst 0x8 emitters on externally posed creatures (0x9) scale
+    // detached velocity with externalParticleScale (1.5x on Cavalier / Four Horsemen,
+    // 1.0x on weapon enchants), while GameObjects (0x9/0x409) and pinned/burst unit
+    // emitters (totems 0x409, WaterElemental 0xc49) stay in unscaled yards.
+    CHECK(particleScalesWithPlacement(/*isGameObject=*/false, /*externalPose=*/true, 0x9u));
+    CHECK_FALSE(particleScalesWithPlacement(/*isGameObject=*/true, /*externalPose=*/false, 0x9u));
+    CHECK_FALSE(particleScalesWithPlacement(/*isGameObject=*/false, /*externalPose=*/true, 0x409u));
+    CHECK_FALSE(particleScalesWithPlacement(/*isGameObject=*/false, /*externalPose=*/true, 0x0c49u));
+
+    // Bone-frame (NoTrail 0x10 / FollowsModel 0x4000) tail sprites (tailSprite=true)
+    // scale half-width with placementScale to match their bone-scaled tail vector,
+    // while head sprites (tailSprite=false, e.g. DruidMorph 0x19) keep authored size.
+    CHECK(particleSpriteHalfWidth(0x419u, 0.4444f, 1.5f, /*tailSprite=*/true) ==
+          Catch::Approx(0.4444f * 1.5f).margin(1e-4f));
+    CHECK(particleSpriteHalfWidth(0x19u, 0.4444f, 1.5f, /*tailSprite=*/false) ==
+          Catch::Approx(0.4444f).margin(1e-4f));
+    // Emitters that already carry 0x20 (0x439) must not double-scale on tails.
+    CHECK(particleSpriteHalfWidth(0x439u, 0.5f, 1.5f, /*tailSprite=*/true) ==
+          Catch::Approx(0.75f).margin(1e-4f));
+
+    const std::filesystem::path mdkPath =
+        "/workspace/azerothcore/client/wowee-data/expansions/tbc/creature/mounteddeathknight/mounteddeathknight.m2";
+    if (std::filesystem::exists(mdkPath)) {
+        const auto mdk = wowee::pipeline::M2Loader::load(
+            wowee::test::readTbcData("creature/mounteddeathknight/mounteddeathknight.m2"));
+        REQUIRE(mdk.particleEmitters.size() == 13);
+
+        // em[8]: DUST1.BLP purple torso aura on bone 103 (flags 0x9, speed 0.55, life 3.975 s).
+        const auto& aura = mdk.particleEmitters[8];
+        CHECK(aura.flags == 0x9u);
+        CHECK(aura.headOrTail == 0u);
+        const float auraSpd = m2_track::sampleFloat(aura.emissionSpeed, 2, 0.0f, 0.0f, mdk.globalSequenceDurations, 0.0f);
+        const float auraLife = m2_track::sampleFloat(aura.lifespan, 2, 0.0f, 0.0f, mdk.globalSequenceDurations, 0.0f);
+        const auto cavModel = glm::scale(glm::mat4(1.0f), glm::vec3(1.5f));
+        const auto auraBirth = particleBirthTransform(aura.flags, cavModel, glm::mat4(1.0f));
+        const bool auraScales = particleScalesWithPlacement(false, true, aura.flags);
+        const glm::vec3 worldVel =
+            particleWorldVelocityBasis(aura.flags, auraBirth, auraScales, 1.5f) * glm::vec3(0.0f, 0.0f, auraSpd);
+        CHECK(worldVel.z * auraLife == Catch::Approx(3.279f).margin(0.02f));
+
+        // em[9..12]: SMOKE02_FLIP / SMOKE02A pinned NoTrail tail wisps (flags 0x419, prio -1).
+        for (size_t ei = 9; ei <= 12; ++ei) {
+            const auto& wisp = mdk.particleEmitters[ei];
+            CHECK(wisp.flags == 0x419u);
+            CHECK(wisp.headOrTail == 1u);
+            CHECK(wisp.priorityPlane == -1);
+            const float midScale = wisp.particleScale.floatValues.at(1);
+            CHECK(particleSpriteHalfWidth(wisp.flags, midScale, 1.5f, /*tailSprite=*/true) ==
+                  Catch::Approx(midScale * 1.5f).margin(1e-4f));
+        }
+    }
+}
+
 TEST_CASE("Shipped TBC Etherial.m2 additive emitters stay unlit without kParticleOwnColor",
           "[m2][particle][tbc]") {
     const auto model = wowee::pipeline::M2Loader::load(

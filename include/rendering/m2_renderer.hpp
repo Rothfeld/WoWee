@@ -825,8 +825,8 @@ public:
     bool getInstanceBounds(uint32_t instanceId, glm::vec3& outCenter, float& outRadius) const;
     /// World position of an instance's model origin.
     bool getInstancePosition(uint32_t instanceId, glm::vec3& outPosition) const;
-    /// Height and bounding sphere radius of the M2 header collision bounds,
-    /// times the instance scale.
+    /// Height and enclosing-container sparkle radius of the M2 header collision
+    /// bounds, times the instance scale (see m2CollisionSparkleRadius).
     bool getInstanceCollisionBounds(uint32_t instanceId, float& outHeight, float& outRadius) const;
 
     /// The world-space box of an instance's collision geometry.

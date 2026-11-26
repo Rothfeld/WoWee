@@ -1,5 +1,6 @@
 #include <cstdlib>
 #include "rendering/m2_renderer.hpp"
+#include "rendering/m2_collision_bounds.hpp"
 #include "rendering/m2_renderer_internal.h"
 #include "rendering/m2_model_classifier.hpp"
 #include "rendering/particle_emission.hpp"
@@ -423,7 +424,9 @@ bool M2Renderer::getInstanceCollisionBounds(uint32_t instanceId, float& outHeigh
     const float sy = glm::length(glm::vec3(inst.modelMatrix[1]));
     const float sz = glm::length(glm::vec3(inst.modelMatrix[2]));
     outHeight = std::abs(model.headerBoxMax.z - model.headerBoxMin.z) * sz;
-    outRadius = model.headerBoundRadius * std::max({sx, sy, sz});
+    const float sparkleRadius =
+        m2CollisionSparkleRadius(model.headerBoxMin, model.headerBoxMax, model.headerBoundRadius);
+    outRadius = sparkleRadius * std::max({sx, sy, sz});
     return true;
 }
 

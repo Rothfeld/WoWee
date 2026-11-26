@@ -257,7 +257,8 @@ inline bool particleScaleAppliesToSize(uint32_t flags) {
     return (flags & kParticleScaledSprite) != 0 ||
            ((flags & kParticleNoTrail) != 0 && (flags & kParticleScaledNoTrail) != 0);
 }
-inline float particleSpriteHalfWidth(uint32_t flags, float authoredScale, float placementScale) {
+inline float particleSpriteHalfWidth(uint32_t flags, float authoredScale, float placementScale,
+                                     bool tailSprite = false) {
     const bool xyQuadNoTrail =
         (flags & (kParticleXYQuad | kParticleNoTrail)) == (kParticleXYQuad | kParticleNoTrail);
     float size = authoredScale;
@@ -268,6 +269,13 @@ inline float particleSpriteHalfWidth(uint32_t flags, float authoredScale, float 
         size *= placementScale;
     } else if ((flags & kParticleNoTrail) != 0 && (flags & kParticleScaledNoTrail) != 0 &&
                (flags & kParticleScaledSprite) == 0) {
+        size *= placementScale;
+    } else if (tailSprite && (flags & kParticleBoneFrame) != 0 &&
+               (flags & kParticleScaledSprite) == 0) {
+        // Bone-frame (NoTrail / FollowsModel) tail sprites already stretch their
+        // length along `mat3(model * bone) * velocity` (scaled by placementScale),
+        // so scaling half-width by placementScale preserves authored wisp aspect
+        // ratio (e.g. MountedDeathKnight.m2 #9-#12 0x419 SMOKE02 wisps at 1.5x).
         size *= placementScale;
     }
     return size;
@@ -333,9 +341,23 @@ inline bool particleScalesWithPlacement(bool isGameObject, bool externalPose,
     // - Corrupted/Cleansed Windblossom (GO 164887 / 164884, Windblossom02.m2 /
     //   Windblossom01.m2, scale 2.0, flags 0x429) send their pinned light
     //   pillars twice as high as unscaled yards.
-    // Emitters without 0x20 (Sunwell gate barrier GO 188118, scale 8.69, 0x409;
-    // Shaman totems 0x9/0x409/0x40b) keep moving in yards.
-    return (flags & kParticleScaledSprite) != 0;
+    // On scaled creature models (`externalPose && !isGameObject`), unpinned
+    // non-burst `0x8` body-aura emitters (e.g. MountedDeathKnight.m2 #8 0x9,
+    // Taerar.m2 #3..#30 0x9, FelBeast.m2 #11 0x9, FrostLord.m2 #9..#16 0x9)
+    // also scale detached velocity by `externalParticleScale` so torso/body
+    // auras reach the scaled skeleton (3.28 yd up to the rider's shoulders at
+    // 1.5x instead of stopping at 2.19 yd at the saddle), while weapon enchants
+    // keep 1.0x via `externalParticleScale = 1.0`. Pinned (`0x400`, Shaman
+    // totems 0x409/0x40b up to scale 10, Sunwell gate GO 188118 scale 8.69
+    // 0x409) and `InheritVelocity` (`0x40`, WaterElemental 0xc49 up to scale 5)
+    // emitters without 0x20 keep moving in yards.
+    if ((flags & kParticleScaledSprite) != 0) return true;
+    if (!isGameObject && externalPose &&
+        (flags & kParticleTravelsInYards) != 0 &&
+        (flags & (kParticlePinned | kParticleInheritVelocity)) == 0) {
+        return true;
+    }
+    return false;
 }
 
 inline bool particleGravityScalesWithPlacement(bool isGameObject, bool externalPose) {
