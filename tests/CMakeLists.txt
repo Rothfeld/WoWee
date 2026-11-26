@@ -2438,6 +2438,12 @@ wowee_add_test(test_terrain_slope_limit
 wowee_add_test(test_pinned_lru_cache
     SOURCES test_pinned_lru_cache.cpp)
 
+# ── test_work_settled_trigger ───────────────────────────────
+# When freed heap pages go back to the system: once per burst of terrain
+# streaming, after it has been over for the settle time. Header-only.
+wowee_add_test(test_work_settled_trigger
+    SOURCES test_work_settled_trigger.cpp)
+
 # ── test_particle_density_floor ─────────────────────────────
 # Particle density against the floor that holds a flame together. Applying
 # the setting after the floor instead of before it takes every candle in the

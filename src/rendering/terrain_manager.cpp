@@ -24,6 +24,7 @@
 #include "pipeline/wowee_collision.hpp"
 #include "core/memory_monitor.hpp"
 #include "core/profiler.hpp"
+#include "core/thread_pool.hpp"
 #include "pipeline/asset_manager.hpp"
 #include "pipeline/adt_loader.hpp"
 #include "pipeline/m2_loader.hpp"
@@ -249,6 +250,26 @@ void TerrainManager::update(const Camera& camera, float deltaTime) {
     const auto tUnloadStart = clock::now();
     processPendingUnloads();
     unloadMs = elapsedMs(tUnloadStart, clock::now());
+#ifdef __GLIBC__
+    {
+        bool streamingBusy = !finalizingTiles_.empty() || !pendingUnloadQueue_.empty();
+        if (!streamingBusy) {
+            std::lock_guard<std::mutex> lock(queueMutex);
+            streamingBusy = !pendingTiles.empty() || !readyQueue.empty();
+        }
+        if (heapReleaseTrigger_.update(streamingBusy, clock::now())) {
+            // Off the frame: the trim takes each arena's lock in turn and
+            // madvises its free pages.
+            core::ThreadPool::ioWorkers().submit([]() {
+                const auto started = std::chrono::steady_clock::now();
+                core::releaseFreedHeapPages();
+                LOG_INFO("Terrain streaming settled: freed heap pages returned to the system in ",
+                         std::chrono::duration<float, std::milli>(
+                             std::chrono::steady_clock::now() - started).count(), " ms");
+            });
+        }
+    }
+#endif
     updateGroundDetail(camera);
 
     timeSinceLastUpdate += deltaTime;

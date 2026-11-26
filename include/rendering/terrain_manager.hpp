@@ -16,6 +16,7 @@
 #include <optional>
 #include <thread>
 #include <mutex>
+#include "core/heap_release.hpp"
 #include <atomic>
 #include <queue>
 #include <list>
@@ -603,6 +604,12 @@ private:
     // is actually available each frame instead of a fixed count, so it can't fall behind
     // real-world churn the way the count cap could.
     std::deque<TileCoord> pendingUnloadQueue_;
+
+    // Freed heap pages go back to the system once a burst of loading and
+    // unloading has been over for this long. A burst is a world load, a
+    // teleport or a tile border crossed; the wait keeps a trim from landing
+    // between two tiles of the same burst.
+    core::WorkSettledTrigger heapReleaseTrigger_{std::chrono::milliseconds(2000)};
 
     // MAIN-THREAD-ONLY: checked and modified in processReadyTiles() and unloadDistantTiles(),
     // both of which run exclusively on the main thread.
