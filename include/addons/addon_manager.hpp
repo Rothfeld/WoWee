@@ -70,7 +70,7 @@ public:
     [[nodiscard]] bool addonsLoaded() const { return addonsLoaded_; }
 
     void saveAllSavedVariables();
-    void setCharacterName(const std::string& name) { characterName_ = name; }
+    void setCharacterName(const std::string& name);
 
     /// Take the interface down, leaving a live but empty Lua state.
     ///

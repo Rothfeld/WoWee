@@ -583,6 +583,10 @@ static std::string cvarStorePath() {
 ///    original's defaults, 180, 90 and 1.
 static constexpr int kCVarStoreVersion = 1;
 static constexpr const char* kCVarStoreVersionKey = "wowee_cvarsversion";
+// TBC town-service minimap tracking lives only in memory for the current
+// character session: build 8606 keeps SetTracking(service) across ReloadUI()
+// within a session and resets to None on every fresh login.
+static constexpr const char* kSessionTrackingServiceKey = "wowee_trackingservice";
 
 bool migrateStoredCVarRows(std::unordered_map<std::string, std::string>& rows) {
     const auto found = rows.find(kCVarStoreVersionKey);
@@ -604,11 +608,29 @@ static void saveStoredCVars();
 static void loadStoredCVars() {
     // From here on the rows answer storedCVarValue and the file is not read
     // again (addons/stored_cvars.hpp). A missing file is left missing, as before.
+    const bool reloading = storedCVars().loaded();
+    std::optional<std::string> sessionTracking;
+    if (reloading) {
+        if (const auto it = cvarStore().find(kSessionTrackingServiceKey); it != cvarStore().end()) {
+            sessionTracking = it->second;
+        }
+    }
     const bool exists = std::ifstream(cvarStorePath()).is_open();
     const size_t loaded = storedCVars().load(cvarStorePath());
+    const bool strippedTrackingFromDisk =
+        !reloading && cvarStore().erase(kSessionTrackingServiceKey) > 0;
+    if (reloading) {
+        if (sessionTracking.has_value()) {
+            cvarStore()[kSessionTrackingServiceKey] = *sessionTracking;
+        } else {
+            cvarStore().erase(kSessionTrackingServiceKey);
+        }
+    }
     if (!exists) return;
     LOG_INFO("CVars: loaded ", loaded, " from ", cvarStorePath());
-    if (migrateStoredCVarRows(cvarStore()) && loaded > 0) saveStoredCVars();
+    if ((migrateStoredCVarRows(cvarStore()) || strippedTrackingFromDisk) && loaded > 0) {
+        saveStoredCVars();
+    }
 }
 
 /// Write them back. Called on every change rather than at shutdown: the file is
@@ -628,7 +650,10 @@ static void saveStoredCVars() {
     // as the hash order moving underneath it.
     std::vector<const std::pair<const std::string, std::string>*> rows;
     rows.reserve(cvarStore().size());
-    for (const auto& kv : cvarStore()) rows.push_back(&kv);
+    for (const auto& kv : cvarStore()) {
+        if (kv.first == kSessionTrackingServiceKey) continue;
+        rows.push_back(&kv);
+    }
     std::sort(rows.begin(), rows.end(),
               [](const auto* a, const auto* b) { return a->first < b->first; });
     for (const auto* kv : rows) {
@@ -968,8 +993,8 @@ static void pushCvarDefault(lua_State* L, const std::string& n) {
     // On, as the real client has it: coming back and talking takes the flag
     // off rather than leaving it for the player to notice.
     else if (n == "autoclearafk") lua_pushstring(L, "1");
-    // On, which is what has always been announced.
-    else if (n == "guildmembernotify") lua_pushstring(L, "1");
+    // Build 8606 answers GetCVarDefault("guildMemberNotify") "0"; WotLK "1".
+    else if (n == "guildmembernotify") lua_pushstring(L, tbcInterface(L) ? "0" : "1");
     // Off, as the real client has it: attacking an ally does nothing unless
     // the player has asked for it to mean assist.
     else if (n == "assistattack") lua_pushstring(L, "0");
@@ -982,9 +1007,9 @@ static void pushCvarDefault(lua_State* L, const std::string& n) {
     // nobody has checked. Stated, they agree by construction.
     else if (n == "autodismountflying") lua_pushstring(L, "0");
     else if (n == "colorblindmode") lua_pushstring(L, "0");
-    // Off, as the real client has it: a second press stops the swing unless
-    // the player has asked to be protected from that.
-    else if (n == "secureabilitytoggle") lua_pushstring(L, "0");
+    // On, as build 8606 ships (GetCVarDefault("secureAbilityToggle") == "1"):
+    // guards auto-attack and auto-repeat abilities from accidental toggle-off.
+    else if (n == "secureabilitytoggle") lua_pushstring(L, "1");
     // Quest titles on the world map colour by difficulty out of the box, and a
     // quest whose progress changes starts being watched - both on in the real
     // client. The other two are opt-in there and stay opt-in here.
@@ -1017,8 +1042,9 @@ static void pushCvarDefault(lua_State* L, const std::string& n) {
     else if (n == "camerayawsmoothspeed") lua_pushstring(L, "30");
     // Titles on player names, as the real client shows them.
     else if (n == "unitnameplayerpvptitle") lua_pushstring(L, "1");
-    // Cast bars over enemy nameplates are on; party lines float only if asked.
-    else if (n == "showvkeycastbar") lua_pushstring(L, "1");
+    // Build 8606 answers GetCVarDefault("ShowVKeyCastbar") "0" (matching
+    // ShowTargetCastbar); WotLK enables enemy nameplate cast bars by default.
+    else if (n == "showvkeycastbar") lua_pushstring(L, tbcInterface(L) ? "0" : "1");
     else if (n == "chatbubblesparty") lua_pushstring(L, "0");
     // Pets and guardians, plated and named on both sides, as they ship.
     else if (n == "nameplateshowenemypets") lua_pushstring(L, "1");
@@ -1311,8 +1337,9 @@ static void pushCvarDefault(lua_State* L, const std::string& n) {
              n == "sound_enableambience") lua_pushstring(L, "1");
     else if (n == "pushtotalkbutton") lua_pushstring(L, "`");
     else if (n == "outboundchatvolume" || n == "inboundchatvolume") lua_pushstring(L, "1");
-    else if (n == "chatsoundvolume" || n == "chatmusicvolume" ||
-             n == "chatambiencevolume" || n == "voiceactivationsensitivity") lua_pushstring(L, "0.4");
+    else if (n == "chatsoundvolume" || n == "voiceactivationsensitivity") lua_pushstring(L, "0.4");
+    else if (n == "chatmusicvolume" || n == "chatambiencevolume") lua_pushstring(L, "0.3");
+    else if (n == "enablemicrophone" || n == "showclock") lua_pushstring(L, "1");
     else if (n == "showbattlefieldminimap") lua_pushstring(L, "0");
     else if (n == "wowee_bindingset") lua_pushstring(L, "1");
     else lua_pushstring(L, "0");
@@ -2127,6 +2154,11 @@ std::string storedCVarValue(std::string_view key, std::string_view fallback) {
     // the interface is up; the file before that, which is the case this
     // exists for. The rule and its reason are in addons/stored_cvars.hpp.
     const StoredCVars& stored = storedCVars();
+    if (!stored.loaded() && key.size() == std::string_view(kSessionTrackingServiceKey).size()) {
+        std::string lowered(key);
+        toLowerInPlace(lowered);
+        if (lowered == kSessionTrackingServiceKey) return std::string(fallback);
+    }
     // The path is built only for the early case: it is a string per call.
     std::string answer = stored.value(key, fallback, stored.loaded() ? std::string() : cvarStorePath());
 
@@ -2159,7 +2191,11 @@ void setStoredCVar(const std::string& key, const std::string& value) {
     const auto existing = cvarStore().find(k);
     if (existing != cvarStore().end() && existing->second == value) return;
     cvarStore()[k] = value;
-    saveStoredCVars();
+    if (k != kSessionTrackingServiceKey) saveStoredCVars();
+}
+
+void clearSessionCVars() {
+    cvarStore().erase(kSessionTrackingServiceKey);
 }
 
 void noteClientSettingChanged(const std::string& settingKey, const std::string& value) {
@@ -2182,6 +2218,15 @@ void noteClientSettingChanged(const std::string& settingKey, const std::string& 
 void applySoundCVarSideEffects(lua_State* L) { applySoundCVars(L); }
 
 void applyStoredCVarSideEffects(lua_State* L) {
+    // Sync client-owned secureAbilityToggle into the in-memory CVar store when
+    // no explicit CVar row exists yet, so SpellHandler::storedCVarValue honors
+    // the live setting/default ("1") on a fresh profile without writing disk.
+    if (cvarStore().find("secureabilitytoggle") == cvarStore().end()) {
+        if (auto* svc = getLuaServices(L); svc && svc->getClientSetting) {
+            const std::string v = svc->getClientSetting("secureabilitytoggle");
+            if (!v.empty()) cvarStore()["secureabilitytoggle"] = v;
+        }
+    }
     g_replayingStoredCVars = true;
     for (const auto& [key, value] : cvarStore()) {
         applyCVarSideEffects(L, key, value);
@@ -2957,9 +3002,8 @@ static int lua_SetTracking(lua_State* L) {
             if (trackingActive(gh, sid)) gh->cancelAura(sid);
         }
     }
-    cvarStore()["wowee_trackingservice"] = std::to_string(
+    cvarStore()[kSessionTrackingServiceKey] = std::to_string(
         index > static_cast<int>(spells.size()) ? index - spells.size() : 0);
-    saveStoredCVars();
     if (spellSelected) gh->castSpell(spells[static_cast<size_t>(index - 1)], 0);
     lua_getfield(L, LUA_REGISTRYINDEX, "wowee_lua_engine");
     auto* engine = static_cast<LuaEngine*>(lua_touserdata(L, -1));

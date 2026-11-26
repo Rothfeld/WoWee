@@ -7790,3 +7790,110 @@ TEST_CASE("CameraController preserves character-relative orbit yaw across same-m
     CHECK(controller.getFacingYaw() == Catch::Approx(-90.0f));
     CHECK(controller.getYaw() == Catch::Approx(60.0f));
 }
+
+#include "ui/settings_schema.hpp"
+#include "game/tracking_services.hpp"
+
+TEST_CASE_METHOD(Integration, "TBC 2.4.3 combat and interface CVar defaults match build 8606 GetCVarDefault", "[cvar][tbc][parity]") {
+    // SettingsPanel and settings schema default both secureAbilityToggle and minimapclock to on ("1").
+    ui::SettingsPanel panel;
+    CHECK(panel.pendingSecureAbilityToggle);
+    CHECK(panel.pendingShowMinimapClock);
+
+    std::size_t schemaCount = 0;
+    const ui::SettingDesc* rows = ui::clientSettingsSchema(schemaCount);
+    bool foundSecureToggle = false;
+    bool foundMinimapClock = false;
+    for (std::size_t i = 0; i < schemaCount; ++i) {
+        if (std::string(rows[i].key) == "secureabilitytoggle") {
+            CHECK(rows[i].defaultValue == 1.0f);
+            foundSecureToggle = true;
+        } else if (std::string(rows[i].key) == "minimapclock") {
+            CHECK(rows[i].defaultValue == 1.0f);
+            foundMinimapClock = true;
+        }
+    }
+    CHECK(foundSecureToggle);
+    CHECK(foundMinimapClock);
+
+    // TBC 2.4.3 (Interface 20400) CVar defaults empirically verified against build 8606 on WOWEE_PAIR=4.
+    run("__WoweeInterfaceVersion = 20400");
+    truth("GetCVarDefault('secureAbilityToggle') == '1'");
+    truth("GetCVarDefault('showClock') == '1'");
+    truth("GetCVarDefault('ShowVKeyCastbar') == '0'");
+    truth("GetCVarDefault('guildMemberNotify') == '0'");
+    truth("GetCVarDefault('ChatSoundVolume') == '0.4'");
+    truth("GetCVarDefault('ChatMusicVolume') == '0.3'");
+    truth("GetCVarDefault('ChatAmbienceVolume') == '0.3'");
+    truth("GetCVarDefault('VoiceActivationSensitivity') == '0.4'");
+    truth("GetCVarDefault('EnableMicrophone') == '1'");
+    truth("GetCVarDefault('autoRangedCombat') == '1'");
+    truth("GetCVarDefault('stopAutoAttackOnTargetChange') == '0'");
+    truth("GetCVarDefault('assistAttack') == '0'");
+    truth("GetCVarDefault('autoSelfCast') == '0'");
+    truth("GetCVarDefault('deselectOnClick') == '1'");
+    truth("GetCVarDefault('buffDurations') == '1'");
+    truth("GetCVarDefault('playerStatusText') == '0'");
+    truth("GetCVarDefault('targetOfTargetMode') == '5'");
+    truth("GetCVarDefault('displayWorldPVPObjectives') == '1'");
+
+    // WotLK (Interface 30300) keeps its expansion-specific defaults for ShowVKeyCastbar and guildMemberNotify.
+    run("__WoweeInterfaceVersion = 30300");
+    truth("GetCVarDefault('ShowVKeyCastbar') == '1'");
+    truth("GetCVarDefault('guildMemberNotify') == '1'");
+    truth("GetCVarDefault('secureAbilityToggle') == '1'");
+
+    // Startup applyStoredCVarSideEffects syncs client-owned secureAbilityToggle ("1") into the CVar store
+    // so SpellHandler::storedCVarValue sees "1" on a fresh install, and SetCVar("0") toggles it off.
+    addons::LuaServices services;
+    services.getClientSetting = [&](const std::string& key) -> std::string {
+        if (key == "secureabilitytoggle") return panel.pendingSecureAbilityToggle ? "1" : "0";
+        return "";
+    };
+    services.setClientSetting = [&](const std::string& key, const std::string& val) {
+        if (key == "secureabilitytoggle") panel.pendingSecureAbilityToggle = (val != "0");
+    };
+    lua.setLuaServices(services);
+    addons::applyStoredCVarSideEffects(lua.getState());
+    CHECK(addons::storedCVarValue("secureAbilityToggle", "0") == "1");
+    truth("GetCVar('secureAbilityToggle') == '1'");
+
+    run("SetCVar('secureAbilityToggle', '0')");
+    CHECK_FALSE(panel.pendingSecureAbilityToggle);
+    CHECK(addons::storedCVarValue("secureAbilityToggle", "0") == "0");
+    truth("GetCVar('secureAbilityToggle') == '0'");
+
+    // Restore clean state so subsequent replay/integration tests start unguarded if headless.
+    run("SetCVar('secureAbilityToggle', '0')");
+    lua.setLuaServices({});
+}
+
+TEST_CASE_METHOD(Integration, "TBC minimap service tracking stays in-session across ReloadUI and resets on logout", "[minimap][tracking][tbc]") {
+    replay::Session session("tbc");
+    lua.setGameHandler(&session.handler());
+    run("__WoweeInterfaceVersion = 20400");
+
+    addons::clearSessionCVars();
+    CHECK(addons::storedCVarValue("wowee_trackingservice", "0") == "0");
+    truth("GetTrackingTexture() == 'Interface\\\\Minimap\\\\Tracking\\\\None'");
+
+    // Selecting the last TBC tracking service (Mailbox = index 13) updates session tracking.
+    const int mailboxIdx = static_cast<int>(wowee::game::tbcTrackingServices.size());
+    REQUIRE(mailboxIdx == 13);
+    run("SetTracking(" + std::to_string(mailboxIdx) + ")");
+    CHECK(addons::storedCVarValue("wowee_trackingservice", "0") == "13");
+    truth("GetTrackingTexture() == 'Interface\\\\Minimap\\\\Tracking\\\\Mailbox'");
+
+    // ReloadUI re-runs registerSystemLuaAPI -> loadStoredCVars and preserves in-session service tracking.
+    addons::registerSystemLuaAPI(lua.getState());
+    CHECK(addons::storedCVarValue("wowee_trackingservice", "0") == "13");
+    truth("GetTrackingTexture() == 'Interface\\\\Minimap\\\\Tracking\\\\Mailbox'");
+
+    // Leaving or switching the character session clears service tracking back to None, matching build 8606.
+    addons::AddonManager mgr;
+    mgr.setCharacterName("Edricd");
+    CHECK(addons::storedCVarValue("wowee_trackingservice", "0") == "0");
+    truth("GetTrackingTexture() == 'Interface\\\\Minimap\\\\Tracking\\\\None'");
+
+    lua.setGameHandler(nullptr);
+}

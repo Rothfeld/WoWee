@@ -420,7 +420,7 @@ constexpr SettingDesc kSchema[] = {
     // the game's Display page that offered it is retired, and the minimap's
     // own menu had been turning it within a session all along.
     {"minimapclock", "Clock", SettingKind::Bool, 0, 0, 0, "Minimap", "Appearance",
-     "Show the time of day under the minimap.", "", 0},
+     "Show the time of day under the minimap.", "", 1},
     {"minimapsquare", "Square minimap", SettingKind::Bool, 0, 0, 0, "Minimap", "",
      "Draw the minimap as a square rather than a circle.", "", 0},
     {"minimapcoords", "Coordinates", SettingKind::Bool, 0, 0, 0, "Minimap", "",
@@ -536,7 +536,7 @@ constexpr SettingDesc kSchema[] = {
     {"secureabilitytoggle", "Ignore a double tap on Attack", SettingKind::Bool, 0, 0, 0,
      "Combat", "",
      "A second press of Attack within half a second is ignored, so a\n"
-     "double tap cannot switch auto-attack straight back off.", "", 0},
+     "double tap cannot switch auto-attack straight back off.", "", 1},
     {"autofacetarget", "Turn to face the target (debug)", SettingKind::Bool, 0, 0, 0,
      "Combat", "",
      "Turn your character toward the target when you start attacking it\n"

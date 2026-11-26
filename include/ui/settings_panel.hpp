@@ -145,7 +145,7 @@ public:
     }
     bool pendingMinimapRotate = false;
     bool pendingMinimapSquare = false;
-    bool pendingShowMinimapClock = false;
+    bool pendingShowMinimapClock = true;
     bool pendingShowMinimapCoordinates = false;
     bool pendingShowLatencyMeter = true;
     bool pendingSeparateBags = true;
@@ -157,7 +157,7 @@ public:
     bool pendingAutoLoot = false;
     bool pendingAutoSellGrey = false;
     bool pendingAutoRepair = false;
-    bool pendingSecureAbilityToggle = false;
+    bool pendingSecureAbilityToggle = true;
     /// Debug: turn to face the target on attack. See GameHandler::setAutoFaceTarget.
     bool pendingAutoFaceTarget = false;
     bool pendingIdleCameraOrbit = false;
@@ -242,7 +242,7 @@ public:
     float uiOpacity_ = 0.65f;  // UI element transparency (0.0 = fully transparent, 1.0 = fully opaque)
     bool minimapRotate_ = false;
     bool minimapSquare_ = false;
-    bool showMinimapClock_ = false;
+    bool showMinimapClock_ = true;
     bool showMinimapCoordinates_ = false;
     bool showLatencyMeter_ = true;           // Show server latency indicator
     bool minimapSettingsApplied_ = false;

@@ -63,6 +63,10 @@ void noteClientSettingChanged(const std::string& settingKey, const std::string& 
 /// a player can rely on, and this client is exited every way there is.
 void setStoredCVar(const std::string& key, const std::string& value);
 
+/// Clear session-only CVar state (such as TBC town-service minimap tracking)
+/// when leaving a character session; preserved across ReloadUI within a session.
+void clearSessionCVars();
+
 /// Bring cvars.cfg's rows, keys lower case, to the current format, recorded
 /// in the rows as wowee_cvarsversion. Returns whether anything changed. Run on
 /// the store as it is loaded; see kCVarStoreVersion.

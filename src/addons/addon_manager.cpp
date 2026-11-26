@@ -1849,8 +1849,16 @@ bool AddonManager::reload() {
     return true;
 }
 
+void AddonManager::setCharacterName(const std::string& name) {
+    if (characterName_ != name) {
+        characterName_ = name;
+        clearSessionCVars();
+    }
+}
+
 void AddonManager::shutdown() {
     saveAllSavedVariables();
+    clearSessionCVars();
     addons_.clear();
     luaEngine_.shutdown();
 }
