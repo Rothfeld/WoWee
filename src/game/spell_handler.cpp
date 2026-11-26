@@ -5819,6 +5819,10 @@ void SpellHandler::loadSpellNameCache() const {
     const auto column = [&](const char* name) { return spellL ? spellL->tryField(name) : 0xFFFFFFFFu; };
     const uint32_t attrEx2Field = column("AttributesEx2");
     const uint32_t attrEx3Field = column("AttributesEx3");
+    uint32_t attrEx5Field = column("AttributesEx5");
+    if (attrEx5Field == 0xFFFFFFFFu && hasAttrField && fieldCount >= 216) {
+        attrEx5Field = attrField + 5;
+    }
     const uint32_t stancesField = column("Stances");
     const uint32_t stancesNotField = column("StancesNot");
     const uint32_t casterAuraStateField = column("CasterAuraState");
@@ -5954,6 +5958,7 @@ void SpellHandler::loadSpellNameCache() const {
             }
             entry.attrEx2 = read(i, attrEx2Field);
             entry.attrEx3 = read(i, attrEx3Field);
+            entry.attrEx5 = read(i, attrEx5Field);
             entry.stances = read(i, stancesField);
             entry.stancesNot = read(i, stancesNotField);
             entry.casterAuraState = read(i, casterAuraStateField);
@@ -7355,10 +7360,12 @@ void SpellHandler::handleExtraAuraInfo(network::Packet& packet, bool isInit) {
         if (auraList) {
             if (auraList->size() <= slot) auraList->resize(slot + 1);
             auto& aura = (*auraList)[slot];
-            const uint8_t lowFlags =
-                (aura.spellId == spellId) ? static_cast<uint8_t>(aura.flags & ~0x80u) : 0u;
+            const bool sameSlotSpell = !aura.isEmpty() && aura.spellId == spellId;
+            const uint8_t lowFlags = sameSlotSpell ? static_cast<uint8_t>(aura.flags & 0x77u) : 0u;
+            const uint8_t selfCastBit = (tbc && auraTargetGuid == owner_.getPlayerGuid()) ? 0x08u : 0u;
+            const uint8_t harmfulBit = (slot >= positiveSlots) ? 0x80u : 0u;
             aura.spellId = spellId;
-            aura.flags = static_cast<uint8_t>(lowFlags | (slot >= positiveSlots ? 0x80u : 0u));
+            aura.flags = static_cast<uint8_t>(harmfulBit | lowFlags | selfCastBit);
             aura.durationMs = maximum < 0 ? -1 : static_cast<int32_t>(remaining);
             aura.maxDurationMs = maximum;
             aura.receivedAtMs = nowMs;

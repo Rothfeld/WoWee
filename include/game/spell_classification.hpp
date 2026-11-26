@@ -620,19 +620,35 @@ inline bool isAreaAuraEffect(uint32_t effectId) {
 }
 
 /// Whether an aura in a unit's aura list should be shown in BuffFrame /
-/// UnitBuff / UnitDebuff, matching native TBC 2.4.3 (verified on pair 8):
+/// UnitBuff / UnitDebuff, matching native TBC 2.4.3 (verified on pair 8 & pair 11):
 /// - SPELL_ATTR_DO_NOT_DISPLAY (attr 0x80): always hidden
-/// - SPELL_ATTR_EX_NO_AURA_ICON (attrEx 0x10000000): hidden (stances, tracking)
+/// - SPELL_ATTR_EX_NO_AURA_ICON (attrEx 0x10000000): hidden (stances, tracking,
+///   Ragnaros Submerge Fade 21107, Submerge Visual 26234)
+/// - SPELL_ATTR_EX5_NO_CASTER_AURA_ICON (attrEx5 0x08000000): hidden when the
+///   target cast the aura on itself (AFLAG_NOT_CASTER 0x08 set, e.g. Hurricane
+///   16914/17401/17402/27012 self-aura on caster, visible on enemies)
+/// - SPELL_ATTR_EX5_NO_TARGET_AURA_ICON (attrEx5 0x10000000): hidden when cast
+///   by another unit (AFLAG_NOT_CASTER 0x08 clear, e.g. Blue Beam 38034, Gust
+///   of Wind 43621 on target, visible when self-cast)
 /// - SPELL_ATTR_PASSIVE (attr 0x40): hidden unless the spell applies an area
 ///   aura (Heroic Presence 6562, Inspiring Presence 28878, Totem of Wrath
 ///   30708, Strength of Earth 8076, Mana Spring 5677 are passive area auras
 ///   that native 2.4.3 displays).
-inline bool isAuraVisible(uint32_t attr, uint32_t attrEx, const uint32_t effectIds[3]) {
-    constexpr uint32_t kAttrPassive       = 0x00000040u;
-    constexpr uint32_t kAttrDoNotDisplay  = 0x00000080u;
-    constexpr uint32_t kAttrExNoAuraIcon  = 0x10000000u;
+inline bool isAuraVisible(uint32_t attr, uint32_t attrEx, const uint32_t effectIds[3],
+                          uint32_t attrEx5 = 0, uint8_t auraFlags = 0) {
+    constexpr uint32_t kAttrPassive             = 0x00000040u;
+    constexpr uint32_t kAttrDoNotDisplay        = 0x00000080u;
+    constexpr uint32_t kAttrExNoAuraIcon        = 0x10000000u;
+    constexpr uint32_t kAttrEx5NoCasterAuraIcon = 0x08000000u;
+    constexpr uint32_t kAttrEx5NoTargetAuraIcon = 0x10000000u;
+    constexpr uint8_t  kAuraFlagSelfCast        = 0x08u;
     if ((attr & kAttrDoNotDisplay) != 0) return false;
     if ((attrEx & kAttrExNoAuraIcon) != 0) return false;
+    if (attrEx5 != 0) {
+        const bool selfCast = (auraFlags & kAuraFlagSelfCast) != 0;
+        if (selfCast && (attrEx5 & kAttrEx5NoCasterAuraIcon) != 0) return false;
+        if (!selfCast && (attrEx5 & kAttrEx5NoTargetAuraIcon) != 0) return false;
+    }
     if ((attr & kAttrPassive) != 0) {
         for (int e = 0; e < 3; ++e) {
             if (isAreaAuraEffect(effectIds[e])) return true;

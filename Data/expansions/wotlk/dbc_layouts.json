@@ -276,6 +276,7 @@
   "Spell": {
     "Attributes": 4,
     "AttributesEx": 5,
+    "AttributesEx5": 9,
     "BaseLevel": 38,
     "CasterAuraState": 20,
     "CasterAuraStateNot": 22,

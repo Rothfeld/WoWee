@@ -264,13 +264,8 @@ static bool classCanDispel(uint8_t classId, uint8_t dispelType) {
     }
 }
 
-static bool auraVisible(game::GameHandler& gh, uint32_t spellId) {
-    gh.getSpellName(spellId);
-    const auto found = gh.spellNameCacheRef().find(spellId);
-    // Server-only helper spells have no client DBC entry or display icon.
-    if (found == gh.spellNameCacheRef().end()) return false;
-    return game::spellclass::isAuraVisible(found->second.attr, found->second.attrEx,
-                                           found->second.effectIds);
+static bool auraVisible(game::GameHandler& gh, const game::AuraSlot& aura) {
+    return gh.isAuraVisible(aura);
 }
 
 static bool auraCancellable(game::GameHandler& gh, const game::AuraSlot& aura) {
@@ -317,7 +312,7 @@ const game::AuraSlot* findUnitAura(game::GameHandler& gh, std::string unit, int 
     // Filter to buffs or debuffs and find the Nth one
     int found = 0;
     for (const auto& aura : *auras) {
-        if (aura.isEmpty() || aura.spellId == 0 || !auraVisible(gh, aura.spellId)) continue;
+        if (aura.isEmpty() || aura.spellId == 0 || !auraVisible(gh, aura)) continue;
         bool isDebuff = (aura.flags & 0x80) != 0;
         if (wantBuff ? isDebuff : !isDebuff) continue;
         if (dispellableOnly &&
@@ -493,7 +488,7 @@ static int lua_GetPlayerBuff(lua_State* L) {
         int seen = 0;
         for (size_t i = 0; i < auras.size(); ++i) {
             const game::AuraSlot& aura = auras[i];
-            if (aura.isEmpty() || !auraVisible(*gh, aura.spellId)) continue;
+            if (aura.isEmpty() || !auraVisible(*gh, aura)) continue;
             const bool isDebuff = (aura.flags & 0x80) != 0;
             if (isDebuff != harmful) continue;
             if (wantCancelable && !auraCancellable(*gh, aura)) continue;
@@ -1454,7 +1449,7 @@ static int lua_CancelUnitBuff(lua_State* L) {
     if (index < 1) return 0;
     int buffCount = 0;
     for (const auto& a : auras) {
-        if (a.isEmpty() || !auraVisible(*gh, a.spellId)) continue;
+        if (a.isEmpty() || !auraVisible(*gh, a)) continue;
         if ((a.flags & 0x80) != 0) continue;   // debuffs are not cancellable
         if (++buffCount == index) {
             if (auraCancellable(*gh, a)) gh->cancelAura(a.spellId);

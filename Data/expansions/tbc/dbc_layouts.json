@@ -412,6 +412,8 @@
     "AttributesEx2": 7,
     "AttributesEx3": 8,
     "AttributesEx4": 9,
+    "AttributesEx5": 10,
+    "AttributesEx6": 11,
     "TargetCreatureType": 15,
     "CasterAuraState": 18,
     "CasterAuraStateNot": 20,

@@ -1097,3 +1097,150 @@ TEST_CASE("SMSG_PERIODICAURALOG periodic damage and absorbs emit red DAMAGE/ABSO
     CHECK(playerUnitCombat[4] == std::vector<std::string>{"player", "WOUND", "ABSORB", "0", "32"});
     CHECK(playerUnitCombat[5] == std::vector<std::string>{"player", "WOUND", "RESIST", "0", "32"});
 }
+
+TEST_CASE("TBC aura cache clears across out-of-range/destroy/zero-aura create and honors AttributesEx5 icon flags",
+          "[aura][ragnaros][tbc]") {
+    FctHarness h;
+    REQUIRE(h.lua.executeString("__WoweeInterfaceVersion = 20400"));
+    auto& spells = h.session.handler().spellNameCacheRef();
+
+    // Real TBC 2.4.3 Spell.dbc rows:
+    // 20567 Ragnaros Submerge Visual: attr=0x20000110, effect[0]=6 (APPLY_AURA)
+    spells[20567].name = "Ragnaros Submerge Visual";
+    spells[20567].attr = 0x20000110u;
+    spells[20567].effectIds[0] = 6u;
+    // 21107 Ragnaros Submerge Fade: attr=0x20000090 (DO_NOT_DISPLAY), attrEx=0x10000000 (NO_AURA_ICON)
+    spells[21107].name = "Ragnaros Submerge Fade";
+    spells[21107].attr = 0x20000090u;
+    spells[21107].attrEx = 0x10000000u;
+    spells[21107].effectIds[0] = 6u;
+    // 16914 Hurricane: attr=0x00010000, attrEx=0x0000008c, attrEx5=0x08002000 (NO_CASTER_AURA_ICON)
+    spells[16914].name = "Hurricane";
+    spells[16914].attr = 0x00010000u;
+    spells[16914].attrEx = 0x0000008cu;
+    spells[16914].attrEx5 = 0x08002000u;
+    spells[16914].effectIds[0] = 27u;
+    spells[16914].effectIds[1] = 27u;
+    spells[16914].effectIds[2] = 6u;
+    // 38034 Blue Beam: attr=0x00000100, attrEx=0x00004004, attrEx5=0x10000000 (NO_TARGET_AURA_ICON)
+    spells[38034].name = "Blue Beam";
+    spells[38034].attr = 0x00000100u;
+    spells[38034].attrEx = 0x00004004u;
+    spells[38034].attrEx5 = 0x10000000u;
+    spells[38034].effectIds[0] = 6u;
+
+    const uint16_t auraBase  = wowee::game::fieldIndex(UF::UNIT_FIELD_AURAS);
+    const uint16_t flagsBase = wowee::game::fieldIndex(UF::UNIT_FIELD_AURAFLAGS);
+    REQUIRE(auraBase != 0xFFFF);
+    REQUIRE(flagsBase != 0xFFFF);
+
+    auto evalStr = [&](const char* expr) -> std::string {
+        REQUIRE(h.lua.executeString(std::string("__aura_probe = tostring(") + expr + ")"));
+        return h.lua.globalString("__aura_probe");
+    };
+
+    // 1. Exact Molten Core Ragnaros submerge -> stealth out-of-range -> emerge with 0 auras:
+    //    Submerge applies 20567 (slot 0), 21859 (slot 1, server-only), 21107 (slot 2, stealth).
+    constexpr uint64_t kRagnarosGuid = 0xF130002CEE59703Cull;
+    h.session.receive(UpdateObject().tbc().create(
+        kRagnarosGuid, ObjectType::UNIT,
+        {{UF::UNIT_FIELD_HEALTH, 1099230},
+         {UF::UNIT_FIELD_MAXHEALTH, 1099230},
+         {UF::UNIT_FIELD_LEVEL, 63},
+         {UF::UNIT_FIELD_DISPLAYID, 11121}}));
+    h.session.handler().setTargetGuidRaw(kRagnarosGuid);
+    h.session.handler().getSpellHandler()->restoreTargetAuras(kRagnarosGuid);
+
+    h.session.receive(UpdateObject().tbc().valuesAt(
+        kRagnarosGuid,
+        {{auraBase + 0, 20567u},
+         {auraBase + 1, 21859u},
+         {auraBase + 2, 21107u},
+         {flagsBase + 0, 0x00191B19u}}));
+    CHECK(evalStr("UnitBuff('target', 1)") == "Ragnaros Submerge Visual");
+    CHECK(evalStr("UnitBuff('target', 2)") == "nil");
+
+    // Ragnaros enters stealth and leaves visibility via OUT_OF_RANGE_OBJECTS.
+    Packet oor(wireOpcode(Opcode::SMSG_UPDATE_OBJECT));
+    oor.writeUInt32(1);
+    oor.writeUInt8(0);
+    oor.writeUInt8(static_cast<uint8_t>(wowee::game::UpdateType::OUT_OF_RANGE_OBJECTS));
+    oor.writeUInt32(1);
+    oor.writePackedGuid(kRagnarosGuid);
+    h.session.receive(oor);
+    CHECK(h.session.handler().getUnitAuras(kRagnarosGuid) == nullptr);
+
+    // Ragnaros removes 20567/21859/21107 while submerged and re-enters view via CREATE_OBJECT
+    // with ZERO non-zero UNIT_FIELD_AURAS fields omitted from the update mask.
+    h.session.receive(UpdateObject().tbc().create(
+        kRagnarosGuid, ObjectType::UNIT,
+        {{UF::UNIT_FIELD_HEALTH, 1099230},
+         {UF::UNIT_FIELD_MAXHEALTH, 1099230},
+         {UF::UNIT_FIELD_LEVEL, 63},
+         {UF::UNIT_FIELD_DISPLAYID, 11121}}));
+    h.session.handler().setTargetGuidRaw(kRagnarosGuid);
+    h.session.handler().getSpellHandler()->restoreTargetAuras(kRagnarosGuid);
+    CHECK(evalStr("UnitBuff('target', 1)") == "nil");
+
+    // 2. Same guarantee if a fresh CREATE_OBJECT arrives with 0 auras without a prior OUT_OF_RANGE
+    //    (e.g. map transfer / phase / group member re-entering range after buffs expired):
+    h.session.receive(UpdateObject().tbc().valuesAt(
+        kRagnarosGuid,
+        {{auraBase + 0, 20567u},
+         {flagsBase + 0, 0x00000019u}}));
+    CHECK(evalStr("UnitBuff('target', 1)") == "Ragnaros Submerge Visual");
+    h.session.receive(UpdateObject().tbc().create(
+        kRagnarosGuid, ObjectType::UNIT,
+        {{UF::UNIT_FIELD_HEALTH, 1099230},
+         {UF::UNIT_FIELD_MAXHEALTH, 1099230},
+         {UF::UNIT_FIELD_LEVEL, 63},
+         {UF::UNIT_FIELD_DISPLAYID, 11121}}));
+    CHECK(evalStr("UnitBuff('target', 1)") == "nil");
+
+    // 3. SMSG_DESTROY_OBJECT also purges non-group unitAurasCache_:
+    h.session.receive(UpdateObject().tbc().valuesAt(
+        kRagnarosGuid,
+        {{auraBase + 0, 20567u},
+         {flagsBase + 0, 0x00000019u}}));
+    REQUIRE(h.session.handler().getUnitAuras(kRagnarosGuid) != nullptr);
+    Packet destroyPkt(wireOpcode(Opcode::SMSG_DESTROY_OBJECT));
+    destroyPkt.writeUInt64(kRagnarosGuid);
+    h.session.receive(destroyPkt);
+    CHECK(h.session.handler().getUnitAuras(kRagnarosGuid) == nullptr);
+
+    // 4. SPELL_ATTR_EX5_NO_CASTER_AURA_ICON (16914 Hurricane) & SPELL_ATTR_EX5_NO_TARGET_AURA_ICON (38034 Blue Beam)
+    //    across UnitBuff, UnitDebuff, GetPlayerBuff, and SMSG_SET_EXTRA_AURA_INFO:
+    h.session.receive(buildSetExtraAuraInfo(Session::kPlayerGuid, 40, 16914, 10000, 10000));
+    h.session.receive(UpdateObject().tbc().valuesAt(
+        Session::kPlayerGuid,
+        {{auraBase + 40, 16914u},
+         {flagsBase + 10, 0x00000009u}})); // slot 40: AFLAG_EFFECT_0 | AFLAG_NOT_CASTER (0x08)
+    // Even if SMSG_SET_EXTRA_AURA_INFO arrives again after UNIT_FIELD_AURAS, selfCast bit 0x08 stays set!
+    h.session.receive(buildSetExtraAuraInfo(Session::kPlayerGuid, 40, 16914, 10000, 9000));
+    CHECK(evalStr("UnitDebuff('player', 1)") == "nil");
+    CHECK(evalStr("GetPlayerBuff(1, 'HARMFUL')") == "0");
+
+    // Self-cast 38034 Blue Beam (NO_TARGET_AURA_ICON) on player (AFLAG_NOT_CASTER 0x08 set) -> visible!
+    h.session.receive(UpdateObject().tbc().valuesAt(
+        Session::kPlayerGuid,
+        {{auraBase + 0, 38034u},
+         {flagsBase + 0, 0x00000019u}}));
+    CHECK(evalStr("UnitBuff('player', 1)") == "Blue Beam");
+    CHECK(evalStr("GetPlayerBuff(1, 'HELPFUL')") != "0");
+
+    // Other-cast 38034 Blue Beam on target mob (AFLAG_NOT_CASTER 0x08 clear) -> hidden!
+    h.session.handler().setTargetGuidRaw(kMobGuid);
+    h.session.handler().getSpellHandler()->restoreTargetAuras(kMobGuid);
+    h.session.receive(UpdateObject().tbc().valuesAt(
+        kMobGuid,
+        {{auraBase + 0, 38034u},
+         {flagsBase + 0, 0x00000011u}}));
+    CHECK(evalStr("UnitBuff('target', 1)") == "nil");
+
+    // Self-cast 38034 Blue Beam on target mob (AFLAG_NOT_CASTER 0x08 set) -> visible!
+    h.session.receive(UpdateObject().tbc().valuesAt(
+        kMobGuid,
+        {{auraBase + 0, 38034u},
+         {flagsBase + 0, 0x00000019u}}));
+    CHECK(evalStr("UnitBuff('target', 1)") == "Blue Beam");
+}

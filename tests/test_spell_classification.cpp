@@ -859,3 +859,39 @@ TEST_CASE("takesUnitCastTarget strips selected unit from script/area/object pet 
     CHECK(takesUnitCastTarget(0u, 0x0002u));    // Explicit TARGET_FLAG_UNIT
     CHECK_FALSE(takesUnitCastTarget(8u, 0x0040u)); // Ground destination only (37146 Chess Move)
 }
+
+TEST_CASE("isAuraVisible enforces TBC 2.4.3 AttributesEx5 caster/target icon flags and submerge aura flags",
+          "[spell][classification][aura][ex5]") {
+    using namespace wowee::game::spellclass;
+    constexpr uint32_t kApplyAura[3]  = {6, 0, 0};
+    constexpr uint32_t kHurricane[3]  = {27, 27, 6};
+    constexpr uint32_t kGustOfWind[3] = {98, 6, 0};
+    constexpr uint8_t  kSelfCastFlag  = 0x08u; // AFLAG_NOT_CASTER (caster == target)
+    constexpr uint8_t  kOtherCastFlag = 0x01u; // AFLAG_EFFECT_0 only (caster != target)
+
+    // Hurricane (16914/17401/17402/27012): AttributesEx5 = 0x08002000 (SPELL_ATTR_EX5_NO_CASTER_AURA_ICON).
+    // Hidden on caster when self-applied (AFLAG_NOT_CASTER 0x08), visible on other targets.
+    CHECK_FALSE(isAuraVisible(0x00010000u, 0x0000008cu, kHurricane, 0x08002000u, kSelfCastFlag));
+    CHECK_FALSE(isAuraVisible(0x00010000u, 0x0000008cu, kHurricane, 0x08002000u, 0x80u | kSelfCastFlag));
+    CHECK(isAuraVisible(0x00010000u, 0x0000008cu, kHurricane, 0x08002000u, kOtherCastFlag));
+    CHECK(isAuraVisible(0x00010000u, 0x0000008cu, kHurricane, 0x08002000u, 0x80u | kOtherCastFlag));
+
+    // Darkness (45996): AttributesEx5 = 0x08000000 (SPELL_ATTR_EX5_NO_CASTER_AURA_ICON).
+    CHECK_FALSE(isAuraVisible(0x00000000u, 0x00000000u, kHurricane, 0x08000000u, kSelfCastFlag));
+    CHECK(isAuraVisible(0x00000000u, 0x00000000u, kHurricane, 0x08000000u, kOtherCastFlag));
+
+    // Blue Beam (38034) & Gust of Wind (43621): AttributesEx5 = 0x10000000 (SPELL_ATTR_EX5_NO_TARGET_AURA_ICON).
+    // Hidden when cast by another unit (AFLAG_NOT_CASTER clear), visible when self-cast (AFLAG_NOT_CASTER set).
+    CHECK_FALSE(isAuraVisible(0x00000100u, 0x00004004u, kApplyAura, 0x10000000u, kOtherCastFlag));
+    CHECK(isAuraVisible(0x00000100u, 0x00004004u, kApplyAura, 0x10000000u, kSelfCastFlag));
+    CHECK_FALSE(isAuraVisible(0x00000000u, 0x00000088u, kGustOfWind, 0x10000000u, kOtherCastFlag));
+    CHECK(isAuraVisible(0x00000000u, 0x00000088u, kGustOfWind, 0x10000000u, kSelfCastFlag));
+
+    // Submerge spells in TBC 2.4.3 Spell.dbc (verified on WOWEE_PAIR=11):
+    // - 20567 Ragnaros Submerge Visual (attr=0x20000110) & 28819 Submerge Visual (attr=0x29000110): visible while active.
+    // - 21107 Ragnaros Submerge Fade (attr=0x20000090, attrEx=0x10000000) & 26234 Submerge Visual (attrEx=0x10000000): hidden.
+    CHECK(isAuraVisible(0x20000110u, 0x00000000u, kApplyAura, 0u, 0x19u));
+    CHECK(isAuraVisible(0x29000110u, 0x00000000u, kApplyAura, 0u, 0x19u));
+    CHECK_FALSE(isAuraVisible(0x20000090u, 0x10000000u, kApplyAura, 0u, 0x19u));
+    CHECK_FALSE(isAuraVisible(0x20000110u, 0x10000000u, kApplyAura, 0u, 0x19u));
+}

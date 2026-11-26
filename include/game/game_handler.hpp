@@ -4833,6 +4833,7 @@ public:
         /// Zero where the installed layout lacks the column.
         uint32_t attrEx2 = 0;
         uint32_t attrEx3 = 0;
+        uint32_t attrEx5 = 0;
         /// Forms the spell needs (bit n-1 for form n) and forms it refuses.
         uint32_t stances = 0;
         uint32_t stancesNot = 0;
@@ -4870,6 +4871,13 @@ public:
         loadSpellNameCache();
         const auto it = spellNameCache_.find(spellId);
         return it == spellNameCache_.end() ? nullptr : &it->second;
+    }
+    bool isAuraVisible(const AuraSlot& aura) const {
+        if (aura.isEmpty() || aura.spellId == 0) return false;
+        const SpellNameEntry* entry = getSpellNameEntry(aura.spellId);
+        if (!entry) return false;
+        return spellclass::isAuraVisible(entry->attr, entry->attrEx, entry->effectIds,
+                                         entry->attrEx5, aura.flags);
     }
     /// Spell name to emit for COMBAT_TEXT_UPDATE (SPELL_AURA_START / _END),
     /// or empty if unknown or suppressed by Spell.dbc Attributes

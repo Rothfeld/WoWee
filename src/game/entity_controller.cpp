@@ -388,7 +388,11 @@ void EntityController::processOutOfRangeObjects(const std::vector<uint64_t>& gui
                 }
             }
         }
+        if (owner_.getSpellHandler() && guid != owner_.getPlayerGuid() && !owner_.isGroupMember(guid)) {
+            owner_.getSpellHandler()->removeUnitAuraCache(guid);
+        }
         if (guid == owner_.getTargetGuid() && !owner_.isGroupMember(guid)) owner_.clearTarget();
+        if (guid == owner_.getFocusGuid() && !owner_.isGroupMember(guid)) pendingEvents_.emit("UNIT_AURA", {"focus"});
         if (owner_.getCombatHandler()) {
             if (guid == owner_.getCombatHandler()->getAutoAttackTargetGuid())
                 owner_.stopAutoAttack();
@@ -644,7 +648,10 @@ void EntityController::syncPreWotlkAurasFromFields(const std::shared_ptr<Entity>
     for (const auto& [fk, fv] : allFields) {
         if (fk >= ufAuras && fk < ufAuras + auraSlots) { hasAuraField = true; break; }
     }
-    if (!hasAuraField) return;
+    const bool hadPreviousAura = std::any_of(
+        previousAuras.begin(), previousAuras.end(),
+        [](const AuraSlot& s) { return !s.isEmpty(); });
+    if (!hasAuraField && !hadPreviousAura) return;
     // Every rage tick of a warrior is a values update of the player. Native
     // 2.4.3 fires UNIT_AURA and PLAYER_AURAS_CHANGED when an aura comes or
     // goes, not on each UNIT_RAGE; rebuilding on any update fired both with
@@ -3823,8 +3830,14 @@ void EntityController::handleDestroyObject(network::Packet& packet) {
     // damage numbers don't linger after the source/target despawns.
     if (owner_.getCombatHandler()) owner_.getCombatHandler()->removeCombatTextForGuid(data.guid);
 
-    // Clean up unit cast owner_.getState() (cast bar) for the destroyed unit
-    if (owner_.getSpellHandler()) owner_.getSpellHandler()->removeUnitCastState(data.guid);
+    // Clean up unit cast state and cached auras for the destroyed unit
+    if (owner_.getSpellHandler()) {
+        owner_.getSpellHandler()->removeUnitCastState(data.guid);
+        if (data.guid != owner_.getPlayerGuid() && !owner_.isGroupMember(data.guid)) {
+            owner_.getSpellHandler()->removeUnitAuraCache(data.guid);
+            if (data.guid == owner_.getFocusGuid()) owner_.fireAddonEvent("UNIT_AURA", {"focus"});
+        }
+    }
     // Clean up cached auras
     if (owner_.getSpellHandler()) owner_.getSpellHandler()->removeUnitAuraCache(data.guid);
 

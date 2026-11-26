@@ -1498,7 +1498,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             const float dotGap  = 2.0f;
             float dotX = barX;
             for (const auto& aura : auras) {
-                if (aura.isEmpty() || aura.casterGuid != pguid) continue;
+                if (aura.isEmpty() || aura.casterGuid != pguid || !gameHandler.isAuraVisible(aura)) continue;
                 uint8_t dispelType = gameHandler.getSpellDispelType(aura.spellId);
                 ImU32 dotCol;
                 switch (dispelType) {
