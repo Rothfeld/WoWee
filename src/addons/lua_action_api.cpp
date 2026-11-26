@@ -3071,9 +3071,13 @@ void registerActionLuaAPI(lua_State* L) {
                 {"GetNumBindings",      lua_GetNumBindings},
                 {"GetBinding",          lua_GetBinding},
                 {"SetBinding",          lua_SetBinding},
+                // GetBindingByKey(key) resolves through the same partial-modifier
+                // submask fallback as live keypresses (unlike GetBindingAction,
+                // which checks only the exact chord for the Key Bindings editor)
+                // and returns nil when unbound (VoiceOptionsFrame.lua:370).
                 {"GetBindingByKey", [](lua_State* L) -> int {
             seedBindingDefaults(L);
-            const auto command = wowee::ui::KeybindingManager::getInstance().commandForKey(luaL_checkstring(L, 1));
+            const auto command = wowee::ui::KeybindingManager::getInstance().resolveCommand(luaL_checkstring(L, 1));
             if (command.empty()) lua_pushnil(L);
             else lua_pushstring(L, command.c_str());
             return 1;

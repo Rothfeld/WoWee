@@ -352,3 +352,50 @@ TEST_CASE_METHOD(Fixture, "Legacy v2 full-snapshot bindings do not steal BONUSAC
     CHECK(manager.commandForKey("CTRL-1") == "SHAPESHIFTBUTTON1");
     CHECK(manager.commandForKey("CTRL-8") == "BONUSACTIONBUTTON8");
 }
+
+TEST_CASE_METHOD(Fixture,
+                 "Multi-modifier chords resolve through TBC 2.4.3 submask fallback (SHIFT > CTRL > ALT > base)",
+                 "[bindings][subchord-fallback]") {
+    // Default TBC 2.4.3 sound/music hotkeys live on CTRL-S and CTRL-M while S and M
+    // hold MOVEBACKWARD and TOGGLEWORLDMAP. Pressing CTRL-SHIFT-S, ALT-CTRL-S, or
+    // ALT-CTRL-SHIFT-S must resolve to TOGGLESOUND (never MOVEBACKWARD), while
+    // SHIFT-S, ALT-S, and ALT-SHIFT-S still fall back to MOVEBACKWARD.
+    CHECK(manager.commandForKey("CTRL-S") == "TOGGLESOUND");
+    CHECK(manager.commandForKey("CTRL-SHIFT-S").empty());
+    CHECK(manager.resolveCommand("S") == "MOVEBACKWARD");
+    CHECK(manager.resolveCommand("SHIFT-S") == "MOVEBACKWARD");
+    CHECK(manager.resolveCommand("ALT-S") == "MOVEBACKWARD");
+    CHECK(manager.resolveCommand("ALT-SHIFT-S") == "MOVEBACKWARD");
+    CHECK(manager.resolveCommand("CTRL-S") == "TOGGLESOUND");
+    CHECK(manager.resolveCommand("CTRL-SHIFT-S") == "TOGGLESOUND");
+    CHECK(manager.resolveCommand("ALT-CTRL-S") == "TOGGLESOUND");
+    CHECK(manager.resolveCommand("ALT-CTRL-SHIFT-S") == "TOGGLESOUND");
+
+    CHECK(manager.resolveCommand("CTRL-M") == "TOGGLEMUSIC");
+    CHECK(manager.resolveCommand("CTRL-SHIFT-M") == "TOGGLEMUSIC");
+    CHECK(manager.resolveCommand("ALT-CTRL-M") == "TOGGLEMUSIC");
+    CHECK(manager.resolveCommand("SHIFT-M") == "TOGGLEWORLDMAP");
+
+    // Queued SDL CTRL+SHIFT+S key-down latches TOGGLESOUND, never MOVEBACKWARD.
+    manager.beginInputFrame();
+    event(SDL_SCANCODE_S, true, SDL_KMOD_CTRL | SDL_KMOD_SHIFT);
+    CHECK(manager.isCommandPressed("TOGGLESOUND"));
+    CHECK_FALSE(manager.isCommandPressed("MOVEBACKWARD"));
+    CHECK_FALSE(manager.isCommandDown("MOVEBACKWARD"));
+    event(SDL_SCANCODE_S, false, SDL_KMOD_CTRL | SDL_KMOD_SHIFT);
+
+    // Exact 3-bit submask tie-breaking verified on Native TBC 2.4.3 (WOWEE_PAIR=4):
+    // SHIFT (4) > CTRL (2) > ALT (1), and CTRL-SHIFT (6) > ALT-SHIFT (5) > SHIFT (4) > ALT-CTRL (3).
+    REQUIRE(manager.setBinding(";", "TOGGLEBAG1"));
+    REQUIRE(manager.setBinding("SHIFT-;", "TOGGLEBAG2"));
+    REQUIRE(manager.setBinding("CTRL-;", "TOGGLEBAG3"));
+    REQUIRE(manager.setBinding("ALT-;", "TOGGLEBAG4"));
+    CHECK(manager.resolveCommand("CTRL-SHIFT-;") == "TOGGLEBAG2");
+    CHECK(manager.resolveCommand("ALT-SHIFT-;") == "TOGGLEBAG2");
+    CHECK(manager.resolveCommand("ALT-CTRL-;") == "TOGGLEBAG3");
+    CHECK(manager.resolveCommand("ALT-CTRL-SHIFT-;") == "TOGGLEBAG2");
+
+    REQUIRE(manager.setBinding("CTRL-SHIFT-;", "RESETVIEW2"));
+    REQUIRE(manager.setBinding("ALT-SHIFT-;", "RESETVIEW3"));
+    CHECK(manager.resolveCommand("ALT-CTRL-SHIFT-;") == "RESETVIEW2");
+}

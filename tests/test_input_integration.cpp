@@ -7587,6 +7587,49 @@ TEST_CASE_METHOD(Integration, "Peace-forced faction keeps standing reaction inst
 }
 
 TEST_CASE_METHOD(Integration,
+                 "CTRL-SHIFT-S and CTRL-S dispatch TOGGLESOUND while GetBindingByKey resolves sub-chords",
+                 "[bindings][sound][tbc]") {
+    run(R"LUA(
+        __toggledSound = 0
+        __toggledMusic = 0
+        __WoweeBindingScripts["TOGGLESOUND"] = function(state)
+            if state == "down" then __toggledSound = __toggledSound + 1 end
+        end
+        __WoweeBindingScripts["TOGGLEMUSIC"] = function(state)
+            if state == "down" then __toggledMusic = __toggledMusic + 1 end
+        end
+    )LUA");
+
+    // Exact lookup (GetBindingAction) stays empty on CTRL-SHIFT-S for the Key Bindings UI,
+    // while GetBindingByKey resolves through sub-chords just like Native TBC 2.4.3.
+    truth("GetBindingKey('TOGGLESOUND') == 'CTRL-S'");
+    truth("GetBindingKey('TOGGLEMUSIC') == 'CTRL-M'");
+    truth("GetBindingAction('CTRL-S') == 'TOGGLESOUND'");
+    truth("GetBindingAction('CTRL-SHIFT-S') == ''");
+    truth("GetBindingByKey('S') == 'MOVEBACKWARD'");
+    truth("GetBindingByKey('SHIFT-S') == 'MOVEBACKWARD'");
+    truth("GetBindingByKey('CTRL-S') == 'TOGGLESOUND'");
+    truth("GetBindingByKey('CTRL-SHIFT-S') == 'TOGGLESOUND'");
+    truth("GetBindingByKey('ALT-CTRL-S') == 'TOGGLESOUND'");
+    truth("GetBindingByKey('ALT-CTRL-SHIFT-S') == 'TOGGLESOUND'");
+    truth("GetBindingByKey('CTRL-SHIFT-M') == 'TOGGLEMUSIC'");
+    truth("GetBindingByKey('F7') == nil");
+
+    // Dispatching physical CTRL+SHIFT+S and CTRL+S runs TOGGLESOUND, and CTRL+SHIFT+M runs TOGGLEMUSIC.
+    CHECK(lua.dispatchBindingKey(SDLK_S, true, true, false, true));
+    CHECK(lua.dispatchBindingKey(SDLK_S, false, false, false, false));
+    truth("__toggledSound == 1");
+
+    CHECK(lua.dispatchBindingKey(SDLK_S, false, true, false, true));
+    CHECK(lua.dispatchBindingKey(SDLK_S, false, false, false, false));
+    truth("__toggledSound == 2");
+
+    CHECK(lua.dispatchBindingKey(SDLK_M, true, true, false, true));
+    CHECK(lua.dispatchBindingKey(SDLK_M, false, false, false, false));
+    truth("__toggledMusic == 1");
+}
+
+TEST_CASE_METHOD(Integration,
                  "TurnInArenaPetition serializes 28-byte TBC arena emblem payload while TurnInGuildCharter stays 8-byte",
                  "[petition][arena][tbc]") {
     using namespace wowee::game;

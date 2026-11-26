@@ -196,6 +196,9 @@ void KeybindingManager::initializeDefaults(Device device) {
         // Native defaults (GetBindingKey on 2.4.3): END / HOME; SETVIEW,
         // SAVEVIEW and RESETVIEW are unbound.
         {"NEXTVIEW", {"END", ""}}, {"PREVVIEW", {"HOME", ""}},
+        // Native 2.4.3 WTF\DefaultBindings.wtf audio hotkeys (lines 121-124).
+        {"TOGGLEMUSIC", {"CTRL-M", ""}}, {"TOGGLESOUND", {"CTRL-S", ""}},
+        {"MASTERVOLUMEUP", {"CTRL-=", ""}}, {"MASTERVOLUMEDOWN", {"CTRL--", ""}},
     };
     bindings_.insert(defaults.begin(), defaults.end());
     // The action bar keys as native 2.4.3 defaults them (GetBinding over
@@ -543,9 +546,28 @@ std::pair<std::string, std::string> KeybindingManager::resolve(const std::string
             if (slots[0] == identity || slots[1] == identity) return {identity, command};
         return {};
     };
-    auto matched = exact(key);
+    if (!fallback) return exact(key);
+
+    // Native TBC 2.4.3 resolves unbound modifier chords through partial modifier
+    // sub-chords in descending 3-bit submask order (SHIFT=4, CTRL=2, ALT=1) before
+    // falling back to the unmodified base key: e.g. CTRL-SHIFT-S (6) checks
+    // CTRL-SHIFT-S (6), SHIFT-S (4), CTRL-S (2 -> TOGGLESOUND), then S (0).
     const auto base = baseKey(key);
-    return matched.second.empty() && fallback && base != key ? exact(base) : matched;
+    const std::string_view modsPrefix(key.data(), key.size() - base.size());
+    int mask = 0;
+    if (modsPrefix.find("SHIFT-") != std::string_view::npos) mask |= 4;
+    if (modsPrefix.find("CTRL-") != std::string_view::npos)  mask |= 2;
+    if (modsPrefix.find("ALT-") != std::string_view::npos)   mask |= 1;
+
+    for (int sub = mask;; sub = (sub - 1) & mask) {
+        const std::string candidate =
+            modifiedKey(base, (sub & 4) != 0, (sub & 2) != 0, (sub & 1) != 0);
+        if (auto matched = exact(candidate); !matched.second.empty()) {
+            return matched;
+        }
+        if (sub == 0) break;
+    }
+    return {};
 }
 std::string KeybindingManager::commandForKey(const std::string& key) const { return resolve(key, false).second; }
 std::string KeybindingManager::resolveBindingKey(const std::string& key) const { return resolve(key, true).first; }
