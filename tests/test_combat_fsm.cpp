@@ -4,6 +4,7 @@
 #include "rendering/animation/animation_ids.hpp"
 #include "rendering/animation/hit_reaction.hpp"
 #include "rendering/animation/melee_swing_queue.hpp"
+#include "rendering/animation/weapon_spell_anim.hpp"
 #include "game/inventory.hpp"
 
 using namespace wowee::rendering;
@@ -994,4 +995,178 @@ TEST_CASE("CombatFSM: Auto Shot ranged aiming holds HoldBow between shots and ac
     REQUIRE(reAim.valid);
     CHECK(fsm.getState() == CombatFSM::State::RANGED_LOAD);
     CHECK(reAim.animId == anim::LOAD_BOW);
+}
+
+TEST_CASE("WeaponLoadout: TBC 2.4.3 ItemSubClass.dbc weapon grip and crit mapping across all 21 subclasses",
+          "[combat][weapon-subclass][tbc]") {
+    namespace G = wowee::game;
+
+    auto makeMainHand = [](uint32_t subClass, uint8_t invType) {
+        WeaponLoadout wl{};
+        applyMainHandWeaponSubclass(wl, G::ITEM_CLASS_WEAPON, subClass, invType);
+        return wl;
+    };
+
+    // 1. 2H Loose family (ItemSubClass.dbc f6 == 1, f9 == 2):
+    //    Polearm (6), Staff (10), Spear (17), Fishing Pole (20).
+    for (uint32_t sub : {static_cast<uint32_t>(G::WEAPON_SUBCLASS_POLEARM),
+                         static_cast<uint32_t>(G::WEAPON_SUBCLASS_STAFF),
+                         static_cast<uint32_t>(G::WEAPON_SUBCLASS_SPEAR),
+                         static_cast<uint32_t>(G::WEAPON_SUBCLASS_FISHING_POLE)}) {
+        INFO("2H Loose subclass=" << sub);
+        const auto wl = makeMainHand(sub, G::InvType::TWO_HAND);
+        CHECK(wl.is2HLoose);
+        CHECK(wl.inventoryType == G::InvType::TWO_HAND);
+        CHECK_FALSE(wl.isFist);
+        CHECK_FALSE(wl.isDagger);
+        CHECK(meleeReadyAnimation(wl) == anim::READY_2H_LOOSE);
+        CHECK(parryAnimationForReady(meleeReadyAnimation(wl)) == anim::PARRY_2H_LOOSE);
+        CHECK(meleeNormalAttackAnimation(wl) == anim::ATTACK_2H_LOOSE);
+        CHECK(meleeCriticalAttackAnimation(wl) == anim::SPECIAL_2H);
+        CHECK(resolveWeaponSpellAnimation(anim::SPECIAL_1H, wl) == anim::SPECIAL_2H);
+        CHECK(resolveWeaponSpellAnimation(anim::ATTACK_1H, wl) == anim::ATTACK_2H_LOOSE);
+
+        // Monster virtual items authored with INVTYPE_WEAPON (13) keep 2HL by subclass.
+        const auto monsterWl = makeMainHand(sub, G::InvType::ONE_HAND);
+        CHECK(monsterWl.is2HLoose);
+        CHECK(meleeReadyAnimation(monsterWl) == anim::READY_2H_LOOSE);
+        CHECK(meleeNormalAttackAnimation(monsterWl) == anim::ATTACK_2H_LOOSE);
+    }
+
+    // 2. 2H Tight family (ItemSubClass.dbc f9 == 2, f6 != 1):
+    //    2H Axe (1), 2H Mace (5), 2H Sword (8), 2H Exotic (12).
+    for (uint32_t sub : {static_cast<uint32_t>(G::WEAPON_SUBCLASS_AXE_2H),
+                         static_cast<uint32_t>(G::WEAPON_SUBCLASS_MACE_2H),
+                         static_cast<uint32_t>(G::WEAPON_SUBCLASS_SWORD_2H),
+                         static_cast<uint32_t>(G::WEAPON_SUBCLASS_EXOTIC_2H)}) {
+        INFO("2H Tight subclass=" << sub);
+        const auto wl = makeMainHand(sub, G::InvType::TWO_HAND);
+        CHECK_FALSE(wl.is2HLoose);
+        CHECK(wl.inventoryType == G::InvType::TWO_HAND);
+        CHECK(meleeReadyAnimation(wl) == anim::READY_2H);
+        CHECK(parryAnimationForReady(meleeReadyAnimation(wl)) == anim::PARRY_2H);
+        CHECK(meleeNormalAttackAnimation(wl) == anim::ATTACK_2H);
+        CHECK(meleeCriticalAttackAnimation(wl) == anim::SPECIAL_2H);
+
+        // Monster 2H weapons with INVTYPE_WEAPON (13) still swing 2H by subclass.
+        const auto monsterWl = makeMainHand(sub, G::InvType::ONE_HAND);
+        CHECK(monsterWl.inventoryType == G::InvType::TWO_HAND);
+        CHECK(meleeReadyAnimation(monsterWl) == anim::READY_2H);
+        CHECK(meleeNormalAttackAnimation(monsterWl) == anim::ATTACK_2H);
+    }
+
+    // 3. Fist Weapon (13) and Unarmed: ReadyUnarmed (25), AttackUnarmed (16),
+    //    ParryUnarmed (20), SpecialUnarmed (118) on crit.
+    {
+        const auto fist = makeMainHand(G::WEAPON_SUBCLASS_FIST, G::InvType::ONE_HAND);
+        CHECK(fist.isFist);
+        CHECK(meleeReadyAnimation(fist) == anim::READY_UNARMED);
+        CHECK(parryAnimationForReady(meleeReadyAnimation(fist)) == anim::PARRY_UNARMED);
+        CHECK(meleeNormalAttackAnimation(fist) == anim::ATTACK_UNARMED);
+        CHECK(meleeCriticalAttackAnimation(fist) == anim::SPECIAL_UNARMED);
+
+        const WeaponLoadout unarmed{};
+        CHECK(meleeReadyAnimation(unarmed) == anim::READY_UNARMED);
+        CHECK(parryAnimationForReady(meleeReadyAnimation(unarmed)) == anim::PARRY_UNARMED);
+        CHECK(meleeNormalAttackAnimation(unarmed) == anim::ATTACK_UNARMED);
+        CHECK(meleeCriticalAttackAnimation(unarmed) == anim::SPECIAL_UNARMED);
+    }
+
+    // 4. Dagger (15): Ready1H (26), Attack1HPierce (85) on both normal and crit, Parry1H (21).
+    {
+        const auto dagger = makeMainHand(G::WEAPON_SUBCLASS_DAGGER, G::InvType::ONE_HAND);
+        CHECK(dagger.isDagger);
+        CHECK(meleeReadyAnimation(dagger) == anim::READY_1H);
+        CHECK(parryAnimationForReady(meleeReadyAnimation(dagger)) == anim::PARRY_1H);
+        CHECK(meleeNormalAttackAnimation(dagger) == anim::ATTACK_1H_PIERCE);
+        CHECK(meleeCriticalAttackAnimation(dagger) == anim::ATTACK_1H_PIERCE);
+    }
+
+    // 5. 1H standard & Miscellaneous (0, 4, 7, 9, 11, 14): Ready1H (26), Attack1H (17),
+    //    Parry1H (21), Special1H (57) on crit -- including 2H-slot Miscellaneous items
+    //    such as Mallet of Zul'Farrak (9239, subClass=14, InvType=TWO_HAND).
+    for (uint32_t sub : {static_cast<uint32_t>(G::WEAPON_SUBCLASS_AXE_1H),
+                         static_cast<uint32_t>(G::WEAPON_SUBCLASS_MACE_1H),
+                         static_cast<uint32_t>(G::WEAPON_SUBCLASS_SWORD_1H),
+                         static_cast<uint32_t>(G::WEAPON_SUBCLASS_OBSOLETE),
+                         static_cast<uint32_t>(G::WEAPON_SUBCLASS_EXOTIC_1H),
+                         static_cast<uint32_t>(G::WEAPON_SUBCLASS_MISC)}) {
+        INFO("1H / Misc subclass=" << sub);
+        const auto wl1h = makeMainHand(sub, G::InvType::MAIN_HAND);
+        CHECK_FALSE(wl1h.is2HLoose);
+        CHECK(wl1h.inventoryType == G::InvType::ONE_HAND);
+        CHECK(meleeReadyAnimation(wl1h) == anim::READY_1H);
+        CHECK(parryAnimationForReady(meleeReadyAnimation(wl1h)) == anim::PARRY_1H);
+        CHECK(meleeNormalAttackAnimation(wl1h) == anim::ATTACK_1H);
+        CHECK(meleeCriticalAttackAnimation(wl1h) == anim::SPECIAL_1H);
+    }
+    {
+        const auto mallet = makeMainHand(G::WEAPON_SUBCLASS_MISC, G::InvType::TWO_HAND);
+        CHECK_FALSE(mallet.is2HLoose);
+        CHECK(mallet.inventoryType == G::InvType::ONE_HAND);
+        CHECK(meleeReadyAnimation(mallet) == anim::READY_1H);
+        CHECK(meleeNormalAttackAnimation(mallet) == anim::ATTACK_1H);
+        CHECK(meleeCriticalAttackAnimation(mallet) == anim::SPECIAL_1H);
+    }
+
+    // 6. Special attack animations count as active melee swings for dual-wield/proc queueing.
+    CHECK(isMeleeSwingAnimation(anim::SPECIAL_1H));
+    CHECK(isMeleeSwingAnimation(anim::SPECIAL_2H));
+    CHECK(isMeleeSwingAnimation(anim::SPECIAL_UNARMED));
+    CHECK(isMeleeSwingAnimation(anim::FLY_SPECIAL_1H));
+    CHECK(isMeleeSwingAnimation(anim::FLY_SPECIAL_2H));
+    CHECK(isMeleeSwingAnimation(anim::FLY_SPECIAL_UNARMED));
+}
+
+TEST_CASE("CombatFSM: Fishing Pole and Spear resolve Ready2HL, Attack2HL on normal swing, and Special2H on crit",
+          "[combat][fishing-pole][tbc]") {
+    namespace G = wowee::game;
+    auto caps = makeCombatCaps();
+    caps.resolvedReady2H = anim::READY_2H;
+    caps.resolvedReady2HLoose = anim::READY_2H_LOOSE;
+    caps.resolvedMelee2H = anim::ATTACK_2H;
+    caps.resolvedMelee2HLoose = anim::ATTACK_2H_LOOSE;
+
+    for (uint32_t sub : {static_cast<uint32_t>(G::WEAPON_SUBCLASS_FISHING_POLE),
+                         static_cast<uint32_t>(G::WEAPON_SUBCLASS_SPEAR)}) {
+        CombatFSM fsm;
+        WeaponLoadout pole{};
+        applyMainHandWeaponSubclass(pole, G::ITEM_CLASS_WEAPON, sub, G::InvType::TWO_HAND);
+
+        auto in = combatInput();
+        in.hasUnsheathe = false;
+
+        // Combat ready stance is Ready2HL (28), not Ready2H (27).
+        auto ready = fsm.resolve(in, caps, pole);
+        REQUIRE(ready.valid);
+        CHECK(fsm.getState() == CombatFSM::State::COMBAT_IDLE);
+        CHECK(ready.animId == anim::READY_2H_LOOSE);
+        CHECK(ready.loop);
+
+        // Normal auto-attack swing plays Attack2HL (19), not Attack2H (18).
+        in.meleeSwingTimer = 1.4f;
+        in.meleeSwingSerial = 1;
+        auto normalSwing = fsm.resolve(in, caps, pole);
+        REQUIRE(normalSwing.valid);
+        CHECK(fsm.getState() == CombatFSM::State::MELEE_SWING);
+        CHECK(normalSwing.animId == anim::ATTACK_2H_LOOSE);
+        CHECK_FALSE(normalSwing.loop);
+
+        // Critical auto-attack swing plays Special2H (58).
+        in.meleeSwingSerial = 2;
+        in.specialAttackAnimId = meleeCriticalAttackAnimation(pole);
+        auto critSwing = fsm.resolve(in, caps, pole);
+        REQUIRE(critSwing.valid);
+        CHECK(fsm.getState() == CombatFSM::State::MELEE_SWING);
+        CHECK(critSwing.animId == anim::SPECIAL_2H);
+        CHECK_FALSE(critSwing.loop);
+
+        // Returning to combat idle after the swing resumes Ready2HL (28).
+        in.meleeSwingTimer = 0.0f;
+        in.specialAttackAnimId = 0;
+        auto postSwing = fsm.resolve(in, caps, pole);
+        REQUIRE(postSwing.valid);
+        CHECK(fsm.getState() == CombatFSM::State::COMBAT_IDLE);
+        CHECK(postSwing.animId == anim::READY_2H_LOOSE);
+    }
 }

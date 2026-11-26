@@ -2747,7 +2747,9 @@ void Application::setState(AppState newState) {
                                 }
                             }
                             if (auto* ac = renderer->getAnimationController()) {
-                                ac->triggerMeleeSwing(offHand, static_cast<float>(attackTimeMs));
+                                ac->triggerMeleeSwing(offHand,
+                                                      static_cast<float>(attackTimeMs),
+                                                      gameHandler->isCurrentMeleeSwingCrit());
                             }
                         }
                     }

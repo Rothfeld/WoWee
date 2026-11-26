@@ -1604,6 +1604,8 @@ public:
     // offHand: true when HITINFO_LEFTSWING (0x4) marks an off-hand auto-attack
     using MeleeSwingCallback = std::function<void(uint32_t spellId, bool offHand)>;
     void setMeleeSwingCallback(MeleeSwingCallback cb) { meleeSwingCallback_ = std::move(cb); }
+    [[nodiscard]] bool isCurrentMeleeSwingCrit() const { return currentMeleeSwingCrit_; }
+    void setCurrentMeleeSwingCrit(bool crit) { currentMeleeSwingCrit_ = crit; }
 
     // Snap the character to face the camera's current look direction and return the
     // resulting canonical orientation. Used by fishing so the bobber lands in front of
@@ -6047,6 +6049,7 @@ private:
     AppearanceChangedCallback appearanceChangedCallback_;
     PlayerModelRebuildCallback playerModelRebuildCallback_;
     MeleeSwingCallback meleeSwingCallback_;
+    bool currentMeleeSwingCrit_ = false;
     FaceCameraProvider faceCameraProvider_;
     RangedWeaponSwapCallback rangedWeaponSwapCallback_;
     bool suppressMeleeSwingAnim_ = false;

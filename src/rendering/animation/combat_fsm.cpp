@@ -9,7 +9,7 @@ namespace wowee {
 namespace rendering {
 
 uint32_t meleeReadyAnimation(const WeaponLoadout& loadout) {
-    if (loadout.inventoryType == game::InvType::NON_EQUIP) return anim::READY_UNARMED;
+    if (loadout.inventoryType == game::InvType::NON_EQUIP || loadout.isFist) return anim::READY_UNARMED;
     if (loadout.is2HLoose) return anim::READY_2H_LOOSE;
     if (loadout.inventoryType == game::InvType::TWO_HAND) return anim::READY_2H;
     return anim::READY_1H;

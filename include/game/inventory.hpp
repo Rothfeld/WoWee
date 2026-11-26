@@ -94,7 +94,7 @@ inline bool isWeaponInventoryType(uint8_t inventoryType) {
 /// tested 13 alone, so an off-hand-only weapon left the character with no
 /// off-hand attack animation and, until the main hand was drawn, no reason to
 /// unsheathe.
-inline bool isOffHandWeaponInventoryType(uint8_t inventoryType) {
+inline constexpr bool isOffHandWeaponInventoryType(uint8_t inventoryType) {
     return inventoryType == InvType::ONE_HAND || inventoryType == InvType::OFF_HAND;
 }
 
@@ -156,18 +156,31 @@ inline std::vector<EquipSlot> comparableEquipSlots(uint8_t inventoryType) {
 // ItemSubclassWeapon (CMaNGOS ItemPrototype.h), for item class 2.
 inline constexpr uint32_t ITEM_CLASS_WEAPON = 2;
 enum WeaponSubclass : uint32_t {
+    WEAPON_SUBCLASS_AXE_1H = 0,
+    WEAPON_SUBCLASS_AXE_2H = 1,
     WEAPON_SUBCLASS_BOW = 2,
     WEAPON_SUBCLASS_GUN = 3,
+    WEAPON_SUBCLASS_MACE_1H = 4,
+    WEAPON_SUBCLASS_MACE_2H = 5,
     WEAPON_SUBCLASS_POLEARM = 6,
+    WEAPON_SUBCLASS_SWORD_1H = 7,
+    WEAPON_SUBCLASS_SWORD_2H = 8,
+    WEAPON_SUBCLASS_OBSOLETE = 9,
     WEAPON_SUBCLASS_STAFF = 10,
+    WEAPON_SUBCLASS_EXOTIC_1H = 11,
+    WEAPON_SUBCLASS_EXOTIC_2H = 12,
     WEAPON_SUBCLASS_FIST = 13,
+    WEAPON_SUBCLASS_MISC = 14,
     WEAPON_SUBCLASS_DAGGER = 15,
+    WEAPON_SUBCLASS_THROWN = 16,
+    WEAPON_SUBCLASS_SPEAR = 17,
     WEAPON_SUBCLASS_CROSSBOW = 18,
     WEAPON_SUBCLASS_WAND = 19,
+    WEAPON_SUBCLASS_FISHING_POLE = 20,
 };
 
 /// True for a weapon of the given ItemSubclassWeapon.
-inline bool isWeaponSubclass(uint32_t itemClass, uint32_t subClass, WeaponSubclass want) {
+inline constexpr bool isWeaponSubclass(uint32_t itemClass, uint32_t subClass, WeaponSubclass want) {
     return itemClass == ITEM_CLASS_WEAPON && subClass == want;
 }
 

@@ -855,7 +855,9 @@ void CombatHandler::handleAttackerStateUpdate(network::Packet& packet) {
             suppressedForRangedShot = true;
             LOG_DEBUG("Suppressed melee swing anim - ranged shot already triggered");
         } else if (!data.isNoAction()) {
+            owner_.setCurrentMeleeSwingCrit(data.isCrit());
             if (owner_.meleeSwingCallbackRef()) owner_.meleeSwingCallbackRef()(0, isOffHandSwing);
+            owner_.setCurrentMeleeSwingCrit(false);
         }
     }
     // Lethal blows suppress victim hit reactions and must not arm or retain a
@@ -896,7 +898,9 @@ void CombatHandler::handleAttackerStateUpdate(network::Packet& packet) {
         }
     }
     if (!isPlayerAttacker && !data.isNoAction() && owner_.npcSwingCallbackRef()) {
+        owner_.setCurrentMeleeSwingCrit(data.isCrit());
         owner_.npcSwingCallbackRef()(data.attackerGuid, isOffHandSwing);
+        owner_.setCurrentMeleeSwingCrit(false);
     }
     // Observers must see the same victim reaction as the combatants. Miss,
     // evade and immunity do not wound; dodge/parry/block are explicit outcomes.

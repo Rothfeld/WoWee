@@ -313,6 +313,7 @@ void AnimationController::resetCombatVisualState() {
     meleeSwingMaxDurationMs_ = 0.0f;
     hasPendingMeleeSwing_ = false;
     pendingMeleeSwingOffHand_ = false;
+    pendingMeleeSwingCrit_ = false;
     pendingMeleeSwingMaxDurationMs_ = 0.0f;
     meleeSwingOffHand_ = false;
     specialAttackAnimId_ = 0;
@@ -342,7 +343,7 @@ bool AnimationController::isMoving() const {
 
 // ── Melee combat ─────────────────────────────────────────────────────────────
 
-void AnimationController::startLocalMeleeSwing(bool offHand, float maxDurationMs) {
+void AnimationController::startLocalMeleeSwing(bool offHand, float maxDurationMs, bool isCrit) {
     auto* characterRenderer = renderer_->getCharacterRenderer();
     uint32_t characterInstanceId = renderer_->getCharacterInstanceId();
     if (!characterRenderer || characterInstanceId == 0) return;
@@ -356,15 +357,35 @@ void AnimationController::startLocalMeleeSwing(bool offHand, float maxDurationMs
     // cross-fade cleanly into a fresh sequence instead of being deduplicated.
     lastPlayerAnimRequest_ = UINT32_MAX;
 
-    resolveMeleeAnimId();
+    float chosenDurationMs = 0.0f;
+    const bool useOffHand = weaponLoadout_.hasOffHand && offHand;
+    if (isCrit && !useOffHand) {
+        const uint32_t critAnim = meleeCriticalAttackAnimation(weaponLoadout_);
+        if (characterRenderer->hasAnimation(characterInstanceId, critAnim)) {
+            specialAttackAnimId_ = critAnim;
+            std::vector<pipeline::M2Sequence> sequences;
+            if (characterRenderer->getAnimationSequences(characterInstanceId, sequences)) {
+                for (const auto& seq : sequences) {
+                    if (seq.id == critAnim && seq.duration > 0) {
+                        chosenDurationMs = static_cast<float>(seq.duration);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    if (specialAttackAnimId_ == 0) {
+        resolveMeleeAnimId();
+        chosenDurationMs = meleeAnimDurationMs_;
+    }
     meleeSwingCooldown_ = 0.1f;
     meleeSwingMaxDurationMs_ = maxDurationMs;
-    float durationSec = meleeAnimDurationMs_ > 0.0f ? meleeAnimDurationMs_ / 1000.0f : 0.6f;
+    float durationSec = chosenDurationMs > 0.0f ? chosenDurationMs / 1000.0f : 0.6f;
     if (meleeSwingMaxDurationMs_ > 0.0f) {
         durationSec = std::min(durationSec, meleeSwingMaxDurationMs_ / 1000.0f);
     }
     if (durationSec < 0.18f) durationSec = 0.18f;
-    if (durationSec > 1.0f) durationSec = 1.0f;
+    if (durationSec > 1.8f) durationSec = 1.8f;
     meleeSwingTimer_ = durationSec;
 
     if (renderer_->getAudioCoordinator()->getActivitySoundManager()) {
@@ -372,7 +393,7 @@ void AnimationController::startLocalMeleeSwing(bool offHand, float maxDurationMs
     }
 }
 
-void AnimationController::triggerMeleeSwing(bool offHand, float attackTimeMs) {
+void AnimationController::triggerMeleeSwing(bool offHand, float attackTimeMs, bool isCrit) {
     auto* characterRenderer = renderer_->getCharacterRenderer();
     uint32_t characterInstanceId = renderer_->getCharacterInstanceId();
     if (!characterRenderer || characterInstanceId == 0) return;
@@ -384,6 +405,7 @@ void AnimationController::triggerMeleeSwing(bool offHand, float attackTimeMs) {
         const float pairMaxMs = dualWieldSwingMaxMs(attackTimeMs);
         hasPendingMeleeSwing_ = true;
         pendingMeleeSwingOffHand_ = offHand;
+        pendingMeleeSwingCrit_ = isCrit;
         pendingMeleeSwingMaxDurationMs_ = pairMaxMs;
         if (pairMaxMs > 0.0f) {
             uint32_t curAnim = 0;
@@ -406,7 +428,7 @@ void AnimationController::triggerMeleeSwing(bool offHand, float attackTimeMs) {
         return;
     }
     if (meleeSwingCooldown_ > 0.0f) return;
-    startLocalMeleeSwing(offHand, attackTimeMs);
+    startLocalMeleeSwing(offHand, attackTimeMs, isCrit);
 }
 
 void AnimationController::setEquippedWeaponType(uint32_t inventoryType, bool is2HLoose,
@@ -468,7 +490,7 @@ void AnimationController::triggerSpecialAttack(uint32_t /*spellId*/) {
         }
     }
     if (dur < 0.25f) dur = 0.25f;
-    if (dur > 1.0f) dur = 1.0f;
+    if (dur > 1.8f) dur = 1.8f;
     meleeSwingTimer_ = dur;
     if (renderer_->getAudioCoordinator()->getActivitySoundManager()) {
         renderer_->getAudioCoordinator()->getActivitySoundManager()->playMeleeSwing();
@@ -1008,10 +1030,12 @@ void AnimationController::updateMeleeTimers(float deltaTime) {
             specialAttackAnimId_ = 0;
             if (hasPendingMeleeSwing_) {
                 const bool nextOffHand = pendingMeleeSwingOffHand_;
+                const bool nextCrit = pendingMeleeSwingCrit_;
                 const float nextMaxMs = pendingMeleeSwingMaxDurationMs_;
                 hasPendingMeleeSwing_ = false;
+                pendingMeleeSwingCrit_ = false;
                 pendingMeleeSwingMaxDurationMs_ = 0.0f;
-                startLocalMeleeSwing(nextOffHand, nextMaxMs);
+                startLocalMeleeSwing(nextOffHand, nextMaxMs, nextCrit);
             }
         }
     }

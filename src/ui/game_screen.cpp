@@ -859,20 +859,19 @@ void GameScreen::render(game::GameHandler& gameHandler) {
         if (r) {
             const auto& mh = gameHandler.getInventory().getEquipSlot(game::EquipSlot::MAIN_HAND);
             const auto& oh = gameHandler.getInventory().getEquipSlot(game::EquipSlot::OFF_HAND);
-            if (mh.empty()) {
-                if (auto* ac = r->getAnimationController()) ac->setEquippedWeaponType(0, false);
-            } else {
-                // Polearms and staves use ATTACK_2H_LOOSE instead of ATTACK_2H
-                bool is2HLoose = (game::isWeaponSubclass(mh.item.itemClass, mh.item.subClass, game::WEAPON_SUBCLASS_POLEARM) ||
-                                  game::isWeaponSubclass(mh.item.itemClass, mh.item.subClass, game::WEAPON_SUBCLASS_STAFF));
-                bool isFist = game::isWeaponSubclass(mh.item.itemClass, mh.item.subClass, game::WEAPON_SUBCLASS_FIST);
-                bool isDagger = game::isWeaponSubclass(mh.item.itemClass, mh.item.subClass, game::WEAPON_SUBCLASS_DAGGER);
-                bool hasOffHand = !oh.empty() &&
-                    game::isOffHandWeaponInventoryType(oh.item.inventoryType);
-                bool hasShield = !oh.empty() && oh.item.inventoryType == game::InvType::SHIELD;
-                bool offHandIsFist = hasOffHand && game::isWeaponSubclass(oh.item.itemClass, oh.item.subClass, game::WEAPON_SUBCLASS_FIST);
-                bool offHandIsDagger = hasOffHand && game::isWeaponSubclass(oh.item.itemClass, oh.item.subClass, game::WEAPON_SUBCLASS_DAGGER);
-                if (auto* ac = r->getAnimationController()) ac->setEquippedWeaponType(mh.item.inventoryType, is2HLoose, isFist, isDagger, hasOffHand, hasShield, offHandIsFist, offHandIsDagger);
+            rendering::WeaponLoadout wl{};
+            if (!mh.empty()) {
+                rendering::applyMainHandWeaponSubclass(
+                    wl, mh.item.itemClass, mh.item.subClass, mh.item.inventoryType);
+            }
+            if (!oh.empty()) {
+                rendering::applyOffHandWeaponSubclass(
+                    wl, oh.item.itemClass, oh.item.subClass, oh.item.inventoryType);
+            }
+            if (auto* ac = r->getAnimationController()) {
+                ac->setEquippedWeaponType(
+                    wl.inventoryType, wl.is2HLoose, wl.isFist, wl.isDagger,
+                    wl.hasOffHand, wl.hasShield, wl.offHandIsFist, wl.offHandIsDagger);
             }
             // Detect ranged weapon type from RANGED slot
             const auto& rangedSlot = gameHandler.getInventory().getEquipSlot(game::EquipSlot::RANGED);

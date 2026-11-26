@@ -22,6 +22,9 @@ inline constexpr bool isMeleeSwingAnimation(uint32_t animId) {
         case anim::ATTACK_OFF:
         case anim::ATTACK_OFF_PIERCE:
         case anim::ATTACK_UNARMED_OFF:
+        case anim::SPECIAL_1H:
+        case anim::SPECIAL_2H:
+        case anim::SPECIAL_UNARMED:
         case anim::FLY_ATTACK_UNARMED:
         case anim::FLY_ATTACK_1H:
         case anim::FLY_ATTACK_2H:
@@ -31,6 +34,9 @@ inline constexpr bool isMeleeSwingAnimation(uint32_t animId) {
         case anim::FLY_ATTACK_OFF:
         case anim::FLY_ATTACK_OFF_PIERCE:
         case anim::FLY_ATTACK_UNARMED_OFF:
+        case anim::FLY_SPECIAL_1H:
+        case anim::FLY_SPECIAL_2H:
+        case anim::FLY_SPECIAL_UNARMED:
             return true;
         default:
             return false;

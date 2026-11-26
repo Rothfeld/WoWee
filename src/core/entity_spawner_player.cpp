@@ -1098,12 +1098,8 @@ rendering::WeaponLoadout EntitySpawner::meleeWeaponLoadout(const game::Unit& uni
         }
         if (equipment && (*equipment)[16] != 0) {
             if (const auto* oh = gameHandler_->getItemInfo((*equipment)[16])) {
-                loadout.hasShield = (oh->inventoryType == game::InvType::SHIELD);
-                loadout.hasOffHand = game::isOffHandWeaponInventoryType(oh->inventoryType);
-                loadout.offHandIsFist = loadout.hasOffHand &&
-                    game::isWeaponSubclass(oh->itemClass, oh->subClass, game::WEAPON_SUBCLASS_FIST);
-                loadout.offHandIsDagger = loadout.hasOffHand &&
-                    game::isWeaponSubclass(oh->itemClass, oh->subClass, game::WEAPON_SUBCLASS_DAGGER);
+                rendering::applyOffHandWeaponSubclass(
+                    loadout, oh->itemClass, oh->subClass, oh->inventoryType);
             }
         }
     } else {
@@ -1127,29 +1123,19 @@ rendering::WeaponLoadout EntitySpawner::meleeWeaponLoadout(const game::Unit& uni
             }
         }
     }
-    if (itemClass != game::ITEM_CLASS_WEAPON) return loadout;
-    loadout.inventoryType = inventoryType != 0 ? inventoryType : game::InvType::ONE_HAND;
-    loadout.is2HLoose = (inventoryType == game::InvType::TWO_HAND &&
-        (subClass == game::WEAPON_SUBCLASS_STAFF || subClass == game::WEAPON_SUBCLASS_POLEARM));
-    loadout.isFist = (subClass == game::WEAPON_SUBCLASS_FIST);
-    loadout.isDagger = (subClass == game::WEAPON_SUBCLASS_DAGGER);
+    rendering::applyMainHandWeaponSubclass(
+        loadout, itemClass, subClass, static_cast<uint8_t>(inventoryType));
     return loadout;
 }
 
 EntitySpawner::MeleeWeaponAnimations EntitySpawner::meleeWeaponAnimations(const game::Unit& unit) const {
     const auto loadout = meleeWeaponLoadout(unit);
-    namespace A = rendering::anim;
-    // Build 8606: a Scarlet Centurion (two-handed sword) holds Ready2H and
-    // swings Attack2H; a Scarlet Wizard (staff) holds the staff across her
-    // body and thrusts it - Ready2HL/Attack2HL, the local player's staff and
-    // polearm pair (_experiments/20261117T184500Z.melee_stance_blood).
-    // A model lacking one plays its AnimationData fallback chain.
-    if (loadout.inventoryType == game::InvType::NON_EQUIP) return {A::READY_UNARMED, A::ATTACK_UNARMED};
-    if (loadout.is2HLoose) return {A::READY_2H_LOOSE, A::ATTACK_2H_LOOSE};
-    if (loadout.inventoryType == game::InvType::TWO_HAND) return {A::READY_2H, A::ATTACK_2H};
-    if (loadout.isFist) return {A::READY_UNARMED, A::ATTACK_UNARMED};
-    if (loadout.isDagger) return {A::READY_1H, A::ATTACK_1H_PIERCE};
-    return {A::READY_1H, A::ATTACK_1H};
+    // Shared ItemSubClass.dbc rule with local CombatFSM: 2HL covers Polearm (6),
+    // Staff (10), Spear (17), and Fishing Pole (20); 2H covers 2H Axe/Mace/Sword
+    // and 2H Exotic; Fist (13) uses Unarmed; Dagger (15) uses Pierce; 1H and
+    // Miscellaneous (14) use Ready1H / Attack1H.
+    return {rendering::meleeReadyAnimation(loadout),
+            rendering::meleeNormalAttackAnimation(loadout)};
 }
 
 std::optional<EntitySpawner::RangedWeaponAnimations>

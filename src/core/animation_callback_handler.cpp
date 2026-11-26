@@ -297,8 +297,15 @@ void AnimationCallbackHandler::setupCallbacks() {
         // and two AttackOff sequences, frequency 16383 each): native main-hand
         // swings matched both AttackUnarmed variations, off-hand swings both
         // AttackOff ones, never the other hand's (classify.py, mainA/offC).
-        const uint32_t attack = offHand ? entitySpawner_.offHandAttackAnimation(*unit)
-                                        : entitySpawner_.meleeWeaponAnimations(*unit).attack;
+        uint32_t attack = offHand ? entitySpawner_.offHandAttackAnimation(*unit)
+                                  : entitySpawner_.meleeWeaponAnimations(*unit).attack;
+        if (!offHand && gameHandler_.isCurrentMeleeSwingCrit()) {
+            const uint32_t critAnim = rendering::meleeCriticalAttackAnimation(
+                entitySpawner_.meleeWeaponLoadout(*unit));
+            if (cr->hasAnimation(instanceId, critAnim)) {
+                attack = critAnim;
+            }
+        }
         const uint16_t attackTimeField = game::fieldIndex(game::UF::UNIT_FIELD_BASEATTACKTIME);
         assert(attackTimeField != 0xFFFF);
         const uint32_t attackTimeMs = unit->getField(attackTimeField + (offHand ? 1 : 0));
