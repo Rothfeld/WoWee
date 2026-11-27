@@ -483,13 +483,24 @@ void M2Renderer::update(float deltaTime, const glm::vec3& cameraPos, const glm::
             if (instance.interiorLightAge < 1.0f && glm::dot(moved, moved) <= 0.0625f) continue;
             instance.interiorLightAge = 0.0f;
             instance.interiorLightQueriedAt = instance.position;
+            instance.interiorLightQueried = true;
+            instance.onExteriorRoofAboveInterior = false;
             const glm::vec3 lightPos = objectFloorLightQueryPosition(
                 instance.position, instance.worldBoundsMin, instance.worldBoundsMax);
             if (roomAtQuery_ && !instance.wmoDoodadPlaced) {
                 const auto room = roomAtQuery_(lightPos);
                 instance.wmoRoomInstance = room ? room->first : 0;
-                if (room) instance.wmoRooms = std::move(room->second);
-                else instance.wmoRooms.clear();
+                if (room) {
+                    instance.wmoRooms = std::move(room->second);
+                } else {
+                    instance.wmoRooms.clear();
+                    for (const float drop : {6.0f, 11.0f, 17.0f, 23.0f}) {
+                        if (roomAtQuery_(lightPos - glm::vec3(0.0f, 0.0f, drop)).has_value()) {
+                            instance.onExteriorRoofAboveInterior = true;
+                            break;
+                        }
+                    }
+                }
             }
             if (objectLightQuery_) {
                 const float sampleHeight = std::max(0.5f * (instance.worldBoundsMax.z - instance.worldBoundsMin.z), 0.5f);
@@ -1209,7 +1220,7 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
             float distFadeAlpha = 1.0f;
             if (usesDoodadSmallCull(instance)) {
                 const float opaqueDist = doodadOpaqueDistanceOf(instance);
-                const float fadeBand = tbcDoodadFadeBand(opaqueDist, objectFade_);
+                const float fadeBand = doodadMaxDistanceOf(instance) - opaqueDist;
                 distFadeAlpha = tbcDoodadDistanceAlpha(distSq, opaqueDist, fadeBand);
             }
             // A faded instance (sky crossfade or TBC objectFade band) is drawn
@@ -2119,7 +2130,7 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
         float fadeAlpha = 1.0f;
         if (usesDoodadSmallCull(instance)) {
             const float opaqueDist = doodadOpaqueDistanceOf(instance);
-            const float fadeBand = tbcDoodadFadeBand(opaqueDist, objectFade_);
+            const float fadeBand = doodadMaxDistanceOf(instance) - opaqueDist;
             fadeAlpha = tbcDoodadDistanceAlpha(entry.distSq, opaqueDist, fadeBand);
         } else {
             float fadeFrac = model.disableAnimation ? 0.55f : fadeStartFraction;

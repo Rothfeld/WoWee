@@ -158,12 +158,13 @@ void SkySystem::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
         return;
     }
 
-    // --- Clouds (DBC-driven daytime clouds, permanent overcast, + storm overcast) ---
-    if (clouds_ && !params.submergedInWater) {
-        if (effectiveCloudDensity > 0.01f) {
-            clouds_->setDensity(effectiveCloudDensity);
-            clouds_->render(cmd, perFrameSet, params);
-        }
+    // --- Clouds (TBC renders authored overcast cloud decks; non-TBC uses procedural cumulus/cirrus) ---
+    if (clouds_ && shouldRenderProceduralCloudDome(
+                       game::isActiveExpansion("tbc"), params.useOriginalSkybox,
+                       params.submergedInWater, effectiveCloudDensity,
+                       params.cloudDensity, params.cloudLayer2Weight)) {
+        clouds_->setDensity(effectiveCloudDensity);
+        clouds_->render(cmd, perFrameSet, params);
     }
 
     const glm::vec3 sunDir = sunDirectionFromLightDir(params.directionalDir);

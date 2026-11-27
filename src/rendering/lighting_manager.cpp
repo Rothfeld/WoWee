@@ -700,32 +700,10 @@ void LightingManager::updateWithStormWeight(const glm::vec3& playerPos, uint32_t
     // The amount is a setting rather than a constant, because how much haze a
     // zone should have is taste and the right value is not the same at noon in
     // Elwynn as at night in Hellfire. Zero is the old behaviour exactly.
-    if (submerged == SubmergedLiquid::None) {
-        newParams.fogColor = glm::mix(newParams.fogColor, newParams.skyMiddleColor,
-                                      glm::clamp(fogSkyBlend_, 0.0f, 1.0f));
-        clampOutdoorFogToViewDistance(newParams.fogStart, newParams.fogEnd, viewDistance_);
-    }
-
-    // How much fog, as a multiplier on the distances the zone asks for.
-    //
-    // Fog is drawn between fogStart and fogEnd, so bringing both in thickens
-    // it and pushing both out clears it. Scaling by 1/strength keeps the
-    // shape of the zone's own curve and only moves where it sits: 1.0 is the
-    // DBC exactly, 2.0 puts the same gradient at half the distance, and 0.5
-    // doubles it.
-    //
-    // Zero is off rather than infinitely thick. A strength of zero scaling
-    // distances by 1/0 is where a divide would land, and what the player means
-    // by nothing is no fog at all.
-    const float strength = glm::clamp(fogStrength_, 0.0f, 2.0f);
-    if (strength <= 0.001f) {
-        newParams.fogStart = 1.0e6f;
-        newParams.fogEnd = 1.0e6f + 1.0f;
-    } else if (std::abs(strength - 1.0f) > 0.001f) {
-        const float scale = 1.0f / strength;
-        newParams.fogStart *= scale;
-        newParams.fogEnd *= scale;
-    }
+    resolveEffectiveOutdoorFog(newParams.fogColor, newParams.skyMiddleColor,
+                               newParams.fogStart, newParams.fogEnd,
+                               viewDistance_, fogSkyBlend_, fogStrength_,
+                               submerged, game::isActiveExpansion("tbc"));
 
     // Preserve authored light intensities. Clamping belongs after lighting is
     // multiplied by surface albedo; normalizing ambient + diffuse darkens it.

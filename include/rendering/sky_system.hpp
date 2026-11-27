@@ -131,6 +131,32 @@ inline float effectiveSkyCloudDensity(bool useOriginalSkybox,
     return std::min(1.0f, clearSkyDensity + weatherBoost);
 }
 
+/// Whether the procedural FBM cloud dome (`Clouds::render`) should draw over
+/// the gradient skybox.
+///
+/// In TBC 2.4.3 (`isTbcExpansion`), clear/default Azeroth zones (`LP 12`
+/// Elwynn `FloatBand[3] = 0.50`, `LP 192` Kalimdor `0.50`, `LP 13` Elwynn Rain
+/// `0.00`, `IntBand[12] = black` -> `overcastCloudCover == 0`) render only the
+/// 6-ring vertex sky dome (`LightIntBand[2..7]`) with zero procedural cumulus
+/// clouds, whereas authored overcast cloud-deck profiles (`LP 19` Deadwind Pass
+/// / `LP 386` Karazhan `FloatBand[3] = 0.70`, `LP 57` Duskwood `0.60`,
+/// Plaguelands `0.68`, Hinterlands `LP 51` `IntBand[12]` non-black ->
+/// `overcastCloudCover(dbcCloudDensity, cloudLayer2Weight) > 0`) blanket the
+/// sky in their authored `IntBand[10]/[11]/[12]` overcast deck.
+inline bool shouldRenderProceduralCloudDome(bool isTbcExpansion,
+                                            bool useOriginalSkybox,
+                                            bool submergedInWater,
+                                            float effectiveCloudDensity,
+                                            float dbcCloudDensity = 0.0f,
+                                            float cloudLayer2Weight = 0.0f) noexcept {
+    if (useOriginalSkybox || submergedInWater) return false;
+    if (isTbcExpansion) {
+        return overcastCloudCover(std::clamp(dbcCloudDensity, 0.0f, 1.0f), cloudLayer2Weight) > 0.01f &&
+               effectiveCloudDensity > 0.01f;
+    }
+    return effectiveCloudDensity > 0.01f;
+}
+
 /**
  * Unified sky rendering system
  *

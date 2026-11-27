@@ -291,6 +291,8 @@ struct M2Instance {
     uint32_t indoorLighting = 0; // packed MODD RGB in bits 8..31, bit 1 enables
     bool outdoorShadowed = false;
     bool interiorFog = false;
+    bool interiorLightQueried = false;
+    bool onExteriorRoofAboveInterior = false;
     glm::vec3 groundNormal{0.0f, 0.0f, 1.0f};
     std::optional<DirectionalLightRig> customLightRig;
     // Game objects: where and how long ago their interior light was asked.
@@ -1003,19 +1005,32 @@ public:
     /// WMORenderer::findSealedInterior); every instance when empty.
     void setVisibleRegion(std::optional<std::pair<glm::vec3, glm::vec3>> region) { visibleRegion_ = region; }
     /// When the camera is inside an indoor WMO room with no visible portal path
-    /// to an exterior group, hide ADT terrain doodads, ground clutter, and
-    /// exterior WMO doodads while keeping interior WMO doodads, game objects,
-    /// spell effects, and externally posed character/creature/weapon emitters.
+    /// to an exterior group, hide ADT terrain doodads, ground clutter, exterior
+    /// WMO doodads, and exterior GameObjects while keeping interior WMO doodads,
+    /// indoor GameObjects, spell effects, and externally posed unit/weapon
+    /// emitters. Also hides exterior roof GameObjects positioned directly above
+    /// an interior WMO room while the camera is inside an interior room below
+    /// them, preventing oversized view-space roof billboards (e.g. Stratholme
+    /// Alonsus Chapel GO 182071/182072 at z = 150.4..169.5) from bleeding down
+    /// in front of the interior ceiling when facing an open doorway.
     void setExteriorHidden(bool hidden) { exteriorHidden_ = hidden; }
-    [[nodiscard]] static bool isExteriorCulled(bool exteriorHidden, const M2Instance& instance) noexcept {
+    [[nodiscard]] static bool isExteriorCulled(bool exteriorHidden,
+                                               const M2Instance& instance,
+                                               bool insideInterior = false,
+                                               const glm::vec3& cameraPos = glm::vec3(0.0f)) noexcept {
+        if (instance.wmoRoomInstance != 0 || instance.interiorFog) return false;
+        if (insideInterior && instance.isGameObject && instance.onExteriorRoofAboveInterior &&
+            cameraPos.z < instance.position.z - 2.0f) {
+            return true;
+        }
         if (!exteriorHidden) return false;
         if (instance.cachedIsGroundDetail) return true;
         if (instance.cachedModel && instance.cachedModel->isSpellEffect) return false;
-        if (instance.wmoRoomInstance != 0) return false;
+        if (instance.isGameObject) return instance.interiorLightQueried;
         return !instance.serverVisibility();
     }
     [[nodiscard]] bool exteriorCulled(const M2Instance& instance) const {
-        return isExteriorCulled(exteriorHidden_, instance);
+        return isExteriorCulled(exteriorHidden_, instance, insideInterior, cachedCamPos_);
     }
     /// A WMO room doodad whose room is not drawn this frame: not its mesh,
     /// particles or ribbons (Karazhan's upper-floor braziers showed their
@@ -1047,15 +1062,22 @@ public:
     [[nodiscard]] bool usesDoodadSmallCull(const M2Instance& inst) const noexcept {
         return !skyMode_ && !inst.serverVisibility() && !inst.cachedIsGroundDetail && smallCull_ > 0.0f;
     }
-    [[nodiscard]] float doodadOpaqueDistanceOf(const M2Instance& inst) const noexcept {
-        const float d = tbcDoodadOpaqueMaxDistance(
-            inst.cachedVertexRadius, smallCull_, distCull_, inst.wmoDoodadPlaced);
-        return std::min(d, cappedViewDistance());
+    [[nodiscard]] float doodadFarclipCeilingOf(const M2Instance& inst) const noexcept {
+        return tbcDoodadFarclipCeiling(
+            cappedViewDistance(), inst.cachedVertexRadius, inst.wmoDoodadPlaced);
     }
     [[nodiscard]] float doodadMaxDistanceOf(const M2Instance& inst) const noexcept {
-        const float opaqueDist = doodadOpaqueDistanceOf(inst);
-        const float fadeBand = tbcDoodadFadeBand(opaqueDist, objectFade_);
-        return std::min(opaqueDist + fadeBand, cappedViewDistance());
+        const float rawOpaque = tbcDoodadOpaqueMaxDistance(
+            inst.cachedVertexRadius, smallCull_, distCull_, inst.wmoDoodadPlaced);
+        const float rawFade = tbcDoodadFadeBand(rawOpaque, objectFade_);
+        return std::min(rawOpaque + rawFade, doodadFarclipCeilingOf(inst));
+    }
+    [[nodiscard]] float doodadOpaqueDistanceOf(const M2Instance& inst) const noexcept {
+        const float rawOpaque = tbcDoodadOpaqueMaxDistance(
+            inst.cachedVertexRadius, smallCull_, distCull_, inst.wmoDoodadPlaced);
+        const float rawFade = tbcDoodadFadeBand(rawOpaque, objectFade_);
+        const float maxDist = std::min(rawOpaque + rawFade, doodadFarclipCeilingOf(inst));
+        return std::min(rawOpaque, std::max(0.0f, maxDist - rawFade));
     }
 
     /// The doodad view distance with that cap applied.

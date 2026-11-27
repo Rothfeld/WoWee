@@ -162,7 +162,7 @@ void main() {
 
     // Behind the air, as the sky it is drawn over is: blended by alpha, so
     // the cloud and the dome under it come out with the same air in front.
-    if (volumetricParams.x > 0.5) {
+    if (volumetricParams.x > 0.5 && lightDir.w == 0.0) {
         vec4 clip = projection * mat4(mat3(view)) * vec4(vWorldDir, 1.0);
         vec4 air = fogVolumeSky(clip.xy / max(clip.w, 1e-4) * 0.5 + 0.5);
         cloudRgb = cloudRgb * air.a + air.rgb;

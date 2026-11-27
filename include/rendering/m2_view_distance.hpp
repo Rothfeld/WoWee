@@ -65,6 +65,20 @@ inline float tbcDoodadDistanceAlpha(float distSq, float opaqueDist, float fadeBa
     return std::clamp((maxDist - dist) / fadeBand, 0.0f, 1.0f);
 }
 
+/// Far-plane ceiling (yards from camera eye) for a placed outdoor M2 doodad so
+/// its scaled bounding sphere fits inside viewDistance without being sliced open
+/// into a hollow sky silhouette by the far clip plane (verified on Netherstorm
+/// floating rocks across farclip 350..777 against Native TBC 2.4.3).
+/// Clamped to at least 0.5 * viewDistance so massive nearby structures (such as
+/// Stormspire biodomes, vertexRadius ~220 yd) remain visible at low farclip.
+inline float tbcDoodadFarclipCeiling(float viewDistance,
+                                     float vertexRadius,
+                                     bool wmoDoodad = false) noexcept {
+    if (viewDistance <= 0.0f) return 0.0f;
+    if (wmoDoodad || vertexRadius <= 0.0f) return viewDistance;
+    return std::min(viewDistance, std::max(viewDistance * 0.5f, viewDistance - vertexRadius));
+}
+
 /// The distance at which one M2 instance stops drawing, squared.
 ///
 /// Placed scenery doodads draw to their TBC SmallCull projection distance

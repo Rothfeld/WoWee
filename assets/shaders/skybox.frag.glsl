@@ -137,7 +137,7 @@ void main() {
         sky = mix(fogColor.rgb, sky, uwFogFactor);
     }
 
-    if (volumetricParams.x > 0.5) {
+    if (volumetricParams.x > 0.5 && lightDir.w == 0.0) {
         vec4 air = fogVolumeSky(TexCoord);
         sky = sky * air.a + air.rgb;
     }

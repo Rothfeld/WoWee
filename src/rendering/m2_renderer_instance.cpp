@@ -879,6 +879,12 @@ void M2Renderer::setModelPinned(uint32_t modelId, bool pinned) {
 }
 
 void M2Renderer::cleanupUnusedModels() {
+    // Skybox M2 models (at most 15 in LightSkybox.dbc) remain permanently
+    // indexed in Renderer::loadedSkyModels_; reaping them after 60s on another
+    // map leaves loadedSkyModels_ pointing at an evicted modelId when the
+    // player returns to Outland.
+    if (skyMode_) return;
+
     // Build set of model IDs that are still referenced by instances
     std::unordered_set<uint32_t> usedModelIds;
     for (const auto& instance : instances) {

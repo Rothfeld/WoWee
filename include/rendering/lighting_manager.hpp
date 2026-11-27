@@ -476,5 +476,56 @@ inline void clampOutdoorFogToViewDistance(float& fogStart, float& fogEnd, float 
     }
 }
 
+/// Resolve effective scene fog color and [fogStart, fogEnd] range after DBC
+/// LightParams sampling.
+///
+/// In TBC 2.4.3 (`isTbcExpansion == true`), `CSkyScene` and world/M2 shaders
+/// use the authored DBC `LightIntBand[7]` (`FOG_COLOR`) and `LightFloatBand[0..1]`
+/// (`FOG_END`, `FOG_START_SCALAR`) directly, clamped to `viewDistance` (`farclip`)
+/// when not submerged; custom non-TBC `fogSkyBlend` and `fogStrength` sliders
+/// must not shift DBC `fogColor` toward `skyMiddleColor` or inflate `fogEnd`
+/// past `farclip` / storm `fogEnd` (which broke `farclip = 177` horizon fog in
+/// Elwynn LP 12 and defeated `fogDepth > outdoorFogParams.y` culling of 430-480 yd
+/// floating rocks in Stormspire LP 552/209).
+///
+/// In non-TBC mode (`isTbcExpansion == false`), `fogStrength` scales distances
+/// before `clampOutdoorFogToViewDistance` so `fogStrength < 1` still respects
+/// the active `viewDistance` ceiling unless fog is explicitly disabled (`<= 0.001`).
+inline void resolveEffectiveOutdoorFog(glm::vec3& fogColor,
+                                       const glm::vec3& skyMiddleColor,
+                                       float& fogStart,
+                                       float& fogEnd,
+                                       float viewDistance,
+                                       float fogSkyBlend,
+                                       float fogStrength,
+                                       SubmergedLiquid submerged,
+                                       bool isTbcExpansion) {
+    if (isTbcExpansion) {
+        if (submerged == SubmergedLiquid::None) {
+            clampOutdoorFogToViewDistance(fogStart, fogEnd, viewDistance);
+        }
+        return;
+    }
+
+    if (submerged == SubmergedLiquid::None) {
+        fogColor = glm::mix(fogColor, skyMiddleColor, glm::clamp(fogSkyBlend, 0.0f, 1.0f));
+    }
+
+    const float strength = glm::clamp(fogStrength, 0.0f, 2.0f);
+    if (strength <= 0.001f) {
+        fogStart = 1.0e6f;
+        fogEnd = 1.0e6f + 1.0f;
+        return;
+    }
+    if (std::abs(strength - 1.0f) > 0.001f) {
+        const float scale = 1.0f / strength;
+        fogStart *= scale;
+        fogEnd *= scale;
+    }
+    if (submerged == SubmergedLiquid::None) {
+        clampOutdoorFogToViewDistance(fogStart, fogEnd, viewDistance);
+    }
+}
+
 } // namespace rendering
 } // namespace wowee

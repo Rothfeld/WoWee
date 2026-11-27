@@ -228,7 +228,7 @@ void main() {
         // additive layer only loses what the air hides of it; the air's own
         // light is already in the layer it is added to.
         vec3 skyColor = texColor.rgb;
-        if (volumetricParams.x > 0.5) {
+        if (volumetricParams.x > 0.5 && lightDir.w == 0.0) {
             vec4 clip = projection * (view * vec4(FragPos, 1.0));
             vec4 air = fogVolumeSky(clip.xy / max(clip.w, 1e-4) * 0.5 + 0.5);
             skyColor = (blendMode >= 3) ? skyColor * air.a : skyColor * air.a + air.rgb;
