@@ -1,5 +1,6 @@
 #include "rendering/chain_effect.hpp"
 #include "rendering/particle_emission.hpp"
+#include "rendering/particle_emitter_order.hpp"
 #include "rendering/water_mask.hpp"
 #include "rendering/m2_renderer.hpp"
 #include <unordered_set>
@@ -1081,9 +1082,6 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
     // An emitter belongs to BeforeTransparent when its priority plane is
     // negative; non-negative emitters partition between BeforeWaterDepth
     // (submerged/surface particles over translucent water) and AfterTransparent.
-    const auto inPhase = [before](const pipeline::M2ParticleEmitter& emitter) {
-        return (emitter.priorityPlane < 0) == before;
-    };
     const uint32_t frame = vkCtx_->getCurrentFrame();
     if (!particlePipeline_ || !m2ParticleVB_[frame]) return;
     // Diagnostic: WOWEE_M2_NO_PARTICLES=1 drops every M2 particle draw, which
@@ -1160,21 +1158,32 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
 
     size_t totalParticles = 0;
 
-    // Only the instances that carry emitters, not every instance in the world.
-    //
-    // particleInstanceIndices_ is built and maintained for exactly this and
-    // the update path above already uses it; this pass walked all 66211
-    // instances instead, asking each whether its particle vector was empty.
-    // That walk was 2.0ms of a 16ms frame - two thirds of the M2 worker,
-    // which is the critical path of renderWorld.
-    for (size_t idx : particleInstanceIndices_) {
+    struct VisibleParticleInstance {
+        size_t instanceIndex = 0;
+        float placementScale = 1.0f;
+        glm::vec3 placementLight{1.0f};
+        std::optional<float> translucentWaterZ;
+        float highestParticleZ = -std::numeric_limits<float>::max();
+        float widestParticle = 0.0f;
+    };
+
+    // Gather visible emitter instances and build scene-wide emitter draw keys
+    // sorted by (priorityPlane, -emitterDistanceSq, registrationOrder, emitterIndex),
+    // matching M2TransparentBatchKey (m2_transparent_sort.hpp).
+    std::vector<VisibleParticleInstance> visibleInstances;
+    visibleInstances.reserve(particleInstanceIndices_.size());
+    std::vector<SceneParticleEmitterDrawKey> emitterDraws;
+
+    for (size_t order = 0; order < particleInstanceIndices_.size(); ++order) {
+        const size_t idx = particleInstanceIndices_[order];
         if (idx >= instances.size()) continue;
-        auto& inst = instances[idx];
+        const auto& inst = instances[idx];
         if (inst.particles.empty() || inst.fade <= 0.0f) continue;
         if (!inst.cachedModel) continue;
         const auto& gpu = *inst.cachedModel;
         const glm::vec3 distance = inst.position - cachedCamPos_;
-        if (glm::dot(distance, distance) > particleMaxDistSq(inst)) continue;
+        const float instDistSq = glm::dot(distance, distance);
+        if (!std::isfinite(instDistSq) || instDistSq > particleMaxDistSq(inst)) continue;
         if (outsideVisibleRegion(inst.position) || exteriorCulled(inst) || roomCulled(inst)) continue;
         const std::optional<float> instTranslucentWaterZ =
             (!before && translucentWaterHeight)
@@ -1182,13 +1191,6 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
                 : std::nullopt;
         if (beforeWaterDepth && !instTranslucentWaterZ) continue;
 
-        // How far this instance's particles actually reach, against how far
-        // the model says it extends. A fire twice the height of the hut behind
-        // it is either particles outliving their authored lifespan, flying at
-        // the wrong speed, or drawn at the wrong size - and none of those says
-        // which model it is. This does.
-        float highestParticleZ = -std::numeric_limits<float>::max();
-        float widestParticle = 0.0f;
         // Sprite sizes of emitters with flag 0x20: an externally posed
         // instance's owner says what scale they are drawn at (an item visual
         // on a weapon: its own); the rest are sized by their placement, as
@@ -1209,16 +1211,57 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
                                              outdoorLightDir_, outdoorEntityLightGain_)
                 : outdoorParticleLight(outdoorAmbient_, outdoorDiffuse_, outdoorLightDir_));
 
-        // Emit in authored emitter order rather than swap-and-pop particle
-        // order: keeps later additive flames (e.g. StratholmeFireSmokeEmberM
-        // emitter #2) drawn over earlier alpha smoke (emitter #0) and keeps
-        // each emitter in one contiguous ParticleRun.
+        const size_t visSlot = visibleInstances.size();
+        visibleInstances.push_back({
+            .instanceIndex = idx,
+            .placementScale = placementScale,
+            .placementLight = placementLight,
+            .translucentWaterZ = instTranslucentWaterZ,
+        });
+
         for (size_t ei = 0; ei < gpu.particleEmitters.size(); ++ei) {
             const auto& em = gpu.particleEmitters[ei];
-            if (!inPhase(em)) continue;
+            if (!particleEmitterInPhase(em.priorityPlane, before)) continue;
             // Drawn as its geometry model in renderParticleMeshes.
             if (ei < gpu.particleGeometry.size() && !gpu.particleGeometry[ei].indices.empty()) continue;
 
+            const glm::mat4 emitterBone = gpu.bones.empty() ? glm::mat4(1.0f)
+                                                            : inst.boneMatrices.at(em.bone);
+            const glm::vec3 emitterWorldPos =
+                glm::vec3((inst.modelMatrix * emitterBone) * glm::vec4(em.position, 1.0f));
+            const glm::vec3 emitterDelta = emitterWorldPos - cachedCamPos_;
+            float emitterDistSq = glm::dot(emitterDelta, emitterDelta);
+            if (!std::isfinite(emitterDistSq)) emitterDistSq = instDistSq;
+
+            emitterDraws.push_back({
+                .visibleSlot = visSlot,
+                .emitterIndex = ei,
+                .priorityPlane = em.priorityPlane,
+                .emitterDistanceSq = emitterDistSq,
+                .registrationOrder = order,
+            });
+        }
+    }
+
+    // Emit in ascending (priorityPlane, -emitterDistanceSq, registrationOrder, emitterIndex):
+    // higher priorityPlane emitters composite over lower priorityPlane emitters across
+    // the scene (e.g. Creature_SpellPortalLarge_Purple.m2 PE[22]/PE[24] prio 2 Additive
+    // over PE[23]/PE[25] prio 1 Alpha over Shadowhoof Summoner prio 0 precast, and center
+    // smoke PE[15] prio 4 Alpha over PE[19] prio 0 Additive), while equal-plane emitters
+    // sort back-to-front by world emitter position and preserve authored emitter order.
+    std::sort(emitterDraws.begin(), emitterDraws.end(), sceneParticleEmitterDrawsBefore);
+
+    for (const auto& draw : emitterDraws) {
+        auto& vis = visibleInstances[draw.visibleSlot];
+        auto& inst = instances[vis.instanceIndex];
+        const auto& gpu = *inst.cachedModel;
+        const size_t ei = draw.emitterIndex;
+        const auto& em = gpu.particleEmitters[ei];
+        const float placementScale = vis.placementScale;
+        const glm::vec3& placementLight = vis.placementLight;
+        const auto& instTranslucentWaterZ = vis.translucentWaterZ;
+
+        {
             const glm::mat4 emitterBone = gpu.bones.empty() ? glm::mat4(1.0f)
                                                             : inst.boneMatrices.at(em.bone);
             const glm::mat4 bone = (em.flags & kParticleBoneFrame) ? emitterBone : glm::mat4(1.0f);
@@ -1283,8 +1326,8 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
                     particleRuns_.push_back({.group = cachedGroup, .first = vbWritten, .count = 0});
                 }
                 const glm::vec3 worldVelocity = glm::mat3(cachedParticleTransform) * p.velocity;
-                highestParticleZ = std::max(highestParticleZ, worldPosition.z);
-                widestParticle = std::max(widestParticle, scale);
+                vis.highestParticleZ = std::max(vis.highestParticleZ, worldPosition.z);
+                vis.widestParticle = std::max(vis.widestParticle, scale);
 
                 for (unsigned sprite = 0; sprite < sprites; ++sprite) {
                     assert(vbWritten < particleVertexCapacity_[frame]);
@@ -1323,9 +1366,15 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
                 totalParticles++;
             }
         }
+    }
 
-        // Opt-in effect diagnostics for captured visual comparisons.
-        static const char* traceModel = std::getenv("WOWEE_PARTICLE_TRACE");
+    // Opt-in effect diagnostics and reach check per visible instance.
+    static const char* traceModel = std::getenv("WOWEE_PARTICLE_TRACE");
+    for (const auto& vis : visibleInstances) {
+        const auto& inst = instances[vis.instanceIndex];
+        const auto& gpu = *inst.cachedModel;
+        const float highestParticleZ = vis.highestParticleZ;
+        const float widestParticle = vis.widestParticle;
         if (phase == ParticlePhase::AfterTransparent && traceModel && gpu.name == traceModel) {
             static uint32_t traceFrame = 0;
             if (++traceFrame % 60 == 1) {
