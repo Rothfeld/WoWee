@@ -129,7 +129,12 @@
 namespace wowee {
 namespace rendering {
 
-
+namespace {
+[[nodiscard]] bool skipShadowPassEnv() {
+    static const bool skip = core::envFlagEnabled("WOWEE_SKIP_SHADOWS", false);
+    return skip;
+}
+} // namespace
 
 Renderer::Renderer() = default;
 Renderer::~Renderer() = default;
@@ -149,7 +154,9 @@ bool Renderer::createPerFrameResources() {
     imgCI.arrayLayers = 1;
     imgCI.samples = VK_SAMPLE_COUNT_1_BIT;
     imgCI.tiling = VK_IMAGE_TILING_OPTIMAL;
-    imgCI.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    imgCI.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
+                  VK_IMAGE_USAGE_SAMPLED_BIT |
+                  VK_IMAGE_USAGE_TRANSFER_DST_BIT;
     VmaAllocationCreateInfo imgAllocCI{};
     imgAllocCI.usage = VMA_MEMORY_USAGE_GPU_ONLY;
     for (uint32_t i = 0; i < MAX_FRAMES; i++) {
@@ -159,6 +166,64 @@ bool Renderer::createPerFrameResources() {
             return false;
         }
         shadowDepthLayout_[i] = VK_IMAGE_LAYOUT_UNDEFINED;
+    }
+
+    // Clear every shadow depth slot to 1.0f (unshadowed) and place it in
+    // VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL immediately. Per-frame descriptor
+    // set 0 binding 1 permanently declares SHADER_READ_ONLY_OPTIMAL, so runs that
+    // skip the shadow pass (WOWEE_SKIP_SHADOWS=1, shadow pass ablation, or early
+    // frames before a light-space matrix exists) must never submit draws while
+    // these images remain in VK_IMAGE_LAYOUT_UNDEFINED.
+    vkCtx->immediateSubmit([this](VkCommandBuffer cmd) {
+        VkImageSubresourceRange depthRange{};
+        depthRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+        depthRange.baseMipLevel = 0;
+        depthRange.levelCount = 1;
+        depthRange.baseArrayLayer = 0;
+        depthRange.layerCount = 1;
+
+        VkImageMemoryBarrier toTransfer[MAX_FRAMES]{};
+        for (uint32_t i = 0; i < MAX_FRAMES; i++) {
+            toTransfer[i].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            toTransfer[i].oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            toTransfer[i].newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            toTransfer[i].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            toTransfer[i].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            toTransfer[i].image = shadowDepthImage[i];
+            toTransfer[i].subresourceRange = depthRange;
+            toTransfer[i].srcAccessMask = 0;
+            toTransfer[i].dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        }
+        vkCmdPipelineBarrier(cmd,
+                             VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                             VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             0, 0, nullptr, 0, nullptr,
+                             MAX_FRAMES, toTransfer);
+
+        const VkClearDepthStencilValue clearDepth{.depth = 1.0f, .stencil = 0};
+        VkImageMemoryBarrier toSampled[MAX_FRAMES]{};
+        for (uint32_t i = 0; i < MAX_FRAMES; i++) {
+            vkCmdClearDepthStencilImage(cmd, shadowDepthImage[i],
+                                        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                        &clearDepth, 1, &depthRange);
+            toSampled[i].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            toSampled[i].oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            toSampled[i].newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            toSampled[i].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            toSampled[i].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            toSampled[i].image = shadowDepthImage[i];
+            toSampled[i].subresourceRange = depthRange;
+            toSampled[i].srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            toSampled[i].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        }
+        vkCmdPipelineBarrier(cmd,
+                             VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                             0, 0, nullptr, 0, nullptr,
+                             MAX_FRAMES, toSampled);
+    });
+    for (uint32_t i = 0; i < MAX_FRAMES; i++) {
+        shadowDepthLayout_[i] = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     }
 
     // --- Create per-frame shadow depth image views ---
@@ -679,7 +744,14 @@ void Renderer::updatePerFrameUBO() {
     float shadowBias = glm::clamp(0.8f * (shadowDistance_ / 300.0f), 0.0f, 1.0f);
     // z carries one texel of the shadow map. The shaders used to hold that as
     // a constant for 4096, and the map is 512 to 4096 by the quality level.
-    currentFrameData.shadowParams = glm::vec4(shadowsEnabled ? 1.0f : 0.0f, shadowBias,
+    const uint32_t frameSlot = vkCtx ? vkCtx->getCurrentFrame() : 0u;
+    const bool sampleShadows = shouldSampleShadowMap(
+        shadowsEnabled,
+        skipShadowPassEnv(),
+        passAblation_ && passAblation_->skip(AblationPass::Shadows),
+        lightSpaceMatrix != glm::mat4(0.0f),
+        shadowDepthLayout_[frameSlot]);
+    currentFrameData.shadowParams = glm::vec4(sampleShadows ? 1.0f : 0.0f, shadowBias,
                                               1.0f / static_cast<float>(SHADOW_MAP_SIZE), 0.0f);
 
     // Whether this frame builds the fog volume. Decided here, beside the
@@ -1503,9 +1575,9 @@ void Renderer::beginFrame() {
     // Update per-frame UBO with current camera/lighting state
     updatePerFrameUBO();
 
-    // Grass culls here too, for the same reason: a dispatch has to be recorded
-    // outside a render pass. Unlike the M2 path nothing reads the result back -
-    // the count it produces is consumed by the indirect draw on the GPU.
+    // Grass culls here, because a compute dispatch has to be recorded outside a
+    // render pass; the count it produces is consumed directly by the indirect
+    // draw on the GPU without a CPU readback.
     if (grassRenderer_ && camera && vkCtx) {
         updateGrassPopulation();
         grassRenderer_->reportCullResult();
@@ -2186,7 +2258,7 @@ float Renderer::sampleSunOcclusion() const {
     // is the sky's business, not the flare's.
     constexpr float kReach = 600.0f;
 
-    if (wmoRenderer && wmoRenderer->raycastBoundingBoxes(eye, sunDir, kReach) < kReach) {
+    if (wmoRenderer && wmoRenderer->rayOccluded(eye, sunDir, kReach)) {
         return 1.0f;
     }
 
@@ -2236,13 +2308,12 @@ void Renderer::update(float deltaTime) {
     // flare on and off; a quarter second of travel reads as the sun going
     // behind something.
     //
-    // Only the sky pass reads it, and the sample is a ray through every WMO
-    // towards the sun (1.3 ms in Shattrath), so a tick that draws nothing
-    // does not take one: the next drawn tick eases over the time since the
-    // last sample. The ease is an exponential, so that is the same value as
-    // easing tick by tick whenever the undrawn ticks would have sampled what
-    // the drawn one does; it differs only while the sun crosses an occluder's
-    // edge between two drawn ticks (docs/draw-schedule.md).
+    // Only the sky pass reads it, so a tick that draws nothing does not sample:
+    // the next drawn tick eases over the time since the last sample. The ease
+    // is an exponential, so that is the same value as easing tick by tick
+    // whenever the undrawn ticks would have sampled what the drawn one does; it
+    // differs only while the sun crosses an occluder's edge between two drawn
+    // ticks (docs/draw-schedule.md).
     sunOcclusionEaseSeconds_ += deltaTime;
     if (tickDraws_) {
         sunOcclusion_ = easeSunOcclusion(sunOcclusion_, sampleSunOcclusion(), sunOcclusionEaseSeconds_);
@@ -3674,8 +3745,13 @@ bool Renderer::updateWorldVisibility() {
             ? std::optional(std::pair(sealedInterior->worldMin, sealedInterior->worldMax))
             : std::nullopt;
         if (m2Renderer) {
+            const bool insideInteriorWmo = sealedInterior.has_value() ||
+                (wmoRenderer && camera &&
+                 wmoRenderer->isInsideInteriorWMO(camera->getPosition().x,
+                                                  camera->getPosition().y,
+                                                  camera->getPosition().z));
             m2Renderer->setVisibleRegion(region);
-            m2Renderer->setExteriorHidden(hideExterior);
+            m2Renderer->setExteriorHidden(hideExterior, insideInteriorWmo);
         }
         if (characterRenderer) characterRenderer->setVisibleRegion(region);
     }
@@ -3852,11 +3928,6 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
     // to handle thread-unsafe GPU allocations (descriptor pools, bone SSBOs).
     if (parallelRecordingEnabled_) {
         // --- Pre-compute state + GPU allocations on main thread (not thread-safe) ---
-        if (m2Renderer && cameraController) {
-            // Use isInsideInteriorWMO (flag 0x2000) - not isInsideWMO which includes
-            // outdoor WMO groups like archways/bridges that should receive shadows.
-            m2Renderer->setInsideInterior(cameraController->isInsideInteriorWMO());
-        }
         auto prepStart = std::chrono::steady_clock::now();
         if (wmoRenderer) wmoRenderer->prepareRender();
         auto prepWmoEnd = std::chrono::steady_clock::now();
@@ -4239,10 +4310,6 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
         };
 
         if (m2Renderer && camera && !skipM2) {
-            if (cameraController) {
-                // Use isInsideInteriorWMO (flag 0x2000) for correct indoor detection
-                m2Renderer->setInsideInterior(cameraController->isInsideInteriorWMO());
-            }
             updateM2ProjectedTextures();
             m2Renderer->prepareRender(frameIdx, *camera);
             if (characterRenderer && !skipChars) characterRenderer->prepareRender(frameIdx);
@@ -5467,8 +5534,7 @@ void Renderer::renderReflectionPass() {
 
 void Renderer::renderShadowPass() {
     ZoneScopedN("Renderer::renderShadowPass");
-    static const bool skipShadows = (std::getenv("WOWEE_SKIP_SHADOWS") != nullptr);
-    if (skipShadows) return;
+    if (skipShadowPassEnv()) return;
     if (passAblation_ && passAblation_->skip(AblationPass::Shadows)) return;
     if (shadowDepthImage[0] == VK_NULL_HANDLE) return;
     if (currentCmd == VK_NULL_HANDLE) return;

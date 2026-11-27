@@ -1536,7 +1536,6 @@ void WMORenderer::setCollisionFocus(const glm::vec3& worldPos, float radius) {
 void WMORenderer::resetQueryStats() {
     queryTimeMs = 0.0;
     queryCallCount = 0;
-    currentFrameId++;
     // Note: precomputedFloorGrid is persistent and not cleared per-frame
 }
 
@@ -1729,8 +1728,6 @@ void WMORenderer::gatherCandidates(const glm::vec3& queryMin, const glm::vec3& q
 }
 
 void WMORenderer::prepareRender() {
-    ++currentFrameId;
-
     // Update material UBOs if settings changed (mapped memory writes - main thread only)
     if (materialSettingsDirty_) {
         materialSettingsDirty_ = false;
@@ -5083,6 +5080,158 @@ float WMORenderer::raycastCamera(const glm::vec3& origin, const glm::vec3& direc
     return raycastTriangles(origin, direction, maxDistance, true, false, outWorldNormal);
 }
 
+namespace {
+
+/// Walks the 1D ray-traced cells of `group`'s dense 2D collision grid in
+/// front-to-back order over `[tEnter, tExit]`, Z-culling triangles against
+/// the ray's Z range inside each cell and deduplicating multi-cell triangles
+/// only once they pass Z culling. Returning `false` from `visitTri(triStart)`
+/// stops traversal immediately while still clearing `group.triVisited`.
+template <typename Group, typename TriVisitor>
+bool forEachGroupRayTriangle(const Group& group,
+                             const glm::vec3& localOrigin,
+                             const glm::vec3& localDir,
+                             float tEnter,
+                             float tExit,
+                             std::vector<uint32_t>& touchedScratch,
+                             TriVisitor&& visitTri) {
+    if (group.gridCellsX == 0 || group.gridCellsY == 0 || group.cellTriangles.empty()) {
+        return true;
+    }
+    touchedScratch.clear();
+    const bool useDedup = !group.triVisited.empty();
+    const bool completed = WMORenderer::walkGridRayCells(
+        group.gridCellsX, group.gridCellsY,
+        group.boundingBoxMin, group.boundingBoxMax,
+        group.gridOrigin,
+        localOrigin, localDir,
+        tEnter, tExit,
+        [&](int cx, int cy, float tc0, float cellZMin, float cellZMax) -> bool {
+            const auto& cellTris = group.cellTriangles[static_cast<size_t>(cy * group.gridCellsX + cx)];
+            for (uint32_t triStart : cellTris) {
+                const uint32_t triIdx = triStart / 3u;
+                if (useDedup && group.triVisited[triIdx]) continue;
+                if (triIdx < group.triBounds.size()) {
+                    const auto& tb = group.triBounds[triIdx];
+                    if (tb.maxZ < cellZMin || tb.minZ > cellZMax) continue;
+                }
+                if (useDedup) {
+                    group.triVisited[triIdx] = 1;
+                    touchedScratch.push_back(triIdx);
+                }
+                if (!visitTri(triStart, tc0)) {
+                    return false;
+                }
+            }
+            return true;
+        });
+    for (uint32_t triIdx : touchedScratch) {
+        group.triVisited[triIdx] = 0;
+    }
+    touchedScratch.clear();
+    return completed;
+}
+
+} // namespace
+
+bool WMORenderer::rayOccluded(const glm::vec3& origin, const glm::vec3& direction,
+                              float maxDistance, bool skipTransports) const {
+    QueryTimer timer(&queryTimeMs, &queryCallCount);
+    if (maxDistance <= 0.0f) return false;
+
+    constexpr float MIN_HIT_DISTANCE = 0.20f;
+    constexpr float MIN_SURFACE_ALIGNMENT = 0.05f;
+
+    const glm::vec3 rayEnd = origin + direction * maxDistance;
+    const glm::vec3 queryMin = glm::min(origin, rayEnd) - glm::vec3(1.0f);
+    const glm::vec3 queryMax = glm::max(origin, rayEnd) + glm::vec3(1.0f);
+    gatherCandidates(queryMin, queryMax, tl_candidateScratch);
+
+    for (size_t idx : tl_candidateScratch) {
+        const auto& instance = instances[idx];
+        if (skipTransports && instance.isTransport) continue;
+        if (outsideCollisionFocus(instance)) continue;
+
+        float instEnter = 0.0f, instExit = 0.0f;
+        if (!rayAABBRange(origin, direction,
+                          instance.worldBoundsMin - glm::vec3(0.5f),
+                          instance.worldBoundsMax + glm::vec3(0.5f),
+                          instEnter, instExit) ||
+            instEnter >= maxDistance) {
+            continue;
+        }
+
+        const auto it = loadedModels.find(instance.modelId);
+        if (it == loadedModels.end()) continue;
+        const ModelData& model = it->second;
+
+        const glm::vec3 localOrigin = glm::vec3(instance.invModelMatrix * glm::vec4(origin, 1.0f));
+        const glm::vec3 localDir = glm::normalize(glm::vec3(instance.invModelMatrix * glm::vec4(direction, 0.0f)));
+        const float worldPerLocal = std::max(
+            glm::length(glm::vec3(instance.modelMatrix * glm::vec4(localDir, 0.0f))), 1e-6f);
+        const float maxLocalT = (maxDistance / worldPerLocal) + 0.05f;
+
+        for (size_t gi = 0; gi < model.groups.size(); ++gi) {
+            if (gi < instance.worldGroupBounds.size()) {
+                const auto& [gMin, gMax] = instance.worldGroupBounds[gi];
+                float wgEnter = 0.0f, wgExit = 0.0f;
+                if (!rayAABBRange(origin, direction, gMin, gMax, wgEnter, wgExit) ||
+                    wgEnter >= maxDistance) {
+                    continue;
+                }
+            }
+
+            const auto& group = model.groups[gi];
+            float tEnter = 0.0f, tExit = 0.0f;
+            if (!rayAABBRange(localOrigin, localDir, group.boundingBoxMin, group.boundingBoxMax,
+                              tEnter, tExit) ||
+                tEnter > maxLocalT) {
+                continue;
+            }
+            tExit = std::min(tExit, maxLocalT);
+
+            const auto& verts = group.collisionVertices;
+            const auto& indices = group.collisionIndices;
+            bool hitAny = false;
+            forEachGroupRayTriangle(group, localOrigin, localDir, tEnter, tExit, tl_triScratch,
+                [&](uint32_t triStart, float /*cellTEnter*/) -> bool {
+                    const uint32_t triIdx = triStart / 3u;
+                    if (triIdx < group.triMopyFlags.size() &&
+                        !wmoTriangleBlocksMovement(group.triMopyFlags[triIdx])) {
+                        return true;
+                    }
+                    const glm::vec3 triNormal = group.triNormals[triIdx];
+                    if (glm::dot(triNormal, triNormal) < 0.5f) return true;
+                    if (std::abs(glm::dot(triNormal, localDir)) < MIN_SURFACE_ALIGNMENT) {
+                        return true;
+                    }
+
+                    const glm::vec3& v0 = verts[indices[triStart]];
+                    const glm::vec3& v1 = verts[indices[triStart + 1]];
+                    const glm::vec3& v2 = verts[indices[triStart + 2]];
+                    float t = rayTriangleIntersect(localOrigin, localDir, v0, v1, v2);
+                    if (t <= 0.0f) {
+                        t = rayTriangleIntersect(localOrigin, localDir, v0, v2, v1);
+                    }
+                    if (t <= 0.0f) return true;
+
+                    const glm::vec3 localHit = localOrigin + localDir * t;
+                    const glm::vec3 worldHit = glm::vec3(instance.modelMatrix * glm::vec4(localHit, 1.0f));
+                    const float worldDist = glm::length(worldHit - origin);
+                    if (worldDist >= MIN_HIT_DISTANCE && worldDist < maxDistance) {
+                        hitAny = true;
+                        return false;
+                    }
+                    return true;
+                });
+            if (hitAny) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 float WMORenderer::raycastTriangles(const glm::vec3& origin, const glm::vec3& direction, float maxDistance,
                                     bool camera, bool skipTransports,
                                     glm::vec3* outWorldNormal) const {
@@ -5122,19 +5271,11 @@ float WMORenderer::raycastTriangles(const glm::vec3& origin, const glm::vec3& di
         if (skipTransports && instance.isTransport) continue;
         if (outsideCollisionFocus(instance)) continue;
 
-        glm::vec3 center = (instance.worldBoundsMin + instance.worldBoundsMax) * 0.5f;
-        glm::vec3 halfExtent = instance.worldBoundsMax - center;
-        float radiusSq = glm::dot(halfExtent, halfExtent);
-        glm::vec3 toCenter = center - origin;
-        float distSq = glm::dot(toCenter, toCenter);
-        float maxR = maxDistance + std::sqrt(radiusSq) + 1.0f;
-        if (distSq > maxR * maxR) {
-            continue;
-        }
-
+        float instEnter = 0.0f, instExit = 0.0f;
         glm::vec3 worldMin = instance.worldBoundsMin - glm::vec3(0.5f);
         glm::vec3 worldMax = instance.worldBoundsMax + glm::vec3(0.5f);
-        if (!rayIntersectsAABB(origin, direction, worldMin, worldMax)) {
+        if (!rayAABBRange(origin, direction, worldMin, worldMax, instEnter, instExit) ||
+            instEnter > closestHit) {
             continue;
         }
 
@@ -5146,92 +5287,96 @@ float WMORenderer::raycastTriangles(const glm::vec3& origin, const glm::vec3& di
         // Use cached inverse matrix
         glm::vec3 localOrigin = glm::vec3(instance.invModelMatrix * glm::vec4(origin, 1.0f));
         glm::vec3 localDir = glm::normalize(glm::vec3(instance.invModelMatrix * glm::vec4(direction, 0.0f)));
+        const float worldPerLocal = std::max(
+            glm::length(glm::vec3(instance.modelMatrix * glm::vec4(localDir, 0.0f))), 1e-6f);
 
         for (size_t gi = 0; gi < model.groups.size(); ++gi) {
-            // World-space group cull - skip groups whose world AABB doesn't intersect the ray
+            // World-space group cull - skip groups whose world AABB doesn't intersect [0, closestHit]
             if (gi < instance.worldGroupBounds.size()) {
                 const auto& [gMin, gMax] = instance.worldGroupBounds[gi];
-                if (!rayIntersectsAABB(origin, direction, gMin, gMax)) {
+                float wgEnter = 0.0f, wgExit = 0.0f;
+                if (!rayAABBRange(origin, direction, gMin, gMax, wgEnter, wgExit) ||
+                    wgEnter > closestHit) {
                     continue;
                 }
             }
 
             const auto& group = model.groups[gi];
-            // Local-space AABB cull
-            if (!rayIntersectsAABB(localOrigin, localDir, group.boundingBoxMin, group.boundingBoxMax)) {
+            const float maxLocalT = (closestHit / worldPerLocal) + 0.05f;
+            float tEnter = 0.0f, tExit = 0.0f;
+            if (!rayAABBRange(localOrigin, localDir, group.boundingBoxMin, group.boundingBoxMax,
+                              tEnter, tExit) ||
+                tEnter > maxLocalT) {
                 continue;
             }
+            tExit = std::min(tExit, maxLocalT);
 
-            // Narrow-phase: triangle raycast using spatial grid (wall-only).
             const auto& verts = group.collisionVertices;
             const auto& indices = group.collisionIndices;
 
-            // Compute local-space ray endpoint and query grid for XY range
-            glm::vec3 localEnd = localOrigin + localDir * (closestHit / glm::length(
-                glm::vec3(instance.modelMatrix * glm::vec4(localDir, 0.0f))));
-            float rMinX = std::min(localOrigin.x, localEnd.x) - 1.0f;
-            float rMinY = std::min(localOrigin.y, localEnd.y) - 1.0f;
-            float rMaxX = std::max(localOrigin.x, localEnd.x) + 1.0f;
-            float rMaxY = std::max(localOrigin.y, localEnd.y) + 1.0f;
-            group.getTrianglesInRange(rMinX, rMinY, rMaxX, rMaxY, tl_triScratch);
-
-            for (uint32_t triStart : tl_triScratch) {
-                const uint32_t triIdx = triStart / 3;
-                if (triIdx < group.triMopyFlags.size()) {
-                    const uint8_t mopy = group.triMopyFlags[triIdx];
-                    if (camera ? !wmoTriangleStopsCamera(mopy)
-                               : !wmoTriangleBlocksMovement(mopy)) {
-                        continue;
+            forEachGroupRayTriangle(group, localOrigin, localDir, tEnter, tExit, tl_triScratch,
+                [&](uint32_t triStart, float cellTEnter) -> bool {
+                    const float curMaxLocalT = (closestHit / worldPerLocal) + 0.05f;
+                    if (cellTEnter > curMaxLocalT) {
+                        return true;
                     }
-                }
-                const glm::vec3& v0 = verts[indices[triStart]];
-                const glm::vec3& v1 = verts[indices[triStart + 1]];
-                const glm::vec3& v2 = verts[indices[triStart + 2]];
-                glm::vec3 triNormal = group.triNormals[triStart / 3];
-                if (glm::dot(triNormal, triNormal) < 0.5f) continue;  // degenerate
-                // Non-camera occlusion rays ignore near-grazing intersections;
-                // camera rays must collide with shallow floors/ramps down to
-                // grazing angles (e.g. 2.1 deg at 48 yd zoom in build 8606).
-                if (!camera && std::abs(glm::dot(triNormal, localDir)) < MIN_SURFACE_ALIGNMENT) {
-                    continue;
-                }
-
-                float t = rayTriangleIntersect(localOrigin, localDir, v0, v1, v2);
-                if (t <= 0.0f) {
-                    // Two-sided collision.
-                    t = rayTriangleIntersect(localOrigin, localDir, v0, v2, v1);
-                }
-                if (t <= 0.0f) continue;
-
-                glm::vec3 localHit = localOrigin + localDir * t;
-                glm::vec3 worldHit = glm::vec3(instance.modelMatrix * glm::vec4(localHit, 1.0f));
-                // Deliberately no height band around the pivot here.
-                //
-                // There was one - hits more than 0.90 below or 0.80 above the
-                // pivot were dropped - and it is what let the camera through
-                // walls. The camera orbits and pitches, so the far end of this
-                // ray is normally metres above or below the pivot: at any
-                // appreciable pitch every hit near the camera fell outside that
-                // 1.7-yard slice and the wall was not there at all. The band was
-                // aimed at floor and ramp geometry underfoot, which the normal
-                // test above already excludes, so it was rejecting only the
-                // walls it was supposed to be finding.
-                float worldDist = glm::length(worldHit - origin);
-                if (worldDist < MIN_HIT_DISTANCE) continue;
-                if (worldDist < closestHit && worldDist <= maxDistance) {
-                    closestHit = worldDist;
-                    foundHit = true;
-                    if (outWorldNormal) {
-                        glm::vec3 wn = glm::transpose(glm::mat3(instance.invModelMatrix)) * triNormal;
-                        const float wnLenSq = glm::dot(wn, wn);
-                        if (wnLenSq > 1e-12f) {
-                            wn *= 1.0f / std::sqrt(wnLenSq);
-                            if (glm::dot(wn, direction) > 0.0f) wn = -wn;
-                            bestWorldNormal = wn;
+                    const uint32_t triIdx = triStart / 3u;
+                    if (triIdx < group.triMopyFlags.size()) {
+                        const uint8_t mopy = group.triMopyFlags[triIdx];
+                        if (camera ? !wmoTriangleStopsCamera(mopy)
+                                   : !wmoTriangleBlocksMovement(mopy)) {
+                            return true;
                         }
                     }
-                }
-            }
+                    const glm::vec3& v0 = verts[indices[triStart]];
+                    const glm::vec3& v1 = verts[indices[triStart + 1]];
+                    const glm::vec3& v2 = verts[indices[triStart + 2]];
+                    glm::vec3 triNormal = group.triNormals[triIdx];
+                    if (glm::dot(triNormal, triNormal) < 0.5f) return true;  // degenerate
+                    // Non-camera occlusion rays ignore near-grazing intersections;
+                    // camera rays must collide with shallow floors/ramps down to
+                    // grazing angles (e.g. 2.1 deg at 48 yd zoom in build 8606).
+                    if (!camera && std::abs(glm::dot(triNormal, localDir)) < MIN_SURFACE_ALIGNMENT) {
+                        return true;
+                    }
+
+                    float t = rayTriangleIntersect(localOrigin, localDir, v0, v1, v2);
+                    if (t <= 0.0f) {
+                        // Two-sided collision.
+                        t = rayTriangleIntersect(localOrigin, localDir, v0, v2, v1);
+                    }
+                    if (t <= 0.0f) return true;
+
+                    glm::vec3 localHit = localOrigin + localDir * t;
+                    glm::vec3 worldHit = glm::vec3(instance.modelMatrix * glm::vec4(localHit, 1.0f));
+                    // Deliberately no height band around the pivot here.
+                    //
+                    // There was one - hits more than 0.90 below or 0.80 above the
+                    // pivot were dropped - and it is what let the camera through
+                    // walls. The camera orbits and pitches, so the far end of this
+                    // ray is normally metres above or below the pivot: at any
+                    // appreciable pitch every hit near the camera fell outside that
+                    // 1.7-yard slice and the wall was not there at all. The band was
+                    // aimed at floor and ramp geometry underfoot, which the normal
+                    // test above already excludes, so it was rejecting only the
+                    // walls it was supposed to be finding.
+                    float worldDist = glm::length(worldHit - origin);
+                    if (worldDist < MIN_HIT_DISTANCE) return true;
+                    if (worldDist < closestHit && worldDist <= maxDistance) {
+                        closestHit = worldDist;
+                        foundHit = true;
+                        if (outWorldNormal) {
+                            glm::vec3 wn = glm::transpose(glm::mat3(instance.invModelMatrix)) * triNormal;
+                            const float wnLenSq = glm::dot(wn, wn);
+                            if (wnLenSq > 1e-12f) {
+                                wn *= 1.0f / std::sqrt(wnLenSq);
+                                if (glm::dot(wn, direction) > 0.0f) wn = -wn;
+                                bestWorldNormal = wn;
+                            }
+                        }
+                    }
+                    return true;
+                });
         }
     }
 
@@ -5251,8 +5396,10 @@ float WMORenderer::raycastVisibleGeometry(const glm::vec3& origin, const glm::ve
     for (size_t idx : tl_candidateScratch) {
         const auto& instance = instances[idx];
         if (outsideCollisionFocus(instance)) continue;
-        if (!rayIntersectsAABB(origin, direction, instance.worldBoundsMin - glm::vec3(0.5f),
-                               instance.worldBoundsMax + glm::vec3(0.5f))) continue;
+        float instEnter = 0.0f, instExit = 0.0f;
+        if (!rayAABBRange(origin, direction, instance.worldBoundsMin - glm::vec3(0.5f),
+                          instance.worldBoundsMax + glm::vec3(0.5f), instEnter, instExit) ||
+            instEnter > closestHit) continue;
         const auto it = loadedModels.find(instance.modelId);
         if (it == loadedModels.end()) continue;
         // Unnormalized: a local distance along it is the world distance.
@@ -5262,15 +5409,31 @@ float WMORenderer::raycastVisibleGeometry(const glm::vec3& origin, const glm::ve
         for (size_t gi = 0; gi < groups.size(); ++gi) {
             if (gi < instance.worldGroupBounds.size()) {
                 const auto& [gMin, gMax] = instance.worldGroupBounds[gi];
-                if (!rayIntersectsAABB(origin, direction, gMin, gMax)) continue;
+                float wgEnter = 0.0f, wgExit = 0.0f;
+                if (!rayAABBRange(origin, direction, gMin, gMax, wgEnter, wgExit) ||
+                    wgEnter > closestHit) continue;
             }
             const auto& group = groups[gi];
-            if (!trianglesAlongRay(group, localOrigin, localDir, tl_triScratch)) continue;
+            float tEnter = 0.0f, tExit = 0.0f;
+            if (!rayAABBRange(localOrigin, localDir, group.boundingBoxMin, group.boundingBoxMax,
+                              tEnter, tExit) ||
+                tEnter > closestHit) continue;
+            tExit = std::min(tExit, closestHit + 0.05f);
             assert(group.triMaterials.size() * 3 == group.collisionIndices.size() &&
                    "WMO group without one MOPY material per triangle");
-            closestHit = pickDrawnWmoTriangles(group.collisionVertices, group.collisionIndices,
-                                               group.triMaterials, tl_triScratch,
-                                               localOrigin, localDir, closestHit);
+            std::vector<uint32_t> rayTris;
+            forEachGroupRayTriangle(group, localOrigin, localDir, tEnter, tExit, tl_triScratch,
+                [&](uint32_t triStart, float cellTEnter) -> bool {
+                    if (cellTEnter <= closestHit + 0.05f) {
+                        rayTris.push_back(triStart);
+                    }
+                    return true;
+                });
+            if (!rayTris.empty()) {
+                closestHit = pickDrawnWmoTriangles(group.collisionVertices, group.collisionIndices,
+                                                   group.triMaterials, rayTris,
+                                                   localOrigin, localDir, closestHit);
+            }
         }
     }
     return closestHit;

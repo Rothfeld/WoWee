@@ -12,6 +12,7 @@
 
 #include <catch_amalgamated.hpp>
 #include "pipeline/wmo_loader.hpp"
+#include "rendering/renderer.hpp"
 #include "rendering/vk_frame_data.hpp"
 
 #include <glm/glm.hpp>
@@ -59,6 +60,40 @@ TEST_CASE("Global shadow params are not affected by indoor state", "[indoor_shad
     // Shadows disabled - should be 0.0
     applyShadowParams(fd, /*shadowsEnabled=*/false);
     REQUIRE(fd.shadowParams.x == Catch::Approx(0.0f));
+}
+
+TEST_CASE("Renderer::shouldSampleShadowMap disables sampling when shadow pass is skipped or layout is undefined",
+          "[indoor_shadows][shadows]") {
+    using wowee::rendering::Renderer;
+
+    // Normal world frame: shadows enabled, not skipped, valid light-space matrix,
+    // and shadow depth image in SHADER_READ_ONLY_OPTIMAL.
+    CHECK(Renderer::shouldSampleShadowMap(
+        /*shadowsOn=*/true,
+        /*skipShadowPass=*/false,
+        /*passAblated=*/false,
+        /*hasLightSpaceMatrix=*/true,
+        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL));
+
+    // User setting disables shadows.
+    CHECK_FALSE(Renderer::shouldSampleShadowMap(
+        false, false, false, true, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL));
+
+    // WOWEE_SKIP_SHADOWS=1 skips renderShadowPass; scene must not sample shadow map.
+    CHECK_FALSE(Renderer::shouldSampleShadowMap(
+        true, /*skipShadowPass=*/true, false, true, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL));
+
+    // Shadow pass ablation skips renderShadowPass; scene must not sample shadow map.
+    CHECK_FALSE(Renderer::shouldSampleShadowMap(
+        true, false, /*passAblated=*/true, true, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL));
+
+    // Early frame before character position sets lightSpaceMatrix.
+    CHECK_FALSE(Renderer::shouldSampleShadowMap(
+        true, false, false, /*hasLightSpaceMatrix=*/false, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL));
+
+    // Defensive layout guard: never sample an image still in VK_IMAGE_LAYOUT_UNDEFINED.
+    CHECK_FALSE(Renderer::shouldSampleShadowMap(
+        true, false, false, true, VK_IMAGE_LAYOUT_UNDEFINED));
 }
 
 TEST_CASE("Interior WMO groups skip shadow sampling", "[indoor_shadows]") {

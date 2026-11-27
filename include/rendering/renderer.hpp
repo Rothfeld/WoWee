@@ -478,6 +478,18 @@ public:
     /// still runs whole, casters and all. See renderShadowPass.
     void setShadowsEnabled(bool enabled) { shadowsEnabled = enabled; }
     bool areShadowsEnabled() const { return shadowsEnabled; }
+
+    /// Whether scene shaders should sample set 0 binding 1 (`uShadowMap`) this frame.
+    /// False whenever shadows are disabled, skipped (`WOWEE_SKIP_SHADOWS=1` or pass
+    /// ablation), before a valid light-space matrix exists, or if the slot's shadow
+    /// depth image is not in `VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL`.
+    [[nodiscard]] static constexpr bool shouldSampleShadowMap(
+            bool shadowsOn, bool skipShadowPass, bool passAblated,
+            bool hasLightSpaceMatrix, VkImageLayout shadowLayout) noexcept {
+        return shadowsOn && !skipShadowPass && !passAblated &&
+               hasLightSpaceMatrix &&
+               shadowLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    }
     void setShadowDistance(float dist) { shadowDistance_ = glm::clamp(dist, 40.0f, 500.0f); }
     float getShadowDistance() const { return shadowDistance_; }
     void setViewDistance(float distance);

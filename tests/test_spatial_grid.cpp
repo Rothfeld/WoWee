@@ -285,3 +285,203 @@ TEST_CASE("a flat group does not divide by zero", "[spatialgrid]") {
     REQUIRE(range.has_value());
     CHECK(range->minY == 0);
 }
+
+#include "rendering/wmo_renderer.hpp"
+#include <random>
+
+namespace {
+
+bool rayHitsAabbRangeTest(const glm::vec3& origin, const glm::vec3& dir,
+                          const glm::vec3& bmin, const glm::vec3& bmax,
+                          float& outMin, float& outMax) {
+    float tmin = -1e30f;
+    float tmax = 1e30f;
+    for (int i = 0; i < 3; ++i) {
+        if (std::abs(dir[i]) < 1e-8f) {
+            if (origin[i] < bmin[i] || origin[i] > bmax[i]) return false;
+        } else {
+            float t0 = (bmin[i] - origin[i]) / dir[i];
+            float t1 = (bmax[i] - origin[i]) / dir[i];
+            if (t0 > t1) std::swap(t0, t1);
+            tmin = std::max(tmin, t0);
+            tmax = std::min(tmax, t1);
+            if (tmin > tmax) return false;
+        }
+    }
+    if (tmax < 0.0f) return false;
+    outMin = std::max(tmin, 0.0f);
+    outMax = tmax;
+    return true;
+}
+
+float rayTriMollerTrumbore(const glm::vec3& origin, const glm::vec3& dir,
+                           const glm::vec3& v0, const glm::vec3& v1, const glm::vec3& v2) {
+    const glm::vec3 e1 = v1 - v0;
+    const glm::vec3 e2 = v2 - v0;
+    const glm::vec3 h = glm::cross(dir, e2);
+    const float a = glm::dot(e1, h);
+    if (std::abs(a) < 1e-6f) return -1.0f;
+    const float f = 1.0f / a;
+    const glm::vec3 s = origin - v0;
+    const float u = f * glm::dot(s, h);
+    if (u < 0.0f || u > 1.0f) return -1.0f;
+    const glm::vec3 q = glm::cross(s, e1);
+    const float v = f * glm::dot(dir, q);
+    if (v < 0.0f || u + v > 1.0f) return -1.0f;
+    const float t = f * glm::dot(e2, q);
+    return t > 1e-5f ? t : -1.0f;
+}
+
+} // namespace
+
+TEST_CASE("WMORenderer::walkGridRayCells matches brute-force triangle hits while visiting O(N) cells",
+          "[spatialgrid][sunray][wmo]") {
+    using wowee::rendering::WMORenderer;
+
+    // 64x64 grid over a 256x256x140 Shattrath-scale WMO group containing floors,
+    // walls, arches, and a multi-cell elevated roof slab spanning several cells.
+    constexpr int kCellsX = 64;
+    constexpr int kCellsY = 64;
+    const glm::vec3 boxMin(-128.0f, -128.0f, -20.0f);
+    const glm::vec3 boxMax(128.0f, 128.0f, 120.0f);
+    const glm::vec2 gridOrigin(boxMin.x, boxMin.y);
+    const float extX = boxMax.x - boxMin.x;
+    const float extY = boxMax.y - boxMin.y;
+
+    struct Tri {
+        glm::vec3 v0, v1, v2;
+        float minZ, maxZ;
+    };
+    std::vector<Tri> tris;
+    std::mt19937 rng(0x5A771234u);
+    std::uniform_real_distribution<float> xyDist(-120.0f, 120.0f);
+    std::uniform_real_distribution<float> zDist(-18.0f, 115.0f);
+    std::uniform_real_distribution<float> spanDist(-14.0f, 14.0f);
+
+    // Explicit multi-cell horizontal roof spanning 6x6 cells at z = 65: a sloped
+    // ray entering earlier cells at z = 10 must NOT drop this triangle via early
+    // dedup before climbing to z = 65 in a later cell.
+    tris.push_back({{-20.0f, -20.0f, 65.0f}, {12.0f, -20.0f, 65.0f}, {12.0f, 12.0f, 65.0f}, 65.0f, 65.0f});
+    tris.push_back({{-20.0f, -20.0f, 65.0f}, {12.0f, 12.0f, 65.0f}, {-20.0f, 12.0f, 65.0f}, 65.0f, 65.0f});
+    // Cell-boundary vertical wall exactly on x = 0.0f (cell 31/32 boundary).
+    tris.push_back({{0.0f, -16.0f, 0.0f}, {0.0f, 16.0f, 0.0f}, {0.0f, 16.0f, 40.0f}, 0.0f, 40.0f});
+    tris.push_back({{0.0f, -16.0f, 0.0f}, {0.0f, 16.0f, 40.0f}, {0.0f, -16.0f, 40.0f}, 0.0f, 40.0f});
+
+    for (int i = 0; i < 600; ++i) {
+        const glm::vec3 base(xyDist(rng), xyDist(rng), zDist(rng));
+        const glm::vec3 v0 = base;
+        const glm::vec3 v1 = glm::clamp(base + glm::vec3(spanDist(rng), spanDist(rng), spanDist(rng)), boxMin, boxMax);
+        const glm::vec3 v2 = glm::clamp(base + glm::vec3(spanDist(rng), spanDist(rng), spanDist(rng)), boxMin, boxMax);
+        if (glm::length(glm::cross(v1 - v0, v2 - v0)) < 0.05f) continue;
+        tris.push_back({v0, v1, v2, std::min({v0.z, v1.z, v2.z}), std::max({v0.z, v1.z, v2.z})});
+    }
+
+    std::vector<std::vector<uint32_t>> cellTris(kCellsX * kCellsY);
+    for (uint32_t ti = 0; ti < tris.size(); ++ti) {
+        const auto& t = tris[ti];
+        const auto cr = cellRangeCovering(
+            kCellsX, kCellsY, extX, extY, gridOrigin,
+            std::min({t.v0.x, t.v1.x, t.v2.x}),
+            std::min({t.v0.y, t.v1.y, t.v2.y}),
+            std::max({t.v0.x, t.v1.x, t.v2.x}),
+            std::max({t.v0.y, t.v1.y, t.v2.y}));
+        REQUIRE(cr.has_value());
+        for (int cy = cr->minY; cy <= cr->maxY; ++cy) {
+            for (int cx = cr->minX; cx <= cr->maxX; ++cx) {
+                cellTris[cy * kCellsX + cx].push_back(ti);
+            }
+        }
+    }
+
+    // 1. Shattrath diagonal afternoon sun ray cell-count check (< 5% of 4,096 cells).
+    {
+        const glm::vec3 origin(-110.0f, -105.0f, -12.0f);
+        const glm::vec3 sunDir = glm::normalize(glm::vec3(0.45f, 0.68f, 0.58f));
+        float tEnter = 0.0f, tExit = 0.0f;
+        REQUIRE(rayHitsAabbRangeTest(origin, sunDir, boxMin, boxMax, tEnter, tExit));
+
+        size_t walkedCells = 0;
+        WMORenderer::walkGridRayCells(
+            kCellsX, kCellsY, boxMin, boxMax, gridOrigin, origin, sunDir, tEnter, tExit,
+            [&](int, int, float, float, float) {
+                ++walkedCells;
+                return true;
+            });
+        // Full 2D bounding box covers > 2,000 cells; 1D ray walk visits < 160 (< 4% of 4,096).
+        CHECK(walkedCells > 0);
+        CHECK(walkedCells < 160);
+
+        // Early-exit any-hit stops immediately on the first cell returning false.
+        size_t earlyStopCells = 0;
+        const bool completed = WMORenderer::walkGridRayCells(
+            kCellsX, kCellsY, boxMin, boxMax, gridOrigin, origin, sunDir, tEnter, tExit,
+            [&](int, int, float, float, float) {
+                ++earlyStopCells;
+                return false;
+            });
+        CHECK_FALSE(completed);
+        CHECK(earlyStopCells == 1);
+    }
+
+    // 2. Exact closest-hit & any-hit equivalence across 1,500 random + targeted rays.
+    std::vector<uint8_t> visited(tris.size(), 0);
+    std::vector<uint32_t> touched;
+    auto queryFastClosest = [&](const glm::vec3& orig, const glm::vec3& dir, float maxDist) {
+        float tEnter = 0.0f, tExit = 0.0f;
+        if (!rayHitsAabbRangeTest(orig, dir, boxMin, boxMax, tEnter, tExit) || tEnter > maxDist) {
+            return maxDist;
+        }
+        tExit = std::min(tExit, maxDist);
+        float closest = maxDist;
+        touched.clear();
+        WMORenderer::walkGridRayCells(
+            kCellsX, kCellsY, boxMin, boxMax, gridOrigin, orig, dir, tEnter, tExit,
+            [&](int cx, int cy, float tc0, float cellZMin, float cellZMax) {
+                if (tc0 > closest + 0.05f) return true;
+                for (uint32_t ti : cellTris[cy * kCellsX + cx]) {
+                    if (visited[ti]) continue;
+                    if (tris[ti].maxZ < cellZMin || tris[ti].minZ > cellZMax) continue;
+                    visited[ti] = 1;
+                    touched.push_back(ti);
+                    const float t = rayTriMollerTrumbore(orig, dir, tris[ti].v0, tris[ti].v1, tris[ti].v2);
+                    if (t > 0.0f && t < closest) closest = t;
+                }
+                return true;
+            });
+        for (uint32_t ti : touched) visited[ti] = 0;
+        return closest;
+    };
+
+    auto queryBruteClosest = [&](const glm::vec3& orig, const glm::vec3& dir, float maxDist) {
+        float closest = maxDist;
+        for (const auto& t : tris) {
+            const float hit = rayTriMollerTrumbore(orig, dir, t.v0, t.v1, t.v2);
+            if (hit > 0.0f && hit < closest) closest = hit;
+        }
+        return closest;
+    };
+
+    // Targeted sloped ray climbing from z = 5 under (-20, -20) up through the multi-cell roof at z = 65:
+    {
+        const glm::vec3 orig(-18.0f, -18.0f, 5.0f);
+        const glm::vec3 dir = glm::normalize(glm::vec3(24.0f, 22.0f, 60.0f));
+        CHECK(queryFastClosest(orig, dir, 300.0f) == Catch::Approx(queryBruteClosest(orig, dir, 300.0f)).margin(1e-4f));
+    }
+    // Targeted ray piercing the cell-boundary wall at x = 0.0f:
+    {
+        const glm::vec3 orig(-10.0f, 0.0f, 15.0f);
+        const glm::vec3 dir = glm::normalize(glm::vec3(1.0f, 0.0f, 0.1f));
+        CHECK(queryFastClosest(orig, dir, 300.0f) == Catch::Approx(queryBruteClosest(orig, dir, 300.0f)).margin(1e-4f));
+    }
+
+    std::uniform_real_distribution<float> dirDist(-1.0f, 1.0f);
+    for (int r = 0; r < 1500; ++r) {
+        const glm::vec3 orig(xyDist(rng), xyDist(rng), zDist(rng));
+        glm::vec3 dir(dirDist(rng), dirDist(rng), dirDist(rng));
+        if (glm::length(dir) < 0.05f) dir = glm::vec3(0.5f, 0.5f, 0.7071f);
+        dir = glm::normalize(dir);
+        const float fast = queryFastClosest(orig, dir, 400.0f);
+        const float brute = queryBruteClosest(orig, dir, 400.0f);
+        REQUIRE(fast == Catch::Approx(brute).margin(1e-4f));
+    }
+}

@@ -1011,7 +1011,6 @@ public:
     [[nodiscard]] float particleDensity() const { return particleDensity_; }
 
     void setSuppressBakedStars(bool suppress) { suppressBakedStars_ = suppress; }
-    void setInsideInterior(bool inside) { insideInterior = inside; }
     /// Draw only instances standing inside this box (a sealed interior, see
     /// WMORenderer::findSealedInterior); every instance when empty.
     void setVisibleRegion(std::optional<std::pair<glm::vec3, glm::vec3>> region) { visibleRegion_ = region; }
@@ -1021,10 +1020,14 @@ public:
     /// indoor GameObjects, spell effects, and externally posed unit/weapon
     /// emitters. Also hides exterior roof GameObjects positioned directly above
     /// an interior WMO room while the camera is inside an interior room below
-    /// them, preventing oversized view-space roof billboards (e.g. Stratholme
-    /// Alonsus Chapel GO 182071/182072 at z = 150.4..169.5) from bleeding down
-    /// in front of the interior ceiling when facing an open doorway.
-    void setExteriorHidden(bool hidden) { exteriorHidden_ = hidden; }
+    /// them (`insideInteriorWmo`), preventing oversized view-space roof
+    /// billboards (e.g. Stratholme Alonsus Chapel GO 182071/182072 at
+    /// z = 150.4..169.5) from bleeding down in front of the interior ceiling
+    /// when facing an open doorway.
+    void setExteriorHidden(bool hidden, bool insideInteriorWmo = false) {
+        exteriorHidden_ = hidden;
+        insideInteriorWmo_ = insideInteriorWmo;
+    }
     [[nodiscard]] static bool isExteriorCulled(bool exteriorHidden,
                                                const M2Instance& instance,
                                                bool insideInterior = false,
@@ -1041,7 +1044,7 @@ public:
         return !instance.serverVisibility();
     }
     [[nodiscard]] bool exteriorCulled(const M2Instance& instance) const {
-        return isExteriorCulled(exteriorHidden_, instance, insideInterior, cachedCamPos_);
+        return isExteriorCulled(exteriorHidden_, instance, insideInteriorWmo_, cachedCamPos_);
     }
     /// A WMO room doodad whose room is not drawn this frame: not its mesh,
     /// particles or ribbons (Karazhan's upper-floor braziers showed their
@@ -1167,7 +1170,7 @@ public:
 
 private:
     bool initialized_ = false;
-    bool insideInterior = false;
+    bool insideInteriorWmo_ = false;
     std::optional<std::pair<glm::vec3, glm::vec3>> visibleRegion_;
     bool exteriorHidden_ = false;
     pipeline::AssetManager* assetManager = nullptr;

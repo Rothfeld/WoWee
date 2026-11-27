@@ -24,6 +24,8 @@
 #include <limits>
 #include <future>
 #include <algorithm>
+#include <cassert>
+#include <cmath>
 
 namespace wowee {
 namespace pipeline {
@@ -234,7 +236,7 @@ public:
      * @param perFrameSet Per-frame descriptor set (set 0)
      * @param camera Camera for frustum culling
      */
-    /** Pre-update mutable state (frame ID, material UBOs) on main thread before parallel render. */
+    /** Pre-update mutable state (material UBOs) on main thread before parallel render. */
     void prepareRender();
     /// viewerPos is the character; portal culling seeds from it as well as from
     /// the camera, because at a doorway the two stand in different groups and
@@ -550,6 +552,9 @@ public:
      * @return Distance to first intersection, or maxDistance if no hit
      */
     float raycastBoundingBoxes(const glm::vec3& origin, const glm::vec3& direction, float maxDistance) const;
+    /// Fast boolean occlusion raycast (early-exits on the first blocking WMO triangle within `maxDistance`).
+    [[nodiscard]] bool rayOccluded(const glm::vec3& origin, const glm::vec3& direction, float maxDistance,
+                                   bool skipTransports = false) const;
     /// Same raycast excluding moving transport instances, so diving in open ocean
     /// beneath a floating ship's keel does not treat the hull above as a sealed cave roof.
     [[nodiscard]] float raycastNonTransportBoundingBoxes(const glm::vec3& origin, const glm::vec3& direction, float maxDistance) const;
@@ -567,6 +572,119 @@ public:
     /// camera collision) do not stop it. See wmoTriangleStopsCamera.
     float raycastCamera(const glm::vec3& origin, const glm::vec3& direction, float maxDistance,
                         glm::vec3* outWorldNormal = nullptr) const;
+
+    /// Walks the cells of a WMO group's dense 2D collision grid (`cellsX`, `cellsY <= 64`)
+    /// along the 3D ray segment `localOrigin + localDir * t` for `t in [tEnter, tExit]`
+    /// in front-to-back order. Each cell whose padded XY slab is pierced by the ray is
+    /// visited at most once, receiving `(cx, cy, cellTEnter, cellZMin, cellZMax)`.
+    /// Returning `false` from `visitCell` aborts traversal immediately (for any-hit queries).
+    template <typename CellVisitor>
+    static bool walkGridRayCells(
+            int cellsX, int cellsY,
+            const glm::vec3& boxMin, const glm::vec3& boxMax,
+            const glm::vec2& gridOrigin,
+            const glm::vec3& localOrigin, const glm::vec3& localDir,
+            float tEnter, float tExit,
+            CellVisitor&& visitCell) {
+        if (cellsX <= 0 || cellsY <= 0 || tEnter > tExit) return true;
+        assert(cellsX <= 64 && cellsY <= 64 && "WMO collision grid exceeds 64x64 cell bitset");
+
+        const float extentX = boxMax.x - boxMin.x;
+        const float extentY = boxMax.y - boxMin.y;
+        const float safeExtX = std::max(0.01f, extentX);
+        const float safeExtY = std::max(0.01f, extentY);
+        const float invCellW = static_cast<float>(cellsX) / safeExtX;
+        const float invCellH = static_cast<float>(cellsY) / safeExtY;
+        const float cellW = safeExtX / static_cast<float>(cellsX);
+        const float cellH = safeExtY / static_cast<float>(cellsY);
+
+        const glm::vec3 pStart = localOrigin + localDir * tEnter;
+        const glm::vec3 pEnd   = localOrigin + localDir * tExit;
+        const int cx0 = std::clamp(static_cast<int>((pStart.x - gridOrigin.x) * invCellW), 0, cellsX - 1);
+        const int cy0 = std::clamp(static_cast<int>((pStart.y - gridOrigin.y) * invCellH), 0, cellsY - 1);
+        const int cx1 = std::clamp(static_cast<int>((pEnd.x   - gridOrigin.x) * invCellW), 0, cellsX - 1);
+        const int cy1 = std::clamp(static_cast<int>((pEnd.y   - gridOrigin.y) * invCellH), 0, cellsY - 1);
+
+        const int steps = std::clamp(std::max(std::abs(cx1 - cx0), std::abs(cy1 - cy0)) + 1, 1, 64);
+        const float dt = (tExit - tEnter) / static_cast<float>(steps);
+        constexpr float kXYPad = 1e-2f;
+        constexpr float kZPad  = 5e-2f;
+
+        uint64_t cellSeen[64]{};
+
+        for (int s = 0; s < steps; ++s) {
+            const float ta = tEnter + dt * static_cast<float>(s);
+            const float tb = (s + 1 == steps) ? tExit : (tEnter + dt * static_cast<float>(s + 1));
+            const glm::vec3 pa = localOrigin + localDir * ta;
+            const glm::vec3 pb = localOrigin + localDir * tb;
+
+            const auto range = cellRangeCovering(
+                cellsX, cellsY, extentX, extentY, gridOrigin,
+                std::min(pa.x, pb.x) - kXYPad, std::min(pa.y, pb.y) - kXYPad,
+                std::max(pa.x, pb.x) + kXYPad, std::max(pa.y, pb.y) + kXYPad);
+            if (!range) continue;
+
+            const int xStart = (localDir.x >= 0.0f) ? range->minX : range->maxX;
+            const int xStop  = (localDir.x >= 0.0f) ? (range->maxX + 1) : (range->minX - 1);
+            const int xStep  = (localDir.x >= 0.0f) ? 1 : -1;
+            const int yStart = (localDir.y >= 0.0f) ? range->minY : range->maxY;
+            const int yStop  = (localDir.y >= 0.0f) ? (range->maxY + 1) : (range->minY - 1);
+            const int yStep  = (localDir.y >= 0.0f) ? 1 : -1;
+
+            for (int cy = yStart; cy != yStop; cy += yStep) {
+                for (int cx = xStart; cx != xStop; cx += xStep) {
+                    const uint32_t cellIdx = static_cast<uint32_t>(cy * cellsX + cx);
+                    const uint64_t bit = uint64_t{1} << (cellIdx & 63u);
+                    uint64_t& word = cellSeen[cellIdx >> 6u];
+                    if (word & bit) continue;
+
+                    const float cMinX = gridOrigin.x + static_cast<float>(cx) * cellW - kXYPad;
+                    const float cMaxX = (cx + 1 == cellsX)
+                        ? (gridOrigin.x + extentX + kXYPad)
+                        : (gridOrigin.x + static_cast<float>(cx + 1) * cellW + kXYPad);
+                    const float cMinY = gridOrigin.y + static_cast<float>(cy) * cellH - kXYPad;
+                    const float cMaxY = (cy + 1 == cellsY)
+                        ? (gridOrigin.y + extentY + kXYPad)
+                        : (gridOrigin.y + static_cast<float>(cy + 1) * cellH + kXYPad);
+
+                    float tc0 = tEnter;
+                    float tc1 = tExit;
+                    if (std::abs(localDir.x) > 1e-6f) {
+                        float tx0 = (cMinX - localOrigin.x) / localDir.x;
+                        float tx1 = (cMaxX - localOrigin.x) / localDir.x;
+                        if (tx0 > tx1) std::swap(tx0, tx1);
+                        tc0 = std::max(tc0, tx0);
+                        tc1 = std::min(tc1, tx1);
+                    } else if (localOrigin.x < cMinX || localOrigin.x > cMaxX) {
+                        continue;
+                    }
+                    if (tc0 > tc1) continue;
+
+                    if (std::abs(localDir.y) > 1e-6f) {
+                        float ty0 = (cMinY - localOrigin.y) / localDir.y;
+                        float ty1 = (cMaxY - localOrigin.y) / localDir.y;
+                        if (ty0 > ty1) std::swap(ty0, ty1);
+                        tc0 = std::max(tc0, ty0);
+                        tc1 = std::min(tc1, ty1);
+                    } else if (localOrigin.y < cMinY || localOrigin.y > cMaxY) {
+                        continue;
+                    }
+                    if (tc0 > tc1) continue;
+
+                    word |= bit;
+
+                    const float z0 = localOrigin.z + localDir.z * tc0;
+                    const float z1 = localOrigin.z + localDir.z * tc1;
+                    const float cellZMin = std::min(z0, z1) - kZPad;
+                    const float cellZMax = std::max(z0, z1) + kZPad;
+                    if (!visitCell(cx, cy, tc0, cellZMin, cellZMax)) {
+                        return false;
+                    }
+                }
+            }
+        }
+        return true;
+    }
 
     /**
      * Limit expensive collision/raycast queries to objects near a focus point.
@@ -1190,7 +1308,6 @@ private:
     // Floor height cache - persistent precomputed grid
     static constexpr float FLOOR_GRID_CELL_SIZE = 2.0f;  // 2 unit grid cells
     mutable std::unordered_map<uint64_t, float> precomputedFloorGrid;  // key -> floor height
-    mutable uint32_t currentFrameId = 0;
 
     uint64_t floorGridKey(float x, float y) const {
         int32_t ix = static_cast<int32_t>(std::floor(x / FLOOR_GRID_CELL_SIZE));
@@ -1210,38 +1327,6 @@ private:
         void invalidate() { instanceIdx = UINT32_MAX; groupIdx = -1; neighborGroups.clear(); }
     };
     mutable ActiveGroupInfo activeGroup_;
-
-    // Per-frame floor height dedup cache (same XY queried 3-5x per frame)
-    struct FrameFloorCache {
-        static constexpr size_t CAPACITY = 16;
-        struct Entry { uint64_t key; float resultZ; float normalZ; uint32_t frameId; };
-        Entry entries[CAPACITY] = {};
-
-        [[nodiscard]] uint64_t makeKey(float x, float y) const {
-            // 0.5-unit quantized grid
-            int32_t ix = static_cast<int32_t>(std::floor(x * 2.0f));
-            int32_t iy = static_cast<int32_t>(std::floor(y * 2.0f));
-            return (static_cast<uint64_t>(static_cast<uint32_t>(ix)) << 32) |
-                   static_cast<uint64_t>(static_cast<uint32_t>(iy));
-        }
-
-        std::optional<float> get(float x, float y, uint32_t frame, float* outNormalZ = nullptr) const {
-            uint64_t k = makeKey(x, y);
-            size_t slot = k % CAPACITY;
-            const auto& e = entries[slot];
-            if (e.frameId == frame && e.key == k) {
-                if (outNormalZ) *outNormalZ = e.normalZ;
-                return e.resultZ;
-            }
-            return std::nullopt;
-        }
-
-        void put(float x, float y, float result, float normalZ, uint32_t frame) {
-            uint64_t k = makeKey(x, y);
-            size_t slot = k % CAPACITY;
-            entries[slot] = { .key = k, .resultZ = result, .normalZ = normalZ, .frameId = frame };
-        }
-    };
 };
 
 } // namespace rendering

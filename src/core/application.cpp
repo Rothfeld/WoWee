@@ -5599,56 +5599,29 @@ void Application::render() {
         runRenderStage("renderHUD", [&] { renderer->renderHUD(); });
     }
 
-    // Addon-built frames, drawn under the client's own interface while the two
-    // coexist. This is the whole point of the widget tree: an addon that calls
-    // CreateTexture now puts something on the screen instead of talking to a
-    // table of no-ops.
+    // FrameXML and addon-built frames share the widget tree as the in-game
+    // interface. This stage updates widget-backed offscreen models, runs layout
+    // (including suppressed-frame hiding), and dispatches widget key/mouse
+    // input; actual widget drawing runs later in frameXml->draw so panels sit
+    // above nameplates and minimap blips added by uiManager->render.
     //
-    // FrameXML's frames come through the same tree, and they are the interface
-    // now rather than a second one drawn over this client's own. This used to
-    // be gated on WOWEE_FRAMEXML_UI naming at least one element, so that a run
-    // loading FrameXML only to exercise the parser kept the client's own
-    // interface; there is no longer another interface for it to keep.
-    //
-    // Only while there is a world to draw it over. That is the whole of the
-    // gate now, and it is the half that was load-bearing: without it every
-    // frame FrameXML had built stayed on screen through a logout and sat on top
-    // of character select - /logout ran, the character left the world, and the
-    // interface it had been using never went away.
+    // Gated on AppState::IN_GAME so frames built in-world do not remain visible
+    // or receive input after /logout returns to character select.
     const bool drawWidgets = state == AppState::IN_GAME;
     if (drawWidgets && addonManager_ && addonManager_->getLuaEngine() && renderer) {
         runRenderStage("addonWidgets", [&] {
             const ImGuiIO& io = ImGui::GetIO();
             auto* engine = addonManager_->getLuaEngine();
 
-            // The portrait is the character itself rendered small, so it is
-            // produced here rather than read from a file, and handed to the
-            // widget by name each frame. Told every frame rather than once,
-            // because the render target is rebuilt when the window resizes and
-            // a handle kept across that would be stale.
+            // Sync map screen rects and offscreen 3D model/portrait targets
+            // feeding FrameXML widgets before layout and input run.
             runRenderStage("addonWidgets/models", [&] {
             if (gameHandler && assetManager) {
                 auto& widgets = engine->widgets();
-                ui::Widget* portrait = portraitWidgetId_
-                    ? widgets.get(portraitWidgetId_) : nullptr;
-                if (!portrait || portrait->name != "PlayerPortrait") {
-                    portrait = widgets.findByName("PlayerPortrait");
-                    portraitWidgetId_ = portrait ? portrait->id : 0;
-                }
-                // Only while something is going to show it. This is a whole
-                // offscreen character pass, and running it for a frame that
-                // FrameXML has not been given costs a model render and a
-                // composite every frame to produce a picture nothing draws.
-                // The minimap is a Vulkan pass of its own drawn inside the
-                // main render pass, not an image this renderer could place, so
-                // the map is told where FrameXML's frame ended up rather than
-                // the frame being handed a picture. One frame behind, because
-                // that pass has already run by the time this lays out - which
-                // for a frame that does not move is not visible.
-                // The world map is an ImGui window that centres itself, so
-                // like the minimap it is told where to be rather than handed
-                // a picture. The detail frame, not the outer one: that is the
-                // map area inside the panel FrameXML drew.
+                // Both the world map (an ImGui window) and the minimap
+                // (composited off-screen in beginFrame and drawn at its screen
+                // rect during the overlay pass) are told where FrameXML placed
+                // their host frames rather than handed a texture handle.
                 if (auto* wmap = renderer->getWorldMap()) {
                     // The map settles on the player's zone a frame after the
                     // interface asked where it was, so it says when it has and
@@ -6130,6 +6103,15 @@ void Application::render() {
 
             });
             runRenderStage("addonWidgets/portrait", [&] {
+                // PlayerPortrait and any textures populated via SetPortraitTexture
+                // receive a fresh descriptor handle each frame so render-target
+                // rebuilds never leave a stale texture id on a widget.
+                ui::Widget* portrait = portraitWidgetId_
+                    ? widgets.get(portraitWidgetId_) : nullptr;
+                if (!portrait || portrait->name != "PlayerPortrait") {
+                    portrait = widgets.findByName("PlayerPortrait");
+                    portraitWidgetId_ = portrait ? portrait->id : 0;
+                }
                 if (portrait) {
                     sizeFor(unitPortrait_, portrait);
                     // A shapeshifted or morphed player is drawn from the
@@ -6716,14 +6698,15 @@ void Application::render() {
             });
             runRenderStage("addonWidgets/engine", [&] {
             engine->reportEventListenersOnce();
-            // Keep this after the widget render, which is where suppressed
-            // windows are forced hidden. A suppressed frame that some handler
-            // showed earlier this iteration is already hidden again by the time
-            // this looks, so it never counts as having appeared and its
-            // OnShow/OnHide never run. Several of those handlers do real work:
-            // LootFrame_OnHide calls CloseLoot, which releases the loot on the
-            // server - through the client's own loot window, the one actually
-            // on screen. Moving this earlier would take the player's loot.
+            // Keep this after widget layout (addonWidgets/layout), which is
+            // where suppressed windows are forced hidden. A suppressed frame
+            // that some handler showed earlier this iteration is already hidden
+            // again by the time this looks, so it never counts as having
+            // appeared and its OnShow/OnHide never run. Several of those
+            // handlers do real work: LootFrame_OnHide calls CloseLoot, which
+            // releases the loot on the server - through the client's own loot
+            // window, the one actually on screen. Moving this before layout
+            // would take the player's loot.
             engine->updateVisibility();
             // After visibility, because a frame shown this frame is measured
             // this frame and its size is new rather than changed.
@@ -6797,12 +6780,13 @@ void Application::render() {
             // batching them took this stage from 682ms to under 200.
             //
             // It also broke correctness, which is why it is not done. This
-            // stage does not only build draw lists - the unit portrait and the
-            // character preview render models to offscreen targets inside it,
-            // and those are real draws. With the batch still open they sampled
-            // images whose uploads had not been submitted, and validation
-            // began reporting VK_IMAGE_LAYOUT_UNDEFINED one second into every
-            // run rather than only at the moment the device was lost.
+            // stage does not only build draw lists - character previews on the
+            // character select, character create, and inventory screens render
+            // models to offscreen targets inside it, and those are real draws.
+            // With the batch still open they sampled images whose uploads had
+            // not been submitted, and validation began reporting
+            // VK_IMAGE_LAYOUT_UNDEFINED one second into every run rather than
+            // only at the moment the device was lost.
             //
             // The stall is real and worth fixing, but it has to be fixed where
             // the uploads are - around each screen's icon loop, inside which
