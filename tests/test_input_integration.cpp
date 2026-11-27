@@ -8740,3 +8740,191 @@ TEST_CASE_METHOD(Integration, "TBC 2.4.3 empty FontString GetWidth/GetHeight/Get
     truth("__bar_vis_3 == false");
     truth("math.abs(__tip_a_3 - 1.0) < 1e-4");
 }
+
+TEST_CASE_METHOD(Integration,
+                 "TBC 2.4.3 FocusUnit, ClearFocus, AssistUnit, TargetUnit, and unit Usage parity",
+                 "[focus][chat][tbc]") {
+    using namespace wowee::game;
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    lua.setGameHandler(&handler);
+
+    auto player = std::make_shared<Player>(replay::Session::kPlayerGuid);
+    player->setName("Edrikl");
+    handler.getEntityManager().addEntity(player->getGuid(), player);
+
+    constexpr uint64_t kBoarGuid = 0xF130000071000001ULL;
+    auto boar = std::make_shared<Unit>(kBoarGuid);
+    boar->setName("Stonetusk Boar");
+    boar->setPosition(4.0f, 0.0f, 0.0f, 0.0f);
+    handler.getEntityManager().addEntity(kBoarGuid, boar);
+
+    constexpr uint64_t kPeerGuid = 0x0000000000000028ULL;
+    auto peer = std::make_shared<Player>(kPeerGuid);
+    peer->setName("Edricl");
+    peer->setPosition(8.0f, 0.0f, 0.0f, 0.0f);
+    peer->setField(fieldIndex(UF::UNIT_FIELD_TARGET_LO), static_cast<uint32_t>(kBoarGuid & 0xFFFFFFFFULL));
+    peer->setField(fieldIndex(UF::UNIT_FIELD_TARGET_HI), static_cast<uint32_t>(kBoarGuid >> 32));
+    handler.getEntityManager().addEntity(kPeerGuid, peer);
+
+    int focusEvents = 0;
+    std::string lastUiError;
+    handler.setGlobalStringLookup([](const char* name) -> std::string {
+        return std::string_view(name) == "ERR_GENERIC_NO_TARGET" ? "You have no target." : "";
+    });
+    handler.setAddonEventCallback([&](const std::string& ev, const std::vector<std::string>& args) {
+        if (ev == "PLAYER_FOCUS_CHANGED") {
+            ++focusEvents;
+        } else if (ev == "UI_ERROR_MESSAGE" && !args.empty()) {
+            lastUiError = args[0];
+        }
+    });
+
+    // 1. FocusUnit(), FocusUnit(nil), FocusUnit("") with no target & no focus: silent no-op (0 events).
+    run("FocusUnit(); FocusUnit(nil); FocusUnit('')");
+    CHECK(handler.getFocusGuid() == 0);
+    CHECK(focusEvents == 0);
+
+    // 2. FocusUnit() with target sets focus once; repeating FocusUnit() / FocusUnit("") on same unit fires 0 events.
+    handler.setTarget(kBoarGuid);
+    run("FocusUnit()");
+    CHECK(handler.getFocusGuid() == kBoarGuid);
+    CHECK(focusEvents == 1);
+
+    focusEvents = 0;
+    run("FocusUnit(); FocusUnit(nil); FocusUnit(''); FocusUnit('target')");
+    CHECK(handler.getFocusGuid() == kBoarGuid);
+    CHECK(focusEvents == 0);
+
+    // 3. Clearing target then calling FocusUnit() / FocusUnit(nil) / FocusUnit("") clears focus and fires once.
+    handler.clearTarget();
+    focusEvents = 0;
+    run("FocusUnit()");
+    CHECK(handler.getFocusGuid() == 0);
+    CHECK(focusEvents == 1);
+
+    handler.setTarget(kBoarGuid);
+    run("FocusUnit(nil)");
+    CHECK(handler.getFocusGuid() == kBoarGuid);
+    handler.clearTarget();
+    focusEvents = 0;
+    run("FocusUnit('')");
+    CHECK(handler.getFocusGuid() == 0);
+    CHECK(focusEvents == 1);
+
+    // 4. ClearFocus() fires PLAYER_FOCUS_CHANGED when set, and does not fire when already empty.
+    handler.setTarget(kBoarGuid);
+    run("FocusUnit()");
+    focusEvents = 0;
+    run("ClearFocus()");
+    CHECK(handler.getFocusGuid() == 0);
+    CHECK(focusEvents == 1);
+    run("ClearFocus()");
+    CHECK(focusEvents == 1);
+
+    // 5. Ungrouped NPC/player names do NOT set or clear focus; grouped exact name DOES set focus (prefix does not).
+    handler.setTarget(kBoarGuid);
+    run("FocusUnit()");
+    handler.clearTarget();
+    focusEvents = 0;
+    run("FocusUnit('Stonetusk Boar'); FocusUnit('Edricl'); FocusUnit('Edric')");
+    CHECK(handler.getFocusGuid() == kBoarGuid);
+    CHECK(focusEvents == 0);
+
+    // Put Edricl into party via SMSG_GROUP_LIST (TBC party layout).
+    {
+        wowee::network::Packet grp(wireOpcode(Opcode::SMSG_GROUP_LIST));
+        grp.writeUInt8(0);  // groupType = party
+        grp.writeUInt8(0);  // isBattleGroup
+        grp.writeUInt8(0);  // subGroup
+        grp.writeUInt8(0);  // flags
+        grp.writeUInt64(0x1F50000000000001ULL); // groupGuid
+        grp.writeUInt32(1); // memberCount (excluding self)
+        grp.writeString("Edricl");
+        grp.writeUInt64(kPeerGuid);
+        grp.writeUInt8(1);  // isOnline
+        grp.writeUInt8(0);  // subGroup
+        grp.writeUInt8(0);  // flags
+        grp.writeUInt64(replay::Session::kPlayerGuid); // leaderGuid
+        grp.writeUInt8(0);  // lootMethod
+        grp.writeUInt64(replay::Session::kPlayerGuid); // looterGuid
+        grp.writeUInt8(2);  // lootThreshold
+        grp.writeUInt8(0);  // dungeonDifficulty
+        session.receive(grp);
+    }
+    run("ClearFocus()");
+    focusEvents = 0;
+    run("FocusUnit('Edric')");
+    CHECK(handler.getFocusGuid() == 0);
+    CHECK(focusEvents == 0);
+    run("FocusUnit('edricl')");
+    CHECK(handler.getFocusGuid() == kPeerGuid);
+    CHECK(focusEvents == 1);
+
+    // 6. TargetUnit(), TargetUnit(nil), TargetUnit(""), TargetUnit("none") do not raise and keep current target.
+    handler.setTarget(kBoarGuid);
+    run("__tu_ok1 = pcall(TargetUnit)\n"
+        "__tu_ok2 = pcall(TargetUnit, nil)\n"
+        "__tu_ok3 = pcall(TargetUnit, '')\n"
+        "__tu_ok4 = pcall(TargetUnit, 'none')\n");
+    truth("__tu_ok1 and __tu_ok2 and __tu_ok3 and __tu_ok4");
+    CHECK(handler.getTargetGuid() == kBoarGuid);
+
+    // 7. AssistUnit(), AssistUnit(nil), AssistUnit(""), and AssistUnit("<nearbyPrefix>").
+    handler.clearTarget();
+    lastUiError.clear();
+    run("AssistUnit('')");
+    CHECK_FALSE(lastUiError.empty());
+    run("AssistUnit('Edric')");
+    CHECK(handler.getTargetGuid() == kBoarGuid);
+
+    // 8. ChatPanel /focus and /clearfocus parity.
+    ui::UIServices services{};
+    services.gameHandler = &handler;
+    ui::ChatPanel chatPanel;
+    chatPanel.setServices(services);
+    handler.clearFocus();
+    handler.setTarget(kBoarGuid);
+    focusEvents = 0;
+    chatPanel.executeMacroText(handler, "/focus\n/focus\n");
+    CHECK(handler.getFocusGuid() == kBoarGuid);
+    CHECK(focusEvents == 1);
+    handler.clearTarget();
+    chatPanel.executeMacroText(handler, "/focus\n");
+    CHECK(handler.getFocusGuid() == 0);
+    CHECK(focusEvents == 2);
+    chatPanel.executeMacroText(handler, "/focus\n/clearfocus\n");
+    CHECK(focusEvents == 2);
+
+    // 9. Zero-argument / missing-argument Usage & Invalid spell slot checks in lua_spell_api.cpp.
+    run("__ok_grti, __e_grti = pcall(GetRaidTargetIndex)\n"
+        "__ok_srt0, __e_srt0 = pcall(SetRaidTarget)\n"
+        "__ok_srt1, __e_srt1 = pcall(SetRaidTarget, 'player')\n"
+        "__ok_ub0,  __e_ub0  = pcall(UnitBuff)\n"
+        "__ok_ub1,  __e_ub1  = pcall(UnitBuff, 'player')\n"
+        "__ok_ud0,  __e_ud0  = pcall(UnitDebuff)\n"
+        "__ok_ud1,  __e_ud1  = pcall(UnitDebuff, 'player')\n"
+        "__ok_uci,  __e_uci  = pcall(UnitCastingInfo)\n"
+        "__ok_uchi, __e_uchi = pcall(UnitChannelInfo)\n"
+        "__ok_sctu, __e_sctu = pcall(SpellCanTargetUnit)\n"
+        "__ok_stu,  __e_stu  = pcall(SpellTargetUnit)\n"
+        "__ok_gsi,  __e_gsi  = pcall(GetSpellInfo)\n"
+        "__ok_gst,  __e_gst  = pcall(GetSpellTexture)\n"
+        "__ok_gsl,  __e_gsl  = pcall(GetSpellLink)\n");
+    truth("not __ok_grti and string.find(__e_grti, 'Usage: GetRaidTargetIndex%(unit%)') ~= nil");
+    truth("not __ok_srt0 and string.find(__e_srt0, 'Usage: SetRaidTarget%(unit, index%)') ~= nil");
+    truth("not __ok_srt1 and string.find(__e_srt1, 'Usage: SetRaidTarget%(unit, index%)') ~= nil");
+    truth("not __ok_ub0  and string.find(__e_ub0,  'Usage: UnitBuff%(\"unit\", index %[,raidFilter%]%)') ~= nil");
+    truth("not __ok_ub1  and string.find(__e_ub1,  'Usage: UnitBuff%(\"unit\", index %[,raidFilter%]%)') ~= nil");
+    truth("not __ok_ud0  and string.find(__e_ud0,  'Usage: UnitDebuff%(\"unit\", index %[,raidFilter%]%)') ~= nil");
+    truth("not __ok_ud1  and string.find(__e_ud1,  'Usage: UnitDebuff%(\"unit\", index %[,raidFilter%]%)') ~= nil");
+    truth("not __ok_uci  and string.find(__e_uci,  'Usage: UnitCastingInfo%(\"unit\"%)') ~= nil");
+    truth("not __ok_uchi and string.find(__e_uchi, 'Usage: UnitChannelInfo%(\"unit\"%)') ~= nil");
+    truth("not __ok_sctu and string.find(__e_sctu, 'Usage: SpellCanTargetUnit%(\"unit\"%)') ~= nil");
+    truth("not __ok_stu  and string.find(__e_stu,  'Usage: SpellTargetUnit%(\"unit\"%)') ~= nil");
+    truth("not __ok_gsi  and string.find(__e_gsi,  'Invalid spell slot') ~= nil");
+    truth("not __ok_gst  and string.find(__e_gst,  'Invalid spell slot') ~= nil");
+    truth("not __ok_gsl  and string.find(__e_gsl,  'Invalid spell slot') ~= nil");
+
+    lua.setGameHandler(nullptr);
+}

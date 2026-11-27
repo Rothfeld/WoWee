@@ -179,41 +179,69 @@ public:
 class FocusCommand : public IChatCommand {
 public:
     ChatCommandResult execute(ChatCommandContext& ctx) override {
-        if (!ctx.args.empty()) {
-            std::string focusArg = ctx.args;
-
-            // Evaluate conditionals if present
-            uint64_t focusCmdOverride = static_cast<uint64_t>(-1);
-            if (!focusArg.empty() && focusArg.front() == '[') {
-                focusArg = evaluateMacroConditionals(focusArg, ctx.gameHandler, focusCmdOverride);
-                if (focusArg.empty() && focusCmdOverride == static_cast<uint64_t>(-1)) return {};
-                trimInPlace(focusArg);
+        auto applyFocusGuid = [&](uint64_t guid) {
+            if (guid == 0) {
+                if (ctx.gameHandler.hasFocus()) ctx.gameHandler.clearFocus();
+            } else if (guid != ctx.gameHandler.getFocusGuid()) {
+                ctx.gameHandler.setFocus(guid);
             }
+        };
 
-            if (focusCmdOverride != static_cast<uint64_t>(-1) && focusCmdOverride != 0) {
-                ctx.gameHandler.setFocus(focusCmdOverride);
-            } else if (!focusArg.empty()) {
-                std::string focusArgLower = focusArg;
-                for (char& c : focusArgLower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-                uint64_t bestGuid = findNearestByName(ctx.gameHandler, focusArgLower);
-                if (bestGuid) {
-                    ctx.gameHandler.setFocus(bestGuid);
-                } else {
-                    game::MessageChatData msg;
-                    msg.type = game::ChatType::SYSTEM;
-                    msg.language = game::ChatLanguage::UNIVERSAL;
-                    msg.message = "No unit matching '" + focusArg + "' found.";
-                    ctx.gameHandler.addLocalChatMessage(msg);
-                }
+        std::string focusArg = ctx.args;
+        trimInPlace(focusArg);
+
+        uint64_t focusCmdOverride = static_cast<uint64_t>(-1);
+        if (!focusArg.empty() && focusArg.front() == '[') {
+            focusArg = evaluateMacroConditionals(focusArg, ctx.gameHandler, focusCmdOverride);
+            if (focusArg.empty() && focusCmdOverride == static_cast<uint64_t>(-1)) return {};
+            trimInPlace(focusArg);
+        }
+
+        if (focusCmdOverride != static_cast<uint64_t>(-1)) {
+            applyFocusGuid(focusCmdOverride);
+            return {};
+        }
+
+        if (focusArg.empty()) {
+            applyFocusGuid(ctx.gameHandler.getTargetGuid());
+            return {};
+        }
+
+        std::string lower = focusArg;
+        for (char& c : lower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        if (lower == "none") {
+            applyFocusGuid(0);
+            return {};
+        }
+        if (lower == "target") {
+            applyFocusGuid(ctx.gameHandler.getTargetGuid());
+            return {};
+        }
+        if (lower == "player") {
+            applyFocusGuid(ctx.gameHandler.getPlayerGuid());
+            return {};
+        }
+        if (lower == "focus") {
+            applyFocusGuid(ctx.gameHandler.getFocusGuid());
+            return {};
+        }
+        if (lower == "mouseover") {
+            applyFocusGuid(ctx.gameHandler.getMouseoverGuid());
+            return {};
+        }
+        if (lower == "pet") {
+            applyFocusGuid(ctx.gameHandler.getPetGuid());
+            return {};
+        }
+
+        for (const auto& m : ctx.gameHandler.getPartyData().members) {
+            if (m.guid == 0) continue;
+            std::string memberLower = m.name;
+            for (char& c : memberLower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            if (memberLower == lower) {
+                applyFocusGuid(m.guid);
+                return {};
             }
-        } else if (ctx.gameHandler.hasTarget()) {
-            ctx.gameHandler.setFocus(ctx.gameHandler.getTargetGuid());
-        } else {
-            game::MessageChatData msg;
-            msg.type = game::ChatType::SYSTEM;
-            msg.language = game::ChatLanguage::UNIVERSAL;
-            msg.message = "You must target a unit to set as focus.";
-            ctx.gameHandler.addLocalChatMessage(msg);
         }
         return {};
     }
@@ -225,7 +253,19 @@ public:
 class ClearFocusCommand : public IChatCommand {
 public:
     ChatCommandResult execute(ChatCommandContext& ctx) override {
-        ctx.gameHandler.clearFocus();
+        bool condPass = true;
+        if (!ctx.args.empty()) {
+            std::string cfArg = ctx.args;
+            trimInPlace(cfArg);
+            if (!cfArg.empty() && cfArg.front() == '[') {
+                uint64_t cfOver = static_cast<uint64_t>(-1);
+                std::string res = evaluateMacroConditionals(cfArg, ctx.gameHandler, cfOver);
+                condPass = !(res.empty() && cfOver == static_cast<uint64_t>(-1));
+            }
+        }
+        if (condPass && ctx.gameHandler.hasFocus()) {
+            ctx.gameHandler.clearFocus();
+        }
         return {};
     }
     [[nodiscard]] std::vector<std::string> aliases() const override { return {"clearfocus"}; }

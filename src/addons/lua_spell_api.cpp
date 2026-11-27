@@ -63,6 +63,133 @@ uint32_t highestKnownRankByName(game::GameHandler* gh, const std::string& name) 
     return bestId;
 }
 
+bool isKnownUnitTokenSyntax(const std::string& uid) {
+    if (uid == "player" || uid == "target" || uid == "focus" || uid == "mouseover" ||
+        uid == "pet" || uid == "npc" || uid == "questnpc" || uid == "none" ||
+        uid == "targettarget" || uid == "focustarget" || uid == "pettarget" ||
+        uid == "mouseovertarget") {
+        return true;
+    }
+    auto checkIndexed = [&](std::string_view prefix, int maxIdx, bool allowSuffix) {
+        if (uid.rfind(prefix.data(), 0) != 0 || uid.size() <= prefix.size()) return false;
+        size_t pos = prefix.size();
+        while (pos < uid.size() && std::isdigit(static_cast<unsigned char>(uid[pos]))) ++pos;
+        if (pos == prefix.size() || pos - prefix.size() > 2) return false;
+        const int idx = std::stoi(uid.substr(prefix.size(), pos - prefix.size()));
+        if (idx < 1 || idx > maxIdx) return false;
+        const std::string suffix = uid.substr(pos);
+        if (suffix.empty()) return true;
+        return allowSuffix && (suffix == "target" || suffix == "pet");
+    };
+    return checkIndexed("party", 4, true) ||
+           checkIndexed("partypet", 4, false) ||
+           checkIndexed("raid", 40, true) ||
+           checkIndexed("raidpet", 40, false) ||
+           checkIndexed("boss", static_cast<int>(game::GameHandler::kMaxEncounterSlots), false);
+}
+
+std::string unitEntityLowerName(game::GameHandler* gh, uint64_t guid) {
+    if (!gh || guid == 0) return {};
+    if (const auto entity = gh->getEntityManager().getEntity(guid); entity && entity->isUnit()) {
+        std::string n = entity->getType() == game::ObjectType::PLAYER
+            ? std::static_pointer_cast<game::Player>(entity)->getName()
+            : std::static_pointer_cast<game::Unit>(entity)->getName();
+        if (!n.empty()) {
+            toLowerInPlace(n);
+            return n;
+        }
+    }
+    std::string cached = gh->getCachedPlayerName(guid);
+    if (!cached.empty()) {
+        toLowerInPlace(cached);
+        return cached;
+    }
+    return {};
+}
+
+// Resolves a valid TBC unit token or exact party/raid/player/pet name.
+// Returns std::nullopt when `uidLower` is not a recognized token or group member,
+// and std::optional<uint64_t>(0) when it is a valid token whose unit is currently absent
+// (e.g. "target" with nothing targeted, "mouseover" with nothing hovered, or "none").
+std::optional<uint64_t> resolveSpellUnitToken(game::GameHandler* gh, const std::string& uidLower) {
+    if (!gh || uidLower.empty()) return std::nullopt;
+    if (uidLower == "none") return uint64_t{0};
+    if (const uint64_t byToken = resolveUnitGuid(gh, uidLower); byToken != 0) {
+        return byToken;
+    }
+    if (isKnownUnitTokenSyntax(uidLower)) {
+        return uint64_t{0};
+    }
+
+    // Exact case-insensitive match against player, active pet, or party/raid members.
+    if (const uint64_t selfGuid = gh->getPlayerGuid(); selfGuid != 0) {
+        std::string selfName = unitEntityLowerName(gh, selfGuid);
+        if (selfName.empty()) {
+            if (const auto* ch = gh->getActiveCharacter(); ch && !ch->name.empty()) {
+                selfName = ch->name;
+                toLowerInPlace(selfName);
+            }
+        }
+        if (!selfName.empty() && selfName == uidLower) return selfGuid;
+    }
+    if (const uint64_t petGuid = gh->getPetGuid(); petGuid != 0) {
+        if (unitEntityLowerName(gh, petGuid) == uidLower) return petGuid;
+    }
+    for (const auto& m : gh->getPartyData().members) {
+        if (m.guid != 0) {
+            std::string memberName = m.name;
+            toLowerInPlace(memberName);
+            if (memberName.empty()) memberName = unitEntityLowerName(gh, m.guid);
+            if (!memberName.empty() && memberName == uidLower) return m.guid;
+        }
+        if (m.petGuid != 0) {
+            std::string petName = m.petName;
+            toLowerInPlace(petName);
+            if (petName.empty()) petName = unitEntityLowerName(gh, m.petGuid);
+            if (!petName.empty() && petName == uidLower) return m.petGuid;
+        }
+    }
+    return std::nullopt;
+}
+
+uint64_t resolveSpellUnitGuid(game::GameHandler* gh, const std::string& uidLower) {
+    const auto resolved = resolveSpellUnitToken(gh, uidLower);
+    return resolved ? *resolved : 0;
+}
+
+uint64_t findNearestSelectableUnitByName(game::GameHandler* gh, const std::string& uidLower,
+                                         bool exactMatch) {
+    if (!gh || uidLower.empty()) return 0;
+    const auto player = gh->getEntityManager().getEntity(gh->getPlayerGuid());
+    const float px = player ? player->getX() : gh->getMovementInfo().x;
+    const float py = player ? player->getY() : gh->getMovementInfo().y;
+    const float pz = player ? player->getZ() : gh->getMovementInfo().z;
+
+    uint64_t bestGuid = 0;
+    float nearestDistanceSq = std::numeric_limits<float>::infinity();
+    for (const auto& [candidateGuid, entity] : gh->getEntityManager().getEntities()) {
+        if (!entity || !entity->isUnit()) continue;
+        const auto unit = std::static_pointer_cast<game::Unit>(entity);
+        if ((unit->getUnitFlags() & game::UNIT_FLAG_NOT_SELECTABLE) != 0) continue;
+        std::string name = entity->getType() == game::ObjectType::PLAYER
+            ? std::static_pointer_cast<game::Player>(entity)->getName()
+            : unit->getName();
+        if (name.empty()) continue;
+        toLowerInPlace(name);
+        if (exactMatch ? name != uidLower : !name.starts_with(uidLower)) continue;
+        const float dx = entity->getX() - px;
+        const float dy = entity->getY() - py;
+        const float dz = entity->getZ() - pz;
+        const float distanceSq = dx * dx + dy * dy + dz * dz;
+        if (distanceSq < nearestDistanceSq ||
+            (distanceSq == nearestDistanceSq && candidateGuid < bestGuid)) {
+            bestGuid = candidateGuid;
+            nearestDistanceSq = distanceSq;
+        }
+    }
+    return bestGuid;
+}
+
 }  // namespace
 
 
@@ -73,12 +200,13 @@ uint32_t highestKnownRankByName(game::GameHandler* gh, const std::string& name) 
 // when that click lands on them (SecureTemplates' "target" action while
 // SpellIsTargeting).
 static int lua_SpellTargetUnit(lua_State* L) {
+    if (!lua_isstring(L, 1)) return luaL_error(L, "Usage: SpellTargetUnit(\"unit\")");
     auto* gh = getGameHandler(L);
-    const char* unit = luaL_optstring(L, 1, nullptr);
+    const char* unit = lua_tostring(L, 1);
     if (!gh || !unit || !gh->isAwaitingUnitTarget()) { lua_pushboolean(L, 0); return 1; }
     std::string u(unit);
     toLowerInPlace(u);
-    const uint64_t guid = resolveUnitGuid(gh, u);
+    const uint64_t guid = resolveSpellUnitGuid(gh, u);
     if (guid == 0) { lua_pushboolean(L, 0); return 1; }
     if (const uint32_t spellId = gh->pendingUnitTargetSpell();
         spellId != 0 && !gh->canSpellTargetUnit(spellId, guid)) {
@@ -95,12 +223,13 @@ static int lua_SpellTargetUnit(lua_State* L) {
 }
 
 static int lua_SpellCanTargetUnit(lua_State* L) {
+    if (!lua_isstring(L, 1)) return luaL_error(L, "Usage: SpellCanTargetUnit(\"unit\")");
     auto* gh = getGameHandler(L);
-    const char* unit = luaL_optstring(L, 1, nullptr);
+    const char* unit = lua_tostring(L, 1);
     if (!gh || !unit || !gh->isAwaitingUnitTarget()) { lua_pushboolean(L, 0); return 1; }
     std::string u(unit);
     toLowerInPlace(u);
-    const uint64_t guid = resolveUnitGuid(gh, u);
+    const uint64_t guid = resolveSpellUnitGuid(gh, u);
     if (guid == 0) { lua_pushboolean(L, 0); return 1; }
     if (const uint32_t spellId = gh->pendingUnitTargetSpell(); spellId != 0) {
         lua_pushboolean(L, gh->canSpellTargetUnit(spellId, guid) ? 1 : 0);
@@ -589,8 +718,18 @@ static int lua_CancelPlayerBuff(lua_State* L) {
     return 0;
 }
 
-static int lua_UnitBuff(lua_State* L) { return lua_UnitAura(L, true); }
-static int lua_UnitDebuff(lua_State* L) { return lua_UnitAura(L, false); }
+static int lua_UnitBuff(lua_State* L) {
+    if (!lua_isstring(L, 1) || !lua_isnumber(L, 2)) {
+        return luaL_error(L, "Usage: UnitBuff(\"unit\", index [,raidFilter])");
+    }
+    return lua_UnitAura(L, true);
+}
+static int lua_UnitDebuff(lua_State* L) {
+    if (!lua_isstring(L, 1) || !lua_isnumber(L, 2)) {
+        return luaL_error(L, "Usage: UnitDebuff(\"unit\", index [,raidFilter])");
+    }
+    return lua_UnitAura(L, false);
+}
 
 // UnitAura(unit, index, filter) - generic aura query with filter string
 // filter: "HELPFUL" = buffs, "HARMFUL" = debuffs, "PLAYER" = cast by player,
@@ -607,14 +746,20 @@ static int lua_UnitAuraGeneric(lua_State* L) {
 // Internal helper: pushes cast/channel info for a unit.
 // Returns number of Lua return values (0 if not casting/channeling the requested type).
 static int lua_UnitCastInfo(lua_State* L, bool wantChannel) {
+    if (!lua_isstring(L, 1)) {
+        return luaL_error(L, wantChannel ? "Usage: UnitChannelInfo(\"unit\")"
+                                         : "Usage: UnitCastingInfo(\"unit\")");
+    }
     auto* gh = getGameHandler(L);
     // Nothing at all, not one nil, for a unit that is not casting: original
     // 2.4.3 select("#", UnitChannelInfo("player")) is 0 during a Hearthstone
     // cast (pair 8).
     if (!gh) return 0;
 
-    const char* uid = luaL_optstring(L, 1, "player");
-    std::string uidStr(uid ? uid : "player");
+    const char* uid = lua_tostring(L, 1);
+    if (!uid || !*uid) return 0;
+    std::string uidStr(uid);
+    toLowerInPlace(uidStr);
 
     // Use shared GetTime() epoch for consistent timestamps
     double nowSec = luaGetTimeNow();
@@ -627,7 +772,8 @@ static int lua_UnitCastInfo(lua_State* L, bool wantChannel) {
     float timeRemaining = 0.0f;
     bool interruptible = true;
 
-    if (uidStr == "player") {
+    const uint64_t guid = resolveSpellUnitGuid(gh, uidStr);
+    if (uidStr == "player" || (guid != 0 && guid == gh->getPlayerGuid())) {
         isCasting = gh->isCasting();
         isChannel = gh->isChanneling();
         spellId = gh->getCurrentCastSpellId();
@@ -636,7 +782,6 @@ static int lua_UnitCastInfo(lua_State* L, bool wantChannel) {
         // Player interruptibility: always true for own casts (server controls actual interrupt)
         interruptible = true;
     } else {
-        uint64_t guid = resolveUnitGuid(gh, uidStr);
         if (guid == 0) return 0;
         const auto* state = gh->getUnitCastState(guid);
         if (!state) return 0;
@@ -729,7 +874,7 @@ static int lua_CastSpellByName(lua_State* L) {
         } else if (const char* unit = luaL_optstring(L, 2, nullptr); unit && *unit) {
             std::string u(unit);
             toLowerInPlace(u);
-            target = resolveUnitGuid(gh, u);
+            target = resolveSpellUnitGuid(gh, u);
         }
         // No unit named: castSpell aims it (current target, caster, or the
         // targeting cursor).
@@ -1163,32 +1308,15 @@ static int lua_HasTarget(lua_State* L) {
 static int lua_TargetUnit(lua_State* L) {
     auto* gh = getGameHandler(L);
     if (!gh) return 0;
-    const char* uid = luaL_checkstring(L, 1);
+    const char* uid = luaL_optstring(L, 1, nullptr);
+    if (!uid || !*uid) return 0;
     std::string uidStr(uid);
     toLowerInPlace(uidStr);
-    uint64_t guid = resolveUnitGuid(gh, uidStr);
-    if (guid == 0 && !uidStr.empty()) {
+    if (uidStr == "none") return 0;
+    uint64_t guid = resolveSpellUnitGuid(gh, uidStr);
+    if (guid == 0) {
         const bool exactMatch = lua_toboolean(L, 2) != 0;
-        const auto player = gh->getEntityManager().getEntity(gh->getPlayerGuid());
-        if (!player) return 0;
-        float nearestDistanceSq = std::numeric_limits<float>::infinity();
-        for (const auto& [candidateGuid, entity] : gh->getEntityManager().getEntities()) {
-            if (!entity || !entity->isUnit()) continue;
-            std::string name = entity->getType() == game::ObjectType::PLAYER
-                ? std::static_pointer_cast<game::Player>(entity)->getName()
-                : std::static_pointer_cast<game::Unit>(entity)->getName();
-            toLowerInPlace(name);
-            if (exactMatch ? name != uidStr : !name.starts_with(uidStr)) continue;
-            const float dx = entity->getX() - player->getX();
-            const float dy = entity->getY() - player->getY();
-            const float dz = entity->getZ() - player->getZ();
-            const float distanceSq = dx * dx + dy * dy + dz * dz;
-            if (distanceSq < nearestDistanceSq ||
-                (distanceSq == nearestDistanceSq && candidateGuid < guid)) {
-                guid = candidateGuid;
-                nearestDistanceSq = distanceSq;
-            }
-        }
+        guid = findNearestSelectableUnitByName(gh, uidStr, exactMatch);
     }
     if (guid != 0) gh->setTarget(guid);
     return 0;
@@ -1204,36 +1332,50 @@ static int lua_ClearTarget(lua_State* L) {
     return 1;
 }
 
-// FocusUnit(unitId) - set focus target
+// FocusUnit([unitId]) - set or clear focus target.
+// TBC 2.4.3: FocusUnit(), FocusUnit(nil), and FocusUnit("") all default to
+// "target" (setting focus to current target if different, or clearing focus if
+// nothing is targeted). Valid tokens or exact party/raid names resolve to their
+// unit (or 0 to clear); unknown names leave focus untouched.
 static int lua_FocusUnit(lua_State* L) {
     auto* gh = getGameHandler(L);
     if (!gh) return 0;
     const char* uid = luaL_optstring(L, 1, nullptr);
-    if (!uid || !*uid) return 0;
-    std::string uidStr(uid);
+    std::string uidStr = (uid && *uid) ? std::string(uid) : std::string("target");
     toLowerInPlace(uidStr);
-    uint64_t guid = resolveUnitGuid(gh, uidStr);
-    if (guid != 0) gh->setFocus(guid);
+    const auto resolved = resolveSpellUnitToken(gh, uidStr);
+    if (!resolved) return 0;
+    if (*resolved == 0) {
+        if (gh->hasFocus()) gh->clearFocus();
+        return 0;
+    }
+    if (*resolved != gh->getFocusGuid()) {
+        gh->setFocus(*resolved);
+    }
     return 0;
 }
 
-// ClearFocus() - clear focus target
+// ClearFocus() - clear focus target (fires PLAYER_FOCUS_CHANGED only when set)
 static int lua_ClearFocus(lua_State* L) {
     auto* gh = getGameHandler(L);
-    if (gh) gh->clearFocus();
+    if (gh && gh->hasFocus()) gh->clearFocus();
     return 0;
 }
 
-// AssistUnit(unitId) - target whatever the given unit is targeting
+// AssistUnit([unitIdOrName]) - target whatever the given unit is targeting
 static int lua_AssistUnit(lua_State* L) {
     auto* gh = getGameHandler(L);
     if (!gh) return 0;
-    const char* uid = luaL_optstring(L, 1, "target");
-    std::string uidStr(uid);
+    const char* uid = luaL_optstring(L, 1, nullptr);
+    std::string uidStr = (uid && *uid) ? std::string(uid) : std::string("target");
     toLowerInPlace(uidStr);
-    uint64_t guid = resolveUnitGuid(gh, uidStr);
+    if (uidStr == "none") return 0;
+    uint64_t guid = resolveSpellUnitGuid(gh, uidStr);
+    if (guid == 0) {
+        guid = findNearestSelectableUnitByName(gh, uidStr, false);
+    }
     // "/assist" with nothing targeted: "You have no target." on the error
-    // line (pair 6, the original).
+    // line (pair 6 / pair 12, the original).
     if (guid == 0) {
         gh->errorGlobal("ERR_GENERIC_NO_TARGET");
         return 0;
@@ -1273,14 +1415,18 @@ static int lua_TargetNearestFriend(lua_State* L) {
     return 0;
 }
 
-// GetRaidTargetIndex(unit) → icon index (1-8) or nil
+// GetRaidTargetIndex(unit) -> icon index (1-8) or nil
 static int lua_GetRaidTargetIndex(lua_State* L) {
+    if (!lua_isstring(L, 1)) {
+        return luaL_error(L, "Usage: GetRaidTargetIndex(unit)");
+    }
     auto* gh = getGameHandler(L);
     if (!gh) { return luaReturnNil(L); }
-    const char* uid = luaL_optstring(L, 1, "target");
+    const char* uid = lua_tostring(L, 1);
+    if (!uid || !*uid) { return luaReturnNil(L); }
     std::string uidStr(uid);
     toLowerInPlace(uidStr);
-    uint64_t guid = resolveUnitGuid(gh, uidStr);
+    uint64_t guid = resolveSpellUnitGuid(gh, uidStr);
     if (guid == 0) { return luaReturnNil(L); }
     uint8_t mark = gh->getEntityRaidMark(guid);
     if (mark == 0xFF) { return luaReturnNil(L); }
@@ -1290,13 +1436,17 @@ static int lua_GetRaidTargetIndex(lua_State* L) {
 
 // SetRaidTarget(unit, index) - set raid marker (1-8, or 0 to clear)
 static int lua_SetRaidTarget(lua_State* L) {
+    if (!lua_isstring(L, 1) || !lua_isnumber(L, 2)) {
+        return luaL_error(L, "Usage: SetRaidTarget(unit, index)");
+    }
     auto* gh = getGameHandler(L);
     if (!gh) return 0;
-    const char* uid = luaL_optstring(L, 1, "target");
-    int index = static_cast<int>(luaL_checknumber(L, 2));
+    const char* uid = lua_tostring(L, 1);
+    int index = static_cast<int>(lua_tonumber(L, 2));
+    if (!uid || !*uid) return 0;
     std::string uidStr(uid);
     toLowerInPlace(uidStr);
-    uint64_t guid = resolveUnitGuid(gh, uidStr);
+    uint64_t guid = resolveSpellUnitGuid(gh, uidStr);
     if (guid == 0) return 0;
     if (index >= 1 && index <= 8)
         gh->setRaidMark(guid, static_cast<uint8_t>(index - 1));
@@ -1334,6 +1484,9 @@ static int lua_GetSpellPowerCost(lua_State* L) {
 // --- GetSpellInfo / GetSpellTexture ---
 // GetSpellInfo(spellIdOrName) -> name, rank, icon, castTime, minRange, maxRange, spellId
 static int lua_GetSpellInfo(lua_State* L) {
+    if (game::isActiveExpansion("tbc") && (lua_isnoneornil(L, 1) || bookSlotBelowOne(L))) {
+        return invalidSpellSlot(L);
+    }
     auto* gh = getGameHandler(L);
     if (!gh) { return luaReturnNil(L); }
 
@@ -1383,10 +1536,11 @@ static int lua_GetSpellInfo(lua_State* L) {
 
 // GetSpellTexture(spellIdOrName) -> icon texture path string
 static int lua_GetSpellTexture(lua_State* L) {
+    if (game::isActiveExpansion("tbc") && (lua_isnoneornil(L, 1) || bookSlotBelowOne(L))) {
+        return invalidSpellSlot(L);
+    }
     auto* gh = getGameHandler(L);
     if (!gh) { return luaReturnNil(L); }
-    if (game::isActiveExpansion("tbc") && bookSlotBelowOne(L))
-        return luaL_error(L, "GetSpellTexture(): Invalid spell slot");
 
     const uint32_t spellId = spellIdForCall(L, gh);
     if (spellId == 0) { return luaReturnNil(L); }
@@ -1399,6 +1553,9 @@ static int lua_GetSpellTexture(lua_State* L) {
 // GetItemInfo(itemId) -> name, link, quality, iLevel, reqLevel, class, subclass, maxStack, equipSlot, texture, vendorPrice
 
 static int lua_GetSpellLink(lua_State* L) {
+    if (game::isActiveExpansion("tbc") && (lua_isnoneornil(L, 1) || bookSlotBelowOne(L))) {
+        return invalidSpellSlot(L);
+    }
     auto* gh = getGameHandler(L);
     if (!gh) { return luaReturnNil(L); }
 
@@ -1478,7 +1635,7 @@ static int lua_CastSpellByID(lua_State* L) {
     } else if (const char* unit = luaL_optstring(L, 2, nullptr); unit && *unit) {
         std::string u(unit);
         toLowerInPlace(u);
-        target = resolveUnitGuid(gh, u);
+        target = resolveSpellUnitGuid(gh, u);
     }
     gh->castSpell(spellId, target);
     return 0;
