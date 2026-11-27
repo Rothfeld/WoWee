@@ -902,7 +902,7 @@ static int lua_UseAction(lua_State* L) {
     // this was a warning on every one of them.
     LOG_DEBUG("UseAction: slot ", slot + 1, " type=", static_cast<int>(action.type),
               " id=", action.id, " ready=", action.isReady() ? 1 : 0);
-    if (action.type == game::ActionBarSlot::SPELL && action.isReady()) {
+    if (action.type == game::ActionBarSlot::SPELL && action.id != 0) {
         // A unit that resolves is named to the cast (the self-cast modifier's
         // "player", a unit frame's own unit). Without one the cast is given no
         // unit, and castSpell decides from the current target, the spell and

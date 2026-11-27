@@ -705,12 +705,8 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
             if (msg.empty()) {
                 LOG_ERROR("SMSG_INVENTORY_CHANGE_FAILURE: GlobalStrings has no usable ", name);
             } else {
-                owner_.addUIError(msg);
+                owner_.addUIError(msg, /*playUiErrorSound=*/false);
             }
-        }
-        if (auto* ac = owner_.services().audioCoordinator) {
-            if (auto* sfx = ac->getUiSoundManager())
-                sfx->playError();
         }
 
         // TBC 2.4.3 VocalUISounds.dbc speech response for all vocal InventoryResults
@@ -6893,7 +6889,6 @@ void InventoryHandler::initiateTrade(uint64_t targetGuid) {
 
     if (targetGuid == 0) {
         owner_.errorGlobal("ERR_GENERIC_NO_TARGET");
-        playPlayerVocalGameError(owner_, "ERR_GENERIC_NO_TARGET");
         return;
     }
 

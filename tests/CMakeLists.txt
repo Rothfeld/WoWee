@@ -3483,6 +3483,29 @@ if(TARGET wowee)
     register_test_target(test_audio_shard_b_spells)
 endif()
 
+if(TARGET wowee)
+    add_executable(test_unusable_spell_click_audio
+        test_unusable_spell_click_audio.cpp
+        "$<FILTER:$<TARGET_OBJECTS:wowee>,EXCLUDE,/main([.]cpp)?[.]o(bj)?$>")
+    target_include_directories(test_unusable_spell_click_audio PRIVATE ${TEST_INCLUDE_DIRS}
+        $<TARGET_PROPERTY:wowee,INCLUDE_DIRECTORIES>)
+    target_include_directories(test_unusable_spell_click_audio SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
+    target_compile_definitions(test_unusable_spell_click_audio PRIVATE
+        WOWEE_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+        $<TARGET_PROPERTY:wowee,COMPILE_DEFINITIONS>)
+    target_link_libraries(test_unusable_spell_click_audio PRIVATE catch2_main
+        $<TARGET_PROPERTY:wowee,LINK_LIBRARIES>)
+    wowee_test_link_glm(test_unusable_spell_click_audio)
+    target_link_directories(test_unusable_spell_click_audio PRIVATE
+        $<TARGET_PROPERTY:wowee,LINK_DIRECTORIES>)
+    target_link_options(test_unusable_spell_click_audio PRIVATE
+        $<TARGET_PROPERTY:wowee,LINK_OPTIONS>)
+    add_dependencies(test_unusable_spell_click_audio wowee)
+    add_test(NAME unusable_spell_click_audio COMMAND test_unusable_spell_click_audio)
+    set_tests_properties(unusable_spell_click_audio PROPERTIES SKIP_RETURN_CODE 4)
+    register_test_target(test_unusable_spell_click_audio)
+endif()
+
 # -- test_audio_shard_a_engine ---------------------------------
 add_executable(test_audio_shard_a_engine
     test_audio_shard_a_engine.cpp

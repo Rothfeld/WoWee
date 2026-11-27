@@ -565,6 +565,10 @@ private:
                             bool skipReleaseDelay = false);
     // Resolve render-space position for a unit GUID (player or entity).
     bool resolveUnitPosition(uint64_t guid, glm::vec3& outPos);
+    // Play TBC 2.4.3 school SpellFizzle (SE:1424..1428) in 3D at local player position.
+    void playSpellFizzle(uint32_t spellId);
+    // Play TBC 2.4.3 targeted spell/ability activate click (SE:905 GAMEABILITYACTIVATE / SE:906 GAMESPELLACTIVATE).
+    void playSpellActivateSound(uint32_t spellId);
     // Play the cast/precast visual effect at the caster's position.
     void triggerCastVisual(uint32_t spellId, uint64_t casterGuid, uint32_t castTimeMs = 0);
     // Play the impact visual effect at the target's position.

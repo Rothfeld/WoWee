@@ -1359,7 +1359,10 @@ void GameHandler::systemGlobal(const char* name, const std::vector<std::string>&
 
 void GameHandler::errorGlobal(const char* name, const std::vector<std::string>& args) {
     if (!noticesInterfaceReady_) { heldNotices_.push_back({1, name, args}); return; }
-    if (std::string line = globalLine(name, args); !line.empty()) addUIError(line);
+    if (std::string line = globalLine(name, args); !line.empty()) {
+        addUIError(line, /*playUiErrorSound=*/false);
+    }
+    playGameErrorSpeech(name);
 }
 
 void GameHandler::infoGlobal(const char* name, const std::vector<std::string>& args) {
@@ -1381,8 +1384,9 @@ void GameHandler::raiseUiError(const std::string& message) {
     //
     // Through addUIError rather than firing the event again here: it already
     // raises UI_ERROR_MESSAGE, which is what addons watch and what
-    // UIErrorsFrame is registered for.
-    addUIError(message);
+    // UIErrorsFrame is registered for. Native TBC 2.4.3 does not play
+    // Sound\Interface\Error.wav for UIErrorsFrame messages.
+    addUIError(message, /*playUiErrorSound=*/false);
 }
 
 // ============================================================

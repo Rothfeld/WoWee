@@ -1641,7 +1641,7 @@ void CombatHandler::handlePetCastFailed(network::Packet& packet) {
         // same error line. Not yet compared with the original for a pet.
         if (reason != 0) {
             if (const std::string text = castFailureText(owner_, spellId, reason, arg1, arg2); !text.empty())
-                owner_.addUIError(text);
+                owner_.addUIError(text, /*playUiErrorSound=*/false);
         }
     }
     packet.skipAll();

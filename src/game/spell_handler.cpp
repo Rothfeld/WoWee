@@ -512,9 +512,9 @@ void raiseGlobalStringError(GameHandler& owner, const char* name) {
     const std::string text = owner.globalString(name);
     if (text.empty()) {
         LOG_ERROR("GlobalStrings has no ", name);
-        return;
+    } else {
+        owner.addUIError(text, /*playUiErrorSound=*/false);
     }
-    owner.addUIError(text, /*playUiErrorSound=*/false);
     owner.playGameErrorSpeech(name);
 }
 
@@ -618,14 +618,15 @@ std::optional<std::string> openLockCastBarCaption(pipeline::AssetManager* assets
 // server SMSG_CAST_FAILED results (including SPELL_FAILED_BAD_TARGETS) route to
 // ERR_SPELL_FAILED_S (vocal=0x44 = none) and play only school SpellFizzle*.
 std::optional<audio::PlayerErrorSpeech> errorSpeechForCastResult(
-        uint32_t spellId, uint8_t result, int powerType) {
+        uint32_t spellId, uint8_t result, int powerType, bool isAbility = false) {
     using audio::PlayerErrorSpeech;
     switch (result) {
-        case 67:  // Not ready (TBC 0x3F -> DisplayError 0x33/0x34)
-            // Rage/Energy abilities (Warrior/Rogue) and ranged weapon attacks use
-            // ABILITY_COOLDOWN ("I can't do that yet", VocalUIEnum 14); mana spells
-            // use SPELL_COOLDOWN ("That spell isn't ready yet", VocalUIEnum 12).
-            return (spellclass::isRangedWeaponAutoAttack(spellId) || powerType == 1 || powerType == 3)
+        case 67:  // Not ready (TBC 0x3F -> ERR_ABILITY_COOLDOWN vs ERR_SPELL_COOLDOWN)
+            // Abilities (Spell.dbc Attributes & 0x10: Stealth, Sprint, Feign Death, Auto Shot)
+            // and Rage/Energy spells use ABILITY_COOLDOWN (VocalUIEnum 50); mana spells
+            // without SPELL_ATTR_ABILITY use SPELL_COOLDOWN (VocalUIEnum 12).
+            return (isAbility || spellclass::isRangedWeaponAutoAttack(spellId) ||
+                    powerType == 1 || powerType == 3)
                 ? PlayerErrorSpeech::ABILITY_COOLDOWN
                 : PlayerErrorSpeech::SPELL_COOLDOWN;
         case 85:  // Not enough power (TBC 0x50 -> DisplayError 0x8d3e5c[power])
@@ -952,6 +953,31 @@ bool SpellHandler::resolveUnitPosition(uint64_t guid, glm::vec3& outPos) {
     glm::vec3 canonical(entity->getLatestX(), entity->getLatestY(), entity->getLatestZ());
     outPos = core::coords::canonicalToRender(canonical);
     return true;
+}
+
+void SpellHandler::playSpellFizzle(uint32_t spellId) {
+    const uint32_t fizzleId = spellFizzleSoundId(owner_.getSpellSchoolMask(spellId));
+    if (fizzleId == 0) return;
+    auto* am = owner_.services().assetManager;
+    if (!am) return;
+    float sfxScale = 1.0f;
+    if (auto* ac = owner_.services().audioCoordinator) sfxScale = ac->getSfxVolumeScale();
+    glm::vec3 pos(0.0f);
+    resolveUnitPosition(owner_.getPlayerGuid(), pos);
+    audio::SoundEntryTable::instance().play3D(
+        am, fizzleId, pos + glm::vec3(0.0f, 0.0f, 2.0f), sfxScale);
+}
+
+void SpellHandler::playSpellActivateSound(uint32_t spellId) {
+    auto* am = owner_.services().assetManager;
+    if (!am) return;
+    owner_.loadSpellNameCache();
+    const auto it = owner_.spellNameCacheRef().find(spellId);
+    const bool isAbility = (it != owner_.spellNameCacheRef().end()) &&
+                           ((it->second.attr & 0x10u) != 0u);
+    float sfxScale = 1.0f;
+    if (auto* ac = owner_.services().audioCoordinator) sfxScale = ac->getSfxVolumeScale();
+    audio::SoundEntryTable::instance().play2D(am, isAbility ? 905u : 906u, sfxScale);
 }
 
 void SpellHandler::triggerCastVisual(uint32_t spellId, uint64_t casterGuid, uint32_t castTimeMs) {
@@ -1744,60 +1770,21 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid, std::optiona
             spellId, spellEntry->attr, spellEntry->attrEx, spellEntry->attrEx2));
 
     bool deferredNoPower = false;
-    switch (prerequisite) {
-        case SpellPrerequisite::Ready: break;
-        case SpellPrerequisite::Unknown:
-            // No text: nothing the original would refuse with is known here.
-            LOG_ERROR("Cast rejected: missing Spell.dbc entry ", spellId);
-            return;
-        case SpellPrerequisite::Passive:
-            LOG_DEBUG("Ignoring cast request for passive spell ", spellId);
-            return;
-        case SpellPrerequisite::FormRefused:
-            raiseGlobalStringError(owner_, "SPELL_FAILED_NOT_SHAPESHIFT");
-            owner_.fireAddonEvent("UNIT_SPELLCAST_FAILED", spellcastArgs("player", spellId));
-            return;
-        case SpellPrerequisite::Stealth:
-            // Sent, and the server answers. Original 2.4.3, Cheap Shot out of
-            // stealth: "Must be in Stealth" (SPELL_FAILED_ONLY_SHAPESHIFT with
-            // the Stealth form), not ONLY_STEALTHED's "You must be in stealth
-            // mode." that a local refusal would have shown.
-            break;
-        case SpellPrerequisite::NoPower:
-            // Auto-target offensive spells (Sinister Strike, Heroic Strike,
-            // Raptor Strike, Execute) acquire their enemy target BEFORE power
-            // refusal on native 2.4.3 (selecting the enemy and then saying
-            // "Not enough rage/mana/energy", or "There is nothing to attack."
-            // if none is in front). Non-auto-target spells (Intercept, Fireball)
-            // refuse power right here before form/target checks.
-            if (autoTargetsEnemy && targetGuid == 0) {
-                deferredNoPower = true;
-                break;
-            }
-            [[fallthrough]];
-        default: {
-            // The client's own refusals, in the same GlobalStrings words the
-            // server's would carry.
-            const char* name = nullptr;
-            switch (prerequisite) {
-                case SpellPrerequisite::NoPower:
-                    name = noPowerGlobalName(owner_.getSpellData(spellId).powerType); break;
-                case SpellPrerequisite::NoComboPoints: name = "SPELL_FAILED_NO_COMBO_POINTS"; break;
-                case SpellPrerequisite::Combat: name = "SPELL_FAILED_AFFECTING_COMBAT"; break;
-                case SpellPrerequisite::Dead: name = "SPELL_FAILED_CASTER_DEAD"; break;
-                default: assert(false && "unhandled spell prerequisite"); break;
-            }
-            if (name)
-                raiseGlobalStringError(owner_, name);
-            else
-                LOG_ERROR("Cast rejected for spell ", spellId, ": GlobalStrings has no line for its resource");
-            // A refused cast is a failed one to the interface: native 2.4.3,
-            // /cast Intercept with no rage in Battle Stance, fires
-            // UI_ERROR_MESSAGE "Not enough rage" then UNIT_SPELLCAST_FAILED.
-            if (owner_.addonEventCallbackRef())
-                owner_.addonEventCallbackRef()("UNIT_SPELLCAST_FAILED", spellcastArgs("player", spellId));
-            return;
-        }
+    if (prerequisite == SpellPrerequisite::Unknown) {
+        // No text: nothing the original would refuse with is known here.
+        LOG_ERROR("Cast rejected: missing Spell.dbc entry ", spellId);
+        return;
+    }
+    if (prerequisite == SpellPrerequisite::Passive) {
+        LOG_DEBUG("Ignoring cast request for passive spell ", spellId);
+        return;
+    }
+    if (prerequisite == SpellPrerequisite::Dead) {
+        raiseGlobalStringError(owner_, "SPELL_FAILED_CASTER_DEAD");
+        playSpellFizzle(spellId);
+        owner_.fireAddonEvent("UNIT_SPELLCAST_FAILED", spellcastArgs("player", spellId));
+        if (owner_.spellCastFailedCallbackRef()) owner_.spellCastFailedCallbackRef()(spellId);
+        return;
     }
 
     // Attack routes to auto-attack instead of cast (toggles off if already
@@ -1844,6 +1831,71 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid, std::optiona
         return;
     }
 
+    // Client-side spell/ability cooldown refusal: Native TBC 2.4.3 refuses per-spell
+    // and per-category cooldown presses here (from action bar clicks, keybinds, stance bar,
+    // spellbook, and /cast alike) before power/combo/target checks, playing
+    // ERR_ABILITY_COOLDOWN (Attributes & 0x10) or ERR_SPELL_COOLDOWN vocal speech +
+    // school SpellFizzle*. Presses during the GCD alone still go out so latency-compensated
+    // end-of-GCD presses reach the server (and early presses receive SMSG_CAST_FAILED).
+    if (getSpellCooldown(spellId) > 0.0f || isCooldownEventPending(spellId)) {
+        const bool isAbility = spellEntry && ((spellEntry->attr & 0x10u) != 0u);
+        raiseGlobalStringError(owner_, isAbility ? "ERR_ABILITY_COOLDOWN" : "ERR_SPELL_COOLDOWN");
+        playSpellFizzle(spellId);
+        owner_.fireAddonEvent("UNIT_SPELLCAST_FAILED", spellcastArgs("player", spellId));
+        if (owner_.spellCastFailedCallbackRef()) owner_.spellCastFailedCallbackRef()(spellId);
+        return;
+    }
+
+    switch (prerequisite) {
+        case SpellPrerequisite::Ready: break;
+        case SpellPrerequisite::FormRefused:
+            raiseGlobalStringError(owner_, "SPELL_FAILED_NOT_SHAPESHIFT");
+            playSpellFizzle(spellId);
+            owner_.fireAddonEvent("UNIT_SPELLCAST_FAILED", spellcastArgs("player", spellId));
+            return;
+        case SpellPrerequisite::Stealth:
+            // Sent, and the server answers. Original 2.4.3, Cheap Shot out of
+            // stealth: "Must be in Stealth" (SPELL_FAILED_ONLY_SHAPESHIFT with
+            // the Stealth form), not ONLY_STEALTHED's "You must be in stealth
+            // mode." that a local refusal would have shown.
+            break;
+        case SpellPrerequisite::NoPower:
+            // Auto-target offensive spells (Sinister Strike, Heroic Strike,
+            // Raptor Strike, Execute) acquire their enemy target BEFORE power
+            // refusal on native 2.4.3 (selecting the enemy and then saying
+            // "Not enough rage/mana/energy", or "There is nothing to attack."
+            // if none is in front). Non-auto-target spells (Intercept, Fireball)
+            // refuse power right here before form/target checks.
+            if (autoTargetsEnemy && targetGuid == 0) {
+                deferredNoPower = true;
+                break;
+            }
+            [[fallthrough]];
+        default: {
+            // The client's own refusals, in the same GlobalStrings words the
+            // server's would carry.
+            const char* name = nullptr;
+            switch (prerequisite) {
+                case SpellPrerequisite::NoPower:
+                    name = noPowerGlobalName(owner_.getSpellData(spellId).powerType); break;
+                case SpellPrerequisite::NoComboPoints: name = "SPELL_FAILED_NO_COMBO_POINTS"; break;
+                case SpellPrerequisite::Combat: name = "SPELL_FAILED_AFFECTING_COMBAT"; break;
+                default: assert(false && "unhandled spell prerequisite"); break;
+            }
+            if (name)
+                raiseGlobalStringError(owner_, name);
+            else
+                LOG_ERROR("Cast rejected for spell ", spellId, ": GlobalStrings has no line for its resource");
+            playSpellFizzle(spellId);
+            // A refused cast is a failed one to the interface: native 2.4.3,
+            // /cast Intercept with no rage in Battle Stance, fires
+            // UI_ERROR_MESSAGE "Not enough rage" then UNIT_SPELLCAST_FAILED.
+            if (owner_.addonEventCallbackRef())
+                owner_.addonEventCallbackRef()("UNIT_SPELLCAST_FAILED", spellcastArgs("player", spellId));
+            return;
+        }
+    }
+
     // Native 2.4.3 checks equipment requirements (e.g. Backstab dagger, Shoot
     // wand) BEFORE auto-acquiring a hostile target, and acquires the target
     // BEFORE power/form/range checks.
@@ -1852,7 +1904,8 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid, std::optiona
             const auto& entry = owner_.spellNameCacheRef().at(spellId);
             const std::string text = castFailureText(owner_, spellId, *result,
                 static_cast<uint32_t>(entry.equippedItemClass), entry.equippedItemSubClassMask);
-            if (!text.empty()) owner_.raiseUiError(text);
+            if (!text.empty()) owner_.addUIError(text, /*playUiErrorSound=*/false);
+            playSpellFizzle(spellId);
             owner_.fireAddonEvent("UNIT_SPELLCAST_FAILED", spellcastArgs("player", spellId));
             return;
         }
@@ -1862,6 +1915,7 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid, std::optiona
         if (deferredNoPower) {
             const char* name = noPowerGlobalName(owner_.getSpellData(spellId).powerType);
             if (name) raiseGlobalStringError(owner_, name);
+            playSpellFizzle(spellId);
             if (owner_.addonEventCallbackRef())
                 owner_.addonEventCallbackRef()("UNIT_SPELLCAST_FAILED", spellcastArgs("player", spellId));
             return;
@@ -1874,17 +1928,20 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid, std::optiona
     if (const auto* entry = owner_.getSpellNameEntry(spellId); entry && !formAllows(owner_, *entry) &&
         prerequisite != SpellPrerequisite::Stealth) {
         const std::string text = castFailureText(owner_, spellId, kCastResultOnlyShapeshift, 0, 0);
-        if (!text.empty()) owner_.raiseUiError(text);
+        if (!text.empty()) owner_.addUIError(text, /*playUiErrorSound=*/false);
+        playSpellFizzle(spellId);
         owner_.fireAddonEvent("UNIT_SPELLCAST_FAILED", spellcastArgs("player", spellId));
         return;
     }
     // SPELL_ATTR_HELD_ITEM_ONLY (0x200): cast at the main-hand item, which the
     // client picks itself (the shaman weapon imbues). Native 2.4.3 with the
-    // hand empty: "Your weapon hand is empty" before any equipment line.
+    // hand empty: "Your weapon hand is empty" before any equipment line, playing
+    // GAMEABILITYACTIVATE / GAMESPELLACTIVATE (SE:905 / SE:906).
     uint64_t heldItemGuid = 0;
     if (const auto* held = owner_.getSpellNameEntry(spellId); held && (held->attr & 0x200u)) {
         heldItemGuid = owner_.getEquipSlotGuid(static_cast<int>(EquipSlot::MAIN_HAND));
         if (heldItemGuid == 0) {
+            playSpellActivateSound(spellId);
             raiseGlobalStringError(owner_, "SPELL_FAILED_MAINHAND_EMPTY");
             owner_.fireAddonEvent("UNIT_SPELLCAST_FAILED", spellcastArgs("player", spellId));
             return;
@@ -1898,13 +1955,15 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid, std::optiona
         const auto& entry = owner_.spellNameCacheRef().at(spellId);
         const std::string text = castFailureText(owner_, spellId, *result,
             static_cast<uint32_t>(entry.equippedItemClass), entry.equippedItemSubClassMask);
-        if (!text.empty()) owner_.raiseUiError(text);
+        if (!text.empty()) owner_.addUIError(text, /*playUiErrorSound=*/false);
+        playSpellFizzle(spellId);
         owner_.fireAddonEvent("UNIT_SPELLCAST_FAILED", spellcastArgs("player", spellId));
         return;
     }
     if (const auto missing = firstMissingTool(owner_, spellId)) {
         const std::string text = castFailureText(owner_, spellId, missing->first, missing->second, 0);
-        if (!text.empty()) owner_.raiseUiError(text);
+        if (!text.empty()) owner_.addUIError(text, /*playUiErrorSound=*/false);
+        playSpellFizzle(spellId);
         // 2.4.3 Transmute: Arcanite without a Philosopher's Stone: the error,
         // then UNIT_SPELLCAST_FAILED, and nothing sent.
         owner_.fireAddonEvent("UNIT_SPELLCAST_FAILED", spellcastArgs("player", spellId));
@@ -1912,7 +1971,8 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid, std::optiona
     }
     if (const auto missingReagent = firstMissingReagent(owner_, spellId)) {
         const std::string text = castFailureText(owner_, spellId, kCastResultReagents, *missingReagent, 0);
-        if (!text.empty()) owner_.raiseUiError(text);
+        if (!text.empty()) owner_.addUIError(text, /*playUiErrorSound=*/false);
+        playSpellFizzle(spellId);
         // Native 2.4.3 (pair 13): Prayer of Fortitude Rank 1 without a Holy
         // Candle refuses before arming SpellIsTargeting or sending the cast.
         owner_.fireAddonEvent("UNIT_SPELLCAST_FAILED", spellcastArgs("player", spellId));
@@ -1983,7 +2043,8 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid, std::optiona
             // setting on this dismounts and lets the cast go, which is what
             // the option is for and what the real client does with it.
             if (addons::storedCVarValue("autoDismountFlying", "0") == "0") {
-                owner_.addUIError("You can't do that while flying.");
+                owner_.addUIError("You can't do that while flying.", /*playUiErrorSound=*/false);
+                playSpellFizzle(spellId);
                 return;
             }
             owner_.dismount();
@@ -2067,6 +2128,8 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid, std::optiona
                     (moveFlags & static_cast<uint32_t>(MovementFlags::STRAFE_LEFT)  ? " STRAFE_LEFT" : ""),
                     (moveFlags & static_cast<uint32_t>(MovementFlags::STRAFE_RIGHT) ? " STRAFE_RIGHT" : ""));
         raiseGlobalStringError(owner_, "SPELL_FAILED_MOVING");
+        playSpellFizzle(spellId);
+        owner_.fireAddonEvent("UNIT_SPELLCAST_FAILED", spellcastArgs("player", spellId));
         return;
     }
 
@@ -2085,6 +2148,7 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid, std::optiona
                                       kAuraMounted) != std::end(entry->effectAuraIds);
         LOG_INFO("Cast refused indoors: spell ", spellId, mounts ? " (mount)" : "");
         raiseGlobalStringError(owner_, mounts ? "SPELL_FAILED_NO_MOUNTS_ALLOWED" : "SPELL_FAILED_ONLY_OUTDOORS");
+        playSpellFizzle(spellId);
         owner_.fireAddonEvent("UNIT_SPELLCAST_FAILED", spellcastArgs("player", spellId));
         return;
     }
@@ -2176,21 +2240,12 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid, std::optiona
         const uint64_t asked = targetGuid != 0 ? targetGuid : current;
         uint64_t chosen = unitTakesAim(asked, aim) ? asked : 0;
         if (chosen == 0) {
-            // Wow.exe Spell_C_CastSpell (0x6fc17b..0x6fc19b): targeted spell activation
-            // plays GAMEABILITYACTIVATE (SE:905, Attributes & 0x10) or GAMESPELLACTIVATE (SE:906).
-            if (auto* am = owner_.services().assetManager) {
-                owner_.loadSpellNameCache();
-                const auto it = owner_.spellNameCacheRef().find(spellId);
-                const bool isAbility = (it != owner_.spellNameCacheRef().end()) &&
-                                       ((it->second.attr & 0x10u) != 0u);
-                float sfxScale = 1.0f;
-                if (auto* ac = owner_.services().audioCoordinator) sfxScale = ac->getSfxVolumeScale();
-                audio::SoundEntryTable::instance().play2D(am, isAbility ? 905u : 906u, sfxScale);
-            }
+            playSpellActivateSound(spellId);
         }
         if (chosen == 0 && aim == spellclass::UnitAim::Enemy) {
             if (owner_.pendingUnitTargetSpell() != 0) owner_.cancelUnitTargeting(false);
             raiseGlobalStringError(owner_, current == 0 ? "ERR_GENERIC_NO_TARGET" : "SPELL_FAILED_BAD_TARGETS");
+            playSpellFizzle(spellId);
             owner_.fireAddonEvent("UNIT_SPELLCAST_FAILED", spellcastArgs("player", spellId));
             LOG_INFO("Cast refused: spell ", spellId, " needs an enemy; target 0x", std::hex, current, std::dec);
             return;
@@ -2251,6 +2306,7 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid, std::optiona
             // (so the enemy selection circle pulses and walking into range shoots
             // automatically; CMaNGOS Spell.cpp:3297 "always cast autorepeat dummy").
             if (spellId != 75 && spellId != 5019) {
+                playSpellFizzle(spellId);
                 owner_.fireAddonEvent("UNIT_SPELLCAST_FAILED", spellcastArgs("player", spellId));
                 return;
             }
@@ -2373,6 +2429,7 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid, std::optiona
         spellclass::requiresHostileTarget(getSpellImplicitTargetA(spellId))) {
         // Native 2.4.3 (Soul Fire): the line, then UNIT_SPELLCAST_FAILED.
         raiseGlobalStringError(owner_, "ERR_GENERIC_NO_TARGET");
+        playSpellFizzle(spellId);
         owner_.fireAddonEvent("UNIT_SPELLCAST_FAILED", spellcastArgs("player", spellId));
         LOG_WARNING("Cast refused: spell ", spellId,
                     " needs a hostile target and nothing is selected - sending it"
@@ -2390,6 +2447,7 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid, std::optiona
         owner_.fireAddonEvent("UNIT_SPELLCAST_SENT",
             {"player", owner_.getSpellName(spellId), owner_.getSpellRank(spellId), ""});
         raiseGlobalStringError(owner_, "ERR_SPELL_OUT_OF_RANGE");
+        playSpellFizzle(spellId);
         owner_.fireAddonEvent("UNIT_SPELLCAST_FAILED", spellcastArgs("player", spellId));
         return;
     }
@@ -2565,7 +2623,7 @@ void SpellHandler::startCraftQueue(uint32_t spellId, int count) {
     // thing still blocked in the air.
     if (owner_.isMounted() && owner_.isPlayerFlying() &&
         addons::storedCVarValue("autoDismountFlying", "0") == "0") {
-        owner_.addUIError("You can't do that while flying.");
+        owner_.addUIError("You can't do that while flying.", /*playUiErrorSound=*/false);
         return;
     }
     craftQueueSpellId_ = spellId;
@@ -2911,7 +2969,6 @@ void SpellHandler::switchTalentSpec(uint8_t newSpec) {
     // Both are taught when dual specialisation is bought, so not knowing one
     // means the character has only the single spec.
     if (!knownSpells_.count(spellId)) {
-        owner_.addUIError("You have not learned Dual Talent Specialization.");
         owner_.raiseUiError("You have not learned Dual Talent Specialization.");
         return;
     }
@@ -3835,22 +3892,14 @@ void SpellHandler::handleCastFailed(network::Packet& packet) {
     // On screen and nowhere else. A cast failure went to the chat log as well
     // from here and from handleCastResult both, so the fix that took it out of
     // GameHandler::raiseUiError changed nothing that was being reported.
-    if (const uint32_t fizzleId = spellFizzleSoundId(owner_.getSpellSchoolMask(data.spellId));
-        fizzleId != 0) {
-        if (auto* am = owner_.services().assetManager) {
-            float sfxScale = 1.0f;
-            if (auto* ac = owner_.services().audioCoordinator) sfxScale = ac->getSfxVolumeScale();
-            glm::vec3 pos(0.0f);
-            resolveUnitPosition(owner_.getPlayerGuid(), pos);
-            audio::SoundEntryTable::instance().play3D(
-                am, fizzleId, pos + glm::vec3(0.0f, 0.0f, 2.0f), sfxScale);
-        }
-    }
+    playSpellFizzle(data.spellId);
 
     // Character speech response ("Not enough mana", "Not enough rage", "Spell is not ready yet", ...)
     // Overlap is gated by PlayerVoiceManager::isErrorSpeechPlaying() matching Wow.exe 0x7b8100.
     if (!gatherCast) {
-        if (auto speech = errorSpeechForCastResult(data.spellId, data.result, powerType))
+        const auto* failedEntry = owner_.getSpellNameEntry(data.spellId);
+        const bool isAbility = failedEntry && ((failedEntry->attr & 0x10u) != 0u);
+        if (auto speech = errorSpeechForCastResult(data.spellId, data.result, powerType, isAbility))
             owner_.playErrorSpeech(*speech);
     }
 
@@ -6719,17 +6768,7 @@ void SpellHandler::handleCastResult(network::Packet& packet) {
                 !errMsg.empty()) {
                 owner_.addUIError(errMsg, /*playUiErrorSound=*/false);
             }
-            if (const uint32_t fizzleId = spellFizzleSoundId(owner_.getSpellSchoolMask(castResultSpellId));
-                fizzleId != 0) {
-                if (auto* am = owner_.services().assetManager) {
-                    float sfxScale = 1.0f;
-                    if (auto* ac = owner_.services().audioCoordinator) sfxScale = ac->getSfxVolumeScale();
-                    glm::vec3 pos(0.0f);
-                    resolveUnitPosition(owner_.getPlayerGuid(), pos);
-                    audio::SoundEntryTable::instance().play3D(
-                        am, fizzleId, pos + glm::vec3(0.0f, 0.0f, 2.0f), sfxScale);
-                }
-            }
+            playSpellFizzle(castResultSpellId);
             if (!gatherCast) {
                 int powerType = -1;
                 if (auto playerEntity = owner_.getEntityManager().getEntity(owner_.getPlayerGuid())) {
@@ -6737,7 +6776,9 @@ void SpellHandler::handleCastResult(network::Packet& packet) {
                         powerType = playerUnit->getPowerType();
                     }
                 }
-                if (auto speech = errorSpeechForCastResult(castResultSpellId, castResult, powerType)) {
+                const auto* failedEntry = owner_.getSpellNameEntry(castResultSpellId);
+                const bool isAbility = failedEntry && ((failedEntry->attr & 0x10u) != 0u);
+                if (auto speech = errorSpeechForCastResult(castResultSpellId, castResult, powerType, isAbility)) {
                     owner_.playErrorSpeech(*speech);
                 }
             }

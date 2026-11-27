@@ -1692,7 +1692,7 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
                         continue;
                     }
                     if (slot < 0 || slot >= static_cast<int>(bar.size())) continue;
-                    if (bar[slot].type == game::ActionBarSlot::SPELL && bar[slot].isReady()) {
+                    if (bar[slot].type == game::ActionBarSlot::SPELL && bar[slot].id != 0) {
                         if (const uint32_t itemForSpell = gameHandler.getItemIdForSpell(bar[slot].id)) {
                             gameHandler.useItemById(
                                 itemForSpell,
