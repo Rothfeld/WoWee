@@ -1,4 +1,5 @@
 #include <catch_amalgamated.hpp>
+#include "rendering/renderer_bloom_math.hpp"
 #include "rendering/weather_mist_math.hpp"
 
 #include <cstdint>
@@ -291,4 +292,127 @@ TEST_CASE("shipped TBC RainDrop01.blp stores 8 authored DXT3 mip levels keeping 
     std::memcpy(&c0, raw.data() + mipOffsets[7] + 8, 2);
     const float g8 = static_cast<float>((c0 >> 5) & 63u) * (255.0f / 63.0f);
     CHECK(g8 > 140.0f);
+}
+
+TEST_CASE("TBC 2.4.3 ffxGlow target extents, resolution-scaled Gaussian kernel, and composite transfer curve",
+          "[ffxglow][bloom][tbc]") {
+    using namespace wowee::rendering;
+
+    SECTION("Two-stage 2x2 downsample produces exact half and quarter extents with non-zero floor") {
+        const auto e720 = computeBloomTargetExtents(1280u, 720u);
+        CHECK(e720.halfWidth == 640u);
+        CHECK(e720.halfHeight == 360u);
+        CHECK(e720.quarterWidth == 320u);
+        CHECK(e720.quarterHeight == 180u);
+
+        const auto e1080 = computeBloomTargetExtents(1920u, 1080u);
+        CHECK(e1080.quarterWidth == 480u);
+        CHECK(e1080.quarterHeight == 270u);
+
+        const auto tiny = computeBloomTargetExtents(2u, 3u);
+        CHECK(tiny.quarterWidth == 1u);
+        CHECK(tiny.quarterHeight == 1u);
+    }
+
+    SECTION("Quarter-res Gaussian sigma scales proportionally with screen height and maintains +-3 sigma support") {
+        const float s720 = computeQuarterBlurSigmaTexels(180u);
+        const float s1080 = computeQuarterBlurSigmaTexels(270u);
+        const float s2160 = computeQuarterBlurSigmaTexels(540u);
+        CHECK(s720 == Catch::Approx(kTbcFfxGlowQuarterSigmaAt720p));
+        CHECK(s1080 == Catch::Approx(1.5f * s720));
+        CHECK(s2160 == Catch::Approx(3.0f * s720));
+
+        const float step720 = computeQuarterBlurTapStepTexels(s720);
+        const float step2160 = computeQuarterBlurTapStepTexels(s2160);
+        CHECK(step720 == Catch::Approx(1.0f));
+        CHECK(step2160 == Catch::Approx(3.0f));
+
+        // Normalized 9-tap weights stay symmetric, positive, peaked at center, and sum to 1.0.
+        const auto w = computeGaussianTapWeights9(s2160, step2160);
+        float sum = 0.0f;
+        for (size_t i = 0; i < 9; ++i) {
+            CHECK(w[i] > 0.0f);
+            CHECK(w[i] == Catch::Approx(w[8 - i]));
+            sum += w[i];
+        }
+        CHECK(sum == Catch::Approx(1.0f));
+        CHECK(w[4] > w[3]);
+        CHECK(w[3] > w[2]);
+        CHECK(w[2] > w[1]);
+        CHECK(w[1] > w[0]);
+    }
+
+    SECTION("effectiveTbcFfxGlowStrength honors expansion, world frame, CVars, Nether World, and LightParams.dbc glow") {
+        // Active TBC world frame with ffx=1, ffxGlow=1, no Nether World -> exact clamped DBC glow.
+        CHECK(effectiveTbcFfxGlowStrength(true, true, true, true, true, false, 0.50f) == Catch::Approx(0.50f));
+        CHECK(effectiveTbcFfxGlowStrength(true, true, true, true, true, false, 1.25f) == Catch::Approx(1.00f));
+        CHECK(effectiveTbcFfxGlowStrength(true, true, true, true, true, false, 0.00f) == 0.0f);
+
+        // Disabled on WotLK, login/loading screen, renderer off, ffx=0, ffxGlow=0, or Nether World invisibility.
+        CHECK(effectiveTbcFfxGlowStrength(false, true, true, true, true, false, 0.65f) == 0.0f);
+        CHECK(effectiveTbcFfxGlowStrength(true, false, true, true, true, false, 0.65f) == 0.0f);
+        CHECK(effectiveTbcFfxGlowStrength(true, true, false, true, true, false, 0.65f) == 0.0f);
+        CHECK(effectiveTbcFfxGlowStrength(true, true, true, false, true, false, 0.65f) == 0.0f);
+        CHECK(effectiveTbcFfxGlowStrength(true, true, true, true, false, false, 0.65f) == 0.0f);
+        CHECK(effectiveTbcFfxGlowStrength(true, true, true, true, true, true, 0.65f) == 0.0f);
+    }
+
+    SECTION("evaluateTbcFfxGlowComposite matches shipped ffxglow.bls squared-blur additive curve") {
+        // Dark stone (30, 18, 12)/255 next to glowing window / flame blur (0.50, 0.25, 0.05) at LP 336 glow = 0.50:
+        const glm::vec3 darkStone(30.0f / 255.0f, 18.0f / 255.0f, 12.0f / 255.0f);
+        const glm::vec3 warmBlur(0.50f, 0.25f, 0.05f);
+        const glm::vec3 lit = evaluateTbcFfxGlowComposite(darkStone, warmBlur, 0.50f);
+        CHECK(lit.r == Catch::Approx(darkStone.r + 0.50f * 0.25f));
+        CHECK(lit.g == Catch::Approx(darkStone.g + 0.50f * 0.0625f));
+        CHECK(lit.b == Catch::Approx(darkStone.b + 0.50f * 0.0025f));
+
+        // Saturated highlights clamp cleanly to 1.0, and glow = 0 is an exact identity.
+        CHECK(evaluateTbcFfxGlowComposite(glm::vec3(0.95f, 0.50f, 0.10f), glm::vec3(0.80f), 1.0f).r == Catch::Approx(1.0f));
+        CHECK(evaluateTbcFfxGlowComposite(darkStone, warmBlur, 0.0f) == darkStone);
+    }
+}
+
+TEST_CASE("Shipped TBC LightParams.dbc col 4 authors zone glow values used by ffxGlow", "[ffxglow][dbc][tbc]") {
+    const char* envDir = std::getenv("WOWEE_TBC_DATA_DIR");
+    const std::string base = envDir ? envDir : "/workspace/azerothcore/client/wowee-data/expansions/tbc";
+    FILE* f = std::fopen((base + "/dbfilesclient/lightparams.dbc").c_str(), "rb");
+    if (!f) {
+        SKIP("TBC LightParams.dbc not present");
+    }
+    std::fseek(f, 0, SEEK_END);
+    const long sz = std::ftell(f);
+    std::fseek(f, 0, SEEK_SET);
+    REQUIRE(sz > 20);
+    std::vector<uint8_t> raw(static_cast<size_t>(sz));
+    REQUIRE(std::fread(raw.data(), 1, raw.size(), f) == raw.size());
+    std::fclose(f);
+
+    CHECK(std::memcmp(raw.data(), "WDBC", 4) == 0);
+    uint32_t recordCount = 0, fieldCount = 0, recordSize = 0;
+    std::memcpy(&recordCount, raw.data() + 4, 4);
+    std::memcpy(&fieldCount, raw.data() + 8, 4);
+    std::memcpy(&recordSize, raw.data() + 12, 4);
+    REQUIRE(recordCount == 582u);
+    REQUIRE(fieldCount == 9u);
+    REQUIRE(recordSize == 36u);
+
+    auto findGlow = [&](uint32_t targetId) -> float {
+        for (uint32_t i = 0; i < recordCount; ++i) {
+            const uint8_t* rec = raw.data() + 20 + static_cast<size_t>(i) * recordSize;
+            uint32_t id = 0;
+            float glow = -1.0f;
+            std::memcpy(&id, rec, 4);
+            if (id == targetId) {
+                std::memcpy(&glow, rec + 16, 4);
+                return glow;
+            }
+        }
+        return -1.0f;
+    };
+
+    // Verified against Native TBC 2.4.3 captures across all 4 zones:
+    CHECK(findGlow(12u) == Catch::Approx(0.65f));   // Map 0 default / Molten Core fallback
+    CHECK(findGlow(208u) == Catch::Approx(1.00f));  // Teldrassil
+    CHECK(findGlow(336u) == Catch::Approx(0.50f));  // Stratholme Alonsus Chapel
+    CHECK(findGlow(552u) == Catch::Approx(0.30f));  // Netherstorm Eco-Domes / The Stormspire
 }

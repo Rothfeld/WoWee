@@ -27,6 +27,7 @@
 #include "rendering/animation/locomotion_fsm.hpp"
 #include "rendering/water_renderer.hpp"
 #include "rendering/wmo_renderer.hpp"
+#include "rendering/renderer_bloom_math.hpp"
 #include "pipeline/adt_loader.hpp"
 #include "pipeline/wmo_loader.hpp"
 #include "ui/gamepad_controls.hpp"
@@ -3633,6 +3634,69 @@ TEST_CASE_METHOD(Integration, "Nether World CVar controls compositor independent
     CHECK(netherEnabled);
     CHECK(glowEnabled);
     CHECK(deathEnabled);
+    lua.setLuaServices({});
+}
+
+TEST_CASE_METHOD(Integration,
+                 "ffxGlow CVar defaults to 1, updates storedCVarValue case-insensitively, honors ffx and RestoreVideoDefaults",
+                 "[ffxglow][cvar]") {
+    bool glowEnabled = true;
+    int glowCalls = 0;
+    addons::LuaServices services;
+    services.setGlowEnabled = [&](bool enabled) {
+        glowEnabled = enabled;
+        ++glowCalls;
+    };
+    lua.setLuaServices(services);
+
+    truth("GetCVarDefault('ffxGlow') == '1'");
+    truth("GetCVar('ffxGlow') == '1'");
+    CHECK(addons::storedCVarValue("ffxglow", "1") == "1");
+
+    run("SetCVar('ffxGlow', '0')");
+    CHECK_FALSE(glowEnabled);
+    CHECK(glowCalls == 1);
+    truth("GetCVar('ffxGlow') == '0'");
+    CHECK(addons::storedCVarValue("ffxglow", "1") == "0");
+    CHECK(wowee::rendering::effectiveTbcFfxGlowStrength(
+              true, true, true,
+              addons::storedCVarValue("ffx", "1") != "0",
+              addons::storedCVarValue("ffxglow", "1") != "0",
+              false, 0.50f) == Catch::Approx(0.0f));
+
+    run("SetCVar('FFXGLOW', '1')");
+    CHECK(glowEnabled);
+    CHECK(glowCalls == 2);
+    truth("GetCVar('ffxGlow') == '1'");
+    CHECK(addons::storedCVarValue("ffxglow", "1") == "1");
+    CHECK(wowee::rendering::effectiveTbcFfxGlowStrength(
+              true, true, true,
+              addons::storedCVarValue("ffx", "1") != "0",
+              addons::storedCVarValue("ffxglow", "1") != "0",
+              false, 0.50f) == Catch::Approx(0.50f));
+
+    // Master ffx=0 suppresses effective TBC ffxGlow strength even while ffxGlow stays 1.
+    run("SetCVar('ffx', '0')");
+    CHECK_FALSE(glowEnabled);
+    CHECK(addons::storedCVarValue("ffx", "1") == "0");
+    CHECK(addons::storedCVarValue("ffxglow", "1") == "1");
+    CHECK(wowee::rendering::effectiveTbcFfxGlowStrength(
+              true, true, true,
+              addons::storedCVarValue("ffx", "1") != "0",
+              addons::storedCVarValue("ffxglow", "1") != "0",
+              false, 0.50f) == Catch::Approx(0.0f));
+    run("SetCVar('ffx', '1')");
+    CHECK(glowEnabled);
+
+    // RestoreVideoDefaults resets ffxGlow back to '1'.
+    run("SetCVar('ffxGlow', '0')");
+    CHECK_FALSE(glowEnabled);
+    CHECK(addons::storedCVarValue("ffxglow", "1") == "0");
+    run("RestoreVideoDefaults()");
+    CHECK(glowEnabled);
+    truth("GetCVar('ffxGlow') == '1'");
+    CHECK(addons::storedCVarValue("ffxglow", "1") == "1");
+
     lua.setLuaServices({});
 }
 

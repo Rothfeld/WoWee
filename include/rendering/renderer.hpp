@@ -81,6 +81,7 @@ class RtScene;
 class RtLighting;
 class LootSparkles;
 class SunShafts;
+class RendererBloom;
 class ScreenCapture;
 
 class Renderer {
@@ -487,6 +488,9 @@ public:
     void setVolumetricFogDensity(float density) { volumetricFogDensity_ = glm::clamp(density, 0.0f, 3.0f); }
     /// Rays streaming from the sun across the finished picture. See SunShafts.
     void setSunShaftsEnabled(bool enabled) { sunShaftsEnabled_ = enabled; }
+    /// TBC 2.4.3 full-screen scene glow (`ffxGlow` / `LightParams.dbc` col 4).
+    void setFullScreenGlowEnabled(bool enabled) { fullScreenGlowEnabled_ = enabled; }
+    [[nodiscard]] bool isFullScreenGlowEnabled() const { return fullScreenGlowEnabled_; }
     int getTerrainLoadRadius() const;
     int getTerrainUnloadRadius() const { return getTerrainLoadRadius() + 3; }
     void setMsaaSamples(VkSampleCountFlagBits samples);
@@ -669,10 +673,13 @@ private:
     // endFrame and added in the overlay pass ahead of the interface.
     std::unique_ptr<SunShafts> sunShafts_;
     bool sunShaftsEnabled_ = true;
+    std::unique_ptr<RendererBloom> bloom_;
+    bool fullScreenGlowEnabled_ = true;
     /// renderWorld ran this frame. The shafts are built from the world's
     /// picture, and a login screen or a loading screen is not one.
     bool worldDrawnThisFrame_ = false;
     bool minimapOverlayDeferredToUi_ = false;
+    void recordBloom();
     void recordSunShafts();
 
     // GPU-driven grass: compute cull with atomic compaction feeding an

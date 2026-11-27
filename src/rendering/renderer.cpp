@@ -49,6 +49,8 @@
 #include "rendering/grass_renderer.hpp"
 #include "rendering/volumetric_fog.hpp"
 #include "rendering/sun_shafts.hpp"
+#include "rendering/renderer_bloom.hpp"
+#include "rendering/renderer_bloom_math.hpp"
 #include "rendering/rt_lighting.hpp"
 #include "rendering/rt_scene.hpp"
 #include "rendering/screen_capture.hpp"
@@ -1016,6 +1018,13 @@ bool Renderer::initialize(core::Window* win) {
         sunShafts_.reset();
     }
 
+    bloom_ = std::make_unique<RendererBloom>();
+    if (!bloom_->initialize(vkCtx)) {
+        LOG_WARNING("RendererBloom failed to initialise - TBC ffxGlow unavailable");
+        bloom_->shutdown();
+        bloom_.reset();
+    }
+
     // Create render graph and register virtual resources
     renderGraph_ = std::make_unique<RenderGraph>();
 
@@ -1073,6 +1082,10 @@ void Renderer::shutdown() {
     if (sunShafts_) {
         sunShafts_->shutdown();
         sunShafts_.reset();
+    }
+    if (bloom_) {
+        bloom_->shutdown();
+        bloom_.reset();
     }
 
     LOG_DEBUG("Renderer::shutdown - skySystem...");
@@ -1428,8 +1441,10 @@ void Renderer::beginFrame() {
         const auto* gh = core::Application::getInstance().getGameHandler();
         postProcessPipeline_->setGhost(gh && gh->isPlayerGhost());
         postProcessPipeline_->setNetherWorld(gh && gh->hasInvisibilityGlow());
-        postProcessPipeline_->setGlow(game::isActiveExpansion("tbc") && lightingManager
-            ? lightingManager->getLightingParams().glow : 0.0f);
+        // TBC ffxGlow runs via RendererBloom on the finished 3D frame ahead of the
+        // UI overlay pass, keeping FSR 1.0 unblocked and avoiding sparse 16-tap
+        // full-res lattice ghosting in fxaa.frag.glsl.
+        postProcessPipeline_->setGlow(0.0f);
         postProcessPipeline_->manageResources();
     }
 
@@ -1612,7 +1627,8 @@ void Renderer::endFrame() {
     }
 
     // The picture is finished and out of every pass that drew it: the one
-    // point where the shafts can copy it down, before the overlay pass opens.
+    // point where bloom and sun shafts can copy it down, before the overlay pass opens.
+    recordBloom();
     recordSunShafts();
 
     VkImage labelDepth = vkCtx->getDepthCopySourceImage();
@@ -1648,6 +1664,7 @@ void Renderer::endFrame() {
         vkCmdSetScissor(currentCmd, 0, 1, &sc);
 
         // Under the interface, over everything else.
+        if (bloom_) bloom_->composite(currentCmd, vkCtx->getCurrentFrame());
         if (sunShafts_) sunShafts_->composite(currentCmd, vkCtx->getCurrentFrame());
 
         if (worldDrawnThisFrame_ && !minimapOverlayDeferredToUi_) {
@@ -5691,6 +5708,31 @@ void Renderer::renderVolumetricFog() {
         LOG_INFO("volumetricFog: extinction=", fogExtinction_, "/yd (target ", target,
                  ") layerBase=", fogLayerBase_, " lights=", currentFrameData.localLightMeta.x);
     }
+}
+
+void Renderer::recordBloom() {
+    if (!bloom_ || currentCmd == VK_NULL_HANDLE) return;
+    const auto& images = vkCtx->getSwapchainImages();
+    float strength = 0.0f;
+    if (currentImageIndex < images.size()) {
+        const auto* gh = core::Application::getInstance().getGameHandler();
+        const bool ffxMaster = addons::storedCVarValue("ffx", "1") != "0";
+        const bool ffxGlow = addons::storedCVarValue("ffxglow", "1") != "0";
+        const bool ffxNether = addons::storedCVarValue("ffxnetherworld", "1") != "0";
+        const bool netherWorldActive = gh && gh->hasInvisibilityGlow() && ffxNether;
+        const float dbcGlow = lightingManager ? lightingManager->getLightingParams().glow : 0.0f;
+        strength = effectiveTbcFfxGlowStrength(
+            game::isActiveExpansion("tbc"),
+            worldDrawnThisFrame_,
+            fullScreenGlowEnabled_,
+            ffxMaster,
+            ffxGlow,
+            netherWorldActive,
+            dbcGlow);
+    }
+    bloom_->record(currentCmd, vkCtx->getCurrentFrame(),
+                   currentImageIndex < images.size() ? images[currentImageIndex] : VK_NULL_HANDLE,
+                   vkCtx->getSwapchainExtent(), strength);
 }
 
 void Renderer::recordSunShafts() {
