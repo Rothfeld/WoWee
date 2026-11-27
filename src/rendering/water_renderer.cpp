@@ -56,6 +56,11 @@ struct WaterPushConstants {
     float interiorFog = 0.0f;
 };
 static_assert(sizeof(WaterPushConstants) == 116, "the two shader declarations of this range are laid out for 116 bytes");
+static_assert(WaterRenderer::frameUBOSlotCount() == MAX_FRAMES_IN_FLIGHT,
+              "WaterRenderer per-frame UBO and scene history ring must match MAX_FRAMES_IN_FLIGHT");
+static_assert(WaterRenderer::frameUBOStride() >= sizeof(WaterFrameUBOData) &&
+              WaterRenderer::frameUBOStride() % 256 == 0,
+              "WaterRenderer per-frame UBO stride must cover WaterFrameUBOData with 256-byte alignment");
 
 // TBC magma and slime: psLiquidMagma.bls draws vertex colour times one
 // texture, vsLiquidMagma.bls takes the vertex's own texture coordinate plus
@@ -816,6 +821,7 @@ void WaterRenderer::updateMaterialUBO(WaterSurface& surface) {
                     &surface.materialUBO, &surface.materialAlloc, &mapInfo);
     if (mapInfo.pMappedData) {
         std::memcpy(mapInfo.pMappedData, &mat, sizeof(mat));
+        vmaFlushAllocation(vkCtx->getAllocator(), surface.materialAlloc, 0, sizeof(mat));
     }
 
     // Allocate and write descriptor set
@@ -1236,7 +1242,14 @@ void WaterRenderer::clear() {
     surfaces.clear();
     contactPoints_.clear();
     contactEmitters_.clear();
-    frameUBO_.contactMeta.x = 0.0f;
+    wakePoints_.clear();
+    hasWakeEmitPos_ = false;
+    frameUBO_.contactMeta = glm::vec4(0.0f);
+    std::fill(std::begin(frameUBO_.contactPositions), std::end(frameUBO_.contactPositions), glm::vec4(0.0f));
+    std::fill(std::begin(frameUBO_.contactStyles), std::end(frameUBO_.contactStyles), glm::vec4(0.0f));
+    frameUBO_.wakeBounds = glm::vec4(0.0f);
+    std::fill(std::begin(frameUBO_.wakePoints), std::end(frameUBO_.wakePoints), glm::vec4(0.0f));
+    ++frameUBOGeneration_;
 }
 
 // ==============================================================
@@ -1245,9 +1258,6 @@ void WaterRenderer::clear() {
 
 void WaterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
                             const Camera& camera, float time, bool use1x, uint32_t frameIndex) {
-    // The wake as it stands, into this frame's slot - safe now, the frame has
-    // waited for the GPU to finish with it.
-    uploadFrameUBO();
     VkPipeline pipeline = (use1x && water1xPipeline) ? water1xPipeline : waterPipeline;
     VkPipeline opaquePipeline = (use1x && water1xOpaquePipeline) ? water1xOpaquePipeline : waterOpaquePipeline;
     if (!renderingEnabled || surfaces.empty() || !pipeline) {
@@ -1267,6 +1277,10 @@ void WaterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
         }
         return;
     }
+
+    // Upload staged contacts, wake, liquid colors, and reflection matrix into
+    // this frame's fenced UBO slot right before binding its scene descriptor set.
+    uploadFrameUBO(frameIndex);
 
     // Frustum culling setup
     Frustum frustum;
@@ -1392,6 +1406,8 @@ void WaterRenderer::renderDepthOnly(VkCommandBuffer cmd, VkDescriptorSet perFram
     if (!renderingEnabled || surfaces.empty() || !waterDepthOnlyPipeline) return;
     VkDescriptorSet activeSceneSet = sceneHistory[frameIndex % SCENE_HISTORY_FRAMES].sceneSet;
     if (!activeSceneSet || liquidSets.empty()) return;
+
+    uploadFrameUBO(frameIndex);
 
     Frustum frustum;
     frustum.extractFromMatrix(camera.getViewProjectionMatrix());
@@ -2212,14 +2228,18 @@ void WaterRenderer::createReflectionResources() {
     }
     reflectionUBOMapped = mapInfo.pMappedData;
 
-    // Initialize with identity
-    WaterFrameUBOData initData{};
-    initData.reflViewProj = glm::mat4(1.0f);
+    // Initialize all slots from staged CPU state so swapchain/pipeline rebuilds
+    // preserve active liquid colors, contacts, wake, and reflection state.
     if (reflectionUBOMapped) {
         for (uint32_t f = 0; f < SCENE_HISTORY_FRAMES; ++f) {
             std::memcpy(static_cast<char*>(reflectionUBOMapped) + f * kFrameUBOStride,
-                        &initData, sizeof(initData));
+                        &frameUBO_, sizeof(frameUBO_));
         }
+        vmaFlushAllocation(allocator, reflectionUBOAlloc, 0,
+                           kFrameUBOStride * SCENE_HISTORY_FRAMES);
+        uploadedFrameUBOGeneration_.fill(frameUBOGeneration_);
+    } else {
+        uploadedFrameUBOGeneration_.fill(0);
     }
 
     // Transition reflection color image to shader-read so first frame doesn't read undefined
@@ -2261,8 +2281,10 @@ void WaterRenderer::destroyReflectionResources() {
         AllocatedBuffer ab{}; ab.buffer = reflectionUBO; ab.allocation = reflectionUBOAlloc;
         destroyBuffer(allocator, ab);
         reflectionUBO = VK_NULL_HANDLE;
+        reflectionUBOAlloc = VK_NULL_HANDLE;
         reflectionUBOMapped = nullptr;
     }
+    uploadedFrameUBOGeneration_.fill(0);
     reflectionColorLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 }
 
@@ -2308,19 +2330,32 @@ void WaterRenderer::endReflectionPass(VkCommandBuffer cmd) {
 
 void WaterRenderer::updateReflectionUBO(const glm::mat4& reflViewProj) {
     frameUBO_.reflViewProj = reflViewProj;
-    uploadFrameUBO();
+    ++frameUBOGeneration_;
 }
 
-// Into the slot of the frame being recorded. There was one slot for every frame
-// in flight, so the reflection matrix was rewritten for the next frame while the
-// GPU was still drawing water with it for the last one - the reflection was
-// sampled through a camera a frame out of step with the one that rendered it,
-// and shook whenever the view moved.
-void WaterRenderer::uploadFrameUBO() {
-    if (!reflectionUBOMapped || !vkCtx) return;
-    const uint32_t slot = vkCtx->getCurrentFrame() % SCENE_HISTORY_FRAMES;
-    std::memcpy(static_cast<char*>(reflectionUBOMapped) + slot * kFrameUBOStride,
+void WaterRenderer::bindMappedFrameUBOBufferForTesting(void* mappedBuffer) {
+    assert(vkCtx == nullptr);
+    reflectionUBOMapped = mappedBuffer;
+    uploadedFrameUBOGeneration_.fill(0);
+}
+
+// Into the fenced slot of the frame being recorded. Every simulation mutator
+// (updateContacts, updateWake, setRiver*, setOceanColors) and reflection matrix
+// update stages into frameUBO_ on the CPU; only render() / renderDepthOnly()
+// call uploadFrameUBO(frameIndex) once beginFrame has waited on that slot's
+// fence, preventing CPU writes into an in-flight GPU uniform buffer slot.
+void WaterRenderer::uploadFrameUBO(uint32_t frameIndex) {
+    if (!reflectionUBOMapped) return;
+    const uint32_t slot = frameIndex % SCENE_HISTORY_FRAMES;
+    if (uploadedFrameUBOGeneration_[slot] == frameUBOGeneration_) return;
+    const VkDeviceSize byteOffset = static_cast<VkDeviceSize>(slot) * kFrameUBOStride;
+    std::memcpy(static_cast<char*>(reflectionUBOMapped) + byteOffset,
                 &frameUBO_, sizeof(frameUBO_));
+    if (vkCtx && reflectionUBOAlloc != VK_NULL_HANDLE) {
+        vmaFlushAllocation(vkCtx->getAllocator(), reflectionUBOAlloc,
+                           byteOffset, sizeof(frameUBO_));
+    }
+    uploadedFrameUBOGeneration_[slot] = frameUBOGeneration_;
 }
 
 // Disturbance trail. Points are dropped along the path rather than parented to
@@ -2390,7 +2425,11 @@ void WaterRenderer::updateContacts(float deltaTime, const std::vector<WaterConta
         frameUBO_.contactStyles[i] = {point.strength * fade, point.direction.x,
                                       point.direction.y, point.wake ? 1.0f : 0.0f};
     }
-    uploadFrameUBO();
+    ++frameUBOGeneration_;
+    // Uploaded when the frame is recorded (uploadFrameUBO), not here: this runs
+    // during Renderer::update before beginFrame or settleSubmittedFrames has
+    // waited for the next frame slot, so the slot getCurrentFrame() names can
+    // still be read by the GPU command buffer in flight.
 }
 
 void WaterRenderer::updateWake(float deltaTime, const glm::vec2& pos,
@@ -2482,6 +2521,7 @@ void WaterRenderer::updateWake(float deltaTime, const glm::vec2& pos,
         frameUBO_.wakePoints[i] = glm::vec4(p.pos.x, p.pos.y, age01, p.strength);
     }
     frameUBO_.wakeBounds = glm::vec4(centre.x, centre.y, cullRadius, static_cast<float>(count));
+    ++frameUBOGeneration_;
     // Uploaded when the frame is recorded, not here: this runs before the frame
     // has waited for its slot, and the slot it would name is still being read
     // by the frame the GPU is drawing.

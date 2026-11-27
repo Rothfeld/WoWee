@@ -1,6 +1,7 @@
 #pragma once
 
 #include "rendering/vk_texture.hpp"
+#include <array>
 #include <vector>
 #include <memory>
 #include <optional>
@@ -179,24 +180,44 @@ public:
     // Compute oblique clip projection to clip below-water geometry in reflection
     static glm::mat4 computeObliqueProjection(const glm::mat4& proj, const glm::mat4& view, float waterHeight);
 
-    // Update the reflection UBO with reflected viewProj matrix
+    // Stage the reflected viewProj matrix for the next fenced frame UBO upload.
     void updateReflectionUBO(const glm::mat4& reflViewProj);
 
     /// Feed the surface disturbance left by something moving through the water.
     /// `intensity` is 0 when nothing is disturbing the surface. `wading` picks
     /// churned-up froth underfoot; swimming instead lays a V wake off the
     /// shoulders. Call once per frame.
-    void setRiverAlpha(const glm::vec2& alpha) { frameUBO_.liquidParams.x = alpha.x; frameUBO_.liquidParams.y = alpha.y; }
-    void setRiverDeepColor(const glm::vec3& color) { frameUBO_.riverDeepColor = glm::vec4(color, 1.0f); }
-    void setRiverShallowColor(const glm::vec3& color) { frameUBO_.riverShallowColor = glm::vec4(color, 1.0f); }
+    void setRiverAlpha(const glm::vec2& alpha) {
+        frameUBO_.liquidParams.x = alpha.x;
+        frameUBO_.liquidParams.y = alpha.y;
+        ++frameUBOGeneration_;
+    }
+    void setRiverDeepColor(const glm::vec3& color) {
+        frameUBO_.riverDeepColor = glm::vec4(color, 1.0f);
+        ++frameUBOGeneration_;
+    }
+    void setRiverShallowColor(const glm::vec3& color) {
+        frameUBO_.riverShallowColor = glm::vec4(color, 1.0f);
+        ++frameUBOGeneration_;
+    }
     void setOceanColors(const glm::vec3& shallow, const glm::vec3& deep, const glm::vec2& alpha) {
         frameUBO_.oceanShallowColor = glm::vec4(shallow, alpha.x);
         frameUBO_.oceanDeepColor = glm::vec4(deep, alpha.y);
+        ++frameUBOGeneration_;
     }
     void updateContacts(float deltaTime, const std::vector<WaterContactActor>& actors);
 
     void updateWake(float deltaTime, const glm::vec2& pos, const glm::vec2& travelDir,
                     float intensity, bool wading);
+
+    /// Copy staged `WaterFrameUBOData` into `frameIndex % SCENE_HISTORY_FRAMES`.
+    /// Must only be called while recording a frame whose slot fence has settled.
+    void uploadFrameUBO(uint32_t frameIndex);
+
+    static constexpr uint32_t frameUBOSlotCount() { return SCENE_HISTORY_FRAMES; }
+    static constexpr VkDeviceSize frameUBOStride() { return kFrameUBOStride; }
+    [[nodiscard]] const WaterFrameUBOData& stagedFrameUBO() const { return frameUBO_; }
+    void bindMappedFrameUBOBufferForTesting(void* mappedBuffer);
 
     VkRenderPass getReflectionRenderPass() const { return reflectionRenderPass; }
     VkExtent2D getReflectionExtent() const { return {.width = REFLECTION_WIDTH, .height = REFLECTION_HEIGHT}; }
@@ -374,10 +395,10 @@ private:
     std::vector<ContactPoint> contactPoints_;
     std::vector<WakePoint> wakePoints_;
     WaterFrameUBOData frameUBO_{};
+    uint64_t frameUBOGeneration_ = 1;
+    std::array<uint64_t, SCENE_HISTORY_FRAMES> uploadedFrameUBOGeneration_{};
     glm::vec2 lastWakeEmitPos_{0.0f};
     bool hasWakeEmitPos_ = false;
-
-    void uploadFrameUBO();
 
     ::VkBuffer reflectionUBO = VK_NULL_HANDLE;
     VmaAllocation reflectionUBOAlloc = VK_NULL_HANDLE;

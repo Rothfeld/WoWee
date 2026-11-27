@@ -3173,6 +3173,33 @@ wowee_add_test(test_ocean_water
             ${TEST_COMMON_SOURCES}
             ${CMAKE_SOURCE_DIR}/src/pipeline/adt_loader.cpp)
 
+# ── test_water_contacts_sync ─────────────────────────────────
+# Per-frame UBO ring synchronization for WaterRenderer::updateContacts,
+# updateWake, updateReflectionUBO, and DrawSchedule undrawn ticks.
+if(NOT ANDROID)
+    add_executable(test_water_contacts_sync
+        test_water_contacts_sync.cpp
+        "$<FILTER:$<TARGET_OBJECTS:wowee>,EXCLUDE,/main([.]cpp)?[.]o(bj)?$>"
+    )
+    target_include_directories(test_water_contacts_sync PRIVATE ${TEST_INCLUDE_DIRS}
+        $<TARGET_PROPERTY:wowee,INCLUDE_DIRECTORIES>)
+    target_include_directories(test_water_contacts_sync SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
+    target_compile_definitions(test_water_contacts_sync PRIVATE
+        WOWEE_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+        $<TARGET_PROPERTY:wowee,COMPILE_DEFINITIONS>)
+    target_compile_features(test_water_contacts_sync PRIVATE cxx_std_20)
+    target_link_libraries(test_water_contacts_sync PRIVATE catch2_main
+        $<TARGET_PROPERTY:wowee,LINK_LIBRARIES>)
+    wowee_test_link_glm(test_water_contacts_sync)
+    target_link_directories(test_water_contacts_sync PRIVATE
+        $<TARGET_PROPERTY:wowee,LINK_DIRECTORIES>)
+    target_link_options(test_water_contacts_sync PRIVATE
+        $<TARGET_PROPERTY:wowee,LINK_OPTIONS>)
+    add_dependencies(test_water_contacts_sync wowee)
+    add_test(NAME water_contacts_sync COMMAND test_water_contacts_sync)
+    register_test_target(test_water_contacts_sync)
+endif()
+
 # ── test_blp_truncation ──────────────────────────────────────
 # What the BLP loader does with a texture that lies about its own sizes. The
 # decompressors derived how much source to read from width and height and
