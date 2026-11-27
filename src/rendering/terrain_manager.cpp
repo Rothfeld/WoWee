@@ -188,6 +188,13 @@ bool TerrainManager::initialize(pipeline::AssetManager* assets, TerrainRenderer*
     return true;
 }
 
+void TerrainManager::setMapName(const std::string& name) {
+    this->mapName = name;
+    if (terrainRenderer && !isCustomZone_) {
+        terrainRenderer->loadHorizonMap(this->mapName);
+    }
+}
+
 void TerrainManager::update(const Camera& camera, float deltaTime) {
     ZoneScopedN("TerrainManager::update");
     if (wmoRenderer) {
@@ -196,6 +203,9 @@ void TerrainManager::update(const Camera& camera, float deltaTime) {
     }
     if (!streamingEnabled || !assetManager || !terrainRenderer) {
         return;
+    }
+    if (!isCustomZone_ && terrainRenderer->loadedHorizonMapName() != mapName) {
+        terrainRenderer->loadHorizonMap(mapName);
     }
 
     // Phase timing: this call stalls for ~180ms when tiles arrive, and the

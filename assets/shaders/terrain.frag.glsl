@@ -41,7 +41,7 @@ layout(set = 1, binding = 7) uniform TerrainParams {
     int hasLayer2;
     int hasLayer3;
     int bigAlpha;
-    int _pad0;
+    int isHorizonMesh;
     int _pad1;
     int _pad2;
     vec4 layerUvVel01;
@@ -153,7 +153,20 @@ vec3 applyFog(vec3 color, vec3 worldPos, float dist) {
 }
 
 void main() {
-    if (outdoorFogParams.z > 0.0 && -(view * vec4(FragPos, 1.0)).z > outdoorFogParams.z) discard;
+    float eyeDepth = -(view * vec4(FragPos, 1.0)).z;
+    if (isHorizonMesh != 0) {
+        float horizonFar = max(2112.0, outdoorFogParams.z);
+        float horizonNear = max(outdoorFogParams.z - 16.0, 32.0);
+        if (eyeDepth < horizonNear || eyeDepth > horizonFar) discard;
+        vec3 hColor = outdoorFogColor.rgb;
+        if (volumetricParams.x > 0.5 && lightDir.w == 0.0) {
+            vec4 air = fogVolumeAt(FragPos);
+            hColor = hColor * air.a + air.rgb;
+        }
+        outColor = vec4(hColor, 1.0);
+        return;
+    }
+    if (outdoorFogParams.z > 0.0 && eyeDepth > outdoorFogParams.z) discard;
     gFogColor = outdoorFogColor;
     gFogParams = outdoorFogParams;
     float fragDist = length(viewPos.xyz - FragPos);

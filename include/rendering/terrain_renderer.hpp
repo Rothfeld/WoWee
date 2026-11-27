@@ -166,6 +166,13 @@ public:
 
     void clear();
 
+    /// Load or replace the `.wdl` low-resolution horizon mesh for `mapName`
+    /// (`World\Maps\<mapName>\<mapName>.wdl`), drawn in solid `outdoorFogColor`
+    /// from `viewDistance` out to `horizonfarclip` (`2112` yd) as in TBC 2.4.3.
+    bool loadHorizonMap(const std::string& mapName);
+    void clearHorizonMesh();
+    [[nodiscard]] const std::string& loadedHorizonMapName() const { return loadedHorizonMapName_; }
+
     void recreatePipelines();
     /// The fill pipeline and its wireframe derivative, which
     /// initialize() and recreatePipelines() both need.
@@ -322,6 +329,25 @@ private:
     VkBuffer indirectBuffer_ = VK_NULL_HANDLE;
     VmaAllocation indirectAlloc_ = VK_NULL_HANDLE;
     static constexpr uint32_t MAX_INDIRECT_DRAWS = 8192;
+
+    // Low-resolution `.wdl` horizon mesh (one VB + IB + material set per map)
+    struct WdlTileDraw {
+        glm::vec3 boundingSphereCenter{0.0f};
+        float boundingSphereRadius = 0.0f;
+        int32_t baseVertex = 0;
+        uint32_t firstIndex = 0;
+        uint32_t indexCount = 0;
+    };
+    std::string loadedHorizonMapName_;
+    std::vector<WdlTileDraw> wdlTiles_;
+    VkBuffer wdlVB_ = VK_NULL_HANDLE;
+    VmaAllocation wdlVBAlloc_ = VK_NULL_HANDLE;
+    VkBuffer wdlIB_ = VK_NULL_HANDLE;
+    VmaAllocation wdlIBAlloc_ = VK_NULL_HANDLE;
+    VkBuffer wdlParamsUBO_ = VK_NULL_HANDLE;
+    VmaAllocation wdlParamsAlloc_ = VK_NULL_HANDLE;
+    VkDescriptorSet wdlMaterialSet_ = VK_NULL_HANDLE;
+    VkDescriptorPool wdlMaterialPool_ = VK_NULL_HANDLE;
 };
 
 } // namespace rendering

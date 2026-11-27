@@ -26,6 +26,7 @@ layout(set = 0, binding = 0) uniform PerFrame {
 
 layout(push_constant) uniform Push {
     mat4 model;
+    vec4 horizonParams; // x = 1.0 for WDL horizon mesh, y = farclip, z = horizonFarClip
 } push;
 
 layout(location = 0) in vec3 aPosition;
@@ -67,4 +68,19 @@ void main() {
     }
     VertexLocalLight = localSum;
     gl_Position = projection * (view * worldPos);
+    if (push.horizonParams.x > 0.5) {
+        VertexSpecular = vec3(0.0);
+        VertexLocalLight = vec3(0.0);
+        // Pure affine clip-space depth transform z_clip = kHorizonNdcMax * w_clip + bWdl:
+        // maps w >= horizonNear monotonically into [ndcZ(farclip + 0.5), 0.99999) so
+        // coarse 33.3 yd WDL triangles never occlude any MCNK, WMO, M2, character, or
+        // water within eyeDepth <= farclip, occlude sky layers at depth 1.0, and preserve
+        // exact hardware near-plane clipping at w_near = -bWdl / kHorizonNdcMax (~0.18 yd).
+        float w1 = max(push.horizonParams.y - 16.0, 32.0);
+        float d0 = clamp(-projection[2][2] + projection[3][2] / (push.horizonParams.y + 0.5),
+                         0.0, 0.99992);
+        const float kHorizonNdcMax = 0.99999;
+        float bWdl = (d0 - kHorizonNdcMax) * w1;
+        gl_Position.z = kHorizonNdcMax * gl_Position.w + bWdl;
+    }
 }

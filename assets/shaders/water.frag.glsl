@@ -304,11 +304,13 @@ vec3 applyFog(vec3 color, vec3 worldPos, float dist) {
 }
 
 void main() {
-    // Indoor WMO magma/slime (interiorFog == 2) uses global Light.dbc fog per
-    // TBC vsLiquidMagma.bls, while hardware zFar = farclip clips geometry past
-    // viewDistance inside sealed WMO interiors so the chamber's MFOG clear
-    // color remains exposed beyond farclip.
-    if (push.interiorFog > 1.5 && outdoorFogParams.z > 0.0 &&
+    // Outdoor liquid (interiorFog == 0) and indoor WMO magma/slime
+    // (interiorFog == 2) clip at eye-space zFar = farclip (outdoorFogParams.z),
+    // matching TBC 2.4.3's main world projection so distant rivers and lakes
+    // beyond farclip do not float over the sky or WDL horizon silhouette.
+    // Sealed indoor WMO freshwater (interiorFog == 1) uses room MFOG without
+    // outdoor farclip discard.
+    if ((push.interiorFog < 0.5 || push.interiorFog > 1.5) && outdoorFogParams.z > 0.0 &&
             -(view * vec4(FragPos, 1.0)).z > outdoorFogParams.z) {
         discard;
     }

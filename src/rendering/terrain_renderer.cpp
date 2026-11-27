@@ -1,6 +1,7 @@
 #include "rendering/terrain_vertex.hpp"
 #include "rendering/terrain_mcly.hpp"
 #include "rendering/terrain_view_distance.hpp"
+#include "rendering/terrain_wdl.hpp"
 #include "rendering/shadow_params.hpp"
 #include "rendering/terrain_renderer.hpp"
 #include "rendering/rt_scene.hpp"
@@ -35,7 +36,7 @@ struct alignas(16) TerrainParamsUBO {
     int32_t hasLayer2;
     int32_t hasLayer3;
     int32_t bigAlpha;
-    int32_t _pad0 = 0;
+    int32_t isHorizonMesh = 0;
     int32_t _pad1 = 0;
     int32_t _pad2 = 0;
     glm::vec4 layerUvVel01{0.0f};    // xy = layer 0 UV vel, zw = layer 1 UV vel
@@ -44,6 +45,12 @@ struct alignas(16) TerrainParamsUBO {
     glm::vec4 layerSpecMask{0.0f};   // x..w = 1.0 if layer 0..3 loaded *_s.blp gloss alpha
 };
 static_assert(sizeof(TerrainParamsUBO) == 96);
+
+struct alignas(16) TerrainPushConstants {
+    glm::mat4 model{1.0f};
+    glm::vec4 horizonParams{0.0f}; // x = 1 for WDL horizon pass, y = farclip, z = horizonFarClip
+};
+static_assert(sizeof(TerrainPushConstants) == 80);
 
 TerrainRenderer::TerrainRenderer() = default;
 
@@ -175,7 +182,7 @@ bool TerrainRenderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameL
     VkPushConstantRange pushRange{};
     pushRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
     pushRange.offset = 0;
-    pushRange.size = sizeof(GPUPushConstants);
+    pushRange.size = sizeof(TerrainPushConstants);
 
     std::vector<VkDescriptorSetLayout> setLayouts = { perFrameLayout, materialSetLayout };
     pipelineLayout = createPipelineLayout(device, setLayouts, { pushRange });
@@ -1015,10 +1022,11 @@ void TerrainRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, c
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout,
                              0, 1, &perFrameSet, 0, nullptr);
 
-    GPUPushConstants push{};
+    TerrainPushConstants push{};
     push.model = glm::mat4(1.0f);
+    push.horizonParams = glm::vec4(0.0f);
     vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT,
-                        0, sizeof(GPUPushConstants), &push);
+                        0, sizeof(TerrainPushConstants), &push);
 
     Frustum frustum;
     if (frustumCullingEnabled) {
@@ -1089,6 +1097,36 @@ void TerrainRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, c
         }
         renderedChunks++;
         if (distSq > furthestDrawnSq_) furthestDrawnSq_ = distSq;
+    }
+
+    // Render `.wdl` low-resolution horizon silhouette beyond `maxViewDistance_`
+    // out to `kDefaultHorizonFarClip` (`2112` yd in TBC 2.4.3).
+    if (!wdlTiles_.empty() && wdlVB_ != VK_NULL_HANDLE && wdlIB_ != VK_NULL_HANDLE &&
+        wdlMaterialSet_ != VK_NULL_HANDLE) {
+        const float horizonFar = std::max(kDefaultHorizonFarClip, maxViewDistance_);
+        TerrainPushConstants wdlPush{};
+        wdlPush.model = glm::mat4(1.0f);
+        wdlPush.horizonParams = glm::vec4(1.0f, maxViewDistance_, horizonFar, 0.0f);
+        vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT,
+                            0, sizeof(TerrainPushConstants), &wdlPush);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout,
+                                 1, 1, &wdlMaterialSet_, 0, nullptr);
+        VkDeviceSize wdlOffset = 0;
+        vkCmdBindVertexBuffers(cmd, 0, 1, &wdlVB_, &wdlOffset);
+        vkCmdBindIndexBuffer(cmd, wdlIB_, 0, VK_INDEX_TYPE_UINT32);
+
+        for (const auto& wt : wdlTiles_) {
+            if (wt.indexCount == 0) continue;
+            if (!wdlTileWithinHorizonRange(wt.boundingSphereCenter, wt.boundingSphereRadius,
+                                           camPos, maxViewDistance_, horizonFar)) {
+                continue;
+            }
+            if (frustumCullingEnabled &&
+                !frustum.intersectsSphere(wt.boundingSphereCenter, wt.boundingSphereRadius)) {
+                continue;
+            }
+            vkCmdDrawIndexed(cmd, wt.indexCount, 1, wt.firstIndex, wt.baseVertex, 0);
+        }
     }
 
 }
@@ -1268,7 +1306,168 @@ void TerrainRenderer::clear() {
         destroyChunkGPU(chunk);
     }
     chunks.clear();
+    clearHorizonMesh();
     renderedChunks = 0;
+}
+
+void TerrainRenderer::clearHorizonMesh() {
+    loadedHorizonMapName_.clear();
+    wdlTiles_.clear();
+    if (!vkCtx) return;
+
+    VkDevice device = vkCtx->getDevice();
+    VmaAllocator allocator = vkCtx->getAllocator();
+    ::VkBuffer vb = wdlVB_;
+    VmaAllocation vbAlloc = wdlVBAlloc_;
+    ::VkBuffer ib = wdlIB_;
+    VmaAllocation ibAlloc = wdlIBAlloc_;
+    ::VkBuffer ubo = wdlParamsUBO_;
+    VmaAllocation uboAlloc = wdlParamsAlloc_;
+    VkDescriptorSet set = wdlMaterialSet_;
+    VkDescriptorPool pool = wdlMaterialPool_;
+
+    wdlVB_ = VK_NULL_HANDLE;
+    wdlVBAlloc_ = VK_NULL_HANDLE;
+    wdlIB_ = VK_NULL_HANDLE;
+    wdlIBAlloc_ = VK_NULL_HANDLE;
+    wdlParamsUBO_ = VK_NULL_HANDLE;
+    wdlParamsAlloc_ = VK_NULL_HANDLE;
+    wdlMaterialSet_ = VK_NULL_HANDLE;
+    wdlMaterialPool_ = VK_NULL_HANDLE;
+
+    if (!vb && !ib && !ubo && !set) return;
+
+    vkCtx->deferAfterAllFrameFences([device, allocator, vb, vbAlloc, ib, ibAlloc, ubo, uboAlloc, set, pool]() {
+        if (vb) {
+            AllocatedBuffer ab{}; ab.buffer = vb; ab.allocation = vbAlloc;
+            destroyBuffer(allocator, ab);
+        }
+        if (ib) {
+            AllocatedBuffer ab{}; ab.buffer = ib; ab.allocation = ibAlloc;
+            destroyBuffer(allocator, ab);
+        }
+        if (ubo) {
+            AllocatedBuffer ab{}; ab.buffer = ubo; ab.allocation = uboAlloc;
+            destroyBuffer(allocator, ab);
+        }
+        if (set && pool) {
+            VkDescriptorSet s = set;
+            vkFreeDescriptorSets(device, pool, 1, &s);
+        }
+    });
+}
+
+bool TerrainRenderer::loadHorizonMap(const std::string& mapName) {
+    if (mapName.empty() || !vkCtx || !assetManager) return false;
+    if (loadedHorizonMapName_ == mapName) return !wdlTiles_.empty();
+
+    clearHorizonMesh();
+    loadedHorizonMapName_ = mapName;
+
+    const std::string wdlPath = "World\\Maps\\" + mapName + "\\" + mapName + ".wdl";
+    const std::vector<uint8_t> raw = assetManager->readFile(wdlPath);
+    if (raw.empty()) {
+        LOG_DEBUG("TerrainRenderer: no WDL horizon file for map ", mapName);
+        return false;
+    }
+
+    WdlHorizonMap wdl;
+    if (!parseWdlHorizon(raw, wdl) || wdl.tiles.empty()) {
+        LOG_DEBUG("TerrainRenderer: WDL for map ", mapName, " has 0 active horizon tiles");
+        return false;
+    }
+
+    std::vector<pipeline::TerrainVertex> allVerts;
+    std::vector<uint32_t> allIndices;
+    allVerts.reserve(wdl.tiles.size() * 545u);
+    allIndices.reserve(wdl.tiles.size() * 3072u);
+    wdlTiles_.reserve(wdl.tiles.size());
+
+    std::vector<pipeline::TerrainVertex> tileVerts;
+    std::vector<uint32_t> tileIndices;
+    for (const auto& t : wdl.tiles) {
+        glm::vec3 center{0.0f};
+        float radius = 0.0f;
+        buildWdlTileMesh(t, tileVerts, tileIndices, center, radius);
+        if (tileVerts.empty() || tileIndices.empty()) continue;
+
+        WdlTileDraw draw{};
+        draw.boundingSphereCenter = center;
+        draw.boundingSphereRadius = radius;
+        draw.baseVertex = static_cast<int32_t>(allVerts.size());
+        draw.firstIndex = static_cast<uint32_t>(allIndices.size());
+        draw.indexCount = static_cast<uint32_t>(tileIndices.size());
+        wdlTiles_.push_back(draw);
+
+        allVerts.insert(allVerts.end(), tileVerts.begin(), tileVerts.end());
+        allIndices.insert(allIndices.end(), tileIndices.begin(), tileIndices.end());
+    }
+
+    if (wdlTiles_.empty() || allVerts.empty() || allIndices.empty()) {
+        wdlTiles_.clear();
+        return false;
+    }
+
+    vkCtx->beginUploadBatch();
+    AllocatedBuffer vb = uploadBuffer(*vkCtx, allVerts.data(),
+                                      allVerts.size() * sizeof(pipeline::TerrainVertex),
+                                      VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+    AllocatedBuffer ib = uploadBuffer(*vkCtx, allIndices.data(),
+                                      allIndices.size() * sizeof(uint32_t),
+                                      VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+    vkCtx->endUploadBatch();
+
+    if (!vb.buffer || !ib.buffer) {
+        if (vb.buffer) destroyBuffer(vkCtx->getAllocator(), vb);
+        if (ib.buffer) destroyBuffer(vkCtx->getAllocator(), ib);
+        wdlTiles_.clear();
+        return false;
+    }
+    wdlVB_ = vb.buffer;
+    wdlVBAlloc_ = vb.allocation;
+    wdlIB_ = ib.buffer;
+    wdlIBAlloc_ = ib.allocation;
+
+    TerrainParamsUBO params{};
+    params.layerCount = 1;
+    params.isHorizonMesh = 1;
+    AllocatedBuffer ubo = createBuffer(vkCtx->getAllocator(), sizeof(TerrainParamsUBO),
+                                       VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                                       VMA_MEMORY_USAGE_CPU_TO_GPU);
+    if (!ubo.buffer || !ubo.info.pMappedData) {
+        if (ubo.buffer) destroyBuffer(vkCtx->getAllocator(), ubo);
+        clearHorizonMesh();
+        loadedHorizonMapName_ = mapName;
+        return false;
+    }
+    std::memcpy(ubo.info.pMappedData, &params, sizeof(TerrainParamsUBO));
+    wdlParamsUBO_ = ubo.buffer;
+    wdlParamsAlloc_ = ubo.allocation;
+
+    TerrainChunkGPU dummyChunk{};
+    dummyChunk.paramsUBO = wdlParamsUBO_;
+    dummyChunk.baseTexture = whiteTexture.get();
+    for (int i = 0; i < 3; ++i) {
+        dummyChunk.layerTextures[i] = whiteTexture.get();
+        dummyChunk.alphaTextures[i] = opaqueAlphaTexture.get();
+    }
+    dummyChunk.shadowTexture = unshadowedTexture.get();
+    if (!allocateMaterialSet(dummyChunk) || !writeMaterialDescriptors(dummyChunk.materialSet, dummyChunk)) {
+        if (dummyChunk.materialSet && dummyChunk.materialPool) {
+            VkDescriptorSet s = dummyChunk.materialSet;
+            vkFreeDescriptorSets(vkCtx->getDevice(), dummyChunk.materialPool, 1, &s);
+        }
+        clearHorizonMesh();
+        loadedHorizonMapName_ = mapName;
+        return false;
+    }
+    wdlMaterialSet_ = dummyChunk.materialSet;
+    wdlMaterialPool_ = dummyChunk.materialPool;
+
+    LOG_INFO("TerrainRenderer: loaded WDL horizon mesh for ", mapName, " (",
+             wdlTiles_.size(), " tiles, ", allVerts.size(), " verts, ",
+             allIndices.size() / 3, " tris)");
+    return true;
 }
 
 void TerrainRenderer::registerRtChunk(TerrainChunkGPU& gpuChunk, const pipeline::ChunkMesh& chunk) {

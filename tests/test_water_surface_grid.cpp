@@ -11,7 +11,12 @@
 // point in the world is inside that surface.
 #include <catch_amalgamated.hpp>
 
+#include "rendering/terrain_wdl.hpp"
 #include "rendering/water_surface_grid.hpp"
+#include "test_support.hpp"
+#include <cstring>
+#include <filesystem>
+#include <fstream>
 
 using wowee::rendering::emitLiquidCellTriangles;
 using wowee::rendering::liquidGridUpwardCcw;
@@ -250,4 +255,150 @@ TEST_CASE("WMO interior magma uses global Light.dbc fog mode while indoor water 
     CHECK(liquidInteriorFogMode(false, true) == Catch::Approx(0.0f));
     CHECK(liquidInteriorFogMode(true, false) == Catch::Approx(1.0f));
     CHECK(liquidInteriorFogMode(true, true) == Catch::Approx(2.0f));
+}
+
+TEST_CASE("WDL horizon parser decodes MAOF/MARE/MAHO with upward CCW triangles",
+          "[watergrid][terrain][sidedisc6]") {
+    using wowee::rendering::WdlHorizonMap;
+    using wowee::rendering::buildWdlTileMesh;
+    using wowee::rendering::kDefaultHorizonFarClip;
+    using wowee::rendering::parseWdlHorizon;
+    using wowee::rendering::wdlTileWithinHorizonRange;
+
+    // Construct a minimal valid WDL file with MVER + MAOF + 1 MARE + 1 MAHO.
+    std::vector<uint8_t> buf;
+    auto pushFourCC = [&](const char cc[4], uint32_t sz) {
+        buf.push_back(static_cast<uint8_t>(cc[3]));
+        buf.push_back(static_cast<uint8_t>(cc[2]));
+        buf.push_back(static_cast<uint8_t>(cc[1]));
+        buf.push_back(static_cast<uint8_t>(cc[0]));
+        const size_t at = buf.size();
+        buf.resize(at + 4);
+        std::memcpy(buf.data() + at, &sz, 4);
+    };
+    pushFourCC("MVER", 4);
+    const uint32_t ver = 18;
+    buf.resize(buf.size() + 4);
+    std::memcpy(buf.data() + buf.size() - 4, &ver, 4);
+
+    pushFourCC("MAOF", 4096u * 4u);
+    const size_t maofStart = buf.size();
+    buf.resize(maofStart + 4096u * 4u, 0);
+
+    const uint32_t mareOffset = static_cast<uint32_t>(buf.size());
+    const uint32_t targetIdx = 48u * 64u + 32u; // Northshire tile (row=48, col=32)
+    std::memcpy(buf.data() + maofStart + targetIdx * 4u, &mareOffset, 4);
+
+    pushFourCC("MARE", (17u * 17u + 16u * 16u) * 2u);
+    for (int i = 0; i < 17 * 17; ++i) {
+        const int16_t h = static_cast<int16_t>(80 + (i % 17));
+        const size_t at = buf.size();
+        buf.resize(at + 2);
+        std::memcpy(buf.data() + at, &h, 2);
+    }
+    for (int i = 0; i < 16 * 16; ++i) {
+        const int16_t h = 95;
+        const size_t at = buf.size();
+        buf.resize(at + 2);
+        std::memcpy(buf.data() + at, &h, 2);
+    }
+
+    pushFourCC("MAHO", 16u * 2u);
+    for (int r = 0; r < 16; ++r) {
+        // Punch 2 holes in row 0 (cols 0 and 3)
+        const uint16_t mask = (r == 0) ? static_cast<uint16_t>((1u << 0) | (1u << 3)) : 0u;
+        const size_t at = buf.size();
+        buf.resize(at + 2);
+        std::memcpy(buf.data() + at, &mask, 2);
+    }
+
+    WdlHorizonMap parsed;
+    REQUIRE(parseWdlHorizon(buf, parsed));
+    REQUIRE(parsed.tiles.size() == 1);
+    CHECK(parsed.tiles[0].maofRow == 48);
+    CHECK(parsed.tiles[0].maofCol == 32);
+
+    std::vector<wowee::pipeline::TerrainVertex> verts;
+    std::vector<uint32_t> indices;
+    glm::vec3 center{0.0f};
+    float radius = 0.0f;
+    buildWdlTileMesh(parsed.tiles[0], verts, indices, center, radius);
+
+    CHECK(verts.size() == 545u);
+    // 256 cells minus 2 MAHO holes = 254 cells * 4 tris * 3 indices = 3048 indices
+    CHECK(indices.size() == 254u * 12u);
+    CHECK(radius > 350.0f);
+
+    // Northshire tile (maofRow=48, maofCol=32 -> ADT tileX=32, tileY=48) NW corner
+    // must land in the Northshire quadrant: position[0] = -8533.33, position[1] = 0.0,
+    // matching MCNK render coordinates (cam ~ (-9008, -130, 87)).
+    CHECK(verts[0].position[0] == Catch::Approx(-16.0f * wowee::core::coords::TILE_SIZE).margin(0.05f));
+    CHECK(verts[0].position[1] == Catch::Approx(0.0f).margin(0.05f));
+    CHECK(center.x < -8500.0f);
+    CHECK(center.x > -9100.0f);
+    CHECK(center.y < 0.0f);
+    CHECK(center.y > -600.0f);
+
+    // Every emitted triangle must match TerrainMeshGenerator::generateIndices winding
+    // (-Z cross product in TerrainRenderer vertex space) so VK_CULL_MODE_BACK_BIT keeps top faces.
+    for (size_t i = 0; i + 2 < indices.size(); i += 3) {
+        const auto& va = verts[indices[i + 0]];
+        const auto& vb = verts[indices[i + 1]];
+        const auto& vc = verts[indices[i + 2]];
+        const glm::vec3 aRender(va.position[0], va.position[1], va.position[2]);
+        const glm::vec3 bRender(vb.position[0], vb.position[1], vb.position[2]);
+        const glm::vec3 cRender(vc.position[0], vc.position[1], vc.position[2]);
+        const glm::vec3 nRender = glm::cross(bRender - aRender, cRender - aRender);
+        CHECK(nRender.z < 0.0f);
+    }
+
+    // Horizon range annulus check across farclip = 177 and farclip = 2400
+    const glm::vec3 cam(0.0f, 0.0f, 85.0f);
+    CHECK(wdlTileWithinHorizonRange(glm::vec3(550.0f, 0.0f, 200.0f), 380.0f, cam, 177.0f, kDefaultHorizonFarClip));
+    CHECK(wdlTileWithinHorizonRange(glm::vec3(2000.0f, 0.0f, 200.0f), 380.0f, cam, 177.0f, kDefaultHorizonFarClip));
+    CHECK_FALSE(wdlTileWithinHorizonRange(glm::vec3(2600.0f, 0.0f, 200.0f), 380.0f, cam, 177.0f, kDefaultHorizonFarClip));
+    // A tile completely inside close MCNK range (e.g. farclip = 1900, tile at d = 300, r = 380 -> 300+380=680 < 1852) is skipped
+    CHECK_FALSE(wdlTileWithinHorizonRange(glm::vec3(300.0f, 0.0f, 80.0f), 380.0f, cam, 1900.0f, kDefaultHorizonFarClip));
+}
+
+TEST_CASE("Real TBC Azeroth.wdl and Expansion01.wdl parse Northshire canyon ridge and shaders clip outdoor water",
+          "[watergrid][terrain][sidedisc6]") {
+    const std::string terrainVert = wowee::test::slurp("assets/shaders/terrain.vert.glsl");
+    const std::string terrainFrag = wowee::test::slurp("assets/shaders/terrain.frag.glsl");
+    const std::string waterFrag = wowee::test::slurp("assets/shaders/water.frag.glsl");
+
+    CHECK(terrainVert.find("horizonParams") != std::string::npos);
+    CHECK(terrainFrag.find("isHorizonMesh") != std::string::npos);
+    CHECK(terrainFrag.find("outdoorFogColor.rgb") != std::string::npos);
+    // Outdoor water (interiorFog < 0.5) must clip at outdoorFogParams.z alongside indoor magma (> 1.5).
+    CHECK(waterFrag.find("push.interiorFog < 0.5 || push.interiorFog > 1.5") != std::string::npos);
+
+    namespace fs = std::filesystem;
+    const fs::path azerothWdl = "/workspace/azerothcore/client/wowee-data/expansions/tbc/world/maps/azeroth/azeroth.wdl";
+    if (!fs::is_regular_file(azerothWdl)) {
+        WARN("TBC Azeroth.wdl not present on this runner; skipping live archive check");
+        return;
+    }
+
+    std::ifstream in(azerothWdl, std::ios::binary);
+    REQUIRE(in.good());
+    const std::vector<uint8_t> raw((std::istreambuf_iterator<char>(in)),
+                                   std::istreambuf_iterator<char>());
+    wowee::rendering::WdlHorizonMap wdl;
+    REQUIRE(wowee::rendering::parseWdlHorizon(raw, wdl));
+    CHECK(wdl.tiles.size() == 687u);
+
+    // Northshire box-canyon mountain ridge behind Northshire Abbey sits in MAOF (row=47, col=32)
+    // with peaks exceeding z = 320 yd (~530..570 yd north of (-9026.64, -130.0, 85.2)).
+    const wowee::rendering::WdlHorizonTile* northRidge = nullptr;
+    for (const auto& t : wdl.tiles) {
+        if (t.maofRow == 47 && t.maofCol == 32) {
+            northRidge = &t;
+            break;
+        }
+    }
+    REQUIRE(northRidge != nullptr);
+    int16_t maxPeak = -32768;
+    for (int16_t h : northRidge->outerHeights) maxPeak = std::max(maxPeak, h);
+    CHECK(maxPeak >= 320);
 }
