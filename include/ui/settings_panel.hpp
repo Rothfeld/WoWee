@@ -36,6 +36,15 @@ public:
     /// shows. Call it once the renderer is wired.
     void applyLoadedSettings();
 
+    /// Push settings owned by lazily created world sub-renderers (M2, WMO,
+    /// character, minimap, terrain, weather) as soon as Renderer::initializeRenderers
+    /// builds them, before initial map geometry streams in.
+    void applyWorldRendererSettings();
+
+    /// Reset disk re-read and one-time renderer latches when returning to the
+    /// login screen so graphics edits saved on AuthScreen take effect on next login.
+    void resetStartupLatches();
+
 
     // ---- Pending video / graphics settings ----
     bool pendingFullscreen = false;
@@ -263,6 +272,8 @@ public:
     bool frameCapApplied_ = false;         // True once the saved frame limit reached the window
     bool waterRefractionApplied_ = false;
     bool normalMapSettingsApplied_ = false;  // True once saved normal map/POM settings applied
+    bool m2SettingsApplied_ = false;         // True once saved M2 particle/environment detail applied
+    bool weatherSettingsApplied_ = false;    // True once saved weather density applied
 
     // ---- Mute state: mute bypasses master volume without touching slider values ----
     bool soundMuted_ = false;

@@ -3069,8 +3069,14 @@ void Application::performLeaveWorld(LeaveWorldTo destination) {
     }
 
     if (gameHandler) {
-        if (destination == LeaveWorldTo::Login) gameHandler->disconnect();
-        else gameHandler->returnToCharacterSelect();
+        if (destination == LeaveWorldTo::Login) {
+            gameHandler->disconnect();
+            if (uiManager) {
+                uiManager->getGameScreen().getSettingsPanel().resetStartupLatches();
+            }
+        } else {
+            gameHandler->returnToCharacterSelect();
+        }
     }
 
     // --- Per-session flags ---

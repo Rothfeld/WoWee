@@ -151,6 +151,75 @@ void SettingsPanel::applyLoadedSettings() {
     for (const char* key : kGraphicsApplyKeys) applySettingSideEffects(key);
 }
 
+void SettingsPanel::applyWorldRendererSettings() {
+    // World sub-renderers (M2, WMO, character, minimap, terrain) do not exist
+    // when GameScreen::setServices() first runs at startup, and initial map
+    // WMOs, doodads, and tiles load inside WorldLoader before GameScreen::render()
+    // ever executes its first in-world frame. Apply every world-renderer setting
+    // here as soon as Renderer::initializeRenderers constructs them, while
+    // leaving swapchain/FSR2 mode switches to startup/in-world latches.
+    static constexpr const char* kWorldRendererKeys[] = {
+        "viewdistance", "shadows", "shadowdistance",
+        "normalmapping", "normalmapstrength", "parallax", "parallaxquality",
+        "particledensity", "environmentdetail", "groundclutterdistance", "sharpstars",
+        "groundclutter", "grassenabled", "grassdensity", "grassheight", "grassdistance",
+        "weatherdetail", "fogskyblend", "fogstrength", "lightshafts", "mistdensity",
+        "sunshafts", "raytracedlighting", "waterrefraction", "lensflare",
+        "brightness", "fxaa", "fsrquality", "fsrsharpness", "fsrjittersign",
+        "minimaprotate", "minimapsquare", "woweemusic",
+        "fov", "camerashake", "camerastiffness", "cameramaxdistance",
+        "smoothfollow", "pivotheight", "idleorbit", "invertmouse",
+    };
+    for (const char* key : kWorldRendererKeys) {
+        applySettingSideEffects(key);
+    }
+
+    auto* renderer = services_.renderer;
+    if (!renderer) return;
+
+    // Replay any explicit CVar-only M2 overrides stored in cvars.cfg after
+    // environmentdetail sets the base WorldDetail tier.
+    if (auto* m2 = renderer->getM2Renderer()) {
+        const std::string smallCull = addons::storedCVarValue("smallCull", "");
+        if (!smallCull.empty()) m2->setSmallCull(static_cast<float>(std::atof(smallCull.c_str())));
+        const std::string distCull = addons::storedCVarValue("DistCull", "");
+        if (!distCull.empty()) m2->setDistCull(static_cast<float>(std::atof(distCull.c_str())));
+        const std::string objectFade = addons::storedCVarValue("objectFade", "");
+        if (!objectFade.empty()) m2->setObjectFade(objectFade != "0");
+        m2SettingsApplied_ = true;
+    }
+    if (renderer->getWMORenderer() && renderer->getCharacterRenderer()) {
+        normalMapSettingsApplied_ = true;
+    }
+    if (renderer->getWeather()) {
+        weatherSettingsApplied_ = true;
+    }
+    if (renderer->getMinimap()) {
+        minimapSettingsApplied_ = true;
+    }
+    if (renderer->getTerrainManager()) {
+        terrainSettingsApplied_ = true;
+    }
+}
+
+void SettingsPanel::resetStartupLatches() {
+    settingsRereadFromDisk_ = false;
+    minimapSettingsApplied_ = false;
+    zoneSettingsApplied_ = false;
+    terrainSettingsApplied_ = false;
+    volumeSettingsApplied_ = false;
+    msaaSettingsApplied_ = false;
+    fxaaSettingsApplied_ = false;
+    lightingSettingsApplied_ = false;
+    lensFlareApplied_ = false;
+    frameCapApplied_ = false;
+    waterRefractionApplied_ = false;
+    normalMapSettingsApplied_ = false;
+    m2SettingsApplied_ = false;
+    weatherSettingsApplied_ = false;
+    fsrSettingsApplied_ = false;
+}
+
 void SettingsPanel::applyGraphicsPreset(GraphicsPreset preset) {
     // Custom is not a set of values - it is the name for "these are whatever
     // you made them", so it changes nothing but the marker.

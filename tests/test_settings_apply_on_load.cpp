@@ -119,7 +119,7 @@ TEST_CASE("the settings the user reported are on the applied list",
 TEST_CASE("the graphics defaults have one home", "[settings]") {
     // The same two numbers were written in the settings panel, in the login
     // screen's copy of the same struct, and in the reset button's constant.
-    CHECK(wowee::ui::kDefaultViewDistance == 1900.0f);
+    CHECK(wowee::ui::kDefaultViewDistance == 477.0f);
     CHECK(wowee::ui::kDefaultGroundClutter == 70);
 
     // And they have to be reachable on the sliders that show them, or the
@@ -716,4 +716,59 @@ TEST_CASE("nothing writes a live setting without the field it is saved from", "[
             }
         }
     }
+}
+
+TEST_CASE("world sub-renderers receive saved settings before initial map geometry loads",
+          "[settings]") {
+    const std::string panelHeader = wowee::test::slurp("include/ui/settings_panel.hpp");
+    const std::string panel = wowee::test::slurp("src/ui/settings_panel.cpp");
+    const std::string renderer = wowee::test::slurp("src/rendering/renderer.cpp");
+    const std::string screen = wowee::test::slurp("src/ui/game_screen.cpp");
+    REQUIRE(panelHeader.size() > 500);
+    REQUIRE(panel.size() > 1000);
+    REQUIRE(renderer.size() > 1000);
+    REQUIRE(screen.size() > 1000);
+
+    // TBC 2.4.3 weatherDensity default is 2 (1.0x Medium), not 3 (1.4x Heavy).
+    CHECK(panelHeader.find("int pendingWeatherDetail = 2;") != std::string::npos);
+
+    // Renderer::initialize must start viewDistance_ from kDefaultViewDistance,
+    // not a separate literal.
+    const size_t initStart = renderer.find("bool Renderer::initialize(");
+    REQUIRE(initStart != std::string::npos);
+    const size_t initEnd = renderer.find("void Renderer::shutdown()", initStart);
+    REQUIRE(initEnd != std::string::npos);
+    const std::string initBody = renderer.substr(initStart, initEnd - initStart);
+    CHECK(initBody.find("viewDistance_ = ui::kDefaultViewDistance;") != std::string::npos);
+
+    // Renderer::initializeRenderers must re-read settings.cfg once and call
+    // applyWorldRendererSettings() before returning to WorldLoader so WMORenderer
+    // and M2Renderer get normalmapping/parallax/particledensity/environmentdetail
+    // before initial map WMOs and M2 doodads stream in.
+    const size_t irStart = renderer.find("bool Renderer::initializeRenderers(");
+    REQUIRE(irStart != std::string::npos);
+    const size_t irEnd = renderer.find("bool Renderer::loadTestTerrain(", irStart);
+    REQUIRE(irEnd != std::string::npos);
+    const std::string irBody = renderer.substr(irStart, irEnd - irStart);
+    CHECK(irBody.find("gs.loadSettings()") != std::string::npos);
+    CHECK(irBody.find("sp.applyWorldRendererSettings()") != std::string::npos);
+
+    const size_t wrStart = panel.find("void SettingsPanel::applyWorldRendererSettings()");
+    REQUIRE(wrStart != std::string::npos);
+    const size_t wrEnd = panel.find("\n}\n", wrStart);
+    REQUIRE(wrEnd != std::string::npos);
+    const std::string wrBody = panel.substr(wrStart, wrEnd - wrStart);
+    for (const char* key : {"viewdistance", "normalmapping", "normalmapstrength",
+                            "parallax", "parallaxquality", "particledensity",
+                            "environmentdetail", "groundclutterdistance",
+                            "groundclutter", "weatherdetail",
+                            "minimaprotate", "minimapsquare"}) {
+        INFO("applyWorldRendererSettings missing key: " << key);
+        CHECK(wrBody.find(std::string("\"") + key + "\"") != std::string::npos);
+    }
+
+    // GameScreen::render also keeps fallback latches for M2Renderer and Weather.
+    CHECK(screen.find("m2->setParticleDensity") != std::string::npos);
+    CHECK(screen.find("m2->setEnvironmentDetail") != std::string::npos);
+    CHECK(screen.find("weather->setDensityLevel") != std::string::npos);
 }

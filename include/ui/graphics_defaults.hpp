@@ -15,7 +15,8 @@ namespace wowee::ui {
 
 inline constexpr float kMinViewDistance = 177.0f;
 inline constexpr float kMaxViewDistance = 2400.0f;
-inline constexpr float kDefaultViewDistance = 1900.0f;
+// TBC 2.4.3 VideoOptionsFrame FarclipSlider midpoint ((177 + 777) / 2 = 477).
+inline constexpr float kDefaultViewDistance = 477.0f;
 inline constexpr int   kDefaultGroundClutter = 70;
 
 }  // namespace wowee::ui

@@ -68,6 +68,7 @@
 #include "pipeline/adt_loader.hpp"
 #include "pipeline/terrain_mesh.hpp"
 #include "core/application.hpp"
+#include "ui/ui_manager.hpp"
 #include "core/entity_spawner.hpp"
 #include "core/window.hpp"
 #include "core/logger.hpp"
@@ -933,6 +934,7 @@ bool Renderer::initialize(core::Window* win) {
     LOG_INFO("Vulkan sub-renderers initialized (Phase 3)");
 
     // LightingManager doesn't use GL - initialize for data-only use
+    viewDistance_ = ui::kDefaultViewDistance;
     lightingManager = std::make_unique<LightingManager>();
     lightingManager->setViewDistance(viewDistance_);
     auto* assetManager = core::Application::getInstance().getAssetManager();
@@ -4765,6 +4767,21 @@ bool Renderer::initializeRenderers(pipeline::AssetManager* assetManager, const s
 
     // Set map name on sub-renderers
     setActiveMapName(mapName);
+
+    // Sync saved settings (including any AuthScreen edits written to settings.cfg)
+    // onto the newly constructed world sub-renderers before initial map WMOs, M2
+    // doodads, characters, or terrain tiles load behind the loading screen.
+    if (core::Application::hasInstance()) {
+        if (auto* uim = core::Application::getInstance().getUIManager()) {
+            auto& gs = uim->getGameScreen();
+            auto& sp = gs.getSettingsPanel();
+            if (!sp.settingsRereadFromDisk_) {
+                sp.settingsRereadFromDisk_ = true;
+                gs.loadSettings();
+            }
+            sp.applyWorldRendererSettings();
+        }
+    }
 
     // Initialize audio managers
     if (audioCoordinator_->getMusicManager() && assetManager && !cachedAssetManager) {

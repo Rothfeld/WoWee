@@ -34,6 +34,8 @@
 #include "rendering/post_process_pipeline.hpp"
 #include "rendering/animation_controller.hpp"
 #include "rendering/lens_flare.hpp"
+#include "rendering/m2_renderer.hpp"
+#include "rendering/weather.hpp"
 #include "rendering/wmo_renderer.hpp"
 #include "rendering/terrain_manager.hpp"
 #include "rendering/lighting_manager.hpp"
@@ -586,6 +588,31 @@ void GameScreen::render(game::GameHandler& gameHandler) {
             if (auto* lf = renderer->getLensFlare()) {
                 lf->setIntensity(settingsPanel_.pendingLensFlare);
                 settingsPanel_.lensFlareApplied_ = true;
+            }
+        }
+    }
+
+    // Apply saved M2 particle / environment detail / clutter distance once M2Renderer exists
+    if (!settingsPanel_.m2SettingsApplied_) {
+        if (auto* renderer = services_.renderer) {
+            renderer->setGroundDetailDistance(
+                static_cast<float>(settingsPanel_.pendingGroundClutterDistance));
+            if (auto* m2 = renderer->getM2Renderer()) {
+                m2->setParticleDensity(
+                    static_cast<float>(settingsPanel_.pendingParticleDensity) / 100.0f);
+                m2->setEnvironmentDetail(
+                    static_cast<float>(settingsPanel_.pendingEnvironmentDetail) / 100.0f);
+                settingsPanel_.m2SettingsApplied_ = true;
+            }
+        }
+    }
+
+    // Apply saved weather density once Weather exists
+    if (!settingsPanel_.weatherSettingsApplied_) {
+        if (auto* renderer = services_.renderer) {
+            if (auto* weather = renderer->getWeather()) {
+                weather->setDensityLevel(settingsPanel_.pendingWeatherDetail);
+                settingsPanel_.weatherSettingsApplied_ = true;
             }
         }
     }
