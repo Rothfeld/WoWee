@@ -84,10 +84,16 @@ public:
 
 // LOGON_PROOF response data
 struct LogonProofResponse {
-    uint8_t status;
-    std::vector<uint8_t> M2;  // Server proof (20 bytes)
+    uint8_t status = 0xFF;
+    std::vector<uint8_t> M2;   // Server proof (20 bytes)
+    uint32_t accountFlags = 0; // Build >= 8089
+    uint32_t surveyId = 0;     // All builds (LoginFlags in <= 6005)
+    uint16_t loginFlags = 0;   // Build >= 6299 (unkFlags in >= 8089)
 
-    [[nodiscard]] bool isSuccess() const { return status == 0; }
+    [[nodiscard]] bool isSuccess() const {
+        return status == static_cast<uint8_t>(AuthResult::SUCCESS) ||
+               status == static_cast<uint8_t>(AuthResult::SURVEY);
+    }
 };
 
 // LOGON_PROOF response parser

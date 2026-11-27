@@ -3,6 +3,9 @@
 #include "network/net_platform.hpp"
 #include "core/logger.hpp"
 
+#include <chrono>
+#include <thread>
+
 namespace wowee {
 namespace network {
 
@@ -14,8 +17,20 @@ TCPSocket::~TCPSocket() {
     TCPSocket::disconnect();  // qualified call: virtual dispatch is bypassed in destructors
 }
 
+void TCPSocket::setClientBuild(uint16_t build, uint8_t protocolVersion, uint8_t majorVersion) {
+    if (build != 0) {
+        clientBuild_ = build;
+    }
+    protocolVersion_ = protocolVersion;
+    majorVersion_ = majorVersion;
+}
+
 bool TCPSocket::connect(const std::string& host, uint16_t port) {
     LOG_INFO("Connecting to ", host, ":", port);
+
+    if (sockfd != INVALID_SOCK || connected || !receiveBuffer.empty()) {
+        disconnect();
+    }
 
     // Socket open, non-blocking, and the address resolved.
     struct sockaddr_in serverAddr;
@@ -81,27 +96,55 @@ void TCPSocket::disconnect() {
 }
 
 void TCPSocket::send(const Packet& packet) {
-    if (!connected) return;
+    if (!connected || sockfd == INVALID_SOCK) return;
 
-    // Build complete packet with opcode
-    std::vector<uint8_t> sendData;
-
-    // Add opcode (1 byte) - always little-endian, but it's just 1 byte so doesn't matter
-    sendData.push_back(static_cast<uint8_t>(packet.getOpcode() & 0xFF));
-
-    // Add packet data
     const auto& data = packet.getData();
+    const uint8_t wireOpcode = static_cast<uint8_t>(packet.getOpcode() & 0xFF);
+
+    // Automatically track the client build announced in CMD_AUTH_LOGON_CHALLENGE (0x00)
+    // or CMD_AUTH_RECONNECT_CHALLENGE (0x02):
+    //   data[0]     = protocolVersion
+    //   data[1..2]  = payloadSize (uint16 LE)
+    //   data[3..6]  = game FourCC
+    //   data[7..9]  = major, minor, patch
+    //   data[10..11]= build (uint16 LE)
+    if ((wireOpcode == 0x00 || wireOpcode == 0x02) && data.size() >= 12) {
+        const uint16_t announcedBuild =
+            static_cast<uint16_t>(uint16_t(data[10]) | (uint16_t(data[11]) << 8));
+        if (announcedBuild != 0) {
+            clientBuild_ = announcedBuild;
+            protocolVersion_ = data[0];
+            majorVersion_ = data[7];
+        }
+    }
+
+    // Build complete packet with 1-byte opcode prefix
+    std::vector<uint8_t> sendData;
+    sendData.reserve(1 + data.size());
+    sendData.push_back(wireOpcode);
     sendData.insert(sendData.end(), data.begin(), data.end());
 
     LOG_DEBUG("Sending packet: opcode=0x", std::hex, packet.getOpcode(), std::dec,
               " size=", sendData.size(), " bytes");
 
-    // Send complete packet
-    ssize_t sent = net::portableSend(sockfd, sendData.data(), sendData.size());
-    if (sent < 0) {
-        LOG_ERROR("Send failed: ", net::errorString(net::lastError()));
-    } else if (static_cast<size_t>(sent) != sendData.size()) {
-        LOG_WARNING("Partial send: ", sent, " of ", sendData.size(), " bytes");
+    size_t totalSent = 0;
+    while (totalSent < sendData.size()) {
+        ssize_t sent = net::portableSend(sockfd, sendData.data() + totalSent,
+                                         sendData.size() - totalSent);
+        if (sent < 0) {
+            int err = net::lastError();
+            if (net::isWouldBlock(err)) {
+                std::this_thread::sleep_for(std::chrono::microseconds(100));
+                continue;
+            }
+            LOG_ERROR("Send failed: ", net::errorString(err));
+            break;
+        }
+        if (sent == 0) break;
+        totalSent += static_cast<size_t>(sent);
+    }
+    if (totalSent != sendData.size()) {
+        LOG_WARNING("Partial send: ", totalSent, " of ", sendData.size(), " bytes");
     }
 }
 
@@ -114,9 +157,6 @@ void TCPSocket::update() {
     bool sawClose = false;
     bool receivedAny = false;
     for (;;) {
-        // 4 KB per recv() call - large enough for any single game packet while keeping
-        // stack usage reasonable. Typical WoW packets are 20-500 bytes; UPDATE_OBJECT
-        // can reach ~2 KB in crowded zones.
         uint8_t buffer[4096];
         ssize_t received = net::portableRecv(sockfd, buffer, sizeof(buffer));
 
@@ -147,80 +187,72 @@ void TCPSocket::update() {
         return;
     }
 
-    if (receivedAny) {
-        tryParsePackets();
+    if (receivedAny || (sawClose && !receiveBuffer.empty())) {
+        tryParsePackets(sawClose);
     }
 
-    if (sawClose) {
+    if (sawClose && connected) {
         LOG_INFO("Connection closed by server");
         disconnect();
     }
 }
 
-void TCPSocket::tryParsePackets() {
-    // For auth packets, we need at least 1 byte (opcode)
-    while (!receiveBuffer.empty()) {
-        uint8_t opcode = receiveBuffer[0];
+void TCPSocket::tryParsePackets(bool peerClosed) {
+    while (connected && !receiveBuffer.empty()) {
+        const uint8_t opcode = receiveBuffer[0];
 
-        // Determine expected packet size based on opcode
-        // This is specific to authentication protocol
-        size_t expectedSize = getExpectedPacketSize(opcode);
+        bool unknownOpcode = false;
+        const size_t expectedSize = getExpectedPacketSize(opcode, peerClosed, unknownOpcode);
 
-        if (expectedSize == 0) {
-            // Unknown opcode or need more data to determine size
-            LOG_WARNING("Unknown opcode or indeterminate size: 0x", std::hex, static_cast<int>(opcode), std::dec);
+        if (unknownOpcode) {
+            LOG_ERROR("Unknown auth packet opcode: 0x", std::hex, static_cast<int>(opcode),
+                      std::dec, " (buffered=", receiveBuffer.size(),
+                      " bytes). Disconnecting to recover stream.");
+            disconnect();
+            return;
+        }
+
+        if (expectedSize == 0 || receiveBuffer.size() < expectedSize) {
+            LOG_DEBUG("Waiting for more auth data: opcode=0x", std::hex, static_cast<int>(opcode),
+                      std::dec, " have=", receiveBuffer.size(),
+                      " expected=", expectedSize);
             break;
         }
 
-        if (receiveBuffer.size() < expectedSize) {
-            // Not enough data yet
-            LOG_DEBUG("Waiting for more data: have ", receiveBuffer.size(),
-                     " bytes, need ", expectedSize);
-            break;
-        }
-
-        // We have a complete packet!
         LOG_DEBUG("Parsing packet: opcode=0x", std::hex, static_cast<int>(opcode), std::dec,
-                 " size=", expectedSize, " bytes");
+                  " size=", expectedSize, " bytes");
 
-        // Create packet from buffer data
         std::vector<uint8_t> packetData(receiveBuffer.begin(),
                                         receiveBuffer.begin() + expectedSize);
+        Packet packet(opcode, std::move(packetData));
 
-        Packet packet(opcode, packetData);
-
-        // Remove parsed data from buffer
         receiveBuffer.erase(receiveBuffer.begin(), receiveBuffer.begin() + expectedSize);
 
-        // Call callback if set
         if (packetCallback) {
             packetCallback(packet);
         }
     }
 }
 
-size_t TCPSocket::getExpectedPacketSize(uint8_t opcode) {
-    // Authentication packet sizes (WoW 3.3.5a)
-    // Note: These are minimum sizes. Some packets are variable length.
+size_t TCPSocket::getExpectedPacketSize(uint8_t opcode, bool peerClosed, bool& unknownOpcodeOut) {
+    unknownOpcodeOut = false;
 
     switch (opcode) {
-        case 0x00:  // LOGON_CHALLENGE response
-            // Need to read status byte to determine success/failure
+        case 0x00:  // CMD_AUTH_LOGON_CHALLENGE response
             if (receiveBuffer.size() >= 3) {
-                uint8_t status = receiveBuffer[2];
+                const uint8_t status = receiveBuffer[2];
                 if (status == 0x00) {
                     // Success: opcode(1) + unk(1) + status(1) + B(32) + gLen(1) + g(gLen) +
                     //          nLen(1) + N(nLen) + salt(32) + crcHash(16) + securityFlags(1)
                     //          + optional security flag data
-                    if (receiveBuffer.size() >= 36) {  // enough to read g_len
-                        uint8_t gLen = receiveBuffer[35];
-                        size_t minSize = 36 + gLen + 1;  // up to N_len
-                        if (receiveBuffer.size() >= minSize) {
-                            uint8_t nLen = receiveBuffer[36 + gLen];
-                            size_t baseSize = 36 + gLen + 1 + nLen + 32 + 16 + 1;
-                            // Need to read securityFlags to account for extra data
+                    if (receiveBuffer.size() >= 36) {
+                        const uint8_t gLen = receiveBuffer[35];
+                        const size_t nLenOffset = 36 + static_cast<size_t>(gLen);
+                        if (receiveBuffer.size() >= nLenOffset + 1) {
+                            const uint8_t nLen = receiveBuffer[nLenOffset];
+                            const size_t baseSize = nLenOffset + 1 + static_cast<size_t>(nLen) + 32 + 16 + 1;
                             if (receiveBuffer.size() >= baseSize) {
-                                uint8_t secFlags = receiveBuffer[baseSize - 1];
+                                const uint8_t secFlags = receiveBuffer[baseSize - 1];
                                 size_t extra = 0;
                                 if (secFlags & 0x01) extra += 20;  // PIN: seed(4) + salt(16)
                                 if (secFlags & 0x02) extra += 12;  // Matrix: w(1)+h(1)+digits(1)+challenges(1)+seed(8)
@@ -230,43 +262,80 @@ size_t TCPSocket::getExpectedPacketSize(uint8_t opcode) {
                         }
                     }
                     return 0;  // Need more data
-                }                     // Failure - just opcode + unknown + status
-                    return 3;
-               
+                }
+                // Failure: opcode(1) + unknown(1) + status(1)
+                return 3;
             }
-            return 0;  // Need more data to determine
+            return 0;
 
-        case 0x01:  // LOGON_PROOF response
-            // Success response varies by server build (determined by client build sent in challenge):
-            //   Build >= 8089: cmd(1)+error(1)+M2(20)+accountFlags(4)+surveyId(4)+loginFlags(2) = 32
-            //   Build 6299-8088: cmd(1)+error(1)+M2(20)+surveyId(4)+loginFlags(2) = 28
-            //   Build < 6299: cmd(1)+error(1)+M2(20)+surveyId(4) = 26
-            // Failure: varies by server - minimum 2 bytes (opcode + status), some send 4
+        case 0x01:  // CMD_AUTH_LOGON_PROOF response
             if (receiveBuffer.size() >= 2) {
-                uint8_t status = receiveBuffer[1];
-                if (status == 0x00) {
-                    if (receiveBuffer.size() >= 32) return 32;
-                    if (receiveBuffer.size() >= 28) return 28;
-                    if (receiveBuffer.size() >= 26) return 26;
-                    return 0;
-                }                     // Consume up to 4 bytes if available, minimum 2
-                    return (receiveBuffer.size() >= 4) ? 4 : 2;
-               
-            }
-            return 0;  // Need more data
+                const uint8_t status = receiveBuffer[1];
+                // AUTH_LOGON_SUCCESS (0x00) and AUTH_LOGON_SUCCESS_SURVEY (0x0E)
+                // carry the full build-determined server proof frame:
+                //   Build >= 8089:          cmd(1)+error(1)+M2(20)+accountFlags(4)+surveyId(4)+unkFlags(2) = 32
+                //   Build 6299..8088 (2.x): cmd(1)+error(1)+M2(20)+surveyId(4)+loginFlags(2) = 28
+                //   Build < 6299 (or 1.x):  cmd(1)+error(1)+M2(20)+surveyId(4) = 26
+                if (status == 0x00 || status == 0x0E) {
+                    return expectedLogonProofSuccessSize(clientBuild_, majorVersion_);
+                }
 
-        case 0x10:  // REALM_LIST response
-            // Variable length - format: opcode(1) + size(2) + payload(size)
-            // Need to read size field (little-endian uint16 at offset 1-2)
-            if (receiveBuffer.size() >= 3) {
-                uint16_t size = receiveBuffer[1] | (receiveBuffer[2] << 8);
-                // Total packet size is: opcode(1) + size field(2) + payload(size)
-                return 1 + 2 + size;
+                // Failure response:
+                // - CMaNGOS sends 2 bytes {0x01, 0x09} on AUTH_LOGON_FAILED_VERSION_INVALID
+                //   for all builds without closing the socket immediately.
+                // - Vanilla <= 6005 sends 2 bytes {0x01, status} on wrong password
+                //   (or 4 bytes {0x01, 0x04, 0x00/0x03, 0x00} on PIN failure).
+                // - Builds > 6005 send 4 bytes {0x01, status, unkFlagsLo, unkFlagsHi}
+                //   and keep the socket open for retry.
+                const bool isVanilla112 = (clientBuild_ <= 6005 || majorVersion_ == 1);
+                if (status == 0x09 || isVanilla112) {
+                    if (receiveBuffer.size() >= 4 &&
+                        (receiveBuffer[2] == 0x00 || receiveBuffer[2] == 0x03) &&
+                        receiveBuffer[3] == 0x00) {
+                        return 4;
+                    }
+                    return 2;
+                }
+
+                if (receiveBuffer.size() >= 4) {
+                    return 4;
+                }
+                return peerClosed ? 2 : 0;
             }
-            return 0;  // Need more data to read size field
+            return 0;
+
+        case 0x02:  // CMD_AUTH_RECONNECT_CHALLENGE response
+            if (receiveBuffer.size() >= 2) {
+                const uint8_t status = receiveBuffer[1];
+                // Success: cmd(1) + error(1) + reconnectProof(16) + versionChallenge(16) = 34
+                return (status == 0x00) ? 34 : 2;
+            }
+            return 0;
+
+        case 0x03:  // CMD_AUTH_RECONNECT_PROOF response
+            if (receiveBuffer.size() >= 2) {
+                const uint8_t status = receiveBuffer[1];
+                if (status != 0x00 || majorVersion_ == 1 || clientBuild_ < 6299) {
+                    return 2;
+                }
+                if (receiveBuffer.size() >= 4) {
+                    return 4;
+                }
+                return peerClosed ? 2 : 0;
+            }
+            return 0;
+
+        case 0x10:  // CMD_REALM_LIST response
+            // Format: opcode(1) + size(2, LE) + payload(size)
+            if (receiveBuffer.size() >= 3) {
+                const uint16_t size =
+                    static_cast<uint16_t>(uint16_t(receiveBuffer[1]) | (uint16_t(receiveBuffer[2]) << 8));
+                return 3 + static_cast<size_t>(size);
+            }
+            return 0;
 
         default:
-            LOG_WARNING("Unknown auth packet opcode: 0x", std::hex, static_cast<int>(opcode), std::dec);
+            unknownOpcodeOut = true;
             return 0;
     }
 }

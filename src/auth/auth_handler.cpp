@@ -196,6 +196,7 @@ void AuthHandler::authenticateWithHash(const std::string& user, const std::vecto
 void AuthHandler::sendLogonChallenge() {
     LOG_DEBUG("Sending LOGON_CHALLENGE");
 
+    socket->setClientBuild(clientInfo.build, clientInfo.protocolVersion, clientInfo.majorVersion);
     auto packet = LogonChallengePacket::build(username, clientInfo);
     socket->send(packet);
 

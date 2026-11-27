@@ -3948,6 +3948,33 @@ wowee_test_link_glm(test_world_socket_framing)
 add_test(NAME world_socket_framing COMMAND test_world_socket_framing)
 register_test_target(test_world_socket_framing)
 
+# Auth/Realmlist TCPSocket build-aware AUTH_LOGON_PROOF (0x01) framing:
+# exercises <6299 (26B), 6299..8088 (28B), and >=8089 (32B) fragmented &
+# coalesced TCP reads followed by CMD_REALM_LIST (0x10), full SRP6 handshakes,
+# and 2-byte vs split 4-byte failure responses.
+add_executable(test_auth_framing
+    test_auth_framing.cpp
+    ${TEST_COMMON_SOURCES}
+    ${CMAKE_SOURCE_DIR}/src/network/tcp_socket.cpp
+    ${CMAKE_SOURCE_DIR}/src/network/socket.cpp
+    ${CMAKE_SOURCE_DIR}/src/network/packet.cpp
+    ${CMAKE_SOURCE_DIR}/src/auth/auth_handler.cpp
+    ${CMAKE_SOURCE_DIR}/src/auth/auth_packets.cpp
+    ${CMAKE_SOURCE_DIR}/src/auth/auth_opcodes.cpp
+    ${CMAKE_SOURCE_DIR}/src/auth/srp.cpp
+    ${CMAKE_SOURCE_DIR}/src/auth/pin_auth.cpp
+    ${CMAKE_SOURCE_DIR}/src/auth/integrity.cpp
+    ${CMAKE_SOURCE_DIR}/src/auth/crypto.cpp
+    ${CMAKE_SOURCE_DIR}/src/auth/big_num.cpp
+)
+target_include_directories(test_auth_framing PRIVATE ${TEST_INCLUDE_DIRS})
+target_include_directories(test_auth_framing SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
+target_link_libraries(test_auth_framing PRIVATE
+    catch2_main OpenSSL::SSL OpenSSL::Crypto Threads::Threads)
+wowee_test_link_glm(test_auth_framing)
+add_test(NAME auth_framing COMMAND test_auth_framing)
+register_test_target(test_auth_framing)
+
 get_property(ALL_TEST_TARGETS GLOBAL PROPERTY WOWEE_ALL_TEST_TARGETS)
 list(LENGTH ALL_TEST_TARGETS _wowee_test_target_count)
 message(STATUS "Test targets registered: ${_wowee_test_target_count}")

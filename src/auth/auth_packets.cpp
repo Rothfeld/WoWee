@@ -143,6 +143,10 @@ network::Packet LogonChallengePacket::build(const std::string& account, const Cl
 
 bool LogonChallengeResponseParser::parse(network::Packet& packet, LogonChallengeResponse& response) {
     // Note: opcode byte already consumed by handlePacket()
+    if (!packet.hasRemaining(2)) {
+        LOG_ERROR("Truncated LOGON_CHALLENGE response: missing status header");
+        return false;
+    }
 
     // Unknown/protocol byte
     packet.readUInt8();
@@ -156,6 +160,11 @@ bool LogonChallengeResponseParser::parse(network::Packet& packet, LogonChallenge
         return true;  // Valid packet, but authentication failed
     }
 
+    if (!packet.hasRemaining(33)) {
+        LOG_ERROR("Truncated LOGON_CHALLENGE response: missing B/gLen");
+        return false;
+    }
+
     // B (server public ephemeral) - 32 bytes
     response.B.resize(32);
     for (int i = 0; i < 32; ++i) {
@@ -164,6 +173,10 @@ bool LogonChallengeResponseParser::parse(network::Packet& packet, LogonChallenge
 
     // g length and value
     uint8_t gLen = packet.readUInt8();
+    if (!packet.hasRemaining(static_cast<size_t>(gLen) + 1)) {
+        LOG_ERROR("Truncated LOGON_CHALLENGE response: missing g/nLen");
+        return false;
+    }
     response.g.resize(gLen);
     for (uint8_t i = 0; i < gLen; ++i) {
         response.g[i] = packet.readUInt8();
@@ -171,6 +184,10 @@ bool LogonChallengeResponseParser::parse(network::Packet& packet, LogonChallenge
 
     // N length and value
     uint8_t nLen = packet.readUInt8();
+    if (!packet.hasRemaining(static_cast<size_t>(nLen) + 32 + 16 + 1)) {
+        LOG_ERROR("Truncated LOGON_CHALLENGE response: missing N/salt/crcSalt/securityFlags");
+        return false;
+    }
     response.N.resize(nLen);
     for (uint8_t i = 0; i < nLen; ++i) {
         response.N[i] = packet.readUInt8();
@@ -192,13 +209,30 @@ bool LogonChallengeResponseParser::parse(network::Packet& packet, LogonChallenge
 
     // Optional security extensions (protocol v8+)
     if (response.securityFlags & 0x01) {
+        if (!packet.hasRemaining(20)) {
+            LOG_ERROR("Truncated LOGON_CHALLENGE response: missing PIN extension");
+            return false;
+        }
         // PIN required: u32 pin_grid_seed + u8[16] pin_salt
         response.pinGridSeed = packet.readUInt32();
         for (uint8_t& byte : response.pinSalt) {
             byte = packet.readUInt8();
         }
     }
+    if (response.securityFlags & 0x02) {
+        if (!packet.hasRemaining(12)) {
+            LOG_ERROR("Truncated LOGON_CHALLENGE response: missing Matrix extension");
+            return false;
+        }
+        for (int i = 0; i < 12; ++i) {
+            packet.readUInt8();
+        }
+    }
     if (response.securityFlags & 0x04) {
+        if (!packet.hasRemaining(1)) {
+            LOG_ERROR("Truncated LOGON_CHALLENGE response: missing Authenticator extension");
+            return false;
+        }
         // Authenticator required (TrinityCore): u8 requiredFlag (usually 1)
         response.authenticatorRequired = packet.readUInt8();
     }
@@ -318,25 +352,58 @@ network::Packet AuthenticatorTokenPacket::build(const std::string& token) {
 
 bool LogonProofResponseParser::parse(network::Packet& packet, LogonProofResponse& response) {
     // Note: opcode byte already consumed by handlePacket()
+    if (!packet.hasRemaining(1)) {
+        LOG_ERROR("Truncated LOGON_PROOF response: missing status byte");
+        return false;
+    }
 
-    // Status
     response.status = packet.readUInt8();
+    response.M2.clear();
+    response.accountFlags = 0;
+    response.surveyId = 0;
+    response.loginFlags = 0;
 
     LOG_INFO("LOGON_PROOF response status: ", static_cast<int>(response.status));
 
-    if (response.status != 0) {
+    if (!response.isSuccess()) {
+        if (packet.hasRemaining(2)) {
+            response.loginFlags = packet.readUInt16();
+        }
         LOG_ERROR("LOGON_PROOF failed with status: ", static_cast<int>(response.status));
         return true;  // Valid packet, but proof failed
     }
 
-    // M2 (server proof) - 20 bytes
+    // Success payload after cmd(1)+status(1) is strictly build-determined:
+    //   24 bytes (26B wire, build < 6299 or 1.x):  M2(20) + surveyId(4)
+    //   26 bytes (28B wire, build 6299..8088):     M2(20) + surveyId(4) + loginFlags(2)
+    //   30 bytes (32B wire, build >= 8089):        M2(20) + accountFlags(4) + surveyId(4) + loginFlags(2)
+    const size_t rem = packet.getRemainingSize();
+    if (rem != 24 && rem != 26 && rem != 30) {
+        LOG_ERROR("Invalid LOGON_PROOF success payload length after status: ", rem,
+                  " bytes (expected 24, 26, or 30)");
+        return false;
+    }
+
     response.M2.resize(20);
     for (int i = 0; i < 20; ++i) {
         response.M2[i] = packet.readUInt8();
     }
 
-    LOG_DEBUG("Parsed LOGON_PROOF response:");
-    LOG_DEBUG("  M2 size: ", response.M2.size(), " bytes");
+    if (rem == 30) {
+        response.accountFlags = packet.readUInt32();
+        response.surveyId = packet.readUInt32();
+        response.loginFlags = packet.readUInt16();
+    } else if (rem == 26) {
+        response.surveyId = packet.readUInt32();
+        response.loginFlags = packet.readUInt16();
+    } else {
+        response.surveyId = packet.readUInt32();
+    }
+
+    LOG_DEBUG("Parsed LOGON_PROOF response: M2=", response.M2.size(),
+              "B accountFlags=0x", std::hex, response.accountFlags,
+              " surveyId=", std::dec, response.surveyId,
+              " loginFlags=0x", std::hex, response.loginFlags, std::dec);
 
     return true;
 }
