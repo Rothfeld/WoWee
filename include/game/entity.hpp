@@ -681,12 +681,13 @@ public:
         return isMoving_ && moveElapsed_ < moveDuration_;
     }
 
-    // Returns the latest server-authoritative position: destination if moving, current if not.
-    // Unlike getX/Y/Z (which only update via updateMovement), this always reflects the
-    // last known server position regardless of distance culling.
-    [[nodiscard]] float getLatestX() const { return isMoving_ ? moveEndX_ : x; }
-    [[nodiscard]] float getLatestY() const { return isMoving_ ? moveEndY_ : y; }
-    [[nodiscard]] float getLatestZ() const { return isMoving_ ? moveEndZ_ : z; }
+    // Returns the unit's current authoritative position: live interpolated (x, y, z)
+    // while stationary or actively moving along a server spline/segment, clamping to
+    // moveEnd only during post-arrival dead-reckoning overrun so callers never observe
+    // speculative extrapolation or jump to the far endpoint of a multi-minute patrol spline.
+    [[nodiscard]] float getLatestX() const { return (isMoving_ && !isActivelyMoving()) ? moveEndX_ : x; }
+    [[nodiscard]] float getLatestY() const { return (isMoving_ && !isActivelyMoving()) ? moveEndY_ : y; }
+    [[nodiscard]] float getLatestZ() const { return (isMoving_ && !isActivelyMoving()) ? moveEndZ_ : z; }
 
     // Object type
     [[nodiscard]] ObjectType getType() const { return type; }

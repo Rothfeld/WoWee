@@ -1862,11 +1862,18 @@ bool CharacterRenderer::loadModel(const pipeline::M2Model& model, uint32_t id) {
         gpuModel.visualBoundMin = glm::vec3(std::numeric_limits<float>::max());
         gpuModel.visualBoundMax = glm::vec3(-std::numeric_limits<float>::max());
         for (const auto& vertex : model.vertices) {
+            if (!std::isfinite(vertex.position.x) || !std::isfinite(vertex.position.y) ||
+                !std::isfinite(vertex.position.z)) continue;
             gpuModel.visualBoundMin = glm::min(gpuModel.visualBoundMin, vertex.position);
             gpuModel.visualBoundMax = glm::max(gpuModel.visualBoundMax, vertex.position);
         }
-        gpuModel.visualBoundRadius =
-            glm::length(gpuModel.visualBoundMax - gpuModel.visualBoundMin) * 0.5f;
+        if (gpuModel.visualBoundMin.x <= gpuModel.visualBoundMax.x) {
+            gpuModel.visualBoundRadius =
+                glm::length(gpuModel.visualBoundMax - gpuModel.visualBoundMin) * 0.5f;
+        } else {
+            gpuModel.visualBoundMin = glm::vec3(0.0f);
+            gpuModel.visualBoundMax = glm::vec3(0.0f);
+        }
     }
     const auto classification = classifyM2Model(
         model.name, model.boundMin, model.boundMax,
@@ -4428,13 +4435,21 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
             float cullRadius = kDefaultCharacterCullRadius;
             glm::vec3 cullCentre = instance.position;
             auto mIt = models.find(instance.modelId);
-            if (mIt != models.end() && mIt->second.data.vertexRadius > 0.01f) {
-                const auto& data = mIt->second.data;
+            if (mIt != models.end()) {
+                const auto& gpuMdl = mIt->second;
+                const auto& data = gpuMdl.data;
                 const float scale = std::max(0.001f, instance.scale);
-                const glm::vec3 local = (data.vertexBoxMin + data.vertexBoxMax) * 0.5f * scale;
-                const float c = std::cos(instance.rotation.z), sn = std::sin(instance.rotation.z);
-                cullCentre += glm::vec3(local.x * c - local.y * sn, local.x * sn + local.y * c, local.z);
-                cullRadius = std::max(kDefaultCharacterCullRadius, data.vertexRadius * scale);
+                if (data.vertexRadius > 0.01f) {
+                    const glm::vec3 local = (data.vertexBoxMin + data.vertexBoxMax) * 0.5f * scale;
+                    const float c = std::cos(instance.rotation.z), sn = std::sin(instance.rotation.z);
+                    cullCentre += glm::vec3(local.x * c - local.y * sn, local.x * sn + local.y * c, local.z);
+                    cullRadius = std::max(kDefaultCharacterCullRadius, data.vertexRadius * scale);
+                } else if (gpuMdl.visualBoundRadius > 0.01f) {
+                    const glm::vec3 local = (gpuMdl.visualBoundMin + gpuMdl.visualBoundMax) * 0.5f * scale;
+                    const float c = std::cos(instance.rotation.z), sn = std::sin(instance.rotation.z);
+                    cullCentre += glm::vec3(local.x * c - local.y * sn, local.x * sn + local.y * c, local.z);
+                    cullRadius = std::max(kDefaultCharacterCullRadius, gpuMdl.visualBoundRadius * scale);
+                }
             }
 
             if (glm::distance(cullCentre, camPos) - cullRadius > viewDistance_) continue;

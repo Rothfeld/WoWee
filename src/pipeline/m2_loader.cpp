@@ -1055,8 +1055,10 @@ M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
     model.boundMin = glm::min(corner0, corner1);
     model.boundMax = glm::max(corner0, corner1);
     model.boundRadius = header.boundingRadius;
-    model.vertexBoxMin = glm::vec3(header.vertexBox[0], header.vertexBox[1], header.vertexBox[2]);
-    model.vertexBoxMax = glm::vec3(header.vertexBox[3], header.vertexBox[4], header.vertexBox[5]);
+    const glm::vec3 vCorner0(header.vertexBox[0], header.vertexBox[1], header.vertexBox[2]);
+    const glm::vec3 vCorner1(header.vertexBox[3], header.vertexBox[4], header.vertexBox[5]);
+    model.vertexBoxMin = glm::min(vCorner0, vCorner1);
+    model.vertexBoxMax = glm::max(vCorner0, vCorner1);
     model.vertexRadius = header.vertexRadius;
 
     // Read vertices
@@ -2323,6 +2325,21 @@ M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
                 }
 
                 model.batches.push_back(batch);
+            }
+
+            const uint32_t totalIndices = static_cast<uint32_t>(model.indices.size());
+            uint32_t emptiedBatches = 0;
+            for (auto& batch : model.batches) {
+                const uint64_t end = static_cast<uint64_t>(batch.indexStart) + batch.indexCount;
+                if (end <= totalIndices) continue;
+                batch.indexStart = 0;
+                batch.indexCount = 0;
+                ++emptiedBatches;
+            }
+            if (emptiedBatches > 0) {
+                core::Logger::getInstance().warning(
+                    "Vanilla/TBC M2: ", emptiedBatches, " embedded batch(es) index past ",
+                    totalIndices, " indices - emptied");
             }
         }
 

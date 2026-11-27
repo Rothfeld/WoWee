@@ -1,5 +1,6 @@
 #include "core/weapon_attachment.hpp"
 #include "core/entity_spawner.hpp"
+#include "core/creature_spawn_pose.hpp"
 #include "rendering/character_scale.hpp"
 #include "rendering/animation/rider_pose.hpp"
 #include "rendering/camera_controller.hpp"
@@ -2030,14 +2031,29 @@ float EntitySpawner::getPlayerSwimmingDepth() const {
 }
 
 float EntitySpawner::getUnitSwimmingDepth(uint64_t guid, uint32_t instanceId) const {
+    if (!gameHandler_ || !renderer_) {
+        return resolveUnitSwimmingDepth(0.0f, 0.0f, 1.0f);
+    }
     const auto unit = std::dynamic_pointer_cast<game::Unit>(
         gameHandler_->getEntityManager().getEntity(guid));
-    assert(unit);
-    const auto& display = displayDataMap_.at(unit->getDisplayId());
-    const float height = modelIdToCollisionHeight_.at(display.modelId);
-    assert(height > 0.0f);
     const auto* cr = renderer_->getCharacterRenderer();
-    return 0.75f * height * cr->getInstanceScale(instanceId);
+    const float scale = cr ? cr->getInstanceScale(instanceId) : 1.0f;
+    float dbcHeight = 0.0f;
+    if (unit) {
+        if (const auto dIt = displayDataMap_.find(unit->getDisplayId()); dIt != displayDataMap_.end()) {
+            if (const auto hIt = modelIdToCollisionHeight_.find(dIt->second.modelId);
+                hIt != modelIdToCollisionHeight_.end()) {
+                dbcHeight = hIt->second;
+            }
+        }
+    }
+    float modelBoundMaxZ = 0.0f;
+    if (cr) {
+        if (const auto* activeModel = cr->getInstanceModelData(instanceId)) {
+            modelBoundMaxZ = activeModel->boundMax.z;
+        }
+    }
+    return resolveUnitSwimmingDepth(dbcHeight, modelBoundMaxZ, scale);
 }
 
 bool EntitySpawner::getRenderBoundsForGuid(uint64_t guid, glm::vec3& outCenter, float& outRadius) const {
@@ -2493,94 +2509,89 @@ void EntitySpawner::removeCreatureForNewDisplay(uint64_t guid) {
 void EntitySpawner::playCreatureSpawnPose(uint64_t guid, uint32_t instanceId) {
     auto* charRenderer = renderer_->getCharacterRenderer();
     if (!charRenderer) return;
-// Spawn in the correct pose. A creature the server marked dead before the
-// queued spawn was processed is a corpse on arrival: Dead (6), not a replay
-// of Death - unless its previous model was still falling
-// (removeCreatureForNewDisplay), which goes on as Death on the new one.
-// Consume displayChangedCreatureGuids_ unconditionally (dead or alive) so
-// display swaps on dying/dead units neither leak the marker nor fade from 0.
-const bool displayChanged = displayChangedCreatureGuids_.erase(guid) != 0;
-if (deadCreatureGuids_.count(guid)) {
-    if (dyingCreatureGuids_.erase(guid))
-        charRenderer->playAnimation(instanceId, rendering::anim::DEATH, false);
-    else
-        charRenderer->playAnimation(instanceId, rendering::anim::DEAD, true);
-} else {
-    // Check if this NPC has a persistent emote state (e.g. working, eating, dancing)
+    // Spawn in the correct pose. A creature the server marked dead before the
+    // queued spawn was processed is a corpse on arrival: Dead (6), not a replay
+    // of Death - unless its previous model was still falling
+    // (removeCreatureForNewDisplay), which goes on as Death on the new one.
+    // Consume displayChangedCreatureGuids_ unconditionally (dead or alive) so
+    // display swaps on dying/dead units neither leak the marker nor fade from 0.
+    const bool displayChanged = displayChangedCreatureGuids_.erase(guid) != 0;
     uint32_t npcEmote = 0;
+    bool unitNewlySpawned = false;
+    bool newlySpawnedForFade = false;
+    bool skipSpawnFadeIn = false;
+    float targetOpacity = 1.0f;
     if (gameHandler_) {
-        auto entity = gameHandler_->getEntityManager().getEntity(guid);
-        if (entity && entity->getType() == game::ObjectType::UNIT) {
-            npcEmote = std::static_pointer_cast<game::Unit>(entity)->getNpcEmoteState();
+        if (auto entity = gameHandler_->getEntityManager().getEntity(guid);
+            entity && entity->getType() == game::ObjectType::UNIT) {
+            const auto* unit = static_cast<const game::Unit*>(entity.get());
+            npcEmote = unit->getNpcEmoteState();
+            unitNewlySpawned = unit->isNewlySpawned();
+            // Spell-summoned guardians/minions (e.g. Summon Unliving Soldier 32853)
+            // whose spawn-tick self-cast clears CMaNGOS m_itsNewObject before
+            // WriteViewChanges still carry UNIT_FIELD_CREATEDBY or UNIT_CREATED_BY_SPELL
+            // and fade in over kUnitSpawnFadeInSeconds (2.0 s) on TBC 2.4.3.
+            newlySpawnedForFade = !displayChanged &&
+                                  (unitNewlySpawned ||
+                                   game::unitCreatedByGuid(*unit) != 0 ||
+                                   game::unitCreatedBySpell(*unit) != 0);
+            skipSpawnFadeIn = game::unitSkipsSpawnFadeIn(unit->getUnitFlags2());
+            targetOpacity = creatureDisplayAlpha(unit->getDisplayId());
         }
     }
-    uint32_t npcEmoteAnim = npcEmote != 0
-        ? rendering::AnimationController::getEmoteAnimByEmotesId(npcEmote)
-        : 0;
-    if (npcEmoteAnim == 0) {
-        auto activeIt = creatureActiveEmotes_.find(guid);
-        if (activeIt != creatureActiveEmotes_.end()) {
-            npcEmoteAnim = activeIt->second;
-        }
-    }
-    const bool hasNpcEmoteAnim = npcEmoteAnim != 0 &&
-        (charRenderer->hasAnimation(instanceId, npcEmoteAnim) ||
-         (npcEmoteAnim == rendering::anim::DEAD &&
-          charRenderer->hasAnimation(instanceId, rendering::anim::DEATH)));
-    if (hasNpcEmoteAnim) {
-        creatureActiveEmotes_[guid] = npcEmoteAnim;
-        charRenderer->playAnimation(instanceId, npcEmoteAnim, true);
-    } else if (displayChanged) {
-        // A new display on a creature already in the world is no new
-        // creature: native 2.4.3 shows Tree Disguise (16977,
-        // AshenvaleTreeFalling01.m2, Birth grows bone 1 from 0.09 over
-        // 16.7 s) at full height right after .npc setmodel.
-        const uint32_t idle = remoteIdleAnimation(guid);
-        const uint32_t auraStateAnim = remoteAuraStateAnimation(guid);
-        const bool holdAuraOneShot =
-            auraStateAnim != rendering::SpellVisualSystem::kNoAnimation &&
-            idle == auraStateAnim &&
-            charRenderer->isAnimationNonLooping(instanceId, idle);
-        if (holdAuraOneShot)
-            charRenderer->playAnimation(instanceId, idle, /*loop=*/false, 0, /*holdFinalPose=*/true);
+
+    if (deadCreatureGuids_.count(guid)) {
+        if (dyingCreatureGuids_.erase(guid))
+            charRenderer->playAnimation(instanceId, rendering::anim::DEATH, false);
         else
-            charRenderer->playAnimation(instanceId, idle, true);
-    } else if (charRenderer->hasAnimation(instanceId, rendering::anim::BIRTH)) {
-        // Play birth animation (one-shot) - will return to idle after
-        charRenderer->playAnimation(instanceId, rendering::anim::BIRTH, false, remoteIdleAnimation(guid));
-    } else if (charRenderer->hasAnimation(instanceId, rendering::anim::SPAWN)) {
-        charRenderer->playAnimation(instanceId, rendering::anim::SPAWN, false, remoteIdleAnimation(guid));
+            charRenderer->playAnimation(instanceId, rendering::anim::DEAD, true);
     } else {
-        // Already hovering, levitating, or stealthed when it came into view.
-        charRenderer->playAnimation(instanceId, remoteIdleAnimation(guid), true);
+        // Check if this NPC has a persistent emote state (e.g. working, eating, dancing)
+        uint32_t npcEmoteAnim = npcEmote != 0
+            ? rendering::AnimationController::getEmoteAnimByEmotesId(npcEmote)
+            : 0;
+        if (npcEmoteAnim == 0) {
+            auto activeIt = creatureActiveEmotes_.find(guid);
+            if (activeIt != creatureActiveEmotes_.end()) {
+                npcEmoteAnim = activeIt->second;
+            }
+        }
+        const bool hasNpcEmoteAnim = npcEmoteAnim != 0 &&
+            (charRenderer->hasAnimation(instanceId, npcEmoteAnim) ||
+             (npcEmoteAnim == rendering::anim::DEAD &&
+              charRenderer->hasAnimation(instanceId, rendering::anim::DEATH)));
+        if (hasNpcEmoteAnim) {
+            creatureActiveEmotes_[guid] = npcEmoteAnim;
+            charRenderer->playAnimation(instanceId, npcEmoteAnim, true);
+        } else {
+            const uint32_t idle = remoteIdleAnimation(guid);
+            const uint32_t auraStateAnim = remoteAuraStateAnimation(guid);
+            const bool auraStateNonLooping =
+                auraStateAnim != rendering::SpellVisualSystem::kNoAnimation &&
+                charRenderer->isAnimationNonLooping(instanceId, auraStateAnim);
+            const CreatureSpawnPoseChoice choice = selectCreatureSpawnPose(
+                displayChanged,
+                unitNewlySpawned,
+                charRenderer->hasAnimation(instanceId, rendering::anim::BIRTH),
+                charRenderer->hasAnimation(instanceId, rendering::anim::SPAWN),
+                idle,
+                auraStateAnim,
+                auraStateNonLooping);
+            charRenderer->playAnimation(
+                instanceId,
+                choice.animationId,
+                choice.loop,
+                choice.nextAnimationId,
+                choice.holdFinalPose);
+        }
     }
-}
-bool newlySpawned = false;
-bool skipSpawnFadeIn = false;
-float targetOpacity = 1.0f;
-if (gameHandler_) {
-    if (auto entity = gameHandler_->getEntityManager().getEntity(guid);
-        entity && entity->getType() == game::ObjectType::UNIT) {
-        const auto* unit = static_cast<const game::Unit*>(entity.get());
-        // Spell-summoned guardians/minions (e.g. Summon Unliving Soldier 32853)
-        // whose spawn-tick self-cast clears CMaNGOS m_itsNewObject before
-        // WriteViewChanges still carry UNIT_FIELD_CREATEDBY or UNIT_CREATED_BY_SPELL
-        // and fade in over kUnitSpawnFadeInSeconds (2.0 s) on TBC 2.4.3.
-        newlySpawned = !displayChanged &&
-                       (unit->isNewlySpawned() ||
-                        game::unitCreatedByGuid(*unit) != 0 ||
-                        game::unitCreatedBySpell(*unit) != 0);
-        skipSpawnFadeIn = game::unitSkipsSpawnFadeIn(unit->getUnitFlags2());
-        targetOpacity = creatureDisplayAlpha(unit->getDisplayId());
-    }
-}
-// Seed applied display opacity before the periodic sync in EntitySpawner::update()
-// runs; otherwise its first tick calls setInstanceOpacity() and cancels fade-in.
-creatureAppliedOpacity_[guid] = targetOpacity;
-const float fadeDuration = skipSpawnFadeIn
-    ? 0.0f
-    : rendering::creatureSpawnFadeDuration(displayChanged, newlySpawned);
-charRenderer->startFadeIn(instanceId, fadeDuration, targetOpacity);
+    // Seed applied display opacity before the periodic sync in EntitySpawner::update()
+    // runs; otherwise its first tick calls setInstanceOpacity() and cancels fade-in.
+    creatureAppliedOpacity_[guid] = targetOpacity;
+    const float fadeDuration = skipSpawnFadeIn
+        ? 0.0f
+        : rendering::creatureSpawnFadeDuration(displayChanged, newlySpawnedForFade);
+    charRenderer->startFadeIn(instanceId, fadeDuration, targetOpacity);
 }
 
 // Choose one mesh per clothing group for a character-style NPC.

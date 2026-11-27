@@ -1485,8 +1485,10 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId, boo
     // translates it tens of units is a flight-path doodad - it visibly freezes
     // mid-air whenever distance culling stops its bone updates, so give it the
     // same treatment as named sky birds.
+    // Pure emitter companions (0 vertices, e.g. CharacterEmitters for Ragnaros)
+    // have no mesh that can freeze mid-air and must not be classified as sky birds.
     bool flightPathDoodad = cls.isSkyBird;
-    if (!flightPathDoodad && !cls.disableAnimation) {
+    if (hasGeometry && !flightPathDoodad && !cls.disableAnimation) {
         glm::vec3 meshExtent = tightMax - tightMin;
         const bool smallMesh = meshExtent.x < 6.0f && meshExtent.y < 6.0f &&
                                meshExtent.z < 6.0f;

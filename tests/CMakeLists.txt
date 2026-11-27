@@ -3886,6 +3886,19 @@ add_test(NAME music_crossfade_loops COMMAND test_music_crossfade_loops)
 set_tests_properties(music_crossfade_loops PROPERTIES SKIP_RETURN_CODE 4)
 register_test_target(test_music_crossfade_loops)
 
+# Wave-3 M2 Creature Visibility & Geometry Parity: active server patrol spline
+# live position (Ghaz'an 18105), CREATE_OBJECT2 vs CREATE_OBJECT Birth/Spawn gating
+# (Ragnaros 11502), zero-CollisionHeight swimming depth fallback, and TBC M2 bounds.
+wowee_add_test(test_m2_creature_visibility
+    SOURCES test_m2_creature_visibility.cpp
+            ${TEST_COMMON_SOURCES}
+            ${CMAKE_SOURCE_DIR}/src/game/entity.cpp
+            ${CMAKE_SOURCE_DIR}/src/game/update_field_table.cpp
+            ${CMAKE_SOURCE_DIR}/src/math/spline.cpp
+            ${CMAKE_SOURCE_DIR}/src/pipeline/m2_loader.cpp
+            ${CMAKE_SOURCE_DIR}/src/rendering/m2_model_classifier.cpp)
+set_tests_properties(m2_creature_visibility PROPERTIES SKIP_RETURN_CODE 4)
+
 get_property(ALL_TEST_TARGETS GLOBAL PROPERTY WOWEE_ALL_TEST_TARGETS)
 list(LENGTH ALL_TEST_TARGETS _wowee_test_target_count)
 message(STATUS "Test targets registered: ${_wowee_test_target_count}")
