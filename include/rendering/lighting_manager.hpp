@@ -275,6 +275,11 @@ public:
     /// LightingManager::update.
     void setFogStrength(float strength) { fogStrength_ = strength; }
     [[nodiscard]] float getFogStrength() const { return fogStrength_; }
+    /// Scene view distance (`farclip`), in yards. Outdoor DBC fog whose
+    /// `fogEnd` exceeds `viewDistance` clamps `fogEnd = viewDistance` and
+    /// scales `fogStart` proportionally, matching TBC 2.4.3 `farclip` fog.
+    void setViewDistance(float yards) { viewDistance_ = std::max(yards, 0.0f); }
+    [[nodiscard]] float getViewDistance() const { return viewDistance_; }
 
     /**
      * Get current time of day (0.0-1.0)
@@ -392,6 +397,7 @@ private:
     std::chrono::steady_clock::time_point lastUpdate_{};
     float fogSkyBlend_ = 0.0f;
     float fogStrength_ = 1.0f;
+    float viewDistance_ = 1900.0f;
 
     // Last values the sky diagnostic reported, so it prints on a change
     // rather than every frame. See LightingManager::update.
@@ -455,6 +461,19 @@ inline glm::vec3 tbcTerrainLightFactor(const glm::vec3& ambient,
                                        bool legacyClamp) {
     const glm::vec3 factor = ambient + shadow * std::max(ndl, 0.0f) * diffuse;
     return legacyClamp ? glm::clamp(factor, glm::vec3(0.0f), glm::vec3(1.0f)) : factor;
+}
+
+/// Clamp outdoor DBC `fogEnd` to the active `viewDistance` (`farclip`) while
+/// preserving the authored `fogStart / fogEnd` scalar (`LightFloatBand` ch 1).
+/// Matches TBC 2.4.3 whenever `farclip < dbcFogEnd` (e.g. Netherstorm LP 508
+/// `dbcFogEnd = 666.67 yd` at default `farclip = 477 yd` -> `fogEnd = 477 yd`,
+/// `fogStart = 238.5 yd`).
+inline void clampOutdoorFogToViewDistance(float& fogStart, float& fogEnd, float viewDistance) {
+    if (viewDistance > 0.0f && fogEnd > viewDistance) {
+        const float scalar = (fogEnd > 1e-4f) ? (fogStart / fogEnd) : 0.0f;
+        fogEnd = viewDistance;
+        fogStart = fogEnd * scalar;
+    }
 }
 
 } // namespace rendering

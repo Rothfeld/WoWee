@@ -51,7 +51,7 @@ struct GPUPerFrameData {
     // grass, outdoor doodads, exterior groups and outdoor liquids take the
     // outdoor fog below. Outside an interior both are the same.
     glm::vec4 outdoorFogColor;   // xyz = color, w = unused
-    glm::vec4 outdoorFogParams;  // x = start, y = end
+    glm::vec4 outdoorFogParams;  // x = start, y = end, z = viewDistance (0 = unclamped)
     // x = gain on the TBC light of units (creatures, players and what they
     // carry): 1 + 2 x AreaTable AmbientMultiplier of the player's area.
     // Only character.frag reads it, and only under TBC light (lightDir.w).

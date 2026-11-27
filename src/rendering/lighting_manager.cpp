@@ -703,6 +703,7 @@ void LightingManager::updateWithStormWeight(const glm::vec3& playerPos, uint32_t
     if (submerged == SubmergedLiquid::None) {
         newParams.fogColor = glm::mix(newParams.fogColor, newParams.skyMiddleColor,
                                       glm::clamp(fogSkyBlend_, 0.0f, 1.0f));
+        clampOutdoorFogToViewDistance(newParams.fogStart, newParams.fogEnd, viewDistance_);
     }
 
     // How much fog, as a multiplier on the distances the zone asks for.

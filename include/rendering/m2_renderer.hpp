@@ -1056,7 +1056,7 @@ public:
                    : viewDistanceAbsolute_;
     }
     void setViewDistance(float distance) {
-        viewDistanceRaw_ = std::clamp(distance, 400.0f, 2400.0f);
+        viewDistanceRaw_ = std::clamp(distance, 177.0f, 2400.0f);
         // And the distance itself, as a ceiling. The scale multiplies a
         // constant tuned for scene density - 2800 yards where models are
         // sparse - so at 2400 it put doodads 5600 yards out while the terrain

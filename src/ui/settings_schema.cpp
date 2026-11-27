@@ -52,7 +52,7 @@ constexpr SettingDesc kSchema[] = {
      "How far away things still cast shadows, in yards. The shadow map\n"
      "covers this whole range, so a shorter distance also gives sharper\n"
      "shadows close to you.", "", 300},
-    {"viewdistance", "View distance", SettingKind::Float, 400, 2400, 50, "Graphics", "View",
+    {"viewdistance", "View distance", SettingKind::Float, 177, 2400, 50, "Graphics", "View",
      "How far into the distance the world is drawn, in yards. The single\n"
      "largest cost in the picture: terrain, buildings and creatures are all\n"
      "drawn to this range.", "", 1900},

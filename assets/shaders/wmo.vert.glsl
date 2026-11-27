@@ -96,7 +96,7 @@ void main() {
     float diffuse = max(dot(normalize(Normal), normalize(-lightDir.xyz)), 0.0);
     VertexLighting = clamp(ambientColor.rgb + diffuse * lightColor.rgb, 0.0, 1.0);
     vec3 halfDir = normalize(normalize(-lightDir.xyz) + normalize(viewPos.xyz - FragPos));
-    VertexSpecular = specularColor.rgb * pow(max(dot(normalize(Normal), halfDir), 0.0), 8.0);
+    VertexSpecular = specularColor.rgb * pow(max(dot(normalize(Normal), halfDir), 0.0), 14.0);
     TexCoord = aTexCoord;
     VertColor = aColor;
 

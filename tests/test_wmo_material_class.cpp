@@ -37,12 +37,12 @@ TEST_CASE("A WMO doodad listed by an outdoor-lit group takes the outdoor light",
 
 #include "rendering/wmo_material_class.hpp"
 
-TEST_CASE("WMO diffuse materials remain matte", "[wmo-material]") {
+TEST_CASE("WMO diffuse and env-mapped materials do not enable directional specular", "[wmo-material]") {
     using wowee::rendering::wmoShaderUsesSpecular;
-    for (uint32_t shader : {0u, 4u, 6u, 8u, 9u, 13u, 14u, 16u}) {
+    for (uint32_t shader : {0u, 3u, 4u, 5u, 6u, 8u, 9u, 13u, 14u, 16u}) {
         CHECK_FALSE(wmoShaderUsesSpecular(shader));
     }
-    for (uint32_t shader : {1u, 2u, 5u, 7u, 11u, 12u}) {
+    for (uint32_t shader : {1u, 2u, 7u, 11u, 12u}) {
         CHECK(wmoShaderUsesSpecular(shader));
     }
 }
@@ -62,7 +62,7 @@ TEST_CASE("WMO MOMT environment-mapped and metal shaders are classified accurate
     using wowee::rendering::wmoShaderIsMetal;
     using wowee::rendering::wmoShaderSpecularAlphaMask;
 
-    // Shader 3 (Env: Karazhan ballroom floor, Stratholme ice) and 5 (EnvMetal: Coilfang, Sunwell floor)
+    // Shader 3 (Env: Karazhan ballroom floor, Stratholme ice) and 5 (EnvMetal: Tempest Keep, Coilfang, Sunwell floor)
     CHECK(wmoShaderUsesEnvMap(3));
     CHECK(wmoShaderUsesEnvMap(5));
     for (uint32_t s : {0u, 1u, 2u, 4u, 6u, 7u}) {
@@ -76,10 +76,11 @@ TEST_CASE("WMO MOMT environment-mapped and metal shaders are classified accurate
         CHECK_FALSE(wmoShaderIsMetal(s));
     }
 
-    // Specular alpha mask: Specular (1), Metal (2), EnvMetal (5)
+    // Directional sun specular alpha mask: Specular (1) and Metal (2) only.
+    // EnvMetal (5) uses diffuse alpha to mask texture2 env reflection (mapobj.wfx EnableEnv(1), no EnableSpec(1)).
     CHECK(wmoShaderSpecularAlphaMask(1));
     CHECK(wmoShaderSpecularAlphaMask(2));
-    CHECK(wmoShaderSpecularAlphaMask(5));
+    CHECK_FALSE(wmoShaderSpecularAlphaMask(5));
     CHECK_FALSE(wmoShaderSpecularAlphaMask(0));
     CHECK_FALSE(wmoShaderSpecularAlphaMask(3));
 }
@@ -117,4 +118,57 @@ TEST_CASE("WMO MOMT shader 5 EnvMetal modulates reflection by lit base color", "
     // Bright interior (Exodar crystal wall): lighting ~0.85, alpha ~0.24 stays proportional.
     const float brightCrystal = wmoEnvMetalChannel(0.60f * 0.85f, 0.50f, 0.24f);
     CHECK(brightCrystal == Catch::Approx(0.51f + 0.50f * 0.51f * 0.24f));
+}
+
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <vector>
+
+TEST_CASE("Tempest Keep Mechanar WMO EnvMetal materials disable directional sun specular", "[wmo-material][tbc]") {
+    const std::filesystem::path wmoPath =
+        "/workspace/azerothcore/client/wowee-data/expansions/tbc/world/wmo/dungeon/ol_tempestkeep/tk_exterior_smallwing_factory.wmo";
+    if (!std::filesystem::exists(wmoPath)) {
+        return;
+    }
+
+    std::ifstream in(wmoPath, std::ios::binary | std::ios::ate);
+    REQUIRE(in.is_open());
+    const auto sz = static_cast<size_t>(in.tellg());
+    in.seekg(0);
+    std::vector<uint8_t> bytes(sz);
+    in.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(sz));
+
+    // Locate MOMT chunk (fourCC 'TMOM' little-endian, 64 bytes per SMOMaterial).
+    std::vector<uint32_t> shaders;
+    size_t pos = 0;
+    while (pos + 8 <= bytes.size()) {
+        uint32_t chunkSize = 0;
+        std::memcpy(&chunkSize, bytes.data() + pos + 4, sizeof(uint32_t));
+        if (pos + 8 + chunkSize > bytes.size()) break;
+        if (std::memcmp(bytes.data() + pos, "TMOM", 4) == 0) {
+            const size_t matCount = chunkSize / 64;
+            for (size_t i = 0; i < matCount; ++i) {
+                uint32_t shader = 0;
+                std::memcpy(&shader, bytes.data() + pos + 8 + i * 64 + 4, sizeof(uint32_t));
+                shaders.push_back(shader);
+            }
+            break;
+        }
+        pos += 8 + chunkSize;
+    }
+    REQUIRE(shaders.size() == 17);
+
+    // Curved rune banner (mat 8 JLO_DRAENEI_TRIMS03, mat 10 JLO_DRAENEI_TRIMS04)
+    // and emblem hull/trims (mat 5 JLO_DRAENEI_WALL06, mat 16 JLO_NAARU_TRIMS01)
+    // all author shader 5 (EnvMetal): env-mapped metallic without sun specular.
+    for (size_t idx : {2u, 4u, 5u, 7u, 8u, 9u, 10u, 11u, 12u, 13u, 14u, 16u}) {
+        INFO("material " << idx);
+        const uint32_t shader = shaders[idx];
+        CHECK(shader == 5u);
+        CHECK(wowee::rendering::wmoShaderUsesEnvMap(shader));
+        CHECK(wowee::rendering::wmoShaderIsMetal(shader));
+        CHECK_FALSE(wowee::rendering::wmoShaderUsesSpecular(shader));
+        CHECK_FALSE(wowee::rendering::wmoShaderSpecularAlphaMask(shader));
+    }
 }

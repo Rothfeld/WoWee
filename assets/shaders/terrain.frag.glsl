@@ -153,6 +153,7 @@ vec3 applyFog(vec3 color, vec3 worldPos, float dist) {
 }
 
 void main() {
+    if (outdoorFogParams.z > 0.0 && -(view * vec4(FragPos, 1.0)).z > outdoorFogParams.z) discard;
     gFogColor = outdoorFogColor;
     gFogParams = outdoorFogParams;
     float fragDist = length(viewPos.xyz - FragPos);

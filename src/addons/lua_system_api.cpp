@@ -6072,7 +6072,7 @@ constexpr CVarRange kCVarRanges[] = {
     // slider could not ask for the range the engine has. Both ends are what
     // Renderer::setViewDistance clamps to, so the control now covers exactly
     // what the client can do and nothing it cannot.
-    {"farclip", 400.0f, 2400.0f},
+    {"farclip", 177.0f, 2400.0f},
     // Texture filtering. The shipped slider counts Blizzard's six modes -
     // bilinear and trilinear before the anisotropic steps - and this client's
     // setting is the five its samplers have, off and then 2x to 16x, so a

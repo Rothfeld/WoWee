@@ -13,6 +13,8 @@
 
 namespace wowee::ui {
 
+inline constexpr float kMinViewDistance = 177.0f;
+inline constexpr float kMaxViewDistance = 2400.0f;
 inline constexpr float kDefaultViewDistance = 1900.0f;
 inline constexpr int   kDefaultGroundClutter = 70;
 

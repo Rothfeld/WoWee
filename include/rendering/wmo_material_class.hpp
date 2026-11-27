@@ -10,10 +10,12 @@
 
 namespace wowee::rendering {
 
-/// MOMT shader variants with a specular term. Diffuse and emissive variants
-/// do not acquire highlights merely because they use the same GPU pipeline.
+/// MOMT shader variants with a directional sun specular term.
+/// Per TBC 2.4.3 shaders/effects/mapobj.wfx, Specular (1) and Metal (2) enable
+/// directional specular (EnableSpec(1), Specular(1, 1, 1, 14)), whereas Env (3)
+/// and EnvMetal (5) set EnableEnv(1) only and have no directional specular lobe.
 constexpr bool wmoShaderUsesSpecular(uint32_t shader) {
-    return shader == 1 || shader == 2 || shader == 5 || shader == 7 ||
+    return shader == 1 || shader == 2 || shader == 7 ||
            shader == 11 || shader == 12;
 }
 
@@ -31,10 +33,11 @@ constexpr bool wmoShaderIsMetal(uint32_t shader) {
     return shader == 2 || shader == 5;
 }
 
-/// MOMT shader variants whose diffuse alpha channel masks specular highlights:
-/// Specular (1), Metal (2), and EnvMetal (5).
+/// MOMT shader variants whose diffuse alpha channel masks directional sun
+/// specular highlights: Specular (1) and Metal (2). Shader 5 (EnvMetal) uses
+/// diffuse alpha to mask its texture2 environment map reflection instead.
 constexpr bool wmoShaderSpecularAlphaMask(uint32_t shader) {
-    return shader == 1 || shader == 2 || shader == 5;
+    return shader == 1 || shader == 2;
 }
 
 /// MOMT material flags.

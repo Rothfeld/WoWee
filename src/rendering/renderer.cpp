@@ -668,6 +668,7 @@ void Renderer::updatePerFrameUBO() {
         currentFrameData.outdoorFogColor = currentFrameData.fogColor;
         currentFrameData.outdoorFogParams = currentFrameData.fogParams;
     }
+    currentFrameData.outdoorFogParams.z = viewDistance_;
 
     currentFrameData.lightSpaceMatrix = lightSpaceMatrix;
     // Scale shadow bias proportionally to ortho extent to avoid acne at close range / gaps at far range
@@ -933,6 +934,7 @@ bool Renderer::initialize(core::Window* win) {
 
     // LightingManager doesn't use GL - initialize for data-only use
     lightingManager = std::make_unique<LightingManager>();
+    lightingManager->setViewDistance(viewDistance_);
     auto* assetManager = core::Application::getInstance().getAssetManager();
     if (assetManager && cameraShakeTable_) {
         cameraShakeTable_->load(*assetManager);
@@ -4970,12 +4972,13 @@ void Renderer::setGroundDetailDistance(float yards) {
 }
 
 void Renderer::setViewDistance(float distance) {
-    viewDistance_ = glm::clamp(distance, 400.0f, 2400.0f);
+    viewDistance_ = glm::clamp(distance, 177.0f, 2400.0f);
 
     if (terrainRenderer) terrainRenderer->setViewDistance(viewDistance_);
     if (wmoRenderer) wmoRenderer->setViewDistance(viewDistance_);
     if (m2Renderer) m2Renderer->setViewDistance(viewDistance_);
     if (characterRenderer) characterRenderer->setViewDistance(viewDistance_);
+    if (lightingManager) lightingManager->setViewDistance(viewDistance_);
     if (terrainManager) {
         terrainManager->setLoadRadius(getTerrainLoadRadius());
         terrainManager->setUnloadRadius(getTerrainUnloadRadius());

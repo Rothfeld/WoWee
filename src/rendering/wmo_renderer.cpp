@@ -877,7 +877,7 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
             matData.unlit = mb.unlit ? 1 : 0;
             matData.isInterior = static_cast<int32_t>(mb.lightingMode);
             matData.hasVertexColors = (groupRes.groupFlags & 0x4) != 0 ? 1 : 0;
-            matData.specularIntensity = key.isMetal ? 0.85f : (key.specular ? 0.5f : 0.0f);
+            matData.specularIntensity = key.specular ? (key.isMetal ? 0.85f : 0.5f) : 0.0f;
             matData.hasEnvMap = (mb.envTexture != nullptr && mb.envTexture->isValid()) ? 1 : 0;
             matData.specularAlphaMask = key.specularAlphaMask ? 1 : 0;
             matData.isMetal = mb.isMetal ? 1 : 0;

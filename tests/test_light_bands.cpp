@@ -342,3 +342,68 @@ TEST_CASE("skyParamsFromLighting forwards smog colour, horizon fog colour, and c
     CHECK(sky.celestialGlowThrough == Catch::Approx(0.25f));
     CHECK(sky.cloudDensity == Catch::Approx(0.70f));
 }
+
+TEST_CASE("clampOutdoorFogToViewDistance clamps fogEnd to farclip while preserving fogStartScalar",
+          "[light][fog][farclip]") {
+    using wowee::rendering::clampOutdoorFogToViewDistance;
+
+    // Netherstorm Voidwind Plateau (Light 502 -> LightParams 508):
+    // LightFloatBand ch 0 = 24000 / 36 = 666.6667 yd, ch 1 = 0.5 -> fogStart = 333.3333 yd.
+    const float kDbcEnd = 24000.0f / wowee::rendering::LIGHT_COORD_UNITS_PER_YARD;
+    const float kDbcStart = kDbcEnd * 0.5f;
+
+    // At farclip = 777 or 1900 (> 666.67 yd), DBC fog is unchanged.
+    for (float fc : {777.0f, 1900.0f}) {
+        float s = kDbcStart;
+        float e = kDbcEnd;
+        clampOutdoorFogToViewDistance(s, e, fc);
+        CHECK(e == Catch::Approx(kDbcEnd));
+        CHECK(s == Catch::Approx(kDbcStart));
+    }
+
+    // At farclip = 600 yd: fogEnd = 600, fogStart = 300.
+    // Transmittance at Mechanar hull (d = 385 yd) relative to fc = 777 matches
+    // measured Native TBC 2.4.3 ratio (~0.848).
+    {
+        float s600 = kDbcStart;
+        float e600 = kDbcEnd;
+        clampOutdoorFogToViewDistance(s600, e600, 600.0f);
+        CHECK(e600 == Catch::Approx(600.0f));
+        CHECK(s600 == Catch::Approx(300.0f));
+        const float f777 = (kDbcEnd - 385.0f) / (kDbcEnd - kDbcStart);
+        const float f600 = (e600 - 385.0f) / (e600 - s600);
+        CHECK((f600 / f777) == Catch::Approx(0.848f).margin(0.01f));
+    }
+
+    // At TBC default farclip = 477 yd: fogEnd = 477, fogStart = 238.5.
+    // Transmittance at Mechanar hull (d = 385 yd) relative to fc = 777 matches
+    // measured Native TBC 2.4.3 ratio (~0.456).
+    {
+        float s477 = kDbcStart;
+        float e477 = kDbcEnd;
+        clampOutdoorFogToViewDistance(s477, e477, 477.0f);
+        CHECK(e477 == Catch::Approx(477.0f));
+        CHECK(s477 == Catch::Approx(238.5f));
+        const float f777 = (kDbcEnd - 385.0f) / (kDbcEnd - kDbcStart);
+        const float f477 = (e477 - 385.0f) / (e477 - s477);
+        CHECK((f477 / f777) == Catch::Approx(0.456f).margin(0.01f));
+    }
+
+    // At TBC minimum farclip = 177 yd: fogEnd = 177, fogStart = 88.5.
+    {
+        float s177 = kDbcStart;
+        float e177 = kDbcEnd;
+        clampOutdoorFogToViewDistance(s177, e177, 177.0f);
+        CHECK(e177 == Catch::Approx(177.0f));
+        CHECK(s177 == Catch::Approx(88.5f));
+    }
+
+    // Short-range fog (e.g. underwater 55 yd with negative scalar -0.98) stays untouched at 177 yd.
+    {
+        float sSub = -53.9f;
+        float eSub = 55.0f;
+        clampOutdoorFogToViewDistance(sSub, eSub, 177.0f);
+        CHECK(eSub == Catch::Approx(55.0f));
+        CHECK(sSub == Catch::Approx(-53.9f));
+    }
+}
