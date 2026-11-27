@@ -101,6 +101,7 @@ public:
     // Common blend states
     static VkPipelineColorBlendAttachmentState blendDisabled();
     static VkPipelineColorBlendAttachmentState blendAlpha();
+    static VkPipelineColorBlendAttachmentState blendPremultiplied();
     static VkPipelineColorBlendAttachmentState blendAdditive();
 
 private:

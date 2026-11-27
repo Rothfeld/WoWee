@@ -2605,8 +2605,29 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
         if (w->kind == WidgetKind::Frame) {
             // Whatever the client rendered for it, under its own regions -
             // a model frame is a window onto a scene and the art around it
-            // belongs on top.
+            // belongs on top. Off-screen CharacterPreview render targets store
+            // premultiplied RGBA (coverage alpha in A, premultiplied surface +
+            // additive glow photons in RGB), so composite with ONE,
+            // ONE_MINUS_SRC_ALPHA instead of ImGui's straight-alpha pipeline.
             if (w->externalTexture != 0) {
+                if (vkCtx_) {
+                    const bool desaturated = w->desaturated;
+                    dl->AddCallback(desaturated ? +[](const ImDrawList*, const ImDrawCmd* cmd) {
+                        auto* state = static_cast<ImGui_ImplVulkan_RenderState*>(
+                            ImGui::GetPlatformIO().Renderer_RenderState);
+                        assert(state);
+                        auto* context = static_cast<rendering::VkContext*>(cmd->UserCallbackData);
+                        vkCmdBindPipeline(state->CommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                          context->getImGuiPremultipliedPipeline(state->PipelineLayout, true));
+                    } : +[](const ImDrawList*, const ImDrawCmd* cmd) {
+                        auto* state = static_cast<ImGui_ImplVulkan_RenderState*>(
+                            ImGui::GetPlatformIO().Renderer_RenderState);
+                        assert(state);
+                        auto* context = static_cast<rendering::VkContext*>(cmd->UserCallbackData);
+                        vkCmdBindPipeline(state->CommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                          context->getImGuiPremultipliedPipeline(state->PipelineLayout, false));
+                    }, vkCtx_);
+                }
                 // NOLINTNEXTLINE(performance-no-int-to-ptr) - the widget holds
                 // the handle as an integer and ImTextureID is a pointer, so
                 // the cast is the API boundary rather than a choice.
@@ -2615,6 +2636,9 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                              ImVec2(x0, y0), ImVec2(x1, y1),
                              ImVec2(0.0f, 0.0f), ImVec2(1.0f, 1.0f),
                              packColor(w->color, w->effAlpha));
+                if (vkCtx_) {
+                    dl->AddCallback(ImDrawCallback_ResetRenderState, nullptr);
+                }
             }
             if (w->isAutoCastShine) {
                 if (!autoCastShineLoaded_ && assets_) {
@@ -3136,30 +3160,44 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                 }
             }
             const bool liveDesaturated = live && w->desaturated;
-            if (liveDesaturated) {
-                const bool additive = w->blendAdd;
-                dl->AddCallback(additive ? +[](const ImDrawList*, const ImDrawCmd* cmd) {
-                    auto* state = static_cast<ImGui_ImplVulkan_RenderState*>(ImGui::GetPlatformIO().Renderer_RenderState);
-                    assert(state);
-                    auto* context = static_cast<rendering::VkContext*>(cmd->UserCallbackData);
-                    vkCmdBindPipeline(state->CommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                        context->getImGuiDesaturatedPipeline(state->PipelineLayout, true));
-                } : +[](const ImDrawList*, const ImDrawCmd* cmd) {
-                    auto* state = static_cast<ImGui_ImplVulkan_RenderState*>(ImGui::GetPlatformIO().Renderer_RenderState);
-                    assert(state);
-                    auto* context = static_cast<rendering::VkContext*>(cmd->UserCallbackData);
-                    vkCmdBindPipeline(state->CommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                        context->getImGuiDesaturatedPipeline(state->PipelineLayout, false));
-                }, vkCtx_);
-            } else if (w->blendAdd) {
-                dl->AddCallback([](const ImDrawList*, const ImDrawCmd* cmd) {
-                    auto* state = static_cast<ImGui_ImplVulkan_RenderState*>(
-                        ImGui::GetPlatformIO().Renderer_RenderState);
-                    assert(state);
-                    auto* context = static_cast<rendering::VkContext*>(cmd->UserCallbackData);
-                    vkCmdBindPipeline(state->CommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                      context->getImGuiAdditivePipeline(state->PipelineLayout));
-                }, vkCtx_);
+            const bool livePremultiplied = live && !w->blendAdd;
+            const bool customPipeline = (vkCtx_ != nullptr) && (livePremultiplied || liveDesaturated || w->blendAdd);
+            if (customPipeline) {
+                if (livePremultiplied) {
+                    dl->AddCallback(liveDesaturated ? +[](const ImDrawList*, const ImDrawCmd* cmd) {
+                        auto* state = static_cast<ImGui_ImplVulkan_RenderState*>(
+                            ImGui::GetPlatformIO().Renderer_RenderState);
+                        assert(state);
+                        auto* context = static_cast<rendering::VkContext*>(cmd->UserCallbackData);
+                        vkCmdBindPipeline(state->CommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                            context->getImGuiPremultipliedPipeline(state->PipelineLayout, true));
+                    } : +[](const ImDrawList*, const ImDrawCmd* cmd) {
+                        auto* state = static_cast<ImGui_ImplVulkan_RenderState*>(
+                            ImGui::GetPlatformIO().Renderer_RenderState);
+                        assert(state);
+                        auto* context = static_cast<rendering::VkContext*>(cmd->UserCallbackData);
+                        vkCmdBindPipeline(state->CommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                            context->getImGuiPremultipliedPipeline(state->PipelineLayout, false));
+                    }, vkCtx_);
+                } else if (liveDesaturated) {
+                    dl->AddCallback(+[](const ImDrawList*, const ImDrawCmd* cmd) {
+                        auto* state = static_cast<ImGui_ImplVulkan_RenderState*>(
+                            ImGui::GetPlatformIO().Renderer_RenderState);
+                        assert(state);
+                        auto* context = static_cast<rendering::VkContext*>(cmd->UserCallbackData);
+                        vkCmdBindPipeline(state->CommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                            context->getImGuiDesaturatedPipeline(state->PipelineLayout, true));
+                    }, vkCtx_);
+                } else {
+                    dl->AddCallback([](const ImDrawList*, const ImDrawCmd* cmd) {
+                        auto* state = static_cast<ImGui_ImplVulkan_RenderState*>(
+                            ImGui::GetPlatformIO().Renderer_RenderState);
+                        assert(state);
+                        auto* context = static_cast<rendering::VkContext*>(cmd->UserCallbackData);
+                        vkCmdBindPipeline(state->CommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                          context->getImGuiAdditivePipeline(state->PipelineLayout));
+                    }, vkCtx_);
+                }
             }
             if (!live && w->texCoordRotated) {
                 // A UV per corner, so the art can sit in the frame at any
@@ -3222,7 +3260,7 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                 addImageQuadColors(dl, reinterpret_cast<ImTextureID>(tex), corners, uvs,
                                    cornerColors(*w, w->effAlpha));
             }
-            if (w->blendAdd || liveDesaturated) dl->AddCallback(ImDrawCallback_ResetRenderState, nullptr);
+            if (customPipeline) dl->AddCallback(ImDrawCallback_ResetRenderState, nullptr);
         } else if (w->kind == WidgetKind::FontString) {
             // Font objects carry a height, and honouring it is most of what
             // makes a label look right - a heading and a footnote are the same

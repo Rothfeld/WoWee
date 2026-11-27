@@ -1558,15 +1558,30 @@ void CharacterPreview::compositePass(VkCommandBuffer cmd, uint32_t frameIndex) {
     ubo.view = camera_->getViewMatrix();
     ubo.projection = camera_->getProjectionMatrix();
     ubo.lightSpaceMatrix = glm::mat4(1.0f);
-    // Studio lighting relative to the active preview camera so key light always
-    // illuminates the front/upper-right of the face and attached helmets regardless
-    // of whether an authored M2 portrait camera (+X) or fallback camera (+Y) is active.
+    // TBC 2.4.3 studio lighting (measured via DressUpModel:GetLight() and
+    // CharacterModelFrame:GetLight() on build 8606):
+    // - UI Model frames (Transparent / OpaquePortrait): dir = (0, +1, 0) in WoW
+    //   camera space (+Y = camRight, so ldir = -camRight lights screen-left),
+    //   ambient = (0.70, 0.70, 0.70), diffuse = (0.80, 0.80, 0.64).
+    // - Racial glue scenes (RacialScene): overhead-front key light matching
+    //   characterselect.lua with the same TBC model2.bls (lightDir.w = 1.0) rig.
     const glm::vec3 camFwd = camera_->getForward();
     const glm::vec3 camRight = camera_->getRight();
     const glm::vec3 camUp = camera_->getUp();
-    ubo.lightDir = glm::vec4(glm::normalize(camFwd - 0.35f * camRight - 0.45f * camUp), 0.0f);
-    ubo.lightColor = glm::vec4(1.0f, 0.96f, 0.90f, 0.0f);
-    ubo.ambientColor = glm::vec4(0.45f, 0.45f, 0.48f, 0.0f);
+    const auto studio = previewStudioLightConstants();
+    const glm::vec3 rayDir = (backgroundMode_ == PreviewBackgroundMode::RacialScene)
+        ? glm::normalize(camFwd - 0.35f * camRight - 0.45f * camUp)
+        : glm::normalize(camRight);
+    ubo.lightDir = glm::vec4(rayDir, studio.lightDirW);
+    ubo.lightColor = glm::vec4(studio.perFrameLightColorRGB[0],
+                               studio.perFrameLightColorRGB[1],
+                               studio.perFrameLightColorRGB[2],
+                               0.0f);
+    ubo.ambientColor = glm::vec4(studio.ambientRGB[0],
+                                 studio.ambientRGB[1],
+                                 studio.ambientRGB[2],
+                                 0.0f);
+    ubo.unitLight = glm::vec4(studio.unitAmbGain, 0.0f, 0.0f, 0.0f);
     ubo.viewPos = glm::vec4(camera_->getPosition(), 0.0f);
     // No fog in preview
     ubo.fogColor = glm::vec4(0.05f, 0.05f, 0.1f, 0.0f);

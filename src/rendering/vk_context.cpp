@@ -2378,6 +2378,31 @@ VkPipeline VkContext::getImGuiAdditivePipeline(VkPipelineLayout layout) {
     return imguiAdditivePipeline_;
 }
 
+VkPipeline VkContext::getImGuiPremultipliedPipeline(VkPipelineLayout layout, bool desaturated) {
+    auto& pipeline = imguiPremultipliedPipelines_[desaturated ? 1 : 0];
+    if (pipeline != VK_NULL_HANDLE) return pipeline;
+    const char* fragPath = desaturated
+        ? "assets/shaders/ui_premultiplied_desaturated.frag.spv"
+        : "assets/shaders/ui_premultiplied.frag.spv";
+    auto shaders = loadShaderPair(device, "assets/shaders/ui_additive.vert.spv",
+                                  fragPath, "premultiplied UI");
+    if (!shaders) throw std::runtime_error("Could not load premultiplied UI shaders");
+    pipeline = PipelineBuilder()
+        .setShaders(shaders.vertStage, shaders.fragStage)
+        .setVertexInput({{0, sizeof(ImDrawVert), VK_VERTEX_INPUT_RATE_VERTEX}}, {
+            {0, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(ImDrawVert, pos)},
+            {1, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(ImDrawVert, uv)},
+            {2, 0, VK_FORMAT_R8G8B8A8_UNORM, offsetof(ImDrawVert, col)}})
+        .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE)
+        .setNoDepthTest()
+        .setColorBlendAttachment(PipelineBuilder::blendPremultiplied())
+        .setDynamicStates({VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR})
+        .setLayout(layout).setRenderPass(overlayRenderPass)
+        .build(device, pipelineCache_);
+    if (pipeline == VK_NULL_HANDLE) throw std::runtime_error("Could not create premultiplied UI pipeline");
+    return pipeline;
+}
+
 VkPipeline VkContext::getImGuiDesaturatedPipeline(VkPipelineLayout layout, bool additive) {
     auto& pipeline = imguiDesaturatedPipelines_[additive ? 1 : 0];
     if (pipeline != VK_NULL_HANDLE) return pipeline;
@@ -2527,6 +2552,7 @@ void VkContext::destroyWorldLabelDepth() {
 
 void VkContext::destroyImGuiResources() {
     destroyWorldLabelDepth();
+    for (auto& pipeline : imguiPremultipliedPipelines_) destroy(device, pipeline);
     for (auto& pipeline : imguiDesaturatedPipelines_) destroy(device, pipeline);
     if (imguiAdditivePipeline_ != VK_NULL_HANDLE) {
         vkDestroyPipeline(device, imguiAdditivePipeline_, nullptr);

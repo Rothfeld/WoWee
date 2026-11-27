@@ -3724,11 +3724,17 @@ add_test(NAME spell_missile_motion COMMAND test_spell_missile_motion)
 set_tests_properties(spell_missile_motion PROPERTIES SKIP_RETURN_CODE 4)
 register_test_target(test_spell_missile_motion)
 
-# Unit portrait background mode & ghost/Wisp desaturation parity tests
-add_executable(test_unit_portrait test_unit_portrait.cpp)
+# Unit portrait background mode, preview FBO premultiplied/additive blend, & ghost/Wisp desaturation parity tests
+add_executable(test_unit_portrait
+    test_unit_portrait.cpp
+    ${CMAKE_SOURCE_DIR}/src/rendering/vk_pipeline.cpp
+    ${TEST_COMMON_SOURCES})
 target_include_directories(test_unit_portrait PRIVATE ${TEST_INCLUDE_DIRS})
 target_include_directories(test_unit_portrait SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
 target_link_libraries(test_unit_portrait PRIVATE catch2_main)
+if(TARGET Vulkan::Vulkan)
+    target_link_libraries(test_unit_portrait PRIVATE Vulkan::Vulkan)
+endif()
 add_test(NAME unit_portrait COMMAND test_unit_portrait)
 register_test_target(test_unit_portrait)
 

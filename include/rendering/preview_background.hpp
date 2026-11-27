@@ -56,4 +56,44 @@ enum class PreviewBackgroundMode : uint8_t {
     return false;
 }
 
+/// TBC 2.4.3 studio light parameters for off-screen CharacterPreview UBOs.
+///
+/// Measured on Native TBC 2.4.3 (build 8606) via DressUpModel:GetLight() and
+/// CharacterModelFrame:GetLight() (plus characterselect.lua:34):
+///   enabled=1, omni=0, dir=(0.00, 1.00, 0.00),
+///   ambIntensity=1.00, ambRGB=(0.70, 0.70, 0.70),
+///   dirIntensity=1.00, dirRGB=(0.80, 0.80, 0.64).
+/// Setting lightDirW = 1.0 activates character.frag.glsl's TBC model2.bls
+/// vertex-normal lighting (clamping litFactor to [0, 1] before multiplying
+/// rawTexRgb and omitting synthetic Phong specular / Sobel normal maps so flat
+/// weapon blades like Ethereum Nexus-Reaver do not blow out to solid white).
+struct PreviewStudioLight {
+    std::array<float, 3> ambientRGB;
+    std::array<float, 3> diffuseRGB;
+    std::array<float, 3> perFrameLightColorRGB;
+    float lightDirW;
+    float unitAmbGain;
+};
+
+[[nodiscard]] constexpr PreviewStudioLight previewStudioLightConstants() {
+    constexpr float kAmbR = 0.70f;
+    constexpr float kAmbG = 0.70f;
+    constexpr float kAmbB = 0.70f;
+    constexpr float kDiffR = 0.80f;
+    constexpr float kDiffG = 0.80f;
+    constexpr float kDiffB = 0.64f;
+    constexpr float kTbcUnitDiffuseScale = 2.5f;
+    return PreviewStudioLight{
+        .ambientRGB = {kAmbR, kAmbG, kAmbB},
+        .diffuseRGB = {kDiffR, kDiffG, kDiffB},
+        .perFrameLightColorRGB = {
+            kDiffR / kTbcUnitDiffuseScale,
+            kDiffG / kTbcUnitDiffuseScale,
+            kDiffB / kTbcUnitDiffuseScale,
+        },
+        .lightDirW = 1.0f,
+        .unitAmbGain = 1.0f,
+    };
+}
+
 } // namespace wowee::rendering

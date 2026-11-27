@@ -269,6 +269,19 @@ VkPipelineColorBlendAttachmentState PipelineBuilder::blendAlpha() {
     state.alphaBlendOp = VK_BLEND_OP_ADD;
     return state;
 }
+VkPipelineColorBlendAttachmentState PipelineBuilder::blendPremultiplied() {
+    VkPipelineColorBlendAttachmentState state{};
+    state.colorWriteMask = kColorWriteAll;
+    state.blendEnable = VK_TRUE;
+    state.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+    state.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    state.colorBlendOp = VK_BLEND_OP_ADD;
+    state.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    state.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    state.alphaBlendOp = VK_BLEND_OP_ADD;
+    return state;
+}
+
 VkPipelineColorBlendAttachmentState PipelineBuilder::blendAdditive() {
     VkPipelineColorBlendAttachmentState state{};
     state.colorWriteMask = kColorWriteAll;
@@ -276,7 +289,13 @@ VkPipelineColorBlendAttachmentState PipelineBuilder::blendAdditive() {
     state.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
     state.dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
     state.colorBlendOp = VK_BLEND_OP_ADD;
-    state.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    // Additive passes emit light (RGB) without adding surface occlusion (A).
+    // Preserving destination alpha keeps off-screen transparent FBOs (such as
+    // DressUpModel / CharacterPreview) at alpha=0 under pure additive glows and
+    // black-bordered DXT1 1-bit glow cards (e.g. BLUE_GLOW2.BLP on Ethereum
+    // Nexus-Reaver) so premultiplied UI compositing adds light cleanly over
+    // backdrop art instead of darkening or occluding it.
+    state.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
     state.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
     state.alphaBlendOp = VK_BLEND_OP_ADD;
     return state;
