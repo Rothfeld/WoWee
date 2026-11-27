@@ -1206,9 +1206,16 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
             VisibleEntry visible{.index = i, .modelId = instance.modelId, .distSq = distSq,
                                  .effectiveMaxDistSq = effectiveMaxDistSq,
                                  .groundDetail = instance.cachedIsGroundDetail};
-            // A faded instance is drawn blended, all of it - see M2Instance::fade.
+            float distFadeAlpha = 1.0f;
+            if (usesDoodadSmallCull(instance)) {
+                const float opaqueDist = doodadOpaqueDistanceOf(instance);
+                const float fadeBand = tbcDoodadFadeBand(opaqueDist, objectFade_);
+                distFadeAlpha = tbcDoodadDistanceAlpha(distSq, opaqueDist, fadeBand);
+            }
+            // A faded instance (sky crossfade or TBC objectFade band) is drawn
+            // blended across all its layers so opaque batches smoothly fade out.
             // External-pose companions only carry projected transparent batches.
-            const bool faded = instance.fade < 0.999f;
+            const bool faded = (instance.fade * distFadeAlpha) < 0.999f;
             if (!faded && !instance.externalPose) out.opaque.push_back(visible);
             if (faded || (instance.cachedModel &&
                 (instance.cachedModel->hasTransparentBatches || instance.cachedModel->isSpellEffect ||
@@ -1455,13 +1462,16 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                 if (entry.index >= instances.size()) continue;
                 auto& instance = instances[entry.index];
 
-                // Distance-based fade alpha
-                float fadeFrac = model.disableAnimation ? 0.55f : fadeStartFraction;
-                float fadeStartDistSq = entry.effectiveMaxDistSq * fadeFrac * fadeFrac;
+                // Distance-based fade alpha (placed doodads using SmallCull route
+                // their fade band through Pass 2 and stay fully opaque in Pass 1).
                 float fadeAlpha = 1.0f;
-                if (entry.distSq > fadeStartDistSq) {
-                    fadeAlpha = std::clamp((entry.effectiveMaxDistSq - entry.distSq) /
-                                          (entry.effectiveMaxDistSq - fadeStartDistSq), 0.0f, 1.0f);
+                if (!usesDoodadSmallCull(instance)) {
+                    float fadeFrac = model.disableAnimation ? 0.55f : fadeStartFraction;
+                    float fadeStartDistSq = entry.effectiveMaxDistSq * fadeFrac * fadeFrac;
+                    if (entry.distSq > fadeStartDistSq) {
+                        fadeAlpha = std::clamp((entry.effectiveMaxDistSq - entry.distSq) /
+                                              (entry.effectiveMaxDistSq - fadeStartDistSq), 0.0f, 1.0f);
+                    }
                 }
                 // Ground detail used to be held at 0.82 here. This is the
                 // opaque pass: nothing blended it, so it was a number with no
@@ -2102,20 +2112,28 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
         const auto& instance = instances[entry.index];
         const M2ModelGPU* modelPtr = instance.cachedModel;
         if (!modelPtr) continue;
-        if (!modelPtr->hasTransparentBatches && !modelPtr->isSpellEffect && !modelPtr->hasProjectedBatches) continue;
         if (!modelPtr->vertexBuffer || !modelPtr->indexBuffer) continue;
         const M2ModelGPU& model = *modelPtr;
 
         // Fade alpha
         float fadeAlpha = 1.0f;
-        float fadeFrac = model.disableAnimation ? 0.55f : fadeStartFraction;
-        float fadeStartDistSq = entry.effectiveMaxDistSq * fadeFrac * fadeFrac;
-        if (entry.distSq > fadeStartDistSq) {
-            fadeAlpha = std::clamp((entry.effectiveMaxDistSq - entry.distSq) /
-                                  (entry.effectiveMaxDistSq - fadeStartDistSq), 0.0f, 1.0f);
+        if (usesDoodadSmallCull(instance)) {
+            const float opaqueDist = doodadOpaqueDistanceOf(instance);
+            const float fadeBand = tbcDoodadFadeBand(opaqueDist, objectFade_);
+            fadeAlpha = tbcDoodadDistanceAlpha(entry.distSq, opaqueDist, fadeBand);
+        } else {
+            float fadeFrac = model.disableAnimation ? 0.55f : fadeStartFraction;
+            float fadeStartDistSq = entry.effectiveMaxDistSq * fadeFrac * fadeFrac;
+            if (entry.distSq > fadeStartDistSq) {
+                fadeAlpha = std::clamp((entry.effectiveMaxDistSq - entry.distSq) /
+                                      (entry.effectiveMaxDistSq - fadeStartDistSq), 0.0f, 1.0f);
+            }
         }
         const float instanceFadeAlpha = fadeAlpha * instance.fade;
-        const bool instanceFaded = instance.fade < 0.999f;
+        const bool instanceFaded = instanceFadeAlpha < 0.999f;
+        if (!instanceFaded && !model.hasTransparentBatches && !model.isSpellEffect && !model.hasProjectedBatches) {
+            continue;
+        }
 
         const bool modelNeedsAnimation = model.hasAnimation && !model.disableAnimation;
         if (modelNeedsAnimation && instance.boneMatrices.empty()) continue;

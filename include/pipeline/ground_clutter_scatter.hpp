@@ -97,15 +97,21 @@ inline glm::vec3 groundClutterSlopeEuler(const glm::vec3& surfaceNormal, float y
 /// Scatter ground-effect detail doodads across one 8x8 MCNK chunk.
 ///
 /// TBC 2.4.3's `groundEffectDensity` (16..64 on the UI slider, 24 default,
-/// up to 256 via console) scales out of 64 per quad:
-///   - Each valid growing quad (qx, qy) spawns `ge.density * N / 64` tufts
-///     (with deterministic stochastic rounding of any fractional remainder):
-///     3.0 tufts/quad at N=24 / density=8, 8.0 tufts/quad at N=64 / density=8.
+/// up to 256 via console) is the per-slot survival probability N / 256 across
+/// each quad's authored `ge.density` candidate slots (`Binomial(ge.density, N/256)`):
+///   - Each valid growing 4.17-yd quad (qx, qy) evaluates `ge.density` (e.g. 8
+///     or 10) deterministic candidate slots `a = 0 .. ge.density - 1`, and each
+///     slot independently spawns with probability `clamp(N / 256, 0, 1)`.
+///   - Mean tufts per growing quad = `ge.density * N / 256` (48 tufts/chunk at
+///     N=24 / density=8, 60 tufts/chunk at N=24 / density=10, 160 at N=64 /
+///     density=10), naturally producing ~37-46% bare quads alongside 1-, 2-, and
+///     3-tuft meadow clusters without rectangular 8-tuft blocks or 4x astroturf.
+///   - Because each slot `a` compares its fixed deterministic roll against
+///     `N / 256`, raising `groundEffectDensity` (16 -> 24 -> 40 -> 64 -> 256)
+///     adds individual tufts while preserving every lower-density tuft identically.
 ///   - When MCAL alpha maps are present, each sample point (fracX, fracY) checks
 ///     the dominant painted terrain layer so tufts on mixed road-edge quads stay
 ///     off bare road/snow texels whose layer carries no ground-effect doodads.
-///   - Each tuft index within a quad derives its own sub-seed so raising density
-///     preserves every lower-density tuft identically.
 template <typename LookupEffectFn, typename EmitFn>
 size_t scatterChunkGroundClutter(const MapChunk& chunk,
                                  int tileX, int tileY, int cx, int cy,
@@ -184,18 +190,27 @@ size_t scatterChunkGroundClutter(const MapChunk& chunk,
         if (ge->density == 0 || totalWeight == 0) continue;
 
         const uint32_t cellSeed = mixGroundClutterSeed((chunkKey | static_cast<uint32_t>(cell)) ^ 0xA511E9B3u);
-        const float exactCount = static_cast<float>(ge->density) * effectiveDensity / 64.0f;
-        uint32_t attempts = static_cast<uint32_t>(exactCount);
-        const float fracCount = exactCount - static_cast<float>(attempts);
-        if (fracCount > 0.0f) {
-            const uint32_t roundRoll = mixGroundClutterSeed(cellSeed ^ 0x9E3779B9u);
-            if (static_cast<float>(roundRoll >> 8) / 16777216.0f < fracCount) {
-                ++attempts;
+        const float slotProb = std::clamp(effectiveDensity / 256.0f, 0.0f, 1.0f);
+        uint32_t candidateSlots = ge->density;
+        if (effectiveDensity > 256.0f) {
+            const float exactCount = static_cast<float>(ge->density) * (effectiveDensity / 256.0f);
+            candidateSlots = static_cast<uint32_t>(exactCount);
+            const float fracCount = exactCount - static_cast<float>(candidateSlots);
+            if (fracCount > 0.0f) {
+                const uint32_t roundRoll = mixGroundClutterSeed(cellSeed ^ 0x517CC1B7u);
+                if (static_cast<float>(roundRoll >> 8) / 16777216.0f < fracCount) {
+                    ++candidateSlots;
+                }
             }
         }
-        attemptsTotal += attempts;
 
-        for (uint32_t a = 0; a < attempts; ++a) {
+        for (uint32_t a = 0; a < candidateSlots; ++a) {
+            const uint32_t slotRoll = mixGroundClutterSeed(cellSeed ^ (a * 0x9E3779B9u + 0x7F4A7C15u));
+            if (effectiveDensity < 256.0f &&
+                static_cast<float>(slotRoll >> 8) / 16777216.0f >= slotProb) {
+                continue;
+            }
+            ++attemptsTotal;
             uint32_t seed = mixGroundClutterSeed(cellSeed ^ (a * 0x85EBCA6Bu + 0xC2B2AE35u));
             auto nextRand = [&seed]() -> uint32_t {
                 seed = seed * 1664525u + 1013904223u;

@@ -372,7 +372,7 @@ void main() {
     // in Opened (149): in the READY state 2.4.3 shows the bare spiky egg,
     // and this drew it encased in ice.
     if (vFadeAlpha < 1.0 / 255.0) discard;
-    float outAlpha = texColor.a * vFadeAlpha;
+    float outAlpha = (blendMode == 0 && alphaTest == 0) ? vFadeAlpha : (texColor.a * vFadeAlpha);
     // Surviving alpha-key fragments are opaque.
     // Color-key-only materials have no meaningful texture alpha; keep them
     // opaque after the discard.

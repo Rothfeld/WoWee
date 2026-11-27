@@ -8329,3 +8329,91 @@ TEST_CASE_METHOD(Integration, "FontInstance GetFont and SetFont canonicalize XML
     run("TestOutlineFS:SetFont('Fonts\\\\ARIALN.TTF', 12, 'THICK, MONOCHROME')");
     truth("select(3, TestOutlineFS:GetFont()) == 'THICKOUTLINE, MONOCHROME'");
 }
+
+TEST_CASE_METHOD(Integration, "TBC WorldDetail, SmallCull, objectFade and groundEffectDensity authority match build 8606", "[cvar][tbc][clutter][smallcull]") {
+    run("__WoweeInterfaceVersion = 20400");
+    truth("GetCVarDefault('groundEffectDensity') == '24'");
+    truth("GetCVarDefault('groundEffectDist') == '70'");
+    truth("GetCVarDefault('smallCull') == '0.04'");
+    truth("GetCVarDefault('DistCull') == '500'");
+    truth("GetCVarDefault('objectFade') == '1'");
+
+    run("__WoweeInterfaceVersion = 30300");
+    truth("GetCVarDefault('groundEffectDensity') == '30'");
+    truth("GetCVarDefault('groundEffectDist') == '140'");
+    run("__WoweeInterfaceVersion = 20400");
+
+    std::string groundClutterPct = "56.25";
+    std::string groundDistYards = "70";
+    std::string envDetailPct = "100";
+    int setClientCallsDuringReplay = 0;
+    bool inReplay = false;
+    float observedSmallCull = 0.04f;
+    float observedDistCull = 0.0f;
+    bool observedObjectFade = true;
+    float observedEnvDetail = 1.0f;
+
+    // Seed a stale CVar echo in cvars.cfg/store before startup replay: settings.cfg
+    // (groundClutterPct = 56.25 -> groundEffectDensity = 24) must win on replay.
+    addons::setStoredCVar("groundeffectdensity", "64");
+
+    addons::LuaServices services;
+    services.getClientSetting = [&](const std::string& key) -> std::string {
+        if (key == "groundclutter") return groundClutterPct;
+        if (key == "groundclutterdistance") return groundDistYards;
+        if (key == "environmentdetail") return envDetailPct;
+        return "";
+    };
+    services.setClientSetting = [&](const std::string& key, const std::string& val) {
+        if (inReplay) ++setClientCallsDuringReplay;
+        if (key == "groundclutter") groundClutterPct = val;
+        else if (key == "groundclutterdistance") groundDistYards = val;
+        else if (key == "environmentdetail") envDetailPct = val;
+    };
+    services.setSmallCull = [&](float v) { observedSmallCull = v; };
+    services.setDistCull = [&](float v) { observedDistCull = v; };
+    services.setObjectFade = [&](bool on) { observedObjectFade = on; };
+    services.setEnvironmentDetail = [&](float v) { observedEnvDetail = v; };
+    lua.setLuaServices(services);
+
+    inReplay = true;
+    addons::applyStoredCVarSideEffects(lua.getState());
+    inReplay = false;
+
+    CHECK(setClientCallsDuringReplay == 0);
+    CHECK(groundClutterPct == "56.25");
+    CHECK(addons::storedCVarValue("groundEffectDensity", "0") == "24");
+    truth("GetCVar('groundEffectDensity') == '24'");
+
+    // Runtime SetCVar("groundEffectDensity", "40") updates client setting to 93.75%.
+    run("SetCVar('groundEffectDensity', '40')");
+    CHECK(groundClutterPct == "93.75");
+    truth("GetCVar('groundEffectDensity') == '40'");
+
+    // TBC OptionsFrame SetWorldDetail / GetWorldDetail drive SmallCull and Environment Detail.
+    truth("GetWorldDetail() == 1");
+    run("SetWorldDetail(0)");
+    CHECK(envDetailPct == "50");
+    CHECK(observedEnvDetail == Catch::Approx(0.5f));
+    CHECK(observedSmallCull == Catch::Approx(0.07f));
+    truth("GetWorldDetail() == 0");
+    truth("GetCVar('smallCull') == '0.07'");
+
+    run("SetWorldDetail(2)");
+    CHECK(envDetailPct == "150");
+    CHECK(observedEnvDetail == Catch::Approx(1.5f));
+    CHECK(observedSmallCull == Catch::Approx(0.01f));
+    truth("GetWorldDetail() == 2");
+    truth("GetCVar('smallCull') == '0.01'");
+
+    run("SetWorldDetail(1)");
+    CHECK(observedSmallCull == Catch::Approx(0.04f));
+    run("SetCVar('DistCull', '500')");
+    CHECK(observedDistCull == Catch::Approx(500.0f));
+    run("SetCVar('objectFade', '0')");
+    CHECK_FALSE(observedObjectFade);
+    run("SetCVar('objectFade', '1')");
+    CHECK(observedObjectFade);
+
+    lua.setLuaServices({});
+}

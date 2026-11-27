@@ -38,6 +38,7 @@
 #include "ui/display_modes.hpp"
 #include "ui/widget_tree.hpp"
 #include "rendering/camera_controller.hpp"
+#include "rendering/m2_view_distance.hpp"
 #include "addons/lua_engine.hpp"
 #include "addons/expansion_api_surface.hpp"
 #include "pipeline/asset_manager.hpp"
@@ -946,10 +947,12 @@ static void pushCvarDefault(lua_State* L, const std::string& n) {
     else if (n == "particledensity") lua_pushstring(L, "1");
     else if (n == "environmentdetail") lua_pushstring(L, "1");
     else if (n == "farclip") lua_pushstring(L, "1900");
-    else if (n == "groundeffectdensity") lua_pushstring(L, "30");
+    else if (n == "groundeffectdensity") lua_pushstring(L, tbcInterface(L) ? "24" : "30");
     else if (n == "spelleffectlevel") lua_pushstring(L, "9");
     else if (n == "worlddetail") lua_pushstring(L, "1");
     else if (n == "smallcull") lua_pushstring(L, "0.04");
+    else if (n == "distcull") lua_pushstring(L, "500");
+    else if (n == "objectfade") lua_pushstring(L, "1");
     else if (n == "shadowlod") lua_pushstring(L, "1");
     else if (n == "desktopgamma") lua_pushstring(L, "1");
     else if (n == "screenedgeflash") lua_pushstring(L, "1");
@@ -964,7 +967,7 @@ static void pushCvarDefault(lua_State* L, const std::string& n) {
     // our five-step 0..4 sampler range), so anything less would be a quality
     // setting the player never asked for.
     else if (n == "texturefilteringmode") lua_pushstring(L, "4");
-    else if (n == "groundeffectdist") lua_pushstring(L, "140");
+    else if (n == "groundeffectdist") lua_pushstring(L, tbcInterface(L) ? "70" : "140");
     // Level 3 is 4096, which is the shadow map this client drew before the
     // setting existed. Answering the size it has always used keeps a player who
     // never touches this from being quietly downgraded by it appearing.
@@ -1890,6 +1893,7 @@ static void syncTbcVideoAlias(lua_State* L, const std::string& cvar,
         const int wd = std::clamp(std::atoi(value.c_str()), 0, 2);
         const int pct = 50 + wd * 50;
         if (svc->setEnvironmentDetail) svc->setEnvironmentDetail(static_cast<float>(pct) / 100.0f);
+        if (svc->setSmallCull) svc->setSmallCull(rendering::tbcSmallCullForWorldDetail(wd));
         if (!g_replayingStoredCVars && svc->setClientSetting) {
             g_applyingCVarToSetting = true;
             svc->setClientSetting("environmentdetail", std::to_string(pct));
@@ -2087,6 +2091,22 @@ static void applyCVarSideEffects(lua_State* L, const std::string& key,
         }
     }
 
+    if (key == "smallcull") {
+        if (auto* svc = getLuaServices(L); svc && svc->setSmallCull) {
+            svc->setSmallCull(static_cast<float>(std::atof(value.c_str())));
+        }
+    }
+    if (key == "distcull") {
+        if (auto* svc = getLuaServices(L); svc && svc->setDistCull) {
+            svc->setDistCull(static_cast<float>(std::atof(value.c_str())));
+        }
+    }
+    if (key == "objectfade") {
+        if (auto* svc = getLuaServices(L); svc && svc->setObjectFade) {
+            svc->setObjectFade(value != "0");
+        }
+    }
+
     // Particle Density, which the panel already offers as a fraction - 0.1 to
     // 1 - so it needs no conversion, only passing on.
     if (key == "particledensity") {
@@ -2112,7 +2132,9 @@ static void applyCVarSideEffects(lua_State* L, const std::string& key,
         }
     }
     // The table first: these are settings the client owns and the panels drive.
-    if (const auto* binding = findClientCVar(key)) {
+    // Skipped during startup CVar replay so stale cvars.cfg echoes never
+    // overwrite authoritative settings.cfg values (see g_replayingStoredCVars).
+    if (const auto* binding = findClientCVar(key); binding && !g_replayingStoredCVars) {
         if (auto* svc = getLuaServices(L); svc && svc->setClientSetting) {
             // The store is the source here, so what the setting does with the
             // value must not come back and overwrite it.
@@ -2246,13 +2268,17 @@ void noteClientSettingChanged(const std::string& settingKey, const std::string& 
 void applySoundCVarSideEffects(lua_State* L) { applySoundCVars(L); }
 
 void applyStoredCVarSideEffects(lua_State* L) {
-    // Sync client-owned secureAbilityToggle into the in-memory CVar store when
-    // no explicit CVar row exists yet, so SpellHandler::storedCVarValue honors
-    // the live setting/default ("1") on a fresh profile without writing disk.
-    if (cvarStore().find("secureabilitytoggle") == cvarStore().end()) {
-        if (auto* svc = getLuaServices(L); svc && svc->getClientSetting) {
-            const std::string v = svc->getClientSetting("secureabilitytoggle");
-            if (!v.empty()) cvarStore()["secureabilitytoggle"] = v;
+    // Client-owned settings in settings.cfg are authoritative over stale echoes
+    // in cvars.cfg: mirror any answered kClientCVars setting into the in-memory
+    // CVar store before replaying service side effects.
+    if (auto* svc = getLuaServices(L); svc && svc->getClientSetting) {
+        for (const auto& binding : kClientCVars) {
+            const std::string v = svc->getClientSetting(binding.setting);
+            if (v.empty()) continue;
+            cvarStore()[binding.cvar] =
+                binding.scale != 1.0
+                    ? ui::settingNumberText(std::atof(v.c_str()) / binding.scale)
+                    : v;
         }
     }
     g_replayingStoredCVars = true;
@@ -6025,6 +6051,38 @@ static int lua_SetBaseMip(lua_State* L) {
     return 0;
 }
 
+static int lua_GetWorldDetail(lua_State* L) {
+    if (auto* svc = getLuaServices(L); svc && svc->getClientSetting) {
+        const std::string v = svc->getClientSetting("environmentdetail");
+        if (!v.empty()) {
+            const int pct = std::atoi(v.c_str());
+            const int wd = std::clamp(static_cast<int>(std::lround((pct - 50) / 50.0)), 0, 2);
+            lua_pushnumber(L, wd);
+            return 1;
+        }
+    }
+    if (auto it = cvarStore().find("smallcull"); it != cvarStore().end() && !it->second.empty()) {
+        lua_pushnumber(L, rendering::tbcWorldDetailForSmallCull(
+                              static_cast<float>(std::atof(it->second.c_str()))));
+        return 1;
+    }
+    const std::string v = storedCVarValue("worlddetail", "1");
+    lua_pushnumber(L, std::clamp(std::atoi(v.c_str()), 0, 2));
+    return 1;
+}
+
+static int lua_SetWorldDetail(lua_State* L) {
+    const int wd = std::clamp(static_cast<int>(luaL_optnumber(L, 1, 1)), 0, 2);
+    const char* scText = (wd == 0) ? "0.07" : (wd == 1 ? "0.04" : "0.01");
+    setStoredCVar("worlddetail", std::to_string(wd));
+    setStoredCVar("smallcull", scText);
+    syncTbcVideoAlias(L, "worlddetail", std::to_string(wd));
+    if (auto* svc = getLuaServices(L); svc && svc->setSmallCull) {
+        svc->setSmallCull(rendering::tbcSmallCullForWorldDetail(wd));
+    }
+    return 0;
+}
+
 static int lua_GetVideoCaps(lua_State* L) {
     lua_pushboolean(L, 1);   // 1: anisotropic
     lua_pushboolean(L, 1);   // 2: pixelShaders
@@ -6471,6 +6529,8 @@ void registerSystemLuaAPI(lua_State* L) {
                 {"SetTerrainMip",            lua_SetTerrainMip},
                 {"GetBaseMip",               lua_GetBaseMip},
                 {"SetBaseMip",               lua_SetBaseMip},
+                {"GetWorldDetail",           lua_GetWorldDetail},
+                {"SetWorldDetail",           lua_SetWorldDetail},
                 {"SetGamma",                 lua_SetGamma},
                 {"WoweeReportMissingFixedControls",
                                              lua_WoweeReportMissingFixedControls},

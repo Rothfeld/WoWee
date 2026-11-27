@@ -139,6 +139,7 @@ struct M2ModelGPU {
     glm::vec3 boundMin;
     glm::vec3 boundMax;
     float boundRadius = 0.0f;
+    float vertexRadius = 0.0f;
     /// The M2 header's bounding (collision) box as authored; boundMin/boundMax
     /// above hold the tight render bounds instead. All zero when the model has
     /// no collision (Bush_Sansam.m2).
@@ -402,6 +403,7 @@ struct M2Instance {
     bool cachedIsValid = false;
     bool skipCollision = false;    // Fully non-collidable visual/effect instance
     float cachedBoundRadius = 0.0f;
+    float cachedVertexRadius = 0.0f;
     glm::vec3 cachedCullCenter{0.0f};              // transformed visual-bounds center
     float cachedVisualRadius = 0.0f;               // transformed visual-bounds half diagonal
     // Pre-computed per-instance cull factors (depend only on static flags + scale +
@@ -1036,19 +1038,34 @@ public:
     /// distance alone, and switching the whole pass off cannot answer it.
     void setDoodadDistanceCap(float yards) { doodadDistanceCapYards_ = yards; }
 
+    [[nodiscard]] bool usesDoodadSmallCull(const M2Instance& inst) const noexcept {
+        return !skyMode_ && !inst.serverVisibility() && !inst.cachedIsGroundDetail && smallCull_ > 0.0f;
+    }
+    [[nodiscard]] float doodadOpaqueDistanceOf(const M2Instance& inst) const noexcept {
+        const float d = tbcDoodadOpaqueMaxDistance(
+            inst.cachedVertexRadius, smallCull_, distCull_, inst.wmoDoodadPlaced);
+        return std::min(d, cappedViewDistance());
+    }
+    [[nodiscard]] float doodadMaxDistanceOf(const M2Instance& inst) const noexcept {
+        const float opaqueDist = doodadOpaqueDistanceOf(inst);
+        const float fadeBand = tbcDoodadFadeBand(opaqueDist, objectFade_);
+        return std::min(opaqueDist + fadeBand, cappedViewDistance());
+    }
+
     /// The doodad view distance with that cap applied.
     /// Squared distance one instance draws to (m2InstanceMaxDistSq), given
     /// this frame's ambient doodad distance.
     float maxDistSqOf(const M2Instance& inst, float baseMaxDistSq) const {
+        const float doodadMaxDist = usesDoodadSmallCull(inst) ? doodadMaxDistanceOf(inst) : 0.0f;
         return m2InstanceMaxDistSq(baseMaxDistSq, inst.cachedEffectiveMaxDistSqFactor, inst.serverVisibility(),
                                    inst.serverVisibility() ? viewDistanceAbsolute_ : cappedViewDistance(),
-                                   inst.cachedIsGroundDetail, groundDetailMaxDistance_);
+                                   inst.cachedIsGroundDetail, groundDetailMaxDistance_, doodadMaxDist);
     }
     /// Squared distance an instance's particles and ribbons are drawn and
-    /// stepped to: the scene's model distance, or the view distance for a
-    /// server object (its particles go wherever it is drawn).
+    /// stepped to: follows the instance's own draw ceiling so small culled
+    /// doodads stop emitting and large cavern smoke emitters draw to range.
     float particleMaxDistSq(const M2Instance& inst) const {
-        return inst.serverVisibility() ? viewDistanceAbsolute_ * viewDistanceAbsolute_ : cachedMaxRenderDistSq_;
+        return maxDistSqOf(inst, cachedMaxRenderDistSq_);
     }
     float cappedViewDistance() const {
         return doodadDistanceCapYards_ > 0.0f
@@ -1086,9 +1103,23 @@ public:
 
     void setEnvironmentDetail(float detail) {
         environmentDetail_ = std::clamp(detail, 0.25f, 1.5f);
+        smallCull_ = tbcSmallCullForEnvironmentDetail(environmentDetail_);
         recomputeViewDistanceScale();
     }
     [[nodiscard]] float environmentDetail() const { return environmentDetail_; }
+
+    void setSmallCull(float threshold) {
+        smallCull_ = std::clamp(threshold, 0.001f, 0.25f);
+    }
+    [[nodiscard]] float smallCull() const noexcept { return smallCull_; }
+
+    void setDistCull(float yards) {
+        distCull_ = std::max(yards, 0.0f);
+    }
+    [[nodiscard]] float distCull() const noexcept { return distCull_; }
+
+    void setObjectFade(bool enabled) { objectFade_ = enabled; }
+    [[nodiscard]] bool objectFade() const noexcept { return objectFade_; }
 
 
     // Pre-decoded BLP cache: set by terrain manager before calling loadModel()
@@ -1569,6 +1600,9 @@ private:
     /// detail setting changes without the caller having to say it again.
     float viewDistanceRaw_ = 1200.0f;
     float environmentDetail_ = 1.0f;
+    float smallCull_ = 0.04f;
+    float distCull_ = 0.0f;
+    bool objectFade_ = true;
     float groundDetailMaxDistance_ = 0.0f;   // 0 = no cap of its own
     void recomputeViewDistanceScale() {
         viewDistanceScale_ = (viewDistanceRaw_ / 1200.0f) * environmentDetail_;

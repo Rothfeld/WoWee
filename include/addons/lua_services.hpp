@@ -66,6 +66,11 @@ struct LuaServices {
     /// the game's Particle Density.
     std::function<void(float)> setParticleDensity;
 
+    /// TBC 2.4.3 M2 doodad SmallCull threshold, DistCull cap, and objectFade switch.
+    std::function<void(float)> setSmallCull;
+    std::function<void(float)> setDistCull;
+    std::function<void(bool)> setObjectFade;
+
     /// The game's Weather Detail, CVar weatherDensity 0 to 3.
     std::function<void(int)> setWeatherDensity;
 

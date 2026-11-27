@@ -96,10 +96,10 @@ void M2Instance::recomputeCachedCullFactors() {
 
     float worldRadius = cachedVisualRadius;
     float cullRadius = worldRadius;
-    if (cachedDisableAnimation) cullRadius = std::max(cullRadius, 3.0f);
+    const float rawVertexRadius = cachedModel ? cachedModel->vertexRadius : cachedBoundRadius;
+    cachedVertexRadius = (rawVertexRadius >= 0.01f) ? (rawVertexRadius * scale) : worldRadius;
     float factor = std::max(1.0f, cullRadius / rendering::M2_CULL_RADIUS_SCALE_DIVISOR);
-    if (cachedDisableAnimation) factor *= 2.6f;
-    if (cachedIsGroundDetail)   factor *= 0.9f;
+    if (cachedIsGroundDetail) factor *= 0.9f;
     cachedEffectiveMaxDistSqFactor = factor;
     cachedPaddedRadius = std::max(cullRadius * rendering::M2_PADDED_RADIUS_SCALE,
                                   cullRadius + rendering::M2_PADDED_RADIUS_MIN_MARGIN);
@@ -1543,6 +1543,7 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId, boo
     gpuModel.boundMin = tightMin;
     gpuModel.boundMax = tightMax;
     gpuModel.boundRadius = model.boundRadius;
+    gpuModel.vertexRadius = model.vertexRadius;
     gpuModel.headerBoxMin = model.boundMin;
     gpuModel.headerBoxMax = model.boundMax;
     gpuModel.headerBoundRadius = model.boundRadius;
@@ -1556,6 +1557,9 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId, boo
                                         return v.position;
                                     })
                 .radius;
+    }
+    if (gpuModel.vertexRadius < 0.01f) {
+        gpuModel.vertexRadius = gpuModel.boundRadius;
     }
     gpuModel.indexCount = static_cast<uint32_t>(model.indices.size());
     gpuModel.vertexCount = static_cast<uint32_t>(model.vertices.size());

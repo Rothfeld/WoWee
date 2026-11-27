@@ -714,6 +714,18 @@ bool Application::initialize() {
             if (!renderer) return;
             if (auto* m2 = renderer->getM2Renderer()) m2->setEnvironmentDetail(detail);
         };
+        luaSvc.setSmallCull = [this](float threshold) {
+            if (!renderer) return;
+            if (auto* m2 = renderer->getM2Renderer()) m2->setSmallCull(threshold);
+        };
+        luaSvc.setDistCull = [this](float yards) {
+            if (!renderer) return;
+            if (auto* m2 = renderer->getM2Renderer()) m2->setDistCull(yards);
+        };
+        luaSvc.setObjectFade = [this](bool enabled) {
+            if (!renderer) return;
+            if (auto* m2 = renderer->getM2Renderer()) m2->setObjectFade(enabled);
+        };
         luaSvc.setParticleDensity = [this](float density) {
             if (!renderer) return;
             if (auto* m2 = renderer->getM2Renderer()) m2->setParticleDensity(density);
