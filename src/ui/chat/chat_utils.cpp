@@ -69,6 +69,87 @@ std::string portBotHelpText() {
            ". Also supports '.tele ...' or 'xyz x y z [map [o]]'.";
 }
 
+bool hasValidChatEscapeCodes(std::string_view message) {
+    size_t i = 0;
+    while (i < message.size()) {
+        if (message[i] != '|') {
+            ++i;
+            continue;
+        }
+        if (i + 1 >= message.size()) {
+            return false;
+        }
+        const char code = message[i + 1];
+        if (code == '|' || code == 'r') {
+            i += 2;
+            continue;
+        }
+        if (code == 'c') {
+            if (i + 10 > message.size()) {
+                return false;
+            }
+            for (size_t k = 0; k < 8; ++k) {
+                const char ch = message[i + 2 + k];
+                if (ch == '|' || ch == '\0') {
+                    return false;
+                }
+            }
+            i += 10;
+            continue;
+        }
+        if (code == 'H') {
+            size_t p = i + 2;
+            while (p < message.size() && message[p] != '|') {
+                ++p;
+            }
+            if (p == i + 2 || p + 1 >= message.size() || message[p + 1] != 'h') {
+                return false;
+            }
+            size_t q = p + 2;
+            bool closed = false;
+            while (q < message.size()) {
+                if (message[q] != '|') {
+                    ++q;
+                    continue;
+                }
+                if (q + 1 >= message.size()) {
+                    return false;
+                }
+                const char inner = message[q + 1];
+                if (inner == 'h') {
+                    i = q + 2;
+                    closed = true;
+                    break;
+                }
+                if (inner == '|' || inner == 'r') {
+                    q += 2;
+                    continue;
+                }
+                if (inner == 'c') {
+                    if (q + 10 > message.size()) {
+                        return false;
+                    }
+                    for (size_t k = 0; k < 8; ++k) {
+                        const char ch = message[q + 2 + k];
+                        if (ch == '|' || ch == '\0') {
+                            return false;
+                        }
+                    }
+                    q += 10;
+                    continue;
+                }
+                return false;
+            }
+            if (!closed) {
+                return false;
+            }
+            continue;
+        }
+        return false;
+    }
+    return true;
+}
+
 } // namespace chat_utils
 } // namespace ui
 } // namespace wowee

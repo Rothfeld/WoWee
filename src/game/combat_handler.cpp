@@ -653,6 +653,9 @@ void CombatHandler::addCombatText(CombatTextEntry::Type type, int32_t amount, ui
         input.amount = amount;
         input.spellId = spellId;
         input.extraSpellId = extraSpellId;
+        input.spellSchoolMask = (spellId != 0) ? owner_.getSpellSchoolMask(spellId) : 0;
+        input.extraSpellSchoolMask = (extraSpellId != 0) ? owner_.getSpellSchoolMask(extraSpellId) : 0;
+        input.damageSchoolMask = schoolMask;
         input.powerType = powerType;
         input.srcGuid = effectiveSrc;
         input.dstGuid = effectiveDst;

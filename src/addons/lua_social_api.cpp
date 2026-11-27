@@ -9,6 +9,7 @@
 #include "game/chat_handler.hpp"
 #include "game/reputation_standing.hpp"
 #include "game/stationery.hpp"
+#include "ui/chat/chat_utils.hpp"
 #include "ui/chat/macro_evaluator.hpp"
 #include <cassert>
 #include "rendering/animation_controller.hpp"
@@ -158,9 +159,12 @@ static int lua_GetLanguageByIndex(lua_State* L) {
 }
 
 static int lua_SendChatMessage(lua_State* L) {
+    const char* msg = luaL_checkstring(L, 1);
+    if (!ui::chat_utils::hasValidChatEscapeCodes(msg)) {
+        return luaL_error(L, "SendChatMessage(): Invalid escape code in chat message");
+    }
     auto* gh = getGameHandler(L);
     if (!gh) return 0;
-    const char* msg = luaL_checkstring(L, 1);
     const char* chatType = luaL_optstring(L, 2, "SAY");
     // language arg (3) ignored - server determines language
     const char* target = luaL_optstring(L, 4, "");
@@ -3806,7 +3810,42 @@ void registerSocialLuaAPI(lua_State* L) {
                 {"BNIsFriend",      [](lua_State* L) -> int { lua_pushboolean(L, 0); return 1; }},
                 {"BNIsToonBlocked", [](lua_State* L) -> int { lua_pushboolean(L, 0); return 1; }},
                 {"BNGetNumFriendInvites", [](lua_State* L) -> int { lua_pushnumber(L, 0); return 1; }},
-                {"GetClickFrame",         [](lua_State* L) -> int { lua_pushnil(L); return 1; }},
+                {"GetClickFrame", [](lua_State* L) -> int {
+            // Ensure __WoweeFrameMT:Click coerces down to boolean (TBC 2.4.3
+            // SecureCmdList["CLICK"] passes "" when omitted and "1" when down).
+            // Applied lazily here because registerSocialLuaApi runs before
+            // LuaEngine::initialize creates __WoweeFrameMT.
+            lua_getglobal(L, "__WoweeFrameMT");
+            if (lua_istable(L, -1)) {
+                lua_getfield(L, -1, "__clickBoolFixed");
+                const bool alreadyFixed = lua_toboolean(L, -1) != 0;
+                lua_pop(L, 2);
+                if (!alreadyFixed) {
+                    if (luaL_dostring(L,
+                            "if __WoweeFrameMT and __WoweeFrameMT.Click and not __WoweeFrameMT.__clickBoolFixed then\n"
+                            "    local rawClick = __WoweeFrameMT.Click\n"
+                            "    __WoweeFrameMT.__clickBoolFixed = true\n"
+                            "    function __WoweeFrameMT:Click(button, down)\n"
+                            "        local isDown = (down == true) or (down ~= nil and down ~= false and down ~= '' and tonumber(down) ~= 0)\n"
+                            "        return rawClick(self, button, isDown)\n"
+                            "    end\n"
+                            "end\n") != 0) {
+                        lua_pop(L, 1);
+                    }
+                }
+            } else {
+                lua_pop(L, 1);
+            }
+
+            const char* name = luaL_optstring(L, 1, nullptr);
+            if (!name || !*name) return luaReturnNil(L);
+            lua_getglobal(L, name);
+            if (tableWidgetId(L, -1) != 0) {
+                return 1;
+            }
+            lua_pop(L, 1);
+            return luaReturnNil(L);
+        }},
                 // Pet autocast is left alone deliberately rather than wired to
                 // togglePetSpellAutocast: these two say enable and disable, the
                 // client can only toggle, and nothing reads back which state a
@@ -4130,6 +4169,21 @@ void registerSocialLuaAPI(lua_State* L) {
     for (const auto& [name, func] : api) {
         lua_pushcfunction(L, func);
         lua_setglobal(L, name);
+    }
+
+    // TBC 2.4.3 Button:Click(mouseButton, down) coerces the second argument to
+    // a Lua boolean: SecureCmdList["CLICK"] passes "" when down is omitted on
+    // "/click Name RightButton" and "1" on "/click Name MiddleButton 1".
+    if (luaL_dostring(L,
+            "if __WoweeFrameMT and __WoweeFrameMT.Click and not __WoweeFrameMT.__clickBoolFixed then\n"
+            "    local rawClick = __WoweeFrameMT.Click\n"
+            "    __WoweeFrameMT.__clickBoolFixed = true\n"
+            "    function __WoweeFrameMT:Click(button, down)\n"
+            "        local isDown = (down == true) or (down ~= nil and down ~= false and down ~= '' and tonumber(down) ~= 0)\n"
+            "        return rawClick(self, button, isDown)\n"
+            "    end\n"
+            "end\n") != 0) {
+        lua_pop(L, 1);
     }
 }
 

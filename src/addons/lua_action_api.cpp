@@ -1614,15 +1614,18 @@ static int lua_PickupItem(lua_State* L) {
     if (lua_isnumber(L, 1)) {
         wantId = static_cast<uint32_t>(lua_tonumber(L, 1));
     } else if (const char* text = lua_tostring(L, 1)) {
-        // A link carries the id in it - "|Hitem:6948:0:..." - and is what a
-        // shift-click puts in a macro, so it is the common case rather than
-        // the exotic one.
+        // TBC 2.4.3 accepts full "|Hitem:<id>:..." hyperlinks, bare "item:<id>"
+        // itemStrings, and item names (case-insensitive).
         const std::string str(text);
-        const size_t at = str.find("Hitem:");
-        if (at != std::string::npos) {
-            wantId = static_cast<uint32_t>(std::strtoul(str.c_str() + at + 6, nullptr, 10));
+        std::string low = str;
+        toLowerInPlace(low);
+        const size_t hitemAt = low.find("hitem:");
+        if (hitemAt != std::string::npos) {
+            wantId = static_cast<uint32_t>(std::strtoul(str.c_str() + hitemAt + 6, nullptr, 10));
+        } else if (low.rfind("item:", 0) == 0) {
+            wantId = static_cast<uint32_t>(std::strtoul(str.c_str() + 5, nullptr, 10));
         } else {
-            wantName = str;
+            wantName = low;
         }
     }
     if (wantId == 0 && wantName.empty()) return 0;
@@ -1630,7 +1633,14 @@ static int lua_PickupItem(lua_State* L) {
     auto matches = [&](const game::ItemSlot& s) {
         if (s.empty()) return false;
         if (wantId != 0) return s.item.itemId == wantId;
-        return s.item.name == wantName;
+        std::string slotName = s.item.name;
+        if (slotName.empty()) {
+            if (const auto* info = gh->getItemInfo(s.item.itemId); info && info->valid) {
+                slotName = info->name;
+            }
+        }
+        toLowerInPlace(slotName);
+        return !slotName.empty() && slotName == wantName;
     };
 
     const auto& inv = gh->getInventory();
@@ -2078,6 +2088,7 @@ static int lua_AutoEquipCursorItem(lua_State* L) {
     // 2.4.3 answers AUTOEQUIP_BIND_CONFIRM for a ring it would bind and keeps
     // the ring on the cursor while it asks (EquipPendingItem clears it).
     uint8_t bag = 0, slot = 0;
+    const uint32_t droppedId = s_cursorId;
     if (gh && cursorWireSlot(bag, slot)) {
         constexpr uint8_t kBackpackBag = 0xFF;
         const int backpackIndex = slot - game::Inventory::NUM_EQUIP_SLOTS;
@@ -2086,10 +2097,12 @@ static int lua_AutoEquipCursorItem(lua_State* L) {
             const bool asks = gh->equipWouldBindFromBackpack(backpackIndex);
             gh->autoEquipItemBySlot(backpackIndex);
             if (asks) return 0;
+            playHeldOrSlotItemSound(gh, droppedId, /*pickup=*/false);
         } else if (bagIndex >= 0 && bagIndex < game::Inventory::NUM_BAG_SLOTS) {
             const bool asks = gh->equipWouldBindFromBag(bagIndex, slot);
             gh->autoEquipItemInBag(bagIndex, slot);
             if (asks) return 0;
+            playHeldOrSlotItemSound(gh, droppedId, /*pickup=*/false);
         } else {
             gh->useItemById(s_cursorId);
         }

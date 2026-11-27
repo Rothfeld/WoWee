@@ -12,6 +12,8 @@
 #include "game/stationery.hpp"
 #include "game/auction_filters.hpp"
 #include "ui/framexml_takeover.hpp"
+#include "audio/audio_coordinator.hpp"
+#include "audio/ui_sound_manager.hpp"
 #include "core/logger.hpp"
 #include "core/config_paths.hpp"
 #include "pipeline/asset_manager.hpp"
@@ -1994,6 +1996,22 @@ static int lua_CloseBankFrame(lua_State* L) {
     return 0;
 }
 
+static void playContainerItemPutDownSound(game::GameHandler* gh, uint32_t itemId) {
+    if (!gh || itemId == 0) return;
+    auto* ac = gh->services().audioCoordinator;
+    auto* sfx = ac ? ac->getUiSoundManager() : nullptr;
+    if (!sfx) return;
+    uint32_t displayInfoId = 0;
+    if (const auto* info = gh->getItemInfo(itemId); info && info->displayInfoId != 0) {
+        displayInfoId = info->displayInfoId;
+    } else {
+        gh->ensureItemInfo(itemId);
+    }
+    if (displayInfoId == 0 || !sfx->playItemDisplaySound(displayInfoId, /*pickup=*/false)) {
+        sfx->playPickupBag();
+    }
+}
+
 // UseContainerItem(bag, slot) - use/equip an item from a bag
 static int lua_UseContainerItem(lua_State* L) {
     auto* gh = getGameHandler(L);
@@ -2140,12 +2158,20 @@ static int lua_UseContainerItem(lua_State* L) {
     if (bag == 0) {
         const int idx = slot - 1;
         if (readable)         gh->readItemBySlot(idx);
-        else if (equippable)  gh->autoEquipItemBySlot(idx);
+        else if (equippable) {
+            const bool asks = gh->equipWouldBindFromBackpack(idx);
+            gh->autoEquipItemBySlot(idx);
+            if (!asks) playContainerItemPutDownSound(gh, itemSlot->item.itemId);
+        }
         else if (openable)    gh->openItemBySlot(idx);
         else                  gh->useItemBySlot(idx, false, usedOnUnit(L, 3));
     } else {
         if (readable)         gh->readItemInBag(bag - 1, slot - 1);
-        else if (equippable)  gh->autoEquipItemInBag(bag - 1, slot - 1);
+        else if (equippable) {
+            const bool asks = gh->equipWouldBindFromBag(bag - 1, slot - 1);
+            gh->autoEquipItemInBag(bag - 1, slot - 1);
+            if (!asks) playContainerItemPutDownSound(gh, itemSlot->item.itemId);
+        }
         else if (openable)    gh->openItemInBag(bag - 1, slot - 1);
         else                  gh->useItemInBag(bag - 1, slot - 1, false,
                                              usedOnUnit(L, 3));

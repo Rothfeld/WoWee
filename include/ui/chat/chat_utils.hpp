@@ -6,6 +6,7 @@
 #include <cctype>
 #include <memory>
 #include <string>
+#include <string_view>
 
 namespace wowee {
 
@@ -61,6 +62,12 @@ std::string portBotHelpText();
 
 /// Whether a whisper target is the teleport bot.
 bool isPortBotTarget(const std::string& target);
+
+/// Validate pipe ('|') escape sequences allowed in outgoing TBC 2.4.3 chat
+/// messages: '||', '|r', '|c' + 8 non-pipe bytes, and complete '|H...|h...|h'
+/// hyperlinks. Rejects bare '|', trailing '|', '|T...|t' texture escapes, and
+/// unclosed hyperlinks.
+bool hasValidChatEscapeCodes(std::string_view message);
 
 } // namespace chat_utils
 } // namespace ui

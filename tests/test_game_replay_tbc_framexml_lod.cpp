@@ -554,6 +554,12 @@ TEST_CASE("TBC PetActionBarFrame offsets right of ShapeshiftBarFrame when pet sp
     wowee::addons::removeApiAbsentFrom(lua->getState(), "tbc");
     wowee::addons::applyApiConventions(lua->getState(), "tbc");
 
+    std::vector<std::string> errors;
+    lua->setLuaErrorCallback([&](const std::string& err) {
+        errors.push_back(err);
+    });
+
+    mgr.scanAddons((tbcDir / "interface" / "addons").string());
     REQUIRE(mgr.loadFrameXml(frameXmlDir.string()));
 
     // During loadFrameXml (TOC line 81 PetActionBarFrame.xml before line 82 BonusActionBarFrame.xml),
@@ -565,6 +571,11 @@ TEST_CASE("TBC PetActionBarFrame offsets right of ShapeshiftBarFrame when pet sp
     mgr.fireEvent("PLAYER_LOGIN", {});
     mgr.fireEvent("PLAYER_ENTERING_WORLD", {});
     mgr.fireEvent("PET_BAR_UPDATE", {});
+
+    if (!errors.empty()) {
+        for (const auto& e : errors) UNSCOPED_INFO("FrameXML error: " << e);
+    }
+    CHECK(errors.empty());
 
     REQUIRE(mgr.runScript(
         "__forms = GetNumShapeshiftForms()\n"

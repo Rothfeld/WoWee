@@ -1,4 +1,5 @@
 #include "game/game_handler.hpp"
+#include <algorithm>
 #include "game/session_flag_rules.hpp"
 #include "game/game_object_lock.hpp"
 #include "game/game_object_reach.hpp"
@@ -4818,6 +4819,15 @@ std::vector<uint32_t> GameHandler::getPetSpellbook() {
     if (!spellHandler_) return listed;
     for (uint32_t id : petSpellList_)
         if (spellHandler_->isListedInSpellbook(id)) listed.push_back(id);
+    std::stable_sort(listed.begin(), listed.end(), [this](uint32_t a, uint32_t b) {
+        const std::string& na = getSpellName(a);
+        const std::string& nb = getSpellName(b);
+        if (na != nb) return na < nb;
+        const std::string& ra = getSpellRank(a);
+        const std::string& rb = getSpellRank(b);
+        if (ra != rb) return ra < rb;
+        return a < b;
+    });
     return listed;
 }
 

@@ -4,12 +4,20 @@
 #include "ui/chat/i_chat_command.hpp"
 #include "ui/chat/macro_evaluator.hpp"
 #include "ui/chat_panel.hpp"
+#include "ui/ui_services.hpp"
+#include "addons/addon_manager.hpp"
+#include "addons/lua_engine.hpp"
 #include "game/game_handler.hpp"
 #include "game/inventory.hpp"
 #include <imgui.h>
 #include <algorithm>
 #include <cctype>
 #include <sstream>
+
+extern "C" {
+#include <lua.h>
+#include <lauxlib.h>
+}
 
 namespace wowee { namespace ui {
 
@@ -522,6 +530,107 @@ public:
     [[nodiscard]] std::string helpText() const override { return "Cancel queued spell"; }
 };
 
+// --- /click <ButtonName> [mouseButton] [down] ---
+class ClickCommand : public IChatCommand {
+public:
+    ChatCommandResult execute(ChatCommandContext& ctx) override {
+        std::string clickArg = ctx.args;
+        trimInPlace(clickArg);
+        if (clickArg.empty()) return {};
+
+        auto* am = ctx.services.addonManager;
+        if (!am || !am->isInitialized()) return {};
+        auto* le = am->getLuaEngine();
+        if (!le || !le->getState()) return {};
+        lua_State* L = le->getState();
+
+        // Prefer FrameXML's SecureCmdList["CLICK"] when loaded so SecureCmdOptionParse
+        // and button:IsObjectType("Button") run identically to ChatFrameEditBox.
+        lua_getglobal(L, "SecureCmdList");
+        if (lua_istable(L, -1)) {
+            lua_getfield(L, -1, "CLICK");
+            if (lua_isfunction(L, -1)) {
+                lua_pushstring(L, clickArg.c_str());
+                if (lua_pcall(L, 1, 0, 0) != 0) {
+                    lua_pop(L, 1);
+                }
+                lua_pop(L, 1); // SecureCmdList
+                return {};
+            }
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 1);
+
+        // Fallback when FrameXML ChatFrame.lua is not loaded (e.g. minimal Lua unit tests).
+        if (!clickArg.empty() && clickArg.front() == '[') {
+            uint64_t dummy = static_cast<uint64_t>(-1);
+            clickArg = evaluateMacroConditionals(clickArg, ctx.gameHandler, dummy);
+            trimInPlace(clickArg);
+            if (clickArg.empty()) return {};
+        }
+
+        std::istringstream iss(clickArg);
+        std::string btnName;
+        std::string mouseBtn;
+        std::string downTok;
+        iss >> btnName >> mouseBtn >> downTok;
+        if (btnName.empty()) return {};
+
+        lua_getglobal(L, "GetClickFrame");
+        if (lua_isfunction(L, -1)) {
+            lua_pushstring(L, btnName.c_str());
+            if (lua_pcall(L, 1, 1, 0) != 0) {
+                lua_pop(L, 1);
+                return {};
+            }
+        } else {
+            lua_pop(L, 1);
+            lua_getglobal(L, btnName.c_str());
+        }
+
+        if (!lua_istable(L, -1)) {
+            lua_pop(L, 1);
+            return {};
+        }
+
+        lua_getfield(L, -1, "IsObjectType");
+        if (lua_isfunction(L, -1)) {
+            lua_pushvalue(L, -2);
+            lua_pushstring(L, "Button");
+            if (lua_pcall(L, 2, 1, 0) != 0) {
+                lua_pop(L, 2);
+                return {};
+            }
+            const bool isButton = lua_toboolean(L, -1) != 0;
+            lua_pop(L, 1);
+            if (!isButton) {
+                lua_pop(L, 1);
+                return {};
+            }
+        } else {
+            lua_pop(L, 1);
+        }
+
+        lua_getfield(L, -1, "Click");
+        if (lua_isfunction(L, -1)) {
+            lua_pushvalue(L, -2);
+            if (mouseBtn.empty()) lua_pushnil(L);
+            else lua_pushstring(L, mouseBtn.c_str());
+            const bool isDown = !downTok.empty() && downTok != "0" && downTok != "false";
+            lua_pushboolean(L, isDown ? 1 : 0);
+            if (lua_pcall(L, 3, 0, 0) != 0) {
+                lua_pop(L, 1);
+            }
+        } else {
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 1);
+        return {};
+    }
+    [[nodiscard]] std::vector<std::string> aliases() const override { return {"click"}; }
+    [[nodiscard]] std::string helpText() const override { return "Simulate a mouse click on a named Button frame"; }
+};
+
 // --- Registration ---
 void registerCombatCommands(ChatCommandRegistry& reg) {
     reg.registerCommand(std::make_unique<CastCommand>());
@@ -533,6 +642,7 @@ void registerCombatCommands(ChatCommandRegistry& reg) {
     reg.registerCommand(std::make_unique<StopAttackCommand>());
     reg.registerCommand(std::make_unique<StopCastingCommand>());
     reg.registerCommand(std::make_unique<CancelQueuedSpellCommand>());
+    reg.registerCommand(std::make_unique<ClickCommand>());
 }
 
 } // namespace ui

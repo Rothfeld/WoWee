@@ -5766,8 +5766,9 @@ void SpellHandler::loadSpellNameCache() const {
     }
     if (descVarField == 0xFFFFFFFF && fieldCount == 234) descVarField = 232;
 
-    // The declarations themselves, read once. Thirty rows in 3.3.5.
-    if (owner_.spellDescriptionVariablesRef().empty()) {
+    // The declarations themselves, read once. Thirty rows in 3.3.5; absent in
+    // Classic 1.12 and TBC 2.4.3 where Spell.dbc has no DescriptionVariables column.
+    if (descVarField != 0xFFFFFFFF && owner_.spellDescriptionVariablesRef().empty()) {
         if (auto varDbc = am->loadDBC("SpellDescriptionVariables.dbc");
             varDbc && varDbc->isLoaded() && varDbc->getFieldCount() >= 2) {
             for (uint32_t i = 0; i < varDbc->getRecordCount(); ++i) {

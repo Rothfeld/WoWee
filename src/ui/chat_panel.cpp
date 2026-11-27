@@ -386,6 +386,12 @@ void ChatPanel::sendChatMessage(game::GameHandler& gameHandler) {
     }
 
     if (!message.empty()) {
+        if (!chat_utils::hasValidChatEscapeCodes(message)) {
+            gameHandler.addLocalChatMessage(
+                chat_utils::makeSystemMessage("Invalid escape code in chat message"));
+            chatInputBuffer_[0] = '\0';
+            return;
+        }
         gameHandler.sendChatMessage(type, message, target);
     }
     chatInputBuffer_[0] = '\0';

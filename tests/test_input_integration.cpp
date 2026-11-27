@@ -12,6 +12,7 @@
 #include "pipeline/asset_manager.hpp"
 #include "game/transport_manager.hpp"
 #include "ui/game_screen.hpp"
+#include "ui/chat/chat_utils.hpp"
 #include "ui/framexml_takeover.hpp"
 #include "addons/lua_engine.hpp"
 #include "addons/lua_api_helpers.hpp"
@@ -8419,4 +8420,190 @@ TEST_CASE_METHOD(Integration, "TBC WorldDetail, SmallCull, objectFade and ground
     CHECK(observedObjectFade);
 
     lua.setLuaServices({});
+}
+
+TEST_CASE_METHOD(Integration,
+                 "TBC SendChatMessage validates pipe escape sequences and raises Invalid escape code",
+                 "[chat][escape][tbc]") {
+    using namespace wowee::game;
+    using wowee::ui::chat_utils::hasValidChatEscapeCodes;
+
+    CHECK(hasValidChatEscapeCodes("A||B"));
+    CHECK(hasValidChatEscapeCodes("|cffff0000Hi|r"));
+    CHECK(hasValidChatEscapeCodes("|cff1234Hi|r"));
+    CHECK(hasValidChatEscapeCodes("|cffff0000Hi"));
+    CHECK(hasValidChatEscapeCodes("|cff9d9d9d|Hitem:118:0:0:0:0:0:0:0|h[Pot]|h|r"));
+    CHECK_FALSE(hasValidChatEscapeCodes("A|B"));
+    CHECK_FALSE(hasValidChatEscapeCodes("A|"));
+    CHECK_FALSE(hasValidChatEscapeCodes("|cff12"));
+    CHECK_FALSE(hasValidChatEscapeCodes("|cff12|r"));
+    CHECK_FALSE(hasValidChatEscapeCodes("|TInterface:16|t"));
+    CHECK_FALSE(hasValidChatEscapeCodes("|Hitem:118|h[Pot]"));
+
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    lua.setGameHandler(&handler);
+
+    // Invalid escapes raise "SendChatMessage(): Invalid escape code in chat message" and send nothing.
+    run("__ok_bar, __err_bar = pcall(SendChatMessage, 'A|B', 'SAY')\n"
+        "__ok_trl, __err_trl = pcall(SendChatMessage, 'A|', 'SAY')\n"
+        "__ok_tex, __err_tex = pcall(SendChatMessage, '|TInterface:16|t', 'SAY')\n"
+        "__ok_bln, __err_bln = pcall(SendChatMessage, '|Hitem:118|h[Pot]', 'SAY')\n");
+    truth("__ok_bar == false and string.find(__err_bar, 'SendChatMessage%(%): Invalid escape code in chat message') ~= nil");
+    truth("__ok_trl == false and string.find(__err_trl, 'SendChatMessage%(%): Invalid escape code in chat message') ~= nil");
+    truth("__ok_tex == false and string.find(__err_tex, 'SendChatMessage%(%): Invalid escape code in chat message') ~= nil");
+    truth("__ok_bln == false and string.find(__err_bln, 'SendChatMessage%(%): Invalid escape code in chat message') ~= nil");
+    CHECK(session.sent().of(Opcode::CMSG_MESSAGECHAT).empty());
+
+    // Valid escapes succeed without error.
+    run("__ok_dbl = pcall(SendChatMessage, 'A||B', 'SAY')\n"
+        "__ok_col = pcall(SendChatMessage, '|cffff0000Hi|r', 'SAY')\n"
+        "__ok_shc = pcall(SendChatMessage, '|cff1234Hi|r', 'SAY')\n"
+        "__ok_unc = pcall(SendChatMessage, '|cffff0000Hi', 'SAY')\n"
+        "__ok_lnk = pcall(SendChatMessage, '|cff9d9d9d|Hitem:118:0:0:0:0:0:0:0|h[Pot]|h|r', 'SAY')\n");
+    truth("__ok_dbl and __ok_col and __ok_shc and __ok_unc and __ok_lnk");
+    CHECK(session.sent().of(Opcode::CMSG_MESSAGECHAT).size() == 5);
+}
+
+TEST_CASE_METHOD(Integration,
+                 "TBC GetClickFrame and /click dispatch Button:Click with boolean down without leaking SAY",
+                 "[chat][click][tbc]") {
+    using namespace wowee::game;
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+
+    addons::AddonManager mgr;
+    REQUIRE(mgr.initialize(&handler));
+    auto* le = mgr.getLuaEngine();
+    REQUIRE(le != nullptr);
+
+    REQUIRE(mgr.runScript(
+        "UIParent = CreateFrame('Frame', 'UIParent')\n"
+        "SLASH_CLICK1 = '/click'\n"
+        "SecureCmdList = {}\n"
+        "SecureCmdList['CLICK'] = function(msg)\n"
+        "    local action = SecureCmdOptionParse(msg)\n"
+        "    if action and action ~= '' then\n"
+        "        local name, mouseButton, down = string.match(action, '([^%s]+)%s+([^%s]+)%s*(.*)')\n"
+        "        if not name then name = action end\n"
+        "        local button = GetClickFrame(name)\n"
+        "        if button and button:IsObjectType('Button') then\n"
+        "            button:Click(mouseButton, down)\n"
+        "        end\n"
+        "    end\n"
+        "end\n"
+        "TCB = CreateFrame('Button', 'TCB', UIParent)\n"
+        "TCB:RegisterForClicks('AnyUp', 'AnyDown')\n"
+        "TCB_LOG = {}\n"
+        "TCB:SetScript('OnClick', function()\n"
+        "    table.insert(TCB_LOG, tostring(arg1) .. ':' .. type(arg2) .. ':' .. tostring(arg2))\n"
+        "end)\n"));
+
+    CHECK(le->evaluateBoolean("GetClickFrame('TCB') == TCB"));
+    CHECK(le->evaluateBoolean("GetClickFrame('UIParent') == UIParent"));
+    CHECK(le->evaluateBoolean("GetClickFrame('SLASH_CLICK1') == nil"));
+    CHECK(le->evaluateBoolean("GetClickFrame('NoSuch99') == nil"));
+
+    ui::UIServices services{};
+    services.gameHandler = &handler;
+    services.addonManager = &mgr;
+    ui::ChatPanel chatPanel;
+    chatPanel.setServices(services);
+
+    chatPanel.executeMacroText(
+        handler,
+        "/click TCB\n"
+        "/click TCB RightButton\n"
+        "/click TCB MiddleButton 1\n"
+        "/click [nocombat] TCB Button4\n"
+        "/click UIParent\n");
+    CHECK(session.sent().of(Opcode::CMSG_MESSAGECHAT).empty());
+    CHECK(le->evaluateBoolean(
+        "table.concat(TCB_LOG, ',') == "
+        "'LeftButton:boolean:false,RightButton:boolean:false,MiddleButton:boolean:true,Button4:boolean:false'"));
+}
+
+TEST_CASE_METHOD(Integration,
+                 "TBC PickupItem accepts numeric id, item:id string, hyperlink, and case-insensitive name",
+                 "[inventory][pickup][tbc]") {
+    using namespace wowee::game;
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    lua.setGameHandler(&handler);
+
+    auto& info = handler.itemInfoCacheRef()[118];
+    info.valid = true;
+    info.name = "Minor Healing Potion";
+    info.inventoryType = 0;
+
+    ItemDef pot{};
+    pot.itemId = 118;
+    pot.stackCount = 2;
+    handler.inventoryRef().setBackpackSlot(0, pot);
+
+    run("ClearCursor(); PickupItem(118); __t1, __id1 = GetCursorInfo(); ClearCursor()\n"
+        "PickupItem('item:118'); __t2, __id2 = GetCursorInfo(); ClearCursor()\n"
+        "PickupItem('|cff1eff00|Hitem:118:0:0:0:0:0:0:0|h[Minor Healing Potion]|h|r'); __t3, __id3 = GetCursorInfo(); ClearCursor()\n"
+        "PickupItem('Minor Healing Potion'); __t4, __id4 = GetCursorInfo(); ClearCursor()\n"
+        "PickupItem('minor healing potion'); __t5, __id5 = GetCursorInfo(); ClearCursor()\n");
+    truth("__t1 == 'item' and __id1 == 118");
+    truth("__t2 == 'item' and __id2 == 118");
+    truth("__t3 == 'item' and __id3 == 118");
+    truth("__t4 == 'item' and __id4 == 118");
+    truth("__t5 == 'item' and __id5 == 118");
+}
+
+TEST_CASE_METHOD(Integration,
+                 "TBC BOOKTYPE_PET sorts pet spellbook alphabetically regardless of SMSG_PET_SPELLS wire order",
+                 "[pet][spellbook][tbc]") {
+    using namespace wowee::game;
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    lua.setGameHandler(&handler);
+
+    handler.spellNameCacheLoadedRef() = true;
+    auto addPetSpell = [&](uint32_t id, const char* name, const char* rank) {
+        auto& e = handler.spellNameCacheRef()[id];
+        e.name = name;
+        e.rank = rank;
+    };
+    // Raw Voidwalker SMSG_PET_SPELLS order observed on live TBC server:
+    // Suffering, Torment, Sacrifice, Consume Shadows.
+    addPetSpell(17735, "Suffering", "Rank 1");
+    addPetSpell(3716,  "Torment", "Rank 1");
+    addPetSpell(7812,  "Sacrifice", "Rank 1");
+    addPetSpell(17767, "Consume Shadows", "Rank 1");
+
+    constexpr uint64_t kPetGuid = 0xF140003C0C000010ULL;
+    wowee::network::Packet petPkt(wireOpcode(Opcode::SMSG_PET_SPELLS));
+    petPkt.writeUInt64(kPetGuid);
+    petPkt.writeUInt32(0); // duration (pre-Wotlk omits family uint16)
+    petPkt.writeUInt8(1);  // react
+    petPkt.writeUInt8(1);  // command
+    petPkt.writeUInt16(0); // flags
+    for (int i = 0; i < GameHandler::PET_ACTION_BAR_SLOTS; ++i) {
+        petPkt.writeUInt32(0);
+    }
+    petPkt.writeUInt8(4);  // spellCount
+    petPkt.writeUInt32(17735u | (0x81u << 24));
+    petPkt.writeUInt32(3716u  | (0xC1u << 24));
+    petPkt.writeUInt32(7812u  | (0x81u << 24));
+    petPkt.writeUInt32(17767u | (0x81u << 24));
+    petPkt.writeUInt8(0);  // cooldownCount
+    session.receive(petPkt);
+
+    const auto book = handler.getPetSpellbook();
+    REQUIRE(book.size() == 4);
+    CHECK(book[0] == 17767u); // Consume Shadows
+    CHECK(book[1] == 7812u);  // Sacrifice
+    CHECK(book[2] == 17735u); // Suffering
+    CHECK(book[3] == 3716u);  // Torment
+
+    run("__psb = {}\n"
+        "for i = 1, 10 do\n"
+        "    local n = GetSpellName(i, BOOKTYPE_PET)\n"
+        "    if not n then break end\n"
+        "    table.insert(__psb, n)\n"
+        "end\n");
+    truth("table.concat(__psb, ',') == 'Consume Shadows,Sacrifice,Suffering,Torment'");
 }

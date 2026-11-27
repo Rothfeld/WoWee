@@ -24,6 +24,9 @@ struct CombatLogEventInput {
     int32_t amount = 0;
     uint32_t spellId = 0;
     uint32_t extraSpellId = 0;
+    uint32_t spellSchoolMask = 0;
+    uint32_t extraSpellSchoolMask = 0;
+    uint32_t damageSchoolMask = 0;
     uint8_t powerType = 0;
     uint64_t srcGuid = 0;
     uint64_t dstGuid = 0;
@@ -98,7 +101,13 @@ inline std::vector<std::string> buildCombatLogEvent(const CombatLogEventInput& i
 
     const bool hasSpell = in.spellId != 0;
     const std::string amount = std::to_string(in.amount);
-    const std::string physical = "1";
+    const uint32_t resolvedSpellSchool =
+        in.spellSchoolMask != 0 ? in.spellSchoolMask
+                                : (in.damageSchoolMask != 0 ? in.damageSchoolMask : 1u);
+    const uint32_t resolvedExtraSchool =
+        in.extraSpellSchoolMask != 0 ? in.extraSpellSchoolMask : 1u;
+    const std::string spellSchool = std::to_string(resolvedSpellSchool);
+    const std::string extraSchool = std::to_string(resolvedExtraSchool);
     const std::string nil = kEventNil;
 
     // Prefix: a spell's id, name and school. A swing has none.
@@ -106,15 +115,16 @@ inline std::vector<std::string> buildCombatLogEvent(const CombatLogEventInput& i
         return std::vector<std::string>{std::to_string(in.spellId),
                                         in.spellName.empty() ? "Spell " + std::to_string(in.spellId)
                                                              : in.spellName,
-                                        physical};
+                                        spellSchool};
     };
     const bool wotlk = in.layout == CombatLogLayout::Wotlk;
     // Suffix of a damage event: amount, [overkill,] school, resisted, blocked,
     // absorbed, critical, glancing, crushing.
-    auto damageSuffix = [&](bool crit, bool glancing, bool crushing) {
+    auto damageSuffix = [&](uint32_t schoolMask, bool crit, bool glancing, bool crushing) {
         std::vector<std::string> out{amount};
         if (wotlk) out.push_back("0");   // overkill
-        out.insert(out.end(), {physical, nil, nil, nil, std::string(eventBool(crit)),
+        out.insert(out.end(), {std::to_string(schoolMask != 0 ? schoolMask : 1u),
+                               nil, nil, nil, std::string(eventBool(crit)),
                                std::string(eventBool(glancing)), std::string(eventBool(crushing))});
         return out;
     };
@@ -139,8 +149,11 @@ inline std::vector<std::string> buildCombatLogEvent(const CombatLogEventInput& i
                           : (periodic ? "SPELL_PERIODIC_DAMAGE"
                                       : (ranged ? "RANGE_DAMAGE" : "SPELL_DAMAGE"));
             if (!swing) prefix = spellPrefix();
-            suffix = damageSuffix(in.type == T::CRIT_DAMAGE, in.type == T::GLANCING,
-                                  in.type == T::CRUSHING);
+            const uint32_t hitSchool =
+                in.damageSchoolMask != 0 ? in.damageSchoolMask
+                                         : (!swing ? resolvedSpellSchool : 1u);
+            suffix = damageSuffix(hitSchool, in.type == T::CRIT_DAMAGE,
+                                  in.type == T::GLANCING, in.type == T::CRUSHING);
             break;
         }
         case T::HEAL: case T::CRIT_HEAL: case T::PERIODIC_HEAL:
@@ -148,12 +161,16 @@ inline std::vector<std::string> buildCombatLogEvent(const CombatLogEventInput& i
             prefix = spellPrefix();
             suffix = healSuffix(in.type == T::CRIT_HEAL);
             break;
-        case T::ENVIRONMENTAL:
+        case T::ENVIRONMENTAL: {
             event = "ENVIRONMENTAL_DAMAGE";
             environmental = true;
             prefix = {environmentName(in.powerType)};
-            suffix = damageSuffix(false, false, false);
+            const uint32_t envSchool =
+                in.damageSchoolMask != 0 ? in.damageSchoolMask
+                                         : ((in.powerType == 3 || in.powerType == 5) ? 4u : 1u);
+            suffix = damageSuffix(envSchool, false, false, false);
             break;
+        }
         case T::ENERGIZE:
         case T::PERIODIC_ENERGIZE:
             event = (in.type == T::PERIODIC_ENERGIZE) ? "SPELL_PERIODIC_ENERGIZE" : "SPELL_ENERGIZE";
@@ -187,7 +204,7 @@ inline std::vector<std::string> buildCombatLogEvent(const CombatLogEventInput& i
                 suffix = {std::to_string(in.extraSpellId),
                           in.extraSpellName.empty() ? "Spell " + std::to_string(in.extraSpellId)
                                                     : in.extraSpellName,
-                          physical};
+                          extraSchool};
                 break;
             }
             // With an amount these are the part of a hit that did not land, and
@@ -205,12 +222,13 @@ inline std::vector<std::string> buildCombatLogEvent(const CombatLogEventInput& i
             event = (in.type == T::STEAL) ? "SPELL_STOLEN" : "SPELL_DISPEL";
             const uint32_t castId = in.extraSpellId != 0 ? in.extraSpellId : in.spellId;
             const std::string& castName = in.extraSpellId != 0 ? in.extraSpellName : in.spellName;
+            const std::string& castSchool = in.extraSpellId != 0 ? extraSchool : spellSchool;
             prefix = {std::to_string(castId),
                       castName.empty() ? "Spell " + std::to_string(castId) : castName,
-                      physical};
+                      castSchool};
             suffix = {std::to_string(in.spellId),
                       in.spellName.empty() ? "Spell " + std::to_string(in.spellId) : in.spellName,
-                      physical,
+                      spellSchool,
                       in.powerType != 0 ? "DEBUFF" : "BUFF"};
             break;
         }
@@ -219,12 +237,13 @@ inline std::vector<std::string> buildCombatLogEvent(const CombatLogEventInput& i
             event = "SPELL_INTERRUPT";
             const uint32_t castId = in.extraSpellId != 0 ? in.extraSpellId : in.spellId;
             const std::string& castName = in.extraSpellId != 0 ? in.extraSpellName : in.spellName;
+            const std::string& castSchool = in.extraSpellId != 0 ? extraSchool : spellSchool;
             prefix = {std::to_string(castId),
                       castName.empty() ? "Spell " + std::to_string(castId) : castName,
-                      physical};
+                      castSchool};
             suffix = {std::to_string(in.spellId),
                       in.spellName.empty() ? "Spell " + std::to_string(in.spellId) : in.spellName,
-                      physical};
+                      spellSchool};
             break;
         }
         case T::INSTAKILL:
@@ -247,7 +266,7 @@ inline std::vector<std::string> buildCombatLogEvent(const CombatLogEventInput& i
                 suffix = {std::to_string(in.extraSpellId),
                           in.extraSpellName.empty() ? "Spell " + std::to_string(in.extraSpellId)
                                                     : in.extraSpellName,
-                          physical,
+                          extraSchool,
                           auraType};
             } else {
                 event = "SPELL_AURA_BROKEN";

@@ -149,3 +149,66 @@ TEST_CASE("normal ranged weapon attacks emit RANGE_DAMAGE and RANGE_MISSED", "[c
     CHECK(m[1] == "RANGE_MISSED");
     CHECK(m.back() == "MISS");
 }
+
+TEST_CASE("spell, periodic, heal, interrupt and environmental events emit real school masks", "[combatlog]") {
+    // TBC Shadow Word: Pain (589, Shadow = 32) periodic tick
+    auto swp = hit(T::PERIODIC_DAMAGE, 589);
+    swp.layout = CombatLogLayout::Tbc;
+    swp.spellName = "Shadow Word: Pain";
+    swp.spellSchoolMask = 32;
+    swp.damageSchoolMask = 32;
+    const auto swpArgs = buildCombatLogEvent(swp);
+    REQUIRE(swpArgs.size() == 19);
+    CHECK(swpArgs[1] == "SPELL_PERIODIC_DAMAGE");
+    CHECK(swpArgs[8] == "589");
+    CHECK(swpArgs[10] == "32");  // prefix spellSchool
+    CHECK(swpArgs[12] == "32");  // suffix damageSchool
+
+    // TBC Immolate (348, Fire = 4) periodic tick when wire damage school overrides or matches
+    auto imm = hit(T::PERIODIC_DAMAGE, 348);
+    imm.layout = CombatLogLayout::Tbc;
+    imm.spellName = "Immolate";
+    imm.spellSchoolMask = 4;
+    imm.damageSchoolMask = 4;
+    const auto immArgs = buildCombatLogEvent(imm);
+    REQUIRE(immArgs.size() == 19);
+    CHECK(immArgs[10] == "4");
+    CHECK(immArgs[12] == "4");
+
+    // TBC Renew (139, Holy = 2) periodic heal
+    auto renew = hit(T::PERIODIC_HEAL, 139);
+    renew.layout = CombatLogLayout::Tbc;
+    renew.spellName = "Renew";
+    renew.spellSchoolMask = 2;
+    const auto renewArgs = buildCombatLogEvent(renew);
+    REQUIRE(renewArgs.size() == 13);
+    CHECK(renewArgs[1] == "SPELL_PERIODIC_HEAL");
+    CHECK(renewArgs[10] == "2");
+
+    // SPELL_INTERRUPT carries both the interrupt's school and the interrupted spell's school
+    auto intr = hit(T::INTERRUPT, 116); // Frostbolt (Frost = 16) interrupted by Counterspell (2139, Arcane = 64)
+    intr.layout = CombatLogLayout::Tbc;
+    intr.spellName = "Frostbolt";
+    intr.spellSchoolMask = 16;
+    intr.extraSpellId = 2139;
+    intr.extraSpellName = "Counterspell";
+    intr.extraSpellSchoolMask = 64;
+    const auto intrArgs = buildCombatLogEvent(intr);
+    REQUIRE(intrArgs.size() == 14);
+    CHECK(intrArgs[1] == "SPELL_INTERRUPT");
+    CHECK(intrArgs[8] == "2139");
+    CHECK(intrArgs[10] == "64");
+    CHECK(intrArgs[11] == "116");
+    CHECK(intrArgs[13] == "16");
+
+    // ENVIRONMENTAL_DAMAGE Lava (type 3) defaults to Fire (4), Falling (type 2) to Physical (1)
+    auto lava = hit(T::ENVIRONMENTAL);
+    lava.layout = CombatLogLayout::Tbc;
+    lava.srcGuid = 0;
+    lava.srcName.clear();
+    lava.powerType = 3;
+    const auto lavaArgs = buildCombatLogEvent(lava);
+    REQUIRE(lavaArgs.size() == 17);
+    CHECK(lavaArgs[8] == "Lava");
+    CHECK(lavaArgs[10] == "4");
+}
