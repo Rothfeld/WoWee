@@ -724,3 +724,218 @@ TEST_CASE("TCPSocket frames 2-byte and split 4-byte AUTH_LOGON_PROOF failure pac
         serverThread.join();
     }
 }
+
+TEST_CASE("AuthHandler transmits inline TOTP Authenticator token without spurious 0x04 opcode byte",
+          "[network][auth][framing][2fa]") {
+    wowee::core::Logger::getInstance().setLogLevel(wowee::core::LogLevel::WARNING);
+
+    const std::string username = "TWOFATEST";
+    const std::string password = "SECRET";
+    const std::string expectedToken = "654321";
+    const std::vector<uint8_t> authHash = Crypto::sha1(username + ":" + password);
+
+    std::vector<uint8_t> salt(32);
+    for (size_t i = 0; i < 32; ++i) {
+        salt[i] = static_cast<uint8_t>(0x55u + i * 3u);
+    }
+    salt[31] |= 0x80u;
+    salt[0] |= 0x01u;
+
+    const BigNum N(kWowPrimeLe, true);
+    const BigNum g(7);
+
+    std::vector<uint8_t> xIn = salt;
+    xIn.insert(xIn.end(), authHash.begin(), authHash.end());
+    const BigNum x(Crypto::sha1(xIn), true);
+    const BigNum v = g.modPow(x, N);
+    const BigNum b = BigNum::fromRandom(19);
+    const BigNum B = (BigNum(3).multiply(v).add(g.modPow(b, N))).mod(N);
+    const std::vector<uint8_t> BWire = B.toArray(true, 32);
+
+    SECTION("Valid 6-digit TOTP submitted via submitSecurityCode succeeds and preserves REALM_LIST stream") {
+        LoopbackListener listener;
+
+        std::thread serverThread([&]() {
+            socket_t clientFd = listener.acceptClient();
+            if (clientFd == INVALID_SOCK) return;
+
+            uint8_t chHdr[4] = {};
+            if (!recvExactBlocking(clientFd, chHdr, 4)) {
+                wowee::net::closeSocket(clientFd);
+                return;
+            }
+            const uint16_t chBodyLen =
+                static_cast<uint16_t>(uint16_t(chHdr[2]) | (uint16_t(chHdr[3]) << 8));
+            std::vector<uint8_t> chBody(chBodyLen);
+            REQUIRE(recvExactBlocking(clientFd, chBody.data(), chBodyLen));
+
+            // Send LOGON_CHALLENGE with securityFlags = 0x04 (SECURITY_FLAG_AUTHENTICATOR) + required = 1
+            std::vector<uint8_t> chResp;
+            chResp.reserve(120);
+            chResp.push_back(0x00);
+            chResp.push_back(0x00);
+            chResp.push_back(0x00);
+            chResp.insert(chResp.end(), BWire.begin(), BWire.end());
+            chResp.push_back(1);
+            chResp.push_back(7);
+            chResp.push_back(32);
+            chResp.insert(chResp.end(), kWowPrimeLe.begin(), kWowPrimeLe.end());
+            chResp.insert(chResp.end(), salt.begin(), salt.end());
+            for (int i = 0; i < 16; ++i) chResp.push_back(static_cast<uint8_t>(0xB0 + i));
+            chResp.push_back(0x04); // SECURITY_FLAG_AUTHENTICATOR
+            chResp.push_back(0x01); // required = 1
+            sendAllBlocking(clientFd, chResp.data(), chResp.size());
+
+            // Read CMD_AUTH_LOGON_PROOF (1B cmd + 74B sAuthLogonProof_C)
+            std::vector<uint8_t> proofReq(75);
+            REQUIRE(recvExactBlocking(clientFd, proofReq.data(), proofReq.size()));
+            CHECK(proofReq[0] == 0x01);
+            CHECK(proofReq[74] == 0x04); // securityFlags
+
+            // Exactly like CMaNGOS AuthSocket::_HandleLogonProof (AuthSocket.cpp:596-616),
+            // read uint8 pinCount + pinCount ASCII bytes directly inline!
+            uint8_t pinCount = 0;
+            REQUIRE(recvExactBlocking(clientFd, &pinCount, 1));
+            REQUIRE(pinCount == expectedToken.size());
+            std::string receivedToken(pinCount, '\0');
+            REQUIRE(recvExactBlocking(
+                clientFd, reinterpret_cast<uint8_t*>(receivedToken.data()), pinCount));
+            CHECK(receivedToken == expectedToken);
+
+            std::vector<uint8_t> AWire(proofReq.begin() + 1, proofReq.begin() + 33);
+            std::vector<uint8_t> clientM1(proofReq.begin() + 33, proofReq.begin() + 53);
+            std::vector<uint8_t> ab = AWire;
+            ab.insert(ab.end(), BWire.begin(), BWire.end());
+            const BigNum u(Crypto::sha1(ab), true);
+            const BigNum A(AWire, true);
+            const BigNum S = A.multiply(v.modPow(u, N)).mod(N).modPow(b, N);
+            const auto serverK = SRP::interleaveSessionKey(S.toArray(true, 32));
+            std::vector<uint8_t> m2In = AWire;
+            m2In.insert(m2In.end(), clientM1.begin(), clientM1.end());
+            m2In.insert(m2In.end(), serverK.begin(), serverK.end());
+            const auto serverM2 = Crypto::sha1(m2In);
+
+            const auto proofResp = buildServerLogonProofSuccess(serverM2, 8606, 2);
+            sendAllBlocking(clientFd, proofResp.data(), 26);
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            sendAllBlocking(clientFd, proofResp.data() + 26, 6);
+
+            // Verify CMD_REALM_LIST (0x10) arrives cleanly on the exact next byte!
+            uint8_t rlReq[5] = {};
+            REQUIRE(recvExactBlocking(clientFd, rlReq, sizeof(rlReq)));
+            CHECK(rlReq[0] == 0x10);
+            const auto rlResp = buildServerRealmList("2FA Outland", "127.0.0.1:8085", 2, false, 8606);
+            sendAllBlocking(clientFd, rlResp.data(), rlResp.size());
+
+            uint8_t drain[16];
+            while (wowee::net::portableRecv(clientFd, drain, sizeof(drain)) > 0) {}
+            wowee::net::closeSocket(clientFd);
+        });
+
+        AuthHandler auth;
+        ClientInfo info;
+        info.majorVersion = 2;
+        info.minorVersion = 4;
+        info.patchVersion = 3;
+        info.build = 8606;
+        info.protocolVersion = 8; // protocol >= 8 required for security extensions
+        auth.setClientInfo(info);
+        auth.setOnSuccess([&](const std::vector<uint8_t>&) {
+            auth.requestRealmList();
+        });
+
+        REQUIRE(auth.connect("127.0.0.1", listener.port));
+        auth.authenticate(username, password);
+
+        REQUIRE(pumpAuthUntil(auth, [&]() {
+            return auth.getState() == AuthState::AUTHENTICATOR_REQUIRED ||
+                   auth.getState() == AuthState::FAILED;
+        }, std::chrono::milliseconds(1000)));
+        REQUIRE(auth.getState() == AuthState::AUTHENTICATOR_REQUIRED);
+
+        auth.submitSecurityCode(expectedToken);
+
+        REQUIRE(pumpAuthUntil(auth, [&]() {
+            return auth.getState() == AuthState::REALM_LIST_RECEIVED ||
+                   auth.getState() == AuthState::FAILED;
+        }, std::chrono::milliseconds(1500)));
+        REQUIRE(auth.getState() == AuthState::REALM_LIST_RECEIVED);
+        REQUIRE(auth.getRealms().size() == 1);
+        CHECK(auth.getRealms()[0].name == "2FA Outland");
+
+        auth.disconnect();
+        serverThread.join();
+    }
+
+    SECTION("Rejected TOTP code surfaces PIN/2FA rejection reason") {
+        LoopbackListener listener;
+
+        std::thread serverThread([&]() {
+            socket_t clientFd = listener.acceptClient();
+            if (clientFd == INVALID_SOCK) return;
+
+            uint8_t chHdr[4] = {};
+            if (!recvExactBlocking(clientFd, chHdr, 4)) {
+                wowee::net::closeSocket(clientFd);
+                return;
+            }
+            const uint16_t chBodyLen =
+                static_cast<uint16_t>(uint16_t(chHdr[2]) | (uint16_t(chHdr[3]) << 8));
+            std::vector<uint8_t> chBody(chBodyLen);
+            REQUIRE(recvExactBlocking(clientFd, chBody.data(), chBodyLen));
+
+            std::vector<uint8_t> chResp;
+            chResp.reserve(120);
+            chResp.push_back(0x00);
+            chResp.push_back(0x00);
+            chResp.push_back(0x00);
+            chResp.insert(chResp.end(), BWire.begin(), BWire.end());
+            chResp.push_back(1);
+            chResp.push_back(7);
+            chResp.push_back(32);
+            chResp.insert(chResp.end(), kWowPrimeLe.begin(), kWowPrimeLe.end());
+            chResp.insert(chResp.end(), salt.begin(), salt.end());
+            for (int i = 0; i < 16; ++i) chResp.push_back(static_cast<uint8_t>(0xB0 + i));
+            chResp.push_back(0x04);
+            chResp.push_back(0x01);
+            sendAllBlocking(clientFd, chResp.data(), chResp.size());
+
+            std::vector<uint8_t> proofReq(75);
+            REQUIRE(recvExactBlocking(clientFd, proofReq.data(), proofReq.size()));
+            uint8_t pinCount = 0;
+            REQUIRE(recvExactBlocking(clientFd, &pinCount, 1));
+            std::vector<uint8_t> tokBytes(pinCount);
+            REQUIRE(recvExactBlocking(clientFd, tokBytes.data(), pinCount));
+
+            const uint8_t rejectWire[4] = {0x01, 0x04, 0x00, 0x00};
+            sendAllBlocking(clientFd, rejectWire, sizeof(rejectWire));
+
+            uint8_t drain[16];
+            while (wowee::net::portableRecv(clientFd, drain, sizeof(drain)) > 0) {}
+            wowee::net::closeSocket(clientFd);
+        });
+
+        AuthHandler auth;
+        ClientInfo info;
+        info.majorVersion = 2;
+        info.minorVersion = 4;
+        info.patchVersion = 3;
+        info.build = 8606;
+        info.protocolVersion = 8;
+        auth.setClientInfo(info);
+
+        std::string observedFailure;
+        auth.setOnFailure([&](const std::string& reason) { observedFailure = reason; });
+
+        REQUIRE(auth.connect("127.0.0.1", listener.port));
+        auth.authenticate(username, password, "000000");
+
+        REQUIRE(pumpAuthUntil(auth, [&]() {
+            return auth.getState() == AuthState::FAILED;
+        }, std::chrono::milliseconds(1500)));
+        CHECK(observedFailure.find("PIN/2FA proof was rejected") != std::string::npos);
+
+        auth.disconnect();
+        serverThread.join();
+    }
+}

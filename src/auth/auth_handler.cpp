@@ -377,19 +377,20 @@ void AuthHandler::sendLogonProof() {
         auto packet = LogonProofPacket::buildLegacy(A, M1, crcHashPtr);
         socket->send(packet);
     } else {
-        auto packet = LogonProofPacket::build(A, M1, securityFlags_, crcHashPtr, pinClientSaltPtr, pinHashPtr);
+        const std::string* authTokenPtr =
+            (securityFlags_ & kSecurityFlagAuthenticator) ? &pendingSecurityCode_ : nullptr;
+        if (authTokenPtr && authTokenPtr->size() > 16) {
+            fail("Authenticator code exceeds maximum 16-character length");
+            return;
+        }
+        auto packet = LogonProofPacket::build(
+            A, M1, securityFlags_, crcHashPtr, pinClientSaltPtr, pinHashPtr, authTokenPtr);
         LOG_INFO("LOGON_PROOF payload: protocol=", static_cast<int>(clientInfo.protocolVersion),
                  " secFlags=0x", std::hex, static_cast<int>(securityFlags_), std::dec,
                  " pinData=", ((pinClientSaltPtr && pinHashPtr) ? "yes" : "no"),
+                 " authTokenLen=", (authTokenPtr ? authTokenPtr->size() : size_t(0)),
                  " payloadSize=", packet.getSize(), "B");
         socket->send(packet);
-
-        if (securityFlags_ & kSecurityFlagAuthenticator) {
-            // TrinityCore-style Google Authenticator token: send immediately after proof.
-            const std::string token = pendingSecurityCode_;
-            auto tokPkt = AuthenticatorTokenPacket::build(token);
-            socket->send(tokPkt);
-        }
     }
 
     setState(AuthState::PROOF_SENT);
@@ -417,7 +418,7 @@ void AuthHandler::handleLogonProofResponse(network::Packet& packet) {
         // retrying can trip the server's failed-login lockout.
         std::string reason = "Login failed: ";
         if (response.status == static_cast<uint8_t>(AuthResult::ACCOUNT_INVALID) &&
-            (securityFlags_ & kSecurityFlagPin)) {
+            ((securityFlags_ & kSecurityFlagPin) || (securityFlags_ & kSecurityFlagAuthenticator))) {
             reason += "PIN/2FA proof was rejected";
         } else {
             reason += getAuthResultString(static_cast<AuthResult>(response.status));

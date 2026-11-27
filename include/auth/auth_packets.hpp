@@ -73,13 +73,8 @@ public:
                                   uint8_t securityFlags,
                                   const std::array<uint8_t, 20>* crcHash,
                                   const std::array<uint8_t, 16>* pinClientSalt,
-                                  const std::array<uint8_t, 20>* pinHash);
-};
-
-// AUTHENTICATOR token packet builder (opcode 0x04 on many TrinityCore-derived servers)
-class AuthenticatorTokenPacket {
-public:
-    static network::Packet build(const std::string& token);
+                                  const std::array<uint8_t, 20>* pinHash,
+                                  const std::string* authenticatorToken = nullptr);
 };
 
 // LOGON_PROOF response data

@@ -292,7 +292,8 @@ network::Packet LogonProofPacket::build(const std::vector<uint8_t>& A,
                                          uint8_t securityFlags,
                                          const std::array<uint8_t, 20>* crcHash,
                                          const std::array<uint8_t, 16>* pinClientSalt,
-                                         const std::array<uint8_t, 20>* pinHash) {
+                                         const std::array<uint8_t, 20>* pinHash,
+                                         const std::string* authenticatorToken) {
     if (A.size() != 32) {
         LOG_ERROR("Invalid A size: ", A.size(), " (expected 32)");
     }
@@ -331,22 +332,28 @@ network::Packet LogonProofPacket::build(const std::vector<uint8_t>& A,
         }
     }
 
+    if (securityFlags & 0x04) {
+        // Inline TOTP authenticator extension at the tail of CMD_AUTH_LOGON_PROOF (0x01):
+        // CMaNGOS and TrinityCore/AzerothCore read u8 pinCount (<= 16) + ascii digits
+        // directly after sAuthLogonProof_C without a separate command opcode byte.
+        const std::string emptyToken;
+        const std::string& tok = authenticatorToken ? *authenticatorToken : emptyToken;
+        const uint8_t len = static_cast<uint8_t>(std::min<size_t>(16, tok.size()));
+        if (tok.size() > 16) {
+            LOG_WARNING("LOGON_PROOF: truncating authenticator token from ", tok.size(),
+                        " to 16 bytes");
+        }
+        packet.writeUInt8(len);
+        if (len > 0) {
+            packet.writeBytes(reinterpret_cast<const uint8_t*>(tok.data()), len);
+        }
+    }
+
     LOG_DEBUG("Built LOGON_PROOF packet:");
     LOG_DEBUG("  A size: ", A.size(), " bytes");
     LOG_DEBUG("  M1 size: ", M1.size(), " bytes");
     LOG_DEBUG("  Total size: ", packet.getSize(), " bytes");
 
-    return packet;
-}
-
-network::Packet AuthenticatorTokenPacket::build(const std::string& token) {
-    network::Packet packet(static_cast<uint16_t>(AuthOpcode::AUTHENTICATOR));
-    // TrinityCore expects: u8 len + ascii token bytes (not null-terminated)
-    uint8_t len = static_cast<uint8_t>(std::min<size_t>(255, token.size()));
-    packet.writeUInt8(len);
-    if (len > 0) {
-        packet.writeBytes(reinterpret_cast<const uint8_t*>(token.data()), len);
-    }
     return packet;
 }
 
