@@ -42,7 +42,8 @@ struct InstanceData {
     // 0 for an ordinary instance, 1 while the player is pressing on it. Sits
     // in what was padding, so the entry is the same 96 bytes it always was.
     float highlight;
-    // Bit 0: outdoor MCSH shadow; Bit 1: custom indoor rig; Bit 2: interior fog.
+    // Bit 0: outdoor MCSH shadow; Bit 1: custom indoor rig; Bit 2: interior fog;
+    // Bit 3: Pass-2 alpha-blended instance fade.
     int flags;
     vec2 uvOffset2;
     uint tintPacked;
@@ -186,7 +187,8 @@ void main() {
     vSkyMode = (push.drawMode < 0 ? 1 : 0) |
                (hasCustomRig ? 2 : 0) |
                ((lightFlags & 4u) != 0u ? 4 : 0) |
-               (push.drawMode == 3 ? 8 : 0);
+               (push.drawMode == 3 ? 8 : 0) |
+               ((lightFlags & 8u) != 0u ? 16 : 0);
     vHighlight = instanceData[instIdx].highlight;
     vIndoorLighting = vec4(effAmbient, hasCustomRig ? 1.0 : 0.0);
     uint packedTint = instanceData[instIdx].tintPacked;

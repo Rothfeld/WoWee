@@ -27,6 +27,7 @@
 #include "rendering/animation/locomotion_fsm.hpp"
 #include "rendering/water_renderer.hpp"
 #include "rendering/wmo_renderer.hpp"
+#include "rendering/lighting_manager.hpp"
 #include "rendering/renderer_bloom_math.hpp"
 #include "pipeline/adt_loader.hpp"
 #include "pipeline/wmo_loader.hpp"
@@ -3635,6 +3636,33 @@ TEST_CASE_METHOD(Integration, "Nether World CVar controls compositor independent
     CHECK(glowEnabled);
     CHECK(deathEnabled);
     lua.setLuaServices({});
+}
+
+TEST_CASE("LightingManager propagates LightSkybox.dbc flags into SkyboxLayer for Nagrand LP 396",
+          "[nagrand][skybox][timesync]") {
+    const char* tbcRoot = std::getenv("WOWEE_TBC_DATA_DIR");
+    if (!tbcRoot || !*tbcRoot) {
+        SKIP("Set WOWEE_TBC_DATA_DIR to client/wowee-data/expansions/tbc");
+    }
+    wowee::pipeline::AssetManager assets;
+    REQUIRE(assets.initialize(tbcRoot));
+    wowee::rendering::LightingManager lm;
+    REQUIRE(lm.initialize(&assets));
+    lm.setViewDistance(477.0f);
+    lm.setTimeOfDay(20.15f / 24.0f);
+    lm.update(glm::vec3(-2403.79f, 7867.26f, 16.2561f), 530u, 3518u, -1.0f, false, false, false);
+    const auto& nagrandLayers = lm.getSkyboxLayers();
+    REQUIRE(!nagrandLayers.empty());
+    CHECK(nagrandLayers.front().path == "Environments\\Stars\\NagrandSkyBox.mdx");
+    CHECK((nagrandLayers.front().flags & wowee::rendering::kLightSkyboxFlagTimeOfDaySync) != 0u);
+
+    lm.update(glm::vec3(4135.2f, 3007.6f, 344.2f), 530u, 3523u, -1.0f, false, false, false);
+    const auto& netherLayers = lm.getSkyboxLayers();
+    const auto netherIt = std::find_if(netherLayers.begin(), netherLayers.end(), [](const auto& l) {
+        return l.path == "Environments\\Stars\\NetherstormSkyBox.mdx";
+    });
+    REQUIRE(netherIt != netherLayers.end());
+    CHECK((netherIt->flags & wowee::rendering::kLightSkyboxFlagTimeOfDaySync) == 0u);
 }
 
 TEST_CASE_METHOD(Integration,

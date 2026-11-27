@@ -341,6 +341,11 @@ struct M2Instance {
     /// between zones. Below one the instance is drawn in the blended pass
     /// alone, every layer of it, since an opaque layer cannot fade otherwise.
     float fade = 1.0f;
+    /// Skybox M2 whose Sequence 0 tracks the 24-hour game clock (`LightSkybox.dbc`
+    /// flags & 0x1, e.g. `NagrandSkyBox.mdx`), while `globalSequenceTime` still
+    /// advances in real time for drifting cloud and planet layers.
+    bool skyTimeOfDaySynced = false;
+    float skyTimeOfDayFraction = 0.0f;
     /// Optional per-instance RGB color multiplier (e.g. SpellVisualKit CharProc 1
     /// non-black tint on attached spell visual M2s such as 35409 Brain Damage).
     glm::vec3 instanceTint{1.0f};
@@ -822,6 +827,8 @@ public:
     void setInstanceHighlight(uint32_t instanceId, float amount);
     /// See M2Instance::fade.
     void setInstanceFade(uint32_t instanceId, float alpha);
+    /// Sync Sequence 0 `animTime` to `dayFraction` in [0, 1) (`LightSkybox.dbc` flags & 0x1).
+    void setInstanceSkyTimeOfDaySync(uint32_t instanceId, bool enabled, float dayFraction);
     /// Set a per-instance RGB color multiplier (1,1,1 clears hasInstanceTint).
     void setInstanceTint(uint32_t instanceId, const glm::vec3& tint);
     void setOutdoorEntityLightGain(float gain) { outdoorEntityLightGain_ = std::max(gain, 0.0f); }

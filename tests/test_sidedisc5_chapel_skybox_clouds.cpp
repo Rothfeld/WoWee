@@ -306,3 +306,75 @@ TEST_CASE("Shipped TBC Stormspire Light.dbc, NetherstormSkyBox.m2, and Stratholm
     REQUIRE(beamModel.textureWeights.size() == 1u);
     CHECK(beamModel.textureWeights[0] == Catch::Approx(0.15f).margin(0.005f));
 }
+
+TEST_CASE("LightSkybox.dbc flags & 0x1 syncs NagrandSkyBox.mdx Sequence 0 to 24h game clock",
+          "[nagrand][skybox][timesync][tbc]") {
+    // 1) Pure clock mapping across 24 hours onto NagrandSkyBox.m2 Sequence 0 (320000 ms).
+    constexpr float kNagrandSeqMs = 320000.0f;
+    CHECK(computeSkyboxTimeOfDayAnimMs(0.0f, kNagrandSeqMs) == Catch::Approx(0.0f));
+    CHECK(computeSkyboxTimeOfDayAnimMs(4.0f / 24.0f, kNagrandSeqMs) == Catch::Approx(53333.333f).margin(0.5f));
+    CHECK(computeSkyboxTimeOfDayAnimMs(8.0f / 24.0f, kNagrandSeqMs) == Catch::Approx(106666.667f).margin(0.5f));
+    CHECK(computeSkyboxTimeOfDayAnimMs(12.0f / 24.0f, kNagrandSeqMs) == Catch::Approx(160000.0f).margin(0.5f));
+    CHECK(computeSkyboxTimeOfDayAnimMs(20.15f / 24.0f, kNagrandSeqMs) == Catch::Approx(268666.667f).margin(0.5f));
+    CHECK(computeSkyboxTimeOfDayAnimMs(21.0f / 24.0f, kNagrandSeqMs) == Catch::Approx(280000.0f).margin(0.5f));
+    // Wraps 1.0 -> 0.0 and negative fractions into [0, durationMs), staying strictly < durationMs.
+    CHECK(computeSkyboxTimeOfDayAnimMs(1.0f, kNagrandSeqMs) == Catch::Approx(0.0f));
+    CHECK(computeSkyboxTimeOfDayAnimMs(-0.25f, kNagrandSeqMs) == Catch::Approx(240000.0f).margin(0.5f));
+    CHECK(computeSkyboxTimeOfDayAnimMs(0.999999f, kNagrandSeqMs) < kNagrandSeqMs);
+
+    // 2) Shipped TBC LightSkybox.dbc sets flags=1 on row 12 (NagrandSkyBox.mdx) and flags=0 on other rows.
+    const auto skyDbcBytes = wowee::test::readTbcData("dbfilesclient/lightskybox.dbc");
+    wowee::pipeline::DBCFile skyDbc;
+    REQUIRE(skyDbc.load(skyDbcBytes));
+    REQUIRE(skyDbc.getFieldCount() >= 3u);
+    uint32_t timeSyncedCount = 0;
+    bool foundNagrandRow = false;
+    for (uint32_t i = 0; i < skyDbc.getRecordCount(); ++i) {
+        const uint32_t id = skyDbc.getUInt32(i, 0);
+        const std::string path = skyDbc.getString(i, 1);
+        const uint32_t flags = skyDbc.getUInt32(i, 2);
+        if ((flags & kLightSkyboxFlagTimeOfDaySync) != 0u) {
+            ++timeSyncedCount;
+        }
+        if (id == 12u) {
+            CHECK(path == "Environments\\Stars\\NagrandSkyBox.mdx");
+            CHECK(flags == kLightSkyboxFlagTimeOfDaySync);
+            foundNagrandRow = true;
+        } else {
+            CHECK((flags & kLightSkyboxFlagTimeOfDaySync) == 0u);
+        }
+    }
+    CHECK(foundNagrandRow);
+    CHECK(timeSyncedCount == 1u);
+
+    // 3) Shipped LightParams.dbc row 396 (Nagrand) references LightSkybox 12 (NagrandSkyBox.mdx).
+    const auto lpBytes = wowee::test::readTbcData("dbfilesclient/lightparams.dbc");
+    wowee::pipeline::DBCFile lpDbc;
+    REQUIRE(lpDbc.load(lpBytes));
+    bool foundLp396 = false;
+    for (uint32_t i = 0; i < lpDbc.getRecordCount(); ++i) {
+        if (lpDbc.getUInt32(i, 0) == 396u) {
+            CHECK(lpDbc.getUInt32(i, 2) == 12u);
+            foundLp396 = true;
+            break;
+        }
+    }
+    CHECK(foundLp396);
+
+    // 4) NagrandSkyBox.m2 Sequence 0 (320000 ms) + 5 real-time GlobalSequences.
+    const auto nagSkyBytes = wowee::test::readTbcData("environments/stars/nagrandskybox.m2");
+    const wowee::pipeline::M2Model nagSky = wowee::pipeline::M2Loader::load(nagSkyBytes);
+    REQUIRE(nagSky.isValid());
+    REQUIRE(nagSky.sequences.size() == 1u);
+    CHECK(nagSky.sequences[0].duration == 320000u);
+    CHECK(nagSky.globalSequenceDurations.size() == 5u);
+}
+
+TEST_CASE("Pass-2 alpha-blended M2 doodad fade skips 4x4 Bayer screen-door discard",
+          "[m2][doodad-fade][shader][tbc]") {
+    const std::string m2Vert = readShaderFile("assets/shaders/m2.vert.glsl");
+    const std::string m2Frag = readShaderFile("assets/shaders/m2.frag.glsl");
+    CHECK(m2Vert.find("((lightFlags & 8u) != 0u ? 16 : 0)") != std::string::npos);
+    CHECK(m2Frag.find("const bool isBlendedInstanceFade = (vSkyMode & 16) != 0;") != std::string::npos);
+    CHECK(m2Frag.find("!isGroundDetailFringe && !isBlendedInstanceFade && blendMode <= 1") != std::string::npos);
+}

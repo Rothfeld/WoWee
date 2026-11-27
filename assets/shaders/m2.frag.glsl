@@ -239,6 +239,7 @@ void main() {
 
     const bool isInteriorFog = (vSkyMode & 4) != 0;
     const bool isGroundDetailFringe = (vSkyMode & 8) != 0;
+    const bool isBlendedInstanceFade = (vSkyMode & 16) != 0;
     selectFog(isInteriorFog);
     // An outdoor doodad is not drawn past the outdoor fog's end; the sky
     // shows there. Terrain goes on past it. Black Temple's floating rocks
@@ -389,7 +390,7 @@ void main() {
     // the coverage alone would give two steps at 2x MSAA and none with MSAA
     // off. Multiplying it into the coverage as well would take the leaf edges
     // with it, so the cutout keeps its own alpha.
-    if (alphaTest != 0 && !isGroundDetailFringe && blendMode <= 1) {
+    if (alphaTest != 0 && !isGroundDetailFringe && !isBlendedInstanceFade && blendMode <= 1) {
         if (vFadeAlpha <= bayerDither4x4(ivec2(gl_FragCoord.xy))) discard;
         outAlpha = texColor.a;
     }

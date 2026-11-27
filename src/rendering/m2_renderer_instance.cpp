@@ -1,6 +1,7 @@
 #include <cstdlib>
 #include "rendering/m2_renderer.hpp"
 #include "rendering/m2_collision_bounds.hpp"
+#include "rendering/skybox_time_sync.hpp"
 #include "rendering/m2_renderer_internal.h"
 #include "rendering/m2_model_classifier.hpp"
 #include "rendering/particle_emission.hpp"
@@ -76,6 +77,21 @@ void M2Renderer::setInstanceFade(uint32_t instanceId, float alpha) {
     auto idxIt = instanceIndexById.find(instanceId);
     if (idxIt == instanceIndexById.end()) return;
     instances[idxIt->second].fade = std::clamp(alpha, 0.0f, 1.0f);
+}
+
+void M2Renderer::setInstanceSkyTimeOfDaySync(uint32_t instanceId, bool enabled, float dayFraction) {
+    auto idxIt = instanceIndexById.find(instanceId);
+    if (idxIt == instanceIndexById.end()) return;
+    auto& inst = instances[idxIt->second];
+    inst.skyTimeOfDaySynced = enabled;
+    inst.skyTimeOfDayFraction = dayFraction;
+    if (enabled) {
+        inst.currentSequenceIndex = 0;
+        if (inst.cachedModel && !inst.cachedModel->sequences.empty()) {
+            inst.animDuration = static_cast<float>(inst.cachedModel->sequences[0].duration);
+        }
+        inst.animTime = computeSkyboxTimeOfDayAnimMs(dayFraction, inst.animDuration);
+    }
 }
 
 void M2Renderer::setInstanceTint(uint32_t instanceId, const glm::vec3& tint) {

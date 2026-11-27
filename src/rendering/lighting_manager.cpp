@@ -208,10 +208,15 @@ bool LightingManager::loadLightSkyboxDbc(pipeline::AssetManager* assetManager) {
     }
 
     lightSkyboxPaths_.clear();
+    lightSkyboxFlags_.clear();
     for (uint32_t i = 0; i < dbc.getRecordCount(); ++i) {
         const uint32_t id = dbc.getUInt32(i, 0);
         std::string path = dbc.getString(i, 1);
-        if (id != 0 && !path.empty()) lightSkyboxPaths_[id] = std::move(path);
+        const uint32_t flags = dbc.getFieldCount() > 2 ? dbc.getUInt32(i, 2) : 0u;
+        if (id != 0 && !path.empty()) {
+            lightSkyboxPaths_[id] = std::move(path);
+            lightSkyboxFlags_[id] = flags;
+        }
     }
     LOG_INFO("Loaded LightSkybox.dbc: ", lightSkyboxPaths_.size(), " model paths");
     return !lightSkyboxPaths_.empty();
@@ -459,26 +464,43 @@ void LightingManager::updateWithStormWeight(const glm::vec3& playerPos, uint32_t
             defaultVolume != nullptr,
             defClearParams, defStormParams, &skyDomeParamShares);
 
-        std::vector<std::pair<std::string, float>> target;
+        struct SkyTargetEntry {
+            std::string path;
+            float weight = 0.0f;
+            uint32_t flags = 0;
+        };
+        std::vector<SkyTargetEntry> target;
         for (const auto& share : skyShares) {
             const auto skyIt = lightSkyboxPaths_.find(share.skyboxId);
             if (skyIt == lightSkyboxPaths_.end() || skyIt->second.empty()) continue;
+            const auto flagIt = lightSkyboxFlags_.find(share.skyboxId);
+            const uint32_t flags = (flagIt != lightSkyboxFlags_.end()) ? flagIt->second : 0u;
             auto t = std::find_if(target.begin(), target.end(),
-                                  [&](const auto& e) { return e.first == skyIt->second; });
-            if (t == target.end()) target.emplace_back(skyIt->second, share.weight);
-            else t->second += share.weight;
+                                  [&](const SkyTargetEntry& e) { return e.path == skyIt->second; });
+            if (t == target.end()) {
+                target.push_back({.path = skyIt->second, .weight = share.weight, .flags = flags});
+            } else {
+                t->weight += share.weight;
+                t->flags |= flags;
+            }
         }
         auto targetFor = [&](const std::string& path) {
-            for (const auto& [p, w] : target) if (p == path) return w;
+            for (const auto& e : target) if (e.path == path) return e.weight;
             return 0.0f;
         };
         for (auto& layer : skyboxLayers_) {
             layer.weight += (targetFor(layer.path) - layer.weight) * blendFactor;
         }
-        for (const auto& [path, w] : target) {
-            const bool present = std::any_of(skyboxLayers_.begin(), skyboxLayers_.end(),
-                                             [&](const SkyboxLayer& l) { return l.path == path; });
-            if (!present) skyboxLayers_.push_back({.path = path, .weight = w * blendFactor});
+        for (const auto& entry : target) {
+            auto existing = std::find_if(skyboxLayers_.begin(), skyboxLayers_.end(),
+                                         [&](const SkyboxLayer& l) { return l.path == entry.path; });
+            if (existing == skyboxLayers_.end()) {
+                skyboxLayers_.push_back({.path = entry.path,
+                                         .weight = entry.weight * blendFactor,
+                                         .flags = entry.flags});
+            } else {
+                existing->flags = entry.flags;
+            }
         }
         // Gone once faded out and not wanted - never while it is still wanted,
         // so a model is not dropped and reloaded on its way in.

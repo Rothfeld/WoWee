@@ -2,6 +2,7 @@
 #include "rendering/m2_renderer.hpp"
 #include "rendering/m2_renderer_internal.h"
 #include "rendering/m2_draw_mode.hpp"
+#include "rendering/skybox_time_sync.hpp"
 #include "rendering/m2_ground_detail_material.hpp"
 #include "rendering/m2_blend_mode.hpp"
 #include "rendering/m2_foliage_culling.hpp"
@@ -532,6 +533,16 @@ void M2Renderer::update(float deltaTime, const glm::vec3& cameraPos, const glm::
 
     for (auto& instance : instances) {
         if (instance.externalPose) continue;  // its owner keeps its clock
+        if (instance.skyTimeOfDaySynced) {
+            instance.currentSequenceIndex = 0;
+            if (instance.cachedModel && !instance.cachedModel->sequences.empty()) {
+                instance.animDuration = static_cast<float>(instance.cachedModel->sequences[0].duration);
+            }
+            instance.animTime = computeSkyboxTimeOfDayAnimMs(
+                instance.skyTimeOfDayFraction, instance.animDuration);
+            instance.globalSequenceTime += dtMs;
+            continue;
+        }
         instance.animTime += dtMs * instance.animSpeed;
         instance.globalSequenceTime += dtMs;
         const bool steppedBelow = instance.cachedHasAnimation && !instance.cachedDisableAnimation;
@@ -616,9 +627,9 @@ void M2Renderer::update(float deltaTime, const glm::vec3& cameraPos, const glm::
     // is quiet unless asked for with WOWEE_LOG_LEVEL=info.
     if (skyMode_ && !instances.empty()) {
         const auto& sky = instances.front();
-        const bool restarted = sky.animTime < skyDiagAnimTime_;
+        const bool restarted = !sky.skyTimeOfDaySynced && sky.animTime < skyDiagAnimTime_;
         if (restarted || sky.id != skyDiagInstanceId_ ||
-            sky.animTime - skyDiagAnimTime_ > 1000.0f) {
+            std::abs(sky.animTime - skyDiagAnimTime_) > 1000.0f) {
             LOG_INFO("skyM2: instance=", sky.id, " instances=", instances.size(),
                      " animTime=", sky.animTime, " duration=", sky.animDuration,
                      " gsTime=", sky.globalSequenceTime, " dtMs=", dtMs,
@@ -2317,7 +2328,8 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
         {
             int32_t lf = (instance.outdoorShadowed ? 1 : 0) |
                          (instance.customLightRig ? 2 : 0) |
-                         (instance.interiorFog ? 4 : 0);
+                         (instance.interiorFog ? 4 : 0) |
+                         ((instanceFaded && batch.blendMode <= 1) ? 8 : 0);
             e.flags = lf;
             const glm::vec3 bc = 0.5f * (instance.worldBoundsMin + instance.worldBoundsMax);
             e.boundsRadius = std::max(0.5f * glm::length(instance.worldBoundsMax - instance.worldBoundsMin), 0.5f);

@@ -7,6 +7,7 @@
 #include <memory>
 #include <string>
 #include <glm/glm.hpp>
+#include "rendering/skybox_time_sync.hpp"
 
 namespace wowee {
 namespace pipeline { class DBCFile; class AssetManager; }
@@ -293,6 +294,7 @@ public:
     struct SkyboxLayer {
         std::string path;
         float weight = 0.0f;   ///< 0..1: the share of the lights here that name it
+        uint32_t flags = 0;    ///< LightSkybox.dbc col 2 flags (0x1 = sync Sequence 0 to time of day)
     };
     /// Every sky model the lights around the player name, heaviest first, at
     /// the weights those lights have - the same falloff the sky colours blend
@@ -380,6 +382,7 @@ private:
     // LightParams profiles by ID
     std::map<uint32_t, LightParamsProfile> lightParamsProfiles_;
     std::map<uint32_t, std::string> lightSkyboxPaths_;
+    std::map<uint32_t, uint32_t> lightSkyboxFlags_;
 
     // Current state
     LightingParams currentParams_;

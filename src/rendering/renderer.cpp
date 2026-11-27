@@ -2003,6 +2003,7 @@ bool Renderer::updateSkyboxLayers() {
         return p;
     };
     const auto& layers = lightingManager->getSkyboxLayers();
+    const float skyDayFraction = lightingManager->getVisualTimeOfDayHours() / 24.0f;
 
     // Faded out and no longer wanted.
     std::erase_if(skyLayers_, [&](const SkyLayerInstance& sky) {
@@ -2029,6 +2030,8 @@ bool Renderer::updateSkyboxLayers() {
         }
         skyboxModelRenderer_->setInstanceFade(it->instanceId, layer.weight);
         skyboxModelRenderer_->setInstancePosition(it->instanceId, camera->getPosition());
+        skyboxModelRenderer_->setInstanceSkyTimeOfDaySync(
+            it->instanceId, (layer.flags & kLightSkyboxFlagTimeOfDaySync) != 0u, skyDayFraction);
     }
     return !skyLayers_.empty();
 }
