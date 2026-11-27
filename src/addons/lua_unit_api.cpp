@@ -3101,9 +3101,9 @@ void registerUnitLuaAPI(lua_State* L) {
                 lua_pushboolean(L, pm && (pm->onlineStatus & 0x0002u) != 0 ? 1 : 0);
                 return 1;
             }
-            // UNIT_FLAG_PVP = 0x00001000
-            uint32_t flags = entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_FLAGS));
-            lua_pushboolean(L, (flags & 0x00001000) ? 1 : 0);
+            // UNIT_FLAG_PVP = 0x00001000 (including charmed/possessed creature's
+            // charming player via UNIT_FIELD_CHARMEDBY in TBC 2.4.3).
+            lua_pushboolean(L, game::unitOrCharmerIsPvpFlagged(gh->getEntityManager(), guid) ? 1 : 0);
             return 1;
         }},
                 {"UnitIsPVPFreeForAll", [](lua_State* L) -> int {

@@ -843,6 +843,13 @@ void CombatHandler::handleAttackerStateUpdate(network::Packet& packet) {
 
     constexpr uint32_t HITINFO_LEFTSWING = 0x4;  // CMaNGOS Unit.h HitInfo
     const bool isOffHandSwing = (data.hitInfo & HITINFO_LEFTSWING) != 0;
+    // Suppress auto-attack swing animation & melee-stance latching when
+    // HITINFO_NOACTION (0x10000) or TBC's meleeSpellId field is non-zero
+    // (CMaNGOS GM `.damage` leaves CalcDamageInfo::meleeSpellId non-zero in the
+    // 8-arg SendAttackStateUpdate overload, and missed/dodged/parried
+    // on-next-swing melee spells populate meleeSpellId whose cast animation
+    // already played via SMSG_SPELL_GO).
+    const bool suppressAutoSwing = data.isNoAction() || data.meleeSpellId != 0;
     bool suppressedForRangedShot = false;
 
     if (isPlayerAttacker) {
@@ -851,13 +858,12 @@ void CombatHandler::handleAttackerStateUpdate(network::Packet& packet) {
             std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::system_clock::now().time_since_epoch()).count());
         // Skip melee animation if a ranged shot was just triggered from
-        // SMSG_SPELL_GO (Auto Shot / Shoot / Throw), or if HITINFO_NOACTION
-        // marks an on-next-swing spell result (Heroic Strike, Cleave, Maul,
-        // Raptor Strike) whose animation already comes from SMSG_SPELL_GO.
+        // SMSG_SPELL_GO (Auto Shot / Shoot / Throw), or if HITINFO_NOACTION /
+        // meleeSpellId marks a spell/GM result rather than a plain auto-attack.
         if (owner_.consumeSuppressMeleeSwingAnim()) {
             suppressedForRangedShot = true;
             LOG_DEBUG("Suppressed melee swing anim - ranged shot already triggered");
-        } else if (!data.isNoAction()) {
+        } else if (!suppressAutoSwing) {
             owner_.setCurrentMeleeSwingCrit(data.isCrit());
             if (owner_.meleeSwingCallbackRef()) owner_.meleeSwingCallbackRef()(0, isOffHandSwing);
             owner_.setCurrentMeleeSwingCrit(false);
@@ -884,11 +890,9 @@ void CombatHandler::handleAttackerStateUpdate(network::Packet& packet) {
             victimUnit->markPendingLethalHit();
         }
     }
-    // A non-lethal swing puts its attacker in melee, as SMSG_ATTACKSTART does.
-    // The server sends ATTACKSTART once, when the attack begins; a unit already
-    // fighting when it came into view has only its swings. Build 8606 holds
-    // such a unit in Stand until its first swing and in its ready stance
-    // from then on (_experiments/20261118T091949Z.creature_swing_anim, reenter).
+    // A non-lethal auto-attack swing puts its attacker in melee, as
+    // SMSG_ATTACKSTART does. Spell/GM damage packets (suppressAutoSwing) must
+    // not latch a remote unit into its melee ready stance from range.
     if (auto attacker = owner_.getEntityManager().getEntity(data.attackerGuid);
         attacker && attacker->isUnit() && data.targetGuid != 0) {
         auto attackerUnit = std::static_pointer_cast<Unit>(attacker);
@@ -896,21 +900,31 @@ void CombatHandler::handleAttackerStateUpdate(network::Packet& packet) {
             if (attackerUnit->getMeleeVictimGuid() == data.targetGuid) {
                 attackerUnit->setMeleeVictimGuid(0);
             }
-        } else {
+        } else if (!suppressAutoSwing) {
             attackerUnit->setMeleeVictimGuid(data.targetGuid);
         }
     }
-    if (!isPlayerAttacker && !data.isNoAction() && owner_.npcSwingCallbackRef()) {
+    if (!isPlayerAttacker && !suppressAutoSwing && owner_.npcSwingCallbackRef()) {
         owner_.setCurrentMeleeSwingCrit(data.isCrit());
         owner_.npcSwingCallbackRef()(data.attackerGuid, isOffHandSwing);
         owner_.setCurrentMeleeSwingCrit(false);
     }
+
+    // Queue 3D/local combat audio for ALL visible units (local player, remote
+    // players, pets, and NPC-vs-NPC combat) before building visual/UI impact.
+    enqueueMeleeCombatAudio(data, isOffHandSwing, suppressedForRangedShot || suppressAutoSwing, lethalHit);
+
+    PendingMeleeImpact impact;
+    impact.attackerGuid = data.attackerGuid;
+    impact.targetGuid = data.targetGuid;
+    impact.isPlayerAttacker = isPlayerAttacker;
+
     // Observers must see the same victim reaction as the combatants. Miss,
     // evade and immunity do not wound; dodge/parry/block are explicit outcomes.
     // HITINFO_NOACTION (CMaNGOS sends it for on-next-swing spell results):
     // build 8606 shows the damage and leaves the victim still, no spurt
     // either (_experiments/20261119T1311Z.wound_rule, thugflags).
-    if (owner_.hitReactionCallbackRef() && !data.isNoAction() && !lethalHit) {
+    if (!data.isNoAction() && !lethalHit) {
         using HR = GameHandler::HitReaction;
         std::optional<HR> reaction;
         if (data.victimState == VICTIMSTATE_DODGE) reaction = HR::DODGE;
@@ -919,16 +933,13 @@ void CombatHandler::handleAttackerStateUpdate(network::Packet& packet) {
         else if (!data.isMiss() && data.victimState != VICTIMSTATE_EVADES &&
                  data.victimState != VICTIMSTATE_IS_IMMUNE && data.victimState != VICTIMSTATE_DEFLECTS)
             reaction = data.isCrit() ? HR::CRIT_WOUND : HR::WOUND;
-        if (reaction) owner_.hitReactionCallbackRef()(data.attackerGuid, data.targetGuid, *reaction);
+        if (reaction) impact.reactionKind = static_cast<int>(*reaction);
     }
-
-    // Queue 3D/local combat audio for ALL visible units (local player, remote
-    // players, pets, and NPC-vs-NPC combat) before the local-UI early return.
-    enqueueMeleeCombatAudio(data, isOffHandSwing, suppressedForRangedShot, lethalHit);
 
     // School of the swing (the first sub-damage; a swing has one), and what
     // was taken off it.
     const uint32_t swingSchool = data.subDamages.empty() ? 0 : data.subDamages.front().schoolMask;
+    impact.schoolMask = swingSchool;
     uint32_t totalAbsorbed = 0, totalResisted = 0;
     for (const auto& sub : data.subDamages) {
         totalAbsorbed += sub.absorbed;
@@ -961,71 +972,125 @@ void CombatHandler::handleAttackerStateUpdate(network::Packet& packet) {
             else if (data.blocked > 0) flags = "BLOCK";
             else if (totalResisted > 0) flags = "RESIST";
         }
-        fireUnitCombat(data.targetGuid, action, flags, amount, swingSchool);
+        impact.unitCombatAction = action;
+        impact.unitCombatFlags = flags;
+        impact.unitCombatAmount = amount;
     }
 
     // The pet's swings are written over its victim too ("Pet Damage",
     // PetMeleeDamage): the original showed the imp's hits on its target.
     const bool isPetAttacker = owner_.getPetGuid() != 0 && data.attackerGuid == owner_.getPetGuid();
+    const bool localParticipant = isPlayerAttacker || isPlayerTarget || isPetAttacker;
 
-    // Local combat UI and auto-targeting remain local.
-    if (!isPlayerAttacker && !isPlayerTarget && !isPetAttacker) return;
-
-    if (isPlayerTarget && data.attackerGuid != 0) {
+    if (localParticipant && isPlayerTarget && data.attackerGuid != 0) {
         hostileAttackers_.insert(data.attackerGuid);
         autoTargetAttacker(data.attackerGuid);
     }
 
-    // An evade comes with the miss flag set as well, so it is asked first.
-    const auto line = [&](CombatTextEntry::Type type, int32_t amount, bool reduction = false) {
-        addCombatText(type, amount, 0, isPlayerAttacker, 0, data.attackerGuid, data.targetGuid,
-                      swingSchool, reduction, false);
-    };
-    if (data.victimState == VICTIMSTATE_EVADES) {
-        line(CombatTextEntry::EVADE, 0);
-    } else if (data.isMiss()) {
-        line(CombatTextEntry::MISS, 0);
-    } else if (data.victimState == VICTIMSTATE_DODGE) {
-        line(CombatTextEntry::DODGE, 0);
-    } else if (data.victimState == VICTIMSTATE_PARRY) {
-        line(CombatTextEntry::PARRY, 0);
-    } else if (data.victimState == VICTIMSTATE_BLOCKS) {
-        line(CombatTextEntry::BLOCK, static_cast<int32_t>(data.blocked));
-    } else if (data.victimState == VICTIMSTATE_IS_IMMUNE) {
-        line(CombatTextEntry::IMMUNE, 0);
-    } else if (data.victimState == VICTIMSTATE_DEFLECTS) {
-        line(CombatTextEntry::DEFLECT, 0);
-    } else if (data.totalDamage == 0 && totalAbsorbed > 0) {
-        // Nothing got through: the swing is named by what stopped it
-        // (the original writes "Absorb" over the unit, nothing else).
-        line(CombatTextEntry::ABSORB, static_cast<int32_t>(totalAbsorbed));
-    } else if (data.totalDamage == 0 && data.blocked > 0) {
-        line(CombatTextEntry::BLOCK, static_cast<int32_t>(data.blocked));
-    } else if (data.totalDamage == 0 && totalResisted > 0) {
-        line(CombatTextEntry::RESIST, static_cast<int32_t>(totalResisted));
-    } else if (!data.isNoAction() || data.totalDamage > 0) {
-        // An on-next-swing spell hit (Heroic Strike, Cleave, Maul, Raptor Strike)
-        // arrives as a 0-damage HITINFO_NOACTION swing paired with SMSG_SPELLNONMELEEDAMAGELOG;
-        // build 8606 emits no SWING_DAMAGE 0 or world "Miss" for that carrier packet
-        // (verified on Pair 12, Cleave 15496). An on-next-swing miss carries HITINFO_MISS
-        // (0x10012) or a dodge/parry victimState and is already handled above.
-        CombatTextEntry::Type type;
-        if (data.isCrit())
-            type = CombatTextEntry::CRIT_DAMAGE;
-        else if (data.isCrushing())
-            type = CombatTextEntry::CRUSHING;
-        else if (data.isGlancing())
-            type = CombatTextEntry::GLANCING;
-        else
-            type = CombatTextEntry::MELEE_DAMAGE;
-        line(type, data.totalDamage);
-        // What was taken off a hit that still did damage, for the combat log
-        // and COMBAT_TEXT_UPDATE's partial forms.
-        if (totalAbsorbed > 0) line(CombatTextEntry::ABSORB, static_cast<int32_t>(totalAbsorbed), true);
-        if (totalResisted > 0) line(CombatTextEntry::RESIST, static_cast<int32_t>(totalResisted), true);
-        if (data.blocked > 0) line(CombatTextEntry::BLOCK, static_cast<int32_t>(data.blocked), true);
+    if (localParticipant) {
+        // An evade comes with the miss flag set as well, so it is asked first.
+        const auto line = [&](CombatTextEntry::Type type, int32_t amount, bool reduction = false) {
+            impact.textLines.push_back({type, amount, reduction});
+        };
+        if (data.victimState == VICTIMSTATE_EVADES) {
+            line(CombatTextEntry::EVADE, 0);
+        } else if (data.isMiss()) {
+            line(CombatTextEntry::MISS, 0);
+        } else if (data.victimState == VICTIMSTATE_DODGE) {
+            line(CombatTextEntry::DODGE, 0);
+        } else if (data.victimState == VICTIMSTATE_PARRY) {
+            line(CombatTextEntry::PARRY, 0);
+        } else if (data.victimState == VICTIMSTATE_BLOCKS) {
+            line(CombatTextEntry::BLOCK, static_cast<int32_t>(data.blocked));
+        } else if (data.victimState == VICTIMSTATE_IS_IMMUNE) {
+            line(CombatTextEntry::IMMUNE, 0);
+        } else if (data.victimState == VICTIMSTATE_DEFLECTS) {
+            line(CombatTextEntry::DEFLECT, 0);
+        } else if (data.totalDamage == 0 && totalAbsorbed > 0) {
+            // Nothing got through: the swing is named by what stopped it
+            // (the original writes "Absorb" over the unit, nothing else).
+            line(CombatTextEntry::ABSORB, static_cast<int32_t>(totalAbsorbed));
+        } else if (data.totalDamage == 0 && data.blocked > 0) {
+            line(CombatTextEntry::BLOCK, static_cast<int32_t>(data.blocked));
+        } else if (data.totalDamage == 0 && totalResisted > 0) {
+            line(CombatTextEntry::RESIST, static_cast<int32_t>(totalResisted));
+        } else if (!data.isNoAction() || data.totalDamage > 0) {
+            // An on-next-swing spell hit (Heroic Strike, Cleave, Maul, Raptor Strike)
+            // arrives as a 0-damage HITINFO_NOACTION swing paired with SMSG_SPELLNONMELEEDAMAGELOG;
+            // build 8606 emits no SWING_DAMAGE 0 or world "Miss" for that carrier packet
+            // (verified on Pair 12, Cleave 15496). An on-next-swing miss carries HITINFO_MISS
+            // (0x10012) or a dodge/parry victimState and is already handled above.
+            CombatTextEntry::Type type;
+            if (data.isCrit())
+                type = CombatTextEntry::CRIT_DAMAGE;
+            else if (data.isCrushing())
+                type = CombatTextEntry::CRUSHING;
+            else if (data.isGlancing())
+                type = CombatTextEntry::GLANCING;
+            else
+                type = CombatTextEntry::MELEE_DAMAGE;
+            line(type, data.totalDamage);
+            // What was taken off a hit that still did damage, for the combat log
+            // and COMBAT_TEXT_UPDATE's partial forms.
+            if (totalAbsorbed > 0) line(CombatTextEntry::ABSORB, static_cast<int32_t>(totalAbsorbed), true);
+            if (totalResisted > 0) line(CombatTextEntry::RESIST, static_cast<int32_t>(totalResisted), true);
+            if (data.blocked > 0) line(CombatTextEntry::BLOCK, static_cast<int32_t>(data.blocked), true);
+        }
     }
 
+    // Native TBC 2.4.3 emits "Miss" / "Evade" immediately on packet arrival
+    // (0 ms), while non-miss melee hits, dodges, parries, and blocks defer both
+    // the victim's hit-reaction animation/blood spurt AND floating combat text
+    // until the attacker's swing animation crosses its authored M2 $CAH
+    // (CombatAttackHit) keyframe (~180-300 ms 1H/dagger, ~533-666 ms 2H).
+    float hitDelaySec = 0.0f;
+    if (!suppressAutoSwing && !suppressedForRangedShot && !lethalHit &&
+        !data.isMiss() && data.victimState != VICTIMSTATE_EVADES &&
+        owner_.meleeHitDelayProviderRef()) {
+        hitDelaySec = owner_.meleeHitDelayProviderRef()(data.attackerGuid, isOffHandSwing);
+    }
+
+    if (hitDelaySec > 0.0f) {
+        impact.remainingSec = hitDelaySec;
+        static constexpr size_t kMaxPendingMeleeImpacts = 64;
+        while (pendingMeleeImpacts_.size() >= kMaxPendingMeleeImpacts) {
+            deliverMeleeImpact(pendingMeleeImpacts_.front());
+            pendingMeleeImpacts_.pop_front();
+        }
+        pendingMeleeImpacts_.push_back(std::move(impact));
+        return;
+    }
+
+    deliverMeleeImpact(impact);
+}
+
+void CombatHandler::deliverMeleeImpact(const PendingMeleeImpact& impact) {
+    if (impact.reactionKind >= 0 && owner_.hitReactionCallbackRef()) {
+        owner_.hitReactionCallbackRef()(
+            impact.attackerGuid,
+            impact.targetGuid,
+            static_cast<GameHandler::HitReaction>(impact.reactionKind));
+    }
+    fireUnitCombat(impact.targetGuid,
+                   impact.unitCombatAction.c_str(),
+                   impact.unitCombatFlags.c_str(),
+                   impact.unitCombatAmount,
+                   impact.schoolMask);
+    for (const auto& tl : impact.textLines) {
+        addCombatText(tl.type, tl.amount, 0, impact.isPlayerAttacker, 0,
+                      impact.attackerGuid, impact.targetGuid,
+                      impact.schoolMask, tl.reduction, false);
+    }
+}
+
+bool CombatHandler::hasPendingMeleeImpactForVictim(uint64_t victimGuid) const {
+    if (victimGuid == 0) return false;
+    for (const auto& imp : pendingMeleeImpacts_) {
+        if (imp.targetGuid == victimGuid && imp.remainingSec > 0.0f) {
+            return true;
+        }
+    }
+    return false;
 }
 
 std::optional<GameHandler::HitReaction> GameHandler::spellDamageHitReaction(
@@ -1165,6 +1230,19 @@ void CombatHandler::handleSetForcedReactions(network::Packet& packet) {
 // ============================================================
 
 void CombatHandler::updateAutoAttack(float deltaTime) {
+    if (deltaTime > 0.0f && !pendingMeleeImpacts_.empty()) {
+        for (auto it = pendingMeleeImpacts_.begin(); it != pendingMeleeImpacts_.end(); ) {
+            it->remainingSec -= deltaTime;
+            if (it->remainingSec <= 0.0f) {
+                PendingMeleeImpact ready = std::move(*it);
+                it = pendingMeleeImpacts_.erase(it);
+                deliverMeleeImpact(ready);
+            } else {
+                ++it;
+            }
+        }
+    }
+
     if (auto* ac = owner_.services().audioCoordinator) {
         if (auto* csm = ac->getCombatSoundManager()) {
             bindCombatAudioCallbacks();
@@ -1250,6 +1328,7 @@ void CombatHandler::resetAllCombatState() {
     }
     hostileAttackers_.clear();
     combatText_.clear();
+    pendingMeleeImpacts_.clear();
     autoAttacking_ = false;
     autoAttackRequested_ = false;
     enterCombatAnnounced_ = false;

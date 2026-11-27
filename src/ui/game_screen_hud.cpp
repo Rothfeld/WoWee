@@ -1726,14 +1726,16 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         // PvP-flagged friendly players are green (0,255,0), enemies are red.
         const bool isPlayerControlled =
             (unit->getUnitFlags() & game::UNIT_FLAG_PLAYER_CONTROLLED) != 0;
+        const bool isCharmedByPlayer =
+            !isPlayer && game::isPlayerGuid(game::unitCharmedByGuid(*unit));
         const bool isPvpFlagged =
-            (unit->getUnitFlags() & game::UNIT_FLAG_PVP) != 0;
+            game::unitOrCharmerIsPvpFlagged(gameHandler.getEntityManager(), guid);
         const int reaction = (isPlayer || isPlayerControlled)
             ? 5
             : gameHandler.unitReactionToPlayer(*unit);
         const ui::LegacyPlateRgb baseNameRgb = ui::worldUnitNameRgb(
             isCorpse && legacyPlates, isPlayer, isPlayerControlled,
-            isPvpFlagged, isHostile, reaction);
+            isPvpFlagged, isHostile, reaction, isCharmedByPlayer);
         ImU32 nameColor = IM_COL32(baseNameRgb.r, baseNameRgb.g, baseNameRgb.b, A(255));
         if (showPlate && legacyPlates) {
             const ui::LegacyPlateRgb plateRgb = ui::legacyPlateNameRgb(

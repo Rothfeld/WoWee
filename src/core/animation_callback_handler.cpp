@@ -317,6 +317,18 @@ void AnimationCallbackHandler::setupCallbacks() {
                            static_cast<float>(attackTimeMs));
     });
 
+    gameHandler_.setMeleeHitDelayProvider([this](uint64_t attackerGuid, bool /*offHand*/) -> float {
+        auto* cr = renderer_.getCharacterRenderer();
+        if (!cr || attackerGuid == 0) return 0.0f;
+        const uint32_t instanceId = resolveUnitInstanceId(attackerGuid);
+        if (instanceId == 0 || cr->isInstanceDead(instanceId)) return 0.0f;
+        if (attackerGuid == gameHandler_.getPlayerGuid()) {
+            auto* ac = renderer_.getAnimationController();
+            return ac ? ac->lastMeleeSwingHitDelaySeconds(instanceId) : 0.0f;
+        }
+        return cr->getMeleeHitDelaySeconds(instanceId);
+    });
+
     // Victim reaction from SMSG_ATTACKERSTATEUPDATE, one rule for the local
     // player, other players and creatures. AnimationData: CombatWound (9),
     // CombatCritical (10), Dodge (30), ShieldBlock (24), and the parry of the
@@ -379,7 +391,9 @@ void AnimationCallbackHandler::setupCallbacks() {
                 LOG_WARNING("Hit reaction ", animId, " on 0x", std::hex, victimGuid, std::dec, " without a unit entity");
                 return;
             }
-            if (!isLocalPlayer && victim->hasPendingLethalHit()) {
+            if (!isLocalPlayer &&
+                (victim->hasPendingLethalHit() ||
+                 game::isUnitCorpseState(victim->getHealth(), victim->getMaxHealth(), victim->getDynamicFlags()))) {
                 return;
             }
             const bool creature = victim->getType() == game::ObjectType::UNIT;
@@ -566,6 +580,12 @@ void AnimationCallbackHandler::setupCallbacks() {
         // models (Lich/Skeleton/Ghoul/golems/totems), stunned units, and units mid-swing,
         // mid-cast/channel, or spinning in Whirlwind do not flinch or break their active pose.
         if (!isState && rendering::isWoundAnimation(emoteAnim)) {
+            if (const auto* ch = gameHandler_.getCombatHandler();
+                ch && ch->hasPendingMeleeImpactForVictim(guid)) {
+                LOG_DEBUG("Wound emote ", emoteAnim, " suppressed on 0x", std::hex, guid, std::dec,
+                          " while $CAH melee impact is pending");
+                return;
+            }
             if (guid == gameHandler_.getPlayerGuid()) {
                 const uint32_t localInst = resolveUnitInstanceId(guid);
                 if (localInst != 0 && cr->hasAnimation(localInst, emoteAnim)) {

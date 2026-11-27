@@ -64,7 +64,12 @@ TEST_CASE("player-created units follow SummonProperties.dbc Title then fallback 
     CHECK(summonTitle(6, player, 0) == SummonTitle::Guardian);      // Skeletal Warrior
     CHECK(summonTitle(1, player, 0) == SummonTitle::Guardian);      // Boar Spirit
     CHECK(std::string(summonTitleGlobal(SummonTitle::Guardian)) == "UNITNAME_TITLE_GUARDIAN");
-    // Charmed unit (Enslave Demon / Mind Control): neither CREATEDBY nor SUMMONEDBY set.
+    // Charmed unit (Enslave Demon / Mind Control / Possess): neither CREATEDBY nor SUMMONEDBY set.
+    // Charmed Beasts (e.g. Stonetusk Boar under Mind Control 11446) read "<Owner's Pet>";
+    // charmed non-Beasts (Dragonkin Razorgore 12435, Demons, Humanoids) read "<Owner's Minion>".
+    CHECK(summonTitle(1, 0, 0, player) == SummonTitle::Pet);
+    CHECK(summonTitle(2, 0, 0, player) == SummonTitle::Charm);
     CHECK(summonTitle(3, 0, 0, player) == SummonTitle::Charm);
+    CHECK(summonTitle(7, 0, 0, player) == SummonTitle::Charm);
     CHECK(std::string(summonTitleGlobal(SummonTitle::Charm)) == "UNITNAME_TITLE_CHARM");
 }

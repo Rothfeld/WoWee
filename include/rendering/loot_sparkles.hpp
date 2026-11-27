@@ -32,6 +32,16 @@ public:
         return std::max({1.0f, collisionBoxHeight, 1.5f * boundingRadius});
     }
 
+    /// Fallback LootFX scale when a game object M2 omits its header collision
+    /// box (collisionBoxHeight == 0 and header boundingRadius == 0, e.g.
+    /// World\Goober\G_DragonEggPrismatic01.m2 for Black Dragon Egg 177807 with
+    /// tight visual radius 3.78 yd and mesh top +3.46 yd). Small collisionless
+    /// herbs (Bush_Sansam.m2, tight radius 0.73 yd) stay at 1.0x.
+    static constexpr float fallbackCollisionlessObjectScale(
+        float spotScale, float visualBoundRadius) {
+        return std::max({1.0f, spotScale, visualBoundRadius});
+    }
+
     /// LootFX scale over a lootable unit corpse: never below 1, growing with
     /// the corpse's selection radius so large boss corpses (e.g. Entropius at
     /// scale 6, selection radius 5.03 yd) sparkle across their full extent

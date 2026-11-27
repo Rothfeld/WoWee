@@ -90,6 +90,8 @@ public:
 
     // ── Melee combat ───────────────────────────────────────────────────────
     void triggerMeleeSwing(bool offHand = false, float attackTimeMs = 0.0f, bool isCrit = false);
+    /// Effective $CAH delay in seconds for the most recently triggered local melee swing.
+    [[nodiscard]] float lastMeleeSwingHitDelaySeconds(uint32_t drawnInstanceId) const;
     /// inventoryType: WoW inventory type (0=unarmed, 13=1H, 17=2H, 21=main-hand, …)
     /// is2HLoose: true for polearms/staves (use ATTACK_2H_LOOSE instead of ATTACK_2H)
     /// isFist/isDagger describe the main hand; offHandIsFist/offHandIsDagger
@@ -257,6 +259,9 @@ private:
     bool pendingMeleeSwingOffHand_ = false;
     bool pendingMeleeSwingCrit_ = false;
     float pendingMeleeSwingMaxDurationMs_ = 0.0f;
+    uint32_t lastTriggeredSwingAnimId_ = 0;
+    float lastTriggeredSwingMaxMs_ = 0.0f;
+    float lastTriggeredSwingLeadSec_ = 0.0f;
     void startLocalMeleeSwing(bool offHand, float maxDurationMs, bool isCrit = false);
 
     // ── Ranged weapon state ──────────────────────────────────────────────

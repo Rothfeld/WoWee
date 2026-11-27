@@ -484,6 +484,13 @@ TEST_CASE("TBC 2.4.3 3D world unit overhead name color keeps friendly pets/minio
     c = worldUnitNameRgb(false, false, true, true, false, 5);
     CHECK((c.r == 128 && c.g == 128 && c.b == 255));
 
+    // Friendly creature charmed/possessed by a player (UNIT_FIELD_CHARMEDBY):
+    // blue when charmer is unflagged, green (0, 255, 0) when charmer is PvP-flagged.
+    c = worldUnitNameRgb(false, false, true, false, false, 5, /*isCharmedByPlayer=*/true);
+    CHECK((c.r == 128 && c.g == 128 && c.b == 255));
+    c = worldUnitNameRgb(false, false, true, true, false, 5, /*isCharmedByPlayer=*/true);
+    CHECK((c.r == 0 && c.g == 255 && c.b == 0));
+
     // Hostile player and hostile player-controlled pet -> red (220, 80, 80)
     c = worldUnitNameRgb(false, true, true, true, true, 1);
     CHECK((c.r == 220 && c.g == 80 && c.b == 80));

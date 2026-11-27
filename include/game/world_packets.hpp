@@ -2282,6 +2282,7 @@ struct AttackerStateUpdateData {
     // 4 interrupt, 5 full block, 6 evade, 7 immune, 8 deflect.
     uint32_t victimState = 0;
     int32_t overkill = -1;
+    uint32_t meleeSpellId = 0;
     uint32_t blocked = 0;
 
     // HitInfo bit layout: classic and TBC (CMaNGOS Unit.h HitInfo) put

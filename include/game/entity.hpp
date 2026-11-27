@@ -174,6 +174,17 @@ inline bool isLiveMeleeVictim(bool victimPresent, bool victimMarkedDead,
     return !isUnitCorpseState(victimHealth, victimMaxHealth, victimDynamicFlags);
 }
 
+/// True when a unit holds its melee ready stance between swings: living, not
+/// pacified (UNIT_FLAG_PACIFIED 0x00020000 keeps Stand on SMSG_ATTACKSTART in
+/// TBC 2.4.3), and engaged with a live melee victim.
+inline constexpr bool unitHoldsMeleeReadyStance(uint32_t unitFlags,
+                                                uint32_t health,
+                                                uint64_t meleeVictimGuid,
+                                                bool liveMeleeVictim) {
+    return health > 0 && meleeVictimGuid != 0 &&
+           (unitFlags & UNIT_FLAG_PACIFIED) == 0 && liveMeleeVictim;
+}
+
 /**
  * Update types for SMSG_UPDATE_OBJECT
  */
@@ -1273,6 +1284,26 @@ inline uint64_t unitCharmedByGuid(const Entity& entity) {
     if (loIdx == 0xFFFF) return 0;
     return static_cast<uint64_t>(entity.getField(loIdx)) |
            (static_cast<uint64_t>(entity.getField(static_cast<uint16_t>(loIdx + 1))) << 32);
+}
+
+/// Effective PvP flag for a unit in TBC 2.4.3: CMaNGOS Unit::TakePossessOf /
+/// TakeCharmOf sets UNIT_FIELD_CHARMEDBY without copying UNIT_FLAG_PVP onto the
+/// charmed creature, while native 2.4.3 queries the charming player's PvP flag
+/// for UnitIsPVP, selection rings, and charmed overhead labels.
+inline bool unitOrCharmerIsPvpFlagged(const EntityManager& entities, uint64_t guid) {
+    if (guid == 0) return false;
+    const auto entity = entities.getEntity(guid);
+    if (!entity) return false;
+    const uint16_t flagsIdx = fieldIndex(UF::UNIT_FIELD_FLAGS);
+    if (flagsIdx == 0xFFFF) return false;
+    if ((entity->getField(flagsIdx) & UNIT_FLAG_PVP) != 0) return true;
+    const uint64_t charmedBy = unitCharmedByGuid(*entity);
+    if (charmedBy != 0 && charmedBy != guid) {
+        if (const auto charmer = entities.getEntity(charmedBy)) {
+            return (charmer->getField(flagsIdx) & UNIT_FLAG_PVP) != 0;
+        }
+    }
+    return false;
 }
 
 inline uint32_t unitCreatedBySpell(const Entity& entity) {

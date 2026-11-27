@@ -56,8 +56,24 @@ void LootSparkles::update(M2Renderer* m2, pipeline::AssetManager* assets,
     live.reserve(spots.size());
     for (const auto& spot : spots) {
         live.insert(spot.guid);
+        float effectiveScale = spot.scale;
+        if (spot.roomSource != 0) {
+            float colHeight = 0.0f;
+            float colRadius = 0.0f;
+            const bool hasCollision =
+                m2->getInstanceCollisionBounds(spot.roomSource, colHeight, colRadius) &&
+                (colHeight > 0.0f || colRadius > 0.0f);
+            if (!hasCollision) {
+                glm::vec3 boundCenter{0.0f};
+                float tightRadius = 0.0f;
+                if (m2->getInstanceBounds(spot.roomSource, boundCenter, tightRadius)) {
+                    effectiveScale = fallbackCollisionlessObjectScale(spot.scale, tightRadius);
+                }
+            }
+        }
         auto it = instances_.find(spot.guid);
-        if (it != instances_.end() && m2->hasInstance(it->second.id) && it->second.scale == spot.scale) {
+        if (it != instances_.end() && m2->hasInstance(it->second.id) &&
+            it->second.scale == effectiveScale) {
             // Kept in place: a corpse can still be settling into place.
             m2->setInstancePosition(it->second.id, spot.position);
             if (spot.roomSource != 0) m2->copyInstanceRoom(it->second.id, spot.roomSource);
@@ -65,9 +81,9 @@ void LootSparkles::update(M2Renderer* m2, pipeline::AssetManager* assets,
         }
         // New, or rescaled (an object whose model changed): placed afresh.
         if (it != instances_.end() && m2->hasInstance(it->second.id)) m2->removeInstance(it->second.id);
-        const uint32_t id = m2->createInstance(MODEL_ID, spot.position, glm::vec3(0.0f), spot.scale);
+        const uint32_t id = m2->createInstance(MODEL_ID, spot.position, glm::vec3(0.0f), effectiveScale);
         if (id != 0 && spot.roomSource != 0) m2->copyInstanceRoom(id, spot.roomSource);
-        if (id != 0) instances_[spot.guid] = {id, spot.scale};
+        if (id != 0) instances_[spot.guid] = {id, effectiveScale};
         else instances_.erase(spot.guid);
     }
 

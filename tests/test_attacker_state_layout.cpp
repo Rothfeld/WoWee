@@ -126,10 +126,23 @@ TEST_CASE("TBC attacker state: an unknown and a spell id, and no overkill",
     REQUIRE(parsers.parseAttackerStateUpdate(packet, data));
     checkHead(data);
     CHECK(data.victimState == 1u);
+    CHECK(data.meleeSpellId == 0u);
     CHECK(data.blocked == 55u);
     // No overkill on the wire here, and the reader says so rather than
     // leaving whatever the previous field held.
     CHECK(data.overkill == -1);
+
+    // Non-zero spellId (e.g. CMaNGOS GM `.damage` or missed on-next-swing melee special)
+    Writer wSpell;
+    writeHead(wSpell);
+    wSpell.u32(1);        // victimState
+    wSpell.u32(0);        // unknown
+    wSpell.u32(300000u);  // spellId / GM .damage payload
+    wSpell.u32(0);        // blocked
+    wowee::network::Packet spellPkt(0, wSpell.bytes);
+    AttackerStateUpdateData spellData;
+    REQUIRE(parsers.parseAttackerStateUpdate(spellPkt, spellData));
+    CHECK(spellData.meleeSpellId == 300000u);
 }
 
 TEST_CASE("a truncated packet is refused and the read position restored",

@@ -845,3 +845,52 @@ TEST_CASE("Unit pet name query triggers on freshly tamed pets with timestamp 0 a
     demon.queriedPetNameTimestamp = 1795384600u;
     CHECK_FALSE(demon.needsPetNameQuery(42u, 1795384600u));
 }
+
+TEST_CASE("LootSparkles fallback scale lifts sparkles above large collisionless goobers while keeping herbs 1x",
+          "[entity][sparkles][goober]") {
+    using wowee::rendering::LootSparkles;
+    // Black Dragon Egg 177807 (G_DragonEggPrismatic01.m2): header collision box = 0,
+    // tight visual radius = 3.78 yd (top +3.46 yd) -> scales to 3.78x.
+    CHECK(LootSparkles::objectScale(0.0f, 0.0f) == Catch::Approx(1.0f));
+    CHECK(LootSparkles::fallbackCollisionlessObjectScale(1.0f, 3.78f) == Catch::Approx(3.78f));
+    // Small collisionless herb (Bush_Sansam.m2, tight radius 0.73 yd) stays at 1.0x.
+    CHECK(LootSparkles::fallbackCollisionlessObjectScale(1.0f, 0.73f) == Catch::Approx(1.0f));
+}
+
+TEST_CASE("UNIT_FLAG_PACIFIED suppresses melee ready stance while keeping victim tracking",
+          "[entity][pacified][stance]") {
+    CHECK(unitHoldsMeleeReadyStance(0u, 100u, 0x25ull, true));
+    CHECK_FALSE(unitHoldsMeleeReadyStance(UNIT_FLAG_PACIFIED, 100u, 0x25ull, true));
+    CHECK_FALSE(unitHoldsMeleeReadyStance(0u, 0u, 0x25ull, true));
+    CHECK_FALSE(unitHoldsMeleeReadyStance(0u, 100u, 0ull, true));
+    CHECK_FALSE(unitHoldsMeleeReadyStance(0u, 100u, 0x25ull, false));
+}
+
+TEST_CASE("unitOrCharmerIsPvpFlagged inherits UNIT_FIELD_CHARMEDBY player's PvP flag",
+          "[entity][possess][pvp]") {
+    UpdateFieldTable fields;
+    fields.setIndex(UF::UNIT_FIELD_CHARMEDBY, 10);
+    fields.setIndex(UF::UNIT_FIELD_FLAGS, 46);
+    struct RestoreTable {
+        const UpdateFieldTable* previous;
+        ~RestoreTable() { setActiveUpdateFieldTable(previous); }
+    } restore{getActiveUpdateFieldTable()};
+    setActiveUpdateFieldTable(&fields);
+
+    EntityManager entities;
+    constexpr uint64_t kCharmer = 0x0000000000000025ULL;
+    constexpr uint64_t kBoar    = 0xF130000071000001ULL;
+    auto player = std::make_shared<Player>(kCharmer);
+    auto boar = std::make_shared<Unit>(kBoar);
+    boar->setField(10, static_cast<uint32_t>(kCharmer));
+    boar->setField(11, static_cast<uint32_t>(kCharmer >> 32));
+    boar->setField(46, UNIT_FLAG_PLAYER_CONTROLLED);  // TakePossessOf omits UNIT_FLAG_PVP on charmed unit
+    entities.addEntity(kCharmer, player);
+    entities.addEntity(kBoar, boar);
+
+    CHECK_FALSE(unitOrCharmerIsPvpFlagged(entities, kBoar));
+    player->setField(46, UNIT_FLAG_PLAYER_CONTROLLED | UNIT_FLAG_PVP);
+    CHECK(unitOrCharmerIsPvpFlagged(entities, kBoar));
+    player->setField(46, UNIT_FLAG_PLAYER_CONTROLLED);
+    CHECK_FALSE(unitOrCharmerIsPvpFlagged(entities, kBoar));
+}

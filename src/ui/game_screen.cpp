@@ -970,7 +970,7 @@ void GameScreen::render(game::GameHandler& gameHandler) {
             (stanceAutoRepeatSpellId != 0 && composer && composer->isShowingRanged());
         if (ac) {
             ac->setRangedAiming(rangedAutoShootInRange && playerAlive);
-            ac->setInCombat(combatStanceActive && playerAlive);
+            ac->setInCombat(combatStanceActive && playerAlive && !gameHandler.isPlayerPacified());
         }
         static glm::vec3 targetGLPos;
         if (gameHandler.hasTarget()) {
@@ -1025,8 +1025,7 @@ void GameScreen::render(game::GameHandler& gameHandler) {
                     const glm::vec3 kRed(1.0f, 0.0f, 0.0f), kOrange(1.0f, 0.5f, 0.0f),
                         kYellow(1.0f, 1.0f, 0.0f), kGreen(0.0f, 1.0f, 0.0f), kBlue(0.5f, 0.5f, 1.0f);
                     auto pvpFlagged = [&](uint64_t guid) {
-                        auto e = gameHandler.getEntityManager().getEntity(guid);
-                        return e && (e->getField(game::fieldIndex(game::UF::UNIT_FIELD_FLAGS)) & 0x00001000u);
+                        return game::unitOrCharmerIsPvpFlagged(gameHandler.getEntityManager(), guid);
                     };
                     if (unit->getHealth() == 0 && unit->getMaxHealth() > 0) {
                         circleColor = glm::vec3(0.5f, 0.5f, 0.5f); // gray (dead)

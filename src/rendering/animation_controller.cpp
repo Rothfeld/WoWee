@@ -378,6 +378,9 @@ void AnimationController::startLocalMeleeSwing(bool offHand, float maxDurationMs
         resolveMeleeAnimId();
         chosenDurationMs = meleeAnimDurationMs_;
     }
+    lastTriggeredSwingAnimId_ = (specialAttackAnimId_ != 0) ? specialAttackAnimId_ : meleeAnimId_;
+    lastTriggeredSwingMaxMs_ = maxDurationMs;
+    lastTriggeredSwingLeadSec_ = 0.0f;
     meleeSwingCooldown_ = 0.1f;
     meleeSwingMaxDurationMs_ = maxDurationMs;
     float durationSec = chosenDurationMs > 0.0f ? chosenDurationMs / 1000.0f : 0.6f;
@@ -425,10 +428,40 @@ void AnimationController::triggerMeleeSwing(bool offHand, float attackTimeMs, bo
                 meleeSwingTimer_ = std::min(meleeSwingTimer_, pairMaxMs / 1000.0f);
             }
         }
+        const bool prevOffHand = meleeSwingOffHand_;
+        const uint32_t prevMeleeAnim = meleeAnimId_;
+        const float prevMeleeDur = meleeAnimDurationMs_;
+        meleeSwingOffHand_ = offHand;
+        uint32_t queuedAnim = 0;
+        if (isCrit && !(weaponLoadout_.hasOffHand && offHand)) {
+            const uint32_t critAnim = meleeCriticalAttackAnimation(weaponLoadout_);
+            if (characterRenderer->hasAnimation(characterInstanceId, critAnim)) {
+                queuedAnim = critAnim;
+            }
+        }
+        if (queuedAnim == 0) {
+            queuedAnim = resolveMeleeAnimId();
+        }
+        meleeSwingOffHand_ = prevOffHand;
+        meleeAnimId_ = prevMeleeAnim;
+        meleeAnimDurationMs_ = prevMeleeDur;
+        lastTriggeredSwingAnimId_ = queuedAnim;
+        lastTriggeredSwingMaxMs_ = pairMaxMs;
+        lastTriggeredSwingLeadSec_ = meleeSwingTimer_;
         return;
     }
     if (meleeSwingCooldown_ > 0.0f) return;
     startLocalMeleeSwing(offHand, attackTimeMs, isCrit);
+}
+
+float AnimationController::lastMeleeSwingHitDelaySeconds(uint32_t drawnInstanceId) const {
+    auto* characterRenderer = renderer_ ? renderer_->getCharacterRenderer() : nullptr;
+    if (!characterRenderer || drawnInstanceId == 0 || lastTriggeredSwingAnimId_ == 0) {
+        return 0.0f;
+    }
+    const float swingHit = characterRenderer->getMeleeHitDelaySeconds(
+        drawnInstanceId, lastTriggeredSwingAnimId_, lastTriggeredSwingMaxMs_);
+    return swingHit > 0.0f ? std::clamp(lastTriggeredSwingLeadSec_ + swingHit, 0.0f, 1.5f) : 0.0f;
 }
 
 void AnimationController::setEquippedWeaponType(uint32_t inventoryType, bool is2HLoose,

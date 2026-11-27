@@ -1329,7 +1329,7 @@ bool TbcPacketParsers::parseAttackerStateUpdate(network::Packet& packet, Attacke
     }
     data.victimState = packet.readUInt32();
     (void)packet.readUInt32(); // unknown, commonly 0
-    (void)packet.readUInt32(); // spell id for some melee specials
+    data.meleeSpellId = packet.readUInt32(); // spell id for melee specials / GM .damage
     data.blocked = packet.readUInt32();
     data.overkill = -1;
 

@@ -1657,6 +1657,11 @@ public:
     using NpcSwingCallback = std::function<void(uint64_t guid, bool offHand)>;
     void setNpcSwingCallback(NpcSwingCallback cb) { npcSwingCallback_ = std::move(cb); }
 
+    // Effective M2 $CAH (CombatAttackHit) delay in seconds for the melee swing
+    // just triggered on `attackerGuid` (0 when unavailable or instant).
+    using MeleeHitDelayProvider = std::function<float(uint64_t attackerGuid, bool offHand)>;
+    void setMeleeHitDelayProvider(MeleeHitDelayProvider cb) { meleeHitDelayProvider_ = std::move(cb); }
+
     // Hit reaction callback - triggers victim animation (dodge, block, wound, crit wound)
     enum class HitReaction : uint8_t { WOUND, CRIT_WOUND, SPELL_WOUND, SPELL_CRIT_WOUND, DODGE, PARRY, BLOCK, SHIELD_BLOCK };
     /// Victim HitReaction animation for an SMSG_SPELL_GO miss entry, if any.
@@ -4627,6 +4632,7 @@ public:
     auto& npcPanelEmotesCallbackRef() { return npcPanelEmotesCallback_; }
     auto& npcRespawnCallbackRef() { return npcRespawnCallback_; }
     auto& npcSwingCallbackRef() { return npcSwingCallback_; }
+    auto& meleeHitDelayProviderRef() { return meleeHitDelayProvider_; }
     auto& npcVendorCallbackRef() { return npcVendorCallback_; }
     auto& openLfgCallbackRef() { return openLfgCallback_; }
     auto& otherPlayerLevelUpCallbackRef() { return otherPlayerLevelUpCallback_; }
@@ -6060,6 +6066,7 @@ private:
     UnitAnimHintCallback unitAnimHintCallback_;
     UnitMoveFlagsCallback unitMoveFlagsCallback_;
     NpcSwingCallback npcSwingCallback_;
+    MeleeHitDelayProvider meleeHitDelayProvider_;
     HitReactionCallback hitReactionCallback_;
     StunStateCallback stunStateCallback_;
     StealthStateCallback stealthStateCallback_;

@@ -139,6 +139,16 @@ public:
     /// or extra-attack swings transition smoothly without mid-swing cutoffs.
     void playMeleeSwing(uint32_t instanceId, uint32_t animationId,
                         uint32_t oneShotReturnAnim = 0, float maxDurationMs = 0.0f);
+    /// Effective seconds until the first authored M2 $CAH (CombatAttackHit)
+    /// event on `sequenceIndex`, scaled proportionally when `maxDurationMs`
+    /// accelerates the sequence. Returns 0 when the sequence has no $CAH event.
+    [[nodiscard]] static float sequenceMeleeHitDelaySeconds(
+        const pipeline::M2Model& model, int sequenceIndex, float maxDurationMs = 0.0f);
+    /// Effective $CAH delay in seconds for the melee swing currently active or
+    /// queued on `instanceId` (or estimated from `fallbackAnimId` when the
+    /// caller has not yet submitted playAnimation for this frame).
+    [[nodiscard]] float getMeleeHitDelaySeconds(
+        uint32_t instanceId, uint32_t fallbackAnimId = 0, float fallbackMaxDurationMs = 0.0f) const;
     /// The one-shot just started plays within `maxMs`: an authored sequence
     /// longer than that runs faster to end in time, a shorter one keeps its
     /// own speed. Lasts until the next playAnimation.

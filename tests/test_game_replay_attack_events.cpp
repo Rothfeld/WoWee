@@ -7,7 +7,15 @@
 // Evidence: _experiments/20261117T210203Z.pair3_autoattack_on_ability/.
 #include <catch_amalgamated.hpp>
 
+#include "addons/lua_engine.hpp"
 #include "game_replay.hpp"
+#include "pipeline/m2_loader.hpp"
+#include "rendering/character_renderer.hpp"
+
+extern "C" {
+#include "lua.h"
+#include "lauxlib.h"
+}
 
 #include <algorithm>
 #include <string>
@@ -347,4 +355,176 @@ TEST_CASE("UNIT_FLAG_NOT_SELECTABLE units (e.g. Void Zone 16697) cannot be auto-
     upd.writeUInt32(wowee::game::UNIT_FLAG_NOT_SELECTABLE);
     s.receive(upd);
     CHECK(gh.getTargetGuid() == 0);
+}
+
+TEST_CASE("TBC SMSG_ATTACKERSTATEUPDATE suppresses swing on non-zero meleeSpellId and delays non-miss impacts to $CAH",
+          "[replay][combat][hitdelay][gmdamage]") {
+    constexpr uint64_t kRemotePlayer = 0x0000000000000026ull;
+    constexpr uint64_t kMob          = 0xF13000265B000001ull;
+
+    Session s("tbc");
+    auto& gh = s.handler();
+
+    auto player = std::make_shared<wowee::game::Player>(Session::kPlayerGuid);
+    player->setHealth(10000);
+    player->setMaxHealth(10000);
+    gh.getEntityManager().addEntity(Session::kPlayerGuid, player);
+
+    auto remote = std::make_shared<wowee::game::Player>(kRemotePlayer);
+    remote->setHealth(10000);
+    remote->setMaxHealth(10000);
+    gh.getEntityManager().addEntity(kRemotePlayer, remote);
+
+    auto mob = std::make_shared<wowee::game::Unit>(kMob);
+    mob->setHealth(50000);
+    mob->setMaxHealth(50000);
+    gh.getEntityManager().addEntity(kMob, mob);
+
+    int localSwings = 0;
+    int remoteSwings = 0;
+    std::vector<wowee::game::GameHandler::HitReaction> reactions;
+    gh.setMeleeSwingCallback([&](uint32_t, bool) { ++localSwings; });
+    gh.setNpcSwingCallback([&](uint64_t, bool) { ++remoteSwings; });
+    gh.setHitReactionCallback([&](uint64_t, uint64_t, wowee::game::GameHandler::HitReaction r) {
+        reactions.push_back(r);
+    });
+
+    auto buildSwing = [](uint64_t attacker, uint64_t victim, uint32_t hitInfo,
+                         int32_t damage, uint32_t victimState, uint32_t spellId = 0) {
+        wowee::network::Packet p(wowee::game::wireOpcode(Opcode::SMSG_ATTACKERSTATEUPDATE));
+        p.writeUInt32(hitInfo);
+        p.writePackedGuid(attacker);
+        p.writePackedGuid(victim);
+        p.writeUInt32(static_cast<uint32_t>(damage));
+        p.writeUInt8(1u);
+        p.writeUInt32(1u);
+        p.writeFloat(static_cast<float>(damage));
+        p.writeUInt32(static_cast<uint32_t>(damage));
+        p.writeUInt32(0u);
+        p.writeUInt32(0u);
+        p.writeUInt32(victimState);
+        p.writeUInt32(0u);
+        p.writeUInt32(spellId);
+        p.writeUInt32(0u);
+        return p;
+    };
+
+    // 1. Out-of-range GM `.damage 10` (spellId = 10 != 0) suppresses swing and meleeVictimGuid
+    //    for both remote and local attackers while still delivering floating combat text immediately.
+    s.receive(buildSwing(kRemotePlayer, kMob, 0x2u, 10, 1u, /*spellId=*/10u));
+    CHECK(remoteSwings == 0);
+    CHECK(remote->getMeleeVictimGuid() == 0);
+    CHECK(reactions.size() == 1);
+
+    reactions.clear();
+    gh.getCombatHandler()->clearCombatText();
+    s.receive(buildSwing(Session::kPlayerGuid, kMob, 0x2u, 10, 1u, /*spellId=*/10u));
+    CHECK(localSwings == 0);
+    REQUIRE(gh.getCombatText().size() == 1);
+    CHECK(gh.getCombatText()[0].amount == 10);
+
+    // 2. With a 0.30s $CAH provider registered:
+    //    - Miss (0x12) fires floating combat text immediately at t = 0 ms.
+    //    - Non-miss crit wound (0x82) starts the swing at t = 0 ms, holds reaction + FCT
+    //      until 0.30s elapses, and marks hasPendingMeleeImpactForVictim while in flight.
+    gh.setMeleeHitDelayProvider([](uint64_t, bool) { return 0.30f; });
+    reactions.clear();
+    gh.getCombatHandler()->clearCombatText();
+
+    s.receive(buildSwing(Session::kPlayerGuid, kMob, 0x12u, 0, 0u, 0u));
+    CHECK(localSwings == 1);
+    REQUIRE(gh.getCombatText().size() == 1);
+    CHECK(gh.getCombatText()[0].type == wowee::game::CombatTextEntry::MISS);
+    CHECK_FALSE(gh.getCombatHandler()->hasPendingMeleeImpactForVictim(kMob));
+
+    gh.getCombatHandler()->clearCombatText();
+    s.receive(buildSwing(Session::kPlayerGuid, kMob, 0x82u, 245, 1u, 0u));
+    CHECK(localSwings == 2);
+    CHECK(reactions.empty());
+    CHECK(gh.getCombatText().empty());
+    CHECK(gh.getCombatHandler()->hasPendingMeleeImpactForVictim(kMob));
+
+    gh.getCombatHandler()->updateAutoAttack(0.15f);
+    CHECK(reactions.empty());
+    CHECK(gh.getCombatText().empty());
+
+    gh.getCombatHandler()->updateAutoAttack(0.16f);
+    REQUIRE(reactions.size() == 1);
+    CHECK(reactions[0] == wowee::game::GameHandler::HitReaction::CRIT_WOUND);
+    REQUIRE(gh.getCombatText().size() == 1);
+    CHECK(gh.getCombatText()[0].type == wowee::game::CombatTextEntry::CRIT_DAMAGE);
+    CHECK(gh.getCombatText()[0].amount == 245);
+    CHECK_FALSE(gh.getCombatHandler()->hasPendingMeleeImpactForVictim(kMob));
+}
+
+TEST_CASE("CharacterRenderer::sequenceMeleeHitDelaySeconds scales $CAH timestamps and UnitIsPVP inherits charmer PvP",
+          "[replay][combat][hitdelay][possess]") {
+    using wowee::pipeline::M2AudioEventType;
+    using wowee::pipeline::M2Model;
+    using wowee::pipeline::M2Sequence;
+    using wowee::rendering::CharacterRenderer;
+
+    M2Model model;
+    M2Sequence sDagger{};
+    sDagger.id = 85;        // Attack1HPierce
+    sDagger.duration = 1000;
+    M2Sequence s2H{};
+    s2H.id = 18;            // Attack2H
+    s2H.duration = 1333;
+    M2Sequence sStand{};
+    sStand.id = 0;
+    sStand.duration = 2667;
+    model.sequences = {sDagger, s2H, sStand};
+
+    M2Model::AudioEvent cah;
+    cah.type = M2AudioEventType::CombatAttackHit;
+    cah.times = {{300u}, {666u}, {}};
+    model.audioEvents.push_back(cah);
+
+    // Uncompressed sequence speed (attackTimeMs >= duration or 0):
+    CHECK(CharacterRenderer::sequenceMeleeHitDelaySeconds(model, 0, 0.0f) == Catch::Approx(0.300f));
+    CHECK(CharacterRenderer::sequenceMeleeHitDelaySeconds(model, 0, 1800.0f) == Catch::Approx(0.300f));
+    CHECK(CharacterRenderer::sequenceMeleeHitDelaySeconds(model, 1, 2000.0f) == Catch::Approx(0.666f));
+    // Fast 600 ms swing compresses 1000 ms sequence -> 300 * (600 / 1000) = 180 ms:
+    CHECK(CharacterRenderer::sequenceMeleeHitDelaySeconds(model, 0, 600.0f) == Catch::Approx(0.180f));
+    // Sequence without $CAH returns 0:
+    CHECK(CharacterRenderer::sequenceMeleeHitDelaySeconds(model, 2, 0.0f) == Catch::Approx(0.0f));
+
+    // UnitIsPVP("target") on a creature charmed by a PvP-flagged player (CMaNGOS TakePossessOf
+    // leaves UNIT_FLAG_PVP=0 on the charmed creature while setting UNIT_FIELD_CHARMEDBY).
+    Session session{"tbc"};
+    wowee::addons::LuaEngine lua;
+    REQUIRE(lua.initialize());
+    lua.setGameHandler(&session.handler());
+
+    constexpr uint64_t kPossessedBoar = 0xF130000071000099ull;
+    session.receive(replay::UpdateObject().tbc().create(
+        Session::kPlayerGuid, wowee::game::ObjectType::PLAYER,
+        {{wowee::game::UF::UNIT_FIELD_HEALTH, 2000},
+         {wowee::game::UF::UNIT_FIELD_MAXHEALTH, 2000},
+         {wowee::game::UF::UNIT_FIELD_FLAGS, wowee::game::UNIT_FLAG_PLAYER_CONTROLLED}},
+        true));
+    session.receive(replay::UpdateObject().tbc().create(
+        kPossessedBoar, wowee::game::ObjectType::UNIT,
+        {{wowee::game::UF::UNIT_FIELD_HEALTH, 500},
+         {wowee::game::UF::UNIT_FIELD_MAXHEALTH, 500},
+         {wowee::game::UF::UNIT_FIELD_FLAGS,
+          wowee::game::UNIT_FLAG_PLAYER_CONTROLLED | 0x01000000u},
+         {wowee::game::UF::UNIT_FIELD_CHARMEDBY, static_cast<uint32_t>(Session::kPlayerGuid)}}));
+    session.handler().setTargetGuidRaw(kPossessedBoar);
+
+    REQUIRE(lua.executeString("__pvp_off = UnitIsPVP('target') and 1 or 0"));
+    lua_State* L = lua.getState();
+    lua_getglobal(L, "__pvp_off");
+    CHECK(lua_tointeger(L, -1) == 0);
+    lua_pop(L, 1);
+
+    session.receive(replay::UpdateObject().tbc().values(
+        Session::kPlayerGuid,
+        {{wowee::game::UF::UNIT_FIELD_FLAGS,
+          wowee::game::UNIT_FLAG_PLAYER_CONTROLLED | wowee::game::UNIT_FLAG_PVP}}));
+    REQUIRE(lua.executeString("__pvp_on = UnitIsPVP('target') and 1 or 0"));
+    lua_getglobal(L, "__pvp_on");
+    CHECK(lua_tointeger(L, -1) == 1);
+    lua_pop(L, 1);
 }

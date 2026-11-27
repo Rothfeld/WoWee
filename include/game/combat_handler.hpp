@@ -114,6 +114,9 @@ public:
 
     // Called from GameHandler::update() each frame
     void updateAutoAttack(float deltaTime);
+    /// True while a non-lethal melee swing impact ($CAH-delayed victim reaction
+    /// and floating combat text) is still in flight toward `victimGuid`.
+    [[nodiscard]] bool hasPendingMeleeImpactForVictim(uint64_t victimGuid) const;
 
     // M2 animation keyframe combat audio triggers (delegating unit equipment,
     // underwater state, and 3D render coordinates to CombatSoundManager).
@@ -311,6 +314,26 @@ private:
     std::unordered_map<uint32_t, uint8_t> forcedReactions_;
     PetActionSoundCallback petActionSoundCallback_;
     PetDismissSoundCallback petDismissSoundCallback_;
+
+    struct PendingMeleeImpact {
+        float remainingSec = 0.0f;
+        uint64_t attackerGuid = 0;
+        uint64_t targetGuid = 0;
+        int reactionKind = -1;
+        std::string unitCombatAction;
+        std::string unitCombatFlags;
+        int32_t unitCombatAmount = 0;
+        uint32_t schoolMask = 0;
+        bool isPlayerAttacker = false;
+        struct TextLine {
+            CombatTextEntry::Type type = CombatTextEntry::MELEE_DAMAGE;
+            int32_t amount = 0;
+            bool reduction = false;
+        };
+        std::vector<TextLine> textLines;
+    };
+    void deliverMeleeImpact(const PendingMeleeImpact& impact);
+    std::deque<PendingMeleeImpact> pendingMeleeImpacts_;
 };
 
 } // namespace game

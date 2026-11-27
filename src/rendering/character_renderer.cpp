@@ -2743,6 +2743,93 @@ void CharacterRenderer::playMeleeSwing(uint32_t instanceId, uint32_t animationId
     }
 }
 
+float CharacterRenderer::sequenceMeleeHitDelaySeconds(
+    const pipeline::M2Model& model, int sequenceIndex, float maxDurationMs) {
+    if (sequenceIndex < 0 || static_cast<size_t>(sequenceIndex) >= model.sequences.size()) {
+        return 0.0f;
+    }
+    uint32_t bestMs = UINT32_MAX;
+    for (const auto& ev : model.audioEvents) {
+        if (ev.type != pipeline::M2AudioEventType::CombatAttackHit) continue;
+        if (static_cast<size_t>(sequenceIndex) >= ev.times.size()) continue;
+        const auto& stamps = ev.times[sequenceIndex];
+        if (!stamps.empty() && stamps.front() < bestMs) {
+            bestMs = stamps.front();
+        }
+    }
+    if (bestMs == UINT32_MAX) return 0.0f;
+    float hitMs = static_cast<float>(bestMs);
+    const float seqDurMs = static_cast<float>(model.sequences[sequenceIndex].duration);
+    if (maxDurationMs > 0.0f && seqDurMs > maxDurationMs && seqDurMs > 0.0f) {
+        hitMs *= (maxDurationMs / seqDurMs);
+    }
+    return std::clamp(hitMs / 1000.0f, 0.0f, 1.5f);
+}
+
+float CharacterRenderer::getMeleeHitDelaySeconds(
+    uint32_t instanceId, uint32_t fallbackAnimId, float fallbackMaxDurationMs) const {
+    const auto it = instances.find(instanceId);
+    if (it == instances.end()) return 0.0f;
+    const auto& instance = it->second;
+    const auto modelIt = models.find(instance.modelId);
+    if (modelIt == models.end()) return 0.0f;
+    const auto& model = modelIt->second.data;
+
+    auto firstHitDelayForAnim = [&](uint32_t animId, float maxMs) -> float {
+        if (animId == 0) return 0.0f;
+        int fallbackSeq = -1;
+        for (size_t s = 0; s < model.sequences.size(); ++s) {
+            if (model.sequences[s].id != animId) continue;
+            if (fallbackSeq < 0) fallbackSeq = static_cast<int>(s);
+            const float d = sequenceMeleeHitDelaySeconds(model, static_cast<int>(s), maxMs);
+            if (d > 0.0f) return d;
+        }
+        return fallbackSeq >= 0 ? sequenceMeleeHitDelaySeconds(model, fallbackSeq, maxMs) : 0.0f;
+    };
+
+    if (instance.pendingMeleeSwing.valid()) {
+        float leadSec = 0.0f;
+        if (instance.upperBodySequenceIndex >= 0 &&
+            static_cast<size_t>(instance.upperBodySequenceIndex) < model.sequences.size() &&
+            !instance.upperBodyAnimationLoop) {
+            const float dur = static_cast<float>(model.sequences[instance.upperBodySequenceIndex].duration);
+            const float effMax = (instance.upperBodyOneShotMaxDurationMs > 0.0f && dur > instance.upperBodyOneShotMaxDurationMs)
+                ? instance.upperBodyOneShotMaxDurationMs : dur;
+            if (dur > 0.0f && instance.upperBodyAnimationTime < dur) {
+                leadSec = (1.0f - instance.upperBodyAnimationTime / dur) * (effMax / 1000.0f);
+            }
+        } else if (!instance.animationLoop && !instance.holdFinalPose &&
+                   instance.currentSequenceIndex >= 0 &&
+                   static_cast<size_t>(instance.currentSequenceIndex) < model.sequences.size()) {
+            const float dur = static_cast<float>(model.sequences[instance.currentSequenceIndex].duration);
+            const float effMax = (instance.oneShotMaxDurationMs > 0.0f && dur > instance.oneShotMaxDurationMs)
+                ? instance.oneShotMaxDurationMs : dur;
+            if (dur > 0.0f && instance.animationTime < dur) {
+                leadSec = (1.0f - instance.animationTime / dur) * (effMax / 1000.0f);
+            }
+        }
+        const float swingHit = firstHitDelayForAnim(
+            instance.pendingMeleeSwing.animId, instance.pendingMeleeSwing.maxDurationMs);
+        return swingHit > 0.0f ? std::clamp(leadSec + swingHit, 0.0f, 1.5f) : 0.0f;
+    }
+
+    if (instance.upperBodySequenceIndex >= 0 && !instance.upperBodyAnimationLoop &&
+        static_cast<size_t>(instance.upperBodySequenceIndex) < model.sequences.size() &&
+        isMeleeSwingAnimation(model.sequences[instance.upperBodySequenceIndex].id)) {
+        return sequenceMeleeHitDelaySeconds(
+            model, instance.upperBodySequenceIndex, instance.upperBodyOneShotMaxDurationMs);
+    }
+
+    if (!instance.animationLoop && !instance.holdFinalPose &&
+        instance.currentSequenceIndex >= 0 &&
+        isMeleeSwingAnimation(instance.currentAnimationId)) {
+        return sequenceMeleeHitDelaySeconds(
+            model, instance.currentSequenceIndex, instance.oneShotMaxDurationMs);
+    }
+
+    return firstHitDelayForAnim(fallbackAnimId, fallbackMaxDurationMs);
+}
+
 void CharacterRenderer::fitOneShotDuration(uint32_t instanceId, float maxMs) {
     assert(maxMs > 0.0f);
     auto& instance = instances.at(instanceId);
