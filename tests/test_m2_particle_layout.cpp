@@ -1706,3 +1706,116 @@ TEST_CASE("Attached NoTrail weapon enchant ItemVisuals span scaled prong bones a
     CHECK(particleSpriteHalfWidth(em.flags, 0.2778f, 7.2f, false) == Catch::Approx(0.2778f));
     CHECK(particleSpriteHalfWidth(em.flags, 0.2778f, 1.0f, false) == Catch::Approx(0.2778f));
 }
+
+TEST_CASE("M2 particle fog separates additive black-fog attenuation from alpha RGB fogging and outdoor fog selection",
+          "[m2][particle][fog][tbc]") {
+    using namespace wowee::rendering;
+
+    // 1. Tile + interiorFog packing round-trips exact atlas cell indices in vd[8] (aTile).
+    for (const uint32_t cell : {0u, 1u, 7u, 15u, 31u, 63u, 255u}) {
+        const float encIn = encodeParticleTileAndFogMode(cell, /*interiorFog=*/true);
+        const float encOut = encodeParticleTileAndFogMode(cell, /*interiorFog=*/false);
+        CHECK(encIn >= 0.0f);
+        CHECK(encOut < 0.0f);
+        CHECK(decodeParticleTileAndFogMode(encIn) == std::pair<uint32_t, bool>{cell, true});
+        CHECK(decodeParticleTileAndFogMode(encOut) == std::pair<uint32_t, bool>{cell, false});
+    }
+
+    // Molten Core Blackrock_lower_guild.wmo MFOG[0] at farclip = 177 yd:
+    // color = (255, 37, 8) / 255, start = 0 yd, end = 177 yd.
+    const glm::vec3 mcMfog(1.0f, 37.0f / 255.0f, 8.0f / 255.0f);
+    const glm::vec2 mcRange(0.0f, 177.0f);
+    const glm::vec3 outdoorColor(0.32f, 0.35f, 0.41f);
+    const glm::vec3 outdoorParams(44.0f, 177.0f, 177.0f);
+
+    // 2. Shipped GO 178107 LavaSteam.m2 (8 emitters, M2Blend = 4 Add, flags = 0x39):
+    // additive particles attenuate RGB toward black (0, 0, 0) by fogVisibility
+    // without adding MFOG (255, 37, 8).
+    const auto lavaSteam = wowee::pipeline::M2Loader::load(
+        wowee::test::readTbcData("world/khazmodan/ironforge/passivedoodads/lavasteam/lavasteam.m2"));
+    REQUIRE(lavaSteam.particleEmitters.size() == 8);
+    for (const auto& em : lavaSteam.particleEmitters) {
+        CHECK(em.blendingType == 4u);
+        CHECK(em.flags == 0x39u);
+        CHECK(particleBlendPipeline(static_cast<uint8_t>(em.blendingType)) == ParticleBlendPipeline::Additive);
+    }
+    const ParticleFogTerms steamFog92 = computeParticleFogTerms(
+        92.78f, /*interiorFog=*/true, mcMfog, mcRange, outdoorColor, outdoorParams);
+    const float expectedFactor92 = (177.0f - 92.78f) / 177.0f;
+    CHECK(steamFog92.visibility == Catch::Approx(expectedFactor92).margin(1e-5f));
+    CHECK_FALSE(steamFog92.culledPastOutdoorFogEnd);
+
+    const glm::vec4 dustSample(128.0f / 255.0f, 128.0f / 255.0f, 128.0f / 255.0f, 140.0f / 255.0f);
+    const glm::vec4 steamVert(lavaSteam.particleEmitters[0].particleColor.vec3Values.at(1),
+                              lavaSteam.particleEmitters[0].particleAlpha.floatValues.at(1));
+    const ParticleFragmentEval add92 = evaluateParticleFragment(4, dustSample, steamVert, steamFog92);
+    const ParticleFragmentEval addFullFog = evaluateParticleFragment(
+        4, dustSample, steamVert,
+        computeParticleFogTerms(200.0f, /*interiorFog=*/true, mcMfog, mcRange, outdoorColor, outdoorParams));
+    REQUIRE_FALSE(add92.discarded);
+    REQUIRE_FALSE(addFullFog.discarded);
+    // At full fog (d >= 177 yd), additive particles attenuate cleanly to (0, 0, 0), NOT MFOG.
+    CHECK(addFullFog.outColor.r == Catch::Approx(0.0f).margin(1e-6f));
+    CHECK(addFullFog.outColor.g == Catch::Approx(0.0f).margin(1e-6f));
+    CHECK(addFullFog.outColor.b == Catch::Approx(0.0f).margin(1e-6f));
+    CHECK(add92.outColor.g == Catch::Approx(
+        dustSample.g * steamVert.g * dustSample.a * steamVert.a * expectedFactor92).margin(1e-5f));
+
+    // 3. Shipped GO 178108 LavaParticleSplash.m2 (pe[0..2], M2Blend = 2 Alpha, pe[2] rate = 100/s)
+    // and LavaSmokeEmitterB.m2 (pe[1,2], M2Blend = 2 Alpha):
+    // non-additive particles fog RGB toward MFOG while keeping authored coverage alpha,
+    // so 50 overlapping splash puffs converge to mix(MFOG, rgb, fogFactor) instead of unfogged RGB.
+    const auto lavaSplash = wowee::pipeline::M2Loader::load(
+        wowee::test::readTbcData("world/generic/passivedoodads/particleemitters/lavaparticlesplash.m2"));
+    REQUIRE(lavaSplash.particleEmitters.size() == 3);
+    for (const auto& em : lavaSplash.particleEmitters) {
+        CHECK(em.blendingType == 2u);
+        CHECK(particleBlendPipeline(static_cast<uint8_t>(em.blendingType)) == ParticleBlendPipeline::Alpha);
+    }
+    const glm::vec4 splashTex(1.0f, 0.85f, 0.55f, 0.35f);
+    const glm::vec4 splashVert(1.0f, 1.0f, 1.0f, 1.0f);
+    const ParticleFragmentEval splashFrag = evaluateParticleFragment(2, splashTex, splashVert, steamFog92);
+    REQUIRE_FALSE(splashFrag.discarded);
+    CHECK(splashFrag.outColor.a == Catch::Approx(0.35f).margin(1e-6f));
+    const glm::vec3 expectedFoggedSplash = glm::mix(mcMfog, glm::vec3(splashTex), expectedFactor92);
+    CHECK(splashFrag.outColor.r == Catch::Approx(expectedFoggedSplash.r).margin(1e-5f));
+    CHECK(splashFrag.outColor.g == Catch::Approx(expectedFoggedSplash.g).margin(1e-5f));
+    CHECK(splashFrag.outColor.b == Catch::Approx(expectedFoggedSplash.b).margin(1e-5f));
+
+    // Simulate 50 overlapping SRC_ALPHA, ONE_MINUS_SRC_ALPHA splash puffs over fogged wall = mcMfog:
+    glm::vec3 dst = mcMfog;
+    for (int i = 0; i < 50; ++i) {
+        dst = glm::vec3(splashFrag.outColor) * splashFrag.outColor.a + dst * (1.0f - splashFrag.outColor.a);
+    }
+    CHECK(dst.g == Catch::Approx(expectedFoggedSplash.g).margin(1e-4f));
+    CHECK(dst.g < 0.50f); // Capped at fogged G (~0.48) instead of converging to unfogged 0.85!
+
+    // 4. AlphaKey (M2Blend = 1) debris discards < 224/255 and keeps opaque alpha 1.0 * vertex.a in fog.
+    CHECK(evaluateParticleFragment(1, glm::vec4(0.4f, 0.4f, 0.4f, 0.5f), splashVert, steamFog92).discarded);
+    const ParticleFragmentEval rockKeep = evaluateParticleFragment(
+        1, glm::vec4(0.25f, 0.25f, 0.25f, 0.95f), splashVert,
+        computeParticleFogTerms(177.0f, /*interiorFog=*/true, mcMfog, mcRange, outdoorColor, outdoorParams));
+    REQUIRE_FALSE(rockKeep.discarded);
+    CHECK(rockKeep.outColor.a == Catch::Approx(1.0f).margin(1e-6f));
+    CHECK(glm::vec3(rockKeep.outColor) == mcMfog);
+
+    // 5. Outdoor M2 particles (Blacksmith_smoke.m2, interiorFog = false) seen from inside a
+    // short-MFOG cave (cave end = 69 yd, outdoor end = 477 yd) take outdoorFogParams/Color
+    // and discard only past outdoorFogParams.y.
+    const auto smithSmoke = wowee::pipeline::M2Loader::load(
+        wowee::test::readTbcData("world/generic/passivedoodads/particleemitters/blacksmith_smoke.m2"));
+    REQUIRE(smithSmoke.particleEmitters.size() == 2);
+    CHECK(smithSmoke.particleEmitters[0].blendingType == 2u);
+
+    const glm::vec2 caveShortRange(0.0f, 69.0f);
+    const glm::vec3 wideOutdoorParams(120.0f, 477.0f, 477.0f);
+    const ParticleFogTerms outdoorAt100 = computeParticleFogTerms(
+        100.0f, /*interiorFog=*/false, mcMfog, caveShortRange, outdoorColor, wideOutdoorParams);
+    CHECK_FALSE(outdoorAt100.culledPastOutdoorFogEnd);
+    CHECK(outdoorAt100.visibility == Catch::Approx(1.0f).margin(1e-6f)); // 100 yd < 120 yd outdoor start!
+
+    const ParticleFogTerms outdoorPastEnd = computeParticleFogTerms(
+        480.0f, /*interiorFog=*/false, mcMfog, caveShortRange, outdoorColor, wideOutdoorParams);
+    CHECK(outdoorPastEnd.culledPastOutdoorFogEnd);
+    CHECK(evaluateParticleFragment(2, splashTex, splashVert, outdoorPastEnd).discarded);
+}

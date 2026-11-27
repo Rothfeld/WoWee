@@ -1303,7 +1303,8 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
                     const bool tail = em.headOrTail == 1 || (em.headOrTail == 2 && sprite == 1);
                     const float halfWidth = particleSpriteHalfWidth(em.flags, scale, placementScale, tail);
                     vd[7] = xyQuad ? -halfWidth : halfWidth;
-                    vd[8] = static_cast<float>(particleCell(em, lifeRatio, tail, cachedTotalTiles));
+                    vd[8] = encodeParticleTileAndFogMode(
+                        particleCell(em, lifeRatio, tail, cachedTotalTiles), inst.interiorFog);
                     const glm::vec3 displacement = xyQuad ? cachedQuadAxes.first
                         : tail ? particleTailVector(em.flags, worldVelocity, em.tailLength,
                             p.life, em.drag)

@@ -736,6 +736,112 @@ inline ParticleBlendPipeline particleBlendPipeline(uint8_t m2Blend) {
     }
 }
 
+/// Pack a non-negative atlas cell index and the instance's `interiorFog` flag
+/// into the `aTile` float attribute (`vd[8]`) without expanding the 16-float
+/// particle vertex stride: non-negative values carry interior-fog particles
+/// (`aTile = cell`), while negative values carry outdoor-fog particles
+/// (`aTile = -cell - 1.0f`). Exact for all integer cell indices up to 2^23.
+inline constexpr float encodeParticleTileAndFogMode(uint32_t cell, bool interiorFog) noexcept {
+    assert(cell < (1u << 23));
+    const float f = static_cast<float>(cell);
+    return interiorFog ? f : (-f - 1.0f);
+}
+
+inline std::pair<uint32_t, bool> decodeParticleTileAndFogMode(float encoded) noexcept {
+    const bool interiorFog = (encoded >= 0.0f);
+    const float raw = interiorFog ? encoded : (-encoded - 1.0f);
+    return {static_cast<uint32_t>(std::floor(raw + 0.5f)), interiorFog};
+}
+
+struct ParticleFogTerms {
+    float visibility = 1.0f;
+    glm::vec3 inscatter{0.0f};
+    bool culledPastOutdoorFogEnd = false;
+};
+
+/// Vertex-stage fog evaluation for an M2 sprite particle (mirrors m2_particle.vert.glsl).
+/// Interior particles (`interiorFog == true`) read WMO `MFOG` (`fogColor`/`fogParams`);
+/// outdoor particles read `Light.dbc` fog (`outdoorFogColor`/`outdoorFogParams`) and
+/// discard past `outdoorFogParams.y` when `outdoorFogParams.z > 0` (matching m2.frag.glsl).
+inline ParticleFogTerms computeParticleFogTerms(
+    float fogDepth,
+    bool interiorFog,
+    const glm::vec3& fogColor,
+    const glm::vec2& fogStartEnd,
+    const glm::vec3& outdoorFogColor,
+    const glm::vec3& outdoorFogParams,
+    bool volumetricEnabled = false,
+    const glm::vec4& airVolume = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f)) noexcept {
+    const glm::vec3 activeColor = interiorFog ? fogColor : outdoorFogColor;
+    const glm::vec2 activeRange = interiorFog
+        ? fogStartEnd
+        : glm::vec2(outdoorFogParams.x, outdoorFogParams.y);
+    if (!interiorFog && outdoorFogParams.z > 0.0f && fogDepth > activeRange.y) {
+        return {.visibility = -1.0f, .inscatter = glm::vec3(0.0f), .culledPastOutdoorFogEnd = true};
+    }
+    const float clampedDepth = std::max(fogDepth, 0.0f);
+    const float span = std::max(activeRange.y - activeRange.x, 0.001f);
+    const float fogFactor = std::clamp((activeRange.y - clampedDepth) / span, 0.0f, 1.0f);
+    const float airTransmittance = volumetricEnabled ? airVolume.a : 1.0f;
+    const glm::vec3 airInscatter = volumetricEnabled ? glm::vec3(airVolume) : glm::vec3(0.0f);
+    return {
+        .visibility = fogFactor * airTransmittance,
+        .inscatter = activeColor * ((1.0f - fogFactor) * airTransmittance) + airInscatter,
+        .culledPastOutdoorFogEnd = false,
+    };
+}
+
+struct ParticleFragmentEval {
+    bool discarded = false;
+    glm::vec4 outColor{0.0f};
+};
+
+/// Fragment-stage M2Blend + fog evaluation for an M2 particle (mirrors m2_particle.frag.glsl):
+/// - M2Blend 0/1/2 (Opaque / AlphaKey / Alpha, pipeline SRC_ALPHA, ONE_MINUS_SRC_ALPHA):
+///   fogs RGB toward the active fog color (`rgb * visibility + inscatter`) while keeping
+///   authored coverage `baseAlpha = effTexAlpha * vertexColor.a`, matching TBC 2.4.3 D3D9
+///   fog so overlapping alpha particles (`LavaParticleSplash.m2`, `LavaSmokeEmitterB.m2`,
+///   `Blacksmith_smoke.m2`) cap at `mix(fogColor, rgb, fogFactor)` rather than converging
+///   to unfogged RGB, and AlphaKey debris (`PARTROCK`, `SandVortex.m2`) fogs to `fogColor`
+///   instead of turning transparent.
+/// - M2Blend 3/4 (NoAlphaAdd / Add, pipeline ONE, ONE): attenuates additive RGB toward
+///   black `(0, 0, 0)` by `visibility` (`D3DRS_FOGCOLOR = 0x00000000`), never adding `fogColor`.
+/// - M2Blend 5/6 (Mod / Mod2x): fades RGB toward neutral `1.0` / `0.5` by `baseAlpha * visibility`.
+inline ParticleFragmentEval evaluateParticleFragment(
+    int blendMode,
+    const glm::vec4& texSample,
+    const glm::vec4& vertexColor,
+    const ParticleFogTerms& fog) noexcept {
+    if (fog.culledPastOutdoorFogEnd || fog.visibility < 0.0f) {
+        return {.discarded = true, .outColor = glm::vec4(0.0f)};
+    }
+    glm::vec4 texColor = texSample;
+    if (blendMode == 1 && texColor.a < 224.0f / 255.0f) {
+        return {.discarded = true, .outColor = glm::vec4(0.0f)};
+    }
+    if (blendMode == 0 || blendMode == 1 || blendMode == 3) {
+        texColor.a = 1.0f;
+    }
+    const float baseAlpha = texColor.a * vertexColor.a;
+    const float foggedAlpha = baseAlpha * fog.visibility;
+    const glm::vec3 rgb = glm::vec3(texColor) * glm::vec3(vertexColor);
+    if (blendMode == 3 || blendMode == 4) {
+        const glm::vec3 premul = rgb * foggedAlpha;
+        const float covAlpha = std::max({premul.r, premul.g, premul.b});
+        return {.discarded = false, .outColor = glm::vec4(premul, covAlpha)};
+    }
+    if (blendMode == 5) {
+        return {.discarded = false, .outColor = glm::vec4(glm::mix(glm::vec3(1.0f), rgb, foggedAlpha), 1.0f)};
+    }
+    if (blendMode == 6) {
+        return {.discarded = false, .outColor = glm::vec4(glm::mix(glm::vec3(0.5f), rgb, foggedAlpha), 1.0f)};
+    }
+    return {
+        .discarded = false,
+        .outColor = glm::vec4(rgb * fog.visibility + fog.inscatter, baseAlpha),
+    };
+}
+
 /// One authored cell range played over `phase` in [0, 1): `repeat` passes
 /// from start to end inclusive, either direction (ShadowWordSilence_Breath
 /// runs 31 -> 16). Wrapped into the texture's tile count, so an end equal to

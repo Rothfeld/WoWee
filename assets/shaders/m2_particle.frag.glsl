@@ -12,10 +12,12 @@ layout(location = 0) in vec4 vColor;
 layout(location = 1) in float vTile;
 layout(location = 2) in float vFogVisibility;
 layout(location = 3) in vec2 vUV;
+layout(location = 4) in vec3 vFogInscatter;
 
 layout(location = 0) out vec4 outColor;
 
 void main() {
+    if (vFogVisibility < 0.0) discard;
     // Quad geometry grows upward in view space; BLP rows start at the top.
     vec2 p = vec2(vUV.x, 1.0 - vUV.y);
     float tile = floor(vTile);
@@ -31,24 +33,27 @@ void main() {
     if (push.blendMode == 1 && texColor.a < 224.0 / 255.0) discard;
     if (push.blendMode == 0 || push.blendMode == 1 || push.blendMode == 3) texColor.a = 1.0;
 
-    // Texture supplies the sprite silhouette. The alpha and additive
-    // pipelines use SRC_ALPHA, so RGB is not premultiplied here.
-    float alpha = texColor.a * vColor.a * vFogVisibility;
+    float baseAlpha = texColor.a * vColor.a;
+    float foggedAlpha = baseAlpha * vFogVisibility;
     vec3 rgb = texColor.rgb * vColor.rgb;
     if (push.blendMode == 3 || push.blendMode == 4) {
-        // Additive modes (NoAlphaAdd / Add): premultiply RGB by alpha and derive
-        // coverage alpha from peak channel luminance so black corners of NoAlphaAdd
-        // sprites (e.g. Thunderfury glow) stay transparent on off-screen preview FBOs
-        // while world additive blending (ONE, ONE) remains identical to (SRC_ALPHA, ONE).
-        vec3 premul = rgb * alpha;
+        // Additive modes (NoAlphaAdd / Add): TBC 2.4.3 binds black fog color
+        // (D3DRS_FOGCOLOR = 0) on additive batches, attenuating RGB toward zero
+        // by fog visibility without adding scene fogColor. Premultiply RGB and
+        // emit peak luminance in alpha for off-screen preview FBO coverage.
+        vec3 premul = rgb * foggedAlpha;
         outColor = vec4(premul, max(max(premul.r, premul.g), premul.b));
     } else if (push.blendMode == 5) {
         // Mod (dst * src): fade toward white, which leaves dst unchanged.
-        outColor = vec4(mix(vec3(1.0), rgb, alpha), 1.0);
+        outColor = vec4(mix(vec3(1.0), rgb, foggedAlpha), 1.0);
     } else if (push.blendMode == 6) {
         // Mod2x (dst * src * 2): neutral is mid grey.
-        outColor = vec4(mix(vec3(0.5), rgb, alpha), 1.0);
+        outColor = vec4(mix(vec3(0.5), rgb, foggedAlpha), 1.0);
     } else {
-        outColor = vec4(rgb, alpha);
+        // Opaque / AlphaKey / Alpha (M2Blend 0, 1, 2): TBC 2.4.3 fogs RGB toward
+        // the active fog color while preserving authored coverage alpha so stacked
+        // splashes/smoke cap at mix(fogColor, rgb, fogFactor) and AlphaKey debris
+        // fogs to fogColor rather than turning transparent.
+        outColor = vec4(rgb * vFogVisibility + vFogInscatter, baseAlpha);
     }
 }

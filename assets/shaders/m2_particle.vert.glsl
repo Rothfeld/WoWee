@@ -17,6 +17,12 @@ layout(set = 0, binding = 0) uniform PerFrame {
     vec4 localLightColorIntensity[64];
     ivec4 localLightMeta;
     vec4 volumetricParams;  // x = on, y = near, z = 1 / ln(far / near), w = slices
+    mat4 rtViewProj;
+    vec4 rtCameraPos;
+    vec4 rtParams;
+    vec4 specularColor;
+    vec4 outdoorFogColor;
+    vec4 outdoorFogParams;  // x = start, y = end, z = viewDistance
 };
 
 layout(set = 0, binding = 2) uniform sampler3D uFogVolume;
@@ -40,6 +46,7 @@ layout(location = 0) out vec4 vColor;
 layout(location = 1) out float vTile;
 layout(location = 2) out float vFogVisibility;
 layout(location = 3) out vec2 vUV;
+layout(location = 4) out vec3 vFogInscatter;
 
 // The air between the camera and this point, out of the fog volume: rgb is
 // the light it scatters toward the camera, a how much of the point shows
@@ -88,12 +95,30 @@ void main() {
         viewPos4.xy += vec2(c * corner.x - s * corner.y, s * corner.x + c * corner.y);
     }
     vColor = aColor;
-    vTile = aTile;
-    float fogDepth = max(-(view * vec4(aPos, 1.0)).z, 0.0);
-    float fogRange = max(fogParams.y - fogParams.x, 0.001);
-    vFogVisibility = clamp((fogParams.y - fogDepth) / fogRange, 0.0, 1.0);
-    // And thinned by the air in front of it, the way distance thins it:
-    // a spark deep in a bank of mist is mostly the mist.
-    if (volumetricParams.x > 0.5) vFogVisibility *= fogVolumeAt(aPos).a;
+    // Sign of aTile carries interiorFog (encodeParticleTileAndFogMode):
+    // interior particles take WMO MFOG (fogColor/fogParams); outdoor particles
+    // take Light.dbc fog (outdoorFogColor/outdoorFogParams) and stop at
+    // outdoorFogParams.y just like m2.frag.glsl.
+    bool isInteriorFog = (aTile >= 0.0);
+    vTile = isInteriorFog ? aTile : (-aTile - 1.0);
+    vec4 activeFogColor = isInteriorFog ? fogColor : outdoorFogColor;
+    vec4 activeFogParams = isInteriorFog ? fogParams : outdoorFogParams;
+    float fogDepth = max(-viewPos4.z, 0.0);
+    if (!isInteriorFog && outdoorFogParams.z > 0.0 && fogDepth > activeFogParams.y) {
+        vFogVisibility = -1.0;
+        vFogInscatter = vec3(0.0);
+    } else {
+        float fogRange = max(activeFogParams.y - activeFogParams.x, 0.001);
+        float fogFactor = clamp((activeFogParams.y - fogDepth) / fogRange, 0.0, 1.0);
+        float airTransmittance = 1.0;
+        vec3 airInscatter = vec3(0.0);
+        if (volumetricParams.x > 0.5) {
+            vec4 air = fogVolumeAt(aPos);
+            airTransmittance = air.a;
+            airInscatter = air.rgb;
+        }
+        vFogVisibility = fogFactor * airTransmittance;
+        vFogInscatter = activeFogColor.rgb * ((1.0 - fogFactor) * airTransmittance) + airInscatter;
+    }
     gl_Position = projection * viewPos4;
 }

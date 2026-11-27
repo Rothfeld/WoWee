@@ -4,6 +4,18 @@
 // Matches m2_particle.frag.glsl M2Blend semantics (0 opaque, 1 alpha key,
 // 2 alpha, 3 no-alpha add, 4 add, 5 mod, 6 mod2x) for 3D particle meshes.
 
+layout(set = 0, binding = 0) uniform PerFrame {
+    mat4 view;
+    mat4 projection;
+    mat4 lightSpaceMatrix;
+    vec4 lightDir;
+    vec4 lightColor;
+    vec4 ambientColor;
+    vec4 viewPos;
+    vec4 fogColor;
+    vec4 fogParams;
+};
+
 layout(set = 1, binding = 0) uniform sampler2D uTexture;
 
 layout(push_constant) uniform Push {
@@ -25,16 +37,23 @@ void main() {
     if (push.blendMode == 1 && tex.a < 224.0 / 255.0) discard;
     if (push.blendMode == 0 || push.blendMode == 1 || push.blendMode == 3) tex.a = 1.0;
 
-    float alpha = tex.a * vAlpha * vFogFactor;
+    float baseAlpha = tex.a * vAlpha;
+    float foggedAlpha = baseAlpha * vFogFactor;
     vec3 rgb = tex.rgb * vColor;
     if (push.blendMode == 5) {
         // Mod (dst * src): fade toward white, which leaves dst unchanged.
-        outColor = vec4(mix(vec3(1.0), rgb, alpha), 1.0);
+        outColor = vec4(mix(vec3(1.0), rgb, foggedAlpha), 1.0);
     } else if (push.blendMode == 6) {
         // Mod2x (dst * src * 2): neutral is mid grey.
-        outColor = vec4(mix(vec3(0.5), rgb, alpha), 1.0);
+        outColor = vec4(mix(vec3(0.5), rgb, foggedAlpha), 1.0);
+    } else if (push.blendMode == 3 || push.blendMode == 4) {
+        // Additive mesh particles bind (SRC_ALPHA, ONE): attenuate toward black by vFogFactor.
+        if (foggedAlpha < 0.001) discard;
+        outColor = vec4(rgb, foggedAlpha);
     } else {
-        if (alpha < 0.001) discard;
-        outColor = vec4(rgb, alpha);
+        // Opaque / AlphaKey / Alpha (M2Blend 0, 1, 2): fog RGB toward fogColor while
+        // preserving baseAlpha (e.g. SandVortex CycloneGeo.m2 blend 1, Skull.m2 blend 2).
+        if (baseAlpha < 0.001) discard;
+        outColor = vec4(mix(fogColor.rgb, rgb, vFogFactor), baseAlpha);
     }
 }
