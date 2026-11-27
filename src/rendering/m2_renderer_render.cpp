@@ -2139,6 +2139,7 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
             if (!model.isGroundDetail && batch.submeshLevel != targetLOD) continue;
             if (batch.batchOpacity < 0.01f) continue;
             if (!skyBatchAllowed(skyMode_, static_cast<std::size_t>(bi))) continue;
+            if (suppressBakedStars_ && batch.starLayer) continue;
 
             const bool rawTransparent = m2BatchIsTransparent(
                 batch.blendMode, model.isSpellEffect, batch.hasAuthoredMaterial) || instanceFaded;

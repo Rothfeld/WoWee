@@ -332,10 +332,15 @@ private:
     };
 
     /**
-     * Find light volumes for blending (up to 4 with weight > 0)
+     * Find light volumes for blending (up to 4 with weight > 0).
+     * When `rawCandidates` is non-null, receives every volume with positive
+     * spatial falloff ordered most-specific first (smallest outerRadius, then
+     * lightId) before `layerLightWeights` zeroes covered outer color shares.
      */
-    [[nodiscard]] std::vector<WeightedVolume> findLightVolumes(const glm::vec3& playerPos, uint32_t mapId,
-                                                               float& defaultWeight) const;
+    [[nodiscard]] std::vector<WeightedVolume> findLightVolumes(
+        const glm::vec3& playerPos, uint32_t mapId,
+        float& defaultWeight,
+        std::vector<WeightedVolume>* rawCandidates = nullptr) const;
 
     /**
      * Get LightParams ID based on conditions

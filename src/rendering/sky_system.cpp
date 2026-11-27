@@ -194,6 +194,30 @@ void SkySystem::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
     }
 }
 
+bool SkySystem::willRenderProceduralStars(const SkyParams& params) const {
+    if (!initialized_ || !starField_) return false;
+    bool renderProceduralStars = false;
+    if (debugSkyMode_) {
+        renderProceduralStars = true;
+    } else if (proceduralStarsEnabled_) {
+        renderProceduralStars = true;
+    } else if (!params.useOriginalSkybox) {
+        renderProceduralStars = !params.skyboxHasStars;
+    }
+    if (!renderProceduralStars) return false;
+
+    const float effectiveCloudDensity = effectiveSkyCloudDensity(
+        params.useOriginalSkybox, params.cloudDensity,
+        params.timeOfDay, params.weatherIntensity, params.skyTopColor,
+        params.cloudLayer2Weight);
+    const float effectiveOvercast = std::max(
+        params.weatherIntensity,
+        overcastCloudCover(effectiveCloudDensity, params.cloudLayer2Weight));
+    return starFieldEffectiveIntensity(
+        params.timeOfDay, effectiveOvercast,
+        params.celestialGlowThrough, params.skyTopColor) > 0.01f;
+}
+
 glm::vec3 SkySystem::getSunPosition(const SkyParams& params) const {
     // Below the horizon it stays below - see sun_direction.hpp for what the
     // mirror that used to be here cost.

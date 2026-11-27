@@ -3888,6 +3888,8 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
                 skySystem->render(cmd, perFrameSet, *camera, skyParams);
                 if (drawSkyModels &&
                     !(skyParams.submergedInWater && skyParams.fogEnd <= 28.0f)) {
+                    skyboxModelRenderer_->setSuppressBakedStars(
+                        skySystem && skySystem->willRenderProceduralStars(skyParams));
                     skyboxModelRenderer_->render(cmd, perFrameSet, *camera);
                 }
             }
@@ -4100,6 +4102,8 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
             skySystem->render(currentCmd, perFrameSet, *camera, skyParams);
             if (drawSkyModels &&
                 !(skyParams.submergedInWater && skyParams.fogEnd <= 28.0f)) {
+                skyboxModelRenderer_->setSuppressBakedStars(
+                    skySystem && skySystem->willRenderProceduralStars(skyParams));
                 skyboxModelRenderer_->prepareRender(frameIdx, *camera);
                 skyboxModelRenderer_->render(currentCmd, perFrameSet, *camera);
             }
@@ -4956,6 +4960,7 @@ void Renderer::setSharpStars(bool enabled) {
     // the client's own point stars take its place. Setting either alone gives a
     // sky with no stars or a sky with two sets of them.
     if (m2Renderer) m2Renderer->setSuppressBakedStars(sharpStars_);
+    if (skyboxModelRenderer_) skyboxModelRenderer_->setSuppressBakedStars(sharpStars_);
     if (skySystem) skySystem->setProceduralStarsEnabled(sharpStars_);
 }
 

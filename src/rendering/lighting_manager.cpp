@@ -361,8 +361,13 @@ void LightingManager::updateWithStormWeight(const glm::vec3& playerPos, uint32_t
     // Update player position and map
     currentPlayerPos_ = playerPos;
 
-    // Find light volumes for blending
-    activeVolumes_ = findLightVolumes(playerPos, mapId, defaultVolumeWeight_);
+    // Find light volumes for blending; retain unlayered spatial candidates so
+    // inner volumes with lightSkyboxId == 0 (e.g. Netherstorm Eco-Domes LP 552
+    // and Manaforges LP 520 inside Light 502, Netherweb Ridge LP 565 inside
+    // Light 742, Blade's Edge groves LP 554 inside Light 455) inherit the
+    // enclosing volume's skybox instead of blanking it out.
+    std::vector<WeightedVolume> skyCandidates;
+    activeVolumes_ = findLightVolumes(playerPos, mapId, defaultVolumeWeight_, &skyCandidates);
     const auto defaultIt = defaultVolumeByMap_.find(mapId);
     const LightVolume* defaultVolume =
         defaultIt != defaultVolumeByMap_.end() ? &defaultIt->second : nullptr;
@@ -409,40 +414,59 @@ void LightingManager::updateWithStormWeight(const glm::vec3& playerPos, uint32_t
     // the sky behind was already Terokkar's pale blue, a hard edge down the
     // middle of the screen. Then it popped.
     //
-    // Now each model is up by the weight of the lights that name it, over the
-    // same volumes and with the same smoothing the colours use, so the two
-    // cross the border together. A light with no sky model contributes to no
-    // layer, and the models fade toward the plain sky there.
+    // Each skybox-bearing volume layers over wider skybox-bearing volumes by
+    // its spatial falloff, while inner volumes with lightSkyboxId == 0 remain
+    // transparent to skybox selection so enclosing zone skyboxes stay visible.
+    std::vector<SkyParamsIdShare> skyDomeParamShares;
     {
-        std::vector<std::pair<std::string, float>> target;
-        {
-            std::vector<WeightedVolume> blend = activeVolumes_;
-            if (defaultVolume && defaultVolumeWeight_ > 0.0f)
-                blend.push_back({.volume = defaultVolume, .weight = defaultVolumeWeight_});
-            for (const auto& wv : blend) {
-                auto accumulateSky = [&](uint32_t paramsId, float share) {
-                    if (share <= 0.0f) return;
-                    auto profileIt = lightParamsProfiles_.find(paramsId);
-                    if (profileIt == lightParamsProfiles_.end() ||
-                        profileIt->second.lightSkyboxId == 0) return;
-                    auto skyIt = lightSkyboxPaths_.find(profileIt->second.lightSkyboxId);
-                    if (skyIt == lightSkyboxPaths_.end() || skyIt->second.empty()) return;
-                    auto t = std::find_if(target.begin(), target.end(),
-                                          [&](const auto& e) { return e.first == skyIt->second; });
-                    if (t == target.end()) target.emplace_back(skyIt->second, share);
-                    else t->second += share;
-                };
-                const uint32_t clearId = selectLightParamsId(wv.volume, false, submerged, isGhost);
-                const uint32_t stormId = selectLightParamsId(wv.volume, true, submerged, isGhost);
-                if (clearId == stormId || clampedStorm <= 0.001f) {
-                    accumulateSky(clearId, wv.weight);
-                } else if (clampedStorm >= 0.999f) {
-                    accumulateSky(stormId, wv.weight);
-                } else {
-                    accumulateSky(clearId, wv.weight * (1.0f - clampedStorm));
-                    accumulateSky(stormId, wv.weight * clampedStorm);
-                }
+        auto skyboxIdForParams = [&](uint32_t paramsId) -> uint32_t {
+            const auto profileIt = lightParamsProfiles_.find(paramsId);
+            if (profileIt == lightParamsProfiles_.end() ||
+                profileIt->second.lightSkyboxId == 0) {
+                return 0;
             }
+            const auto skyIt = lightSkyboxPaths_.find(profileIt->second.lightSkyboxId);
+            if (skyIt == lightSkyboxPaths_.end() || skyIt->second.empty()) {
+                return 0;
+            }
+            return profileIt->second.lightSkyboxId;
+        };
+
+        std::vector<SkyVolumeCandidate> skyVolumes;
+        skyVolumes.reserve(skyCandidates.size());
+        for (const auto& wv : skyCandidates) {
+            const uint32_t clearId = selectLightParamsId(wv.volume, false, submerged, isGhost);
+            const uint32_t stormId = selectLightParamsId(wv.volume, true, submerged, isGhost);
+            skyVolumes.push_back({
+                .falloff = wv.weight,
+                .clearSkyboxId = skyboxIdForParams(clearId),
+                .stormSkyboxId = skyboxIdForParams(stormId),
+                .clearParamsId = clearId,
+                .stormParamsId = stormId,
+            });
+        }
+        const uint32_t defClearParams = defaultVolume
+            ? selectLightParamsId(defaultVolume, false, submerged, isGhost)
+            : 0;
+        const uint32_t defStormParams = defaultVolume
+            ? selectLightParamsId(defaultVolume, true, submerged, isGhost)
+            : 0;
+        const uint32_t defClearSky = skyboxIdForParams(defClearParams);
+        const uint32_t defStormSky = skyboxIdForParams(defStormParams);
+
+        const auto skyShares = layerLightSkyboxWeights(
+            skyVolumes, clampedStorm, defClearSky, defStormSky,
+            defaultVolume != nullptr,
+            defClearParams, defStormParams, &skyDomeParamShares);
+
+        std::vector<std::pair<std::string, float>> target;
+        for (const auto& share : skyShares) {
+            const auto skyIt = lightSkyboxPaths_.find(share.skyboxId);
+            if (skyIt == lightSkyboxPaths_.end() || skyIt->second.empty()) continue;
+            auto t = std::find_if(target.begin(), target.end(),
+                                  [&](const auto& e) { return e.first == skyIt->second; });
+            if (t == target.end()) target.emplace_back(skyIt->second, share.weight);
+            else t->second += share.weight;
         }
         auto targetFor = [&](const std::string& path) {
             for (const auto& [p, w] : target) if (p == path) return w;
@@ -558,6 +582,81 @@ void LightingManager::updateWithStormWeight(const glm::vec3& playerPos, uint32_t
         } else {
             // Fallback if all directions cancelled out
             newParams.directionalDir = glm::vec3(0.3f, -0.7f, 0.6f);
+        }
+
+        // When an enclosing volume supplies a LightSkybox M2 while an inner
+        // volume has lightSkyboxId == 0 (e.g. Stormspire LP 552 or Manaforge
+        // LP 520 inside Netherstorm LP 508, Netherweb Ridge LP 565 inside
+        // Bone Wastes LP 500), TBC 2.4.3 keeps the sky dome gradient paired
+        // with the skybox-bearing LightParams so cloned daytime blue/olive/gold
+        // sky bands on ground-only sub-volumes never bleed through cloud gaps.
+        if (!skyDomeParamShares.empty()) {
+            float skyCov = 0.0f;
+            glm::vec3 skyTop(0.0f), skyMid(0.0f), skyB1(0.0f), skyB2(0.0f), skySmog(0.0f);
+            for (const auto& sp : skyDomeParamShares) {
+                const auto it = lightParamsProfiles_.find(sp.paramsId);
+                if (it == lightParamsProfiles_.end()) continue;
+                const LightingParams p = sampleLightParams(&it->second, timeHalfMinutes);
+                skyTop  += p.skyTopColor * sp.weight;
+                skyMid  += p.skyMiddleColor * sp.weight;
+                skyB1   += p.skyBand1Color * sp.weight;
+                skyB2   += p.skyBand2Color * sp.weight;
+                skySmog += p.skySmogColor * sp.weight;
+                skyCov  += sp.weight;
+            }
+            skyCov = glm::clamp(skyCov, 0.0f, 1.0f);
+            if (skyCov >= 0.999f) {
+                newParams.skyTopColor = skyTop;
+                newParams.skyMiddleColor = skyMid;
+                newParams.skyBand1Color = skyB1;
+                newParams.skyBand2Color = skyB2;
+                newParams.skySmogColor = skySmog;
+            } else if (skyCov > 0.0f) {
+                // Across a zone border into a non-skybox zone (e.g. Hellfire ->
+                // Terokkar), fill the uncovered (1 - skyCov) fraction from the
+                // non-skybox volumes so neither side is double-counted.
+                float nonSkyTotal = 0.0f;
+                glm::vec3 nsTop(0.0f), nsMid(0.0f), nsB1(0.0f), nsB2(0.0f), nsSmog(0.0f);
+                auto accumNonSky = [&](uint32_t paramsId, float share) {
+                    if (share <= 0.0f) return;
+                    const auto it = lightParamsProfiles_.find(paramsId);
+                    if (it == lightParamsProfiles_.end() || it->second.lightSkyboxId != 0) return;
+                    const LightingParams p = sampleLightParams(&it->second, timeHalfMinutes);
+                    nsTop  += p.skyTopColor * share;
+                    nsMid  += p.skyMiddleColor * share;
+                    nsB1   += p.skyBand1Color * share;
+                    nsB2   += p.skyBand2Color * share;
+                    nsSmog += p.skySmogColor * share;
+                    nonSkyTotal += share;
+                };
+                for (const auto& wv : blend) {
+                    const uint32_t clearId = selectLightParamsId(wv.volume, false, submerged, isGhost);
+                    const uint32_t stormId = selectLightParamsId(wv.volume, true, submerged, isGhost);
+                    if (clearId == stormId || clampedStorm <= 0.001f) {
+                        accumNonSky(clearId, wv.weight);
+                    } else if (clampedStorm >= 0.999f) {
+                        accumNonSky(stormId, wv.weight);
+                    } else {
+                        accumNonSky(clearId, wv.weight * (1.0f - clampedStorm));
+                        accumNonSky(stormId, wv.weight * clampedStorm);
+                    }
+                }
+                const float rem = 1.0f - skyCov;
+                if (nonSkyTotal > 1e-5f) {
+                    const float inv = rem / nonSkyTotal;
+                    newParams.skyTopColor = skyTop + nsTop * inv;
+                    newParams.skyMiddleColor = skyMid + nsMid * inv;
+                    newParams.skyBand1Color = skyB1 + nsB1 * inv;
+                    newParams.skyBand2Color = skyB2 + nsB2 * inv;
+                    newParams.skySmogColor = skySmog + nsSmog * inv;
+                } else {
+                    newParams.skyTopColor = skyTop + newParams.skyTopColor * rem;
+                    newParams.skyMiddleColor = skyMid + newParams.skyMiddleColor * rem;
+                    newParams.skyBand1Color = skyB1 + newParams.skyBand1Color * rem;
+                    newParams.skyBand2Color = skyB2 + newParams.skyBand2Color * rem;
+                    newParams.skySmogColor = skySmog + newParams.skySmogColor * rem;
+                }
+            }
         }
     } else {
         // Light.dbc has no default row for map 0 either, which the 2.4.3
@@ -708,7 +807,10 @@ void LightingManager::updateWithStormWeight(const glm::vec3& playerPos, uint32_t
 }
 
 std::vector<LightingManager::WeightedVolume> LightingManager::findLightVolumes(
-        const glm::vec3& playerPos, uint32_t mapId, float& defaultWeight) const {
+        const glm::vec3& playerPos, uint32_t mapId,
+        float& defaultWeight,
+        std::vector<WeightedVolume>* rawCandidates) const {
+    if (rawCandidates) rawCandidates->clear();
     const bool mapHasDefault = defaultVolumeByMap_.count(mapId) != 0;
     defaultWeight = mapHasDefault ? 1.0f : 0.0f;
     auto it = lightVolumesByMap_.find(mapId);
@@ -748,6 +850,7 @@ std::vector<LightingManager::WeightedVolume> LightingManager::findLightVolumes(
             return a.volume->outerRadius < b.volume->outerRadius;
         return a.volume->lightId < b.volume->lightId;
     });
+    if (rawCandidates) *rawCandidates = weighted;
     std::vector<float> shares;
     shares.reserve(weighted.size());
     for (const auto& wv : weighted) shares.push_back(wv.weight);

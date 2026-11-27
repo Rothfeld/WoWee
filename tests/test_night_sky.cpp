@@ -1,12 +1,19 @@
 #include <catch_amalgamated.hpp>
 
 #include "pipeline/dbc_loader.hpp"
+#include "rendering/light_coords.hpp"
+#include "rendering/light_volume_order.hpp"
 #include "rendering/night_sky_math.hpp"
 #include "rendering/sky_params_from_lighting.hpp"
 #include "rendering/sky_system.hpp"
 #include "tbc_data_test_util.hpp"
 
+#include <algorithm>
 #include <cmath>
+#include <map>
+#include <string>
+#include <tuple>
+#include <vector>
 
 using namespace wowee::rendering;
 
@@ -257,4 +264,154 @@ TEST_CASE("TBC 2.4.3 DBC skybox and cloud bands match Azeroth night sky expectat
     CHECK(foundLp85Celestial);
     CHECK(foundSun);
     CHECK(foundEmissive);
+}
+
+TEST_CASE("Outland nested Light.dbc sub-volumes inherit enclosing zone LightSkybox in TBC 2.4.3",
+          "[sky][skybox][tbc]") {
+    using wowee::rendering::isMapDefaultLight;
+    using wowee::rendering::layerLightSkyboxWeights;
+    using wowee::rendering::layerLightWeights;
+    using wowee::rendering::LIGHT_COORD_UNITS_PER_YARD;
+    using wowee::rendering::lightPositionToWorld;
+    using wowee::rendering::lightVolumeFalloff;
+    using wowee::rendering::SkyVolumeCandidate;
+
+    const auto lightBytes = wowee::test::readTbcData("dbfilesclient/light.dbc");
+    const auto paramsBytes = wowee::test::readTbcData("dbfilesclient/lightparams.dbc");
+    const auto skyboxBytes = wowee::test::readTbcData("dbfilesclient/lightskybox.dbc");
+
+    wowee::pipeline::DBCFile lightDbc, paramsDbc, skyboxDbc;
+    REQUIRE(lightDbc.load(lightBytes));
+    REQUIRE(paramsDbc.load(paramsBytes));
+    REQUIRE(skyboxDbc.load(skyboxBytes));
+
+    std::map<uint32_t, uint32_t> skyboxByParams;
+    for (uint32_t i = 0; i < paramsDbc.getRecordCount(); ++i) {
+        skyboxByParams[paramsDbc.getUInt32(i, 0)] = paramsDbc.getUInt32(i, 2);
+    }
+    std::map<uint32_t, std::string> skyboxPaths;
+    for (uint32_t i = 0; i < skyboxDbc.getRecordCount(); ++i) {
+        skyboxPaths[skyboxDbc.getUInt32(i, 0)] = skyboxDbc.getString(i, 1);
+    }
+
+    struct Vol {
+        uint32_t id;
+        glm::vec3 pos;
+        float innerR;
+        float outerR;
+        uint32_t clearLp;
+        uint32_t stormLp;
+    };
+    std::vector<Vol> map530;
+    uint32_t defClearSky = 0, defStormSky = 0;
+    bool hasDefault = false;
+    for (uint32_t i = 0; i < lightDbc.getRecordCount(); ++i) {
+        if (lightDbc.getUInt32(i, 1) != 530u) continue;
+        const float dbcX = lightDbc.getFloat(i, 2);
+        const float dbcZ = lightDbc.getFloat(i, 3);
+        const float dbcY = lightDbc.getFloat(i, 4);
+        const uint32_t clearLp = lightDbc.getUInt32(i, 7);
+        const uint32_t stormLp = lightDbc.getUInt32(i, 9);
+        if (isMapDefaultLight(dbcX, dbcY, dbcZ)) {
+            hasDefault = true;
+            defClearSky = skyboxByParams[clearLp];
+            defStormSky = skyboxByParams[stormLp];
+            continue;
+        }
+        map530.push_back({
+            .id = lightDbc.getUInt32(i, 0),
+            .pos = lightPositionToWorld(dbcX, dbcY, dbcZ),
+            .innerR = lightDbc.getFloat(i, 5) / LIGHT_COORD_UNITS_PER_YARD,
+            .outerR = lightDbc.getFloat(i, 6) / LIGHT_COORD_UNITS_PER_YARD,
+            .clearLp = clearLp,
+            .stormLp = stormLp,
+        });
+    }
+    REQUIRE(hasDefault);
+
+    auto evalAt = [&](const glm::vec3& pt, float stormWeight = 0.0f) {
+        struct Hit {
+            const Vol* v;
+            float falloff;
+        };
+        std::vector<Hit> hits;
+        for (const auto& v : map530) {
+            const float f = lightVolumeFalloff(glm::length(pt - v.pos), v.innerR, v.outerR);
+            if (f > 0.0f) hits.push_back({&v, f});
+        }
+        std::sort(hits.begin(), hits.end(), [](const Hit& a, const Hit& b) {
+            if (a.v->outerR != b.v->outerR) return a.v->outerR < b.v->outerR;
+            return a.v->id < b.v->id;
+        });
+        std::vector<float> colorShares;
+        std::vector<SkyVolumeCandidate> skyCands;
+        for (const auto& h : hits) {
+            colorShares.push_back(h.falloff);
+            skyCands.push_back({
+                .falloff = h.falloff,
+                .clearSkyboxId = skyboxByParams[h.v->clearLp],
+                .stormSkyboxId = skyboxByParams[h.v->stormLp],
+            });
+        }
+        layerLightWeights(colorShares, hasDefault);
+        uint32_t topColorLightId = hits.empty() ? 0u : hits[0].v->id;
+        float topColorShare = colorShares.empty() ? 0.0f : colorShares[0];
+        const auto skyShares = layerLightSkyboxWeights(
+            skyCands, stormWeight, defClearSky, defStormSky, hasDefault);
+        return std::make_tuple(topColorLightId, topColorShare, skyShares);
+    };
+
+    // 1. The Stormspire live user report spot & volume center: Light 669 (LP 552)
+    //    owns 100% color share while NetherstormSkyBox.mdx (sb=10) stays at 1.0.
+    for (const glm::vec3 pt : {glm::vec3(4192.57f, 3089.15f, 335.82f),
+                               glm::vec3(4135.20f, 3007.60f, 344.20f)}) {
+        const auto [colorId, colorShare, sky] = evalAt(pt);
+        CHECK(colorId == 669u);
+        CHECK(colorShare == Catch::Approx(1.0f));
+        REQUIRE(sky.size() == 1);
+        CHECK(skyboxPaths[sky[0].skyboxId] == "Environments\\Stars\\NetherstormSkyBox.mdx");
+        CHECK(sky[0].weight == Catch::Approx(1.0f));
+    }
+
+    // 2. Eco-Dome Midrealm (Light 673, LP 552) & Manaforge B'naar / Scrap Field (Light 674, LP 520).
+    {
+        const auto [midId, midShare, midSky] = evalAt(glm::vec3(3449.08f, 2948.37f, 144.60f));
+        CHECK(midId == 673u);
+        CHECK(midShare == Catch::Approx(1.0f));
+        REQUIRE(midSky.size() == 1);
+        CHECK(skyboxPaths[midSky[0].skyboxId] == "Environments\\Stars\\NetherstormSkyBox.mdx");
+        CHECK(midSky[0].weight == Catch::Approx(1.0f));
+
+        const auto [mfId, mfShare, mfSky] = evalAt(glm::vec3(3254.70f, 2691.20f, 148.50f));
+        CHECK(mfId == 674u);
+        CHECK(mfShare == Catch::Approx(1.0f));
+        REQUIRE(mfSky.size() == 1);
+        CHECK(skyboxPaths[mfSky[0].skyboxId] == "Environments\\Stars\\NetherstormSkyBox.mdx");
+        CHECK(mfSky[0].weight == Catch::Approx(1.0f));
+    }
+
+    // 3. Netherweb Ridge (Light 602: clear LP 565 sb=0, rain LP 564 sb=15) inside Bone Wastes (Light 742 sb=8).
+    {
+        const auto [nwId, nwShare, nwClear] = evalAt(glm::vec3(-3892.30f, 4327.70f, 6.50f), 0.0f);
+        CHECK(nwId == 602u);
+        CHECK(nwShare == Catch::Approx(1.0f));
+        REQUIRE(nwClear.size() == 1);
+        CHECK(skyboxPaths[nwClear[0].skyboxId] == "Environments\\Stars\\BoneWastesSkyBox.mdx");
+        CHECK(nwClear[0].weight == Catch::Approx(1.0f));
+
+        const auto [nwIdS, nwShareS, nwStorm] = evalAt(glm::vec3(-3892.30f, 4327.70f, 6.50f), 1.0f);
+        REQUIRE(nwStorm.size() == 1);
+        CHECK(skyboxPaths[nwStorm[0].skyboxId] == "Environments\\Stars\\BladesedgeNightElfSkyBox.mdx");
+        CHECK(nwStorm[0].weight == Catch::Approx(1.0f));
+    }
+
+    // 4. Blade's Edge grove (Light 659, LP 554 sb=0) inside Blade's Edge (Light 455 sb=11).
+    {
+        const auto [beId, beShare, beSky] = evalAt(glm::vec3(2168.80f, 5450.20f, 149.10f));
+        CHECK(beId == 659u);
+        CHECK(beShare == Catch::Approx(1.0f));
+        REQUIRE(beSky.size() == 1);
+        CHECK(skyboxPaths[beSky[0].skyboxId] == "Environments\\Stars\\BladesEdgeSkyBox.mdx");
+        CHECK(beSky[0].weight == Catch::Approx(1.0f));
+    }
 }

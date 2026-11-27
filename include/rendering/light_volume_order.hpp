@@ -21,6 +21,7 @@
 /// both apply fully. Light id decides the last case, so that two volumes of
 /// identical extent still cannot swap places between frames.
 
+#include <algorithm>
 #include <cstdint>
 #include <vector>
 
@@ -78,6 +79,110 @@ inline float layerLightWeights(std::vector<float>& weights, bool mapHasDefault) 
     if (covered > 0.0f)
         for (float& w : weights) w /= covered;
     return 0.0f;
+}
+
+/// Spatial falloff and resolved clear/storm LightSkybox IDs for one Light.dbc
+/// volume covering the player, ordered most-specific first (smallest outer
+/// radius, then lightId). A LightSkybox ID of 0 means that LightParams defines
+/// no skybox override and inherits wider enclosing volumes' skyboxes.
+struct SkyVolumeCandidate {
+    float falloff = 0.0f;
+    uint32_t clearSkyboxId = 0;
+    uint32_t stormSkyboxId = 0;
+    uint32_t clearParamsId = 0;
+    uint32_t stormParamsId = 0;
+};
+
+/// Resolved target weight in [0, 1] for one LightSkybox ID.
+struct SkyboxIdShare {
+    uint32_t skyboxId = 0;
+    float weight = 0.0f;
+};
+
+/// Resolved target weight in [0, 1] for one LightParams ID contributing to the
+/// sky dome gradient behind an active LightSkybox M2.
+struct SkyParamsIdShare {
+    uint32_t paramsId = 0;
+    float weight = 0.0f;
+};
+
+/// Layer skybox weights across overlapping Light.dbc volumes and the map's
+/// default row, matching TBC 2.4.3 CSkyManager behavior:
+/// - Volumes whose active LightParams has lightSkyboxId == 0 (e.g. Netherstorm
+///   Eco-Domes LP 552 and Manaforges LP 520 inside Light 502, Netherweb Ridge
+///   LP 565 inside Light 742, Blade's Edge groves LP 554 inside Light 455) do
+///   not consume skybox share, leaving enclosing zone skyboxes at full weight.
+/// - Volumes that do name a skybox layer over wider skybox-bearing volumes by
+///   their spatial falloff, and fade smoothly across zone borders where wider
+///   volumes or the map default row have lightSkyboxId == 0.
+inline std::vector<SkyboxIdShare> layerLightSkyboxWeights(
+    const std::vector<SkyVolumeCandidate>& volumes,
+    float stormWeight,
+    uint32_t defaultClearSkyboxId,
+    uint32_t defaultStormSkyboxId,
+    bool mapHasDefault,
+    uint32_t defaultClearParamsId = 0,
+    uint32_t defaultStormParamsId = 0,
+    std::vector<SkyParamsIdShare>* outSkyParamsShares = nullptr) {
+    if (outSkyParamsShares) outSkyParamsShares->clear();
+    const float clampedStorm = std::clamp(stormWeight, 0.0f, 1.0f);
+    const float wClear = (clampedStorm <= 0.001f)
+        ? 1.0f
+        : ((clampedStorm >= 0.999f) ? 0.0f : (1.0f - clampedStorm));
+    const float wStorm = 1.0f - wClear;
+
+    std::vector<SkyboxIdShare> out;
+    auto accumulate = [&](uint32_t skyboxId, uint32_t paramsId, float add) {
+        if (skyboxId == 0 || add <= 0.0f) return;
+        auto it = std::find_if(out.begin(), out.end(),
+                               [&](const SkyboxIdShare& s) { return s.skyboxId == skyboxId; });
+        if (it == out.end()) out.push_back({.skyboxId = skyboxId, .weight = add});
+        else it->weight += add;
+
+        if (outSkyParamsShares && paramsId != 0) {
+            auto pit = std::find_if(
+                outSkyParamsShares->begin(), outSkyParamsShares->end(),
+                [&](const SkyParamsIdShare& p) { return p.paramsId == paramsId; });
+            if (pit == outSkyParamsShares->end()) {
+                outSkyParamsShares->push_back({.paramsId = paramsId, .weight = add});
+            } else {
+                pit->weight += add;
+            }
+        }
+    };
+
+    float remaining = 1.0f;
+    for (const auto& v : volumes) {
+        const float f = std::clamp(v.falloff, 0.0f, 1.0f);
+        if (f <= 0.0f || remaining <= 0.0f) continue;
+        const float clearCov = (v.clearSkyboxId != 0) ? wClear : 0.0f;
+        const float stormCov = (v.stormSkyboxId != 0) ? wStorm : 0.0f;
+        const float own = f * (clearCov + stormCov);
+        if (own <= 0.0f) continue;
+        accumulate(v.clearSkyboxId, v.clearParamsId, remaining * f * clearCov);
+        accumulate(v.stormSkyboxId, v.stormParamsId, remaining * f * stormCov);
+        remaining *= (1.0f - own);
+    }
+
+    if (mapHasDefault) {
+        if (remaining > 0.0f) {
+            if (defaultClearSkyboxId != 0) {
+                accumulate(defaultClearSkyboxId, defaultClearParamsId, remaining * wClear);
+            }
+            if (defaultStormSkyboxId != 0) {
+                accumulate(defaultStormSkyboxId, defaultStormParamsId, remaining * wStorm);
+            }
+        }
+    } else {
+        const float covered = 1.0f - remaining;
+        if (covered > 0.0f) {
+            for (auto& s : out) s.weight /= covered;
+            if (outSkyParamsShares) {
+                for (auto& p : *outSkyParamsShares) p.weight /= covered;
+            }
+        }
+    }
+    return out;
 }
 
 }  // namespace wowee::rendering

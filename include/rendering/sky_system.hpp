@@ -177,6 +177,11 @@ public:
     void setProceduralStarsEnabled(bool enabled) { proceduralStarsEnabled_ = enabled; }
     [[nodiscard]] bool isProceduralStarsEnabled() const { return proceduralStarsEnabled_; }
 
+    /// True when SkySystem::render will emit procedural point stars this frame,
+    /// so skybox M2 rendering suppresses its baked star layer only when the
+    /// procedural field actually replaces it (keeping Outland daytime stars).
+    [[nodiscard]] bool willRenderProceduralStars(const SkyParams& params) const;
+
     /**
      * Enable/disable debug sky mode (forces procedural stars even with skybox)
      */

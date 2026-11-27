@@ -149,3 +149,107 @@ TEST_CASE("Light row weight falls linearly across its falloff", "[light-blend]")
     CHECK(lightVolumeFalloff(118.3f, 81.4f, 127.9f) == Catch::Approx(0.206f).margin(0.005f));
     CHECK(lightVolumeFalloff(140.0f, 81.4f, 127.9f) == 0.0f);
 }
+
+TEST_CASE("Inner LightParams with lightSkyboxId == 0 inherit enclosing zone skybox",
+          "[light-blend][skybox]") {
+    using wowee::rendering::layerLightSkyboxWeights;
+    using wowee::rendering::SkyVolumeCandidate;
+
+    // The Stormspire Eco-Dome: Light 669 (LP 552, sb=0) inside Light 666
+    // (LP 552, sb=0) inside Netherstorm Light 502 (LP 508, sb=10).
+    {
+        const std::vector<SkyVolumeCandidate> stormspire = {
+            {.falloff = 1.0f, .clearSkyboxId = 0, .stormSkyboxId = 0, .clearParamsId = 552, .stormParamsId = 552},
+            {.falloff = 1.0f, .clearSkyboxId = 0, .stormSkyboxId = 0, .clearParamsId = 552, .stormParamsId = 552},
+            {.falloff = 1.0f, .clearSkyboxId = 10, .stormSkyboxId = 10, .clearParamsId = 508, .stormParamsId = 508},
+        };
+        std::vector<wowee::rendering::SkyParamsIdShare> paramShares;
+        const auto shares = layerLightSkyboxWeights(
+            stormspire, 0.0f, 0, 0, true, 379, 379, &paramShares);
+        REQUIRE(shares.size() == 1);
+        CHECK(shares[0].skyboxId == 10);
+        CHECK(shares[0].weight == Catch::Approx(1.0f));
+        REQUIRE(paramShares.size() == 1);
+        CHECK(paramShares[0].paramsId == 508);
+        CHECK(paramShares[0].weight == Catch::Approx(1.0f));
+    }
+
+    // Walking across Light 669's falloff ring (falloff = 0.45): Netherstorm's
+    // skybox stays steady at 1.0 without dipping.
+    {
+        const std::vector<SkyVolumeCandidate> bridge = {
+            {.falloff = 0.45f, .clearSkyboxId = 0, .stormSkyboxId = 0},
+            {.falloff = 1.0f, .clearSkyboxId = 10, .stormSkyboxId = 10},
+        };
+        const auto shares = layerLightSkyboxWeights(bridge, 0.0f, 0, 0, true);
+        REQUIRE(shares.size() == 1);
+        CHECK(shares[0].skyboxId == 10);
+        CHECK(shares[0].weight == Catch::Approx(1.0f));
+    }
+
+    // Inner volume with its own skybox (Blade's Edge Forest sb=14 inside
+    // Blade's Edge sb=11) crossfades smoothly across its falloff.
+    {
+        const std::vector<SkyVolumeCandidate> forestEdge = {
+            {.falloff = 0.4f, .clearSkyboxId = 14, .stormSkyboxId = 14},
+            {.falloff = 1.0f, .clearSkyboxId = 11, .stormSkyboxId = 11},
+        };
+        const auto shares = layerLightSkyboxWeights(forestEdge, 0.0f, 0, 0, true);
+        REQUIRE(shares.size() == 2);
+        CHECK(shares[0].skyboxId == 14);
+        CHECK(shares[0].weight == Catch::Approx(0.4f));
+        CHECK(shares[1].skyboxId == 11);
+        CHECK(shares[1].weight == Catch::Approx(0.6f));
+    }
+
+    // Zangarmarsh (Light 523, sb=0, falloff=1.0) overlapping the outer 8 yd of
+    // Hellfire Peninsula (Light 377, sb=7, falloff=0.043) over map 530 default
+    // (Terokkar Light 374, sb=0): Hellfire stays at 0.043 rather than 1.0.
+    {
+        const std::vector<SkyVolumeCandidate> zangarBorder = {
+            {.falloff = 1.0f, .clearSkyboxId = 0, .stormSkyboxId = 0},
+            {.falloff = 0.043f, .clearSkyboxId = 7, .stormSkyboxId = 7},
+        };
+        const auto shares = layerLightSkyboxWeights(zangarBorder, 0.0f, 0, 0, true);
+        REQUIRE(shares.size() == 1);
+        CHECK(shares[0].skyboxId == 7);
+        CHECK(shares[0].weight == Catch::Approx(0.043f));
+    }
+
+    // Netherweb Ridge (Light 602: clear LP 565 sb=0, storm LP 564 sb=15)
+    // nested inside Bone Wastes (Light 742: LP 500 sb=8).
+    {
+        const std::vector<SkyVolumeCandidate> netherweb = {
+            {.falloff = 1.0f, .clearSkyboxId = 0, .stormSkyboxId = 15},
+            {.falloff = 1.0f, .clearSkyboxId = 8, .stormSkyboxId = 8},
+        };
+        const auto clearShares = layerLightSkyboxWeights(netherweb, 0.0f, 0, 0, true);
+        REQUIRE(clearShares.size() == 1);
+        CHECK(clearShares[0].skyboxId == 8);
+        CHECK(clearShares[0].weight == Catch::Approx(1.0f));
+
+        const auto stormShares = layerLightSkyboxWeights(netherweb, 1.0f, 0, 0, true);
+        REQUIRE(stormShares.size() == 1);
+        CHECK(stormShares[0].skyboxId == 15);
+        CHECK(stormShares[0].weight == Catch::Approx(1.0f));
+
+        const auto midShares = layerLightSkyboxWeights(netherweb, 0.35f, 0, 0, true);
+        REQUIRE(midShares.size() == 2);
+        CHECK(midShares[0].skyboxId == 15);
+        CHECK(midShares[0].weight == Catch::Approx(0.35f));
+        CHECK(midShares[1].skyboxId == 8);
+        CHECK(midShares[1].weight == Catch::Approx(0.65f));
+    }
+
+    // Map default with a skybox (e.g. Tempest Keep / Black Temple) shines
+    // through an inner positioned volume with lightSkyboxId == 0.
+    {
+        const std::vector<SkyVolumeCandidate> innerNoSky = {
+            {.falloff = 1.0f, .clearSkyboxId = 0, .stormSkyboxId = 0},
+        };
+        const auto shares = layerLightSkyboxWeights(innerNoSky, 0.0f, 18, 18, true);
+        REQUIRE(shares.size() == 1);
+        CHECK(shares[0].skyboxId == 18);
+        CHECK(shares[0].weight == Catch::Approx(1.0f));
+    }
+}
