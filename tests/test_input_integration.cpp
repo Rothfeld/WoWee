@@ -15,6 +15,7 @@
 #include "ui/chat/chat_utils.hpp"
 #include "ui/framexml_takeover.hpp"
 #include "addons/lua_engine.hpp"
+#include "addons/lua_handler_globals.hpp"
 #include "addons/lua_api_helpers.hpp"
 #include "addons/addon_lua_snippets.hpp"
 #include "addons/addon_manager.hpp"
@@ -8955,4 +8956,489 @@ TEST_CASE_METHOD(Integration,
     truth("not __ok_gsl  and string.find(__e_gsl,  'Invalid spell slot') ~= nil");
 
     lua.setGameHandler(nullptr);
+}
+
+TEST_CASE("Typed slash chat stress: 2400 slash lines across stall ticks, same-pump bursts, OPENCHATSLASH, and undrawn ticks drop 0 slashes",
+          "[input][lua][chat][slash-stress]") {
+    Integration f;
+    f.lua.widgets().noteScreenSize(1280.0f, 720.0f);
+
+    // Faithful TBC 2.4.3 ChatFrame_OpenChat + ChatEdit_* model (including deferred
+    // editBox.setText = 1 / ChatEdit_OnUpdate, OnShow -> SetFocus, OnEnterPressed ->
+    // ChatEdit_SendText -> ChatEdit_OnEscapePressed -> editBox:Hide() without ClearFocus),
+    // plus Bindings.xml OPENCHAT and OPENCHATSLASH scripts.
+    f.run(R"LUA(
+        __slashArgs = {}
+        __saySent = {}
+        SlashCmdList = SlashCmdList or {}
+        SLASH_DS1 = "/ds"
+        SlashCmdList["DS"] = function(msg)
+            __slashArgs[#__slashArgs + 1] = msg
+        end
+
+        function SendChatMessage(msg, chatType)
+            __saySent[#__saySent + 1] = tostring(chatType) .. ":" .. tostring(msg)
+        end
+
+        DEFAULT_CHAT_FRAME = CreateFrame("ScrollingMessageFrame", "ChatFrame1", UIParent)
+        DEFAULT_CHAT_FRAME:SetSize(430, 120)
+        DEFAULT_CHAT_FRAME:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", 32, 95)
+        DEFAULT_CHAT_FRAME:Show()
+
+        ChatFrameEditBox = CreateFrame("EditBox", "ChatFrameEditBox", UIParent)
+        ChatFrameEditBox:SetAutoFocus(false)
+        ChatFrameEditBox:SetIgnoreArrows(true)
+        ChatFrameEditBox:SetHistoryLines(32)
+        ChatFrameEditBox:SetMaxLetters(255)
+        ChatFrameEditBox:SetSize(430, 32)
+        ChatFrameEditBox:SetPoint("TOPLEFT", DEFAULT_CHAT_FRAME, "BOTTOMLEFT", -5, -2)
+        ChatFrameEditBox.chatFrame = DEFAULT_CHAT_FRAME
+        DEFAULT_CHAT_FRAME.editBox = ChatFrameEditBox
+        ChatFrameEditBox:SetAttribute("chatType", "SAY")
+        ChatFrameEditBox:SetAttribute("stickyType", "SAY")
+        ChatFrameEditBox:Hide()
+
+        function ChatEdit_ParseText(editBox, send)
+            local text = editBox:GetText() or ""
+            if string.len(text) <= 0 or string.sub(text, 1, 1) ~= "/" then
+                return
+            end
+            if send == 0 then
+                return
+            end
+            local command = string.match(text, "^(/[^%s]+)") or ""
+            local rest = ""
+            if command ~= text then
+                rest = string.sub(text, string.len(command) + 2)
+            end
+            if string.upper(command) == "/DS" then
+                SlashCmdList["DS"](rest)
+                editBox:AddHistoryLine(text)
+                ChatEdit_OnEscapePressed(editBox)
+                return
+            end
+            ChatEdit_OnEscapePressed(editBox)
+        end
+
+        function ChatEdit_OnEscapePressed(editBox)
+            editBox:SetAttribute("chatType", editBox:GetAttribute("stickyType"))
+            editBox:SetText("")
+            editBox:Hide()
+        end
+
+        function ChatEdit_SendText(editBox, addHistory)
+            ChatEdit_ParseText(editBox, 1)
+            local text = editBox:GetText() or ""
+            if string.find(text, "%s*[^%s]+") then
+                SendChatMessage(text, editBox:GetAttribute("chatType") or "SAY")
+                if addHistory then
+                    editBox:AddHistoryLine(text)
+                end
+            end
+        end
+
+        ChatFrameEditBox:SetScript("OnShow", function(self)
+            self:SetFocus()
+        end)
+        ChatFrameEditBox:SetScript("OnUpdate", function(self, elapsed)
+            if self.setText == 1 then
+                self:SetText(self.text or "")
+                self.setText = 0
+                ChatEdit_ParseText(self, 0)
+            end
+        end)
+        ChatFrameEditBox:SetScript("OnTextSet", function(self)
+            ChatEdit_ParseText(self, 0)
+        end)
+        ChatFrameEditBox:SetScript("OnSpacePressed", function(self)
+            ChatEdit_ParseText(self, 0)
+        end)
+        ChatFrameEditBox:SetScript("OnEnterPressed", function(self)
+            ChatEdit_SendText(self, 1)
+            ChatEdit_OnEscapePressed(self)
+        end)
+        ChatFrameEditBox:SetScript("OnEscapePressed", function(self)
+            ChatEdit_OnEscapePressed(self)
+        end)
+
+        function ChatFrame_OpenChat(text, chatFrame)
+            chatFrame = chatFrame or DEFAULT_CHAT_FRAME
+            chatFrame.editBox:Show()
+            chatFrame.editBox.setText = 1
+            chatFrame.editBox.text = text or ""
+        end
+
+        __WoweeBindingScripts.OPENCHAT = function(keystate)
+            if keystate == "down" then ChatFrame_OpenChat("") end
+        end
+        __WoweeBindingScripts.OPENCHATSLASH = function(keystate)
+            if keystate == "down" then ChatFrame_OpenChat("/") end
+        end
+    )LUA");
+    f.lua.widgets().layout(1280.0f, 720.0f);
+    f.lua.updateVisibility();
+
+    struct QueuedEvent {
+        enum class Kind { KeyDown, KeyUp, Text };
+        Kind kind;
+        SDL_Scancode scancode = SDL_SCANCODE_UNKNOWN;
+        SDL_Keycode keycode = SDLK_UNKNOWN;
+        SDL_Keymod mod = SDL_KMOD_NONE;
+        std::string text;
+    };
+    std::vector<QueuedEvent> queue;
+
+    auto scancodeForAscii = [](char c) -> std::pair<SDL_Scancode, SDL_Keymod> {
+        if (c >= 'a' && c <= 'z') {
+            return {static_cast<SDL_Scancode>(SDL_SCANCODE_A + (c - 'a')), SDL_KMOD_NONE};
+        }
+        if (c >= 'A' && c <= 'Z') {
+            return {static_cast<SDL_Scancode>(SDL_SCANCODE_A + (c - 'A')), SDL_KMOD_LSHIFT};
+        }
+        if (c >= '1' && c <= '9') {
+            return {static_cast<SDL_Scancode>(SDL_SCANCODE_1 + (c - '1')), SDL_KMOD_NONE};
+        }
+        switch (c) {
+            case '0': return {SDL_SCANCODE_0, SDL_KMOD_NONE};
+            case '/': return {SDL_SCANCODE_SLASH, SDL_KMOD_NONE};
+            case ' ': return {SDL_SCANCODE_SPACE, SDL_KMOD_NONE};
+            case '.': return {SDL_SCANCODE_PERIOD, SDL_KMOD_NONE};
+            case '-': return {SDL_SCANCODE_MINUS, SDL_KMOD_NONE};
+            case '_': return {SDL_SCANCODE_MINUS, SDL_KMOD_LSHIFT};
+            default:  return {SDL_SCANCODE_SPACE, SDL_KMOD_NONE};
+        }
+    };
+
+    auto pushKeyTap = [&](SDL_Scancode sc, SDL_Keycode kc, SDL_Keymod mod, const char* utf8) {
+        queue.push_back({QueuedEvent::Kind::KeyDown, sc, kc, mod, {}});
+        if (utf8 && *utf8) {
+            queue.push_back({QueuedEvent::Kind::Text, SDL_SCANCODE_UNKNOWN, SDLK_UNKNOWN, mod, utf8});
+        }
+        queue.push_back({QueuedEvent::Kind::KeyUp, sc, kc, mod, {}});
+    };
+
+    auto pushAsciiChar = [&](char c) {
+        const auto [sc, mod] = scancodeForAscii(c);
+        const SDL_Keycode kc = (c >= 'A' && c <= 'Z')
+            ? static_cast<SDL_Keycode>(c - 'A' + 'a')
+            : static_cast<SDL_Keycode>(static_cast<unsigned char>(c));
+        const char buf[2] = {c, '\0'};
+        pushKeyTap(sc, kc, mod, buf);
+    };
+
+    // Mirrors one full iteration of Application::run (event pump -> update -> layout ->
+    // visibility -> GameScreen::processTargetInput fallback), both drawn and undrawn.
+    auto runTick = [&](bool draws = true) {
+        (void)draws; // Undrawn ticks in 84c4a8b14 run the exact same interface stages.
+        ui::clearInterfaceConsumedKeys();
+        f.manager.beginInputFrame();
+        ui::ageChatSlashEcho();
+
+        auto batch = std::move(queue);
+        queue.clear();
+        for (const auto& ev : batch) {
+            if (ev.kind == QueuedEvent::Kind::Text) {
+                if (f.lua.editBoxHasFocus()) {
+                    if (!ui::consumeChatSlashEcho(ev.text.c_str())) {
+                        f.lua.dispatchText(ev.text.c_str());
+                    }
+                } else {
+                    f.lua.dispatchFrameChar(ev.text.c_str());
+                }
+                continue;
+            }
+
+            SDL_Event sdl{};
+            sdl.type = (ev.kind == QueuedEvent::Kind::KeyDown) ? SDL_EVENT_KEY_DOWN : SDL_EVENT_KEY_UP;
+            sdl.key.scancode = ev.scancode;
+            sdl.key.key = ev.keycode;
+            sdl.key.mod = ev.mod;
+            sdl.key.down = (ev.kind == QueuedEvent::Kind::KeyDown);
+
+            if (ev.kind == QueuedEvent::Kind::KeyUp) {
+                f.lua.dispatchBindingKey(SDL_SCANCODE_TO_KEYCODE(ev.scancode), false, false, false, false);
+                f.lua.dispatchFrameKey(ev.keycode, false, SDL_SCANCODE_TO_KEYCODE(ev.scancode), ev.mod);
+                f.manager.processInputEvent(sdl);
+                continue;
+            }
+
+            // KeyDown path matching Application::run lines 2101-2230 + ~NativeInputEvent.
+            const auto finishNative = [&] { f.manager.processInputEvent(sdl); };
+            if (f.lua.editBoxHasFocus()) {
+                ui::noteInterfaceConsumedKey(ui::KeybindingManager::keyFromName(
+                    ui::KeybindingManager::keyNameFromSDL(SDL_SCANCODE_TO_KEYCODE(ev.scancode))));
+                if (ev.keycode == SDLK_ESCAPE) ui::noteInterfaceConsumedKey(ImGuiKey_Escape);
+                else if (ev.keycode == SDLK_RETURN || ev.keycode == SDLK_KP_ENTER)
+                    ui::noteInterfaceConsumedKey(ImGuiKey_Enter);
+                else if (ev.keycode == SDLK_TAB) ui::noteInterfaceConsumedKey(ImGuiKey_Tab);
+                f.lua.dispatchKey(ev.keycode,
+                                  (ev.mod & (SDL_KMOD_CTRL | SDL_KMOD_GUI)) != 0,
+                                  (ev.mod & SDL_KMOD_SHIFT) != 0,
+                                  (ev.mod & SDL_KMOD_ALT) != 0);
+                finishNative();
+                continue;
+            }
+            if (f.lua.dispatchFrameKey(ev.keycode, true, SDL_SCANCODE_TO_KEYCODE(ev.scancode), ev.mod)) {
+                ui::noteInterfaceConsumedKey(ui::KeybindingManager::keyFromName(
+                    ui::KeybindingManager::keyNameFromSDL(SDL_SCANCODE_TO_KEYCODE(ev.scancode))));
+                finishNative();
+                continue;
+            }
+            if (f.lua.dispatchBindingKey(SDL_SCANCODE_TO_KEYCODE(ev.scancode),
+                                         (ev.mod & SDL_KMOD_SHIFT) != 0,
+                                         (ev.mod & SDL_KMOD_CTRL) != 0,
+                                         (ev.mod & SDL_KMOD_ALT) != 0, true)) {
+                ui::noteInterfaceConsumedKey(ui::KeybindingManager::keyFromName(
+                    ui::KeybindingManager::keyNameFromSDL(SDL_SCANCODE_TO_KEYCODE(ev.scancode))));
+                finishNative();
+                continue;
+            }
+            finishNative();
+        }
+
+        f.lua.dispatchOnUpdate(0.05f);
+        f.lua.widgets().layout(1280.0f, 720.0f);
+        f.lua.updateVisibility();
+        f.lua.updateSizeChanges();
+        f.lua.updateScrollRanges();
+
+        // GameScreen::processTargetInput fallback stage (runs after layout + updateVisibility).
+        if (f.manager.isCommandPressed("OPENCHATSLASH")) {
+            f.run("ChatFrame_OpenChat(\"/\")");
+            ui::noteChatOpenedBySlash();
+        } else if (f.manager.isCommandPressed("OPENCHAT")) {
+            f.run("ChatFrame_OpenChat(\"\")");
+        }
+    };
+
+    int expectedCount = 0;
+
+    // Phase 1 (600 lines): Exact tip-all-1 stall-tick reproducer where ChatFrame_OpenChat("")
+    // runs at the GameScreen::processTargetInput stage of Tick T (after dispatchOnUpdate and
+    // after layout), and "/" arrives at the top of Tick T+1 before layout() and before OnUpdate.
+    for (int i = 0; i < 600; ++i) {
+        const std::string arg = "snap stall_" + std::to_string(i);
+        // Simulate late-stage ChatFrame_OpenChat("") at the end of Tick T (post-layout, post-OnUpdate).
+        f.run("ChatFrame_OpenChat(\"\")");
+        REQUIRE(f.lua.editBoxHasFocus());
+        // Next tick T+1 receives '/' immediately in SDL_PollEvent before layout/OnUpdate.
+        pushAsciiChar('/');
+        if ((i % 2) == 0) {
+            runTick((i % 4) == 0);
+        }
+        for (char c : std::string("ds ") + arg) {
+            pushAsciiChar(c);
+            if ((i % 5) == 0) runTick((i % 4) == 0);
+        }
+        pushKeyTap(SDL_SCANCODE_RETURN, SDLK_RETURN, SDL_KMOD_NONE, nullptr);
+        runTick((i % 4) == 0);
+        ++expectedCount;
+    }
+    f.truth("#__saySent == 0");
+    f.truth("#__slashArgs == " + std::to_string(expectedCount));
+
+    // Phase 2 (600 lines): Same-pump 0-ms XTEST bursts (Return + /ds ... + Return in ONE
+    // SDL_PollEvent batch, including 3 back-to-back chat lines inside a single tick!).
+    for (int batchIdx = 0; batchIdx < 200; ++batchIdx) {
+        for (int sub = 0; sub < 3; ++sub) {
+            const int idx = batchIdx * 3 + sub;
+            const std::string body = "/ds burst_" + std::to_string(idx);
+            pushKeyTap(SDL_SCANCODE_RETURN, SDLK_RETURN, SDL_KMOD_NONE, nullptr);
+            for (char c : body) pushAsciiChar(c);
+            pushKeyTap(SDL_SCANCODE_RETURN, SDLK_RETURN, SDL_KMOD_NONE, nullptr);
+            ++expectedCount;
+        }
+        runTick((batchIdx % 4) == 0);
+    }
+    f.truth("#__saySent == 0");
+    f.truth("#__slashArgs == " + std::to_string(expectedCount));
+
+    // Phase 3 (600 lines): Bare '/' (OPENCHATSLASH) across same-pump, next-tick, undrawn ticks,
+    // and embedded second slashes ("/ds ratio_i a/b") to ensure consumeChatSlashEcho neither
+    // doubles the leading '/' nor eats a legitimate second '/'.
+    for (int i = 0; i < 600; ++i) {
+        const std::string rest = "ds ratio_" + std::to_string(i) + " a/b";
+        pushAsciiChar('/');
+        if ((i % 3) == 1) {
+            runTick(false);
+        }
+        for (size_t k = 0; k < rest.size(); ++k) {
+            pushAsciiChar(rest[k]);
+            if ((i % 3) == 2 && (k == 0 || k == rest.size() - 3)) {
+                runTick((k % 4) == 0);
+            }
+        }
+        pushKeyTap(SDL_SCANCODE_RETURN, SDLK_RETURN, SDL_KMOD_NONE, nullptr);
+        runTick((i % 4) == 0);
+        ++expectedCount;
+        f.truth("__slashArgs[" + std::to_string(expectedCount) + "] == 'ratio_" +
+                std::to_string(i) + " a/b'");
+    }
+    f.truth("#__saySent == 0");
+    f.truth("#__slashArgs == " + std::to_string(expectedCount));
+
+    // Phase 4 (600 lines): UIParent hide/show cycle (as WorldMapFrame full-screen toggle does
+    // right before `panelsclosed` in drive.py) + keypad Enter + mixed tick boundaries under
+    // WOWEE_DRAW_EVERY=4 schedule.
+    uint64_t rng = 0x9e3779b97f4a7c15ULL;
+    auto nextRand = [&]() -> uint32_t {
+        rng ^= rng >> 12;
+        rng ^= rng << 25;
+        rng ^= rng >> 27;
+        return static_cast<uint32_t>((rng * 0x2545F4914F6CDD1DULL) >> 32);
+    };
+    int tickCounter = 0;
+    for (int i = 0; i < 600; ++i) {
+        if ((i % 4) == 0) {
+            // Simulate WorldMap open (UIParent:Hide) -> close (UIParent:Show) before typing.
+            f.run("UIParent:Hide()");
+            CHECK_FALSE(f.lua.editBoxHasFocus());
+            runTick((++tickCounter % 4) == 0);
+            f.run("UIParent:Show()");
+            if ((i % 8) == 0) {
+                // Start typing BEFORE the post-UIParent:Show layout() pass has run!
+            } else {
+                runTick((++tickCounter % 4) == 0);
+            }
+        }
+        const bool useKpEnter = (i % 5) == 0;
+        const bool bareSlash = (i % 7) == 0;
+        const std::string arg = "panelsclosed_" + std::to_string(i);
+        if (!bareSlash) {
+            pushKeyTap(useKpEnter ? SDL_SCANCODE_KP_ENTER : SDL_SCANCODE_RETURN,
+                       useKpEnter ? SDLK_KP_ENTER : SDLK_RETURN,
+                       SDL_KMOD_NONE, nullptr);
+            if ((nextRand() % 3u) != 0u) {
+                runTick((++tickCounter % 4) == 0);
+            }
+        }
+        const std::string typed = bareSlash ? ("/ds " + arg) : ("/ds " + arg);
+        for (char c : typed) {
+            pushAsciiChar(c);
+            if ((nextRand() % 4u) == 0u) {
+                runTick((++tickCounter % 4) == 0);
+            }
+        }
+        pushKeyTap(useKpEnter ? SDL_SCANCODE_KP_ENTER : SDL_SCANCODE_RETURN,
+                   useKpEnter ? SDLK_KP_ENTER : SDLK_RETURN,
+                   SDL_KMOD_NONE, nullptr);
+        runTick((++tickCounter % 4) == 0);
+        ++expectedCount;
+        f.truth("__slashArgs[" + std::to_string(expectedCount) + "] == '" + arg + "'");
+    }
+
+    REQUIRE(expectedCount == 2400);
+    f.truth("#__saySent == 0");
+    f.truth("#__slashArgs == 2400");
+}
+
+TEST_CASE("Shipped TBC ChatFrame.lua + ChatFrame.xml + Bindings.xml preserves leading slash on immediate and cross-tick input",
+          "[input][lua][chat][framexml]") {
+    const std::filesystem::path fxmlDir =
+        "/workspace/azerothcore/client/wowee-data/expansions/tbc/interface/framexml";
+    if (!std::filesystem::exists(fxmlDir / "chatframe.lua") ||
+        !std::filesystem::exists(fxmlDir / "chatframe.xml") ||
+        !std::filesystem::exists(fxmlDir / "bindings.xml")) {
+        SKIP("TBC FrameXML extraction not present on this machine");
+    }
+
+    const bool prevLegacyGlobals = addons::legacyHandlerGlobals();
+    addons::setLegacyHandlerGlobals(true);
+    struct RestoreLegacyGlobals {
+        bool prev;
+        ~RestoreLegacyGlobals() { addons::setLegacyHandlerGlobals(prev); }
+    } restoreLegacyGlobals{prevLegacyGlobals};
+
+    Integration f;
+    f.lua.widgets().noteScreenSize(1280.0f, 720.0f);
+    auto loadXml = [&](const std::filesystem::path& path) {
+        std::ifstream in(path);
+        REQUIRE(in.is_open());
+        std::string xml((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        wowee::ui::XmlNode root;
+        std::string err;
+        REQUIRE(wowee::ui::parseXml(xml, root, err));
+        f.run(wowee::ui::emitFrameXml(root).lua);
+    };
+
+    loadXml(fxmlDir / "fonts.xml");
+    if (std::filesystem::exists(fxmlDir / "globalstrings.lua")) {
+        REQUIRE(f.lua.executeFile((fxmlDir / "globalstrings.lua").string()));
+    }
+    f.run(R"LUA(
+        function __WoweeXmlStep() end
+        __shippedSlash = {}
+        __shippedSay = {}
+        function GetDefaultLanguage() return "Common" end
+        function GetNumPartyMembers() return 0 end
+        function GetNumRaidMembers() return 0 end
+        function IsInGuild() return false end
+        function UnitName(u) return u == "player" and "Edricd" or "" end
+        function GetChannelName() return 0, nil, 0 end
+        function PlaySound() end
+        function FCF_GetCurrentChatFrame() return DEFAULT_CHAT_FRAME end
+        function SendChatMessage(msg, chatType)
+            __shippedSay[#__shippedSay + 1] = tostring(chatType) .. ":" .. tostring(msg)
+        end
+    )LUA");
+    REQUIRE(f.lua.executeFile((fxmlDir / "chatframe.lua").string()));
+    loadXml(fxmlDir / "chatframe.xml");
+    loadXml(fxmlDir / "bindings.xml");
+
+    f.run(R"LUA(
+        DEFAULT_CHAT_FRAME = CreateFrame("ScrollingMessageFrame", "ChatFrame1", UIParent)
+        DEFAULT_CHAT_FRAME:SetSize(430, 120)
+        DEFAULT_CHAT_FRAME:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", 32, 95)
+        DEFAULT_CHAT_FRAME:Show()
+
+        ChatFrameEditBox = CreateFrame("EditBox", "ChatFrameEditBox", DEFAULT_CHAT_FRAME)
+        ChatFrameEditBox.chatFrame = DEFAULT_CHAT_FRAME
+        DEFAULT_CHAT_FRAME.editBox = ChatFrameEditBox
+        __WoweeTemplates["ChatFrameEditBoxTemplate"](ChatFrameEditBox)
+        ChatFrameEditBox:SetSize(430, 32)
+        ChatFrameEditBox:SetPoint("TOPLEFT", DEFAULT_CHAT_FRAME, "BOTTOMLEFT", -5, -2)
+        this = ChatFrameEditBox
+        ChatEdit_OnLoad()
+        this = nil
+        ChatFrameEditBox:Hide()
+
+        SLASH_DRAWSKIP1 = "/ds"
+        SlashCmdList["DRAWSKIP"] = function(msg)
+            __shippedSlash[#__shippedSlash + 1] = msg
+        end
+    )LUA");
+    f.lua.widgets().layout(1280.0f, 720.0f);
+    f.lua.updateVisibility();
+
+    // 1. OPENCHAT via dispatchBindingKey(RETURN) + immediate "/ds snap panelsclosed" before layout/OnUpdate.
+    REQUIRE(f.lua.dispatchBindingKey(SDLK_RETURN, false, false, false, true));
+    REQUIRE(f.lua.editBoxHasFocus());
+    f.lua.dispatchText("/ds snap panelsclosed");
+    f.lua.dispatchOnUpdate(0.05f);
+    f.lua.dispatchKey(SDLK_RETURN, false);
+    CHECK_FALSE(f.lua.editBoxHasFocus());
+    f.truth("#__shippedSay == 0 and #__shippedSlash == 1 and __shippedSlash[1] == 'snap panelsclosed'");
+
+    // 2. Late-tick ChatFrame_OpenChat("") followed on next tick by dispatchText("/") BEFORE OnUpdate/layout.
+    f.run("ChatFrame_OpenChat(\"\")");
+    REQUIRE(f.lua.editBoxHasFocus());
+    f.lua.dispatchText("/");
+    f.lua.dispatchOnUpdate(0.05f);
+    f.lua.widgets().layout(1280.0f, 720.0f);
+    f.lua.updateVisibility();
+    f.lua.dispatchText("ds say .gps");
+    f.lua.dispatchKey(SDLK_RETURN, false);
+    CHECK_FALSE(f.lua.editBoxHasFocus());
+    f.truth("#__shippedSay == 0 and #__shippedSlash == 2 and __shippedSlash[2] == 'say .gps'");
+
+    // 3. OPENCHATSLASH via dispatchBindingKey('/') + echo suppression + immediate command body.
+    REQUIRE(f.lua.dispatchBindingKey(SDL_SCANCODE_TO_KEYCODE(SDL_SCANCODE_SLASH), false, false, false, true));
+    REQUIRE(f.lua.editBoxHasFocus());
+    REQUIRE(ui::consumeChatSlashEcho("/"));
+    CHECK_FALSE(ui::consumeChatSlashEcho("/"));
+    f.lua.dispatchText("ds ratio a/b");
+    f.lua.dispatchOnUpdate(0.05f);
+    f.lua.dispatchKey(SDLK_RETURN, false);
+    CHECK_FALSE(f.lua.editBoxHasFocus());
+    f.truth("#__shippedSay == 0 and #__shippedSlash == 3 and __shippedSlash[3] == 'ratio a/b'");
 }

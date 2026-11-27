@@ -1021,6 +1021,20 @@ bool WidgetTree::lacksPosition(uint32_t id) const {
     return lacksPosition(id, depth);
 }
 
+bool WidgetTree::isLiveVisible(uint32_t id) const {
+    const Widget* w = get(id);
+    if (!w || w->id == 0 || !w->shown) return false;
+    int guard = 0;
+    for (uint32_t pid = w->parent; pid != 0;) {
+        if (++guard > 64) break;
+        const Widget* p = get(pid);
+        if (!p) break;
+        if (!p->shown) return false;
+        pid = p->parent;
+    }
+    return !lacksPosition(id);
+}
+
 bool WidgetTree::lacksPosition(uint32_t id, int& depth) const {
     const Widget* w = get(id);
     if (!w || id == rootId_ || id == uiParentId_ || w->tooltipAnchorCursor) return false;

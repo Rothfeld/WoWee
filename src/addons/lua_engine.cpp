@@ -5306,6 +5306,11 @@ int lua_Region_Show(lua_State* L) {
     if (w && becameShown && w->shownToggles <= 1 && ancestorsShown(L, w)) {
         fireOnShowNow(L, 1, w);
     }
+    if (w && becameShown && w->isEditBox && w->editAutoFocus && ancestorsShown(L, w)) {
+        if (const auto* tree = wowee::addons::getWidgetTree(L); !tree || !tree->lacksPosition(w->id)) {
+            if (auto* e = engineFrom(L)) e->setEditFocus(w->id);
+        }
+    }
     return 0;
 }
 static void fireOnHideNow(lua_State* L, int frameIndex, wowee::ui::Widget* w) {
@@ -5345,7 +5350,8 @@ int lua_Region_Hide(lua_State* L) {
     const bool isTooltip = w && (w->isTooltip || w->objectType == "GameTooltip");
     const bool wasShown = w && w->shown;
     if (w) {
-        if (!isTooltip && w->shown && frameScriptSet(L, 1, "OnHide") && w->shownToggles < 200) {
+        if (!isTooltip && !w->isEditBox && w->shown && frameScriptSet(L, 1, "OnHide") &&
+            w->shownToggles < 200) {
             ++w->shownToggles;
         }
         // A hidden tooltip belongs to nobody and hides its unit status bar.
@@ -5358,13 +5364,22 @@ int lua_Region_Hide(lua_State* L) {
         w->shown = false;
     }
     lua_pushboolean(L, 0); lua_setfield(L, 1, "__visible");
-    // Tooltips are never managed by ShowUIPanel, and moving the cursor from
-    // one button to another in a single frame runs OnLeave (GameTooltip:Hide)
-    // immediately followed by OnEnter (SetOwner + SetTooltipMoney + Show).
-    // Deferring OnHide to updateVisibility() made GameTooltip_OnHide ->
-    // GameTooltip_ClearMoney() fire AFTER the new button's SetTooltipMoney(),
-    // wiping out its coin frame and leaving an empty line under the title.
+    // Tooltips and EditBoxes are never managed by ShowUIPanel. Moving the cursor
+    // from one button to another in a single frame runs OnLeave (GameTooltip:Hide)
+    // immediately followed by OnEnter (Show), and submitting a chat line runs
+    // ChatEdit_OnEscapePressed (editBox:Hide) which may be followed in the same
+    // tick by opening the next chat line (editBox:Show). Running Hide's cleanup
+    // immediately resets shownToggles and releases edit focus so a second Show
+    // in the same tick fires ChatEdit_OnShow -> SetFocus cleanly.
     if (isTooltip && wasShown) {
+        w->reportedVisible = false;
+        w->shownToggles = 0;
+        w->onShowFired = false;
+        fireOnHideNow(L, 1, w);
+    } else if (w && w->isEditBox && wasShown) {
+        if (w->editFocused) {
+            if (auto* e = engineFrom(L)) e->setEditFocus(0);
+        }
         w->reportedVisible = false;
         w->shownToggles = 0;
         w->onShowFired = false;
@@ -8289,6 +8304,14 @@ void LuaEngine::setLuaServices(const LuaServices& services) {
         lua_pushlightuserdata(L_, &luaServices_);
         lua_setfield(L_, LUA_REGISTRYINDEX, "wowee_lua_services");
     }
+#ifndef __ANDROID__
+    if (luaServices_.window) {
+        if (SDL_Window* sdl = luaServices_.window->getSDLWindow();
+            sdl && !SDL_TextInputActive(sdl)) {
+            SDL_StartTextInput(sdl);
+        }
+    }
+#endif
 }
 
 
@@ -12800,6 +12823,38 @@ LuaEngine* engineFrom(lua_State* L) {
     return e;
 }
 
+bool hasPendingEditBoxSetText(lua_State* L, uint32_t wid) {
+    if (!L || wid == 0) return false;
+    lua_getglobal(L, "__WoweeFramesByWid");
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        return false;
+    }
+    lua_rawgeti(L, -1, static_cast<int>(wid));
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 2);
+        return false;
+    }
+    lua_getfield(L, -1, "setText");
+    const bool pending = lua_isnumber(L, -1) && lua_tonumber(L, -1) == 1.0;
+    lua_pop(L, 3);
+    return pending;
+}
+
+void ensureWindowTextInput(const LuaServices& services, bool editBoxFocused) {
+    if (!services.window) return;
+    SDL_Window* sdlWindow = services.window->getSDLWindow();
+    if (!sdlWindow) return;
+#ifdef __ANDROID__
+    if (!editBoxFocused) return;
+#else
+    (void)editBoxFocused;
+#endif
+    if (!SDL_TextInputActive(sdlWindow)) {
+        SDL_StartTextInput(sdlWindow);
+    }
+}
+
 }  // namespace
 
 int lua_EditBox_SetFocus(lua_State* L) {
@@ -12839,12 +12894,48 @@ void LuaEngine::setEditFocus(uint32_t wid) {
     }
     if (wid != 0) {
         if (auto* w = widgets_.get(wid)) w->editFocused = true;
+        ensureWindowTextInput(luaServices_, true);
         callFrameScript(wid, "OnEditFocusGained");
     }
 }
 
 void LuaEngine::dispatchText(const char* utf8) {
     if (!L_ || focusedWid_ == 0 || !utf8) return;
+    // ChatFrame_OpenChat stages editBox.setText = 1 / editBox.text = text for
+    // ChatEdit_OnUpdate. Apply any pending staged text before inserting typed
+    // characters so a subsequent OnUpdate pass never overwrites typed input.
+    static bool settlingSetText = false;
+    if (!settlingSetText && hasPendingEditBoxSetText(L_, focusedWid_)) {
+        settlingSetText = true;
+        struct Guard { bool& f; ~Guard() { f = false; } } guard{settlingSetText};
+        const uint32_t targetWid = focusedWid_;
+        callFrameScriptNumber(targetWid, "OnUpdate", 0.0);
+        if (hasPendingEditBoxSetText(L_, targetWid)) {
+            lua_getglobal(L_, "__WoweeFramesByWid");
+            if (lua_istable(L_, -1)) {
+                lua_rawgeti(L_, -1, static_cast<int>(targetWid));
+                if (lua_istable(L_, -1)) {
+                    lua_pushinteger(L_, 0);
+                    lua_setfield(L_, -2, "setText");
+                    lua_getfield(L_, -1, "SetText");
+                    if (lua_isfunction(L_, -1)) {
+                        lua_pushvalue(L_, -2);
+                        lua_getfield(L_, -3, "text");
+                        if (!lua_isstring(L_, -1)) {
+                            lua_pop(L_, 1);
+                            lua_pushliteral(L_, "");
+                        }
+                        if (pcallRouted(L_, 2, 0) != 0) lua_pop(L_, 1);
+                    } else {
+                        lua_pop(L_, 1);
+                    }
+                }
+                lua_pop(L_, 1);
+            }
+            lua_pop(L_, 1);
+        }
+    }
+    if (focusedWid_ == 0) return;
     auto* w = widgets_.get(focusedWid_);
     if (!w || !w->isEditBox) return;
 
@@ -12944,7 +13035,8 @@ bool LuaEngine::dispatchBindingInput(const std::string& key, bool shift, bool ct
     if (heldBindings_.count(key)) return true;
     if (editBoxHasFocus() || ImGui::GetIO().WantTextInput) return false;
     const std::string command = bindingCommandForKey(ui::KeybindingManager::modifiedKey(key, shift, ctrl, alt));
-    if (command.empty() || clientActsOnBinding(command)) return false;
+    const bool isChatOpenBinding = (command == "OPENCHAT" || command == "OPENCHATSLASH");
+    if (command.empty() || (!isChatOpenBinding && clientActsOnBinding(command))) return false;
     // Hidden and debug commands (TURNORACTION on BUTTON2, TOGGLESTATS on
     // Ctrl-Y) are bound as native binds them, but this client drives the
     // mouse itself and has no debug displays, so their scripts do not run.
@@ -12967,9 +13059,35 @@ bool LuaEngine::dispatchBindingInput(const std::string& key, bool shift, bool ct
         }
         lua_pop(L_, 1);
     }
-    if (!runBindingScript(command, true)) {
+    bool ranScript = runBindingScript(command, true);
+    if (!ranScript && isChatOpenBinding) {
+        lua_getglobal(L_, "ChatFrame_OpenChat");
+        if (lua_isfunction(L_, -1)) {
+            lua_pushstring(L_, command == "OPENCHATSLASH" ? "/" : "");
+            if (pcallRouted(L_, 1, 0) != 0) {
+                LOG_WARNING("ChatFrame_OpenChat failed for ", command, ": ",
+                            luaL_optstring(L_, -1, "?"));
+                lua_pop(L_, 1);
+            } else {
+                ranScript = true;
+            }
+        } else {
+            lua_pop(L_, 1);
+        }
+    }
+    if (!ranScript) {
         if (releaseScript != LUA_NOREF) luaL_unref(L_, LUA_REGISTRYINDEX, releaseScript);
         return false;
+    }
+    if (isChatOpenBinding) {
+        if (focusedWid_ != 0 && hasPendingEditBoxSetText(L_, focusedWid_)) {
+            callFrameScriptNumber(focusedWid_, "OnUpdate", 0.0);
+        }
+        if (command == "OPENCHATSLASH" &&
+            !key.starts_with("BUTTON") && !key.starts_with("PAD") && !key.starts_with("MOUSEWHEEL")) {
+            ui::noteChatOpenedBySlash();
+        }
+        if (releaseScript == LUA_NOREF) return true;
     }
     heldBindings_[key] = {command, releaseScript};
     return true;
@@ -13045,8 +13163,17 @@ LuaEngine::PadKeyOutcome LuaEngine::dispatchPadKey(const char* padKey, bool down
 
     const std::string command = bindingCommandForKey(padKey);
     if (command.empty()) return outcome;
-    if (clientActsOnBinding(command)) {
+    const bool isChatOpenBinding = (command == "OPENCHAT" || command == "OPENCHATSLASH");
+    if (!isChatOpenBinding && clientActsOnBinding(command)) {
         outcome.command = command;
+        return outcome;
+    }
+    if (isChatOpenBinding) {
+        if (dispatchBindingInput(padKey, false, false, false, true)) {
+            outcome.taken = true;
+        } else {
+            outcome.command = command;
+        }
         return outcome;
     }
     // Taken whether or not a script ran. A button bound to a command with no
@@ -13148,6 +13275,13 @@ void LuaEngine::releaseInput() {
 
 void LuaEngine::dispatchKey(int sdlKeycode, bool ctrlHeld, bool shiftHeld, bool altHeld) {
     if (!L_ || focusedWid_ == 0) return;
+    if (sdlKeycode != '/') {
+        (void)ui::consumeChatSlashEcho("/");
+    }
+    if (hasPendingEditBoxSetText(L_, focusedWid_)) {
+        callFrameScriptNumber(focusedWid_, "OnUpdate", 0.0);
+    }
+    if (focusedWid_ == 0) return;
     auto* w = widgets_.get(focusedWid_);
     if (!w || !w->isEditBox) return;
 
@@ -13681,7 +13815,12 @@ bool LuaEngine::editBoxHasFocus() const {
     // and nothing would say why. The mouse path already refuses to focus
     // anything else; SetFocus from Lua does not, and this is the same rule on
     // the reading side.
-    return w != nullptr && w->id != 0 && w->isEditBox && w->visible;
+    //
+    // Query live ancestor shown-chain + placement rather than cached w->visible,
+    // which is only refreshed during WidgetTree::layout(). Otherwise an EditBox
+    // opened after layout() (or mid-pump on OPENCHAT / OPENCHATSLASH) reports
+    // editBoxHasFocus() == false on the next event pump and drops the leading '/'.
+    return w != nullptr && w->id != 0 && w->isEditBox && widgets_.isLiveVisible(focusedWid_);
 }
 
 void LuaEngine::updateScrollRanges() {
@@ -14852,6 +14991,7 @@ void LuaEngine::drainPendingTextChanged() {
 }
 
 void LuaEngine::dispatchOnUpdate(float elapsed) {
+    ensureWindowTextInput(luaServices_, editBoxHasFocus());
     // Asked for by the check, and answered here because only this side can ask
     // the interface anything.
     if (ui::frameXmlTakeProbeRequest()) runInterfaceProbe();

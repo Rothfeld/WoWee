@@ -1474,6 +1474,10 @@ public:
     /// are positioned without anchors and are not that.
     [[nodiscard]] bool lacksPosition(uint32_t id) const;
     [[nodiscard]] bool lacksPosition(uint32_t id, int& depth) const;
+    /// Live visibility (`shown` across the full ancestor chain and positioned),
+    /// matching what the next layout() pass will assign to `Widget::visible`
+    /// without waiting for layout() to run.
+    [[nodiscard]] bool isLiveVisible(uint32_t id) const;
 
 private:
 

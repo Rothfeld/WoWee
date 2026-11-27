@@ -1368,9 +1368,9 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
     if (bindings.isCommandPressed("OPENCHATSLASH")) {
         gameHandler.runInterfaceCommand("ChatFrame_OpenChat(\"/\")");
         noteChatOpenedBySlash();
-    }
-    if (bindings.isCommandPressed("OPENCHAT"))
+    } else if (bindings.isCommandPressed("OPENCHAT")) {
         gameHandler.runInterfaceCommand("ChatFrame_OpenChat(\"\")");
+    }
 
     // Anything at all is taking typed input: this client's chat box, an ImGui
     // field, or one of the interface's own edit boxes.
