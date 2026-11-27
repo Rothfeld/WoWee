@@ -25,6 +25,39 @@ namespace wowee::pipeline {
 
 namespace wowee::game {
 
+/// Horizontal distance beyond which a non-ridden WMO transport hull (continent
+/// ships and zeppelins, which MaNGOS streams map-wide) stays hidden in the
+/// renderer instead of rebuilding the WMO spatial index and updating 100+ M2
+/// deck doodads every tick. Exceeds twice the 1277-yard maximum farclip.
+inline constexpr float kTransportRenderHorizonYards = 2500.0f;
+
+[[nodiscard]] constexpr bool shouldCullTransportRenderPush(
+    const glm::vec3& transportPos,
+    const glm::vec3& viewerPos,
+    bool hasViewerPos,
+    bool carryingRider) noexcept {
+    if (carryingRider || !hasViewerPos) return false;
+    const float dx = transportPos.x - viewerPos.x;
+    const float dy = transportPos.y - viewerPos.y;
+    return (dx * dx + dy * dy) > (kTransportRenderHorizonYards * kTransportRenderHorizonYards);
+}
+
+[[nodiscard]] inline bool transportTransformUnchanged(
+    const glm::mat4& a,
+    const glm::mat4& b,
+    float posEps = 1e-4f,
+    float rotEps = 1e-5f) noexcept {
+    for (int col = 0; col < 3; ++col) {
+        for (int row = 0; row < 3; ++row) {
+            if (std::abs(a[col][row] - b[col][row]) > rotEps) return false;
+        }
+    }
+    for (int row = 0; row < 3; ++row) {
+        if (std::abs(a[3][row] - b[3][row]) > posEps) return false;
+    }
+    return true;
+}
+
 struct ActiveTransport {
     uint64_t guid;              // Entity GUID
     uint32_t wmoInstanceId;     // WMO renderer instance ID
@@ -151,6 +184,13 @@ struct ActiveTransport {
     int appliedDoodadAnim = -1;
     size_t appliedDoodadCount = 0;
 
+    // Renderer push deduplication state so stationary / docked / off-horizon
+    // transports do not trigger WMORenderer::rebuildSpatialIndex() every tick.
+    glm::mat4 lastPushedTransform{0.0f};
+    bool hasPushedTransform = false;
+    bool lastPushedHidden = false;
+    bool hasPushedHidden = false;
+
     // The server's own route clock, when it publishes one (WotLK MO_TRANSPORT).
     // routePhase is the fraction of the route period the hull was at as of
     // routePhaseAtTime; routePeriodMs is that period. Preferred over the client's
@@ -250,6 +290,11 @@ public:
             }
         }
     }
+    void setViewerPosition(const glm::vec3& canonicalPos) {
+        viewerPosition_ = canonicalPos;
+        hasViewerPosition_ = true;
+    }
+    void clearViewerPosition() { hasViewerPosition_ = false; }
 
     /// Whether a point stands over an M2 transport's actual footprint.
     ///
@@ -404,7 +449,7 @@ private:
     void updateTransformMatrices(ActiveTransport& transport);
     void pushTransform(ActiveTransport& transport);
     /// Take the hull out of the world, or put it back. See ActiveTransport::onThisMap.
-    void setInstanceHidden(const ActiveTransport& transport, bool hidden);
+    void setInstanceHidden(ActiveTransport& transport, bool hidden);
 
     TransportPathRepository pathRepo_;
     TransportClockSync clockSync_;
@@ -424,6 +469,8 @@ private:
     };
     std::unordered_map<uint64_t, TransportTimestamp> transportTimestamps_;
     uint64_t riderTransportGuid_ = 0;
+    glm::vec3 viewerPosition_{0.0f};
+    bool hasViewerPosition_ = false;
     rendering::WMORenderer* wmoRenderer_ = nullptr;
     rendering::M2Renderer* m2Renderer_ = nullptr;
     bool clientSideAnimation_ = false;  // DISABLED - use server positions instead of client prediction

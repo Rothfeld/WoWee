@@ -42,6 +42,7 @@
 #include "core/coordinates.hpp"
 #include "core/application.hpp"
 #include "core/config_paths.hpp"
+#include "core/frame_stage_times.hpp"
 #include "pipeline/asset_manager.hpp"
 #include "pipeline/dbc_loader.hpp"
 #include "core/logger.hpp"
@@ -857,6 +858,9 @@ void GameHandler::update(float deltaTime) {
         return;
     }
 
+    core::FrameStagePhases updatePhases;
+    updatePhases.phase("gameHandler->update/networking");
+
     // Events a script asked for while it ran (queueAddonEvent), now that it
     // has returned.
     if (!queuedAddonEvents_.empty()) {
@@ -867,6 +871,8 @@ void GameHandler::update(float deltaTime) {
 
     updateNetworking();
     if (!socket) return;  // disconnect() may have been called
+
+    updatePhases.phase("gameHandler->update/timers");
 
     // Possession starting or ending moves the possessed unit's actions onto
     // bonus bar five and the possess bar in or out (BonusActionBar_OnEvent,
@@ -960,6 +966,7 @@ void GameHandler::update(float deltaTime) {
 
     // Send periodic heartbeat if in world
     if (state == WorldState::IN_WORLD) {
+        updatePhases.phase("gameHandler->update/world state");
         timeSinceLastPing += deltaTime;
         if (movementHandler_) movementHandler_->timeSinceLastMoveHeartbeatRef() += deltaTime;
 
@@ -1069,13 +1076,17 @@ void GameHandler::update(float deltaTime) {
 
         updateTaxiAndMountState(deltaTime);
 
+        updatePhases.phase("gameHandler->update/transports");
         // Update transport manager
         if (transportManager_) {
             transportManager_->setRiderTransport(playerTransportGuid_);
+            transportManager_->setViewerPosition(
+                glm::vec3(movementInfo.x, movementInfo.y, movementInfo.z));
             transportManager_->update(deltaTime);
             updateAttachedTransportChildren(deltaTime);
         }
 
+        updatePhases.phase("gameHandler->update/npc and interpolation");
         updateAutoAttack(deltaTime);
         // A hello the server never answered. It says nothing when it refuses,
         // so this is the only place the refusal can be seen.

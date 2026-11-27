@@ -207,6 +207,7 @@ void EntitySpawner::processAsyncCreatureResults(bool unlimited) {
 }
 
 void EntitySpawner::processAsyncNpcCompositeResults(bool unlimited) {
+    if (asyncNpcCompositeLoads_.empty()) return;
     // Every texture this loop loads or composites goes through immediateSubmit,
     // which submits and then blocks on a fence - unless a batch is open, in
     // which case it records and returns. loadModel and processPendingNormalMaps
@@ -1213,8 +1214,9 @@ void EntitySpawner::processPendingTransportRegistrations() {
             }
         } else if (!hasUsablePath) {
             bool allowZOnly = (pending.displayId == 455 || pending.displayId == 462);
-            uint32_t inferredPath = transportManager->inferDbcPathForSpawn(
-                canonicalSpawnPos, 1200.0f, allowZOnly);
+            uint32_t inferredPath = shipOrZeppelinDisplay
+                ? 0u
+                : transportManager->inferDbcPathForSpawn(canonicalSpawnPos, 1200.0f, allowZOnly);
             if (inferredPath != 0) {
                 pathId = inferredPath;
                 LOG_WARNING("Using inferred transport path ", pathId, " for entry ", pending.entry);

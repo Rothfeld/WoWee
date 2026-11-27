@@ -315,6 +315,7 @@ void TransportManager::clearTransports() {
     // next map must not inherit one.
     pendingRouteClocks_.clear();
     transportTimestamps_.clear();
+    hasViewerPosition_ = false;
     if (count != 0) {
         LOG_INFO("TransportManager: Cleared ", count, " transports for map transition");
     }
@@ -354,17 +355,18 @@ void TransportManager::resolveAndRegisterSpawn(uint64_t guid,
         }
     } else if (!hasUsablePath) {
         bool allowZOnly = (displayId == 455 || displayId == 462);
-        // Continent-crossing ships are server-driven MO_TRANSPORT objects whose
-        // route only ever comes from their taxi path (TaxiPathNode.dbc via GO
-        // template data[0]), assigned by the GO-query hook. They must NOT infer a
-        // nearby TransportAnimation.dbc path at spawn: a ship spawned in a harbour
-        // can otherwise borrow an unrelated local animation loop (e.g. an elevator)
-        // and circle in place until - or unless - its taxi path arrives. The ship
-        // guard in pickFallbackMovingPath already returns 0 for these displays; skip
-        // inference too so the same guard actually holds, leaving the ship docked.
-        const bool looksLikeShip = isOceanGoingTransportDisplay(displayId);
-        uint32_t inferredPath =
-            looksLikeShip ? 0u : inferDbcPathForSpawn(canonicalSpawnPos, 1200.0f, allowZOnly);
+        // Continent-crossing ships and zeppelins are server-driven MO_TRANSPORT
+        // objects whose route only ever comes from their taxi path
+        // (TaxiPathNode.dbc via GO template data[0]), assigned by the GO-query
+        // hook. They must NOT infer a nearby TransportAnimation.dbc path at
+        // spawn: MO_TRANSPORT creates arrive at (0, 0, 0), which matches every
+        // local-offset TransportAnimation path (including Deeprun Tram 176085).
+        // Skip inference for all vehicle transport displays, matching
+        // pickFallbackMovingPath, so hulls stay docked until their taxi route
+        // arrives.
+        uint32_t inferredPath = shipOrZeppelinDisplay
+            ? 0u
+            : inferDbcPathForSpawn(canonicalSpawnPos, 1200.0f, allowZOnly);
         if (inferredPath != 0) {
             pathId = inferredPath;
             LOG_INFO("Auto-spawned transport with inferred path: entry=", entry,
@@ -663,7 +665,9 @@ void TransportManager::updateTransportMovement(ActiveTransport& transport, float
     if (transport.borrowedPath) {
         updateTransformMatrices(transport);
         pushTransform(transport);
-        applyDoodadMotionState(transport, /*moving=*/transport.hasServerVelocity);
+        if (!transport.lastPushedHidden) {
+            applyDoodadMotionState(transport, /*moving=*/transport.hasServerVelocity);
+        }
         return;
     }
 
@@ -677,7 +681,9 @@ void TransportManager::updateTransportMovement(ActiveTransport& transport, float
         // Just update transform (position already set)
         updateTransformMatrices(transport);
         pushTransform(transport);
-        applyDoodadMotionState(transport, /*moving=*/false);
+        if (!transport.lastPushedHidden) {
+            applyDoodadMotionState(transport, /*moving=*/false);
+        }
         return;
     }
 
@@ -738,7 +744,9 @@ void TransportManager::updateTransportMovement(ActiveTransport& transport, float
     // Update transform matrices
     updateTransformMatrices(transport);
     pushTransform(transport);
-    applyDoodadMotionState(transport, /*moving=*/!transport.atDockDwell);
+    if (!transport.lastPushedHidden) {
+        applyDoodadMotionState(transport, /*moving=*/!transport.atDockDwell);
+    }
 
     // Debug logging every 600 frames (~10 seconds at 60fps)
     static int debugFrameCount = 0;
@@ -753,19 +761,44 @@ void TransportManager::updateTransportMovement(ActiveTransport& transport, float
 }
 
 // Push transform to the appropriate renderer (WMO or M2).
-void TransportManager::setInstanceHidden(const ActiveTransport& transport, bool hidden) {
+void TransportManager::setInstanceHidden(ActiveTransport& transport, bool hidden) {
     // Only WMO hulls. An M2 transport is a tram car or a lift, which never
     // leaves its map, so onThisMap is always true for one and this is never
     // asked to hide it.
-    if (!transport.isM2 && wmoRenderer_) {
+    if (transport.isM2) {
+        transport.lastPushedHidden = false;
+        transport.hasPushedHidden = true;
+        return;
+    }
+    if (transport.hasPushedHidden && transport.lastPushedHidden == hidden) {
+        return;
+    }
+    if (wmoRenderer_) {
         wmoRenderer_->setInstanceHidden(transport.wmoInstanceId, hidden);
+        transport.lastPushedHidden = hidden;
+        transport.hasPushedHidden = true;
     }
 }
 
 void TransportManager::pushTransform(ActiveTransport& transport) {
-    setInstanceHidden(transport, !transport.onThisMap);
+    const bool carryingRider = riderTransportGuid_ != 0 && transport.guid == riderTransportGuid_;
+    const bool beyondHorizon = !transport.isM2 &&
+        shouldCullTransportRenderPush(transport.position, viewerPosition_, hasViewerPosition_, carryingRider);
+    const bool wantHidden = !transport.onThisMap || beyondHorizon;
+    setInstanceHidden(transport, wantHidden);
+    if (wantHidden) {
+        return;
+    }
+    if (transport.hasPushedTransform &&
+        transportTransformUnchanged(transport.transform, transport.lastPushedTransform)) {
+        return;
+    }
     if (transport.isM2) {
-        if (m2Renderer_) m2Renderer_->setInstanceTransform(transport.wmoInstanceId, transport.transform);
+        if (m2Renderer_) {
+            m2Renderer_->setInstanceTransform(transport.wmoInstanceId, transport.transform);
+            transport.lastPushedTransform = transport.transform;
+            transport.hasPushedTransform = true;
+        }
     } else {
         if (wmoRenderer_) {
             wmoRenderer_->setInstanceTransform(transport.wmoInstanceId, transport.transform);
@@ -774,6 +807,8 @@ void TransportManager::pushTransform(ActiveTransport& transport) {
             // once at register so it survives an instance rebuild from
             // streaming - the call is idempotent and cheap.
             wmoRenderer_->setInstanceIsTransport(transport.wmoInstanceId, true);
+            transport.lastPushedTransform = transport.transform;
+            transport.hasPushedTransform = true;
         }
     }
 }
@@ -890,6 +925,8 @@ void TransportManager::rebindTransportInstance(uint64_t guid, uint32_t instanceI
     if (displayId != 0) {
         transport->displayId = displayId;
     }
+    transport->hasPushedTransform = false;
+    transport->hasPushedHidden = false;
 
     updateTransformMatrices(*transport);
     pushTransform(*transport);

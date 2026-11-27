@@ -15,6 +15,8 @@
 #include "core/helm_visual.hpp"
 
 #include "core/coordinates.hpp"
+#include "core/entity_spawner_audio_budget.hpp"
+#include "core/frame_stage_times.hpp"
 #include "core/logger.hpp"
 #include "addons/lua_api_registrations.hpp"
 #include "rendering/renderer.hpp"
@@ -65,11 +67,36 @@ bool getLastQueriedCharacterAudioAnim(const CharacterRenderer* renderer, uint32_
 namespace core {
 
 namespace {
+struct CachedInstanceAudioState {
+    uint64_t unitGuid = 0;
+    int prevBaseSeq = -1;
+    float prevBaseTimeMs = 0.0f;
+    int prevUpperSeq = -1;
+    float prevUpperTimeMs = 0.0f;
+    bool hasFootstepCursor = false;
+
+    bool surfaceValid = false;
+    glm::vec3 lastSurfacePos{0.0f};
+    uint32_t terrainTypeId = 0;
+    bool hasTerrainType = false;
+    bool wading = false;
+    bool inWater = false;
+
+    bool waterValid = false;
+    glm::vec3 lastWaterPos{0.0f};
+    bool cachedUnderwater = false;
+};
+
 struct SpawnerAudioTracker {
     rendering::M2Renderer* boundM2Renderer = nullptr;
-    std::unordered_map<uint32_t, uint32_t> goInstanceDisplayIds; // m2 instanceId -> GO displayId
     std::unordered_set<uint64_t> activeCreatureLoopGuids;
     std::unordered_set<uint32_t> activeCharAudioInstances;
+    std::unordered_set<uint64_t> seenCreatureGuids;
+    std::unordered_set<uint32_t> seenCharInstances;
+    std::unordered_map<uint32_t, CachedInstanceAudioState> instanceAudioStates;
+    std::unordered_map<uint32_t, bool> displayHasLoopSound;
+    std::unordered_map<uint32_t, uint32_t> displayArmorMaterial;
+    std::unordered_map<const pipeline::M2Model*, bool> modelHasKeyframeDriver;
     uint32_t prevLocalAnimId = 0xFFFFFFFFu;
     float prevLocalAnimTimeMs = 0.0f;
 };
@@ -125,6 +152,8 @@ void EntitySpawner::initialize() {
 }
 
 void EntitySpawner::update() {
+    core::FrameStagePhases spawnerPhases;
+    spawnerPhases.phase("spawn/equipment queues/spawn queues");
     if (renderer_) {
         if (auto* m2 = renderer_->getM2Renderer()) {
             const auto* zm = renderer_->getZoneManager();
@@ -144,9 +173,11 @@ void EntitySpawner::update() {
     processFadingGameObjects();
     processPendingMount();
     processPendingRemotePlayerMounts();
+    spawnerPhases.phase("spawn/equipment queues/visual and morph sync");
     syncCreatureVisualState();
     syncPlayerMorphs();
 
+    spawnerPhases.phase("spawn/equipment queues/unit audio");
     // --- Unit & GameObject M2 audio events, armor foley, creature loops, and drowning ---
     if (renderer_ && gameHandler_) {
         auto* ac = renderer_->getAudioCoordinator();
@@ -162,13 +193,8 @@ void EntitySpawner::update() {
             fm->setArmorFoleyOthersEnabled(
                 addons::storedCVarValue("Sound_EnableArmorFoleySoundForOthers", "1") != "0");
 
-            // 2. Refresh GameObject instance -> displayId map and bind M2Renderer resolver
-            tracker.goInstanceDisplayIds.clear();
-            for (const auto& [guid, goInfo] : gameObjectInstances_) {
-                if (!goInfo.isWmo && goInfo.instanceId != 0 && goInfo.displayId != 0) {
-                    tracker.goInstanceDisplayIds[goInfo.instanceId] = goInfo.displayId;
-                }
-            }
+            // 2. Bind M2Renderer GameObject sound resolver once; look up displayId on demand
+            // when a GameObject M2 actually crosses a $GO0..5 / $GC0..3 keyframe.
             if (auto* m2 = renderer_->getM2Renderer()) {
                 if (tracker.boundM2Renderer != m2) {
                     tracker.boundM2Renderer = m2;
@@ -176,18 +202,22 @@ void EntitySpawner::update() {
                         if (!renderer_ || !renderer_->getAudioCoordinator()) return 0;
                         auto* foot = renderer_->getAudioCoordinator()->getFootstepManager();
                         if (!foot || !foot->sounds()) return 0;
-                        const auto tIt = s_spawnerAudioTrackers.find(this);
-                        if (tIt == s_spawnerAudioTrackers.end()) return 0;
-                        const auto dIt = tIt->second.goInstanceDisplayIds.find(instId);
-                        if (dIt == tIt->second.goInstanceDisplayIds.end()) return 0;
-                        return foot->sounds()->gameObjectSound(dIt->second, slotIndex);
+                        for (const auto& [guid, goInfo] : gameObjectInstances_) {
+                            (void)guid;
+                            if (!goInfo.isWmo && goInfo.instanceId == instId && goInfo.displayId != 0) {
+                                return foot->sounds()->gameObjectSound(goInfo.displayId, slotIndex);
+                            }
+                        }
+                        return 0;
                     });
                 }
             }
 
-            // 3. Helper: terrain & water state at render position
+            // 3. Helper: terrain & water state at render position (invoked only when needed)
             auto querySurface = [&](const glm::vec3& pos, uint32_t& outTerrainId,
                                     bool& outHasTerrain, bool& outWading, bool& outInWater) {
+                core::FrameStagePhases surfPhase;
+                surfPhase.phase("spawn/equipment queues/unit audio/querySurface");
                 outTerrainId = 0;
                 outHasTerrain = false;
                 outWading = false;
@@ -250,10 +280,28 @@ void EntitySpawner::update() {
                 if (localArmorMat != 0) break;
             }
 
-            std::unordered_set<uint32_t> seenCharInstances;
+            tracker.seenCharInstances.clear();
             auto* csm = ac->getCombatSoundManager();
             auto* pvm = ac->getPlayerVoiceManager();
             auto* combatHandler = gameHandler_->getCombatHandler();
+            static const std::function<glm::vec3(uint16_t, const glm::vec3&)> kEmptyBoneWorldPos{};
+
+            auto modelDrivesCombatKeyframes = [&](const pipeline::M2Model* model) -> bool {
+                auto [it, inserted] = tracker.modelHasKeyframeDriver.try_emplace(model, false);
+                if (inserted) {
+                    for (const auto& ev : model->audioEvents) {
+                        using T = pipeline::M2AudioEventType;
+                        if (ev.type == T::CombatSwing || ev.type == T::CombatAttackHit ||
+                            ev.type == T::ArmorHit0 || ev.type == T::ArmorHit1 ||
+                            ev.type == T::ArmorHit2 || ev.type == T::ArmorHit3) {
+                            it->second = true;
+                            break;
+                        }
+                    }
+                }
+                return it->second;
+            };
+
             auto stepCharUnit = [&](uint64_t unitGuid, uint32_t instId, uint32_t displayId, bool isLocal,
                                     bool bareFeet, uint32_t armorMat, bool skipFootstep) {
                 if (instId == 0 || !cr->hasInstance(instId)) return;
@@ -275,9 +323,63 @@ void EntitySpawner::update() {
                 glm::vec3 unitPos{0.0f};
                 if (!cr->getInstancePosition(instId, unitPos)) return;
 
-                seenCharInstances.insert(instId);
+                tracker.seenCharInstances.insert(instId);
+                auto& instState = tracker.instanceAudioStates[instId];
+                instState.unitGuid = unitGuid;
+
+                if (csm && unitGuid != 0) {
+                    if (shouldRefreshCachedPositionSample(
+                            instState.waterValid, instState.lastWaterPos, unitPos, 0.50f)) {
+                        instState.lastWaterPos = unitPos;
+                        instState.waterValid = true;
+                        instState.cachedUnderwater = false;
+                        if (auto* wr = renderer_->getWaterRenderer()) {
+                            if (const auto wh = wr->getNearestWaterHeightAt(
+                                    unitPos.x, unitPos.y, unitPos.z, 400.0f)) {
+                                instState.cachedUnderwater = unitPos.z < *wh - 0.25f;
+                            }
+                        }
+                    }
+                    const bool underwater =
+                        instState.cachedUnderwater || (isLocal && gameHandler_->isSwimming());
+                    csm->setUnitUnderwater(unitGuid, underwater);
+                    if (!csm->unitHasKeyframeDriver(unitGuid) && modelDrivesCombatKeyframes(model)) {
+                        csm->setUnitHasKeyframeDriver(unitGuid, true);
+                    }
+                }
+
                 const glm::vec3 d = unitPos - listenerRefPos;
                 const bool beyondRange = !isLocal && glm::dot(d, d) > (65.0f * 65.0f);
+                const bool hasCustomBridge = unitGuid != 0 && (combatHandler || pvm);
+
+                const UnitAudioStepMask baseMask = evaluateUnitLayerAudioStep(
+                    *model, baseSeq, baseTime, playReversed, /*isUpperLayer=*/false,
+                    skipFootstep, hasCustomBridge, beyondRange,
+                    instState.prevBaseSeq, instState.prevBaseTimeMs);
+                UnitAudioStepMask upperMask{};
+                if (upperSeq >= 0 && upperSeq != baseSeq) {
+                    upperMask = evaluateUnitLayerAudioStep(
+                        *model, upperSeq, upperTime, /*reversed=*/false, /*isUpperLayer=*/true,
+                        skipFootstep, hasCustomBridge, beyondRange,
+                        instState.prevUpperSeq, instState.prevUpperTimeMs);
+                } else {
+                    instState.prevUpperSeq = -1;
+                }
+
+                // Sequences with zero character audio timestamps (such as Stand on most
+                // creatures) need no FootstepManager cursor updates until the unit enters
+                // a sequence that authors events.
+                if (!baseMask.sequenceHasEvents && !upperMask.sequenceHasEvents) {
+                    if (instState.hasFootstepCursor) {
+                        fm->removeCharacterAudioInstance(instId);
+                        instState.hasFootstepCursor = false;
+                    }
+                    return;
+                }
+
+                const bool crossedAny = baseMask.crossedAny || upperMask.crossedAny;
+                const bool needsSurface = baseMask.needsSurface || upperMask.needsSurface;
+                const bool needsBridge = baseMask.needsBridge || upperMask.needsBridge;
 
                 audio::FootstepManager::CharacterAudioStepContext ctx;
                 ctx.displayId = displayId != 0 ? displayId : cr->getInstanceDisplayId(instId);
@@ -287,27 +389,29 @@ void EntitySpawner::update() {
                 ctx.listenerAtCharacter = listenerAtChar;
                 ctx.skipFootstep = skipFootstep;
                 ctx.muteEvents = beyondRange;
-                if (!beyondRange) {
-                    querySurface(unitPos, ctx.terrainTypeId, ctx.hasTerrainType, ctx.wading, ctx.inWater);
-                }
 
-                if (csm && unitGuid != 0) {
-                    const bool underwater = ctx.inWater || (isLocal && gameHandler_->isSwimming());
-                    csm->setUnitUnderwater(unitGuid, underwater);
-                    if (!csm->unitHasKeyframeDriver(unitGuid)) {
-                        for (const auto& ev : model->audioEvents) {
-                            using T = pipeline::M2AudioEventType;
-                            if (ev.type == T::CombatSwing || ev.type == T::CombatAttackHit ||
-                                ev.type == T::ArmorHit0 || ev.type == T::ArmorHit1 ||
-                                ev.type == T::ArmorHit2 || ev.type == T::ArmorHit3) {
-                                csm->setUnitHasKeyframeDriver(unitGuid, true);
-                                break;
-                            }
-                        }
+                if (needsSurface) {
+                    if (shouldRefreshCachedPositionSample(
+                            instState.surfaceValid, instState.lastSurfacePos, unitPos, 0.20f)) {
+                        querySurface(unitPos, instState.terrainTypeId, instState.hasTerrainType,
+                                     instState.wading, instState.inWater);
+                        instState.lastSurfacePos = unitPos;
+                        instState.surfaceValid = true;
+                        instState.cachedUnderwater = instState.inWater;
+                        instState.lastWaterPos = unitPos;
+                        instState.waterValid = true;
                     }
+                    ctx.terrainTypeId = instState.terrainTypeId;
+                    ctx.hasTerrainType = instState.hasTerrainType;
+                    ctx.wading = instState.wading;
+                    ctx.inWater = instState.inWater;
+                } else {
+                    // Preserve Footstep eligibility flag so FootstepManager cursor
+                    // advances identically on frames where no timestamp crossed.
+                    ctx.hasTerrainType = true;
                 }
 
-                if (unitGuid != 0 && (combatHandler || pvm)) {
+                if (needsBridge) {
                     ctx.onCustomUnitEvent = [&](pipeline::M2AudioEventType evType, uint32_t eventData,
                                                 uint32_t seqAnimId, const glm::vec3& worldPos) -> bool {
                         using T = pipeline::M2AudioEventType;
@@ -365,6 +469,14 @@ void EntitySpawner::update() {
                                 return false;
                         }
                     };
+                }
+
+                instState.hasFootstepCursor = true;
+                if (!crossedAny) {
+                    fm->stepCharacterAudioEvents(
+                        instId, *model, baseSeq, baseTime, playReversed,
+                        upperSeq, upperTime, ctx, kEmptyBoneWorldPos);
+                    return;
                 }
 
                 auto boneWorldPos = [&](uint16_t bone, const glm::vec3& localOffset) -> glm::vec3 {
@@ -451,11 +563,11 @@ void EntitySpawner::update() {
 
             // 6. Creatures & pets: M2 audio events + CreatureSoundData.LoopSound (col 24)
             const auto& entities = gameHandler_->getEntityManager().getEntities();
-            std::unordered_set<uint64_t> seenCreatureGuids;
-            seenCreatureGuids.reserve(creatureInstances_.size());
+            tracker.seenCreatureGuids.clear();
+            tracker.seenCreatureGuids.reserve(creatureInstances_.size());
             for (const auto& [guid, instId] : creatureInstances_) {
                 if (instId == 0 || !cr->hasInstance(instId)) continue;
-                seenCreatureGuids.insert(guid);
+                tracker.seenCreatureGuids.insert(guid);
 
                 uint32_t dispId = cr->getInstanceDisplayId(instId);
                 if (dispId == 0) {
@@ -464,45 +576,60 @@ void EntitySpawner::update() {
                     }
                 }
 
-                glm::vec3 pos{0.0f};
-                if (!cr->getInstancePosition(instId, pos)) continue;
-
-                bool alive = !deadCreatureGuids_.contains(guid) &&
-                             !dyingCreatureGuids_.contains(guid) &&
-                             !cr->isInstanceDead(instId);
-                if (alive) {
-                    if (const auto eIt = entities.find(guid); eIt != entities.end() && eIt->second &&
-                        eIt->second->getType() == game::ObjectType::UNIT) {
-                        const auto* u = static_cast<const game::Unit*>(eIt->second.get());
-                        if (u->getMaxHealth() > 0 && u->getHealth() == 0) alive = false;
-                    }
+                auto [loopIt, loopInserted] = tracker.displayHasLoopSound.try_emplace(dispId, false);
+                if (loopInserted && dispId != 0) {
+                    loopIt->second = sounds->sound(
+                        sounds->soundDataForDisplay(dispId),
+                        audio::CreatureSoundColumn::LoopSound) != 0;
                 }
-
-                fm->syncCreatureLoopSound(guid, dispId, pos, alive);
-                if (fm->hasActiveCreatureLoop(guid)) {
-                    tracker.activeCreatureLoopGuids.insert(guid);
-                } else {
-                    tracker.activeCreatureLoopGuids.erase(guid);
-                }
-
-                uint32_t npcArmorMat = 0;
-                if (const auto ddIt = displayDataMap_.find(dispId);
-                    ddIt != displayDataMap_.end() && ddIt->second.extraDisplayId != 0) {
-                    if (const auto exIt = humanoidExtraMap_.find(ddIt->second.extraDisplayId);
-                        exIt != humanoidExtraMap_.end()) {
-                        // CreatureDisplayInfoExtra equipDisplayId: 3=chest, 5=legs
-                        for (int eqIdx : {3, 5}) {
-                            if (exIt->second.equipDisplayId[eqIdx] != 0) {
-                                npcArmorMat = sounds->armorMaterialForDisplayInfo(
-                                    exIt->second.equipDisplayId[eqIdx]);
-                                if (npcArmorMat != 0) break;
+                if (loopIt->second || tracker.activeCreatureLoopGuids.contains(guid)) {
+                    glm::vec3 pos{0.0f};
+                    if (cr->getInstancePosition(instId, pos)) {
+                        bool alive = !deadCreatureGuids_.contains(guid) &&
+                                     !dyingCreatureGuids_.contains(guid) &&
+                                     !cr->isInstanceDead(instId);
+                        if (alive) {
+                            if (const auto eIt = entities.find(guid); eIt != entities.end() && eIt->second &&
+                                eIt->second->getType() == game::ObjectType::UNIT) {
+                                const auto* u = static_cast<const game::Unit*>(eIt->second.get());
+                                if (u->getMaxHealth() > 0 && u->getHealth() == 0) alive = false;
                             }
+                        }
+                        fm->syncCreatureLoopSound(guid, dispId, pos, alive);
+                        if (fm->hasActiveCreatureLoop(guid)) {
+                            tracker.activeCreatureLoopGuids.insert(guid);
+                        } else {
+                            tracker.activeCreatureLoopGuids.erase(guid);
                         }
                     }
                 }
 
-                const bool swimming = creatureSwimmingState_.count(guid) && creatureSwimmingState_.at(guid);
-                const bool flying = creatureFlyingState_.count(guid) && creatureFlyingState_.at(guid);
+                uint32_t npcArmorMat = 0;
+                if (dispId != 0) {
+                    auto [armIt, armInserted] = tracker.displayArmorMaterial.try_emplace(dispId, 0u);
+                    if (armInserted) {
+                        if (const auto ddIt = displayDataMap_.find(dispId);
+                            ddIt != displayDataMap_.end() && ddIt->second.extraDisplayId != 0) {
+                            if (const auto exIt = humanoidExtraMap_.find(ddIt->second.extraDisplayId);
+                                exIt != humanoidExtraMap_.end()) {
+                                // CreatureDisplayInfoExtra equipDisplayId: 3=chest, 5=legs
+                                for (int eqIdx : {3, 5}) {
+                                    if (exIt->second.equipDisplayId[eqIdx] != 0) {
+                                        armIt->second = sounds->armorMaterialForDisplayInfo(
+                                            exIt->second.equipDisplayId[eqIdx]);
+                                        if (armIt->second != 0) break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    npcArmorMat = armIt->second;
+                }
+
+                const auto swimIt = creatureSwimmingState_.find(guid);
+                const bool swimming = swimIt != creatureSwimmingState_.end() && swimIt->second;
+                const auto flyIt = creatureFlyingState_.find(guid);
+                const bool flying = flyIt != creatureFlyingState_.end() && flyIt->second;
                 stepCharUnit(guid, instId, dispId, /*isLocal=*/false, /*bareFeet=*/false,
                              npcArmorMat, /*skipFootstep=*/swimming || flying);
             }
@@ -510,7 +637,7 @@ void EntitySpawner::update() {
             // Stop col 24 loops and clear queued combat audio for despawned creatures immediately
             for (auto it = tracker.activeCreatureLoopGuids.begin();
                  it != tracker.activeCreatureLoopGuids.end();) {
-                if (!seenCreatureGuids.contains(*it)) {
+                if (!tracker.seenCreatureGuids.contains(*it)) {
                     fm->stopCreatureLoopSound(*it);
                     if (csm) csm->clearUnitEvents(*it);
                     it = tracker.activeCreatureLoopGuids.erase(it);
@@ -519,17 +646,27 @@ void EntitySpawner::update() {
                 }
             }
 
-            // Prune character audio cursors for despawned instances
+            // Prune character audio cursors and queued combat events for despawned instances
             for (auto it = tracker.activeCharAudioInstances.begin();
                  it != tracker.activeCharAudioInstances.end();) {
-                if (!seenCharInstances.contains(*it)) {
+                if (!tracker.seenCharInstances.contains(*it)) {
                     fm->removeCharacterAudioInstance(*it);
+                    if (const auto stIt = tracker.instanceAudioStates.find(*it);
+                        stIt != tracker.instanceAudioStates.end()) {
+                        if (csm && stIt->second.unitGuid != 0 &&
+                            !tracker.seenCreatureGuids.contains(stIt->second.unitGuid)) {
+                            csm->clearUnitEvents(stIt->second.unitGuid);
+                        }
+                        tracker.instanceAudioStates.erase(stIt);
+                    }
                     it = tracker.activeCharAudioInstances.erase(it);
                 } else {
                     ++it;
                 }
             }
-            tracker.activeCharAudioInstances.insert(seenCharInstances.begin(), seenCharInstances.end());
+            for (uint32_t instId : tracker.seenCharInstances) {
+                tracker.activeCharAudioInstances.insert(instId);
+            }
         }
     }
 }
@@ -1240,9 +1377,12 @@ void EntitySpawner::clearAllQueues() {
         }
     }
     if (const auto tIt = s_spawnerAudioTrackers.find(this); tIt != s_spawnerAudioTrackers.end()) {
-        tIt->second.goInstanceDisplayIds.clear();
         tIt->second.activeCreatureLoopGuids.clear();
         tIt->second.activeCharAudioInstances.clear();
+        tIt->second.seenCreatureGuids.clear();
+        tIt->second.seenCharInstances.clear();
+        tIt->second.instanceAudioStates.clear();
+        tIt->second.modelHasKeyframeDriver.clear();
         tIt->second.prevLocalAnimId = 0xFFFFFFFFu;
     }
 }

@@ -4019,6 +4019,18 @@ wowee_test_link_glm(test_auth_framing)
 add_test(NAME auth_framing COMMAND test_auth_framing)
 register_test_target(test_auth_framing)
 
+# Perf84 Shard C (Items 4 & 5): unit audio crossing/surface cache budgets,
+# distant WMO transport render horizon culling, transform push deduplication,
+# and vehicle MO_TRANSPORT origin path-inference guards.
+wowee_add_test(test_perf84_gamehandler_spawn_queues
+    SOURCES test_perf84_gamehandler_spawn_queues.cpp
+            ${TEST_COMMON_SOURCES}
+            ${CMAKE_SOURCE_DIR}/src/game/transport_path_repository.cpp
+            ${CMAKE_SOURCE_DIR}/src/game/transport_clock_sync.cpp
+            ${CMAKE_SOURCE_DIR}/src/game/transport_animator.cpp
+            ${CMAKE_SOURCE_DIR}/src/math/spline.cpp
+            ${CMAKE_SOURCE_DIR}/src/pipeline/dbc_loader.cpp)
+
 get_property(ALL_TEST_TARGETS GLOBAL PROPERTY WOWEE_ALL_TEST_TARGETS)
 list(LENGTH ALL_TEST_TARGETS _wowee_test_target_count)
 message(STATUS "Test targets registered: ${_wowee_test_target_count}")
