@@ -1617,3 +1617,76 @@ TEST_CASE("A jump up an oblique walkable hill touches down while rising and runs
         CHECK(glm::dot(pos - stood->position, dir) == Catch::Approx(45.0f * 35.0f * dt).margin(0.05f));
     }
 }
+
+TEST_CASE("Sunk-floor lift requires sole support and never snaps stationary feet onto adjacent barrel/cart",
+          "[body_mover][barrel][sidedisc5]") {
+    constexpr float kHumanRadius = 0.305555552f;
+    constexpr float kHumanHeight = 2.0312655f;
+
+    SECTION("Northshire (-8897.80, -112.17, 81.8487) adjacent prop catches only side bevel when lifted") {
+        // Exact terrain + adjacent M2 triangles captured at (-8897.7998, -112.1700, 81.8487)
+        // in Northshire Abbey: terrain sits at 81.8481 directly under the sole while the
+        // neighbouring cart/barrel surface (z = 81.806..83.051) lies outside (px, py) and
+        // touches only the lifted body's side bevel (normal.z = 0.522 < cos 50 deg).
+        std::vector<BodyTriangle> tris = {
+            upFacing({-8897.91602f, -114.583328f, 81.8481064f},
+                     {-8895.83301f, -112.499992f, 81.8481064f},
+                     {-8900.0f,     -112.499992f, 81.8481064f}),
+            upFacing({-8897.91602f, -110.416664f, 81.8481064f},
+                     {-8895.83301f, -112.499992f, 81.8481064f},
+                     {-8895.83301f, -108.333328f, 81.8580704f}),
+            upFacing({-8897.91602f, -110.416664f, 81.8481064f},
+                     {-8900.0f,     -108.333328f, 81.8481064f},
+                     {-8900.0f,     -112.499992f, 81.8481064f}),
+            upFacing({-8897.91602f, -110.416664f, 81.8481064f},
+                     {-8895.83301f, -108.333328f, 81.8580704f},
+                     {-8900.0f,     -108.333328f, 81.8481064f}),
+            // Exact M2 cart-rail / barrel triangles (tri 91..92 of barrel_body.tris) outside the sole column:
+            BodyTriangle{{{-8897.41016f, -112.16053f,  83.2499542f},
+                          {-8898.40234f, -110.60405f,  82.005928f},
+                          {-8898.53223f, -110.687286f, 82.005928f}}},
+            BodyTriangle{{{-8898.53223f, -110.687286f, 82.005928f},
+                          {-8897.54102f, -112.243759f, 83.2499542f},
+                          {-8897.41016f, -112.16053f,  83.2499542f}}},
+            BodyTriangle{{{-8898.4443f, -111.9813f, 82.8413f},
+                          {-8898.4443f, -111.4853f, 82.8413f},
+                          {-8898.8740f, -111.2373f, 82.8413f}}},
+        };
+        const glm::vec3 from(-8897.7998f, -112.1700f, 81.8487f);
+        const auto liftedRest = lowerBody(from + glm::vec3(0.0f, 0.0f, kMaxStepUp),
+                                          kMaxStepUp, kHumanRadius, kHumanHeight, tris, true);
+        REQUIRE(liftedRest.has_value());
+        CHECK(liftedRest->position.z == Catch::Approx(82.8483f).margin(0.002f));
+        CHECK(isBodyGround(*liftedRest, kMinWalkableNormalZ));
+        CHECK_FALSE(isBodySoleOnGround(*liftedRest, kMinWalkableNormalZ));
+
+        // Gated on isBodySoleOnGround, stationary/teleported feet remain at 81.8487
+        // matching Native TBC 2.4.3 (81.848701).
+        glm::vec3 start = from;
+        if (liftedRest && isBodySoleOnGround(*liftedRest, kMinWalkableNormalZ)) {
+            start.z = std::max(start.z, liftedRest->position.z);
+        }
+        const BodyMove stayed = walkBody(start, glm::vec3(0.0f), kMaxStepUp, kHumanRadius, kHumanHeight,
+                                         tris, kMinWalkableNormalZ, kMaxStepUp, 4, glm::vec3(0.0f), true);
+        CHECK(stayed.support == BodySupport::Walkable);
+        CHECK(stayed.soleOnGround);
+        CHECK(stayed.position.z == Catch::Approx(81.8481f).margin(0.002f));
+    }
+
+    SECTION("Real floor streaming in directly over the sole still lifts sunk feet onto it") {
+        // Undercity bank ring / WMO floor streaming in 0.05..0.60 yd above terrain-placed feet.
+        std::vector<BodyTriangle> tris = {
+            upFacing({-2.0f, -2.0f, 10.0f}, {2.0f, -2.0f, 10.0f}, {2.0f, 2.0f, 10.0f}),
+            upFacing({-2.0f, -2.0f, 10.0f}, {2.0f, 2.0f, 10.0f}, {-2.0f, 2.0f, 10.0f}),
+            upFacing({-2.0f, -2.0f, 10.55f}, {2.0f, -2.0f, 10.55f}, {2.0f, 2.0f, 10.55f}),
+            upFacing({-2.0f, -2.0f, 10.55f}, {2.0f, 2.0f, 10.55f}, {-2.0f, 2.0f, 10.55f}),
+        };
+        glm::vec3 from(0.0f, 0.0f, 10.0f);
+        const auto liftedRest = lowerBody(from + glm::vec3(0.0f, 0.0f, kMaxStepUp),
+                                          kMaxStepUp, kHumanRadius, kHumanHeight, tris, true);
+        REQUIRE(liftedRest.has_value());
+        CHECK(isBodySoleOnGround(*liftedRest, kMinWalkableNormalZ));
+        from.z = std::max(from.z, liftedRest->position.z);
+        CHECK(from.z == Catch::Approx(10.55f).margin(0.003f));
+    }
+}

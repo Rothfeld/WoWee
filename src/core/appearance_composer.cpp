@@ -813,6 +813,16 @@ void AppearanceComposer::showRangedWeapon(bool show) {
     setSheathState(show ? kSheathStateRanged : kSheathStateMelee);
 }
 
+void AppearanceComposer::setWeaponsSheathed(bool sheathed) {
+    const bool onlineSession = (gameHandler_ != nullptr);
+    const bool hasCharacterInstance =
+        (renderer_ != nullptr && renderer_->getCharacterInstanceId() != 0);
+    if (!shouldApplyWeaponsSheathedRequest(sheathed, onlineSession, hasCharacterInstance)) {
+        return;
+    }
+    setSheathState(sheathed ? kSheathStateUnarmed : kSheathStateMelee);
+}
+
 void AppearanceComposer::setSheathState(uint8_t sheathState) {
     assert(sheathState <= kSheathStateRanged);
     if (sheathState == sheathState_) return;

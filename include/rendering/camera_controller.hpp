@@ -970,6 +970,25 @@ public:
             return nativePivotHeight(pivotHeight_, followedCollisionHeight_, mounted_);
         return pivotHeightFor(pivotHeight_, followedHeight_, followedHeadZ_);
     }
+
+    /// World-space orbit and close-camera self-fade pivot position for `feetPos`.
+    [[nodiscard]] static glm::vec3 followedPivotPositionFor(
+        const glm::vec3& feetPos, float pivotSetting, float collisionHeight,
+        float height, float headZ, bool mounted, float mountHeightOffset) {
+        const float basePivot = (collisionHeight > 0.0f)
+            ? nativePivotHeight(pivotSetting, collisionHeight, mounted)
+            : pivotHeightFor(pivotSetting, height, headZ);
+        const float mountedOffset = mounted ? mountHeightOffset : 0.0f;
+        return feetPos + glm::vec3(0.0f, 0.0f, basePivot + mountedOffset);
+    }
+
+    /// World-space orbit and close-camera self-fade pivot position for `feetPos`,
+    /// including any active mount seat offset.
+    [[nodiscard]] glm::vec3 followedPivotPosition(const glm::vec3& feetPos) const {
+        return followedPivotPositionFor(
+            feetPos, pivotHeight_, followedCollisionHeight_,
+            followedHeight_, followedHeadZ_, mounted_, mountHeightOffset_);
+    }
 private:
     static constexpr float PIVOT_HEIGHT_DEFAULT = 1.6f;
     static constexpr float kNativePivotDrop = 0.167f;  // measured, see nativePivotHeight

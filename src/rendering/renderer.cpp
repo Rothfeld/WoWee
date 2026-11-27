@@ -2200,11 +2200,12 @@ void Renderer::update(float deltaTime) {
         if (camera && camera->hasExternalPose() && characterRenderer && characterInstanceId) {
             // Comparison cameras must not inherit first-person hiding from the
             // gameplay camera that the controller updated earlier this frame.
-            // Measure from the camera pivot height (matching CameraController's
-            // 1.2 -> 0.2 yd linear fade on build 8606), not the feet.
-            const glm::vec3 pivot = characterPosition + glm::vec3(0.0f, 0.0f, cameraController->getPivotHeight());
+            // Measure from the followed race/mount camera pivot height (matching
+            // CameraController's 1.2 -> 0.2 yd linear fade on build 8606), not
+            // the raw 1.60 setting or the feet.
+            const glm::vec3 pivot = cameraController->followedPivotPosition(characterPosition);
             const float distance = glm::distance(camera->getPosition(), pivot);
-            const float opacity = glm::clamp((distance - 0.2f) / 1.0f, 0.0f, 1.0f);
+            const float opacity = computePlayerCameraOpacity(distance);
             characterRenderer->setInstanceCameraOpacity(characterInstanceId, opacity);
             characterRenderer->setInstanceVisible(characterInstanceId, opacity > 0.0f);
         }
@@ -2240,9 +2241,10 @@ void Renderer::update(float deltaTime) {
     }
 
     // Visibility hardening: ensure player instance cannot stay hidden after
-    // taxi/camera transitions, but preserve first-person self-hide.
+    // taxi/camera transitions, but preserve first-person and external-pose self-hide.
     if (characterRenderer && characterInstanceId > 0 && cameraController) {
-        if (!cameraController->shouldHidePlayer() &&
+        const bool externalPoseActive = (camera && camera->hasExternalPose());
+        if (!externalPoseActive && !cameraController->shouldHidePlayer() &&
             (cameraController->isThirdPerson() ||
              (animationController_ && animationController_->isTaxiFlight()))) {
             characterRenderer->setInstanceVisible(characterInstanceId, true);

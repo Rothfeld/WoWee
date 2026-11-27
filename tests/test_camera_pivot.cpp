@@ -471,3 +471,33 @@ TEST_CASE("Interior WMO camera resets stale outdoor terrain limit to current dis
     CHECK(CameraController::resolveCameraTerrainLimit(false, 5.55f, 15.0f) == Catch::Approx(5.55f));
     CHECK(CameraController::resolveCameraTerrainLimit(true, 5.55f, 15.0f) == Catch::Approx(15.0f));
 }
+
+TEST_CASE("External camera-hold self-fade pivots at followed race/mount head height",
+          "[camera][pivot][fade][sidedisc5]") {
+    using wowee::rendering::computePlayerCameraOpacity;
+
+    // Shimmering Flats reproduction (-6280, -3710, -59.5223) on Human Male (H = 2.03125):
+    // Native TBC camera eye at z020 sits at (-6280.278, -3710.0, -57.697), 0.283 yd from
+    // the 1.8643 yd pivot (opacity ~0.083), whereas a raw 1.60 yd pivot inflated distance
+    // to 0.358 yd (opacity ~0.158, leaving a visible ghost head under external hold).
+    const glm::vec3 humanFeet(-6280.0f, -3710.0f, -59.5223f);
+    const glm::vec3 humanPivot = CameraController::followedPivotPositionFor(
+        humanFeet, 1.6f, 2.03125f, 2.127f, 1.843f, false, 0.0f);
+    CHECK_THAT(humanPivot.z - humanFeet.z, WithinAbs(1.8643, 0.005));
+
+    const glm::vec3 heldEyeZ020(-6280.278f, -3710.0f, -57.697f);
+    const float distTrue = glm::distance(heldEyeZ020, humanPivot);
+    const float distRaw160 = glm::distance(heldEyeZ020, humanFeet + glm::vec3(0.0f, 0.0f, 1.60f));
+    CHECK(distTrue < 0.29f);
+    CHECK(distRaw160 > 0.35f);
+    CHECK(computePlayerCameraOpacity(distTrue) == Catch::Approx(0.081f).margin(0.01f));
+
+    // Gnome Male (H = 1.044 -> 0.877) and Horse-mounted Human (seat 1.866 -> 2.715)
+    // honor their true pivot rather than 1.60.
+    const glm::vec3 gnomePivot = CameraController::followedPivotPositionFor(
+        glm::vec3(0.0f), 1.6f, 1.044f, 1.325f, 0.752f, false, 0.0f);
+    CHECK_THAT(gnomePivot.z, WithinAbs(0.877, 0.01));
+    const glm::vec3 mountedPivot = CameraController::followedPivotPositionFor(
+        glm::vec3(0.0f), 1.6f, 2.03125f, 2.127f, 1.843f, true, 1.866f);
+    CHECK_THAT(mountedPivot.z, WithinAbs(2.715, 0.01));
+}

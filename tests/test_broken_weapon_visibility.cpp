@@ -4,6 +4,7 @@
 // _experiments/20261118T124909.broken_items.
 #include <catch_amalgamated.hpp>
 
+#include "core/appearance_composer.hpp"
 #include "core/broken_weapon_visibility.hpp"
 
 using wowee::core::BrokenWeaponVisibility;
@@ -139,4 +140,29 @@ TEST_CASE("Bow breaking takes the off hand only when it is in hand", "[broken_we
         CHECK(v.hidden(kRanged));
         CHECK(shown(v, kOff));
     }
+}
+
+TEST_CASE("Online world reload preserves server sheath state instead of unsheathing", "[sheath][sidedisc5]") {
+    using wowee::core::AppearanceComposer;
+
+    // Fresh sessions start sheathed (state 0, kSheathStateUnarmed), matching
+    // TBC 2.4.3 server default out-of-combat UNIT_FIELD_BYTES_2 byte 0.
+    CHECK(AppearanceComposer::kDefaultSheathState == kUnarmed);
+
+    // Pre-spawn world reload (WorldLoader::loadOnlineWorldTerrain while cid == 0)
+    // must NOT unsheathe or send CMSG_SETSHEATHED(1), keeping Warglaive of Azzinoth
+    // (32837, SheatheType 1) on SheathMainHand (26) across cross-map teleports.
+    CHECK_FALSE(AppearanceComposer::shouldApplyWeaponsSheathedRequest(
+        /*sheathed=*/false, /*onlineSession=*/true, /*hasCharacterInstance=*/false));
+
+    // Active gameplay combat/swing unsheathe (cid != 0), explicit sheathing
+    // (swim, mount, sheath animation), and offline viewer mode still apply.
+    CHECK(AppearanceComposer::shouldApplyWeaponsSheathedRequest(
+        /*sheathed=*/false, /*onlineSession=*/true, /*hasCharacterInstance=*/true));
+    CHECK(AppearanceComposer::shouldApplyWeaponsSheathedRequest(
+        /*sheathed=*/true, /*onlineSession=*/true, /*hasCharacterInstance=*/false));
+    CHECK(AppearanceComposer::shouldApplyWeaponsSheathedRequest(
+        /*sheathed=*/true, /*onlineSession=*/true, /*hasCharacterInstance=*/true));
+    CHECK(AppearanceComposer::shouldApplyWeaponsSheathedRequest(
+        /*sheathed=*/false, /*onlineSession=*/false, /*hasCharacterInstance=*/false));
 }

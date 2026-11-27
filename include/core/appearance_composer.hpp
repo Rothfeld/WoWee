@@ -80,9 +80,21 @@ public:
 
     // Weapon sheathe state
     // Weapon sheath state (0 unarmed, 1 melee, 2 ranged), sent to the server.
+    static constexpr uint8_t kDefaultSheathState = 0;
     void setSheathState(uint8_t sheathState);
     [[nodiscard]] uint8_t sheathState() const { return sheathState_; }
-    void setWeaponsSheathed(bool sheathed) { setSheathState(sheathed ? 0 : 1); }
+    void setWeaponsSheathed(bool sheathed);
+    /// Ignore pre-spawn world-reload unsheathe requests (`!sheathed`) in online
+    /// sessions while no local character instance is mounted (`cid == 0`), so
+    /// map transitions preserve the server's `UNIT_FIELD_BYTES_2` sheath state
+    /// instead of sending a spurious `CMSG_SETSHEATHED(1)`.
+    [[nodiscard]] static constexpr bool shouldApplyWeaponsSheathedRequest(
+        bool sheathed, bool onlineSession, bool hasCharacterInstance) {
+        if (!sheathed && onlineSession && !hasCharacterInstance) {
+            return false;
+        }
+        return true;
+    }
     /// The local player's UNIT_FIELD_BYTES_2 byte 0, read every frame. A new
     /// value (the first after login, or a change) is taken as the local state
     /// without sending it back: the server holds the state other clients see.
@@ -138,7 +150,7 @@ private:
     uint32_t skinTextureSlotIndex_ = 0;
     uint32_t cloakTextureSlotIndex_ = 0;
 
-    uint8_t sheathState_ = 1;
+    uint8_t sheathState_ = kDefaultSheathState;
     std::optional<uint8_t> serverSheathState_;
     bool showingRanged_ = false;
     bool showingMiningPick_ = false;

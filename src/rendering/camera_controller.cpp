@@ -543,9 +543,13 @@ glm::vec3 CameraController::moveBodyOnFootOnce(const glm::vec3& start, const glm
     const glm::vec3 horizontal(delta.x, delta.y, 0.0f);
     const bool supported = grounded && verticalVelocity <= 0.0f;
     if (supported) {
+        // Only lift out of floors that actually cover the character's sole
+        // (`isBodySoleOnGround`). Accepting side-bevel edge hits (`isBodyGround`)
+        // snapped stationary/teleported characters +1.0 yd onto adjacent props
+        // such as Northshire's `westfallbarrel01` / cart at (-8897.80, -112.17, 81.85).
         if (const auto rest = movement::lowerBody(from + glm::vec3(0.0f, 0.0f, kSunkTolerance),
                                                   kSunkTolerance, radius, height, triangles, true);
-            rest && movement::isBodyGround(*rest, minWalkable)) {
+            rest && movement::isBodySoleOnGround(*rest, minWalkable)) {
             from.z = std::max(from.z, rest->position.z);
         }
     }
