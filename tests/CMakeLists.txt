@@ -3924,6 +3924,30 @@ wowee_add_test(test_m2_creature_visibility
             ${CMAKE_SOURCE_DIR}/src/rendering/m2_model_classifier.cpp)
 set_tests_properties(m2_creature_visibility PROPERTIES SKIP_RETURN_CODE 4)
 
+# WorldSocket auth-session encryption transition & large server header framing:
+# exercises asyncPumpThread_ race between send(CMSG_AUTH_SESSION) and
+# initEncryption(), split encrypted headers across the transition, pre-crypt
+# plaintext SMSG_AUTH_RESPONSE rejections, TBC >32KB uint16 headers, and WotLK
+# 5-byte (0x80) RC4 large headers.
+add_executable(test_world_socket_framing
+    test_world_socket_framing.cpp
+    ${TEST_COMMON_SOURCES}
+    ${CMAKE_SOURCE_DIR}/src/network/world_socket.cpp
+    ${CMAKE_SOURCE_DIR}/src/network/packet.cpp
+    ${CMAKE_SOURCE_DIR}/src/network/socket.cpp
+    ${CMAKE_SOURCE_DIR}/src/auth/crypto.cpp
+    ${CMAKE_SOURCE_DIR}/src/auth/rc4.cpp
+    ${CMAKE_SOURCE_DIR}/src/auth/vanilla_crypt.cpp
+    ${CMAKE_SOURCE_DIR}/src/game/opcode_table.cpp
+)
+target_include_directories(test_world_socket_framing PRIVATE ${TEST_INCLUDE_DIRS})
+target_include_directories(test_world_socket_framing SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
+target_link_libraries(test_world_socket_framing PRIVATE
+    catch2_main OpenSSL::SSL OpenSSL::Crypto Threads::Threads)
+wowee_test_link_glm(test_world_socket_framing)
+add_test(NAME world_socket_framing COMMAND test_world_socket_framing)
+register_test_target(test_world_socket_framing)
+
 get_property(ALL_TEST_TARGETS GLOBAL PROPERTY WOWEE_ALL_TEST_TARGETS)
 list(LENGTH ALL_TEST_TARGETS _wowee_test_target_count)
 message(STATUS "Test targets registered: ${_wowee_test_target_count}")

@@ -84,7 +84,9 @@ public:
     /**
      * Check if header encryption is enabled
      */
-    [[nodiscard]] bool isEncryptionEnabled() const { return encryptionEnabled; }
+    [[nodiscard]] bool isEncryptionEnabled() const {
+        return encryptionEnabled.load(std::memory_order_acquire);
+    }
 
 private:
     std::atomic<uint64_t> bytesIn_{0};
@@ -92,7 +94,7 @@ private:
     /**
      * Try to parse complete packets from receive buffer
      */
-    void tryParsePackets();
+    void tryParsePackets(bool peerClosed = false);
     void pumpNetworkIO();
     void dispatchQueuedPackets();
     void asyncPumpLoop();
@@ -107,8 +109,15 @@ private:
     // ioMutex_ for a packet burst. Atomic state avoids turning that harmless
     // status check into a 50ms main-thread mutex stall.
     std::atomic<bool> connected{false};
-    bool encryptionEnabled = false;            // THREAD-SAFE: protected by ioMutex_
+    std::atomic<bool> encryptionEnabled{false}; // Written under ioMutex_, atomic for lock-free query
     bool useVanillaCrypt = false;  // true = XOR cipher, false = RC4
+    // Set atomically under ioMutex_ when CMSG_AUTH_SESSION is sent before
+    // initEncryption() runs on the main thread, preventing asyncPumpThread_
+    // from parsing encrypted post-auth server headers with enc=0.
+    bool awaitingEncryptionInit_ = false;
+    bool deferredPeerClose_ = false;
+    bool firstPostAuthPacketPending_ = false;
+    bool parseBudgetDeferred_ = false;
     bool useAsyncPump_ = true;
     std::thread asyncPumpThread_;
     std::atomic<bool> asyncPumpStop_{false};   // THREAD-SAFE: atomic

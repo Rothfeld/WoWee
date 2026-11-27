@@ -18,9 +18,12 @@
 #include <cstring>
 #include <chrono>
 #include <thread>
+#include <algorithm>
 
 namespace {
 constexpr size_t kMaxReceiveBufferBytes = 8 * 1024 * 1024;
+constexpr uint32_t kMaxUnencryptedWorldPacketSize = 0x8000u;
+constexpr uint32_t kMaxLargeWorldPacketSize = 512 * 1024u;
 // Per-frame packet budgets prevent a burst of server data from starving the
 // render loop. Tunable via env vars for debugging heavy-traffic scenarios
 // (e.g. SMSG_UPDATE_OBJECT floods on login to crowded zones).
@@ -46,6 +49,26 @@ inline int parsedPacketsBudgetPerUpdate() {
         return static_cast<int>(parsed);
     }();
     return budget;
+}
+
+inline bool isAuthSessionOpcode(uint16_t opcode) {
+    if (opcode == 0x01ED) return true;
+    const auto* table = wowee::game::getActiveOpcodeTable();
+    if (table) {
+        const uint16_t mapped = table->toWire(wowee::game::LogicalOpcode::CMSG_AUTH_SESSION);
+        if (mapped != 0xFFFF && opcode == mapped) return true;
+    }
+    return false;
+}
+
+inline bool isAuthResponseOpcode(uint16_t opcode) {
+    if (opcode == 0x01EE) return true;
+    const auto* table = wowee::game::getActiveOpcodeTable();
+    if (table) {
+        const uint16_t mapped = table->toWire(wowee::game::LogicalOpcode::SMSG_AUTH_RESPONSE);
+        if (mapped != 0xFFFF && opcode == mapped) return true;
+    }
+    return false;
 }
 
 inline bool isLoginPipelineSmsg(uint16_t opcode) {
@@ -129,6 +152,25 @@ bool WorldSocket::connect(const std::string& host, uint16_t port) {
     LOG_INFO("Connecting to world server: ", host, ":", port);
 
     stopAsyncPump();
+    {
+        std::lock_guard<std::mutex> lock(ioMutex_);
+        closeSocketNoJoin();
+        encryptionEnabled.store(false, std::memory_order_release);
+        useVanillaCrypt = false;
+        awaitingEncryptionInit_ = false;
+        deferredPeerClose_ = false;
+        firstPostAuthPacketPending_ = false;
+        parseBudgetDeferred_ = false;
+        receiveBuffer.clear();
+        receiveReadOffset_ = 0;
+        parsedPacketsScratch_.clear();
+        headerBytesDecrypted = 0;
+        recentPacketHistory_.clear();
+    }
+    {
+        std::lock_guard<std::mutex> lock(callbackMutex_);
+        pendingPacketCallbacks_.clear();
+    }
 
     // Socket open, non-blocking, and the address resolved.
     struct sockaddr_in serverAddr;
@@ -195,12 +237,17 @@ void WorldSocket::disconnect() {
     {
         std::lock_guard<std::mutex> lock(ioMutex_);
         closeSocketNoJoin();
-        encryptionEnabled = false;
+        encryptionEnabled.store(false, std::memory_order_release);
         useVanillaCrypt = false;
+        awaitingEncryptionInit_ = false;
+        deferredPeerClose_ = false;
+        firstPostAuthPacketPending_ = false;
+        parseBudgetDeferred_ = false;
         receiveBuffer.clear();
         receiveReadOffset_ = 0;
         parsedPacketsScratch_.clear();
         headerBytesDecrypted = 0;
+        recentPacketHistory_.clear();
         packetTraceStart_ = {};
         packetTraceUntil_ = {};
         packetTraceReason_.clear();
@@ -371,7 +418,8 @@ void WorldSocket::send(const Packet& packet) {
     // Debug logging disabled - too spammy
 
     // Encrypt header if encryption is enabled (all 6 bytes)
-    if (encryptionEnabled) {
+    const bool encEnabled = encryptionEnabled.load(std::memory_order_relaxed);
+    if (encEnabled) {
         if (useVanillaCrypt) {
             vanillaCrypt.encrypt(sendData.data(), 6);
         } else {
@@ -389,7 +437,7 @@ void WorldSocket::send(const Packet& packet) {
     }
     if (isLoginPipelineCmsg(opcode)) {
         LOG_INFO("WS TX LOGIN opcode=0x", std::hex, opcode, std::dec,
-                 " payload=", payloadLen, " enc=", encryptionEnabled ? "yes" : "no");
+                 " payload=", payloadLen, " enc=", encEnabled ? "yes" : "no");
     }
 
     // Send complete packet, retrying on partial sends. Non-blocking sockets
@@ -416,6 +464,13 @@ void WorldSocket::send(const Packet& packet) {
     }
     if (totalSent != sendData.size()) {
         LOG_WARNING("Incomplete send: ", totalSent, " of ", sendData.size(), " bytes");
+    }
+
+    // Hold packet framing across the CMSG_AUTH_SESSION -> initEncryption() gap
+    // while still holding ioMutex_ so asyncPumpThread_ cannot parse encrypted
+    // post-auth server headers with encryptionEnabled == false.
+    if (!encEnabled && isAuthSessionOpcode(opcode) && totalSent > 0) {
+        awaitingEncryptionInit_ = true;
     }
 }
 
@@ -447,23 +502,22 @@ void WorldSocket::asyncPumpLoop() {
     asyncPumpRunning_.store(true, std::memory_order_release);
     while (!asyncPumpStop_.load(std::memory_order_acquire)) {
         pumpNetworkIO();
+        socket_t fd = INVALID_SOCK;
+        bool deferClose = false;
         {
             std::lock_guard<std::mutex> lock(ioMutex_);
             if (!connected) {
                 break;
             }
+            fd = sockfd;
+            deferClose = deferredPeerClose_;
         }
         // Wait for data rather than sleeping a fixed interval: a packet that
         // arrives mid-sleep would otherwise be read up to the interval late,
         // which the ping round trip then reports as latency (1-2 ms on a
         // local realm where build 8606 reports 0). Still bounded by the same
         // interval so the pump keeps its cadence for everything else.
-        socket_t fd;
-        {
-            std::lock_guard<std::mutex> lock(ioMutex_);
-            fd = sockfd;
-        }
-        if (fd == INVALID_SOCK) {
+        if (fd == INVALID_SOCK || deferClose) {
             std::this_thread::sleep_for(std::chrono::milliseconds(kAsyncPumpSleepMs));
             continue;
         }
@@ -508,7 +562,7 @@ void WorldSocket::pumpNetworkIO() {
     bool receivedAny = false;
     size_t bytesReadThisTick = 0;
     int readOps = 0;
-    while (connected && readOps < kMaxRecvCallsPerUpdate &&
+    while (connected && !deferredPeerClose_ && readOps < kMaxRecvCallsPerUpdate &&
            bytesReadThisTick < kMaxRecvBytesPerUpdate) {
         uint8_t buffer[4096];
         ssize_t received = net::portableRecv(sockfd, buffer, sizeof(buffer));
@@ -594,22 +648,37 @@ void WorldSocket::pumpNetworkIO() {
         return;
     }
 
-    if (receivedAny) {
-        const bool debugLog = core::Logger::getInstance().shouldLog(core::LogLevel::DEBUG);
-        if (debugLog) {
-            LOG_DEBUG("World socket read ", bytesReadThisTick, " bytes in ", readOps,
-                      " recv call(s), buffered=", bufferedBytes());
-        }
-        // Hex dump received bytes for auth debugging (debug-only to avoid per-frame string work)
-        if (debugLog && bytesReadThisTick <= 128) {
+    const bool debugLog = core::Logger::getInstance().shouldLog(core::LogLevel::DEBUG);
+    if (receivedAny && debugLog) {
+        LOG_DEBUG("World socket read ", bytesReadThisTick, " bytes in ", readOps,
+                  " recv call(s), buffered=", bufferedBytes());
+        if (bytesReadThisTick <= 128) {
             LOG_DEBUG("World socket raw bytes: ",
                       core::toHexString(receiveBuffer.data() + receiveReadOffset_,
                                         receiveBuffer.size() - receiveReadOffset_, true));
         }
-        tryParsePackets();
+    }
+
+    // CMSG_AUTH_SESSION has been transmitted, so any incoming server bytes are
+    // post-auth (encrypted on success, or a 5-byte plaintext SMSG_AUTH_RESPONSE
+    // on pre-crypt rejection). Defer packet header framing until initEncryption()
+    // configures the session key on the main thread.
+    if (awaitingEncryptionInit_) {
+        if (sawClose) {
+            deferredPeerClose_ = true;
+        }
+        if (receivedAny && debugLog) {
+            LOG_DEBUG("World socket buffered ", bufferedBytes(),
+                      " post-auth bytes while awaiting initEncryption()");
+        }
+        return;
+    }
+
+    if (receivedAny || parseBudgetDeferred_) {
+        tryParsePackets(sawClose);
         if (debugLog && connected && bufferedBytes() > 0) {
             LOG_DEBUG("World socket parse left ", bufferedBytes(),
-                     " bytes buffered (awaiting complete packet)");
+                      " bytes buffered (awaiting complete packet)");
         }
     }
 
@@ -621,17 +690,20 @@ void WorldSocket::pumpNetworkIO() {
     if (sawClose) {
         dumpRecentPacketHistoryLocked("peer_closed", bufferedBytes());
         LOG_WARNING("World server connection closed by peer (receivedAny=", receivedAny,
-                 " buffered=", bufferedBytes(), ")");
+                    " buffered=", bufferedBytes(), ")");
         closeSocketNoJoin();
         return;
     }
 }
 
-void WorldSocket::tryParsePackets() {
-    // World server packets have 4-byte incoming header: size(2) + opcode(2)
+void WorldSocket::tryParsePackets(bool peerClosed) {
+    // World server packets use a 4-byte incoming header: size(2) + opcode(2),
+    // except WotLK RC4 packets with size > 0x7FFF which set bit 0x80 on hdr[0]
+    // and use a 5-byte header: size(3, 23-bit BE) + opcode(2, LE).
     int parsedThisTick = 0;
     size_t parseOffset = receiveReadOffset_;
     size_t localHeaderBytesDecrypted = headerBytesDecrypted;
+    const bool encEnabled = encryptionEnabled.load(std::memory_order_relaxed);
     std::vector<Packet> parsedPacketsLocal;
     std::vector<Packet>* parsedPackets = &parsedPacketsLocal;
     if (useParseScratchQueue_) {
@@ -649,13 +721,37 @@ void WorldSocket::tryParsePackets() {
     }
     const int maxParsedThisTick = parsedPacketsBudgetPerUpdate();
     while ((receiveBuffer.size() - parseOffset) >= 4 && parsedThisTick < maxParsedThisTick) {
-        uint8_t rawHeader[4] = {0, 0, 0, 0};
+        const size_t availableBytes = receiveBuffer.size() - parseOffset;
+        uint8_t rawHeader[5] = {0, 0, 0, 0, 0};
         std::memcpy(rawHeader, receiveBuffer.data() + parseOffset, 4);
 
-        // Decrypt header bytes in-place if encryption is enabled
-        // Only decrypt bytes we haven't already decrypted
-        if (encryptionEnabled && localHeaderBytesDecrypted < 4) {
-            size_t toDecrypt = 4 - localHeaderBytesDecrypted;
+        bool skipHeaderDecrypt = false;
+        if (encEnabled && firstPostAuthPacketPending_ && localHeaderBytesDecrypted == 0) {
+            const uint16_t rawSize =
+                static_cast<uint16_t>((uint16_t(rawHeader[0]) << 8) | uint16_t(rawHeader[1]));
+            const uint16_t rawOpcode =
+                static_cast<uint16_t>(uint16_t(rawHeader[2]) | (uint16_t(rawHeader[3]) << 8));
+            if (rawSize == 3 && isAuthResponseOpcode(rawOpcode)) {
+                if (availableBytes < 5) {
+                    // Wait for the 1-byte AuthResult payload before deciding so we
+                    // do not advance cipher state on a split pre-crypt rejection.
+                    break;
+                }
+                const uint8_t authResult = receiveBuffer[parseOffset + 4];
+                // CMaNGOS / MaNGOS send a 5-byte unencrypted SMSG_AUTH_RESPONSE
+                // before AuthCrypt::Init when rejecting CMSG_AUTH_SESSION
+                // (AUTH_VERSION_MISMATCH, AUTH_UNKNOWN_ACCOUNT, AUTH_BANNED, etc.).
+                if (availableBytes == 5 &&
+                    (peerClosed || (authResult != 0x0Cu && authResult != 0x1Bu))) {
+                    skipHeaderDecrypt = true;
+                }
+            }
+        }
+
+        // Decrypt header bytes in-place if encryption is enabled.
+        // Only decrypt bytes we haven't already decrypted on an earlier partial read.
+        if (encEnabled && !skipHeaderDecrypt && localHeaderBytesDecrypted < 4) {
+            const size_t toDecrypt = 4 - localHeaderBytesDecrypted;
             if (useVanillaCrypt) {
                 vanillaCrypt.decrypt(receiveBuffer.data() + parseOffset + localHeaderBytesDecrypted, toDecrypt);
             } else {
@@ -664,11 +760,39 @@ void WorldSocket::tryParsePackets() {
             localHeaderBytesDecrypted = 4;
         }
 
-        // Parse header (now decrypted in-place).
-        // Size: 2 bytes big-endian. For world packets, this includes opcode bytes.
-        uint16_t size = (receiveBuffer[parseOffset + 0] << 8) | receiveBuffer[parseOffset + 1];
-        // Opcode: 2 bytes little-endian.
-        uint16_t opcode = receiveBuffer[parseOffset + 2] | (receiveBuffer[parseOffset + 3] << 8);
+        size_t headerLen = 4;
+        uint32_t size = 0;
+        uint16_t opcode = 0;
+        if (encEnabled && !skipHeaderDecrypt && !useVanillaCrypt &&
+            (receiveBuffer[parseOffset + 0] & 0x80u) != 0u) {
+            // WotLK 3.3.5a 5-byte large server packet header.
+            if (availableBytes < 5) {
+                // Keep bytes 0..3 decrypted in-place (localHeaderBytesDecrypted == 4)
+                // and wait for byte 4 before advancing RC4 keystream by 1 byte.
+                break;
+            }
+            rawHeader[4] = receiveBuffer[parseOffset + 4];
+            if (localHeaderBytesDecrypted < 5) {
+                decryptCipher.process(receiveBuffer.data() + parseOffset + 4, 1);
+                localHeaderBytesDecrypted = 5;
+            }
+            headerLen = 5;
+            size = ((static_cast<uint32_t>(receiveBuffer[parseOffset + 0] & 0x7Fu) << 16) |
+                    (static_cast<uint32_t>(receiveBuffer[parseOffset + 1]) << 8) |
+                    static_cast<uint32_t>(receiveBuffer[parseOffset + 2]));
+            opcode = static_cast<uint16_t>(
+                uint16_t(receiveBuffer[parseOffset + 3]) |
+                (uint16_t(receiveBuffer[parseOffset + 4]) << 8));
+        } else {
+            size = (static_cast<uint32_t>(receiveBuffer[parseOffset + 0]) << 8) |
+                   static_cast<uint32_t>(receiveBuffer[parseOffset + 1]);
+            opcode = static_cast<uint16_t>(
+                uint16_t(receiveBuffer[parseOffset + 2]) |
+                (uint16_t(receiveBuffer[parseOffset + 3]) << 8));
+        }
+
+        firstPostAuthPacketPending_ = false;
+
         if (size < 2) {
             LOG_ERROR("World packet framing desync: invalid size=", size,
                       " rawHdr=", std::hex,
@@ -676,25 +800,32 @@ void WorldSocket::tryParsePackets() {
                       static_cast<int>(rawHeader[1]), " ",
                       static_cast<int>(rawHeader[2]), " ",
                       static_cast<int>(rawHeader[3]), std::dec,
-                      " enc=", encryptionEnabled, ". Disconnecting to recover stream.");
+                      " enc=", encEnabled ? 1 : 0, ". Disconnecting to recover stream.");
             closeSocketNoJoin();
             return;
         }
-        constexpr uint16_t kMaxWorldPacketSize = 0x8000;  // 32KB - allows large guild rosters, auction lists
-        if (size > kMaxWorldPacketSize) {
+        const uint32_t maxAllowedPacketSize = encEnabled
+            ? (useVanillaCrypt ? 0xFFFFu : kMaxLargeWorldPacketSize)
+            : kMaxUnencryptedWorldPacketSize;
+        if (size > maxAllowedPacketSize) {
             LOG_ERROR("World packet framing desync: oversized packet size=", size,
                       " rawHdr=", std::hex,
                       static_cast<int>(rawHeader[0]), " ",
                       static_cast<int>(rawHeader[1]), " ",
                       static_cast<int>(rawHeader[2]), " ",
                       static_cast<int>(rawHeader[3]), std::dec,
-                      " enc=", encryptionEnabled, ". Disconnecting to recover stream.");
+                      " enc=", encEnabled ? 1 : 0, ". Disconnecting to recover stream.");
             closeSocketNoJoin();
             return;
         }
 
-        const uint16_t payloadLen = size - 2;
-        const size_t totalSize = 4 + payloadLen;
+        const uint32_t payloadLen = size - 2;
+        const size_t totalSize = headerLen + static_cast<size_t>(payloadLen);
+
+        if (availableBytes < totalSize) {
+            // Not enough data yet - header stays decrypted in buffer.
+            break;
+        }
 
         if (headerTracePacketsLeft > 0) {
             LOG_INFO("WS HDR TRACE raw=",
@@ -709,19 +840,21 @@ void WorldSocket::tryParsePackets() {
                      static_cast<int>(receiveBuffer[parseOffset + 2]), " ",
                      static_cast<int>(receiveBuffer[parseOffset + 3]),
                      std::dec,
+                     " hdrLen=", headerLen,
                      " size=", size,
                      " payload=", payloadLen,
                      " opcode=0x", std::hex, opcode, std::dec,
-                     " buffered=", (receiveBuffer.size() - parseOffset));
+                     " buffered=", availableBytes);
             --headerTracePacketsLeft;
         }
         if (isLoginPipelineSmsg(opcode)) {
             LOG_INFO("WS RX LOGIN opcode=0x", std::hex, opcode, std::dec,
                      " size=", size, " payload=", payloadLen,
-                     " buffered=", (receiveBuffer.size() - parseOffset),
-                     " enc=", encryptionEnabled ? "yes" : "no");
+                     " buffered=", availableBytes,
+                     " enc=", encEnabled ? "yes" : "no");
         }
-        recordRecentPacket(false, opcode, payloadLen);
+        recordRecentPacket(false, opcode,
+                           static_cast<uint16_t>(std::min<uint32_t>(payloadLen, 0xFFFFu)));
         const auto traceNow = std::chrono::steady_clock::now();
         if (packetTraceUntil_ > traceNow) {
             const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -733,17 +866,14 @@ void WorldSocket::tryParsePackets() {
                       " reason='", packetTraceReason_, "'");
         }
 
-        if ((receiveBuffer.size() - parseOffset) < totalSize) {
-            // Not enough data yet - header stays decrypted in buffer
-            break;
-        }
-
         // Extract payload (skip header). Guard allocation failures so malformed
         // streams cannot unwind into application-level OOM crashes.
         try {
             std::vector<uint8_t> packetData(payloadLen);
             if (payloadLen > 0) {
-                std::memcpy(packetData.data(), receiveBuffer.data() + parseOffset + 4, payloadLen);
+                std::memcpy(packetData.data(),
+                            receiveBuffer.data() + parseOffset + headerLen,
+                            payloadLen);
             }
             // Queue packet; callbacks run after buffer state is finalized.
             parsedPackets->emplace_back(opcode, std::move(packetData));
@@ -793,9 +923,10 @@ void WorldSocket::tryParsePackets() {
     const size_t buffered = (receiveBuffer.size() >= receiveReadOffset_)
         ? (receiveBuffer.size() - receiveReadOffset_)
         : 0;
-    if (parsedThisTick >= maxParsedThisTick && buffered >= 4) {
+    parseBudgetDeferred_ = (parsedThisTick >= maxParsedThisTick && buffered >= 4);
+    if (parseBudgetDeferred_) {
         LOG_DEBUG("World socket parse budget reached (", parsedThisTick,
-                 " packets); deferring remaining buffered data=", buffered, " bytes");
+                  " packets); deferring remaining buffered data=", buffered, " bytes");
     }
 }
 
@@ -821,6 +952,9 @@ void WorldSocket::initEncryption(const std::vector<uint8_t>& sessionKey, uint32_
     std::lock_guard<std::mutex> lock(ioMutex_);
     if (sessionKey.size() != 40) {
         LOG_ERROR("Invalid session key size: ", sessionKey.size(), " (expected 40)");
+        awaitingEncryptionInit_ = false;
+        deferredPeerClose_ = false;
+        closeSocketNoJoin();
         return;
     }
 
@@ -863,9 +997,31 @@ void WorldSocket::initEncryption(const std::vector<uint8_t>& sessionKey, uint32_
         decryptCipher.drop(1024);
     }
 
-    encryptionEnabled = true;
+    encryptionEnabled.store(true, std::memory_order_release);
+    awaitingEncryptionInit_ = false;
+    firstPostAuthPacketPending_ = true;
+    headerBytesDecrypted = 0;
     headerTracePacketsLeft = 24;
     LOG_INFO("World server encryption initialized successfully");
+
+    // Parse any post-auth server packets that asyncPumpThread_ already drained
+    // into receiveBuffer while CMSG_AUTH_SESSION was in flight.
+    if (connected && receiveBuffer.size() > receiveReadOffset_) {
+        tryParsePackets(deferredPeerClose_);
+    }
+
+    if (deferredPeerClose_) {
+        deferredPeerClose_ = false;
+        if (connected) {
+            const size_t remaining = (receiveBuffer.size() >= receiveReadOffset_)
+                ? (receiveBuffer.size() - receiveReadOffset_)
+                : 0;
+            dumpRecentPacketHistoryLocked("peer_closed", remaining);
+            LOG_WARNING("World server connection closed by peer during auth transition (buffered=",
+                        remaining, ")");
+            closeSocketNoJoin();
+        }
+    }
 }
 
 } // namespace network
