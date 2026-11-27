@@ -80,48 +80,56 @@ inline constexpr float kDefaultWalkMoveSpeed = 2.5f;
 inline constexpr float kDefaultRunMoveSpeed = 250.0f / 36.0f;
 
 // Walk or Run for a server-driven (SMSG_MONSTER_MOVE spline) ground unit.
-// Build 8606 decides from the spline's speed against the model's authored Walk
-// movingSpeed (or kDefaultWalkMoveSpeed = 2.5 when the M2 authors Walk
-// movingSpeed == 0, e.g. DoomGuard.m2, HumanFemale.m2, GnomeRocketCar.m2)
-// multiplied by OBJECT_FIELD_SCALE_X (not CreatureDisplayInfo.CreatureModelScale
-// or creature_template.SpeedWalk), not from the retained WALK_MODE flag or the
-// spline's Runmode flag (CMaNGOS sets it on every move): it walks while
-// speed < kSplineRunWalkRate * walkStride.
-// Measured natively:
+// Native TBC 2.4.3 (build 8606) compares the spline's ground speed against
+// kSplineRunWalkRate (2.0) * walkStride, where walkStride is the unit's
+// authoritative groundWalkSpeed (from the UPDATEFLAG_LIVING movement block and
+// SMSG_SPLINE_SET_WALK_SPEED) multiplied by OBJECT_FIELD_SCALE_X -- NOT
+// CreatureDisplayInfo.CreatureModelScale, NOT the retained MOVEFLAG_WALK_MODE
+// bit, and NOT the M2 sequence's Walk.movingSpeed (which scales playback rate
+// via computeLocomotionPlaybackRate once Walk vs Run has been chosen):
+// - Doomwalker 17711 (display 21435, FelReaver.m2 Walk 2.5, cdi_scale 1.5,
+//   groundWalkSpeed 7.0 -> threshold 14.0 yd/s): patrols at 7.0 yd/s and slows
+//   at 6.0/8.0/10.0 yd/s play Walk (4) at rate 7.0/(2.5*1.5) = 1.867x; combat
+//   chase at 14.0/16.0/18.0/20.0 yd/s plays Run (5)
+//   (_experiments/20261127T202135Z.doomwalker_movement_anim).
+// - 2x2 factorial decoupling on identical M2 models: Benny 19 (groundWalkSpeed
+//   2.5 -> threshold 5.0) morphed to display 21435 (FelReaver.m2 Walk 2.5) runs
+//   at 8.0 yd/s while Doomwalker (groundWalkSpeed 7.0) walks at 8.0/10.0 yd/s;
+//   Benny 19 morphed to display 171 (ElementalEarth.m2 Walk 3.889) runs at
+//   6.4 yd/s while Rock Elemental 92 (groundWalkSpeed 3.889 -> threshold 7.78)
+//   walks at 6.4/7.2 yd/s and runs at 8.0 yd/s.
 // - Mirage Raceway Gnome Racer 4252 & Gnome Drag Car 4946 (display 2490,
-//   GnomeRocketCar.m2, Walk 0 -> default 2.5, creature_template.SpeedWalk = 4.0
-//   -> 10.0 yd/s, matching GoblinRocketCar.m2's explicit Walk 2.5): at 10.0 yd/s
-//   (>= threshold 5.0), plays Run (5) and emits its 150/s exhaust flames and
-//   100/s smoke trail (using unitGroundWalkSpeed = 10.0 gave threshold 20.0 and
-//   stuck the racer in Walk (4) with 0 particles).
-// - Unchained Doombringer 20900 (display 19945, DoomGuard.m2, Walk 0 -> 2.5,
-//   cdi_scale 2.5): at serverScale 1.0 (threshold 5.0), 2.5/3.6 walk and
-//   6.0/10.0 run; at serverScale 2.0 (threshold 10.0), 6.0 walks
-//   (_experiments/20261122T223300Z.doombringer_gait_parity).
-// - Phantom Guardsman (display 16457, HumanFemale.m2, Walk 0 -> 2.5, cdi 1.15):
-//   at serverScale 1.0 (threshold 5.0), 2.5/4.0 walk and 5.6/8.0 run; at
-//   serverScale 2.0 (threshold 10.0), 5.6 walks
-//   (_experiments/20261118T104000Z.guardsman_gait).
-// - Akama 23089 (display 21112 x2.6, Walk 2.5 -> threshold 5.0): 3.0, 4.2,
-//   4.8 yd/s walk; 5.4, 6.0, 10.0, 10.2 yd/s run
-//   (_experiments/20261122T201500Z.akama_walk_gait_parity).
-// - TrollDire (x1.2, Walk 1.667 -> threshold 3.33): 2.4, 3.2 walk; 4.0+ run.
-// - ElementalEarth (x1.0, Walk 3.889 -> threshold 7.78): 7.2 walk; 8.0 run.
+//   GnomeRocketCar.m2 Walk 0, groundWalkSpeed 10.0 -> threshold 20.0 yd/s):
+//   pit taxi at 10.0 yd/s plays Walk (4) with zero exhaust particles; racing at
+//   22.0/30.0 yd/s plays Run (5) with 150/s exhaust flames and 100/s smoke.
+// - Unchained Doombringer 20900 (display 19945, cdi_scale 2.5, groundWalkSpeed
+//   2.5) & Phantom Guardsman (display 16457, cdi_scale 1.15, groundWalkSpeed
+//   2.5): at serverScale 1.0 (threshold 5.0), <= 4.0 walks and >= 5.6 runs; at
+//   serverScale 2.0 (threshold 10.0), 5.6/6.0 walk.
+// - Akama 23089 (cdi_scale 2.6, groundWalkSpeed 2.5 -> threshold 5.0): 3.0..4.8
+//   walk; 5.4..10.2 run.
+// - Smolderthorn Berserker 9268 (groundWalkSpeed 1.667 -> threshold 3.33):
+//   2.4/3.2 walk; 4.0..8.0 run.
+// - Tempest Keep advisors (groundWalkSpeed 3.0 -> threshold 6.0): Thaladred
+//   20064 gazes at 5.5 yd/s in Walk (4); Sanguinar/Capernian/Telonicus chase at
+//   12.0 yd/s in Run (5).
 inline constexpr float kSplineRunWalkRate = 2.0f;
 
 inline std::optional<float> splineWalkStride(std::optional<float> modelWalkMoveSpeed,
                                              bool hasWalkAnimation,
                                              float unitGroundWalkSpeed,
                                              float serverScale) {
-    (void)unitGroundWalkSpeed;
+    if (!hasWalkAnimation && !(modelWalkMoveSpeed && *modelWalkMoveSpeed > 0.0f)) {
+        return std::nullopt;
+    }
     const float scale = serverScale > 0.0f ? serverScale : 1.0f;
+    if (unitGroundWalkSpeed > 0.0f) {
+        return unitGroundWalkSpeed * scale;
+    }
     if (modelWalkMoveSpeed && *modelWalkMoveSpeed > 0.0f) {
         return *modelWalkMoveSpeed * scale;
     }
-    if (hasWalkAnimation) {
-        return kDefaultWalkMoveSpeed * scale;
-    }
-    return std::nullopt;
+    return kDefaultWalkMoveSpeed * scale;
 }
 
 // Run -> Sprint (143) promotion rate for ground forward/strafe locomotion.

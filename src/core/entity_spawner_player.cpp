@@ -1018,9 +1018,9 @@ bool EntitySpawner::remoteGaitWalks(uint64_t guid, uint32_t locomotionInstanceId
         return creatureWalkingState_.count(guid) > 0;
     auto* characters = renderer_->getCharacterRenderer();
     // Native TBC 2.4.3 compares creature spline ground speed against 2.0x the
-    // model's authored Walk movingSpeed (or entity->groundWalkSpeed when the M2
-    // authors Walk movingSpeed == 0, e.g. DoomGuard.m2, HumanFemale.m2) scaled
-    // by OBJECT_FIELD_SCALE_X (not CreatureDisplayInfo.CreatureModelScale).
+    // unit's authoritative groundWalkSpeed (from UPDATEFLAG_LIVING /
+    // SMSG_SPLINE_SET_WALK_SPEED, with M2 Walk.movingSpeed / 2.5 fallback when
+    // unset) scaled by OBJECT_FIELD_SCALE_X, not CreatureDisplayInfo scale.
     float serverScale = 1.0f;
     const uint16_t scaleIdx = game::fieldIndex(game::UF::OBJECT_FIELD_SCALE_X);
     if (scaleIdx != 0xFFFF) {

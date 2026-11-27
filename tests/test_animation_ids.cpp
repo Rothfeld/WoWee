@@ -280,49 +280,95 @@ TEST_CASE("Mounted creature mount animation uses locomotion and neutral idle onl
     CHECK(creatureMountAnimation(/*moving=*/false, /*flying=*/false, /*swimming=*/false, /*walking=*/false, /*hoverIdle=*/true) == anim::FLY_IDLE);
 }
 
-TEST_CASE("Spline gait follows speed against the model's unscaled Walk movingSpeed", "[creature-locomotion]") {
-    // Native 8606 observations (_experiments/20261117T215856Z.berserker_gait and
-    // _experiments/20261122T201500Z.akama_walk_gait_parity):
-    // threshold is 2.0 * abs(M2 Walk.movingSpeed) without display/object scale.
+TEST_CASE("Spline gait follows speed against unitGroundWalkSpeed times OBJECT_FIELD_SCALE_X", "[creature-locomotion]") {
+    using wowee::rendering::computeLocomotionPlaybackRate;
     using wowee::rendering::splineGroundGaitWalks;
-    const float trollDireWalk = 1.6666666f;      // Smolderthorn Berserker (cdi_scale=1.2)
-    const float berserkerRun = 1.14286f * 7.0f;  // SpeedRun x 7 yd/s
-    CHECK(splineGroundGaitWalks(berserkerRun * 0.3f, trollDireWalk));
-    CHECK(splineGroundGaitWalks(berserkerRun * 0.4f, trollDireWalk));
-    CHECK_FALSE(splineGroundGaitWalks(berserkerRun * 0.5f, trollDireWalk));
-    CHECK_FALSE(splineGroundGaitWalks(berserkerRun * 0.7f, trollDireWalk));
-    CHECK_FALSE(splineGroundGaitWalks(berserkerRun, trollDireWalk));
-
-    const float elementalEarthWalk = 3.8888888f; // Rock Elemental (cdi_scale=1.0)
-    CHECK(splineGroundGaitWalks(5.6f, elementalEarthWalk));
-    CHECK(splineGroundGaitWalks(6.4f, elementalEarthWalk));
-    CHECK(splineGroundGaitWalks(7.2f, elementalEarthWalk));
-    CHECK_FALSE(splineGroundGaitWalks(8.0f, elementalEarthWalk));
-
-    // Akama 23089 (display 21112, cdi_scale=2.6, Walk=2.5 -> threshold 5.0 yd/s)
-    const float akamaWalk = 2.5f;
-    CHECK(splineGroundGaitWalks(3.0f, akamaWalk));
-    CHECK(splineGroundGaitWalks(4.2f, akamaWalk));
-    CHECK(splineGroundGaitWalks(4.8f, akamaWalk));
-    CHECK_FALSE(splineGroundGaitWalks(5.4f, akamaWalk));
-    CHECK_FALSE(splineGroundGaitWalks(6.0f, akamaWalk));
-    CHECK_FALSE(splineGroundGaitWalks(10.0f, akamaWalk));
-
-    // Lord Sanguinar 20060 (display 20178, cdi_scale=3.0, BloodElfMale Walk=2.2222)
-    const float bloodElfWalk = 2.2222222f;
-    CHECK(splineGroundGaitWalks(4.0f, bloodElfWalk));
-    CHECK_FALSE(splineGroundGaitWalks(4.5f, bloodElfWalk));
-    CHECK_FALSE(splineGroundGaitWalks(12.0f, bloodElfWalk));
-
-    // Zero-moveSpeed M2 models (DoomGuard.m2, HumanFemale.m2) fall back to
-    // groundWalkSpeed * OBJECT_FIELD_SCALE_X, NOT CreatureDisplayInfo.scale:
-    // - Unchained Doombringer 20900 (display 19945, cdi_scale=2.5, Walk=0):
-    //   at serverScale=1.0 -> threshold 5.0 (2.5/3.6 walk, 6.0/10.0 run);
-    //   at serverScale=2.0 -> threshold 10.0 (6.0 walks).
-    // - Phantom Guardsman (display 16457, cdi_scale=1.15, Walk=0):
-    //   at serverScale=1.0 -> threshold 5.0 (4.0 walks, 5.6 runs);
-    //   at serverScale=2.0 -> threshold 10.0 (5.6 walks).
     using wowee::rendering::splineWalkStride;
+
+    // Doomwalker 17711 (display 21435, FelReaver.m2 Walk=2.5, cdi_scale=1.5,
+    // groundWalkSpeed=7.0, serverScale=1.0 -> walkStride=7.0, threshold=14.0 yd/s)
+    // (_experiments/20261127T202135Z.doomwalker_movement_anim):
+    const auto doomwalker = splineWalkStride(2.5f, true, 7.0f, 1.0f);
+    REQUIRE(doomwalker.has_value());
+    CHECK(*doomwalker == Catch::Approx(7.0f));
+    CHECK(splineGroundGaitWalks(6.0f, *doomwalker));
+    CHECK(splineGroundGaitWalks(7.0f, *doomwalker));   // Black Temple terrace patrol
+    CHECK(splineGroundGaitWalks(8.0f, *doomwalker));
+    CHECK(splineGroundGaitWalks(10.0f, *doomwalker));
+    CHECK(splineGroundGaitWalks(13.9f, *doomwalker));
+    CHECK_FALSE(splineGroundGaitWalks(14.0f, *doomwalker)); // Exact 2.0x boundary runs
+    CHECK_FALSE(splineGroundGaitWalks(16.0f, *doomwalker));
+    CHECK_FALSE(splineGroundGaitWalks(18.0f, *doomwalker));
+    CHECK_FALSE(splineGroundGaitWalks(20.0f, *doomwalker)); // Unslowed combat chase
+    // Playback rate still scales against M2 sequence movingSpeed * instanceScale:
+    CHECK(computeLocomotionPlaybackRate(anim::WALK, 7.0f, 2.5f, 1.5f) ==
+          Catch::Approx(7.0f / 3.75f));
+    CHECK(computeLocomotionPlaybackRate(anim::RUN, 20.0f, 20.0f / 3.0f, 1.5f) ==
+          Catch::Approx(2.0f));
+
+    // Fel Reaver 18733 (display 18671, FelReaver.m2 Walk=2.5, cdi_scale=2.0,
+    // groundWalkSpeed=7.0, SpeedRun=12.0):
+    const auto felReaver = splineWalkStride(2.5f, true, 7.0f, 1.0f);
+    REQUIRE(felReaver.has_value());
+    CHECK(splineGroundGaitWalks(7.0f, *felReaver));
+    CHECK(splineGroundGaitWalks(12.0f, *felReaver));
+    CHECK(computeLocomotionPlaybackRate(anim::WALK, 7.0f, 2.5f, 2.0f) ==
+          Catch::Approx(7.0f / 5.0f));
+
+    // 2x2 factorial decoupling against identical M2 models:
+    // Benny 19 (groundWalkSpeed=2.5) morphed to display 21435 (FelReaver.m2 Walk=2.5)
+    // runs at 8.0 yd/s, and morphed to display 171 (ElementalEarth.m2 Walk=3.8889)
+    // runs at 6.4 yd/s, while Rock Elemental 92 (groundWalkSpeed=3.8889) walks at 6.4/7.2.
+    const auto bennyFelReaver = splineWalkStride(2.5f, true, 2.5f, 1.0f);
+    REQUIRE(bennyFelReaver.has_value());
+    CHECK(*bennyFelReaver == Catch::Approx(2.5f));
+    CHECK_FALSE(splineGroundGaitWalks(8.0f, *bennyFelReaver));
+
+    const auto bennyElem = splineWalkStride(3.8888888f, true, 2.5f, 1.0f);
+    REQUIRE(bennyElem.has_value());
+    CHECK(*bennyElem == Catch::Approx(2.5f));
+    CHECK_FALSE(splineGroundGaitWalks(6.4f, *bennyElem));
+
+    const auto rockElemental = splineWalkStride(3.8888888f, true, 3.8888888f, 1.0f);
+    REQUIRE(rockElemental.has_value());
+    CHECK(*rockElemental == Catch::Approx(3.8888888f));
+    CHECK(splineGroundGaitWalks(5.6f, *rockElemental));
+    CHECK(splineGroundGaitWalks(6.4f, *rockElemental));
+    CHECK(splineGroundGaitWalks(7.2f, *rockElemental));
+    CHECK_FALSE(splineGroundGaitWalks(8.0f, *rockElemental));
+
+    // Smolderthorn Berserker 9268 (TrollDire.m2, cdi_scale=1.2, groundWalkSpeed=1.6667)
+    const auto berserker = splineWalkStride(1.6666666f, true, 1.6666666f, 1.0f);
+    REQUIRE(berserker.has_value());
+    const float berserkerRun = 1.14286f * 7.0f;
+    CHECK(splineGroundGaitWalks(berserkerRun * 0.3f, *berserker));
+    CHECK(splineGroundGaitWalks(berserkerRun * 0.4f, *berserker));
+    CHECK_FALSE(splineGroundGaitWalks(berserkerRun * 0.5f, *berserker));
+    CHECK_FALSE(splineGroundGaitWalks(berserkerRun * 0.7f, *berserker));
+    CHECK_FALSE(splineGroundGaitWalks(berserkerRun, *berserker));
+
+    // Akama 23089 (display 21112, cdi_scale=2.6, groundWalkSpeed=2.5 -> threshold 5.0 yd/s)
+    const auto akama = splineWalkStride(2.5f, true, 2.5f, 1.0f);
+    REQUIRE(akama.has_value());
+    CHECK(splineGroundGaitWalks(3.0f, *akama));
+    CHECK(splineGroundGaitWalks(4.2f, *akama));
+    CHECK(splineGroundGaitWalks(4.8f, *akama));
+    CHECK_FALSE(splineGroundGaitWalks(5.4f, *akama));
+    CHECK_FALSE(splineGroundGaitWalks(6.0f, *akama));
+    CHECK_FALSE(splineGroundGaitWalks(10.0f, *akama));
+
+    // Tempest Keep advisors (BloodElfMale.m2 Walk=2.2222, cdi_scale=3.0, groundWalkSpeed=3.0):
+    // Thaladred 20064 gazes at 5.5 yd/s (walks); Sanguinar 20060 chases at 12.0 yd/s (runs).
+    const auto tkAdvisor = splineWalkStride(2.2222222f, true, 3.0f, 1.0f);
+    REQUIRE(tkAdvisor.has_value());
+    CHECK(*tkAdvisor == Catch::Approx(3.0f));
+    CHECK(splineGroundGaitWalks(3.0f, *tkAdvisor));
+    CHECK(splineGroundGaitWalks(5.5f, *tkAdvisor));
+    CHECK_FALSE(splineGroundGaitWalks(6.0f, *tkAdvisor));
+    CHECK_FALSE(splineGroundGaitWalks(12.0f, *tkAdvisor));
+
+    // Zero-moveSpeed M2 models (DoomGuard.m2, HumanFemale.m2) scale with OBJECT_FIELD_SCALE_X,
+    // NOT CreatureDisplayInfo.CreatureModelScale:
     const auto doomS1 = splineWalkStride(std::nullopt, true, 2.5f, 1.0f);
     REQUIRE(doomS1.has_value());
     CHECK(*doomS1 == Catch::Approx(2.5f));
@@ -342,16 +388,24 @@ TEST_CASE("Spline gait follows speed against the model's unscaled Walk movingSpe
     // Models lacking Walk animation return nullopt (always run).
     CHECK_FALSE(splineWalkStride(std::nullopt, false, 2.5f, 1.0f).has_value());
 
+    // Fallback when unitGroundWalkSpeed is unset (<= 0): use modelWalkMoveSpeed or default 2.5.
+    const auto unsetWithM2 = splineWalkStride(3.8888888f, true, 0.0f, 1.0f);
+    REQUIRE(unsetWithM2.has_value());
+    CHECK(*unsetWithM2 == Catch::Approx(3.8888888f));
+    const auto unsetZeroM2 = splineWalkStride(std::nullopt, true, 0.0f, 2.0f);
+    REQUIRE(unsetZeroM2.has_value());
+    CHECK(*unsetZeroM2 == Catch::Approx(5.0f));
+
     // Mirage Raceway Gnome Racer 4252 & Gnome Drag Car 4946 (display 2490,
-    // GnomeRocketCar.m2, Walk movingSpeed == 0, creature_template.SpeedWalk = 4.0
-    // -> unitGroundWalkSpeed = 10.0 yd/s) use kDefaultWalkMoveSpeed (2.5) * serverScale
-    // rather than unitGroundWalkSpeed, so racing at 10.0 yd/s selects Run (5)
-    // and emits the car's rocket flame/smoke emitters.
+    // GnomeRocketCar.m2, Walk movingSpeed == 0, groundWalkSpeed = 10.0 yd/s):
+    // pit taxi at 10.0 yd/s plays Walk (4) (zero exhaust particles), while racing
+    // at 22.0 / 30.0 yd/s plays Run (5) (150/s exhaust flames and 100/s smoke).
     const auto dragCar = splineWalkStride(std::nullopt, true, 10.0f, 1.0f);
     REQUIRE(dragCar.has_value());
-    CHECK(*dragCar == Catch::Approx(2.5f));
-    CHECK_FALSE(splineGroundGaitWalks(10.0f, *dragCar));
-    CHECK(splineGroundGaitWalks(4.0f, *dragCar));
+    CHECK(*dragCar == Catch::Approx(10.0f));
+    CHECK(splineGroundGaitWalks(10.0f, *dragCar));
+    CHECK_FALSE(splineGroundGaitWalks(22.0f, *dragCar));
+    CHECK_FALSE(splineGroundGaitWalks(30.0f, *dragCar));
 }
 
 TEST_CASE("Aquatic creature surface limit preserves submerged server coordinates", "[creature-locomotion]") {
