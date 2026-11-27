@@ -546,3 +546,26 @@ TEST_CASE("wmoGroupWithinViewDistance culls distant WMO groups past farclip whil
     // Optional maxGroupDistance clamp when WOWEE_WMO_CULL distanceCulling is active
     CHECK_FALSE(wmoGroupWithinViewDistance(zepMin, zepMax, cam, 1900.0f, true, 500.0f));
 }
+
+TEST_CASE("wmoCameraConfirmedIndoors rejects cameras beneath indoor floors while keeping enclosed rooms", "[wmo][portal]") {
+    using wowee::rendering::wmoCameraConfirmedIndoors;
+
+    // Beneath Molten Core Blackrock_lower_guild floor at z = -230.86 (inside Group 6 AABB,
+    // no outdoor group, roomBeneath == -1, upward ray hits floor backface -> not enclosed):
+    CHECK_FALSE(wmoCameraConfirmedIndoors(true, false, -1, 0u, false));
+
+    // Inside Molten Core cavern at z = -227.8 (roomBeneath == 6 with indoor-only flags 0x2005):
+    CHECK(wmoCameraConfirmedIndoors(true, false, 6, kWmoGroupFlagIndoor | 0x5u, false));
+
+    // Standing on an outdoor porch/roof whose box ended below camera while an indoor room's
+    // bloated AABB overlaps camera (roomBeneath hits outdoor porch 0x8):
+    CHECK_FALSE(wmoCameraConfirmedIndoors(true, false, 0, kWmoGroupFlagOutdoor, true));
+
+    // Standing on ADT terrain inside an enclosed indoor-only WMO room (roomBeneath == -1,
+    // enclosedByIndoorGeometry == true):
+    CHECK(wmoCameraConfirmedIndoors(true, false, -1, 0u, true));
+
+    // Overlapping an outdoor group's box or outside indoor-only boxes -> outdoors:
+    CHECK_FALSE(wmoCameraConfirmedIndoors(true, true, 6, kWmoGroupFlagIndoor, true));
+    CHECK_FALSE(wmoCameraConfirmedIndoors(false, false, 6, kWmoGroupFlagIndoor, true));
+}

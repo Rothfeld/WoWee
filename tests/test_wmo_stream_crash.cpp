@@ -8,6 +8,7 @@
 #include "pipeline/wmo_group_path.hpp"
 #include "pipeline/wmo_liquid.hpp"
 #include "pipeline/wmo_loader.hpp"
+#include "rendering/camera.hpp"
 #include "rendering/water_surface_grid.hpp"
 #include "rendering/wmo_renderer.hpp"
 
@@ -334,4 +335,68 @@ TEST_CASE("Shipped TBC Blackrock_lower_guild_003.wmo Molten Core MLIQ lavafall s
     }
     CHECK((maxWetZ - minWetZ) > 130.0f);
     CHECK(elevatedFrontFacingCells > 20);
+}
+
+TEST_CASE("WMORenderer culls all Blackrock_lower_guild groups when camera is beneath Molten Core floor",
+          "[wmo][portal][sidedisc6]") {
+    const char* envTbc = std::getenv("WOWEE_TBC_DATA_DIR");
+    const std::filesystem::path tbcRoot = envTbc
+        ? std::filesystem::path(envTbc)
+        : std::filesystem::path("/workspace/azerothcore/client/wowee-data/expansions/tbc");
+    const auto rootDiskPath = tbcRoot / "world/wmo/dungeon/az_blackrock/blackrock_lower_guild.wmo";
+    if (!std::filesystem::exists(rootDiskPath)) {
+        SKIP("Shipped TBC blackrock_lower_guild WMO not present at " + rootDiskPath.string());
+    }
+
+    const auto rootBytes = readDiskBinary(rootDiskPath);
+    REQUIRE_FALSE(rootBytes.empty());
+    auto mc = wowee::pipeline::WMOLoader::load(rootBytes);
+    mc.sourcePath = "WORLD\\WMO\\DUNGEON\\AZ_BLACKROCK\\BLACKROCK_LOWER_GUILD.WMO";
+    REQUIRE(mc.nGroups == 12u);
+    for (uint32_t gi = 0; gi < mc.nGroups; ++gi) {
+        char buf[64];
+        std::snprintf(buf, sizeof(buf), "world/wmo/dungeon/az_blackrock/blackrock_lower_guild_%03u.wmo", gi);
+        const auto groupBytes = readDiskBinary(tbcRoot / buf);
+        REQUIRE_FALSE(groupBytes.empty());
+        REQUIRE(wowee::pipeline::WMOLoader::loadGroup(groupBytes, mc, gi));
+    }
+
+    wowee::rendering::WMORenderer wmo;
+    constexpr uint32_t kMcModelId = 409001u;
+    REQUIRE(wmo.loadModel(mc, kMcModelId));
+    // Map 409 WDT MODF places Blackrock_lower_guild at wmoPos = (0,0,0) with wmoRot = (0, 0, pi)
+    // per WorldLoader::loadInstanceWMO (lines 399-404).
+    const uint32_t instId = wmo.createInstance(
+        kMcModelId, glm::vec3(0.0f), glm::vec3(0.0f, 0.0f, 3.14159265358979323846f), 1.0f);
+    REQUIRE(instId != 0u);
+
+    std::vector<uint16_t> allGroups(mc.nGroups);
+    for (uint16_t gi = 0; gi < mc.nGroups; ++gi) {
+        allGroups[gi] = gi;
+    }
+
+    wowee::rendering::Camera cam;
+    cam.setAspectRatio(1280.0f / 720.0f);
+    cam.setFov(44.1f);
+
+    // 1. Out-of-group camera & character beneath the -230.86 cavern floor:
+    //    must match Native TBC 2.4.3 by culling all 12 interior groups (0 drawn).
+    const glm::vec3 outCamPos(848.0f, -805.0f, -230.86f);
+    const glm::vec3 outCharPos(848.0f, -805.0f, -232.0f);
+    CHECK_FALSE(wmo.getInteriorLocation(outCamPos).has_value());
+    cam.setPosition(outCamPos);
+    cam.setRotation(96.8f, 12.2f);
+    wmo.updateRoomVisibility(cam, &outCharPos);
+    CHECK_FALSE(wmo.anyGroupDrawn(instId, allGroups));
+
+    // 2. Inside Molten Core cavern above the floor at (849.4, -816.8, -227.8):
+    //    camera is confirmed indoors and draws Group 6 + visible portal neighbors.
+    const glm::vec3 inCamPos(849.4f, -816.8f, -227.8f);
+    const glm::vec3 inCharPos(849.4f, -816.8f, -229.4f);
+    CHECK(wmo.getInteriorLocation(inCamPos).has_value());
+    cam.setPosition(inCamPos);
+    cam.setRotation(96.8f, -3.0f);
+    wmo.updateRoomVisibility(cam, &inCharPos);
+    CHECK(wmo.anyGroupDrawn(instId, {6u}));
+    CHECK(wmo.anyGroupDrawn(instId, allGroups));
 }

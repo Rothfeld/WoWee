@@ -96,6 +96,26 @@ enum class RaySurfaceHit : uint8_t {
     return horizFrontHits >= 2 && horizFrontHits > horizBackHits;
 }
 
+/// Whether a camera whose local position falls inside an indoor-only WMO
+/// group's AABB (and outside every outdoor group's AABB) is genuinely inside
+/// the building's interior shell rather than outside beneath its floor, above
+/// its ceiling, or in an empty exterior corner of a sloped AABB (e.g. beneath
+/// `Blackrock_lower_guild`'s `-230.86` floor on WMO-only Map 409).
+[[nodiscard]] inline bool wmoCameraConfirmedIndoors(
+    bool inIndoorOnlyBox,
+    bool inAnyOutdoorBox,
+    int roomBeneath,
+    uint32_t roomBeneathFlags,
+    bool enclosedByIndoorGeometry) {
+    if (!inIndoorOnlyBox || inAnyOutdoorBox) {
+        return false;
+    }
+    if (roomBeneath >= 0) {
+        return wmoGroupIsIndoorOnly(roomBeneathFlags);
+    }
+    return enclosedByIndoorGeometry;
+}
+
 /// Prefer the nearer downward surface hit; on coplanar ties (within 1mm),
 /// prefer a front-facing floor over a back-facing ceiling/collision triangle.
 [[nodiscard]] inline bool preferDownwardSurfaceHit(

@@ -2076,9 +2076,13 @@ bool Renderer::updateSkyboxLayers() {
     };
     const auto& layers = lightingManager->getSkyboxLayers();
     const float skyDayFraction = lightingManager->getVisualTimeOfDayHours() / 24.0f;
+    evictReapedSkyModels(loadedSkyModels_, skyboxModelRenderer_->drainReapedModelIds());
 
-    // Faded out and no longer wanted.
+    // Faded out and no longer wanted, or backed by a dropped M2 instance.
     std::erase_if(skyLayers_, [&](const SkyLayerInstance& sky) {
+        if (!skyboxModelRenderer_->hasInstance(sky.instanceId)) {
+            return true;
+        }
         const bool wanted = std::any_of(layers.begin(), layers.end(), [&](const auto& l) {
             return normalized(l.path) == sky.path;
         });
@@ -2109,7 +2113,14 @@ bool Renderer::updateSkyboxLayers() {
 }
 
 uint32_t Renderer::loadSkyboxModel(const std::string& path) {
-    if (auto it = loadedSkyModels_.find(path); it != loadedSkyModels_.end()) return it->second;
+    if (!skyboxModelRenderer_) return 0;
+    evictReapedSkyModels(loadedSkyModels_, skyboxModelRenderer_->drainReapedModelIds());
+    if (const uint32_t cachedId = resolveCachedSkyModelId(
+            loadedSkyModels_, path,
+            [this](uint32_t id) { return skyboxModelRenderer_->hasModel(id); });
+        cachedId != 0) {
+        return cachedId;
+    }
     if (failedSkyboxPaths_.count(path)) return 0;
 
     std::vector<std::string> candidates{path};

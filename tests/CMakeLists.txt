@@ -3052,6 +3052,10 @@ wowee_add_test(test_sidedisc5_chapel_skybox_clouds
             ${CMAKE_SOURCE_DIR}/src/pipeline/m2_loader.cpp
             ${TEST_COMMON_SOURCES})
 
+wowee_add_test(test_sidedisc6_sun_wmo_outofgroup
+    SOURCES test_sidedisc6_sun_wmo_outofgroup.cpp
+            ${TEST_COMMON_SOURCES})
+
 # ── test_placement_transform ─────────────────────────────────
 # The model matrix a doodad or a building placement becomes. Nothing on flat
 # ground can tell the six composition orders apart, so this checks four real

@@ -20,32 +20,70 @@ namespace wowee::rendering {
 
 /// Light travel direction (pointing FROM the sun) for a given day fraction in
 /// [0, 1) in engine render space (+X = North, +Y = West, -Y = East, +Z = Up).
-/// Rises in the east (-Y) at 06:00, reaches 60 deg elevation toward north (+X)
-/// at 12:00 noon, tracks Native TBC 2.4.3's extended afternoon/dusk arc from
-/// 14:00 (~49 deg) through 17:31 (~26 deg) to sunset at 21:15 (+Y, matching
-/// LightIntBand's 21:00 sunset keyframe before 22:00 moonrise), and passes
-/// below the horizon overnight.
+///
+/// Calibrated to Native TBC 2.4.3 multi-epoch outdoor captures:
+/// - 06:00 sunrise on the SE horizon (`az = -135 deg`),
+/// - 12:00 culmination (`88 deg` elevation tilted slightly SW),
+/// - 13:57..14:05 early afternoon (`~66..68 deg` elevation in NW, matching
+///   Goldshire & Kharanos paired captures),
+/// - 17:31 late afternoon (`~27.9 deg` elevation at `az ~ +46 deg` NW, peeking
+///   above Karazhan's north-west battlements beside the `292z` main spire),
+/// - 18:17 early evening (`~19.1 deg` elevation at `az ~ +45.7 deg` NW, behind
+///   Karazhan's main spire and outside the due-west `+94.5 deg` rotunda dome view),
+/// - 20:00 sunset on the NW horizon (`az = +45 deg`, matching `starFieldTimeVisibility`
+///   nightfall so `20:12` Shimmering Flats skies have the sun below the horizon).
 inline glm::vec3 sunLightDirectionForDayFraction(float dayFraction) {
     constexpr float kPi = 3.14159265358979323846f;
-    constexpr float kTwoPi = 6.28318530717958647692f;
-    constexpr float kSinTilt = 0.5f;        // sin(30 deg)
-    constexpr float kCosTilt = 0.8660254f;  // cos(30 deg)
+    constexpr float kHalfPi = 1.57079632679489661923f;
+    constexpr float kInvSqrt2 = 0.70710678118654752440f;
+    constexpr float kMaxElevSin = 0.99939083f;  // sin(88 deg)
+    constexpr float kMaxElevCos = 0.03489950f;  // cos(88 deg)
+
     float frac = std::fmod(dayFraction, 1.0f);
     if (frac < 0.0f) frac += 1.0f;
     const float hours = frac * 24.0f;
-    float angle = frac * kTwoPi;
-    if (hours > 14.0f && hours <= 21.25f) {
-        // 14:00 (7*pi/6 = 210 deg) -> 21:15 (3*pi/2 = 270 deg)
-        const float t = (hours - 14.0f) / (21.25f - 14.0f);
-        angle = (7.0f * kPi / 6.0f) + t * (kPi / 3.0f);
-    } else if (hours > 21.25f) {
-        // 21:15 (3*pi/2 = 270 deg) -> 24:00 (2*pi = 360 deg)
-        const float t = (hours - 21.25f) / (24.0f - 21.25f);
-        angle = (1.5f * kPi) + t * (0.5f * kPi);
+
+    // theta = 0 at 06:00 sunrise, pi/2 at 12:00 culmination, pi at 20:00 sunset,
+    // and (pi..2*pi) below the horizon overnight across 20:00..06:00 (10 hours).
+    float theta = 0.0f;
+    if (hours >= 6.0f && hours <= 12.0f) {
+        theta = ((hours - 6.0f) / 6.0f) * kHalfPi;
+    } else if (hours > 12.0f && hours <= 20.0f) {
+        theta = kHalfPi + ((hours - 12.0f) / 8.0f) * kHalfPi;
+    } else if (hours > 20.0f) {
+        theta = kPi + ((hours - 20.0f) / 10.0f) * kPi;
+    } else {
+        theta = kPi + ((hours + 4.0f) / 10.0f) * kPi;
     }
-    const float c = std::cos(angle);
-    const float s = std::sin(angle);
-    return glm::vec3(c * kSinTilt, s, c * kCosTilt);
+
+    const float horizForward = -std::cos(theta);            // -1 (SE) -> +1 (NW)
+    const float horizSide = std::sin(theta) * kMaxElevCos;  // slight SW noon tilt
+    const float z = std::sin(theta) * kMaxElevSin;
+
+    const glm::vec3 toSun(
+        (horizForward - horizSide) * kInvSqrt2,
+        (horizForward + horizSide) * kInvSqrt2,
+        z);
+    return -glm::normalize(toSun);
+}
+
+/// Daytime sun disc time-of-day intensity in [0, 1] across the 06:00 sunrise ..
+/// 20:00 sunset window: smooth dawn fade-in (05:30..06:15), full strength
+/// through afternoon/early evening (06:15..19:15, including 17:31 and 18:17),
+/// smooth dusk fade-out to 20:03 sunset, and 0.0 overnight.
+inline float sunDiscTimeIntensity(float timeOfDay) {
+    float h = std::fmod(timeOfDay, 24.0f);
+    if (h < 0.0f) h += 24.0f;
+    if (h >= 5.5f && h < 6.25f) {
+        return (h - 5.5f) / 0.75f;
+    }
+    if (h >= 6.25f && h < 19.25f) {
+        return 1.0f;
+    }
+    if (h >= 19.25f && h < 20.05f) {
+        return 1.0f - (h - 19.25f) / 0.80f;
+    }
+    return 0.0f;
 }
 
 /// World-space vertex position for a celestial billboard quad tangent to the

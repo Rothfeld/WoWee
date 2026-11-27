@@ -2473,32 +2473,44 @@ bool WMORenderer::portalVisibleGroups(const WMOInstance& instance, const ModelDa
                                       const glm::vec3& camPos, const glm::vec3& viewerPos,
                                       const Frustum& frustum, const glm::mat4& viewProj, bool cullIndoors,
                                       std::unordered_set<uint32_t>& out) const {
-    if (!portalCulling || model.portals.empty() || model.portalRefs.empty()) return false;
+    if (!portalCulling) return false;
     const glm::vec3 localRealCam = glm::vec3(instance.invModelMatrix * glm::vec4(camPos, 1.0f));
     const glm::vec3 localViewer = glm::vec3(instance.invModelMatrix * glm::vec4(viewerPos, 1.0f));
-    // Indoors only when the camera's best-fit group is interior-only and
-    // no exterior group's box holds it too: interior boxes spill past
-    // their doorways, so a camera in both is standing outside.
+    // Indoors only when the camera's best-fit group is interior-only, no
+    // exterior group's box holds it too, AND surface/enclosure rays confirm
+    // the camera is inside the building's interior shell rather than beneath
+    // its floor or above its ceiling inside a sloped group AABB (e.g. beneath
+    // Molten Core's Blackrock_lower_guild floor at z = -230.86 on Map 409).
     bool cameraIndoors = false;
     const int camGroup = findContainingGroup(model, localRealCam);
     if (camGroup >= 0) {
         constexpr uint32_t WMO_GROUP_FLAG_OUTDOOR = 0x8;
-        constexpr uint32_t WMO_GROUP_FLAG_INDOOR = 0x2000;
         const uint32_t gFlags = model.groups[camGroup].groupFlags;
-        cameraIndoors = (gFlags & WMO_GROUP_FLAG_INDOOR) != 0 &&
-                        (gFlags & WMO_GROUP_FLAG_OUTDOOR) == 0;
-        for (size_t gi = 0; cameraIndoors && gi < model.groups.size(); ++gi) {
+        const bool inIndoorOnlyBox = wmoGroupIsIndoorOnly(gFlags);
+        bool inAnyOutdoorBox = false;
+        for (size_t gi = 0; inIndoorOnlyBox && !inAnyOutdoorBox && gi < model.groups.size(); ++gi) {
             if (static_cast<int>(gi) == camGroup) continue;
             const auto& g = model.groups[gi];
             if (!(g.groupFlags & WMO_GROUP_FLAG_OUTDOOR) || g.unreachable || g.antiportal) continue;
             if (glm::all(glm::greaterThanEqual(localRealCam, g.boundingBoxMin)) &&
                 glm::all(glm::lessThanEqual(localRealCam, g.boundingBoxMax))) {
-                cameraIndoors = false;
+                inAnyOutdoorBox = true;
             }
+        }
+        if (inIndoorOnlyBox && !inAnyOutdoorBox) {
+            const glm::vec3 localDown =
+                glm::normalize(glm::vec3(instance.invModelMatrix * glm::vec4(0.0f, 0.0f, -1.0f, 0.0f)));
+            const int roomBeneath = groupBeneath(model, localRealCam, localDown);
+            const uint32_t roomBeneathFlags =
+                roomBeneath >= 0 ? model.groups[static_cast<size_t>(roomBeneath)].groupFlags : 0u;
+            const bool enclosedByIndoorGeometry =
+                roomBeneath < 0 && !interiorRoomsOf(model, instance.invModelMatrix, camPos).empty();
+            cameraIndoors = wmoCameraConfirmedIndoors(
+                inIndoorOnlyBox, inAnyOutdoorBox, roomBeneath, roomBeneathFlags, enclosedByIndoorGeometry);
         }
     }
     if (cameraIndoors) {
-        if (!cullIndoors) return false;
+        if (!cullIndoors || model.portals.empty() || model.portalRefs.empty()) return false;
         // Both viewpoints seed the walk. The frustum belongs to the camera,
         // so its group is the principled start - but at a doorway or in a
         // hallway the camera and the character stand in different groups,

@@ -1,7 +1,12 @@
 #pragma once
 
 #include <algorithm>
+#include <cstdint>
 #include <memory>
+#include <string>
+#include <unordered_map>
+#include <utility>
+#include <vector>
 #include <glm/glm.hpp>
 #include <vulkan/vulkan.h>
 #include "rendering/night_sky_math.hpp"
@@ -155,6 +160,39 @@ inline bool shouldRenderProceduralCloudDome(bool isTbcExpansion,
                effectiveCloudDensity > 0.01f;
     }
     return effectiveCloudDensity > 0.01f;
+}
+
+/// Remove any cached `path -> modelId` entries whose model ID was reaped from
+/// `skyboxModelRenderer_` (via `M2Renderer::drainReapedModelIds()`).
+inline size_t evictReapedSkyModels(
+    std::unordered_map<std::string, uint32_t>& loadedSkyModels,
+    const std::vector<uint32_t>& reapedModelIds) {
+    if (reapedModelIds.empty() || loadedSkyModels.empty()) {
+        return 0;
+    }
+    return std::erase_if(loadedSkyModels, [&](const auto& kv) {
+        return std::find(reapedModelIds.begin(), reapedModelIds.end(), kv.second) !=
+               reapedModelIds.end();
+    });
+}
+
+/// Return a cached skybox `modelId` for `path` only if `hasModelFn(modelId)`
+/// confirms the model is still resident in `skyboxModelRenderer_`; otherwise
+/// erase the stale cache entry and return `0` so the caller reloads cleanly.
+template <typename HasModelPred>
+[[nodiscard]] inline uint32_t resolveCachedSkyModelId(
+    std::unordered_map<std::string, uint32_t>& loadedSkyModels,
+    const std::string& path,
+    HasModelPred&& hasModelFn) {
+    auto it = loadedSkyModels.find(path);
+    if (it == loadedSkyModels.end()) {
+        return 0;
+    }
+    if (std::forward<HasModelPred>(hasModelFn)(it->second)) {
+        return it->second;
+    }
+    loadedSkyModels.erase(it);
+    return 0;
 }
 
 /**

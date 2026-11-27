@@ -30,13 +30,17 @@ TEST_CASE("Deadwind Pass daytime sun stays visible under clear DBC overcast and 
     CHECK(daytimeCelestialVisibility(0.42f, 1.0f) < 0.75f);
 }
 
-TEST_CASE("Deadwind Pass 17:31 setting sun projects into lower-right western sky in render space",
+TEST_CASE("Deadwind Pass 17:31 setting sun projects into lower-right NW sky beside Karazhan spire",
           "[sky][sun][sidedisc2]") {
-    // At (-11145.5, -2104.41, 49.08) facing WSW/WNW (~95 deg, pitched up +38 deg
-    // to frame Karazhan's 190-yard spire), Native TBC 2.4.3 places the 17:31 sun
-    // in the lower-right sky above the battlements (u > 0.70, v > 0.60).
-    const float yawRad = glm::radians(95.0f);
-    const float pitchRad = glm::radians(38.0f);
+    // In 20261126T173105Z/original.png, the camera at (-11143.2, -2102.1, 48.6)
+    // is orbited to yaw ~78 deg, pitched up ~42 deg to frame Karazhan's 292z main
+    // spire at pixel (811, 205), placing the 17:31 NW sun (az ~46 deg, elev ~28 deg)
+    // in the lower-right sky above the battlements (u > 0.75, v > 0.60).
+    // Conversely, facing due west at yaw = 1.65 rad (~94.54 deg, pitch +23.3 deg)
+    // toward the lower rotunda dome at 18:17 puts the sun past the right viewport
+    // edge (u > 1.15) behind the main spire rather than above the dome.
+    const float yawRad = glm::radians(78.0f);
+    const float pitchRad = glm::radians(42.0f);
     const glm::vec3 forward(std::cos(yawRad) * std::cos(pitchRad),
                             std::sin(yawRad) * std::cos(pitchRad),
                             std::sin(pitchRad));
@@ -49,10 +53,22 @@ TEST_CASE("Deadwind Pass 17:31 setting sun projects into lower-right western sky
         sunLightDirectionForDayFraction((17.0f + 31.0f / 60.0f) / 24.0f));
     const SunOnScreen onScreen = sunScreenPosition(view, proj, sunDir);
     REQUIRE(onScreen.inFront);
-    CHECK(onScreen.uv.x > 0.70f);
-    CHECK(onScreen.uv.x < 1.05f);
+    CHECK(onScreen.uv.x > 0.75f);
+    CHECK(onScreen.uv.x < 1.02f);
     CHECK(onScreen.uv.y > 0.60f);
     CHECK(onScreen.uv.y < 0.95f);
+
+    const float domeYaw = 1.65f;
+    const float domePitch = glm::radians(23.3f);
+    const glm::vec3 domeFwd(std::cos(domeYaw) * std::cos(domePitch),
+                            std::sin(domeYaw) * std::cos(domePitch),
+                            std::sin(domePitch));
+    const glm::mat4 domeView = glm::lookAt(eye, eye + domeFwd, glm::vec3(0.0f, 0.0f, 1.0f));
+    const glm::vec3 sun1817 = sunDirectionFromLightDir(
+        sunLightDirectionForDayFraction((18.0f + 17.0f / 60.0f) / 24.0f));
+    const SunOnScreen domeSun = sunScreenPosition(domeView, proj, sun1817);
+    REQUIRE(domeSun.inFront);
+    CHECK(domeSun.uv.x > 1.15f);
 }
 
 TEST_CASE("underwaterSkyFogFactor obscures Stormwind Canal sky cutout while keeping Deadwind river misty ceiling",

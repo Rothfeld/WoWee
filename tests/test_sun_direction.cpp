@@ -79,41 +79,41 @@ TEST_CASE("the sun lands on screen where it is in the sky", "[sky][sun]") {
 }
 
 TEST_CASE("sun arc matches TBC 2.4.3 elevation and azimuth across the day", "[sky][sun]") {
-    // Noon: 60 deg elevation toward +X, unit length
+    // Noon: ~88 deg culmination tilted slightly SW, unit length
     const glm::vec3 noonSun = sunDirectionFromLightDir(sunLightDirectionForDayFraction(0.5f));
     CHECK(glm::length(noonSun) == Catch::Approx(1.0f).margin(1e-5f));
-    CHECK(noonSun.z == Catch::Approx(0.8660254f).margin(1e-4f));
-    CHECK(noonSun.y == Catch::Approx(0.0f).margin(1e-4f));
-    CHECK(noonSun.x > 0.0f);
+    CHECK(glm::degrees(std::asin(noonSun.z)) == Catch::Approx(88.0f).margin(0.5f));
 
-    // 13:57 (13.95h): measured Native TBC 2.4.3 in Elwynn Forest had elevation 49.2 deg
-    // and direction ~(0.407, 0.511, 0.757).
+    // 14:05 (Kharanos & Goldshire paired captures): ~66.4 deg elevation in NW (+X, +Y).
     const glm::vec3 afternoonSun = sunDirectionFromLightDir(
-        sunLightDirectionForDayFraction((13.0f + 57.0f / 60.0f) / 24.0f));
-    CHECK(glm::degrees(std::asin(afternoonSun.z)) == Catch::Approx(49.1f).margin(1.0f));
-    CHECK(afternoonSun.x > 0.35f);
-    CHECK(afternoonSun.y > 0.45f);
+        sunLightDirectionForDayFraction((14.0f + 5.0f / 60.0f) / 24.0f));
+    CHECK(glm::degrees(std::asin(afternoonSun.z)) == Catch::Approx(66.4f).margin(1.0f));
+    CHECK(afternoonSun.x > 0.24f);
+    CHECK(afternoonSun.y > 0.28f);
 
-    // 17:31 (Deadwind Pass / Karazhan late afternoon): ~26 deg elevation in WNW,
-    // visible above Karazhan's battlements; 20:24 dusk (~6 deg) before 21:15 sunset.
+    // 17:31 (Deadwind Pass / Karazhan main spire capture): ~27.9 deg elevation at az ~ +46 deg NW.
     const glm::vec3 karaLateAfternoon = sunDirectionFromLightDir(
         sunLightDirectionForDayFraction((17.0f + 31.0f / 60.0f) / 24.0f));
-    CHECK(glm::degrees(std::asin(karaLateAfternoon.z)) == Catch::Approx(26.4f).margin(2.0f));
-    CHECK(karaLateAfternoon.y > 0.80f);
+    CHECK(glm::degrees(std::asin(karaLateAfternoon.z)) == Catch::Approx(27.9f).margin(1.0f));
+    const float karaAzDeg = glm::degrees(std::atan2(karaLateAfternoon.y, karaLateAfternoon.x));
+    CHECK(karaAzDeg == Catch::Approx(46.1f).margin(2.0f));
 
-    const glm::vec3 duskSun = sunDirectionFromLightDir(
-        sunLightDirectionForDayFraction((20.0f + 24.0f / 60.0f) / 24.0f));
-    CHECK(glm::degrees(std::asin(duskSun.z)) == Catch::Approx(6.1f).margin(1.5f));
+    // 20:12 (Shimmering Flats nightfall sweep): sun has already set below the horizon.
+    const glm::vec3 postSunset = sunDirectionFromLightDir(
+        sunLightDirectionForDayFraction((20.0f + 12.0f / 60.0f) / 24.0f));
+    CHECK(postSunset.z < 0.0f);
 
-    // Sunrise (06:00) at east horizon (-Y), sunset (21:15) at west horizon (+Y),
+    // Sunrise (06:00) on SE horizon (-X, -Y), sunset (20:00) on NW horizon (+X, +Y),
     // midnight (00:00) below horizon.
     const glm::vec3 sunrise = sunDirectionFromLightDir(sunLightDirectionForDayFraction(0.25f));
-    const glm::vec3 sunset  = sunDirectionFromLightDir(sunLightDirectionForDayFraction(21.25f / 24.0f));
+    const glm::vec3 sunset  = sunDirectionFromLightDir(sunLightDirectionForDayFraction(20.0f / 24.0f));
     const glm::vec3 midnight = sunDirectionFromLightDir(sunLightDirectionForDayFraction(0.0f));
     CHECK(sunrise.z == Catch::Approx(0.0f).margin(1e-5f));
-    CHECK(sunrise.y == Catch::Approx(-1.0f).margin(1e-5f));
+    CHECK(sunrise.x == Catch::Approx(-0.70710678f).margin(1e-4f));
+    CHECK(sunrise.y == Catch::Approx(-0.70710678f).margin(1e-4f));
     CHECK(sunset.z == Catch::Approx(0.0f).margin(1e-5f));
-    CHECK(sunset.y == Catch::Approx(1.0f).margin(1e-5f));
+    CHECK(sunset.x == Catch::Approx(0.70710678f).margin(1e-4f));
+    CHECK(sunset.y == Catch::Approx(0.70710678f).margin(1e-4f));
     CHECK(midnight.z < -0.8f);
 }
 
