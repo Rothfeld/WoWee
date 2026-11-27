@@ -1696,6 +1696,26 @@ void TerrainManager::unloadTile(int x, int y) {
                 }
                 wmoRenderer->removeInstances(fit->wmoInstanceIds);
             }
+            // If WMO_MODELS was partway through uploading a model that no other
+            // finalizing tile references, cancel its partial state in WMORenderer.
+            if (fit->phase == FinalizationPhase::WMO_MODELS && wmoRenderer &&
+                fit->wmoModelIndex < fit->pending->wmoModels.size()) {
+                const uint32_t abortedModelId = fit->pending->wmoModels[fit->wmoModelIndex].modelId;
+                bool referencedElsewhere = false;
+                for (auto oit = finalizingTiles_.begin(); oit != finalizingTiles_.end(); ++oit) {
+                    if (oit == fit || !oit->pending) continue;
+                    for (size_t wi = oit->wmoModelIndex; wi < oit->pending->wmoModels.size(); ++wi) {
+                        if (oit->pending->wmoModels[wi].modelId == abortedModelId) {
+                            referencedElsewhere = true;
+                            break;
+                        }
+                    }
+                    if (referencedElsewhere) break;
+                }
+                if (!referencedElsewhere && wmoRenderer->isModelLoading(abortedModelId)) {
+                    wmoRenderer->cancelLoadingModel(abortedModelId);
+                }
+            }
             for (uint32_t uid : fit->tileUniqueIds) placedDoodadIds.erase(uid);
             for (uint32_t uid : fit->tileWmoUniqueIds) {
                 placedWmoIds.erase(uid);
@@ -1799,6 +1819,9 @@ void TerrainManager::softReset() {
     }
     pendingTiles.clear();
     finalizingTiles_.clear();
+    if (wmoRenderer) {
+        wmoRenderer->cancelAllLoadingModels();
+    }
     placedDoodadIds.clear();
     placedWmoIds.clear();
     {

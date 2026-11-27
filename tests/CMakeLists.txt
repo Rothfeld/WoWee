@@ -3333,6 +3333,7 @@ if(NOT ANDROID)
     # Same complete client objects as game_replay: never replace client classes
     # with test implementations or copy an input-routing branch into a seam.
     add_executable(test_input_integration test_input_integration.cpp test_addon_saved_variables.cpp
+        test_wmo_stream_crash.cpp
         "$<FILTER:$<TARGET_OBJECTS:wowee>,EXCLUDE,/main([.]cpp)?[.]o(bj)?$>")
     target_include_directories(test_input_integration PRIVATE ${TEST_INCLUDE_DIRS}
         $<TARGET_PROPERTY:wowee,INCLUDE_DIRECTORIES>)

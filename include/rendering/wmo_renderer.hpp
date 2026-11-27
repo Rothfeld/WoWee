@@ -105,6 +105,13 @@ public:
      * @param id WMO model identifier
      */
     bool isModelLoaded(uint32_t id) const;
+    /// Whether this model is currently partway through an incremental upload in loadingModels_.
+    [[nodiscard]] bool isModelLoading(uint32_t id) const {
+        return loadingModels_.find(id) != loadingModels_.end();
+    }
+    [[nodiscard]] size_t getLoadingModelCount() const { return loadingModels_.size(); }
+    void cancelLoadingModel(uint32_t id);
+    void cancelAllLoadingModels();
     /// Whether this instance's model has finished uploading its groups, and so
     /// whether a failed floor query means "nothing under you" rather than "not
     /// loaded yet". The two need telling apart: a rider held in place waiting
@@ -826,6 +833,8 @@ private:
         // rather than the decode, which the worker already did.
         size_t nextTextureIndex = 0;
         size_t nextGroupIndex = 0;
+        size_t expectedTextureCount = 0;
+        size_t expectedGroupCount = 0;
         uint32_t loadedGroups = 0;
 
         [[nodiscard]] uint32_t getTotalTriangles() const {
@@ -1076,12 +1085,19 @@ private:
         uint64_t lastUse = 0;
     };
     std::unordered_map<std::string, TextureCacheEntry> textureCache;
+    struct LiveTextureMeta {
+        VkTexture* normalHeightMap = nullptr;
+        float heightMapVariance = 0.0f;
+    };
+    std::unordered_map<const VkTexture*, LiveTextureMeta> liveTextureByPtr_;
     size_t textureCacheBytes_ = 0;
     uint64_t textureCacheCounter_ = 0;
     size_t textureCacheBudgetBytes_ = 8192ull * 1024 * 1024;  // 8 GB default, overridden at init
     std::unordered_set<std::string> failedTextureCache_;
     std::unordered_map<std::string, uint64_t> failedTextureRetryAt_;
     std::unordered_set<std::string> loggedTextureLoadFails_;
+    std::unordered_set<uint32_t> fallbackRetryModels_;
+    bool fallbackRetryModelsCapped_ = false;
     uint64_t textureLookupSerial_ = 0;
     uint32_t textureBudgetRejectWarnings_ = 0;
 

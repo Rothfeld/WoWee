@@ -385,6 +385,10 @@ void WMORenderer::shutdown() {
     // - and nothing to call it on either, which is what this used to try.
     if (!vkCtx_) {
         loadedModels.clear();
+        loadingModels_.clear();
+        liveTextureByPtr_.clear();
+        fallbackRetryModels_.clear();
+        fallbackRetryModelsCapped_ = false;
         instances.clear();
         spatialGrid.clear();
         instanceIndexById.clear();
@@ -397,9 +401,14 @@ void WMORenderer::shutdown() {
 
     vkDeviceWaitIdle(device);
 
-    // Free all GPU resources for loaded models
+    // Free all GPU resources for loaded models and in-progress incremental models
     for (auto& [id, model] : loadedModels) {
         releaseRtModel(id);
+        for (auto& group : model.groups) {
+            destroyGroupGPU(group);
+        }
+    }
+    for (auto& [id, model] : loadingModels_) {
         for (auto& group : model.groups) {
             destroyGroupGPU(group);
         }
@@ -410,12 +419,15 @@ void WMORenderer::shutdown() {
         if (entry.texture) entry.texture->destroy(device, allocator);
         if (entry.normalHeightMap) entry.normalHeightMap->destroy(device, allocator);
     }
+    liveTextureByPtr_.clear();
     textureCache.clear();
     textureCacheBytes_ = 0;
     textureCacheCounter_ = 0;
     failedTextureCache_.clear();
     failedTextureRetryAt_.clear();
     loggedTextureLoadFails_.clear();
+    fallbackRetryModels_.clear();
+    fallbackRetryModelsCapped_ = false;
     textureLookupSerial_ = 0;
     textureBudgetRejectWarnings_ = 0;
 
@@ -424,6 +436,7 @@ void WMORenderer::shutdown() {
     if (flatNormalTexture_) { flatNormalTexture_->destroy(device, allocator); flatNormalTexture_.reset(); }
 
     loadedModels.clear();
+    loadingModels_.clear();
     instances.clear();
     spatialGrid.clear();
     instanceIndexById.clear();
@@ -479,9 +492,10 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
         return ModelLoadResult::Failed;
     }
 
-    // Check if already loaded
+    // Check if already loaded (unless an incremental fallback-texture reload is already in flight)
+    const bool alreadyReloading = (loadingModels_.find(id) != loadingModels_.end());
     auto existingIt = loadedModels.find(id);
-    if (existingIt != loadedModels.end()) {
+    if (!alreadyReloading && existingIt != loadedModels.end()) {
         // If a model was first loaded while texture resolution failed (or before
         // assets were fully available), it can remain permanently white because
         // merged batches cache texture pointers at load time. Do a one-time reload for
@@ -498,20 +512,19 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
             // fallback textures. Cap the set to avoid unbounded memory growth in worlds
             // with many unique WMO groups (e.g. Dalaran has 2000+).
             static constexpr size_t kMaxRetryTracked = 8192;
-            static std::unordered_set<uint32_t> retryReloadedModels;
-            static bool retryReloadedModelsCapped = false;
-            if (retryReloadedModels.size() > kMaxRetryTracked) {
-                retryReloadedModels.clear();
-                if (!retryReloadedModelsCapped) {
+            if (fallbackRetryModels_.size() > kMaxRetryTracked) {
+                fallbackRetryModels_.clear();
+                if (!fallbackRetryModelsCapped_) {
                     core::Logger::getInstance().warning("WMO fallback-retry set exceeded ", kMaxRetryTracked, " entries; reset");
-                    retryReloadedModelsCapped = true;
+                    fallbackRetryModelsCapped_ = true;
                 }
             }
-            if (!hasResolvedTexture && retryReloadedModels.insert(id).second) {
+            if (!hasResolvedTexture && fallbackRetryModels_.insert(id).second) {
                 core::Logger::getInstance().warning(
                     "WMO model ", id,
                     " has only fallback textures; forcing one-time reload");
-                unloadModel(id);
+                // Keep existingIt in loadedModels until the replacement finishes
+                // uploading so active WMOInstances never observe a missing model.
             } else {
                 return ModelLoadResult::Complete;
             }
@@ -519,7 +532,7 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
             return ModelLoadResult::Complete;
         }
     }
-    if (loadedModels.size() >= modelCacheLimit_) {
+    if (existingIt == loadedModels.end() && loadedModels.size() >= modelCacheLimit_) {
         if (modelLimitRejectWarnings_ < 3) {
             core::Logger::getInstance().warning("WMO model cache full (",
                                                 loadedModels.size(), "/", modelCacheLimit_,
@@ -533,11 +546,44 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
                                       model.textures.size(), " textures...");
 
     // The accumulating model lives across calls, so a resumed load picks up its
-    // textures, materials and the groups already uploaded.
+    // textures, materials and the groups already uploaded. Validate that any
+    // in-progress state still matches the incoming model and live textureCache.
     ModelData& modelData = loadingModels_[id];
+    const bool hasPartialState = modelData.setupDone ||
+                                 modelData.nextTextureIndex > 0 ||
+                                 modelData.nextGroupIndex > 0 ||
+                                 !modelData.groups.empty() ||
+                                 !modelData.textures.empty();
+    if (hasPartialState) {
+        bool stalePartial =
+            modelData.expectedGroupCount != model.groups.size() ||
+            modelData.expectedTextureCount != model.textures.size() ||
+            (!modelData.sourcePath.empty() && !model.sourcePath.empty() &&
+             modelData.sourcePath != model.sourcePath);
+        if (!stalePartial && vkCtx_) {
+            for (const VkTexture* tex : modelData.textures) {
+                if (tex != nullptr && tex != whiteTexture_.get() &&
+                    liveTextureByPtr_.find(tex) == liveTextureByPtr_.end()) {
+                    stalePartial = true;
+                    break;
+                }
+            }
+        }
+        if (stalePartial) {
+            core::Logger::getInstance().warning(
+                "WMO model ", id,
+                " had stale or mismatched incremental state; restarting upload from scratch");
+            for (auto& g : modelData.groups) {
+                destroyGroupGPU(g, /*defer=*/true);
+            }
+            modelData = ModelData{};
+        }
+    }
     modelData.id = id;
     modelData.rootId = model.rootId;
     modelData.sourcePath = model.sourcePath;
+    modelData.expectedTextureCount = model.textures.size();
+    modelData.expectedGroupCount = model.groups.size();
     modelData.boundingBoxMin = model.boundingBoxMin;
     modelData.boundingBoxMax = model.boundingBoxMax;
     modelData.wmoAmbientColor = model.ambientColor;
@@ -835,14 +881,17 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
                 mb.lightingMode = batch.lightingMode;
                 mb.emissiveLevel = emissiveLevel;
                 mb.sidnColor = sidnColor;
-                // Look up normal/height map from texture cache
+                // Look up normal/height map from live texture index
                 if (hasTexture && tex != whiteTexture_.get()) {
-                    for (const auto& [cacheKey, cacheEntry] : textureCache) {
-                        if (cacheEntry.texture.get() == tex) {
-                            mb.normalHeightMap = cacheEntry.normalHeightMap.get();
-                            mb.heightMapVariance = cacheEntry.heightMapVariance;
-                            break;
-                        }
+                    if (auto liveIt = liveTextureByPtr_.find(tex); liveIt != liveTextureByPtr_.end()) {
+                        mb.normalHeightMap = liveIt->second.normalHeightMap;
+                        mb.heightMapVariance = liveIt->second.heightMapVariance;
+                    } else {
+                        // Defensive fallback if texture pointer is not in liveTextureByPtr_
+                        tex = whiteTexture_.get();
+                        mb.texture = tex;
+                        mb.hasTexture = false;
+                        hasTexture = false;
                     }
                 }
             }
@@ -914,7 +963,7 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
             VkTexture* texToUse = pick(mb.texture, whiteTexture_.get());
             VkTexture* nhMap = pick(mb.normalHeightMap, flatNormalTexture_.get());
             VkTexture* envTexToUse = pick(mb.envTexture, whiteTexture_.get());
-            if ((!texToUse || !nhMap || !envTexToUse) && mb.materialSet) {
+            if ((!texToUse || !nhMap || !envTexToUse || mb.materialUBO == VK_NULL_HANDLE) && mb.materialSet) {
                 vkFreeDescriptorSets(vkCtx_->getDevice(), materialDescPool_, 1,
                                      &mb.materialSet);
                 mb.materialSet = VK_NULL_HANDLE;
@@ -1057,6 +1106,12 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
     // Read before the move: the log line below reports what was stored, and
     // modelData no longer owns it afterwards.
     const uint32_t loadedGroupCount = modelData.loadedGroups;
+    if (auto replacedIt = loadedModels.find(id); replacedIt != loadedModels.end()) {
+        releaseRtModel(id);
+        for (auto& oldGroup : replacedIt->second.groups) {
+            destroyGroupGPU(oldGroup, /*defer=*/true);
+        }
+    }
     registerRtModel(id, modelData);
     loadedModels[id] = std::move(modelData);
     loadingModels_.erase(id);
@@ -1066,6 +1121,24 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
 
 bool WMORenderer::isModelLoaded(uint32_t id) const {
     return loadedModels.find(id) != loadedModels.end();
+}
+
+void WMORenderer::cancelLoadingModel(uint32_t id) {
+    auto it = loadingModels_.find(id);
+    if (it == loadingModels_.end()) return;
+    for (auto& group : it->second.groups) {
+        destroyGroupGPU(group, /*defer=*/true);
+    }
+    loadingModels_.erase(it);
+}
+
+void WMORenderer::cancelAllLoadingModels() {
+    for (auto& [id, model] : loadingModels_) {
+        for (auto& group : model.groups) {
+            destroyGroupGPU(group, /*defer=*/true);
+        }
+    }
+    loadingModels_.clear();
 }
 
 bool WMORenderer::instanceHasCollisionGeometry(uint32_t instanceId) const {
@@ -1078,6 +1151,7 @@ bool WMORenderer::instanceHasCollisionGeometry(uint32_t instanceId) const {
 }
 
 void WMORenderer::unloadModel(uint32_t id) {
+    cancelLoadingModel(id);
     auto it = loadedModels.find(id);
     if (it == loadedModels.end()) {
         return;
@@ -1406,9 +1480,19 @@ void WMORenderer::clearAll() {
         VmaAllocator allocator = vkCtx_->getAllocator();
         vkDeviceWaitIdle(device);
 
-        // Free GPU resources for loaded models
+        // Drain any deferred destroyGroupGPU lambdas from earlier unloadModel() calls
+        // BEFORE resetting materialDescPool_, so stale lambdas never call
+        // vkFreeDescriptorSets on handles invalidated and recycled by pool reset.
+        vkCtx_->flushDeferredCleanup();
+
+        // Free GPU resources for loaded models and in-progress incremental models
         for (auto& [id, model] : loadedModels) {
             releaseRtModel(id);
+            for (auto& group : model.groups) {
+                destroyGroupGPU(group);
+            }
+        }
+        for (auto& [id, model] : loadingModels_) {
             for (auto& group : model.groups) {
                 destroyGroupGPU(group);
             }
@@ -1427,12 +1511,16 @@ void WMORenderer::clearAll() {
     }
 
     loadedModels.clear();
+    loadingModels_.clear();
+    liveTextureByPtr_.clear();
     textureCache.clear();
     textureCacheBytes_ = 0;
     textureCacheCounter_ = 0;
     failedTextureCache_.clear();
     failedTextureRetryAt_.clear();
     loggedTextureLoadFails_.clear();
+    fallbackRetryModels_.clear();
+    fallbackRetryModelsCapped_ = false;
     textureLookupSerial_ = 0;
     textureBudgetRejectWarnings_ = 0;
     precomputedFloorGrid.clear();
@@ -3138,23 +3226,27 @@ VkTexture* WMORenderer::loadTexture(const std::string& path) {
     }
 
     // Cache it
+    const std::string& cacheKey = !resolvedKey.empty() ? resolvedKey : key;
+    if (auto existingCacheIt = textureCache.find(cacheKey); existingCacheIt != textureCache.end()) {
+        existingCacheIt->second.lastUse = ++textureCacheCounter_;
+        return existingCacheIt->second.texture.get();
+    }
     TextureCacheEntry e;
     VkTexture* rawPtr = texture.get();
+    VkTexture* rawNhPtr = nhMap.get();
     e.approxBytes = approxBytes;
     e.lastUse = ++textureCacheCounter_;
     e.texture = std::move(texture);
     e.normalHeightMap = std::move(nhMap);
     e.heightMapVariance = nhVariance;
     textureCacheBytes_ += e.approxBytes;
-    if (!resolvedKey.empty()) {
-        textureCache[resolvedKey] = std::move(e);
-        failedTextureCache_.erase(resolvedKey);
-        failedTextureRetryAt_.erase(resolvedKey);
-    } else {
-        textureCache[key] = std::move(e);
-        failedTextureCache_.erase(key);
-        failedTextureRetryAt_.erase(key);
-    }
+    textureCache[cacheKey] = std::move(e);
+    liveTextureByPtr_[rawPtr] = LiveTextureMeta{
+        .normalHeightMap = rawNhPtr,
+        .heightMapVariance = nhVariance,
+    };
+    failedTextureCache_.erase(cacheKey);
+    failedTextureRetryAt_.erase(cacheKey);
     core::Logger::getInstance().debug("WMO: Loaded texture: ", path, " (", blp.width, "x", blp.height, ")");
 
     return rawPtr;
@@ -4504,7 +4596,9 @@ std::optional<WMOFogSample> WMORenderer::getFog(
     const auto instance = std::find_if(instances.begin(), instances.end(),
         [&](const auto& value) { return value.id == location->instanceId; });
     assert(instance != instances.end());
-    const auto& model = loadedModels.at(instance->modelId);
+    const auto modelIt = loadedModels.find(instance->modelId);
+    if (modelIt == loadedModels.end()) return std::nullopt;
+    const auto& model = modelIt->second;
     const auto& group = model.groups[location->groupIndex];
     // An indoor group with MOGP 0x40 is lit as outdoors, and fogged as
     // outdoors too: Light.dbc's fog, not MFOG. Black Temple's courtyard
@@ -4671,7 +4765,9 @@ std::optional<WMORenderer::SealedInterior> WMORenderer::findSealedInterior(const
     const auto instance = std::find_if(instances.begin(), instances.end(),
         [&](const auto& value) { return value.id == location->instanceId; });
     assert(instance != instances.end());
-    const auto& model = loadedModels.at(instance->modelId);
+    const auto modelIt = loadedModels.find(instance->modelId);
+    if (modelIt == loadedModels.end()) return std::nullopt;
+    const auto& model = modelIt->second;
     constexpr uint32_t kOutdoor = 0x8;
     std::vector<uint32_t> reached{location->groupIndex};
     std::vector<bool> seen(model.groups.size(), false);
@@ -4865,7 +4961,9 @@ std::vector<WMORenderer::InteriorMapGroup> WMORenderer::getInteriorMapGroups(con
     const auto instance = std::find_if(instances.begin(), instances.end(),
         [&](const auto& value) { return value.id == location.instanceId; });
     assert(instance != instances.end());
-    const auto& model = loadedModels.at(instance->modelId);
+    const auto modelIt = loadedModels.find(instance->modelId);
+    if (modelIt == loadedModels.end()) return {};
+    const auto& model = modelIt->second;
     std::vector<ui::InteriorMinimapGroupCandidate> candidates;
     candidates.reserve(model.groups.size());
     for (size_t index = 0; index < model.groups.size(); ++index) {
