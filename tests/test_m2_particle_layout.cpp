@@ -1652,3 +1652,57 @@ TEST_CASE("Scaled Core Hound and Magmadar 0x401 drool emitters keep world-yard g
         CHECK(gravDir == glm::vec3(0.0f, 0.0f, -1.0f));
     }
 }
+
+TEST_CASE("Attached NoTrail weapon enchant ItemVisuals span scaled prong bones at 1.0x sprite size",
+          "[m2][particle][tbc]") {
+    using namespace wowee::rendering;
+
+    // Majordomo Executus (12018, SalamanderMale.m2 scale 4.0) wields Item 12063 ->
+    // IDI 22031 Polearm_2H_Trident_C_01.m2 (bones 1..4 scale 1.8 -> 7.2x attachment matrix,
+    // opaque bronze prong front face at +0.019 * 4.0 = +0.076 yd) with ItemVisual 25 ->
+    // Spells\Enchantments\RedFlame_Low.m2 (flags 0x19 = OwnColor | TravelsInYards | NoTrail,
+    // local pos (-0.139, 0, 0), plane area 0.0556 x 0.0556, speed 0.278 yd/s over 1.0 s).
+    const auto redFlame = wowee::pipeline::M2Loader::load(
+        wowee::test::readTbcData("spells/enchantments/redflame_low.m2"));
+    REQUIRE(redFlame.particleEmitters.size() == 1);
+    const auto& em = redFlame.particleEmitters[0];
+    CHECK(em.flags == 0x19u);
+    CHECK((em.flags & kParticleBoneFrame) != 0u);
+    CHECK((em.flags & kParticleScaledSprite) == 0u);
+    CHECK(em.position.x == Catch::Approx(-0.138889f).margin(1e-3f));
+
+    const float spd = m2_track::sampleFloat(em.emissionSpeed, 0, 0.0f, 0.0f,
+                                            redFlame.globalSequenceDurations, 0.0f);
+    const float areaW = m2_track::sampleFloat(em.emissionAreaWidth, 0, 0.0f, 0.0f,
+                                              redFlame.globalSequenceDurations, 0.0f);
+    CHECK(spd == Catch::Approx(0.277778f).margin(1e-3f));
+    CHECK(areaW == Catch::Approx(0.055556f).margin(1e-3f));
+
+    // In bone-frame (NoTrail), particleRenderTransform preserves full model * bone (7.2x):
+    // - +/-0.0278 * 7.2 = +/-0.200 yd plane jitter clears the +0.076 yd bronze prong face;
+    // - (-0.139 + 0.278 * age) * 7.2 sweeps [-1.00 .. +1.00] yd along each 2.0 yd prong;
+    // - particleSpriteHalfWidth(0x19, 0.2778f, ...) keeps authored 1.0x sprite size.
+    const glm::vec3 prongWorld(10.0f, 20.0f, 30.0f);
+    const glm::mat4 weaponAttachModel =
+        glm::scale(glm::translate(glm::mat4(1.0f), prongWorld), glm::vec3(7.2f));
+    const glm::mat4 enchantBone =
+        glm::translate(glm::mat4(1.0f), em.position) *
+        glm::rotate(glm::mat4(1.0f), glm::half_pi<float>(), glm::vec3(0.0f, 1.0f, 0.0f)) *
+        glm::translate(glm::mat4(1.0f), -em.position);
+
+    const glm::mat4 renderEnchant =
+        particleRenderTransform(em.flags, weaponAttachModel, enchantBone);
+    const glm::vec3 midAgeLocal = em.position + glm::vec3(0.0f, 0.0f, 0.5f * spd);
+    const glm::vec3 midAgeWorld = glm::vec3(renderEnchant * glm::vec4(midAgeLocal, 1.0f));
+    CHECK(midAgeWorld.x == Catch::Approx(prongWorld.x).margin(1e-3f));
+    CHECK(midAgeWorld.y == Catch::Approx(prongWorld.y).margin(1e-3f));
+    CHECK(midAgeWorld.z == Catch::Approx(prongWorld.z).margin(1e-3f));
+
+    const glm::vec3 maxFaceJitterLocal = midAgeLocal + glm::vec3(0.0f, 0.5f * areaW, 0.0f);
+    const glm::vec3 maxFaceJitterWorld = glm::vec3(renderEnchant * glm::vec4(maxFaceJitterLocal, 1.0f));
+    CHECK((maxFaceJitterWorld.y - prongWorld.y) == Catch::Approx(0.20f).margin(2e-3f));
+    CHECK((maxFaceJitterWorld.y - prongWorld.y) > 0.076f);
+
+    CHECK(particleSpriteHalfWidth(em.flags, 0.2778f, 7.2f, false) == Catch::Approx(0.2778f));
+    CHECK(particleSpriteHalfWidth(em.flags, 0.2778f, 1.0f, false) == Catch::Approx(0.2778f));
+}

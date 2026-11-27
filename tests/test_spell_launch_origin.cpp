@@ -1,7 +1,9 @@
 #include <catch_amalgamated.hpp>
 #include "pipeline/m2_loader.hpp"
 #include "rendering/missile_homing.hpp"
+#include "rendering/quest_marker_renderer.hpp"
 #include "rendering/spell_launch_origin.hpp"
+#include "rendering/spell_visual_kit_policy.hpp"
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -480,4 +482,83 @@ TEST_CASE("beamAttachmentFallbacks preserves Base (19) at feet and falls Breath/
     CHECK(handRightFb.ids[1] == kAttachSpellRightHandId);
     CHECK(handRightFb.ids[2] == kAttachChestId);
     CHECK(handRightFb.ids[3] == kAttachChestBloodFrontId);
+}
+
+TEST_CASE("CastKit breath release-event gating and CastKit-to-StateKit same-model handoff",
+          "[spell_origin][spell_visual]") {
+    constexpr uint32_t kNoAnim = 0xffffffffu;
+
+    // Breath (17) with a valid cast animation waits for the caster's M2 release event;
+    // Special1..3 (23..25) wait on directed cast/spit animations (53, 64, 81, 183, 184)
+    // while leaving omni forehead effects (Draenei Gift of the Naaru, anim 54 on 23) immediate;
+    // spell hands (21, 22) and base/chest (19, 34) never delay CastKit bursts.
+    CHECK(castSlotWaitsForSpellReleaseEvent(kAttachBreathId, 53u, kNoAnim));
+    CHECK(castSlotWaitsForSpellReleaseEvent(kAttachBreathId, 54u, kNoAnim));
+    CHECK_FALSE(castSlotWaitsForSpellReleaseEvent(kAttachBreathId, kNoAnim, kNoAnim));
+    CHECK(castSlotWaitsForSpellReleaseEvent(kAttachSpecial1Id, 53u, kNoAnim));
+    CHECK(castSlotWaitsForSpellReleaseEvent(kAttachSpecial1Id, 183u, kNoAnim));
+    CHECK_FALSE(castSlotWaitsForSpellReleaseEvent(kAttachSpecial1Id, 54u, kNoAnim));
+    CHECK_FALSE(castSlotWaitsForSpellReleaseEvent(kAttachSpellLeftHandId, 53u, kNoAnim));
+    CHECK_FALSE(castSlotWaitsForSpellReleaseEvent(kAttachBaseId, 126u, kNoAnim));
+
+    // Whirlwind 13736 (SpellVisual 8377): CastKit 369 and StateKit 370 both spawn
+    // Spells\Whirlwind_State_Base.m2 (modelId 999005) at Base (19) on the same caster.
+    CHECK(stateKitReplacesActiveCast(223u, 19u, 999005u, /*existingIsCast=*/true,
+                                     /*existingDecaying=*/false, 223u, 19u, 999005u));
+    CHECK(activeStateSuppressesDuplicateCast(223u, 19u, 999005u, /*existingIsAuraState=*/true,
+                                             /*existingDecaying=*/false, 223u, 19u, 999005u));
+    // Distinct models, attachments, or units never suppress each other.
+    CHECK_FALSE(stateKitReplacesActiveCast(223u, 19u, 999005u, true, false, 223u, 19u, 999006u));
+    CHECK_FALSE(stateKitReplacesActiveCast(223u, 19u, 999005u, true, false, 223u, 34u, 999005u));
+    CHECK_FALSE(stateKitReplacesActiveCast(223u, 19u, 999005u, false, false, 223u, 19u, 999005u));
+    CHECK_FALSE(activeStateSuppressesDuplicateCast(223u, 19u, 999005u, true, /*decaying=*/true,
+                                                   223u, 19u, 999005u));
+
+    const char* envTbc = std::getenv("WOWEE_TBC_DATA_DIR");
+    const std::filesystem::path tbcRoot = envTbc && *envTbc
+        ? std::filesystem::path(envTbc)
+        : std::filesystem::path("/workspace/azerothcore/client/wowee-data/expansions/tbc");
+    if (std::filesystem::exists(tbcRoot / "creature/drake/orcdrakerider.m2")) {
+        // UBRS Gyth (OrcDrakeRider.m2, displayId 9723) and Drake.m2 (9806):
+        // 53:SpellCastDirected cocks the neck right during [0..200 ms] and fires $CSR at 234 ms.
+        for (const char* rel : {
+                 "creature/drake/orcdrakerider.m2",
+                 "creature/drake/drake.m2",
+             }) {
+            const auto bytes = readFileBytes(tbcRoot / rel);
+            REQUIRE(!bytes.empty());
+            const M2Model drake = M2Loader::load(bytes);
+            const auto* ev = findSequenceSpellReleaseEvent(&drake, 53u);
+            REQUIRE(ev != nullptr);
+            CHECK(ev->timeMs == 234u);
+        }
+        // Dragon.m2 (Onyxia / Nefarian / Chromaggus): 53:SpellCastDirected fires $CST at 500 ms.
+        const auto dragonBytes = readFileBytes(tbcRoot / "creature/dragon/dragon.m2");
+        REQUIRE(!dragonBytes.empty());
+        const M2Model dragon = M2Loader::load(dragonBytes);
+        const auto* dragonEv = findSequenceSpellReleaseEvent(&dragon, 53u);
+        REQUIRE(dragonEv != nullptr);
+        CHECK(dragonEv->timeMs == 500u);
+
+        // TalkToMe*.m2 quest markers author Stand (0, z ~ 0.00 yd) and StandHigh (190, z ~ +0.517 yd).
+        for (const char* rel : {
+                 "interface/buttons/talktome.m2",
+                 "interface/buttons/talktomequestionmark.m2",
+                 "interface/buttons/talktomequestion_grey.m2",
+                 "interface/buttons/talktomegrey.m2",
+                 "interface/buttons/talktomeblue.m2",
+                 "interface/buttons/talktomequestion_ltblue.m2",
+             }) {
+            const auto qBytes = readFileBytes(tbcRoot / rel);
+            REQUIRE(!qBytes.empty());
+            const M2Model qm = M2Loader::load(qBytes);
+            REQUIRE(qm.sequences.size() >= 2);
+            CHECK(qm.sequences[0].id == kQuestMarkerAnimStand);
+            CHECK(qm.sequences[1].id == kQuestMarkerAnimStandHigh);
+            REQUIRE(!qm.bones.empty());
+            REQUIRE(qm.bones[0].translation.sequences.size() >= 2);
+            CHECK(qm.bones[0].translation.sequences[0].vec3Values.at(0).z == Catch::Approx(0.0f).margin(0.02f));
+            CHECK(qm.bones[0].translation.sequences[1].vec3Values.at(0).z == Catch::Approx(0.517f).margin(0.02f));
+        }
+    }
 }

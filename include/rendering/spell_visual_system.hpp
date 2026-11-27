@@ -394,6 +394,8 @@ private:
         bool fadeOutOnExpire = false;// PersistentAreaKit M2 without Decay (159) fades over 1.0 s
         uint32_t kitId = 0;  // SpellVisualKit ID that spawned this instance
         bool deathPersistent = false;  // Spell.dbc AttributesEx3 & SPELL_ATTR_EX3_DEATH_PERSISTENT
+        uint32_t modelId = 0;  // SpellVisualSystem loaded M2 model ID
+        float startDelay = 0.0f;  // Release-event delay (seconds) while instanceId == 0
     };
 
     struct PhysicalProjectile {

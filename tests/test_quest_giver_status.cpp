@@ -276,3 +276,28 @@ TEST_CASE("GameObject quest marker anchor places marker above visual bounding bo
     CHECK(height == 0.0f);
     CHECK(pos.z == Catch::Approx(5.0f));
 }
+
+TEST_CASE("Unit quest markers select StandHigh (190) when plain world name is drawn and Stand (0) otherwise",
+          "[questgiver][tbc]") {
+    using wowee::rendering::kQuestMarkerAnimStand;
+    using wowee::rendering::kQuestMarkerAnimStandHigh;
+    using wowee::rendering::selectQuestMarkerAnimation;
+
+    // All NPC quest marker types (0 !, 1 ?, 2 grey ?, 4 blue !, 5 light-blue ?)
+    // play StandHigh (190) when the unit's overhead name is drawn (e.g. Stratholme
+    // Alonsus Chapel Aurius 10917 with UnitNameNPC=1 or targeted), and Stand (0)
+    // when hidden or covered by a nameplate.
+    for (int markerType : {0, 1, 2, 4, 5}) {
+        CHECK(selectQuestMarkerAnimation(markerType, /*isUnit=*/true, /*unitWorldNameVisible=*/true)
+              == kQuestMarkerAnimStandHigh);
+        CHECK(selectQuestMarkerAnimation(markerType, /*isUnit=*/true, /*unitWorldNameVisible=*/false)
+              == kQuestMarkerAnimStand);
+        // GameObject quest markers always play Stand (0).
+        CHECK(selectQuestMarkerAnimation(markerType, /*isUnit=*/false, /*unitWorldNameVisible=*/true)
+              == kQuestMarkerAnimStand);
+    }
+    // Flight discovery (markerType 3, TalkToMeGreen.m2) already receives its +0.5 yd
+    // lift at the caller's anchor and stays on Stand (0).
+    CHECK(selectQuestMarkerAnimation(3, /*isUnit=*/true, /*unitWorldNameVisible=*/true)
+          == kQuestMarkerAnimStand);
+}

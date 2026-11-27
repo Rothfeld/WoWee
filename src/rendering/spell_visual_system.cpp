@@ -762,6 +762,17 @@ float SpellVisualSystem::spawnKitEffects(uint32_t kitId, const glm::vec3& worldP
     }
     float longest = 0.0f;
     auto* characters = renderer_ ? renderer_->getCharacterRenderer() : nullptr;
+    uint32_t castAnim = kNoAnimation;
+    const pipeline::M2Model::SpellReleaseEvent* releaseEv = nullptr;
+    if (stage == KitStage::Cast && attachInstanceId != 0 && characters) {
+        if (const auto animIt = kitAnimations_.find(kitId); animIt != kitAnimations_.end()) {
+            castAnim = animIt->second;
+        }
+        if (castAnim != kNoAnimation) {
+            const auto* casterModel = characters->getInstanceModelData(attachInstanceId);
+            releaseEv = findSequenceSpellReleaseEvent(casterModel, castAnim);
+        }
+    }
     for (const auto& effect : effects->second) {
         const uint32_t modelId = loadSpellModel(effect.path);
         if (modelId == 0) continue;
@@ -798,7 +809,38 @@ float SpellVisualSystem::spawnKitEffects(uint32_t kitId, const glm::vec3& worldP
                 attachment = 0;
             }
         }
+        if (stage == KitStage::Cast && attachInstanceId != 0) {
+            const bool alreadyInState = std::any_of(
+                activeSpellVisuals_.begin(), activeSpellVisuals_.end(),
+                [&](const SpellVisualInstance& sv) {
+                    return activeStateSuppressesDuplicateCast(
+                        sv.attachInstanceId, sv.attachmentId, sv.modelId,
+                        sv.auraVisualId != 0, sv.decaying,
+                        attachInstanceId, attachment, modelId);
+                });
+            if (alreadyInState) {
+                LOG_DEBUG("SpellVisual: kit=", kitId, " model=", effect.path,
+                          " already active via StateKit on instance ", attachInstanceId, "; skipping duplicate CastKit");
+                continue;
+            }
+        }
         const bool breath = slotFollowsBone(attachment);
+        const float startDelaySec =
+            (stage == KitStage::Cast && releaseEv && releaseEv->timeMs > 0 &&
+             castSlotWaitsForSpellReleaseEvent(attachment, castAnim, kNoAnimation))
+                ? (static_cast<float>(releaseEv->timeMs) / 1000.0f)
+                : 0.0f;
+        if (startDelaySec > 0.0f) {
+            longest = std::max(longest, startDelaySec + (duration > 0.0f ? duration : 1.0f));
+            activeSpellVisuals_.push_back({.instanceId = 0, .elapsed = 0.0f, .duration = duration,
+                .isPrecast = false, .attachmentId = attachment, .attachInstanceId = attachInstanceId,
+                .orientWithAttachment = breath, .effectScale = effect.scale, .isCast = true,
+                .kitId = kitId, .deathPersistent = deathPersistent, .modelId = modelId,
+                .startDelay = startDelaySec});
+            LOG_INFO("SpellVisual: kit=", kitId, " slot attachment=", effect.attachment, " used=", attachment,
+                     " deferred ", startDelaySec, "s to release event, model=", effect.path);
+            continue;
+        }
         const glm::vec3 spawn = attachment ? glm::vec3(attachMat[3]) : worldPosition;
         const uint32_t instanceId = breath
             ? m2Renderer_->createInstanceWithMatrix(modelId, glm::scale(attachMat, glm::vec3(effect.scale)), spawn,
@@ -856,7 +898,8 @@ float SpellVisualSystem::spawnKitEffects(uint32_t kitId, const glm::vec3& worldP
             .isPrecast = stage == KitStage::Precast, .attachmentId = attachment, .attachInstanceId = attachInstanceId,
             .orientWithAttachment = breath, .effectScale = effect.scale, .isCast = stage == KitStage::Cast,
             .precastSpellId = stage == KitStage::Precast ? precastSpellId : 0u,
-            .decayOnExpire = decayOnExpire, .kitId = kitId, .deathPersistent = deathPersistent});
+            .decayOnExpire = decayOnExpire, .kitId = kitId, .deathPersistent = deathPersistent,
+            .modelId = modelId});
         if (!breath && attachInstanceId)
             placeOnUnit(activeSpellVisuals_.back(), characters, spawn, attachment ? attachmentScale(attachMat) : 1.0f);
         LOG_INFO("SpellVisual: kit=", kitId, " slot attachment=", effect.attachment, " used=", attachment,
@@ -1413,11 +1456,6 @@ bool SpellVisualSystem::syncAuraVisuals(uint32_t attachInstanceId,
                 }
                 const uint32_t model = loadSpellModel(effect.path);
                 if (!model) { LOG_ERROR("Aura model unavailable: ", effect.path); continue; }
-                const uint32_t instance = m2Renderer_->createInstance(model, position, glm::vec3(0), 1.0f,
-                                                                      /*allowPositionDedup=*/false);
-                if (!instance) { LOG_ERROR("Aura instance failed: ", effect.path); continue; }
-                m2Renderer_->setInstanceIsSpellVisual(instance);
-                m2Renderer_->startInstanceStateEffect(instance);
                 // As spawnKitEffects: a model without the slot's attachment (40 of
                 // 769 TBC creature models lack Base 19, e.g. HumSCitizenMid) has
                 // the effect at its position, at the unit's own size.
@@ -1428,9 +1466,25 @@ bool SpellVisualSystem::syncAuraVisuals(uint32_t attachInstanceId,
                                 "; placed at unit position, model=", effect.path);
                     attachment = 0;
                 }
+                for (auto it = activeSpellVisuals_.begin(); it != activeSpellVisuals_.end();) {
+                    if (stateKitReplacesActiveCast(it->attachInstanceId, it->attachmentId, it->modelId,
+                                                   it->isCast, it->decaying,
+                                                   attachInstanceId, attachment, model)) {
+                        retireEffect(*it);
+                        it = activeSpellVisuals_.erase(it);
+                    } else {
+                        ++it;
+                    }
+                }
+                const uint32_t instance = m2Renderer_->createInstance(model, position, glm::vec3(0), 1.0f,
+                                                                      /*allowPositionDedup=*/false);
+                if (!instance) { LOG_ERROR("Aura instance failed: ", effect.path); continue; }
+                m2Renderer_->setInstanceIsSpellVisual(instance);
+                m2Renderer_->startInstanceStateEffect(instance);
                 activeSpellVisuals_.push_back({instance, 0.0f, std::numeric_limits<float>::infinity(),
                     false, attachment, attachInstanceId, false, visual, marker});
                 activeSpellVisuals_.back().effectScale = effect.scale;
+                activeSpellVisuals_.back().modelId = model;
                 activeSpellVisuals_.back().orientWithAttachment = slotFollowsBone(attachment);
                 if (activeSpellVisuals_.back().orientWithAttachment)
                     m2Renderer_->setInstanceTransform(instance, glm::scale(attachMat, glm::vec3(effect.scale)));
@@ -1561,7 +1615,7 @@ void SpellVisualSystem::applyCharacterProcedures(uint32_t attachInstanceId, bool
         const bool roomHidden = characters->isInstanceRoomHidden(attachInstanceId);
         const float ownerOpacity = characters->getInstanceEffectiveOpacity(attachInstanceId);
         for (const auto& sv : activeSpellVisuals_) {
-            if (sv.attachInstanceId != attachInstanceId) continue;
+            if (sv.attachInstanceId != attachInstanceId || !sv.instanceId) continue;
             if (!sv.decaying && (sv.auraVisualId != 0 || sv.isChannel)) {
                 m2Renderer_->setInstanceTint(sv.instanceId, fxTint);
             }
@@ -3286,6 +3340,65 @@ void SpellVisualSystem::update(float deltaTime) {
                       [&](const DrainingEffect& effect) { return !m2Renderer_->hasInstance(effect.instanceId); });
     }
     for (auto it = activeSpellVisuals_.begin(); it != activeSpellVisuals_.end(); ) {
+        if (it->instanceId == 0) {
+            glm::vec3 ownerPos(0.0f);
+            if (!m2Renderer_ || !charRenderer || !it->attachInstanceId ||
+                !charRenderer->getInstancePosition(it->attachInstanceId, ownerPos)) {
+                it = activeSpellVisuals_.erase(it);
+                continue;
+            }
+            it->elapsed += deltaTime;
+            if (it->elapsed < it->startDelay) {
+                ++it;
+                continue;
+            }
+            glm::mat4 attachMat(1.0f);
+            if (slotSkippedWhenAbsent(it->attachmentId) &&
+                !charRenderer->getAttachmentTransform(it->attachInstanceId, it->attachmentId, attachMat)) {
+                it = activeSpellVisuals_.erase(it);
+                continue;
+            }
+            if (it->attachmentId != 0 &&
+                !charRenderer->getAttachmentTransform(it->attachInstanceId, it->attachmentId, attachMat)) {
+                it->attachmentId = 0;
+            }
+            const glm::vec3 spawn = it->attachmentId ? glm::vec3(attachMat[3]) : ownerPos;
+            const uint32_t instanceId = it->orientWithAttachment
+                ? m2Renderer_->createInstanceWithMatrix(it->modelId, glm::scale(attachMat, glm::vec3(it->effectScale)),
+                                                        spawn, /*allowPositionDedup=*/false)
+                : m2Renderer_->createInstance(it->modelId, spawn, glm::vec3(0.0f), it->effectScale,
+                                              /*allowPositionDedup=*/false);
+            if (instanceId == 0) {
+                it = activeSpellVisuals_.erase(it);
+                continue;
+            }
+            m2Renderer_->setInstanceIsSpellVisual(instanceId);
+            if (const auto proc = kitCharacterProcedures_.find(it->kitId);
+                proc != kitCharacterProcedures_.end() && proc->second.color &&
+                kitCharProcTintsAttachedEffects(*proc->second.color)) {
+                m2Renderer_->setInstanceTint(instanceId, *proc->second.color);
+            }
+            m2Renderer_->startInstanceOneShotEffect(instanceId);
+            m2Renderer_->setInstanceFade(
+                instanceId,
+                attachedSpellVisualFade(/*sustainedUnitVisual=*/false,
+                                        charRenderer->isInstanceRoomHidden(it->attachInstanceId),
+                                        1.0f));
+            float lifetime = it->duration;
+            if (lifetime <= 0.0f) {
+                lifetime = m2Renderer_->getInstanceAnimDuration(instanceId) / 1000.0f;
+                it->decayOnExpire = m2Renderer_->hasAnimation(instanceId, 159);
+            }
+            it->instanceId = instanceId;
+            it->elapsed = std::max(0.0f, it->elapsed - it->startDelay);
+            it->startDelay = 0.0f;
+            it->duration = lifetime;
+            if (!it->orientWithAttachment) {
+                placeOnUnit(*it, charRenderer, spawn, it->attachmentId ? attachmentScale(attachMat) : 1.0f);
+            }
+            ++it;
+            continue;
+        }
         // Sustained unit visuals inherit their owner's effective opacity;
         // effects on a unit hidden in an unseen WMO room are hidden with it.
         if (it->attachInstanceId && charRenderer) {
@@ -3524,7 +3637,7 @@ void SpellVisualSystem::removeCasterStages(uint32_t attachInstanceId) {
         if (it->attachInstanceId == attachInstanceId &&
             shouldRemoveAttachedSpellVisualOnDeath(it->auraVisualId != 0, it->decaying, it->deathPersistent)) {
             LOG_DEBUG("SpellVisual: unit died, effect instance ", it->instanceId, " removed");
-            m2Renderer_->removeInstance(it->instanceId);
+            if (it->instanceId) m2Renderer_->removeInstance(it->instanceId);
             it = activeSpellVisuals_.erase(it);
         } else {
             ++it;
@@ -3570,6 +3683,7 @@ void SpellVisualSystem::reapplyAuraKitLights(uint32_t attachInstanceId) {
 }
 
 void SpellVisualSystem::retireEffect(const SpellVisualInstance& effect) {
+    if (!effect.instanceId) return;
     m2Renderer_->retireInstance(effect.instanceId);
     if (effect.attachInstanceId &&
         shouldRemoveAttachedSpellVisualOnDeath(effect.auraVisualId != 0, effect.decaying, effect.deathPersistent) &&
@@ -3629,7 +3743,7 @@ void SpellVisualSystem::transferUnitVisuals(uint32_t fromInstanceId, uint32_t to
     for (auto& visual : activeSpellVisuals_) {
         if (visual.attachInstanceId != fromInstanceId) continue;
         visual.attachInstanceId = toInstanceId;
-        if (!characters || !m2Renderer_) continue;
+        if (!characters || !m2Renderer_ || !visual.instanceId) continue;
         if (visual.attachmentId != 0) {
             glm::mat4 attachMat(1.0f);
             if (characters->getAttachmentTransform(toInstanceId, visual.attachmentId, attachMat)) {
@@ -3764,7 +3878,7 @@ void SpellVisualSystem::reset() {
     // Clear lingering spell visual instances from the previous map/combat session.
     // Without this, old effects could remain visible after teleport or map change.
     for (auto& sv : activeSpellVisuals_) {
-        if (m2Renderer_) m2Renderer_->removeInstance(sv.instanceId);
+        if (m2Renderer_ && sv.instanceId) m2Renderer_->removeInstance(sv.instanceId);
     }
     activeSpellVisuals_.clear();
     for (const auto& missile : spellMissiles_) {

@@ -358,4 +358,65 @@ inline constexpr bool castKitReplacesActiveCast(uint32_t existingAttachInstanceI
            existingKitId == newKitId;
 }
 
+/// True when a newly applied aura StateKit effect (`newAttachInstanceId`,
+/// `newAttachmentId`, `newModelId`) supersedes an already-active one-shot
+/// CastKit instance playing the exact same M2 model at the same attachment on
+/// that unit (e.g. Whirlwind 13736, SpellVisual 8377: CastKit 369 + StateKit 370
+/// both spawn Spells\Whirlwind_State_Base.m2 at Base 19). Retiring the CastKit
+/// copy avoids 2x particle stacking at the feet and lets the aura's StateKit
+/// finish cleanly with Decay (159) when the aura ends.
+inline constexpr bool stateKitReplacesActiveCast(uint32_t existingAttachInstanceId,
+                                                 uint32_t existingAttachmentId,
+                                                 uint32_t existingModelId,
+                                                 bool existingIsCast,
+                                                 bool existingDecaying,
+                                                 uint32_t newAttachInstanceId,
+                                                 uint32_t newAttachmentId,
+                                                 uint32_t newModelId) {
+    return existingIsCast &&
+           !existingDecaying &&
+           existingAttachInstanceId != 0 &&
+           existingAttachInstanceId == newAttachInstanceId &&
+           existingAttachmentId == newAttachmentId &&
+           existingModelId != 0 &&
+           existingModelId == newModelId;
+}
+
+/// Symmetric guard when SMSG_UPDATE_OBJECT applies the aura StateKit before
+/// SMSG_SPELL_GO processes the CastKit for the same `(unit, attachment, model)`.
+inline constexpr bool activeStateSuppressesDuplicateCast(uint32_t existingAttachInstanceId,
+                                                         uint32_t existingAttachmentId,
+                                                         uint32_t existingModelId,
+                                                         bool existingIsAuraState,
+                                                         bool existingDecaying,
+                                                         uint32_t newAttachInstanceId,
+                                                         uint32_t newAttachmentId,
+                                                         uint32_t newModelId) {
+    return existingIsAuraState &&
+           !existingDecaying &&
+           existingAttachInstanceId != 0 &&
+           existingAttachInstanceId == newAttachInstanceId &&
+           existingAttachmentId == newAttachmentId &&
+           existingModelId != 0 &&
+           existingModelId == newModelId;
+}
+
+/// True when a CastKit attachment slot is a mouth/head breath emitter (`Breath` 17,
+/// or `Special1..3` 23..25 during a directed cast/spit sequence) that waits for the
+/// caster M2 sequence's authored `$CSL`/`$CSR`/`$CST` spell-release event before
+/// starting emission, preventing premature wind-up puffs while a drake or dragon
+/// cocks its neck back (e.g. UBRS Gyth OrcDrakeRider.m2 / Drake.m2 53:SpellCastDirected
+/// $CSR at +234 ms, Dragon.m2 / NetherDrake.m2 53/183 $CST at +500 ms).
+inline constexpr bool castSlotWaitsForSpellReleaseEvent(uint32_t attachment,
+                                                        uint32_t castAnimId,
+                                                        uint32_t noAnimId) {
+    if (castAnimId == noAnimId) return false;
+    if (attachment == 17u) return true;
+    if (attachment >= 23u && attachment <= 25u) {
+        return castAnimId == 53u || castAnimId == 64u || castAnimId == 81u ||
+               castAnimId == 183u || castAnimId == 184u;
+    }
+    return false;
+}
+
 } // namespace wowee::rendering

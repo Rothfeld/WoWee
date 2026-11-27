@@ -1,8 +1,14 @@
 #include "rendering/quest_marker_renderer.hpp"
+#include "rendering/character_renderer.hpp"
 #include "rendering/m2_renderer.hpp"
+#include "rendering/renderer.hpp"
 #include "pipeline/asset_manager.hpp"
 #include "pipeline/m2_loader.hpp"
+#include "core/application.hpp"
+#include "core/entity_spawner.hpp"
 #include "core/logger.hpp"
+#include "game/game_handler.hpp"
+#include "ui/ui_manager.hpp"
 #include <array>
 #include <stdexcept>
 #include <glm/gtc/matrix_transform.hpp>
@@ -61,6 +67,39 @@ void QuestMarkerRenderer::syncModels(M2Renderer& renderer, pipeline::AssetManage
         // Flight discovery receives the name-layout anchor from the HUD policy.
         const bool flightDiscovery = marker.type == 3;
         if (!flightDiscovery) position.z += marker.boundingHeight + 0.3f;
+
+        bool isUnit = false;
+        bool unitWorldNameVisible = false;
+        if (!flightDiscovery && core::Application::hasInstance()) {
+            auto& app = core::Application::getInstance();
+            auto* gh = app.getGameHandler();
+            auto* ui = app.getUIManager();
+            auto* ren = app.getRenderer();
+            auto* spawner = app.getEntitySpawner();
+            if (gh) {
+                if (auto entity = gh->getEntityManager().getEntity(guid);
+                    entity && entity->getType() == game::ObjectType::UNIT) {
+                    isUnit = true;
+                    if (ui && ren && ren->getCamera()) {
+                        glm::vec3 namePos = marker.position + glm::vec3(0.0f, 0.0f, marker.boundingHeight);
+                        if (auto* chars = ren->getCharacterRenderer(); chars && spawner) {
+                            const uint32_t charInst = spawner->characterInstanceIdForGuid(guid);
+                            const bool mounted =
+                                std::static_pointer_cast<game::Unit>(entity)->getMountDisplayId() != 0;
+                            if (charInst != 0) {
+                                chars->getInstanceNamePosition(charInst, mounted, namePos);
+                            }
+                        }
+                        unitWorldNameVisible = ui->getGameScreen()
+                            .unitLabelVisibility(*gh, guid, marker.position, namePos, *ren->getCamera())
+                            .worldName();
+                    }
+                }
+            }
+        }
+        const uint32_t desiredAnim =
+            selectQuestMarkerAnimation(marker.type, isUnit, unitWorldNameVisible);
+
         auto it = placements_.find(guid);
         if (it != placements_.end() &&
             (modelWasMissing || it->second.modelId != modelId ||
@@ -77,9 +116,19 @@ void QuestMarkerRenderer::syncModels(M2Renderer& renderer, pipeline::AssetManage
             // WMO interiors/dungeons or dropped at ambient doodad distance, and
             // inherits WMO room visibility from its world position.
             renderer.setInstanceIsGameObject(instance, true);
-            placements_[guid] = {instance, modelId};
+            uint32_t appliedAnim = kQuestMarkerAnimStand;
+            if (desiredAnim != kQuestMarkerAnimStand && renderer.hasAnimation(instance, desiredAnim)) {
+                renderer.setInstanceAnimation(instance, desiredAnim, true);
+                appliedAnim = desiredAnim;
+            }
+            placements_[guid] = {instance, modelId, appliedAnim};
         } else {
             renderer.setInstancePosition(it->second.instanceId, position);
+            if (it->second.animationId != desiredAnim &&
+                renderer.hasAnimation(it->second.instanceId, desiredAnim)) {
+                renderer.setInstanceAnimation(it->second.instanceId, desiredAnim, true);
+                it->second.animationId = desiredAnim;
+            }
         }
         if (flightDiscovery) {
             // TalkToMeGreen is a solid +X-facing mesh, with no billboard bone.
