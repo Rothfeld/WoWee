@@ -1291,6 +1291,7 @@ void SpellHandler::registerOpcodes(DispatchTable& table) {
                         " guid=0x", std::hex, guid, std::dec);
             return;
         }
+        petNamesByNumber_[key] = name;
 
         auto entity = owner_.getEntityManager().getEntity(guid);
         if (!entity) return;
@@ -3887,6 +3888,11 @@ void SpellHandler::handleCastFailed(network::Packet& packet) {
         // Spell cast failures do not play Sound\Interface\Error.wav in TBC 2.4.3;
         // they play school SpellFizzle (SE:1424..1428) + vocal error speech.
         owner_.addUIError(errMsg, /*playUiErrorSound=*/false);
+        if (data.spellId != 0) {
+            if (auto* ch = owner_.getCombatHandler()) {
+                ch->emitCombatLogCastFailed(owner_.getPlayerGuid(), data.spellId, errMsg);
+            }
+        }
     }
 
     // On screen and nowhere else. A cast failure went to the chat log as well
@@ -7876,6 +7882,18 @@ void SpellHandler::parseEffectExtraAttacks(network::Packet& packet, uint32_t eff
     }
 }
 
+void SpellHandler::parseEffectSummon(network::Packet& packet, uint32_t effectLogCount,
+                                     uint64_t caster, uint32_t spellId, bool isCreateObject) {
+    for (uint32_t li = 0; li < effectLogCount; ++li) {
+        uint64_t target = 0;
+        if (!readEffectLogTarget(packet, target)) { packet.skipAll(); break; }
+        if (target == 0 || spellId == 0) continue;
+        if (auto* ch = owner_.getCombatHandler()) {
+            ch->emitCombatLogSpellSummon(caster, target, spellId, isCreateObject);
+        }
+    }
+}
+
 void SpellHandler::parseEffectTargetGuidOnly(network::Packet& packet, uint32_t effectLogCount) {
     for (uint32_t li = 0; li < effectLogCount; ++li) {
         uint64_t target = 0;
@@ -7939,18 +7957,20 @@ void SpellHandler::handleSpellLogExecute(network::Packet& packet) {
         } else if (effectType == SpellEffect::ADD_EXTRA_ATTACKS) {
             parseEffectExtraAttacks(packet, effectLogCount, exeCaster, exeSpellId,
                                     isPlayerCaster);
-        } else if (effectType == SpellEffect::OPEN_LOCK ||
-                   effectType == SpellEffect::OPEN_LOCK_ITEM ||
-                   effectType == SpellEffect::SUMMON ||
-                   effectType == SpellEffect::SUMMON_PET ||
-                   effectType == SpellEffect::SUMMON_OBJECT_WILD ||
-                   effectType == SpellEffect::DUEL ||
-                   effectType == SpellEffect::DISMISS_PET ||
+        } else if (effectType == SpellEffect::SUMMON ||
+                   effectType == SpellEffect::SUMMON_PET) {
+            parseEffectSummon(packet, effectLogCount, exeCaster, exeSpellId, /*isCreateObject=*/false);
+        } else if (effectType == SpellEffect::SUMMON_OBJECT_WILD ||
                    effectType == SpellEffect::SUMMON_OBJECT_SLOT1 ||
                    effectType == SpellEffect::SUMMON_OBJECT_SLOT2 ||
                    effectType == SpellEffect::SUMMON_OBJECT_SLOT3 ||
                    effectType == SpellEffect::SUMMON_OBJECT_SLOT4 ||
-                   effectType == SpellEffect::TRANS_DOOR ||
+                   effectType == SpellEffect::TRANS_DOOR) {
+            parseEffectSummon(packet, effectLogCount, exeCaster, exeSpellId, /*isCreateObject=*/true);
+        } else if (effectType == SpellEffect::OPEN_LOCK ||
+                   effectType == SpellEffect::OPEN_LOCK_ITEM ||
+                   effectType == SpellEffect::DUEL ||
+                   effectType == SpellEffect::DISMISS_PET ||
                    effectType == SpellEffect::RESURRECT ||
                    effectType == SpellEffect::RESURRECT_NEW) {
             parseEffectTargetGuidOnly(packet, effectLogCount);

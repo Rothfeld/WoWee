@@ -243,25 +243,9 @@ static double calendarInviteStatusFor(const wowee::game::CalendarData& cal,
 }
 
 static int lua_CombatLog_Object_IsA(lua_State* L) {
-    const auto flags = static_cast<uint32_t>(luaL_optnumber(L, 1, 0));
-    const auto mask  = static_cast<uint32_t>(luaL_optnumber(L, 2, 0));
-
-    static constexpr uint32_t kCategories[] = {
-        0x0000000Fu,  // affiliation: mine / party / raid / outsider
-        0x000000F0u,  // reaction: friendly / neutral / hostile
-        0x00000300u,  // control: player / npc
-        0x0000FC00u,  // type: player / npc / pet / guardian / object
-    };
-    for (const uint32_t cat : kCategories) {
-        const uint32_t wanted = mask & cat;
-        if (wanted == 0) continue;            // unconstrained
-        if ((flags & wanted) == 0) { lua_pushboolean(L, 0); return 1; }
-    }
-    // The special bits are non-exclusive, so every one asked for must be present.
-    const uint32_t special = mask & 0xFFFF0000u;
-    if (special != 0 && (flags & special) != special) { lua_pushboolean(L, 0); return 1; }
-
-    lua_pushboolean(L, 1);
+    const uint32_t flags = game::combat_log::doubleToBits(luaL_optnumber(L, 1, 0));
+    const uint32_t mask  = game::combat_log::doubleToBits(luaL_optnumber(L, 2, 0));
+    lua_pushboolean(L, game::combat_log::objectIsA(flags, mask) ? 1 : 0);
     return 1;
 }
 
@@ -5228,26 +5212,135 @@ static int lua_ShowMiniWorldMapArrowFrame(lua_State* L) { (void)L; return 0; }
 // Lua - it would add a line per iteration from an entry that does not exist,
 // stop only on the per-frame cap, and be re-armed by the OnUpdate that
 // scheduled it, every frame, for as long as the log was open.
+namespace {
+game::CombatLogFilterTable& fallbackCombatLogFilters() {
+    static game::CombatLogFilterTable table;
+    return table;
+}
+int gFilteredCombatLogIndex = -1; // index into matchingRawAges(L, ignoreFilter), -1 when empty
+
+const game::CombatLogFilterTable& activeCombatLogFilters(lua_State* L) {
+    if (auto* gh = getGameHandler(L)) return gh->combatLogFilters();
+    return fallbackCombatLogFilters();
+}
+
+std::vector<int> matchingCombatLogRawAges(lua_State* L, bool ignoreFilter) {
+    const int rawTotal = combatLogEntryCount();
+    std::vector<int> ages;
+    if (rawTotal <= 0) return ages;
+    const auto& filters = activeCombatLogFilters(L);
+    if (ignoreFilter || filters.empty()) {
+        ages.resize(static_cast<size_t>(rawTotal));
+        for (int i = 0; i < rawTotal; ++i) ages[static_cast<size_t>(i)] = i;
+        return ages;
+    }
+    ages.reserve(static_cast<size_t>(rawTotal));
+    const int base = lua_gettop(L);
+    for (int rawAge = 0; rawAge < rawTotal; ++rawAge) {
+        combatLogSetCursor(rawAge);
+        const int pushed = pushCombatLogCurrent(L);
+        if (pushed >= 8) {
+            const char* sub = lua_tostring(L, base + 2);
+            const char* sg  = lua_tostring(L, base + 3);
+            const uint32_t sf = game::combat_log::doubleToBits(lua_tonumber(L, base + 5));
+            const char* dg  = lua_tostring(L, base + 6);
+            const uint32_t df = game::combat_log::doubleToBits(lua_tonumber(L, base + 8));
+            if (filters.matchesParsed(sub ? sub : "",
+                                      sg ? game::CombatLogFilterRule::parseGuidString(sg) : 0u, sf,
+                                      dg ? game::CombatLogFilterRule::parseGuidString(dg) : 0u, df)) {
+                ages.push_back(rawAge);
+            }
+        }
+        lua_settop(L, base);
+    }
+    return ages;
+}
+} // namespace
+
 static int lua_CombatLogGetNumEntries(lua_State* L) {
-    lua_pushnumber(L, combatLogEntryCount());
+    const bool ignoreFilter = lua_toboolean(L, 1) != 0;
+    const auto ages = matchingCombatLogRawAges(L, ignoreFilter);
+    lua_pushnumber(L, static_cast<double>(ages.size()));
     return 1;
 }
 static int lua_CombatLogGetCurrentEntry(lua_State* L) {
+    const bool ignoreFilter = lua_toboolean(L, 1) != 0;
+    const auto ages = matchingCombatLogRawAges(L, ignoreFilter);
+    if (ages.empty()) return luaReturnNil(L);
+    if (gFilteredCombatLogIndex < 0 || gFilteredCombatLogIndex >= static_cast<int>(ages.size())) {
+        gFilteredCombatLogIndex = 0;
+    }
+    combatLogSetCursor(ages[static_cast<size_t>(gFilteredCombatLogIndex)]);
     const int pushed = pushCombatLogCurrent(L);
     return pushed > 0 ? pushed : luaReturnNil(L);
 }
 static int lua_CombatLogAdvanceEntry(lua_State* L) {
     const int count = static_cast<int>(luaL_optnumber(L, 1, 1));
-    if (!combatLogAdvanceCursor(count)) return luaReturnNil(L);
+    const bool ignoreFilter = lua_toboolean(L, 2) != 0;
+    const auto ages = matchingCombatLogRawAges(L, ignoreFilter);
+    const int size = static_cast<int>(ages.size());
+    if (size == 0) {
+        gFilteredCombatLogIndex = -1;
+        return luaReturnNil(L);
+    }
+    if (gFilteredCombatLogIndex < 0 || gFilteredCombatLogIndex >= size) {
+        gFilteredCombatLogIndex = 0;
+    }
+    const int target = gFilteredCombatLogIndex - count;
+    if (target < 0 || target >= size) {
+        gFilteredCombatLogIndex = std::clamp(target, 0, size - 1);
+        combatLogSetCursor(ages[static_cast<size_t>(gFilteredCombatLogIndex)]);
+        return luaReturnNil(L);
+    }
+    gFilteredCombatLogIndex = target;
+    combatLogSetCursor(ages[static_cast<size_t>(gFilteredCombatLogIndex)]);
     lua_pushboolean(L, 1);
     return 1;
 }
 static int lua_CombatLogSetCurrentEntry(lua_State* L) {
-    combatLogSetCursor(static_cast<int>(luaL_optnumber(L, 1, 0)));
+    const int requested = static_cast<int>(luaL_optnumber(L, 1, 0));
+    const bool ignoreFilter = lua_toboolean(L, 2) != 0;
+    const auto ages = matchingCombatLogRawAges(L, ignoreFilter);
+    const int size = static_cast<int>(ages.size());
+    if (size == 0) {
+        gFilteredCombatLogIndex = -1;
+        return 0;
+    }
+    const int idx = requested < 0 ? (size + requested) : requested;
+    gFilteredCombatLogIndex = std::clamp(idx, 0, size - 1);
+    combatLogSetCursor(ages[static_cast<size_t>(gFilteredCombatLogIndex)]);
     return 0;
 }
-static int lua_CombatLogAddFilter(lua_State* L) { (void)L; return 0; }
-static int lua_CombatLogResetFilter(lua_State* L) { (void)L; return 0; }
+static int lua_CombatLogAddFilter(lua_State* L) {
+    game::CombatLogFilterRule rule;
+    if (!lua_isnoneornil(L, 1) && lua_type(L, 1) == LUA_TSTRING) {
+        rule.setEventCsv(lua_tostring(L, 1));
+    }
+    if (!lua_isnoneornil(L, 2)) {
+        if (lua_type(L, 2) == LUA_TNUMBER) {
+            rule.setSrcMask(game::combat_log::doubleToBits(lua_tonumber(L, 2)));
+        } else if (lua_type(L, 2) == LUA_TSTRING) {
+            rule.setSrcGuid(lua_tostring(L, 2));
+        }
+    }
+    if (!lua_isnoneornil(L, 3)) {
+        if (lua_type(L, 3) == LUA_TNUMBER) {
+            rule.setDstMask(game::combat_log::doubleToBits(lua_tonumber(L, 3)));
+        } else if (lua_type(L, 3) == LUA_TSTRING) {
+            rule.setDstGuid(lua_tostring(L, 3));
+        }
+    }
+    fallbackCombatLogFilters().addRule(rule);
+    if (auto* gh = getGameHandler(L)) gh->addCombatLogFilter(std::move(rule));
+    gFilteredCombatLogIndex = 0;
+    return 0;
+}
+static int lua_CombatLogResetFilter(lua_State* L) {
+    fallbackCombatLogFilters().reset();
+    if (auto* gh = getGameHandler(L)) gh->resetCombatLogFilters();
+    gFilteredCombatLogIndex = 0;
+    return 0;
+}
 
 // CombatTextSetActiveUnit(unit) - which unit the floating combat text follows.
 // It tells the client where to aim the events it already sends; the events do

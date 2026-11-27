@@ -661,16 +661,22 @@ void CombatHandler::addCombatText(CombatTextEntry::Type type, int32_t amount, ui
         input.dstGuid = effectiveDst;
         input.playerGuid = owner_.getPlayerGuid();
         input.petGuid = owner_.getPetGuid();
-        input.srcName = sourceName;
-        input.dstName = targetName;
+        input.srcFlags = owner_.combatLogUnitFlags(effectiveSrc);
+        input.dstFlags = owner_.combatLogUnitFlags(effectiveDst);
+        input.srcName = sourceName.empty() && effectiveSrc != 0
+                            ? owner_.lookupCombatLogName(effectiveSrc)
+                            : sourceName;
+        input.dstName = targetName.empty() && effectiveDst != 0
+                            ? owner_.lookupCombatLogName(effectiveDst)
+                            : targetName;
         input.spellName = (spellId != 0) ? owner_.getSpellName(spellId) : std::string{};
         input.extraSpellName = (extraSpellId != 0) ? owner_.getSpellName(extraSpellId) : std::string{};
         input.timestamp = static_cast<int64_t>(std::time(nullptr));
         input.normalRangedAttack = normalRanged;
         const std::vector<std::string> args = buildCombatLogEvent(input);
         if (!args.empty()) {
-            owner_.addonEventCallbackRef()("COMBAT_LOG_EVENT_UNFILTERED", args);
-            owner_.addonEventCallbackRef()("COMBAT_LOG_EVENT", args);
+            owner_.fireAddonEvent("COMBAT_LOG_EVENT_UNFILTERED", args);
+            owner_.fireAddonEvent("COMBAT_LOG_EVENT", args);
         }
     }
 
@@ -712,8 +718,10 @@ std::vector<std::string> CombatHandler::buildAuraCombatLogArgs(
     input.dstGuid = dstGuid;
     input.playerGuid = owner_.getPlayerGuid();
     input.petGuid = owner_.getPetGuid();
-    input.srcName = (srcGuid != 0) ? owner_.lookupName(srcGuid) : std::string{};
-    input.dstName = owner_.lookupName(dstGuid);
+    input.srcFlags = owner_.combatLogUnitFlags(srcGuid);
+    input.dstFlags = owner_.combatLogUnitFlags(dstGuid);
+    input.srcName = (srcGuid != 0) ? owner_.lookupCombatLogName(srcGuid) : std::string{};
+    input.dstName = owner_.lookupCombatLogName(dstGuid);
     input.spellName = owner_.getSpellName(spellId);
     input.timestamp = static_cast<int64_t>(std::time(nullptr));
     return buildCombatLogEvent(input);
@@ -728,7 +736,8 @@ std::vector<std::string> CombatHandler::buildDeathCombatLogArgs(
     input.dstGuid = victimGuid;
     input.playerGuid = owner_.getPlayerGuid();
     input.petGuid = owner_.getPetGuid();
-    input.dstName = owner_.lookupName(victimGuid);
+    input.dstFlags = owner_.combatLogUnitFlags(victimGuid);
+    input.dstName = owner_.lookupCombatLogName(victimGuid);
     input.timestamp = static_cast<int64_t>(std::time(nullptr));
     return buildCombatLogEvent(input);
 }
@@ -739,8 +748,8 @@ void CombatHandler::emitCombatLogAuraEvent(
     if (!owner_.addonEventCallbackRef() || isClassicLikeExpansion()) return;
     const auto args = buildAuraCombatLogArgs(subevent, srcGuid, dstGuid, spellId, isDebuff, stacks);
     if (!args.empty()) {
-        owner_.addonEventCallbackRef()("COMBAT_LOG_EVENT_UNFILTERED", args);
-        owner_.addonEventCallbackRef()("COMBAT_LOG_EVENT", args);
+        owner_.fireAddonEvent("COMBAT_LOG_EVENT_UNFILTERED", args);
+        owner_.fireAddonEvent("COMBAT_LOG_EVENT", args);
     }
 }
 
@@ -754,13 +763,15 @@ void CombatHandler::emitCombatLogPartyKill(uint64_t killerGuid, uint64_t victimG
     input.dstGuid = victimGuid;
     input.playerGuid = owner_.getPlayerGuid();
     input.petGuid = owner_.getPetGuid();
-    input.srcName = owner_.lookupName(killerGuid);
-    input.dstName = owner_.lookupName(victimGuid);
+    input.srcFlags = owner_.combatLogUnitFlags(killerGuid);
+    input.dstFlags = owner_.combatLogUnitFlags(victimGuid);
+    input.srcName = owner_.lookupCombatLogName(killerGuid);
+    input.dstName = owner_.lookupCombatLogName(victimGuid);
     input.timestamp = static_cast<int64_t>(std::time(nullptr));
     const auto args = buildCombatLogEvent(input);
     if (!args.empty()) {
-        owner_.addonEventCallbackRef()("COMBAT_LOG_EVENT_UNFILTERED", args);
-        owner_.addonEventCallbackRef()("COMBAT_LOG_EVENT", args);
+        owner_.fireAddonEvent("COMBAT_LOG_EVENT_UNFILTERED", args);
+        owner_.fireAddonEvent("COMBAT_LOG_EVENT", args);
     }
 }
 
@@ -768,8 +779,61 @@ void CombatHandler::emitCombatLogUnitDeath(uint64_t victimGuid, bool destroyed) 
     if (!owner_.addonEventCallbackRef() || isClassicLikeExpansion()) return;
     const auto args = buildDeathCombatLogArgs(victimGuid, destroyed);
     if (!args.empty()) {
-        owner_.addonEventCallbackRef()("COMBAT_LOG_EVENT_UNFILTERED", args);
-        owner_.addonEventCallbackRef()("COMBAT_LOG_EVENT", args);
+        owner_.fireAddonEvent("COMBAT_LOG_EVENT_UNFILTERED", args);
+        owner_.fireAddonEvent("COMBAT_LOG_EVENT", args);
+    }
+}
+
+void CombatHandler::emitCombatLogSpellSummon(
+        uint64_t casterGuid, uint64_t summonedGuid, uint32_t spellId, bool isCreateObject) {
+    const std::string summonedName = (summonedGuid != 0)
+        ? owner_.lookupCombatLogName(summonedGuid)
+        : std::string{};
+    if (!owner_.addonEventCallbackRef() || isClassicLikeExpansion()) return;
+    if (casterGuid == 0 || summonedGuid == 0 || spellId == 0) return;
+    CombatLogEventInput input;
+    input.layout = isActiveExpansion("tbc") ? CombatLogLayout::Tbc : CombatLogLayout::Wotlk;
+    input.subevent = isCreateObject ? CombatLogSubevent::SpellCreate : CombatLogSubevent::SpellSummon;
+    input.spellId = spellId;
+    input.spellSchoolMask = owner_.getSpellSchoolMask(spellId);
+    input.srcGuid = casterGuid;
+    input.dstGuid = summonedGuid;
+    input.playerGuid = owner_.getPlayerGuid();
+    input.petGuid = owner_.getPetGuid();
+    input.srcFlags = owner_.combatLogUnitFlags(casterGuid);
+    input.dstFlags = owner_.combatLogUnitFlags(summonedGuid);
+    input.srcName = owner_.lookupCombatLogName(casterGuid);
+    input.dstName = summonedName;
+    input.spellName = owner_.getSpellName(spellId);
+    input.timestamp = static_cast<int64_t>(std::time(nullptr));
+    const auto args = buildCombatLogEvent(input);
+    if (!args.empty()) {
+        owner_.fireAddonEvent("COMBAT_LOG_EVENT_UNFILTERED", args);
+        owner_.fireAddonEvent("COMBAT_LOG_EVENT", args);
+    }
+}
+
+void CombatHandler::emitCombatLogCastFailed(
+        uint64_t casterGuid, uint32_t spellId, const std::string& reason) {
+    if (!owner_.addonEventCallbackRef() || isClassicLikeExpansion()) return;
+    if (casterGuid == 0 || spellId == 0 || reason.empty()) return;
+    CombatLogEventInput input;
+    input.layout = isActiveExpansion("tbc") ? CombatLogLayout::Tbc : CombatLogLayout::Wotlk;
+    input.subevent = CombatLogSubevent::SpellCastFailed;
+    input.spellId = spellId;
+    input.spellSchoolMask = owner_.getSpellSchoolMask(spellId);
+    input.srcGuid = casterGuid;
+    input.playerGuid = owner_.getPlayerGuid();
+    input.petGuid = owner_.getPetGuid();
+    input.srcFlags = owner_.combatLogUnitFlags(casterGuid);
+    input.srcName = owner_.lookupCombatLogName(casterGuid);
+    input.spellName = owner_.getSpellName(spellId);
+    input.extraSpellName = reason;
+    input.timestamp = static_cast<int64_t>(std::time(nullptr));
+    const auto args = buildCombatLogEvent(input);
+    if (!args.empty()) {
+        owner_.fireAddonEvent("COMBAT_LOG_EVENT_UNFILTERED", args);
+        owner_.fireAddonEvent("COMBAT_LOG_EVENT", args);
     }
 }
 

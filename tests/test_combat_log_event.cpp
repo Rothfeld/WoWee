@@ -310,4 +310,130 @@ TEST_CASE("aura, party kill, and unit death subevents match TBC 2.4.3 Blizzard_C
     REQUIRE(destroyedArgs.size() == 8);
     CHECK(destroyedArgs[1] == "UNIT_DESTROYED");
     CHECK(destroyedArgs[4] == kObjectNone);
+
+    CombatLogEventInput summon;
+    summon.layout = CombatLogLayout::Tbc;
+    summon.subevent = CombatLogSubevent::SpellSummon;
+    summon.srcGuid = kPlayer;
+    summon.srcName = "Alpha";
+    summon.dstGuid = 0xF1400037C700008EULL;
+    summon.dstName = "Nokpit";
+    summon.playerGuid = kPlayer;
+    summon.spellId = 688;
+    summon.spellName = "Summon Imp";
+    summon.spellSchoolMask = 32;
+    summon.timestamp = 1700000000;
+    const auto sumArgs = buildCombatLogEvent(summon);
+    REQUIRE(sumArgs.size() == 11);
+    CHECK(sumArgs[1] == "SPELL_SUMMON");
+    CHECK(sumArgs[5] == "0xF1400037C700008E");
+    CHECK(sumArgs[6] == "Nokpit");
+    CHECK(sumArgs[7] == "4648"); // 0x1228: OUTSIDER | NEUTRAL | CONTROL_NPC | TYPE_PET
+    CHECK(sumArgs[8] == "688");
+    CHECK(sumArgs[9] == "Summon Imp");
+    CHECK(sumArgs[10] == "32");
+
+    auto create = summon;
+    create.subevent = CombatLogSubevent::SpellCreate;
+    create.dstGuid = 0xF11000071A000001ULL;
+    create.dstName = "Campfire";
+    create.spellId = 818;
+    create.spellName = "Basic Campfire";
+    create.spellSchoolMask = 4;
+    const auto createArgs = buildCombatLogEvent(create);
+    REQUIRE(createArgs.size() == 11);
+    CHECK(createArgs[1] == "SPELL_CREATE");
+    CHECK(createArgs[7] == std::to_string(combat_log::kOutsider | combat_log::kNeutral |
+                                          combat_log::kControlNpc | combat_log::kTypeObject));
+
+    CombatLogEventInput failed;
+    failed.layout = CombatLogLayout::Tbc;
+    failed.subevent = CombatLogSubevent::SpellCastFailed;
+    failed.srcGuid = kPlayer;
+    failed.srcName = "Alpha";
+    failed.dstGuid = kCreature; // Must still serialize destination as 0 / nil / COMBATLOG_OBJECT_NONE
+    failed.playerGuid = kPlayer;
+    failed.spellId = 133;
+    failed.spellName = "Fireball";
+    failed.spellSchoolMask = 4;
+    failed.extraSpellName = "Invalid target";
+    failed.timestamp = 1700000000;
+    const auto failArgs = buildCombatLogEvent(failed);
+    REQUIRE(failArgs.size() == 12);
+    CHECK(failArgs[1] == "SPELL_CAST_FAILED");
+    CHECK(failArgs[2] == "0x0000000000000001");
+    CHECK(failArgs[5] == "0x0000000000000000");
+    CHECK(failArgs[6] == kEventNil);
+    CHECK(failArgs[7] == kObjectNone);
+    CHECK(failArgs[8] == "133");
+    CHECK(failArgs[9] == "Fireball");
+    CHECK(failArgs[10] == "4");
+    CHECK(failArgs[11] == "Invalid target");
+}
+
+TEST_CASE("combat_log::objectIsA and CombatLogFilterTable match TBC 2.4.3 truth table", "[combatlog]") {
+    using namespace combat_log;
+    // All 16 empirically verified ISA1..4 cases on Wow.exe build 8606
+    CHECK(objectIsA(0x511u, 0x80007F7Fu));
+    CHECK(objectIsA(0x80000000u, 0x80007F7Fu));
+    CHECK(objectIsA(0x511u, 0xFFFFFFFFu));
+    CHECK(objectIsA(0x80000000u, 0xFFFFFFFFu));
+    CHECK(objectIsA(0x10511u, 0x10000u));
+    CHECK(objectIsA(0x511u, 0x10511u));
+    CHECK(objectIsA(0x10511u, 0x30000u));
+    CHECK(objectIsA(0x10511u, 0x80010511u));
+    CHECK_FALSE(objectIsA(0u, 0xFFFFFFFFu));
+    CHECK_FALSE(objectIsA(0x511u, 0u));
+    CHECK_FALSE(objectIsA(0x80000000u, 0x7F7Fu));
+    CHECK(objectIsA(0x10A28u, 0xFFFFFFFFu));
+    CHECK(objectIsA(0x20511u, 0x10511u));
+    CHECK_FALSE(objectIsA(0x511u, 0x10000u));
+    CHECK_FALSE(objectIsA(0x10A28u, 0x4511u));
+    CHECK(objectIsA(0x10511u, 0x4511u));
+
+    // Safe negative Lua double conversions
+    CHECK(doubleToBits(-2147483648.0) == 0x80000000u);
+    CHECK(doubleToBits(2147483648.0) == 0x80000000u);
+    CHECK(doubleToBits(-1.0) == 0xFFFFFFFFu);
+
+    // Filter table: empty passes all; empty CSV "" rejects all; My Actions keeps player src/dst only
+    CombatLogFilterTable table;
+    CombatLogEventInput boarDied;
+    boarDied.layout = CombatLogLayout::Tbc;
+    boarDied.subevent = CombatLogSubevent::UnitDied;
+    boarDied.dstGuid = kCreature;
+    boarDied.dstFlags = 0x10A28u;
+    boarDied.dstName = "Stonetusk Boar";
+    const auto boarDiedArgs = buildCombatLogEvent(boarDied);
+    CHECK(table.matches(boarDiedArgs)); // empty table -> pass all
+
+    CombatLogFilterRule blockAll;
+    blockAll.setEventCsv("");
+    blockAll.setSrcMask(0x4511u);
+    table.addRule(blockAll);
+    CHECK_FALSE(table.matches(boarDiedArgs));
+
+    table.reset();
+    constexpr uint32_t kMineOrMyPet = 0x4511u | 0x3111u;
+    CombatLogFilterRule myOut;
+    myOut.setEventCsv("SPELL_DAMAGE,PARTY_KILL,SPELL_AURA_APPLIED,UNIT_DIED");
+    myOut.setSrcMask(kMineOrMyPet);
+    CombatLogFilterRule myIn;
+    myIn.setEventCsv("SPELL_DAMAGE,PARTY_KILL,SPELL_AURA_APPLIED,UNIT_DIED");
+    myIn.setDstMask(kMineOrMyPet);
+    table.addRule(myOut);
+    table.addRule(myIn);
+
+    CHECK_FALSE(table.matches(boarDiedArgs)); // Outsider boar death rejected under My Actions
+
+    auto myHit = hit(T::SPELL_DAMAGE, 27079);
+    myHit.layout = CombatLogLayout::Tbc;
+    myHit.dstFlags = 0x10A28u;
+    CHECK(table.matches(buildCombatLogEvent(myHit))); // Player SPELL_DAMAGE passes
+
+    CombatLogFilterRule byGuid;
+    byGuid.setDstGuid("0xf130000000000002");
+    table.reset();
+    table.addRule(byGuid);
+    CHECK(table.matches(boarDiedArgs));
 }

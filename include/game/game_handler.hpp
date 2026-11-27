@@ -3636,8 +3636,19 @@ public:
         if (worldStateChangedCallback_ && event == "UPDATE_WORLD_STATES") {
             worldStateChangedCallback_();
         }
+        if (event == "COMBAT_LOG_EVENT" && !combatLogFilters_.matches(args)) {
+            return;
+        }
         if (addonEventCallback_) addonEventCallback_(event, args);
     }
+    void resetCombatLogFilters() { combatLogFilters_.reset(); }
+    void addCombatLogFilter(CombatLogFilterRule rule) { combatLogFilters_.addRule(std::move(rule)); }
+    [[nodiscard]] bool passesCombatLogFilter(const std::vector<std::string>& args) const {
+        return combatLogFilters_.matches(args);
+    }
+    [[nodiscard]] const CombatLogFilterTable& combatLogFilters() const { return combatLogFilters_; }
+    [[nodiscard]] uint32_t combatLogUnitFlags(uint64_t guid) const;
+    [[nodiscard]] std::string lookupCombatLogName(uint64_t guid) const;
     /// Fire an event once the running script has returned: at the start of the
     /// next update, identical requests merged into one. 2.4.3 answers
     /// ExpandQuestHeader/CollapseQuestHeader this way - the QUEST_LOG_UPDATE
@@ -5225,6 +5236,7 @@ private:
     // Chat (state lives in ChatHandler; callbacks remain here for cross-domain access)
     ChatBubbleCallback chatBubbleCallback_;
     AddonEventCallback addonEventCallback_;
+    CombatLogFilterTable combatLogFilters_;
     InterfaceCommand   interfaceCommand_;
     InterfaceQuery     interfaceQuery_;
     SpellIconPathResolver spellIconPathResolver_;

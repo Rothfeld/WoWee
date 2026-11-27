@@ -1,8 +1,12 @@
 #pragma once
 
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <string>
+#include <string_view>
+#include <unordered_set>
 #include <vector>
 
 #include "game/handler_types.hpp"
@@ -28,6 +32,9 @@ enum class CombatLogSubevent : uint8_t {
     PartyKill,
     UnitDied,
     UnitDestroyed,
+    SpellSummon,
+    SpellCreate,
+    SpellCastFailed,
 };
 
 /// What the client knows about one combat event, before it is shaped for Lua.
@@ -46,6 +53,8 @@ struct CombatLogEventInput {
     uint64_t dstGuid = 0;
     uint64_t playerGuid = 0;
     uint64_t petGuid = 0;
+    uint32_t srcFlags = 0;
+    uint32_t dstFlags = 0;
     std::string srcName;
     std::string dstName;
     std::string spellName;
@@ -56,22 +65,65 @@ struct CombatLogEventInput {
 
 namespace combat_log {
 
-/// COMBATLOG_OBJECT_* bits, which the interface reads to colour a name and to
-/// decide whether an event is the player's own.
-inline constexpr uint32_t kMine = 0x1, kOutsider = 0x8;
-inline constexpr uint32_t kFriendly = 0x10, kHostile = 0x40;
-inline constexpr uint32_t kControlPlayer = 0x100, kControlNpc = 0x200;
-inline constexpr uint32_t kTypePlayer = 0x400, kTypeNpc = 0x800, kTypePet = 0x1000;
+/// COMBATLOG_OBJECT_* bits (TBC 2.4.3 / WotLK Constants.lua).
+inline constexpr uint32_t kMine = 0x1u, kParty = 0x2u, kRaid = 0x4u, kOutsider = 0x8u;
+inline constexpr uint32_t kAffiliationMask = 0x0000000Fu;
+inline constexpr uint32_t kFriendly = 0x10u, kNeutral = 0x20u, kHostile = 0x40u;
+inline constexpr uint32_t kReactionMask = 0x000000F0u;
+inline constexpr uint32_t kControlPlayer = 0x100u, kControlNpc = 0x200u;
+inline constexpr uint32_t kControlMask = 0x00000300u;
+inline constexpr uint32_t kTypePlayer = 0x400u, kTypeNpc = 0x800u, kTypePet = 0x1000u;
+inline constexpr uint32_t kTypeGuardian = 0x2000u, kTypeObject = 0x4000u;
+inline constexpr uint32_t kTypeMask = 0x0000FC00u;
+inline constexpr uint32_t kTarget = 0x00010000u, kFocus = 0x00020000u;
+inline constexpr uint32_t kMainTank = 0x00040000u, kMainAssist = 0x00080000u;
+inline constexpr uint32_t kRaidTarget1 = 0x00100000u;
 inline constexpr uint32_t kNone = 0x80000000u;
+inline constexpr uint32_t kSpecialMask = 0xFFFF0000u;
 
-/// The unit flags for a guid. The client does not track reaction, so a creature
-/// is taken as hostile and another player as friendly, which is right for the
-/// fights this log is read for. Absent source/dest GUIDs carry COMBATLOG_OBJECT_NONE.
+/// Convert a Lua numeric bitmask (which Lua 5.1 bit.bor may hand over as negative
+/// int32, e.g. -2147483648 or -1, or unsigned double up to 4294967295) to uint32_t
+/// without C++ negative-float-to-unsigned undefined behaviour.
+[[nodiscard]] inline uint32_t doubleToBits(double n) {
+    if (!std::isfinite(n)) return 0u;
+    const auto i64 = static_cast<int64_t>(n);
+    return static_cast<uint32_t>(i64);
+}
+
+/// TBC 2.4.3 CombatLog_Object_IsA(unitFlags, mask):
+/// - Requires at least one overlapping bit (`(flags & mask) != 0`).
+/// - When both `flags` and `mask` carry standard 4-axis unit bits (`0xFFFF`),
+///   each constrained axis present in both must overlap; upper `0xFFFF0000`
+///   bits (such as `COMBATLOG_OBJECT_NONE` in `COMBATLOG_FLAG_LIST` or `TARGET`)
+///   do not reject a matching unit.
+/// - Otherwise (standalone special mask such as `COMBATLOG_OBJECT_TARGET`,
+///   `RAIDTARGET*`, or `COMBATLOG_OBJECT_NONE` on a sourceless event), matches
+///   iff `(flags & mask & kSpecialMask) != 0`.
+[[nodiscard]] inline constexpr bool objectIsA(uint32_t flags, uint32_t mask) {
+    if ((flags & mask) == 0u) return false;
+    if ((flags & 0xFFFFu) != 0u && (mask & 0xFFFFu) != 0u) {
+        constexpr uint32_t kCategories[] = {
+            kAffiliationMask, kReactionMask, kControlMask, kTypeMask,
+        };
+        for (uint32_t cat : kCategories) {
+            if ((flags & cat) != 0u && (mask & cat) != 0u && (flags & mask & cat) == 0u) {
+                return false;
+            }
+        }
+        return true;
+    }
+    return (flags & mask & kSpecialMask) != 0u;
+}
+
+/// Fallback unit flags when no live GameHandler entity/faction context is supplied.
 inline uint32_t unitFlags(uint64_t guid, uint64_t playerGuid, uint64_t petGuid) {
     if (guid == 0) return kNone;
     if (guid == playerGuid) return kMine | kFriendly | kControlPlayer | kTypePlayer;
     if (guid == petGuid)    return kMine | kFriendly | kControlPlayer | kTypePet;
-    if ((guid >> 48) == 0)  return kOutsider | kFriendly | kControlPlayer | kTypePlayer;
+    const uint16_t high = static_cast<uint16_t>(guid >> 48);
+    if (high == 0) return kOutsider | kFriendly | kControlPlayer | kTypePlayer;
+    if (high == 0xF140u) return kOutsider | kNeutral | kControlNpc | kTypePet;
+    if (high == 0xF110u || high == 0xF111u) return kOutsider | kNeutral | kControlNpc | kTypeObject;
     return kOutsider | kHostile | kControlNpc | kTypeNpc;
 }
 
@@ -152,6 +204,7 @@ inline std::vector<std::string> buildCombatLogEvent(const CombatLogEventInput& i
     std::vector<std::string> prefix;
     std::vector<std::string> suffix;
     bool environmental = false;
+    bool destIsNone = false;
 
     if (in.subevent != CombatLogSubevent::FromCombatText) {
         const char* auraType = in.powerType != 0 ? "DEBUFF" : "BUFF";
@@ -188,6 +241,21 @@ inline std::vector<std::string> buildCombatLogEvent(const CombatLogEventInput& i
                             ? "UNIT_DESTROYED"
                             : "UNIT_DIED";
                 environmental = true; // Force 0x0000000000000000 / nil / COMBATLOG_OBJECT_NONE source
+                break;
+            case CombatLogSubevent::SpellSummon:
+            case CombatLogSubevent::SpellCreate:
+                if (!hasSpell || in.srcGuid == 0 || in.dstGuid == 0) return {};
+                event = in.subevent == CombatLogSubevent::SpellCreate
+                            ? "SPELL_CREATE"
+                            : "SPELL_SUMMON";
+                prefix = spellPrefix();
+                break;
+            case CombatLogSubevent::SpellCastFailed:
+                if (!hasSpell || in.srcGuid == 0 || in.extraSpellName.empty()) return {};
+                event = "SPELL_CAST_FAILED";
+                destIsNone = true; // Force 0x0000000000000000 / nil / COMBATLOG_OBJECT_NONE dest
+                prefix = spellPrefix();
+                suffix = {in.extraSpellName};
                 break;
             case CombatLogSubevent::FromCombatText:
                 break;
@@ -333,20 +401,131 @@ inline std::vector<std::string> buildCombatLogEvent(const CombatLogEventInput& i
     }
 
     const uint64_t effectiveSrcGuid = (environmental || in.srcGuid == 0) ? 0 : in.srcGuid;
+    const uint64_t effectiveDstGuid = (destIsNone || in.dstGuid == 0) ? 0 : in.dstGuid;
+    const uint32_t effectiveSrcFlags = effectiveSrcGuid == 0
+        ? kNone
+        : (in.srcFlags != 0 ? in.srcFlags : unitFlags(effectiveSrcGuid, in.playerGuid, in.petGuid));
+    const uint32_t effectiveDstFlags = effectiveDstGuid == 0
+        ? kNone
+        : (in.dstFlags != 0 ? in.dstFlags : unitFlags(effectiveDstGuid, in.playerGuid, in.petGuid));
+
     std::vector<std::string> out;
     out.reserve(11 + prefix.size() + suffix.size());
     out.push_back(std::to_string(in.timestamp));
     out.push_back(event);
     out.push_back(guidText(effectiveSrcGuid));
     out.push_back(effectiveSrcGuid == 0 ? nil : textOrNil(in.srcName));
-    out.push_back(std::to_string(unitFlags(effectiveSrcGuid, in.playerGuid, in.petGuid)));
-    out.push_back(guidText(in.dstGuid));
-    out.push_back(textOrNil(in.dstName));
-    out.push_back(std::to_string(unitFlags(in.dstGuid, in.playerGuid, in.petGuid)));
+    out.push_back(std::to_string(effectiveSrcFlags));
+    out.push_back(guidText(effectiveDstGuid));
+    out.push_back(effectiveDstGuid == 0 ? nil : textOrNil(in.dstName));
+    out.push_back(std::to_string(effectiveDstFlags));
     out.insert(out.end(), prefix.begin(), prefix.end());
     out.insert(out.end(), suffix.begin(), suffix.end());
     return out;
 }
+
+/// One C-side filter rule added via TBC/WotLK CombatLogAddFilter(events, srcFlags, dstFlags).
+struct CombatLogFilterRule {
+    enum class EndpointMode : uint8_t { Any = 0, Mask, Guid };
+
+    bool matchAllEvents = true;
+    std::unordered_set<std::string> events;
+    EndpointMode srcMode = EndpointMode::Any;
+    uint32_t srcMask = 0;
+    uint64_t srcGuid = 0;
+    EndpointMode dstMode = EndpointMode::Any;
+    uint32_t dstMask = 0;
+    uint64_t dstGuid = 0;
+
+    void setEventCsv(std::string_view csv) {
+        matchAllEvents = false;
+        events.clear();
+        size_t pos = 0;
+        while (pos < csv.size()) {
+            const size_t comma = csv.find(',', pos);
+            std::string_view tok = (comma == std::string_view::npos)
+                ? csv.substr(pos)
+                : csv.substr(pos, comma - pos);
+            while (!tok.empty() && (tok.front() == ' ' || tok.front() == '\t')) tok.remove_prefix(1);
+            while (!tok.empty() && (tok.back() == ' ' || tok.back() == '\t')) tok.remove_suffix(1);
+            if (!tok.empty()) events.emplace(tok);
+            if (comma == std::string_view::npos) break;
+            pos = comma + 1;
+        }
+    }
+
+    void setSrcMask(uint32_t mask) {
+        srcMode = EndpointMode::Mask;
+        srcMask = mask;
+    }
+
+    void setDstMask(uint32_t mask) {
+        dstMode = EndpointMode::Mask;
+        dstMask = mask;
+    }
+
+    static uint64_t parseGuidString(std::string_view s) {
+        while (!s.empty() && (s.front() == ' ' || s.front() == '\t')) s.remove_prefix(1);
+        if (s.empty()) return 0;
+        const std::string tmp(s);
+        char* end = nullptr;
+        return std::strtoull(tmp.c_str(), &end, 0);
+    }
+
+    void setSrcGuid(std::string_view guidStr) {
+        srcMode = EndpointMode::Guid;
+        srcGuid = parseGuidString(guidStr);
+    }
+
+    void setDstGuid(std::string_view guidStr) {
+        dstMode = EndpointMode::Guid;
+        dstGuid = parseGuidString(guidStr);
+    }
+
+    [[nodiscard]] bool matches(const std::string& subevent,
+                               uint64_t evSrcGuid, uint32_t evSrcFlags,
+                               uint64_t evDstGuid, uint32_t evDstFlags) const {
+        if (!matchAllEvents && events.find(subevent) == events.end()) return false;
+        if (srcMode == EndpointMode::Mask && !combat_log::objectIsA(evSrcFlags, srcMask)) return false;
+        if (srcMode == EndpointMode::Guid && evSrcGuid != srcGuid) return false;
+        if (dstMode == EndpointMode::Mask && !combat_log::objectIsA(evDstFlags, dstMask)) return false;
+        if (dstMode == EndpointMode::Guid && evDstGuid != dstGuid) return false;
+        return true;
+    }
+};
+
+/// Active C-side filter set managed by CombatLogResetFilter() and CombatLogAddFilter().
+/// An empty table passes all events (matching build 8606 right after CombatLogResetFilter()
+/// and preserving unfiltered delivery when Blizzard_CombatLog is not loaded).
+class CombatLogFilterTable {
+public:
+    void reset() { rules_.clear(); }
+    void addRule(CombatLogFilterRule rule) { rules_.push_back(std::move(rule)); }
+    [[nodiscard]] bool empty() const { return rules_.empty(); }
+
+    [[nodiscard]] bool matchesParsed(const std::string& subevent,
+                                     uint64_t srcGuid, uint32_t srcFlags,
+                                     uint64_t dstGuid, uint32_t dstFlags) const {
+        if (rules_.empty()) return true;
+        for (const auto& rule : rules_) {
+            if (rule.matches(subevent, srcGuid, srcFlags, dstGuid, dstFlags)) return true;
+        }
+        return false;
+    }
+
+    [[nodiscard]] bool matches(const std::vector<std::string>& args) const {
+        if (rules_.empty()) return true;
+        if (args.size() < 8) return false;
+        const uint64_t srcGuid = CombatLogFilterRule::parseGuidString(args[2]);
+        const uint32_t srcFlags = static_cast<uint32_t>(std::strtoll(args[4].c_str(), nullptr, 10));
+        const uint64_t dstGuid = CombatLogFilterRule::parseGuidString(args[5]);
+        const uint32_t dstFlags = static_cast<uint32_t>(std::strtoll(args[7].c_str(), nullptr, 10));
+        return matchesParsed(args[1], srcGuid, srcFlags, dstGuid, dstFlags);
+    }
+
+private:
+    std::vector<CombatLogFilterRule> rules_;
+};
 
 }  // namespace game
 }  // namespace wowee

@@ -3863,6 +3863,191 @@ bool GameHandler::canInteractWithGameObject(const GameObject& object) const {
     return gameObjectReactionToPlayer(object) >= 4;
 }
 
+std::string GameHandler::lookupCombatLogName(uint64_t guid) const {
+    if (guid == 0) return {};
+    const std::string& base = lookupName(guid);
+    if (!base.empty()) return base;
+    if (!entityController_) return {};
+    if (const auto entity = entityController_->getEntityManager().getEntity(guid)) {
+        if (entity->getType() == ObjectType::GAMEOBJECT) {
+            const auto& go = static_cast<const GameObject&>(*entity);
+            if (const auto* info = entityController_->getCachedGameObjectInfo(go.getEntry())) {
+                return info->name;
+            }
+        }
+    }
+    const uint16_t high = static_cast<uint16_t>(guid >> 48);
+    const uint32_t midEntry = static_cast<uint32_t>((guid >> 24) & 0xFFFFFFu);
+    if (high == 0xF130u && midEntry != 0u) {
+        std::string cached = entityController_->getCachedCreatureName(midEntry);
+        if (!cached.empty()) return cached;
+        entityController_->queryCreatureInfo(midEntry, guid);
+    } else if (high == 0xF140u && midEntry != 0u && spellHandler_) {
+        std::string cached = spellHandler_->getCachedPetName(midEntry);
+        if (!cached.empty()) return cached;
+        spellHandler_->requestPetName(guid, midEntry);
+    } else if ((high == 0xF110u || high == 0xF111u) && midEntry != 0u) {
+        if (const auto* info = entityController_->getCachedGameObjectInfo(midEntry)) {
+            return info->name;
+        }
+        entityController_->queryGameObjectInfo(midEntry, guid);
+    }
+    return {};
+}
+
+uint32_t GameHandler::combatLogUnitFlags(uint64_t guid) const {
+    using namespace combat_log;
+    if (guid == 0) return kNone;
+
+    uint32_t special = 0;
+    if (guid == targetGuid) special |= kTarget;
+    if (guid == focusGuid) special |= kFocus;
+    if (socialHandler_) {
+        const uint8_t mark = socialHandler_->getEntityRaidMark(guid);
+        if (mark < kRaidMarkCount) special |= (kRaidTarget1 << mark);
+    }
+
+    const auto& party = getPartyData();
+    const bool inRaid = groupIsRaid(party.groupType) && !party.isEmpty();
+    auto findMember = [&](uint64_t g) -> const GroupMember* {
+        if (g == 0 || party.isEmpty()) return nullptr;
+        for (const auto& m : party.members) {
+            if (m.guid == g) return &m;
+        }
+        return nullptr;
+    };
+    auto isMemberPet = [&](uint64_t g) -> bool {
+        if (g == 0 || party.isEmpty()) return false;
+        for (const auto& m : party.members) {
+            if (m.petGuid != 0 && m.petGuid == g) return true;
+        }
+        return false;
+    };
+    if (const auto* member = findMember(guid)) {
+        if ((member->flags & 0x02u) != 0u) special |= kMainTank;
+        if ((member->flags & 0x04u) != 0u) special |= kMainAssist;
+    }
+
+    if (guid == playerGuid) {
+        return special | kMine | kFriendly | kControlPlayer | kTypePlayer;
+    }
+    if (petGuid_ != 0 && guid == petGuid_) {
+        return special | kMine | kFriendly | kControlPlayer | kTypePet;
+    }
+
+    const auto entity = entityController_ ? entityController_->getEntityManager().getEntity(guid) : nullptr;
+    const uint16_t high = static_cast<uint16_t>(guid >> 48);
+    const bool hasFactionTables = !factionHostileMap_.empty() || !factionTemplateRepList_.empty();
+
+    auto readGuidField = [](const Entity& ent, UF loField) -> uint64_t {
+        const uint16_t idx = fieldIndex(loField);
+        if (idx == 0xFFFF) return 0;
+        return static_cast<uint64_t>(ent.getField(idx)) |
+               (static_cast<uint64_t>(ent.getField(idx + 1)) << 32);
+    };
+    auto reactionBitsFromRank = [](int rank) -> uint32_t {
+        if (rank >= 5) return kFriendly;
+        if (rank == 4) return kNeutral;
+        return kHostile;
+    };
+
+    // GameObjects (traps, totemic objects, soulwells, campfires)
+    if ((entity && entity->getType() == ObjectType::GAMEOBJECT) ||
+        high == 0xF110u || high == 0xF111u) {
+        uint64_t ownerGuid = 0;
+        uint32_t reaction = kNeutral;
+        if (entity && entity->getType() == ObjectType::GAMEOBJECT) {
+            const auto& go = static_cast<const GameObject&>(*entity);
+            ownerGuid = readGuidField(go, UF::GAMEOBJECT_CREATED_BY);
+            if (!factionObjectReactionMap_.empty()) {
+                reaction = reactionBitsFromRank(gameObjectReactionToPlayer(go));
+            } else if (ownerGuid != 0 && ownerGuid == playerGuid) {
+                reaction = kFriendly;
+            }
+        }
+        const uint32_t affil = (ownerGuid != 0 && ownerGuid == playerGuid)
+            ? kMine
+            : ((ownerGuid != 0 && findMember(ownerGuid) != nullptr)
+                   ? (inRaid ? kRaid : kParty)
+                   : kOutsider);
+        const uint32_t control = (ownerGuid != 0 && (ownerGuid == playerGuid || (ownerGuid >> 48) == 0))
+            ? kControlPlayer
+            : kControlNpc;
+        return special | affil | reaction | control | kTypeObject;
+    }
+
+    // Other players
+    if (high == 0 || (entity && entity->getType() == ObjectType::PLAYER)) {
+        const uint32_t affil = (findMember(guid) != nullptr)
+            ? (inRaid ? kRaid : kParty)
+            : kOutsider;
+        uint32_t reaction = kFriendly;
+        uint32_t control = kControlPlayer;
+        if (entity && entity->isUnit()) {
+            const auto& unit = static_cast<const Unit&>(*entity);
+            if (hasFactionTables || unit.isHostile() || isDuelOpponent(unit)) {
+                reaction = reactionBitsFromRank(unitReactionToPlayer(unit));
+            }
+            if ((unit.getUnitFlags() & UNIT_FLAG_PLAYER_CONTROLLED) == 0u &&
+                readGuidField(unit, UF::UNIT_FIELD_CHARMEDBY) != 0u) {
+                control = kControlNpc;
+            }
+        }
+        return special | affil | reaction | control | kTypePlayer;
+    }
+
+    // Creatures, pets, totems, and guardians
+    uint64_t ownerGuid = 0;
+    if (entity && entity->isUnit()) {
+        const auto& unit = static_cast<const Unit&>(*entity);
+        ownerGuid = readGuidField(unit, UF::UNIT_FIELD_CHARMEDBY);
+        if (ownerGuid == 0) ownerGuid = readGuidField(unit, UF::UNIT_FIELD_SUMMONEDBY_LO);
+        if (ownerGuid == 0) ownerGuid = readGuidField(unit, UF::UNIT_FIELD_CREATEDBY_LO);
+    }
+
+    const bool ownedByMe = ownerGuid != 0 && (ownerGuid == playerGuid || (petGuid_ != 0 && ownerGuid == petGuid_));
+    const bool ownedByGroup = isMemberPet(guid) || (ownerGuid != 0 && findMember(ownerGuid) != nullptr);
+    const uint32_t affil = ownedByMe
+        ? kMine
+        : (ownedByGroup ? (inRaid ? kRaid : kParty) : kOutsider);
+
+    bool playerControlled = ownedByMe || isMemberPet(guid) ||
+                            (ownerGuid != 0 && (ownerGuid >> 48) == 0);
+    if (entity && entity->isUnit()) {
+        const auto& unit = static_cast<const Unit&>(*entity);
+        if ((unit.getUnitFlags() & UNIT_FLAG_PLAYER_CONTROLLED) != 0u) {
+            playerControlled = true;
+        }
+    }
+    const uint32_t control = playerControlled ? kControlPlayer : kControlNpc;
+
+    uint32_t typeBit = kTypeNpc;
+    if (high == 0xF140u || isMemberPet(guid)) {
+        typeBit = kTypePet;
+    } else if (ownerGuid != 0) {
+        typeBit = kTypeGuardian;
+    }
+
+    uint32_t reaction = kHostile;
+    if (entity && entity->isUnit()) {
+        const auto& unit = static_cast<const Unit&>(*entity);
+        if (hasFactionTables || unit.isHostile() || isDuelOpponent(unit)) {
+            reaction = reactionBitsFromRank(unitReactionToPlayer(unit));
+        } else if (ownedByMe || ownedByGroup) {
+            reaction = kFriendly;
+        } else if (unit.getFactionTemplate() != 0) {
+            reaction = reactionBitsFromRank(unitReactionToPlayer(unit));
+        }
+    } else {
+        // Unspawned creature/pet GUID (e.g. SMSG_SPELLLOGEXECUTE arriving ahead
+        // of SMSG_UPDATE_OBJECT CREATE_OBJECT2): build 8606 reports neutral (0x20)
+        // when world DBCs are active; synthetic unit tests without DBCs keep hostile.
+        reaction = hasFactionTables ? kNeutral : (high == 0xF140u ? kNeutral : kHostile);
+    }
+
+    return special | affil | reaction | control | typeBit;
+}
+
 void GameHandler::registerFactionMapBuilder(PlayerFactionTemplateCallback cb, uint32_t startingTemplate) {
     assert(cb && startingTemplate != 0);
     playerFactionTemplateCallback_ = std::move(cb);

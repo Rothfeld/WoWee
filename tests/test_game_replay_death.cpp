@@ -800,3 +800,139 @@ TEST_CASE("TBC aura, party kill, and unit death transitions emit COMBAT_LOG_EVEN
     CHECK(unfiltered[6][4] == "2147483648");
     CHECK(unfiltered[6][5] == "0xF130000071000011");
 }
+
+TEST_CASE("TBC combat log filters, unitFlags target/focus/raidmark/reaction, SPELL_SUMMON and SPELL_CAST_FAILED",
+          "[replay][combatlog]") {
+    Session s("tbc");
+    auto& gh = s.handler();
+    gh.spellNameCacheRef()[589].name = "Shadow Word: Pain";
+    gh.spellNameCacheRef()[589].schoolMask = 32;
+    gh.spellNameCacheRef()[688].name = "Summon Imp";
+    gh.spellNameCacheRef()[688].schoolMask = 32;
+    gh.spellNameCacheRef()[818].name = "Basic Campfire";
+    gh.spellNameCacheRef()[818].schoolMask = 4;
+    gh.spellNameCacheRef()[133].name = "Fireball";
+    gh.spellNameCacheRef()[133].schoolMask = 4;
+    gh.spellNameCacheRef()[27079].name = "Fire Blast";
+    gh.spellNameCacheRef()[27079].schoolMask = 4;
+    gh.spellNameCacheLoadedRef() = true;
+    gh.setGlobalStringLookup([](const char* key) -> std::string {
+        const std::string_view sv(key);
+        if (sv == "SPELL_FAILED_BAD_TARGETS" || sv == "SPELL_FAILED_BAD_IMPLICIT_TARGETS") {
+            return "Invalid target";
+        }
+        return {};
+    });
+
+    spawnAlivePlayer(s);
+    constexpr uint64_t kBoar = 0xF1300000715948EBULL;
+    s.receive(UpdateObject().tbc().create(
+        kBoar, ObjectType::UNIT,
+        {{UF::OBJECT_FIELD_ENTRY, 113},
+         {UF::UNIT_FIELD_HEALTH, 50},
+         {UF::UNIT_FIELD_MAXHEALTH, 50},
+         {UF::UNIT_FIELD_FACTIONTEMPLATE, 32}}));
+
+    // Target + Focus + RaidMark 8 (Skull = index 7 -> 0x08000000)
+    gh.setTarget(kBoar);
+    CHECK((gh.combatLogUnitFlags(kBoar) & wowee::game::combat_log::kTarget) != 0);
+    CHECK((gh.combatLogUnitFlags(kBoar) & wowee::game::combat_log::kFocus) == 0);
+    gh.setFocus(kBoar);
+    CHECK((gh.combatLogUnitFlags(kBoar) & (wowee::game::combat_log::kTarget | wowee::game::combat_log::kFocus)) ==
+          (wowee::game::combat_log::kTarget | wowee::game::combat_log::kFocus));
+    {
+        wowee::network::Packet rm(wowee::game::wireOpcode(wowee::game::Opcode::MSG_RAID_TARGET_UPDATE));
+        rm.writeUInt8(1); // single update
+        rm.writeUInt8(7); // Skull (0-based 7)
+        rm.writeUInt64(kBoar);
+        s.receive(rm);
+    }
+    CHECK((gh.combatLogUnitFlags(kBoar) & (wowee::game::combat_log::kRaidTarget1 << 7)) != 0);
+
+    // Install Blizzard_CombatLog "My Actions" filter on GameHandler
+    constexpr uint32_t kMineOrMyPet = 0x4511u | 0x3111u;
+    wowee::game::CombatLogFilterRule r1;
+    r1.setEventCsv("SPELL_DAMAGE,PARTY_KILL,SPELL_AURA_APPLIED,SPELL_AURA_REMOVED,UNIT_DIED");
+    r1.setSrcMask(kMineOrMyPet);
+    wowee::game::CombatLogFilterRule r2;
+    r2.setEventCsv("SPELL_DAMAGE,PARTY_KILL,SPELL_AURA_APPLIED,SPELL_AURA_REMOVED,UNIT_DIED");
+    r2.setDstMask(kMineOrMyPet);
+    gh.resetCombatLogFilters();
+    gh.addCombatLogFilter(r1);
+    gh.addCombatLogFilter(r2);
+
+    std::vector<std::vector<std::string>> unfiltered;
+    std::vector<std::vector<std::string>> filtered;
+    gh.setAddonEventCallback([&](const std::string& e, const std::vector<std::string>& a) {
+        if (e == "COMBAT_LOG_EVENT_UNFILTERED") unfiltered.push_back(a);
+        else if (e == "COMBAT_LOG_EVENT") filtered.push_back(a);
+    });
+
+    const uint16_t ufAuras = wowee::game::fieldIndex(UF::UNIT_FIELD_AURAS);
+    REQUIRE(ufAuras != 0xFFFF);
+
+    // Apply & remove debuff on outsider boar, deal player spell damage + PARTY_KILL + boar UNIT_DIED
+    s.receive(UpdateObject().tbc().valuesAt(kBoar, {{static_cast<uint16_t>(ufAuras + 40), 589u}}));
+    s.receive(UpdateObject().tbc().valuesAt(kBoar, {{static_cast<uint16_t>(ufAuras + 40), 0u}}));
+    gh.getCombatHandler()->addCombatText(wowee::game::CombatTextEntry::SPELL_DAMAGE,
+                                         669, 27079, true, 0, Session::kPlayerGuid, kBoar, 4, false, false);
+    {
+        wowee::network::Packet pk(wowee::game::wireOpcode(wowee::game::Opcode::SMSG_PARTYKILLLOG));
+        pk.writeUInt64(Session::kPlayerGuid);
+        pk.writeUInt64(kBoar);
+        s.receive(pk);
+    }
+    s.receive(UpdateObject().tbc().values(
+        kBoar, {{UF::UNIT_FIELD_HEALTH, 0}, {UF::UNIT_DYNAMIC_FLAGS, wowee::game::UNIT_DYNFLAG_DEAD}}));
+
+    // Matches N_KILL_META: all 5 hit COMBAT_LOG_EVENT_UNFILTERED, only 2 player-sourced hit COMBAT_LOG_EVENT!
+    REQUIRE(unfiltered.size() == 5);
+    REQUIRE(filtered.size() == 2);
+    CHECK(filtered[0][1] == "SPELL_DAMAGE");
+    CHECK(filtered[1][1] == "PARTY_KILL");
+
+    // SMSG_SPELLLOGEXECUTE: SPELL_EFFECT_SUMMON_PET (56) -> SPELL_SUMMON; SUMMON_OBJECT_WILD (76) -> SPELL_CREATE
+    constexpr uint64_t kImpGuid = 0xF1400037C700008EULL;
+    {
+        wowee::network::Packet exe(wowee::game::wireOpcode(wowee::game::Opcode::SMSG_SPELLLOGEXECUTE));
+        exe.writeUInt8(0x01u); // packed Session::kPlayerGuid (0x42)
+        exe.writeUInt8(0x42u);
+        exe.writeUInt32(688u); // Summon Imp
+        exe.writeUInt32(1u);   // 1 effect
+        exe.writeUInt32(wowee::game::SpellEffect::SUMMON_PET);
+        exe.writeUInt32(1u);   // 1 target
+        // Packed kImpGuid (0xF1400037C700008EULL -> bytes 0, 3, 4, 6, 7)
+        exe.writeUInt8(0xD9u);
+        exe.writeUInt8(0x8Eu);
+        exe.writeUInt8(0xC7u);
+        exe.writeUInt8(0x37u);
+        exe.writeUInt8(0x40u);
+        exe.writeUInt8(0xF1u);
+        s.receive(exe);
+    }
+    REQUIRE(unfiltered.size() == 6);
+    CHECK(unfiltered[5][1] == "SPELL_SUMMON");
+    CHECK(unfiltered[5][5] == "0xF1400037C700008E");
+    CHECK(unfiltered[5][7] == "4648"); // 0x1228
+    CHECK(unfiltered[5][8] == "688");
+    CHECK(unfiltered[5][9] == "Summon Imp");
+    CHECK(unfiltered[5][10] == "32");
+    CHECK(filtered.size() == 2); // SPELL_SUMMON excluded from My Actions eventList
+
+    // SMSG_CAST_FAILED (TBC: uint32 spellId + uint8 status; TBC SPELL_FAILED_BAD_TARGETS = 10)
+    {
+        wowee::network::Packet cf(wowee::game::wireOpcode(wowee::game::Opcode::SMSG_CAST_FAILED));
+        cf.writeUInt32(133u); // Fireball
+        cf.writeUInt8(10u);   // TBC SPELL_FAILED_BAD_TARGETS -> "Invalid target"
+        s.receive(cf);
+    }
+    REQUIRE(unfiltered.size() == 7);
+    CHECK(unfiltered[6][1] == "SPELL_CAST_FAILED");
+    CHECK(unfiltered[6][2] == "0x0000000000000042");
+    CHECK(unfiltered[6][5] == "0x0000000000000000");
+    CHECK(unfiltered[6][7] == "2147483648");
+    CHECK(unfiltered[6][8] == "133");
+    CHECK(unfiltered[6][9] == "Fireball");
+    CHECK(unfiltered[6][10] == "4");
+    CHECK(unfiltered[6][11] == "Invalid target");
+}

@@ -123,6 +123,10 @@ public:
                                 uint32_t spellId, bool isDebuff, int32_t stacks = 0);
     void emitCombatLogPartyKill(uint64_t killerGuid, uint64_t victimGuid);
     void emitCombatLogUnitDeath(uint64_t victimGuid, bool destroyed = false);
+    void emitCombatLogSpellSummon(uint64_t casterGuid, uint64_t summonedGuid,
+                                  uint32_t spellId, bool isCreateObject = false);
+    void emitCombatLogCastFailed(uint64_t casterGuid, uint32_t spellId,
+                                 const std::string& reason);
 
     // Called from GameHandler::update() each frame
     void updateAutoAttack(float deltaTime);

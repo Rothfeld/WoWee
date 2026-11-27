@@ -483,6 +483,10 @@ public:
     // CMSG_PET_NAME_QUERY for a unit whose UNIT_FIELD_PET_NAME_TIMESTAMP is set.
     // The server answers only when petNumber is the unit's UNIT_FIELD_PETNUMBER.
     void requestPetName(uint64_t petGuid, uint32_t petNumber);
+    [[nodiscard]] std::string getCachedPetName(uint32_t petNumber) const {
+        auto it = petNamesByNumber_.find(petNumber);
+        return it != petNamesByNumber_.end() ? it->second : std::string{};
+    }
 
     /// Give a hunter's pet up for good. The interface asks first - this is the
     /// other side of the ABANDON_PET dialog, whose accept called an unbound
@@ -595,6 +599,8 @@ private:
                             uint64_t caster, uint32_t spellId, bool isPlayerCaster);
     void parseEffectExtraAttacks(network::Packet& packet, uint32_t effectLogCount,
                                  uint64_t caster, uint32_t spellId, bool isPlayerCaster);
+    void parseEffectSummon(network::Packet& packet, uint32_t effectLogCount,
+                           uint64_t caster, uint32_t spellId, bool isCreateObject);
     void parseEffectTargetGuidOnly(network::Packet& packet, uint32_t effectLogCount);
     void parseEffectDurabilityDamage(network::Packet& packet, uint32_t effectLogCount);
 
@@ -732,6 +738,7 @@ private:
     std::unordered_map<uint8_t, PendingAuraDuration> pendingPlayerAuraDurations_;
     std::vector<AuraSlot> targetAuras_;
     std::unordered_map<uint64_t, std::vector<AuraSlot>> unitAurasCache_;
+    std::unordered_map<uint32_t, std::string> petNamesByNumber_;
 
     // Global Cooldown
     float gcdTotal_ = 0.0f;
