@@ -51,7 +51,9 @@ struct WaterPushConstants {
     float legacyWmoMode = 0.0f;
     // Water: texture repeats across the surface. Authored magma: texture offset.
     float textureX = 0.0f, textureY = 0.0f;
-    float interiorFog = 0.0f; // 1: a WMO interior group's liquid, which takes the camera's interior fog (else the outdoor fog)
+    // 0: outdoor liquid (outdoorFog), 1: WMO interior water (MFOG),
+    // 2: WMO interior magma/slime (outdoorFog per vsLiquidMagma.bls + farclip clip).
+    float interiorFog = 0.0f;
 };
 static_assert(sizeof(WaterPushConstants) == 116, "the two shader declarations of this range are laid out for 116 bytes");
 
@@ -289,7 +291,7 @@ bool WaterRenderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLay
                     fragShader.stageInfo(VK_SHADER_STAGE_FRAGMENT_BIT))
         .setVertexInput({ vertBinding }, vertAttribs)
         .setTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
-        .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE)
+        .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE)
         .setDepthTest(true, false, VK_COMPARE_OP_LESS_OR_EQUAL)  // translucent water defers depth write to waterDepthOnlyPipeline
         .setColorBlendAttachment(PipelineBuilder::blendAlpha())
         .setMultisample(vkCtx->getMsaaSamples())
@@ -303,7 +305,7 @@ bool WaterRenderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLay
                     fragShader.stageInfo(VK_SHADER_STAGE_FRAGMENT_BIT))
         .setVertexInput({ vertBinding }, vertAttribs)
         .setTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
-        .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE)
+        .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE)
         .setDepthTest(true, true, VK_COMPARE_OP_LESS_OR_EQUAL)   // opaque magma/slime writes depth
         .setColorBlendAttachment(PipelineBuilder::blendDisabled())
         .setMultisample(vkCtx->getMsaaSamples())
@@ -319,7 +321,7 @@ bool WaterRenderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLay
                     fragShader.stageInfo(VK_SHADER_STAGE_FRAGMENT_BIT))
         .setVertexInput({ vertBinding }, vertAttribs)
         .setTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
-        .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE)
+        .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE)
         .setDepthTest(true, true, VK_COMPARE_OP_LESS_OR_EQUAL)   // depth-only waterline clip for blended M2 meshes
         .setColorBlendAttachment(depthOnlyBlend)
         .setMultisample(vkCtx->getMsaaSamples())
@@ -386,7 +388,7 @@ void WaterRenderer::recreatePipelines() {
                     fragShader.stageInfo(VK_SHADER_STAGE_FRAGMENT_BIT))
         .setVertexInput({ vertBinding }, vertAttribs)
         .setTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
-        .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE)
+        .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE)
         .setDepthTest(true, false, VK_COMPARE_OP_LESS_OR_EQUAL)
         .setColorBlendAttachment(PipelineBuilder::blendAlpha())
         .setMultisample(vkCtx->getMsaaSamples())
@@ -400,7 +402,7 @@ void WaterRenderer::recreatePipelines() {
                     fragShader.stageInfo(VK_SHADER_STAGE_FRAGMENT_BIT))
         .setVertexInput({ vertBinding }, vertAttribs)
         .setTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
-        .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE)
+        .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE)
         .setDepthTest(true, true, VK_COMPARE_OP_LESS_OR_EQUAL)
         .setColorBlendAttachment(PipelineBuilder::blendDisabled())
         .setMultisample(vkCtx->getMsaaSamples())
@@ -416,7 +418,7 @@ void WaterRenderer::recreatePipelines() {
                     fragShader.stageInfo(VK_SHADER_STAGE_FRAGMENT_BIT))
         .setVertexInput({ vertBinding }, vertAttribs)
         .setTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
-        .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE)
+        .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE)
         .setDepthTest(true, true, VK_COMPARE_OP_LESS_OR_EQUAL)
         .setColorBlendAttachment(depthOnlyBlend)
         .setMultisample(vkCtx->getMsaaSamples())
@@ -1347,7 +1349,7 @@ void WaterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
         // against a near plane of 0.05 while the camera's is 0.5.
         push.depthRange = glm::vec2(camera.getNearPlane(), camera.getFarPlane());
         push.sceneValid = sceneHistoryReady ? 1.0f : 0.0f;
-        push.interiorFog = surface.indoorColor ? 1.0f : 0.0f;
+        push.interiorFog = liquidInteriorFogMode(surface.indoorColor.has_value(), authoredMagma);
         // 1 = indoor WMO, 2 = exterior WMO, 3 = terrain depth-color ramp.
         // ADT ocean and freshwater both use authored animation and lighting.
         // 4 = authored magma/slime: texture at the vertex s,t plus a drift.
@@ -1646,7 +1648,9 @@ void WaterRenderer::createWaterMesh(WaterSurface& surface) {
         }
     }
 
-    // Generate indices respecting render mask (same logic as GL version)
+    // Generate indices respecting render mask with consistent upward/outward
+    // right-handed winding across unmerged ADT, merged ADT, and WMO MLIQ grids.
+    const bool upwardCcw = liquidGridUpwardCcw(surface.stepX, surface.stepY);
     for (int y = 0; y < gridHeight - 1; y++) {
         for (int x = 0; x < gridWidth - 1; x++) {
             const bool renderTile =
@@ -1655,17 +1659,14 @@ void WaterRenderer::createWaterMesh(WaterSurface& surface) {
 
             if (!renderTile) continue;
 
-            int topLeft = y * gridWidth + x;
-            int topRight = topLeft + 1;
-            int bottomLeft = (y + 1) * gridWidth + x;
-            int bottomRight = bottomLeft + 1;
+            const auto topLeft = static_cast<uint32_t>(y * gridWidth + x);
+            const uint32_t topRight = topLeft + 1u;
+            const auto bottomLeft = static_cast<uint32_t>((y + 1) * gridWidth + x);
+            const uint32_t bottomRight = bottomLeft + 1u;
 
-            indices.push_back(topLeft);
-            indices.push_back(bottomLeft);
-            indices.push_back(topRight);
-            indices.push_back(topRight);
-            indices.push_back(bottomLeft);
-            indices.push_back(bottomRight);
+            const auto cellIndices = emitLiquidCellTriangles(
+                topLeft, topRight, bottomLeft, bottomRight, upwardCcw);
+            indices.insert(indices.end(), cellIndices.begin(), cellIndices.end());
         }
     }
 
@@ -2650,7 +2651,7 @@ bool WaterRenderer::createWater1xPass(VkFormat colorFormat, VkFormat depthFormat
                     fragShader.stageInfo(VK_SHADER_STAGE_FRAGMENT_BIT))
         .setVertexInput({ vertBinding }, vertAttribs)
         .setTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
-        .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE)
+        .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE)
         .setDepthTest(true, true, VK_COMPARE_OP_LESS_OR_EQUAL)
         .setColorBlendAttachment(PipelineBuilder::blendAlpha())
         .setMultisample(VK_SAMPLE_COUNT_1_BIT)
@@ -2664,7 +2665,7 @@ bool WaterRenderer::createWater1xPass(VkFormat colorFormat, VkFormat depthFormat
                     fragShader.stageInfo(VK_SHADER_STAGE_FRAGMENT_BIT))
         .setVertexInput({ vertBinding }, vertAttribs)
         .setTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
-        .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE)
+        .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE)
         .setDepthTest(true, true, VK_COMPARE_OP_LESS_OR_EQUAL)
         .setColorBlendAttachment(PipelineBuilder::blendDisabled())
         .setMultisample(VK_SAMPLE_COUNT_1_BIT)

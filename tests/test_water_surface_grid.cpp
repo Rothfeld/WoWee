@@ -13,6 +13,9 @@
 
 #include "rendering/water_surface_grid.hpp"
 
+using wowee::rendering::emitLiquidCellTriangles;
+using wowee::rendering::liquidGridUpwardCcw;
+using wowee::rendering::liquidInteriorFogMode;
 using wowee::rendering::sampleGridHeight;
 using wowee::rendering::surfaceGridPosition;
 
@@ -185,4 +188,66 @@ TEST_CASE("a non-square surface indexes by its own width", "[watergrid]") {
     const auto heights = corners(4, 8, [](int, int y) { return static_cast<float>(y); });
     CHECK(*sampleGridHeight(heights, 4, 8, 0.0f, 3.0f) == Catch::Approx(3.0f));
     CHECK(*sampleGridHeight(heights, 4, 8, 4.0f, 6.0f) == Catch::Approx(6.0f));
+}
+
+TEST_CASE("liquid cell winding keeps upward/outward normals across ADT and WMO grids",
+          "[watergrid][sidedisc5]") {
+    constexpr float kTile = 4.1666665f;
+
+    auto checkCellNormals = [](const glm::vec3& stepX, const glm::vec3& stepY,
+                               float h00, float h10, float h01, float h11) {
+        const glm::vec3 p[4] = {
+            glm::vec3(0.0f, 0.0f, h00),
+            glm::vec3(stepX.x, stepX.y, h10),
+            glm::vec3(stepY.x, stepY.y, h01),
+            glm::vec3(stepX.x + stepY.x, stepX.y + stepY.y, h11),
+        };
+        const bool upwardCcw = liquidGridUpwardCcw(stepX, stepY);
+        const auto idx = emitLiquidCellTriangles(0u, 1u, 2u, 3u, upwardCcw);
+        const glm::vec3 n0 = glm::cross(p[idx[1]] - p[idx[0]], p[idx[2]] - p[idx[0]]);
+        const glm::vec3 n1 = glm::cross(p[idx[4]] - p[idx[3]], p[idx[5]] - p[idx[3]]);
+        CHECK(n0.z > 0.0f);
+        CHECK(n1.z > 0.0f);
+        return std::pair{n0, n1};
+    };
+
+    // Unmerged ADT chunk: stepX = (0, -T, 0), stepY = (-T, 0, 0).
+    CHECK(liquidGridUpwardCcw(glm::vec3(0.0f, -kTile, 0.0f), glm::vec3(-kTile, 0.0f, 0.0f)));
+    checkCellNormals(glm::vec3(0.0f, -kTile, 0.0f), glm::vec3(-kTile, 0.0f, 0.0f),
+                     0.0f, 0.0f, 0.0f, 0.0f);
+
+    // Merged 128x128 ADT tile: stepX = (-T, 0, 0), stepY = (0, -T, 0).
+    CHECK_FALSE(liquidGridUpwardCcw(glm::vec3(-kTile, 0.0f, 0.0f), glm::vec3(0.0f, -kTile, 0.0f)));
+    checkCellNormals(glm::vec3(-kTile, 0.0f, 0.0f), glm::vec3(0.0f, -kTile, 0.0f),
+                     0.0f, 0.0f, 0.0f, 0.0f);
+
+    // Rotated WMO MLIQ lavafall: local (+T, 0, 0) / (0, +T, 0) rotated 97 deg around Z,
+    // sloping steeply upward away from the viewer (FragPos.z = -170 > viewPos.z = -227.8).
+    const float c = -0.12186934f;
+    const float s = 0.99254615f;
+    const glm::vec3 wmoStepX(c * kTile, s * kTile, 0.0f);
+    const glm::vec3 wmoStepY(-s * kTile, c * kTile, 0.0f);
+    CHECK_FALSE(liquidGridUpwardCcw(wmoStepX, wmoStepY));
+    // Lavafall rises +6 yd along +wmoStepY away from a viewer standing 20 cells downhill
+    // along -wmoStepY and 54.8 yd below FragPos.z in world Z.
+    const auto [n0, n1] = checkCellNormals(wmoStepX, wmoStepY, -176.0f, -176.0f, -170.0f, -170.0f);
+    const glm::vec3 fragPos(0.0f, 0.0f, -173.0f);
+    const glm::vec3 cavernViewerBelow = fragPos - 20.0f * wmoStepY + glm::vec3(0.0f, 0.0f, -54.8f);
+    // Viewer is 54.8 yd below FragPos.z in world Z, yet stands in front of the falling sheet.
+    CHECK(cavernViewerBelow.z < fragPos.z);
+    CHECK(glm::dot(n0, cavernViewerBelow - fragPos) > 0.0f);
+    CHECK(glm::dot(n1, cavernViewerBelow - fragPos) > 0.0f);
+
+    // Submerged viewer directly underneath the sheet sees the back face and culls it.
+    const glm::vec3 submergedUnderSheet(0.0f, 0.0f, -190.0f);
+    CHECK(glm::dot(n0, submergedUnderSheet - fragPos) < 0.0f);
+    CHECK(glm::dot(n1, submergedUnderSheet - fragPos) < 0.0f);
+}
+
+TEST_CASE("WMO interior magma uses global Light.dbc fog mode while indoor water uses MFOG",
+          "[watergrid][sidedisc5]") {
+    CHECK(liquidInteriorFogMode(false, false) == Catch::Approx(0.0f));
+    CHECK(liquidInteriorFogMode(false, true) == Catch::Approx(0.0f));
+    CHECK(liquidInteriorFogMode(true, false) == Catch::Approx(1.0f));
+    CHECK(liquidInteriorFogMode(true, true) == Catch::Approx(2.0f));
 }

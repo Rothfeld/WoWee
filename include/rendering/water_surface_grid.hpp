@@ -2,6 +2,7 @@
 
 #include <glm/glm.hpp>
 
+#include <array>
 #include <cstdint>
 #include <optional>
 #include <vector>
@@ -94,6 +95,47 @@ inline std::optional<float> sampleGridHeight(const std::vector<float>& heights,
     const float h11 = heights[static_cast<size_t>(idx11)];
     return h00 * (1 - fx) * (1 - fy) + h10 * fx * (1 - fy) +
            h01 * (1 - fx) * fy + h11 * fx * fy;
+}
+
+/// True when the cell triangle `(topLeft, bottomLeft, topRight)` has a
+/// right-handed upward/outward normal `cross(stepY, stepX).z >= 0`.
+///
+/// Unmerged ADT chunks step `(0, -T, 0)` along X and `(-T, 0, 0)` along Y
+/// (`cross(stepY, stepX).z = +T^2 > 0`), whereas merged 128x128 ADT tiles
+/// (`(-T, 0, 0)` / `(0, -T, 0)`) and WMO MLIQ grids (`M * (+T, 0, 0)` /
+/// `M * (0, +T, 0)`) have `cross(stepY, stepX).z < 0` and require the swapped
+/// winding `(topLeft, topRight, bottomLeft)` so every liquid surface in the
+/// engine presents `gl_FrontFacing == true` on its open/above-liquid side
+/// (including steep MLIQ lavafalls whose vertices sit above `viewPos.z`) and
+/// `gl_FrontFacing == false` when viewed from underneath while submerged.
+constexpr bool liquidGridUpwardCcw(const glm::vec3& stepX, const glm::vec3& stepY) {
+    return (stepY.x * stepX.y - stepY.y * stepX.x) >= 0.0f;
+}
+
+/// Emit the 6 indices of one liquid grid cell with consistent right-handed
+/// upward/outward triangle normals (`cross(v1 - v0, v2 - v0) = J * (-dh/dx, -dh/dy, +1)`
+/// with `J > 0`).
+constexpr std::array<uint32_t, 6> emitLiquidCellTriangles(
+        uint32_t topLeft, uint32_t topRight,
+        uint32_t bottomLeft, uint32_t bottomRight,
+        bool upwardCcw) {
+    if (upwardCcw) {
+        return {topLeft, bottomLeft, topRight,
+                topRight, bottomLeft, bottomRight};
+    }
+    return {topLeft, topRight, bottomLeft,
+            topRight, bottomRight, bottomLeft};
+}
+
+/// Encode `WaterPushConstants::interiorFog` for a liquid surface:
+/// - `0.0f`: outdoor terrain or exterior WMO liquid (`outdoorFogColor` / `outdoorFogParams`).
+/// - `1.0f`: indoor WMO translucent water (`vsLiquidIntWater.bls` uses WMO `MFOG`).
+/// - `2.0f`: indoor WMO authored magma/slime (`vsLiquidMagma.bls` writes raw eye
+///   depth to global `Light.dbc` `outdoorFogColor` / `outdoorFogParams`, clipped at
+///   `farclip` inside sealed WMO interiors).
+constexpr float liquidInteriorFogMode(bool hasIndoorColor, bool authoredMagma) {
+    if (!hasIndoorColor) return 0.0f;
+    return authoredMagma ? 2.0f : 1.0f;
 }
 
 }  // namespace rendering

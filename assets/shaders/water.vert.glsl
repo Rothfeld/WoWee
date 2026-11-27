@@ -39,7 +39,7 @@ layout(push_constant) uniform Push {
     float sceneValid;
     float legacyWmoMode;
     float textureX, textureY; // water: texture repeats across the surface; authored magma: texture offset
-    float interiorFog;
+    float interiorFog; // 0=outdoor, 1=WMO interior water (MFOG), 2=WMO interior magma/slime (outdoor fog + farclip clip)
 } push;
 
 layout(location = 0) in vec3 aPos;

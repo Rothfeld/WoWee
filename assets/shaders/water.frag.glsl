@@ -38,7 +38,7 @@ layout(push_constant) uniform Push {
     float sceneValid; // 1 once the refraction capture holds a frame, 0 before it
     float legacyWmoMode;
     float textureX, textureY; // water: texture repeats across the surface; authored magma: texture offset
-    float interiorFog; // 1: liquid of a WMO interior group, fogged by the interior fog
+    float interiorFog; // 0=outdoor, 1=WMO interior water (MFOG), 2=WMO interior magma/slime (outdoor fog + farclip clip)
 } push;
 
 layout(set = 1, binding = 0) uniform WaterMaterial {
@@ -304,14 +304,23 @@ vec3 applyFog(vec3 color, vec3 worldPos, float dist) {
 }
 
 void main() {
-    selectFog(push.interiorFog > 0.5);
+    // Indoor WMO magma/slime (interiorFog == 2) uses global Light.dbc fog per
+    // TBC vsLiquidMagma.bls, while hardware zFar = farclip clips geometry past
+    // viewDistance inside sealed WMO interiors so the chamber's MFOG clear
+    // color remains exposed beyond farclip.
+    if (push.interiorFog > 1.5 && outdoorFogParams.z > 0.0 &&
+            -(view * vec4(FragPos, 1.0)).z > outdoorFogParams.z) {
+        discard;
+    }
+    selectFog(push.interiorFog > 0.5 && push.interiorFog < 1.5);
     float time = fogParams.z;
     float basicType = push.liquidBasicType;
     if (push.legacyWmoMode > 3.5) {
-        // TBC psLiquidMagma: one-sided surface (culled from underneath when
-        // submerged so the fogged canal/cavern ceiling above remains visible),
-        // vertex colour times the animated texture, opaque, unlit, fogged.
-        if (viewPos.z < FragPos.z) {
+        // TBC psLiquidMagma: one-sided surface. Cull back-facing triangles when
+        // submerged beneath a magma sheet so the cavern ceiling above remains
+        // visible, while keeping front-facing sloped MLIQ/MCLQ lavafalls whose
+        // vertices sit above viewPos.z (e.g. Blackrock_lower_guild_003.wmo).
+        if (!gl_FrontFacing) {
             discard;
         }
         vec3 color = waterColor.rgb * texture(LakeTexture, TexCoord + vec2(push.textureX, push.textureY)).rgb;
