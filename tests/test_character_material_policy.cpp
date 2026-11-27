@@ -245,3 +245,92 @@ TEST_CASE("attached weapon enchant effect shader blend mode and additive fade al
     CHECK(characterBatchOutAlpha(4, false, false, 0.5f, 0.25f) == Catch::Approx(0.125f));
     CHECK(characterBatchOutAlpha(4, false, false, 0.5f, 0.06f) == Catch::Approx(0.03f));
 }
+
+TEST_CASE("per-instance type-1 skin override and fallback cover facial hair, ears, horns, and trouser cuffs across TBC character M2s",
+          "[character][m2][sidedisc6]") {
+    using wowee::rendering::characterBatchUsesSkinFallback;
+    using wowee::rendering::characterTextureSlotOverrideApplies;
+
+    // Every texType == 1 (TEX_COMPONENT_SKIN) submesh on remote players and NPCs --
+    // including Human/Dwarf/Gnome beards & sideburns (101..102, 201..202, 301..302),
+    // Draenei horns (101..103), all-race ears (701..702), trouser cuffs (1102),
+    // and no-cape bare back (1501) -- must receive the instance's skin override
+    // instead of falling back to untextured whiteTexture_.
+    for (uint16_t submeshId : {uint16_t{0}, uint16_t{101}, uint16_t{102}, uint16_t{201},
+                               uint16_t{202}, uint16_t{302}, uint16_t{401}, uint16_t{501},
+                               uint16_t{701}, uint16_t{702}, uint16_t{802}, uint16_t{902},
+                               uint16_t{1002}, uint16_t{1102}, uint16_t{1202}, uint16_t{1301},
+                               uint16_t{1501}, uint16_t{1801}, uint16_t{2001}}) {
+        CHECK(characterTextureSlotOverrideApplies(1u, submeshId));
+        CHECK(characterBatchUsesSkinFallback(/*isSceneModel=*/false, submeshId, /*batchTexType=*/1u));
+    }
+
+    // Hardcoded type-0 M2 slots (eyes, weapon reflection maps) are not replaceable.
+    CHECK_FALSE(characterTextureSlotOverrideApplies(0u, 0u));
+
+    // Fallback must never bleed body skin onto scene backdrops, type-2 capes (1502+), or type-6 hair cards,
+    // while allowing ScourgeMale/FelOrcMale/SkeletonMale type-1 exposed spine passes on 1502..1506.
+    CHECK_FALSE(characterBatchUsesSkinFallback(/*isSceneModel=*/true, 0u, 1u));
+    CHECK_FALSE(characterBatchUsesSkinFallback(/*isSceneModel=*/false, 8u, 6u));
+    CHECK_FALSE(characterBatchUsesSkinFallback(/*isSceneModel=*/false, 102u, 6u));
+    CHECK_FALSE(characterBatchUsesSkinFallback(/*isSceneModel=*/false, 1502u, 2u));
+    CHECK(characterBatchUsesSkinFallback(/*isSceneModel=*/false, 1502u, 1u));
+
+    // Audit shipped TBC Character\*\*.m2 models when present: every batch referencing
+    // a texType == 1 slot must receive per-instance skin overrides and skin fallback.
+    const std::filesystem::path charRoot("/workspace/azerothcore/client/wowee-data/expansions/tbc/character");
+    if (std::filesystem::is_directory(charRoot)) {
+        size_t checkedModels = 0;
+        size_t checkedType1Batches = 0;
+        auto rdU16 = [](const std::vector<uint8_t>& buf, size_t off) -> uint16_t {
+            return static_cast<uint16_t>(buf[off] | (static_cast<uint16_t>(buf[off + 1]) << 8));
+        };
+        auto rdU32 = [](const std::vector<uint8_t>& buf, size_t off) -> uint32_t {
+            return static_cast<uint32_t>(buf[off]) |
+                   (static_cast<uint32_t>(buf[off + 1]) << 8) |
+                   (static_cast<uint32_t>(buf[off + 2]) << 16) |
+                   (static_cast<uint32_t>(buf[off + 3]) << 24);
+        };
+        for (const auto& entry : std::filesystem::recursive_directory_iterator(charRoot)) {
+            if (!entry.is_regular_file()) continue;
+            std::string ext = entry.path().extension().string();
+            for (char& ch : ext) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+            if (ext != ".m2") continue;
+            std::ifstream in(entry.path(), std::ios::binary);
+            std::vector<uint8_t> buf((std::istreambuf_iterator<char>(in)), {});
+            if (buf.size() < 0xA0 || buf[0] != 'M' || buf[1] != 'D' || buf[2] != '2' || buf[3] != '0') continue;
+            const uint32_t ver = rdU32(buf, 4);
+            if (ver < 260 || ver > 263) continue;
+            const uint32_t nViews = rdU32(buf, 0x4c), ofsViews = rdU32(buf, 0x50);
+            const uint32_t nTex = rdU32(buf, 0x5c), ofsTex = rdU32(buf, 0x60);
+            const uint32_t nTexLk = rdU32(buf, 0x94), ofsTexLk = rdU32(buf, 0x98);
+            if (nViews == 0 || ofsViews + 44 > buf.size()) continue;
+            ++checkedModels;
+            const uint32_t nSub = rdU32(buf, ofsViews + 24), oSub = rdU32(buf, ofsViews + 28);
+            const uint32_t nBat = rdU32(buf, ofsViews + 32), oBat = rdU32(buf, ofsViews + 36);
+            for (uint32_t bi = 0; bi < nBat; ++bi) {
+                const size_t bo = oBat + bi * 24u;
+                if (bo + 24u > buf.size()) break;
+                const uint16_t sidx = rdU16(buf, bo + 4u);
+                const uint16_t tcnt = rdU16(buf, bo + 14u);
+                const uint16_t tcomb = rdU16(buf, bo + 16u);
+                if (sidx >= nSub || oSub + (sidx + 1u) * 48u > buf.size()) continue;
+                const uint16_t sid = rdU16(buf, oSub + sidx * 48u);
+                for (uint16_t ci = 0; ci < std::max<uint16_t>(1u, tcnt); ++ci) {
+                    if (static_cast<uint32_t>(tcomb) + ci >= nTexLk) continue;
+                    const uint16_t ts = rdU16(buf, ofsTexLk + (static_cast<size_t>(tcomb) + ci) * 2u);
+                    if (ts >= nTex || ofsTex + (ts + 1u) * 16u > buf.size()) continue;
+                    const uint32_t tt = rdU32(buf, ofsTex + ts * 16u);
+                    if (tt == 1u) {
+                        ++checkedType1Batches;
+                        INFO("model=" << entry.path().string() << " submeshId=" << sid);
+                        CHECK(characterTextureSlotOverrideApplies(tt, sid));
+                        CHECK(characterBatchUsesSkinFallback(/*isSceneModel=*/false, sid, tt));
+                    }
+                }
+            }
+        }
+        CHECK(checkedModels >= 20u);
+        CHECK(checkedType1Batches >= 400u);
+    }
+}

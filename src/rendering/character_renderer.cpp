@@ -4774,32 +4774,25 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
 
                 // For body/equipment parts with white/fallback texture, use skin (type 1) texture.
                 if (texPtr == whiteTexture_.get() && !instance.isSceneModel) {
-                    uint16_t group = batchGroup;
-                    bool isSkinGroup = (group == 0 || group == 3 || group == 4 || group == 5 ||
-                                        group == 8 || group == 9 || group == 10 || group == 12 ||
-                                        group == 13 || group == 18);
-                    if (isSkinGroup) {
-                        uint32_t texType = 0;
-                        if (batch.textureIndex < gpuModel.data.textureLookup.size()) {
-                            uint16_t lk = gpuModel.data.textureLookup[batch.textureIndex];
-                            if (lk < gpuModel.data.textures.size()) {
-                                texType = gpuModel.data.textures[lk].type;
-                            }
+                    uint32_t texType = 0;
+                    if (batch.textureIndex < gpuModel.data.textureLookup.size()) {
+                        uint16_t lk = gpuModel.data.textureLookup[batch.textureIndex];
+                        if (lk < gpuModel.data.textures.size()) {
+                            texType = gpuModel.data.textures[lk].type;
                         }
-                        // Do NOT apply skin composite to hair (type 6) batches
-                        if (texType != 6) {
-                            for (size_t ti = 0; ti < gpuModel.textureIds.size(); ti++) {
-                                VkTexture* candidate = gpuModel.textureIds[ti];
-                                auto itO = instance.textureSlotOverrides.find(static_cast<uint16_t>(ti));
-                                if (itO != instance.textureSlotOverrides.end() && itO->second != nullptr) {
-                                    candidate = itO->second;
-                                }
-                                if (candidate != whiteTexture_.get() && candidate != nullptr) {
-                                    if (ti < gpuModel.data.textures.size() &&
-                                        (gpuModel.data.textures[ti].type == 1 || gpuModel.data.textures[ti].type == 11)) {
-                                        texPtr = candidate;
-                                        break;
-                                    }
+                    }
+                    if (characterBatchUsesSkinFallback(instance.isSceneModel, batch.submeshId, texType)) {
+                        for (size_t ti = 0; ti < gpuModel.textureIds.size(); ti++) {
+                            VkTexture* candidate = gpuModel.textureIds[ti];
+                            auto itO = instance.textureSlotOverrides.find(static_cast<uint16_t>(ti));
+                            if (itO != instance.textureSlotOverrides.end() && itO->second != nullptr) {
+                                candidate = itO->second;
+                            }
+                            if (candidate != whiteTexture_.get() && candidate != nullptr) {
+                                if (ti < gpuModel.data.textures.size() &&
+                                    (gpuModel.data.textures[ti].type == 1 || gpuModel.data.textures[ti].type == 11)) {
+                                    texPtr = candidate;
+                                    break;
                                 }
                             }
                         }
@@ -5674,18 +5667,9 @@ VkTexture* CharacterRenderer::resolveComboTexture(const CharacterInstance& inst,
     VkTexture* texPtr = gm.textureIds[texSlot];
     const uint32_t texType = (texSlot < gm.data.textures.size()) ? gm.data.textures[texSlot].type : 0;
     auto itO = inst.textureSlotOverrides.find(texSlot);
-    if (itO != inst.textureSlotOverrides.end() && itO->second != nullptr) {
-        if (texType == 1) {
-            // Type-1 (skin) overrides apply only to skin-group batches, so the
-            // skin composite does not bleed onto cloak/hair.
-            uint16_t grp = b.submeshId / 100;
-            bool isSkinGroup = (grp == 0 || grp == 3 || grp == 4 || grp == 5 ||
-                                grp == 8 || grp == 9 || grp == 10 || grp == 12 ||
-                                grp == 13 || grp == 15 || grp == 18 || grp == 20);
-            if (isSkinGroup) texPtr = itO->second;
-        } else {
-            texPtr = itO->second;
-        }
+    if (itO != inst.textureSlotOverrides.end() && itO->second != nullptr &&
+        characterTextureSlotOverrideApplies(texType, b.submeshId)) {
+        texPtr = itO->second;
     }
     return texPtr;
 }

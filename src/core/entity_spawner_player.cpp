@@ -139,7 +139,9 @@ bool EntitySpawner::loadCharacterMorphModel(uint32_t displayId, uint8_t raceId, 
         if (!model.isValid()) return false;
         pipeline::loadExternalAnimations(
             *assetManager_, outModelPath, m2Data, model,
-            {rendering::anim::STAND, rendering::anim::WALK, rendering::anim::RUN});
+            {rendering::anim::STAND, rendering::anim::WALK, rendering::anim::RUN,
+             rendering::anim::STEALTH_STAND, rendering::anim::STEALTH_WALK,
+             rendering::anim::STEALTH_RUN});
         modelId = nextPlayerModelId_++;
         if (!charRenderer->loadModel(model, modelId)) return false;
         playerModelCache_[cacheKey] = modelId;
@@ -386,11 +388,12 @@ void EntitySpawner::spawnOnlinePlayer(uint64_t guid,
             return;
         }
 
-        // Only the three animations a standing player needs. Loading every
-        // external sequence of a character model stalls the frame.
+        // Load standing, locomotion, and stealth sequences needed by remote players.
         pipeline::loadExternalAnimations(
             *assetManager_, m2Path, m2Data, model,
-            {rendering::anim::STAND, rendering::anim::WALK, rendering::anim::RUN});
+            {rendering::anim::STAND, rendering::anim::WALK, rendering::anim::RUN,
+             rendering::anim::STEALTH_STAND, rendering::anim::STEALTH_WALK,
+             rendering::anim::STEALTH_RUN});
 
         modelId = nextPlayerModelId_++;
         if (!charRenderer->loadModel(model, modelId)) {
@@ -428,6 +431,13 @@ void EntitySpawner::spawnOnlinePlayer(uint64_t guid,
     buildPlayerBaseAppearance(instanceId, modelId, raceId, genderId, appearanceBytes, facialFeatures, st);
 
     playerInstances_[guid] = instanceId;
+    // Apply active SpellVisualKit procedures (e.g. Stealth 1784 CharProc 14 = 0.30,
+    // GM Invisibility 37800 CharProc 14 = 0.50, Ghost 0x8CB9FD / 0.50) immediately
+    // on creation so newly spawned or >320 yd remote players never flash opaque on
+    // their first frame and newly attached equipment inherits kitOpacity/kitColor.
+    if (entity) {
+        syncUnitAuraVisuals(*entity, instanceId);
+    }
     if (deadCreatureGuids_.count(guid)) {
         charRenderer->playAnimation(instanceId, rendering::anim::DEAD, true);
     } else {

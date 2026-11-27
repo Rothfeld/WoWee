@@ -51,4 +51,60 @@ namespace wowee::rendering {
     return std::clamp(texAlpha, 0.0f, 1.0f) * clampedOpacity;
 }
 
+/// Whether a per-instance M2 texture slot override (`inst.textureSlotOverrides`)
+/// applies to a batch referencing a slot of `texType`.
+///
+/// In M2 character/creature models (`Character\*\*.m2`), cloak batches (`1502+`)
+/// reference `texType == 2` (`TEX_COMPONENT_OBJECT_SKIN`), hair-card batches
+/// reference `texType == 6` (`TEX_COMPONENT_CHAR_HAIR`), and skin-extra batches
+/// reference `texType == 8`. Every batch whose texture lookup selects a
+/// `texType == 1` (`TEX_COMPONENT_SKIN`) slot -- including facial hair / horns
+/// (`1xx`, `2xx`, `3xx`), ears (`7xx`), trouser cuffs (`11xx`), bare back
+/// (`1501`), and body/limb submeshes -- is UV-mapped to the composited skin
+/// atlas, matching `AppearanceComposer::setModelTexture` on the local player.
+[[nodiscard]] constexpr bool characterTextureSlotOverrideApplies(
+    uint32_t texType,
+    uint16_t /*submeshId*/) noexcept {
+    return texType != 0u;
+}
+
+/// Whether an un-bound (`whiteTexture_`) character batch should fall back to
+/// the instance's `type 1` / `type 11` skin composite texture.
+///
+/// Covers all character skin-atlas geoset groups (`0..5`, `7..13`, `15` for
+/// `1501` no-cape torso patch and `ScourgeMale`/`FelOrcMale` `type 1` exposed
+/// spine passes on `1502..1506`, `18`, `20`) while never bleeding skin onto
+/// scene backdrops, `texType == 2` object-skin cloaks (`1502+`), or
+/// `texType == 6` hair cards.
+[[nodiscard]] constexpr bool characterBatchUsesSkinFallback(
+    bool isSceneModel,
+    uint16_t submeshId,
+    uint32_t batchTexType) noexcept {
+    if (isSceneModel || batchTexType == 2u || batchTexType == 6u) {
+        return false;
+    }
+    const uint16_t group = submeshId / 100u;
+    switch (group) {
+        case 0u:
+        case 1u:
+        case 2u:
+        case 3u:
+        case 4u:
+        case 5u:
+        case 7u:
+        case 8u:
+        case 9u:
+        case 10u:
+        case 11u:
+        case 12u:
+        case 13u:
+        case 15u:
+        case 18u:
+        case 20u:
+            return true;
+        default:
+            return false;
+    }
+}
+
 } // namespace wowee::rendering

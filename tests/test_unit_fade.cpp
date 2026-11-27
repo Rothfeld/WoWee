@@ -162,3 +162,17 @@ TEST_CASE("newly spawned dynamic GameObjects fade in over 1.5s while static GOs 
     CHECK(fadeOutOpacity(0.5f, 0.75f, kGameObjectFadeSeconds) == Catch::Approx(0.25f));
     CHECK(fadeOutOpacity(0.5f, 1.5f, kGameObjectFadeSeconds) == Catch::Approx(0.0f));
 }
+
+TEST_CASE("GM invisibility 37800 and Stealth 1784 kit opacities apply immediately on initial remote spawn",
+          "[unit-fade][stealth][sidedisc6]") {
+    // GM invisibility (.gm visible off -> Spell 37800 Transparency (50%), SpellVisual 8739,
+    // StateKit 3450 CharProc 14 = 0.50) and Rogue Stealth (Spell 1784, SpellVisual 184,
+    // StateKit 312 CharProc 14 = 0.30) must initialize at target opacity (0 s duration)
+    // when spawnOnlinePlayer runs syncUnitAuraVisuals on creation.
+    const float initDuration = kitOpacityTransitionDuration(/*initialAppearanceSync=*/true);
+    CHECK(initDuration == 0.0f);
+    const float gmInvisKit = kitTransitionOpacity(1.0f, 0.5f, 0.0f, initDuration);
+    const float stealthKit = kitTransitionOpacity(1.0f, 0.3f, 0.0f, initDuration);
+    CHECK(effectiveUnitOpacity(1.0f, 1.0f, gmInvisKit) == Catch::Approx(0.5f));
+    CHECK(effectiveUnitOpacity(1.0f, 1.0f, stealthKit) == Catch::Approx(0.3f));
+}
