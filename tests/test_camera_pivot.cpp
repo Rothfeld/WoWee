@@ -462,3 +462,12 @@ TEST_CASE("Stepped snowbank ledge catches lower vertical feeler before near plan
     CHECK(nearBot.z > snowZ);
     CHECK(nearBot.z > gratingZ);
 }
+
+TEST_CASE("Interior WMO camera resets stale outdoor terrain limit to current distance",
+          "[camera][terrain][sidedisc3]") {
+    // Reproduces Molten Core (Map 409) after outdoor SetView(2) left traceTerrainLimit_
+    // at 5.55 yd: inside an interior WMO terrain raymarch is skipped so the reported
+    // terrain limit must match currentDistance (15.0 yd) rather than stale 5.55 yd.
+    CHECK(CameraController::resolveCameraTerrainLimit(false, 5.55f, 15.0f) == Catch::Approx(5.55f));
+    CHECK(CameraController::resolveCameraTerrainLimit(true, 5.55f, 15.0f) == Catch::Approx(15.0f));
+}

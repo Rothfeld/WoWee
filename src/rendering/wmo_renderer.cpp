@@ -4513,8 +4513,12 @@ std::optional<WMOFogSample> WMORenderer::getFog(
     // facades and far walls past its 417-yard end drew as flat teal shapes;
     // the original fogs them into Light 592's dark green (LightParams 604).
     if (!pipeline::wmoUsesLocalLighting(group.groupFlags)) return std::nullopt;
-    return sampleWMOFog(
+    auto fog = sampleWMOFog(
         model.fogs, group.fogIndices, location->localPosition, underwater, outdoorFallback);
+    if (fog) {
+        clampWmoFogToViewDistance(*fog, viewDistance_, underwater);
+    }
+    return fog;
 }
 
 namespace {

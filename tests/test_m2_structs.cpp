@@ -627,3 +627,14 @@ TEST_CASE("indoor exterior-hiding keeps externally posed character emitters and 
     groundDetail.cachedIsGroundDetail = true;
     CHECK(M2Renderer::isExteriorCulled(true, groundDetail));
 }
+
+TEST_CASE("TBC expansion disables static M2 doodad shadow-map casters",
+          "[m2][shadow][sidedisc3]") {
+    using wowee::rendering::M2Renderer;
+
+    // Native TBC 2.4.3 shades outdoor M2 doodads via baked ADT MCSH (outdoorShadowed
+    // 0.5x diffuse scale in VertexLighting) rather than real-time terrain/doodad
+    // directional shadow maps; WotLK+ keeps static doodad shadow-map casters active.
+    CHECK_FALSE(M2Renderer::staticDoodadsUseShadowMap(true));
+    CHECK(M2Renderer::staticDoodadsUseShadowMap(false));
+}

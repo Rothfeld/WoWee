@@ -323,7 +323,10 @@ void main() {
         float spec = pow(max(dot(norm, halfDir), 0.0), 32.0) * specularIntensity;
         float shadow = 1.0;
 
-        if (shadowParams.x > 0.5) {
+        // In TBC 2.4.3 (lightDir.w != 0.0), outdoor M2 doodad shadowing comes from
+        // baked ADT MCSH via outdoorShadowed (0.5x diffuse in VertexLighting) rather
+        // than real-time uShadowMap self-shadowing (matching character.frag.glsl).
+        if (shadowParams.x > 0.5 && lightDir.w == 0.0) {
             float normalOffset = shadowTexel() * 2.0 * (1.0 - abs(dot(norm, ldir)));
             vec3 biasedPos = FragPos + norm * normalOffset;
             vec4 lsPos = lightSpaceMatrix * vec4(biasedPos, 1.0);

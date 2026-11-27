@@ -2547,6 +2547,7 @@ bool M2Renderer::initializeShadow(VkRenderPass shadowRenderPass) {
 
 void M2Renderer::renderShadow(VkCommandBuffer cmd, const glm::mat4& lightSpaceMatrix,
                               const glm::vec3& /*shadowCenter*/, float shadowRadius) {
+    if (!staticDoodadsUseShadowMap(game::isActiveExpansion("tbc"))) return;
     if (!shadowPipeline_ || !shadowParams_.set) return;
     if (instances.empty() || models.empty()) return;
 

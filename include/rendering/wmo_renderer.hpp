@@ -6,6 +6,7 @@
 #include "rendering/spatial_grid.hpp"
 #include "rendering/shadow_params.hpp"
 #include "rendering/wmo_fog.hpp"
+#include "rendering/wmo_renderer_fog.hpp"
 #include "rendering/legacy_light_direction.hpp"
 
 #include "pipeline/blp_loader.hpp"

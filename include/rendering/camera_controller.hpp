@@ -955,6 +955,15 @@ public:
         return {orbitPitch, camDir, rawLimit};
     }
 
+    /// Effective terrain-ray camera limit reported in telemetry and clamped
+    /// into orbit zoom: inside locally-lit interior WMOs terrain heightfields
+    /// are bypassed, so the limit resets to `currentDistance` rather than
+    /// retaining a stale pre-teleport outdoor value.
+    [[nodiscard]] static constexpr float resolveCameraTerrainLimit(
+            bool insideInteriorWmo, float raymarchedTerrainLimit, float currentDistance) {
+        return insideInteriorWmo ? currentDistance : raymarchedTerrainLimit;
+    }
+
     /// The pivot for whoever is being followed right now.
     [[nodiscard]] float followedPivotHeight() const {
         if (followedCollisionHeight_ > 0.0f)

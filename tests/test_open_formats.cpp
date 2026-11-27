@@ -6,6 +6,7 @@
 #include "pipeline/wowee_terrain_loader.hpp"
 #include "pipeline/adt_loader.hpp"
 #include "rendering/wmo_fog.hpp"
+#include "rendering/wmo_renderer_fog.hpp"
 #include "rendering/lighting_manager.hpp"
 #include <filesystem>
 #include <fstream>
@@ -1151,4 +1152,63 @@ TEST_CASE("WMO area group ID comes from MOGP rather than file index", "[wmo-area
     model.groups.resize(2);
     REQUIRE(WMOLoader::loadGroup(bytes, model, 1));
     CHECK(model.groups[1].groupId == 3697);
+}
+
+TEST_CASE("WMO fog clamps dry MFOG end distance to active farclip while preserving start ratio",
+          "[wmo-fog][sidedisc3]") {
+    using wowee::rendering::WMOFogSample;
+    using wowee::rendering::clampWmoFogToViewDistance;
+
+    // Synthetic Molten Core MFOG[0] values: color1 = (255, 37, 8), startFactor = 0.0, endDist = 1111.11.
+    WMOFogSample mc{glm::vec3(1.0f, 37.0f / 255.0f, 8.0f / 255.0f), 0.0f, 1111.1111f};
+    clampWmoFogToViewDistance(mc, 477.0f, false);
+    CHECK(mc.start == Catch::Approx(0.0f));
+    CHECK(mc.end == Catch::Approx(477.0f));
+
+    // Non-zero startFactor preserves start / end ratio when end clamps to farclip.
+    WMOFogSample nonzeroStart{glm::vec3(0.5f, 0.2f, 0.1f), 250.0f, 1000.0f};
+    clampWmoFogToViewDistance(nonzeroStart, 400.0f, false);
+    CHECK(nonzeroStart.end == Catch::Approx(400.0f));
+    CHECK(nonzeroStart.start == Catch::Approx(100.0f));
+
+    // Shorter authored room fog (e.g. Cavern of Mists 277.78 yd < 477.0 yd) stays untouched.
+    WMOFogSample shortRoom{glm::vec3(0.0f, 0.46f, 0.40f), 55.555f, 277.777f};
+    clampWmoFogToViewDistance(shortRoom, 477.0f, false);
+    CHECK(shortRoom.start == Catch::Approx(55.555f));
+    CHECK(shortRoom.end == Catch::Approx(277.777f));
+
+    // Underwater MFOG record (negative startFactor2 allowed) is not modified by dry farclip clamp.
+    WMOFogSample underwater{glm::vec3(0.0f, 0.74f, 1.0f), -222.222f, 800.0f};
+    clampWmoFogToViewDistance(underwater, 477.0f, true);
+    CHECK(underwater.start == Catch::Approx(-222.222f));
+    CHECK(underwater.end == Catch::Approx(800.0f));
+
+    // Verify against shipped TBC Blackrock_lower_guild.wmo (Molten Core, Map 409) if present.
+    const char* envTbc = std::getenv("WOWEE_TBC_DATA_DIR");
+    const std::filesystem::path tbcRoot = envTbc
+        ? std::filesystem::path(envTbc)
+        : std::filesystem::path("/workspace/azerothcore/client/wowee-data/expansions/tbc");
+    const auto mcPath = tbcRoot / "world/wmo/dungeon/az_blackrock/blackrock_lower_guild.wmo";
+    if (std::filesystem::exists(mcPath)) {
+        std::ifstream f(mcPath, std::ios::binary | std::ios::ate);
+        REQUIRE(f.is_open());
+        const auto sz = static_cast<size_t>(f.tellg());
+        f.seekg(0);
+        std::vector<uint8_t> raw(sz);
+        REQUIRE(f.read(reinterpret_cast<char*>(raw.data()), static_cast<std::streamsize>(sz)));
+        const auto wmo = WMOLoader::load(raw);
+        REQUIRE_FALSE(wmo.fogs.empty());
+        auto sampled = wowee::rendering::sampleWMOFog(
+            wmo.fogs, {0, 0, 0, 0}, glm::vec3(849.4f, -816.8f, -229.6f), false);
+        REQUIRE(sampled.has_value());
+        CHECK(sampled->color.r == Catch::Approx(1.0f));
+        CHECK(sampled->color.g == Catch::Approx(37.0f / 255.0f));
+        CHECK(sampled->color.b == Catch::Approx(8.0f / 255.0f));
+        CHECK(sampled->end > 1100.0f);
+        const float startRatio = sampled->start / sampled->end;
+        CHECK(startRatio == Catch::Approx(0.01f).margin(0.001f));
+        clampWmoFogToViewDistance(*sampled, 477.0f, false);
+        CHECK(sampled->start == Catch::Approx(477.0f * startRatio).margin(0.01f));
+        CHECK(sampled->end == Catch::Approx(477.0f));
+    }
 }

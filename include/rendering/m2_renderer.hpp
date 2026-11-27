@@ -654,6 +654,12 @@ public:
     void renderShadow(VkCommandBuffer cmd, const glm::mat4& lightSpaceMatrix,
                       const glm::vec3& shadowCenter = glm::vec3(0), float shadowRadius = 1e9f);
 
+    /// In TBC 2.4.3, static world doodad shadows are baked into ADT MCSH + WMO MOCV
+    /// rather than projected via real-time directional shadow maps (`uShadowMap`).
+    [[nodiscard]] static constexpr bool staticDoodadsUseShadowMap(bool isTbcExpansion) {
+        return !isTbcExpansion;
+    }
+
     /// Which part of a frame's particles one renderM2Particles call draws.
     /// - BeforeTransparent: emitters with a negative priority plane, drawn
     ///   between opaque and transparent mesh passes.

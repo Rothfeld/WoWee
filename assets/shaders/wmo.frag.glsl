@@ -207,7 +207,7 @@ vec3 applyFog(vec3 color, vec3 worldPos, float dist) {
 }
 
 void main() {
-    if (outdoorFogParams.z > 0.0 && -(view * vec4(FragPos, 1.0)).z > outdoorFogParams.z) discard;
+    if (isInterior == 0 && outdoorFogParams.z > 0.0 && -(view * vec4(FragPos, 1.0)).z > outdoorFogParams.z) discard;
     selectFog(isInterior != 0);
     float lodFactor = computeLodFactor();
     // Gradients of the authored UV, taken here where every pixel of the quad

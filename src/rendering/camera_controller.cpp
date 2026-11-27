@@ -2745,8 +2745,10 @@ void CameraController::updateOrbitCamera(float deltaTime, FrameInput& f,
 
             if (!cachedInsideInteriorWMO) {
                 const float terrainLimit = raymarchTerrainCameraLimit(pivot, dir, currentDistance);
-                traceTerrainLimit_ = terrainLimit;
+                traceTerrainLimit_ = resolveCameraTerrainLimit(false, terrainLimit, currentDistance);
                 lim = std::min(lim, terrainLimit);
+            } else {
+                traceTerrainLimit_ = resolveCameraTerrainLimit(true, 0.0f, currentDistance);
             }
             return lim;
         };
