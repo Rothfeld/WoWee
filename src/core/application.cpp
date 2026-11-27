@@ -1576,6 +1576,12 @@ void Application::run() {
     // on Linux. Pinning here silently confined every later render worker to
     // CPU 0 and defeated all command-recording parallelism.
 
+    drawSchedule_ = core::DrawSchedule(core::DrawSchedule::everyFromEnvironment(std::getenv("WOWEE_DRAW_EVERY")));
+    if (drawSchedule_.every() != 1) {
+        LOG_WARNING("Draw schedule: one tick in ", drawSchedule_.every(),
+                    " is drawn while in the world (WOWEE_DRAW_EVERY)");
+    }
+
     frameProfileEnabled_ = core::envFlagEnabled("WOWEE_FRAME_PROFILE", false);
     core::frameStageNotes().detailEnabled = frameProfileEnabled_;
     if (frameProfileEnabled_) {
@@ -2294,6 +2300,14 @@ void Application::run() {
         ui::KeybindingManager::getInstance().updateInput();
 
         lap("loop/events and input");
+        // Whether this tick draws a picture (core/draw_schedule.hpp). Decided
+        // here, before the update, because the update leaves out the one
+        // thing it prepares for the picture alone (unit shadows); a host
+        // that decides per tick says so through drawSchedule().request()
+        // before this point of the iteration.
+        tickDraws_ = drawSchedule_.beginTick(state == AppState::IN_GAME);
+        if (renderer) renderer->setTickDraws(tickDraws_);
+        core::noteFrameCount("ticks drawn", tickDraws_ ? 1 : 0);
         // Update application state
         try {
             FrameMark;
@@ -5423,9 +5437,11 @@ void Application::update(float deltaTime) {
             std::chrono::steady_clock::now() - rendererUpdateStart).count();
         noteStageTime("renderer->update", ruMs);
         updateStagesMs_ += ruMs;
-        // Units have been placed for this frame: their ground shadows.
+        // Units have been placed for this frame: their ground shadows. Read
+        // by the world pass alone and gathered afresh each time, so a tick
+        // that draws nothing gathers none.
         const auto shadowsStart = std::chrono::steady_clock::now();
-        if (entitySpawner_) renderer->setUnitShadows(entitySpawner_->collectUnitShadows());
+        if (entitySpawner_ && tickDraws_) renderer->setUnitShadows(entitySpawner_->collectUnitShadows());
         const float shadowsMs = std::chrono::duration<float, std::milli>(
             std::chrono::steady_clock::now() - shadowsStart).count();
         noteStageTime("unit shadows", shadowsMs);
@@ -5550,14 +5566,32 @@ void Application::render() {
     ui::touchControls().draw();
 #endif
 
+    // A tick draws or it does not (core/draw_schedule.hpp). Drawing is
+    // beginFrame, renderWorld and endFrame: a swapchain image, the command
+    // buffer, the submit and the present. Everything else in this function
+    // is the interface - layout, input delivery, script handlers, the ImGui
+    // pass - and runs on every tick in the same order, because the next
+    // tick's input is resolved against what it leaves behind. On an undrawn
+    // tick the renderer is told at the two places it would have drawn, and
+    // does there what drawing does besides the picture
+    // (Renderer::passFrameUndrawn, passWorldUndrawn).
+    const bool draws = tickDraws_;
     renderingFrame_ = true;
-    runRenderStage("beginFrame", [&] { renderer->beginFrame(); });
+    if (draws) {
+        runRenderStage("beginFrame", [&] { renderer->beginFrame(); });
+    } else {
+        runRenderStage("passFrameUndrawn", [&] { renderer->passFrameUndrawn(); });
+    }
 
     // Only render 3D world when in-game
     if (state == AppState::IN_GAME) {
-        runRenderStage("renderWorld", [&] {
-            renderer->renderWorld(world ? world.get() : nullptr, gameHandler.get());
-        });
+        if (draws) {
+            runRenderStage("renderWorld", [&] {
+                renderer->renderWorld(world ? world.get() : nullptr, gameHandler.get());
+            });
+        } else {
+            runRenderStage("passWorldUndrawn", [&] { renderer->passWorldUndrawn(); });
+        }
     }
 
     // Render performance HUD (within ImGui frame, before UI ends the frame)
@@ -6809,8 +6843,8 @@ void Application::render() {
         runRenderStage("mapWindow", [&] { updateMapWindow(); });
     }
 
-    runRenderStage("endFrame", [&] { renderer->endFrame(); });
-    {
+    if (draws) runRenderStage("endFrame", [&] { renderer->endFrame(); });
+    if (draws) {
         const auto& t = renderer->lastEndFrameTimes();
         noteStageTime("endFrame/post-process", t.postProcess);
         noteStageTime("endFrame/interface", t.interface);
@@ -6839,7 +6873,9 @@ void Application::render() {
     // row counted in one place and not the other comes out as a sheet taller
     // than what is on it, which nothing but looking will catch. The in-game
     // screenshot key cannot reach the login screen, which is where that card is.
-    if (const char* shot = std::getenv("WOWEE_SCREENSHOT"); shot != nullptr) {
+    // Counted in drawn frames: there is no new picture to settle or to take
+    // on a tick that draws nothing.
+    if (const char* shot = std::getenv("WOWEE_SCREENSHOT"); draws && shot != nullptr) {
         // Let the interface settle first: ImGui sizes much of its layout from
         // what it measured last frame, and hides a window outright for its
         // first frame or two while it fits itself.
@@ -6854,7 +6890,7 @@ void Application::render() {
     // WOWEE_RECORD=<file.mp4>, for WOWEE_RECORD_SECONDS (five by default).
     // Started once the interface has settled, as the screenshot is; stopped by
     // quitting, which finishes the file on the way out.
-    if (const char* record = std::getenv("WOWEE_RECORD"); record != nullptr && *record != '\0') {
+    if (const char* record = std::getenv("WOWEE_RECORD"); draws && record != nullptr && *record != '\0') {
         ++envRecordFrames_;
         if (envRecordFrames_ == kScreenshotFrame) {
             std::string error;

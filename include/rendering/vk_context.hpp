@@ -602,6 +602,15 @@ public:
     // Execute all deferred destruction immediately. For shutdown paths, where no
     // further frames will run to drain the queues naturally.
     void flushDeferredCleanup();
+    // For a tick of the main loop that draws nothing (docs/draw-schedule.md):
+    // wait until the GPU has finished every frame submitted so far, then run
+    // the destruction queued against the frame slots. beginFrame does both for
+    // the one slot it is about to reuse, once per drawn frame; without this a
+    // run of undrawn ticks would leave both waiting for the next drawn frame,
+    // and whatever counts "frames since last use" per tick (ImGui's texture
+    // retirement) would free things the last drawn frame still reads.
+    // Returns false when the device is lost.
+    bool settleSubmittedFrames();
 private:
     std::vector<std::function<void()>> deferredCleanup_[MAX_FRAMES_IN_FLIGHT];
 

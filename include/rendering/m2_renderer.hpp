@@ -616,6 +616,10 @@ public:
      */
     /** Pre-allocate GPU resources (bone SSBOs, descriptors) on main thread before parallel render. */
     void prepareRender(uint32_t frameIndex, const Camera& camera);
+    /// A tick that draws nothing (Renderer::passWorldUndrawn): what render()
+    /// carries from one call to the next. That is the draw distance's
+    /// approach to its target, a fixed fraction per call.
+    void passUndrawn();
     // Split command buffers let world opaque geometry execute before characters.
     // Inline recording uses afterOpaque to insert characters at the same boundary.
     void render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const Camera& camera,
@@ -1624,6 +1628,7 @@ private:
     glm::vec3 cachedCamPos_ = glm::vec3(0.0f);
     float cachedMaxRenderDistSq_ = 0.0f;
     float smoothedRenderDist_ = 1000.0f;  // Smoothed render distance to prevent flickering
+    void stepRenderDistance();
     /// The distance as asked for, kept so the scale can be rebuilt when the
     /// detail setting changes without the caller having to say it again.
     float viewDistanceRaw_ = 1200.0f;

@@ -1,5 +1,6 @@
 #include "rendering/view_sync.hpp"
 #include "rendering/renderer.hpp"
+#include "rendering/sun_occlusion_ease.hpp"
 #include "core/frame_stage_times.hpp"
 #include "rendering/sun_direction.hpp"
 
@@ -773,33 +774,7 @@ void Renderer::updatePerFrameUBO() {
         }
     }
 
-    // Player motion, consumed by water ripples and by the procedural grass
-    // (grass.vert). Horizontal speed only: a fall shouldn't read as running.
-    {
-        const float dt = std::max(lastDeltaTime_, 0.0f);
-        if (!playerMotionTracked_) {
-            prevPlayerPos_ = characterPosition;
-            playerWakePos_ = characterPosition;
-            playerMotionTracked_ = true;
-        }
-        if (dt > 0.0f) {
-            const glm::vec2 step(characterPosition.x - prevPlayerPos_.x,
-                                 characterPosition.y - prevPlayerPos_.y);
-            // A teleport is not a sprint. Anything past a gallop is discarded
-            // rather than smoothed, or one map change flattens a whole field.
-            constexpr float MAX_TRACKED_SPEED = 30.0f;
-            const float rawSpeed = glm::length(step) / dt;
-            playerSpeed_ = (rawSpeed > MAX_TRACKED_SPEED) ? 0.0f
-                                                          : glm::mix(playerSpeed_, rawSpeed, 0.25f);
-
-            // Exponential chase, framerate independent.
-            constexpr float WAKE_TIME_CONSTANT = 0.30f;  // seconds of springback
-            const float k = 1.0f - std::exp(-dt / WAKE_TIME_CONSTANT);
-            playerWakePos_ += (characterPosition - playerWakePos_) * k;
-            if (rawSpeed > MAX_TRACKED_SPEED) playerWakePos_ = characterPosition;
-        }
-        prevPlayerPos_ = characterPosition;
-    }
+    trackPlayerMotion(lastDeltaTime_);
     currentFrameData.playerPos = glm::vec4(characterPosition, playerSpeed_);
     currentFrameData.playerWake = glm::vec4(playerWakePos_, 0.0f);
 
@@ -815,6 +790,37 @@ void Renderer::updatePerFrameUBO() {
     // Copy to current frame's mapped UBO
     uint32_t frame = vkCtx->getCurrentFrame();
     std::memcpy(perFrameUBOMapped[frame], &currentFrameData, sizeof(GPUPerFrameData));
+}
+
+void Renderer::trackPlayerMotion(float deltaTime) {
+    // Player motion, consumed by water ripples and by the procedural grass
+    // (grass.vert). Horizontal speed only: a fall shouldn't read as running.
+    //
+    // Once per tick, drawn or not (updatePerFrameUBO, passFrameUndrawn): the
+    // speed is a blend per step and the teleport test a distance per step.
+    const float dt = std::max(deltaTime, 0.0f);
+    if (!playerMotionTracked_) {
+        prevPlayerPos_ = characterPosition;
+        playerWakePos_ = characterPosition;
+        playerMotionTracked_ = true;
+    }
+    if (dt > 0.0f) {
+        const glm::vec2 step(characterPosition.x - prevPlayerPos_.x,
+                             characterPosition.y - prevPlayerPos_.y);
+        // A teleport is not a sprint. Anything past a gallop is discarded
+        // rather than smoothed, or one map change flattens a whole field.
+        constexpr float MAX_TRACKED_SPEED = 30.0f;
+        const float rawSpeed = glm::length(step) / dt;
+        playerSpeed_ = (rawSpeed > MAX_TRACKED_SPEED) ? 0.0f
+                                                      : glm::mix(playerSpeed_, rawSpeed, 0.25f);
+
+        // Exponential chase, framerate independent.
+        constexpr float WAKE_TIME_CONSTANT = 0.30f;  // seconds of springback
+        const float k = 1.0f - std::exp(-dt / WAKE_TIME_CONSTANT);
+        playerWakePos_ += (characterPosition - playerWakePos_) * k;
+        if (rawSpeed > MAX_TRACKED_SPEED) playerWakePos_ = characterPosition;
+    }
+    prevPlayerPos_ = characterPosition;
 }
 
 bool Renderer::initialize(core::Window* win) {
@@ -1486,7 +1492,7 @@ void Renderer::beginFrame() {
 
     // This slot's fence has just been waited on, so a frame it copied for the
     // recording two frames ago is complete.
-    collectRecordedFrame();
+    collectRecordedFrame(vkCtx->getCurrentFrame());
 
     // FSR2 jitter pattern (§4.3 - delegates to PostProcessPipeline)
     if (postProcessPipeline_ && camera) postProcessPipeline_->applyJitter(camera.get());
@@ -1578,8 +1584,53 @@ void Renderer::beginFrame() {
     }
 }
 
+void Renderer::passFrameUndrawn() {
+    if (!vkCtx || vkCtx->isDeviceLost()) return;
+
+    // As beginFrame leaves them when no world is recorded.
+    worldDrawnThisFrame_ = false;
+    minimapOverlayDeferredToUi_ = false;
+
+    vkCtx->pollUploadBatches();
+
+    // No frame slot is taken, so there is no one fence to wait on: every
+    // submitted frame is waited for instead. That keeps what beginFrame
+    // promises its callers - nothing they retire is still read by the GPU
+    // two drawn frames later - true across any number of undrawn ticks, and
+    // makes every recorded frame collectable now rather than two drawn frames on.
+    if (!vkCtx->settleSubmittedFrames()) return;
+    for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
+        // Oldest first: the slot the next drawn frame takes was used longest ago.
+        collectRecordedFrame((vkCtx->getCurrentFrame() + i) % MAX_FRAMES_IN_FLIGHT);
+    }
+
+    // The parts of updatePerFrameUBO and of the grass pass that carry state
+    // from one tick to the next.
+    trackPlayerMotion(lastDeltaTime_);
+    if (grassRenderer_ && camera) updateGrassPopulation();
+}
+
+namespace {
+// GPU crash diagnostic: WOWEE_SKIP_ALL_RENDER leaves the whole world pass out.
+bool worldRenderSwitchedOff() {
+    static const bool skipAll = (std::getenv("WOWEE_SKIP_ALL_RENDER") != nullptr);
+    return skipAll;
+}
+} // namespace
+
+void Renderer::passWorldUndrawn() {
+    // Where renderWorld returns before deciding anything, so does this.
+    if (!vkCtx || vkCtx->isDeviceLost() || worldRenderSwitchedOff()) return;
+    updateWorldVisibility();
+    if (m2Renderer && camera) m2Renderer->passUndrawn();
+}
+
 void Renderer::endFrame() {
     ZoneScopedN("Renderer::endFrame");
+    // What the easing below and in the passes of this frame stepped by; the
+    // next drawn frame steps by what update() adds from here on.
+    const float sinceDraw = sinceDrawSeconds_;
+    sinceDrawSeconds_ = 0.0f;
     if (!vkCtx || currentCmd == VK_NULL_HANDLE) return;
 
     logViewDistanceDiag();
@@ -1594,7 +1645,7 @@ void Renderer::endFrame() {
     // itself once whichever pass is current has been closed.
     if (postProcessPipeline_) {
         postProcessPipeline_->executePostProcessing(
-            currentCmd, currentImageIndex, camera.get(), lastDeltaTime_);
+            currentCmd, currentImageIndex, camera.get(), sinceDraw);
     }
 
     // The scene is complete: close its pass so the water refraction copy can run
@@ -1787,9 +1838,9 @@ std::string Renderer::takeRecordingFailure() {
     return failure;
 }
 
-void Renderer::collectRecordedFrame() {
+void Renderer::collectRecordedFrame(uint32_t frameSlot) {
     if (!recorder_ || !screenCapture_ || !vkCtx) return;
-    const ScreenCapture::Ready ready = screenCapture_->collect(vkCtx->getCurrentFrame());
+    const ScreenCapture::Ready ready = screenCapture_->collect(frameSlot);
     if (ready.valid) {
         ScreenCapture* capture = screenCapture_.get();
         const uint32_t buffer = ready.buffer;
@@ -2171,6 +2222,9 @@ void Renderer::updateM2ProjectedTextures() {
 
 void Renderer::update(float deltaTime) {
     ZoneScopedN("Renderer::update");
+    // This function's parts in the frame budget report (WOWEE_FRAME_PROFILE).
+    core::FrameStagePhases phases;
+    phases.phase("renderer->update/world init, sun occlusion");
     globalTime += deltaTime;
     runDeferredWorldInitStep(deltaTime);
 
@@ -2178,20 +2232,27 @@ void Renderer::update(float deltaTime) {
     // walking a hill edge across the line to the sun would otherwise snap the
     // flare on and off; a quarter second of travel reads as the sun going
     // behind something.
-    {
-        const float target = sampleSunOcclusion();
-        const float rate = 1.0f - std::exp(-deltaTime / 0.25f);
-        sunOcclusion_ += (target - sunOcclusion_) * glm::clamp(rate, 0.0f, 1.0f);
+    //
+    // Only the sky pass reads it, and the sample is a ray through every WMO
+    // towards the sun (1.3 ms in Shattrath), so a tick that draws nothing
+    // does not take one: the next drawn tick eases over the time since the
+    // last sample. The ease is an exponential, so that is the same value as
+    // easing tick by tick whenever the undrawn ticks would have sampled what
+    // the drawn one does; it differs only while the sun crosses an occluder's
+    // edge between two drawn ticks (docs/draw-schedule.md).
+    sunOcclusionEaseSeconds_ += deltaTime;
+    if (tickDraws_) {
+        sunOcclusion_ = easeSunOcclusion(sunOcclusion_, sampleSunOcclusion(), sunOcclusionEaseSeconds_);
+        sunOcclusionEaseSeconds_ = 0.0f;
     }
 
     auto updateStart = std::chrono::steady_clock::now();
     lastDeltaTime_ = deltaTime;
+    sinceDrawSeconds_ += deltaTime;
 
     if (wmoRenderer) wmoRenderer->resetQueryStats();
     if (m2Renderer) m2Renderer->resetQueryStats();
 
-    // This function's parts in the frame budget report (WOWEE_FRAME_PROFILE).
-    core::FrameStagePhases phases;
     phases.phase("renderer->update/camera");
     if (cameraController) {
         auto cameraStart = std::chrono::steady_clock::now();
@@ -3585,42 +3646,12 @@ void Renderer::updateGrassPopulation() {
              complete ? "" : " - hit the blade cap");
 }
 
-void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
-    ZoneScopedN("Renderer::renderWorld");
-    (void)world;
-
-    // Guard against null command buffer (e.g. after VK_ERROR_DEVICE_LOST)
-    if (currentCmd == VK_NULL_HANDLE) return;
-
-    // GPU crash diagnostic: skip ALL world rendering to isolate crash source
-    static const bool skipAll = (std::getenv("WOWEE_SKIP_ALL_RENDER") != nullptr);
-    if (skipAll) return;
-
-    worldDrawnLastFrame_ = true;
-    worldDrawnThisFrame_ = true;
-
-    auto renderStart = std::chrono::steady_clock::now();
-    lastTerrainRenderMs = 0.0;
-    lastWMORenderMs = 0.0;
-    lastM2RenderMs = 0.0;
-
-    uint32_t frameIdx = vkCtx->getCurrentFrame();
-    VkDescriptorSet perFrameSet = perFrameDescSets[frameIdx];
-    const glm::mat4& view = camera ? camera->getViewMatrix() : glm::mat4(1.0f);
-
-    // GPU crash diagnostic: skip individual renderers to isolate which one faults
-    static const bool envSkipWMO = (std::getenv("WOWEE_SKIP_WMO") != nullptr);
-    static const bool envSkipChars = (std::getenv("WOWEE_SKIP_CHARS") != nullptr);
-    static const bool envSkipM2 = (std::getenv("WOWEE_SKIP_M2") != nullptr);
-    static const bool envSkipTerrain = (std::getenv("WOWEE_SKIP_TERRAIN") != nullptr);
-    static const bool envSkipSky = (std::getenv("WOWEE_SKIP_SKY") != nullptr);
-    // ...and the ablation switches the same passes off, one phase at a time.
-    const auto ablated = [&](AblationPass p) {
-        return passAblation_ && passAblation_->skip(p);
-    };
-    const bool skipWMO = envSkipWMO || ablated(AblationPass::WMO);
-    const bool skipChars = envSkipChars || ablated(AblationPass::Characters);
-    const bool skipM2 = envSkipM2 || ablated(AblationPass::M2);
+bool Renderer::updateWorldVisibility() {
+    // Not picture state alone: WMORenderer::roomHides reads the rooms decided
+    // here, and through it Application hides units the player cannot see
+    // from mouse targeting, nameplates and unit shadows. So this runs once
+    // per tick, drawn (renderWorld) or not (passWorldUndrawn).
+    //
     // Inside a room no portal path leads out of, nothing outside it is seen
     // (WMORenderer::findSealedInterior): no terrain, grass, sky or exterior
     // model. Water is left alone: interior pools are drawn by the same pass.
@@ -3651,8 +3682,68 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
                  lastFrameSealedInterior_ ? ": exterior terrain, water and models not drawn" : "");
     }
     lastFrameExteriorHidden_ = hideExterior;
-    const bool skipTerrain = envSkipTerrain || ablated(AblationPass::Terrain) || hideExterior;
+    // The fog colour of the last drawn frame (updatePerFrameUBO writes it).
     if (hideExterior) sealedClearColor_ = glm::vec3(currentFrameData.fogColor);
+
+    // Rooms a WMO shows this frame decide which of its doodads are drawn; both
+    // recorders read the answer, so it is settled before either starts.
+    if (wmoRenderer && camera) wmoRenderer->updateRoomVisibility(*camera, &characterPosition);
+    if (m2Renderer) {
+        WMORenderer* wmo = wmoRenderer.get();
+        m2Renderer->setWmoRoomQuery(wmo ? M2Renderer::WmoRoomQuery(
+            [wmo](uint32_t instanceId, const std::vector<uint16_t>& groups) {
+                return wmo->anyGroupDrawn(instanceId, groups);
+            }) : M2Renderer::WmoRoomQuery{});
+    }
+    if (waterRenderer) {
+        WMORenderer* wmo = wmoRenderer.get();
+        waterRenderer->setWmoGroupQuery(wmo ? WaterRenderer::WmoGroupQuery(
+            [wmo](uint32_t instanceId, const std::vector<uint16_t>& groups) {
+                return wmo->anyGroupDrawn(instanceId, groups);
+            }) : WaterRenderer::WmoGroupQuery{});
+    }
+    return hideExterior;
+}
+
+void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
+    ZoneScopedN("Renderer::renderWorld");
+    (void)world;
+
+    // Guard against null command buffer (e.g. after VK_ERROR_DEVICE_LOST)
+    if (currentCmd == VK_NULL_HANDLE) return;
+
+    // GPU crash diagnostic: skip ALL world rendering to isolate crash source
+    if (worldRenderSwitchedOff()) return;
+
+    worldDrawnLastFrame_ = true;
+    worldDrawnThisFrame_ = true;
+
+    auto renderStart = std::chrono::steady_clock::now();
+    lastTerrainRenderMs = 0.0;
+    lastWMORenderMs = 0.0;
+    lastM2RenderMs = 0.0;
+
+    uint32_t frameIdx = vkCtx->getCurrentFrame();
+    VkDescriptorSet perFrameSet = perFrameDescSets[frameIdx];
+    const glm::mat4& view = camera ? camera->getViewMatrix() : glm::mat4(1.0f);
+
+    // GPU crash diagnostic: skip individual renderers to isolate which one faults
+    static const bool envSkipWMO = (std::getenv("WOWEE_SKIP_WMO") != nullptr);
+    static const bool envSkipChars = (std::getenv("WOWEE_SKIP_CHARS") != nullptr);
+    static const bool envSkipM2 = (std::getenv("WOWEE_SKIP_M2") != nullptr);
+    static const bool envSkipTerrain = (std::getenv("WOWEE_SKIP_TERRAIN") != nullptr);
+    static const bool envSkipSky = (std::getenv("WOWEE_SKIP_SKY") != nullptr);
+    // ...and the ablation switches the same passes off, one phase at a time.
+    const auto ablated = [&](AblationPass p) {
+        return passAblation_ && passAblation_->skip(p);
+    };
+    const bool skipWMO = envSkipWMO || ablated(AblationPass::WMO);
+    const bool skipChars = envSkipChars || ablated(AblationPass::Characters);
+    const bool skipM2 = envSkipM2 || ablated(AblationPass::M2);
+    // Sealed interiors and the rooms each WMO shows: settled before any
+    // recorder starts, and on undrawn ticks too (passWorldUndrawn).
+    const bool hideExterior = updateWorldVisibility();
+    const bool skipTerrain = envSkipTerrain || ablated(AblationPass::Terrain) || hideExterior;
     const bool skipSky = envSkipSky || ablated(AblationPass::Sky) || hideExterior;
     const bool skipGrass = ablated(AblationPass::Grass) || hideExterior;
     // Liquid in the scene pass goes between the opaque and the blended world
@@ -3751,24 +3842,6 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
         for (const auto& layer : lightingManager->getSkyboxLayers()) skyModelCoverage += layer.weight;
     }
     const bool useOriginalSkybox = drawSkyModels && skyModelCoverage >= 0.5f;
-
-    // Rooms a WMO shows this frame decide which of its doodads are drawn; both
-    // recorders read the answer, so it is settled before either starts.
-    if (wmoRenderer && camera) wmoRenderer->updateRoomVisibility(*camera, &characterPosition);
-    if (m2Renderer) {
-        WMORenderer* wmo = wmoRenderer.get();
-        m2Renderer->setWmoRoomQuery(wmo ? M2Renderer::WmoRoomQuery(
-            [wmo](uint32_t instanceId, const std::vector<uint16_t>& groups) {
-                return wmo->anyGroupDrawn(instanceId, groups);
-            }) : M2Renderer::WmoRoomQuery{});
-    }
-    if (waterRenderer) {
-        WMORenderer* wmo = wmoRenderer.get();
-        waterRenderer->setWmoGroupQuery(wmo ? WaterRenderer::WmoGroupQuery(
-            [wmo](uint32_t instanceId, const std::vector<uint16_t>& groups) {
-                return wmo->anyGroupDrawn(instanceId, groups);
-            }) : WaterRenderer::WmoGroupQuery{});
-    }
 
     // ── Multithreaded secondary command buffer recording ──
     // Terrain, WMO, and M2 record on worker threads while main thread handles
@@ -5026,7 +5099,9 @@ int Renderer::getTerrainLoadRadius() const {
     return glm::clamp(static_cast<int>(std::ceil(viewDistance_ / kAdtTileSize)) + 1, 2, 6);
 }
 void Renderer::renderHUD() {
-    if (currentCmd == VK_NULL_HANDLE) return;
+    // An ImGui window, not a draw: built on an undrawn tick too, because a
+    // window that comes and goes changes what the pointer is over.
+    if (tickDraws_ && currentCmd == VK_NULL_HANDLE) return;
     if (performanceHUD && camera) {
         performanceHUD->render(this, camera.get());
     }
@@ -5667,7 +5742,8 @@ void Renderer::renderVolumetricFog() {
     // this slot's volume as it was - clear air, until the first real frame -
     // and the shaders read that.
     if (shadowDepthLayout_[frame] != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) return;
-    const float dt = std::max(lastDeltaTime_, 0.0f);
+    // Since the last drawn frame: the chases below run once per picture.
+    const float dt = std::max(sinceDrawSeconds_, 0.0f);
 
     // The ground the mist lies on: the terrain under the player, or the
     // player's own feet where those are lower - a cave, a city under a

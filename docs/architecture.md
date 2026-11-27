@@ -49,6 +49,7 @@ Wowee follows a modular architecture with clear separation of concerns:
 - Owns all subsystems (renderer, game handler, asset manager, UI, addon manager, audio coordinator)
 - Manages application state (`AUTHENTICATION` → `REALM_SELECTION` → `CHARACTER_SELECTION` / `CHARACTER_CREATION` → `IN_GAME`, plus `DISCONNECTED`, and `FIRST_RUN` when nothing has been extracted and the asset builder is shown instead of the login)
 - Runs update/render loop, paced by `FramePacer` (`frame_pacer.hpp/cpp`): integer-nanosecond deltas off a monotonic clock, and a frame cap that sleeps most of the wait and spins the rest
+- Each iteration is a tick; `DrawSchedule` (`draw_schedule.hpp/cpp`) says whether the tick draws. An undrawn tick runs input, update and the whole interface and leaves out `Renderer::beginFrame`/`renderWorld`/`endFrame` (see `docs/draw-schedule.md`)
 - Populates `GameServices` struct and passes to `GameHandler` at construction
 
 **Window** (`window.hpp/cpp`) - SDL3 + Vulkan wrapper

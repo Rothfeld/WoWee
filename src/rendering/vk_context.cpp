@@ -331,6 +331,16 @@ void VkContext::flushDeferredCleanup() {
     }
 }
 
+bool VkContext::settleSubmittedFrames() {
+    if (deviceLost_ || device == VK_NULL_HANDLE) return false;
+    for (const auto& frame : frames) {
+        if (!waitForSubmittedFrame(frame.timelineValue, frame.inFlightFence)) return false;
+    }
+    // Nothing is recorded or in flight now, so no slot's queue has a reader left.
+    flushDeferredCleanup();
+    return true;
+}
+
 void VkContext::runDeferredCleanup(uint32_t frameIndex) {
     auto& q = deferredCleanup_[frameIndex];
     if (q.empty()) return;

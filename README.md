@@ -705,6 +705,7 @@ is not covered by the MIT license; see [LICENSE](LICENSE).
 ### Internals
 
 - [Architecture](docs/architecture.md)
+- [Ticks that do not draw](docs/draw-schedule.md) (`WOWEE_DRAW_EVERY`, a host deciding per tick)
 - [Authentication](docs/authentication.md) and [SRP Implementation](docs/srp-implementation.md)
 - [Packet Framing](docs/packet-framing.md) and [Realm List](docs/realm-list.md)
 - [Sky System](docs/SKY_SYSTEM.md)
@@ -4231,6 +4232,10 @@ Evidence, sources and per-addon table: `_experiments/20261119T093431Z.tbc_addons
 in the workspace.
 
 ### Frame pacing (maxFPS, maxFPSBk)
+
+A tick of the main loop draws a picture unless `core::DrawSchedule` says
+otherwise (`WOWEE_DRAW_EVERY=N`, or a host deciding per tick); input, game
+state and the interface run on every tick either way: docs/draw-schedule.md.
 
 The main loop applies build 8606's maxFPS and maxFPSBk CVars (both default 0)
 through `core::nativeFrameLimit`. Measured on the original under Wine with a

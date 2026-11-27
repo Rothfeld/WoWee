@@ -2077,6 +2077,13 @@ if(WIN32)
     target_link_libraries(test_frame_pacer PRIVATE winmm)
 endif()
 
+# ── test_draw_schedule ───────────────────────────────────────
+# Which ticks of the main loop draw: the count, a host's request, the world.
+wowee_add_test(test_draw_schedule
+    SOURCES test_draw_schedule.cpp
+            ${CMAKE_SOURCE_DIR}/src/core/draw_schedule.cpp
+            ${TEST_COMMON_SOURCES})
+
 # ── test_update_check ────────────────────────────────────────
 # Version ordering for the update notice. No network: the ordering is the
 # part that decides whether anybody is told anything.

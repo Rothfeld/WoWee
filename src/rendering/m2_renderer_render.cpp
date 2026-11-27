@@ -1062,6 +1062,23 @@ void M2Renderer::prepareRender(uint32_t frameIndex, const Camera& camera) {
     }
 }
 
+void M2Renderer::stepRenderDistance() {
+    const float targetRenderDist = viewDistanceScale_ *
+        ((instances.size() > 2000) ? 300.0f
+         : (instances.size() > 1000) ? 500.0f
+                                     : 1000.0f);
+    const float shrinkRate = 0.005f;
+    const float growRate = 0.05f;
+    const float blendRate = (targetRenderDist < smoothedRenderDist_) ? shrinkRate : growRate;
+    smoothedRenderDist_ = glm::mix(smoothedRenderDist_, targetRenderDist, blendRate);
+}
+
+void M2Renderer::passUndrawn() {
+    // The conditions under which render() gets as far as the step.
+    if (instances.empty() || !opaquePipeline_) return;
+    stepRenderDistance();
+}
+
 void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const Camera& camera,
                         VkCommandBuffer transparentCmd,
                         const std::function<void()>& afterOpaque,
@@ -1112,14 +1129,7 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
     // stayed culled for those frames - clutter blinked in at the leading edge,
     // half the in-view tufts it covered missing at a 10 fps turn - and only the
     // first 24576 instances were covered at all; the rest were culled here.
-    const float targetRenderDist = viewDistanceScale_ *
-        ((instances.size() > 2000) ? 300.0f
-         : (instances.size() > 1000) ? 500.0f
-                                     : 1000.0f);
-    const float shrinkRate = 0.005f;
-    const float growRate = 0.05f;
-    const float blendRate = (targetRenderDist < smoothedRenderDist_) ? shrinkRate : growRate;
-    smoothedRenderDist_ = glm::mix(smoothedRenderDist_, targetRenderDist, blendRate);
+    stepRenderDistance();
     const float maxRenderDistanceSq = smoothedRenderDist_ * smoothedRenderDist_;
 
     const uint32_t frameIndex = vkCtx_->getCurrentFrame();

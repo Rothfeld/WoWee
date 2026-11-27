@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/window.hpp"
+#include "core/draw_schedule.hpp"
 #include "core/npc_interaction_facing.hpp"
 #include "core/npc_panel_emotes.hpp"
 #include "rendering/animation/possessed_locomotion.hpp"
@@ -104,6 +105,9 @@ public:
     /// the setting first opens it; see updateMapWindow.
     ui::MapWindow* getMapWindow() { return mapWindow_.get(); }
     rendering::Renderer* getRenderer() { return renderer.get(); }
+    /// Which ticks of the main loop draw a picture. A host that decides per
+    /// tick calls drawSchedule().request(draw) before the tick's update.
+    core::DrawSchedule& drawSchedule() { return drawSchedule_; }
     ui::UIManager* getUIManager() { return uiManager.get(); }
     auth::AuthHandler* getAuthHandler() { return authHandler.get(); }
     game::GameHandler* getGameHandler() { return gameHandler.get(); }
@@ -393,6 +397,9 @@ private:
     AppState state = AppState::AUTHENTICATION;
     bool running = false;
     bool renderingFrame_ = false;
+    /// Which ticks draw a picture, and whether the tick now running does.
+    core::DrawSchedule drawSchedule_;
+    bool tickDraws_ = true;
     std::optional<LeaveWorldTo> leaveWorldPending_;
     /// Why the player is back at the login screen, when it was not their idea.
     std::string disconnectNotice_;

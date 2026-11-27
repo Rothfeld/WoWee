@@ -95,6 +95,25 @@ public:
     void beginFrame();
     void endFrame();
 
+    /// A tick of the main loop in which no picture is drawn
+    /// (core/draw_schedule.hpp, docs/draw-schedule.md). These two stand in
+    /// for beginFrame and renderWorld on such a tick and do what those do
+    /// besides drawing, at the same point of the tick: state that game code,
+    /// the interface or a later drawn frame reads and that has to move once
+    /// per tick, not once per picture. endFrame has no such part.
+    ///
+    /// passFrameUndrawn: finished GPU work is collected (frame slots,
+    /// uploads, deferred destruction, recorded frames), the player's motion
+    /// for grass and water is tracked, the grass population is advanced.
+    /// passWorldUndrawn: which WMO rooms show (read by unit visibility,
+    /// mouse targeting and nameplates through WMORenderer::roomHides) and
+    /// the doodad draw distance's approach to its target.
+    void passFrameUndrawn();
+    void passWorldUndrawn();
+    /// Whether the tick now running draws; set by the loop before update().
+    void setTickDraws(bool draws) { tickDraws_ = draws; }
+    [[nodiscard]] bool tickDraws() const { return tickDraws_; }
+
     /// Where the last endFrame spent its time, in milliseconds, for the frame
     /// budget report: recording the post-process and interface passes, the
     /// queue submit, and the present.
@@ -342,6 +361,7 @@ private:
     /// Sampled once a frame in update() and eased, because the raw answer is a
     /// yes or a no and a hill edge crossing it would snap the flare on and off.
     float sunOcclusion_ = 0.0f;
+    float sunOcclusionEaseSeconds_ = 0.0f;  // since the last sample (taken on drawn ticks)
 
     /// That line, asked of the terrain, the buildings and where the camera is.
     [[nodiscard]] float sampleSunOcclusion() const;
@@ -612,7 +632,18 @@ private:
     bool passAblationReported_ = false;
     bool worldDrawnLastFrame_ = false;
     std::chrono::steady_clock::time_point lastFrameStart_{};
-    float lastDeltaTime_ = 0.0f;           // cached for post-process pipeline
+    float lastDeltaTime_ = 0.0f;           // the tick's delta, as update() got it
+    // Seconds since the last drawn frame ended: what the draw path's own
+    // easing and the post-process pass step by. Equal to lastDeltaTime_ when
+    // every tick is drawn.
+    float sinceDrawSeconds_ = 0.0f;
+    bool tickDraws_ = true;
+    /// Player motion for water ripples and grass, stepped once per tick.
+    void trackPlayerMotion(float deltaTime);
+    /// Sealed interiors and the rooms each WMO shows from the camera; what
+    /// renderWorld decides before it records anything. Returns whether the
+    /// world outside a sealed interior is hidden.
+    bool updateWorldVisibility();
     EndFrameTimes endFrameTimes_;
     bool createSecondaryCommandResources();
     void destroySecondaryCommandResources();
@@ -666,7 +697,8 @@ private:
     std::unique_ptr<ScreenCapture> screenCapture_;
     std::unique_ptr<core::ScreenRecorder> recorder_;
     std::string recordingFailure_;
-    void collectRecordedFrame();
+    /// The frame recorded with `frameSlot`, once the GPU has finished it.
+    void collectRecordedFrame(uint32_t frameSlot);
     void recordScreenCapture();
 
     // Screen-space sun shafts, built from the finished frame at the end of

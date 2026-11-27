@@ -641,6 +641,7 @@ set(WOWEE_SOURCES
     src/core/app_clock.cpp
     src/core/config_paths.cpp
     src/core/frame_pacer.cpp
+    src/core/draw_schedule.cpp
     src/core/https_get.cpp
     src/core/update_check.cpp
 

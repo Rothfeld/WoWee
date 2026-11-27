@@ -70,7 +70,12 @@ The client also measures itself, with no build option needed:
   the last completed frame, at warning level instead of info.
   The main loop's consecutive parts are the `loop/...` lines (`loop/cap wait`,
   `loop/events and input`, `loop/update`, `loop/render`, `loop/after render`,
-  `loop/pace to refresh`); they add up to the frame. `loop/update outside its
+  `loop/pace to refresh`); they add up to the frame. `count ticks drawn` is
+  how many of the window's ticks drew a picture (all of them unless
+  `WOWEE_DRAW_EVERY` or a host says otherwise, docs/draw-schedule.md); on the
+  others `passFrameUndrawn` and `passWorldUndrawn` stand where `beginFrame`
+  and `renderWorld` do, and every average is per tick.
+  `loop/update outside its
   stages` and `loop/render outside its stages` are what those two spend
   outside the stages they time: a large number there is a stage missing a
   timer. `endFrame/present/cpu in user code` and `.../cpu in kernel` are the
