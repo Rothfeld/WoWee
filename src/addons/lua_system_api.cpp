@@ -946,7 +946,7 @@ static void pushCvarDefault(lua_State* L, const std::string& n) {
     else if (n == "weatherdensity") lua_pushstring(L, "2");
     else if (n == "particledensity") lua_pushstring(L, "1");
     else if (n == "environmentdetail") lua_pushstring(L, "1");
-    else if (n == "farclip") lua_pushstring(L, "1900");
+    else if (n == "farclip") lua_pushstring(L, tbcInterface(L) ? "350" : "477");
     else if (n == "groundeffectdensity") lua_pushstring(L, tbcInterface(L) ? "24" : "30");
     else if (n == "spelleffectlevel") lua_pushstring(L, "9");
     else if (n == "worlddetail") lua_pushstring(L, "1");

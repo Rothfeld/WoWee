@@ -55,7 +55,7 @@ constexpr SettingDesc kSchema[] = {
     {"viewdistance", "View distance", SettingKind::Float, 177, 2400, 50, "Graphics", "View",
      "How far into the distance the world is drawn, in yards. The single\n"
      "largest cost in the picture: terrain, buildings and creatures are all\n"
-     "drawn to this range.", "", 1900},
+     "drawn to this range.", "", kDefaultViewDistance},
     // It used to be left out, deferred to the Effects panel of the game's own
     // Video options - as were ground clutter, its radius, brightness,
     // particle and weather detail, environment detail and texture filtering.

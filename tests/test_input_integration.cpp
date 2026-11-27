@@ -5874,7 +5874,10 @@ TEST_CASE_METHOD(Integration, "TBC video CVar aliases and gamma brightness bridg
     truth("GetCVar('spellEffectLevel') == '5'");
     truth("GetCVar('WorldDetail') == '2'");
     truth("GetCVar('shadowLOD') == '0'");
-    truth("GetCVarDefault('farclip') == '1900'");
+    truth("GetCVarDefault('farclip') == '477'");
+
+    run("__WoweeInterfaceVersion = 20400");
+    truth("GetCVarDefault('farclip') == '350'");
 
     run("SetCVar('spellEffectLevel', '9')");
     CHECK(settings["particledensity"] == "100");
@@ -5899,7 +5902,7 @@ TEST_CASE_METHOD(Integration, "TBC video CVar aliases and gamma brightness bridg
     CHECK(settings["brightness"] == "30");
 
     run("RestoreVideoDefaults()");
-    CHECK(settings["viewdistance"] == "1900");
+    CHECK(settings["viewdistance"] == "477");
     CHECK(settings["brightness"] == "50");
     truth("GetCVar('desktopGamma') == '1'");
     truth("GetCVar('gamma') == '1.0'");

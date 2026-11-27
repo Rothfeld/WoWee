@@ -124,10 +124,24 @@ TEST_CASE("the graphics defaults have one home", "[settings]") {
 
     // And they have to be reachable on the sliders that show them, or the
     // panel opens on a value it cannot represent.
-    CHECK(wowee::ui::kDefaultViewDistance >= 400.0f);
+    CHECK(wowee::ui::kDefaultViewDistance >= 177.0f);
     CHECK(wowee::ui::kDefaultViewDistance <= 2400.0f);
     CHECK(wowee::ui::kDefaultGroundClutter >= 0);
     CHECK(wowee::ui::kDefaultGroundClutter <= 150);
+
+    std::size_t count = 0;
+    const wowee::ui::SettingDesc* rows = wowee::ui::clientSettingsSchema(count);
+    const wowee::ui::SettingDesc* vd = nullptr;
+    for (std::size_t i = 0; i < count; ++i) {
+        if (std::string(rows[i].key) == "viewdistance") {
+            vd = &rows[i];
+            break;
+        }
+    }
+    REQUIRE(vd != nullptr);
+    CHECK(vd->minValue == wowee::ui::kMinViewDistance);
+    CHECK(vd->maxValue == wowee::ui::kMaxViewDistance);
+    CHECK(vd->defaultValue == wowee::ui::kDefaultViewDistance);
 }
 
 TEST_CASE("no default is spelled out a second time", "[settings]") {
