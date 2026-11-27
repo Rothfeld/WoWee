@@ -5009,7 +5009,7 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
                 matData.heightMapVariance = useAdvancedMaterials ? batchHeightVariance : 0.0f;
                 matData.normalMapStrength = normalMapStrength_;
                 matData.hairMaterial = hairMaterial ? 1 : 0;
-                matData.blendMode = blendMode;
+                matData.blendMode = effectiveCharacterShaderBlendMode(blendMode, instance.isEffectModel);
                 matData.textureCount = batch.textureCount == 2 ? 2 : 1;
                 {
                     const auto& md = gpuModel.data;

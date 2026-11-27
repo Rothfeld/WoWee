@@ -835,14 +835,25 @@ void EntitySpawner::syncPlayerMorphs() {
             // the fall is still playing, Dead after (removeCreatureForNewDisplay).
             uint32_t play = animation;
             bool loop = true;
+            bool holdFinalPose = false;
             if (animation == rendering::anim::DEATH) {
                 if (timeMs >= durationMs) play = rendering::anim::DEAD;
                 else loop = false;
+            } else {
+                const uint32_t auraStateAnim = renderer_->getSpellVisualSystem()
+                    ? renderer_->getSpellVisualSystem()->auraStateAnimation(morph.instanceId)
+                    : rendering::SpellVisualSystem::kNoAnimation;
+                if (auraStateAnim != rendering::SpellVisualSystem::kNoAnimation &&
+                    play == auraStateAnim &&
+                    cr->isAnimationNonLooping(morph.instanceId, play)) {
+                    loop = false;
+                    holdFinalPose = true;
+                }
             }
             if (loop && play != rendering::anim::DEAD && cr->isPlayingOneShot(morph.instanceId)) {
                 cr->setOneShotReturn(morph.instanceId, play);
             } else {
-                cr->playAnimation(morph.instanceId, play, loop);
+                cr->playAnimation(morph.instanceId, play, loop, 0, holdFinalPose);
             }
         }
     }

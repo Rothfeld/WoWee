@@ -6,7 +6,9 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include "core/entity_spawner.hpp"
 #include "rendering/character_material_policy.hpp"
+#include "rendering/character_renderer_blend_policy.hpp"
 
 using wowee::rendering::characterBatchDrawsBefore;
 using wowee::rendering::characterBatchIsHair;
@@ -182,13 +184,64 @@ TEST_CASE("weapon texture replacement preserves hardcoded type-0 textures and fi
     CHECK(collectReplaceableItemTextureSlots(legacyUnnamed) == std::vector<uint32_t>{0u});
 }
 
-TEST_CASE("character fragment shader writes surface opacity for opaque batches instead of raw texture alpha", "[character][m2]") {
+TEST_CASE("character fragment shader writes surface opacity for opaque and NoAlphaAdd batches instead of raw texture alpha", "[character][m2][sidedisc4]") {
     // Opaque M2 batches (blendMode == 0, alphaTest == 0, colorKeyBlack == 0)
-    // such as hand_1h_naxxramas_d_01.m2 (Claw of the Frost Wyrm) store a
-    // reflection/overlay mask in texture alpha (0 across the blade). Writing
-    // texColor.a with blendDisabled() punches a transparent hole into the
-    // off-screen CharacterPreview FBO over both the weapon and character body.
+    // such as hand_1h_naxxramas_d_01.m2 (Claw of the Frost Wyrm) and NoAlphaAdd
+    // batches (blendMode == 3, D3D9 ONE+ONE drawn via SRC_ALPHA+ONE) ignore
+    // texture alpha: writing texColor.a on blendMode == 0 cuts holes in FBOs,
+    // and on blendMode == 3 suppresses unmasked additive glow while keeping
+    // linear opacity scaling during camera/stealth/spawn fades.
     const std::string frag = readRepoText("assets/shaders/character.frag.glsl");
-    CHECK(frag.find("float outAlpha = (colorKeyBlack == 0 && (blendMode == 0 || alphaTest != 0))") != std::string::npos);
-    CHECK(frag.find("float outAlpha = (blendMode == 0 && alphaTest == 0 && colorKeyBlack == 0)") != std::string::npos);
+    CHECK(frag.find("float outAlpha = (colorKeyBlack == 0 && (blendMode == 0 || blendMode == 3 || alphaTest != 0))") != std::string::npos);
+    CHECK(frag.find("float outAlpha = (colorKeyBlack == 0 && ((blendMode == 0 && alphaTest == 0) || blendMode == 3))") != std::string::npos);
+}
+
+TEST_CASE("morphed remote player visual instance resolves drawn morph before hidden base player mesh", "[character][entity][sidedisc4]") {
+    using wowee::core::resolveRemoteUnitVisualInstanceId;
+
+    // Morphed remote player (e.g. .modify morph 9778 OrcMale channeling Spell 13736
+    // Whirlwind): StateKit 370 (LoopSpellArt 126) is attached to drawnInstanceId (42),
+    // not the hidden base racial playerInstanceId (18).
+    CHECK(resolveRemoteUnitVisualInstanceId(/*drawn=*/42u, /*creature=*/0u, /*player=*/18u) == 42u);
+
+    // Unmorphed remote player: drawnInstanceId equals playerInstanceId (or 0 before draw lookup).
+    CHECK(resolveRemoteUnitVisualInstanceId(/*drawn=*/18u, /*creature=*/0u, /*player=*/18u) == 18u);
+    CHECK(resolveRemoteUnitVisualInstanceId(/*drawn=*/0u, /*creature=*/0u, /*player=*/18u) == 18u);
+
+    // Creature: mid-display-swap drawnInstanceId (replaced instance) takes precedence,
+    // otherwise creatureInstanceId.
+    CHECK(resolveRemoteUnitVisualInstanceId(/*drawn=*/77u, /*creature=*/0u, /*player=*/0u) == 77u);
+    CHECK(resolveRemoteUnitVisualInstanceId(/*drawn=*/0u, /*creature=*/55u, /*player=*/0u) == 55u);
+    CHECK(resolveRemoteUnitVisualInstanceId(/*drawn=*/0u, /*creature=*/0u, /*player=*/0u) == 0u);
+}
+
+TEST_CASE("attached weapon enchant effect shader blend mode and additive fade alpha match TBC 2.4.3", "[character][m2][sidedisc4]") {
+    using wowee::rendering::characterBatchOutAlpha;
+    using wowee::rendering::effectiveCharacterShaderBlendMode;
+
+    // Soulfrost (spells/shadow_frost_weapon_effect.m2, blendMode=2 over GENERICGLOW_BLACK.BLP)
+    // and other isEffectModel weapon enchants bind additivePipeline_ (SRC_ALPHA, ONE);
+    // shader blendMode must be 4 (or 3 for authored NoAlphaAdd) so fog attenuates to 0
+    // instead of mixing gFogColor or Mod/Mod2x neutral across black card texels.
+    CHECK(effectiveCharacterShaderBlendMode(0u, true) == 4);
+    CHECK(effectiveCharacterShaderBlendMode(2u, true) == 4);
+    CHECK(effectiveCharacterShaderBlendMode(3u, true) == 3);
+    CHECK(effectiveCharacterShaderBlendMode(4u, true) == 4);
+    CHECK(effectiveCharacterShaderBlendMode(5u, true) == 4);
+    CHECK(effectiveCharacterShaderBlendMode(6u, true) == 4);
+
+    // Non-effect M2 batches (e.g. Warglaive of Azzinoth Batch[0..3]) keep authored modes.
+    for (uint16_t mode = 0u; mode <= 7u; ++mode) {
+        CHECK(effectiveCharacterShaderBlendMode(mode, false) == static_cast<int32_t>(mode));
+    }
+
+    // M2_BLEND_ADD (3) ignores texture alpha (even 0) and scales linearly with opacity.
+    CHECK(characterBatchOutAlpha(3, false, false, 0.0f, 1.0f) == Catch::Approx(1.0f));
+    CHECK(characterBatchOutAlpha(3, false, false, 0.0f, 0.25f) == Catch::Approx(0.25f));
+    CHECK(characterBatchOutAlpha(3, false, false, 0.0f, 0.06f) == Catch::Approx(0.06f));
+
+    // M2_BLEND_ADD_ALPHA (4, Glave_1H_DualBlade_D_02.m2 Batch[3]) scales texAlpha * opacity.
+    CHECK(characterBatchOutAlpha(4, false, false, 0.5f, 1.0f) == Catch::Approx(0.5f));
+    CHECK(characterBatchOutAlpha(4, false, false, 0.5f, 0.25f) == Catch::Approx(0.125f));
+    CHECK(characterBatchOutAlpha(4, false, false, 0.5f, 0.06f) == Catch::Approx(0.03f));
 }

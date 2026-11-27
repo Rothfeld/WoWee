@@ -3,6 +3,8 @@
 #include "pipeline/blp_loader.hpp"
 #include "pipeline/m2_loader.hpp"
 #include "rendering/character_material_policy.hpp"
+#include "rendering/character_renderer_blend_policy.hpp"
+#include "rendering/m2_blend_mode.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -92,4 +94,53 @@ TEST_CASE("Bloodsurge's opaque sword geometry ignores the texture alpha", "[m2][
     // This is the old character-only decision that erased the sword surface.
     CHECK(wowee::rendering::characterBatchNeedsCutout(
         wowee::rendering::CharacterMaterialDomain::Character, 0, true, false));
+}
+
+TEST_CASE("Warglaive of Azzinoth TBC M2 batches, stage combiners, and Soulfrost enchant blend mode", "[m2][weapon][assets][sidedisc4]") {
+    const std::filesystem::path tbcRoot("/workspace/azerothcore/client/wowee-data/expansions/tbc");
+    const auto glavePath = tbcRoot / "item/objectcomponents/weapon/glave_1h_dualblade_d_02.m2";
+    const auto glaveLeftPath = tbcRoot / "item/objectcomponents/weapon/glave_1h_dualblade_d_02left.m2";
+    const auto glaveBlpPath = tbcRoot / "item/objectcomponents/weapon/glave_1h_dualblade_d_02.blp";
+    const auto soulfrostPath = tbcRoot / "spells/shadow_frost_weapon_effect.m2";
+    if (!std::filesystem::exists(glavePath) || !std::filesystem::exists(glaveLeftPath) ||
+        !std::filesystem::exists(glaveBlpPath)) {
+        SKIP("Shipped TBC Warglaive assets not present under wowee-data/expansions/tbc");
+    }
+
+    for (const auto& p : {glavePath, glaveLeftPath}) {
+        const auto m2 = wowee::pipeline::M2Loader::load(readBytes(p));
+        REQUIRE(m2.isValid());
+        CHECK(m2.version == 262u);
+        CHECK(m2.particleEmitters.empty());
+        CHECK(m2.ribbonEmitters.empty());
+        REQUIRE(m2.batches.size() == 4u);
+        REQUIRE(m2.materials.size() == 4u);
+
+        // Batch[0]=Opaque(0), Batch[1]=Mod2x(6), Batch[2]=Alpha(2) on submesh 0;
+        // Batch[3]=AddAlpha(4, flags=0x10 lit without 0x01 Unlit) 2-stage fel shell on submesh 1.
+        CHECK(m2.materials[m2.batches[0].materialIndex].blendMode == 0u);
+        CHECK(m2.materials[m2.batches[1].materialIndex].blendMode == 6u);
+        CHECK(m2.materials[m2.batches[2].materialIndex].blendMode == 2u);
+        CHECK(m2.materials[m2.batches[3].materialIndex].blendMode == 4u);
+        CHECK((m2.materials[m2.batches[3].materialIndex].flags & 0x01u) == 0u);
+        CHECK(m2.batches[3].textureCount == 2u);
+
+        const auto comb = wowee::rendering::m2ResolveStageCombiners(
+            m2.version, m2.textureCombinerCombos, m2.batches[3].shader, m2.batches[3].textureCount);
+        CHECK(comb.stage0 == 1);
+        CHECK(comb.stage1 == 0);
+
+        // Replaceable slot 2 receives GLAVE_1H_DUALBLADE_D_02.BLP while hardcoded slots 0,1,3 stay intact.
+        const auto repl = wowee::rendering::collectReplaceableItemTextureSlots(m2.textures);
+        CHECK(repl == std::vector<uint32_t>{2u});
+    }
+
+    if (std::filesystem::exists(soulfrostPath)) {
+        const auto sf = wowee::pipeline::M2Loader::load(readBytes(soulfrostPath));
+        REQUIRE(sf.isValid());
+        REQUIRE_FALSE(sf.batches.empty());
+        const uint16_t rawBlend = sf.materials.at(sf.batches[0].materialIndex).blendMode;
+        CHECK(rawBlend == 2u);
+        CHECK(wowee::rendering::effectiveCharacterShaderBlendMode(rawBlend, /*isEffectModel=*/true) == 4);
+    }
 }

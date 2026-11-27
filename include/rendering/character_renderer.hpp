@@ -8,6 +8,7 @@
 #include "rendering/animation/playable_animation.hpp"
 #include "rendering/shadow_params.hpp"
 #include "rendering/hand_grip.hpp"
+#include "rendering/character_renderer_blend_policy.hpp"
 #include "rendering/legacy_light_direction.hpp"
 
 #include "rendering/animation/melee_swing_queue.hpp"

@@ -37,6 +37,21 @@ namespace game { class GameHandler; class Unit; class Entity; struct MirrorImage
 
 namespace core {
 
+/// Resolve the CharacterRenderer instance ID that owns a remote unit's visible
+/// mesh, SpellVisualSystem aura StateKits, and stealth/gait animation queries.
+/// Morphed players (`UNIT_FIELD_DISPLAYID != UNIT_FIELD_NATIVEDISPLAYID`) attach
+/// aura StateKits (e.g. Whirlwind StateKit 370 -> LoopSpellArt 126) and play
+/// combat/spell animations on `drawnInstanceId` (`playerMorphs_[guid].instanceId`)
+/// while keeping their hidden base racial mesh in `playerInstanceId`.
+[[nodiscard]] constexpr uint32_t resolveRemoteUnitVisualInstanceId(
+    uint32_t drawnInstanceId,
+    uint32_t creatureInstanceId,
+    uint32_t playerInstanceId) noexcept {
+    if (drawnInstanceId != 0) return drawnInstanceId;
+    if (creatureInstanceId != 0) return creatureInstanceId;
+    return playerInstanceId;
+}
+
 class Application;
 
 class EntitySpawner {

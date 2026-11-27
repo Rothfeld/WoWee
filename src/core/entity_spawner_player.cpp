@@ -958,8 +958,10 @@ uint32_t EntitySpawner::remoteIdleAnimation(uint64_t guid) const {
         }
         if (unit->hasCreepVisibility() && unit->getHealth() > 0) {
             auto* cr = renderer_ ? renderer_->getCharacterRenderer() : nullptr;
-            uint32_t instance = getCreatureInstanceId(guid);
-            if (!instance) instance = getPlayerInstanceId(guid);
+            const uint32_t instance = resolveRemoteUnitVisualInstanceId(
+                drawnInstanceIdForGuid(guid),
+                getCreatureInstanceId(guid),
+                getPlayerInstanceId(guid));
             if (cr && instance != 0 && cr->hasAnimation(instance, rendering::anim::STEALTH_STAND)) {
                 return rendering::anim::STEALTH_STAND;
             }
@@ -981,8 +983,10 @@ bool EntitySpawner::remoteIdlesInHover(uint64_t guid) const {
 uint32_t EntitySpawner::remoteAuraStateAnimation(uint64_t guid) const {
     const auto* visuals = renderer_ ? renderer_->getSpellVisualSystem() : nullptr;
     if (!visuals) return rendering::SpellVisualSystem::kNoAnimation;
-    uint32_t instance = getCreatureInstanceId(guid);
-    if (!instance) instance = getPlayerInstanceId(guid);
+    const uint32_t instance = resolveRemoteUnitVisualInstanceId(
+        drawnInstanceIdForGuid(guid),
+        getCreatureInstanceId(guid),
+        getPlayerInstanceId(guid));
     return instance ? visuals->auraStateAnimation(instance) : rendering::SpellVisualSystem::kNoAnimation;
 }
 
@@ -1068,8 +1072,10 @@ uint32_t EntitySpawner::remoteResumeAnimation(uint64_t guid) const {
     // changes, so a one-shot that ends mid-move must resume it itself.
     if (const auto moving = creatureWasMoving_.find(guid); moving != creatureWasMoving_.end() && moving->second) {
         if (const uint32_t aura = remoteAuraLocomotion(guid)) return aura;
-        const uint32_t instanceId = creatureInstances_.count(guid) ? creatureInstances_.at(guid)
-                                                                    : playerInstances_.at(guid);
+        const uint32_t instanceId = resolveRemoteUnitVisualInstanceId(
+            drawnInstanceIdForGuid(guid),
+            getCreatureInstanceId(guid),
+            getPlayerInstanceId(guid));
         const auto entity = gameHandler_->getEntityManager().getEntity(guid);
         const auto unit = std::dynamic_pointer_cast<game::Unit>(entity);
         const bool stealthed = unit && unit->hasCreepVisibility();
@@ -1465,17 +1471,35 @@ void EntitySpawner::updateRemoteUnitState(uint64_t guid, uint32_t instanceId, bo
         idleIt->second = idle;
         if (previous == state && !moving && !mounted && !deadPose) {
             auto* cr = renderer_->getCharacterRenderer();
+            const uint32_t visualInst = drawn != 0 ? drawn : instanceId;
             uint32_t current = 0; float time = 0.0f, duration = 0.0f;
             const bool haveAnim = cr->getAnimationState(instanceId, current, time, duration);
+            uint32_t drawnCurrent = current; float drawnTime = 0.0f, drawnDuration = 0.0f;
+            const bool haveDrawnAnim = (visualInst == instanceId)
+                ? haveAnim
+                : cr->getAnimationState(visualInst, drawnCurrent, drawnTime, drawnDuration);
             const auto playIdlePose = [&](uint32_t animId) {
                 const bool holdAuraOneShot =
                     auraStateAnim != rendering::SpellVisualSystem::kNoAnimation &&
                     animId == auraStateAnim &&
-                    cr->isAnimationNonLooping(instanceId, animId);
+                    cr->isAnimationNonLooping(visualInst, animId);
                 if (holdAuraOneShot) {
                     cr->playAnimation(instanceId, animId, /*loop=*/false, 0, /*holdFinalPose=*/true);
                 } else {
                     cr->playAnimation(instanceId, animId, true);
+                }
+                if (visualInst != instanceId) {
+                    if (auto morphIt = playerMorphs_.find(guid); morphIt != playerMorphs_.end() &&
+                        morphIt->second.instanceId == visualInst) {
+                        morphIt->second.animation = animId;
+                    }
+                    if (!holdAuraOneShot && animId != rendering::anim::DEAD && cr->isPlayingOneShot(visualInst)) {
+                        cr->setOneShotReturn(visualInst, animId);
+                    } else if (holdAuraOneShot) {
+                        cr->playAnimation(visualInst, animId, /*loop=*/false, 0, /*holdFinalPose=*/true);
+                    } else {
+                        cr->playAnimation(visualInst, animId, true);
+                    }
                 }
             };
             if (idle == rendering::anim::STUN) {
@@ -1485,13 +1509,37 @@ void EntitySpawner::updateRemoteUnitState(uint64_t guid, uint32_t instanceId, bo
                 } else if (haveAnim && current == rendering::anim::KNOCKDOWN) {
                     cr->setOneShotReturn(instanceId, rendering::anim::STUN);
                 }
+                if (visualInst != instanceId) {
+                    if (!haveDrawnAnim ||
+                        (drawnCurrent != rendering::anim::STUN && drawnCurrent != rendering::anim::KNOCKDOWN)) {
+                        if (auto morphIt = playerMorphs_.find(guid); morphIt != playerMorphs_.end() &&
+                            morphIt->second.instanceId == visualInst) {
+                            morphIt->second.animation = rendering::anim::STUN;
+                        }
+                        cr->playAnimation(visualInst, rendering::anim::STUN, true);
+                    } else if (haveDrawnAnim && drawnCurrent == rendering::anim::KNOCKDOWN) {
+                        cr->setOneShotReturn(visualInst, rendering::anim::STUN);
+                    }
+                }
             } else if (!firstIdle && previousIdle != idle) {
                 const bool stunnedAuraOverride =
                     stunned && auraStateAnim != rendering::SpellVisualSystem::kNoAnimation && idle == auraStateAnim;
-                if (stunnedAuraOverride || (haveAnim && current == previousIdle))
+                if (stunnedAuraOverride || (haveAnim && current == previousIdle)) {
                     playIdlePose(idle);
-                else
+                } else {
                     cr->retargetOneShotReturn(instanceId, previousIdle, idle);
+                    if (visualInst != instanceId) {
+                        if (haveDrawnAnim && drawnCurrent == previousIdle && !cr->isPlayingOneShot(visualInst)) {
+                            if (auto morphIt = playerMorphs_.find(guid); morphIt != playerMorphs_.end() &&
+                                morphIt->second.instanceId == visualInst) {
+                                morphIt->second.animation = idle;
+                            }
+                            cr->playAnimation(visualInst, idle, true);
+                        } else {
+                            cr->retargetOneShotReturn(visualInst, previousIdle, idle);
+                        }
+                    }
+                }
                 LOG_DEBUG("Remote idle: guid=", guid, " ", previousIdle, " -> ", idle, " current=", current);
             }
         }

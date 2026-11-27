@@ -373,11 +373,12 @@ void main() {
             texColor.a *= ck;
             if (texColor.a < 0.01) discard;
         }
-        // Opaque (blendMode == 0) and surviving alpha-key (alphaTest != 0)
+        // Opaque (blendMode == 0), NoAlphaAdd (blendMode == 3, D3D9 ONE+ONE
+        // mapped onto SRC_ALPHA+ONE), and surviving alpha-key (alphaTest != 0)
         // fragments carry full surface opacity rather than raw texture alpha,
         // so atlases whose alpha channel masks a separate pass do not punch
-        // transparent holes into off-screen CharacterPreview FBOs.
-        float outAlpha = (colorKeyBlack == 0 && (blendMode == 0 || alphaTest != 0))
+        // transparent holes into CharacterPreview FBOs or zero out M2_BLEND_ADD.
+        float outAlpha = (colorKeyBlack == 0 && (blendMode == 0 || blendMode == 3 || alphaTest != 0))
             ? opacity
             : texColor.a * opacity;
         outColor = vec4(texColor.rgb, outAlpha);
@@ -607,13 +608,14 @@ void main() {
         result = texColor.rgb;
     }
 
-    // Opaque M2 batches (blendMode == 0 without cutout/color-key) ignore
-    // texture alpha: weapons and armor often store a reflection/overlay mask in
-    // alpha (e.g. hand_1h_naxxramas_d_01.blp for Claw of the Frost Wyrm).
-    // Writing raw texColor.a with blendDisabled() overwrites the off-screen
-    // CharacterPreview FBO alpha to 0 and cuts a hole through both the item and
-    // the character behind it.
-    float outAlpha = (blendMode == 0 && alphaTest == 0 && colorKeyBlack == 0)
+    // Opaque M2 batches (blendMode == 0 without cutout/color-key) and
+    // NoAlphaAdd batches (blendMode == 3, D3D9 ONE+ONE drawn via SRC_ALPHA+ONE)
+    // ignore texture alpha: weapons and armor often store a reflection/overlay
+    // mask in alpha (e.g. hand_1h_naxxramas_d_01.blp for Claw of the Frost Wyrm).
+    // Writing raw texColor.a on blendMode == 0 cuts holes in CharacterPreview
+    // FBOs, and on blendMode == 3 suppresses unmasked additive glow while
+    // keeping opacity scaling intact during camera/stealth/spawn fades.
+    float outAlpha = (colorKeyBlack == 0 && ((blendMode == 0 && alphaTest == 0) || blendMode == 3))
         ? opacity
         : texColor.a * opacity;
     outColor = vec4(result, outAlpha);
