@@ -205,6 +205,7 @@ void EntityController::clearAll() {
     pendingGameObjectQueries_.clear();
     transportGuids_.clear();
     serverUpdatedTransportGuids_.clear();
+    lastFieldUnitAuras_.clear();
     entityManager.clear();
     playerFeigningDeath_ = false;
 }
@@ -381,6 +382,7 @@ void EntityController::processOutOfRangeObjects(const std::vector<uint64_t>& gui
             owner_.clearPlayerTransport();
         }
         entityManager.removeEntity(guid);
+        lastFieldUnitAuras_.erase(guid);
         if (removedPetSummoner != 0 && removedPetSummoner != owner_.getPlayerGuid()) {
             for (const auto& token : unitEventTokens(owner_, removedPetSummoner)) {
                 if (token.rfind("party", 0) == 0 || token.rfind("raid", 0) == 0) {
@@ -737,23 +739,60 @@ void EntityController::syncPreWotlkAurasFromFields(const std::shared_ptr<Entity>
     // AURA_REMOVE_BY_STACK refresh even though UNIT_FIELD_AURAS stays unchanged.
     // Evaluated before the `same` early-return so a prior SMSG_SET_EXTRA_AURA_INFO
     // populating playerAuras_ never suppresses the first SPELL_AURA_START.
-    if (localPlayer) {
-        auto& lastField = owner_.getSpellHandler()->lastFieldPlayerAurasMut();
+    {
+        auto& lastField = localPlayer
+            ? owner_.getSpellHandler()->lastFieldPlayerAurasMut()
+            : lastFieldUnitAuras_[entity->getGuid()];
         if (changed != nullptr) {
-            const auto has = [](const std::vector<AuraSlot>& list, uint32_t spellId) {
-                return std::any_of(list.begin(), list.end(),
-                                   [&](const AuraSlot& a) { return a.spellId == spellId; });
-            };
-            const auto announce = [&](const AuraSlot& a, const char* change) {
-                const std::string& name = owner_.auraCombatTextName(a.spellId);
-                if (name.empty()) return;
-                const std::string type = std::string("SPELL_AURA_") + change + ((a.flags & 0x80u) ? "_HARMFUL" : "");
-                pendingEvents_.emit("COMBAT_TEXT_UPDATE", {type, name});
-            };
-            for (const auto& a : rebuilt)
-                if (!a.isEmpty() && !has(lastField, a.spellId)) announce(a, "START");
-            for (const auto& a : lastField)
-                if (!a.isEmpty() && !has(rebuilt, a.spellId)) announce(a, "END");
+            if (localPlayer) {
+                const auto has = [](const std::vector<AuraSlot>& list, uint32_t spellId) {
+                    return std::any_of(list.begin(), list.end(),
+                                       [&](const AuraSlot& a) { return a.spellId == spellId; });
+                };
+                const auto announce = [&](const AuraSlot& a, const char* change) {
+                    const std::string& name = owner_.auraCombatTextName(a.spellId);
+                    if (name.empty()) return;
+                    const std::string type = std::string("SPELL_AURA_") + change + ((a.flags & 0x80u) ? "_HARMFUL" : "");
+                    pendingEvents_.emit("COMBAT_TEXT_UPDATE", {type, name});
+                };
+                for (const auto& a : rebuilt)
+                    if (!a.isEmpty() && !has(lastField, a.spellId)) announce(a, "START");
+                for (const auto& a : lastField)
+                    if (!a.isEmpty() && !has(rebuilt, a.spellId)) announce(a, "END");
+            }
+            if (!isClassicLikeExpansion()) {
+                if (auto* ch = owner_.getCombatHandler()) {
+                    const uint64_t dstGuid = entity->getGuid();
+                    auto queueAuraLog = [&](CombatLogSubevent sub, uint32_t spellId, bool debuff, int32_t stacks = 0) {
+                        const auto args = ch->buildAuraCombatLogArgs(sub, 0, dstGuid, spellId, debuff, stacks);
+                        if (!args.empty()) {
+                            pendingEvents_.emit("COMBAT_LOG_EVENT_UNFILTERED", args);
+                            pendingEvents_.emit("COMBAT_LOG_EVENT", args);
+                        }
+                    };
+                    for (int slot = 0; slot < auraSlots; ++slot) {
+                        const AuraSlot oldA = static_cast<size_t>(slot) < lastField.size()
+                                                  ? lastField[static_cast<size_t>(slot)]
+                                                  : AuraSlot{};
+                        const AuraSlot& newA = rebuilt[static_cast<size_t>(slot)];
+                        if (oldA.spellId != 0 && newA.spellId != oldA.spellId) {
+                            queueAuraLog(CombatLogSubevent::AuraRemoved, oldA.spellId,
+                                         (oldA.flags & 0x80u) != 0);
+                        }
+                        if (newA.spellId != 0 && newA.spellId != oldA.spellId) {
+                            queueAuraLog(CombatLogSubevent::AuraApplied, newA.spellId,
+                                         (newA.flags & 0x80u) != 0);
+                        } else if (newA.spellId != 0 && newA.spellId == oldA.spellId &&
+                                   newA.charges != oldA.charges) {
+                            queueAuraLog(newA.charges > oldA.charges
+                                             ? CombatLogSubevent::AuraAppliedDose
+                                             : CombatLogSubevent::AuraRemovedDose,
+                                         newA.spellId, (newA.flags & 0x80u) != 0,
+                                         static_cast<int32_t>(newA.charges));
+                        }
+                    }
+                }
+            }
         }
         lastField = rebuilt;
     }
@@ -1385,6 +1424,18 @@ EntityController::UnitFieldUpdateResult EntityController::applyUnitFieldsOnUpdat
     UnitFieldUpdateResult result;
     result.oldDisplayId = unit->getDisplayId();
     uint32_t oldHealth = unit->getHealth();
+    auto isUnitActuallyDead = [&](uint32_t hp, uint32_t maxHp, uint32_t dyn) {
+        if (hp == 0 && maxHp > 0) return true;
+        if ((dyn & UNIT_DYNFLAG_DEAD) != 0) {
+            constexpr uint32_t kFeignFlag2 = 0x1u;
+            const uint16_t f2 = fieldIndex(UF::UNIT_FIELD_FLAGS_2);
+            const bool feigning = (f2 != 0xFFFF && (entity->getField(f2) & kFeignFlag2) != 0) || hp > 0;
+            if (!feigning) return true;
+        }
+        return false;
+    };
+    const bool wasDeadBeforeUpdate =
+        isUnitActuallyDead(oldHealth, unit->getMaxHealth(), unit->getDynamicFlags());
     const bool alreadyProneBeforeUpdate =
         isUnitAlreadyProneForDeath(unit->getDynamicFlags(),
                                    unit->getStandState(),
@@ -1800,6 +1851,21 @@ EntityController::UnitFieldUpdateResult EntityController::applyUnitFieldsOnUpdat
             unit->setMaxPowerByType(powerType, val);
             result.powerChanged = true;
             if (powerType < 7) emitForUnit(kMaxPowerEvents[powerType]);
+        }
+    }
+
+    if (!wasDeadBeforeUpdate && !isClassicLikeExpansion() &&
+        (entity->getType() == ObjectType::UNIT || entity->getType() == ObjectType::PLAYER) &&
+        isUnitActuallyDead(unit->getHealth(), unit->getMaxHealth(), unit->getDynamicFlags())) {
+        if (auto* ch = owner_.getCombatHandler()) {
+            const bool isTotem = entity->getType() == ObjectType::UNIT &&
+                                 unit->getEntry() != 0 &&
+                                 getCreatureType(unit->getEntry()) == 11u;
+            const auto args = ch->buildDeathCombatLogArgs(block.guid, isTotem);
+            if (!args.empty()) {
+                pendingEvents_.emit("COMBAT_LOG_EVENT_UNFILTERED", args);
+                pendingEvents_.emit("COMBAT_LOG_EVENT", args);
+            }
         }
     }
 
@@ -3792,6 +3858,7 @@ void EntityController::handleDestroyObject(network::Packet& packet) {
         }
         owner_.clearTransportAttachment(data.guid);
         entityManager.removeEntity(data.guid);
+        lastFieldUnitAuras_.erase(data.guid);
         if (destroyedPetSummoner != 0 && destroyedPetSummoner != owner_.getPlayerGuid()) {
             for (const auto& token : unitEventTokens(owner_, destroyedPetSummoner)) {
                 if (token.rfind("party", 0) == 0 || token.rfind("raid", 0) == 0) {

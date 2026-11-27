@@ -538,7 +538,7 @@ private:
     void handleTotemCreated(network::Packet& packet);
     void handlePeriodicAuraLog(network::Packet& packet);
     void handleSpellEnergizeLog(network::Packet& packet);
-    void handleExtraAuraInfo(network::Packet& packet, bool isInit);
+    void handleExtraAuraInfo(network::Packet& packet, bool isInit, bool isNeedUpdate = false);
     void handleSpellDispelLog(network::Packet& packet);
     void handleSpellStealLog(network::Packet& packet);
     void handleSpellChanceProcLog(network::Packet& packet);

@@ -3,6 +3,7 @@
 #include "game/world_packets.hpp"
 #include "game/entity.hpp"
 #include "game/opcode_table.hpp"
+#include "game/spell_defines.hpp"
 #include "network/packet.hpp"
 #include <chrono>
 #include <deque>
@@ -370,6 +371,10 @@ private:
     /// The tracking auras (EffectApplyAuraName 44 creatures, 45 resources)
     /// last announced with MINIMAP_UPDATE_TRACKING.
     std::vector<uint32_t> trackingAuras_;
+    /// Authoritative UNIT_FIELD_AURAS snapshot per non-local unit GUID, used to
+    /// emit SPELL_AURA_APPLIED / _REMOVED / _DOSE on live VALUES updates without
+    /// firing on initial CREATE_OBJECT or racing SMSG_SET_EXTRA_AURA_INFO.
+    std::unordered_map<uint64_t, std::vector<AuraSlot>> lastFieldUnitAuras_;
     void flushPendingEvents();
 
     // The player's UNIT_DYNFLAG_DEAD is Feign Death, not a death.

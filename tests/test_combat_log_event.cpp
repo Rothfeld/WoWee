@@ -212,3 +212,102 @@ TEST_CASE("spell, periodic, heal, interrupt and environmental events emit real s
     CHECK(lavaArgs[8] == "Lava");
     CHECK(lavaArgs[10] == "4");
 }
+
+TEST_CASE("aura, party kill, and unit death subevents match TBC 2.4.3 Blizzard_CombatLog positions", "[combatlog]") {
+    constexpr std::string_view kObjectNone = "2147483648"; // 0x80000000u (COMBATLOG_OBJECT_NONE)
+
+    CombatLogEventInput buff;
+    buff.layout = CombatLogLayout::Tbc;
+    buff.subevent = CombatLogSubevent::AuraApplied;
+    buff.spellId = 1243;
+    buff.spellName = "Power Word: Fortitude";
+    buff.spellSchoolMask = 2;
+    buff.powerType = 0; // BUFF
+    buff.srcGuid = 0;
+    buff.dstGuid = kPlayer;
+    buff.playerGuid = kPlayer;
+    buff.dstName = "Alpha";
+    buff.timestamp = 1700000000;
+    const auto buffArgs = buildCombatLogEvent(buff);
+    REQUIRE(buffArgs.size() == 12);
+    CHECK(buffArgs[1] == "SPELL_AURA_APPLIED");
+    CHECK(buffArgs[2] == "0x0000000000000000");
+    CHECK(buffArgs[3] == kEventNil);
+    CHECK(buffArgs[4] == kObjectNone);
+    CHECK(buffArgs[5] == "0x0000000000000001");
+    CHECK(buffArgs[6] == "Alpha");
+    CHECK(buffArgs[8] == "1243");
+    CHECK(buffArgs[9] == "Power Word: Fortitude");
+    CHECK(buffArgs[10] == "2");
+    CHECK(buffArgs[11] == "BUFF");
+
+    auto dose = buff;
+    dose.subevent = CombatLogSubevent::AuraAppliedDose;
+    dose.spellId = 7386;
+    dose.spellName = "Sunder Armor";
+    dose.spellSchoolMask = 1;
+    dose.powerType = 1; // DEBUFF
+    dose.amount = 2;
+    const auto doseArgs = buildCombatLogEvent(dose);
+    REQUIRE(doseArgs.size() == 13);
+    CHECK(doseArgs[1] == "SPELL_AURA_APPLIED_DOSE");
+    CHECK(doseArgs[8] == "7386");
+    CHECK(doseArgs[10] == "1");
+    CHECK(doseArgs[11] == "DEBUFF");
+    CHECK(doseArgs[12] == "2");
+
+    auto refresh = dose;
+    refresh.subevent = CombatLogSubevent::AuraRefresh;
+    const auto refreshArgs = buildCombatLogEvent(refresh);
+    REQUIRE(refreshArgs.size() == 12);
+    CHECK(refreshArgs[1] == "SPELL_AURA_REFRESH");
+    CHECK(refreshArgs[11] == "DEBUFF");
+
+    auto removed = dose;
+    removed.subevent = CombatLogSubevent::AuraRemoved;
+    const auto removedArgs = buildCombatLogEvent(removed);
+    REQUIRE(removedArgs.size() == 12);
+    CHECK(removedArgs[1] == "SPELL_AURA_REMOVED");
+    CHECK(removedArgs[11] == "DEBUFF");
+
+    CombatLogEventInput pk;
+    pk.layout = CombatLogLayout::Tbc;
+    pk.subevent = CombatLogSubevent::PartyKill;
+    pk.srcGuid = kPlayer;
+    pk.srcName = "Alpha";
+    pk.dstGuid = kCreature;
+    pk.dstName = "Stonetusk Boar";
+    pk.playerGuid = kPlayer;
+    pk.timestamp = 1700000000;
+    const auto pkArgs = buildCombatLogEvent(pk);
+    REQUIRE(pkArgs.size() == 8);
+    CHECK(pkArgs[1] == "PARTY_KILL");
+    CHECK(pkArgs[2] == "0x0000000000000001");
+    CHECK(pkArgs[3] == "Alpha");
+    CHECK(pkArgs[5] == "0xF130000000000002");
+    CHECK(pkArgs[6] == "Stonetusk Boar");
+
+    CombatLogEventInput died;
+    died.layout = CombatLogLayout::Tbc;
+    died.subevent = CombatLogSubevent::UnitDied;
+    died.srcGuid = kPlayer; // Even if populated, UNIT_DIED forces nil/COMBATLOG_OBJECT_NONE source
+    died.dstGuid = kCreature;
+    died.dstName = "Stonetusk Boar";
+    died.playerGuid = kPlayer;
+    died.timestamp = 1700000000;
+    const auto diedArgs = buildCombatLogEvent(died);
+    REQUIRE(diedArgs.size() == 8);
+    CHECK(diedArgs[1] == "UNIT_DIED");
+    CHECK(diedArgs[2] == "0x0000000000000000");
+    CHECK(diedArgs[3] == kEventNil);
+    CHECK(diedArgs[4] == kObjectNone);
+    CHECK(diedArgs[5] == "0xF130000000000002");
+    CHECK(diedArgs[6] == "Stonetusk Boar");
+
+    auto destroyed = died;
+    destroyed.subevent = CombatLogSubevent::UnitDestroyed;
+    const auto destroyedArgs = buildCombatLogEvent(destroyed);
+    REQUIRE(destroyedArgs.size() == 8);
+    CHECK(destroyedArgs[1] == "UNIT_DESTROYED");
+    CHECK(destroyedArgs[4] == kObjectNone);
+}

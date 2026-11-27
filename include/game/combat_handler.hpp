@@ -1,6 +1,7 @@
 #pragma once
 
 #include "game/world_packets.hpp"
+#include "game/combat_log_event.hpp"
 #include "game/opcode_table.hpp"
 #include "game/spell_defines.hpp"
 #include "network/packet.hpp"
@@ -111,6 +112,17 @@ public:
 
     // Spellsteal dedup (used by aura update handler)
     bool shouldLogSpellstealAura(uint64_t casterGuid, uint64_t victimGuid, uint32_t spellId);
+
+    // Aura, kill, and death COMBAT_LOG_EVENT / COMBAT_LOG_EVENT_UNFILTERED builders & emitters
+    [[nodiscard]] std::vector<std::string> buildAuraCombatLogArgs(
+        CombatLogSubevent subevent, uint64_t srcGuid, uint64_t dstGuid,
+        uint32_t spellId, bool isDebuff, int32_t stacks = 0) const;
+    [[nodiscard]] std::vector<std::string> buildDeathCombatLogArgs(
+        uint64_t victimGuid, bool destroyed = false) const;
+    void emitCombatLogAuraEvent(CombatLogSubevent subevent, uint64_t srcGuid, uint64_t dstGuid,
+                                uint32_t spellId, bool isDebuff, int32_t stacks = 0);
+    void emitCombatLogPartyKill(uint64_t killerGuid, uint64_t victimGuid);
+    void emitCombatLogUnitDeath(uint64_t victimGuid, bool destroyed = false);
 
     // Called from GameHandler::update() each frame
     void updateAutoAttack(float deltaTime);

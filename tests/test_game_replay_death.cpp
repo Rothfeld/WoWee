@@ -679,3 +679,124 @@ TEST_CASE("creating player alive after cross-map revive clears dead/ghost state 
         CHECK(std::count(events.names.begin(), events.names.end(), "PLAYER_ALIVE") == 1);
     }
 }
+
+TEST_CASE("TBC aura, party kill, and unit death transitions emit COMBAT_LOG_EVENT subevents",
+          "[replay][death][combatlog]") {
+    Session s("tbc");
+    auto& gh = s.handler();
+    gh.spellNameCacheRef()[1243].name = "Power Word: Fortitude";
+    gh.spellNameCacheRef()[1243].schoolMask = 2;
+    gh.spellNameCacheRef()[589].name = "Shadow Word: Pain";
+    gh.spellNameCacheRef()[589].schoolMask = 32;
+    gh.spellNameCacheRef()[7386].name = "Sunder Armor";
+    gh.spellNameCacheRef()[7386].schoolMask = 1;
+    gh.spellNameCacheLoadedRef() = true;
+
+    const uint16_t ufAuras = wowee::game::fieldIndex(UF::UNIT_FIELD_AURAS);
+    const uint16_t ufAuraApps = wowee::game::fieldIndex(UF::UNIT_FIELD_AURAAPPLICATIONS);
+    REQUIRE(ufAuras != 0xFFFF);
+    REQUIRE(ufAuraApps != 0xFFFF);
+
+    std::vector<std::vector<std::string>> unfiltered;
+    std::vector<std::vector<std::string>> filtered;
+    gh.setAddonEventCallback([&](const std::string& e, const std::vector<std::string>& a) {
+        if (e == "COMBAT_LOG_EVENT_UNFILTERED") unfiltered.push_back(a);
+        else if (e == "COMBAT_LOG_EVENT") filtered.push_back(a);
+    });
+
+    // 1. Initial CREATE_OBJECT with existing buff/corpse must NOT emit SPELL_AURA_APPLIED or UNIT_DIED.
+    constexpr uint64_t kDeadBoar = 0xF130000071000010ULL;
+    constexpr uint64_t kLiveBoar = 0xF130000071000011ULL;
+    s.receive(UpdateObject().tbc().create(
+        Session::kPlayerGuid, ObjectType::PLAYER,
+        {{UF::UNIT_FIELD_HEALTH, 100},
+         {UF::UNIT_FIELD_MAXHEALTH, 100}},
+        true));
+    s.receive(UpdateObject().tbc().create(
+        kDeadBoar, ObjectType::UNIT,
+        {{UF::OBJECT_FIELD_ENTRY, 113},
+         {UF::UNIT_FIELD_HEALTH, 0},
+         {UF::UNIT_FIELD_MAXHEALTH, 50}}));
+    s.receive(UpdateObject().tbc().create(
+        kLiveBoar, ObjectType::UNIT,
+        {{UF::OBJECT_FIELD_ENTRY, 113},
+         {UF::UNIT_FIELD_HEALTH, 50},
+         {UF::UNIT_FIELD_MAXHEALTH, 50}}));
+    CHECK(unfiltered.empty());
+
+    // 2. Live VALUES update applying buff (slot 0) on player and debuff (slot 40) on creature.
+    s.receive(UpdateObject().tbc().valuesAt(Session::kPlayerGuid, {{ufAuras, 1243u}}));
+    s.receive(UpdateObject().tbc().valuesAt(kLiveBoar, {{static_cast<uint16_t>(ufAuras + 40), 7386u}}));
+    REQUIRE(unfiltered.size() == 2);
+    REQUIRE(filtered.size() == 2);
+    CHECK(unfiltered[0][1] == "SPELL_AURA_APPLIED");
+    CHECK(unfiltered[0][4] == "2147483648"); // COMBATLOG_OBJECT_NONE when srcGuid == 0
+    CHECK(unfiltered[0][8] == "1243");
+    CHECK(unfiltered[0][11] == "BUFF");
+    CHECK(unfiltered[1][1] == "SPELL_AURA_APPLIED");
+    CHECK(unfiltered[1][8] == "7386");
+    CHECK(unfiltered[1][11] == "DEBUFF");
+
+    // 3. SMSG_SET_EXTRA_AURA_INFO_NEED_UPDATE refreshes duration -> SPELL_AURA_REFRESH,
+    //    and UNIT_FIELD_AURAAPPLICATIONS increment -> SPELL_AURA_APPLIED_DOSE (stack 2).
+    {
+        wowee::network::Packet p(wowee::game::wireOpcode(wowee::game::Opcode::SMSG_SET_EXTRA_AURA_INFO_NEED_UPDATE));
+        // Packed GUID for kLiveBoar (0xF130000071000011ULL -> bytes 0, 2, 6, 7 non-zero)
+        p.writeUInt8(0xC5u);
+        p.writeUInt8(0x11u);
+        p.writeUInt8(0x71u);
+        p.writeUInt8(0x30u);
+        p.writeUInt8(0xF1u);
+        p.writeUInt8(40u);      // negative slot 40
+        p.writeUInt32(7386u);   // Sunder Armor
+        p.writeUInt32(30000u);  // maxDuration
+        p.writeUInt32(30000u);  // duration
+        s.receive(p);
+    }
+    s.receive(UpdateObject().tbc().valuesAt(
+        kLiveBoar, {{static_cast<uint16_t>(ufAuraApps + (40 / 4)), 1u}})); // byte 0 = 1 -> 2 stacks
+    REQUIRE(unfiltered.size() == 4);
+    CHECK(unfiltered[2][1] == "SPELL_AURA_REFRESH");
+    CHECK(unfiltered[2][8] == "7386");
+    CHECK(unfiltered[2][11] == "DEBUFF");
+    CHECK(unfiltered[3][1] == "SPELL_AURA_APPLIED_DOSE");
+    CHECK(unfiltered[3][11] == "DEBUFF");
+    CHECK(unfiltered[3][12] == "2");
+
+    // 4. Clearing slot 40 emits SPELL_AURA_REMOVED.
+    s.receive(UpdateObject().tbc().valuesAt(kLiveBoar, {{static_cast<uint16_t>(ufAuras + 40), 0u}}));
+    REQUIRE(unfiltered.size() == 5);
+    CHECK(unfiltered[4][1] == "SPELL_AURA_REMOVED");
+    CHECK(unfiltered[4][8] == "7386");
+
+    // 5. Hunter Feign Death (UNIT_DYNFLAG_DEAD + UNIT_FIELD_FLAGS_2=0x1 while health > 0) must NOT emit UNIT_DIED.
+    s.receive(UpdateObject().tbc().values(
+        Session::kPlayerGuid,
+        {{UF::UNIT_FIELD_FLAGS_2, 0x1u},
+         {UF::UNIT_DYNAMIC_FLAGS, wowee::game::UNIT_DYNFLAG_DEAD}}));
+    CHECK(unfiltered.size() == 5);
+
+    // 6. SMSG_PARTYKILLLOG + living->dead VALUES (health=0 + UNIT_DYNFLAG_DEAD in one block)
+    //    emits PARTY_KILL once and UNIT_DIED once, with no duplicate on later lootable update.
+    {
+        wowee::network::Packet pk(wowee::game::wireOpcode(wowee::game::Opcode::SMSG_PARTYKILLLOG));
+        pk.writeUInt64(Session::kPlayerGuid);
+        pk.writeUInt64(kLiveBoar);
+        s.receive(pk);
+    }
+    s.receive(UpdateObject().tbc().values(
+        kLiveBoar,
+        {{UF::UNIT_FIELD_HEALTH, 0},
+         {UF::UNIT_DYNAMIC_FLAGS, wowee::game::UNIT_DYNFLAG_DEAD}}));
+    s.receive(UpdateObject().tbc().values(
+        kLiveBoar,
+        {{UF::UNIT_DYNAMIC_FLAGS, wowee::game::UNIT_DYNFLAG_DEAD | wowee::game::UNIT_DYNFLAG_LOOTABLE}}));
+    REQUIRE(unfiltered.size() == 7);
+    CHECK(unfiltered[5][1] == "PARTY_KILL");
+    CHECK(unfiltered[5][2] == "0x0000000000000042");
+    CHECK(unfiltered[5][5] == "0xF130000071000011");
+    CHECK(unfiltered[6][1] == "UNIT_DIED");
+    CHECK(unfiltered[6][2] == "0x0000000000000000");
+    CHECK(unfiltered[6][4] == "2147483648");
+    CHECK(unfiltered[6][5] == "0xF130000071000011");
+}

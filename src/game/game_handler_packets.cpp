@@ -4014,6 +4014,14 @@ void GameHandler::handlePacket(network::Packet& packet) {
             break;
     }
 
+    if (*logicalOp == Opcode::SMSG_PARTYKILLLOG && packet.hasRemaining(16) && combatHandler_) {
+        const size_t pos = packet.getReadPos();
+        const uint64_t killerGuid = packet.readUInt64();
+        const uint64_t victimGuid = packet.readUInt64();
+        packet.setReadPos(pos);
+        combatHandler_->emitCombatLogPartyKill(killerGuid, victimGuid);
+    }
+
     // Dispatch via the opcode handler table
     auto it = dispatchTable_.find(*logicalOp);
     if (it != dispatchTable_.end()) {

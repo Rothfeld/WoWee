@@ -17,9 +17,23 @@ namespace game {
 /// 1.12 has no combat log event at all.
 enum class CombatLogLayout { Tbc, Wotlk };
 
+/// Explicit non-CombatTextEntry subevents routed through buildCombatLogEvent.
+enum class CombatLogSubevent : uint8_t {
+    FromCombatText = 0,
+    AuraApplied,
+    AuraRemoved,
+    AuraRefresh,
+    AuraAppliedDose,
+    AuraRemovedDose,
+    PartyKill,
+    UnitDied,
+    UnitDestroyed,
+};
+
 /// What the client knows about one combat event, before it is shaped for Lua.
 struct CombatLogEventInput {
     CombatLogLayout layout = CombatLogLayout::Wotlk;
+    CombatLogSubevent subevent = CombatLogSubevent::FromCombatText;
     CombatTextEntry::Type type = CombatTextEntry::MELEE_DAMAGE;
     int32_t amount = 0;
     uint32_t spellId = 0;
@@ -48,12 +62,13 @@ inline constexpr uint32_t kMine = 0x1, kOutsider = 0x8;
 inline constexpr uint32_t kFriendly = 0x10, kHostile = 0x40;
 inline constexpr uint32_t kControlPlayer = 0x100, kControlNpc = 0x200;
 inline constexpr uint32_t kTypePlayer = 0x400, kTypeNpc = 0x800, kTypePet = 0x1000;
+inline constexpr uint32_t kNone = 0x80000000u;
 
 /// The unit flags for a guid. The client does not track reaction, so a creature
 /// is taken as hostile and another player as friendly, which is right for the
-/// fights this log is read for.
+/// fights this log is read for. Absent source/dest GUIDs carry COMBATLOG_OBJECT_NONE.
 inline uint32_t unitFlags(uint64_t guid, uint64_t playerGuid, uint64_t petGuid) {
-    if (guid == 0) return 0;
+    if (guid == 0) return kNone;
     if (guid == playerGuid) return kMine | kFriendly | kControlPlayer | kTypePlayer;
     if (guid == petGuid)    return kMine | kFriendly | kControlPlayer | kTypePet;
     if ((guid >> 48) == 0)  return kOutsider | kFriendly | kControlPlayer | kTypePlayer;
@@ -138,7 +153,46 @@ inline std::vector<std::string> buildCombatLogEvent(const CombatLogEventInput& i
     std::vector<std::string> suffix;
     bool environmental = false;
 
-    switch (in.type) {
+    if (in.subevent != CombatLogSubevent::FromCombatText) {
+        const char* auraType = in.powerType != 0 ? "DEBUFF" : "BUFF";
+        switch (in.subevent) {
+            case CombatLogSubevent::AuraApplied:
+            case CombatLogSubevent::AuraRemoved:
+            case CombatLogSubevent::AuraRefresh:
+                if (!hasSpell || in.dstGuid == 0) return {};
+                event = in.subevent == CombatLogSubevent::AuraApplied
+                            ? "SPELL_AURA_APPLIED"
+                            : (in.subevent == CombatLogSubevent::AuraRemoved
+                                   ? "SPELL_AURA_REMOVED"
+                                   : "SPELL_AURA_REFRESH");
+                prefix = spellPrefix();
+                suffix = {auraType};
+                break;
+            case CombatLogSubevent::AuraAppliedDose:
+            case CombatLogSubevent::AuraRemovedDose:
+                if (!hasSpell || in.dstGuid == 0) return {};
+                event = in.subevent == CombatLogSubevent::AuraAppliedDose
+                            ? "SPELL_AURA_APPLIED_DOSE"
+                            : "SPELL_AURA_REMOVED_DOSE";
+                prefix = spellPrefix();
+                suffix = {auraType, amount};
+                break;
+            case CombatLogSubevent::PartyKill:
+                if (in.srcGuid == 0 || in.dstGuid == 0) return {};
+                event = "PARTY_KILL";
+                break;
+            case CombatLogSubevent::UnitDied:
+            case CombatLogSubevent::UnitDestroyed:
+                if (in.dstGuid == 0) return {};
+                event = in.subevent == CombatLogSubevent::UnitDestroyed
+                            ? "UNIT_DESTROYED"
+                            : "UNIT_DIED";
+                environmental = true; // Force 0x0000000000000000 / nil / COMBATLOG_OBJECT_NONE source
+                break;
+            case CombatLogSubevent::FromCombatText:
+                break;
+        }
+    } else switch (in.type) {
         case T::MELEE_DAMAGE: case T::CRIT_DAMAGE: case T::GLANCING: case T::CRUSHING:
         case T::SPELL_DAMAGE: case T::PERIODIC_DAMAGE: {
             const bool swing = !hasSpell && (in.type == T::MELEE_DAMAGE || in.type == T::CRIT_DAMAGE ||
@@ -278,13 +332,14 @@ inline std::vector<std::string> buildCombatLogEvent(const CombatLogEventInput& i
             return {};
     }
 
+    const uint64_t effectiveSrcGuid = (environmental || in.srcGuid == 0) ? 0 : in.srcGuid;
     std::vector<std::string> out;
     out.reserve(11 + prefix.size() + suffix.size());
     out.push_back(std::to_string(in.timestamp));
     out.push_back(event);
-    out.push_back(environmental || in.srcGuid == 0 ? guidText(0) : guidText(in.srcGuid));
-    out.push_back(textOrNil(in.srcName));
-    out.push_back(std::to_string(unitFlags(in.srcGuid, in.playerGuid, in.petGuid)));
+    out.push_back(guidText(effectiveSrcGuid));
+    out.push_back(effectiveSrcGuid == 0 ? nil : textOrNil(in.srcName));
+    out.push_back(std::to_string(unitFlags(effectiveSrcGuid, in.playerGuid, in.petGuid)));
     out.push_back(guidText(in.dstGuid));
     out.push_back(textOrNil(in.dstName));
     out.push_back(std::to_string(unitFlags(in.dstGuid, in.playerGuid, in.petGuid)));

@@ -697,6 +697,82 @@ void CombatHandler::addCombatText(CombatTextEntry::Type type, int32_t amount, ui
     }
 }
 
+std::vector<std::string> CombatHandler::buildAuraCombatLogArgs(
+        CombatLogSubevent subevent, uint64_t srcGuid, uint64_t dstGuid,
+        uint32_t spellId, bool isDebuff, int32_t stacks) const {
+    if (isClassicLikeExpansion() || spellId == 0 || dstGuid == 0) return {};
+    CombatLogEventInput input;
+    input.layout = isActiveExpansion("tbc") ? CombatLogLayout::Tbc : CombatLogLayout::Wotlk;
+    input.subevent = subevent;
+    input.amount = stacks;
+    input.spellId = spellId;
+    input.spellSchoolMask = owner_.getSpellSchoolMask(spellId);
+    input.powerType = isDebuff ? 1u : 0u;
+    input.srcGuid = srcGuid;
+    input.dstGuid = dstGuid;
+    input.playerGuid = owner_.getPlayerGuid();
+    input.petGuid = owner_.getPetGuid();
+    input.srcName = (srcGuid != 0) ? owner_.lookupName(srcGuid) : std::string{};
+    input.dstName = owner_.lookupName(dstGuid);
+    input.spellName = owner_.getSpellName(spellId);
+    input.timestamp = static_cast<int64_t>(std::time(nullptr));
+    return buildCombatLogEvent(input);
+}
+
+std::vector<std::string> CombatHandler::buildDeathCombatLogArgs(
+        uint64_t victimGuid, bool destroyed) const {
+    if (isClassicLikeExpansion() || victimGuid == 0) return {};
+    CombatLogEventInput input;
+    input.layout = isActiveExpansion("tbc") ? CombatLogLayout::Tbc : CombatLogLayout::Wotlk;
+    input.subevent = destroyed ? CombatLogSubevent::UnitDestroyed : CombatLogSubevent::UnitDied;
+    input.dstGuid = victimGuid;
+    input.playerGuid = owner_.getPlayerGuid();
+    input.petGuid = owner_.getPetGuid();
+    input.dstName = owner_.lookupName(victimGuid);
+    input.timestamp = static_cast<int64_t>(std::time(nullptr));
+    return buildCombatLogEvent(input);
+}
+
+void CombatHandler::emitCombatLogAuraEvent(
+        CombatLogSubevent subevent, uint64_t srcGuid, uint64_t dstGuid,
+        uint32_t spellId, bool isDebuff, int32_t stacks) {
+    if (!owner_.addonEventCallbackRef() || isClassicLikeExpansion()) return;
+    const auto args = buildAuraCombatLogArgs(subevent, srcGuid, dstGuid, spellId, isDebuff, stacks);
+    if (!args.empty()) {
+        owner_.addonEventCallbackRef()("COMBAT_LOG_EVENT_UNFILTERED", args);
+        owner_.addonEventCallbackRef()("COMBAT_LOG_EVENT", args);
+    }
+}
+
+void CombatHandler::emitCombatLogPartyKill(uint64_t killerGuid, uint64_t victimGuid) {
+    if (!owner_.addonEventCallbackRef() || isClassicLikeExpansion()) return;
+    if (killerGuid == 0 || victimGuid == 0) return;
+    CombatLogEventInput input;
+    input.layout = isActiveExpansion("tbc") ? CombatLogLayout::Tbc : CombatLogLayout::Wotlk;
+    input.subevent = CombatLogSubevent::PartyKill;
+    input.srcGuid = killerGuid;
+    input.dstGuid = victimGuid;
+    input.playerGuid = owner_.getPlayerGuid();
+    input.petGuid = owner_.getPetGuid();
+    input.srcName = owner_.lookupName(killerGuid);
+    input.dstName = owner_.lookupName(victimGuid);
+    input.timestamp = static_cast<int64_t>(std::time(nullptr));
+    const auto args = buildCombatLogEvent(input);
+    if (!args.empty()) {
+        owner_.addonEventCallbackRef()("COMBAT_LOG_EVENT_UNFILTERED", args);
+        owner_.addonEventCallbackRef()("COMBAT_LOG_EVENT", args);
+    }
+}
+
+void CombatHandler::emitCombatLogUnitDeath(uint64_t victimGuid, bool destroyed) {
+    if (!owner_.addonEventCallbackRef() || isClassicLikeExpansion()) return;
+    const auto args = buildDeathCombatLogArgs(victimGuid, destroyed);
+    if (!args.empty()) {
+        owner_.addonEventCallbackRef()("COMBAT_LOG_EVENT_UNFILTERED", args);
+        owner_.addonEventCallbackRef()("COMBAT_LOG_EVENT", args);
+    }
+}
+
 bool CombatHandler::shouldLogSpellstealAura(uint64_t casterGuid, uint64_t victimGuid, uint32_t spellId) {
     if (spellId == 0) return false;
 

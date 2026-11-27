@@ -1380,10 +1380,10 @@ void SpellHandler::registerOpcodes(DispatchTable& table) {
     table[Opcode::SMSG_TOTEM_CREATED] = [this](network::Packet& p) { handleTotemCreated(p); };
     table[Opcode::SMSG_PERIODICAURALOG] = [this](network::Packet& p) { handlePeriodicAuraLog(p); };
     table[Opcode::SMSG_SPELLENERGIZELOG] = [this](network::Packet& p) { handleSpellEnergizeLog(p); };
-    table[Opcode::SMSG_INIT_EXTRA_AURA_INFO_OBSOLETE] = [this](network::Packet& p) { handleExtraAuraInfo(p, true); };
-    table[Opcode::SMSG_SET_EXTRA_AURA_INFO_OBSOLETE] = [this](network::Packet& p) { handleExtraAuraInfo(p, false); };
-    table[Opcode::SMSG_SET_EXTRA_AURA_INFO_NEED_UPDATE] = [this](network::Packet& p) { handleExtraAuraInfo(p, false); };
-    table[Opcode::SMSG_SET_EXTRA_AURA_INFO_NEED_UPDATE_OBSOLETE] = [this](network::Packet& p) { handleExtraAuraInfo(p, false); };
+    table[Opcode::SMSG_INIT_EXTRA_AURA_INFO_OBSOLETE] = [this](network::Packet& p) { handleExtraAuraInfo(p, true, false); };
+    table[Opcode::SMSG_SET_EXTRA_AURA_INFO_OBSOLETE] = [this](network::Packet& p) { handleExtraAuraInfo(p, false, false); };
+    table[Opcode::SMSG_SET_EXTRA_AURA_INFO_NEED_UPDATE] = [this](network::Packet& p) { handleExtraAuraInfo(p, false, true); };
+    table[Opcode::SMSG_SET_EXTRA_AURA_INFO_NEED_UPDATE_OBSOLETE] = [this](network::Packet& p) { handleExtraAuraInfo(p, false, true); };
     table[Opcode::SMSG_SPELLDISPELLOG] = [this](network::Packet& p) { handleSpellDispelLog(p); };
     table[Opcode::SMSG_SPELLSTEALLOG] = [this](network::Packet& p) { handleSpellStealLog(p); };
     table[Opcode::SMSG_SPELL_CHANCE_PROC_LOG] = [this](network::Packet& p) { handleSpellChanceProcLog(p); };
@@ -4716,6 +4716,29 @@ void SpellHandler::handleAuraUpdate(network::Packet& packet, bool isAll) {
             }
         }
         for (auto [slot, aura] : data.updates) {
+            if (!isAll && !isClassicLikeExpansion()) {
+                if (auto* ch = owner_.getCombatHandler()) {
+                    const AuraSlot& oldA = (*auraList)[slot];
+                    if (oldA.spellId != 0 && aura.spellId != oldA.spellId) {
+                        ch->emitCombatLogAuraEvent(CombatLogSubevent::AuraRemoved,
+                                                   oldA.casterGuid, data.guid,
+                                                   oldA.spellId, (oldA.flags & 0x80u) != 0);
+                    }
+                    if (aura.spellId != 0 && aura.spellId != oldA.spellId) {
+                        ch->emitCombatLogAuraEvent(CombatLogSubevent::AuraApplied,
+                                                   aura.casterGuid, data.guid,
+                                                   aura.spellId, (aura.flags & 0x80u) != 0);
+                    } else if (aura.spellId != 0 && aura.spellId == oldA.spellId &&
+                               aura.charges != oldA.charges) {
+                        ch->emitCombatLogAuraEvent(aura.charges > oldA.charges
+                                                       ? CombatLogSubevent::AuraAppliedDose
+                                                       : CombatLogSubevent::AuraRemovedDose,
+                                                   aura.casterGuid, data.guid,
+                                                   aura.spellId, (aura.flags & 0x80u) != 0,
+                                                   static_cast<int32_t>(aura.charges));
+                    }
+                }
+            }
             if (aura.durationMs >= 0) {
                 aura.receivedAtMs = nowMs;
             }
@@ -7363,7 +7386,7 @@ void SpellHandler::handleSpellEnergizeLog(network::Packet& packet) {
     packet.skipAll();
 }
 
-void SpellHandler::handleExtraAuraInfo(network::Packet& packet, bool isInit) {
+void SpellHandler::handleExtraAuraInfo(network::Packet& packet, bool isInit, bool isNeedUpdate) {
     // CMaNGOS SpellAuraHolder::BuildAuraDurationToCaster and
     // Player::SendAurasForTarget: packed GUID, then 13-byte slot/spell/max/remaining
     // records. INIT has no count; SET has exactly one record.
@@ -7420,6 +7443,13 @@ void SpellHandler::handleExtraAuraInfo(network::Packet& packet, bool isInit) {
             aura.playerCast = true;
             aura.casterGuid = owner_.getPlayerGuid();
             updatedVisibleSlot = true;
+            if (!isInit && isNeedUpdate && spellId != 0 && !isClassicLikeExpansion()) {
+                if (auto* ch = owner_.getCombatHandler()) {
+                    ch->emitCombatLogAuraEvent(CombatLogSubevent::AuraRefresh,
+                                               0, auraTargetGuid, spellId,
+                                               slot >= positiveSlots);
+                }
+            }
         }
     }
     if (!updatedVisibleSlot) {
