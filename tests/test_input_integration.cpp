@@ -8607,3 +8607,72 @@ TEST_CASE_METHOD(Integration,
         "end\n");
     truth("table.concat(__psb, ',') == 'Consume Shadows,Sacrifice,Suffering,Torment'");
 }
+
+TEST_CASE_METHOD(Integration, "TBC 2.4.3 empty FontString GetWidth/GetHeight/GetStringHeight and GameTooltip FadeOut + GetEffectiveAlpha", "[fontstring][tooltip][tbc]") {
+    run(R"LUA(
+        local fs0 = UIParent:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+        __fs0_w = fs0:GetWidth()
+        __fs0_h = fs0:GetHeight()
+        __fs0_sw = fs0:GetStringWidth()
+        __fs0_sh = fs0:GetStringHeight()
+
+        local ct = UIParent:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+        ct:SetPoint("TOP", UIParent, "BOTTOM", 0, 384)
+        ct:Hide()
+        __ct_w = ct:GetWidth()
+        __ct_h = ct:GetHeight()
+        __ct_bot = ct:GetBottom()
+        __ct_top = ct:GetTop()
+
+        local para = UIParent:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+        para:SetWidth(290)
+        para:SetHeight(0)
+        __para_w = para:GetWidth()
+        __para_h = para:GetHeight()
+        __para_sh = para:GetStringHeight()
+
+        local tip = CreateFrame("GameTooltip", "TestFadeTooltip", UIParent)
+        local bar = CreateFrame("StatusBar", "TestFadeTooltipStatusBar", tip)
+        tip:SetOwner(UIParent, "ANCHOR_NONE")
+        tip:SetPoint("BOTTOMRIGHT", UIParent, "BOTTOMRIGHT", -13, 75)
+        tip:SetText("Cabal Deathsworn", 1, 0.82, 0)
+        bar:Show()
+        __tip_shown_0 = tip:IsShown() and true or false
+        __bar_vis_0 = bar:IsVisible() and true or false
+        __bar_eff_0 = bar:GetEffectiveAlpha()
+        tip:FadeOut()
+    )LUA");
+    truth("__fs0_w == 1");
+    truth("__fs0_h == 1");
+    truth("__fs0_sw == 0");
+    truth("__fs0_sh == 0");
+    truth("__ct_w == 1");
+    truth("__ct_h == 1");
+    truth("math.abs(__ct_bot - 383.0) < 1e-4");
+    truth("math.abs(__ct_top - 384.0) < 1e-4");
+    truth("__para_w == 290");
+    truth("__para_h == 1");
+    truth("__para_sh == 0");
+    truth("__tip_shown_0 == true");
+    truth("__bar_vis_0 == true");
+    truth("math.abs(__bar_eff_0 - 1.0) < 1e-4");
+
+    // Hold 0.9s (< 1.0s): still opaque.
+    lua.dispatchOnUpdate(0.9f);
+    run("__tip_a_1 = TestFadeTooltip:GetAlpha(); __bar_eff_1 = TestFadeTooltipStatusBar:GetEffectiveAlpha()");
+    truth("math.abs(__tip_a_1 - 1.0) < 1e-4");
+    truth("math.abs(__bar_eff_1 - 1.0) < 1e-4");
+
+    // +0.5s (0.1s hold + 0.4s fade): both tooltip and child statusbar effective alpha = 0.6.
+    lua.dispatchOnUpdate(0.5f);
+    run("__tip_a_2 = TestFadeTooltip:GetAlpha(); __bar_eff_2 = TestFadeTooltipStatusBar:GetEffectiveAlpha()");
+    truth("math.abs(__tip_a_2 - 0.6) < 1e-4");
+    truth("math.abs(__bar_eff_2 - 0.6) < 1e-4");
+
+    // +0.7s: fade completes, tooltip & child statusbar hide, and alpha resets to 1.0.
+    lua.dispatchOnUpdate(0.7f);
+    run("__tip_shown_3 = TestFadeTooltip:IsShown() and true or false; __bar_vis_3 = TestFadeTooltipStatusBar:IsVisible() and true or false; __tip_a_3 = TestFadeTooltip:GetAlpha()");
+    truth("__tip_shown_3 == false");
+    truth("__bar_vis_3 == false");
+    truth("math.abs(__tip_a_3 - 1.0) < 1e-4");
+}

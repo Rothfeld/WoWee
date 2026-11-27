@@ -1186,42 +1186,67 @@ void WidgetRenderer::drawCooldown(ImDrawList* dl, const Widget& w,
     if (w.cooldownDuration <= 0.0) return;
     const double elapsed = core::appTimeSeconds() - w.cooldownStart;
     if (elapsed < 0.0 || elapsed >= w.cooldownDuration) return;
-    const float done = static_cast<float>(elapsed / w.cooldownDuration);
-    // Reversed, the wedge covers what has passed rather than what is left.
-    const float remaining = w.cooldownReverse ? done : (1.0f - done);
+    const float done = std::clamp(static_cast<float>(elapsed / w.cooldownDuration), 0.0f, 1.0f);
+    const float effAlpha = std::clamp(w.effAlpha, 0.0f, 1.0f);
+    if (effAlpha <= 0.0f) return;
 
-    // A wedge from twelve o'clock, shrinking clockwise as the time runs out.
-    // Drawn to the corners rather than to an inscribed circle - the thing being
-    // covered is a square icon, and a circle would leave its corners lit - and
-    // clipped to the frame so the overrun does not spill onto its neighbours.
+    // -pi/2 is twelve o'clock and angles grow clockwise on a screen whose y
+    // grows downward. In TBC 2.4.3 UI-Cooldown-Indicator.m2, the radial edge
+    // always advances clockwise from twelve o'clock at angle (-pi/2 + 2*pi*done):
+    //   - reverse == false (ability cooldown): dark wedge covers [edge, 3*pi/2],
+    //     shrinking clockwise toward twelve o'clock as remaining time runs out.
+    //   - reverse == true (aura timer): dark wedge covers [-pi/2, edge],
+    //     growing clockwise from twelve o'clock as elapsed time advances.
     const ImVec2 centre((x0 + x1) * 0.5f, (y0 + y1) * 0.5f);
-    const float radius = std::sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0));
+    const float dx = x1 - x0;
+    const float dy = y1 - y0;
+    const float diag = std::sqrt(dx * dx + dy * dy);
     constexpr float kTwoPi = 6.2831853f;
     constexpr int kSegments = 48;
-    const int used = std::max(1, static_cast<int>(kSegments * remaining));
+    const float sweepFraction = w.cooldownReverse ? done : (1.0f - done);
+    const float startAngle = w.cooldownReverse
+        ? (-kTwoPi * 0.25f)
+        : (-kTwoPi * 0.25f + kTwoPi * done);
+    const int shadeAlpha = static_cast<int>(153.0f * effAlpha + 0.5f);
 
     dl->PushClipRect(ImVec2(x0, y0), ImVec2(x1, y1), true);
-    dl->PathClear();
-    dl->PathLineTo(centre);
-    for (int i = 0; i <= used; ++i) {
-        // -pi/2 is twelve o'clock and angles grow clockwise on a screen whose
-        // y grows downward. The dark wedge runs from the moving edge clockwise
-        // back to twelve, so the edge itself travels clockwise as native's
-        // does; starting the wedge at twelve made the edge run backwards.
-        const float start = -kTwoPi * 0.25f + kTwoPi * (1.0f - remaining);
-        const float a = start + kTwoPi * remaining * (static_cast<float>(i) / used);
-        dl->PathLineTo(ImVec2(centre.x + std::cos(a) * radius,
-                              centre.y + std::sin(a) * radius));
+    if (sweepFraction > 1.0e-4f && shadeAlpha > 0) {
+        const int used = std::max(1, static_cast<int>(kSegments * sweepFraction));
+        dl->PathClear();
+        dl->PathLineTo(centre);
+        for (int i = 0; i <= used; ++i) {
+            const float a = startAngle + kTwoPi * sweepFraction * (static_cast<float>(i) / used);
+            dl->PathLineTo(ImVec2(centre.x + std::cos(a) * diag,
+                                  centre.y + std::sin(a) * diag));
+        }
+        dl->PathFillConvex(IM_COL32(0, 0, 0, shadeAlpha));
     }
-    dl->PathFillConvex(IM_COL32(0, 0, 0, 160));
     if (w.cooldownDrawEdge) {
-        // One bright spoke along the leading edge, which is what makes a slow
-        // sweep readable at a glance.
-        const float edge = -kTwoPi * 0.25f + kTwoPi * (1.0f - remaining);
-        dl->AddLine(centre,
-                    ImVec2(centre.x + std::cos(edge) * radius,
-                           centre.y + std::sin(edge) * radius),
-                    IM_COL32(255, 255, 255, 180), 1.5f);
+        // Shipped Interface\Cooldown\edge.blp (16x16 RGBA) carries a golden
+        // radial spoke along u~0.5 from v=0 (outer rim, RGBA 248,208,0,255) to
+        // v=0.5 (icon centre), rotated clockwise by 2*pi*done over a half-diag
+        // square so the spoke reaches the corners at 45 degrees.
+        const float theta = kTwoPi * done;
+        const float halfDiag = 0.5f * diag;
+        const ImVec2 up(std::sin(theta) * halfDiag, -std::cos(theta) * halfDiag);
+        const ImVec2 right(std::cos(theta) * halfDiag, std::sin(theta) * halfDiag);
+        const VkDescriptorSet edgeTex = resident("Interface\\Cooldown\\edge.blp");
+        if (edgeTex != VK_NULL_HANDLE && edgeTex != kMissing) {
+            const ImVec2 p0(centre.x - right.x + up.x, centre.y - right.y + up.y);
+            const ImVec2 p1(centre.x + right.x + up.x, centre.y + right.y + up.y);
+            const ImVec2 p2(centre.x + right.x - up.x, centre.y + right.y - up.y);
+            const ImVec2 p3(centre.x - right.x - up.x, centre.y - right.y - up.y);
+            dl->AddImageQuad(reinterpret_cast<ImTextureID>(edgeTex),
+                             p0, p1, p2, p3,
+                             ImVec2(0.0f, 0.0f), ImVec2(1.0f, 0.0f),
+                             ImVec2(1.0f, 1.0f), ImVec2(0.0f, 1.0f),
+                             packColor(w.color, effAlpha));
+        } else {
+            dl->AddLine(centre,
+                        ImVec2(centre.x + up.x, centre.y + up.y),
+                        IM_COL32(248, 208, 0, static_cast<int>(220.0f * effAlpha + 0.5f)),
+                        1.5f);
+        }
     }
     dl->PopClipRect();
 }
@@ -2378,6 +2403,10 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
             if (w->hasBackdrop) { want(w->bgFile); want(w->edgeFile); }
             if (w->isStatusBar) want(w->barTexture);
             if (w->isSlider) want(w->thumbTexture);
+            if (w->isCooldown && w->cooldownDrawEdge && w->cooldownDuration > 0.0) {
+                static const std::string kCooldownEdgePath = "Interface\\Cooldown\\edge.blp";
+                want(kCooldownEdgePath);
+            }
         }
     }
 
@@ -2422,9 +2451,25 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
     }
 
     for (const Widget* w : order) {
-        // A GameTooltip hidden after layout (e.g. OnLeave or minimap blip
-        // hover-off) must disappear on the same frame instead of ghost-drawing.
-        if (w->objectType == "GameTooltip" && !w->shown) continue;
+        // Walk the live ancestor chain so a parent hidden, emptied, or faded
+        // after layout() (such as GameTooltip + GameTooltipStatusBar during
+        // world mouseover leave or FadeOut) hides or dims all its descendants
+        // on the exact same frame instead of leaving orphaned children lit.
+        bool chainShown = true;
+        float liveEffAlpha = 1.0f;
+        for (const Widget* anc = w; anc != nullptr;
+             anc = anc->parent ? tree.peek(anc->parent) : nullptr) {
+            if (!anc->shown ||
+                (anc->objectType == "GameTooltip" && anc->tooltipLines.empty())) {
+                chainShown = false;
+                break;
+            }
+            liveEffAlpha *= anc->alpha;
+        }
+        if (!chainShown || liveEffAlpha <= 0.0f) continue;
+        if (std::fabs(liveEffAlpha - w->effAlpha) > 1.0e-5f) {
+            if (Widget* mut = tree.untracked(w->id)) mut->effAlpha = liveEffAlpha;
+        }
         // Fullscreen dialogs and tooltips must also cover embedded ImGui maps.
         dl = (w->effStrata >= FrameStrata::FullscreenDialog ||
               (w->effStrata >= FrameStrata::Fullscreen && w->kind == WidgetKind::FontString))

@@ -105,6 +105,7 @@ void WidgetTree::reset() {
     scrollFrames_.clear();
     keyboardFrames_.clear();
     ownedTooltips_.clear();
+    fadingTooltips_.clear();
     nameLookups_.clear();
     for (auto& list : touched_) list.clear();
     for (auto& index : touchedIndex_) index.clear();
@@ -350,6 +351,74 @@ void WidgetTree::setTooltipOwner(uint32_t tooltipId, uint32_t ownerId) {
     }
 }
 
+void WidgetTree::startTooltipFadeOut(uint32_t tooltipId) {
+    Widget* tip = get(tooltipId);
+    if (!tip || !tip->shown) {
+        if (tip) {
+            tip->tooltipFadingOut = false;
+            tip->tooltipFadeHold = 0.0f;
+        }
+        return;
+    }
+    if (!tip->tooltipFadingOut) {
+        tip->tooltipFadingOut = true;
+        tip->tooltipFadeHold = 1.0f;
+    }
+    if (std::find(fadingTooltips_.begin(), fadingTooltips_.end(), tooltipId) ==
+        fadingTooltips_.end()) {
+        fadingTooltips_.push_back(tooltipId);
+    }
+}
+
+void WidgetTree::cancelTooltipFadeOut(uint32_t tooltipId) {
+    Widget* tip = get(tooltipId);
+    if (!tip || !tip->tooltipFadingOut) return;
+    tip->tooltipFadingOut = false;
+    tip->tooltipFadeHold = 0.0f;
+    tip->alpha = 1.0f;
+}
+
+std::vector<uint32_t> WidgetTree::advanceTooltipFades(float elapsed) {
+    std::vector<uint32_t> finished;
+    if (fadingTooltips_.empty() || elapsed <= 0.0f) return finished;
+    for (size_t i = 0; i < fadingTooltips_.size();) {
+        const uint32_t id = fadingTooltips_[i];
+        Widget* tip = get(id);
+        if (!tip || !tip->shown || !tip->tooltipFadingOut) {
+            if (tip && tip->tooltipFadingOut) {
+                tip->tooltipFadingOut = false;
+                tip->tooltipFadeHold = 0.0f;
+                tip->alpha = 1.0f;
+            }
+            fadingTooltips_[i] = fadingTooltips_.back();
+            fadingTooltips_.pop_back();
+            continue;
+        }
+        float fadeDt = elapsed;
+        if (tip->tooltipFadeHold > 0.0f) {
+            if (fadeDt <= tip->tooltipFadeHold) {
+                tip->tooltipFadeHold -= fadeDt;
+                ++i;
+                continue;
+            }
+            fadeDt -= tip->tooltipFadeHold;
+            tip->tooltipFadeHold = 0.0f;
+        }
+        tip->alpha -= fadeDt;
+        if (tip->alpha <= 0.0f) {
+            tip->tooltipFadingOut = false;
+            tip->tooltipFadeHold = 0.0f;
+            tip->alpha = 1.0f;
+            finished.push_back(id);
+            fadingTooltips_[i] = fadingTooltips_.back();
+            fadingTooltips_.pop_back();
+            continue;
+        }
+        ++i;
+    }
+    return finished;
+}
+
 void WidgetTree::hideOrphanedTooltips() {
     for (uint32_t id : ownedTooltips_) {
         Widget* tip = get(id);
@@ -364,6 +433,17 @@ void WidgetTree::hideOrphanedTooltips() {
         // own right after LootFrame hides above it.
         if (owner && owner->visibleChain) continue;
         tip->shown = false;
+        if (tip->tooltipFadingOut) {
+            tip->tooltipFadingOut = false;
+            tip->tooltipFadeHold = 0.0f;
+            tip->alpha = 1.0f;
+        }
+        if (!tip->name.empty()) {
+            if (Widget* bar = findByName(tip->name + "StatusBar")) {
+                bar->shown = false;
+                setVisibility(*bar, false, false);
+            }
+        }
         setVisibility(*tip, false, false);
     }
 }
@@ -1394,11 +1474,20 @@ void WidgetTree::layoutWidgetSelf(uint32_t id, float screenW, float screenH) {
         w->rectW  = parent->rectW;
         w->rectH  = parent->rectH;
     } else {
+        float explicitW = w->width * es;
         float explicitH = w->height * es;
+        // In TBC 2.4.3, an empty FontString without an explicit size on an axis
+        // (including SetHeight(0) wrapping paragraphs and hidden CombatText1)
+        // lays out at 1 interface unit rather than 0, while keeping its stored
+        // width/height at 0 so future non-empty text still auto-measures.
+        if (w->kind == WidgetKind::FontString && w->text.empty()) {
+            if (explicitW <= 0.0f) explicitW = 1.0f * es;
+            if (explicitH <= 0.0f) explicitH = 1.0f * es;
+        }
         if (w->isEditBox && w->editMultiLine && w->editContentH > 0.0f) {
             explicitH = std::max(explicitH, w->editContentH * es);
         }
-        solveAxis(cx, w->width * es,  pLeft,   pW, w->left,   w->rectW);
+        solveAxis(cx, explicitW,      pLeft,   pW, w->left,   w->rectW);
         solveAxis(cy, explicitH,      pBottom, pH, w->bottom, w->rectH);
         // A button's art fills the button on any axis its anchors left open.
         //
@@ -1675,7 +1764,17 @@ void WidgetTree::collectDrawOrder() {
         // GameTooltip carries a Backdrop on its template, so without this early
         // check an empty GameTooltip:Show() (such as InboxFrameItem_OnEnter on a
         // plain/NPC letter with no item, money or COD) drew an empty tooltip box.
-        if (w.objectType == "GameTooltip" && w.tooltipLines.empty()) continue;
+        // Descendants of an empty GameTooltip (e.g. GameTooltipStatusBar) are
+        // suppressed with it so an orphaned status bar never draws over empty air.
+        bool insideEmptyTooltip = false;
+        for (const Widget* anc = &w; anc != nullptr;
+             anc = anc->parent ? peek(anc->parent) : nullptr) {
+            if (anc->objectType == "GameTooltip" && anc->tooltipLines.empty()) {
+                insideEmptyTooltip = true;
+                break;
+            }
+        }
+        if (insideEmptyTooltip) continue;
         if (w.kind == WidgetKind::Frame && !w.hasBackdrop && !w.isStatusBar &&
             !w.isEditBox && w.externalTexture == 0 && !w.isAutoCastShine &&
             !(w.isCooldown && w.cooldownDuration > 0.0) &&
@@ -1759,17 +1858,30 @@ void WidgetTree::collectDrawOrder() {
                   const int la = sortLayer(a), lb = sortLayer(b);
                   if (la != lb) return la < lb;
                   if (a->subLevel != b->subLevel) return a->subLevel < b->subLevel;
-                  // Opaque textures before translucent ones within a layer,
-                  // whichever was created first. Build 8606 draws a
-                  // SetTexture(0,0,0,0.7) region over a later opaque sibling at
-                  // the same level and layer, and under a later one in a higher
-                  // layer or level (_experiments/20261117T114606Z.
-                  // mangadmin_panel_compare, order4-order7). MangAdmin's lists
-                  // depend on it: a black 0.7 scroll frame dims its white rows.
-                  // Measured for colour alpha only; image alpha is not covered.
-                  const bool clearA = a->kind == WidgetKind::Texture && a->colorAlpha() < 1.0f;
-                  const bool clearB = b->kind == WidgetKind::Texture && b->colorAlpha() < 1.0f;
-                  if (clearA != clearB) return !clearA;
+                  // TBC 2.4.3 batches untextured solid-colour quads before BLP
+                  // image textures within the same (strata, level, layer, subLevel):
+                  //   0: opaque untextured solidColor (e.g. SetTexture(1,1,1,1))
+                  //   1: translucent untextured solidColor (e.g. <Color a="0.5"/>, SetTexture(0,0,0,0.7))
+                  //   2: image textures (!solidColor) and additive regions
+                  // Verified empirically across all four pairings on WOWEE_PAIR=4:
+                  // MangAdmin's (0,0,0,0.7) dims (1,1,1,1) rows (pass 1 after pass 0),
+                  // while TargetFrameNameBackground (.blp, pass 2) draws un-dimmed
+                  // above TargetFrameBackground (<Color a="0.5"/>, pass 1) regardless
+                  // of creation order.
+                  const auto texPass = [](const Widget* w) {
+                      if (w->kind != WidgetKind::Texture || !w->solidColor || w->blendAdd) {
+                          return 2;
+                      }
+                      const bool opaque = w->hasGradient
+                          ? (w->solidTexel[3] >= 1.0f &&
+                             w->gradientMin[3] >= 1.0f &&
+                             w->gradientMax[3] >= 1.0f)
+                          : (w->colorAlpha() >= 1.0f);
+                      return opaque ? 0 : 1;
+                  };
+                  const int tpA = texPass(a);
+                  const int tpB = texPass(b);
+                  if (tpA != tpB) return tpA < tpB;
                   // Text is painted after textures within the same layer.
                   // MirrorTimer declares its label before its border, but the
                   // border must not cover the label's ascenders.

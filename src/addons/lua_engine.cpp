@@ -1290,6 +1290,7 @@ int lua_Region_GetFieldSize(lua_State* L) {
 /// wrapping. A label sized by its own text wraps at nothing and is one line
 /// unless it carries a |n.
 double fontStringTextHeight(const wowee::ui::Widget& w, float pixelScale) {
+    if (w.text.empty()) return 0.0;
     // Rows of the whole pixel height it is drawn at, as the original
     // measures them, with the string's spacing between.
     const bool spansX = wowee::ui::anchorsSpanAxis(w.anchors, true);
@@ -1345,7 +1346,7 @@ int lua_Region_GetWidth(lua_State* L) {
     if (w && w->kind == wowee::ui::WidgetKind::FontString &&
         (staleAutoSize || widthBorrowed || (w->rectW <= 0.0f && w->width <= 0.0f))) {
         if (w->text.empty()) {
-            lua_pushnumber(L, 0.0);
+            lua_pushnumber(L, 1.0);
             return 1;
         }
         // A font string that was never given a width is as wide as its text.
@@ -1374,10 +1375,13 @@ int lua_Region_GetHeight(lua_State* L) {
         w && w->kind == wowee::ui::WidgetKind::FontString &&
         (w->autoSized || w->wrapsToWidth) &&
         w->text != w->measuredText;
+    const bool heightBorrowed =
+        w && w->kind == wowee::ui::WidgetKind::FontString &&
+        w->anchors.empty() && w->height <= 0.0f;
     if (w && w->kind == wowee::ui::WidgetKind::FontString &&
-        (staleDynamicHeight || (w->rectH <= 0.0f && w->height <= 0.0f))) {
+        (staleDynamicHeight || heightBorrowed || (w->rectH <= 0.0f && w->height <= 0.0f))) {
         if (w->text.empty()) {
-            lua_pushnumber(L, 0.0);
+            lua_pushnumber(L, 1.0);
             return 1;
         }
         // A font string that was never given a height is as tall as its text,
@@ -2297,6 +2301,7 @@ int lua_Tooltip_SetFrameStack(lua_State* L) {
     });
 
     w->isTooltip = true;
+    if (auto* tree = wowee::addons::getWidgetTree(L)) tree->cancelTooltipFadeOut(w->id);
     clearTooltipUnit(L, *w);
     w->tooltipLines.clear();
     auto line = [&](std::string text, float r, float g, float b) {
@@ -2368,6 +2373,7 @@ int lua_Tooltip_SetOwner(lua_State* L) {
     auto* w = tree->get(id);
     if (!w) return 0;
     w->isTooltip = true;
+    tree->cancelTooltipFadeOut(id);
     // Native 2.4.3 hides an already-shown tooltip synchronously inside
     // SetOwner so GameTooltip_OnHide -> GameTooltip_ClearMoney() runs before
     // the new caller adds lines or calls SetTooltipMoney().
@@ -2475,6 +2481,7 @@ int lua_Tooltip_SetText(lua_State* L) {
     const bool isTooltipFrame = w && (w->isTooltip || w->objectType == "GameTooltip");
     if (!isTooltipFrame) { lua_pushboolean(L, 0); return 1; }
     w->isTooltip = true;
+    if (auto* tree = wowee::addons::getWidgetTree(L)) tree->cancelTooltipFadeOut(w->id);
     clearTooltipUnit(L, *w);
     w->tooltipLines.clear();
     // SetText starts a tooltip over, so whatever it was showing is no longer
@@ -3247,6 +3254,7 @@ static std::string timeRemainingText(lua_State* L, int32_t ms) {
 static void fillAuraTooltip(lua_State* L, wowee::ui::Widget* w, game::GameHandler* gh,
                             const game::AuraSlot& aura) {
     w->isTooltip = true;
+    if (auto* tree = wowee::addons::getWidgetTree(L)) tree->cancelTooltipFadeOut(w->id);
     clearTooltipUnit(L, *w);
     w->tooltipLines.clear();
     const auto addLine = [&](std::string text, bool gold, bool wrap) {
@@ -3326,6 +3334,7 @@ int lua_Tooltip_SetTotem(lua_State* L) {
     const int slot = static_cast<int>(luaL_checkinteger(L, 2));
     if (!w || !gh) return 0;
     w->isTooltip = true;
+    if (auto* tree = wowee::addons::getWidgetTree(L)) tree->cancelTooltipFadeOut(w->id);
     clearTooltipUnit(L, *w);
     w->tooltipLines.clear();
     if (slot < 1 || slot > game::GameHandler::NUM_TOTEM_SLOTS) return 0;
@@ -3420,6 +3429,7 @@ int lua_Tooltip_SetEquipmentSet(lua_State* L) {
     if (!set) { lua_pushboolean(L, 0); return 1; }
 
     w->isTooltip = true;
+    if (auto* tree = wowee::addons::getWidgetTree(L)) tree->cancelTooltipFadeOut(w->id);
     clearTooltipUnit(L, *w);
     w->tooltipLines.clear();
     auto line = [&](std::string text, float r, float g, float b) {
@@ -3513,6 +3523,7 @@ int lua_Tooltip_SetTalent(lua_State* L) {
     const int maxRank = talent->maxRank;
 
     w->isTooltip = true;
+    if (auto* tree = wowee::addons::getWidgetTree(L)) tree->cancelTooltipFadeOut(w->id);
     clearTooltipUnit(L, *w);
     w->tooltipLines.clear();
     pushTooltipLine(w, name, kWhite);
@@ -3712,6 +3723,7 @@ int lua_Tooltip_SetUnit(lua_State* L) {
     if (name.empty()) { lua_pushboolean(L, 0); return 1; }
 
     w->isTooltip = true;
+    if (auto* tree = wowee::addons::getWidgetTree(L)) tree->cancelTooltipFadeOut(w->id);
     // Whose tooltip this is, for IsUnit below.
     w->tooltipUnit = uidStr;
     w->tooltipLines.clear();
@@ -4810,6 +4822,7 @@ int lua_Tooltip_SetSendMailItem(lua_State* L) {
 
 int lua_Tooltip_ClearLines(lua_State* L) {
     if (auto* w = widgetOf(L, 1)) {
+        if (auto* tree = wowee::addons::getWidgetTree(L)) tree->cancelTooltipFadeOut(w->id);
         clearTooltipUnit(L, *w);
         w->tooltipLines.clear();
         w->tooltipMinWidth = 0.0f;
@@ -5250,6 +5263,9 @@ int lua_Region_Show(lua_State* L) {
     }
     bool becameShown = false;
     if (w) {
+        if (w->tooltipFadingOut) {
+            if (auto* tree = wowee::addons::getWidgetTree(L)) tree->cancelTooltipFadeOut(w->id);
+        }
         // Counted, not just set. A hide and a show in the same breath leave the
         // flag where it started, and the pass that fires OnShow works by
         // comparing against the last state it reported - so the rebuild the
@@ -5332,8 +5348,10 @@ int lua_Region_Hide(lua_State* L) {
         if (!isTooltip && w->shown && frameScriptSet(L, 1, "OnHide") && w->shownToggles < 200) {
             ++w->shownToggles;
         }
-        // A hidden tooltip belongs to nobody.
+        // A hidden tooltip belongs to nobody and hides its unit status bar.
         if (isTooltip) {
+            if (auto* tree = wowee::addons::getWidgetTree(L)) tree->cancelTooltipFadeOut(w->id);
+            clearTooltipUnit(L, *w);
             lua_pushnil(L);
             privSetField(L, 1, "__owner");
         }
@@ -5408,6 +5426,28 @@ int lua_Region_GetAlpha(lua_State* L) {
     const auto* w = widgetOf(L, 1);
     lua_pushnumber(L, w ? w->alpha : 1.0);
     return 1;
+}
+int lua_Region_GetEffectiveAlpha(lua_State* L) {
+    const auto* w = widgetOf(L, 1);
+    if (!w) { lua_pushnumber(L, 1.0); return 1; }
+    auto* tree = wowee::addons::getWidgetTree(L);
+    double eff = w->alpha;
+    if (tree) {
+        for (uint32_t pid = w->parent; pid != 0;) {
+            const auto* p = tree->peek(pid);
+            if (!p) break;
+            eff *= p->alpha;
+            pid = p->parent;
+        }
+    }
+    lua_pushnumber(L, std::clamp(eff, 0.0, 1.0));
+    return 1;
+}
+int lua_Tooltip_FadeOut(lua_State* L) {
+    auto* tree = wowee::addons::getWidgetTree(L);
+    const uint32_t id = widgetIdOf(L, 1);
+    if (tree && id != 0) tree->startTooltipFadeOut(id);
+    return 0;
 }
 
 // SetTexture takes either a path or a colour, and addons use both freely.
@@ -8657,6 +8697,7 @@ void LuaEngine::registerCoreAPI() {
         {"AppendText",      lua_Tooltip_AppendText},
         {"NumLines",        lua_Tooltip_NumLines},
         {"AddFontStrings",  lua_Tooltip_AddFontStrings},
+        {"FadeOut",         lua_Tooltip_FadeOut},
         {"Clear",           lua_MessageFrame_Clear},
         {"GetNumMessages",  lua_MessageFrame_GetNumMessages},
         {"GetMessageInfo",  lua_MessageFrame_GetMessageInfo},
@@ -8716,6 +8757,7 @@ void LuaEngine::registerCoreAPI() {
         {"GetCenter",       lua_Region_GetCenter},
         {"SetAlpha",        lua_Region_SetAlpha},
         {"GetAlpha",        lua_Region_GetAlpha},
+        {"GetEffectiveAlpha", lua_Region_GetEffectiveAlpha},
         {"EnableMouse",     lua_Frame_EnableMouse},
         {"SetHyperlinksEnabled", lua_Frame_SetHyperlinksEnabled},
         {"SetMotionScriptsWhileDisabled", lua_Frame_SetMotionScriptsWhileDisabled},
@@ -9530,7 +9572,7 @@ void LuaEngine::registerCoreAPI() {
         "GetBackdrop=1,GetBottom=1,GetButtonState=1,GetCenter=1,GetChecked=1,\n"
         "GetCheckedTexture=1,GetChildList=1,GetChildren=1,\n"
         "GetCursorPosition=1,GetDisabledCheckedTexture=1,\n"
-        "GetDisabledTexture=1,GetDrawLayer=1,GetEffectiveAttribute=1,\n"
+        "GetDisabledTexture=1,GetDrawLayer=1,GetEffectiveAlpha=1,GetEffectiveAttribute=1,\n"
         "GetEffectiveScale=1,GetFileHeight=1,GetFileWidth=1,\n"
         "GetFontString=1,GetFrame=1,GetFrameLevel=1,GetFrameRef=1,\n"
         "GetFrameStrata=1,GetHeight=1,GetHighlightTexture=1,GetHorizontalScroll=1,\n"
@@ -11132,7 +11174,7 @@ void LuaEngine::registerCoreAPI() {
         "    end\n"
         "    return false\n"
         "end\n"
-        "function __WoweeFrameMT:FadeOut() end\n"
+        // FadeOut is a real C binding on frames/tooltips; do not shadow it here.
         // SetFrameStrata is a real binding; a no-op here would shadow it and
         // leave the tooltip in whatever stratum it inherited, under the frames
         // it is meant to sit above.
@@ -14820,6 +14862,28 @@ void LuaEngine::dispatchOnUpdate(float elapsed) {
 
     drainPendingTextChanged();
     advanceWheelGlide(elapsed);
+    for (const uint32_t tipId : widgets_.advanceTooltipFades(elapsed)) {
+        lua_getglobal(L_, "__WoweeFramesByWid");
+        if (lua_istable(L_, -1)) {
+            lua_pushinteger(L_, static_cast<lua_Integer>(tipId));
+            lua_rawget(L_, -2);
+            if (lua_istable(L_, -1)) {
+                lua_getfield(L_, -1, "Hide");
+                if (lua_isfunction(L_, -1)) {
+                    lua_pushvalue(L_, -2);
+                    if (lua_pcall(L_, 1, 0, 0) != 0) {
+                        LOG_WARNING("tooltip FadeOut Hide error: ",
+                                    luaL_optstring(L_, -1, "?"));
+                        lua_pop(L_, 1);
+                    }
+                } else {
+                    lua_pop(L_, 1);
+                }
+            }
+            lua_pop(L_, 1);
+        }
+        lua_pop(L_, 1);
+    }
 
     // Animations first, so a frame's own OnUpdate sees this frame's values
     // rather than the previous one's.

@@ -3957,3 +3957,169 @@ TEST_CASE("findByName answers the last widget to take a name, asked before or af
     const uint32_t again = tree.create(WidgetKind::Frame, tree.uiParentId(), "Late");
     CHECK(tree.findByName("Late")->id == again);
 }
+
+TEST_CASE("TargetFrameNameBackground BLP texture draws over TargetFrameBackground translucent solid slab while MangAdmin 0.7 solid dims opaque 1.0 solid",
+          "[widget][draworder][targetframe][mangadmin]") {
+    WidgetTree tree;
+    const uint32_t tf = tree.create(WidgetKind::Frame, tree.uiParentId(), "TargetFrame");
+    tree.setWidth(tf, 232.0f);
+    tree.setHeight(tf, 100.0f);
+    tree.addPoint(tf, Anchor{"TOPLEFT", tree.uiParentId(), "TOPLEFT", 250.0f, 0.0f});
+
+    // TargetFrame.xml declares TargetFrameBackground (<Color r=0 g=0 b=0 a=0.5/>)
+    // first and TargetFrameNameBackground (file="Interface\TargetingFrame\UI-TargetingFrame-LevelBackground")
+    // second in <Layer level="BACKGROUND">.
+    const uint32_t bg = tree.create(WidgetKind::Texture, tf, "TargetFrameBackground");
+    {
+        Widget* w = tree.get(bg);
+        w->layer = DrawLayer::Background;
+        w->solidColor = true;
+        w->solidTexel[0] = 0.0f; w->solidTexel[1] = 0.0f; w->solidTexel[2] = 0.0f; w->solidTexel[3] = 0.5f;
+        w->width = 119.0f;
+        w->height = 41.0f;
+        tree.addPoint(bg, Anchor{"TOPRIGHT", tf, "TOPRIGHT", -106.0f, -22.0f});
+    }
+    const uint32_t nameBg = tree.create(WidgetKind::Texture, tf, "TargetFrameNameBackground");
+    {
+        Widget* w = tree.get(nameBg);
+        w->layer = DrawLayer::Background;
+        w->solidColor = false;
+        w->texturePath = "Interface\\TargetingFrame\\UI-TargetingFrame-LevelBackground";
+        w->color[0] = 0.0f; w->color[1] = 1.0f; w->color[2] = 0.0f; w->color[3] = 1.0f;
+        w->width = 119.0f;
+        w->height = 19.0f;
+        tree.addPoint(nameBg, Anchor{"TOPRIGHT", tf, "TOPRIGHT", -106.0f, -22.0f});
+    }
+
+    // MangAdmin pattern: translucent solid (0,0,0,0.7) created BEFORE opaque solid (1,1,1,1)
+    // at the same level & layer must still draw AFTER the opaque solid so rows are dimmed.
+    const uint32_t maParent = tree.create(WidgetKind::Frame, tree.uiParentId(), "MaList");
+    tree.setWidth(maParent, 100.0f);
+    tree.setHeight(maParent, 40.0f);
+    tree.addPoint(maParent, Anchor{"TOPLEFT", tree.uiParentId(), "TOPLEFT", 10.0f, -200.0f});
+    const uint32_t maDim = tree.create(WidgetKind::Texture, maParent, "MaDim");
+    {
+        Widget* w = tree.get(maDim);
+        w->layer = DrawLayer::Background;
+        w->solidColor = true;
+        w->solidTexel[0] = 0.0f; w->solidTexel[1] = 0.0f; w->solidTexel[2] = 0.0f; w->solidTexel[3] = 0.7f;
+        tree.setAllPoints(maDim, maParent);
+    }
+    const uint32_t maRow = tree.create(WidgetKind::Texture, maParent, "MaRow");
+    {
+        Widget* w = tree.get(maRow);
+        w->layer = DrawLayer::Background;
+        w->solidColor = true;
+        w->solidTexel[0] = 1.0f; w->solidTexel[1] = 1.0f; w->solidTexel[2] = 1.0f; w->solidTexel[3] = 1.0f;
+        tree.setAllPoints(maRow, maParent);
+    }
+
+    tree.layout(kScreenW, kScreenH);
+    const auto indexOf = [&](uint32_t id) {
+        const auto& order = tree.drawOrder();
+        for (size_t i = 0; i < order.size(); ++i) {
+            if (order[i]->id == id) return static_cast<int>(i);
+        }
+        return -1;
+    };
+    REQUIRE(indexOf(bg) >= 0);
+    REQUIRE(indexOf(nameBg) >= 0);
+    CHECK(indexOf(bg) < indexOf(nameBg));
+
+    REQUIRE(indexOf(maRow) >= 0);
+    REQUIRE(indexOf(maDim) >= 0);
+    CHECK(indexOf(maRow) < indexOf(maDim));
+
+    // Reversed creation order (BLP created before <Color a=0.5/> in same layer)
+    // also draws BLP above the untextured solid slab, matching Native TBC DB4.
+    const uint32_t db4 = tree.create(WidgetKind::Frame, tree.uiParentId(), "DB4");
+    tree.setWidth(db4, 50.0f);
+    tree.setHeight(db4, 40.0f);
+    tree.addPoint(db4, Anchor{"TOPLEFT", tree.uiParentId(), "TOPLEFT", 120.0f, -200.0f});
+    const uint32_t db4Blp = tree.create(WidgetKind::Texture, db4, "DB4Blp");
+    tree.get(db4Blp)->layer = DrawLayer::Background;
+    tree.get(db4Blp)->texturePath = "Interface\\TargetingFrame\\UI-TargetingFrame-LevelBackground";
+    tree.setAllPoints(db4Blp, db4);
+    const uint32_t db4Solid = tree.create(WidgetKind::Texture, db4, "DB4Solid");
+    tree.get(db4Solid)->layer = DrawLayer::Background;
+    tree.get(db4Solid)->solidColor = true;
+    tree.get(db4Solid)->solidTexel[3] = 0.5f;
+    tree.setAllPoints(db4Solid, db4);
+    tree.layout(kScreenW, kScreenH);
+    CHECK(indexOf(db4Solid) < indexOf(db4Blp));
+}
+
+TEST_CASE("Empty GameTooltip suppresses child GameTooltipStatusBar from drawOrder and advanceTooltipFades follows 1.0s hold + 1.0s fade",
+          "[widget][tooltip][fadeout]") {
+    WidgetTree tree;
+    const uint32_t tip = tree.create(WidgetKind::Frame, tree.uiParentId(), "GameTooltip");
+    Widget* tipW = tree.get(tip);
+    tipW->objectType = "GameTooltip";
+    tipW->isTooltip = true;
+    tipW->hasBackdrop = true;
+    tipW->width = 160.0f;
+    tipW->height = 48.0f;
+    tipW->shown = true;
+    tree.addPoint(tip, Anchor{"BOTTOMRIGHT", tree.uiParentId(), "BOTTOMRIGHT", -13.0f, 75.0f});
+
+    const uint32_t bar = tree.create(WidgetKind::Frame, tip, "GameTooltipStatusBar");
+    Widget* barW = tree.get(bar);
+    barW->objectType = "StatusBar";
+    barW->isStatusBar = true;
+    barW->barTexture = "Interface\\TargetingFrame\\UI-TargetingFrame-BarFill";
+    barW->height = 8.0f;
+    barW->shown = true;
+    tree.addPoint(bar, Anchor{"TOPLEFT", tip, "BOTTOMLEFT", 2.0f, -1.0f});
+    tree.addPoint(bar, Anchor{"TOPRIGHT", tip, "BOTTOMRIGHT", -2.0f, -1.0f});
+
+    // Empty tooltipLines: NEITHER GameTooltip NOR GameTooltipStatusBar may enter drawOrder.
+    tree.layout(kScreenW, kScreenH);
+    for (const Widget* d : tree.drawOrder()) {
+        CHECK(d->id != tip);
+        CHECK(d->id != bar);
+    }
+
+    // Populated tooltip: both draw, and startTooltipFadeOut holds 1.0s then fades over 1.0s.
+    tipW->tooltipLines.push_back({"Synge"});
+    tree.layout(kScreenW, kScreenH);
+    tree.startTooltipFadeOut(tip);
+    CHECK(tree.advanceTooltipFades(0.8f).empty());
+    CHECK(tipW->alpha == Catch::Approx(1.0f));
+    CHECK(tree.advanceTooltipFades(0.6f).empty()); // 0.2s hold consumed + 0.4s fade -> alpha 0.6
+    CHECK(tipW->alpha == Catch::Approx(0.6f));
+    tree.layout(kScreenW, kScreenH);
+    CHECK(barW->effAlpha == Catch::Approx(0.6f));
+
+    // Finishing the fade returns tip id and restores alpha to 1.0 ready for Hide.
+    const auto done = tree.advanceTooltipFades(0.7f);
+    REQUIRE(done.size() == 1);
+    CHECK(done[0] == tip);
+    CHECK_FALSE(tipW->tooltipFadingOut);
+    CHECK(tipW->alpha == Catch::Approx(1.0f));
+}
+
+TEST_CASE("Empty anchored or paragraph FontString resolves 1u layout extent while preserving 0u stored auto-size markers",
+          "[widget][fontstring][tbc]") {
+    WidgetTree tree;
+    tree.noteScreenSize(kScreenW, kScreenH);
+    // CombatText1 shape: anchored TOP to WorldFrame BOTTOM + (0, 384), hidden, empty.
+    const uint32_t ct = tree.create(WidgetKind::FontString, tree.uiParentId(), "CombatText1");
+    tree.get(ct)->shown = false;
+    tree.addPoint(ct, Anchor{"TOP", tree.uiParentId(), "BOTTOM", 0.0f, 384.0f});
+    tree.resolveWidget(ct);
+    CHECK(tree.get(ct)->rectW == Catch::Approx(1.0f));
+    CHECK(tree.get(ct)->rectH == Catch::Approx(1.0f));
+    CHECK(tree.get(ct)->bottom == Catch::Approx(383.0f));
+    CHECK(tree.get(ct)->width == Catch::Approx(0.0f));
+    CHECK(tree.get(ct)->height == Catch::Approx(0.0f));
+
+    // Wrapping paragraph shape: SetWidth(290), SetHeight(0), empty text -> 290x1.
+    const uint32_t para = tree.create(WidgetKind::FontString, tree.uiParentId(), "Para");
+    tree.setWidth(para, 290.0f);
+    tree.setHeight(para, 0.0f);
+    tree.addPoint(para, Anchor{"TOPLEFT", tree.uiParentId(), "TOPLEFT", 0.0f, 0.0f});
+    tree.resolveWidget(para);
+    CHECK(tree.get(para)->rectW == Catch::Approx(290.0f));
+    CHECK(tree.get(para)->rectH == Catch::Approx(1.0f));
+    CHECK(tree.get(para)->height == Catch::Approx(0.0f));
+}

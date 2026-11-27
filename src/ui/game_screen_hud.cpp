@@ -985,6 +985,56 @@ GameScreen::UnitLabelVisibility GameScreen::unitLabelVisibility(
 void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
     if (gameHandler.getState() != game::WorldState::IN_WORLD) return;
 
+    // Synchronize nameplate visibility bidirectionally between TBC/WotLK CVars
+    // (nameplateShowEnemies / nameplateShowFriends, written by UIParent.lua's
+    // UpdateNameplates, ShowNameplates/HideNameplates, and ShowFriendNameplates/
+    // HideFriendNameplates) and SettingsPanel (toggled by V / Shift+V / Ctrl+V).
+    {
+        struct NameplateCvarSync {
+            bool initialized = false;
+            uint64_t playerGuid = 0;
+            bool panelEnemies = false;
+            bool panelFriends = false;
+            bool cvarEnemies = false;
+            bool cvarFriends = false;
+        };
+        static NameplateCvarSync npSync;
+        const uint64_t curPlayer = gameHandler.getPlayerGuid();
+        const bool cvarEnemies = addons::storedCVarValue("nameplateShowEnemies", "0") != "0";
+        const bool cvarFriends = addons::storedCVarValue("nameplateShowFriends", "0") != "0";
+        if (!npSync.initialized || (curPlayer != 0 && npSync.playerGuid != curPlayer)) {
+            settingsPanel_.showEnemyNameplates_ = cvarEnemies;
+            settingsPanel_.showFriendlyNameplates_ = cvarFriends;
+            npSync = {true, curPlayer, cvarEnemies, cvarFriends, cvarEnemies, cvarFriends};
+        } else if (cvarEnemies != npSync.cvarEnemies || cvarFriends != npSync.cvarFriends) {
+            settingsPanel_.showEnemyNameplates_ = cvarEnemies;
+            settingsPanel_.showFriendlyNameplates_ = cvarFriends;
+            npSync.panelEnemies = cvarEnemies;
+            npSync.panelFriends = cvarFriends;
+            npSync.cvarEnemies = cvarEnemies;
+            npSync.cvarFriends = cvarFriends;
+        } else if (settingsPanel_.showEnemyNameplates_ != npSync.panelEnemies ||
+                   settingsPanel_.showFriendlyNameplates_ != npSync.panelFriends) {
+            const bool wantEnemies = settingsPanel_.showEnemyNameplates_;
+            const bool wantFriends = settingsPanel_.showFriendlyNameplates_;
+            addons::setStoredCVar("nameplateShowEnemies", wantEnemies ? "1" : "0");
+            addons::setStoredCVar("nameplateShowFriends", wantFriends ? "1" : "0");
+            if (services_.addonManager) {
+                if (auto* lua = services_.addonManager->getLuaEngine()) {
+                    std::string syncScript = std::string("NAMEPLATES_ON = ") +
+                        (wantEnemies ? "1" : "nil") +
+                        "; FRIENDNAMEPLATES_ON = " +
+                        (wantFriends ? "1" : "nil");
+                    lua->executeString(syncScript);
+                }
+            }
+            npSync.panelEnemies = wantEnemies;
+            npSync.panelFriends = wantFriends;
+            npSync.cvarEnemies = wantEnemies;
+            npSync.cvarFriends = wantFriends;
+        }
+    }
+
     // World picking and visible nameplates share one mouseover identity.
     uint64_t mouseoverGuid = worldHoverGuid_;
     plateHits_.clear();
@@ -1984,7 +2034,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         } else {
             script = mouseoverGuid
                 ? "GameTooltip_SetDefaultAnchor(GameTooltip, WorldFrame); GameTooltip:SetUnit('mouseover')"
-                : "if GameTooltip:GetOwner() == WorldFrame then GameTooltip:Hide() end";
+                : "if GameTooltip:GetOwner() == WorldFrame then GameTooltip:FadeOut() end";
         }
         if (!lua->executeString(script)) {
             LOG_ERROR("World tooltip update failed: ", lua->lastError());

@@ -599,6 +599,8 @@ struct Widget {
     /// because a tooltip has no size of its own until it has something to say.
     bool  isTooltip = false;
     bool tooltipAnchorCursor = false;
+    bool tooltipFadingOut = false;
+    float tooltipFadeHold = 0.0f;
     /// The frame this tooltip was last given by SetOwner. A tooltip is hidden
     /// when its owner stops being visible - see hideOrphanedTooltips.
     uint32_t tooltipOwnerId = 0;
@@ -1250,6 +1252,11 @@ public:
     /// Record which frame a tooltip is describing, so it can be taken away
     /// with it. See hideOrphanedTooltips.
     void setTooltipOwner(uint32_t tooltipId, uint32_t ownerId);
+    /// Begin or cancel TBC 2.4.3 GameTooltip:FadeOut() (1.0 s hold, then 1.0 s
+    /// linear alpha fade to 0 followed by Hide + alpha restore to 1.0).
+    void startTooltipFadeOut(uint32_t tooltipId);
+    void cancelTooltipFadeOut(uint32_t tooltipId);
+    std::vector<uint32_t> advanceTooltipFades(float elapsed);
     /// Hide any tooltip whose owner has stopped being visible.
     ///
     /// A tooltip is hidden by its owner's OnLeave, and a frame that is hidden
@@ -1497,6 +1504,7 @@ private:
     /// Tooltips that have been given an owner, so the check is over a handful
     /// of frames rather than every widget in the tree.
     std::vector<uint32_t> ownedTooltips_;
+    std::vector<uint32_t> fadingTooltips_;
     uint32_t pressedId_ = 0;
 
     /// Whether a state texture should be drawn given what the mouse is doing.
