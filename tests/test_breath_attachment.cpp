@@ -376,6 +376,32 @@ TEST_CASE("SpellVisualKit policies for InstantAreaKit destination, CharProc 1 ef
             7608u, center, 3.0f, 10.0f, 7608u, center, 8.0f, 10.002f));
         CHECK_FALSE(wowee::rendering::persistentAreaSharesInstance(
             9490u, center, 8.0f, 10.0f, 9490u, center, 8.0f, 12.0f));
+        // Non-CharProc-9 persistent areas (e.g. Hunter Flare 1543/28822, SV 10387, kit 6489)
+        // instantiate each DynamicObject's M2 independently rather than deduplicating.
+        CHECK_FALSE(wowee::rendering::persistentAreaSharesInstance(
+            10387u, center, 10.0f, 10.000f, 10387u, center, 10.0f, 10.002f, /*kitHasAreaImpacts=*/false));
+    }
+
+    SECTION("Missile-delivered PersistentAreaKit matching and 2.0 s expiration fade policy") {
+        const glm::vec3 dest{-6000.0f, -3272.38f, 86.16f};
+        // Hunter Flare (SV 10387, no CharProc 9) matches its in-flight ground missile.
+        CHECK(wowee::rendering::persistentAreaMatchesGroundMissile(
+            10387u, dest, /*kitHasAreaImpacts=*/false, 10387u, dest + glm::vec3(0.2f, -0.1f, 0.5f),
+            /*missileIsGroundDest=*/true));
+        // CharProc 9 rain spells (Volley / Blizzard) never defer to a single missile.
+        CHECK_FALSE(wowee::rendering::persistentAreaMatchesGroundMissile(
+            10384u, dest, /*kitHasAreaImpacts=*/true, 10384u, dest, /*missileIsGroundDest=*/true));
+        // Unit-targeted missiles or distant destinations do not match.
+        CHECK_FALSE(wowee::rendering::persistentAreaMatchesGroundMissile(
+            10387u, dest, /*kitHasAreaImpacts=*/false, 10387u, dest, /*missileIsGroundDest=*/false));
+        CHECK_FALSE(wowee::rendering::persistentAreaMatchesGroundMissile(
+            10387u, dest, /*kitHasAreaImpacts=*/false, 10387u, dest + glm::vec3(5.0f, 0.0f, 0.0f),
+            /*missileIsGroundDest=*/true));
+        // Linear 2.0 s fade opacity curve on DynamicObject removal.
+        CHECK(wowee::rendering::persistentAreaFadeOpacity(0.0f) == Catch::Approx(1.0f));
+        CHECK(wowee::rendering::persistentAreaFadeOpacity(1.0f) == Catch::Approx(0.5f));
+        CHECK(wowee::rendering::persistentAreaFadeOpacity(2.0f) == Catch::Approx(0.0f));
+        CHECK(wowee::rendering::persistentAreaFadeOpacity(2.5f) == Catch::Approx(0.0f));
     }
 
     SECTION("Mutual channel/aura SpellVisual collision suppresses matching StateKit visualId only") {

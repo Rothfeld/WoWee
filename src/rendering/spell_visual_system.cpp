@@ -114,6 +114,7 @@ void SpellVisualSystem::loadSpellVisualDbc() {
     uint32_t svCastKitField   = svLayout  ? (*svLayout)["CastKit"]       : 2;
     uint32_t svPrecastKitField = svLayout  ? (*svLayout)["PrecastKit"]    : 1;
     uint32_t svImpactKitField = svLayout  ? (*svLayout)["ImpactKit"]     : 3;
+    uint32_t svHasMissileField = svLayout ? svLayout->tryField("HasMissile") : 0xFFFFFFFFu;
     uint32_t svMissileField   = svLayout  ? (*svLayout)["MissileModel"]  : 8;
     // Declared for TBC only: columns after ChannelKit were mapped from the
     // 2.4.3 data (MissileModel 7, InstantAreaKit 22 holds summon/portal kits).
@@ -366,9 +367,10 @@ void SpellVisualSystem::loadSpellVisualDbc() {
     }
     uint32_t svFc = svDbc->getFieldCount();
     assert(svLayout && "SpellVisual layout required for channel kits");
-    // TBC 2.4.3 SpellVisual.dbc (25 columns) stores MissilePathType at col 8,
-    // MissileSound at col 10, AnimEventSoundID at col 11, and MissileMotion at col 20;
-    // preserve fallback when runtime dbc_layouts.json has not been re-synced yet.
+    // TBC 2.4.3 SpellVisual.dbc (25 columns) stores HasMissile at col 6, MissilePathType
+    // at col 8, MissileSound at col 10, AnimEventSoundID at col 11, and MissileMotion at
+    // col 20; preserve fallback when runtime dbc_layouts.json has not been re-synced yet.
+    if (svHasMissileField == 0xFFFFFFFFu && svFc == 25) svHasMissileField = 6;
     if (svMissilePathTypeField == 0xFFFFFFFFu && svFc == 25) svMissilePathTypeField = 8;
     if (svMissileSoundField == 0xFFFFFFFFu && svFc == 25) svMissileSoundField = 10;
     if (svAnimEventSoundField == 0xFFFFFFFFu && svFc == 25) svAnimEventSoundField = 11;
@@ -410,7 +412,12 @@ void SpellVisualSystem::loadSpellVisualDbc() {
         // The missile flies from caster to target. It used to stand in for a
         // missing cast or impact kit instead, parked at one end, which is why a
         // Fireball - which has both kits - never showed its fireball at all.
-        if (svMissileField < svFc) {
+        // Gate on SpellVisual.HasMissile (TBC col 6) when present so visuals with
+        // HasMissile == 0 and a stale MissileModel (e.g. Volley SV 10384) do not
+        // register a bogus projectile.
+        const bool hasMissile = (svHasMissileField >= svFc) ||
+                                (svDbc->getUInt32(i, svHasMissileField) != 0u);
+        if (hasMissile && svMissileField < svFc) {
             std::string path = missilePath(svDbc->getUInt32(i, svMissileField));
             if (!path.empty()) {
                 spellVisualMissilePath_[vid] = path;
@@ -2371,7 +2378,7 @@ void SpellVisualSystem::updateWeaponTrails(float deltaTime) {
 // it is removed with the object, not on a timer.
 void SpellVisualSystem::playPersistentArea(uint64_t key, uint32_t visualId, const glm::vec3& worldPosition,
                                            float radius) {
-    if (!m2Renderer_ || visualId == 0) return;
+    if (visualId == 0) return;
     if (!cachedAssetManager_)
         cachedAssetManager_ = core::Application::getInstance().getAssetManager();
     if (!cachedAssetManager_) return;
@@ -2379,16 +2386,58 @@ void SpellVisualSystem::playPersistentArea(uint64_t key, uint32_t visualId, cons
     stopPersistentArea(key);
     const auto kit = persistentAreaKits_.find(visualId);
     if (kit == persistentAreaKits_.end() || kit->second == 0) return;
+    const bool kitHasAreaImpacts = kitAreaImpacts_.contains(kit->second);
+
+    // Non-CharProc-9 missile-delivered persistent areas (e.g. Hunter Flare 1543/28822,
+    // Smoke Flare 30262-30265/32812/42657, Fel Cannon Blast 36242, Rain of Bones 37091)
+    // receive their DynamicObject on SMSG_SPELL_GO while the ground missile is still
+    // flying to worldPosition. Defer spawning PersistentAreaKit until that missile lands.
+    if (!kitHasAreaImpacts) {
+        for (auto it = spellMissiles_.rbegin(); it != spellMissiles_.rend(); ++it) {
+            if (!it->isPrimary || it->landed) continue;
+            const bool isGroundDest = (it->targetInstanceId == 0 && !it->targetResolver);
+            if (persistentAreaMatchesGroundMissile(visualId, worldPosition, kitHasAreaImpacts,
+                                                   it->visualId, it->end, isGroundDest)) {
+                pendingPersistentAreas_.push_back({
+                    .key = key,
+                    .visualId = visualId,
+                    .worldPosition = worldPosition,
+                    .radius = radius,
+                    .missileGroupId = it->missileGroupId,
+                });
+                LOG_INFO("SpellVisual: deferring persistent area 0x", std::hex, key, std::dec,
+                         " visual=", visualId, " until missile group=", it->missileGroupId, " lands");
+                return;
+            }
+        }
+    }
+
+    spawnPersistentAreaNow(key, visualId, worldPosition, radius);
+}
+
+void SpellVisualSystem::spawnPersistentAreaNow(uint64_t key, uint32_t visualId, const glm::vec3& worldPosition,
+                                               float radius) {
+    const auto kit = persistentAreaKits_.find(visualId);
+    if (kit == persistentAreaKits_.end() || kit->second == 0) return;
+    const bool kitHasAreaImpacts = kitAreaImpacts_.contains(kit->second);
+
     // Deduplicate co-located DynamicObjects spawned in the same tick by multi-effect
-    // SPELL_EFFECT_PERSISTENT_AREA_AURA spells (e.g. 28547 Chill, 21097 Manastorm,
+    // CharProc 9 SPELL_EFFECT_PERSISTENT_AREA_AURA spells (e.g. 28547 Chill, 21097 Manastorm,
     // 29951 Blizzard, 16914 Hurricane): share the existing primary area visual until
-    // all participating DynamicObjects expire.
+    // all participating DynamicObjects expire. Non-CharProc-9 multi-DynamicObject spells
+    // (1543/28822 Flare) instantiate each DynamicObject's M2 independently, matching Native 2.4.3.
+    bool soundAlreadyActiveNearby = false;
     for (auto& [primaryKey, meta] : persistentAreaMeta_) {
         if (persistentAreaSharesInstance(meta.visualId, meta.center, meta.radius, meta.createdClock,
-                                         visualId, worldPosition, radius, beamClock_)) {
+                                         visualId, worldPosition, radius, beamClock_, kitHasAreaImpacts)) {
             meta.sharedKeys.insert(key);
             persistentAreaOwner_[key] = primaryKey;
             return;
+        }
+        if (meta.visualId == visualId && std::abs(beamClock_ - meta.createdClock) <= 0.5f &&
+            glm::dot(worldPosition - meta.center, worldPosition - meta.center) <= (0.25f * 0.25f) &&
+            activeAreaSounds_.contains(primaryKey)) {
+            soundAlreadyActiveNearby = true;
         }
     }
     persistentAreaMeta_[key] = {
@@ -2399,9 +2448,11 @@ void SpellVisualSystem::playPersistentArea(uint64_t key, uint32_t visualId, cons
         .sharedKeys = {key},
     };
     persistentAreaOwner_[key] = key;
-    if (const uint32_t snd = playKitSound(kit->second, worldPosition, /*attachInstanceId=*/0, /*stoppable=*/true);
-        snd != 0) {
-        activeAreaSounds_[key] = snd;
+    if (!soundAlreadyActiveNearby) {
+        if (const uint32_t snd = playKitSound(kit->second, worldPosition, /*attachInstanceId=*/0, /*stoppable=*/true);
+            snd != 0) {
+            activeAreaSounds_[key] = snd;
+        }
     }
     // Cave In 36240 (kit 9373): Smash_Impact_Chest glows at the centre, a
     // 1 s loop, while HellfireRaid_Dust_Impact_Base rock falls land around it
@@ -2429,6 +2480,10 @@ void SpellVisualSystem::playPersistentArea(uint64_t key, uint32_t visualId, cons
             persistentAreaSkipsDuplicateBaseEffect(effect.path, droppedImpactPath)) {
             continue;
         }
+        if (!m2Renderer_) {
+            instances.push_back(1u);
+            continue;
+        }
         const uint32_t modelId = loadSpellModel(effect.path);
         if (modelId == 0) continue;
         const uint32_t instanceId = m2Renderer_->createInstance(modelId, worldPosition, glm::vec3(0.0f), effect.scale,
@@ -2447,7 +2502,89 @@ void SpellVisualSystem::playPersistentArea(uint64_t key, uint32_t visualId, cons
     }
 }
 
+void SpellVisualSystem::activatePendingPersistentAreas(uint64_t missileGroupId) {
+    if (missileGroupId == 0 || pendingPersistentAreas_.empty()) return;
+    std::vector<PendingPersistentArea> ready;
+    for (auto it = pendingPersistentAreas_.begin(); it != pendingPersistentAreas_.end();) {
+        if (it->missileGroupId == missileGroupId) {
+            ready.push_back(*it);
+            it = pendingPersistentAreas_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    for (const auto& area : ready) {
+        spawnPersistentAreaNow(area.key, area.visualId, area.worldPosition, area.radius);
+    }
+}
+
+void SpellVisualSystem::deferPrematurePersistentAreas(uint64_t missileGroupId, uint32_t visualId,
+                                                      const glm::vec3& missileEnd) {
+    if (missileGroupId == 0 || visualId == 0 || persistentAreaMeta_.empty()) return;
+    const auto kit = persistentAreaKits_.find(visualId);
+    if (kit == persistentAreaKits_.end() || kit->second == 0) return;
+    const bool kitHasAreaImpacts = kitAreaImpacts_.contains(kit->second);
+    if (kitHasAreaImpacts) return;
+
+    std::vector<uint64_t> toDefer;
+    for (const auto& [primaryKey, meta] : persistentAreaMeta_) {
+        if (std::abs(beamClock_ - meta.createdClock) > kPersistentAreaSameTickGraceSec) continue;
+        if (persistentAreaMatchesGroundMissile(meta.visualId, meta.center, kitHasAreaImpacts,
+                                               visualId, missileEnd, /*missileIsGroundDest=*/true)) {
+            toDefer.push_back(primaryKey);
+        }
+    }
+    for (uint64_t primaryKey : toDefer) {
+        const auto metaIt = persistentAreaMeta_.find(primaryKey);
+        if (metaIt == persistentAreaMeta_.end()) continue;
+        const PersistentAreaBinding saved = metaIt->second;
+        persistentAreaMeta_.erase(metaIt);
+        activeAreaImpacts_.erase(primaryKey);
+        if (auto sndIt = activeAreaSounds_.find(primaryKey); sndIt != activeAreaSounds_.end()) {
+            audio::AudioEngine::instance().stopSound(sndIt->second);
+            activeAreaSounds_.erase(sndIt);
+        }
+        if (auto areaIt = persistentAreas_.find(primaryKey); areaIt != persistentAreas_.end()) {
+            if (m2Renderer_) {
+                for (uint32_t instId : areaIt->second) m2Renderer_->removeInstance(instId);
+            }
+            persistentAreas_.erase(areaIt);
+        }
+        for (uint64_t k : saved.sharedKeys) {
+            persistentAreaOwner_.erase(k);
+            pendingPersistentAreas_.push_back({
+                .key = k,
+                .visualId = saved.visualId,
+                .worldPosition = saved.center,
+                .radius = saved.radius,
+                .missileGroupId = missileGroupId,
+            });
+        }
+    }
+}
+
+size_t SpellVisualSystem::activePersistentAreaInstanceCount() const {
+    size_t total = 0;
+    for (const auto& [key, instances] : persistentAreas_) {
+        total += instances.size();
+    }
+    return total;
+}
+
+size_t SpellVisualSystem::fadingPersistentAreaCount() const {
+    size_t total = 0;
+    for (const auto& sv : activeSpellVisuals_) {
+        if (sv.fadeOutOnExpire) ++total;
+    }
+    return total;
+}
+
 void SpellVisualSystem::stopPersistentArea(uint64_t key) {
+    const size_t canceledPending = std::erase_if(pendingPersistentAreas_,
+                                                 [key](const PendingPersistentArea& p) { return p.key == key; });
+    if (canceledPending > 0 && !persistentAreaOwner_.contains(key) && !persistentAreas_.contains(key)) {
+        return;
+    }
     uint64_t primaryKey = key;
     if (const auto ownerIt = persistentAreaOwner_.find(key); ownerIt != persistentAreaOwner_.end()) {
         primaryKey = ownerIt->second;
@@ -2468,15 +2605,15 @@ void SpellVisualSystem::stopPersistentArea(uint64_t key) {
     }
     const auto it = persistentAreas_.find(primaryKey);
     if (it == persistentAreas_.end()) return;
-    if (m2Renderer_) {
-        for (uint32_t instanceId : it->second) {
-            const float decay = m2Renderer_->finishInstanceStateEffect(instanceId);
-            if (decay > 0.0f) {
-                activeSpellVisuals_.push_back({.instanceId = instanceId, .elapsed = 0.0f, .duration = decay,
-                    .isPrecast = false, .attachmentId = 0, .attachInstanceId = 0, .decaying = true});
-            } else {
-                m2Renderer_->retireInstance(instanceId);
-            }
+    for (uint32_t instanceId : it->second) {
+        const float decay = m2Renderer_ ? m2Renderer_->finishInstanceStateEffect(instanceId) : 0.0f;
+        if (decay > 0.0f) {
+            activeSpellVisuals_.push_back({.instanceId = instanceId, .elapsed = 0.0f, .duration = decay,
+                .isPrecast = false, .attachmentId = 0, .attachInstanceId = 0, .decaying = true});
+        } else {
+            activeSpellVisuals_.push_back({.instanceId = instanceId, .elapsed = 0.0f,
+                .duration = kPersistentAreaFadeOutSec, .isPrecast = false,
+                .attachmentId = 0, .attachInstanceId = 0, .decaying = true, .fadeOutOnExpire = true});
         }
     }
     persistentAreas_.erase(it);
@@ -2575,6 +2712,7 @@ bool SpellVisualSystem::playSpellMissile(uint32_t visualId, const glm::vec3& sta
     static thread_local std::mt19937 motionRng{std::random_device{}()};
     std::uniform_real_distribution<float> unitDist(0.0f, 1.0f);
     const float baseScale = spellVisualMissileScale_.at(visualId);
+    const uint64_t missileGroupId = ++nextMissileGroupId_;
 
     for (int idx = 0; idx < count; ++idx) {
         const bool isPrimary = (idx == 0);
@@ -2598,7 +2736,11 @@ bool SpellVisualSystem::playSpellMissile(uint32_t visualId, const glm::vec3& sta
                                   .missileIndex = idx, .missileCount = count,
                                   .rand1 = unitDist(motionRng), .rand2 = unitDist(motionRng),
                                   .rand3 = unitDist(motionRng), .startDistance = distance,
-                                  .soundHandle = snd, .isPrimary = isPrimary});
+                                  .soundHandle = snd, .isPrimary = isPrimary,
+                                  .missileGroupId = missileGroupId});
+    }
+    if (targetInstanceId == 0 && !targetResolver) {
+        deferPrematurePersistentAreas(missileGroupId, visualId, resolvedEnd);
     }
     LOG_INFO("SpellVisual: missile visualId=", visualId, " model=", modelPath,
              " distance=", distance, " speed=", speed, " lands=", duration, "s leaves=", launchDelay,
@@ -2949,6 +3091,7 @@ void SpellVisualSystem::update(float deltaTime) {
     struct ImpactArrival { uint32_t visualId; glm::vec3 pos; uint32_t attachInstanceId; };
     std::vector<ImpactArrival> arrivals;
     std::vector<std::pair<uint32_t, glm::vec3>> areaArrivals;
+    std::vector<uint64_t> landedMissileGroups;
     std::vector<std::pair<glm::vec3, glm::vec3>> resistArrivals;
     std::vector<std::function<void()>> arriveCallbacks;
     for (auto it = spellMissiles_.begin(); it != spellMissiles_.end(); ) {
@@ -2979,6 +3122,7 @@ void SpellVisualSystem::update(float deltaTime) {
             }
             if (it->impactAtEnd) arrivals.push_back({it->visualId, it->end, it->targetAttachInstanceId});
             if (it->areaImpactAtEnd) areaArrivals.emplace_back(it->visualId, it->end);
+            if (it->isPrimary && it->missileGroupId != 0) landedMissileGroups.push_back(it->missileGroupId);
             if (it->resistEffectAtEnd) resistArrivals.emplace_back(it->end, it->dir);
             if (it->onArrive) arriveCallbacks.push_back(std::move(it->onArrive));
             if (m2Renderer_ && it->instanceId) m2Renderer_->retireMissileInstance(it->instanceId);
@@ -3039,6 +3183,7 @@ void SpellVisualSystem::update(float deltaTime) {
                     }
                     if (it->impactAtEnd) arrivals.push_back({it->visualId, it->end, it->targetAttachInstanceId});
                     if (it->areaImpactAtEnd) areaArrivals.emplace_back(it->visualId, it->end);
+                    if (it->isPrimary && it->missileGroupId != 0) landedMissileGroups.push_back(it->missileGroupId);
                     if (it->resistEffectAtEnd) resistArrivals.emplace_back(it->end, it->dir);
                     if (it->onArrive) arriveCallbacks.push_back(std::move(it->onArrive));
                     it = spellMissiles_.erase(it);
@@ -3126,6 +3271,8 @@ void SpellVisualSystem::update(float deltaTime) {
         playSpellVisual(arrival.visualId, arrival.pos, /*useImpactKit=*/true, arrival.attachInstanceId);
     for (const auto& [visualId, pos] : areaArrivals)
         playImpactAreaKit(visualId, pos);
+    for (uint64_t groupId : landedMissileGroups)
+        activatePendingPersistentAreas(groupId);
     for (const auto& [pos, dir] : resistArrivals)
         playResistImmuneEffect(pos, dir);
     for (auto& cb : arriveCallbacks)
@@ -3174,7 +3321,7 @@ void SpellVisualSystem::update(float deltaTime) {
         it->elapsed += deltaTime;
         if (it->elapsed >= it->duration) {
             if (!it->decaying && it->decayOnExpire) {
-                const float decay = m2Renderer_->finishInstanceStateEffect(it->instanceId);
+                const float decay = m2Renderer_ ? m2Renderer_->finishInstanceStateEffect(it->instanceId) : 0.0f;
                 if (decay > 0.0f) {
                     it->decaying = true;
                     it->elapsed = 0.0f;
@@ -3183,9 +3330,17 @@ void SpellVisualSystem::update(float deltaTime) {
                     continue;
                 }
             }
-            retireEffect(*it);
+            if (it->fadeOutOnExpire) {
+                if (m2Renderer_) m2Renderer_->removeInstance(it->instanceId);
+            } else {
+                retireEffect(*it);
+            }
             it = activeSpellVisuals_.erase(it);
         } else {
+            if (it->fadeOutOnExpire && m2Renderer_) {
+                m2Renderer_->setInstanceFade(
+                    it->instanceId, persistentAreaFadeOpacity(it->elapsed, it->duration));
+            }
             // Update position for bone-tracked effects - follow the CASTER's
             // hands/chest/head, not the local player's.
             if (it->attachmentId != 0 && it->attachInstanceId != 0 && charRenderer) {
@@ -3631,6 +3786,7 @@ void SpellVisualSystem::reset() {
     activeAreaImpacts_.clear();
     persistentAreaMeta_.clear();
     persistentAreaOwner_.clear();
+    pendingPersistentAreas_.clear();
     // Reset the negative cache so models that failed during asset loading can retry.
     spellVisualFailedModels_.clear();
 }

@@ -102,6 +102,7 @@ TEST_CASE("TBC 2.4.3 dbc_layouts.json SpellVisual declares MissilePathType and M
 
     const auto* svLayout = layout.getLayout("SpellVisual");
     REQUIRE(svLayout != nullptr);
+    CHECK(svLayout->field("HasMissile") == 6u);
     CHECK(svLayout->field("MissileModel") == 7u);
     CHECK(svLayout->field("MissilePathType") == 8u);
     CHECK(svLayout->field("MissileDestinationAttachment") == 9u);
@@ -121,7 +122,21 @@ TEST_CASE("TBC 2.4.3 dbc_layouts.json SpellVisual declares MissilePathType and M
     CHECK(svDbc.getUInt32(static_cast<uint32_t>(rec9466), svLayout->field("MissileModel")) == 3532u);
     CHECK(svDbc.getUInt32(static_cast<uint32_t>(rec9466), svLayout->field("MissilePathType")) == 0u);
     CHECK(svDbc.getUInt32(static_cast<uint32_t>(rec9466), svLayout->field("MissileMotion")) == 40u);
-    CHECK(svDbc.getUInt32(static_cast<uint32_t>(rec9466), svLayout->field("ImpactAreaKit")) == 8045u);
+    // Hunter Flare (1543/28822 -> SpellVisual 10387): HasMissile=1, MissileModel=2262
+    // (Missile_Flare.m2), MissileMotion=13 (Parabola), PersistentAreaKit=6489 (Flare_State_Base.m2).
+    const int32_t rec10387 = svDbc.findRecordById(10387);
+    REQUIRE(rec10387 >= 0);
+    CHECK(svDbc.getUInt32(static_cast<uint32_t>(rec10387), svLayout->field("HasMissile")) == 1u);
+    CHECK(svDbc.getUInt32(static_cast<uint32_t>(rec10387), svLayout->field("MissileModel")) == 2262u);
+    CHECK(svDbc.getUInt32(static_cast<uint32_t>(rec10387), svLayout->field("MissileDestinationAttachment")) == 2u);
+    CHECK(svDbc.getUInt32(static_cast<uint32_t>(rec10387), svLayout->field("MissileMotion")) == 13u);
+    CHECK(svDbc.getUInt32(static_cast<uint32_t>(rec10387), svLayout->field("PersistentAreaKit")) == 6489u);
+
+    // Hunter Volley (1510 -> SpellVisual 10384): HasMissile=0 even though MissileModel=1603.
+    const int32_t rec10384 = svDbc.findRecordById(10384);
+    REQUIRE(rec10384 >= 0);
+    CHECK(svDbc.getUInt32(static_cast<uint32_t>(rec10384), svLayout->field("HasMissile")) == 0u);
+    CHECK(svDbc.getUInt32(static_cast<uint32_t>(rec10384), svLayout->field("PersistentAreaKit")) == 9356u);
 }
 
 TEST_CASE("All 83 shipped TBC 2.4.3 SpellMissileMotion.dbc scripts compile and evaluate cleanly",

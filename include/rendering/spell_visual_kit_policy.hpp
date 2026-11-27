@@ -276,14 +276,15 @@ inline float areaImpactSampleDistance(float radius, float unitRandom) {
 }
 
 /// True when a newly arriving DynamicObject persistent area is a co-located
-/// companion effect of an already-active persistent area from the same cast
-/// (e.g. multi-effect SPELL_EFFECT_PERSISTENT_AREA_AURA spells such as 28547
-/// Chill, 21097 Manastorm, 29951 Blizzard, 16914 Hurricane, 41382 Blizzard,
-/// where the server spawns one DynamicObject per persistent-area effect in the
-/// same tick at the same coordinates and radius). Native TBC 2.4.3 plays one
-/// PersistentAreaKit visual/sound/CharProc-9 stream for the cast rather than
-/// multiplying shards and looping clouds by the effect count, while still
-/// rendering independent casts separated in space or time (> 0.5 s apart).
+/// companion effect of an already-active CharProc 9 area-impact persistent area
+/// from the same cast (e.g. multi-effect SPELL_EFFECT_PERSISTENT_AREA_AURA spells
+/// such as 28547 Chill, 21097 Manastorm, 29951 Blizzard, 16914 Hurricane, 41382
+/// Blizzard, where the server spawns one DynamicObject per persistent-area effect
+/// in the same tick at the same coordinates and radius). Native TBC 2.4.3 plays
+/// one CharProc-9 stream/cloud for the cast rather than multiplying falling shards,
+/// whereas non-CharProc-9 DynamicObjects (e.g. 1543/28822 Hunter Flare, kit 6489
+/// Flare_State_Base.m2 across two SPELL_EFFECT_PERSISTENT_AREA_AURA effects)
+/// instantiate each DynamicObject's persistent M2 independently.
 inline bool persistentAreaSharesInstance(uint32_t existingVisualId,
                                          const glm::vec3& existingCenter,
                                          float existingRadius,
@@ -291,12 +292,51 @@ inline bool persistentAreaSharesInstance(uint32_t existingVisualId,
                                          uint32_t newVisualId,
                                          const glm::vec3& newCenter,
                                          float newRadius,
-                                         float nowClock) {
+                                         float nowClock,
+                                         bool kitHasAreaImpacts = true) {
+    if (!kitHasAreaImpacts) return false;
     if (existingVisualId == 0 || existingVisualId != newVisualId) return false;
     if (std::abs(nowClock - existingCreatedClock) > 0.5f) return false;
     if (std::abs(existingRadius - newRadius) > 0.25f) return false;
     const glm::vec3 delta = newCenter - existingCenter;
     return glm::dot(delta, delta) <= (0.25f * 0.25f);
+}
+
+/// Matching tolerances and fade timing for missile-delivered DynamicObject
+/// PersistentAreaKits (verified on Native TBC 2.4.3 build 8606 with Hunter
+/// Flare 1543 at 6 yd, 15 yd, and 24 yd):
+/// - CMaNGOS spawns the DynamicObject immediately on SMSG_SPELL_GO (within
+///   0-270 ms), while Native TBC 2.4.3 defers spawning Flare_State_Base.m2
+///   until Missile_Flare.m2 arrives at the ground destination (dist / speed).
+/// - On DynamicObject removal, PersistentAreaKit M2s without a dedicated Decay
+///   (159) sequence fade linearly from 1.0 to 0.0 over ~2.0 s rather than
+///   snapping projected ground glow decals off in one frame.
+inline constexpr float kPersistentAreaMissileMatchXYRadius = 2.0f;
+inline constexpr float kPersistentAreaMissileMatchZWindow = 4.0f;
+inline constexpr float kPersistentAreaSameTickGraceSec = 0.25f;
+inline constexpr float kPersistentAreaFadeOutSec = 2.0f;
+
+inline bool persistentAreaMatchesGroundMissile(uint32_t areaVisualId,
+                                               const glm::vec3& areaCenter,
+                                               bool kitHasAreaImpacts,
+                                               uint32_t missileVisualId,
+                                               const glm::vec3& missileEnd,
+                                               bool missileIsGroundDest) {
+    if (kitHasAreaImpacts || !missileIsGroundDest) return false;
+    if (areaVisualId == 0 || areaVisualId != missileVisualId) return false;
+    const float dx = areaCenter.x - missileEnd.x;
+    const float dy = areaCenter.y - missileEnd.y;
+    if ((dx * dx + dy * dy) > (kPersistentAreaMissileMatchXYRadius * kPersistentAreaMissileMatchXYRadius)) {
+        return false;
+    }
+    return std::abs(areaCenter.z - missileEnd.z) <= kPersistentAreaMissileMatchZWindow;
+}
+
+inline constexpr float persistentAreaFadeOpacity(float elapsed,
+                                                 float duration = kPersistentAreaFadeOutSec) {
+    if (duration <= 1e-4f || elapsed >= duration) return 0.0f;
+    if (elapsed <= 0.0f) return 1.0f;
+    return 1.0f - (elapsed / duration);
 }
 
 /// True when a newly triggered CastKit (`newKitId`) on `newAttachInstanceId`

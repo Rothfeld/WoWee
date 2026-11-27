@@ -220,6 +220,10 @@ public:
     // kit's area impacts (CharProc 9) falling within radius yards of it.
     void playPersistentArea(uint64_t key, uint32_t visualId, const glm::vec3& worldPosition, float radius);
     void stopPersistentArea(uint64_t key);
+    [[nodiscard]] size_t pendingPersistentAreaCount() const { return pendingPersistentAreas_.size(); }
+    [[nodiscard]] size_t activePersistentAreaCount() const { return persistentAreas_.size(); }
+    [[nodiscard]] size_t activePersistentAreaInstanceCount() const;
+    [[nodiscard]] size_t fadingPersistentAreaCount() const;
 
     // Whether this visual has a missile model (SpellVisual.dbc MissileModel).
     bool hasSpellMissile(uint32_t visualId);
@@ -387,6 +391,7 @@ private:
         bool isCast = false;  // the caster's CastKit (SMSG_SPELL_GO)
         uint32_t precastSpellId = 0;  // spell ID for PrecastKit cancellation matching
         bool decayOnExpire = false;  // one-shot state-effect M2 plays Decay (159) on expiry
+        bool fadeOutOnExpire = false;// PersistentAreaKit M2 without Decay (159) fades over 1.0 s
         uint32_t kitId = 0;  // SpellVisualKit ID that spawned this instance
         bool deathPersistent = false;  // Spell.dbc AttributesEx3 & SPELL_ATTR_EX3_DEATH_PERSISTENT
     };
@@ -454,6 +459,7 @@ private:
         bool hasPrevWorldPos = false;
         uint32_t soundHandle = 0;
         bool isPrimary = true;
+        uint64_t missileGroupId = 0;
     };
 
     void loadSpellVisualDbc();
@@ -586,6 +592,18 @@ private:
     };
     std::unordered_map<uint64_t, PersistentAreaBinding> persistentAreaMeta_; // primary key -> metadata + ref keys
     std::unordered_map<uint64_t, uint64_t> persistentAreaOwner_;             // any DynamicObject key -> primary key
+    struct PendingPersistentArea {
+        uint64_t key = 0;
+        uint32_t visualId = 0;
+        glm::vec3 worldPosition{0.0f};
+        float radius = 0.0f;
+        uint64_t missileGroupId = 0;
+    };
+    std::vector<PendingPersistentArea> pendingPersistentAreas_;
+    uint64_t nextMissileGroupId_ = 0;
+    void spawnPersistentAreaNow(uint64_t key, uint32_t visualId, const glm::vec3& worldPosition, float radius);
+    void activatePendingPersistentAreas(uint64_t missileGroupId);
+    void deferPrematurePersistentAreas(uint64_t missileGroupId, uint32_t visualId, const glm::vec3& missileEnd);
     void dropAreaImpacts(float deltaTime);
     struct UnitAuraVisuals {
         std::vector<uint32_t> ids;

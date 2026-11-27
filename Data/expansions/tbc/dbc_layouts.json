@@ -571,6 +571,7 @@
     "InstantAreaKit": 22,
     "ImpactAreaKit": 23,
     "PersistentAreaKit": 24,
+    "HasMissile": 6,
     "MissileModel": 7,
     "MissilePathType": 8,
     "MissileDestinationAttachment": 9,
